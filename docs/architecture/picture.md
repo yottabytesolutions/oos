@@ -59,7 +59,8 @@ UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole 
 ```
 
 - **`BatchUnit`.** The pipe creates one per `Batch`: frame count, `BatchMeta`, mapping key, list of shares. A share
-  is a map set plus its row bounds. The share that brings drawn plus dropped to the frame count publishes the unit.
+  is a map set plus its touched rows. When the last share is in, the workers sum the shares by row bands, and the
+  unit is published with one summed map set (README.md, [Maps: workers pre-sum](README.md#maps-workers-pre-sum)).
   The UI sees only whole batches.
 - **Mapping key.** It is fixed per batch at its first claim, from `DepositView`, so all shares of a batch use one mapping. It has one
   source: `classify` builds `MappingKey` from exactly the fields it classifies `mapping`, in the same destructure, so a
@@ -159,7 +160,8 @@ RUN, SINGLE and CLEAR leave `Frozen`.
 - A picture holds whole batches of one mapping key and epoch, or exactly one `Replace` record.
 - Every frame of a mode weighs the same per column, whatever its source.
 - Nothing draws from `Settings` state that a batch carries itself.
-- No map adds on the A53. No lock on the deposit hot path beyond the claim and the publish.
+- Workers pre-sum the shares of a batch by row bands; main adds at most 3 map sets per step, over touched rows
+  ([Data path cost](README.md#data-path-cost)). No lock on the deposit hot path beyond the claim and the publish.
 
 ## Counters
 

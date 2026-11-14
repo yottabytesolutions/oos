@@ -766,6 +766,84 @@ setup file                 -> store  -> Commands -+                             
 
 Records and measurements: `records.md`.
 
+## Data path cost
+
+How samples travel from the FPGA to pixels without needless copies, conversions or sweeps (adr/0016). The figures are
+for 4 channels on the panel plot (970 x 448 in the benchmarks, map set M = 3.48 MB of `u16`).
+
+### One ownership path per batch
+
+- **Immutable storage.** The DMA buffer of a batch becomes immutable after the read: `Arc<SampleStore>` with the
+  codes, the `BatchMeta` and the frame offsets. Everything downstream holds an `Arc` and a range, never a copy.
+- **The newest frame is a view.** It is an index into its batch, not a clone under a lock (today `hw.rs` 2173 clones
+  it into `Shared`, and the fast path clones it again, `ui.rs` 1945: two 10 MB copies at 4 x 10 M).
+- **Each record is built once.** `to_record` runs once per frame that needs a record; the record holds its screen
+  points and an `Arc` plus range into the store for measurements. History keeps the screen record only.
+- **Measurement reads are separate.** A `MeasRead` decodes only the channels and window its measurements need, into a
+  reusable buffer of the measure thread. Its reread cost is scheduled: at most one reread per `RAW_PERIOD`, and the
+  acquisition counts the time it loses (`cost reread=`).
+
+### Codes until volts
+
+- Samples stay `u16` codes through transfer, deposit and the cheap measurements. Deposit maps codes to rows with the
+  batch's code-to-row table, for every channel count; a four-channel stride uses a fused decode-and-deposit kernel in
+  registers, never a decoded `f32` vector. Enabling it needs a unit benchmark, not only a host ratio.
+- The cheap measurements (min, max, mean, RMS, peak-peak) run on codes in the deposit pass and convert their results.
+- A measurement that needs volts (rise time, frequency, FFT input) converts its own window, once, into the measure
+  thread's reusable buffer.
+
+### Measurements
+
+- One pass per record computes the shared statistics (min, max, sum, sum of squares, the edge list), and each
+  requested measurement reads from them. Only requested products are computed.
+- The per-frame folds reuse the trigger position and the extrema of the deposit pass instead of scanning again
+  (today `framestats.rs` 139, 222).
+- The measure thread and its per-channel helpers are persistent; no thread is spawned per job.
+
+### Maps: workers pre-sum
+
+- Each worker deposits its claimed frames into its own share maps and records the rows it touched.
+- When the last share of a batch is in, the workers reduce the shares by row bands: each worker sums one band of
+  rows over all shares, touched rows only. The `BatchUnit` then holds one summed map set and its touched-row range.
+- Main adds at most 3 map sets per step (the window's units at Min persistence, or one unit into the decay maps), over
+  touched rows only. This removes today's per-share adds on main (about 52 MB of merge traffic per batch with five
+  shares).
+- No arithmetic under a mailbox lock: a share moves by ownership through the SPSC ring.
+
+### Fused accumulation
+
+- One pass over the touched rows adds the unit, applies decay where persistence needs it, and updates the per-column
+  maxima that the grade reads. No separate maxima or decay sweeps.
+- Decay above Min is applied in that pass to the touched rows; rows not touched decay lazily by a per-row age that the
+  next touch or the grade applies. A full-map sweep happens only on a reset.
+- A frozen picture (STOP, SINGLE done, replay) does no accumulation work at all.
+
+### GPU work proportional to change
+
+- The accumulator hands the helper the dirty row ranges of the maps; the helper uploads those rows only. The row
+  compare against the arena copy (`gpu.rs` 460) goes.
+- The arena is a pool of 3 fenced buffers per output. Each submission carries a fence (`EGL_KHR_fence_sync`); the
+  helper reuses a buffer only after its fence signalled, and waits for a fence before a page flip that needs it. The
+  per-composition `glFinish` (`oos-gpu.c` 817) goes.
+- Snapshots are read back only on demand (a screenshot, a web viewer that asked), into a pool of 2 buffers, without
+  blocking the composition. A finished readback goes to the encoder by ownership, not copied. The periodic snapshot
+  every 15 frames goes.
+- HDMI: its maps scale with its plot pixels (up to 4.3 x the panel at 1920 x 1080). It has its own budget
+  ([Performance budgets](#performance-budgets)); when both outputs run and the budget is exceeded, HDMI composes at
+  half rate and counts it.
+
+### Allocations
+
+Zero allocations per frame after warm-up on every hot path. Each has a counting-allocator guard in the tests (gate step
+in [Performance budgets](#performance-budgets)):
+- the acquisition read, publish and reread;
+- the deposit and the row-band reduction;
+- the records stage and `to_record`;
+- the accumulator merge and grade;
+- a measure job;
+- compose and present, including the GPU submission;
+- a remote reply and a waveform encode.
+
 ## Ports and adapters
 
 | Port (trait) | Adapters | Fake for tests |

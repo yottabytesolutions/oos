@@ -153,7 +153,7 @@ merge ([Memory and queues](#memory-and-queues)).
 | menu state (open menu, focus, dialogs) | `menus` | `compose` | process | < 64 kB |
 | system settings (`system.conf`) | `store::sysconf`, through `interfaces` commands | `system` services | file | file, < 16 kB |
 | a network service's state | that `system` service | its menu page | process | per service, < 1 MB |
-| composed picture for remote clients | `present` | web PNG thread, by snapshot | one picture | one picture |
+| picture snapshot leases | `present` (the helper's readback, on demand) | web PNG thread, by lease | until returned, at most 1 s | 2 pictures |
 
 ### Enforced by visibility
 
@@ -532,7 +532,7 @@ their own tests, Miri runs (task 0034) and the same contention counter (adr/0016
 | `BatchUnit`, `RecordBatch` to main | bounded `sync_channel`, plus main's wake `eventfd` | SPSC ring per worker |
 | `AcqWant`, `DepositView`, `Readings`, `Pacing` | `Mutex` cell, held for a copy or an `Arc` swap, plus a wake `eventfd` where the reader must react within a step | seqlock for the `Copy` parts |
 | `AcqCmd` | bounded `sync_channel` plus the acquisition `eventfd` | none needed: rare |
-| composed picture to remote clients | `Mutex` around an index swap of three buffers | triple buffer |
+| picture snapshot to the encoder | bounded `sync_channel` of leases (readback buffers, at most 2 out) | none needed: at most 30 per s |
 | `RemoteRequest` | bounded `sync_channel` plus main's wake `eventfd` | none needed: rare |
 | replies to a connection | bounded output queue per connection, written on `EPOLLOUT` by the listener | none needed: per connection |
 | metrics | per-thread counters, cache-line aligned, summed by the reader | already lock-free |
@@ -645,6 +645,8 @@ Every owner that keeps acquired data past its step has a byte limit and a releas
 | ring chunk pins | 1 sweep, in-flight work only, at most one step | the step ends; longer holders copy |
 | history and segments | `HISTORY_MAX` screen records, no raw | the oldest entry drops out; the `history` class clears it |
 | waveform snapshots held by remote listeners | its own copy, one per connection, 2 over all connections | the answer is sent, the connection closes, or the send times out |
+| picture snapshot leases (readback buffers at the encoder) | 2 x one picture (2.46 MB on the panel, 8.3 MB on HDMI) | the encoder returns the buffer; after 1 s the next snapshot is refused |
+| remote output queues | 256 kB per connection, 1 MB over all | see [Queues](#queues) |
 | remote connections | 8 over SCPI, VXI-11, HTTP and MCP together | a ninth is refused at accept |
 | `RemoteRequest` | 8 per connection, 32 over all | see [Queues](#queues) |
 | export (CSV, PNG, setup) | one at a time, from its own copy | the file is written |
@@ -668,6 +670,7 @@ thread never blocks on a full queue.
 | `MeasRead` | latest-value cell per kind | replaced by the newer read |
 | `AcqCmd` | 16 | the sender gets an error; commands are never dropped silently; a superseded command is acknowledged as `Superseded` |
 | `RemoteRequest` | 8 per connection, 32 over all connections | the listener answers SCPI `-350` (queue overflow) or HTTP 503 |
+| remote output queue | 256 kB per connection, 1 MB over all connections | main never blocks: a reply that does not fit is refused with `-350` (SCPI) or 503 (HTTP) if the connection is idle, and the connection is closed if it is already behind on an earlier answer. Waveform answers are encoded in 64 kB chunks into a reusable buffer, one chunk at a time as the queue drains; partial writes and `EAGAIN` keep the order; the 10 s per-send rule closes a stalled client |
 | `InputEvent` | 64 | knob steps coalesce (relative steps add up); keys are never dropped |
 | measure jobs | one running, one pending | the pending job is replaced by a newer record |
 
@@ -934,12 +937,24 @@ depends on the channel count, so that no batch needs more than one reduction pas
   helper uploads those rows only. The row compare against the arena copy (`gpu.rs` 460) goes. Under persistence above
   Min every row is dirty every step, so the whole map is uploaded; dirty rows pay off at Min persistence and in a
   frozen picture.
-- The arena is a pool of 3 fenced buffers per output. Each submission carries a fence (`EGL_KHR_fence_sync`); the
-  helper reuses a buffer only after its fence signalled, and waits for a fence before a page flip that needs it. The
-  per-composition `glFinish` (`oos-gpu.c` 817) goes.
-- Snapshots are read back only on demand (a screenshot, a web viewer that asked), into a pool of 2 buffers, without
-  blocking the composition. A finished readback goes to the encoder by ownership, not copied. The periodic snapshot
-  every 15 frames goes.
+- **Buffer ownership.** Each output has a pool of 3 buffers. A buffer is in exactly one state: free, uploading,
+  rendering, pending flip, or scanned out. A GPU fence ends rendering, not scan-out: a buffer becomes free only after
+  the flip that replaced it on screen has completed. Main tracks the states per output from the helper's completion
+  messages and the flip events.
+- **Fences.** The helper flushes each submission (`glFlush`) and attaches a fence. At startup it detects its
+  capabilities. With `EGL_ANDROID_native_fence_sync` it exports a native fence fd and sends it to main over the
+  socket, so main can `epoll` on it. Without it, the helper waits on an `EGL_KHR_fence_sync` object in its own thread
+  and sends a completion message on the socket. An EGL sync object is not an fd and never crosses the process
+  boundary. `glFinish` stays only on a fallback readback path. Panfrost's support for native fence fds and its
+  asynchronous behaviour on this board are not verified; M9b measures them before any default is set.
+- **Snapshots.** Read back only on demand (a screenshot, a web viewer that asked), into a pool of 2 pixel-pack buffers
+  (GLES 3 PBO): the helper starts the readback after a composition, fences it, and hands the buffer to the encoder when
+  the fence signals, by ownership, not copied. Without PBO support, a synchronous `glReadPixels` into one buffer is the
+  fallback, run only on demand. The periodic snapshot every 15 frames goes.
+- **Snapshot leases.** A readback buffer handed to the encoder is a lease: at most 2 out at a time, counted in the
+  retained memory ([Retaining owners](#retaining-owners)). An encoder running at `SCHED_IDLE` that keeps its lease
+  longer than 1 s loses the next snapshot (busy), never a buffer that presentation needs; presentation uses its own
+  pool.
 - HDMI: its maps scale with its plot pixels (up to 4.3 x the panel at 1920 x 1080). It has its own budget
   ([Performance budgets](#performance-budgets)); when both outputs run and the budget is exceeded, HDMI composes at
   half rate and counts it.

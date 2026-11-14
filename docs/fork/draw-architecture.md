@@ -304,6 +304,29 @@ trace still updates late. The Fill plan should end the fill so a batch is ready 
 rare: the fill is planned from the measured rest (arm, first trigger, read) and shortened when rest + fill exceeds a
 frame, down to `FILL_MIN`. Scheduled as step 8.
 
+### 3.9 One change-detection point
+
+A read-only review of upstream 0.1.12 (team-lead, verified counts) found three invalidation mechanisms side by side:
+- the `Want` diff in the acquisition thread;
+- `hw_stamp` bumps in ui.rs, bode.rs and autoset.rs;
+- `settings_changed()` / `mark_changed()`, 39 calls in the fork, plus 16 direct `dirty_map = true`.
+
+`Model` has about 178 pub fields (upstream count), about 103 direct writes and the string-keyed `store::set` for SCPI and HTTP. A
+write that skips one mechanism leaves stale state, in the phosphor and outside it: measurement statistics (`mstat`),
+history, segments, the decode cache. `Ui::step` relies on an implicit order with about 8 `ph.clear()` sites.
+
+Design (adopted from that review):
+- **(A) One point.** Once per step, before acquisition and drawing, the UI diffs the relevant `Model` sub-structs
+  against last step's copy (`Model` derives `PartialEq` already) and derives one `Invalidate` set: `acq` (hardware
+  generation), `mapping` (3.5's key: preview, drop old batches), `phosphor` (reset of maps and W), `stats`
+  (measurement statistics), `decode` (protocol decode cache), `history` (history and segments). Every consumer acts
+  on that set only.
+- **Classification by construction.** A `classify(old, new)` destructures `Model` without `..`. A new field
+  therefore does not compile until it is placed in a class, or explicitly in "changes nothing".
+- **(B)** The accumulator of 3.1 to 3.6 is the only writer of `ph`/`phz`, driven only by (A) and frame intake.
+- Not part of this: the 130-field `Ui` and other long functions stay as they are unless a step touches them. Splitting
+  `Shared` (commands vs state under one lock) only if want/rearm races show.
+
 ## 4. Acceptance criteria (unitlab)
 
 Setups:
@@ -340,7 +363,9 @@ system.conf for A/B on the unit; step 9 removes the flag and the old code after 
 | # | Step | Days | Host tests (fail before) | Unit check | Deletes |
 |---|---|---|---|---|---|
 | 0 | Counters: `stale`, `partial`, `preview`, picture `age`, frames and W per picture | 0.5 | counters count in pipe and UI tests | status line shows them | none |
-| 1 | Mapping key split (3.5): batch keeps its first `View`, UI drops published batches of another mapping; preview of `last[0]` on a mapping change; `gen_acq` for records; the batch's trigger snapshot for the refinement; invert, coupling and bandwidth in the mapping key; queue cleared on reconfigure, early-ended fill dropped; check that decode reads the batch's calibration, not global state (self-cal reload, core-offset overlay) | 1.5 | a mapping change gives a preview at the next step and never a blank trace; no batch drawn under two mappings; records of an old generation not measured | knob spin, settle over 20 changes | `hw_stamp` use for the view, blank-on-change |
+| 1a | One change-detection point (3.9): once per step, diff the relevant `Model` sub-structs against the last step and derive one `Invalidate` set; its consumers act on it; the ad hoc `settings_changed`, `dirty_map = true` and `hw_stamp` writes go | 3 | every `Model` field classified (exhaustive destructuring: a new field does not compile until classified); per class, changing a representative field resets exactly its consumers; SCPI/HTTP writes (`store::set`) reach the same point | knob and SCPI changes: clears and resets as before (screenshots, measurement statistics) | `settings_changed`, `mark_changed`, the 16 `dirty_map = true`, the `hw_stamp` bumps in ui.rs, bode.rs, autoset.rs |
+| 1b | Split the acquisition thread's closure (`hw.rs` `spawn`, lines 1263-2154 on 32041d0) into functions: set-up, normal batch loop, batch read, roll, scan. Pure refactor | 1.5 | the existing hw tests unchanged; no behaviour change (same counters and pictures in the hw tests) | smoke: probe comp and setup B as before | none (moved code) |
+| 1c | Mapping key split (3.5): batch keeps its first `View`, UI drops published batches of another mapping; preview of `last[0]` on a mapping change; `gen_acq` for records; the batch's trigger snapshot for the refinement; invert, coupling and bandwidth in the mapping key; queue cleared on reconfigure, early-ended fill dropped; check that decode reads the batch's calibration, not global state (self-cal reload, core-offset overlay) | 1.5 | a mapping change gives a preview at the next step and never a blank trace; no batch drawn under two mappings; records of an old generation not measured | knob spin, settle over 20 changes | `hw_stamp` use for the view, blank-on-change |
 | 2 | Measurement reads never draw (RAW_PERIOD raw newest, deep window); on `fast_ok` the UI takes only the newest record; off it, all records as before | 0.5 | a raw measurement read leaves the picture unchanged; mask counts, zones, average, Bus trigger, Single, segments unchanged off the fast path | probe comp 200 us dots/lines | `compress::hold` draw branch, `deepmeas` draw cases, `RECORDS_BUDGET` |
 | 3 | One lines kernel: spans for raw, codes, pairs, records (`draw_ex` lines; Z keeps its drawing; sparse per 3.3); behind `draw.model` | 4 | `pair_raw_mix_report` and `depth_mix_report` x1.000; record-path pictures alone within 3 % | screenshot pairs old/new per mode for the user's eye | `draw_ex` segment joining for lines (after step 9), deep-raw branch in `draw_frame` |
 | 4 | Dots: one count per sample, W_frame = samples per column | 2.5 | dots brightness within 3 % across raw/record frames; no dot lost at 100 samples per column over 40 rows | dots set | none |
@@ -350,9 +375,10 @@ system.conf for A/B on the unit; step 9 removes the flag and the old code after 
 | 8 | Sparse-event pacing: fill shortened when rest + fill exceeds a frame | 1.5 | Fill plan with rest 24 ms yields a batch every <= 33.3 ms in the pacing tests | setup B at 5.1 V: empty <= 1 % | none |
 | 9 | Acceptance, then remove `draw.model` and the old paths | 1 | full suites | full acceptance set | the old kernels and grade |
 
-Order: 0, 1, 2 (step 2 next to step 1), 3, 4, 5, 6, 8, 9. About 18 days of host work, plus unit rounds after 1, 3, 5,
+Order: 0, 1a, 1b, 1c, 2 (step 2 next to step 1), 3, 4, 5, 6, 8, 9. Step 1 in the text below means 1c. About 22 days of host work, plus unit rounds after 1c, 3, 5,
 6 and 9 (about 3 days). Risk: high for 3 and 6 (look of every mode: A/B by flag, screenshot pairs, the user's eye);
-medium for 1 and 5 (concurrency, knob behaviour); low for the others.
+medium for 1a, 1c and 5 (every clear and reset moves to one point; concurrency; knob behaviour); low for the others (1b is
+a pure refactor).
 
 Existing fixes:
 

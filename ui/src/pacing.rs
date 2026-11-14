@@ -160,7 +160,15 @@ pub fn composition(deposit: usize, record: usize, age_ms: Option<f32>) {
 pub fn changed() {
     WANTED.fetch_add(1, Ordering::Relaxed);
     let mut s = state().lock().unwrap();
-    s.settle = Some(Settle { at: Instant::now(), configured: None, first: None, steady: None, run_from: None, run: 0, empty: 0 });
+    s.settle = Some(Settle {
+        at: Instant::now(),
+        configured: None,
+        first: None,
+        steady: None,
+        run_from: None,
+        run: 0,
+        empty: 0,
+    });
 }
 
 /// The hardware took the settings (hw.rs).
@@ -180,7 +188,10 @@ pub fn pass(t0: Instant, t1: Instant, t2: Instant, t3: Instant) {
     let p = [iv, ms(t0, t1), ms(t1, t2), ms(t2, t3)];
     if iv > SLOW_MS && s.slow_logged < 2000 {
         s.slow_logged += 1;
-        eprintln!("oos-ui pacing: pass interval {:.1} ms (step {:.1} render {:.1} present {:.1})", p[0], p[1], p[2], p[3]);
+        eprintln!(
+            "oos-ui pacing: pass interval {:.1} ms (step {:.1} render {:.1} present {:.1})",
+            p[0], p[1], p[2], p[3]
+        );
     }
     push(&mut s.passes, p);
 }
@@ -378,7 +389,21 @@ pub fn summary() -> String {
     let mut pre: Vec<f32> = s.batches.iter().zip(s.reads.iter()).map(|(b, r)| b.0 - r).collect();
     let mut fd: Vec<f32> = s.fast.iter().map(|x| x[0]).collect();
     let mut fm: Vec<f32> = s.fast.iter().map(|x| x[1]).collect();
-    let settles: Vec<String> = s.settled.iter().rev().take(4).map(|c| format!("{}/{}/{}/{}", c.configured.map_or(-1.0, |x| x.round()), c.first.map_or(-1.0, |x| x.round()), c.steady.map_or(-1.0, |x| x.round()), c.empty)).collect();
+    let settles: Vec<String> = s
+        .settled
+        .iter()
+        .rev()
+        .take(4)
+        .map(|c| {
+            format!(
+                "{}/{}/{}/{}",
+                c.configured.map_or(-1.0, |x| x.round()),
+                c.first.map_or(-1.0, |x| x.round()),
+                c.steady.map_or(-1.0, |x| x.round()),
+                c.empty
+            )
+        })
+        .collect();
     let nb = s.batches.len().max(1);
     let mut cd: Vec<f32> = s.comps.iter().map(|c| c.0 as f32).collect();
     let mut cr: Vec<f32> = s.comps.iter().map(|c| c.1 as f32).collect();
@@ -444,7 +469,11 @@ mod tests {
         assert!(STALE.load(Ordering::Relaxed) >= s0 + 3);
         composition(20, 1, Some(12.5));
         let line = summary();
-        assert!(line.contains(" picture deposit p10/p50/p90 ") && line.contains(" stale ") && line.contains(" partial "), "{}", line);
+        assert!(
+            line.contains(" picture deposit p10/p50/p90 ") && line.contains(" stale ") && line.contains(" partial "),
+            "{}",
+            line
+        );
         assert!(line.find(" picture deposit").unwrap() < line.find(" settle ").unwrap(), "settle stays last");
     }
 
@@ -513,12 +542,22 @@ mod tests {
             for r in &reads[20..] {
                 // lead before a step, within the jitter of the rest and the whole-ms fill
                 let ph = (r + lead).rem_euclid(FRAME_MS);
-                assert!(ph < 2.5 || ph > FRAME_MS - 2.5, "{}: read {} is {} ms off the lead before a step", name, r, ph);
+                assert!(
+                    ph < 2.5 || ph > FRAME_MS - 2.5,
+                    "{}: read {} is {} ms off the lead before a step",
+                    name,
+                    r,
+                    ph
+                );
             }
         }
         // 32 ms besides the fill (5 us/div): the least fill, a read every 36.5 ms
         let reads = run(|_| 32.0, 5.0, 40);
-        assert!(reads[20..].windows(2).all(|w| (w[1] - w[0] - (32.0 + FILL_MIN_MS + 0.5)).abs() < 0.6), "{:?}", &reads[20..26]);
+        assert!(
+            reads[20..].windows(2).all(|w| (w[1] - w[0] - (32.0 + FILL_MIN_MS + 0.5)).abs() < 0.6),
+            "{:?}",
+            &reads[20..26]
+        );
         // no step known yet: the former fixed wait
         assert_eq!(Fill::default().plan(Instant::now(), |_| None, 2.0), FILL_MAX_MS as u64);
     }
@@ -530,7 +569,8 @@ mod tests {
         assert_eq!(pct(&mut [], 0.5), 0.0);
         // pictures at 0, 33, 66, 99 ms; the one at 66 had nothing new: gaps 33 and 66
         let t = Instant::now();
-        let pics: VecDeque<(Instant, u32)> = [(0, 4), (33, 2), (66, 0), (99, 5)].iter().map(|&(ms, n)| (t + Duration::from_millis(ms), n)).collect();
+        let pics: VecDeque<(Instant, u32)> =
+            [(0, 4), (33, 2), (66, 0), (99, 5)].iter().map(|&(ms, n)| (t + Duration::from_millis(ms), n)).collect();
         let g = gaps(&pics);
         assert_eq!(g.len(), 2);
         assert!((g[0] - 33.0).abs() < 0.5 && (g[1] - 66.0).abs() < 0.5, "{:?}", g);

@@ -56,7 +56,10 @@ pub const GENERATORS: [Gen; 6] = [
 
 /// The command lines of a preset template for `f` Hz and `a` Vpp.
 pub fn gen_lines(tpl: &str, f: f64, a: f64) -> Vec<String> {
-    tpl.split('\n').filter(|l| !l.trim().is_empty()).map(|l| l.replace("{f}", &bode::fmt_hz(f)).replace("{a}", &bode::fmt_hz(a))).collect()
+    tpl.split('\n')
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.replace("{f}", &bode::fmt_hz(f)).replace("{a}", &bode::fmt_hz(a)))
+        .collect()
 }
 
 #[derive(Default)]
@@ -144,7 +147,13 @@ pub fn free_plan(m: &Model, sw: &bode::Sweep) -> Result<FreePlan, String> {
                 }
             }
             if best.1 < 4.0 * sw.stop {
-                return Err(format!("Sweep time does not fit the memory: {} at {} needs {}, the memory gives {}", si_short(sw.time, "s"), si_short(sw.stop, "Hz"), si_short(4.0 * sw.stop, "Sa/s"), si_short(best.1, "Sa/s")));
+                return Err(format!(
+                    "Sweep time does not fit the memory: {} at {} needs {}, the memory gives {}",
+                    si_short(sw.time, "s"),
+                    si_short(sw.stop, "Hz"),
+                    si_short(4.0 * sw.stop, "Sa/s"),
+                    si_short(best.1, "Sa/s")
+                ));
             }
             return Ok(FreePlan { tscale: i, delay: c.delay, mdepth: best.0, scan: false });
         }
@@ -183,7 +192,9 @@ impl Link {
         }
         let target = if addr.contains(':') { addr.to_string() } else { format!("{}:5555", addr) };
         let what = format!("generator {}", target);
-        let sock = target.parse::<std::net::SocketAddr>().map_err(|e| e.to_string()).and_then(|a| std::net::TcpStream::connect_timeout(&a, std::time::Duration::from_secs(2)).map_err(|e| e.to_string()));
+        let sock = target.parse::<std::net::SocketAddr>().map_err(|e| e.to_string()).and_then(|a| {
+            std::net::TcpStream::connect_timeout(&a, std::time::Duration::from_secs(2)).map_err(|e| e.to_string())
+        });
         match sock {
             Ok(s) => Ok((Link::Tcp(s), what, None)),
             Err(e) => Err(format!("{}: {}", what, e)),
@@ -201,7 +212,12 @@ impl Link {
 }
 
 /// The generator thread: connects, sends every line it receives (a message with `\n` as several commands).
-fn gen_thread(usb: bool, addr: String, err: std::sync::Arc<std::sync::Mutex<Option<String>>>, note: std::sync::Arc<std::sync::Mutex<Option<String>>>) -> mpsc::Sender<String> {
+fn gen_thread(
+    usb: bool,
+    addr: String,
+    err: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    note: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+) -> mpsc::Sender<String> {
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
         let (mut link, what) = match Link::open(usb, &addr) {
@@ -241,7 +257,17 @@ impl Ui {
             }
             return v;
         }
-        let mut v = vec![Item::BodeOn, Item::BodeRun, Item::BodeStart, Item::BodeStop, Item::BodePoints, Item::BodeAmp, Item::BodeIn, Item::BodeOut, Item::BodeGen];
+        let mut v = vec![
+            Item::BodeOn,
+            Item::BodeRun,
+            Item::BodeStart,
+            Item::BodeStop,
+            Item::BodePoints,
+            Item::BodeAmp,
+            Item::BodeIn,
+            Item::BodeOut,
+            Item::BodeGen,
+        ];
         // a cursor once there is something to read
         if !self.bode.points.is_empty() {
             v.push(Item::BodeCur);
@@ -258,9 +284,24 @@ impl Ui {
 
     pub(super) fn bode_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::BodeStart | Item::BodeStop | Item::BodePoints | Item::BodeAmp | Item::BodeAddr | Item::BodeCur | Item::BodeSwTime | Item::BodeSyncLvl | Item::BodeRef => Kind::Value,
+            Item::BodeStart
+            | Item::BodeStop
+            | Item::BodePoints
+            | Item::BodeAmp
+            | Item::BodeAddr
+            | Item::BodeCur
+            | Item::BodeSwTime
+            | Item::BodeSyncLvl
+            | Item::BodeRef => Kind::Value,
             Item::BodeRun => Kind::Action,
-            Item::BodeOn | Item::BodeIn | Item::BodeOut | Item::BodeGen | Item::BodeLink | Item::BodeSwLog | Item::BodeSync | Item::BodeSyncEdge => Kind::Choice,
+            Item::BodeOn
+            | Item::BodeIn
+            | Item::BodeOut
+            | Item::BodeGen
+            | Item::BodeLink
+            | Item::BodeSwLog
+            | Item::BodeSync
+            | Item::BodeSyncEdge => Kind::Choice,
             _ => return None,
         })
     }
@@ -293,7 +334,13 @@ impl Ui {
     pub(super) fn bode_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
-            Item::BodeOn => if m.view == AView::Bode { "On".into() } else { "Off".into() },
+            Item::BodeOn => {
+                if m.view == AView::Bode {
+                    "On".into()
+                } else {
+                    "Off".into()
+                }
+            }
             Item::BodeRun => String::new(),
             Item::BodeStart => si_short(m.bode_start, "Hz"),
             Item::BodeStop => si_short(m.bode_stop, "Hz"),
@@ -307,12 +354,30 @@ impl Ui {
             Item::BodeOut => format!("CH{}", m.bode_out + 1),
             Item::BodeGen => GENERATORS[m.bode_gen.min(GENERATORS.len() - 1)].name.into(),
             Item::BodeAddr => m.bode_addr.clone(),
-            Item::BodeLink => if m.bode_usb { "USB".into() } else { "LAN".into() },
+            Item::BodeLink => {
+                if m.bode_usb {
+                    "USB".into()
+                } else {
+                    "LAN".into()
+                }
+            }
             Item::BodeCur => self.bode_cursor_text(),
             Item::BodeSwTime => si_short(m.bode_sw_time, "s"),
-            Item::BodeSwLog => if m.bode_sw_log { "Log".into() } else { "Lin".into() },
+            Item::BodeSwLog => {
+                if m.bode_sw_log {
+                    "Log".into()
+                } else {
+                    "Lin".into()
+                }
+            }
             Item::BodeSync => format!("CH{}", m.bode_sync + 1),
-            Item::BodeSyncEdge => if m.bode_sync_slope == Slope::Fall { "Falling".into() } else { "Rising".into() },
+            Item::BodeSyncEdge => {
+                if m.bode_sync_slope == Slope::Fall {
+                    "Falling".into()
+                } else {
+                    "Rising".into()
+                }
+            }
             Item::BodeSyncLvl => si_short(m.bode_sync_level as f64, "V"),
             Item::BodeRef => format!("{:.1} dBV", m.bode_ref),
             _ => return None,
@@ -358,10 +423,15 @@ impl Ui {
             // two choices: an odd step switches
             Item::BodeSwLog => m.bode_sw_log ^= d % 2 != 0,
             Item::BodeLink => m.bode_usb ^= d % 2 != 0,
-            Item::BodeSyncEdge if d % 2 != 0 => m.bode_sync_slope = if m.bode_sync_slope == Slope::Fall { Slope::Rise } else { Slope::Fall },
+            Item::BodeSyncEdge if d % 2 != 0 => {
+                m.bode_sync_slope = if m.bode_sync_slope == Slope::Fall { Slope::Rise } else { Slope::Fall }
+            }
             Item::BodeSyncEdge => {}
             Item::BodeSync => m.bode_sync = src_step(m.bode_sync, NCH, d),
-            Item::BodeSyncLvl => m.bode_sync_level = (((m.bode_sync_level * 10.0).round() as i64 + d as i64).clamp(-200, 200) as f32) / 10.0,
+            Item::BodeSyncLvl => {
+                m.bode_sync_level =
+                    (((m.bode_sync_level * 10.0).round() as i64 + d as i64).clamp(-200, 200) as f32) / 10.0
+            }
             Item::BodeRef => m.bode_ref = (m.bode_ref.round() + d as f64).clamp(-80.0, 40.0),
             Item::BodeOut => m.bode_out = src_step(m.bode_out, NCH, d),
             Item::BodeGen => m.bode_gen = (m.bode_gen as i32 + d).rem_euclid(GENERATORS.len() as i32) as usize,
@@ -439,16 +509,25 @@ impl Ui {
         let (inp, out) = (self.m.bode_in, self.m.bode_out);
         self.m.ch[inp].on = true;
         self.m.ch[out].on = true;
-        (self.m.trig_type, self.m.trig_src, self.m.trig_level, self.m.trig_mode, self.m.run) = (TrigType::Edge, inp, 0.0, TrigMode::Auto, RunState::Run);
+        (self.m.trig_type, self.m.trig_src, self.m.trig_level, self.m.trig_mode, self.m.run) =
+            (TrigType::Edge, inp, 0.0, TrigMode::Auto, RunState::Run);
         self.bode.running = true;
         if self.bode_gen() == BUILTIN {
-            self.bode.afg_saved = Some((self.m.afg_on, self.m.afg_freq, self.m.afg_ampl, self.m.afg_offset, self.m.afg_wave, self.m.afg_mod));
+            self.bode.afg_saved = Some((
+                self.m.afg_on,
+                self.m.afg_freq,
+                self.m.afg_ampl,
+                self.m.afg_offset,
+                self.m.afg_wave,
+                self.m.afg_mod,
+            ));
             // the sweep measures unmodulated sines
             (self.m.afg_wave, self.m.afg_mod) = (0, 0);
             self.bode_send_freq();
         } else {
             *self.bode.note.lock().unwrap() = None;
-            let tx = gen_thread(self.m.bode_usb, self.m.bode_addr.clone(), self.bode.err.clone(), self.bode.note.clone());
+            let tx =
+                gen_thread(self.m.bode_usb, self.m.bode_addr.clone(), self.bode.err.clone(), self.bode.note.clone());
             let g = &GENERATORS[self.bode_gen()];
             let (f0, a) = (self.bode.freqs[0], self.m.bode_amp);
             let _ = tx.send(gen_lines(g.setup, f0, a).join("\n"));
@@ -468,7 +547,8 @@ impl Ui {
         (self.bode.free, self.bode.capturing) = (false, false);
         if let Some(s) = self.bode.free_saved.take() {
             let m = &mut self.m;
-            (m.tscale, m.delay, m.trig_type, m.trig_src, m.trig_la, m.trig_level, m.slope) = (s.tscale, s.delay, s.trig_type, s.trig_src, s.trig_la, s.trig_level, s.slope);
+            (m.tscale, m.delay, m.trig_type, m.trig_src, m.trig_la, m.trig_level, m.slope) =
+                (s.tscale, s.delay, s.trig_type, s.trig_src, s.trig_la, s.trig_level, s.slope);
             (m.trig_mode, m.mdepth, m.auto_roll, m.acq, m.run) = (s.trig_mode, s.mdepth, s.auto_roll, s.acq, s.run);
             self.dirty_map = true;
             self.settings_changed();
@@ -577,9 +657,11 @@ impl Ui {
             run: m.run,
         });
         m.ch = want.ch;
-        (m.tscale, m.delay, m.mdepth, m.auto_roll, m.acq) = (plan.tscale, plan.delay, plan.mdepth, false, AcqMode::Normal);
+        (m.tscale, m.delay, m.mdepth, m.auto_roll, m.acq) =
+            (plan.tscale, plan.delay, plan.mdepth, false, AcqMode::Normal);
         let slope = if m.bode_sync_slope == Slope::Fall { Slope::Fall } else { Slope::Rise };
-        (m.trig_type, m.trig_src, m.trig_la, m.trig_level, m.slope) = (TrigType::Edge, sync, None, m.bode_sync_level, slope);
+        (m.trig_type, m.trig_src, m.trig_la, m.trig_level, m.slope) =
+            (TrigType::Edge, sync, None, m.bode_sync_level, slope);
         (m.trig_mode, m.run, m.view) = (TrigMode::Single, RunState::Run, AView::Bode);
         m.hw_stamp += 1;
         self.bode.stamp = m.hw_stamp;
@@ -633,10 +715,15 @@ impl Ui {
         let envelope = self.meas_frame(rec, out).is_some_and(|(f, _, _)| f.envelope);
         let hyst = m.trig_hyst_div() * m.ch[sync].volts_per_div();
         let rising = m.bode_sync_slope != Slope::Fall;
-        let Some(ts) = bode::sync_start(vs, dt, self.meas_t0(rec, sync), m.bode_sync_level, hyst, rising, sw.time) else {
+        let Some(ts) = bode::sync_start(vs, dt, self.meas_t0(rec, sync), m.bode_sync_level, hyst, rising, sw.time)
+        else {
             return format!("No sync edge on CH{} in the record: check its edge and level", sync + 1);
         };
-        let r = bode::sweep_response(&sw, &bode::SweepRecord { out: vo, inp: vi.map(|v| v.0), dt, t0: self.meas_t0(rec, out) - ts, envelope }, m.bode_points);
+        let r = bode::sweep_response(
+            &sw,
+            &bode::SweepRecord { out: vo, inp: vi.map(|v| v.0), dt, t0: self.meas_t0(rec, out) - ts, envelope },
+            m.bode_points,
+        );
         // without an input: the output in dBV (RMS of the sine) against the reference level
         let ref_dbv = m.bode_ref;
         self.bode.points = r
@@ -659,17 +746,26 @@ impl Ui {
         } else {
             None
         };
-        let why: Vec<&str> = [(r.too_fast, "sweep too fast for the low end"), (r.too_high, "sample rate too low for the top"), (r.outside, "sweep not in the record")]
-            .iter()
-            .filter(|w| w.0 > 0)
-            .map(|w| w.1)
-            .collect();
+        let why: Vec<&str> = [
+            (r.too_fast, "sweep too fast for the low end"),
+            (r.too_high, "sample rate too low for the top"),
+            (r.outside, "sweep not in the record"),
+        ]
+        .iter()
+        .filter(|w| w.0 > 0)
+        .map(|w| w.1)
+        .collect();
         let n = self.bode.points.len();
         match (n, why.is_empty()) {
             (0..=2, true) => format!("Too few points ({}): no signal on CH{}", n, out + 1),
             (0..=2, false) => format!("Too few points ({}): {}", n, why.join(", ")),
             (_, true) => format!("Sweep captured: {} points", n),
-            (_, false) => format!("Sweep captured: {} points; {} left out: {}", n, r.too_fast + r.too_high + r.outside, why.join(", ")),
+            (_, false) => format!(
+                "Sweep captured: {} points; {} left out: {}",
+                n,
+                r.too_fast + r.too_high + r.outside,
+                why.join(", ")
+            ),
         }
     }
 
@@ -680,7 +776,12 @@ impl Ui {
         }
     }
     pub fn bode_text(&self) -> String {
-        self.bode.points.iter().map(|(f, g, p)| format!("{},{:.3},{:.2}", bode::fmt_hz(*f), g, p)).collect::<Vec<_>>().join(";")
+        self.bode
+            .points
+            .iter()
+            .map(|(f, g, p)| format!("{},{:.3},{:.2}", bode::fmt_hz(*f), g, p))
+            .collect::<Vec<_>>()
+            .join(";")
     }
 
     /// Gain (top) and phase (bottom) over log frequency.
@@ -702,7 +803,11 @@ impl Ui {
         let (pt, pb) = (a.y + a.h / 2 + 8, a.y + a.h - 24);
         // gain axis: the measured range rounded to 10 dB, phase -180..180
         let (gmin, gmax) = self.bode.points.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
-        let (gmin, gmax) = if gmin > gmax { (-40.0, 10.0) } else { ((gmin / 10.0).floor() * 10.0 - 10.0, (gmax / 10.0).ceil() * 10.0) };
+        let (gmin, gmax) = if gmin > gmax {
+            (-40.0, 10.0)
+        } else {
+            ((gmin / 10.0).floor() * 10.0 - 10.0, (gmax / 10.0).ceil() * 10.0)
+        };
         let gy = |g: f64| gb - ((g - gmin) / (gmax - gmin) * (gb - gt) as f64).round() as i32;
         let py = |p: f64| pb - ((p + 180.0) / 360.0 * (pb - pt) as f64).round() as i32;
         // decade lines
@@ -747,7 +852,13 @@ impl Ui {
             _ if self.m.bode_in == self.m.bode_out && self.bode_gen() == BUILTIN => "generator".to_string(),
             _ => format!("CH{}", self.m.bode_in + 1),
         };
-        cv.text(&f.s, a.x + 6, gt + 14, &format!("Gain CH{} / {}  {:.0} .. {:.0} dB", self.m.bode_out + 1, refn, gmin, gmax), col_g);
+        cv.text(
+            &f.s,
+            a.x + 6,
+            gt + 14,
+            &format!("Gain CH{} / {}  {:.0} .. {:.0} dB", self.m.bode_out + 1, refn, gmin, gmax),
+            col_g,
+        );
         // a free sweep has a phase only from the fit of both channels on plain samples
         let phase_text = match (free, self.m.bode_sw_in, self.bode.no_phase) {
             (true, 0, _) => "No phase without an input channel",
@@ -758,7 +869,12 @@ impl Ui {
         cv.text(&f.s, a.x + 6, pt + 14, phase_text, ACCENT);
         let sync_text = || {
             let edge = if self.m.bode_sync_slope == Slope::Fall { "falling" } else { "rising" };
-            format!("waiting for the sync edge on CH{} ({}, {})", self.m.bode_sync + 1, edge, si_short(self.m.bode_sync_level as f64, "V"))
+            format!(
+                "waiting for the sync edge on CH{} ({}, {})",
+                self.m.bode_sync + 1,
+                edge,
+                si_short(self.m.bode_sync_level as f64, "V")
+            )
         };
         let status = if self.bode.running && self.bode.free {
             if self.bode.capturing {
@@ -767,13 +883,26 @@ impl Ui {
                 sync_text()
             }
         } else if self.bode.running {
-            format!("sweeping {} of {}: {}", self.bode.idx + 1, self.bode.freqs.len(), si_short(self.bode.freqs[self.bode.idx], "Hz"))
-        } else if let Some(&(hz, g, p)) = self.bode.points.iter().min_by(|a, b| ((a.1 + 3.0).abs()).partial_cmp(&(b.1 + 3.0).abs()).unwrap()) {
+            format!(
+                "sweeping {} of {}: {}",
+                self.bode.idx + 1,
+                self.bode.freqs.len(),
+                si_short(self.bode.freqs[self.bode.idx], "Hz")
+            )
+        } else if let Some(&(hz, g, p)) =
+            self.bode.points.iter().min_by(|a, b| ((a.1 + 3.0).abs()).partial_cmp(&(b.1 + 3.0).abs()).unwrap())
+        {
             let ph = if p.is_nan() { String::new() } else { format!(", {:.0}\u{b0}", p) };
             format!("{} points; nearest -3 dB: {} ({:.1} dB{})", self.bode.points.len(), si_short(hz, "Hz"), g, ph)
         } else if free {
             let law = if self.m.bode_sw_log { "log" } else { "lin" };
-            format!("free sweep {} .. {} in {}, {} (Bode > Start)", si_short(self.m.bode_start, "Hz"), si_short(self.m.bode_stop, "Hz"), si_short(self.m.bode_sw_time, "s"), law)
+            format!(
+                "free sweep {} .. {} in {}, {} (Bode > Start)",
+                si_short(self.m.bode_start, "Hz"),
+                si_short(self.m.bode_stop, "Hz"),
+                si_short(self.m.bode_sw_time, "s"),
+                law
+            )
         } else if self.bode_gen() == BUILTIN {
             "built-in generator (Bode > Start)".to_string()
         } else {
@@ -783,8 +912,12 @@ impl Ui {
         // an open loop passes one of these two; a filter sweep neither
         let mg = oos_dsp::bode::margins(&self.bode.points);
         if !self.bode.running && (mg.gain.is_some() || mg.phase.is_some()) {
-            let gm = mg.gain.map_or("Gain margin -".to_string(), |(v, hz)| format!("Gain margin {:.1} dB at {}", v, si_short(hz, "Hz")));
-            let pm = mg.phase.map_or("phase margin -".to_string(), |(v, hz)| format!("phase margin {:.0}\u{b0} at {}", v, si_short(hz, "Hz")));
+            let gm = mg.gain.map_or("Gain margin -".to_string(), |(v, hz)| {
+                format!("Gain margin {:.1} dB at {}", v, si_short(hz, "Hz"))
+            });
+            let pm = mg.phase.map_or("phase margin -".to_string(), |(v, hz)| {
+                format!("phase margin {:.0}\u{b0} at {}", v, si_short(hz, "Hz"))
+            });
             cv.text(&f.s, a.x + 6, pt + 30, &format!("{}, {}", gm, pm), TEXT);
         }
         let w = f.s.width(&status) + 16;
@@ -804,13 +937,19 @@ mod tests {
     fn free_sweep_reads_one_record() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points) = (FREE, 20.0, 20e3, 40);
-        (ui.m.bode_sw_time, ui.m.bode_sw_log, ui.m.bode_sw_in, ui.m.bode_out, ui.m.bode_sync, ui.m.bode_sync_level) = (0.5, true, 1, 1, 3, 1.5);
+        (ui.m.bode_sw_time, ui.m.bode_sw_log, ui.m.bode_sw_in, ui.m.bode_out, ui.m.bode_sync, ui.m.bode_sync_level) =
+            (0.5, true, 1, 1, 3, 1.5);
         let (ts0, trig0, mode0) = (ui.m.tscale, ui.m.trig_src, ui.m.trig_mode);
-        assert!(ui.items(MenuId::Bode).contains(&Item::BodeSyncLvl) && !ui.items(MenuId::Bode).contains(&Item::BodeAmp));
+        assert!(
+            ui.items(MenuId::Bode).contains(&Item::BodeSyncLvl) && !ui.items(MenuId::Bode).contains(&Item::BodeAmp)
+        );
         ui.activate(Item::BodeRun);
         assert!(ui.bode.running && ui.bode.free, "{:?}", ui.toast);
         assert!(ui.toast.as_ref().unwrap().0.contains("sync edge on CH4"));
-        assert_eq!((ui.m.trig_src, ui.m.trig_mode, ui.m.trig_type, ui.m.run), (3, TrigMode::Single, TrigType::Edge, RunState::Run));
+        assert_eq!(
+            (ui.m.trig_src, ui.m.trig_mode, ui.m.trig_type, ui.m.run),
+            (3, TrigMode::Single, TrigType::Edge, RunState::Run)
+        );
         assert!(ui.m.ch[0].on && ui.m.ch[1].on && ui.m.ch[3].on);
         // 100 ms/div: the trigger one division from the left, 9 for the sweep; a depth with 20 samples per period
         let tdiv = tscales()[ui.m.tscale] as f64;
@@ -822,7 +961,8 @@ mod tests {
         let sw = ui.free_sweep();
         let (dt, t0) = (5e-6, ui.m.delay as f64 - 5.0 * tdiv);
         let n = (10.0 * tdiv / dt) as usize;
-        let x: Vec<f32> = (0..n).map(|k| (sw.phase_at((t0 + k as f64 * dt).clamp(0.0, sw.time)) + 0.3).sin() as f32).collect();
+        let x: Vec<f32> =
+            (0..n).map(|k| (sw.phase_at((t0 + k as f64 * dt).clamp(0.0, sw.time)) + 0.3).sin() as f32).collect();
         let alpha = 1.0 - (-2.0 * std::f64::consts::PI * 1e3 * dt).exp();
         let mut y = 0.0f64;
         let out: Vec<f32> = x
@@ -832,15 +972,29 @@ mod tests {
                 y as f32
             })
             .collect();
-        let sync: Vec<f32> = (0..n).map(|k| if (0.0..1e-3).contains(&(t0 + k as f64 * dt)) { 3.3 } else { 0.0 }).collect();
-        ui.last[0] = Some(Record { t0, dt, ch: [x, out, Vec::new(), sync], triggered: true, partial: false, raw: None, la: None, pairs: false });
+        let sync: Vec<f32> =
+            (0..n).map(|k| if (0.0..1e-3).contains(&(t0 + k as f64 * dt)) { 3.3 } else { 0.0 }).collect();
+        ui.last[0] = Some(Record {
+            t0,
+            dt,
+            ch: [x, out, Vec::new(), sync],
+            triggered: true,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+        });
         ui.m.run = RunState::Stop;
         ui.bode_update();
         assert!(!ui.bode.running && !ui.bode.free);
         // 0.5 s over three decades passes the lowest frequencies in less than a period each
         let t = ui.toast.as_ref().unwrap().0.clone();
         assert!(t.starts_with("Sweep captured") && t.contains("too fast for the low end"), "{}", t);
-        assert!(ui.bode.points.len() >= 30 && ui.bode.points[0].0 > 50.0 && ui.bode.points[0].0 < 100.0, "{:?}", ui.bode.points);
+        assert!(
+            ui.bode.points.len() >= 30 && ui.bode.points[0].0 > 50.0 && ui.bode.points[0].0 < 100.0,
+            "{:?}",
+            ui.bode.points
+        );
         // the exact response of that sampled low-pass: alpha / (1 - (1 - alpha) e^-jw)
         let truth = |f: f64| {
             let w = 2.0 * std::f64::consts::PI * f * dt;
@@ -851,7 +1005,11 @@ mod tests {
             let (tg, tp) = truth(f);
             assert!((g - tg).abs() < 0.5 && (p - tp).abs() < 3.0, "{} Hz: {} dB {} deg", f, g, p);
         }
-        assert_eq!((ui.m.tscale, ui.m.trig_src, ui.m.trig_mode, ui.m.run), (ts0, trig0, mode0, RunState::Run), "settings restored");
+        assert_eq!(
+            (ui.m.tscale, ui.m.trig_src, ui.m.trig_mode, ui.m.run),
+            (ts0, trig0, mode0, RunState::Run),
+            "settings restored"
+        );
         ui.render(&mut cv);
         // the same without the input channel: against 1 V peak = -3.01 dBV, no phase
         (ui.m.bode_sw_in, ui.m.bode_ref) = (0, -3.0);
@@ -891,7 +1049,12 @@ mod tests {
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
         ui.activate(Item::BodeRun);
-        assert!(!ui.bode.running && ui.m.tscale == ts0 && ui.m.trig_mode == TrigMode::Auto && ui.m.auto_roll == Model::default().auto_roll);
+        assert!(
+            !ui.bode.running
+                && ui.m.tscale == ts0
+                && ui.m.trig_mode == TrigMode::Auto
+                && ui.m.auto_roll == Model::default().auto_roll
+        );
         // the demo signals through the whole loop: whatever CH4 does, the sweep waits or ends with a message
         ui.m.bode_sw_time = 0.05;
         ui.activate(Item::BodeRun);
@@ -908,13 +1071,19 @@ mod tests {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         ui.m.bode_gen = FREE;
         assert_eq!(ui.value(Item::BodeGen), "Free-running sweep");
-        assert_eq!((ui.value(Item::BodeSwTime), ui.value(Item::BodeSwLog), ui.value(Item::BodeSync), ui.value(Item::BodeIn)), ("1 s".into(), "Log".into(), "CH4".into(), "CH1".into()));
+        assert_eq!(
+            (ui.value(Item::BodeSwTime), ui.value(Item::BodeSwLog), ui.value(Item::BodeSync), ui.value(Item::BodeIn)),
+            ("1 s".into(), "Log".into(), "CH4".into(), "CH1".into())
+        );
         ui.adjust(Item::BodeSwTime, 2);
         ui.adjust(Item::BodeSwLog, 1);
         ui.adjust(Item::BodeSyncEdge, 1);
         ui.adjust(Item::BodeSyncLvl, 5);
         ui.adjust(Item::BodeIn, -1);
-        assert_eq!((ui.m.bode_sw_time, ui.m.bode_sw_log, ui.m.bode_sync_slope, ui.m.bode_sw_in == 0), (5.0, false, Slope::Fall, true));
+        assert_eq!(
+            (ui.m.bode_sw_time, ui.m.bode_sw_log, ui.m.bode_sync_slope, ui.m.bode_sw_in == 0),
+            (5.0, false, Slope::Fall, true)
+        );
         assert!((ui.m.bode_sync_level - 1.5).abs() < 1e-6);
         ui.adjust(Item::BodeSwTime, -100);
         assert_eq!(ui.m.bode_sw_time, 1e-3);
@@ -930,7 +1099,13 @@ mod tests {
         let g = &GENERATORS[g];
         assert_eq!(
             gen_lines(g.setup, 100.0, 2.0),
-            vec![":CHANnel1:MODe CONTINUE", ":CHANnel1:BASE:WAVe SINe", ":CHANnel1:AMPLitude:UNIT VPP", ":CHANnel1:BASE:AMPLitude 2", ":CHANnel1:BASE:OFFSet 0"]
+            vec![
+                ":CHANnel1:MODe CONTINUE",
+                ":CHANnel1:BASE:WAVe SINe",
+                ":CHANnel1:AMPLitude:UNIT VPP",
+                ":CHANnel1:BASE:AMPLitude 2",
+                ":CHANnel1:BASE:OFFSet 0"
+            ]
         );
         assert_eq!(gen_lines(g.step, 12500.0, 2.0), vec![":CHANnel1:BASE:FREQuency 12500"]);
         assert_eq!(gen_lines(g.on, 1.0, 2.0), vec![":CHANnel1:OUTPut ON"]);

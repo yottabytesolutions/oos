@@ -11,7 +11,11 @@ use std::{fs, io::Write, path::Path};
 /// Text of a clock step; the top step gives wrong samples (docs/models.md 4.1).
 pub(super) fn label(hz: f64) -> String {
     let ghz = format!("{} GHz", hz / 1e9);
-    if hz == board().clock_steps()[board().clock_steps().len() - 1] { format!("{} (test)", ghz) } else { ghz }
+    if hz == board().clock_steps()[board().clock_steps().len() - 1] {
+        format!("{} (test)", ghz)
+    } else {
+        ghz
+    }
 }
 
 /// Replaces limits.conf in one step, the scope is switched off at the mains. No lines left: no file.

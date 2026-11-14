@@ -56,7 +56,9 @@ pub fn file_name(p: &Path) -> String {
 /// A stick is foreign data and this program runs as root: a link or a device node on it, under a name a save would use,
 /// could lead straight to the card. So only a regular file or a new one, and on the stick no link on the way there.
 pub fn check_target(path: &Path) -> std::io::Result<()> {
-    let refuse = |what: &str| Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{}: {}", path.display(), what)));
+    let refuse = |what: &str| {
+        Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{}: {}", path.display(), what)))
+    };
     if path.starts_with("/mnt/usb") {
         for a in path.ancestors().skip(1).take_while(|a| a.starts_with("/mnt/usb") && *a != Path::new("/mnt/usb")) {
             if a.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
@@ -89,7 +91,8 @@ const WHENS: [WhenKind; 5] = [WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKin
 const WIN_MODES: [WinMode; 3] = [WinMode::Enter, WinMode::Exit, WinMode::Inside];
 const VSYNCS: [VSync; 5] = [VSync::AllLines, VSync::Line, VSync::Odd, VSync::Even, VSync::AllFields];
 const HEXPANDS: [HExpand; 4] = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
-const CURSORS: [CursorMode; 5] = [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
+const CURSORS: [CursorMode; 5] =
+    [CursorMode::Off, CursorMode::Time, CursorMode::Volt, CursorMode::Track, CursorMode::Xy];
 const GRIDS: [Grid; 3] = [Grid::Full, Grid::Light, Grid::None];
 const VIDEO_STDS: [VideoStd; 2] = [VideoStd::Pal, VideoStd::Ntsc];
 const BITS: [Bit; 5] = [Bit::H, Bit::L, Bit::X, Bit::R, Bit::F];
@@ -182,7 +185,17 @@ pub fn setup_text(m: &Model) -> String {
     kv("delay", m.delay.to_string());
     kv("trig_src", m.trig_src.to_string());
     kv("trig_la", m.trig_la.map_or("none".to_string(), |n| n.to_string()));
-    kv("pat_la", m.pat_la.iter().map(|&b| match b { Bit::H => 'H', Bit::L => 'L', _ => 'X' }).collect());
+    kv(
+        "pat_la",
+        m.pat_la
+            .iter()
+            .map(|&b| match b {
+                Bit::H => 'H',
+                Bit::L => 'L',
+                _ => 'X',
+            })
+            .collect(),
+    );
     kv("trig_level", m.trig_level.to_string());
     kv("slope", name(m.slope));
     kv("trig_mode", name(m.trig_mode));
@@ -296,19 +309,61 @@ pub fn setup_text(m: &Model) -> String {
     for (i, v) in m.view_slots.iter().enumerate().filter(|(_, v)| !v.is_empty()) {
         kv(&format!("view{}", i + 1), v.clone());
     }
-    kv("bode", format!("{} {} {} {} {} {} {} {}", m.bode_start, m.bode_stop, m.bode_points, m.bode_amp, m.bode_in + 1, m.bode_out + 1, m.bode_gen, m.bode_addr));
+    kv(
+        "bode",
+        format!(
+            "{} {} {} {} {} {} {} {}",
+            m.bode_start,
+            m.bode_stop,
+            m.bode_points,
+            m.bode_amp,
+            m.bode_in + 1,
+            m.bode_out + 1,
+            m.bode_gen,
+            m.bode_addr
+        ),
+    );
     // the generator's connection: lan (the address above) or usb; a line of its own, so older versions skip it
     kv("bode_link", if m.bode_usb { "usb" } else { "lan" }.to_string());
     // free sweep: time, log, sync channel, edge, level, input (0 = none), reference dBV
-    kv("bode_sweep", format!("{} {} {} {} {} {} {}", m.bode_sw_time, m.bode_sw_log, m.bode_sync + 1, name(m.bode_sync_slope), m.bode_sync_level, m.bode_sw_in, m.bode_ref));
-    kv("spec", format!("{} {} {} {} {} {} {} {} {}", m.spec_src + 1, m.spec_center, m.spec_span, m.spec_rbw, name(m.spec_win), m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist));
+    kv(
+        "bode_sweep",
+        format!(
+            "{} {} {} {} {} {} {}",
+            m.bode_sw_time,
+            m.bode_sw_log,
+            m.bode_sync + 1,
+            name(m.bode_sync_slope),
+            m.bode_sync_level,
+            m.bode_sw_in,
+            m.bode_ref
+        ),
+    );
+    kv(
+        "spec",
+        format!(
+            "{} {} {} {} {} {} {} {} {}",
+            m.spec_src + 1,
+            m.spec_center,
+            m.spec_span,
+            m.spec_rbw,
+            name(m.spec_win),
+            m.spec_trace,
+            m.spec_ref,
+            m.spec_wf,
+            m.spec_dist
+        ),
+    );
     kv("spec_peaks", format!("{} {}", m.spec_sort, m.spec_harm));
     kv("eye", format!("{} {}", m.eye_src + 1, m.eye_rate));
     kv("power", format!("{} {} {}", m.pw_v + 1, m.pw_i + 1, name(m.pw_mode)));
     // zones: "on src inside t:v t:v ..."
     for (k, z) in m.zones.iter().enumerate() {
         let pts: Vec<String> = z.pts.iter().map(|(t, v)| format!("{}:{}", t, v)).collect();
-        kv(&format!("zone{}", k + 1), format!("{} {} {} {}", z.on, z.src + 1, z.inside, pts.join(" ")).trim().to_string());
+        kv(
+            &format!("zone{}", k + 1),
+            format!("{} {} {} {}", z.on, z.src + 1, z.inside, pts.join(" ")).trim().to_string(),
+        );
     }
     kv("z_src", m.z_src.map_or("off".to_string(), |c| (c + 1).to_string()));
     kv("hist", name(m.hist));
@@ -320,7 +375,10 @@ pub fn setup_text(m: &Model) -> String {
     kv("quick", name(m.quick));
     kv("text_size", name(m.text_size));
     kv("la", m.la.to_text());
-    kv("dec_la", format!("{} {}", m.dec_la_in as u8, m.dec_la.map(|n| n.map_or("-".to_string(), |x| x.to_string())).join(" ")));
+    kv(
+        "dec_la",
+        format!("{} {}", m.dec_la_in as u8, m.dec_la.map(|n| n.map_or("-".to_string(), |x| x.to_string())).join(" ")),
+    );
     s
 }
 
@@ -407,7 +465,9 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         match field {
             "on" => ch.on = p_bool(v)?,
             "vfine" => ch.vfine = p_f32(v)?.clamp(1.0, 2.5),
-            "unit" => ch.unit = *AmpUnit::ALL.iter().find(|u| u.name() == v.trim()).ok_or_else(|| format!("no unit {}", v))?,
+            "unit" => {
+                ch.unit = *AmpUnit::ALL.iter().find(|u| u.name() == v.trim()).ok_or_else(|| format!("no unit {}", v))?
+            }
             "bias" => ch.bias = p_f32(v)?,
             "skew" => ch.skew = p_f32(v)?.clamp(-SKEW_MAX, SKEW_MAX),
             // the keyboard takes ten characters; a hand-edited file gets no more
@@ -416,13 +476,18 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 let x = p_f32(v)?;
                 // 20 V/div was once on the ladder, the hardware ends at 10
                 let x = x.min(VSCALES[VSCALES.len() - 1]);
-                ch.vscale = VSCALES.iter().position(|&s| (s - x).abs() <= s * 1e-3).ok_or_else(|| format!("no V/div step {}", v))?;
+                ch.vscale = VSCALES
+                    .iter()
+                    .position(|&s| (s - x).abs() <= s * 1e-3)
+                    .ok_or_else(|| format!("no V/div step {}", v))?;
             }
             // setups before the 100/200 uV steps: index into the old ladder (500 uV .. 20 V)
             "vscale" => ch.vscale = (p_idx(v, VSCALES.len() - 1)? + 2).min(VSCALES.len() - 1),
             "offset" => ch.offset = p_f32(v)?,
             "coupling" => ch.coupling = p_enum(v, &COUPLINGS)?,
-            "bw" => ch.bw = BWS.iter().position(|b| b.0 == v.trim()).ok_or_else(|| format!("unknown bandwidth {}", v))?,
+            "bw" => {
+                ch.bw = BWS.iter().position(|b| b.0 == v.trim()).ok_or_else(|| format!("unknown bandwidth {}", v))?
+            }
             // setups before 2026-11-03
             "bw20" => ch.bw = if p_bool(v)? { BW_20M } else { BW_FULL },
             "probe" => ch.probe = p_f32(v)?,
@@ -439,12 +504,16 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "tscale" => m.tscale = p_idx(v, ntime - 2)? + 2,
         "delay" => m.delay = p_f32(v)?,
         "trig_src" => m.trig_src = p_idx(v, NCH)?,
-"pat_la" => {
+        "pat_la" => {
             if v.trim().len() != 16 {
                 return Err(format!("pat_la: {:?}", v));
             }
             for (b, c) in m.pat_la.iter_mut().zip(v.trim().chars()) {
-                *b = match c { 'H' => Bit::H, 'L' => Bit::L, _ => Bit::X };
+                *b = match c {
+                    'H' => Bit::H,
+                    'L' => Bit::L,
+                    _ => Bit::X,
+                };
             }
         }
         "trig_la" => m.trig_la = if v.trim() == "none" { None } else { Some(p_idx(v, 16)? as u8) },
@@ -498,7 +567,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         "la_window" => m.la_win = p_idx(v, 5)?.checked_sub(1).ok_or("window 0")?,
         "math_window" => {
-            let w = p_list(v, crate::math::NMATH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
+            let w =
+                p_list(v, crate::math::NMATH, |x| p_idx(x, 5)?.checked_sub(1).ok_or_else(|| "window 0".to_string()))?;
             m.math_win.copy_from_slice(&w);
         }
         "meas" => {
@@ -589,7 +659,10 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "dec_uspeed" => m.dec_uspeed = p_idx(v, crate::decode::USB_SPEEDS.len())?,
         "dec_src4" => m.dec_src4 = if v.trim() == "none" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
         "dec_diff" => m.dec_diff = if v.trim() == "none" { None } else { Some(p_idx(v, NCH + 1)?.max(1) - 1) },
-        "trig_bus" => m.trig_bus = *BUS_WHATS.iter().find(|b| b.name() == v.trim()).ok_or_else(|| format!("unknown bus match {}", v))?,
+        "trig_bus" => {
+            m.trig_bus =
+                *BUS_WHATS.iter().find(|b| b.name() == v.trim()).ok_or_else(|| format!("unknown bus match {}", v))?
+        }
         "trig_bus_val" => m.trig_bus_val = v.trim().parse().map_err(|e| format!("{}", e))?,
         "ser.rel" => m.ser.rel = p_enum(v, &RELS)?,
         "ser.max" => m.ser.max = v.trim().parse().map_err(|e| format!("ser.max: {}", e))?,
@@ -606,9 +679,14 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "ser.bytes" => m.ser.bytes = p_u32(v)?.min(5) as u8,
         "dec_thr" => m.dec_thr = p_f32(v)?,
         "dec_ascii" => m.dec_ascii = p_bool(v)?,
-        "dec_proto" => m.dec_proto = Proto::from_key(v.trim()).ok_or_else(|| format!("unknown protocol: {}", v.trim()))?,
+        "dec_proto" => {
+            m.dec_proto = Proto::from_key(v.trim()).ok_or_else(|| format!("unknown protocol: {}", v.trim()))?
+        }
         // a module's option indices; brought into range where they are used (`protocols::opt_fit`)
-        "dec_opt" => m.dec_opt = p_list(v, crate::protocols::OPTS, |x| x.parse::<u8>().map_err(|e| e.to_string()))?.try_into().unwrap(),
+        "dec_opt" => {
+            m.dec_opt =
+                p_list(v, crate::protocols::OPTS, |x| x.parse::<u8>().map_err(|e| e.to_string()))?.try_into().unwrap()
+        }
         "dec_src2" => m.dec_src2 = p_idx(v, NCH)?,
         "dec_cs" => m.dec_cs = if v == "none" { None } else { Some(p_idx(v, NCH)?) },
         "dec_mode" => m.dec_mode = p_idx(v, 4)? as u8,
@@ -635,7 +713,11 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             }
             (m.views, m.view_cur) = (n[0], n[1] - 1);
         }
-        k if k.strip_prefix("view").and_then(|i| i.parse::<usize>().ok()).is_some_and(|i| (1..=crate::ui::VIEWS_MAX).contains(&i)) => {
+        k if k
+            .strip_prefix("view")
+            .and_then(|i| i.parse::<usize>().ok())
+            .is_some_and(|i| (1..=crate::ui::VIEWS_MAX).contains(&i)) =>
+        {
             let i: usize = k[4..].parse().unwrap_or(1);
             m.view_slots[i - 1] = crate::ui::views::slot_checked(v)?;
         }
@@ -705,7 +787,8 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             }
             m.pw_v = p_idx(w[0], NCH + 1)?.max(1) - 1;
             m.pw_i = p_idx(w[1], NCH + 1)?.max(1) - 1;
-            m.pw_mode = p_enum(w[2], &[PowerMode::Quality, PowerMode::Harmonics, PowerMode::Switching, PowerMode::Ripple])?;
+            m.pw_mode =
+                p_enum(w[2], &[PowerMode::Quality, PowerMode::Harmonics, PowerMode::Switching, PowerMode::Ripple])?;
         }
         "zone1" | "zone2" => {
             let z = &mut m.zones[if k == "zone1" { 0 } else { 1 }];
@@ -741,7 +824,11 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
             }
             m.dec_la_in = w[0] == "1";
             for (r, s) in m.dec_la.iter_mut().zip(&w[1..]) {
-                *r = if *s == "-" { None } else { Some(s.parse::<u8>().map_err(|_| format!("dec_la: {:?}", v))?.min(15)) };
+                *r = if *s == "-" {
+                    None
+                } else {
+                    Some(s.parse::<u8>().map_err(|_| format!("dec_la: {:?}", v))?.min(15))
+                };
             }
         }
         _ => {} // unknown keys of newer versions are ignored
@@ -936,14 +1023,68 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
 
 /// Deflate length codes 257..285 (RFC 1951 3.2.5): base length and extra bits.
 const LEN_BASE: [(u16, u8); 29] = [
-    (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0), (10, 0), (11, 1), (13, 1), (15, 1), (17, 1), (19, 2), (23, 2), (27, 2),
-    (31, 2), (35, 3), (43, 3), (51, 3), (59, 3), (67, 4), (83, 4), (99, 4), (115, 4), (131, 5), (163, 5), (195, 5), (227, 5), (258, 0),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (6, 0),
+    (7, 0),
+    (8, 0),
+    (9, 0),
+    (10, 0),
+    (11, 1),
+    (13, 1),
+    (15, 1),
+    (17, 1),
+    (19, 2),
+    (23, 2),
+    (27, 2),
+    (31, 2),
+    (35, 3),
+    (43, 3),
+    (51, 3),
+    (59, 3),
+    (67, 4),
+    (83, 4),
+    (99, 4),
+    (115, 4),
+    (131, 5),
+    (163, 5),
+    (195, 5),
+    (227, 5),
+    (258, 0),
 ];
 /// Deflate distance codes 0..29: base distance and extra bits.
 const DIST_BASE: [(u16, u8); 30] = [
-    (1, 0), (2, 0), (3, 0), (4, 0), (5, 1), (7, 1), (9, 2), (13, 2), (17, 3), (25, 3), (33, 4), (49, 4), (65, 5), (97, 5), (129, 6),
-    (193, 6), (257, 7), (385, 7), (513, 8), (769, 8), (1025, 9), (1537, 9), (2049, 10), (3073, 10), (4097, 11), (6145, 11),
-    (8193, 12), (12289, 12), (16385, 13), (24577, 13),
+    (1, 0),
+    (2, 0),
+    (3, 0),
+    (4, 0),
+    (5, 1),
+    (7, 1),
+    (9, 2),
+    (13, 2),
+    (17, 3),
+    (25, 3),
+    (33, 4),
+    (49, 4),
+    (65, 5),
+    (97, 5),
+    (129, 6),
+    (193, 6),
+    (257, 7),
+    (385, 7),
+    (513, 8),
+    (769, 8),
+    (1025, 9),
+    (1537, 9),
+    (2049, 10),
+    (3073, 10),
+    (4097, 11),
+    (6145, 11),
+    (8193, 12),
+    (12289, 12),
+    (16385, 13),
+    (24577, 13),
 ];
 
 /// Bit writer of a deflate stream: values LSB first, Huffman codes MSB first.
@@ -1017,7 +1158,8 @@ fn match_len(raw: &[u8], i: usize, d: usize) -> usize {
     let (a, b) = (&raw[i..i + max], &raw[i - d..i - d + max]);
     let mut n = 0;
     while n + 8 <= max {
-        let x = u64::from_le_bytes(a[n..n + 8].try_into().unwrap()) ^ u64::from_le_bytes(b[n..n + 8].try_into().unwrap());
+        let x =
+            u64::from_le_bytes(a[n..n + 8].try_into().unwrap()) ^ u64::from_le_bytes(b[n..n + 8].try_into().unwrap());
         if x != 0 {
             return n + (x.trailing_zeros() / 8) as usize;
         }
@@ -1211,7 +1353,8 @@ mod tests {
     /// A non-default set-up in every group of fields.
     fn custom() -> Model {
         let mut m = Model::default();
-        (m.bode_sw_time, m.bode_sw_log, m.bode_sync, m.bode_sync_slope, m.bode_sync_level, m.bode_sw_in, m.bode_ref) = (12.5, false, 2, Slope::Fall, -0.75, 0, -6.02);
+        (m.bode_sw_time, m.bode_sw_log, m.bode_sync, m.bode_sync_slope, m.bode_sync_level, m.bode_sw_in, m.bode_ref) =
+            (12.5, false, 2, Slope::Fall, -0.75, 0, -6.02);
         m.ch[1].on = true;
         m.ch[1].vscale = 1; // 200 uV/div
         m.ch[1].offset = -0.123_456_79;
@@ -1257,15 +1400,54 @@ mod tests {
         m.cur_b = 0.875;
         m.touch_lock = true;
         m.aux_out = AuxOut::Off;
-        m.ser = SerialTrig { rel: Rel::Out, max: 0x1_2345_6789, mask: 0xf0f0, uart_inv: true, uart_stop: StopBits::Two, uart_err: UartErr::Parity, spi_cs_high: true, spi_timeout: 2e-6, addr_rel: Rel::In, addr_max: 0x3a0, dir: I2cDir::Read, ten_bit: true, bytes: 4 };
+        m.ser = SerialTrig {
+            rel: Rel::Out,
+            max: 0x1_2345_6789,
+            mask: 0xf0f0,
+            uart_inv: true,
+            uart_stop: StopBits::Two,
+            uart_err: UartErr::Parity,
+            spi_cs_high: true,
+            spi_timeout: 2e-6,
+            addr_rel: Rel::In,
+            addr_max: 0x3a0,
+            dir: I2cDir::Read,
+            ten_bit: true,
+            bytes: 4,
+        };
         m.trig_bus_val = 0xab_cdef_0123;
-        m.maths[3] = crate::math::MathCh { op: MathOp::Bpf, a: 4, b: 0, scale: 7, fc: 1234.0, bw: 56.0, offset: -1.5, win: Window::Blackman, lin: (1.0, 0.0) };
+        m.maths[3] = crate::math::MathCh {
+            op: MathOp::Bpf,
+            a: 4,
+            b: 0,
+            scale: 7,
+            fc: 1234.0,
+            bw: 56.0,
+            offset: -1.5,
+            win: Window::Blackman,
+            lin: (1.0, 0.0),
+        };
         m.math_bw = 777.0;
-        m.zones[1] = crate::zone::Zone { on: true, src: 2, inside: false, pts: vec![(-1e-4, 0.5), (2.5e-5, 1.25), (3e-5, -0.75)] };
+        m.zones[1] = crate::zone::Zone {
+            on: true,
+            src: 2,
+            inside: false,
+            pts: vec![(-1e-4, 0.5), (2.5e-5, 1.25), (3e-5, -0.75)],
+        };
         m.dots = DotsMode::Off;
         m.z_src = Some(3);
         m.hist = Hist::Horizontal;
-        (m.view, m.spec_src, m.spec_center, m.spec_span, m.spec_rbw, m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist) = (AView::Spectrum, 2, 1.5e6, 2e5, 1e3, 2, -12.5, true, true);
+        (
+            m.view,
+            m.spec_src,
+            m.spec_center,
+            m.spec_span,
+            m.spec_rbw,
+            m.spec_trace,
+            m.spec_ref,
+            m.spec_wf,
+            m.spec_dist,
+        ) = (AView::Spectrum, 2, 1.5e6, 2e5, 1e3, 2, -12.5, true, true);
         (m.spec_sort, m.spec_harm, m.trend_sel) = (1, 4, [3, 1]);
         (m.eye_src, m.eye_rate, m.pw_v, m.pw_i, m.pw_mode) = (3, 1.25e9, 2, 0, PowerMode::Switching);
         m.math = MathOp::Fft;
@@ -1297,7 +1479,13 @@ mod tests {
         m.mask_y = 1.25;
         m.mask_stop = true;
         m.quick = Quick::SaveCsv;
-        m.la = crate::ui::la::LaSet { on: true, show: 0x0f0f, preset: [2, crate::ui::la::USER], user: [0.5, -0.25], height: 2 };
+        m.la = crate::ui::la::LaSet {
+            on: true,
+            show: 0x0f0f,
+            preset: [2, crate::ui::la::USER],
+            user: [0.5, -0.25],
+            height: 2,
+        };
         m
     }
 
@@ -1394,7 +1582,16 @@ mod tests {
     fn csv_of_a_record() {
         let mut m = Model::default();
         m.ch[2].on = true;
-        let mut rec = Record { t0: -1e-3, dt: 1e-6, ch: Default::default(), triggered: true, partial: false, raw: None, la: None, pairs: false };
+        let mut rec = Record {
+            t0: -1e-3,
+            dt: 1e-6,
+            ch: Default::default(),
+            triggered: true,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+        };
         rec.ch[0] = vec![0.5, 1.25, f32::NAN];
         rec.ch[2] = vec![-1.0, 0.0, 3.3];
         let csv = wave_csv(&rec, &m);
@@ -1420,11 +1617,14 @@ mod tests {
                 c
             });
             assert_eq!(crc32(d), crc, "CRC of {} bytes", n);
-            let (a, b) = d.iter().fold((1u32, 0u32), |(a, b), &x| ((a + x as u32) % 65521, (b + (a + x as u32) % 65521) % 65521));
+            let (a, b) = d
+                .iter()
+                .fold((1u32, 0u32), |(a, b), &x| ((a + x as u32) % 65521, (b + (a + x as u32) % 65521) % 65521));
             assert_eq!(adler32(d), b << 16 | a, "Adler of {} bytes", n);
         }
         assert_eq!(adler32(&[0xff; 100_000]), {
-            let (a, b) = (0..100_000).fold((1u64, 0u64), |(a, b), _| ((a + 255) % 65521, (b + (a + 255) % 65521) % 65521));
+            let (a, b) =
+                (0..100_000).fold((1u64, 0u64), |(a, b), _| ((a + 255) % 65521, (b + (a + 255) % 65521) % 65521));
             (b << 16 | a) as u32
         });
         assert_eq!(crc32(b"IEND"), 0xae42_6082);
@@ -1468,10 +1668,18 @@ mod tests {
     /// Independent inflate for what the encoder may write (stored and fixed Huffman blocks, not dynamic ones); returns the
     /// data and the number of bytes the stream took.
     fn inflate(z: &[u8]) -> (Vec<u8>, usize) {
-        const LBASE: [u32; 29] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
-        const LEXTRA: [u32; 29] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
-        const DBASE: [u32; 30] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
-        const DEXTRA: [u32; 30] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+        const LBASE: [u32; 29] = [
+            3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195,
+            227, 258,
+        ];
+        const LEXTRA: [u32; 29] =
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+        const DBASE: [u32; 30] = [
+            1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073,
+            4097, 6145, 8193, 12289, 16385, 24577,
+        ];
+        const DEXTRA: [u32; 30] =
+            [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
         let mut b = Bits { d: z, p: 0 };
         let mut out: Vec<u8> = Vec::new();
         loop {
@@ -1498,7 +1706,12 @@ mod tests {
                         let dc = (0..5).fold(0, |c, _| c << 1 | b.bit()) as usize;
                         assert!(dc < 30, "distance code {}", dc);
                         let dist = (DBASE[dc] + b.bits(DEXTRA[dc])) as usize;
-                        assert!(dist <= out.len(), "distance {} reaches before the start ({} bytes so far)", dist, out.len());
+                        assert!(
+                            dist <= out.len(),
+                            "distance {} reaches before the start ({} bytes so far)",
+                            dist,
+                            out.len()
+                        );
                         for _ in 0..len {
                             out.push(out[out.len() - dist]);
                         }
@@ -1576,7 +1789,10 @@ mod tests {
         b.extend_from_slice(&[255, 0, 0, 0, 0, 255]);
         let mut cv = Canvas::new(10, 4);
         assert_eq!(ppm_into(&b, &mut cv), Some((2, 1)));
-        assert_eq!((cv.px[(1 * 10 + 4) as usize], cv.px[(1 * 10 + 5) as usize]), (crate::gfx::rgb(255, 0, 0), crate::gfx::rgb(0, 0, 255)));
+        assert_eq!(
+            (cv.px[(1 * 10 + 4) as usize], cv.px[(1 * 10 + 5) as usize]),
+            (crate::gfx::rgb(255, 0, 0), crate::gfx::rgb(0, 0, 255))
+        );
         assert!(ppm_into(b"P5\n1 1\n255\n\0", &mut cv).is_none());
     }
 
@@ -1650,7 +1866,10 @@ mod tests {
     /// Cross-check with an independent decoder when the host has Python with Pillow (skipped otherwise).
     #[test]
     fn png_opens_in_pillow() {
-        let has_pillow = std::process::Command::new("python3").args(["-c", "import PIL"]).output().map_or(false, |o| o.status.success());
+        let has_pillow = std::process::Command::new("python3")
+            .args(["-c", "import PIL"])
+            .output()
+            .map_or(false, |o| o.status.success());
         if !has_pillow {
             return eprintln!("python3 with Pillow not found: check skipped");
         }
@@ -1667,7 +1886,14 @@ mod tests {
         let rgb_bytes: Vec<u8> = screen.iter().flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8]).collect();
         write(&dir.join("big.rgb"), &rgb_bytes).unwrap();
         let script = "import sys\nfrom PIL import Image\nim = Image.open(sys.argv[1]); im.load()\nprint(im.size[0], im.size[1], im.mode, *im.getpixel((5, 7)))\nbig = Image.open(sys.argv[2]); big.load()\nprint(big.tobytes() == open(sys.argv[3], 'rb').read())";
-        let out = std::process::Command::new("python3").arg("-c").arg(script).arg(&path).arg(&big).arg(dir.join("big.rgb")).output().unwrap();
+        let out = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(script)
+            .arg(&path)
+            .arg(&big)
+            .arg(dir.join("big.rgb"))
+            .output()
+            .unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(out.status.success(), "Pillow: {}", String::from_utf8_lossy(&out.stderr));
         let s = String::from_utf8_lossy(&out.stdout);
@@ -1732,7 +1958,11 @@ mod tests {
         }
         let per_cmp = t.elapsed().as_secs_f64() / n as f64;
         assert!(same);
-        println!("frame loop: copy of the screen {:.3} ms; encoder thread: comparison {:.3} ms", per_copy * 1e3, per_cmp * 1e3);
+        println!(
+            "frame loop: copy of the screen {:.3} ms; encoder thread: comparison {:.3} ms",
+            per_copy * 1e3,
+            per_cmp * 1e3
+        );
     }
 
     #[test]

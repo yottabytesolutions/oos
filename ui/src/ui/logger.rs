@@ -24,7 +24,11 @@ pub struct Logger {
 
 impl Ui {
     fn log_head(&self) -> String {
-        let cols: Vec<String> = self.meas_rows().iter().map(|r| format!("{} CH{} ({})", r.name.replace(',', " "), r.ch + 1, r.unit)).collect();
+        let cols: Vec<String> = self
+            .meas_rows()
+            .iter()
+            .map(|r| format!("{} CH{} ({})", r.name.replace(',', " "), r.ch + 1, r.unit))
+            .collect();
         format!("Elapsed (s),Unix time (s),{}", cols.join(","))
     }
 
@@ -81,7 +85,9 @@ impl Ui {
             }
         }
         row.push('\n');
-        let res = crate::store::check_target(&p).and_then(|_| std::fs::OpenOptions::new().append(true).open(&p)).and_then(|mut f| f.write_all(row.as_bytes()));
+        let res = crate::store::check_target(&p)
+            .and_then(|_| std::fs::OpenOptions::new().append(true).open(&p))
+            .and_then(|mut f| f.write_all(row.as_bytes()));
         if let Err(e) = res {
             self.log.file = None;
             return self.toast(&format!("Log ended: {}", e));

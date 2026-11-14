@@ -63,7 +63,8 @@ pub(super) fn layout(a: Rect) -> Layout {
     let lw = a.w * 57 / 100;
     let (rx, rw) = (a.x + lw + GAP, a.w - lw - GAP);
     let bottom = a.y + a.h;
-    let rows = |pct: i32, most: i32| if a.h < BOXES_MIN_H { 0 } else { ((a.h * pct / 100 - BOX_HEAD) / ROW).clamp(3, most) };
+    let rows =
+        |pct: i32, most: i32| if a.h < BOXES_MIN_H { 0 } else { ((a.h * pct / 100 - BOX_HEAD) / ROW).clamp(3, most) };
     let (fig_rows, jit_rows) = (rows(22, 5), rows(30, 7));
     let box_h = |r: i32| if r == 0 { 0 } else { BOX_HEAD + r * ROW };
     let (fh, jh) = (box_h(fig_rows), box_h(jit_rows));
@@ -81,7 +82,14 @@ pub(super) fn layout(a: Rect) -> Layout {
         Rect::new(x, y, w, h)
     };
     let charts = [cell(0, 0), cell(1, 0), cell(0, 1), cell(1, 1)];
-    let plots = charts.map(|c| Rect::new(c.x + CHART_GUTTER, c.y + CHART_TITLE, c.w - CHART_GUTTER - 6, (c.h - CHART_TITLE - CHART_FOOT).max(1)));
+    let plots = charts.map(|c| {
+        Rect::new(
+            c.x + CHART_GUTTER,
+            c.y + CHART_TITLE,
+            c.w - CHART_GUTTER - 6,
+            (c.h - CHART_TITLE - CHART_FOOT).max(1),
+        )
+    });
     Layout { eye, plot, head, charts, plots, fig, jit, fig_rows, jit_rows }
 }
 
@@ -280,7 +288,13 @@ impl Page {
         let peak = e.hits.iter().copied().max().unwrap_or(0);
         let k = 255.0 / (1.0 + peak as f32).ln().max(1e-6);
         self.img.clear();
-        self.img.extend(e.hits.iter().map(|&h| if h == 0 { 0 } else { pal[(((1.0 + h as f32).ln() * k) as usize).min(255)] }));
+        self.img.extend(e.hits.iter().map(|&h| {
+            if h == 0 {
+                0
+            } else {
+                pal[(((1.0 + h as f32).ln() * k) as usize).min(255)]
+            }
+        }));
         self.img_w = e.w;
     }
 
@@ -330,7 +344,8 @@ impl Page {
             return (f64::NAN, why);
         }
         let (df, s) = eye::tie_spectrum(&tr[..tr.len().min(SPECTRUM_UI)], clk.period);
-        let Some((k, &pk)) = s.iter().enumerate().skip(2).max_by(|a, b| a.1.total_cmp(b.1)).filter(|p| *p.1 > 0.0) else {
+        let Some((k, &pk)) = s.iter().enumerate().skip(2).max_by(|a, b| a.1.total_cmp(b.1)).filter(|p| *p.1 > 0.0)
+        else {
             c.empty = "No jitter in the record".into();
             return (0.0, String::new());
         };
@@ -372,13 +387,19 @@ impl Page {
             figure("DCD", dcd, "s", Kind::Measured, &means),
             figure("DDJ", ddj, "s", Kind::Measured, if dcd.is_finite() { "one run length" } else { &means }),
             // no line over the floor is a finding, not a jitter of 0 s
-            if pj == 0.0 { cell("PJ rms", "no lines".into(), Kind::Missing) } else { figure("PJ rms", pj, "s", Kind::Measured, if pj_why.is_empty() { &few } else { "needs 64 UI" }) },
+            if pj == 0.0 {
+                cell("PJ rms", "no lines".into(), Kind::Missing)
+            } else {
+                figure("PJ rms", pj, "s", Kind::Measured, if pj_why.is_empty() { &few } else { "needs 64 UI" })
+            },
             figure("Period rms", j.period_jitter_rms, "s", Kind::Measured, &few),
             figure("Cycle-cycle", j.c2c_rms, "s", Kind::Measured, &few),
         ];
         let at_most = |v: f64| format!("under {}", si(v, "s"));
         self.model = match j.fit {
-            JitterFit::TooFew => ["TJ 1e-12", "RJ rms", "DJ", "Opening"].iter().map(|l| cell(l, few.clone(), Kind::Missing)).collect(),
+            JitterFit::TooFew => {
+                ["TJ 1e-12", "RJ rms", "DJ", "Opening"].iter().map(|l| cell(l, few.clone(), Kind::Missing)).collect()
+            }
             JitterFit::Limit => vec![
                 cell("TJ 1e-12", at_most(j.tj_pp), Kind::Model),
                 cell("RJ rms", at_most(j.rj_rms), Kind::Model),
@@ -406,15 +427,31 @@ impl Page {
             (_, true) => format!("{}  \u{3c3} < {}", si(v, "V"), si(row, "V")),
             _ => format!("{}  \u{3c3} {}", si(v, "V"), si(s, "V")),
         };
-        let tr = if m.rise.is_finite() && m.fall.is_finite() { format!("{} / {}", si(m.rise, "s"), si(m.fall, "s")) } else { "not resolved".to_string() };
+        let tr = if m.rise.is_finite() && m.fall.is_finite() {
+            format!("{} / {}", si(m.rise, "s"), si(m.fall, "s"))
+        } else {
+            "not resolved".to_string()
+        };
         self.eye_measured = vec![
             cell("One", level(m.one, m.sigma_one), if m.one.is_finite() { Kind::Measured } else { Kind::Missing }),
             cell("Zero", level(m.zero, m.sigma_zero), if m.zero.is_finite() { Kind::Measured } else { Kind::Missing }),
             figure("Amplitude", m.amplitude, "V", Kind::Measured, empty),
-            if m.crossing_pct.is_finite() { cell("Crossing", format!("{:.1} %", m.crossing_pct), Kind::Measured) } else { cell("Crossing", empty.into(), Kind::Missing) },
-            cell("Rise / fall", tr, if m.rise.is_finite() && m.fall.is_finite() { Kind::Measured } else { Kind::Missing }),
+            if m.crossing_pct.is_finite() {
+                cell("Crossing", format!("{:.1} %", m.crossing_pct), Kind::Measured)
+            } else {
+                cell("Crossing", empty.into(), Kind::Missing)
+            },
+            cell(
+                "Rise / fall",
+                tr,
+                if m.rise.is_finite() && m.fall.is_finite() { Kind::Measured } else { Kind::Missing },
+            ),
         ];
-        let q = if m.sigma_one + m.sigma_zero < row { cell("Q", format!("over {:.0}", m.amplitude / row), Kind::Model) } else { cell("Q", format!("{:.1}", m.q_factor), Kind::Model) };
+        let q = if m.sigma_one + m.sigma_zero < row {
+            cell("Q", format!("over {:.0}", m.amplitude / row), Kind::Model)
+        } else {
+            cell("Q", format!("{:.1}", m.q_factor), Kind::Model)
+        };
         self.eye_model = vec![
             figure("Height", m.height, "V", Kind::Model, empty),
             figure("Width", m.width, "s", Kind::Model, empty),
@@ -426,7 +463,11 @@ impl Page {
             cell("Records", format!("{}", self.records), Kind::Measured),
             cell("Edges", format!("{} of {}", self.pool.len(), self.edges), Kind::Measured),
             figure("UI mean", self.ui.mean(), "s", Kind::Measured, empty),
-            if self.rms.n > 0 { cell("TIE rms", format!("{} .. {}", si(self.rms.min, "s"), si(self.rms.max, "s")), Kind::Measured) } else { cell("TIE rms", format!("needs {} edges", eye::MIN_EDGES), Kind::Missing) },
+            if self.rms.n > 0 {
+                cell("TIE rms", format!("{} .. {}", si(self.rms.min, "s"), si(self.rms.max, "s")), Kind::Measured)
+            } else {
+                cell("TIE rms", format!("needs {} edges", eye::MIN_EDGES), Kind::Missing)
+            },
             cell("Sampling", format!("{} ({:.0}/UI)", si(dt, "s"), period / dt), Kind::Measured),
         ];
     }
@@ -440,7 +481,9 @@ impl Page {
             match j.fit {
                 JitterFit::TooFew => format!("Needs {} edges for a model", eye::MIN_EDGES),
                 JitterFit::Quiet => "No jitter above the time resolution".into(),
-                JitterFit::Limit if n < eye::TAIL_EDGES => format!("Upper limits: tail fit from {} edges", eye::TAIL_EDGES),
+                JitterFit::Limit if n < eye::TAIL_EDGES => {
+                    format!("Upper limits: tail fit from {} edges", eye::TAIL_EDGES)
+                }
                 JitterFit::Limit => "Upper limits: the TIE has no Gaussian tails".into(),
                 JitterFit::Tails => "Model: dual-Dirac fit of the TIE tails".into(),
             }
@@ -477,7 +520,10 @@ impl Ui {
         });
         if self.azr.eye.is_none() || self.azr.eye_key != key || left {
             // the eye fills its plot whatever the scale of the channel; the signal itself sets the range
-            let (lo, hi) = v.iter().filter(|x| x.is_finite()).fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x as f64), b.max(x as f64)));
+            let (lo, hi) = v
+                .iter()
+                .filter(|x| x.is_finite())
+                .fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x as f64), b.max(x as f64)));
             let (lo, hi, step) = eye_range(lo, hi);
             self.azr.eye = Some(eye::Eye::new(pw as usize, ph as usize, 2, lo as f32, hi as f32));
             self.azr.eye_key = key;
@@ -544,7 +590,13 @@ impl Ui {
             }
         }
         if l.fig_rows > 0 {
-            self.eye_box(cv, l.fig, "Eye figures", l.fig_rows, &[("Measured", &p.eye_measured), ("Model", &p.eye_model), ("Records", &p.stats)]);
+            self.eye_box(
+                cv,
+                l.fig,
+                "Eye figures",
+                l.fig_rows,
+                &[("Measured", &p.eye_measured), ("Model", &p.eye_model), ("Records", &p.stats)],
+            );
         }
         if l.jit_rows > 0 {
             self.eye_box(cv, l.jit, "Jitter breakdown", l.jit_rows, &[("Measured", &p.measured), ("Model", &p.model)]);
@@ -579,7 +631,13 @@ impl Ui {
             cv.vline(x, r.y, r.y + r.h - 1, if k % 2 == 1 { GRID_AXIS } else { GRID_LINE });
             let s = ["-0.5", "0", "0.5", "1", "1.5 UI"][k as usize];
             let w = f.s.width(s);
-            let tx = if k == 4 { x - w } else if k == 0 { x } else { x - w / 2 };
+            let tx = if k == 4 {
+                x - w
+            } else if k == 0 {
+                x
+            } else {
+                x - w / 2
+            };
             cv.text(&f.s, tx, r.y + r.h + 13, s, AXIS_TEXT);
         }
         if let Some(e) = &self.azr.eye {
@@ -591,7 +649,13 @@ impl Ui {
                 cv.hline(r.x, r.x + r.w - 1, y, GRID_LINE);
                 // a sum of steps misses zero by a rounding error
                 let s = si_short(if v.abs() < 1e-3 * p.vstep { 0.0 } else { v }, "V");
-                let ty = if k == 0 { y + 10 } else if k == lines { y } else { y + 4 };
+                let ty = if k == 0 {
+                    y + 10
+                } else if k == lines {
+                    y
+                } else {
+                    y + 4
+                };
                 cv.text(&f.s, r.x - 4 - f.s.width(&s), ty, &s, AXIS_TEXT);
             }
             if p.img_w == r.w as usize {
@@ -826,9 +890,19 @@ mod tests {
             let a = Rect::new(0, 40, PANEL_W, h);
             let l = layout(a);
             let bottom = a.y + a.h;
-            assert_eq!(l.charts[2].y + l.charts[2].h + if l.jit_rows > 0 { GAP + l.jit.h } else { 0 }, bottom, "right column, height {}", h);
+            assert_eq!(
+                l.charts[2].y + l.charts[2].h + if l.jit_rows > 0 { GAP + l.jit.h } else { 0 },
+                bottom,
+                "right column, height {}",
+                h
+            );
             assert_eq!(l.charts[3].y + l.charts[3].h, l.charts[2].y + l.charts[2].h);
-            assert_eq!(l.eye.y + l.eye.h + if l.fig_rows > 0 { GAP + l.fig.h } else { 0 }, bottom, "left column, height {}", h);
+            assert_eq!(
+                l.eye.y + l.eye.h + if l.fig_rows > 0 { GAP + l.fig.h } else { 0 },
+                bottom,
+                "left column, height {}",
+                h
+            );
             assert_eq!(l.charts[1].x + l.charts[1].w, a.x + a.w, "height {}", h);
             assert!(l.plots.iter().all(|p| p.h >= 1 && p.w > 40), "{:?}", l.plots);
             assert_eq!(l.fig_rows > 0, h >= BOXES_MIN_H);
@@ -944,7 +1018,11 @@ mod tests {
                 assert!(f.s.width(&c.empty) <= l.plots[k].w, "'{}'", c.empty);
                 assert!(f.s.width(&c.y.0).max(f.s.width(&c.y.1)) + 3 <= CHART_GUTTER, "{:?}", c.y);
             }
-            assert!(f.sb.width(&p.status[0]) + 2 <= l.head.w && f.s.width(&p.status[1]) + 2 <= l.head.w, "{:?}", p.status);
+            assert!(
+                f.sb.width(&p.status[0]) + 2 <= l.head.w && f.s.width(&p.status[1]) + 2 <= l.head.w,
+                "{:?}",
+                p.status
+            );
             assert!(f.sb.width(&p.title) + 6 + 196 <= l.eye.w, "'{}'", p.title);
             let room = |r: Rect, n: i32| (r.w - 12) / n - 4;
             for cells in [&p.eye_measured, &p.eye_model, &p.stats] {
@@ -994,7 +1072,11 @@ mod tests {
         assert!((period - 10e-9).abs() < 1e-11, "{}", period);
         assert!(p.charts.iter().all(|c| c.empty.is_empty()), "{:?}", p.charts);
         assert!(!p.trend.is_empty() && !p.hist.is_empty() && !p.spec.is_empty() && !p.tub.model.is_empty());
-        assert!(p.measured.iter().filter(|c| c.label == "DDJ" || c.label == "PJ rms").all(|c| c.kind == Kind::Measured), "{:?}", p.measured);
+        assert!(
+            p.measured.iter().filter(|c| c.label == "DDJ" || c.label == "PJ rms").all(|c| c.kind == Kind::Measured),
+            "{:?}",
+            p.measured
+        );
         assert!(p.model.iter().any(|c| c.label == "TJ 1e-12" && c.kind == Kind::Model));
     }
 
@@ -1048,7 +1130,12 @@ mod tests {
     fn eye_page_shots() {
         let dir = std::env::var("OOS_SHOTS").unwrap_or_else(|_| ".".into());
         let few = Sig { uis: 10, ..CLEAN };
-        for (name, s, n) in [("eye-clean", CLEAN, 40), ("eye-noisy", NOISY, 60), ("eye-few", few, 6), ("eye-tiny", Sig { uis: 6, ..CLEAN }, 3)] {
+        for (name, s, n) in [
+            ("eye-clean", CLEAN, 40),
+            ("eye-noisy", NOISY, 60),
+            ("eye-few", few, 6),
+            ("eye-tiny", Sig { uis: 6, ..CLEAN }, 3),
+        ] {
             let mut ui = page(s, n);
             let mut cv = Canvas::new(PANEL_W, PANEL_H);
             ui.render(&mut cv);

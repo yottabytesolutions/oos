@@ -58,7 +58,17 @@ pub fn edge_near(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, eit
 /// cannot rule out. Only edges at times `fits` accepts count. Returns the edge and the nearest edge of either direction
 /// (for the statistics).
 #[allow(clippy::too_many_arguments)]
-pub fn edge_smooth(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, either: bool, span: usize, l: usize, fits: impl Fn(f64) -> bool) -> (Option<f64>, Option<oos_dsp::edges::Edge>) {
+pub fn edge_smooth(
+    v: &[f32],
+    pre: usize,
+    level: f32,
+    hyst: f32,
+    rising: bool,
+    either: bool,
+    span: usize,
+    l: usize,
+    fits: impl Fn(f64) -> bool,
+) -> (Option<f64>, Option<oos_dsp::edges::Edge>) {
     let l = l.max(1);
     let a = pre.saturating_sub(span + l);
     let b = (pre + span + l).min(v.len());
@@ -87,7 +97,9 @@ pub fn edge_smooth(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, e
     }
     let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
     let d = |e: &oos_dsp::edges::Edge| (a as f64 + e.t - pre as f64).abs();
-    let near = |ok: &dyn Fn(&oos_dsp::edges::Edge) -> bool| edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied();
+    let near = |ok: &dyn Fn(&oos_dsp::edges::Edge) -> bool| {
+        edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied()
+    };
     let want = near(&|e| either || e.rising == rising).map(|e| a as f64 + e.t);
     (want, near(&|_| true).map(|e| oos_dsp::edges::Edge { t: a as f64 + e.t, ..e }))
 }
@@ -182,7 +194,11 @@ impl Samples for Codes<'_> {
         };
         let (x, y) = ((self.volt)(lo, self.affine), (self.volt)(hi, self.affine));
         // a negative scale turns the order around
-        if x <= y { (x, y) } else { (y, x) }
+        if x <= y {
+            (x, y)
+        } else {
+            (y, x)
+        }
     }
     #[inline]
     fn at(&self, i: usize) -> f32 {
@@ -314,7 +330,13 @@ fn sweep_cost(rows: usize, cols: usize) -> usize {
 
 /// The spans of `deposit` into `sp`: columns `c0..c1`, the rows used (`rmin..=rmax`) and the pixel count; None when
 /// nothing is drawn.
-fn spans<S: Samples + ?Sized>(v: &S, m: &Map, w: usize, h: usize, sp: &mut Spans) -> Option<(usize, usize, usize, usize, usize)> {
+fn spans<S: Samples + ?Sized>(
+    v: &S,
+    m: &Map,
+    w: usize,
+    h: usize,
+    sp: &mut Spans,
+) -> Option<(usize, usize, usize, usize, usize)> {
     if v.len() == 0 || m.x_per_sample <= 0.0 || w == 0 || h == 0 {
         return None;
     }
@@ -439,8 +461,18 @@ pub fn min_max_scalar(s: &[f32]) -> (f32, f32) {
 unsafe fn min_max_neon(s: &[f32]) -> (f32, f32) {
     use core::arch::aarch64::*;
     let mut it = s.chunks_exact(16);
-    let (mut n0, mut n1, mut n2, mut n3) = (vdupq_n_f32(f32::INFINITY), vdupq_n_f32(f32::INFINITY), vdupq_n_f32(f32::INFINITY), vdupq_n_f32(f32::INFINITY));
-    let (mut x0, mut x1, mut x2, mut x3) = (vdupq_n_f32(f32::NEG_INFINITY), vdupq_n_f32(f32::NEG_INFINITY), vdupq_n_f32(f32::NEG_INFINITY), vdupq_n_f32(f32::NEG_INFINITY));
+    let (mut n0, mut n1, mut n2, mut n3) = (
+        vdupq_n_f32(f32::INFINITY),
+        vdupq_n_f32(f32::INFINITY),
+        vdupq_n_f32(f32::INFINITY),
+        vdupq_n_f32(f32::INFINITY),
+    );
+    let (mut x0, mut x1, mut x2, mut x3) = (
+        vdupq_n_f32(f32::NEG_INFINITY),
+        vdupq_n_f32(f32::NEG_INFINITY),
+        vdupq_n_f32(f32::NEG_INFINITY),
+        vdupq_n_f32(f32::NEG_INFINITY),
+    );
     for c in &mut it {
         let p = c.as_ptr();
         let (a, b, d, e) = (vld1q_f32(p), vld1q_f32(p.add(4)), vld1q_f32(p.add(8)), vld1q_f32(p.add(12)));
@@ -613,7 +645,14 @@ mod tests {
         let mut sweeps = 0;
         for n in [1_408usize, 12_512, 100_000] {
             for v in signals(n) {
-                for (xps, ti, x0) in [(1.0 / 100.0, n as f64 / 2.0, 485.0), (0.00776, n as f64 / 2.0 + 0.37, 485.0), (0.7, 3.3, 10.0), (970.0 / n as f64, 0.0, 0.0), (0.0123, n as f64 * 0.9, 120.5), (0.25, -40.0, 0.0)] {
+                for (xps, ti, x0) in [
+                    (1.0 / 100.0, n as f64 / 2.0, 485.0),
+                    (0.00776, n as f64 / 2.0 + 0.37, 485.0),
+                    (0.7, 3.3, 10.0),
+                    (970.0 / n as f64, 0.0, 0.0),
+                    (0.0123, n as f64 * 0.9, 120.5),
+                    (0.25, -40.0, 0.0),
+                ] {
                     for (ypv, y0) in [(-56.0f32, 224.0f32), (-560.0, 224.0), (37.0, 10.0), (-5.0, 447.6)] {
                         for (wgt, pre) in [(24u16, 0u16), (1, 0), (60_000, 30_000)] {
                             let m = Map { ti, x_per_sample: xps, x0, y_per_volt: ypv, y0 };
@@ -645,12 +684,26 @@ mod tests {
         let mut worst: f64 = 0.0;
         for n in [100_000usize, 12_512] {
             for (name, v) in names.iter().zip(signals(n)) {
-                let m = Map { ti: n as f64 / 2.0, x_per_sample: 970.0 / n as f64 * 0.8, x0: 485.0, y_per_volt: -56.0, y0: 224.0 };
+                let m = Map {
+                    ti: n as f64 / 2.0,
+                    x_per_sample: 970.0 / n as f64 * 0.8,
+                    x0: 485.0,
+                    y_per_volt: -56.0,
+                    y0: 224.0,
+                };
                 let (mut ma, mut mb) = (vec![0u16; w * h], vec![0u16; w * h]);
-                let (old, new) = crate::perfguard::best_pair(crate::perfguard::ROUNDS, 33, || deposit_reference(&mut ma, w, h, &v, &m, 1), || deposit(&mut mb, w, h, &v, &m, 1));
+                let (old, new) = crate::perfguard::best_pair(
+                    crate::perfguard::ROUNDS,
+                    33,
+                    || deposit_reference(&mut ma, w, h, &v, &m, 1),
+                    || deposit(&mut mb, w, h, &v, &m, 1),
+                );
                 let r = new.as_secs_f64() / old.as_secs_f64();
                 worst = worst.max(r);
-                println!("deposit {} pt {}: one write per pixel {:?}, span pass {:?} (ratio {:.2})", n, name, old, new, r);
+                println!(
+                    "deposit {} pt {}: one write per pixel {:?}, span pass {:?} (ratio {:.2})",
+                    n, name, old, new, r
+                );
             }
         }
         assert!(worst <= 1.25, "the span pass must not be slower: worst ratio {:.2}", worst);
@@ -663,7 +716,12 @@ mod tests {
         let (w, h) = (970usize, 448usize);
         for n in [1_408usize, 12_512, 100_000] {
             for v in signals(n) {
-                for (xps, ti, x0) in [(1.0 / 100.0, n as f64 / 2.0, 485.0), (0.00776, n as f64 / 2.0 + 0.37, 485.0), (0.7, 3.3, 10.0), (0.0123, n as f64 * 0.9, 120.5)] {
+                for (xps, ti, x0) in [
+                    (1.0 / 100.0, n as f64 / 2.0, 485.0),
+                    (0.00776, n as f64 / 2.0 + 0.37, 485.0),
+                    (0.7, 3.3, 10.0),
+                    (0.0123, n as f64 * 0.9, 120.5),
+                ] {
                     for (ypv, y0) in [(-56.0f32, 224.0f32), (-560.0, 224.0), (37.0, 10.0), (-5.0, 447.6)] {
                         for (wgt, pre) in [(24u16, 0u16), (60_000, 30_000), (1, 65_534)] {
                             let m = Map { ti, x_per_sample: xps, x0, y_per_volt: ypv, y0 };
@@ -687,9 +745,20 @@ mod tests {
         let n = 100_000usize;
         let mut worst: f64 = 0.0;
         for (name, v) in names.iter().zip(signals(n)) {
-            let m = Map { ti: n as f64 / 2.0, x_per_sample: 970.0 / n as f64 * 0.8, x0: 485.0, y_per_volt: -56.0, y0: 224.0 };
+            let m = Map {
+                ti: n as f64 / 2.0,
+                x_per_sample: 970.0 / n as f64 * 0.8,
+                x0: 485.0,
+                y_per_volt: -56.0,
+                y0: 224.0,
+            };
             let (mut ma, mut mb) = (vec![0u16; w * h], vec![0u16; w * h]);
-            let (old, new) = crate::perfguard::best_pair(crate::perfguard::ROUNDS, 22, || deposit_dots_reference(&mut ma, w, h, &v, &m, 1), || deposit_dots(&mut mb, w, h, &v, &m, 1));
+            let (old, new) = crate::perfguard::best_pair(
+                crate::perfguard::ROUNDS,
+                22,
+                || deposit_dots_reference(&mut ma, w, h, &v, &m, 1),
+                || deposit_dots(&mut mb, w, h, &v, &m, 1),
+            );
             let r = new.as_secs_f64() / old.as_secs_f64();
             worst = worst.max(r);
             println!("dots {} pt {}: one add per sample {:?}, runs {:?} (ratio {:.2})", n, name, old, new, r);
@@ -741,10 +810,14 @@ mod tests {
             assert!(!any.unwrap().rising, "pre {}: the nearest edge is the falling one", pre);
         }
         // at the rising edge itself
-        assert!((edge_smooth(&v, 12_480, 0.0, 0.06, true, false, 31_250, 62, |_| true).0.unwrap() - 12500.0).abs() < 60.0);
+        assert!(
+            (edge_smooth(&v, 12_480, 0.0, 0.06, true, false, 31_250, 62, |_| true).0.unwrap() - 12500.0).abs() < 60.0
+        );
         // falling, nearer the one at 6250 than the one at 18750 (from 12480 both are about as far: the comparators fire
         // at the first crossing, so the noise decides which is nearer)
-        assert!((edge_smooth(&v, 11_000, 0.0, 0.06, false, false, 31_250, 62, |_| true).0.unwrap() - 6250.0).abs() < 60.0);
+        assert!(
+            (edge_smooth(&v, 11_000, 0.0, 0.06, false, false, 31_250, 62, |_| true).0.unwrap() - 6250.0).abs() < 60.0
+        );
     }
 
     // Break it catches: the software trigger arming on noise the hardware ignores. A 0..5 V square with +-0.1 V noise
@@ -777,7 +850,9 @@ mod tests {
     #[test]
     fn hysteresis_keeps_noise_on_the_other_edge_out() {
         // a sine, 1000 samples a period, with a +-0.02 wiggle; it falls through 0 at 500
-        let v: Vec<f32> = (0..3000).map(|k| (k as f32 / 1000.0 * std::f32::consts::TAU).sin() + if k % 2 == 0 { 0.02 } else { -0.02 }).collect();
+        let v: Vec<f32> = (0..3000)
+            .map(|k| (k as f32 / 1000.0 * std::f32::consts::TAU).sin() + if k % 2 == 0 { 0.02 } else { -0.02 })
+            .collect();
         // without hysteresis the wiggle at the falling crossing looks like a rising edge
         assert!((edge_near(&v, 500, 0.0, 0.0, true, false, 16).unwrap() - 500.0).abs() < 3.0);
         // with it, nothing rising near 500 ...
@@ -812,5 +887,3 @@ mod tests {
         assert_eq!((col3(5), map3[5 * w + 5], col3(4)), (vec![5], 4, vec![15]));
     }
 }
-
-

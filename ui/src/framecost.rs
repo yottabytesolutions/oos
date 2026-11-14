@@ -41,7 +41,12 @@ pub fn add(part: Part, t0: Instant) {
 /// ` cost frames N wide N us decode/level/near/wide/frame a/b/c/d/e` (sums since the start).
 pub fn summary() -> String {
     let us: Vec<String> = NS.iter().map(|n| (n.load(Ordering::Relaxed) / 1000).to_string()).collect();
-    format!(" cost frames {} wide {} us decode/level/near/wide/frame {}", FRAMES.load(Ordering::Relaxed), WIDES.load(Ordering::Relaxed), us.join("/"))
+    format!(
+        " cost frames {} wide {} us decode/level/near/wide/frame {}",
+        FRAMES.load(Ordering::Relaxed),
+        WIDES.load(Ordering::Relaxed),
+        us.join("/")
+    )
 }
 
 #[cfg(test)]

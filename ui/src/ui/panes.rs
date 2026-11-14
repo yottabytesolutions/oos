@@ -103,7 +103,11 @@ fn fit_font<'a>(fonts: &[&'a Font], w: i32, texts: impl Iterator<Item = &'a str>
 impl Ui {
     /// Height of the waterfall under the spectrum.
     pub(super) fn spec_wf_h(&self, a: Rect, pane: bool) -> i32 {
-        if self.m.spec_wf && !pane { a.h * 2 / 5 } else { 0 }
+        if self.m.spec_wf && !pane {
+            a.h * 2 / 5
+        } else {
+            0
+        }
     }
 
     /// Layout of the spectrum in `a`. In the full view the list starts under the overflow button, in the pane the close
@@ -112,7 +116,8 @@ impl Ui {
         let col_x = a.x + a.w - PEAK_W;
         let title = Rect::new(a.x + AXIS_W, a.y, a.w - AXIS_W - PEAK_W - 8, TITLE_H);
         let plot = Rect::new(title.x, a.y + TITLE_H, title.w, a.h - self.spec_wf_h(a, pane) - TITLE_H - XLABEL_H);
-        let sort = if pane { Rect::new(col_x, a.y + 2, PEAK_W - 50, 36) } else { Rect::new(col_x, a.y + 46, PEAK_W - 6, 36) };
+        let sort =
+            if pane { Rect::new(col_x, a.y + 2, PEAK_W - 50, 36) } else { Rect::new(col_x, a.y + 46, PEAK_W - 6, 36) };
         let y = sort.y + sort.h + 2;
         SpecBox { title, plot, sort, list: Rect::new(col_x, y, PEAK_W - 6, a.y + a.h - y) }
     }
@@ -123,7 +128,11 @@ impl Ui {
     }
 
     fn sort_name(&self) -> &'static str {
-        if self.m.spec_sort == 0 { "Peaks by frequency" } else { "Peaks by level" }
+        if self.m.spec_sort == 0 {
+            "Peaks by frequency"
+        } else {
+            "Peaks by level"
+        }
     }
 
     pub(super) fn sort_toggle(&mut self) {
@@ -137,7 +146,12 @@ impl Ui {
         let g = b.plot;
         let src = self.m.spec_src;
         let x = cv.text(&f.sb, b.title.x, b.title.y + 14, &self.ch_name(src), CH_COLORS[src]);
-        let mut t = format!("{:.0} dB/div  \u{b7}  Ref {:.0} dBV  \u{b7}  RBW {}", DB_PER_DIV, self.m.spec_ref, si_short(sp.rbw, "Hz"));
+        let mut t = format!(
+            "{:.0} dB/div  \u{b7}  Ref {:.0} dBV  \u{b7}  RBW {}",
+            DB_PER_DIV,
+            self.m.spec_ref,
+            si_short(sp.rbw, "Hz")
+        );
         if self.azr.limit.is_some() {
             t.push_str(&format!("  \u{b7}  Limit: {} of {} over", self.azr.limit_over, self.azr.limit_n));
         }
@@ -212,7 +226,10 @@ impl Ui {
         let stop = sp.freq(sp.dbv.len().saturating_sub(1));
         v.push(("Band".to_string(), format!("{} to {}", si_short(sp.f0, "Hz"), si_short(stop, "Hz"))));
         v.push(("Window".to_string(), self.m.spec_win.name().to_string()));
-        v.push(("Trace".to_string(), ["Normal", "Average", "Max hold", "Min hold"][self.m.spec_trace.min(3)].to_string()));
+        v.push((
+            "Trace".to_string(),
+            ["Normal", "Average", "Max hold", "Min hold"][self.m.spec_trace.min(3)].to_string(),
+        ));
         v
     }
 
@@ -221,7 +238,13 @@ impl Ui {
     pub(super) fn draw_peaks(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum, pane: bool) {
         let f = self.fonts();
         btn(cv, b.sort, BTN, BTN_BORDER);
-        cv.text_in(super::fit_font(&[&f.mb, &f.sb, &crate::font::Fonts::get(0).mb], b.sort.w - 8, self.sort_name()), b.sort, 1, self.sort_name(), TEXT);
+        cv.text_in(
+            super::fit_font(&[&f.mb, &f.sb, &crate::font::Fonts::get(0).mb], b.sort.w - 8, self.sort_name()),
+            b.sort,
+            1,
+            self.sort_name(),
+            TEXT,
+        );
         let r = b.list;
         let n = self.peaks_shown(b) as i32;
         let facts = self.spec_facts(sp);
@@ -247,7 +270,8 @@ impl Ui {
             let span = (top - sp.floor_dbv).max(1.0);
             let w = (((m.dbv - sp.floor_dbv) / span).clamp(0.0, 1.0) * (r.w - 26) as f64) as i32;
             if pitch >= 36 {
-                let s = if m.dbv == strongest { "strongest".to_string() } else { format!("{:.1} dBc", m.dbv - strongest) };
+                let s =
+                    if m.dbv == strongest { "strongest".to_string() } else { format!("{:.1} dBc", m.dbv - strongest) };
                 cv.text(&f.s, r.x + 22, ty + 15, &s, DIM);
             }
             cv.fill(Rect::new(r.x + 22, y + pitch - 3, w, 2), scale(ACCENT, 150));
@@ -270,7 +294,17 @@ impl Ui {
 // results
 
 /// Columns of the results table: heading, relative width. The last one is a bar and goes first when room is short.
-const RESULT_COLS: [(&str, i32); 9] = [("Source", 54), ("Measurement", 136), ("Now", 88), ("Mean", 88), ("Min", 88), ("Max", 88), ("\u{3c3}", 80), ("Count", 60), ("Range", 90)];
+const RESULT_COLS: [(&str, i32); 9] = [
+    ("Source", 54),
+    ("Measurement", 136),
+    ("Now", 88),
+    ("Mean", 88),
+    ("Min", 88),
+    ("Max", 88),
+    ("\u{3c3}", 80),
+    ("Count", 60),
+    ("Range", 90),
+];
 
 /// Left edges of the columns in a table `w` wide, and the end.
 fn result_cols(w: i32) -> Vec<i32> {
@@ -334,7 +368,8 @@ impl Ui {
 
     /// Per frame: the slow content of the pane, a few times a second.
     pub(super) fn pane_tick(&mut self) {
-        if !matches!(self.m.pane, tables::PANE_EVENTS | tables::PANE_BUS) || (self.now - self.pn.events_t).abs() < 0.25 {
+        if !matches!(self.m.pane, tables::PANE_EVENTS | tables::PANE_BUS) || (self.now - self.pn.events_t).abs() < 0.25
+        {
             return;
         }
         self.pn.events_t = self.now;
@@ -363,8 +398,27 @@ impl Ui {
                 let sd = (st.sumsq / n - mean * mean).max(0.0).sqrt();
                 let val = |v: f64| if st.n == 0 { "----".to_string() } else { r.fmt4(v) };
                 // a pair names both channels
-                let src = self.m.meas2.get(i.wrapping_sub(self.m.meas.len())).map_or(format!("CH{}", r.ch + 1), |p| format!("CH{}-{}", p.1 + 1, p.2 + 1));
-                ResultRow { ch: r.ch, cells: [src, r.name.clone(), r.fmt4(r.v), val(mean), val(st.min), val(st.max), val(sd), fmt_count(st.n as f64)], now: r.v, lo: st.min, hi: st.max }
+                let src = self
+                    .m
+                    .meas2
+                    .get(i.wrapping_sub(self.m.meas.len()))
+                    .map_or(format!("CH{}", r.ch + 1), |p| format!("CH{}-{}", p.1 + 1, p.2 + 1));
+                ResultRow {
+                    ch: r.ch,
+                    cells: [
+                        src,
+                        r.name.clone(),
+                        r.fmt4(r.v),
+                        val(mean),
+                        val(st.min),
+                        val(st.max),
+                        val(sd),
+                        fmt_count(st.n as f64),
+                    ],
+                    now: r.v,
+                    lo: st.min,
+                    hi: st.max,
+                }
             })
             .collect()
     }
@@ -373,7 +427,10 @@ impl Ui {
     fn results_box(&self, r: Rect) -> (Rect, Option<Rect>) {
         let side = self.results_side_rows() > 0;
         let w = if side { r.w - SIDE_W - 8 } else { r.w };
-        (Rect::new(r.x, r.y, w, r.h), side.then(|| Rect::new(r.x + r.w - SIDE_W, r.y + BAND_H, SIDE_W - 6, r.h - BAND_H)))
+        (
+            Rect::new(r.x, r.y, w, r.h),
+            side.then(|| Rect::new(r.x + r.w - SIDE_W, r.y + BAND_H, SIDE_W - 6, r.h - BAND_H)),
+        )
     }
 
     /// Rows that fit, and their pitch: the rows share the height of the pane.
@@ -435,7 +492,13 @@ impl Ui {
         let shown = &rows[top..top + fit];
         // the normal size last: the larger text sizes fall back to it where a column is too narrow
         let n = crate::font::Fonts::get(0);
-        let fonts: &[&Font] = if pitch >= 40 { &[&f.lb, &f.mb, &f.sb, &n.sb] } else if pitch >= 24 { &[&f.mb, &f.sb, &n.sb] } else { &[&f.sb, &n.sb] };
+        let fonts: &[&Font] = if pitch >= 40 {
+            &[&f.lb, &f.mb, &f.sb, &n.sb]
+        } else if pitch >= 24 {
+            &[&f.mb, &f.sb, &n.sb]
+        } else {
+            &[&f.sb, &n.sb]
+        };
         let vf = fit_font(fonts, col_w, shown.iter().map(|w| w.cells[2].as_str()));
         let stats: &[&Font] = if pitch >= 24 { &[&f.m, &f.s, &n.s] } else { &[&f.s, &n.s] };
         let plain = fit_font(stats, col_w, shown.iter().flat_map(|w| w.cells[3..7].iter().map(|s| s.as_str())));
@@ -451,7 +514,11 @@ impl Ui {
             cv.text(&f.sb, x0 + x[0], ty, &w.cells[0], col);
             // the name in the figures' font, or the smallest of the text size it fits in
             let room = x[2] - x[1] - 6;
-            let name_font = if plain.width(&w.cells[1]) <= room && plain.size >= f.s.size { plain } else { fit_font(&[&f.s, &n.s], room, std::iter::once(w.cells[1].as_str())) };
+            let name_font = if plain.width(&w.cells[1]) <= room && plain.size >= f.s.size {
+                plain
+            } else {
+                fit_font(&[&f.s, &n.s], room, std::iter::once(w.cells[1].as_str()))
+            };
             cv.text(name_font, x0 + x[1], ty, &w.cells[1], LABEL);
             for k in 2..8 {
                 let (font, c) = match k {
@@ -499,7 +566,13 @@ impl Ui {
                 CursorMode::Xy => "XY",
                 _ => "Time",
             };
-            cv.text(&f.sb, s.x, line(0), &format!("Cursors  \u{b7}  {}  \u{b7}  {}", mode, self.ch_name(self.m.active)), TEXT);
+            cv.text(
+                &f.sb,
+                s.x,
+                line(0),
+                &format!("Cursors  \u{b7}  {}  \u{b7}  {}", mode, self.ch_name(self.m.active)),
+                TEXT,
+            );
             for (i, (l, v)) in cur.iter().enumerate() {
                 let (x, y) = (s.x + (i as i32 % 2) * half, line(1 + i as i32 / 2));
                 cv.text(&f.s, x, y, l, DIM);
@@ -539,7 +612,8 @@ const SCALE_MARGIN: f64 = 0.15;
 const SCALE_MIN_REL: f64 = 1e-3;
 const SCALE_HOLD: u32 = 30;
 /// Time axes of a chart, s: fifths of them are round numbers.
-const TREND_WINDOWS: [f64; 16] = [10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 75.0, 100.0, 150.0, 200.0, 300.0, 600.0, 1200.0, 3600.0];
+const TREND_WINDOWS: [f64; 16] =
+    [10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 75.0, 100.0, 150.0, 200.0, 300.0, 600.0, 1200.0, 3600.0];
 /// Width of the value card and of the y labels of a chart.
 const CARD_W: i32 = 128;
 const YLABEL_W: i32 = 68;
@@ -570,7 +644,14 @@ pub struct Trend {
 
 impl Default for Trend {
     fn default() -> Trend {
-        Trend { pts: VecDeque::new(), step: TREND_STEP, open: (f64::NAN, 0.0, 0, f32::MAX, f32::MIN), scale: None, slack: 0, range: None }
+        Trend {
+            pts: VecDeque::new(),
+            step: TREND_STEP,
+            open: (f64::NAN, 0.0, 0, f32::MAX, f32::MIN),
+            scale: None,
+            slack: 0,
+            range: None,
+        }
     }
 }
 
@@ -593,7 +674,11 @@ impl Trend {
     /// The open point goes into the history (a stretch without a value is a gap), the scale follows.
     fn close(&mut self) {
         let (t, sum, n, lo, hi) = self.open;
-        let p = if n > 0 { TrendPt { t, v: (sum / n as f64) as f32, lo, hi } } else { TrendPt { t, v: f32::NAN, lo: f32::NAN, hi: f32::NAN } };
+        let p = if n > 0 {
+            TrendPt { t, v: (sum / n as f64) as f32, lo, hi }
+        } else {
+            TrendPt { t, v: f32::NAN, lo: f32::NAN, hi: f32::NAN }
+        };
         self.pts.push_back(p);
         self.open = (t, 0.0, 0, f32::MAX, f32::MIN);
         if self.pts.len() >= TREND_PTS {
@@ -624,7 +709,9 @@ impl Trend {
         if v.is_empty() {
             return;
         }
-        self.range = self.pts.iter().filter(|p| p.lo.is_finite()).fold(None, |r: Option<(f64, f64)>, p| Some(r.map_or((p.lo as f64, p.hi as f64), |(a, b)| (a.min(p.lo as f64), b.max(p.hi as f64)))));
+        self.range = self.pts.iter().filter(|p| p.lo.is_finite()).fold(None, |r: Option<(f64, f64)>, p| {
+            Some(r.map_or((p.lo as f64, p.hi as f64), |(a, b)| (a.min(p.lo as f64), b.max(p.hi as f64))))
+        });
         // where the data is now: the middle of the last three, a single stray point is not that
         let mut end: Vec<f32> = v[v.len().saturating_sub(3)..].to_vec();
         end.sort_by(f32::total_cmp);
@@ -674,7 +761,13 @@ impl Ui {
         let mut v = vec!["Auto".to_string(), "Off".to_string()];
         // a pair says its channels in its name
         let single = self.m.meas.len();
-        v.extend(self.meas_rows().iter().enumerate().map(|(i, r)| if i < single { format!("CH{} {}", r.ch + 1, r.name) } else { r.name.clone() }));
+        v.extend(self.meas_rows().iter().enumerate().map(|(i, r)| {
+            if i < single {
+                format!("CH{} {}", r.ch + 1, r.name)
+            } else {
+                r.name.clone()
+            }
+        }));
         v
     }
 
@@ -701,7 +794,11 @@ impl Ui {
         let rows = self.meas_rows();
         let charts = self.trend_charts();
         if rows.is_empty() || charts.is_empty() {
-            let s = if rows.is_empty() { "No measurements: Measure > Add item" } else { "Both charts off: Display > Trend chart 1, 2" };
+            let s = if rows.is_empty() {
+                "No measurements: Measure > Add item"
+            } else {
+                "Both charts off: Display > Trend chart 1, 2"
+            };
             cv.text(&f.sb, r.x + 12, r.y + (r.h + 9) / 2, s, DIM);
             return;
         }
@@ -775,7 +872,9 @@ impl Ui {
         let body = r.h - 40;
         let col = CH_COLORS[row.ch];
         cv.text(font, r.x + r.w - 6 - font.width(&now), r.y + 40 + body / 3 - 4, &now, col);
-        let (lo, hi) = t.and_then(|t| t.range).map_or(("----".to_string(), "----".to_string()), |(a, b)| (row.fmt4(a), row.fmt4(b)));
+        let (lo, hi) = t
+            .and_then(|t| t.range)
+            .map_or(("----".to_string(), "----".to_string()), |(a, b)| (row.fmt4(a), row.fmt4(b)));
         for (k, (l, v)) in [("Max", hi), ("Min", lo)].iter().enumerate() {
             let y = r.y + 40 + body / 3 + (k as i32 + 1) * (body * 2 / 3) / 3 + 4;
             cv.text(&f.s, r.x + 8, y, l, DIM);

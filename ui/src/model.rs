@@ -98,7 +98,8 @@ pub const CH_COLORS: [Rgb; NCH] = {
 /// V/div at the probe tip for probe 1x: 500 µV .. 10 V (DHO800/900 range).
 /// V/div at the probe tip for 1x. Below 1 mV/div the AFE stays at its highest analog gain and the FPGA read path
 /// scales digitally (cal_vertical digital gain 2.15 / 5.38 / 10.76 at 500 / 200 / 100 uV, no forced 20 MHz).
-pub const VSCALES: [f32; 16] = [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0];
+pub const VSCALES: [f32; 16] =
+    [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0];
 /// s/div: 5 ns .. 1000 s.
 pub fn tscales() -> Vec<f32> {
     let mut v = Vec::new();
@@ -297,14 +298,34 @@ pub enum Proto {
 
 /// The protocols wired by hand; the modules come after them in [`PROTOS`].
 pub const BUILTIN_PROTOS: [Proto; 22] = [
-    Proto::Uart, Proto::I2c, Proto::Spi, Proto::Can, Proto::Lin, Proto::I2s, Proto::Mil1553, Proto::Parallel, Proto::CanFd,
-    Proto::FlexRay, Proto::ModbusRtu, Proto::ModbusAscii, Proto::OneWire, Proto::Ds2482, Proto::Uart9, Proto::Swd,
-    Proto::Jtag, Proto::Qspi, Proto::I3c, Proto::Arinc429, Proto::Sent, Proto::Usb,
+    Proto::Uart,
+    Proto::I2c,
+    Proto::Spi,
+    Proto::Can,
+    Proto::Lin,
+    Proto::I2s,
+    Proto::Mil1553,
+    Proto::Parallel,
+    Proto::CanFd,
+    Proto::FlexRay,
+    Proto::ModbusRtu,
+    Proto::ModbusAscii,
+    Proto::OneWire,
+    Proto::Ds2482,
+    Proto::Uart9,
+    Proto::Swd,
+    Proto::Jtag,
+    Proto::Qspi,
+    Proto::I3c,
+    Proto::Arinc429,
+    Proto::Sent,
+    Proto::Usb,
 ];
 
 /// Every protocol of the Decode menu: the built-in ones, then the modules.
-pub static PROTOS: std::sync::LazyLock<Vec<Proto>> =
-    std::sync::LazyLock::new(|| BUILTIN_PROTOS.iter().copied().chain((0..crate::protocols::MODULES.len()).map(|i| Proto::Module(i as u8))).collect());
+pub static PROTOS: std::sync::LazyLock<Vec<Proto>> = std::sync::LazyLock::new(|| {
+    BUILTIN_PROTOS.iter().copied().chain((0..crate::protocols::MODULES.len()).map(|i| Proto::Module(i as u8))).collect()
+});
 
 impl Proto {
     /// The module behind a module protocol.
@@ -367,7 +388,7 @@ impl Proto {
             Proto::Qspi => [Some("IO0"), Some("SCK"), Some("CS#"), Some("IO1")],
             // D- optional: D+ alone decodes without SE0
             Proto::Usb => [Some("D+"), None, Some("D-"), None],
-            _ =>[Some("Source"), None, None, None],
+            _ => [Some("Source"), None, None, None],
         }
     }
     /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
@@ -375,7 +396,18 @@ impl Proto {
         if let Some(p) = self.module() {
             return p.diff_ok();
         }
-        matches!(self, Proto::Uart | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii | Proto::Can | Proto::CanFd | Proto::FlexRay | Proto::Lin | Proto::Arinc429)
+        matches!(
+            self,
+            Proto::Uart
+                | Proto::Uart9
+                | Proto::ModbusRtu
+                | Proto::ModbusAscii
+                | Proto::Can
+                | Proto::CanFd
+                | Proto::FlexRay
+                | Proto::Lin
+                | Proto::Arinc429
+        )
     }
 }
 
@@ -399,8 +431,19 @@ pub enum TrigType {
 }
 
 pub const TRIG_TYPES: [TrigType; 13] = [
-    TrigType::Edge, TrigType::Pulse, TrigType::Slope, TrigType::Video, TrigType::Pattern, TrigType::Duration, TrigType::Timeout,
-    TrigType::Runt, TrigType::Window, TrigType::Delay, TrigType::SetupHold, TrigType::NthEdge, TrigType::Bus,
+    TrigType::Edge,
+    TrigType::Pulse,
+    TrigType::Slope,
+    TrigType::Video,
+    TrigType::Pattern,
+    TrigType::Duration,
+    TrigType::Timeout,
+    TrigType::Runt,
+    TrigType::Window,
+    TrigType::Delay,
+    TrigType::SetupHold,
+    TrigType::NthEdge,
+    TrigType::Bus,
 ];
 
 /// What the protocol trigger looks for in the decoded packets (`trig::find_all`); the trigger point is the end of
@@ -627,7 +670,17 @@ pub enum Quick {
     NextView,
 }
 
-pub const QUICKS: [Quick; 9] = [Quick::Screenshot, Quick::SavePng, Quick::SaveSetup, Quick::SaveCsv, Quick::Autoset, Quick::Single, Quick::RunStop, Quick::Clear, Quick::NextView];
+pub const QUICKS: [Quick; 9] = [
+    Quick::Screenshot,
+    Quick::SavePng,
+    Quick::SaveSetup,
+    Quick::SaveCsv,
+    Quick::Autoset,
+    Quick::Single,
+    Quick::RunStop,
+    Quick::Clear,
+    Quick::NextView,
+];
 
 impl Quick {
     /// Name in the Utility menu and its picker.
@@ -876,7 +929,7 @@ pub struct Channel {
     pub bias: f32,
     /// deskew in s
     pub skew: f32,
-    pub offset: f32,   // volts added before display (vertical position)
+    pub offset: f32, // volts added before display (vertical position)
     pub coupling: Coupling,
     /// bandwidth limit, index into BWS
     pub bw: usize,
@@ -893,7 +946,16 @@ impl Channel {
     /// file's limits vary a little from block to block.
     pub fn offset_max(&self) -> f32 {
         let bnc = VSCALES[self.vscale] * self.vfine;
-        self.probe * if bnc < 0.06 { 2.0 } else if bnc < 0.26 { 12.0 } else if bnc < 2.65 { 56.0 } else { 550.0 }
+        self.probe
+            * if bnc < 0.06 {
+                2.0
+            } else if bnc < 0.26 {
+                12.0
+            } else if bnc < 2.65 {
+                56.0
+            } else {
+                550.0
+            }
     }
 }
 
@@ -953,7 +1015,7 @@ pub struct Model {
     pub seg_hw: bool,
     /// hardware segments: wait after each segment before the next arm, seconds (0 = back to back)
     pub seg_ivl: f32,
-    pub mdepth: usize, // index into `mdepths()` (0 = auto)
+    pub mdepth: usize,  // index into `mdepths()` (0 = auto)
     pub persist: usize, // index into PERSIST
     pub intensity: u32, // 10..100 %
     pub grid: Grid,
@@ -1010,7 +1072,7 @@ pub struct Model {
     pub log_ivl: usize,
     /// spectrum limit from a trace: dB above it
     pub spec_margin: f32,
-    pub math_offset: f32,  // divisions
+    pub math_offset: f32, // divisions
     pub fft_win: Window,
     /// bandwidth of the math band-pass/band-stop (Hz)
     pub math_bw: f32,
@@ -1186,7 +1248,14 @@ pub struct Model {
 pub const MATH_COLOR: Rgb = rgb(0xa9, 0x8b, 0xff);
 /// Trace colours of M1..M8 (M1 = the classic math colour).
 pub const MATH_COLORS: [Rgb; 8] = [
-    MATH_COLOR, rgb(0xff, 0x8b, 0xd0), rgb(0x8b, 0xe9, 0xff), rgb(0xff, 0xc8, 0x6b), rgb(0x9b, 0xff, 0x8b), rgb(0xff, 0x9b, 0x8b), rgb(0xd8, 0xd8, 0xd8), rgb(0x8b, 0xa8, 0xff),
+    MATH_COLOR,
+    rgb(0xff, 0x8b, 0xd0),
+    rgb(0x8b, 0xe9, 0xff),
+    rgb(0xff, 0xc8, 0x6b),
+    rgb(0x9b, 0xff, 0x8b),
+    rgb(0xff, 0x9b, 0x8b),
+    rgb(0xd8, 0xd8, 0xd8),
+    rgb(0x8b, 0xa8, 0xff),
 ];
 /// FFT vertical scale in dB/div.
 pub const FFT_DB: [f32; 5] = [1.0, 2.0, 5.0, 10.0, 20.0];
@@ -1195,11 +1264,36 @@ pub const FFT_DB: [f32; 5] = [1.0, 2.0, 5.0, 10.0, 20.0];
 /// default, Full = widest filter (stock "OFF", 3150 MHz in the AFE), GND = no signal through the AFE; then the AFE
 /// filter frequency in MHz (`board::dho::hw::bw_code`).
 pub const BWS: [(&str, u32); 31] = [
-    ("Auto", 0), ("Full", 0), ("20 MHz", 20), ("GND", 0),
-    ("5 MHz", 5), ("10 MHz", 10), ("15 MHz", 15), ("25 MHz", 25), ("30 MHz", 30), ("35 MHz", 35), ("40 MHz", 40),
-    ("50 MHz", 50), ("60 MHz", 60), ("70 MHz", 70), ("75 MHz", 75), ("80 MHz", 80), ("90 MHz", 90), ("100 MHz", 100),
-    ("125 MHz", 125), ("150 MHz", 150), ("175 MHz", 175), ("200 MHz", 200), ("250 MHz", 250), ("300 MHz", 300),
-    ("310 MHz", 310), ("400 MHz", 400), ("600 MHz", 600), ("800 MHz", 800), ("1 GHz", 1000), ("1.5 GHz", 1500),
+    ("Auto", 0),
+    ("Full", 0),
+    ("20 MHz", 20),
+    ("GND", 0),
+    ("5 MHz", 5),
+    ("10 MHz", 10),
+    ("15 MHz", 15),
+    ("25 MHz", 25),
+    ("30 MHz", 30),
+    ("35 MHz", 35),
+    ("40 MHz", 40),
+    ("50 MHz", 50),
+    ("60 MHz", 60),
+    ("70 MHz", 70),
+    ("75 MHz", 75),
+    ("80 MHz", 80),
+    ("90 MHz", 90),
+    ("100 MHz", 100),
+    ("125 MHz", 125),
+    ("150 MHz", 150),
+    ("175 MHz", 175),
+    ("200 MHz", 200),
+    ("250 MHz", 250),
+    ("300 MHz", 300),
+    ("310 MHz", 310),
+    ("400 MHz", 400),
+    ("600 MHz", 600),
+    ("800 MHz", 800),
+    ("1 GHz", 1000),
+    ("1.5 GHz", 1500),
     ("2 GHz", 2000),
 ];
 /// Index of "20 MHz" in BWS (old setups, SCPI 20M).
@@ -1261,11 +1355,24 @@ pub const AFG_MODS: [&str; 4] = ["Off", "AM", "FM", "PM"];
 pub const AFG_MOD_SHAPES: [&str; 6] = ["Sine", "Square", "Triangle", "Up ramp", "Down ramp", "Noise"];
 
 /// Persistence: name, seconds (0 = minimum, <0 = infinite).
-pub const PERSIST: [(&str, f32); 7] = [("Min", 0.0), ("100 ms", 0.1), ("500 ms", 0.5), ("1 s", 1.0), ("5 s", 5.0), ("10 s", 10.0), ("Infinite", -1.0)];
+pub const PERSIST: [(&str, f32); 7] =
+    [("Min", 0.0), ("100 ms", 0.1), ("500 ms", 0.5), ("1 s", 1.0), ("5 s", 5.0), ("10 s", 10.0), ("Infinite", -1.0)];
 
 impl Default for Model {
     fn default() -> Model {
-        let c = |on| Channel { on, vscale: 12, vfine: 1.0, unit: AmpUnit::V, bias: 0.0, skew: 0.0, offset: 0.0, coupling: Coupling::Dc, bw: BW_AUTO, probe: 1.0, invert: false };
+        let c = |on| Channel {
+            on,
+            vscale: 12,
+            vfine: 1.0,
+            unit: AmpUnit::V,
+            bias: 0.0,
+            skew: 0.0,
+            offset: 0.0,
+            coupling: Coupling::Dc,
+            bw: BW_AUTO,
+            probe: 1.0,
+            invert: false,
+        };
         let ts = tscales();
         let t200u = ts.iter().position(|&t| (t - 200e-6).abs() < 1e-9).unwrap_or(ts.len() / 2);
         let mut m = Model {
@@ -1560,7 +1667,9 @@ impl Model {
         match self.trig_type {
             TrigType::Edge => Trigger::Edge { src, slope: sl, level: lv },
             // the protocol trigger is evaluated by trig::find_all; this edge only stands for it elsewhere
-            TrigType::Bus => Trigger::Edge { src: self.dec_src, slope: oos_dsp::trigger::Slope::Falling, level: self.dec_thr },
+            TrigType::Bus => {
+                Trigger::Edge { src: self.dec_src, slope: oos_dsp::trigger::Slope::Falling, level: self.dec_thr }
+            }
             TrigType::Pulse => Trigger::Pulse { src, pol: self.trig_pol, level: lv, when },
             TrigType::Slope => Trigger::Slope { src, slope: sl, lo, hi, when },
             TrigType::Video => Trigger::Video {
@@ -1576,7 +1685,11 @@ impl Model {
                 },
             },
             TrigType::Pattern => Trigger::Pattern { bits: self.pat, levels: self.pat_levels },
-            TrigType::Duration => Trigger::Duration { bits: self.pat.map(|b| if matches!(b, Bit::R | Bit::F) { Bit::X } else { b }), levels: self.pat_levels, when },
+            TrigType::Duration => Trigger::Duration {
+                bits: self.pat.map(|b| if matches!(b, Bit::R | Bit::F) { Bit::X } else { b }),
+                levels: self.pat_levels,
+                when,
+            },
             TrigType::Timeout => Trigger::Timeout { src, slope: sl, level: lv, time: self.trig_t1 as f64 },
             TrigType::Runt => Trigger::Runt { src, pol: self.trig_pol, lo, hi, when: self.when() },
             TrigType::Window => Trigger::Window {
@@ -1589,7 +1702,15 @@ impl Model {
                     WinMode::Inside => WinWhen::Inside(when),
                 },
             },
-            TrigType::Delay => Trigger::Delay { a: src, slope_a: sl, level_a: lv, b: self.trig_src2, slope_b: Self::dsp_slope(self.trig_slope2), level_b: lv2, when },
+            TrigType::Delay => Trigger::Delay {
+                a: src,
+                slope_a: sl,
+                level_a: lv,
+                b: self.trig_src2,
+                slope_b: Self::dsp_slope(self.trig_slope2),
+                level_b: lv2,
+                when,
+            },
             TrigType::SetupHold => Trigger::SetupHold {
                 data: src,
                 clk: self.trig_src2,
@@ -1599,7 +1720,9 @@ impl Model {
                 setup: self.setup as f64,
                 hold: self.hold as f64,
             },
-            TrigType::NthEdge => Trigger::NthEdge { src, slope: sl, level: lv, idle: self.nth_idle as f64, n: self.nth_n },
+            TrigType::NthEdge => {
+                Trigger::NthEdge { src, slope: sl, level: lv, idle: self.nth_idle as f64, n: self.nth_n }
+            }
         }
     }
 
@@ -1652,7 +1775,13 @@ impl Model {
             TrigType::NthEdge => t(self.nth_idle) / 20.0,
             TrigType::Runt if self.trig_when == WhenKind::Off => f64::INFINITY,
             TrigType::Window if self.win_mode != WinMode::Inside => f64::INFINITY,
-            _ => t(self.trig_t1.min(if matches!(self.trig_when, WhenKind::In | WhenKind::Out) { self.trig_t2 } else { f32::MAX })) / 20.0,
+            _ => {
+                t(self.trig_t1.min(if matches!(self.trig_when, WhenKind::In | WhenKind::Out) {
+                    self.trig_t2
+                } else {
+                    f32::MAX
+                })) / 20.0
+            }
         }
     }
 
@@ -1668,9 +1797,15 @@ impl Model {
             TrigType::NthEdge => 4.0 * t(self.nth_idle) + 2e-3,
             // room for a whole frame of the protocol before the trigger point (ARINC 429 auto rate: a low-speed word;
             // USB auto: low-speed packets)
-            TrigType::Bus if self.dec_proto == Proto::Arinc429 && self.dec_arate == 0 => 200.0 / crate::decode::ARINC_RATES[1],
-            TrigType::Bus if self.dec_proto == Proto::Usb && self.dec_uspeed == 0 => 200.0 / oos_dsp::decode_ext3::USB_LOW,
-            TrigType::Bus => self.dec_proto.module().and_then(|p| p.frame_span(&self.dec_opts())).unwrap_or(200.0 * self.bus_bit()),
+            TrigType::Bus if self.dec_proto == Proto::Arinc429 && self.dec_arate == 0 => {
+                200.0 / crate::decode::ARINC_RATES[1]
+            }
+            TrigType::Bus if self.dec_proto == Proto::Usb && self.dec_uspeed == 0 => {
+                200.0 / oos_dsp::decode_ext3::USB_LOW
+            }
+            TrigType::Bus => {
+                self.dec_proto.module().and_then(|p| p.frame_span(&self.dec_opts())).unwrap_or(200.0 * self.bus_bit())
+            }
             TrigType::Edge | TrigType::Pattern => 0.0,
             _ => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 3e-3,
         }
@@ -1687,7 +1822,9 @@ impl Model {
     /// Bit time of the decoder's protocol (s), for the protocol trigger's sampling and search window.
     pub fn bus_bit(&self) -> f64 {
         match self.dec_proto {
-            Proto::Uart | Proto::Lin | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii => 1.0 / crate::decode::BAUDS[self.dec_baud],
+            Proto::Uart | Proto::Lin | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii => {
+                1.0 / crate::decode::BAUDS[self.dec_baud]
+            }
             Proto::Can | Proto::CanFd => 1.0 / crate::decode::CAN_RATES[self.dec_canrate],
             Proto::I2c | Proto::Ds2482 => 2.5e-6,
             Proto::I3c => 0.1e-6,
@@ -1740,7 +1877,17 @@ impl Model {
     /// Settings of math channel `k` (the selected one from the edit fields).
     pub fn math_ch(&self, k: usize) -> crate::math::MathCh {
         if k == self.math_sel {
-            crate::math::MathCh { lin: self.math_lin, op: self.math, a: self.math_a, b: self.math_b, scale: self.math_scale, fc: self.math_fc, bw: self.math_bw, offset: self.math_offset, win: self.fft_win }
+            crate::math::MathCh {
+                lin: self.math_lin,
+                op: self.math,
+                a: self.math_a,
+                b: self.math_b,
+                scale: self.math_scale,
+                fc: self.math_fc,
+                bw: self.math_bw,
+                offset: self.math_offset,
+                win: self.fft_win,
+            }
         } else {
             self.maths[k]
         }
@@ -1748,7 +1895,31 @@ impl Model {
 
     /// The settings of the decoder the menu edits.
     pub fn dec_cfg(&self) -> DecCfg {
-        DecCfg { on: self.dec_on.clone(), src: self.dec_src.clone(), baud: self.dec_baud.clone(), canrate: self.dec_canrate.clone(), canh: self.dec_canh.clone(), fdrate: self.dec_fdrate.clone(), arate: self.dec_arate.clone(), tick: self.dec_tick.clone(), nibbles: self.dec_nibbles.clone(), uspeed: self.dec_uspeed.clone(), src4: self.dec_src4.clone(), la_in: self.dec_la_in.clone(), la: self.dec_la.clone(), diff: self.dec_diff.clone(), thr: self.dec_thr.clone(), ascii: self.dec_ascii.clone(), proto: self.dec_proto.clone(), src2: self.dec_src2.clone(), cs: self.dec_cs.clone(), mode: self.dec_mode.clone(), bits: self.dec_bits.clone(), parity: self.dec_parity.clone(), opt: self.dec_opt }
+        DecCfg {
+            on: self.dec_on.clone(),
+            src: self.dec_src.clone(),
+            baud: self.dec_baud.clone(),
+            canrate: self.dec_canrate.clone(),
+            canh: self.dec_canh.clone(),
+            fdrate: self.dec_fdrate.clone(),
+            arate: self.dec_arate.clone(),
+            tick: self.dec_tick.clone(),
+            nibbles: self.dec_nibbles.clone(),
+            uspeed: self.dec_uspeed.clone(),
+            src4: self.dec_src4.clone(),
+            la_in: self.dec_la_in.clone(),
+            la: self.dec_la.clone(),
+            diff: self.dec_diff.clone(),
+            thr: self.dec_thr.clone(),
+            ascii: self.dec_ascii.clone(),
+            proto: self.dec_proto.clone(),
+            src2: self.dec_src2.clone(),
+            cs: self.dec_cs.clone(),
+            mode: self.dec_mode.clone(),
+            bits: self.dec_bits.clone(),
+            parity: self.dec_parity.clone(),
+            opt: self.dec_opt,
+        }
     }
 
     fn dec_load(&mut self, c: &DecCfg) {
@@ -1829,7 +2000,16 @@ impl Model {
         self.math_sel = k.min(crate::math::NMATH - 1);
         let c = self.maths[self.math_sel];
         self.math_lin = c.lin;
-        (self.math, self.math_a, self.math_b, self.math_scale, self.math_fc, self.math_bw, self.math_offset, self.fft_win) = (c.op, c.a, c.b, c.scale, c.fc, c.bw, c.offset, c.win);
+        (
+            self.math,
+            self.math_a,
+            self.math_b,
+            self.math_scale,
+            self.math_fc,
+            self.math_bw,
+            self.math_offset,
+            self.fft_win,
+        ) = (c.op, c.a, c.b, c.scale, c.fc, c.bw, c.offset, c.win);
     }
 
     pub fn n_on(&self) -> usize {
@@ -1876,9 +2056,23 @@ impl Model {
             changed = true;
         }
         // every other channel source that points at a missing input: CH1, or none for the optional ones
-        for s in [&mut self.trig_src, &mut self.trig_src2, &mut self.dec_src, &mut self.dec_src2, &mut self.mask_src, &mut self.spec_src, &mut self.eye_src, &mut self.pw_v, &mut self.pw_i, &mut self.bode_in, &mut self.bode_out, &mut self.bw_src, &mut self.afg_arb_src]
-            .into_iter()
-            .chain(self.zones.iter_mut().map(|z| &mut z.src))
+        for s in [
+            &mut self.trig_src,
+            &mut self.trig_src2,
+            &mut self.dec_src,
+            &mut self.dec_src2,
+            &mut self.mask_src,
+            &mut self.spec_src,
+            &mut self.eye_src,
+            &mut self.pw_v,
+            &mut self.pw_i,
+            &mut self.bode_in,
+            &mut self.bode_out,
+            &mut self.bw_src,
+            &mut self.afg_arb_src,
+        ]
+        .into_iter()
+        .chain(self.zones.iter_mut().map(|z| &mut z.src))
         {
             if *s >= n {
                 *s = 0;
@@ -1892,7 +2086,10 @@ impl Model {
             }
         }
         // math sources: channels 0..NCH, then math channels (always there)
-        for s in [&mut self.math_a, &mut self.math_b].into_iter().chain(self.maths.iter_mut().flat_map(|m| [&mut m.a, &mut m.b])) {
+        for s in [&mut self.math_a, &mut self.math_b]
+            .into_iter()
+            .chain(self.maths.iter_mut().flat_map(|m| [&mut m.a, &mut m.b]))
+        {
             if !src_ok(*s) {
                 *s = 0;
                 changed = true;
@@ -1922,7 +2119,11 @@ impl Model {
     /// The trigger coupling in effect: the set one for the edge trigger on a channel, DC for every other type and
     /// for an LA line.
     pub fn trig_coupling(&self) -> TrigCoup {
-        if self.trig_type == TrigType::Edge && self.trig_line().is_none() { self.trig_coup } else { TrigCoup::Dc }
+        if self.trig_type == TrigType::Edge && self.trig_line().is_none() {
+            self.trig_coup
+        } else {
+            TrigCoup::Dc
+        }
     }
 
     /// A fixed memory depth the hardware cannot take for the channels acquired now: the depth applied, and the hidden
@@ -1947,7 +2148,8 @@ impl Model {
     pub fn depth_label(&self) -> String {
         let name = mdepths().get(self.mdepth).map_or("Auto", |d| d.0);
         let Some((applied, hidden)) = self.depth_cap() else { return name.into() };
-        let applied = mdepths().iter().find(|d| d.1 == applied).map_or_else(|| applied.to_string(), |d| d.0.to_string());
+        let applied =
+            mdepths().iter().find(|d| d.1 == applied).map_or_else(|| applied.to_string(), |d| d.0.to_string());
         match hidden {
             Some(c) => format!("{} \u{2192} {} (trig CH{})", name, applied, c + 1),
             None => format!("{} \u{2192} {}", name, applied),
@@ -1963,7 +2165,9 @@ impl Model {
     }
     /// The pattern or duration trigger looks at LA lines.
     pub fn pat_on_la(&self) -> bool {
-        self.la_on() && matches!(self.trig_type, TrigType::Pattern | TrigType::Duration) && self.pat_la.iter().any(|&b| b != Bit::X)
+        self.la_on()
+            && matches!(self.trig_type, TrigType::Pattern | TrigType::Duration)
+            && self.pat_la.iter().any(|&b| b != Bit::X)
     }
     /// The protocol trigger on LA lines (the decoder's input is the LA).
     pub fn bus_on_la(&self) -> bool {
@@ -2034,12 +2238,28 @@ pub fn si_digits(v: f64, unit: &str, digits: usize) -> String {
     if v == 0.0 {
         return format!("0 {}", unit);
     }
-    let prefixes = [(1e12, "T"), (1e9, "G"), (1e6, "M"), (1e3, "k"), (1.0, ""), (1e-3, "m"), (1e-6, "\u{b5}"), (1e-9, "n"), (1e-12, "p")];
+    let prefixes = [
+        (1e12, "T"),
+        (1e9, "G"),
+        (1e6, "M"),
+        (1e3, "k"),
+        (1.0, ""),
+        (1e-3, "m"),
+        (1e-6, "\u{b5}"),
+        (1e-9, "n"),
+        (1e-12, "p"),
+    ];
     let a = v.abs();
     let (mult, p) = prefixes.iter().copied().find(|(m, _)| a >= *m * 0.9995).unwrap_or((1e-12, "p"));
     let x = v / mult;
     let ax = x.abs();
-    let dec = if ax >= 100.0 { digits.saturating_sub(3) } else if ax >= 10.0 { digits.saturating_sub(2) } else { digits.saturating_sub(1) };
+    let dec = if ax >= 100.0 {
+        digits.saturating_sub(3)
+    } else if ax >= 10.0 {
+        digits.saturating_sub(2)
+    } else {
+        digits.saturating_sub(1)
+    };
     format!("{:.*} {}{}", dec, x, p, unit)
 }
 
@@ -2145,7 +2365,11 @@ mod platform_tests {
         let d = mdepths();
         assert_eq!(d[0].1, 0, "Auto first");
         assert!(d.windows(2).all(|w| w[0].1 < w[1].1), "ascending");
-        assert_eq!(d[d.len() - 1].1, oos_hal::model::Limits::standard().max_mem[0], "the list ends at the largest depth");
+        assert_eq!(
+            d[d.len() - 1].1,
+            oos_hal::model::Limits::standard().max_mem[0],
+            "the list ends at the largest depth"
+        );
         assert!(board().couplings().contains(&Coupling::Dc), "the fallback of fit_platform");
         assert!(n_ch() <= NCH && gen_count() <= NGEN);
     }

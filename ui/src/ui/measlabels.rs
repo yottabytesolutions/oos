@@ -113,7 +113,13 @@ impl Ui {
                         cv.line(x, y, x - 4, y + 7 * d, col);
                         cv.line(x, y, x + 4, y + 7 * d, col);
                     }
-                    self.meas_label(cv, x + 8 + label_half(self, &text), (y0 + y1) / 2 + verts * (label_h(self) + 2), &text, col);
+                    self.meas_label(
+                        cv,
+                        x + 8 + label_half(self, &text),
+                        (y0 + y1) / 2 + verts * (label_h(self) + 2),
+                        &text,
+                        col,
+                    );
                     verts += 1;
                 }
                 Some(Mark::Span(t0, t1)) => {
@@ -149,7 +155,18 @@ mod tests {
 
     fn square() -> Analysis {
         // rises at 1, 3, 5 ms, falls at 2, 4, 6 ms, 0..1 V
-        Analysis { valid: true, vmin: -0.1, vmax: 1.1, top: 1.0, base: 0.0, rises: vec![1e-3, 3e-3, 5e-3], falls: vec![2e-3, 4e-3, 6e-3], rise_time: 1e-5, fall_time: 2e-5, ..Default::default() }
+        Analysis {
+            valid: true,
+            vmin: -0.1,
+            vmax: 1.1,
+            top: 1.0,
+            base: 0.0,
+            rises: vec![1e-3, 3e-3, 5e-3],
+            falls: vec![2e-3, 4e-3, 6e-3],
+            rise_time: 1e-5,
+            fall_time: 2e-5,
+            ..Default::default()
+        }
     }
 
     #[test]

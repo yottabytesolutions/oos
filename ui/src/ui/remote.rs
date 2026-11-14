@@ -43,7 +43,9 @@ impl Ui {
 
     pub(super) fn remote_kind(it: Item) -> Option<Kind> {
         match it {
-            Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemSsh | Item::RemMdns | Item::RemName => Some(Kind::Choice),
+            Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemSsh | Item::RemMdns | Item::RemName => {
+                Some(Kind::Choice)
+            }
             _ => Self::ssh_kind(it),
         }
     }
@@ -81,7 +83,11 @@ impl Ui {
         let mut services = Vec::new();
         let mut add = |on: bool, kind: &str, port: u16, txt: &[&str]| {
             if on {
-                services.push(mdns::Service { kind: kind.into(), port, txt: txt.iter().map(|t| t.to_string()).collect() });
+                services.push(mdns::Service {
+                    kind: kind.into(),
+                    port,
+                    txt: txt.iter().map(|t| t.to_string()).collect(),
+                });
             }
         };
         add(s.remote_web, "_http._tcp", web_port, &["path=/"]);
@@ -89,7 +95,13 @@ impl Ui {
         add(s.remote_vxi11, "_vxi-11._tcp", 111, &[]);
         // the fork's SSH (docs/network.md 7): announced only while oos-ssh would listen (it needs `net.allow` as well)
         add(s.remote_ssh && crate::ssh::listens(), "_ssh._tcp", 22, &[]);
-        mdns::Config { on: s.remote_mdns, instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name), name, services, v6: crate::net6::enabled() }
+        mdns::Config {
+            on: s.remote_mdns,
+            instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name),
+            name,
+            services,
+            v6: crate::net6::enabled(),
+        }
     }
 
     /// The name's row: `<name>.local` while mDNS is on (the one in use: `-2` after a conflict), else the name.
@@ -102,7 +114,9 @@ impl Ui {
         let suffix = if self.sys.remote_mdns { ".local" } else { "" };
         let full = format!("{}{}", n, suffix);
         // a long name: as much as its row has room for, `.local` kept
-        let room = self.dlg_layout().and_then(|d| d.rows.iter().find(|r| r.it == Item::RemName).map(|r| Self::value_parts(r.ctrl).1.w - 44));
+        let room = self
+            .dlg_layout()
+            .and_then(|d| d.rows.iter().find(|r| r.it == Item::RemName).map(|r| Self::value_parts(r.ctrl).1.w - 44));
         let f = &self.fonts().mb;
         let Some(room) = room.filter(|&w| f.width(&full) > w) else { return full };
         let mut c: Vec<char> = n.chars().collect();
@@ -243,7 +257,13 @@ mod tests {
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
         // two columns of five: each switch has its address, port, settings or name on the same row
-        for (sw, info) in [(Item::RemWeb, Item::NetWeb), (Item::RemScpi, Item::RemScpiInfo), (Item::RemVxi, Item::RemVxiInfo), (Item::RemSsh, Item::Open(MenuId::Ssh)), (Item::RemMdns, Item::RemName)] {
+        for (sw, info) in [
+            (Item::RemWeb, Item::NetWeb),
+            (Item::RemScpi, Item::RemScpiInfo),
+            (Item::RemVxi, Item::RemVxiInfo),
+            (Item::RemSsh, Item::Open(MenuId::Ssh)),
+            (Item::RemMdns, Item::RemName),
+        ] {
             let a = d.rows.iter().find(|r| r.it == sw).unwrap().ctrl;
             let b = d.rows.iter().find(|r| r.it == info).unwrap().ctrl;
             assert!(a.y == b.y && a.x < b.x, "{:?} {:?}", sw, info);

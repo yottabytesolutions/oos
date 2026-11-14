@@ -23,7 +23,12 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
     if m.dec_proto == Proto::Parallel {
         // up to 16 data lines upwards from the main source, skipping the clock line
         let first = la[0].unwrap_or(0);
-        let lines: Vec<Vec<f32>> = (0..16u8).map(|k| (first + k) % 16).filter(|&n| Some(n) != la[2]).take(m.dec_bits.clamp(1, 16) as usize).map(wave).collect();
+        let lines: Vec<Vec<f32>> = (0..16u8)
+            .map(|k| (first + k) % 16)
+            .filter(|&n| Some(n) != la[2])
+            .take(m.dec_bits.clamp(1, 16) as usize)
+            .map(wave)
+            .collect();
         let refs: Vec<&[f32]> = lines.iter().map(|l| &l[..]).collect();
         let clk = la[2].map(wave);
         return Ok(oos_dsp::decode_ext::parallel(&refs, clk.as_deref(), oos_dsp::trigger::Slope::Rising, thr, hy));
@@ -76,13 +81,27 @@ fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result
         Proto::Parallel => {
             // dec_bits data lines from the main source upwards, skipping the clock
             let clk = m.dec_cs;
-            let lines: Vec<&[f32]> = (0..NCH).map(|k| (m.dec_src + k) % NCH).filter(|&c| Some(c) != clk).take(m.dec_bits.clamp(1, 4) as usize).map(get).collect::<Result<_, _>>()?;
+            let lines: Vec<&[f32]> = (0..NCH)
+                .map(|k| (m.dec_src + k) % NCH)
+                .filter(|&c| Some(c) != clk)
+                .take(m.dec_bits.clamp(1, 4) as usize)
+                .map(get)
+                .collect::<Result<_, _>>()?;
             x1::parallel(&lines, opt(clk)?, oos_dsp::trigger::Slope::Rising, thr, hy)
         }
         Proto::CanFd => x1::can_fd(line, dt, can_rate, crate::decode::FD_RATES[m.dec_fdrate], thr, hy, m.dec_canh),
         Proto::FlexRay => x1::flexray(line, dt, 10e6, thr, hy, false),
         Proto::ModbusRtu => x1::modbus_rtu(line, dt, baud, m.dec_parity, thr, hy, false),
-        Proto::ModbusAscii => x1::modbus_ascii(line, dt, baud, m.dec_bits.clamp(7, 8), if m.dec_parity == Parity::None { Parity::Even } else { m.dec_parity }, thr, hy, false),
+        Proto::ModbusAscii => x1::modbus_ascii(
+            line,
+            dt,
+            baud,
+            m.dec_bits.clamp(7, 8),
+            if m.dec_parity == Parity::None { Parity::Even } else { m.dec_parity },
+            thr,
+            hy,
+            false,
+        ),
         Proto::OneWire => x1::onewire(get(m.dec_src)?, dt, thr, hy, false),
         Proto::Ds2482 => x1::ds2482(&i2c(get(m.dec_src)?, get(m.dec_src2)?, thr, hy)),
         Proto::Uart9 => x1::uart9(line, dt, baud, thr, hy, false),
@@ -114,7 +133,12 @@ fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result
         Proto::Module(i) => {
             let p = crate::protocols::get(i);
             let r = p.roles();
-            let lines = [Some(line), if r[1].is_some() { Some(get(m.dec_src2)?) } else { None }, if r[2].is_some() { opt(m.dec_cs)? } else { None }, if r[3].is_some() { opt(m.dec_src4)? } else { None }];
+            let lines = [
+                Some(line),
+                if r[1].is_some() { Some(get(m.dec_src2)?) } else { None },
+                if r[2].is_some() { opt(m.dec_cs)? } else { None },
+                if r[3].is_some() { opt(m.dec_src4)? } else { None },
+            ];
             return p.decode(&crate::protocols::Lines { lines, dt, thr, hy, opt: m.dec_opts() });
         }
     })
@@ -148,7 +172,14 @@ pub fn matches(m: &Model, p: &Packet) -> bool {
         },
         // USB: the token address or the PID byte
         BusWhat::Id if m.dec_proto == Proto::Usb => matches!(p.kind, Kind::Field("ADDR" | "PID")) && p.value == v,
-        BusWhat::Id => (matches!(p.kind, Kind::Id { .. } | Kind::Addr { .. } | Kind::Word { cmd: true }) || p.kind == Kind::Field("ROM") || p.kind == Kind::Field("CMD") || p.kind == Kind::Field("HDR") || p.kind == Kind::Field("STAT")) && p.value == v,
+        BusWhat::Id => {
+            (matches!(p.kind, Kind::Id { .. } | Kind::Addr { .. } | Kind::Word { cmd: true })
+                || p.kind == Kind::Field("ROM")
+                || p.kind == Kind::Field("CMD")
+                || p.kind == Kind::Field("HDR")
+                || p.kind == Kind::Field("STAT"))
+                && p.value == v
+        }
         BusWhat::Data => matches!(p.kind, Kind::Data | Kind::Sample { .. } | Kind::Word { cmd: false }) && p.value == v,
         BusWhat::Error => !p.ok,
     }

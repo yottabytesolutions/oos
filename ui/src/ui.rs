@@ -3,48 +3,48 @@
 
 //! Layout, rendering, menus and input handling of the OOS scope screen (1024 x 600).
 
+use crate::board::{board, Board};
 use crate::font::{Font, Fonts};
-use crate::math::*;
 use crate::gfx::*;
+use crate::math::*;
 use crate::model::*;
 use crate::wave::*;
-use crate::board::{board, Board};
 
+mod afg;
 mod analysis;
+mod autoset;
+mod backlight;
+pub mod bode;
 mod busview;
 mod eyepage;
-mod panes;
-mod autoset;
-mod selfcal;
-pub mod bode;
-pub mod startup;
-mod afg;
-mod sysinfo;
-mod tables;
+mod graphics;
+mod hwmask;
+mod hwzone;
 mod logger;
 mod measlabels;
 mod overclock;
-mod tools;
-mod hwmask;
-mod hwzone;
+mod panes;
+mod remote;
+mod selfcal;
 mod sertrig;
+mod ssh;
+pub mod startup;
+mod sysinfo;
+mod tables;
+mod time;
+mod tools;
 mod update;
 mod viewmore;
-mod wlan;
-mod windows;
-mod time;
-mod remote;
-mod ssh;
-mod backlight;
-mod graphics;
 pub mod views;
+mod windows;
+mod wlan;
 pub use views::VIEWS_MAX;
-mod script;
+mod bwtest;
+pub mod la;
 #[cfg(test)]
 mod lint;
-mod bwtest;
 mod marks;
-pub mod la;
+mod script;
 
 // The frame (top bar, waveform area, bottom bar with the cards) comes from the screen size: `Ui::frame`,
 // `crate::layout`. Top bar: run state, menu buttons, network (buttons drawn 30 px high, tapped over the full bar
@@ -106,9 +106,33 @@ pub struct Lay {
 
 /// The layouts of Normal, Large and Larger.
 pub const LAYS: [Lay; 3] = [
-    Lay { strip_row: 18, dlg_label: 96, dlg_col: 400, grid_col: 150, results_w: 196, card: (18, 42, 58), res_pitch: (22, 42) },
-    Lay { strip_row: 21, dlg_label: 104, dlg_col: 420, grid_col: 168, results_w: 224, card: (19, 43, 59), res_pitch: (24, 46) },
-    Lay { strip_row: 24, dlg_label: 116, dlg_col: 440, grid_col: 190, results_w: 250, card: (20, 43, 59), res_pitch: (26, 50) },
+    Lay {
+        strip_row: 18,
+        dlg_label: 96,
+        dlg_col: 400,
+        grid_col: 150,
+        results_w: 196,
+        card: (18, 42, 58),
+        res_pitch: (22, 42),
+    },
+    Lay {
+        strip_row: 21,
+        dlg_label: 104,
+        dlg_col: 420,
+        grid_col: 168,
+        results_w: 224,
+        card: (19, 43, 59),
+        res_pitch: (24, 46),
+    },
+    Lay {
+        strip_row: 24,
+        dlg_label: 116,
+        dlg_col: 440,
+        grid_col: 190,
+        results_w: 250,
+        card: (20, 43, 59),
+        res_pitch: (26, 50),
+    },
 ];
 /// Menu dialogs: header height, row pitch and control height of the list rows (touch targets of 40 px).
 const DLG_HEAD: i32 = 50;
@@ -168,7 +192,8 @@ const GRID_FRAME: Rgb = rgb(0x64, 0x64, 0x67);
 
 /// Averaging counts of Acquire > Averages.
 /// Stops of the density scale, rare to frequent (`heat_palette`).
-const HEAT_STOPS: [(f32, f32, f32); 5] = [(40.0, 70.0, 255.0), (0.0, 220.0, 255.0), (40.0, 240.0, 70.0), (255.0, 235.0, 30.0), (255.0, 40.0, 30.0)];
+const HEAT_STOPS: [(f32, f32, f32); 5] =
+    [(40.0, 70.0, 255.0), (0.0, 220.0, 255.0), (40.0, 240.0, 70.0), (255.0, 235.0, 30.0), (255.0, 40.0, 30.0)];
 pub const AVERAGES: [u32; 10] = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 
 /// Front-panel key codes (data byte of the MCU frame, see docs/protocols/frontpanel.md).
@@ -227,7 +252,13 @@ const DEC_BAND: i32 = 28;
 
 /// Reference slots.
 /// Colours of the references.
-const REF_COLORS: [(&str, Rgb); 5] = [("White", rgb(0xd8, 0xd8, 0xd8)), ("Red", rgb(0xf0, 0x60, 0x60)), ("Green", rgb(0x60, 0xe0, 0x90)), ("Blue", rgb(0x70, 0xa8, 0xf8)), ("Violet", rgb(0xc8, 0x88, 0xf0))];
+const REF_COLORS: [(&str, Rgb); 5] = [
+    ("White", rgb(0xd8, 0xd8, 0xd8)),
+    ("Red", rgb(0xf0, 0x60, 0x60)),
+    ("Green", rgb(0x60, 0xe0, 0x90)),
+    ("Blue", rgb(0x70, 0xa8, 0xf8)),
+    ("Violet", rgb(0xc8, 0x88, 0xf0)),
+];
 
 const NREF: usize = 10;
 /// Kinds of delay and phase measurement and of second panes, for the setups.
@@ -237,25 +268,60 @@ pub use panes::{PANE_HARMS, TREND_SEL_N};
 pub const LOG_STEPS_N: usize = logger::LOG_STEPS.len();
 
 /// Keys of the frequency keypad: the unit ends the entry.
-const FREQ_KEYS: [&str; 18] = ["7", "8", "9", "mHz", "4", "5", "6", "Hz", "1", "2", "3", "kHz", "0", ".", "Del", "MHz", "Clear", "Cancel"];
+const FREQ_KEYS: [&str; 18] =
+    ["7", "8", "9", "mHz", "4", "5", "6", "Hz", "1", "2", "3", "kHz", "0", ".", "Del", "MHz", "Clear", "Cancel"];
 /// Keys of the hex keypad picker.
 /// Largest protocol trigger value: 40 bits (five I2C data bytes).
 pub const BUS_VAL_MAX: u64 = 0xff_ffff_ffff;
 
-const KEYPAD: [&str; 19] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "Del", "Clear", "OK"];
+const KEYPAD: [&str; 19] =
+    ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "Del", "Clear", "OK"];
 
 /// A channel key on the front panel held this many seconds: AC/DC (`Ui::panel_key`).
 pub const LONG_PRESS: f64 = 0.6;
 
 pub const KEY_NAMES: [(&str, u8); 30] = [
-    ("navfwd", 0x06), ("navplay", 0x07), ("navback", 0x08),
-    ("ref", 0x01), ("la", 0x02), ("gi", 0x03), ("hmenu", 0x04), ("navigate", 0x05), ("slope", 0x09), ("force", 0x0a), ("clear", 0x0b),
-    ("runstop", 0x0c), ("auto", 0x0d), ("single", 0x0e), ("measure", 0x0f), ("cursor", 0x10), ("default", 0x11), ("analyse", 0x12),
-    ("touchlock", 0x13), ("quick", 0x14), ("ch1", 0x15), ("ch2", 0x16), ("ch3", 0x17), ("ch4", 0x18), ("math", 0x19), ("tmenu", 0x1a),
-    ("power", 0x1b), ("hpos", 0x8c), ("vpos", 0x9c), ("tlevel", 0xec),
+    ("navfwd", 0x06),
+    ("navplay", 0x07),
+    ("navback", 0x08),
+    ("ref", 0x01),
+    ("la", 0x02),
+    ("gi", 0x03),
+    ("hmenu", 0x04),
+    ("navigate", 0x05),
+    ("slope", 0x09),
+    ("force", 0x0a),
+    ("clear", 0x0b),
+    ("runstop", 0x0c),
+    ("auto", 0x0d),
+    ("single", 0x0e),
+    ("measure", 0x0f),
+    ("cursor", 0x10),
+    ("default", 0x11),
+    ("analyse", 0x12),
+    ("touchlock", 0x13),
+    ("quick", 0x14),
+    ("ch1", 0x15),
+    ("ch2", 0x16),
+    ("ch3", 0x17),
+    ("ch4", 0x18),
+    ("math", 0x19),
+    ("tmenu", 0x1a),
+    ("power", 0x1b),
+    ("hpos", 0x8c),
+    ("vpos", 0x9c),
+    ("tlevel", 0xec),
 ];
 /// Knob names -> CW code (CCW = CW + 1, push = CW + 2).
-pub const KNOB_NAMES: [(&str, u8); 7] = [("hpos", 0x8a), ("vpos", 0x9a), ("multi2", 0xaa), ("multi1", 0xba), ("hscale", 0xca), ("vscale", 0xda), ("tlevel", 0xea)];
+pub const KNOB_NAMES: [(&str, u8); 7] = [
+    ("hpos", 0x8a),
+    ("vpos", 0x9a),
+    ("multi2", 0xaa),
+    ("multi1", 0xba),
+    ("hscale", 0xca),
+    ("vscale", 0xda),
+    ("tlevel", 0xea),
+];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuId {
@@ -795,8 +861,12 @@ type MeasDone = (u64, Vec<(usize, Stats, oos_dsp::measure::Analysis)>);
 
 /// The measurements of a record, each channel on its own thread (the four channels of 100 kpts took 27 ms in a row
 /// on the unit).
-fn measure_channels(work: &[(usize, &[f32], f64, f64)], cheap: bool) -> Vec<(usize, Stats, oos_dsp::measure::Analysis)> {
-    let one = |&(c, v, dt, min): &(usize, &[f32], f64, f64)| match crate::framestats::cheap_results(v).filter(|_| cheap) {
+fn measure_channels(
+    work: &[(usize, &[f32], f64, f64)],
+    cheap: bool,
+) -> Vec<(usize, Stats, oos_dsp::measure::Analysis)> {
+    let one = |&(c, v, dt, min): &(usize, &[f32], f64, f64)| match crate::framestats::cheap_results(v).filter(|_| cheap)
+    {
         Some((st, an)) => (c, st, an),
         None => (c, stats(v, dt), oos_dsp::measure::analyze_min(v, dt, min)),
     };
@@ -829,7 +899,8 @@ impl MeasWorker {
             .spawn(move || {
                 crate::http::to_little_cores();
                 while let Ok((n, cheap, work)) = jobs.recv() {
-                    let w: Vec<(usize, &[f32], f64, f64)> = work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
+                    let w: Vec<(usize, &[f32], f64, f64)> =
+                        work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
                     let t0 = std::time::Instant::now();
                     let r = measure_channels(&w, cheap);
                     // deep raw records (millions of samples): their cost on the state line (deepmeas::cost)
@@ -1201,7 +1272,19 @@ impl Ui {
             start_up: None,
             start_up_last: None,
             bode: Default::default(),
-            touch: TouchState { down: false, x0: 0, y0: 0, x: 0, y: 0, drag: Drag::None, start_offset: 0.0, start_delay: 0.0, start_level: 0.0, start_cur: 0.0, win: 0 },
+            touch: TouchState {
+                down: false,
+                x0: 0,
+                y0: 0,
+                x: 0,
+                y: 0,
+                drag: Drag::None,
+                start_offset: 0.0,
+                start_delay: 0.0,
+                start_level: 0.0,
+                start_cur: 0.0,
+                win: 0,
+            },
             mstat: Vec::new(),
             trend: Vec::new(),
             pn: Default::default(),
@@ -1319,7 +1402,8 @@ impl Ui {
         if self.results_pane_on() {
             return dvm;
         }
-        let meas = if self.results_panel() { 0 } else { self.meas_groups().iter().map(|&c| self.meas_strip_rows(c)).sum() };
+        let meas =
+            if self.results_panel() { 0 } else { self.meas_groups().iter().map(|&c| self.meas_strip_rows(c)).sum() };
         meas + (self.m.cursor != CursorMode::Off) as i32 + dvm
     }
 
@@ -1350,17 +1434,29 @@ impl Ui {
     }
 
     fn plot_top(&self) -> i32 {
-        if self.full_on() { 0 } else { self.frame().body.y }
+        if self.full_on() {
+            0
+        } else {
+            self.frame().body.y
+        }
     }
 
     /// Where the measurement rows end: the cards, or the bottom of the screen.
     fn plot_bottom(&self) -> i32 {
-        if self.full_on() { self.scr.h } else { self.frame().bottom.y }
+        if self.full_on() {
+            self.scr.h
+        } else {
+            self.frame().bottom.y
+        }
     }
 
     /// Waveform windows in use: one while zoom, XY or an analysis view has the plot.
     fn n_wins(&self) -> usize {
-        if self.m.zoom || self.view_on() { 1 } else { self.m.win_layout.count() }
+        if self.m.zoom || self.view_on() {
+            1
+        } else {
+            self.m.win_layout.count()
+        }
     }
 
     /// The windows in the plot `g`, all of the same size (they share the phosphor size), in reading order.
@@ -1400,7 +1496,11 @@ impl Ui {
 
     /// The rectangle channel `c` is drawn in: its window, or the main waveform area (zoom).
     fn ch_area(&self, c: usize) -> Rect {
-        if self.wins.len() > 1 { self.wins[self.win_of(c)] } else { self.area }
+        if self.wins.len() > 1 {
+            self.wins[self.win_of(c)]
+        } else {
+            self.area
+        }
     }
 
     /// Window of the LA lanes.
@@ -1410,12 +1510,17 @@ impl Ui {
 
     /// Area whose time axis the LA lanes and the decoders on them use: the window of the LA, or the main area.
     fn lane_area(&self) -> Rect {
-        if self.wins.len() > 1 { self.wins[self.la_win_of()] } else { self.area }
+        if self.wins.len() > 1 {
+            self.wins[self.la_win_of()]
+        } else {
+            self.area
+        }
     }
 
     /// Whether window `w` has an analog channel or a math channel in it.
     fn win_has_analog(&self, w: usize) -> bool {
-        (0..NCH).any(|c| self.m.ch[c].on && self.win_of(c) == w) || (0..NMATH).any(|k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == w)
+        (0..NCH).any(|c| self.m.ch[c].on && self.win_of(c) == w)
+            || (0..NMATH).any(|k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == w)
     }
 
     /// Window of decoder `k`'s band in the plot, or None when it has a row under the LA lanes.
@@ -1429,7 +1534,11 @@ impl Ui {
 
     /// Area for cards over the plot (tables, results): the whole plot when it is split.
     fn over_area(&self) -> Rect {
-        if self.wins.len() > 1 { self.grid } else { self.area }
+        if self.wins.len() > 1 {
+            self.grid
+        } else {
+            self.area
+        }
     }
 
     /// Spreads the channels that are on over the windows of a new layout, in channel order (math channels after
@@ -1475,7 +1584,8 @@ impl Ui {
         let l = 6;
         for (sx, sy) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
             // corner of the bracket, and the way its arms go (x, y)
-            let (px, py, ax, ay) = if self.full_on() { (cx + sx * 3, cy + sy * 2, sx, sy) } else { (cx + sx * 10, cy + sy * 8, -sx, -sy) };
+            let (px, py, ax, ay) =
+                if self.full_on() { (cx + sx * 3, cy + sy * 2, sx, sy) } else { (cx + sx * 10, cy + sy * 8, -sx, -sy) };
             let (hx0, hx1) = (px.min(px + ax * (l - 1)), px.max(px + ax * (l - 1)));
             let (vy0, vy1) = (py.min(py + ay * (l - 1)), py.max(py + ay * (l - 1)));
             // 2 px thick, the second pixel on the side of the arms
@@ -1553,7 +1663,11 @@ impl Ui {
 
     /// The LA lines of the last record, one row per change.
     pub fn web_la_csv(&self) -> Result<String, String> {
-        let la = self.last[0].as_ref().and_then(|r| r.la.as_ref()).filter(|_| self.m.la_on()).ok_or("No logic analyser record")?;
+        let la = self.last[0]
+            .as_ref()
+            .and_then(|r| r.la.as_ref())
+            .filter(|_| self.m.la_on())
+            .ok_or("No logic analyser record")?;
         Ok(crate::store::la_csv(la, &self.m.la.lines()))
     }
 
@@ -1611,7 +1725,10 @@ impl Ui {
             && !(m.mask_on && m.mask_stop)
             && self.hist_pos.is_none()
             && self.seg_pos.is_none()
-            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| crate::compress::live(&r.frame) || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame)))
+            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| {
+                crate::compress::live(&r.frame)
+                    || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame))
+            })
     }
 
     /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
@@ -1675,11 +1792,15 @@ impl Ui {
     pub fn raw_volts(&self, c: usize) -> Option<Vec<f32>> {
         let r = self.last[0].as_ref()?.raw.as_ref()?;
         let v = r.frame.ch.get(c)?;
-        (r.i1 <= v.len() && r.i1 > r.i0 && !r.frame.envelope).then(|| v[r.i0..r.i1].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect())
+        (r.i1 <= v.len() && r.i1 > r.i0 && !r.frame.envelope)
+            .then(|| v[r.i0..r.i1].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect())
     }
 
     pub fn record_volts(&self, c: usize) -> Vec<f32> {
-        self.last[0].as_ref().map(|r| r.ch[c].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect()).unwrap_or_default()
+        self.last[0]
+            .as_ref()
+            .map(|r| r.ch[c].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect())
+            .unwrap_or_default()
     }
 
     pub fn toast(&mut self, s: &str) {
@@ -1899,7 +2020,13 @@ impl Ui {
                     }
                     // protocol trigger, Normal and Single: the hardware fires on every edge of the line, only the decoder
                     // decides; Single waits on for the record that holds the event
-                    Some(rec) if self.m.trig_type == TrigType::Bus && self.m.trig_mode != TrigMode::Auto && !rec.triggered && !rec.partial && self.bus_can_match(&rec) => {
+                    Some(rec)
+                        if self.m.trig_type == TrigType::Bus
+                            && self.m.trig_mode != TrigMode::Auto
+                            && !rec.triggered
+                            && !rec.partial
+                            && self.bus_can_match(&rec) =>
+                    {
                         self.m.status = TrigStatus::Wait;
                     }
                     Some(mut rec) => {
@@ -1942,7 +2069,11 @@ impl Ui {
                         // a deep raw window takes the record path in `draw_frame` (flicker.md): that path is this record,
                         // already made by `Source::acquire`, so it is drawn below instead of made once more (25 to 50 ms
                         // on the host for a 10 to 12 M-point window)
-                        let frame = rec.raw.as_ref().filter(|r| self.fast_ok() && !crate::deepmeas::deep_raw_frame(&r.frame)).map(|r| r.frame.clone());
+                        let frame = rec
+                            .raw
+                            .as_ref()
+                            .filter(|r| self.fast_ok() && !crate::deepmeas::deep_raw_frame(&r.frame))
+                            .map(|r| r.frame.clone());
                         if let Some(r) = rec.raw.as_ref() {
                             crate::pacing::drawn(r.frame.cfg, 1);
                         }
@@ -1954,9 +2085,29 @@ impl Ui {
                             n_rec += 1;
                             for c in 0..NCH {
                                 if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                                    self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
+                                    self.ph.draw_ex(
+                                        c,
+                                        &self.m,
+                                        mainv,
+                                        rec.t0,
+                                        rec.dt,
+                                        &rec.ch[c],
+                                        24,
+                                        zw.as_deref(),
+                                        rec.pairs,
+                                    );
                                     if self.m.zoom {
-                                        self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
+                                        self.phz.draw_ex(
+                                            c,
+                                            &self.m,
+                                            zv,
+                                            rec.t0,
+                                            rec.dt,
+                                            &rec.ch[c],
+                                            24,
+                                            zw.as_deref(),
+                                            rec.pairs,
+                                        );
                                     }
                                 }
                             }
@@ -1985,7 +2136,9 @@ impl Ui {
                                 self.toast(&format!("{} segments recorded", self.seg_n));
                                 break;
                             }
-                        } else if self.m.trig_mode == TrigMode::Single && !self.last[0].as_ref().is_some_and(|r| r.partial) {
+                        } else if self.m.trig_mode == TrigMode::Single
+                            && !self.last[0].as_ref().is_some_and(|r| r.partial)
+                        {
                             self.m.run = RunState::Stop;
                             break;
                         }
@@ -2033,12 +2186,17 @@ impl Ui {
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
             self.wfm_total += got as u64;
             crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
-            crate::pacing::composition(n_dep, n_rec, newest.map(|t: std::time::Instant| t.elapsed().as_secs_f32() * 1e3));
+            crate::pacing::composition(
+                n_dep,
+                n_rec,
+                newest.map(|t: std::time::Instant| t.elapsed().as_secs_f32() * 1e3),
+            );
             crate::pacing::picture(got);
             // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
             // measurement stays that of the last raw record
             let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
-            let hold = crate::deepmeas::hold(&self.m, shown, self.src.hw_deep_ok()) || crate::compress::hold(&self.m, shown);
+            let hold =
+                crate::deepmeas::hold(&self.m, shown, self.src.hw_deep_ok()) || crate::compress::hold(&self.m, shown);
             if got > 0 {
                 let p0 = std::time::Instant::now();
                 if hold {
@@ -2083,9 +2241,29 @@ impl Ui {
                 let zw = self.z_weights(&rec);
                 for c in 0..NCH {
                     if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                        self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref(), rec.pairs);
+                        self.ph.draw_ex(
+                            c,
+                            &self.m,
+                            mainv,
+                            rec.t0,
+                            rec.dt,
+                            &rec.ch[c],
+                            24 * 6,
+                            zw.as_deref(),
+                            rec.pairs,
+                        );
                         if self.m.zoom {
-                            self.phz.draw_ex(c, &self.m, zv, rec.t0, rec.dt, &rec.ch[c], 24 * 6, zw.as_deref(), rec.pairs);
+                            self.phz.draw_ex(
+                                c,
+                                &self.m,
+                                zv,
+                                rec.t0,
+                                rec.dt,
+                                &rec.ch[c],
+                                24 * 6,
+                                zw.as_deref(),
+                                rec.pairs,
+                            );
                         }
                     }
                 }
@@ -2152,7 +2330,10 @@ impl Ui {
     /// One line of settings for the HDMI workspace: channels, time base, trigger, state, rate.
     pub fn hdmi_header(&self) -> String {
         let m = &self.m;
-        let mut parts: Vec<String> = (0..NCH).filter(|&c| m.ch[c].on).map(|c| format!("CH{} {}/div", c + 1, si_short(m.ch[c].volts_per_div() as f64, "V"))).collect();
+        let mut parts: Vec<String> = (0..NCH)
+            .filter(|&c| m.ch[c].on)
+            .map(|c| format!("CH{} {}/div", c + 1, si_short(m.ch[c].volts_per_div() as f64, "V")))
+            .collect();
         parts.push(format!("{}/div", si_short(m.time_per_div() as f64, "s")));
         parts.push(match m.trig_line() {
             Some(n) => format!("Trig D{}", n),
@@ -2333,7 +2514,8 @@ impl Ui {
     /// The traces of a plot window: drawn now on one canvas, a job for the GPU with layers. `zoom`: the zoom
     /// window's maps.
     fn traces(&self, l: &mut Layers, area: Rect, zoom: bool) {
-        let (ph, vmax, vmax_cg) = if zoom { (&self.phz, &self.vmaxz, self.vmaxz_cg) } else { (&self.ph, &self.vmax, self.vmax_cg) };
+        let (ph, vmax, vmax_cg) =
+            if zoom { (&self.phz, &self.vmaxz, self.vmaxz_cg) } else { (&self.ph, &self.vmax, self.vmax_cg) };
         if l.over.is_none() {
             return self.draw_traces(l.under, area, ph, vmax, vmax_cg);
         }
@@ -2369,7 +2551,15 @@ impl Ui {
 
     /// `render_view` into layers (System > Graphics = GPU): the traces become jobs at the monitor's size.
     pub fn render_view_layers(&mut self, l: &mut Layers) {
-        let keep = (self.scr, self.grid, std::mem::take(&mut self.wins), self.area, self.cur_win, self.frames, self.hdmi_snap_want);
+        let keep = (
+            self.scr,
+            self.grid,
+            std::mem::take(&mut self.wins),
+            self.area,
+            self.cur_win,
+            self.frames,
+            self.hdmi_snap_want,
+        );
         self.scr = Screen { w: l.under.w, h: l.under.h };
         (self.view_pass, self.hdmi_snap_want) = (true, false);
         self.render_layers(l);
@@ -2445,7 +2635,11 @@ impl Ui {
     fn draw_axes(&self, cv: &mut Canvas) {
         let f = self.fonts();
         let a = self.area;
-        let c = if self.m.ch[self.m.active].on && self.shows(self.m.active) { Some(self.m.active) } else { (0..NCH).find(|&i| self.m.ch[i].on && self.shows(i)) };
+        let c = if self.m.ch[self.m.active].on && self.shows(self.m.active) {
+            Some(self.m.active)
+        } else {
+            (0..NCH).find(|&i| self.m.ch[i].on && self.shows(i))
+        };
         if let Some(c) = c {
             let ch = &self.m.ch[c];
             let vpd = ch.volts_per_div();
@@ -2454,7 +2648,9 @@ impl Ui {
             if self.m.mask_on && self.mask.is_some() && self.shows(self.m.mask_src) {
                 taken.push(Rect::new(a.x, a.y + 22, a.w, 28));
             }
-            let bands = (0..DECODERS).filter(|&k| self.m.dec_is_on(k) && self.dec_band_win(k) == Some(self.cur_win)).count() as i32;
+            let bands = (0..DECODERS)
+                .filter(|&k| self.m.dec_is_on(k) && self.dec_band_win(k) == Some(self.cur_win))
+                .count() as i32;
             if bands > 0 {
                 taken.push(Rect::new(a.x, a.y + a.h - 50 - (bands - 1) * DEC_BAND, a.w, bands * DEC_BAND));
             }
@@ -2593,7 +2789,11 @@ impl Ui {
         let mut lut = [0u32; 1024];
         for (i, l) in lut.iter_mut().enumerate() {
             let v = (i as f32 + 0.5) / top;
-            *l = if i == 0 && shift == 0 { 0 } else { (floor + (255.0 - floor) * (v * gain).min(1.0).sqrt()).min(255.0) as u32 };
+            *l = if i == 0 && shift == 0 {
+                0
+            } else {
+                (floor + (255.0 - floor) * (v * gain).min(1.0).sqrt()).min(255.0) as u32
+            };
         }
         (lut, shift, floor as u32 / 2)
     }
@@ -2630,7 +2830,8 @@ impl Ui {
     /// density relative to the densest pixel (blue = rare .. red = frequent). Per frame only a 1024-entry LUT is
     /// built; per pixel it is an add per channel and one table look-up.
     fn draw_graded(&self, cv: &mut Canvas, area: Rect, ph: &Phosphor, vmax: u32) {
-        let maps: Vec<&[u16]> = (0..NCH).filter(|&c| self.m.ch[c].on && self.shows(c)).map(|c| ph.map[c].as_slice()).collect();
+        let maps: Vec<&[u16]> =
+            (0..NCH).filter(|&c| self.m.ch[c].on && self.shows(c)).map(|c| ph.map[c].as_slice()).collect();
         if maps.is_empty() {
             return;
         }
@@ -2715,7 +2916,8 @@ impl Ui {
         let ch = &self.m.ch[self.m.mask_src];
         let ppd = a.h as f32 / VDIV;
         let cy = a.y as f32 + a.h as f32 / 2.0;
-        let y_of = |v: f32| -> i32 { (cy - (v + ch.offset) / ch.volts_per_div() * ppd).round().clamp(-1e6, 1e6) as i32 };
+        let y_of =
+            |v: f32| -> i32 { (cy - (v + ch.offset) / ch.volts_per_div() * ppd).round().clamp(-1e6, 1e6) as i32 };
         let (top, bot) = (a.y, a.y + a.h);
         for x in 0..a.w {
             let (lo, hi) = mask.band(x as f64 / a.w as f64, (x + 1) as f64 / a.w as f64);
@@ -2932,13 +3134,21 @@ impl Ui {
 
     fn draw_math(&self, cv: &mut Canvas) {
         // all traces first, then the labels on top of them
-        let on: Vec<usize> = (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.cur_win).collect();
-        let labels: Vec<Option<String>> = on.iter().enumerate().map(|(row, &k)| self.draw_math_ch(cv, k, row as i32)).collect();
+        let on: Vec<usize> = (0..NMATH)
+            .filter(|&k| self.m.math_ch(k).op != MathOp::Off && self.math_win_of(k) == self.cur_win)
+            .collect();
+        let labels: Vec<Option<String>> =
+            on.iter().enumerate().map(|(row, &k)| self.draw_math_ch(cv, k, row as i32)).collect();
         let f = self.fonts();
         for (row, (label, &k)) in labels.iter().zip(&on).enumerate() {
             if let Some(label) = label {
                 // top right, under the status line, one row per math channel (the results panel goes below them)
-                let r = Rect::new(self.area.x + self.area.w - 12 - f.s.width(label) - 16, self.area.y + 22 + 26 * row as i32, f.s.width(label) + 16, 20);
+                let r = Rect::new(
+                    self.area.x + self.area.w - 12 - f.s.width(label) - 16,
+                    self.area.y + 22 + 26 * row as i32,
+                    f.s.width(label) + 16,
+                    20,
+                );
                 cv.round(r, 4, rgb(0x1c, 0x16, 0x28), 230);
                 cv.text_in(&f.s, r, 1, label, MATH_COLORS[k % MATH_COLORS.len()]);
             }
@@ -2981,7 +3191,14 @@ impl Ui {
                 }
                 prev = Some((x, y));
             }
-            label = format!("M{} FFT {} {}  {} dB/div  {}/div", k + 1, src_name(c.a), c.win.name(), dbdiv, si_short(span / HDIV as f64, "Hz"));
+            label = format!(
+                "M{} FFT {} {}  {} dB/div  {}/div",
+                k + 1,
+                src_name(c.a),
+                c.win.name(),
+                dbdiv,
+                si_short(span / HDIV as f64, "Hz")
+            );
         } else {
             let w = self.math_wave_of(k);
             if w.is_empty() {
@@ -3148,7 +3365,8 @@ impl Ui {
             if x1 - x0 < 3 {
                 continue;
             }
-            let is_addr = matches!(p.kind, Kind::Addr { .. } | Kind::Id { .. } | Kind::Word { cmd: true } | Kind::Field(_));
+            let is_addr =
+                matches!(p.kind, Kind::Addr { .. } | Kind::Id { .. } | Kind::Word { cmd: true } | Kind::Field(_));
             let base = if is_addr { ACCENT } else { col };
             let fill = if p.ok { scale(base, 70) } else { rgb(0x70, 0x18, 0x18) };
             cv.fill(Rect::new(x0 + 3, y, x1 - x0 - 6, h), fill);
@@ -3338,12 +3556,26 @@ impl Ui {
             Drag::Offset(c) if self.shows(c) => {
                 let y = self.y_of_volts(c, 0.0);
                 cv.dashed_hline(a.x, a.x + a.w - 1, y, 6, 4, CH_COLORS[c]);
-                tag(cv, a.x + 8, y - 30, &format!("Offset {}", si(self.m.ch[c].offset as f64, self.m.unit(c))), CH_COLORS[c]);
+                tag(
+                    cv,
+                    a.x + 8,
+                    y - 30,
+                    &format!("Offset {}", si(self.m.ch[c].offset as f64, self.m.unit(c))),
+                    CH_COLORS[c],
+                );
             }
-            Drag::Delay if self.cur_win == self.touch.win.min(self.wins.len().max(1) - 1) => tag(cv, a.x + a.w / 2 - 60, a.y + 12, &format!("Delay {}", si(self.view().1 as f64, "s")), ACCENT),
+            Drag::Delay if self.cur_win == self.touch.win.min(self.wins.len().max(1) - 1) => {
+                tag(cv, a.x + a.w / 2 - 60, a.y + 12, &format!("Delay {}", si(self.view().1 as f64, "s")), ACCENT)
+            }
             Drag::Level if self.shows(ts) => {
                 let y = self.y_of_volts(ts, self.m.trig_level);
-                tag(cv, a.x + a.w - 130, y - 30, &format!("Level {}", si(self.m.trig_level as f64, self.m.unit(ts))), ACCENT);
+                tag(
+                    cv,
+                    a.x + a.w - 130,
+                    y - 30,
+                    &format!("Level {}", si(self.m.trig_level as f64, self.m.unit(ts))),
+                    ACCENT,
+                );
             }
             _ => {}
         }
@@ -3443,7 +3675,11 @@ impl Ui {
                 let va = (0.5 - self.m.cur_a) * VDIV * ch.volts_per_div() - ch.offset;
                 let vb = (0.5 - self.m.cur_b) * VDIV * ch.volts_per_div() - ch.offset;
                 let u = ch.unit.name();
-                vec![("Y1".into(), si(va as f64, u)), ("Y2".into(), si(vb as f64, u)), ("\u{394}Y".into(), si((vb - va) as f64, u))]
+                vec![
+                    ("Y1".into(), si(va as f64, u)),
+                    ("Y2".into(), si(vb as f64, u)),
+                    ("\u{394}Y".into(), si((vb - va) as f64, u)),
+                ]
             }
         }
     }
@@ -3504,7 +3740,8 @@ impl Ui {
         let f = self.fonts();
         let g = self.grid;
         // the rows sit on the cards: what the plot's whole divisions leave over goes between plot and rows
-        let mut y = (self.plot_bottom() + 2 - self.strip_rows() * self.lay().strip_row).max(g.y + g.h + 4 + self.la_strip_h() + self.pane_h());
+        let mut y = (self.plot_bottom() + 2 - self.strip_rows() * self.lay().strip_row)
+            .max(g.y + g.h + 4 + self.la_strip_h() + self.pane_h());
         // bar height and text baseline of a row; the channel pill and the values right of it
         let bh = self.lay().strip_row - 2;
         let base = (bh + f.s.size * 72 / 100) / 2;
@@ -3560,7 +3797,8 @@ impl Ui {
             let vals = self.cursor_values();
             let x0 = r.x + r.w + 10;
             // the pitch of the values, closer where a large text size would push the last one off the row
-            let pitch = if matches!(self.m.cursor, CursorMode::Track | CursorMode::Xy) { 150 } else { 200 }.min((row(y).right() - 6 - x0) / vals.len().max(1) as i32);
+            let pitch = if matches!(self.m.cursor, CursorMode::Track | CursorMode::Xy) { 150 } else { 200 }
+                .min((row(y).right() - 6 - x0) / vals.len().max(1) as i32);
             for (i, (l, v)) in vals.iter().enumerate() {
                 let x = x0 + i as i32 * pitch;
                 let x2 = cv.text(&f.s, x, y + base, l, DIM) + 8;
@@ -3587,7 +3825,11 @@ impl Ui {
     /// Height of a row of the results card: two lines, or one when there are many.
     fn results_pitch(&self, n: i32) -> i32 {
         let (one, two) = self.lay().res_pitch;
-        if n > 6 { one } else { two }
+        if n > 6 {
+            one
+        } else {
+            two
+        }
     }
 
     /// Measurement results with statistics as a translucent card over the plot: value, mean, ±σ, acquisitions;
@@ -3730,7 +3972,9 @@ impl Ui {
         match self.m.acq {
             AcqMode::Normal => "Normal".to_string(),
             AcqMode::Peak => "Peak".to_string(),
-            AcqMode::Average if self.src.is_hw() && board().avg_hw(&self.m) => format!("Average {} HW", self.m.avg_count),
+            AcqMode::Average if self.src.is_hw() && board().avg_hw(&self.m) => {
+                format!("Average {} HW", self.m.avg_count)
+            }
             AcqMode::Average => format!("Average {}", self.m.avg_count),
             AcqMode::HiRes => "High res".to_string(),
         }
@@ -3802,14 +4046,30 @@ impl Ui {
         }
         // LAN: an address without a cable is only the fallback waiting for one
         let lan = self.addr_of("eth0").filter(|_| self.eth_link);
-        self.draw_link(cv, self.net_box(), if lan.is_none() { "LAN" } else if self.net_fixed { "LAN \u{b7} local" } else { "LAN \u{b7} DHCP" }, lan);
+        self.draw_link(
+            cv,
+            self.net_box(),
+            if lan.is_none() {
+                "LAN"
+            } else if self.net_fixed {
+                "LAN \u{b7} local"
+            } else {
+                "LAN \u{b7} DHCP"
+            },
+            lan,
+        );
         // WLAN and USB sticks, while they are there
         if self.wlan_stick {
             self.draw_link(cv, self.wlan_box(), "WLAN", self.addr_of(oos_hal::wlan::IFACE));
         }
         if self.usb {
             let r = self.usb_box();
-            cv.round(r, 5, if self.menu_open && self.menu_root() == MenuId::Storage { ACCENT } else { BTN_BORDER }, 255);
+            cv.round(
+                r,
+                5,
+                if self.menu_open && self.menu_root() == MenuId::Storage { ACCENT } else { BTN_BORDER },
+                255,
+            );
             cv.round(r.inset(1), 4, BG, 255);
             cv.circle(r.x + 9, r.y + 15, 3, GREEN);
             cv.text(&f.sb, r.x + 16, r.y + 20, "USB", TEXT);
@@ -3940,8 +4200,14 @@ impl Ui {
     /// text size.
     fn card_sub_font(&self) -> &'static Font {
         let (f, chs) = (self.fonts(), self.cards().0);
-        let all_fit = (0..NCH).filter(|&c| chs[c].w > 0 && self.m.ch[c].on).all(|c| f.s.width(&self.card_sub(c)) <= chs[c].w - 22);
-        if all_fit { &f.s } else { &Fonts::get(0).s }
+        let all_fit = (0..NCH)
+            .filter(|&c| chs[c].w > 0 && self.m.ch[c].on)
+            .all(|c| f.s.width(&self.card_sub(c)) <= chs[c].w - 22);
+        if all_fit {
+            &f.s
+        } else {
+            &Fonts::get(0).s
+        }
     }
 
     /// Trigger card buttons, one over the other at the right edge (touch): source, sweep; the rest of the card, and with
@@ -3987,9 +4253,26 @@ impl Ui {
         // start menu button: three bars and "Menu"; amber "Locked" while touch is locked (a tap unlocks)
         let r = self.menu_btn();
         let (hl, lock) = (root == Some(MenuId::Main), self.m.touch_lock);
-        cv.round(r, 7, if hl { ACCENT } else if lock { AMBER } else { CARD_BORDER }, 255);
+        cv.round(
+            r,
+            7,
+            if hl {
+                ACCENT
+            } else if lock {
+                AMBER
+            } else {
+                CARD_BORDER
+            },
+            255,
+        );
         cv.round(r.inset(2), 5, BAR, 255);
-        let col = if hl { ACCENT } else if lock { AMBER } else { TEXT };
+        let col = if hl {
+            ACCENT
+        } else if lock {
+            AMBER
+        } else {
+            TEXT
+        };
         for k in 0..3 {
             cv.fill(Rect::new(r.x + r.w / 2 - 11, r.y + 16 + k * 7, 22, 3), col);
         }
@@ -4047,7 +4330,13 @@ impl Ui {
         let tdiv = format!("{}/div", si_short(self.m.time_per_div() as f64, "s"));
         cv.text(Self::card_font(f, &tdiv, r.w - 20), r.x + 12, r.y + yb, &tdiv, TEXT);
         if self.m.zoom {
-            cv.text(&f.sb, r.x + 12, r.y + ys, &format!("zoom {}/div", si_short(tscales()[self.m.zscale] as f64, "s")), ACCENT);
+            cv.text(
+                &f.sb,
+                r.x + 12,
+                r.y + ys,
+                &format!("zoom {}/div", si_short(tscales()[self.m.zscale] as f64, "s")),
+                ACCENT,
+            );
         } else {
             let t = format!("delay {}", si_short(self.m.delay as f64, "s"));
             cv.text(small(&t, r.w - 18), r.x + 12, r.y + ys, &t, DIM);
@@ -4059,12 +4348,27 @@ impl Ui {
         cv.round(r.inset(2), 5, BAR, 255);
         // type and slope on the first line, the level under them: it has the width up to the buttons
         let tx = cv.text(&f.sb, r.x + 12, r.y + yn, &self.m.trig_type.name().to_uppercase(), LABEL) + 8;
-        if matches!(self.m.trig_type, TrigType::Edge | TrigType::Slope | TrigType::Timeout | TrigType::NthEdge | TrigType::Delay) {
+        if matches!(
+            self.m.trig_type,
+            TrigType::Edge | TrigType::Slope | TrigType::Timeout | TrigType::NthEdge | TrigType::Delay
+        ) {
             draw_slope(cv, tx, r.y + 6, self.m.slope, ACCENT);
         } else {
             let tag = match self.m.trig_type {
-                TrigType::Pulse | TrigType::Runt => if self.m.trig_pol == Pol::Pos { "+" } else { "-" },
-                TrigType::Video => if self.m.video_std == VideoStd::Pal { "P" } else { "N" },
+                TrigType::Pulse | TrigType::Runt => {
+                    if self.m.trig_pol == Pol::Pos {
+                        "+"
+                    } else {
+                        "-"
+                    }
+                }
+                TrigType::Video => {
+                    if self.m.video_std == VideoStd::Pal {
+                        "P"
+                    } else {
+                        "N"
+                    }
+                }
                 _ => "",
             };
             cv.text(&f.sb, tx, r.y + yn, tag, ACCENT);
@@ -4140,11 +4444,15 @@ impl Ui {
             MenuId::Power => vec![m.pw_v, m.pw_i],
             MenuId::Spectrum => vec![m.spec_src],
             MenuId::Eye => vec![m.eye_src],
-            MenuId::Bode if m.bode_gen == bode::FREE => [Some(m.bode_out), m.bode_sw_in.checked_sub(1), Some(m.bode_sync)].into_iter().flatten().collect(),
+            MenuId::Bode if m.bode_gen == bode::FREE => {
+                [Some(m.bode_out), m.bode_sw_in.checked_sub(1), Some(m.bode_sync)].into_iter().flatten().collect()
+            }
             MenuId::Bode => vec![m.bode_in, m.bode_out],
             MenuId::BwTest => vec![m.bw_src],
             MenuId::Mask => vec![m.mask_src],
-            MenuId::Dvm => [m.dvm_on.then_some(m.dvm_src), m.cnt_on.then_some(m.cnt_src)].into_iter().flatten().collect(),
+            MenuId::Dvm => {
+                [m.dvm_on.then_some(m.dvm_src), m.cnt_on.then_some(m.cnt_src)].into_iter().flatten().collect()
+            }
             MenuId::Decode if !m.dec_on_la() => vec![m.dec_src],
             _ => Vec::new(),
         };
@@ -4156,13 +4464,44 @@ impl Ui {
     fn menu_items(&self, menu: MenuId) -> Vec<Item> {
         match menu {
             MenuId::Main => self.main_groups().into_iter().flat_map(|g| g.1).collect(),
-            MenuId::Channel(c) => vec![Item::ChOn(c), Item::ChScale(c), Item::ChOffset(c), Item::ChCoupling(c), Item::ChBw(c), Item::ChProbe(c), Item::ChInvert(c), Item::ChFine, Item::ChLabel(c), Item::Open(MenuId::ChMore(c))],
-            MenuId::ChMore(c) => vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::ChExpand],
+            MenuId::Channel(c) => vec![
+                Item::ChOn(c),
+                Item::ChScale(c),
+                Item::ChOffset(c),
+                Item::ChCoupling(c),
+                Item::ChBw(c),
+                Item::ChProbe(c),
+                Item::ChInvert(c),
+                Item::ChFine,
+                Item::ChLabel(c),
+                Item::Open(MenuId::ChMore(c)),
+            ],
+            MenuId::ChMore(c) => {
+                vec![Item::ChUnit(c), Item::ChBias(c), Item::ChBiasZero(c), Item::ChSkew(c), Item::ChExpand]
+            }
             MenuId::Horizontal => {
                 if self.m.zoom {
-                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::Zoom, Item::ZScale, Item::ZDelay, Item::AutoRoll]
+                    vec![
+                        Item::HScale,
+                        Item::HFine,
+                        Item::HExpandI,
+                        Item::HDelay,
+                        Item::HZero,
+                        Item::Zoom,
+                        Item::ZScale,
+                        Item::ZDelay,
+                        Item::AutoRoll,
+                    ]
                 } else {
-                    vec![Item::HScale, Item::HFine, Item::HExpandI, Item::HDelay, Item::HZero, Item::Zoom, Item::AutoRoll]
+                    vec![
+                        Item::HScale,
+                        Item::HFine,
+                        Item::HExpandI,
+                        Item::HDelay,
+                        Item::HZero,
+                        Item::Zoom,
+                        Item::AutoRoll,
+                    ]
                 }
             }
             MenuId::Trigger => self.trigger_items(),
@@ -4186,29 +4525,113 @@ impl Ui {
                 v
             }
             MenuId::MeasPair => (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
-            MenuId::Dvm => vec![Item::DvmOn, Item::DvmSrc, Item::DvmMode, Item::CntOn, Item::CntSrc, Item::CntMode, Item::CntDigits, Item::CntClear],
-            MenuId::Measure => vec![Item::MeasSrc, Item::MeasSrcB, Item::Open(MenuId::MeasAdd), Item::Open(MenuId::MeasPair), Item::Open(MenuId::Dvm), Item::MeasStats, Item::MeasLabels, Item::MeasClear],
+            MenuId::Dvm => vec![
+                Item::DvmOn,
+                Item::DvmSrc,
+                Item::DvmMode,
+                Item::CntOn,
+                Item::CntSrc,
+                Item::CntMode,
+                Item::CntDigits,
+                Item::CntClear,
+            ],
+            MenuId::Measure => vec![
+                Item::MeasSrc,
+                Item::MeasSrcB,
+                Item::Open(MenuId::MeasAdd),
+                Item::Open(MenuId::MeasPair),
+                Item::Open(MenuId::Dvm),
+                Item::MeasStats,
+                Item::MeasLabels,
+                Item::MeasClear,
+            ],
             MenuId::Decode => self.decode_items(),
             MenuId::Logger => vec![Item::LogOn, Item::LogIvl, Item::LogInfo],
-            MenuId::Ref => vec![Item::RefSrc, Item::RefSave, Item::RefClear, Item::RefSel, Item::RefVpd, Item::RefOffset, Item::RefColor, Item::RefLabel, Item::RefExport, Item::RefImport].into_iter().chain((0..NREF).map(Item::RefShow)).collect(),
+            MenuId::Ref => vec![
+                Item::RefSrc,
+                Item::RefSave,
+                Item::RefClear,
+                Item::RefSel,
+                Item::RefVpd,
+                Item::RefOffset,
+                Item::RefColor,
+                Item::RefLabel,
+                Item::RefExport,
+                Item::RefImport,
+            ]
+            .into_iter()
+            .chain((0..NREF).map(Item::RefShow))
+            .collect(),
             MenuId::MeasAdd => ALL_MEAS.iter().map(|&k| Item::MeasAdd(k)).collect(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
-            MenuId::Cursor if self.m.cursor == CursorMode::Xy => vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD],
+            MenuId::Cursor if self.m.cursor == CursorMode::Xy => {
+                vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD]
+            }
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
-                let mut v = vec![Item::Open(MenuId::Windows), Item::Views, Item::PaneSel, Item::Persist, Item::ColorGrade, Item::Intensity, Item::GridStyle, Item::GridBright, Item::GridFrame, Item::Dots, Item::ZInput, Item::Histogram, Item::XyMode, Item::Hdmi, Item::Backlight, Item::TextSize, Item::ClearDisp];
+                let mut v = vec![
+                    Item::Open(MenuId::Windows),
+                    Item::Views,
+                    Item::PaneSel,
+                    Item::Persist,
+                    Item::ColorGrade,
+                    Item::Intensity,
+                    Item::GridStyle,
+                    Item::GridBright,
+                    Item::GridFrame,
+                    Item::Dots,
+                    Item::ZInput,
+                    Item::Histogram,
+                    Item::XyMode,
+                    Item::Hdmi,
+                    Item::Backlight,
+                    Item::TextSize,
+                    Item::ClearDisp,
+                ];
                 if self.m.pane == tables::PANE_TREND {
                     v.splice(1..1, [Item::TrendSel(0), Item::TrendSel(1)]);
                 }
                 v
             }
-            MenuId::Storage => vec![Item::StoreSlot, Item::StoreSaveSetup, Item::StoreRecall, Item::StoreCsv, Item::StoreBin, Item::StorePng],
-            MenuId::Spectrum => vec![Item::SpecOn, Item::SpecSrc, Item::SpecCenter, Item::SpecSpan, Item::SpecHarm, Item::SpecRbw, Item::SpecWin, Item::SpecTrace, Item::SpecRef, Item::SpecWf, Item::SpecDist, Item::SpecPeak, Item::SpecMargin, Item::SpecLimitSet, Item::SpecLimitClear],
+            MenuId::Storage => vec![
+                Item::StoreSlot,
+                Item::StoreSaveSetup,
+                Item::StoreRecall,
+                Item::StoreCsv,
+                Item::StoreBin,
+                Item::StorePng,
+            ],
+            MenuId::Spectrum => vec![
+                Item::SpecOn,
+                Item::SpecSrc,
+                Item::SpecCenter,
+                Item::SpecSpan,
+                Item::SpecHarm,
+                Item::SpecRbw,
+                Item::SpecWin,
+                Item::SpecTrace,
+                Item::SpecRef,
+                Item::SpecWf,
+                Item::SpecDist,
+                Item::SpecPeak,
+                Item::SpecMargin,
+                Item::SpecLimitSet,
+                Item::SpecLimitClear,
+            ],
             MenuId::Eye => vec![Item::EyeOn, Item::EyeSrc, Item::EyeRate, Item::EyeClear],
             MenuId::Power => vec![Item::PowOn, Item::PowV, Item::PowI, Item::PowMode],
             MenuId::Identify => self.identify_items(),
             MenuId::SelfCal => self.cal_items(),
-            MenuId::Network => vec![Item::NetEth, Item::NetRetry10, Item::NetMac, Item::Open(MenuId::Remote), Item::NetWlan, Item::WlanScan, Item::WlanForget, Item::WlanInfo],
+            MenuId::Network => vec![
+                Item::NetEth,
+                Item::NetRetry10,
+                Item::NetMac,
+                Item::Open(MenuId::Remote),
+                Item::NetWlan,
+                Item::WlanScan,
+                Item::WlanForget,
+                Item::WlanInfo,
+            ],
             MenuId::Remote => self.remote_items(),
             MenuId::Ssh => self.ssh_items(),
             MenuId::Time => self.time_items(),
@@ -4220,15 +4643,57 @@ impl Ui {
             MenuId::LaLines => self.la_line_items(),
             MenuId::LaPat => (0..16).map(Item::LaPat).collect(),
             MenuId::Windows => self.win_items(),
-            MenuId::Zone => vec![Item::ZoneSel, Item::ZoneOn, Item::ZoneSrc, Item::ZoneMode, Item::ZoneBox, Item::ZoneShape, Item::ZoneClear],
-            MenuId::Mask => vec![Item::MaskOn, Item::MaskSrc, Item::MaskX, Item::MaskY, Item::MaskAction, Item::MaskCreate, Item::MaskReset, Item::MaskSave, Item::MaskLoad],
-            MenuId::Utility => vec![Item::QuickAct, Item::TouchLock, Item::AuxOut, Item::BootMode, Item::Overclock, Item::Graphics, Item::Shot, Item::Open(MenuId::SelfCal), Item::Open(MenuId::Network), Item::Open(MenuId::Time), Item::SysInfo, Item::About, Item::Update, Item::UpdateRollback, Item::Stock],
+            MenuId::Zone => vec![
+                Item::ZoneSel,
+                Item::ZoneOn,
+                Item::ZoneSrc,
+                Item::ZoneMode,
+                Item::ZoneBox,
+                Item::ZoneShape,
+                Item::ZoneClear,
+            ],
+            MenuId::Mask => vec![
+                Item::MaskOn,
+                Item::MaskSrc,
+                Item::MaskX,
+                Item::MaskY,
+                Item::MaskAction,
+                Item::MaskCreate,
+                Item::MaskReset,
+                Item::MaskSave,
+                Item::MaskLoad,
+            ],
+            MenuId::Utility => vec![
+                Item::QuickAct,
+                Item::TouchLock,
+                Item::AuxOut,
+                Item::BootMode,
+                Item::Overclock,
+                Item::Graphics,
+                Item::Shot,
+                Item::Open(MenuId::SelfCal),
+                Item::Open(MenuId::Network),
+                Item::Open(MenuId::Time),
+                Item::SysInfo,
+                Item::About,
+                Item::Update,
+                Item::UpdateRollback,
+                Item::Stock,
+            ],
             MenuId::Pick => {
                 let n = self.pick.map_or(0, |p| self.options(p.it).len());
                 (0..n).map(Item::PickOpt).collect()
             }
             MenuId::Math if self.m.math == MathOp::Off => vec![Item::MathSel, Item::MathOpI],
-            MenuId::Math if self.m.math == MathOp::Expr => vec![Item::MathSel, Item::MathOpI, Item::MathExprI, Item::MathExprEdit, Item::MathScale, Item::MathOffset, Item::MathAuto],
+            MenuId::Math if self.m.math == MathOp::Expr => vec![
+                Item::MathSel,
+                Item::MathOpI,
+                Item::MathExprI,
+                Item::MathExprEdit,
+                Item::MathScale,
+                Item::MathOffset,
+                Item::MathAuto,
+            ],
             MenuId::Math => {
                 let mut v = vec![Item::MathSel, Item::MathOpI, Item::MathA];
                 if self.m.math.two_sources() {
@@ -4264,7 +4729,14 @@ impl Ui {
         if self.hist_pos.is_some() {
             disp.extend([NavBack, NavFwd]);
         }
-        let ana = vec![Open(MenuId::Spectrum), Open(MenuId::Eye), Open(MenuId::Power), Open(MenuId::Bode), Open(MenuId::BwTest), IdentifyAct];
+        let ana = vec![
+            Open(MenuId::Spectrum),
+            Open(MenuId::Eye),
+            Open(MenuId::Power),
+            Open(MenuId::Bode),
+            Open(MenuId::BwTest),
+            IdentifyAct,
+        ];
         // the generator page only on models with one (S models), the LA only with the port
         let mut ins = Vec::new();
         if oos_hal::model::platform().caps.has_gen() {
@@ -4278,7 +4750,17 @@ impl Ui {
         let mut g = vec![
             ("Acquisition", vec![RunStop, SingleAct, AutosetAct, ClearDisp, DefaultAct, Open(MenuId::Acquire)]),
             ("Trigger", vec![Open(MenuId::Trigger), SlopeAct, ForceAct, Open(MenuId::Zone)]),
-            ("Analysis", vec![Open(MenuId::Measure), Open(MenuId::Cursor), Open(MenuId::Math), Open(MenuId::Ref), Open(MenuId::Decode), Open(MenuId::Mask)]),
+            (
+                "Analysis",
+                vec![
+                    Open(MenuId::Measure),
+                    Open(MenuId::Cursor),
+                    Open(MenuId::Math),
+                    Open(MenuId::Ref),
+                    Open(MenuId::Decode),
+                    Open(MenuId::Mask),
+                ],
+            ),
             ("Analysers", ana),
             ("Instruments", ins),
             ("Display", disp),
@@ -4356,7 +4838,11 @@ impl Ui {
 
     /// Hardware segments: the trigger times since the first trigger, comma separated, in seconds (9.9E37: no stamp).
     pub fn seg_times_text(&self) -> String {
-        self.seg_times.iter().map(|t| t.map_or("9.9E37".to_string(), |x| format!("{:e}", x))).collect::<Vec<_>>().join(",")
+        self.seg_times
+            .iter()
+            .map(|t| t.map_or("9.9E37".to_string(), |x| format!("{:e}", x)))
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     /// Hardware segments: shows segment `i` (played from the FPGA memory), stopping the acquisition.
@@ -4370,7 +4856,9 @@ impl Ui {
     /// Shows record `hist_pos + d` of the history (d = 0: the newest), stopping the acquisition.
     fn history_step(&mut self, d: i32) {
         // hardware segments: any of them, played on demand
-        if let Some(v) = self.seg_view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0) {
+        if let Some(v) =
+            self.seg_view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0)
+        {
             let n = v.recorded as i32;
             let cur = self.seg_pos.unwrap_or(n as usize - 1) as i32;
             let i = if d == 0 { n - 1 } else { (cur + d).clamp(0, n - 1) };
@@ -4682,7 +5170,11 @@ impl Ui {
                 if changed {
                     m.dec_opt = crate::protocols::opt_default(i);
                     // a module with a view of its own: open it, when no other pane is open
-                    if m.pane == 0 && crate::protocols::get(i).view(&[], &crate::protocols::opt_fit(i, m.dec_opt), &mut None).is_some() {
+                    if m.pane == 0
+                        && crate::protocols::get(i)
+                            .view(&[], &crate::protocols::opt_fit(i, m.dec_opt), &mut None)
+                            .is_some()
+                    {
                         m.pane = tables::PANE_BUS;
                     }
                 }
@@ -4711,7 +5203,8 @@ impl Ui {
         // a trigger that holds the demo bus still: I2C start (first SDA fall after idle), SPI CS falling
         match p {
             Proto::I2c => {
-                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) = (TrigType::NthEdge, 2, Slope::Fall, 20e-6, 1, 1.65);
+                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) =
+                    (TrigType::NthEdge, 2, Slope::Fall, 20e-6, 1, 1.65);
             }
             Proto::Spi => {
                 (m.trig_type, m.trig_src, m.slope, m.trig_level) = (TrigType::Edge, 1, Slope::Fall, 1.65);
@@ -4721,10 +5214,12 @@ impl Ui {
                 (m.trig_type, m.trig_src, m.slope, m.trig_level) = (TrigType::Edge, 0, Slope::Fall, 1.65);
             }
             Proto::Mil1553 => {
-                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) = (TrigType::NthEdge, 2, Slope::Rise, 3e-6, 1, 2.0);
+                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) =
+                    (TrigType::NthEdge, 2, Slope::Rise, 3e-6, 1, 2.0);
             }
             Proto::Can | Proto::Lin => {
-                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) = (TrigType::NthEdge, 2, Slope::Fall, 20e-6, 1, 1.65);
+                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) =
+                    (TrigType::NthEdge, 2, Slope::Fall, 20e-6, 1, 1.65);
             }
             _ => {}
         }
@@ -4846,7 +5341,9 @@ impl Ui {
             Item::TrigSlope2 if t == TrigType::SetupHold => "Clock edge",
             Item::TrigT1 if t == TrigType::Timeout => "Timeout",
             Item::DecOpt(k) => self.m.dec_proto.module().and_then(|p| p.options().get(k)).map_or("Option", |o| o.name),
-            Item::DecSrc if self.m.dec_proto.roles()[0] != Some("Source") => self.m.dec_proto.roles()[0].unwrap_or("Source"),
+            Item::DecSrc if self.m.dec_proto.roles()[0] != Some("Source") => {
+                self.m.dec_proto.roles()[0].unwrap_or("Source")
+            }
             Item::DecSrc2 if self.m.dec_proto.roles()[1].is_some() => self.m.dec_proto.roles()[1].unwrap_or("Clock"),
             Item::DecCs if self.m.dec_proto.roles()[2].is_some() => self.m.dec_proto.roles()[2].unwrap_or("CS"),
             Item::DecSrc4 if self.m.dec_proto.roles()[3].is_some() => self.m.dec_proto.roles()[3].unwrap_or("Source 4"),
@@ -4926,10 +5423,12 @@ impl Ui {
             }
             TrigType::Pulse => {
                 on(3, m);
-                (m.trig_src, m.trig_pol, m.trig_when, m.trig_t1, m.trig_level) = (3, Pol::Pos, WhenKind::Lt, 30e-6, 1.65);
+                (m.trig_src, m.trig_pol, m.trig_when, m.trig_t1, m.trig_level) =
+                    (3, Pol::Pos, WhenKind::Lt, 30e-6, 1.65);
             }
             TrigType::Slope => {
-                (m.trig_src, m.slope, m.trig_when, m.trig_t1, m.trig_level, m.trig_level2) = (0, Slope::Rise, WhenKind::Gt, 1e-6, 2.0, 0.5);
+                (m.trig_src, m.slope, m.trig_when, m.trig_t1, m.trig_level, m.trig_level2) =
+                    (0, Slope::Rise, WhenKind::Gt, 1e-6, 2.0, 0.5);
             }
             TrigType::Video => {
                 on(1, m);
@@ -4939,7 +5438,15 @@ impl Ui {
             }
             TrigType::Pattern => {
                 on(3, m);
-                m.pat = std::array::from_fn(|i| if i == 0 { Bit::H } else if i == NCH - 1 { Bit::R } else { Bit::X });
+                m.pat = std::array::from_fn(|i| {
+                    if i == 0 {
+                        Bit::H
+                    } else if i == NCH - 1 {
+                        Bit::R
+                    } else {
+                        Bit::X
+                    }
+                });
                 m.trig_src = 0;
             }
             TrigType::Duration => {
@@ -4950,7 +5457,8 @@ impl Ui {
                 (m.trig_src, m.slope, m.trig_t1, m.trig_level) = (0, Slope::Rise, 1.2e-3, 1.5);
             }
             TrigType::Runt => {
-                (m.trig_src, m.trig_pol, m.trig_when, m.trig_level, m.trig_level2) = (0, Pol::Pos, WhenKind::Off, 2.0, 0.5);
+                (m.trig_src, m.trig_pol, m.trig_when, m.trig_level, m.trig_level2) =
+                    (0, Pol::Pos, WhenKind::Off, 2.0, 0.5);
             }
             TrigType::Window => {
                 on(1, m);
@@ -4958,13 +5466,22 @@ impl Ui {
             }
             TrigType::Delay => {
                 on(3, m);
-                (m.trig_src, m.slope, m.trig_src2, m.trig_slope2, m.trig_when, m.trig_t1, m.trig_level, m.trig_level2) =
-                    (0, Slope::Rise, 3, Slope::Rise, WhenKind::Gt, 40e-6, 1.5, 1.65);
+                (
+                    m.trig_src,
+                    m.slope,
+                    m.trig_src2,
+                    m.trig_slope2,
+                    m.trig_when,
+                    m.trig_t1,
+                    m.trig_level,
+                    m.trig_level2,
+                ) = (0, Slope::Rise, 3, Slope::Rise, WhenKind::Gt, 40e-6, 1.5, 1.65);
             }
             TrigType::SetupHold => {
                 on(2, m);
                 on(3, m);
-                (m.trig_src, m.trig_src2, m.trig_slope2, m.setup, m.hold, m.trig_level, m.trig_level2) = (2, 3, Slope::Rise, 2e-6, 2e-6, 1.65, 1.65);
+                (m.trig_src, m.trig_src2, m.trig_slope2, m.setup, m.hold, m.trig_level, m.trig_level2) =
+                    (2, 3, Slope::Rise, 2e-6, 2e-6, 1.65, 1.65);
             }
             TrigType::NthEdge => {
                 on(2, m);
@@ -4981,7 +5498,9 @@ impl Ui {
         match menu {
             // /tmp is in RAM: say so where the files go
             MenuId::Storage if self.usb_used() => "Storage \u{b7} USB stick".into(),
-            MenuId::Storage if self.store_dir.starts_with("/tmp") => format!("Storage \u{b7} {} (lost at power-off)", self.store_dir.display()),
+            MenuId::Storage if self.store_dir.starts_with("/tmp") => {
+                format!("Storage \u{b7} {} (lost at power-off)", self.store_dir.display())
+            }
             MenuId::Storage => format!("Storage \u{b7} {}", self.store_dir.display()),
             MenuId::Mask => "Mask test".into(),
             MenuId::Zone => "Zone trigger".into(),
@@ -5021,7 +5540,9 @@ impl Ui {
             MenuId::Decode => "Decode".into(),
             MenuId::Pick => match self.pick {
                 Some(p) if Self::hex_item(p.it) => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
-                Some(p) if p.it == Item::AfgFreqEntry => format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz")),
+                Some(p) if p.it == Item::AfgFreqEntry => {
+                    format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz"))
+                }
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
             },
@@ -5029,29 +5550,129 @@ impl Ui {
     }
 
     fn kind(it: Item) -> Kind {
-        if let Some(k) = Self::ana_kind(it).or_else(|| Self::cal_kind(it)).or_else(|| Self::bode_kind(it)).or_else(|| Self::afg_kind(it)).or_else(|| Self::bw_kind(it)).or_else(|| Self::la_kind(it)).or_else(|| Self::win_kind(it)).or_else(|| Self::time_kind(it)).or_else(|| Self::remote_kind(it)).or_else(|| Self::graphics_kind(it)).or_else(|| Self::views_kind(it)).or_else(|| Self::backlight_kind(it)) {
+        if let Some(k) = Self::ana_kind(it)
+            .or_else(|| Self::cal_kind(it))
+            .or_else(|| Self::bode_kind(it))
+            .or_else(|| Self::afg_kind(it))
+            .or_else(|| Self::bw_kind(it))
+            .or_else(|| Self::la_kind(it))
+            .or_else(|| Self::win_kind(it))
+            .or_else(|| Self::time_kind(it))
+            .or_else(|| Self::remote_kind(it))
+            .or_else(|| Self::graphics_kind(it))
+            .or_else(|| Self::views_kind(it))
+            .or_else(|| Self::backlight_kind(it))
+        {
             return k;
         }
         match it {
-            Item::LogIvl | Item::ChBias(_) | Item::ChSkew(_) | Item::RefColor | Item::CurC | Item::CurD | Item::RefSel | Item::RefVpd | Item::RefOffset | Item::MathLinA | Item::MathLinB | Item::TrigHoldoff | Item::CntDigits | Item::MathScale | Item::MathOffset | Item::MathFc | Item::MathBw | Item::ZScale | Item::ZDelay | Item::DecThr => Kind::Value,
+            Item::LogIvl
+            | Item::ChBias(_)
+            | Item::ChSkew(_)
+            | Item::RefColor
+            | Item::CurC
+            | Item::CurD
+            | Item::RefSel
+            | Item::RefVpd
+            | Item::RefOffset
+            | Item::MathLinA
+            | Item::MathLinB
+            | Item::TrigHoldoff
+            | Item::CntDigits
+            | Item::MathScale
+            | Item::MathOffset
+            | Item::MathFc
+            | Item::MathBw
+            | Item::ZScale
+            | Item::ZDelay
+            | Item::DecThr => Kind::Value,
             Item::MathAuto | Item::ZoneBox | Item::ZoneShape | Item::ZoneClear => Kind::Action,
             Item::DecBits => Kind::Value,
-            Item::TrigLevel2 | Item::TrigT1 | Item::TrigT2 | Item::VidLine | Item::PatLevel | Item::NthIdle | Item::NthN | Item::Setup | Item::Hold => Kind::Value,
-            Item::ChScale(_) | Item::ChOffset(_) | Item::HScale | Item::HDelay | Item::TrigLevel | Item::AcqAvg | Item::CurA | Item::CurB | Item::Intensity | Item::GridBright => Kind::Value,
+            Item::TrigLevel2
+            | Item::TrigT1
+            | Item::TrigT2
+            | Item::VidLine
+            | Item::PatLevel
+            | Item::NthIdle
+            | Item::NthN
+            | Item::Setup
+            | Item::Hold => Kind::Value,
+            Item::ChScale(_)
+            | Item::ChOffset(_)
+            | Item::HScale
+            | Item::HDelay
+            | Item::TrigLevel
+            | Item::AcqAvg
+            | Item::CurA
+            | Item::CurB
+            | Item::Intensity
+            | Item::GridBright => Kind::Value,
             Item::RefSave | Item::RefClear => Kind::Action,
             Item::StoreSlot | Item::MaskX | Item::MaskY => Kind::Value,
-            Item::StoreSaveSetup | Item::StoreRecall | Item::StoreCsv | Item::StorePng | Item::MaskCreate | Item::MaskReset => Kind::Action,
-            Item::Open(_) | Item::MathExprEdit | Item::ChBiasZero(_) | Item::RefLabel | Item::RefExport | Item::RefImport | Item::DecTable | Item::DecExport | Item::SearchTable | Item::SearchSave | Item::StoreBin | Item::MeasPair(_) | Item::CntClear | Item::MaskSave | Item::MaskLoad | Item::ChLabel(_) | Item::SrcOn | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::HZero | Item::Trig50 | Item::MeasAdd(_) | Item::MeasClear | Item::AcqSegTable | Item::ClearDisp | Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
+            Item::StoreSaveSetup
+            | Item::StoreRecall
+            | Item::StoreCsv
+            | Item::StorePng
+            | Item::MaskCreate
+            | Item::MaskReset => Kind::Action,
+            Item::Open(_)
+            | Item::MathExprEdit
+            | Item::ChBiasZero(_)
+            | Item::RefLabel
+            | Item::RefExport
+            | Item::RefImport
+            | Item::DecTable
+            | Item::DecExport
+            | Item::SearchTable
+            | Item::SearchSave
+            | Item::StoreBin
+            | Item::MeasPair(_)
+            | Item::CntClear
+            | Item::MaskSave
+            | Item::MaskLoad
+            | Item::ChLabel(_)
+            | Item::SrcOn
+            | Item::WlanInfo
+            | Item::WlanScan
+            | Item::WlanForget
+            | Item::HZero
+            | Item::Trig50
+            | Item::MeasAdd(_)
+            | Item::MeasClear
+            | Item::AcqSegTable
+            | Item::ClearDisp
+            | Item::About
+            | Item::SysInfo
+            | Item::Shot
+            | Item::Stock
+            | Item::Update
+            | Item::UpdateRollback => Kind::Action,
             Item::PickOpt(_) | Item::ViewExit | Item::ViewSettings => Kind::Action,
             Item::SpiTimeout => Kind::Value,
-            Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => Kind::Action,
-            Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => Kind::Action,
+            Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::SlopeAct | Item::ForceAct => {
+                Kind::Action
+            }
+            Item::NavHist | Item::NavBack | Item::NavFwd | Item::QuickRun | Item::LockAct | Item::PowerAct => {
+                Kind::Action
+            }
             _ => Kind::Choice,
         }
     }
 
     fn label(it: Item) -> &'static str {
-        if let Some(l) = Self::ana_label(it).or_else(|| Self::cal_label(it)).or_else(|| Self::bode_label(it)).or_else(|| Self::afg_label(it)).or_else(|| Self::bw_label(it)).or_else(|| Self::la_label(it)).or_else(|| Self::win_label(it)).or_else(|| Self::time_label(it)).or_else(|| Self::remote_label(it)).or_else(|| Self::graphics_label(it)).or_else(|| Self::views_label(it)).or_else(|| Self::backlight_label(it)) {
+        if let Some(l) = Self::ana_label(it)
+            .or_else(|| Self::cal_label(it))
+            .or_else(|| Self::bode_label(it))
+            .or_else(|| Self::afg_label(it))
+            .or_else(|| Self::bw_label(it))
+            .or_else(|| Self::la_label(it))
+            .or_else(|| Self::win_label(it))
+            .or_else(|| Self::time_label(it))
+            .or_else(|| Self::remote_label(it))
+            .or_else(|| Self::graphics_label(it))
+            .or_else(|| Self::views_label(it))
+            .or_else(|| Self::backlight_label(it))
+        {
             return l;
         }
         match it {
@@ -5322,7 +5943,20 @@ impl Ui {
     }
 
     fn value(&self, it: Item) -> String {
-        if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.views_value(it)).or_else(|| self.backlight_value(it)) {
+        if let Some(v) = self
+            .ana_value(it)
+            .or_else(|| self.cal_value(it))
+            .or_else(|| self.bode_value(it))
+            .or_else(|| self.afg_value(it))
+            .or_else(|| self.bw_value(it))
+            .or_else(|| self.la_value(it))
+            .or_else(|| self.win_value(it))
+            .or_else(|| self.time_value(it))
+            .or_else(|| self.remote_value(it))
+            .or_else(|| self.graphics_value(it))
+            .or_else(|| self.views_value(it))
+            .or_else(|| self.backlight_value(it))
+        {
             return v;
         }
         let m = &self.m;
@@ -5341,7 +5975,9 @@ impl Ui {
             Item::ChExpand => if m.v_expand_gnd { "Ground" } else { "Center" }.into(),
             Item::HFine => onoff(m.fine_t),
             Item::HExpandI => format!("{:?}", m.h_expand),
-            Item::RefColor => self.refs[self.ref_sel].as_ref().map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0).into(),
+            Item::RefColor => {
+                self.refs[self.ref_sel].as_ref().map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0).into()
+            }
             Item::HScale => si_short(m.time_per_div() as f64, "s"),
             Item::HDelay => si(m.delay as f64, "s"),
             Item::TrigSrc => format!("CH{}", m.trig_src + 1),
@@ -5353,7 +5989,13 @@ impl Ui {
             Item::TrigMode => format!("{:?}", m.trig_mode),
             Item::TrigLevel => si(m.trig_level as f64, m.unit(m.trig_src)),
             Item::TrigType => m.trig_type.name().into(),
-            Item::SearchOn => if self.search_on { "On".into() } else { "Off".into() },
+            Item::SearchOn => {
+                if self.search_on {
+                    "On".into()
+                } else {
+                    "Off".into()
+                }
+            }
             Item::TrigLevel2 => si(m.trig_level2 as f64, m.unit(m.trig_src)),
             Item::TrigSrc2 => format!("CH{}", m.trig_src2 + 1),
             Item::TrigSlope2 => match m.trig_slope2 {
@@ -5361,7 +6003,13 @@ impl Ui {
                 Slope::Fall => "Falling".into(),
                 Slope::Either => "Either".into(),
             },
-            Item::TrigPol => if m.trig_pol == Pol::Pos { "Positive".into() } else { "Negative".into() },
+            Item::TrigPol => {
+                if m.trig_pol == Pol::Pos {
+                    "Positive".into()
+                } else {
+                    "Negative".into()
+                }
+            }
             Item::TrigWhen => match m.trig_when {
                 WhenKind::Off => "Off".into(),
                 WhenKind::Gt => ">".into(),
@@ -5371,7 +6019,13 @@ impl Ui {
             },
             Item::TrigT1 => si_short(m.trig_t1 as f64, "s"),
             Item::TrigT2 => si_short(m.trig_t2 as f64, "s"),
-            Item::VidStd => if m.video_std == VideoStd::Pal { "PAL".into() } else { "NTSC".into() },
+            Item::VidStd => {
+                if m.video_std == VideoStd::Pal {
+                    "PAL".into()
+                } else {
+                    "NTSC".into()
+                }
+            }
             Item::VidSync => match m.video_sync {
                 VSync::AllLines => "Lines".into(),
                 VSync::Line => "Line n".into(),
@@ -5404,7 +6058,13 @@ impl Ui {
                 AcqMode::HiRes => "High res".into(),
             },
             Item::AcqAvg => format!("{}", m.avg_count),
-            Item::AcqSeg => if m.segments == 0 { "Off".into() } else { self.seg_count().to_string() },
+            Item::AcqSeg => {
+                if m.segments == 0 {
+                    "Off".into()
+                } else {
+                    self.seg_count().to_string()
+                }
+            }
             Item::AcqSegHw => onoff(m.seg_hw),
             Item::AcqAvgHw => onoff(m.avg_hw),
             Item::AcqSegIvl => seg_ivl_name(m.seg_ivl),
@@ -5412,14 +6072,22 @@ impl Ui {
             Item::MeasSrc => format!("CH{}", self.meas_src + 1),
             Item::MeasSrcB => format!("CH{}", self.meas_src_b + 1),
             Item::ChFine => onoff(m.fine_v),
-            Item::MathExprI => if m.math_expr[m.math_sel].is_empty() { "none".to_string() } else { m.math_expr[m.math_sel].clone() },
+            Item::MathExprI => {
+                if m.math_expr[m.math_sel].is_empty() {
+                    "none".to_string()
+                } else {
+                    m.math_expr[m.math_sel].clone()
+                }
+            }
             Item::LogOn => onoff(self.log.file.is_some()),
             Item::LogIvl => si_short(logger::LOG_STEPS[m.log_ivl.min(logger::LOG_STEPS.len() - 1)], "s"),
             Item::LogInfo => self.log_info(),
             Item::CurC => self.cursor_values().get(2).map_or(format!("{:.0} %", m.cur_c * 100.0), |v| v.1.clone()),
             Item::CurD => self.cursor_values().get(3).map_or(format!("{:.0} %", m.cur_d * 100.0), |v| v.1.clone()),
             Item::RefSel => format!("R{}", self.ref_sel + 1),
-            Item::RefVpd => self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V"))),
+            Item::RefVpd => {
+                self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V")))
+            }
             Item::RefOffset => self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| si_short(r.offset as f64, "V")),
             Item::DvmOn => onoff(m.dvm_on),
             Item::DvmSrc => format!("CH{}", m.dvm_src + 1),
@@ -5428,7 +6096,13 @@ impl Ui {
             Item::CntSrc => format!("CH{}", m.cnt_src + 1),
             Item::CntMode => tools::CNT_MODES[m.cnt_mode.min(2)].into(),
             Item::CntDigits => m.cnt_digits.to_string(),
-            Item::TrigHoldoff => if m.holdoff <= 0.0 { "Off".into() } else { si_short(m.holdoff as f64, "s") },
+            Item::TrigHoldoff => {
+                if m.holdoff <= 0.0 {
+                    "Off".into()
+                } else {
+                    si_short(m.holdoff as f64, "s")
+                }
+            }
             Item::MathLinA => format!("{:.3}", m.math_lin.0),
             Item::MathLinB => format!("{:.3}", m.math_lin.1),
             Item::CurMode => format!("{:?}", m.cursor),
@@ -5449,10 +6123,22 @@ impl Ui {
             Item::ZoneSel => format!("Z{}", self.zone_sel + 1),
             Item::ZoneOn => onoff(m.zones[self.zone_sel].on),
             Item::ZoneSrc => format!("CH{}", m.zones[self.zone_sel].src + 1),
-            Item::ZoneMode => if m.zones[self.zone_sel].inside { "Intersect".into() } else { "Not intersect".into() },
+            Item::ZoneMode => {
+                if m.zones[self.zone_sel].inside {
+                    "Intersect".into()
+                } else {
+                    "Not intersect".into()
+                }
+            }
             Item::ZInput => m.z_src.map_or("Off".to_string(), |c| format!("CH{}", c + 1)),
             Item::Histogram => format!("{:?}", m.hist),
-            Item::TouchLock => if m.touch_lock { "Locked".into() } else { "On".into() },
+            Item::TouchLock => {
+                if m.touch_lock {
+                    "Locked".into()
+                } else {
+                    "On".into()
+                }
+            }
             Item::AuxOut => m.aux_out.name().into(),
             Item::MathOpI => m.math.name().into(),
             Item::MeasStats => onoff(self.stats_on),
@@ -5468,8 +6154,24 @@ impl Ui {
             Item::DecCanRate => si(crate::decode::CAN_RATES[m.dec_canrate], "bit/s"),
             Item::TrigBusWhat => m.trig_bus.name().into(),
             Item::TrigBusVal => format!("0x{:X}", m.trig_bus_val),
-            Item::SerRel | Item::SerMax | Item::SerMask | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::SpiTimeout | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => self.serial_value(it),
-            Item::DecCanH => if m.dec_canh { "CAN_H".into() } else { "RX/TX".into() },
+            Item::SerRel
+            | Item::SerMax
+            | Item::SerMask
+            | Item::UartPol
+            | Item::UartStop
+            | Item::UartErr
+            | Item::SpiCs
+            | Item::SpiTimeout
+            | Item::I2cDir
+            | Item::I2cAddrBits
+            | Item::I2cBytes => self.serial_value(it),
+            Item::DecCanH => {
+                if m.dec_canh {
+                    "CAN_H".into()
+                } else {
+                    "RX/TX".into()
+                }
+            }
             Item::DecFdRate => format!("{} M", crate::decode::FD_RATES[m.dec_fdrate] / 1e6),
             Item::DecArate => ARATE_NAMES[m.dec_arate].into(),
             Item::DecTick => tick_name(crate::decode::SENT_TICKS[m.dec_tick]),
@@ -5478,9 +6180,19 @@ impl Ui {
             Item::DecSrc4 => m.dec_src4.map_or("None".into(), |c| format!("CH{}", c + 1)),
             Item::DecDiff => m.dec_diff.map_or("None".into(), |c| format!("CH{}", c + 1)),
             Item::DecThr => si(m.dec_thr as f64, "V"),
-            Item::DecFmt => if m.dec_ascii { "ASCII".into() } else { "Hex".into() },
+            Item::DecFmt => {
+                if m.dec_ascii {
+                    "ASCII".into()
+                } else {
+                    "Hex".into()
+                }
+            }
             Item::DecProto => m.dec_proto.name().into(),
-            Item::DecOpt(k) => m.dec_proto.module().and_then(|p| p.options().get(k)).map_or(String::new(), |o| o.choices[m.dec_opts()[k]].into()),
+            Item::DecOpt(k) => m
+                .dec_proto
+                .module()
+                .and_then(|p| p.options().get(k))
+                .map_or(String::new(), |o| o.choices[m.dec_opts()[k]].into()),
             Item::DecSrc2 => format!("CH{}", m.dec_src2 + 1),
             Item::DecCs => m.dec_cs.map_or("None".into(), |c| format!("CH{}", c + 1)),
             Item::DecMode => format!("{}", m.dec_mode),
@@ -5492,7 +6204,13 @@ impl Ui {
             },
             Item::ZScale => si_short(tscales()[m.zscale] as f64, "s"),
             Item::ZDelay => si(m.zdelay as f64, "s"),
-            Item::XyMode => if self.xy { "XY".into() } else { "YT".into() },
+            Item::XyMode => {
+                if self.xy {
+                    "XY".into()
+                } else {
+                    "YT".into()
+                }
+            }
             Item::BootMode => self.boot_mode().into(),
             Item::Overclock => overclock::label(self.clock_next),
             Item::NetEth | Item::NetMac | Item::NetWlan => self.net_value(it),
@@ -5515,7 +6233,13 @@ impl Ui {
             Item::MaskSrc => format!("CH{}", m.mask_src + 1),
             Item::MaskX => format!("{:.2} div", m.mask_x),
             Item::MaskY => format!("{:.2} div", m.mask_y),
-            Item::MaskAction => if m.mask_stop { "Stop".into() } else { "None".into() },
+            Item::MaskAction => {
+                if m.mask_stop {
+                    "Stop".into()
+                } else {
+                    "None".into()
+                }
+            }
             Item::QuickAct => m.quick.name().into(),
             _ => String::new(),
         }
@@ -5552,7 +6276,19 @@ impl Ui {
     }
 
     fn adjust(&mut self, it: Item, d: i32) {
-        if self.ana_adjust(it, d) || self.cal_adjust(it, d) || self.bode_adjust(it, d) || self.afg_adjust(it, d) || self.bw_adjust(it, d) || self.la_adjust(it, d) || self.win_adjust(it, d) || self.time_adjust(it, d) || self.remote_adjust(it, d) || self.graphics_adjust(it, d) || self.views_adjust(it, d) || self.backlight_adjust(it, d) {
+        if self.ana_adjust(it, d)
+            || self.cal_adjust(it, d)
+            || self.bode_adjust(it, d)
+            || self.afg_adjust(it, d)
+            || self.bw_adjust(it, d)
+            || self.la_adjust(it, d)
+            || self.win_adjust(it, d)
+            || self.time_adjust(it, d)
+            || self.remote_adjust(it, d)
+            || self.graphics_adjust(it, d)
+            || self.views_adjust(it, d)
+            || self.backlight_adjust(it, d)
+        {
             return;
         }
         if self.seg_adjust(it, d) {
@@ -5578,14 +6314,14 @@ impl Ui {
             Item::ChScale(c) => {
                 let old = m.ch[c].volts_per_div();
                 if m.fine_v {
-                // row by row through the calibration table: each scale has its own record
-                let rows = board().vscale_steps_nv();
-                let now = VSCALES[m.ch[c].vscale] as f64 * m.ch[c].vfine as f64 * 1e9 * 0.999999;
-                let at = rows.iter().position(|&k| k as f64 >= now).unwrap_or(rows.len() - 1) as i32;
-                let want = (rows[(at + d).clamp(0, rows.len() as i32 - 1) as usize] as f64 * 1e-9) as f32;
-                let i = VSCALES.iter().rposition(|&s| s <= want * 1.000001).unwrap_or(0);
-                let f = want / VSCALES[i];
-                (m.ch[c].vscale, m.ch[c].vfine) = (i, if (f - 1.0).abs() < 1e-6 { 1.0 } else { f });
+                    // row by row through the calibration table: each scale has its own record
+                    let rows = board().vscale_steps_nv();
+                    let now = VSCALES[m.ch[c].vscale] as f64 * m.ch[c].vfine as f64 * 1e9 * 0.999999;
+                    let at = rows.iter().position(|&k| k as f64 >= now).unwrap_or(rows.len() - 1) as i32;
+                    let want = (rows[(at + d).clamp(0, rows.len() as i32 - 1) as usize] as f64 * 1e-9) as f32;
+                    let i = VSCALES.iter().rposition(|&s| s <= want * 1.000001).unwrap_or(0);
+                    let f = want / VSCALES[i];
+                    (m.ch[c].vscale, m.ch[c].vfine) = (i, if (f - 1.0).abs() < 1e-6 { 1.0 } else { f });
                 } else {
                     m.ch[c].vscale = step(m.ch[c].vscale, VSCALES.len(), d);
                     m.ch[c].vfine = 1.0;
@@ -5663,7 +6399,8 @@ impl Ui {
                 self.set_trig_type(t);
             }
             Item::TrigLevel2 => {
-                let c = if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold) { m.trig_src2 } else { m.trig_src };
+                let c =
+                    if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold) { m.trig_src2 } else { m.trig_src };
                 m.trig_level2 += d as f32 * m.ch[c].volts_per_div() / 25.0;
             }
             Item::TrigSrc2 => m.trig_src2 = src_step(m.trig_src2, NCH, d),
@@ -5675,7 +6412,11 @@ impl Ui {
             }
             Item::TrigPol => m.trig_pol = if m.trig_pol == Pol::Pos { Pol::Neg } else { Pol::Pos },
             Item::TrigWhen => {
-                let all: &[WhenKind] = if m.trig_type == TrigType::Runt { &[WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out] } else { &[WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out] };
+                let all: &[WhenKind] = if m.trig_type == TrigType::Runt {
+                    &[WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out]
+                } else {
+                    &[WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out]
+                };
                 let i = all.iter().position(|&x| x == m.trig_when).unwrap_or(0);
                 m.trig_when = all[cyc(i, all.len(), d)];
             }
@@ -5690,9 +6431,15 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.video_sync).unwrap();
                 m.video_sync = all[cyc(i, all.len(), d)];
             }
-            Item::VidLine => m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32,
+            Item::VidLine => {
+                m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32
+            }
             Item::Pat(c) => {
-                let all = if m.trig_type == TrigType::Duration { &[Bit::H, Bit::L, Bit::X][..] } else { &[Bit::H, Bit::L, Bit::X, Bit::R, Bit::F][..] };
+                let all = if m.trig_type == TrigType::Duration {
+                    &[Bit::H, Bit::L, Bit::X][..]
+                } else {
+                    &[Bit::H, Bit::L, Bit::X, Bit::R, Bit::F][..]
+                };
                 let i = all.iter().position(|&x| x == m.pat[c]).unwrap_or(0);
                 m.pat[c] = all[cyc(i, all.len(), d)];
             }
@@ -5880,8 +6627,20 @@ impl Ui {
                 let i = BUS_WHATS.iter().position(|&x| x == self.m.trig_bus).unwrap_or(0);
                 self.m.trig_bus = BUS_WHATS[cyc(i, BUS_WHATS.len(), d)];
             }
-            Item::TrigBusVal => self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(0, BUS_VAL_MAX as i64) as u64,
-            Item::SerRel | Item::SerMax | Item::SerMask | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::SpiTimeout | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => self.serial_adjust(it, d),
+            Item::TrigBusVal => {
+                self.m.trig_bus_val = (self.m.trig_bus_val as i64 + d as i64).clamp(0, BUS_VAL_MAX as i64) as u64
+            }
+            Item::SerRel
+            | Item::SerMax
+            | Item::SerMask
+            | Item::UartPol
+            | Item::UartStop
+            | Item::UartErr
+            | Item::SpiCs
+            | Item::SpiTimeout
+            | Item::I2cDir
+            | Item::I2cAddrBits
+            | Item::I2cBytes => self.serial_adjust(it, d),
             Item::DecCanH => self.m.dec_canh = !self.m.dec_canh,
             Item::DecThr => self.m.dec_thr += d as f32 * self.m.ch[self.m.dec_src].volts_per_div() / 25.0,
             Item::DecFmt => self.m.dec_ascii = !self.m.dec_ascii,
@@ -5985,7 +6744,14 @@ impl Ui {
     }
 
     fn activate(&mut self, it: Item) {
-        if Self::kind(it) == Kind::Action && (self.ana_activate(it) || self.cal_activate(it) || self.bode_activate(it) || self.afg_activate(it) || self.time_activate(it) || self.ssh_activate(it)) {
+        if Self::kind(it) == Kind::Action
+            && (self.ana_activate(it)
+                || self.cal_activate(it)
+                || self.bode_activate(it)
+                || self.afg_activate(it)
+                || self.time_activate(it)
+                || self.ssh_activate(it))
+        {
             return;
         }
         match Self::kind(it) {
@@ -6003,7 +6769,12 @@ impl Ui {
                     self.parent = Some(p);
                 }
                 // start menu: the front-panel key functions; one-shot actions close the menu, stepping ones keep it
-                Item::RunStop | Item::SingleAct | Item::AutosetAct | Item::DefaultAct | Item::ForceAct | Item::LockAct => {
+                Item::RunStop
+                | Item::SingleAct
+                | Item::AutosetAct
+                | Item::DefaultAct
+                | Item::ForceAct
+                | Item::LockAct => {
                     self.close_menu();
                     self.key(match it {
                         Item::RunStop => key::RUNSTOP,
@@ -6037,7 +6808,9 @@ impl Ui {
                     // keypad: digits edit the entry, OK sets the value and goes back
                     match KEYPAD.get(k).copied() {
                         Some("OK") => {
-                            let v = u64::from_str_radix(if self.keypad.is_empty() { "0" } else { &self.keypad }, 16).unwrap_or(0).min(BUS_VAL_MAX);
+                            let v = u64::from_str_radix(if self.keypad.is_empty() { "0" } else { &self.keypad }, 16)
+                                .unwrap_or(0)
+                                .min(BUS_VAL_MAX);
                             if let Some(p) = self.pick {
                                 self.set_hex(p.it, v);
                             }
@@ -6061,7 +6834,9 @@ impl Ui {
                     self.close_picker();
                     self.wlan_pick(k);
                 }
-                Item::PickOpt(k) if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName)) => {
+                Item::PickOpt(k)
+                    if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName)) =>
+                {
                     let it = self.pick.map(|p| p.it).unwrap_or(Item::TimeZone);
                     self.close_picker();
                     self.time_pick(it, k);
@@ -6121,7 +6896,9 @@ impl Ui {
                     None => self.toast("That slot is empty"),
                 },
                 Item::ChBiasZero(c) => self.zero_input(c),
-                Item::MathExprEdit => self.wlan.osk = Some(wlan::Osk::for_expr(self.m.math_sel, &self.m.math_expr[self.m.math_sel])),
+                Item::MathExprEdit => {
+                    self.wlan.osk = Some(wlan::Osk::for_expr(self.m.math_sel, &self.m.math_expr[self.m.math_sel]))
+                }
                 Item::MeasClear => {
                     self.m.meas.clear();
                     self.m.meas2.clear();
@@ -6165,7 +6942,11 @@ impl Ui {
                     let mut d = vec![
                         "OOS".into(),
                         "An open operating system for the DHO800/DHO900".into(),
-                        if build.is_empty() { format!("oos-ui {}", env!("CARGO_PKG_VERSION")) } else { format!("Build {}", oos_hal::update::short(build.trim())) },
+                        if build.is_empty() {
+                            format!("oos-ui {}", env!("CARGO_PKG_VERSION"))
+                        } else {
+                            format!("Build {}", oos_hal::update::short(build.trim()))
+                        },
                         self.info.clone(),
                         format!("Rigol {}", p.ident()),
                         p.caps_line(),
@@ -6194,10 +6975,15 @@ impl Ui {
                 Item::ZoneBox | Item::ZoneShape => {
                     self.zone_arm = Some((self.zone_sel, it == Item::ZoneShape));
                     self.close_menu();
-                    self.toast(if it == Item::ZoneShape { "Draw the zone with one finger" } else { "Drag a box for the zone" });
+                    self.toast(if it == Item::ZoneShape {
+                        "Draw the zone with one finger"
+                    } else {
+                        "Drag a box for the zone"
+                    });
                 }
                 Item::ZoneClear => {
-                    self.m.zones[self.zone_sel] = crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
+                    self.m.zones[self.zone_sel] =
+                        crate::zone::Zone { src: self.m.zones[self.zone_sel].src, ..Default::default() };
                 }
                 Item::StoreSaveSetup => {
                     let p = self.setup_path();
@@ -6265,12 +7051,20 @@ impl Ui {
 
     /// Where screenshots and CSV files go now.
     pub fn save_dir(&self) -> std::path::PathBuf {
-        if self.usb_used() { std::path::PathBuf::from(crate::store::USB_DIR) } else { self.store_dir.clone() }
+        if self.usb_used() {
+            std::path::PathBuf::from(crate::store::USB_DIR)
+        } else {
+            self.store_dir.clone()
+        }
     }
 
     /// For the message after saving.
     pub fn saved_where(&self) -> &'static str {
-        if self.usb_used() { " on the USB stick" } else { "" }
+        if self.usb_used() {
+            " on the USB stick"
+        } else {
+            ""
+        }
     }
 
     /// After a file: on the stick for real, so that it can be pulled. Not in the frame loop, a stick can take its time.
@@ -6300,7 +7094,11 @@ impl Ui {
     /// in RAM is not used for it when OOS's data partition is there.
     fn setup_path(&self) -> std::path::PathBuf {
         let keep = std::path::Path::new("/oos/setups");
-        let dir = if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) && keep.is_dir() { keep } else { self.store_dir.as_path() };
+        let dir = if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) && keep.is_dir() {
+            keep
+        } else {
+            self.store_dir.as_path()
+        };
         dir.join(format!("setup{}.txt", self.store_slot))
     }
 
@@ -6358,18 +7156,41 @@ impl Ui {
 
     /// The options of a choice item for segmented buttons (empty: shown as - value +).
     fn options(&self, it: Item) -> Vec<String> {
-        if let Some(o) = self.ana_options(it).or_else(|| self.cal_options(it)).or_else(|| self.bode_options(it)).or_else(|| self.afg_options(it)).or_else(|| self.bw_options(it)).or_else(|| self.la_options(it)).or_else(|| self.win_options(it)).or_else(|| self.time_options(it)).or_else(|| self.remote_options(it)).or_else(|| self.graphics_options(it)).or_else(|| self.views_options(it)) {
+        if let Some(o) = self
+            .ana_options(it)
+            .or_else(|| self.cal_options(it))
+            .or_else(|| self.bode_options(it))
+            .or_else(|| self.afg_options(it))
+            .or_else(|| self.bw_options(it))
+            .or_else(|| self.la_options(it))
+            .or_else(|| self.win_options(it))
+            .or_else(|| self.time_options(it))
+            .or_else(|| self.remote_options(it))
+            .or_else(|| self.graphics_options(it))
+            .or_else(|| self.views_options(it))
+        {
             return o;
         }
         let v: &[&str] = match it {
-            Item::ChOn(_) | Item::ChInvert(_) | Item::MeasStats | Item::MeasLabels | Item::Zoom | Item::AutoRoll | Item::DecOn | Item::SearchOn | Item::ColorGrade | Item::MaskOn => &["Off", "On"],
+            Item::ChOn(_)
+            | Item::ChInvert(_)
+            | Item::MeasStats
+            | Item::MeasLabels
+            | Item::Zoom
+            | Item::AutoRoll
+            | Item::DecOn
+            | Item::SearchOn
+            | Item::ColorGrade
+            | Item::MaskOn => &["Off", "On"],
             Item::MaskSrc => return ch_names(),
             Item::MaskAction => &["None", "Stop"],
             Item::ChCoupling(_) => return board().couplings().iter().map(|c| c.name().to_string()).collect(),
 
             Item::ChProbe(_) => &["1x", "10x", "100x"],
             Item::TrigSrc | Item::MeasSrc | Item::DecSrc | Item::RefSrc => return ch_names(),
-            Item::MathA | Item::MathB => return (0..NCH + self.m.math_sel).filter(|&s| src_ok(s)).map(src_name).collect(),
+            Item::MathA | Item::MathB => {
+                return (0..NCH + self.m.math_sel).filter(|&s| src_ok(s)).map(src_name).collect()
+            }
             Item::MathSel => return (0..NMATH).map(|k| format!("M{}", k + 1)).collect(),
             Item::TrigSlope => &["Rising", "Falling", "Either"],
             Item::TrigMode => &["Auto", "Normal", "Single"],
@@ -6400,7 +7221,14 @@ impl Ui {
             Item::DecTick => return crate::decode::SENT_TICKS.iter().map(|&t| tick_name(t)).collect(),
             Item::DecNibbles => &["1", "2", "3", "4", "5", "6"],
             Item::DecUsbSpeed => &USPEED_NAMES,
-            Item::DecOpt(k) => return self.m.dec_proto.module().and_then(|p| p.options().get(k)).map_or(Vec::new(), |o| o.choices.iter().map(|c| c.to_string()).collect()),
+            Item::DecOpt(k) => {
+                return self
+                    .m
+                    .dec_proto
+                    .module()
+                    .and_then(|p| p.options().get(k))
+                    .map_or(Vec::new(), |o| o.choices.iter().map(|c| c.to_string()).collect())
+            }
             Item::DecSrc4 | Item::DecDiff => return opt_ch_names("None"),
             Item::DecCanH => &["RX/TX", "CAN_H"],
             Item::TrigBusWhat => &["Frame", "ID/Addr", "Data", "Error"],
@@ -6422,14 +7250,23 @@ impl Ui {
             Item::ZInput => return opt_ch_names("Off"),
             Item::Histogram => &["Off", "Vertical", "Horizontal"],
             Item::TouchLock => &["On", "Locked"],
-            Item::AuxOut => return AuxOut::choices(board().mask_hw() || board().zone_hw()).iter().map(|a| a.name().to_string()).collect(),
+            Item::AuxOut => {
+                return AuxOut::choices(board().mask_hw() || board().zone_hw())
+                    .iter()
+                    .map(|a| a.name().to_string())
+                    .collect()
+            }
             Item::DecFmt => &["Hex", "ASCII"],
             Item::XyMode => &["YT", "XY"],
             Item::DecSel => &["D1", "D2", "D3", "D4"],
             Item::PaneSel => &tables::PANES,
             Item::TrendSel(_) => return self.trend_options(),
-            Item::MeasSrcB | Item::DvmSrc | Item::CntSrc => return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect(),
-            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn | Item::AcqSegHw | Item::AcqAvgHw => &["Off", "On"],
+            Item::MeasSrcB | Item::DvmSrc | Item::CntSrc => {
+                return (0..n_ch()).map(|c| format!("CH{}", c + 1)).collect()
+            }
+            Item::DvmOn | Item::CntOn | Item::ChFine | Item::HFine | Item::LogOn | Item::AcqSegHw | Item::AcqAvgHw => {
+                &["Off", "On"]
+            }
             Item::ChUnit(_) => &["V", "A", "W", "U"],
             Item::ChExpand => &["Center", "Ground"],
             Item::HExpandI => &["Center", "Left", "Right", "Trigger"],
@@ -6444,13 +7281,22 @@ impl Ui {
             Item::ChBw(_) => return BWS.iter().map(|b| b.0.to_string()).collect(),
             Item::Persist => return PERSIST.iter().map(|p| p.0.to_string()).collect(),
             Item::AcqAvg => return AVERAGES.iter().map(|n| n.to_string()).collect(),
-            Item::AcqSeg => return self.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect(),
+            Item::AcqSeg => {
+                return self.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect()
+            }
             Item::AcqSegIvl => return SEG_IVLS.iter().map(|&x| seg_ivl_name(x)).collect(),
             Item::DecBaud => return crate::decode::BAUDS.iter().map(|b| b.to_string()).collect(),
             Item::DecCanRate => return crate::decode::CAN_RATES.iter().map(|&b| si(b, "bit/s")).collect(),
             // the value picker is a hex keypad
             Item::TrigBusVal | Item::SerMax | Item::SerMask => return KEYPAD.iter().map(|k| k.to_string()).collect(),
-            Item::SerRel | Item::UartPol | Item::UartStop | Item::UartErr | Item::SpiCs | Item::I2cDir | Item::I2cAddrBits | Item::I2cBytes => return Self::serial_options(it),
+            Item::SerRel
+            | Item::UartPol
+            | Item::UartStop
+            | Item::UartErr
+            | Item::SpiCs
+            | Item::I2cDir
+            | Item::I2cAddrBits
+            | Item::I2cBytes => return Self::serial_options(it),
             Item::AfgFreqEntry => return FREQ_KEYS.iter().map(|k| k.to_string()).collect(),
             Item::WlanNet => return self.wlan_net_options(),
             Item::WlanForgetNet => return self.wlan_forget_options(),
@@ -6471,7 +7317,10 @@ impl Ui {
         if let Item::RefShow(_) = it {
             return Ctl::Button;
         }
-        if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::NetEth | Item::NetMac | Item::NetWlan) || Self::time_text(it) || Self::remote_text(it) {
+        if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::NetEth | Item::NetMac | Item::NetWlan)
+            || Self::time_text(it)
+            || Self::remote_text(it)
+        {
             return Ctl::Text;
         }
         match Self::kind(it) {
@@ -6547,11 +7396,21 @@ impl Ui {
             MenuId::Main => (self.menu_btn().x, false),
             MenuId::Network | MenuId::Remote | MenuId::Ssh => (self.net_box().x + self.net_box().w / 2, true),
             MenuId::ViewMore => (self.scr.w, true),
-            MenuId::La | MenuId::LaLines | MenuId::LaPat => self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
+            MenuId::La | MenuId::LaLines | MenuId::LaPat => {
+                self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false))
+            }
             MenuId::Afg => self.aux_cards().1.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
-            MenuId::Utility => self.top_buttons().iter().find(|t| t.0 == TopBtn::System).map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
+            MenuId::Utility => self
+                .top_buttons()
+                .iter()
+                .find(|t| t.0 == TopBtn::System)
+                .map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
             // menus of front-panel keys (also opened from the start menu): centred above the cards
-            m => self.top_buttons().iter().find(|t| t.0 == TopBtn::Menu(m)).map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
+            m => self
+                .top_buttons()
+                .iter()
+                .find(|t| t.0 == TopBtn::Menu(m))
+                .map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
         }
     }
 
@@ -6567,7 +7426,17 @@ impl Ui {
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
         let wide = self.pick.is_some_and(|p| matches!(p.it, Item::WlanNet | Item::WlanForgetNet | Item::SshRemoveKey));
         let l = self.lay();
-        let (cols, cw, rh, gap) = if wide { (2, l.dlg_col, DLG_ROW + 2, 8) } else if self.menu == MenuId::ViewMore { (1, l.grid_col + 40, DLG_ROW + 2, 8) } else if grid { (4, l.grid_col, DLG_ROW + 2, 8) } else if n > 5 { (2, l.dlg_col, DLG_ROW, 16) } else { (1, l.dlg_col, DLG_ROW, 16) };
+        let (cols, cw, rh, gap) = if wide {
+            (2, l.dlg_col, DLG_ROW + 2, 8)
+        } else if self.menu == MenuId::ViewMore {
+            (1, l.grid_col + 40, DLG_ROW + 2, 8)
+        } else if grid {
+            (4, l.grid_col, DLG_ROW + 2, 8)
+        } else if n > 5 {
+            (2, l.dlg_col, DLG_ROW, 16)
+        } else {
+            (1, l.dlg_col, DLG_ROW, 16)
+        };
         let nrows = (n + cols - 1) / cols;
         let w = 24 + cols * cw + (cols - 1) * gap;
         let h = DLG_HEAD + nrows * rh + 6;
@@ -6592,7 +7461,11 @@ impl Ui {
             let ry = r.y + DLG_HEAD + row * rh;
             let label = Rect::new(cx, ry, l.dlg_label, DLG_CTRL);
             let lw = l.dlg_label + 4;
-            let ctrl = if Self::kind(it) == Kind::Action { Rect::new(cx, ry, cw, DLG_CTRL) } else { Rect::new(cx + lw, ry, cw - lw, DLG_CTRL) };
+            let ctrl = if Self::kind(it) == Kind::Action {
+                Rect::new(cx, ry, cw, DLG_CTRL)
+            } else {
+                Rect::new(cx + lw, ry, cw - lw, DLG_CTRL)
+            };
             rows.push(Row { it, label, ctl: self.ctl(it, ctrl.w), ctrl });
         }
         Some(Dlg { r, close, back, rows, heads: Vec::new() })
@@ -6713,7 +7586,9 @@ impl Ui {
                 }
                 Ctl::Button => {
                     let picked = match (row.it, self.pick) {
-                        (Item::PickOpt(k), Some(p)) => self.options(p.it).get(k).map(|o| (o.clone(), *o == self.value(p.it))),
+                        (Item::PickOpt(k), Some(p)) => {
+                            self.options(p.it).get(k).map(|o| (o.clone(), *o == self.value(p.it)))
+                        }
                         _ => None,
                     };
                     // orange: added measurement, current option of a picker, active state of a start menu entry
@@ -6852,7 +7727,13 @@ impl Ui {
             cv.round(r.inset(2), 7, DLG_BG, 255);
             for (i, l) in lines.iter().enumerate() {
                 let fnt = if i == 0 { &f.lb } else { &f.m };
-                cv.text_in(fnt, Rect::new(r.x, r.y + 20 + i as i32 * 30, r.w, 26), 1, l, if i == 0 { ACCENT } else { TEXT });
+                cv.text_in(
+                    fnt,
+                    Rect::new(r.x, r.y + 20 + i as i32 * 30, r.w, 26),
+                    1,
+                    l,
+                    if i == 0 { ACCENT } else { TEXT },
+                );
             }
         }
     }
@@ -6915,7 +7796,9 @@ impl Ui {
     /// held on a channel's card: then the finger's lift is no tap.
     fn ch_hold_poll(&mut self) {
         if let Some((c, t)) = self.card_hold {
-            let still = self.touch.down && (self.touch.x - self.touch.x0).abs() < 16 && (self.touch.y - self.touch.y0).abs() < 16;
+            let still = self.touch.down
+                && (self.touch.x - self.touch.x0).abs() < 16
+                && (self.touch.y - self.touch.y0).abs() < 16;
             if !still {
                 self.card_hold = None;
             } else if self.now - t >= LONG_PRESS {
@@ -7068,7 +7951,8 @@ impl Ui {
             }
             key::LA | key::GI => {
                 let p = oos_hal::model::platform();
-                let (name, has) = if k == key::LA { ("logic analyser port", p.caps.la) } else { ("generator", p.caps.has_gen()) };
+                let (name, has) =
+                    if k == key::LA { ("logic analyser port", p.caps.la) } else { ("generator", p.caps.has_gen()) };
                 if !has {
                     self.toast(&format!("The {} has no {}", p.caps.name, name));
                 } else if k == key::GI {
@@ -7151,7 +8035,10 @@ impl Ui {
                 }
                 self.focus = self.focus.min(items.len() - 1);
                 let it = items[self.focus];
-                let picker = self.dlg_layout().and_then(|d| d.rows.get(self.focus).map(|r| matches!(r.ctl, Ctl::Pick))).unwrap_or(false);
+                let picker = self
+                    .dlg_layout()
+                    .and_then(|d| d.rows.get(self.focus).map(|r| matches!(r.ctl, Ctl::Pick)))
+                    .unwrap_or(false);
                 if push {
                     if picker {
                         // push on a choice with a long list: the list
@@ -7255,25 +8142,43 @@ impl Ui {
             return self.touch_in(ph, x, y);
         }
         let keep = (self.area, self.cur_win);
-        let w = if ph == Phase::Down { self.wins.iter().position(|r| r.contains(x, y)).unwrap_or(0) } else { self.touch.win.min(self.wins.len() - 1) };
+        let w = if ph == Phase::Down {
+            self.wins.iter().position(|r| r.contains(x, y)).unwrap_or(0)
+        } else {
+            self.touch.win.min(self.wins.len() - 1)
+        };
         (self.area, self.cur_win) = (self.wins[w], w);
         self.touch_in(ph, x, y);
         (self.area, self.cur_win) = keep;
     }
 
     fn touch_in(&mut self, ph: Phase, x: i32, y: i32) {
-        let in_plot = ph == Phase::Down && self.grid.contains(x, y) && !self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
+        let in_plot =
+            ph == Phase::Down && self.grid.contains(x, y) && !self.dlg_layout().map_or(false, |d| d.r.contains(x, y));
         let t = &mut self.touch;
         match ph {
             Phase::Down => {
                 let sd = if self.m.zoom { self.m.zdelay } else { self.m.delay };
-                *t = TouchState { down: true, x0: x, y0: y, x, y, drag: Drag::None, start_offset: 0.0, start_delay: sd, start_level: self.m.trig_level, start_cur: 0.0, win: self.cur_win };
+                *t = TouchState {
+                    down: true,
+                    x0: x,
+                    y0: y,
+                    x,
+                    y,
+                    drag: Drag::None,
+                    start_offset: 0.0,
+                    start_delay: sd,
+                    start_level: self.m.trig_level,
+                    start_cur: 0.0,
+                    win: self.cur_win,
+                };
                 if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
                     return;
                 }
                 if !in_plot {
                     let (chs, _, _) = self.cards();
-                    self.card_hold = chs.iter().position(|r| r.contains(x, y)).filter(|&c| self.m.ch[c].on).map(|c| (c, self.now));
+                    self.card_hold =
+                        chs.iter().position(|r| r.contains(x, y)).filter(|&c| self.m.ch[c].on).map(|c| (c, self.now));
                     return;
                 }
                 if in_plot {
@@ -7330,7 +8235,11 @@ impl Ui {
                     } else if dy.abs() > dx.abs() {
                         // nearest enabled channel marker when starting at the left edge, else the active channel (in a
                         // split plot: of this window)
-                        let mut c = if self.shows(m.active) { m.active } else { (0..NCH).find(|&i| m.ch[i].on && self.shows(i)).unwrap_or(m.active) };
+                        let mut c = if self.shows(m.active) {
+                            m.active
+                        } else {
+                            (0..NCH).find(|&i| m.ch[i].on && self.shows(i)).unwrap_or(m.active)
+                        };
                         if near_left {
                             let mut best = i32::MAX;
                             for i in 0..NCH {
@@ -7463,7 +8372,11 @@ impl Ui {
             let v = ((a.y + a.h / 2) - y) as f64 / ppy * ch.volts_per_div() as f64 - ch.offset as f64;
             (t, v)
         };
-        let ok = if shape { path.len() >= 3 } else { path.len() == 2 && (path[0].0 - path[1].0).abs() > 4 && (path[0].1 - path[1].1).abs() > 4 };
+        let ok = if shape {
+            path.len() >= 3
+        } else {
+            path.len() == 2 && (path[0].0 - path[1].0).abs() > 4 && (path[0].1 - path[1].1).abs() > 4
+        };
         if !ok {
             self.toast("Zone too small");
             return;
@@ -7491,7 +8404,13 @@ impl Ui {
                 (x.clamp(-1e4, 1e4).round() as i32, y.clamp(-1e4, 1e4).round() as i32)
             };
             let poly: Vec<(i32, i32)> = z.polygon().into_iter().map(px).collect();
-            let col = if !z.on { DIM } else if z.inside { GREEN } else { RED };
+            let col = if !z.on {
+                DIM
+            } else if z.inside {
+                GREEN
+            } else {
+                RED
+            };
             for i in 0..poly.len() {
                 let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
                 cv.line(p.0, p.1, q.0, q.1, col);
@@ -7786,41 +8705,76 @@ fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
         return t;
     }
     let hex = |v: u32| if m.dec_bits > 8 { format!("{:04X}", v) } else { format!("{:02X}", v) };
-            match p.kind {
-                Kind::Addr { read } => format!("{} {}{}", hex(p.value), if read { "R" } else { "W" }, if p.ok { "" } else { " N" }),
-                // ARINC 429 label in octal; SENT tick and data nibbles
-                Kind::Id { .. } if m.dec_proto == Proto::Arinc429 => format!("L {:03o}", p.value),
-                Kind::Field("SYNC") if m.dec_proto == Proto::Sent => format!("SYNC {}{}", si(p.value as f64 * 1e-9, "s"), if p.ok { "" } else { " !" }),
-                Kind::Data if m.dec_proto == Proto::Sent => format!("{:0w$X}", p.value, w = p.value2.unwrap_or(1) as usize),
-                // USB: the speed of the SYNC, PID names, bytes
-                Kind::Field("SYNC") if m.dec_proto == Proto::Usb => format!("SYNC {}{}", if p.value >= 12000 { "FS" } else { "LS" }, if p.ok { "" } else { " !" }),
-                Kind::Field("PID") if m.dec_proto == Proto::Usb && p.ok => oos_dsp::decode_ext3::usb_pid_name(p.value as u8).to_string(),
-                Kind::Field("PID") if m.dec_proto == Proto::Usb => format!("PID {:02X} !", p.value),
-                Kind::Data if m.dec_proto == Proto::Usb => format!("{:02X}", p.value),
-                Kind::Id { ext, rtr } => format!("ID {}{}{}", if ext { format!("{:08X}", p.value) } else if m.dec_proto == Proto::Lin { format!("{:02X}", p.value) } else { format!("{:03X}", p.value) }, if rtr { " RTR" } else { "" }, if p.ok { "" } else { " !P" }),
-                Kind::Sample { right } => format!("{} {:0w$X}", if right { "R" } else { "L" }, p.value, w = (m.dec_bits as usize).div_ceil(4)),
-                Kind::Word { cmd } => format!("{} {:04X}{}", if cmd { "C/S" } else { "D" }, p.value, if p.ok { "" } else { " !P" }),
-                Kind::Crc => format!("{} {:X}{}", if m.dec_proto == Proto::Lin { "CS" } else { "CRC" }, p.value, if p.ok { "" } else { " !" }),
-                Kind::Field(l) => match p.value2 {
-                    Some(v2) if matches!(l, "DST" | "SRC" | "SER" | "PID") => format!("{} {:04X}{:08X}{}", l, v2, p.value, if p.ok { "" } else { " !" }),
-                    _ => format!("{} {:X}{}", l, p.value, if p.ok { "" } else { " !" }),
-                },
-                Kind::Ack => format!("ACK {}", p.value),
-                _ if m.dec_proto == Proto::Uart && m.dec_ascii && p.value == 0x20 => "SP".to_string(),
-                _ if m.dec_proto == Proto::Uart && m.dec_ascii && (0x21..0x7f).contains(&p.value) => format!("{}", p.value as u8 as char),
-                _ => match p.value2 {
-                    Some(v2) => format!("{}/{}", hex(p.value), hex(v2)),
-                    None if m.dec_proto == Proto::I2c && !p.ok => format!("{} N", hex(p.value)),
-                    None => hex(p.value),
-                },
+    match p.kind {
+        Kind::Addr { read } => {
+            format!("{} {}{}", hex(p.value), if read { "R" } else { "W" }, if p.ok { "" } else { " N" })
+        }
+        // ARINC 429 label in octal; SENT tick and data nibbles
+        Kind::Id { .. } if m.dec_proto == Proto::Arinc429 => format!("L {:03o}", p.value),
+        Kind::Field("SYNC") if m.dec_proto == Proto::Sent => {
+            format!("SYNC {}{}", si(p.value as f64 * 1e-9, "s"), if p.ok { "" } else { " !" })
+        }
+        Kind::Data if m.dec_proto == Proto::Sent => format!("{:0w$X}", p.value, w = p.value2.unwrap_or(1) as usize),
+        // USB: the speed of the SYNC, PID names, bytes
+        Kind::Field("SYNC") if m.dec_proto == Proto::Usb => {
+            format!("SYNC {}{}", if p.value >= 12000 { "FS" } else { "LS" }, if p.ok { "" } else { " !" })
+        }
+        Kind::Field("PID") if m.dec_proto == Proto::Usb && p.ok => {
+            oos_dsp::decode_ext3::usb_pid_name(p.value as u8).to_string()
+        }
+        Kind::Field("PID") if m.dec_proto == Proto::Usb => format!("PID {:02X} !", p.value),
+        Kind::Data if m.dec_proto == Proto::Usb => format!("{:02X}", p.value),
+        Kind::Id { ext, rtr } => format!(
+            "ID {}{}{}",
+            if ext {
+                format!("{:08X}", p.value)
+            } else if m.dec_proto == Proto::Lin {
+                format!("{:02X}", p.value)
+            } else {
+                format!("{:03X}", p.value)
+            },
+            if rtr { " RTR" } else { "" },
+            if p.ok { "" } else { " !P" }
+        ),
+        Kind::Sample { right } => {
+            format!("{} {:0w$X}", if right { "R" } else { "L" }, p.value, w = (m.dec_bits as usize).div_ceil(4))
+        }
+        Kind::Word { cmd } => {
+            format!("{} {:04X}{}", if cmd { "C/S" } else { "D" }, p.value, if p.ok { "" } else { " !P" })
+        }
+        Kind::Crc => format!(
+            "{} {:X}{}",
+            if m.dec_proto == Proto::Lin { "CS" } else { "CRC" },
+            p.value,
+            if p.ok { "" } else { " !" }
+        ),
+        Kind::Field(l) => match p.value2 {
+            Some(v2) if matches!(l, "DST" | "SRC" | "SER" | "PID") => {
+                format!("{} {:04X}{:08X}{}", l, v2, p.value, if p.ok { "" } else { " !" })
             }
+            _ => format!("{} {:X}{}", l, p.value, if p.ok { "" } else { " !" }),
+        },
+        Kind::Ack => format!("ACK {}", p.value),
+        _ if m.dec_proto == Proto::Uart && m.dec_ascii && p.value == 0x20 => "SP".to_string(),
+        _ if m.dec_proto == Proto::Uart && m.dec_ascii && (0x21..0x7f).contains(&p.value) => {
+            format!("{}", p.value as u8 as char)
+        }
+        _ => match p.value2 {
+            Some(v2) => format!("{}/{}", hex(p.value), hex(v2)),
+            None if m.dec_proto == Proto::I2c && !p.ok => format!("{} N", hex(p.value)),
+            None => hex(p.value),
+        },
+    }
 }
 
 /// The short tag of an event (start, stop, acknowledge ...), None for a field with a value.
 fn packet_tag(m: &Model, p: &oos_dsp::decode::Packet) -> Option<&'static str> {
     use oos_dsp::decode::Kind;
     let event = matches!(p.kind, Kind::Field(l) if l.starts_with('!'));
-    if !(event || matches!(p.kind, Kind::Start | Kind::RepStart | Kind::Stop | Kind::Break) || (p.kind == Kind::Ack && m.dec_proto != Proto::Swd)) {
+    if !(event
+        || matches!(p.kind, Kind::Start | Kind::RepStart | Kind::Stop | Kind::Break)
+        || (p.kind == Kind::Ack && m.dec_proto != Proto::Swd))
+    {
         return None;
     }
     Some(match p.kind {
@@ -7851,7 +8805,8 @@ fn holdoff_step(h: f32, d: i32) -> f32 {
 /// Axis label with the SI prefix of the axis `span` and as many decimals as `step` and `base` (offset / delay)
 /// need: "-1.0 µs", "500 mV", "3.25 V".
 fn axis_label(v: f32, step: f32, base: f32, span: f32, unit: &str) -> String {
-    let prefixes = [(1e9, "G"), (1e6, "M"), (1e3, "k"), (1.0, ""), (1e-3, "m"), (1e-6, "\u{b5}"), (1e-9, "n"), (1e-12, "p")];
+    let prefixes =
+        [(1e9, "G"), (1e6, "M"), (1e3, "k"), (1.0, ""), (1e-3, "m"), (1e-6, "\u{b5}"), (1e-9, "n"), (1e-12, "p")];
     let a = span.abs().max(step.abs()) as f64;
     let (mult, p) = prefixes.iter().copied().find(|(m, _)| a >= *m * 0.9995).unwrap_or((1e-12, "p"));
     let st = (step as f64 / mult).abs();
@@ -7953,7 +8908,15 @@ mod tests {
         ui.m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 40_000usize;
-        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e7 / (tdiv * 16.0), 10_000_000), ..Default::default() };
+        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame {
+            seq,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            envelope,
+            acq: (1e7 / (tdiv * 16.0), 10_000_000),
+            ..Default::default()
+        };
         let raw = |high: f32| -> Vec<f32> { (0..n).map(|i| if (i / 50) % 4 == 0 { high } else { 0.0 }).collect() };
         let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
         let mut seq = 0;
@@ -7999,16 +8962,41 @@ mod tests {
         }
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 40_000usize;
-        let v: Vec<f32> = (0..n).map(|i| if (i / 2) % 50 < 10 { 1.0 } else if i % 2 == 0 { -1.0 } else { -0.98 }).collect();
+        let v: Vec<f32> = (0..n)
+            .map(|i| {
+                if (i / 2) % 50 < 10 {
+                    1.0
+                } else if i % 2 == 0 {
+                    -1.0
+                } else {
+                    -0.98
+                }
+            })
+            .collect();
         for (seq, envelope) in [(1u64, true), (2, false), (3, true)] {
             // a deep record (above 1 M points): pairs of the live compression are held instead (compress::hold)
-            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() });
+            shared.lock().unwrap().queue.push_back(crate::board::Frame {
+                seq,
+                dt: window * 1.2 / n as f64,
+                pre: n / 2,
+                ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
+                envelope,
+                acq: (1e9, 10_000_000),
+                ..Default::default()
+            });
             for _ in 0..3 {
                 ui.step(0.02);
             }
-            let (avg, rms, max, pp) = (ui.meas(0, Meas::Vavg), ui.meas(0, Meas::Vrms), ui.meas(0, Meas::Vmax), ui.meas(0, Meas::Vpp));
+            let (avg, rms, max, pp) =
+                (ui.meas(0, Meas::Vavg), ui.meas(0, Meas::Vrms), ui.meas(0, Meas::Vmax), ui.meas(0, Meas::Vpp));
             assert_eq!(avg.is_nan() && rms.is_nan(), envelope, "envelope {}: mean {} rms {}", envelope, avg, rms);
-            assert!((max - 1.0).abs() < 0.05 && (pp - 2.0).abs() < 0.05, "envelope {}: max {} pk-pk {}", envelope, max, pp);
+            assert!(
+                (max - 1.0).abs() < 0.05 && (pp - 2.0).abs() < 0.05,
+                "envelope {}: max {} pk-pk {}",
+                envelope,
+                max,
+                pp
+            );
             let row = ui.meas_rows().into_iter().find(|r| r.name == Meas::Vavg.name()).map(|r| r.v);
             assert!(row.is_none_or(|x| x.is_nan() == envelope));
         }
@@ -8030,7 +9018,15 @@ mod tests {
         ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 40_000usize;
-        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (625e6, 100_000), ..Default::default() };
+        let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame {
+            seq,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            envelope,
+            acq: (625e6, 100_000),
+            ..Default::default()
+        };
         let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 1.0 } else { 0.0 }).collect();
         let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.5 }).collect();
         let steps = |ui: &mut Ui, k: usize| {
@@ -8061,7 +9057,10 @@ mod tests {
         }
         steps(&mut ui, 2);
         assert!(ui.stop_final.is_none());
-        assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope)), Some((5, false)));
+        assert_eq!(
+            ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope)),
+            Some((5, false))
+        );
         assert!((ui.meas(0, Meas::Vavg) - 0.5).abs() < 0.03);
     }
 
@@ -8101,7 +9100,15 @@ mod tests {
         ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 40_000usize;
-        let frame = |seq: u64, envelope: bool, acq: usize, v: Vec<f32>| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, acq), ..Default::default() };
+        let frame = |seq: u64, envelope: bool, acq: usize, v: Vec<f32>| crate::board::Frame {
+            seq,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            envelope,
+            acq: (1e9, acq),
+            ..Default::default()
+        };
         let raw = |top: f32| -> Vec<f32> { (0..n).map(|i| if (i / 50) % 4 == 0 { top } else { 0.0 }).collect() };
         let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
         let steps = |ui: &mut Ui, k: usize| {
@@ -8119,7 +9126,10 @@ mod tests {
             let g = shared.lock().unwrap();
             assert!(g.hold && g.final_req == 1);
         }
-        assert!(ui.stop_final.is_some() && ui.last[0].as_ref().is_some_and(|r| r.raw.as_ref().is_some_and(|x| x.frame.envelope)));
+        assert!(
+            ui.stop_final.is_some()
+                && ui.last[0].as_ref().is_some_and(|r| r.raw.as_ref().is_some_and(|x| x.frame.envelope))
+        );
         // the thread: the last frame of the batch in progress, then the newest frame raw, then the answer
         {
             let mut g = shared.lock().unwrap();
@@ -8171,8 +9181,25 @@ mod tests {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         let rec = |acq: usize, envelope: bool| {
-            let f = std::sync::Arc::new(crate::board::Frame { seq: 1, dt: 1e-9, pre: 50, ch: [vec![0.0; 100], Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, acq), ..Default::default() });
-            Record { t0: 0.0, dt: 1e-9, ch: Default::default(), triggered: true, partial: false, raw: Some(crate::wave::Raw { frame: f, i0: 0, i1: 100, t0: 0.0 }), la: None, pairs: false }
+            let f = std::sync::Arc::new(crate::board::Frame {
+                seq: 1,
+                dt: 1e-9,
+                pre: 50,
+                ch: [vec![0.0; 100], Vec::new(), Vec::new(), Vec::new()],
+                envelope,
+                acq: (1e9, acq),
+                ..Default::default()
+            });
+            Record {
+                t0: 0.0,
+                dt: 1e-9,
+                ch: Default::default(),
+                triggered: true,
+                partial: false,
+                raw: Some(crate::wave::Raw { frame: f, i0: 0, i1: 100, t0: 0.0 }),
+                la: None,
+                pairs: false,
+            }
         };
         let deep = rec(10_000_000, false);
         ui.m.meas = vec![(Meas::Vavg, 0), (Meas::Vpp, 0), (Meas::StdDev, 0)];
@@ -8216,7 +9243,15 @@ mod tests {
         let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 1.0 } else { 0.0 }).collect();
         let pairs = |top: f32| -> Vec<f32> { (0..n).map(|i| if i % 2 == 0 { 0.0 } else { top }).collect() };
         let push = |seq: u64, envelope: bool, v: Vec<f32>| {
-            shared.lock().unwrap().queue.push_back(crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, 10_000_000), ..Default::default() });
+            shared.lock().unwrap().queue.push_back(crate::board::Frame {
+                seq,
+                dt: window * 1.2 / n as f64,
+                pre: n / 2,
+                ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                envelope,
+                acq: (1e9, 10_000_000),
+                ..Default::default()
+            });
         };
         let step = |ui: &mut Ui| {
             for _ in 0..3 {
@@ -8273,7 +9308,13 @@ mod tests {
                 (if (k / 4000) % 2 == 1 { 0.3 } else { 0.0 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
             })
             .collect();
-        let frame = |seq: u64| crate::board::Frame { seq, dt: window * 1.2 / n as f64, pre: n / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
+        let frame = |seq: u64| crate::board::Frame {
+            seq,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        };
         let mut seq = 0;
         let mut picture = |ui: &mut Ui, k: usize| -> Vec<u32> {
             {
@@ -8324,15 +9365,22 @@ mod tests {
         let raw: Vec<f32> = (0..n)
             .map(|i| {
                 x = x.wrapping_mul(1664525).wrapping_add(1013904223);
-                (if ((i + n / 2 + half) / half) % 2 == 1 { 0.3 } else { 0.0 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
+                (if ((i + n / 2 + half) / half) % 2 == 1 { 0.3 } else { 0.0 })
+                    + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
             })
             .collect();
         // every point of a pair frame stands for k samples: a block of 2k samples gives its min and max in time order
         let pairs: Vec<f32> = raw
             .chunks_exact(2 * k)
             .flat_map(|b| {
-                let (lo, hi) = b.iter().enumerate().fold(((0, f32::MAX), (0, f32::MIN)), |(lo, hi), (i, &v)| (if v < lo.1 { (i, v) } else { lo }, if v > hi.1 { (i, v) } else { hi }));
-                if lo.0 <= hi.0 { [lo.1, hi.1] } else { [hi.1, lo.1] }
+                let (lo, hi) = b.iter().enumerate().fold(((0, f32::MAX), (0, f32::MIN)), |(lo, hi), (i, &v)| {
+                    (if v < lo.1 { (i, v) } else { lo }, if v > hi.1 { (i, v) } else { hi })
+                });
+                if lo.0 <= hi.0 {
+                    [lo.1, hi.1]
+                } else {
+                    [hi.1, lo.1]
+                }
             })
             .collect();
         let dt = window * 1.2 / n as f64;
@@ -8380,7 +9428,12 @@ mod tests {
     fn pair_and_raw_frames_in_one_picture_keep_the_grade_with_lines() {
         for (raw, worst, off, sum) in pair_raw_mix(false, false) {
             if raw {
-                assert!(off <= 200 && (sum - 1.0).abs() < 0.05, "with the raw frame: {} pixels off, brightness x{:.3}", off, sum);
+                assert!(
+                    off <= 200 && (sum - 1.0).abs() < 0.05,
+                    "with the raw frame: {} pixels off, brightness x{:.3}",
+                    off,
+                    sum
+                );
             } else {
                 assert!(worst <= 3, "after a raw frame: brightness off by {}", worst);
             }
@@ -8394,7 +9447,14 @@ mod tests {
     fn deep_raw_window_draws_like_its_pair_frames() {
         for dots in [false, true] {
             for (raw, worst, _, sum) in pair_raw_mix(dots, true) {
-                assert!(worst <= 3 && (sum - 1.0).abs() < 0.01, "dots {} raw frame {}: off by {}, brightness x{:.3}", dots, raw, worst, sum);
+                assert!(
+                    worst <= 3 && (sum - 1.0).abs() < 0.01,
+                    "dots {} raw frame {}: off by {}, brightness x{:.3}",
+                    dots,
+                    raw,
+                    worst,
+                    sum
+                );
             }
         }
     }
@@ -8405,7 +9465,10 @@ mod tests {
         for deep in [false, true] {
             for dots in [false, true] {
                 for (raw, worst, off, sum) in pair_raw_mix(dots, deep) {
-                    println!("deep {} dots {} raw frame {}: worst {} pixels off {} brightness x{:.3}", deep, dots, raw, worst, off, sum);
+                    println!(
+                        "deep {} dots {} raw frame {}: worst {} pixels off {} brightness x{:.3}",
+                        deep, dots, raw, worst, off, sum
+                    );
                 }
             }
         }
@@ -8426,7 +9489,12 @@ mod tests {
             seq,
             dt: window / n as f64 * 1.2,
             pre: n / 2,
-            ch: [(0..n).map(|k| if (k / 200) % 2 == 1 { 1.0 } else { 0.0 }).collect(), Vec::new(), Vec::new(), Vec::new()],
+            ch: [
+                (0..n).map(|k| if (k / 200) % 2 == 1 { 1.0 } else { 0.0 }).collect(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ],
             ..Default::default()
         };
         let mut seq = 0;
@@ -8559,7 +9627,8 @@ mod tests {
             ui.render(&mut cv);
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
             let _ = std::fs::create_dir_all(&dir);
-            let _ = crate::store::write(&dir.join(format!("i-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
+            let _ =
+                crate::store::write(&dir.join(format!("i-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
         }
     }
 
@@ -8585,7 +9654,13 @@ mod tests {
             assert!(std::mem::take(&mut shared.lock().unwrap().force));
             seq += 1;
             let n = 2000;
-            let f = crate::board::Frame { seq, dt: 5e-3 / n as f64, pre: n / 2, ch: [vec![0.0; n], Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
+            let f = crate::board::Frame {
+                seq,
+                dt: 5e-3 / n as f64,
+                pre: n / 2,
+                ch: [vec![0.0; n], Vec::new(), Vec::new(), Vec::new()],
+                ..Default::default()
+            };
             shared.lock().unwrap().queue.push_back(f);
             ui.step(0.02);
             assert_ne!(ui.m.status, TrigStatus::Wait, "the forced frame came (force {})", k);
@@ -8672,7 +9747,10 @@ mod tests {
             }
             assert!(ui.last[0].as_ref().unwrap().triggered, "id {:x} not triggered", id);
             let p = ui.decode_packets().unwrap();
-            let hit = p.iter().find(|x| matches!(x.kind, Kind::Id { .. }) && x.value == id).expect("matching ID in the record");
+            let hit = p
+                .iter()
+                .find(|x| matches!(x.kind, Kind::Id { .. }) && x.value == id)
+                .expect("matching ID in the record");
             // trigger point = end of the matching ID field = t 0 (within one screen point of 500 us / 3600)
             assert!(hit.t1.abs() < 0.5e-6, "id {:x}: field ends at {} s", id, hit.t1);
             if id == 0x123 {
@@ -8732,18 +9810,29 @@ mod tests {
                 }
                 assert!(ui.last[0].as_ref().is_some_and(|r| r.triggered), "{:?} {:?}: not triggered", proto, what);
                 let p = ui.decode_packets().unwrap();
-                assert!(crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol), "{:?} {:?}: no matching field ends at 0: {:?}", proto, what, p);
+                assert!(
+                    crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol),
+                    "{:?} {:?}: no matching field ends at 0: {:?}",
+                    proto,
+                    what,
+                    p
+                );
                 if what == BusWhat::Id && proto != Proto::Sent {
                     let want = if proto == Proto::Arinc429 { 0o310 } else { 0x2a };
                     assert_eq!(id_default, want);
-                    assert!(p.iter().any(|x| matches!(x.kind, Kind::Id { .. }) && x.value as u64 == want && x.t1.abs() < tol));
+                    assert!(p
+                        .iter()
+                        .any(|x| matches!(x.kind, Kind::Id { .. }) && x.value as u64 == want && x.t1.abs() < tol));
                 }
                 if what == BusWhat::Id {
                     let mut cv = Canvas::new(PANEL_W, PANEL_H);
                     ui.render(&mut cv);
                     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
                     let _ = std::fs::create_dir_all(&dir);
-                    let _ = crate::store::write(&dir.join(format!("j-bus-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
+                    let _ = crate::store::write(
+                        &dir.join(format!("j-bus-{:?}.png", proto).to_lowercase()),
+                        &crate::store::png_of(&cv),
+                    );
                 }
             }
         }
@@ -8758,7 +9847,13 @@ mod tests {
         let tdiv = 5e-6f32;
         let tsc = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
         let tol = 3.0 * tdiv as f64 * HDIV as f64 / 3600.0; // three record samples
-        for (what, val) in [(BusWhat::Id, None), (BusWhat::Id, Some(0x4B)), (BusWhat::Data, Some(0x40)), (BusWhat::Frame, None), (BusWhat::Error, None)] {
+        for (what, val) in [
+            (BusWhat::Id, None),
+            (BusWhat::Id, Some(0x4B)),
+            (BusWhat::Data, Some(0x40)),
+            (BusWhat::Frame, None),
+            (BusWhat::Error, None),
+        ] {
             let mut ui = Ui::new(Source::Demo { t: 0.0 });
             ui.m.dec_proto = Proto::Usb;
             ui.set_trig_type(TrigType::Bus);
@@ -8780,10 +9875,19 @@ mod tests {
             }
             assert!(ui.last[0].as_ref().is_some_and(|r| r.triggered), "USB {:?} {:?}: not triggered", what, val);
             let p = ui.decode_packets().unwrap();
-            assert!(crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol), "USB {:?}: no matching field ends at 0: {:?}", what, p);
+            assert!(
+                crate::trig::points(&ui.m, &p).iter().any(|t| t.abs() < tol),
+                "USB {:?}: no matching field ends at 0: {:?}",
+                what,
+                p
+            );
             match (what, val) {
-                (BusWhat::Id, None) => assert!(p.iter().any(|x| x.kind == Kind::Field("ADDR") && x.value == 5 && x.t1.abs() < tol)),
-                (BusWhat::Id, Some(v)) => assert!(p.iter().any(|x| x.kind == Kind::Field("PID") && x.value as u64 == v && x.t1.abs() < tol)),
+                (BusWhat::Id, None) => {
+                    assert!(p.iter().any(|x| x.kind == Kind::Field("ADDR") && x.value == 5 && x.t1.abs() < tol))
+                }
+                (BusWhat::Id, Some(v)) => {
+                    assert!(p.iter().any(|x| x.kind == Kind::Field("PID") && x.value as u64 == v && x.t1.abs() < tol))
+                }
                 (BusWhat::Frame, _) => assert!(p.iter().any(|x| x.kind == Kind::Field("SYNC") && x.t1.abs() < tol)),
                 _ => {}
             }
@@ -9039,7 +10143,15 @@ mod tests {
             co.replay(&mut po);
             for (name, a, b) in [("under", &u, &pu), ("over", &o, &po)] {
                 let bad = a.px.iter().zip(&b.px).position(|(p, q)| p != q);
-                assert!(bad.is_none(), "{} {}: pixel {:?} differs: {:08x} drawn, {:08x} replayed", what, name, bad.map(|i| (i as i32 % w, i as i32 / w)), bad.map_or(0, |i| a.px[i]), bad.map_or(0, |i| b.px[i]));
+                assert!(
+                    bad.is_none(),
+                    "{} {}: pixel {:?} differs: {:08x} drawn, {:08x} replayed",
+                    what,
+                    name,
+                    bad.map(|i| (i as i32 % w, i as i32 / w)),
+                    bad.map_or(0, |i| a.px[i]),
+                    bad.map_or(0, |i| b.px[i])
+                );
             }
         };
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
@@ -9102,7 +10214,8 @@ mod tests {
                 }
             }
         }
-        let kinds: Vec<String> = ui.azr.findings.iter().map(|f| format!("{:?} {:?} {:.2}", f.channels, f.kind, f.confidence)).collect();
+        let kinds: Vec<String> =
+            ui.azr.findings.iter().map(|f| format!("{:?} {:?} {:.2}", f.channels, f.kind, f.confidence)).collect();
         assert!(named.contains("CH3"), "toast: {:?}, seen {:?}, findings {:?}", named, ui.azr.watch_seen, kinds);
         assert!(ui.identify_items().len() > 1);
     }
@@ -9142,7 +10255,13 @@ mod tests {
         assert_eq!(ui.m.tscale, ts0, "time base restored");
         std::thread::sleep(std::time::Duration::from_millis(200));
         let cmds = got.lock().unwrap().clone();
-        assert!(cmds.contains(":SOUR1:APPL:SIN 1000,1,0") && cmds.contains(":OUTP1 ON") && cmds.contains(":SOUR1:APPL:SIN 100000"), "{}", cmds);
+        assert!(
+            cmds.contains(":SOUR1:APPL:SIN 1000,1,0")
+                && cmds.contains(":OUTP1 ON")
+                && cmds.contains(":SOUR1:APPL:SIN 100000"),
+            "{}",
+            cmds
+        );
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.render(&mut cv);
     }
@@ -9151,7 +10270,8 @@ mod tests {
     fn bode_sweep_with_the_builtin_generator() {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
-        (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_in, ui.m.bode_out) = (bode::BUILTIN, 1e3, 1e5, 3, 0, 0);
+        (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_in, ui.m.bode_out) =
+            (bode::BUILTIN, 1e3, 1e5, 3, 0, 0);
         (ui.m.afg_on, ui.m.afg_freq) = (false, 1234.0);
         ui.activate(Item::BodeRun);
         assert!(ui.m.afg_on && ui.m.afg_freq == 1e3 && ui.m.afg_offset == 0.0);
@@ -9234,11 +10354,17 @@ mod tests {
             let p = ui.decode_packets().unwrap();
             match proto {
                 Proto::I2s => {
-                    let s: Vec<(bool, u32)> = p.iter().filter_map(|x| if let Kind::Sample { right } = x.kind { Some((right, x.value)) } else { None }).collect();
+                    let s: Vec<(bool, u32)> = p
+                        .iter()
+                        .filter_map(|x| if let Kind::Sample { right } = x.kind { Some((right, x.value)) } else { None })
+                        .collect();
                     assert!(s.contains(&(false, 0x4000)) && s.contains(&(true, 0xc000)), "{:x?}", s);
                 }
                 _ => {
-                    let w: Vec<(bool, u32, bool)> = p.iter().filter_map(|x| if let Kind::Word { cmd } = x.kind { Some((cmd, x.value, x.ok)) } else { None }).collect();
+                    let w: Vec<(bool, u32, bool)> = p
+                        .iter()
+                        .filter_map(|x| if let Kind::Word { cmd } = x.kind { Some((cmd, x.value, x.ok)) } else { None })
+                        .collect();
                     assert!(w.contains(&(true, 0x0c23, true)) && w.contains(&(false, 0xbeef, true)), "{:x?}", w);
                 }
             }
@@ -9246,7 +10372,8 @@ mod tests {
             ui.render(&mut cv);
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
             let _ = std::fs::create_dir_all(&dir);
-            let _ = crate::store::write(&dir.join(format!("i-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
+            let _ =
+                crate::store::write(&dir.join(format!("i-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
         }
     }
 
@@ -9330,7 +10457,10 @@ mod tests {
             ui.render(&mut cv);
             let pal = heat_palette();
             let a = ui.area;
-            let hits = (a.y..a.y + a.h).flat_map(|y| (a.x..a.x + a.w).map(move |x| (x, y))).filter(|&(x, y)| pal.contains(&cv.px[(y * PANEL_W + x) as usize])).count();
+            let hits = (a.y..a.y + a.h)
+                .flat_map(|y| (a.x..a.x + a.w).map(move |x| (x, y)))
+                .filter(|&(x, y)| pal.contains(&cv.px[(y * PANEL_W + x) as usize]))
+                .count();
             assert!(hits > 1000, "zoom {}: {} graded pixels", zoom, hits);
         }
     }
@@ -9437,7 +10567,14 @@ mod tests {
         assert_eq!(shared.lock().unwrap().seg.want, Some(98));
         assert_eq!(ui.seg_label(98), "Segment 99/100 \u{b7} 980 \u{b5}s \u{b7} \u{394}t 10.0 \u{b5}s");
         let v: Vec<f32> = (0..1000).map(|k| ((k as f32) * 0.1).sin()).collect();
-        let f = crate::board::Frame { seq: 1, dt: 1e-9, pre: 500, ch: [v, Vec::new(), Vec::new(), Vec::new()], acq: (1e9, 1000), ..Default::default() };
+        let f = crate::board::Frame {
+            seq: 1,
+            dt: 1e-9,
+            pre: 500,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            acq: (1e9, 1000),
+            ..Default::default()
+        };
         shared.lock().unwrap().seg.shown = Some((98, f));
         ui.step(0.02);
         assert_eq!(ui.seg_pos, Some(98));
@@ -9525,8 +10662,25 @@ mod tests {
         // 1 us/div, 12.5 k points at 0.8 ns, a 200 kHz sine through 0 V rising at the trigger point
         let (n, dt, pre) = (12_500usize, 0.8e-9, 6250usize);
         let frame = |seq: u64| {
-            let v: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() as f32).collect();
-            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None, hw_avg: false, pre_exact: false, cfg: 0 }
+            let v: Vec<f32> = (0..n)
+                .map(|k| (2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() as f32)
+                .collect();
+            crate::board::Frame {
+                seq,
+                dt,
+                pre,
+                ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                roll: false,
+                envelope: false,
+                scan: false,
+                partial: false,
+                acq: (1.25e9, n),
+                stamp: 0,
+                la: None,
+                hw_avg: false,
+                pre_exact: false,
+                cfg: 0,
+            }
         };
         shared.lock().unwrap().queue.extend((1..=10).map(frame));
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
@@ -9560,7 +10714,15 @@ mod tests {
         ui.m.tscale = tscales().iter().position(|&x| (x - 100e-6).abs() < 1e-9).unwrap();
         (ui.m.acq, ui.m.avg_count, ui.m.avg_hw) = (AcqMode::Average, 16, true);
         ui.m.run = RunState::Run;
-        let flat = |seq: u64, v: f32, hw_avg: bool| crate::board::Frame { seq, dt: 0.8e-9, pre: 6250, ch: [vec![v; 12_500], Vec::new(), Vec::new(), Vec::new()], acq: (1.25e9, 12_500), hw_avg, ..Default::default() };
+        let flat = |seq: u64, v: f32, hw_avg: bool| crate::board::Frame {
+            seq,
+            dt: 0.8e-9,
+            pre: 6250,
+            ch: [vec![v; 12_500], Vec::new(), Vec::new(), Vec::new()],
+            acq: (1.25e9, 12_500),
+            hw_avg,
+            ..Default::default()
+        };
         let mid = |ui: &Ui| {
             let c = &ui.last[0].as_ref().unwrap().ch[0];
             c[c.len() / 2]
@@ -9640,7 +10802,10 @@ mod tests {
         q(&mut ui, ":ACQ:AVER 256");
         q(&mut ui, ":ACQ:AVER:HARD ON");
         assert_eq!((ui.m.acq, ui.m.avg_count, ui.m.avg_hw), (AcqMode::Average, 256, true));
-        assert_eq!((q(&mut ui, ":ACQ:TYPE?"), q(&mut ui, ":ACQ:AVER?"), q(&mut ui, ":ACQ:AVER:HARD?")), ("AVER".into(), "256".into(), "1".into()));
+        assert_eq!(
+            (q(&mut ui, ":ACQ:TYPE?"), q(&mut ui, ":ACQ:AVER?"), q(&mut ui, ":ACQ:AVER:HARD?")),
+            ("AVER".into(), "256".into(), "1".into())
+        );
         // counts the menu does not offer are refused and leave the count alone
         q(&mut ui, ":ACQ:AVER 100");
         q(&mut ui, ":ACQ:TYPE BOGUS");
@@ -9702,7 +10867,16 @@ mod tests {
             // two buttons in a card: the finger gets half of its height each
             assert!(trg.h / 2 >= 32 && sb.w >= 60 && mb.y > sb.y + sb.h, "{:?} {:?}", sb, mb);
         }
-        for m in [MenuId::Main, MenuId::Trigger, MenuId::Math, MenuId::MeasAdd, MenuId::Utility, MenuId::Channel(0), MenuId::Display, MenuId::Acquire] {
+        for m in [
+            MenuId::Main,
+            MenuId::Trigger,
+            MenuId::Math,
+            MenuId::MeasAdd,
+            MenuId::Utility,
+            MenuId::Channel(0),
+            MenuId::Display,
+            MenuId::Acquire,
+        ] {
             ui.open_menu(m);
             let d = ui.dlg_layout().unwrap();
             let fr = ui.frame();
@@ -9769,8 +10943,23 @@ mod tests {
         use super::*;
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         let items = [
-            Item::TrigType, Item::MathOpI, Item::FftWin, Item::VidSync, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct,
-            Item::AcqMode, Item::TrigWhen, Item::Pat(1), Item::DecCs, Item::DecProto, Item::GridStyle, Item::ChProbe(0), Item::TrigMode,
+            Item::TrigType,
+            Item::MathOpI,
+            Item::FftWin,
+            Item::VidSync,
+            Item::AcqDepth,
+            Item::Persist,
+            Item::AcqAvg,
+            Item::DecBaud,
+            Item::QuickAct,
+            Item::AcqMode,
+            Item::TrigWhen,
+            Item::Pat(1),
+            Item::DecCs,
+            Item::DecProto,
+            Item::GridStyle,
+            Item::ChProbe(0),
+            Item::TrigMode,
             Item::TrigCoup,
         ];
         for it in items {
@@ -9782,7 +10971,16 @@ mod tests {
             }
         }
         // long lists get a picker, short ones segmented buttons
-        for it in [Item::TrigType, Item::MathOpI, Item::FftWin, Item::AcqDepth, Item::Persist, Item::AcqAvg, Item::DecBaud, Item::QuickAct] {
+        for it in [
+            Item::TrigType,
+            Item::MathOpI,
+            Item::FftWin,
+            Item::AcqDepth,
+            Item::Persist,
+            Item::AcqAvg,
+            Item::DecBaud,
+            Item::QuickAct,
+        ] {
             assert!(matches!(ui.ctl(it, 300), Ctl::Pick), "{:?}", it);
         }
         assert!(matches!(ui.ctl(Item::AcqMode, 300), Ctl::Seg(..)));
@@ -9816,7 +11014,10 @@ mod tests {
         assert_eq!(ui.m.run, RunState::Stop);
         // no trace pixel in the plot (below the mask pill)
         let a = ui.area;
-        let yellow = (a.y + 60..a.y + a.h - 20).flat_map(|y| (a.x + 60..a.x + a.w - 60).map(move |x| (x, y))).filter(|&(x, y)| cv.px[(y * PANEL_W + x) as usize] == CH_COLORS[0]).count();
+        let yellow = (a.y + 60..a.y + a.h - 20)
+            .flat_map(|y| (a.x + 60..a.x + a.w - 60).map(move |x| (x, y)))
+            .filter(|&(x, y)| cv.px[(y * PANEL_W + x) as usize] == CH_COLORS[0])
+            .count();
         assert_eq!(yellow, 0);
         // Display > Clear does the same; SINGLE acquires and draws again
         ui.key(key::SINGLE);
@@ -9887,7 +11088,8 @@ mod tests {
             let room = ui.top_buttons().first().map_or(ui.top_right(), |b| b.2.x) - 12;
             for (sr, depth) in [(1.25e9, 125e6), (625e6, 62.5e6), (3.125e6, 1.25e6)] {
                 let (bold, main, mode) = Ui::top_acq(f, r.x + r.w + 14, room, sr, depth, "Average 1024".into());
-                let w = if bold { f.mb.width(&main) } else { f.m.width(&main) } + mode.as_ref().map_or(0, |m| f.m.width(m));
+                let w =
+                    if bold { f.mb.width(&main) } else { f.m.width(&main) } + mode.as_ref().map_or(0, |m| f.m.width(m));
                 assert!(r.x + r.w + 14 + w <= room, "{:?} {} {}", ts, main, w);
             }
         }
@@ -9949,7 +11151,15 @@ mod tests {
             ui.step(0.033);
         }
         // the menu keys
-        for (k, m) in [(key::HMENU, MenuId::Acquire), (key::ANALYSE, MenuId::Decode), (key::TMENU, MenuId::Trigger), (key::MEASURE, MenuId::Measure), (key::CURSOR, MenuId::Cursor), (key::MATH, MenuId::Math), (key::REF, MenuId::Ref)] {
+        for (k, m) in [
+            (key::HMENU, MenuId::Acquire),
+            (key::ANALYSE, MenuId::Decode),
+            (key::TMENU, MenuId::Trigger),
+            (key::MEASURE, MenuId::Measure),
+            (key::CURSOR, MenuId::Cursor),
+            (key::MATH, MenuId::Math),
+            (key::REF, MenuId::Ref),
+        ] {
             ui.close_menu();
             ui.key(k);
             assert!(ui.menu_open && ui.menu == m, "key {:#x}", k);
@@ -9961,10 +11171,36 @@ mod tests {
         ui.tap(x, y);
         assert_eq!(ui.menu, MenuId::Main);
         let all = ui.items(MenuId::Main);
-        for it in [Item::RunStop, Item::SingleAct, Item::AutosetAct, Item::ClearDisp, Item::DefaultAct, Item::SlopeAct, Item::ForceAct, Item::NavHist, Item::QuickRun, Item::Shot, Item::LockAct, Item::PowerAct] {
+        for it in [
+            Item::RunStop,
+            Item::SingleAct,
+            Item::AutosetAct,
+            Item::ClearDisp,
+            Item::DefaultAct,
+            Item::SlopeAct,
+            Item::ForceAct,
+            Item::NavHist,
+            Item::QuickRun,
+            Item::Shot,
+            Item::LockAct,
+            Item::PowerAct,
+        ] {
             assert!(all.contains(&it), "{:?}", it);
         }
-        for m in [MenuId::Acquire, MenuId::Trigger, MenuId::Horizontal, MenuId::Measure, MenuId::Cursor, MenuId::Math, MenuId::Ref, MenuId::Decode, MenuId::Display, MenuId::Storage, MenuId::Mask, MenuId::Utility] {
+        for m in [
+            MenuId::Acquire,
+            MenuId::Trigger,
+            MenuId::Horizontal,
+            MenuId::Measure,
+            MenuId::Cursor,
+            MenuId::Math,
+            MenuId::Ref,
+            MenuId::Decode,
+            MenuId::Display,
+            MenuId::Storage,
+            MenuId::Mask,
+            MenuId::Utility,
+        ] {
             assert!(all.contains(&Item::Open(m)), "{:?}", m);
             ui.open_menu(MenuId::Main);
             let (x, y) = mid(row_of(&ui, Item::Open(m)).ctrl);
@@ -10045,7 +11281,11 @@ mod aux_out_tests {
     fn aux_out_in_the_system_menu_with_the_offered_choices() {
         let mut ui = Ui::new(Source::Demo { t: 0.0 });
         assert!(ui.items(MenuId::Utility).contains(&Item::AuxOut));
-        let want: &[&str] = if board().mask_hw() || board().zone_hw() { &["Trigger out", "Off", "Pass/fail"] } else { &["Trigger out", "Off"] };
+        let want: &[&str] = if board().mask_hw() || board().zone_hw() {
+            &["Trigger out", "Off", "Pass/fail"]
+        } else {
+            &["Trigger out", "Off"]
+        };
         assert_eq!(ui.options(Item::AuxOut), want);
         assert_eq!(ui.value(Item::AuxOut), "Trigger out");
         ui.select_option(Item::AuxOut, "Off");
@@ -10057,4 +11297,3 @@ mod aux_out_tests {
         assert_eq!(AuxOut::choices(false), [AuxOut::TrigOut, AuxOut::Off]);
     }
 }
-

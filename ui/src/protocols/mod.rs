@@ -261,7 +261,11 @@ mod tests {
         }
         // the built-in protocols must not take a module's key or name
         for p in crate::model::BUILTIN_PROTOS {
-            assert!(!keys.contains(format!("{:?}", p).as_str()) && !names.contains(p.name()), "{:?} clashes with a module", p);
+            assert!(
+                !keys.contains(format!("{:?}", p).as_str()) && !names.contains(p.name()),
+                "{:?} clashes with a module",
+                p
+            );
         }
     }
 
@@ -272,9 +276,19 @@ mod tests {
             let Some(d) = demo(i as u8) else { continue };
             let dt = m.bit_time(&opt_fit(i as u8, opt_default(i as u8))) / 40.0;
             let n = (3.0 * d.period / dt) as usize;
-            let waves: Vec<Option<Vec<f32>>> = d.lines.iter().map(|l| l.as_ref().map(|f| (0..n).map(|k| f((k as f64 * dt).rem_euclid(d.period)) as f32).collect())).collect();
+            let waves: Vec<Option<Vec<f32>>> = d
+                .lines
+                .iter()
+                .map(|l| l.as_ref().map(|f| (0..n).map(|k| f((k as f64 * dt).rem_euclid(d.period)) as f32).collect()))
+                .collect();
             let s = m.setup();
-            let l = Lines { lines: std::array::from_fn(|k| waves[k].as_deref()), dt, thr: s.thr, hy: 0.1, opt: opt_fit(i as u8, opt_default(i as u8)) };
+            let l = Lines {
+                lines: std::array::from_fn(|k| waves[k].as_deref()),
+                dt,
+                thr: s.thr,
+                hy: 0.1,
+                opt: opt_fit(i as u8, opt_default(i as u8)),
+            };
             let p = m.decode(&l).unwrap_or_else(|e| panic!("{}: {}", m.name(), e));
             assert!(!p.is_empty(), "{}: nothing decoded from its demo", m.name());
             assert!(p.iter().all(|x| x.ok), "{}: errors in its own demo: {:?}", m.name(), p.iter().find(|x| !x.ok));

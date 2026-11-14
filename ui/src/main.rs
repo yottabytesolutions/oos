@@ -13,53 +13,53 @@
 // SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
+mod board;
 mod clock;
 mod cmd;
-mod decode;
-mod ethlink;
 mod compress;
+mod decode;
 mod deepmeas;
+mod drawpipe;
+#[cfg(target_os = "linux")]
+mod drm;
+mod ethlink;
 mod fastdraw;
 mod font;
+mod framecost;
+mod framestats;
 mod gfx;
+mod gpu;
 mod hostname;
 mod http;
-mod board;
+#[cfg(target_os = "linux")]
+mod input;
+mod json;
+mod layout;
 mod math;
 mod mdns;
 mod model;
 mod net;
 mod net6;
 mod netacl;
+mod pacing;
+#[cfg(test)]
+mod perfguard;
+mod placement;
 mod protocols;
 mod scpi;
 mod sntp;
+mod sparse;
+mod ssh;
 mod store;
 mod sysconf;
 mod trig;
 mod trignear;
-mod placement;
-#[cfg(test)]
-mod perfguard;
-mod sparse;
-mod drawpipe;
-mod framestats;
-mod framecost;
 mod ui;
 mod usbtmc;
-mod vxi11;
-mod json;
-mod gpu;
 mod vpu;
-mod layout;
-mod ssh;
+mod vxi11;
 mod wave;
 mod zone;
-mod pacing;
-#[cfg(target_os = "linux")]
-mod drm;
-#[cfg(target_os = "linux")]
-mod input;
 
 use gfx::Canvas;
 use ui::Ui;
@@ -82,10 +82,16 @@ fn source(args: &[String]) -> Source {
     #[cfg(target_os = "linux")]
     if args.iter().any(|a| a == "--hw") {
         use board::Board;
-        let mask = arg(args, "--app-mask").and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()).unwrap_or(1);
+        let mask =
+            arg(args, "--app-mask").and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()).unwrap_or(1);
         let cal_dir = arg(args, "--cal").unwrap_or_else(|| "/rigol/data".into());
         eprintln!("oos-ui: board {}", board::board().name());
-        let shared = board::board().spawn(board::Spawn { mask, program_afe: args.iter().any(|a| a == "--afe"), cal_dir, start_up: arg(args, "--start-up") });
+        let shared = board::board().spawn(board::Spawn {
+            mask,
+            program_afe: args.iter().any(|a| a == "--afe"),
+            cal_dir,
+            start_up: arg(args, "--start-up"),
+        });
         return Source::Hw { shared, seen: 0 };
     }
     if let Some(path) = arg(args, "--replay") {
@@ -141,7 +147,10 @@ fn main() {
     }
     let mut ui = Ui::new(source(&args));
     if let Some(m) = &foreign {
-        ui.toast(&format!("This is a {}: OOS drives DHO800/DHO900 hardware only. Demo signal shown (docs/porting.md)", m));
+        ui.toast(&format!(
+            "This is a {}: OOS drives DHO800/DHO900 hardware only. Demo signal shown (docs/porting.md)",
+            m
+        ));
     }
     ui.limits_path = limits;
     if experimental {
@@ -251,37 +260,77 @@ impl GpuLayers {
     }
 
     fn quad<'a>(&'a self, ui: &'a Ui, src: gfx::Rect, dst: gfx::Rect, filter: bool, reuse: bool) -> gpu::Quad<'a> {
-        gpu::Quad { under: Some(&self.under), over: Some(&self.over), size: (self.under.w, self.under.h), src, dst, filter, reuse, jobs: &self.jobs, ph: &ui.ph, phz: &ui.phz }
+        gpu::Quad {
+            under: Some(&self.under),
+            over: Some(&self.over),
+            size: (self.under.w, self.under.h),
+            src,
+            dst,
+            filter,
+            reuse,
+            jobs: &self.jobs,
+            ph: &ui.ph,
+            phz: &ui.phz,
+        }
     }
 
     /// The panel's picture into `target` (the size of `cv`); with `read` it also comes back into `cv` (the web page,
     /// screenshots, SCPI).
-    fn compose(&mut self, ui: &mut Ui, g: &mut gpu::Gpu, cv: &mut Canvas, target: usize, read: bool) -> Result<(), String> {
+    fn compose(
+        &mut self,
+        ui: &mut Ui,
+        g: &mut gpu::Gpu,
+        cv: &mut Canvas,
+        target: usize,
+        read: bool,
+    ) -> Result<(), String> {
         self.draw(ui, cv.w, cv.h, false);
         let full = gfx::Rect::new(0, 0, cv.w, cv.h);
         g.compose(target, None, &[self.quad(ui, full, full, false, false)], read.then_some(cv))
     }
-
 }
 
 /// The monitor's picture on the GPU (Display > HDMI with Graphics = GPU), right after the panel's: Mirror and
 /// Waveform take the panel's layers again without a new upload (quad 0); Layout draws the monitor's own layers.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
-fn hdmi_gpu_frame(ui: &mut Ui, g: &mut gpu::Gpu, panel: &GpuLayers, view: &mut GpuLayers, head: &mut Option<Canvas>, mw: i32, mh: i32, target: usize, read: bool) -> Result<gpu::Ticket, String> {
+fn hdmi_gpu_frame(
+    ui: &mut Ui,
+    g: &mut gpu::Gpu,
+    panel: &GpuLayers,
+    view: &mut GpuLayers,
+    head: &mut Option<Canvas>,
+    mw: i32,
+    mh: i32,
+    target: usize,
+    read: bool,
+) -> Result<gpu::Ticket, String> {
     let whole = gfx::Rect::new(0, 0, ui.scr.w, ui.scr.h);
     let fit_of = |sw: i32, sh: i32, dw: i32, dh: i32| {
         let f = gfx::Fit::new(sw, sh, dw, dh);
         let (w, h) = f.size();
         gfx::Rect::new(f.x0 as i32, f.y0 as i32, w as i32, h as i32)
     };
-    let mirror = |g: &mut gpu::Gpu| g.submit(target, Some(0), &[panel.quad(ui, whole, fit_of(whole.w, whole.h, mw, mh), true, true)], read);
+    let mirror = |g: &mut gpu::Gpu| {
+        g.submit(target, Some(0), &[panel.quad(ui, whole, fit_of(whole.w, whole.h, mw, mh), true, true)], read)
+    };
     match ui.m.hdmi {
         model::HdmiMode::Layout => match ui::Screen::for_monitor(mw, mh) {
             Some(s) => {
                 view.draw(ui, s.w, s.h, true);
                 // quad 0 stays the panel's: an empty one, the monitor's layers go to quad 1
-                let none = gpu::Quad { under: None, over: None, size: (1, 1), src: gfx::Rect::new(0, 0, 1, 1), dst: gfx::Rect::new(0, 0, 0, 0), filter: false, reuse: false, jobs: &[], ph: &ui.ph, phz: &ui.phz };
+                let none = gpu::Quad {
+                    under: None,
+                    over: None,
+                    size: (1, 1),
+                    src: gfx::Rect::new(0, 0, 1, 1),
+                    dst: gfx::Rect::new(0, 0, 0, 0),
+                    filter: false,
+                    reuse: false,
+                    jobs: &[],
+                    ph: &ui.ph,
+                    phz: &ui.phz,
+                };
                 let q = view.quad(ui, gfx::Rect::new(0, 0, s.w, s.h), gfx::Rect::new(0, 0, mw, mh), true, false);
                 g.submit(target, None, &[none, q], read)
             }
@@ -301,9 +350,25 @@ fn hdmi_gpu_frame(ui: &mut Ui, g: &mut gpu::Gpu, panel: &GpuLayers, view: &mut G
             let f = font::Fonts::get(0);
             hc.text_in(&f.xl, gfx::Rect::new(0, 0, mw, band), 1, &ui.hdmi_header(), gfx::rgb(0xe6, 0xed, 0xf3));
             // the waveform area without the bars and menus: the layer over the traces as it was before them
-            let over = ui.hdmi_over.as_ref().filter(|o| (o.w, o.h) == (panel.under.w, panel.under.h)).unwrap_or(&panel.over);
-            let plot = gpu::Quad { over: Some(over), reuse: false, ..panel.quad(ui, body, gfx::Rect::new(r.x, band, r.w, r.h), true, false) };
-            let line = gpu::Quad { under: Some(hc), over: None, size: (mw, band), src: gfx::Rect::new(0, 0, mw, band), dst: gfx::Rect::new(0, 0, mw, band), filter: false, reuse: false, jobs: &[], ph: &ui.ph, phz: &ui.phz };
+            let over =
+                ui.hdmi_over.as_ref().filter(|o| (o.w, o.h) == (panel.under.w, panel.under.h)).unwrap_or(&panel.over);
+            let plot = gpu::Quad {
+                over: Some(over),
+                reuse: false,
+                ..panel.quad(ui, body, gfx::Rect::new(r.x, band, r.w, r.h), true, false)
+            };
+            let line = gpu::Quad {
+                under: Some(hc),
+                over: None,
+                size: (mw, band),
+                src: gfx::Rect::new(0, 0, mw, band),
+                dst: gfx::Rect::new(0, 0, mw, band),
+                filter: false,
+                reuse: false,
+                jobs: &[],
+                ph: &ui.ph,
+                phz: &ui.phz,
+            };
             g.submit(target, Some(HDMI_BG), &[plot, line], read)
         }
         model::HdmiMode::Mirror => mirror(g),
@@ -334,7 +399,10 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
     // with --gpu, `OOS_GPU_HDMI=1920x1080 OOS_GPU_HDMI_MODE=Mirror|Waveform|Layout`: each shot also writes the
     // monitor's picture as the GPU puts it together (`<shot>-hdmi.ppm`)
     let hdmi = std::env::var("OOS_GPU_HDMI").ok().and_then(|s| ui::Screen::parse(&s)).filter(|_| gpu.is_some());
-    if let Some(m) = std::env::var("OOS_GPU_HDMI_MODE").ok().and_then(|v| model::HDMI_MODES.iter().copied().find(|x| format!("{:?}", x) == v)) {
+    if let Some(m) = std::env::var("OOS_GPU_HDMI_MODE")
+        .ok()
+        .and_then(|v| model::HDMI_MODES.iter().copied().find(|x| format!("{:?}", x) == v))
+    {
         ui.m.hdmi = m;
     }
     let (mut gl_view, mut gl_head, mut hdmi_cv) = (GpuLayers::new(1, 1), None, hdmi.map(|s| Canvas::new(s.w, s.h)));
@@ -374,7 +442,9 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
                 println!("shot {}", p);
                 if let (Some(g), Some(hc)) = (gpu.as_mut(), hdmi_cv.as_mut()) {
                     let (w, h) = (hc.w, hc.h);
-                    if let Err(e) = hdmi_gpu_frame(ui, g, &gl, &mut gl_view, &mut gl_head, w, h, 2, true).and_then(|t| g.collect(t, Some(hc))) {
+                    if let Err(e) = hdmi_gpu_frame(ui, g, &gl, &mut gl_view, &mut gl_head, w, h, 2, true)
+                        .and_then(|t| g.collect(t, Some(hc)))
+                    {
                         eprintln!("oos-ui: GPU HDMI: {}", e);
                         std::process::exit(3);
                     }
@@ -384,7 +454,11 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
                     if let Some(f) = std::env::var_os("OOS_GPU_TIMES") {
                         use std::io::Write;
                         let line = format!("{:.3} {:.3}\n", g.times.panel, g.times.monitor);
-                        let _ = std::fs::OpenOptions::new().create(true).append(true).open(f).and_then(|mut f| f.write_all(line.as_bytes()));
+                        let _ = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(f)
+                            .and_then(|mut f| f.write_all(line.as_bytes()));
                     }
                 }
             }
@@ -467,7 +541,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let start_up = arg(args, "--start-up");
     if start_up.is_some() {
         let mut cv = Canvas::new(ui::PANEL_W, ui::PANEL_H);
-        let splash = SPLASH.iter().find_map(|p| std::fs::read(p).ok()).and_then(|b| store::ppm_into(&b, &mut cv)).map(|_| cv.px);
+        let splash =
+            SPLASH.iter().find_map(|p| std::fs::read(p).ok()).and_then(|b| store::ppm_into(&b, &mut cv)).map(|_| cv.px);
         ui.start_up_begin(splash);
     }
     // own picture at power-on: without the start-up screen, the first start of a boot shows a binary
@@ -497,7 +572,9 @@ fn device_main(mut ui: Ui, args: &[String]) {
     ui.set_ssh_dir(ssh::dir());
     let mut setup_last = store::setup_text(&ui.m);
     let mut setup_t = Instant::now();
-    ui.info = std::fs::read_to_string("/proc/sys/kernel/osrelease").map(|s| format!("Linux {}", s.trim())).unwrap_or_default();
+    ui.info = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map(|s| format!("Linux {}", s.trim()))
+        .unwrap_or_default();
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     let mut last = Instant::now();
     let mut fps_t = Instant::now();
@@ -554,9 +631,13 @@ fn device_main(mut ui: Ui, args: &[String]) {
     let mut start_up_t = Instant::now().checked_sub(std::time::Duration::from_millis(300)).unwrap_or_else(Instant::now);
     while !ui.quit && !input::stop_requested() {
         // the start-up file, every 250 ms while the screen is up
-        if let Some(p) = start_up.as_deref().filter(|_| ui.start_up_active() && start_up_t.elapsed().as_millis() >= 250) {
+        if let Some(p) = start_up.as_deref().filter(|_| ui.start_up_active() && start_up_t.elapsed().as_millis() >= 250)
+        {
             start_up_t = Instant::now();
-            let up = std::fs::read_to_string("/proc/uptime").ok().and_then(|s| s.split_whitespace().next().and_then(|t| t.parse().ok())).unwrap_or(0.0);
+            let up = std::fs::read_to_string("/proc/uptime")
+                .ok()
+                .and_then(|s| s.split_whitespace().next().and_then(|t| t.parse().ok()))
+                .unwrap_or(0.0);
             ui.start_up_update(&std::fs::read_to_string(p).unwrap_or_default(), up);
         }
         // inputs (waits up to the next frame)
@@ -690,7 +771,10 @@ fn device_main(mut ui: Ui, args: &[String]) {
                     let mut ok = true;
                     for i in 0..h.buffers() {
                         let (fd, pitch) = h.export(i).map_err(|e| format!("HDMI export: {}", e))?;
-                        ok &= g.target_dmabuf(hdmi_base + i, h.width, h.height, pitch, fd).map_err(|e| eprintln!("oos-ui: GPU HDMI: {}", e)).is_ok();
+                        ok &= g
+                            .target_dmabuf(hdmi_base + i, h.width, h.height, pitch, fd)
+                            .map_err(|e| eprintln!("oos-ui: GPU HDMI: {}", e))
+                            .is_ok();
                     }
                     hdmi_gpu = Some(ok);
                 }
@@ -703,7 +787,20 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 let th = match (hdmi.as_ref(), hdmi_gpu, hdmi_frame) {
                     (Some(h), Some(true), true) => {
                         let b2 = h.free();
-                        Some((hdmi_gpu_frame(&mut ui, g, &gl, &mut gl_view, &mut gl_head, h.width, h.height, hdmi_base + b2, false)?, b2))
+                        Some((
+                            hdmi_gpu_frame(
+                                &mut ui,
+                                g,
+                                &gl,
+                                &mut gl_view,
+                                &mut gl_head,
+                                h.width,
+                                h.height,
+                                hdmi_base + b2,
+                                false,
+                            )?,
+                            b2,
+                        ))
                     }
                     _ => None,
                 };
@@ -823,7 +920,8 @@ fn device_main(mut ui: Ui, args: &[String]) {
                 if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {
                     // and across power cycles on OOS's own data partition (rcS copies it back to /tmp at boot)
                     if std::path::Path::new("/oos/setups").is_dir() {
-                        let _ = std::fs::write("/oos/oos-ui.setup.new", &t).and_then(|_| std::fs::rename("/oos/oos-ui.setup.new", "/oos/oos-ui.setup"));
+                        let _ = std::fs::write("/oos/oos-ui.setup.new", &t)
+                            .and_then(|_| std::fs::rename("/oos/oos-ui.setup.new", "/oos/oos-ui.setup"));
                     }
                     setup_last = t;
                 }
@@ -877,7 +975,13 @@ fn eth_watch(ui: &mut Ui, now: f64) {
         }
         Some(ethlink::Act::Result(s)) => {
             let s = s.map_or("no speed".to_string(), |s| format!("{} Mbit/s", s));
-            eprintln!("oos-ui: {} after the restart: {} {} ({})", ethlink::IFACE, s, ethlink::duplex(), ethlink::mii_regs());
+            eprintln!(
+                "oos-ui: {} after the restart: {} {} ({})",
+                ethlink::IFACE,
+                s,
+                ethlink::duplex(),
+                ethlink::mii_regs()
+            );
         }
         None => {}
     }

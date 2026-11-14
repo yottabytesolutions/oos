@@ -71,7 +71,12 @@ impl Ui {
             .m
             .meas
             .iter()
-            .map(|&(k, c)| MeasRow { name: k.name().to_string(), ch: c, v: if self.m.ch[c].on { self.ana_get(c, k) } else { f64::NAN }, unit: self.m.ch[c].unit.of(k.unit()) })
+            .map(|&(k, c)| MeasRow {
+                name: k.name().to_string(),
+                ch: c,
+                v: if self.m.ch[c].on { self.ana_get(c, k) } else { f64::NAN },
+                unit: self.m.ch[c].unit.of(k.unit()),
+            })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
             let (name, is_phase, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
@@ -82,7 +87,12 @@ impl Ui {
                 (true, true) => phase(&self.ana[a], &self.ana[b], p),
                 (true, false) => delay(&self.ana[a], &self.ana[b], p),
             };
-            v.push(MeasRow { name: format!("{} {}-{}", name, a + 1, b + 1), ch: a, v: val, unit: if is_phase { "\u{b0}" } else { "s" } });
+            v.push(MeasRow {
+                name: format!("{} {}-{}", name, a + 1, b + 1),
+                ch: a,
+                v: val,
+                unit: if is_phase { "\u{b0}" } else { "s" },
+            });
         }
         v
     }
@@ -219,7 +229,12 @@ impl Ui {
     /// Off the hardware the counter is worked out from the records (`counter_update`).
     pub(super) fn counter_poll(&mut self) {
         let m = &self.m;
-        let want = (m.cnt_on && m.ch[m.cnt_src].on).then_some(crate::board::CounterWant { ch: m.cnt_src, mode: m.cnt_mode.min(2), digits: m.cnt_digits, clear: self.cnt_clear });
+        let want = (m.cnt_on && m.ch[m.cnt_src].on).then_some(crate::board::CounterWant {
+            ch: m.cnt_src,
+            mode: m.cnt_mode.min(2),
+            digits: m.cnt_digits,
+            clear: self.cnt_clear,
+        });
         let Some(r) = self.src.hw_counter(want) else { return };
         match r {
             Some(r) if Some(r.n) != self.cnt_hw.map(|x| x.n) => {
@@ -304,7 +319,8 @@ impl Ui {
     /// latest reading.
     pub(super) fn dvm_poll(&mut self) {
         let m = &self.m;
-        let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw()).then_some(crate::board::DvmWant { ch: m.dvm_src, lane: self.dvm_lane });
+        let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw())
+            .then_some(crate::board::DvmWant { ch: m.dvm_src, lane: self.dvm_lane });
         if let Some(r) = self.src.hw_dvm(want) {
             self.dvm_hw = r;
         }
@@ -323,11 +339,14 @@ impl Ui {
         if !self.m.ch[c].on {
             return f64::NAN;
         }
-        self.ana_get(c, match self.m.dvm_mode {
-            0 => Meas::Vavg,
-            1 => Meas::VrmsAc,
-            _ => Meas::Vrms,
-        })
+        self.ana_get(
+            c,
+            match self.m.dvm_mode {
+                0 => Meas::Vavg,
+                1 => Meas::VrmsAc,
+                _ => Meas::Vrms,
+            },
+        )
     }
 
     /// DVM reading of its source, volts: the DVM block's when it has one, else the software DVM.
@@ -397,7 +416,10 @@ impl Ui {
             v.push((format!("Counter CH{} {}", c + 1, CNT_MODES[self.m.cnt_mode.min(2)]), t));
             let st = self.cnt_stat;
             if self.m.cnt_mode == 0 && st.n > 1 {
-                v.push(("min / max".into(), format!("{} / {}", si_digits(st.min, "Hz", digits), si_digits(st.max, "Hz", digits))));
+                v.push((
+                    "min / max".into(),
+                    format!("{} / {}", si_digits(st.min, "Hz", digits), si_digits(st.max, "Hz", digits)),
+                ));
             }
         }
         v
@@ -439,8 +461,15 @@ impl Ui {
 
     pub(super) fn mask_load(&mut self) {
         let p = self.mask_path();
-        let Ok(t) = std::fs::read_to_string(&p) else { return self.toast(&format!("No {}", crate::store::file_name(&p))) };
-        let v: Vec<f32> = t.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.trim().parse().ok()).filter(|v: &f32| v.is_finite()).collect();
+        let Ok(t) = std::fs::read_to_string(&p) else {
+            return self.toast(&format!("No {}", crate::store::file_name(&p)));
+        };
+        let v: Vec<f32> = t
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|l| l.trim().parse().ok())
+            .filter(|v: &f32| v.is_finite())
+            .collect();
         if v.len() < 2 {
             return self.toast("That file holds no mask");
         }
@@ -483,7 +512,9 @@ impl Ui {
     /// A CSV of that form into the slot of the Slot row: at least two rows, even time steps taken from the first two.
     pub(super) fn ref_import(&mut self) {
         let p = self.ref_path();
-        let Ok(t) = std::fs::read_to_string(&p) else { return self.toast(&format!("No {}", crate::store::file_name(&p))) };
+        let Ok(t) = std::fs::read_to_string(&p) else {
+            return self.toast(&format!("No {}", crate::store::file_name(&p)));
+        };
         let rows: Vec<(f64, f32)> = t
             .lines()
             .filter_map(|l| {
@@ -512,7 +543,11 @@ impl Ui {
 
     /// Name of a channel on its card: its label, or CHn.
     pub(super) fn ch_name(&self, c: usize) -> String {
-        if self.m.ch_label[c].is_empty() { format!("CH{}", c + 1) } else { self.m.ch_label[c].clone() }
+        if self.m.ch_label[c].is_empty() {
+            format!("CH{}", c + 1)
+        } else {
+            self.m.ch_label[c].clone()
+        }
     }
 }
 

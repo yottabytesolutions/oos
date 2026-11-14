@@ -69,7 +69,7 @@ pub fn parse_call(m: &[u8]) -> Option<Call<'_>> {
     x.opaque()?; // credentials
     x.u32()?;
     x.opaque()?; // verifier
-    // a verifier without its padding leaves the position past the end
+                 // a verifier without its padding leaves the position past the end
     Some(Call { xid, prog, vers, proc_, args: m.get(x.p..)? })
 }
 
@@ -240,7 +240,14 @@ pub struct Server {
 
 impl Server {
     pub fn open() -> Server {
-        let mut s = Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new(), acl: crate::netacl::Acl::default() };
+        let mut s = Server {
+            pm_tcp: None,
+            pm_udp: None,
+            core_tcp: None,
+            conns: Vec::new(),
+            links: Vec::new(),
+            acl: crate::netacl::Acl::default(),
+        };
         s.set_open(true);
         s
     }
@@ -260,7 +267,11 @@ impl Server {
         let tcp = |p: u16| crate::net6::tcp(p).inspect(|l| drop(l.set_nonblocking(true)));
         self.pm_udp = crate::net6::udp(111).inspect(|u| drop(u.set_nonblocking(true)));
         (self.pm_tcp, self.core_tcp) = (tcp(111), tcp(CORE_PORT));
-        eprintln!("oos-ui: VXI-11 portmapper {} / core {}", if self.pm_tcp.is_some() { "111" } else { "unavailable" }, if self.core_tcp.is_some() { CORE_PORT.to_string() } else { "unavailable".into() });
+        eprintln!(
+            "oos-ui: VXI-11 portmapper {} / core {}",
+            if self.pm_tcp.is_some() { "111" } else { "unavailable" },
+            if self.core_tcp.is_some() { CORE_PORT.to_string() } else { "unavailable".into() }
+        );
     }
 
     pub fn poll(&mut self, exec: &mut dyn FnMut(&str) -> Vec<u8>) {
@@ -377,7 +388,10 @@ mod tests {
         let m = call(7, PMAP_PROG, 3, &a);
         let r = portmap(&parse_call(&m).unwrap());
         let mut x = Xdr::new(&r);
-        assert_eq!([x.u32(), x.u32(), x.u32(), x.u32(), x.u32(), x.u32(), x.u32()], [Some(7), Some(1), Some(0), Some(0), Some(0), Some(0), Some(CORE_PORT as u32)]);
+        assert_eq!(
+            [x.u32(), x.u32(), x.u32(), x.u32(), x.u32(), x.u32(), x.u32()],
+            [Some(7), Some(1), Some(0), Some(0), Some(0), Some(0), Some(CORE_PORT as u32)]
+        );
         // create_link, device_write "*IDN?\n", device_read, destroy_link
         let mut links = Vec::new();
         let mut exec = |c: &str| if c == "*IDN?" { b"OOS,DHO924S".to_vec() } else { Vec::new() };

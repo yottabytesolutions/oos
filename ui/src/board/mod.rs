@@ -212,7 +212,10 @@ pub enum Slow {
     Off,
     Roll,
     /// `delay`: horizontal position (scan trigger position 0x4058); `single`: stop after one sweep
-    Scan { delay: f64, single: bool },
+    Scan {
+        delay: f64,
+        single: bool,
+    },
 }
 
 /// The hardware frequency counter as the UI wants it: channel, mode (0 frequency, 1 period, 2 totalize), resolution in
@@ -525,7 +528,9 @@ mod boundary {
         }
         assert!(bad.is_empty(), "board code outside board/dho:\n{}", bad.join("\n"));
         // the check itself sees what it is meant to see
-        assert!(production("use oos_hal::dho::afg;\n#[cfg(test)]\nmod tests {\n use oos_hal::dho::seq;\n}").contains("afg"));
+        assert!(
+            production("use oos_hal::dho::afg;\n#[cfg(test)]\nmod tests {\n use oos_hal::dho::seq;\n}").contains("afg")
+        );
         assert!(!production("fn a() {}\n#[cfg(test)]\nmod tests {\n use oos_hal::dho::seq;\n}").contains("seq"));
         assert!(test_only.iter().any(|p| p.ends_with("ui/lint.rs")), "{:?}", test_only);
     }

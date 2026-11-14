@@ -86,12 +86,26 @@ impl Ui {
     pub(super) fn ana_kind(it: Item) -> Option<Kind> {
         Some(match it {
             Item::SpecCenter | Item::SpecSpan | Item::SpecRbw | Item::SpecRef | Item::EyeRate => Kind::Value,
-            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::IdentifyAct => Kind::Action,
+            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::IdentifyAct => {
+                Kind::Action
+            }
             Item::SpecMargin => Kind::Value,
             Item::ProtoWatch => Kind::Choice,
             // a finding is a row with its summary as the only option: tapping it applies it
             Item::IdFind(_) => Kind::Choice,
-            Item::SpecOn | Item::SpecSrc | Item::SpecHarm | Item::SpecWin | Item::SpecTrace | Item::SpecWf | Item::SpecDist | Item::EyeOn | Item::EyeSrc | Item::PowOn | Item::PowV | Item::PowI | Item::PowMode => Kind::Choice,
+            Item::SpecOn
+            | Item::SpecSrc
+            | Item::SpecHarm
+            | Item::SpecWin
+            | Item::SpecTrace
+            | Item::SpecWf
+            | Item::SpecDist
+            | Item::EyeOn
+            | Item::EyeSrc
+            | Item::PowOn
+            | Item::PowV
+            | Item::PowI
+            | Item::PowMode => Kind::Choice,
             _ => return None,
         })
     }
@@ -142,7 +156,9 @@ impl Ui {
             Item::PowI => format!("CH{}", m.pw_i + 1),
             Item::SpecCenter => si_short(m.spec_center, "Hz"),
             Item::SpecSpan if m.spec_span > 0.0 => si_short(m.spec_span, "Hz"),
-            Item::SpecSpan if self.spec_follows() && self.azr.spec_stop > 0.0 => format!("Auto {}", si_short(self.azr.spec_stop, "Hz")),
+            Item::SpecSpan if self.spec_follows() && self.azr.spec_stop > 0.0 => {
+                format!("Auto {}", si_short(self.azr.spec_stop, "Hz"))
+            }
             Item::SpecSpan => "Full".into(),
             Item::SpecHarm => panes::harm_names()[m.spec_harm.min(PANE_HARMS.len() - 1)].clone(),
             Item::SpecRbw => match &self.azr.spec {
@@ -155,7 +171,13 @@ impl Ui {
             Item::SpecRef => format!("{:.0} dBV", m.spec_ref),
             Item::SpecWf => onoff(m.spec_wf),
             Item::SpecDist => onoff(m.spec_dist),
-            Item::EyeRate => if m.eye_rate == 0.0 { "Auto".into() } else { si_short(m.eye_rate, "b/s") },
+            Item::EyeRate => {
+                if m.eye_rate == 0.0 {
+                    "Auto".into()
+                } else {
+                    si_short(m.eye_rate, "b/s")
+                }
+            }
             Item::PowMode => format!("{:?}", m.pw_mode),
             Item::IdFind(k) => self.azr.findings.get(k).map_or(String::new(), |f| {
                 // short enough for the row's button (longer text would turn it into a - value + picker)
@@ -165,7 +187,9 @@ impl Ui {
                 }
                 s
             }),
-            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::IdentifyAct => String::new(),
+            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::IdentifyAct => {
+                String::new()
+            }
             Item::SpecMargin => format!("{:.0} dB", self.m.spec_margin),
             _ => return None,
         })
@@ -174,7 +198,9 @@ impl Ui {
     pub(super) fn ana_options(&self, it: Item) -> Option<Vec<String>> {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
-            Item::SpecOn | Item::EyeOn | Item::PowOn | Item::SpecWf | Item::SpecDist | Item::ProtoWatch => v(&["Off", "On"]),
+            Item::SpecOn | Item::EyeOn | Item::PowOn | Item::SpecWf | Item::SpecDist | Item::ProtoWatch => {
+                v(&["Off", "On"])
+            }
             Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => ch_names(),
             Item::SpecHarm => panes::harm_names(),
             Item::SpecWin => crate::math::WINDOWS.iter().map(|w| w.name().to_string()).collect(),
@@ -229,7 +255,9 @@ impl Ui {
             Item::SpecWf => m.spec_wf = !m.spec_wf,
             Item::SpecDist => m.spec_dist = !m.spec_dist,
             Item::EyeRate => m.eye_rate = step_ladder(m.eye_rate, d),
-            Item::PowMode => m.pw_mode = POWER_MODES[cyc(POWER_MODES.iter().position(|&p| p == m.pw_mode).unwrap_or(0), 4)],
+            Item::PowMode => {
+                m.pw_mode = POWER_MODES[cyc(POWER_MODES.iter().position(|&p| p == m.pw_mode).unwrap_or(0), 4)]
+            }
             _ => return false,
         }
         // the averaging/waterfall/eye restart on any analyser change
@@ -287,7 +315,8 @@ impl Ui {
 
     /// The spectrum is on the screen and its span is left to the signal.
     fn spec_follows(&self) -> bool {
-        let shown = self.m.view == AView::Spectrum || self.m.view == AView::Scope && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
+        let shown = self.m.view == AView::Spectrum
+            || self.m.view == AView::Scope && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
         shown && self.m.spec_span == 0.0 && PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)] > 0
     }
 
@@ -313,7 +342,8 @@ impl Ui {
         let (mut center, mut span) = (self.m.spec_center, self.m.spec_span);
         if self.spec_follows() {
             // no frequency this record: the span stays
-            self.azr.spec_stop = spectrum::auto_stop(f1, PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)], self.azr.spec_stop);
+            self.azr.spec_stop =
+                spectrum::auto_stop(f1, PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)], self.azr.spec_stop);
             (center, span) = (self.azr.spec_stop / 2.0, self.azr.spec_stop);
         }
         let area = if pane { self.pane_rect() } else { self.area };
@@ -325,7 +355,12 @@ impl Ui {
             rbw: if self.m.spec_rbw > 0.0 { self.m.spec_rbw } else { finest },
             window: self.m.spec_win,
             averaging: 16,
-            trace: [spectrum::Trace::Normal, spectrum::Trace::Average, spectrum::Trace::MaxHold, spectrum::Trace::MinHold][self.m.spec_trace.min(3)],
+            trace: [
+                spectrum::Trace::Normal,
+                spectrum::Trace::Average,
+                spectrum::Trace::MaxHold,
+                spectrum::Trace::MinHold,
+            ][self.m.spec_trace.min(3)],
             detector: spectrum::Detector::Peak,
             points: self.spec_box(area, pane).plot.w.max(100) as usize,
             ref_level_dbv: self.m.spec_ref as f64,
@@ -390,7 +425,19 @@ impl Ui {
     /// SCPI / MCP: Identify now, one finding per line ("CH1 Clock 1.000 kHz ... (90 %)").
     pub fn identify_text(&mut self) -> String {
         self.identify_now();
-        self.azr.findings.iter().map(|f| format!("{} {} ({:.0} %)", f.channels.iter().map(|c| format!("CH{}", c + 1)).collect::<Vec<_>>().join("+"), f.summary, f.confidence * 100.0)).collect::<Vec<_>>().join(";")
+        self.azr
+            .findings
+            .iter()
+            .map(|f| {
+                format!(
+                    "{} {} ({:.0} %)",
+                    f.channels.iter().map(|c| format!("CH{}", c + 1)).collect::<Vec<_>>().join("+"),
+                    f.summary,
+                    f.confidence * 100.0
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(";")
     }
 
     /// Identify on every captured sample of the channels that are on.
@@ -424,7 +471,8 @@ impl Ui {
         let m = &mut self.m;
         match f.trigger {
             T::Edge { source, level, rising, .. } => {
-                (m.trig_type, m.trig_src, m.trig_level, m.slope) = (TrigType::Edge, source, level, if rising { Slope::Rise } else { Slope::Fall });
+                (m.trig_type, m.trig_src, m.trig_level, m.slope) =
+                    (TrigType::Edge, source, level, if rising { Slope::Rise } else { Slope::Fall });
             }
             T::PulseWidth { source, level, positive, less_than, greater_than } => {
                 (m.trig_type, m.trig_src, m.trig_level) = (TrigType::Pulse, source, level);
@@ -441,17 +489,26 @@ impl Ui {
             }
             T::None => {}
         }
-        let nearest = |l: &[f64], x: f64| l.iter().enumerate().min_by(|a, b| (a.1 - x).abs().partial_cmp(&(b.1 - x).abs()).unwrap()).map_or(0, |e| e.0);
+        let nearest = |l: &[f64], x: f64| {
+            l.iter()
+                .enumerate()
+                .min_by(|a, b| (a.1 - x).abs().partial_cmp(&(b.1 - x).abs()).unwrap())
+                .map_or(0, |e| e.0)
+        };
         let Some(d) = &f.decoder else { return };
         m.dec_on = true;
         match d {
             D::Uart { ch, baud, bits, parity, thr, .. } => {
-                (m.dec_proto, m.dec_src, m.dec_bits, m.dec_parity, m.dec_thr) = (Proto::Uart, *ch, *bits, *parity, *thr);
+                (m.dec_proto, m.dec_src, m.dec_bits, m.dec_parity, m.dec_thr) =
+                    (Proto::Uart, *ch, *bits, *parity, *thr);
                 m.dec_baud = nearest(&crate::decode::BAUDS, *baud);
             }
-            D::I2c { sda, scl, thr } => (m.dec_proto, m.dec_src, m.dec_src2, m.dec_thr) = (Proto::I2c, *sda, *scl, *thr),
+            D::I2c { sda, scl, thr } => {
+                (m.dec_proto, m.dec_src, m.dec_src2, m.dec_thr) = (Proto::I2c, *sda, *scl, *thr)
+            }
             D::Spi { clk, data, cs, mode, bits, thr } => {
-                (m.dec_proto, m.dec_src2, m.dec_cs, m.dec_mode, m.dec_bits, m.dec_thr) = (Proto::Spi, *clk, *cs, *mode, *bits, *thr);
+                (m.dec_proto, m.dec_src2, m.dec_cs, m.dec_mode, m.dec_bits, m.dec_thr) =
+                    (Proto::Spi, *clk, *cs, *mode, *bits, *thr);
                 m.dec_src = data.first().copied().unwrap_or(0);
             }
             D::Can { ch, bitrate, thr, invert } => {
@@ -478,7 +535,9 @@ impl Ui {
             }
         }
         // the second pane runs the spectrum beside the scope; the peak list of the Results pane needs it less often
-        let beside = self.m.view == AView::Scope && self.pane_h() > 0 && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
+        let beside = self.m.view == AView::Scope
+            && self.pane_h() > 0
+            && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
         if beside && self.m.pane == tables::PANE_RESULTS {
             if self.azr.spec.is_some() && (self.now - self.azr.spec_t).abs() < 0.5 {
                 return;
@@ -506,7 +565,12 @@ impl Ui {
                         let q = power::quality(&v, &i, dt, None);
                         vec![
                             format!("Vrms {}   Irms {}", si(q.vrms, "V"), si(q.irms, "A")),
-                            format!("P {}   S {}   Q {}", si(q.p_real, "W"), si(q.s_apparent, "VA"), si(q.q_reactive, "var")),
+                            format!(
+                                "P {}   S {}   Q {}",
+                                si(q.p_real, "W"),
+                                si(q.s_apparent, "VA"),
+                                si(q.q_reactive, "var")
+                            ),
                             format!("PF {:.3}   phase {:.1}\u{b0}   f {}", q.pf, q.phase_deg, si(q.freq, "Hz")),
                             format!("crest V {:.2}   crest I {:.2}   {} cycles", q.crest_v, q.crest_i, q.cycles),
                         ]
@@ -514,7 +578,15 @@ impl Ui {
                     PowerMode::Harmonics => {
                         let h = power::harmonics(&i, dt, None, 15);
                         let mut out = vec!["Current harmonics vs. IEC 61000-3-2 class A".to_string()];
-                        out.extend(h.iter().map(|(n, a, lim, pass)| format!("H{:<2} {:>10}  limit {:>10}  {}", n, si(*a, "A"), if lim.is_finite() { si(*lim, "A") } else { "-".into() }, if *pass { "pass" } else { "FAIL" })));
+                        out.extend(h.iter().map(|(n, a, lim, pass)| {
+                            format!(
+                                "H{:<2} {:>10}  limit {:>10}  {}",
+                                n,
+                                si(*a, "A"),
+                                if lim.is_finite() { si(*lim, "A") } else { "-".into() },
+                                if *pass { "pass" } else { "FAIL" }
+                            )
+                        }));
                         out
                     }
                     PowerMode::Switching => {
@@ -527,8 +599,17 @@ impl Ui {
                     }
                     PowerMode::Ripple => {
                         let (pp, ac) = power::ripple(&v);
-                        let (pk, tpk, i2t) = if i.is_empty() { (f64::NAN, f64::NAN, f64::NAN) } else { power::inrush(&i, dt) };
-                        vec![format!("Ripple {} pp   {} rms AC", si(pp, "V"), si(ac, "V")), format!("Inrush peak {} at {}   I\u{b2}t {}", si(pk, "A"), si(tpk, "s"), si(i2t, "A\u{b2}s"))]
+                        let (pk, tpk, i2t) =
+                            if i.is_empty() { (f64::NAN, f64::NAN, f64::NAN) } else { power::inrush(&i, dt) };
+                        vec![
+                            format!("Ripple {} pp   {} rms AC", si(pp, "V"), si(ac, "V")),
+                            format!(
+                                "Inrush peak {} at {}   I\u{b2}t {}",
+                                si(pk, "A"),
+                                si(tpk, "s"),
+                                si(i2t, "A\u{b2}s")
+                            ),
+                        ]
                     }
                 };
             }
@@ -564,7 +645,11 @@ impl Ui {
         let f = self.fonts();
         let col = CH_COLORS[self.m.spec_src];
         let Some(sp) = &self.azr.spec else {
-            let t = if self.m.ch[self.m.spec_src].on { "Spectrum: waiting for a record".to_string() } else { format!("Spectrum: {} is off", self.ch_name(self.m.spec_src)) };
+            let t = if self.m.ch[self.m.spec_src].on {
+                "Spectrum: waiting for a record".to_string()
+            } else {
+                format!("Spectrum: {} is off", self.ch_name(self.m.spec_src))
+            };
             cv.text(&f.sb, a.x + 20, a.y + a.h / 2 + 5, &t, DIM);
             return;
         };
@@ -574,7 +659,10 @@ impl Ui {
         let wf_h = self.spec_wf_h(a, pane);
         let n = sp.dbv.len().max(2);
         let (top, dbdiv) = (self.m.spec_ref, panes::DB_PER_DIV);
-        let y_of = |db: f32| (g.y as f32 + (top - db) / dbdiv * (g.h as f32 / VDIV)).clamp(g.y as f32 - 2.0, (g.y + g.h) as f32 + 2.0) as i32;
+        let y_of = |db: f32| {
+            (g.y as f32 + (top - db) / dbdiv * (g.h as f32 / VDIV)).clamp(g.y as f32 - 2.0, (g.y + g.h) as f32 + 2.0)
+                as i32
+        };
         let x_of = |i: usize| g.x + (i as i64 * (g.w as i64 - 1) / (n as i64 - 1)) as i32;
         self.draw_spec_frame(cv, &b, sp);
         cv.set_clip(g);
@@ -626,7 +714,8 @@ impl Ui {
 
     fn draw_power(&self, cv: &mut Canvas) {
         let a = self.area;
-        let mut l = vec![format!("Power  V = CH{}  I = CH{}  ({:?})", self.m.pw_v + 1, self.m.pw_i + 1, self.m.pw_mode)];
+        let mut l =
+            vec![format!("Power  V = CH{}  I = CH{}  ({:?})", self.m.pw_v + 1, self.m.pw_i + 1, self.m.pw_mode)];
         l.extend(self.azr.power.iter().cloned());
         self.panel(cv, a.x + 20, a.y + 30, &l, TEXT);
     }

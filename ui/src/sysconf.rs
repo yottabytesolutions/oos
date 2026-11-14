@@ -101,7 +101,10 @@ impl Default for SysConf {
 
 /// A host name or an address: letters, digits, `.`, `-`, `:` (IPv6).
 pub fn server_ok(s: &str) -> bool {
-    !s.is_empty() && s.len() <= SERVER_MAX && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".-:".contains(&c)) && !s.starts_with(['-', '.'])
+    !s.is_empty()
+        && s.len() <= SERVER_MAX
+        && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".-:".contains(&c))
+        && !s.starts_with(['-', '.'])
 }
 
 /// Where the server asked (or the zone in use) came from.
@@ -212,7 +215,9 @@ impl SysConf {
                     }
                     _ => false,
                 },
-                "backlight" => v.parse::<u32>().ok().filter(|p| (10..=100).contains(p)).map(|p| c.backlight = p).is_some(),
+                "backlight" => {
+                    v.parse::<u32>().ok().filter(|p| (10..=100).contains(p)).map(|p| c.backlight = p).is_some()
+                }
                 _ => {
                     c.extra.push(line.to_string());
                     true
@@ -317,7 +322,10 @@ impl SysConf {
 /// file (`default_path`), then the image defaults (`IMAGE_PATH`). `conf_value` takes the first line of a key, so the
 /// settings file wins, also with an empty value, as `oos-conf` has it for the scripts.
 pub fn fork_text() -> String {
-    fork_text_of(&std::fs::read_to_string(default_path()).unwrap_or_default(), &std::fs::read_to_string(IMAGE_PATH).unwrap_or_default())
+    fork_text_of(
+        &std::fs::read_to_string(default_path()).unwrap_or_default(),
+        &std::fs::read_to_string(IMAGE_PATH).unwrap_or_default(),
+    )
 }
 
 /// `fork_text` from the two files' text.
@@ -345,7 +353,11 @@ mod tests {
         let v = |settings: &str, k: &str| crate::drawpipe::conf_value(None, &super::fork_text_of(settings, image), k);
         assert_eq!(v("", "acq.pipeline").as_deref(), Some("batch"));
         assert_eq!(v("perf.place = off\n", "perf.place").as_deref(), Some("off"));
-        assert_eq!(v("acq.pipeline =\n", "acq.pipeline").as_deref(), Some(""), "an empty value in the settings wins too");
+        assert_eq!(
+            v("acq.pipeline =\n", "acq.pipeline").as_deref(),
+            Some(""),
+            "an empty value in the settings wins too"
+        );
         assert_eq!(v("", "acq.prearm"), None);
     }
     use super::*;
@@ -425,7 +437,10 @@ mod tests {
     #[test]
     fn dhcp_server_resolves_from_the_lease() {
         let none = |_: &str| None;
-        assert_eq!(ntp_server("ptbtime1.ptb.de", |_| Some("10.0.0.1".into())), ("ptbtime1.ptb.de".into(), NtpOrigin::Set));
+        assert_eq!(
+            ntp_server("ptbtime1.ptb.de", |_| Some("10.0.0.1".into())),
+            ("ptbtime1.ptb.de".into(), NtpOrigin::Set)
+        );
         assert_eq!(ntp_server(DHCP, none), ("pool.ntp.org".into(), NtpOrigin::NoDhcp));
         // eth0 first, the first server of the list
         let both = |i: &str| Some(if i == "eth0" { "192.168.1.1 192.168.1.2\n" } else { "10.0.0.1" }.to_string());
@@ -462,7 +477,16 @@ mod tests {
         assert_eq!(tz_of(DHCP, fb, wlan), ("JST-9".into(), NtpOrigin::Dhcp("wlan0")));
         // what a server must not get through: junk, shell text, a name of the tz database, too long; eth0's bad string
         // falls through to wlan0
-        for junk in ["", "Europe/Amsterdam", "CET-1;reboot", "CET-1\nntp = off", "$(reboot)", &format!("<{}>-1", "A".repeat(60)), "CET-1CEST,M13.5.0,M10.5.0/3", "\u{e9}T-1"] {
+        for junk in [
+            "",
+            "Europe/Amsterdam",
+            "CET-1;reboot",
+            "CET-1\nntp = off",
+            "$(reboot)",
+            &format!("<{}>-1", "A".repeat(60)),
+            "CET-1CEST,M13.5.0,M10.5.0/3",
+            "\u{e9}T-1",
+        ] {
             assert_eq!(tz_of(DHCP, fb, |_| Some(junk.to_string())), (fb.into(), NtpOrigin::NoDhcp), "{:?}", junk);
         }
         let both = |i: &str| Some(if i == "eth0" { "nonsense" } else { "JST-9" }.to_string());
@@ -491,7 +515,9 @@ mod tests {
     fn unit_image_takes_the_time_from_the_dhcp_server() {
         let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/unit/dho804/system.conf"));
         assert!(bad.is_empty(), "{:?}", bad);
-        assert!(base.ntp && base.tz == DHCP && base.tz_fallback == "CET-1CEST,M3.5.0,M10.5.0/3" && base.ntp_server == DHCP);
+        assert!(
+            base.ntp && base.tz == DHCP && base.tz_fallback == "CET-1CEST,M3.5.0,M10.5.0/3" && base.ntp_server == DHCP
+        );
         assert_eq!(base.zone(), Tz::parse("CET-1CEST,M3.5.0,M10.5.0/3").unwrap());
         let lease = |i: &str| (i == "eth0").then(|| "192.0.2.1".to_string());
         let (fresh, _) = SysConf::parse_over(base.clone(), "");

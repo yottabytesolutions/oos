@@ -48,7 +48,12 @@ impl Ui {
             let Ok(p) = self.decode_packets_of(&m) else { continue };
             // a module may give a row per command
             if let Some(rows) = m.dec_proto.module().and_then(|x| x.events(&p, &m.dec_opts())) {
-                v.extend(rows.into_iter().map(|(t, text, ok)| EventRow { t, who: format!("D{} {}", k + 1, m.dec_proto.name()), text, ok }));
+                v.extend(rows.into_iter().map(|(t, text, ok)| EventRow {
+                    t,
+                    who: format!("D{} {}", k + 1, m.dec_proto.name()),
+                    text,
+                    ok,
+                }));
                 continue;
             }
             for x in &p {
@@ -61,7 +66,16 @@ impl Ui {
     }
 
     fn search_rows(&self) -> Vec<EventRow> {
-        self.search_events().into_iter().enumerate().map(|(i, t)| EventRow { t, who: format!("{}", i + 1), text: self.m.trig_type.name().to_string(), ok: true }).collect()
+        self.search_events()
+            .into_iter()
+            .enumerate()
+            .map(|(i, t)| EventRow {
+                t,
+                who: format!("{}", i + 1),
+                text: self.m.trig_type.name().to_string(),
+                ok: true,
+            })
+            .collect()
     }
 
     /// One row per hardware segment read back: time since the first trigger (NaN without a stamp), number, step.
@@ -81,7 +95,11 @@ impl Ui {
 
     /// The decoder events as text, one per line: time, decoder, content (SCPI).
     pub fn events_text(&self) -> String {
-        self.decode_events().iter().map(|r| format!("{:e},{},{},{}", r.t, r.who, r.text, if r.ok { "ok" } else { "error" })).collect::<Vec<_>>().join("\n")
+        self.decode_events()
+            .iter()
+            .map(|r| format!("{:e},{},{},{}", r.t, r.who, r.text, if r.ok { "ok" } else { "error" }))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub(super) fn table_rows(&self, k: TableKind) -> Vec<EventRow> {
@@ -215,7 +233,11 @@ impl Ui {
         // the plot keeps its height; with many LA lanes there may be no room left
         let room = self.plot_base() - self.la_strip_h() - 160;
         let h = (self.frame().body.h * 2 / 5).min(room);
-        if h < 100 { 0 } else { h.min(self.pane_want() + 4) }
+        if h < 100 {
+            0
+        } else {
+            h.min(self.pane_want() + 4)
+        }
     }
 
     /// The second pane: under the plot and the lanes.

@@ -94,7 +94,10 @@ impl Acl {
             IpAddr::V6(a) => a.to_ipv4_mapped().map_or(ip, IpAddr::V4),
             v4 => v4,
         };
-        if self.is_open() || ip.is_loopback() || self.nets.iter().any(|&(net, n)| net.is_ipv4() == ip.is_ipv4() && masked(ip, n) == net) {
+        if self.is_open()
+            || ip.is_loopback()
+            || self.nets.iter().any(|&(net, n)| net.is_ipv4() == ip.is_ipv4() && masked(ip, n) == net)
+        {
             return true;
         }
         self.onlink6 && ip.is_ipv6() && onlink().into_iter().any(|(net, n)| masked(ip, n) == masked(IpAddr::V6(net), n))
@@ -103,7 +106,10 @@ impl Acl {
     /// From the image default and the settings file (the file wins, also with an empty value). A list that names
     /// something but of which nothing parses closes everything but loopback rather than opening it.
     pub fn from_texts(image: Option<&str>, settings: Option<&str>) -> (Acl, Vec<String>) {
-        let v = settings.and_then(|t| value(t, "net.allow")).or_else(|| image.and_then(|t| value(t, "net.allow"))).unwrap_or("");
+        let v = settings
+            .and_then(|t| value(t, "net.allow"))
+            .or_else(|| image.and_then(|t| value(t, "net.allow")))
+            .unwrap_or("");
         let (mut acl, bad) = Acl::parse(v);
         if acl.is_open() && !bad.is_empty() {
             acl.nets.push(("::1".parse().unwrap(), 128));
@@ -178,7 +184,9 @@ mod tests {
         assert!(!a.permits_with(ip("10.0.0.1"), || panic!("asked")));
         // onlink6 alone closes what is not on the link
         let (a, _) = Acl::parse("onlink6");
-        assert!(!a.is_open() && !a.permits_with(ip("192.0.2.3"), link) && a.permits_with(ip("2001:db8:5:7::1"), link));
+        assert!(
+            !a.is_open() && !a.permits_with(ip("192.0.2.3"), link) && a.permits_with(ip("2001:db8:5:7::1"), link)
+        );
     }
 
     #[test]

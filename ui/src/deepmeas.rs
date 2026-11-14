@@ -91,7 +91,8 @@ pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
 /// The request for the model: on, and a shown measurement (or the software DVM) needs samples. Normal acquisition
 /// only: in Peak the memory holds peak pairs, not samples; Average and High res have their own records.
 pub fn want(m: &Model) -> Option<Want> {
-    let needs = m.meas.iter().any(|&(k, c)| m.ch[c].on && crate::framestats::needs_samples(k)) || (m.dvm_on && m.ch[m.dvm_src].on);
+    let needs = m.meas.iter().any(|&(k, c)| m.ch[c].on && crate::framestats::needs_samples(k))
+        || (m.dvm_on && m.ch[m.dvm_src].on);
     (enabled() && needs && m.acq == AcqMode::Normal).then_some(Want { every: m.trig_mode == TrigMode::Single })
 }
 
@@ -125,7 +126,12 @@ mod tests {
     use super::*;
 
     fn deep(envelope: bool) -> Frame {
-        Frame { envelope, acq: (1.25e9, 10_000_000), ch: [vec![0.0; 16], Vec::new(), Vec::new(), Vec::new()], ..Default::default() }
+        Frame {
+            envelope,
+            acq: (1.25e9, 10_000_000),
+            ch: [vec![0.0; 16], Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -167,7 +173,10 @@ mod tests {
         assert!(hold(&m, Some(&deep(true)), true));
         assert!(!hold(&m, Some(&deep(true)), false), "no raw read planned: the pair measurement stays");
         assert!(!hold(&m, Some(&deep(false)), true), "a raw record is measured");
-        assert!(!hold(&m, Some(&Frame { acq: (1.25e9, 1_000_000), ..deep(true) }), true), "live compression: the newest frame is raw anyway");
+        assert!(
+            !hold(&m, Some(&Frame { acq: (1.25e9, 1_000_000), ..deep(true) }), true),
+            "live compression: the newest frame is raw anyway"
+        );
         assert!(!hold(&m, None, true));
         m.run = RunState::Stop;
         assert!(!hold(&m, Some(&deep(true)), true));

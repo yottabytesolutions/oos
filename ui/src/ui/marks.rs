@@ -9,7 +9,15 @@ use super::*;
 /// Mark positions in `area` for the samples `v` (sample j at `t0 + j * dt` s from the trigger) of a channel with
 /// `offset` V and `vpd` V/div, shown at `view` (s/div, delay): the top-left corner of a 2 x 2 square centred on each
 /// sample inside the area.
-pub(super) fn sample_marks(area: Rect, view: (f64, f64), t0: f64, dt: f64, v: &[f32], offset: f32, vpd: f32) -> Vec<(i32, i32)> {
+pub(super) fn sample_marks(
+    area: Rect,
+    view: (f64, f64),
+    t0: f64,
+    dt: f64,
+    v: &[f32],
+    offset: f32,
+    vpd: f32,
+) -> Vec<(i32, i32)> {
     let ppd_x = area.w as f64 / HDIV as f64;
     let ppd_y = area.h as f32 / VDIV;
     let (cx, cy) = (area.x as f64 + area.w as f64 / 2.0, area.y as f32 + area.h as f32 / 2.0);
@@ -100,7 +108,12 @@ mod tests {
         let cv = Canvas::new(PANEL_W, PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
         assert_eq!(scpi.exec_line(&mut u, &cv, ":DISPlay:TYPE?"), b"AUTO");
-        for (cmd, mode, answer) in [("VECTors", DotsMode::Off, &b"VECT"[..]), ("DOTS", DotsMode::On, b"DOTS"), ("auto", DotsMode::Auto, b"AUTO"), ("VECT", DotsMode::Off, b"VECT")] {
+        for (cmd, mode, answer) in [
+            ("VECTors", DotsMode::Off, &b"VECT"[..]),
+            ("DOTS", DotsMode::On, b"DOTS"),
+            ("auto", DotsMode::Auto, b"AUTO"),
+            ("VECT", DotsMode::Off, b"VECT"),
+        ] {
             u.dirty_map = false;
             scpi.exec_line(&mut u, &cv, &format!(":DISP:TYPE {}", cmd));
             assert_eq!((u.m.dots, u.dirty_map), (mode, true), "{}", cmd);
@@ -142,11 +155,27 @@ mod tests {
         let mut u = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let area = Rect::new(0, 0, 1000, 400);
         let n = 101usize;
-        let frame = |dt: f64, envelope: bool| crate::board::Frame { seq: 1, dt, pre: n / 2, ch: [vec![0.1; n], Vec::new(), Vec::new(), Vec::new()], envelope, ..Default::default() };
+        let frame = |dt: f64, envelope: bool| crate::board::Frame {
+            seq: 1,
+            dt,
+            pre: n / 2,
+            ch: [vec![0.1; n], Vec::new(), Vec::new(), Vec::new()],
+            envelope,
+            ..Default::default()
+        };
         let rec = |f: crate::board::Frame| {
             let f = std::sync::Arc::new(f);
             let t0 = -(f.pre as f64) * f.dt;
-            Record { t0, dt: f.dt, ch: Default::default(), triggered: true, partial: false, raw: Some(Raw { frame: f, i0: 0, i1: n, t0 }), la: None, pairs: false }
+            Record {
+                t0,
+                dt: f.dt,
+                ch: Default::default(),
+                triggered: true,
+                partial: false,
+                raw: Some(Raw { frame: f, i0: 0, i1: n, t0 }),
+                la: None,
+                pairs: false,
+            }
         };
         for c in 1..NCH {
             u.m.ch[c].on = false;

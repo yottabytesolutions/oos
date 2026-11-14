@@ -18,8 +18,8 @@
 //! :VOLTage[:AMPLitude] <Vpp>, :VOLTage:OFFSet <V> (all with queries)
 //! Settings go through the same model as the screen, so the screen follows remote changes.
 
-use crate::gfx::Canvas;
 use crate::board::{board, Board};
+use crate::gfx::Canvas;
 use crate::model::*;
 use crate::ui::Ui;
 
@@ -238,14 +238,26 @@ fn e(v: f64) -> String {
 
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
-        Scpi { l: Self::bind(port), clients: Vec::new(), wav_src: 0, wav_fmt: 0, wav_raw: false, err: Vec::new(), acl: crate::netacl::Acl::default() }
+        Scpi {
+            l: Self::bind(port),
+            clients: Vec::new(),
+            wav_src: 0,
+            wav_fmt: 0,
+            wav_raw: false,
+            err: Vec::new(),
+            acl: crate::netacl::Acl::default(),
+        }
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
         let l = crate::net6::tcp(port);
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
-            eprintln!("oos-ui: SCPI on port {}{}", port, if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" });
+            eprintln!(
+                "oos-ui: SCPI on port {}{}",
+                port,
+                if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" }
+            );
         } else {
             eprintln!("oos-ui: SCPI port {} not available", port);
         }
@@ -382,7 +394,12 @@ impl Scpi {
         match up.as_str() {
             "*IDN" => {
                 let p = oos_hal::model::platform();
-                return t(&format!("OOS,{},{},oos-ui {}", p.caps.name, p.serial.as_deref().unwrap_or("0"), env!("CARGO_PKG_VERSION")));
+                return t(&format!(
+                    "OOS,{},{},oos-ui {}",
+                    p.caps.name,
+                    p.serial.as_deref().unwrap_or("0"),
+                    env!("CARGO_PKG_VERSION")
+                ));
             }
             "*OPC" => return if query { t("1") } else { None },
             "*CLS" => {
@@ -497,7 +514,10 @@ impl Scpi {
                         "AUTO" => 0,
                         "GND" => 3,
                         "20M" | "20MHZ" => BW_20M,
-                        _ => BWS.iter().position(|b| b.0.replace(' ', "").to_ascii_uppercase() == a || b.0.replace(' ', "").to_ascii_uppercase() == format!("{}HZ", a))?,
+                        _ => BWS.iter().position(|b| {
+                            b.0.replace(' ', "").to_ascii_uppercase() == a
+                                || b.0.replace(' ', "").to_ascii_uppercase() == format!("{}HZ", a)
+                        })?,
                     };
                 } else if kw(n1, "PROBe") {
                     if query {
@@ -598,16 +618,32 @@ impl Scpi {
                         }));
                     }
                     let a = arg.to_ascii_uppercase();
-                    m.trig_mode = if a.starts_with("AUTO") { TrigMode::Auto } else if a.starts_with("NORM") { TrigMode::Normal } else if a.starts_with("SING") { TrigMode::Single } else { return None };
+                    m.trig_mode = if a.starts_with("AUTO") {
+                        TrigMode::Auto
+                    } else if a.starts_with("NORM") {
+                        TrigMode::Normal
+                    } else if a.starts_with("SING") {
+                        TrigMode::Single
+                    } else {
+                        return None;
+                    };
                     return Some(None);
                 }
                 if nodes.len() == 3 && kw(nodes[1], "EDGE") {
                     if kw(last, "SOURce") {
                         if query {
-                            return Some(t(&m.trig_line().map_or(format!("CHAN{}", m.trig_src + 1), |n| format!("D{}", n))));
+                            return Some(t(&m
+                                .trig_line()
+                                .map_or(format!("CHAN{}", m.trig_src + 1), |n| format!("D{}", n))));
                         }
                         // D0..D15 like Rigol's source names, with the LA on
-                        match arg.trim().to_ascii_uppercase().strip_prefix('D').and_then(|n| n.parse::<u8>().ok()).filter(|&n| n < 16 && m.trig_la_ok()) {
+                        match arg
+                            .trim()
+                            .to_ascii_uppercase()
+                            .strip_prefix('D')
+                            .and_then(|n| n.parse::<u8>().ok())
+                            .filter(|&n| n < 16 && m.trig_la_ok())
+                        {
                             Some(n) => m.trig_la = Some(n),
                             None => (m.trig_src, m.trig_la) = (parse_ch(arg)?, None),
                         }
@@ -625,7 +661,15 @@ impl Scpi {
                             }));
                         }
                         let a = arg.to_ascii_uppercase();
-                        m.slope = if a.starts_with("POS") { Slope::Rise } else if a.starts_with("NEG") { Slope::Fall } else if a.starts_with("RFAL") { Slope::Either } else { return None };
+                        m.slope = if a.starts_with("POS") {
+                            Slope::Rise
+                        } else if a.starts_with("NEG") {
+                            Slope::Fall
+                        } else if a.starts_with("RFAL") {
+                            Slope::Either
+                        } else {
+                            return None;
+                        };
                     } else {
                         return None;
                     }
@@ -682,7 +726,13 @@ impl Scpi {
             if kw(n0, "ACQuire") && (2..=3).contains(&nodes.len()) && kw(nodes[1], "SEGMents") {
                 match (nodes.get(2).copied(), query) {
                     (None, true) => return Some(t(&m.segments.to_string())),
-                    (None, false) => m.segments = if parse_bool(arg) == Some(false) { 0 } else { (arg.trim().parse::<usize>().ok()?).min(crate::ui::SEG_HW_MAX) },
+                    (None, false) => {
+                        m.segments = if parse_bool(arg) == Some(false) {
+                            0
+                        } else {
+                            (arg.trim().parse::<usize>().ok()?).min(crate::ui::SEG_HW_MAX)
+                        }
+                    }
                     (Some(x), true) if kw(x, "HARDware") => return Some(t(if m.seg_hw { "1" } else { "0" })),
                     (Some(x), false) if kw(x, "HARDware") => m.seg_hw = parse_bool(arg)?,
                     (Some(x), true) if kw(x, "INTerval") => return Some(t(&e(m.seg_ivl as f64))),
@@ -718,7 +768,9 @@ impl Scpi {
             if kw(n0, "ACQuire") && (2..=3).contains(&nodes.len()) && kw(nodes[1], "AVERages") {
                 match (nodes.get(2).copied(), query) {
                     (None, true) => return Some(t(&m.avg_count.to_string())),
-                    (None, false) => m.avg_count = arg.trim().parse::<u32>().ok().filter(|n| crate::ui::AVERAGES.contains(n))?,
+                    (None, false) => {
+                        m.avg_count = arg.trim().parse::<u32>().ok().filter(|n| crate::ui::AVERAGES.contains(n))?
+                    }
                     (Some(x), true) if kw(x, "HARDware") => return Some(t(if m.avg_hw { "1" } else { "0" })),
                     (Some(x), false) if kw(x, "HARDware") => m.avg_hw = parse_bool(arg)?,
                     _ => return None,
@@ -777,7 +829,13 @@ impl Scpi {
                     return t(["BYTE", "WORD", "ASC"][self.wav_fmt as usize]);
                 }
                 let a = arg.to_ascii_uppercase();
-                self.wav_fmt = if a.starts_with("WORD") { 1 } else if a.starts_with("ASC") { 2 } else { 0 };
+                self.wav_fmt = if a.starts_with("WORD") {
+                    1
+                } else if a.starts_with("ASC") {
+                    2
+                } else {
+                    0
+                };
                 return None;
             }
             let (pts, pre) = self.wave_params(ui);
@@ -803,7 +861,10 @@ impl Scpi {
                     DotsMode::Auto => "AUTO",
                 });
             }
-            match [("VECTors", DotsMode::Off), ("DOTS", DotsMode::On), ("AUTO", DotsMode::Auto)].iter().find(|(k, _)| kw(arg.trim(), k)) {
+            match [("VECTors", DotsMode::Off), ("DOTS", DotsMode::On), ("AUTO", DotsMode::Auto)]
+                .iter()
+                .find(|(k, _)| kw(arg.trim(), k))
+            {
                 Some(&(_, d)) => ui.set_dots(d),
                 None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
             }
@@ -829,7 +890,13 @@ impl Scpi {
         }
         // OOS extensions: analyser view, Identify, self-calibration, Bode
         if kw(n0, "VIEW") && nodes.len() == 1 {
-            const VIEWS: [(&str, AView); 5] = [("SCOPe", AView::Scope), ("SPECtrum", AView::Spectrum), ("EYE", AView::Eye), ("POWer", AView::Power), ("BODE", AView::Bode)];
+            const VIEWS: [(&str, AView); 5] = [
+                ("SCOPe", AView::Scope),
+                ("SPECtrum", AView::Spectrum),
+                ("EYE", AView::Eye),
+                ("POWer", AView::Power),
+                ("BODE", AView::Bode),
+            ];
             if query {
                 return t(&format!("{:?}", ui.m.view).to_ascii_uppercase());
             }
@@ -883,9 +950,15 @@ impl Scpi {
                 return None;
             }
         }
-        if suffix(n0).1.is_none_or(|n| (1..=gen_count().max(1)).contains(&n)) && kw(suffix(n0).0, "SOURce") && nodes.len() >= 2 {
+        if suffix(n0).1.is_none_or(|n| (1..=gen_count().max(1)).contains(&n))
+            && kw(suffix(n0).0, "SOURce")
+            && nodes.len() >= 2
+        {
             if !oos_hal::model::platform().caps.has_gen() {
-                self.err.push(format!("-241,\"Hardware missing\" no generator on the {}", oos_hal::model::platform().caps.name));
+                self.err.push(format!(
+                    "-241,\"Hardware missing\" no generator on the {}",
+                    oos_hal::model::platform().caps.name
+                ));
                 return None;
             }
             // :SOURce<n> talks to generator n, whichever one the page shows
@@ -917,7 +990,10 @@ impl Scpi {
                 let a = arg.trim();
                 if has("INTernal") && has("FUNCtion") {
                     if query {
-                        return t(&SHAPES[m.afg_mod_shape.min(5)].chars().filter(|c| c.is_ascii_uppercase()).collect::<String>());
+                        return t(&SHAPES[m.afg_mod_shape.min(5)]
+                            .chars()
+                            .filter(|c| c.is_ascii_uppercase())
+                            .collect::<String>());
                     }
                     match SHAPES.iter().position(|s| kw(a, s)) {
                         Some(i) => ui.m.afg_mod_shape = i,
@@ -1031,7 +1107,9 @@ impl Scpi {
                     return t(&e(cur));
                 }
                 match x {
-                    Some(v) => ui.afg_set(None, (want == 0).then_some(v), (want == 1).then_some(v), (want == 2).then_some(v)),
+                    Some(v) => {
+                        ui.afg_set(None, (want == 0).then_some(v), (want == 1).then_some(v), (want == 2).then_some(v))
+                    }
                     None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
                 return None;
@@ -1040,7 +1118,10 @@ impl Scpi {
         // test access: any key of a setup file on the live settings (`:SYST:SET ch1.bw = 20M`), its value, the state
         if kw(n0, "SYSTem") && nodes.len() == 2 {
             if kw(nodes[1], "SET") && !query {
-                let r = arg.split_once('=').ok_or("no '='".to_string()).and_then(|(k, v)| crate::store::set(&mut ui.m, k.trim(), v.trim()));
+                let r = arg
+                    .split_once('=')
+                    .ok_or("no '='".to_string())
+                    .and_then(|(k, v)| crate::store::set(&mut ui.m, k.trim(), v.trim()));
                 match r {
                     Ok(()) => ui.mark_changed(),
                     Err(e) => self.err.push(format!("-224,\"Illegal parameter value\" {}", e)),
@@ -1048,15 +1129,20 @@ impl Scpi {
                 // a setup file may hold keys of newer versions, here a typo must not pass for a setting; the keys that
                 // are only written when they differ from their default do not show
                 let k = arg.split('=').next().unwrap_or("").trim();
-                let optional = ["vfine", "unit", "bias", "skew", "label", "tfine"].iter().any(|s| k.ends_with(s)) || k.starts_with("math_expr");
-                if !optional && !crate::store::setup_text(&ui.m).lines().any(|l| l.split('=').next().unwrap_or("").trim() == k) {
+                let optional = ["vfine", "unit", "bias", "skew", "label", "tfine"].iter().any(|s| k.ends_with(s))
+                    || k.starts_with("math_expr");
+                if !optional
+                    && !crate::store::setup_text(&ui.m).lines().any(|l| l.split('=').next().unwrap_or("").trim() == k)
+                {
                     self.err.push(format!("-224,\"Illegal parameter value\" unknown key {}", k));
                 }
                 return None;
             }
             if kw(nodes[1], "GET") && query {
                 let text = crate::store::setup_text(&ui.m);
-                let v = text.lines().find_map(|l| l.split_once('=').filter(|(k, _)| k.trim() == arg.trim()).map(|x| x.1.trim().to_string()));
+                let v = text.lines().find_map(|l| {
+                    l.split_once('=').filter(|(k, _)| k.trim() == arg.trim()).map(|x| x.1.trim().to_string())
+                });
                 return t(&v.unwrap_or_default());
             }
             if kw(nodes[1], "STATe") && query {
@@ -1113,7 +1199,12 @@ impl Scpi {
             return t(&ui.events_text());
         }
         // fork: the TPU UART receiver's words for the current settings (docs/fork/hwuart.md)
-        if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && (kw(nodes[2], "UART") || kw(nodes[2], "SERial")) && query {
+        if kw(n0, "SYSTem")
+            && nodes.len() == 3
+            && kw(nodes[1], "DEBug")
+            && (kw(nodes[2], "UART") || kw(nodes[2], "SERial"))
+            && query
+        {
             return t(&board().uart_debug(&ui.m));
         }
         // fork: the zone unit's raw status and counter next to the software filter (docs/fork/hwzone.md)
@@ -1121,7 +1212,8 @@ impl Scpi {
             return t(&ui.zone_debug_text());
         }
         // fork: the comparator mapping of the mask test and zone trigger, and the per-column view (docs/fork/hwmask.md)
-        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "MASK") && kw(nodes[3], "MAP") {
+        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "MASK") && kw(nodes[3], "MAP")
+        {
             match board().mask_map(if query { None } else { Some(arg.trim()) }) {
                 Ok(s) if query => return t(&s),
                 Ok(_) => ui.mark_changed(),
@@ -1129,7 +1221,13 @@ impl Scpi {
             }
             return None;
         }
-        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "MASK") && kw(nodes[3], "COLumns") && query {
+        if kw(n0, "SYSTem")
+            && nodes.len() == 4
+            && kw(nodes[1], "DEBug")
+            && kw(nodes[2], "MASK")
+            && kw(nodes[3], "COLumns")
+            && query
+        {
             let mut it = arg.split(',').map(|x| x.trim().parse::<usize>());
             let (a, b) = match (it.next(), it.next()) {
                 (Some(Ok(a)), Some(Ok(b))) => (a.min(b), a.max(b)),
@@ -1147,7 +1245,8 @@ impl Scpi {
             return t(&ui.dvm_debug_text());
         }
         // fork, unit debug: force the DVM block's lane with one channel (each lane = one pair of ADC cores)
-        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "DVM") && kw(nodes[3], "LANE") {
+        if kw(n0, "SYSTem") && nodes.len() == 4 && kw(nodes[1], "DEBug") && kw(nodes[2], "DVM") && kw(nodes[3], "LANE")
+        {
             if query {
                 return t(&ui.dvm_lane_text());
             }
@@ -1264,7 +1363,10 @@ impl Scpi {
         use crate::ui::la;
         let t = |s: String| Some(s.into_bytes());
         if !la::available() {
-            self.err.push(format!("-241,\"Hardware missing\" no logic analyser port on the {}", oos_hal::model::platform().caps.name));
+            self.err.push(format!(
+                "-241,\"Hardware missing\" no logic analyser port on the {}",
+                oos_hal::model::platform().caps.name
+            ));
             return None;
         }
         let bad = |e: &mut Vec<String>| {
@@ -1331,7 +1433,11 @@ impl Scpi {
 
     fn wave_data(&self, ui: &Ui, p: (f64, f64, f64)) -> Vec<u8> {
         let (yinc, yorg, yref) = p;
-        let v = if self.wav_raw { ui.raw_volts(self.wav_src).unwrap_or_else(|| ui.record_volts(self.wav_src)) } else { ui.record_volts(self.wav_src) };
+        let v = if self.wav_raw {
+            ui.raw_volts(self.wav_src).unwrap_or_else(|| ui.record_volts(self.wav_src))
+        } else {
+            ui.record_volts(self.wav_src)
+        };
         match self.wav_fmt {
             2 => {
                 let s: Vec<String> = v.iter().map(|&x| e(x as f64)).collect();
@@ -1346,7 +1452,8 @@ impl Scpi {
                 block(&b)
             }
             _ => {
-                let b: Vec<u8> = v.iter().map(|&x| ((x as f64 / yinc) + yorg + yref).round().clamp(0.0, 255.0) as u8).collect();
+                let b: Vec<u8> =
+                    v.iter().map(|&x| ((x as f64 / yinc) + yorg + yref).round().clamp(0.0, 255.0) as u8).collect();
                 block(&b)
             }
         }
@@ -1409,7 +1516,13 @@ mod vernier_tests {
         assert_eq!(q(&mut ui, ":MEAS:ITEM VPP,CHAN1;:MEAS:ITEM FREQ,CHAN2;:MEAS:ITEM RRDelay,CHAN1,CHAN2"), "");
         assert_eq!(ui.meas_list().0, ["Pk-pk 1", "Freq 2", "Delay rise-rise 1-2 1"]);
         assert_eq!(q(&mut ui, ":SYST:ERR?"), "0,\"No error\"");
-        for bad in [":MEAS:ITEM BOGUS,CHAN1", ":MEAS:ITEM VPP,CHAN9", ":MEAS:ITEM RRD,CHAN1", ":MEAS:ITEM RRD,CHAN1,CHAN1", ":MEAS:ITEM VARiance,CHAN1"] {
+        for bad in [
+            ":MEAS:ITEM BOGUS,CHAN1",
+            ":MEAS:ITEM VPP,CHAN9",
+            ":MEAS:ITEM RRD,CHAN1",
+            ":MEAS:ITEM RRD,CHAN1,CHAN1",
+            ":MEAS:ITEM VARiance,CHAN1",
+        ] {
             assert_eq!(q(&mut ui, bad), "", "{}", bad);
             assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224,"), "{}", bad);
         }
@@ -1612,7 +1725,10 @@ mod aux_out_tests {
         q(&mut ui, ":TRIGger:RS232:WHEN DATA");
         q(&mut ui, ":TRIG:RS232:RELation OUT");
         q(&mut ui, ":TRIG:RS232:DMAX 0x7e");
-        assert_eq!((q(&mut ui, ":TRIGger:RS232:RELation?"), ui.m.ser.max, ui.m.trig_bus), ("OUT".to_string(), 0x7e, BusWhat::Data));
+        assert_eq!(
+            (q(&mut ui, ":TRIGger:RS232:RELation?"), ui.m.ser.max, ui.m.trig_bus),
+            ("OUT".to_string(), 0x7e, BusWhat::Data)
+        );
         assert!(crate::store::setup_text(&ui.m).contains("ser.rel = Out\n"));
         q(&mut ui, ":TRIG:IIC:AWIDth 8");
         assert!(q(&mut ui, ":SYST:ERR?").starts_with("-"));

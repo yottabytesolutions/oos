@@ -32,8 +32,25 @@ pub enum MathOp {
 }
 
 pub const MATH_OPS: [MathOp; 19] = [
-    MathOp::Off, MathOp::Add, MathOp::Sub, MathOp::Mul, MathOp::Div, MathOp::Intg, MathOp::Diff, MathOp::Abs, MathOp::Sqrt, MathOp::Lg,
-    MathOp::Ln, MathOp::Exp, MathOp::Lin, MathOp::Expr, MathOp::Lpf, MathOp::Hpf, MathOp::Bpf, MathOp::Bsf, MathOp::Fft,
+    MathOp::Off,
+    MathOp::Add,
+    MathOp::Sub,
+    MathOp::Mul,
+    MathOp::Div,
+    MathOp::Intg,
+    MathOp::Diff,
+    MathOp::Abs,
+    MathOp::Sqrt,
+    MathOp::Lg,
+    MathOp::Ln,
+    MathOp::Exp,
+    MathOp::Lin,
+    MathOp::Expr,
+    MathOp::Lpf,
+    MathOp::Hpf,
+    MathOp::Bpf,
+    MathOp::Bsf,
+    MathOp::Fft,
 ];
 
 /// Math channels (8, math on math).
@@ -124,7 +141,17 @@ pub struct MathCh {
 
 impl Default for MathCh {
     fn default() -> MathCh {
-        MathCh { op: MathOp::Off, a: 0, b: 1, scale: 3, fc: 10e3, bw: 2e3, offset: 0.0, win: Window::Hann, lin: (1.0, 0.0) }
+        MathCh {
+            op: MathOp::Off,
+            a: 0,
+            b: 1,
+            scale: 3,
+            fc: 10e3,
+            bw: 2e3,
+            offset: 0.0,
+            win: Window::Hann,
+            lin: (1.0, 0.0),
+        }
     }
 }
 

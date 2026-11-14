@@ -59,7 +59,9 @@ impl Ui {
         Some(match it {
             Item::WinLayout => WinLayout::ALL.iter().map(|l| l.label().to_string()).collect(),
             Item::FullScreen => vec!["Off".into(), "On".into()],
-            Item::WinCh(_) | Item::WinMath(_) | Item::WinLa => (1..=self.m.win_layout.count()).map(|i| i.to_string()).collect(),
+            Item::WinCh(_) | Item::WinMath(_) | Item::WinLa => {
+                (1..=self.m.win_layout.count()).map(|i| i.to_string()).collect()
+            }
             _ => return None,
         })
     }
@@ -117,7 +119,12 @@ mod tests {
             let g = u.grid;
             for (i, a) in u.wins.iter().enumerate() {
                 assert_eq!((a.w, a.h), (u.wins[0].w, u.wins[0].h), "{:?}", l);
-                assert!(a.x >= g.x && a.y >= g.y && a.x + a.w <= g.x + g.w && a.y + a.h <= g.y + g.h, "{:?} {:?}", l, a);
+                assert!(
+                    a.x >= g.x && a.y >= g.y && a.x + a.w <= g.x + g.w && a.y + a.h <= g.y + g.h,
+                    "{:?} {:?}",
+                    l,
+                    a
+                );
                 assert_eq!(a.h % 8, 0, "{:?}", l);
                 for b in &u.wins[i + 1..] {
                     assert!(!overlaps(*a, *b), "{:?}", l);
@@ -250,9 +257,20 @@ mod tests {
         let s = Stats { vmin: -1.0, vmax: 1.0, ..Stats::default() };
         place(&mut m, &[(0, s, 1e-3), (1, s, 1e-3), (2, s, 1e-3)]);
         // CH1 alone in window 1: its 2 Vpp fill about 80 % of 8 div, centred
-        assert!(2.0 / m.ch[0].volts_per_div() >= 3.9 && m.ch[0].offset.abs() < 1e-6, "{} {}", m.ch[0].volts_per_div(), m.ch[0].offset);
+        assert!(
+            2.0 / m.ch[0].volts_per_div() >= 3.9 && m.ch[0].offset.abs() < 1e-6,
+            "{} {}",
+            m.ch[0].volts_per_div(),
+            m.ch[0].offset
+        );
         // CH2 and CH3 share window 2: half the height each, one above the other
-        assert!(2.0 / m.ch[1].volts_per_div() <= 3.2 && m.ch[1].offset > 0.0 && m.ch[2].offset < 0.0, "{} {} {}", m.ch[1].volts_per_div(), m.ch[1].offset, m.ch[2].offset);
+        assert!(
+            2.0 / m.ch[1].volts_per_div() <= 3.2 && m.ch[1].offset > 0.0 && m.ch[2].offset < 0.0,
+            "{} {} {}",
+            m.ch[1].volts_per_div(),
+            m.ch[1].offset,
+            m.ch[2].offset
+        );
         // one window: three bands
         m.win_layout = WinLayout::One;
         place(&mut m, &[(0, s, 1e-3), (1, s, 1e-3), (2, s, 1e-3)]);
@@ -275,7 +293,12 @@ mod tests {
         let w = u.wins[0];
         // at the bottom of the window, half of it or what 16 lanes of the smallest pitch need
         let n = u.m.la.lines().len() as i32;
-        assert!(band.y >= w.y && band.y + band.h == w.y + w.h - 22 && band.x == w.x && band.w == w.w, "{:?} {:?}", band, w);
+        assert!(
+            band.y >= w.y && band.y + band.h == w.y + w.h - 22 && band.x == w.x && band.w == w.w,
+            "{:?} {:?}",
+            band,
+            w
+        );
         assert!(band.h <= (w.h / 2).max(n * 9 + 18), "{:?} {:?}", band, w);
         assert!(pitch >= 9);
         // the plot keeps its height: no strip under it
@@ -298,7 +321,13 @@ mod tests {
         for _ in 0..30 {
             u.step(0.05);
         }
-        for (name, l, full) in [("win-one", WinLayout::One, false), ("win-cols", WinLayout::Cols, false), ("win-rows", WinLayout::Rows, false), ("win-quad", WinLayout::Quad, true), ("win-full", WinLayout::One, true)] {
+        for (name, l, full) in [
+            ("win-one", WinLayout::One, false),
+            ("win-cols", WinLayout::Cols, false),
+            ("win-rows", WinLayout::Rows, false),
+            ("win-quad", WinLayout::Quad, true),
+            ("win-full", WinLayout::One, true),
+        ] {
             u.m.win_layout = l;
             u.spread_wins();
             u.full = full;

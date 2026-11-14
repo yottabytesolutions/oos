@@ -124,29 +124,56 @@ without compression and with frames to spare for the workers, for example 1 us/d
 
 ## Default on (2026-11-14)
 
-Off, a user who adds Vavg sees `----` above 1 M points while 1 M works. So the default is now on.
+Off, a user who adds Vavg sees `----` above 1 M points while 1 M works. So the default is now on. One raw read is
+made at most once a second while running, and only while a shown measurement needs samples (`want`). Without a
+mean-type measurement shown, nothing changes.
 
-Cost of one raw read, at most one per second while running and only when a shown measurement needs samples
-(`want`). Host figures from `hw::tests::deep_raw_read_cost_report` (ignored test) at 1 ms/div. The DMA time is
-estimated at about 600 MB/s (specs/10-transfer-efficiency.md).
+### Cost on the unit
 
-| Depth, channels | Rate, lanes | Pair frame | Raw window | DMA est. | Decode (host) | `to_record` (host) |
-|---|---|---|---|---|---|---|
-| 10 M, CH1 | 625 MSa/s, 1 | 1.25 MB | 9.4 M pts, 18.8 MB | 31 ms | 1.5 ms | 25 ms |
-| 10 M, CH1+2 | 625 MSa/s, 2 | 2.5 MB | 6.3 M pts, 25.2 MB | 42 ms | 2.1 ms | 33 ms |
-| 100 M, CH1 | 1.25 GSa/s, 1 | 1.25 MB | 12.6 M pts, 25.2 MB | 42 ms | 3.0 ms | 52 ms |
-| 100 M, CH1+2 | 625 MSa/s, 2 | 2.5 MB | 6.3 M pts, 25.2 MB | 42 ms | 2.2 ms | 33 ms |
+1 ms/div, 10 M, CH1 only (probe comp), trigger on CH1, Auto, Vavg CH1 shown. Rates over 15 s. The last read's
+times come from `:SYSTem:STATe?` `deep ...` (`deepmeas::cost`).
 
-The acquisition thread spends the DMA and the decode: about 35 to 50 ms a second plus the A53's decode, which is
-several times the host's. If the batch reads keep the thread busy, that is about 4 to 6 % of acquired/s. The UI
-spends `to_record` once per raw read. It made it twice since 1a0e4a2 (the record in `Source::acquire`, then the
-record path of `draw_frame`). The UI now draws the newest deep raw window from the record it already has. An
-earlier unit round (unit-dho804.md) measured 11.2 -> 9.0 acquired/s with 1 channel at 10 M (−20 %). That build also drew the 9.4 M samples
-densely on the UI thread. To be measured again on this build. 100 M with one channel now gets a window (narrow
-margins); before, it kept `----`.
+| Build | deep_raw | prearm | acquired/s | fps |
+|---|---|---|---|---|
+| 0b5662d | off | on | 11.41 | 29.9 |
+| 0b5662d | off | off | 10.27 | 29.6 |
+| 0b5662d | on | on | 9.0 | 30.0 |
+| 145819 (before) | on | on | 4.45 | 22.4 (trigger on CH2, mask 0x3) |
 
-Levers if the unit shows more than 5 %: drop the quarter-screen margins for this read (screen plus 4096 points,
-about a third fewer bytes with one channel at 10 M), or a longer `PERIOD`.
+One raw read, before -> after:
+
+- DMA: 106 -> 52 ms, for a window of 18.8 -> 12.5 MB.
+- Decode: 80 -> 51 ms, in the acquisition thread.
+- Screen record: 197 -> 5.5 ms, `to_record` on the UI thread.
+- Measurement: 1157 -> 58 ms, in the worker. The measure thread went from 109 % to 7 % of a core.
+
+The changes behind these numbers:
+
+- **Window:** the screen and 4096 points each side, not quarter-screen margins.
+- **Screen record:** the pair spans of `to_record` use the NEON `min_max`.
+- **Trigger search:** only near the hardware point, falling back to that point. Without that, a flat trigger source cost about 160 ms per window.
+- **Measurement:** shown measurements that are all cheap are measured from the sums (`framestats::cheap_results`), not the full analysis.
+
+The raw window reads at about 240 MB/s. Chunking is not the cost: it is the batch read path, 4 MiB per `read()`. A
+10 M record through the FPGA compression takes 68 ms for its 1.25 MB, which is the compressor's rate.
+
+The remaining -21 % acquired/s comes from two causes. About half is prearm, which is off for every batch while
+deep reads are wanted (-10 %, measured). The other half is the acquisition thread blocked about 103 ms a second by
+DMA and decode. The frame rate is unaffected. The 5 % goal was moved for this case (team-lead, 2026-11-14): it
+applies only at deep records with a mean-type value shown, and the levers below change STOP or the update rate.
+
+### Open levers
+
+- **Prearm per batch (about +10 %, measured):** prearm only where no raw read follows. That conflicts with the exact
+  STOP (`final_replay` needs the ring of the last batch). A variant keeps STOP exact: at STOP with a batch armed
+  ahead, do not disarm; let it finish, read its pairs, then read its newest frame's raw window. Picture and
+  measurement then come from that newer record, at one more record time (16 ms at 10 M plus the trigger wait,
+  within `STOP_FINAL_WAIT`). Unit check needed.
+- **2 s `PERIOD`:** halves the remaining read cost (about -10 % -> -5 %). The measurement then updates every 2 s.
+- **Decode off the acquisition thread:** the worker decodes the window from its bytes, handed over like the
+  pipeline's `feed_codes`. About -5 %.
+
+Estimate: the first two together about -5 to -6 %, all three about -3 %.
 
 ## Risks
 

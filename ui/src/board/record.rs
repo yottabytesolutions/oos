@@ -62,7 +62,15 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
             // the screen window stays inside the frame where it can
             let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
             let fits = |t: f64| first > last || (first..=last).contains(&t);
-            let found = crate::trignear::edge_smooth_near(&f.ch[m.trig_src], f.pre, sw_trig_level(m, f), hyst[m.trig_src], rising, either, screen / 2, col, fits).0;
+            let (src, level) = (&f.ch[m.trig_src], sw_trig_level(m, f));
+            // the raw screen window of a deep record (`deepmeas`): the near search alone, else the hardware point.
+            // Its pair frames place the picture; the wide search over millions of samples without an edge near the
+            // trigger point (a flat source, Auto) cost about 160 ms of the UI thread per window on the unit
+            if crate::deepmeas::deep_raw_frame(f) {
+                let near = crate::trignear::edge_near_window(src, 0, src.len(), f.pre, level, hyst[m.trig_src], rising, either, screen / 2, col, fits);
+                return Some(near.and_then(|r| r.0).unwrap_or(f.pre as f64));
+            }
+            let found = crate::trignear::edge_smooth_near(src, f.pre, level, hyst[m.trig_src], rising, either, screen / 2, col, fits).0;
             // a filtered trigger path (coupling) can fire where the samples show no crossing of that level: the
             // hardware point stands
             found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
@@ -392,6 +400,36 @@ mod bench {
 #[cfg(test)]
 mod pair_tests {
     use super::*;
+
+    // Break it catches: the wide software trigger search run on a deep raw window (millions of samples, about 160 ms
+    // on the unit per window with a flat source), or a near edge not taken. A deep raw window takes the near search
+    // alone and the hardware point without an edge near it; the same frame not deep searches wide.
+    #[test]
+    fn a_deep_raw_window_searches_near_the_trigger_only() {
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-3).abs() < 1e-9).unwrap();
+        m.trig_level = 0.5;
+        let (n_s, window) = (1_000_000usize, 1e-2);
+        let dt = window / n_s as f64;
+        let pre = n_s / 2;
+        // one rising edge `at` samples from the hardware point
+        let frame = |at: i64, depth: usize| {
+            let v: Vec<f32> = (0..n_s).map(|i| if (i as i64) < pre as i64 + at { 0.0 } else { 1.0 }).collect();
+            Frame { seq: 1, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], acq: (1.0 / dt, depth), ..Default::default() }
+        };
+        let t = |f: &Frame| trigger_point(f, &m, 3600, window, -window / 2.0).unwrap();
+        // near (100 samples): found either way
+        let near_deep = t(&frame(100, 10_000_000));
+        assert!((near_deep - (pre + 100) as f64).abs() < 300.0, "{}", near_deep);
+        assert_eq!(near_deep, t(&frame(100, 1_000_000)));
+        // far (200 k samples, beyond the near search): the wide search finds it, the deep window keeps the hardware point
+        assert!((t(&frame(200_000, 1_000_000)) - (pre + 200_000) as f64).abs() < 300.0);
+        assert_eq!(t(&frame(200_000, 10_000_000)), pre as f64);
+        // flat: the hardware point
+        let mut flat = frame(0, 10_000_000);
+        flat.ch[0] = vec![0.0; n_s];
+        assert_eq!(t(&flat), pre as f64);
+    }
 
     // Break it catches: the NEON extremes of a pair span other than the filtered scalar loop's: a NaN gap that is not
     // skipped, an infinite sample that counts, a span left out. Every pair point of a dense record equals the

@@ -8305,12 +8305,13 @@ mod tests {
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         // samples, k, the record's depth; a half period of the 1 kHz square in samples
         let (n, k, depth) = if deep { (1_200_000usize, 16usize, 10_000_000usize) } else { (100_000, 15, 100_000) };
+        // the rising edge at the hardware trigger point (`pre`, the middle), where the hardware found it
         let half = n / 24;
         let mut x = 9u32;
         let raw: Vec<f32> = (0..n)
             .map(|i| {
                 x = x.wrapping_mul(1664525).wrapping_add(1013904223);
-                (if (i / half) % 2 == 1 { 0.3 } else { 0.0 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
+                (if ((i + n / 2 + half) / half) % 2 == 1 { 0.3 } else { 0.0 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
             })
             .collect();
         // every point of a pair frame stands for k samples: a block of 2k samples gives its min and max in time order

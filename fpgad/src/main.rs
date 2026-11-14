@@ -572,6 +572,27 @@ fn xdma_params(v: Option<&str>) -> Result<String, String> {
     Ok(v.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
+/// The xdma.ko parameters for this start: `xdma_params` of the system setting, except in a start by kexec (`kexec`:
+/// `oos.kexec=` on the command line), which always polls. The GICv3 keeps its ITS tables across kexec (docs/update.md),
+/// the MSI completions of the C2H engine never arrive there and every read timed out with `poll_mode=0`. Returns the
+/// line and, when the setting was overridden or refused, why.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn xdma_params_for(conf: Option<&str>, kexec: bool) -> (String, Option<String>) {
+    let set = xdma_params(conf);
+    if kexec {
+        let why = match set {
+            Ok(v) if v == XDMA_DEFAULT => None,
+            Ok(v) => Some(format!("started by kexec: MSI does not reach this kernel, xdma.params {:?} overridden", v)),
+            Err(e) => Some(e),
+        };
+        return (XDMA_DEFAULT.into(), why);
+    }
+    match set {
+        Ok(v) => (v, None),
+        Err(e) => (XDMA_DEFAULT.into(), Some(e)),
+    }
+}
+
 /// PCIe host + xdma bring-up with retries (the loop of oos-fpga-up, without the FPGA boot), then BAR1. The device and
 /// the xdma nodes are polled every 20 ms instead of the fixed 2 s / 1 s sleeps of oos-fpga-up (`insmod` returns once
 /// the driver probed, so a link that is up shows at once).
@@ -603,10 +624,11 @@ fn pcie_up() -> std::io::Result<oos_hal::dho::bus::Bar1> {
             return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "FPGA did not appear on PCIe"));
         }
         let conf = std::process::Command::new("/bin/oos-conf").arg("xdma.params").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-        let params = xdma_params(conf.as_deref()).unwrap_or_else(|e| {
-            eprintln!("oos-fpgad: {}; loading xdma with {}", e, XDMA_DEFAULT);
-            XDMA_DEFAULT.into()
-        });
+        let kexec = std::fs::read_to_string("/proc/cmdline").is_ok_and(|c| c.split_whitespace().any(|w| w.starts_with(oos_hal::update::kexec::KEY)));
+        let (params, why) = xdma_params_for(conf.as_deref(), kexec);
+        if let Some(w) = why {
+            eprintln!("oos-fpgad: {}; loading xdma with {}", w, params);
+        }
         eprintln!("oos-fpgad: insmod xdma.ko {}", params);
         if !sh(&format!("insmod {}/updates/xdma.ko {}", m, params)) {
             return Err(std::io::Error::other("insmod xdma failed"));
@@ -1021,6 +1043,20 @@ mod tests {
         for bad in ["poll_mode=2", "poll_mode=0; reboot", "poll_mode=0 poll_mode=1", "interrupt_mode=4", "c2h_timeout=1", "poll_mode=0 $(id)"] {
             assert!(xdma_params(Some(bad)).is_err(), "{}", bad);
         }
+    }
+
+    // Break it catches: a kexec start that loads xdma with MSI (round 21: every C2H read timed out), or an ordinary start
+    // that loses the setting.
+    #[test]
+    fn a_kexec_start_polls_whatever_the_setting() {
+        assert_eq!(xdma_params_for(Some("poll_mode=0"), false), ("poll_mode=0".to_string(), None));
+        let (v, why) = xdma_params_for(Some("poll_mode=0"), true);
+        assert_eq!(v, "poll_mode=1");
+        assert!(why.is_some_and(|w| w.contains("kexec") && w.contains("poll_mode=0")));
+        assert_eq!(xdma_params_for(Some("poll_mode=0 interrupt_mode=1"), true).0, "poll_mode=1");
+        // the default needs no note; a refused setting says why in both starts
+        assert_eq!(xdma_params_for(None, true), ("poll_mode=1".to_string(), None));
+        assert!(xdma_params_for(Some("poll_mode=7"), true).1.is_some() && xdma_params_for(Some("poll_mode=7"), false).1.is_some());
     }
 
     #[test]

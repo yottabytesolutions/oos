@@ -10,6 +10,11 @@ then the power-on as trial start, confirmed. Its first run had shown that the ne
 first (step 3): the package arrived damaged and the display stayed dark. In the kexec start the kernel warns twice
 while the PCIe driver loads (`its_build_mapti_cmd`, `its_build_inv_cmd`: the interrupt translation tables of the
 previous kernel are still there); the display and the acquisition work, and the power-on after it has no warning.
+That held with `poll_mode=1`. With MSI (`xdma.params = poll_mode=0`) every C2H read in a kexec start timed out
+(0x4034 = 0x21c0, descriptor engine stopped, nothing acquired): the completion interrupts go through those tables and
+never arrive. A real restart fixed it. So `oos-fpgad` loads xdma with `poll_mode=1` in a kexec start (`oos.kexec=` on
+the command line) whatever the setting says, and logs the override. After a successful install the kexec start
+restarts the scope at once (step 4), so the acquisition rarely runs in it.
 
 Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/src/bin/oos-update.rs` (command line),
 `ui/src/ui/update.rs` and `ui/src/http.rs` (GUI, web upload), `rootfs/initramfs/etc/rcS` (start count, watcher).
@@ -49,8 +54,12 @@ OOS has no loader of its own, so nothing counts the starts before rcS. An image 
 4. The new image's rcS: `oos-oneshot`, `/oos` mounted, then `oos-update boot` finds the word and the package and
    runs the ordinary install from there: rollback slot, `recovery`, read back, `OOSK`. This start is no trial start:
    its device tree and loader path are the old build's, and the display comes up from another state. The watcher
-   judges nothing in it. The next power-on is the first trial start, confirmed or rolled back as for any trial. If
-   the install fails after it began writing, the previous build is written back at once. A package that fails its
+   judges nothing in it. After a successful install it restarts the scope (a warm restart, as `reboot`) into the
+   first trial start, which confirms or rolls back as for any trial. It restarts only with the boot magic `OOSK`
+   (written by the install after the read-back, so the restart cannot drop to stock) and the installed build on
+   trial. It restarts once per build: the mark `kexec-restart` beside the state names the build, and the next
+   ordinary start removes it. Otherwise the panel asks for a power-cycle. If the install fails after it began
+   writing, the previous build is written back at once. A package that fails its
    check stays at `/oos-kexec.oosupd` (RAM) until the next start, for a look at what damaged it.
 
 If the kernel hangs in step 4, the scope is power-cycled and the previous OOS build starts (stock in one-shot mode,
@@ -180,9 +189,10 @@ In a script, do not put a plain `nc` SCPI query (port 5555) before the curl: the
 open, and macOS `nc -w` does not exit on it, so the curl never runs (`nc -G 3 -w 3` or a script with a timeout does).
 - shell: upload the file to /tmp, `oos-update install /tmp/oos-dev.oosupd` (dry run), then `--execute`
 
-The scope restarts into the new build by kexec, which installs itself (about a minute); System > Update shows the
-result. Then power-cycle: that start is its trial. If the screen stays dark after the restart, power-cycle too: the
-previous build starts if the install did not finish. A package without `trial kexec`, `--no-kexec` and `--new-dt`
+The scope restarts into the new build by kexec, which installs itself (about a minute), then restarts once more into
+the trial start; System > Update shows the result. Do not restart by hand within the next minute: the trial start
+re-arms `OOSK` only after its confirmation, and a restart before that starts stock. If the screen stays dark after the
+kexec restart, power-cycle: the previous build starts if the install did not finish. A package without `trial kexec`, `--no-kexec` and `--new-dt`
 write the image directly: then power-cycle to start it on trial.
 
 | command | |

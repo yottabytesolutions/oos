@@ -547,7 +547,7 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
             r.lines.iter().for_each(|l| out!("{}", l));
             if r.written {
                 notice(&format!(
-                    "Update {} installed after its kexec start. Power-cycle the scope: its first power-on is the trial start, it confirms itself about 20 s after the start-up",
+                    "Update {} installed after its kexec start. The scope restarts for the trial start, which confirms itself about 20 s after the start-up",
                     short
                 ));
             } else {
@@ -579,6 +579,67 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
     drop(pk);
     let _ = std::fs::remove_file(kexec::PACKAGE);
     done
+}
+
+/// The mark of a restart after a kexec install: the build it was for. Removed by the next ordinary start.
+fn restart_mark(p: &Path) -> PathBuf {
+    p.with_file_name("kexec-restart")
+}
+
+/// Whether the kexec start that just installed `build` restarts the scope for its trial start: only with the image
+/// written (`OOSK` armed, so the restart cannot drop to stock), the build on trial, and no restart for it before (a
+/// start that comes back here again does not loop).
+fn may_restart(magic: Option<[u8; 4]>, on_trial: bool, mark: Option<&str>, build: &str) -> Result<(), String> {
+    if magic != Some(*b"OOSK") {
+        return Err("the boot magic is not OOSK".into());
+    }
+    if !on_trial {
+        return Err("the build is not on trial".into());
+    }
+    if mark.is_some_and(|m| m.trim() == build.trim()) {
+        return Err("this kexec start already restarted once for the build".into());
+    }
+    Ok(())
+}
+
+/// After the install in a kexec start: restart into the trial start, as a power-cycle would (the kexec session runs on
+/// the old build's device tree and interrupt tables: with MSI the acquisition got no data). Refused: the notice asks
+/// for a power-cycle.
+fn restart_for_trial(a: &Args, p: &Path) {
+    let build = update::running_build().unwrap_or_default();
+    let magic = open_card(a, false).boot_magic().ok();
+    let st = State::load(p).unwrap_or_default();
+    let on_trial = st.trial.is_some() && st.current.as_ref().is_some_and(|c| c.build.trim() == build.trim());
+    let mark = std::fs::read_to_string(restart_mark(p)).ok();
+    if let Err(e) = may_restart(magic, on_trial, mark.as_deref(), &build) {
+        notice(&format!("Update {} installed; no automatic restart ({}). Power-cycle the scope for the trial start", update::short(&build), e));
+        return;
+    }
+    if let Err(e) = std::fs::write(restart_mark(p), format!("{}\n", build.trim())) {
+        notice(&format!("Update {} installed; no automatic restart (mark not written: {}). Power-cycle the scope for the trial start", update::short(&build), e));
+        return;
+    }
+    tell(&format!("build {} installed and armed (OOSK, on trial): restarting for the trial start", update::short(&build)));
+    let _ = std::fs::write("/dev/tty1", "\nUpdate installed: restarting for the trial start.\n");
+    restart();
+}
+
+#[cfg(target_os = "linux")]
+fn restart() {
+    // the panel line stays readable for a moment; then the same order as before a kexec start: sync, /oos read only
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    unsafe { libc::sync() };
+    if !std::process::Command::new("mount").args(["-o", "remount,ro", "/oos"]).status().is_ok_and(|x| x.success()) {
+        out!("warning: /oos stays writable (busy); synced");
+    }
+    unsafe { libc::sync() };
+    let r = unsafe { libc::reboot(libc::LINUX_REBOOT_CMD_RESTART) };
+    notice(&format!("restart for the trial start failed (reboot returned {}: {}). Power-cycle the scope", r, std::io::Error::last_os_error()));
+}
+
+#[cfg(not(target_os = "linux"))]
+fn restart() {
+    tell("restart: on the unit only");
 }
 
 /// The device tree section of the image the loader started, for a later kexec start (`kexec::BOOTED_DT`): in an
@@ -681,9 +742,11 @@ fn boot(a: &Args) {
         return; // no update state yet
     }
     match kx {
-        // not the trial start of anything: a failed install, or the install, whose trial begins at the next power-on
+        // not the trial start of anything: a failed install, or the install, whose trial begins at the next start
         Some(f) => {
-            finish_kexec(a, &p, f);
+            if finish_kexec(a, &p, f) {
+                restart_for_trial(a, &p);
+            }
             return;
         }
         None if word.is_some() => {
@@ -692,11 +755,15 @@ fn boot(a: &Args) {
             notice(m);
             return;
         }
-        None => match update::kexec_missed(&p, false) {
-            Ok(Some(m)) => notice(&m),
-            Ok(None) => {}
-            Err(e) => tell(&e),
-        },
+        None => {
+            // an ordinary start: the restart guard of a kexec start has done its job
+            let _ = std::fs::remove_file(restart_mark(&p));
+            match update::kexec_missed(&p, false) {
+                Ok(Some(m)) => notice(&m),
+                Ok(None) => {}
+                Err(e) => tell(&e),
+            }
+        }
     }
     let running = update::running_build();
     match update::boot_started(&p, running.as_deref()) {
@@ -920,6 +987,24 @@ fn pack(a: &Args) {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Break it catches: a restart with KRNL armed (the trial start would be stock), of a build that is not on trial,
+    // or a second restart from a kexec start that came back.
+    #[test]
+    fn a_kexec_install_restarts_only_armed_on_trial_and_once() {
+        let b = "20261114-120000";
+        assert!(may_restart(Some(*b"OOSK"), true, None, b).is_ok());
+        assert!(may_restart(Some(*b"OOSK"), true, Some("20261101-000000\n"), b).is_ok());
+        assert!(may_restart(Some(*b"KRNL"), true, None, b).unwrap_err().contains("OOSK"));
+        assert!(may_restart(None, true, None, b).is_err());
+        assert!(may_restart(Some(*b"OOSK"), false, None, b).unwrap_err().contains("trial"));
+        assert!(may_restart(Some(*b"OOSK"), true, Some("20261114-120000\n"), b).unwrap_err().contains("already"));
+    }
+
+    #[test]
+    fn the_restart_mark_sits_beside_the_state() {
+        assert_eq!(restart_mark(Path::new("/oos/update/state")), Path::new("/oos/update/kexec-restart"));
+    }
 
     /// Counts write calls; fails every one with `fail`, or none.
     struct Pipe {

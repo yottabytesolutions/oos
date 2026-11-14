@@ -152,16 +152,56 @@ Builds for the unit: `--target aarch64-unknown-linux-musl` (static, rust-lld).
 
 ## Platform tuning
 
-To be filled by the kernel and driver tuning study (in progress). The architecture's budgets
-([Performance budgets](README.md#performance-budgets)) assume the settings this section will record. Each entry
-states the setting, where it is set (kernel config, device tree, rcS, `system.conf`), the measurement behind it, and
-the date:
-- CPU frequency governor per cluster, and the frequency floor during acquisition;
-- CPU idle states and their exit latency against the wake budgets ([Waiting](README.md#waiting));
-- IRQ affinity: the xdma IRQ, the DRM and GPU IRQs, network and USB;
-- isolated CPUs, if any, for main and the acquisition thread;
-- the kernel's preemption model;
-- DDR frequency scaling (devfreq) under load;
-- PCIe link settings and power management for the FPGA link;
-- the GPU driver (panfrost) settings and frequency;
-- the DMA completion default decided in M5c ([DMA completion](README.md#dma-completion)).
+Candidates from the kernel and driver study (2026-11-15, read-only: the fork, the stock DTB, stock dmesg, kallsyms and
+rc files). None is a decision yet: unitlab is measuring the governor, `pm_qos` and XDMA INTx on the unit, and each
+entry becomes a decision only with its measurement. The architecture's budgets ([Performance
+budgets](README.md#performance-budgets)) are provisional until then.
+
+### Facts that correct earlier assumptions
+
+- **The xdma poll threads are pinned.** `xdma_threads_create()` (`kernel/modules/xdma/xdma/xdma_thread.c` 299) binds
+  one `cmpl_status_th` per channel with `kthread_bind` to the first online CPUs: cpu0 and cpu1, both A53s. The poll
+  loop yields every 100 polls (`libxdma.c` 1295). In poll mode it burns an A53 and competes with the deposit workers.
+- **All device IRQs go to cpu0.** GICv3 routes every SPI to cpu0 by default; `oos-irq-place` changes nothing today.
+  IRQ placement has to be explicit (`/proc/irq/<n>/smp_affinity_list` from rcS).
+- **The likely kexec MSI cause.** GIC-500 `GICR_CTLR.EnableLPIs` cannot be cleared once set. Linux reuses the previous
+  kernel's LPI tables only when they come through the EFI `LINUX_EFI_MEMRESERVE` table, and OOS boots through U-Boot
+  without EFI. So after kexec, MSIs (LPIs) never arrive. INTx does not use the ITS, so the kexec path uses INTx
+  (`poll_mode=0 interrupt_mode=2`), not poll mode. Inferred from the GIC and kernel behaviour; the symptom is verified
+  (`../update.md`).
+
+### Candidates, ranked by benefit per risk
+
+| # | Candidate | Where | Measurement | Pass criterion |
+|---|---|---|---|---|
+| 1 | Timer slack 1 ns: `prctl(PR_SET_TIMERSLACK, 1)` early in `main`, inherited by later threads. Today each 10 us BAR-write gap lasts 60 to 70 us (50 us default slack), a configure of about 230 writes 15 ms instead of 2.3 ms | `oos-ui` (M3c) | configure time and the poll period, before and after | configure <= 4 ms; poll period within 10 % of nominal |
+| 2 | XDMA by INTx on normal boots: `xdma.params = poll_mode=0 interrupt_mode=2`, as stock (IRQ 241, MSI off); then try MSI (`interrupt_mode=1`) | kernel command line (M5c) | CPU per read, read latency, C2H time-outs over 10 min | no time-out in 10 min; no busy A53 during reads |
+| 3 | XDMA by INTx after kexec instead of poll mode (`oos-fpga-up`, `oos-fpgad` under `oos.kexec=`), or `pci=nomsi` on the kexec command line | `oos-fpga-up`, `oos-fpgad` (M5c) | a kexec start with acquisition for 10 min | no C2H time-out |
+| 4 | Big cluster clock: `uclamp_min` 1024 on main and the acquisition thread (`sched_setattr`, `UCLAMP_TASK=y` is built); alternative: `performance` governor on policy4. Little cluster stays on schedutil | `oos-ui` (platform step P1) | `scaling_cur_freq`, `time_in_state`, step time p99, thermal zone after 30 min | step p99 improves; temperature below the 70 C passive trip |
+| 5 | Shallow idle on the A72s while acquiring: `pm_qos_resume_latency_us = 100` on cpu4 and cpu5 (CPU_SLEEP exit 250 us, CLUSTER_SLEEP 500 us with an L2 flush) | `oos-ui` (P1) | `cpuidle/state*/usage` deltas, step-time jitter, wake latency | wake-latency budgets met; power cost recorded |
+| 6 | PCIe MPS 256 (`pci=pcie_bus_perf`); today 128 on both sides, the link trains Gen2 x2 | kernel command line (P1) | long read with a data check, MB/s | no data error; throughput up |
+| 7 | Console `loglevel=4` (today 7 on a legacy 8250 console written synchronously at 11.5 kB/s) | kernel command line (P1) | stall time of a warning burst | no printk stall in a step |
+| 8 | Preemption: build `PREEMPT_DYNAMIC`, A/B `preempt=full`; HZ stays 250; no `isolcpus`, no `nohz_full`; `rcu_nocbs=4-5` optional | kernel config (P1) | wake latency p99 under DMA, DRM and MMC load | p99 improves, throughput within 2 % |
+| 9 | Persistent DMA mapping in xdma: one streaming mapping, mmapped, `dma_sync_single_for_cpu` over the bytes received, instead of pinning and mapping 1024 pages per 4 MB read (0.5 to 2 ms per 4 MB, inferred) | driver task (after M5c) | `read()` wall time minus bytes / link rate; ftrace on `dma_map_sg_attrs` | per-read overhead below 0.2 ms |
+| 10 | GPU: `glFlush` plus a fence instead of `glFinish`; `glFinish` only on readback; Panfrost stays; GPU floor 400 MHz, 600 MHz optional | helper (M9b) | helper CPU and GPU time per composition; tearing under load | budgets met, no tearing |
+| 11 | HDMI scaling on the VOP win0 scaler (`DRM_IOCTL_MODE_SETPLANE`) instead of on the CPU, when the GPU path is off | display (later) | CPU per HDMI frame | about 8 MB less CPU writes per 1080p frame |
+| 12 | Allocator: pools on the hot paths (adr/0016 zero allocations); optionally `MADV_HUGEPAGE` on DMA and decode buffers with THP in `madvise` mode | `oos-ui` (data-path steps) | page faults per frame, TLB misses | 0 faults per frame after warm-up |
+
+### No change (verified)
+
+- DMC and DDR devfreq stay disabled, as in stock: DMC switching through ATF can disturb the VOPs.
+- ASPM: no common state between the root port (L1) and the endpoint (L0s); nothing to set.
+- CMA 16 MB; raise to 64 MB only if the VPU or HDMI run out (`CmaFree`).
+- IOMMU strict mode: VPU only, negligible. No debug option with runtime cost.
+
+### Stock for comparison
+
+Stock runs the `interactive` governor with no frequency floor, no pinning, no real-time priorities, xdma without
+parameters (it ended on INTx), and thermal trips at 70 C and 85 C (passive), 115 C (critical), 120 C (shutdown). Taken
+from stock: INTx as the known-good xdma mode, and the thermal trips as the limit when raising clocks.
+
+### Unit checks
+
+The read-only checks for each unit round (governor, idle states, `pm_qos`, thermal zones, xdma threads and
+parameters, IRQ affinity, PCIe link, printk level, timer slack per thread) are in the study's check list, kept with
+unitlab's scripts.

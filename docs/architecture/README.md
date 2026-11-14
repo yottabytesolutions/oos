@@ -429,19 +429,29 @@ The FPGA raises no usable user interrupt for trigger done, ring count or roll ch
 (`0x4080` bit 30) and then does one blocking C2H read, with the driver on legacy INTx and MSI off (RE, `regmap`).
 So those two polls stay, but inside `ppoll(eventfd, period)` (`poll` takes milliseconds; the 200 and 500 us periods
 need `ppoll`, `epoll_pwait2` or a `timerfd`): a command interrupts them at once, and an armed scope in
-STOP costs nothing. The 10 us sleep after every BAR write (`bus.rs` 167) stays until a unit measurement shows the
-minimum spacing; then it becomes that spacing, done once per write list rather than per write where the hardware
-allows it.
+STOP costs nothing. The 10 us sleep after every BAR write (`bus.rs` 167) lasts 60 to 70 us today, because a
+SCHED_OTHER thread has 50 us of timer slack. `oos-ui` sets `prctl(PR_SET_TIMERSLACK, 1)` at startup, before it starts
+any thread, so every sleep and timeout is as long as asked. M3c measures the minimum spacing the FPGA needs and sets
+the gap to it, per write list where the hardware allows it.
 
 ### DMA completion
 
 | Boot | C2H completion | Where | Shown as |
 |---|---|---|---|
-| cold boot | interrupt: MSI today; legacy INTx (as stock) to evaluate | the IRQ on an A53 (`oos-irq-place`) | `xdma=msi cpuN` or `xdma=intx cpuN` |
-| kexec start | `poll_mode=1` (MSI after kexec gives C2H time-outs, `dho804` fix) | the completion poll threads pinned to one A53, never an A72 | `xdma=poll cpuN` |
+| cold boot | interrupt: legacy INTx (as stock), or MSI if the round shows it is better | the IRQ placed explicitly on an A53 | `xdma=intx cpuN` or `xdma=msi cpuN` |
+| kexec start | legacy INTx (`poll_mode=0 interrupt_mode=2`) | the IRQ placed explicitly on an A53 | `xdma=intx cpuN` |
+| fallback only | `poll_mode=1` | the completion threads, bound by the driver to cpu0 and cpu1 (A53s) | `xdma=poll cpu0,1` |
 
-A unit round (M5c) measures CPU per read, read latency and kexec behaviour for MSI, INTx and poll, and decides the
-default. If INTx works after kexec, the poll mode goes.
+- **IRQ placement is explicit.** GICv3 routes every device IRQ to cpu0 by default, so rcS writes
+  `/proc/irq/<n>/smp_affinity_list` for the xdma, DRM, GPU, network and USB IRQs ([Platform
+  tuning](system.md#platform-tuning)). `oos-irq-place` does nothing today.
+- **Why not MSI after kexec.** The GIC-500 cannot disable LPIs once enabled, and without an EFI boot the next kernel
+  cannot reuse the old LPI tables, so MSIs never arrive after kexec (inferred; the symptom is verified). INTx does not
+  use the ITS.
+- **Why not poll.** The poll threads are bound to cpu0 and cpu1 and burn an A53 per transfer, competing with the
+  deposit workers.
+- A unit round (M5c) measures CPU per read, read latency and time-outs for INTx and MSI on cold boot and INTx after
+  kexec, and records the default in Platform tuning. Poll mode stays only as a fallback.
 
 ### Main loop and pacing
 

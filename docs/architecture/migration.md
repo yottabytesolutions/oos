@@ -81,12 +81,13 @@ D-numbers are the steps of [drawing implementation plan](drawing.md#implementati
 | M2.2 | `classify` in shadow mode next to the old mechanisms | 1a | round 0 (shadow) |
 | M2.3 | Consumers switch to the `ChangeSet`, one class per part; old mechanisms deleted last | 1a | |
 | M3 | Acquisition thread split | 1b | |
-| M3c | Acquisition waiting: command `eventfd`, hardware polls inside `poll` | | |
+| M3c | Acquisition waiting: command `eventfd`, hardware polls inside `ppoll`, timer slack, BAR-write spacing | | round 1 |
 | M3d | Main event loop (after M2.3): `epoll`, vblank pacing, light step with a pending `ChangeSet`, non-blocking remote output | | round 1 |
 | M4 | Mapping key, preview, generation for records | 1c | round 1 |
 | M5 | Typed channels replace `Shared` | | |
 | M5b | Memory model: `memplan`, byte bounds, ring chunks, watchdog, drop counters | | |
-| M5c | DMA completion: MSI, INTx and poll measured; default decided | | round 2 |
+| M5c | DMA completion: INTx and MSI measured, INTx after kexec, explicit IRQ placement | | round 2 |
+| P1 | Platform settings: `uclamp_min`, `pm_qos`, console log level, PCIe MPS, preemption, IRQ affinity | | round 2 |
 | M6 | Measurement reads never draw | 2 | |
 | M7 | One lines kernel, behind `draw.model` | 3 | round 2 |
 | M8 | Dots: one count per sample | 4 | |
@@ -261,9 +262,15 @@ allowlist entry for `hw.rs` and its `spawn` shrinks. Unit: smoke check (probe co
   poll (500 us) and the ring-count poll (200 us) move inside it; helper work between ring reads stays.
 - The 9, 5, 2, 20 and 500 ms sleeps of roll, hold, SINGLE and scan, the 50 ms settings poll, the 10 ms segment
   polls and the error back-offs become deadlines in the same call.
+- Timer slack: `prctl(PR_SET_TIMERSLACK, 1)` at the start of `main`, before any thread starts (Platform tuning item
+  1). Today each 10 us BAR-write gap lasts 60 to 70 us.
+- BAR-write spacing: the unit round measures the minimum gap the FPGA needs (configure and read back at shrinking
+  gaps), and the gap becomes that value, per write list where the hardware allows it.
 - Tests, failing before: with the scripted `Device`, STOP, a settings change and cancel are handled within 1 ms
-  in every phase (armed, filling, roll, hold, segments); an armed scope in STOP does no hardware poll.
-- Estimate: 1.5 days.
+  in every phase (armed, filling, roll, hold, segments); an armed scope in STOP does no hardware poll; every thread
+  shows a timer slack of 1 ns.
+- Unit check in round 1: configure time (target <= 4 ms for about 230 writes), poll period within 10 % of nominal.
+- Estimate: 2 days.
 
 ### M3d: main event loop
 
@@ -353,12 +360,31 @@ allocator); a stalled remote client holding a waveform does not reduce the batch
 
 ### M5c: DMA completion
 
-[DMA completion](README.md#dma-completion). A measurement step with a unit round, no new code beyond switches.
-- `oos-irq-place` puts the xdma IRQ on an A53; under kexec the completion poll threads are pinned to an A53.
+[DMA completion](README.md#dma-completion), Platform tuning items 2, 3 and 9 (`system.md`). A measurement step with a
+unit round, and switches.
+- rcS places the xdma IRQ on an A53 explicitly (the GIC sends every SPI to cpu0 otherwise).
+- The kexec path uses INTx (`poll_mode=0 interrupt_mode=2` in `oos-fpga-up` and `oos-fpgad` under `oos.kexec=`), not
+  poll mode.
 - `:SYSTem:STATe?` shows the mode and CPU (`xdma=`).
-- Round 2 measures, on cold boot and after kexec: MSI, legacy INTx (MSI off, as stock) and poll mode, each for CPU per
-  read, read latency and errors. The result sets the default and goes into `system.md`, Platform tuning.
+- Round 2 measures, on cold boot: INTx and MSI; after kexec: INTx; each for CPU per read, read latency and time-outs
+  over 10 min. The result sets the default and goes into Platform tuning.
+- The persistent DMA mapping in the xdma driver (one streaming mapping, sync over the bytes received) is a driver task
+  after this step, opened with the measured per-read overhead.
 - Estimate: 1 day plus the round.
+
+### P1: platform settings
+
+[Platform tuning](system.md#platform-tuning) items 4 to 8. Each is an A/B on the unit with the measurement and pass
+criterion of its row; only the ones that pass are kept, and the row records the result.
+- `oos-ui`: `uclamp_min` 1024 on main and the acquisition thread (`sched_setattr`); `pm_qos_resume_latency_us = 100`
+  on cpu4 and cpu5 while acquiring, released in STOP.
+- Kernel command line: `loglevel=4`; `pci=pcie_bus_perf` (MPS 256).
+- Kernel config: `PREEMPT_DYNAMIC`, then A/B `preempt=full`.
+- rcS: explicit IRQ affinity for xdma, DRM, GPU, network and USB.
+- DMC devfreq stays disabled.
+- Tests: host tests for the `oos-ui` calls (failing before: the thread has no clamp; the QoS file is written while
+  acquiring and released in STOP). The rest is measured in round 2 with the M5c checks.
+- Estimate: 1.5 days plus a kernel build.
 
 ### M6: measurement reads never draw (D2)
 
@@ -411,7 +437,8 @@ and no thread blocks on it. Adds 1.5 days.
 [GPU work proportional to change](README.md#gpu-work-proportional-to-change). After M9, because the dirty rows come from
 the accumulator.
 - The helper uploads dirty row ranges only; the arena row compare goes.
-- A pool of 3 fenced buffers per output; `glFinish` goes.
+- A pool of 3 fenced buffers per output; `glFlush` plus a fence replaces `glFinish`, which stays only on the readback
+  path (Platform tuning item 10).
 - Snapshots on demand into a pool of 2 readback buffers, handed to the encoder by ownership; the snapshot every 15
   frames goes.
 - HDMI with its own budget and the half-rate rule.
@@ -510,9 +537,9 @@ or `model.rs`, since they no longer exist.
 
 ## Estimate
 
-M0 to M12: about 50 days of host work plus six unit rounds (0 to 5) of about half a day: the drawing plan's 22 days
+M0 to M12: about 52 days of host work plus six unit rounds (0 to 5) of about half a day: the drawing plan's 22 days
 with D1a (3 days) replaced by M2.1 to M2.3 (7.5 days), M1 and M5 at about 1.5 days each, M1b at 2 days, M3.0 at 1.5
-days, M5b (memory model) at 2 days, and the performance work of adr/0016 at 15 days (M3c 1.5, M3d 3, M5c 1, M9b 3,
+days, M5b (memory model) at 2 days, and the performance work of adr/0016 at 17 days (M3c 2, M3d 3, P1 1.5, M5c 1, M9b 3,
 the data path in M5, M6, M7, M9 and M10 6.5). G1 and G2 add 3.5 days of gate work by auxout, in parallel. M13 to
 M18: estimated at the stable stop point after M12, when the remaining sizes are known.
 

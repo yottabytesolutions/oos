@@ -513,6 +513,11 @@ The display paces the steps (adr/0016):
   requests get a light-step slice within a quota (at most 8 requests, 64 kB of input and 0.5 ms per service point),
   then the full step continues where it was. No stage runs longer than 2 ms between two service points; a stage that
   would (accumulate on HDMI, compose) has service points inside it, at row-band boundaries.
+- **One snapshot per step.** A full step takes a snapshot of `Settings` (and `Layout`) at its change stage, and every
+  stage of that step reads the snapshot, not the live value. A light slice at a service point changes the live
+  `Settings` and the pending `ChangeSet` only; the running full step does not see it, and the next full step does.
+  A query answered in a slice reads the live value. So a picture's labels always match its trace. The snapshot is the
+  `&Settings` the change stage hands out for the step (adr/0001, adr/0004); a clone of a few kB.
 - **Fairness.** A full step always finishes before the next one starts, whatever the remote load: light work per full
   step is capped by the quotas. Requests beyond a quota wait for the next service point, in arrival order. A full step
   never delays a request by more than one service interval (2 ms) plus its slice.
@@ -889,8 +894,9 @@ for 4 channels on the panel plot (970 x 448 in the benchmarks, map set M = 3.48 
 ### Codes until volts
 
 - Samples stay `u16` codes through transfer, deposit and the cheap measurements. Deposit maps codes to rows with the
-  batch's code-to-row table, for every channel count; a four-channel stride uses a fused decode-and-deposit kernel in
-  registers, never a decoded `f32` vector. Enabling it needs a unit benchmark, not only a host ratio.
+  batch's code-to-row table, for every channel count. At 3 and 4 channels each worker deposits one channel with a
+  per-channel kernel that reads that channel's codes from the interleaved frame, never a decoded `f32` vector. A unit
+  benchmark against today's `f32` path decides when it becomes the default.
 - The cheap measurements (min, max, mean, RMS, peak-peak) run on codes in the deposit pass and convert their results.
 - A measurement that needs volts (rise time, frequency, FFT input) converts its own window, once, into the measure
   thread's reusable buffer.
@@ -910,10 +916,14 @@ depends on the channel count, so that no batch needs more than one reduction pas
 
 | Channels | Split | Reduction |
 |---|---|---|
-| 3 or 4 | by channel: each worker owns one channel's maps and deposits that channel of every frame of the batch; the helper does not deposit | none: the unit is the workers' channel maps side by side |
+| 3 or 4 | two phases. First, the trigger table: the workers split the batch's frames into ranges and refine the trigger point of each frame once, written into the batch's per-frame trigger table, immutable after. Then by channel: each worker owns one channel's maps and deposits that channel of every frame, reading the table; the helper does not deposit | none: the unit is the workers' channel maps side by side |
 | 2 | by channel and frame: two workers per channel claim frames; no helper share | per channel, 2 shares: each of the two workers sums one row band |
 | 1 | by frame: four workers and the helper claim frames | 5 shares, each of the four workers sums one row band |
 
+- **Trigger table.** At 3 and 4 channels the trigger is refined once per frame, in parallel, before any channel is
+  deposited. The worker that owns the trigger channel does not refine it for the others, so no channel waits on one
+  worker. The table holds each frame's trigger offset and the extrema the folds reuse. At 1 and 2 channels the worker
+  that claims a frame refines it, as today.
 - Each share records the rows it touched; reduction and the later adds cover touched rows only.
 - Reduction cost, worst case (every row touched, 2 GB/s copy bandwidth): at 1 channel, 5 shares x 1.74 MB read plus
   1.74 MB written, over 4 workers, is 2.6 MB per worker, 1.3 ms; at 2 channels, 2 x 1.74 MB read plus 1.74 MB written

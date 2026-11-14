@@ -288,14 +288,15 @@ every later unit round measures latency against it.
 - The light step for input and remote requests: intake of input and remote only, change, acquire, reply; the pending
   `ChangeSet` with ordered transitions that the next full step consumes behind a generation barrier.
 - Service points between stages of a full step, with quotas (8 requests, 64 kB, 0.5 ms) and the 2 ms bound between
-  points.
+  points; the full step reads its `Settings` snapshot, slices change the live `Settings` and the pending set.
 - The HTTP listener's 20 ms polling becomes `epoll` with the other listeners.
 - Remote replies go into per-connection output queues written by the listeners on `EPOLLOUT`; main never writes to a
   socket (today `scpi.rs` 46 and `vxi11.rs` 319). The request inbox becomes a bounded MPSC queue with main's wake.
 - Tests, failing before: a stalled SCPI client does not delay a step; a settings round trip stays under 2 ms on the
   host with a busy picture; an idle main wakes only on vblanks it needs and input; a mapping change in a light step
   gives a preview at the next full step; four light steps before one full step deliver every class and both
-  transitions in order; a remote request that arrives during a full step is answered within 3 ms; a flood of
+  transitions in order; a V/div write injected at each service point of a full step gives a picture whose labels
+  match its trace; a remote request that arrives during a full step is answered within 3 ms; a flood of
   requests does not delay the next full step beyond its quota; the first picture after idle comes at the next vblank;
   with the DRM fake,
   a missing vblank event switches to the timer within 3 periods and back; panel and HDMI flips are accounted per
@@ -417,8 +418,10 @@ As D3, behind `draw.model = old|new` in `system.conf`. Tests, failing before: `p
 each with the reason. Deletes: the deep-raw branch in `draw_frame`; segment joining for lines after M12.
 
 Data path in M7 ([Codes until volts](README.md#codes-until-volts)): the kernel deposits from codes for every channel
-count, with a fused four-channel decode-and-deposit kernel; the per-frame folds reuse the deposit's trigger position and
-extrema. A unit benchmark decides whether the four-channel code path replaces the `f32` one. Adds 1.5 days.
+count; at 3 and 4 channels a per-channel kernel per worker, after a first phase that fills the batch's per-frame
+trigger table in parallel; the per-frame folds reuse the table's trigger position and extrema. A unit benchmark
+decides whether the per-channel code path replaces the `f32` one. Perf-guard case: 4 channels, edge trigger, the
+refinement counted once per frame, not once per channel. Adds 1.5 days.
 
 **Unit round 2** (M5 to M7, with M5c): screenshot pairs old and new per mode for the user's eye; the acquisition under change
 storm for M5.
@@ -563,7 +566,7 @@ Codex code audit (2026-11-15, 15 items, and its three structural changes):
 | 5 | modes outside `fast_ok` build records on main | M6, M9 | records built on the workers; `stage records` p99 <= 1.5 ms |
 | 6 | full-map publish and add per share | M9 | at most 3 map sets added per step (test); `reduce` budget |
 | 7 | GPU snapshot readback chain | M9b | a snapshot does not delay a composition; leases counted |
-| 8 | four-channel deposits through `f32` | M7 | fused code deposit; unit benchmark decides |
+| 8 | four-channel deposits through `f32` | M7 | per-channel code deposit after the trigger table; refinement once per frame; unit benchmark decides |
 | 9 | row compare and double copy to the GPU | M9b | an unchanged picture uploads nothing |
 | 10 | per-frame folds repeat the trigger search and extrema | M7 | folds reuse the deposit pass (test) |
 | 11 | grade maxima, decay and STOP redraw sweep every step | M10 | one pass per step above Min; none frozen; no maxima |

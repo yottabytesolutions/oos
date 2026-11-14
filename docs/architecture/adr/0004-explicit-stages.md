@@ -14,6 +14,8 @@ between distant lines. Moving one line has broken the picture more than once.
 - Each stage owns its state and takes and returns typed values. No stage reads another stage's state except through
   those values.
 - `Session` creates and wires the stages and holds no domain state. It is not a new god object.
+- One consistent snapshot per step: every stage of a full step reads the `Settings` snapshot its change stage took.
+  Light slices between stages change only the live `Settings` and the pending `ChangeSet`.
 
 ## Consequences
 

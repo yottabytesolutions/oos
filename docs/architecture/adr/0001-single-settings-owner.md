@@ -18,6 +18,8 @@ string-keyed setter. Nothing sees all writes, so nothing can say reliably what c
 - Cross-group constraints have one model: `Settings::normalize()`, run by the change stage after the step's commands
   and before `classify`. Group `apply` checks only its own group, with read-only `Context`. Today's per-step rewrites
   (`clamp_offsets`, `fit_platform`) move into `normalize`, so they are no longer a second writer outside `classify`.
+- Each full step reads one snapshot of `Settings`, taken at its change stage; changes from light slices during the
+  step reach the next one (adr/0004).
 - One struct, not one per area: change detection needs one consistent snapshot per step, and a whole-settings clone
   is cheap (a few kB).
 

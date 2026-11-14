@@ -267,7 +267,7 @@ Two numbers, private to `change` (`Generations`):
   - **A token without an epoch accepts nothing.** Until its `ChangeSet` arrives, the stage takes no records.
   - Tokens are unique per request (requester, run id, stage). Several requests in one step may share one epoch.
 - The pair is published inside `AcqIntent` and `PipeView`, so it is always consistent.
-- Readers filter on the pair: the picture by its mapping key, records and measurements by `epoch` and `gen`
+- Readers filter on the pair: the picture by its mapping key and `epoch`, records and measurements by `epoch` and `gen`
   (`architecture/records.md`).
 
 ### Acquisition intent

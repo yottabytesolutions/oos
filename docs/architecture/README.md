@@ -411,7 +411,7 @@ A hardware poll remains only where the FPGA raises no event; it runs at the hard
 | Thread | The one blocking call | Wake sources | Worst-case wake latency | Hardware poll (period, cost) |
 |---|---|---|---|---|
 | main | `epoll_pwait2` | vblank sequence event and page-flip event (DRM fd); wake `eventfd` (a `BatchUnit`, a `RecordBatch`, a remote request, `Readings` changed, the outbox of a worker); input fds; GPU helper reply socket; a `timerfd` deadline only without a display (host, headless) | an input or remote event: under 1 ms to the light step; a picture: the next flip | none |
-| acquisition | `ppoll` on its command `eventfd` with a timeout of the hardware period (sub-millisecond, so `ppoll`, not `poll`) | `AcqWant` changed, `AcqCmd` queued, cancel | under 1 ms for STOP, a settings change or cancel | trigger done (BAR1 `0x4080` bit 30): every 500 us while armed; ring count during a fill: every 200 us, or helper work between reads; each read is one MMIO load |
+| acquisition | `ppoll` on its command `eventfd` with a timeout of the hardware period (sub-millisecond, so `ppoll`, not `poll`) | `AcqWant` changed, `AcqCmd` queued, cancel | notification under 1 ms outside a C2H read; inside one, the rest of that read chunk ([Acquisition reaction](#acquisition-reaction)) | trigger done (BAR1 `0x4080` bit 30): every 500 us while armed; ring count during a fill: every 200 us, or helper work between reads; each read is one MMIO load |
 | deposit workers | channel receive (`sync_channel`) | a claimable batch, shutdown | under 50 us | none |
 | measure | channel receive | a job, shutdown | under 50 us | none |
 | input | `ppoll` | panel UART, touch evdev, shutdown `eventfd` | under 1 ms | none |
@@ -433,6 +433,22 @@ STOP costs nothing. The 10 us sleep after every BAR write (`bus.rs` 167) lasts 6
 SCHED_OTHER thread has 50 us of timer slack. `oos-ui` sets `prctl(PR_SET_TIMERSLACK, 1)` at startup, before it starts
 any thread, so every sleep and timeout is as long as asked. M3c measures the minimum spacing the FPGA needs and sets
 the gap to it, per write list where the hardware allows it.
+
+### Acquisition reaction
+
+Four different things, with different bounds:
+
+| What | Bound | Why |
+|---|---|---|
+| notification: a command reaches the thread | under 1 ms outside a C2H read | `ppoll` on the command `eventfd` with a timespec computed from the next absolute deadline (`CLOCK_MONOTONIC`), recomputed after every command and after `EINTR`, so waits do not drift |
+| application: the new `AcqWant` is applied | the end of the current read chunk, or the next hardware check | a C2H read cannot be interrupted: the driver's character device has no `.poll`, and a read blocks until the transfer completes or the driver times out (10 s) |
+| STOP completion: the batch in progress is finished | its fill plus its read, plus the final raw read if a `Final` asks | STOP is a level: the batch armed when it arrives completes, as the stop-exact design requires |
+| shutdown cancellation | one read chunk: 4 MiB (`MAX_READ`) at the measured rate, 17 ms at 240 MB/s; a stalled read ends at the driver timeout | the loop checks the cancel flag between chunks; shutdown's 2 s join bound covers a chunk, and a stalled read is left to process exit ([Cancellation](#cancellation)) |
+
+- Helper work between hardware checks is bounded: the helper deposits one frame at a time and checks the ring count
+  between frames, so a check comes at least every frame deposit (budget 2.7 ms).
+- The chunk time is a counter (`acq chunk`, p99) with a budget, so a slower link or a larger chunk shows as a failed
+  budget, not as a slow STOP. A smaller `MAX_READ` lowers the bound at a cost per read that M5c measures.
 
 ### DMA completion
 
@@ -745,9 +761,10 @@ that overruns is logged and skipped, and the exit continues:
 STOP (`hold`) finishes the acquisition in progress, which may wait for a trigger for ever. Shutdown needs a path that ends
 every wait:
 - **One cancel flag** per thread, an `AtomicBool` owned by `Session` and shared by `Arc`. Setting it is the request.
-- **Every blocking wait checks it.** Trigger waits poll with a timeout of at most 50 ms and return `Cancelled`. A C2H
-  read is split into `MAX_READ` pieces today; the loop checks the flag between pieces. A read already in the driver
-  ends within its own timeout (the xdma C2H timeout), owned by `hal`.
+- **Every blocking wait checks it.** Trigger and ring waits are in `ppoll` on the command `eventfd` and return
+  `Cancelled` at once. A C2H read is split into `MAX_READ` pieces; the loop checks the flag between pieces, so
+  cancellation inside a read takes up to one chunk ([Acquisition reaction](#acquisition-reaction)). A read already in
+  the driver cannot be interrupted and ends within the xdma C2H timeout (10 s), owned by `hal`.
 - **No buffer is freed while a thread can still use it.** The thread that owns a buffer frees it, after its last
   read returned. Shutdown waits for the join; if the join times out, `oos-ui` exits without freeing that buffer
   (the process ends anyway) rather than freeing memory a live read may still write to.
@@ -1000,7 +1017,8 @@ after each step may tighten them, never loosen them without a doc change.
 | light step (input or remote) | settings round trip p99 <= 2 ms when main is idle | `light` | host test, unitlab | M3d |
 | remote arrival to reply during full steps | p99 <= 3 ms, measured from the listener's read timestamp to the reply in the output queue | `remote latency` | unitlab (`ifload.py` with pictures running) | M3d |
 | remote throughput | >= 500 query/answer exchanges per s on one SCPI connection, picture rate within 10 % | `remote` | unitlab (`ifload.py`) | M3d |
-| acquisition reaction | STOP, a settings change or cancel within 1 ms (provisional until Platform tuning) | `acq wake` | host test with the scripted `Device`, unitlab | M3c |
+| acquisition notification | under 1 ms outside a C2H read (provisional until Platform tuning) | `acq wake` | host test with the scripted `Device`, unitlab | M3c |
+| acquisition read chunk | p99 <= 20 ms per 4 MiB chunk; this bounds application and cancellation inside a read | `acq chunk` | unitlab | M3c |
 | acquisition overhead per batch (excluding DMA) | p99 <= 1 ms | `acq batch` | unitlab | M3c |
 | DMA completion | CPU per read and read latency per mode | `xdma` | unitlab | M5c |
 | deposit worker, per frame | p99 <= 2.7 ms; load <= 70 % per little core with measurements | `worker` | perf guard (ratio), unitlab | M7 |

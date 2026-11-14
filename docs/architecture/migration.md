@@ -258,17 +258,21 @@ allowlist entry for `hw.rs` and its `spawn` shrinks. Unit: smoke check (probe co
 ### M3c: acquisition waiting
 
 [Waiting](README.md#waiting), adr/0016. After M3, on its `AcqLoop`.
-- One blocking call: `poll` on the acquisition's command `eventfd`, with the hardware period as timeout. The trigger
-  poll (500 us) and the ring-count poll (200 us) move inside it; helper work between ring reads stays.
+- One blocking call: `ppoll` on the acquisition's command `eventfd`, with a timespec from the next absolute deadline,
+  recomputed after each command and `EINTR`. The trigger poll (500 us) and the ring-count poll (200 us) move inside
+  it; helper work between ring checks is bounded to one frame deposit.
+- Notification, application, STOP completion and shutdown cancellation are separate, with the bounds of
+  [Acquisition reaction](README.md#acquisition-reaction); the chunk time is a counter.
 - The 9, 5, 2, 20 and 500 ms sleeps of roll, hold, SINGLE and scan, the 50 ms settings poll, the 10 ms segment
   polls and the error back-offs become deadlines in the same call.
 - Timer slack: `prctl(PR_SET_TIMERSLACK, 1)` at the start of `main`, before any thread starts (Platform tuning item
   1). Today each 10 us BAR-write gap lasts 60 to 70 us.
 - BAR-write spacing: the unit round measures the minimum gap the FPGA needs (configure and read back at shrinking
   gaps), and the gap becomes that value, per write list where the hardware allows it.
-- Tests, failing before: with the scripted `Device`, STOP, a settings change and cancel are handled within 1 ms
-  in every phase (armed, filling, roll, hold, segments); an armed scope in STOP does no hardware poll; every thread
-  shows a timer slack of 1 ns.
+- Tests, failing before: with the scripted `Device`, a command is noticed within 1 ms in every phase outside a read
+  (armed, filling, roll, hold, segments); inside a scripted read, application and cancellation come at the next chunk;
+  waits do not drift over 1000 commands; an armed scope in STOP does no hardware poll; every thread shows a timer
+  slack of 1 ns.
 - Unit check in round 1: configure time (target <= 4 ms for about 230 writes), poll period within 10 % of nominal.
 - Estimate: 2 days.
 

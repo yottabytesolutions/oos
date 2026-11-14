@@ -1860,8 +1860,11 @@ impl Ui {
             let t_records = std::time::Instant::now();
             for _ in 0..k {
                 // the records of a step within a time budget: where every frame takes the record path, 48 of them a step
-                // took the frame rate down to 5-13 fps (stutter.md); the rest of the queue goes, counted as dropped
-                if got > 0 && t_records.elapsed() > RECORDS_BUDGET {
+                // took the frame rate down to 5-13 fps (stutter.md); the rest of the queue goes, counted as dropped.
+                // Hardware queue only: the demo source makes its records here and advances its signal time by each
+                // record, so a wall-clock cut made what it shows depend on the machine's speed and load (the host
+                // tests of the decoders and bus triggers failed on a loaded machine)
+                if got > 0 && self.src.is_hw() && t_records.elapsed() > RECORDS_BUDGET {
                     break;
                 }
                 let t0 = std::time::Instant::now();

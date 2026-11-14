@@ -212,17 +212,20 @@ shows would blank for the whole spin. So:
   coupling, noise reject and the source's V/div (for the hysteresis). A frame kept across a level change is refined
   against the level it was acquired at. It never reads the live `Model`, which today's `draw_frame` does through the
   `View`.
-- **The mapping key** is what turns volts and times into pixels: time base, delay, V/div, offset, channel set, dots,
-  zoom, size. It is fixed per batch at its first claim (the batch keeps the `View` it was first drawn under, so all
+- **The mapping key** is what turns volts and times into pixels, plus what the hardware does to the waveform itself:
+  time base, delay, V/div, offset, channel set, dots, zoom, size, and per channel invert, coupling and bandwidth.
+  The hardware applies inversion, coupling and bandwidth (`Source::is_hw`), so a frame from before such a toggle
+  shows the old waveform: those batches are dropped like a mapping change. It is fixed per batch at its first claim (the batch keeps the `View` it was first drawn under, so all
   its shares share one mapping). A published batch of another mapping key is dropped by the UI (pixels in the wrong
   place); its frames are not redrawn.
 - **The hardware generation** (`gen_acq`, raised when `configure` runs: depth, k, coupling, bandwidth, trigger,
-  acquisition mode) does not invalidate the picture. Live and deep frames after a depth change may share a picture;
+  acquisition mode) does not invalidate the picture, because each frame is refined with its own trigger snapshot
+  (above). Live and deep frames after a depth change may share a picture;
   with one weight model (3.3, step 3) that is correct, so `depth_mix_report` becomes step 3's test, not step 1's. A level, slope or coupling change keeps the old batches valid as
   pictures. It matters to the records: measurements and Single take only the current generation. The queue is
   cleared on reconfigure, and a fill that `changed()` ended under the old configuration is dropped.
 - **Preview.** On a mapping change the UI draws `last[0]` once under the new mapping as the picture (W = w, window of
-  1), at the next step. The first batch drawn under the new mapping replaces it. During a spin the picture is a
+  1), at the next step, from its stored trigger point (not refined again). The first batch drawn under the new mapping replaces it. During a spin the picture is a
   preview or a real batch at every step, never blank and never at old pixel positions under new labels.
 
 Input to photon: the preview at the next step (<= 33 ms). The first batch under the new mapping: the batches in
@@ -281,7 +284,9 @@ rare hits.
 
 - **GPU:** the LUT maps count / vmax today. With vmax = W it computes count / W exactly, so neither the protocol nor
   the shader changes: the UI passes W where it passed `vmax`. The UI copies the changed rows of the picture into the
-  arena (today: copy 0.6 ms; helper upload 2.3 ms and draw 7 ms on its own core).
+  arena (today: copy 0.6 ms; helper upload 2.3 ms and draw 7 ms on its own core). The arena holds u16 counts. With
+  the u32 persistence maps the copy converts (>> 16, saturating), a per-pixel pass of about 1 ms, and W is passed in
+  the same unit after the shift.
 - **Screen step** (33.3 ms on the first A72; today at setup B 200 ns: step 6 ms, render 2.9 ms): merge and window
   rebuild <= 2 ms, decay pass (persistence only) <= 2 ms, grade <= 0.5 ms, render and arena copy <= 6 ms. Target step
   p99 <= 15 ms.
@@ -334,7 +339,7 @@ system.conf for A/B on the unit; step 9 removes the flag and the old code after 
 | # | Step | Days | Host tests (fail before) | Unit check | Deletes |
 |---|---|---|---|---|---|
 | 0 | Counters: `stale`, `partial`, `preview`, picture `age`, frames and W per picture | 0.5 | counters count in pipe and UI tests | status line shows them | none |
-| 1 | Mapping key split (3.5): batch keeps its first `View`, UI drops published batches of another mapping; preview of `last[0]` on a mapping change; `gen_acq` for records; queue cleared on reconfigure, early-ended fill dropped | 1.5 | a mapping change gives a preview at the next step and never a blank trace; no batch drawn under two mappings; records of an old generation not measured | knob spin, settle over 20 changes | `hw_stamp` use for the view, blank-on-change |
+| 1 | Mapping key split (3.5): batch keeps its first `View`, UI drops published batches of another mapping; preview of `last[0]` on a mapping change; `gen_acq` for records; the batch's trigger snapshot for the refinement; invert, coupling and bandwidth in the mapping key; queue cleared on reconfigure, early-ended fill dropped; check that decode reads the batch's calibration, not global state (self-cal reload, core-offset overlay) | 1.5 | a mapping change gives a preview at the next step and never a blank trace; no batch drawn under two mappings; records of an old generation not measured | knob spin, settle over 20 changes | `hw_stamp` use for the view, blank-on-change |
 | 2 | Measurement reads never draw (RAW_PERIOD raw newest, deep window); on `fast_ok` the UI takes only the newest record; off it, all records as before | 0.5 | a raw measurement read leaves the picture unchanged; mask counts, zones, average, Bus trigger, Single, segments unchanged off the fast path | probe comp 200 us dots/lines | `compress::hold` draw branch, `deepmeas` draw cases, `RECORDS_BUDGET` |
 | 3 | One lines kernel: spans for raw, codes, pairs, records (`draw_ex` lines; Z keeps its drawing; sparse per 3.3); behind `draw.model` | 4 | `pair_raw_mix_report` and `depth_mix_report` x1.000; record-path pictures alone within 3 % | screenshot pairs old/new per mode for the user's eye | `draw_ex` segment joining for lines (after step 9), deep-raw branch in `draw_frame` |
 | 4 | Dots: one count per sample, W_frame = samples per column | 2.5 | dots brightness within 3 % across raw/record frames; no dot lost at 100 samples per column over 40 rows | dots set | none |

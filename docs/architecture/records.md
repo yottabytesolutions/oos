@@ -74,8 +74,8 @@ it carries its `BatchMeta` (`id`, `gen`, `epoch`, `mode`).
 ## The measurement path
 
 ```
-record (raw, current epoch) -> measure job (record id, gen, epoch, stats_gen) -> measure thread (A53, one scoped
-thread per channel) -> result -> UI: accepted if gen, epoch and stats_gen are still current -> values, statistics
+record (raw, current epoch) -> measure job (record id, gen, epoch, stats_gen) -> measure thread (A53, persistent,
+one helper per channel) -> result -> UI: accepted if gen, epoch and stats_gen are still current -> values, statistics
 ```
 
 - **One hold rule.** Today two holds exist: `compress::hold` and `deepmeas::hold`. While `raw_planned` is true for the

@@ -22,9 +22,9 @@ requests, outputs and readings side by side, each with its own counter conventio
 |---|---|---|---|
 | `AcqWant` | UI (`app/acq_client`, from the change point's `AcqIntent`) | acq | latest value plus `gen`, replaced whole |
 | `AcqCmd` | UI | acq | queue of one-shot commands, each with an id; acq acknowledges the id |
-| `Batch` | acq | deposit pipe | owned buffer plus `BatchMeta`, moved, never shared |
-| `Frame` | acq | UI record path | decoded volts plus `BatchMeta` |
-| `MeasRead` | acq | measurement path | decoded volts plus `BatchMeta`; a separate type that no drawing kernel accepts |
+| `Batch` | acq | deposit pipe | `Arc<SampleStore>`: the codes, immutable after the read, plus `BatchMeta`; shared read-only by in-flight work; the buffer returns to the pool after its last reader (README.md, [Budget arithmetic](README.md#budget-arithmetic)) |
+| `Frame` | acq | UI record path | a view into its batch's store (codes) plus `BatchMeta`; its consumer converts to volts; a roll or scan sweep is screen-resolution min/max plus ring chunks |
+| `MeasRead` | acq | measurement path | the codes of the window the measurements need, in the reread buffer, plus `BatchMeta`; the measure thread converts what it needs; a separate type that no drawing kernel accepts |
 | `Readings` | acq | UI | latest value: status, unit counters, board readings, acknowledged ids, the applied `(gen, epoch)` |
 
 The change point produces a board-neutral `AcqIntent` (README.md, [Acquisition

@@ -397,7 +397,7 @@ its trigger. It ends on the first of:
 | GPU helper (process) | first A72, with main, within its budget; the unit round of M5c tries an A53 | SCHED_OTHER | nothing; reads the arena | the arena, its socket and fences |
 | acquisition (`board/dho`) | second A72 | SCHED_OTHER | hardware, batch buffers, `AcqLoop`, the helper's share | `AcqWant` and `AcqCmd` in; `Batch`, `Frame`, `MeasRead`, `Readings` out |
 | deposit workers | A53, one per little core | SCHED_OTHER | their share maps; the route per batch from its `BatchMeta` tag, the mapping from `DepositView` at first claim | `BatchUnit` (fast path) or `RecordBatch` (records, off it) to main (`picture.md`) |
-| measure | A53, scoped per channel | SCHED_OTHER | one measurement job | job and result channels (`records.md`) |
+| measure | A53, persistent, one helper per channel | SCHED_OTHER | one measurement job | job and result channels (`records.md`) |
 | input | A53 | SCHED_OTHER, blocked on read | the panel UART, the touch device | `InputEvent` channel to main |
 | remote listeners | A53 | SCHED_OTHER, in `epoll_wait` | sockets of SCPI, HTTP, MCP, VXI-11, the control FIFO; encoding of large answers | `RemoteRequest { command or query, wait, reply sender }` to main |
 | web PNG / send | A53 | SCHED_IDLE (nice 10 where refused) | encoding and sending pictures | the composed-picture snapshot |
@@ -616,9 +616,15 @@ the sum for every reachable setting:
 | acquisition | `dma` + `raw` + `ring` + `segments` + decoded copies | `dma` = pool (3) x batch bytes; decoded = 2 x code bytes (u16 codes to f32 volts) for every frame decoded at once; `raw` <= `deepmeas::MAX_BYTES` (24 MiB) per window |
 | retained | every retaining owner below at its limit | [Retaining owners](#retaining-owners) |
 
-- **Reconfiguration overlap.** The acquisition thread frees the old plan's `dma` and `raw` buffers before it allocates
-  the new plan's, while nothing is armed, so a reconfiguration adds nothing. Where a buffer must outlive the switch
-  (a pinned ring chunk, a `RecordBatch` in flight), it counts in the retained term until it is released.
+- **Buffer return.** A DMA buffer goes back to the pool only when its last reader drops it: the workers have
+  deposited, the records stage has built its records, and every holder has made its copy. An `Arc` pins the whole
+  allocation, not one frame, so the in-flight readers are kept to one step ([One ownership path per
+  batch](#one-ownership-path-per-batch)). When no buffer is free, the acquisition drops the next batch and counts it
+  (`drops batch`); it never overwrites a buffer a reader holds.
+- **Reconfiguration overlap.** The acquisition thread allocates the new plan's buffers when the old plan's are back,
+  while nothing is armed. Old buffers still in flight at the switch (at most the pool of 3, for at most one step) are
+  counted in the `dma` class of both plans for that step; `memplan` adds the old pool to the new plan's total when it
+  checks a reconfiguration against the budget.
 - **The two figures.** The baseline in [Performance budgets](#performance-budgets) (120 MB) is the measured base plus
   the maps term at HDMI size. `Config.mem_budget` (default 512 MB) bounds the acquisition and retained terms. M5b
   replaces both with the values the sweep computes, and the sweep test fails if a later change moves them by more
@@ -655,7 +661,7 @@ thread never blocks on a full queue.
 | Channel | Bound | When full |
 |---|---|---|
 | `Batch` into the pipe | the pool (count) and the `dma` class (bytes) | the acquisition thread drops the batch and counts it; deposit never moves to main |
-| `BatchUnit` to main | pool size | cannot fill: a unit returns its buffer when merged |
+| `BatchUnit` to main | pool size | cannot fill: there are never more units than buffers in flight |
 | `RecordBatch` to main | 2 per step, `records` class | thin to the newest batch and count; a reader that needs every frame (mask, segments) counts the loss |
 | `Frame` (newest frame, live roll and scan sweeps) | latest-value cell: one frame | replaced; a sweep is screen-resolution min/max plus the `Arc`s of its ring chunks, never a copy |
 | segment read-back | 2 batches of segments, `segments` class | back-pressure: the read-back waits for space. Safe because acquisition is stopped during read-back (today `seg_step` waits the same way, `hw.rs` 2252) |

@@ -6,6 +6,7 @@ How the Rigol DHO800/DHO900 hardware works and how OOS drives it. "Verified on t
 ## System
 
 - [architecture.md](architecture.md): how the SD card, kernel, Rust crates and GUI fit together.
+- [development.md](development.md): the gate (`cargo xtask check`), what it enforces, the ratchets, hooks and CI.
 - [boot.md](boot.md): card layout, boot chain, the image format of the stock loader, OOS start-up order.
 - [install-usb.md](install-usb.md): installing OOS from a USB stick, without opening the scope.
 - [sdcard-backup.md](sdcard-backup.md): backing up and cloning the SD card on Windows, macOS and Linux (card route).

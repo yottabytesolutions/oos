@@ -20,14 +20,16 @@ requests, outputs and readings side by side, each with its own counter conventio
 
 | Kind | Writer | Reader | Shape |
 |---|---|---|---|
-| `AcqWant` | UI change point | acq | latest value plus `gen`, replaced whole |
+| `AcqWant` | UI (`app/acq_client`, from the change point's `AcqIntent`) | acq | latest value plus `gen`, replaced whole |
 | `AcqCmd` | UI | acq | queue of one-shot commands, each with an id; acq acknowledges the id |
 | `Batch` | acq | deposit pipe | owned buffer plus `BatchMeta`, moved, never shared |
 | `Frame` | acq | UI record path | decoded volts plus `BatchMeta` |
 | `MeasRead` | acq | measurement path | decoded volts plus `BatchMeta`; a separate type that no drawing kernel accepts |
 | `Readings` | acq | UI | latest value: status, unit counters, board readings, acknowledged ids |
 
-`board/mod.rs` defines these types for every board. `board/dho` implements the thread. The `board::boundary` lint
+The change point produces a board-neutral `AcqIntent` (architecture.md, [Acquisition
+intent](../architecture.md#acquisition-intent)). `app/acq_client` maps it to this board's `AcqWant` through
+`Board::want`, so the domain never names `Want` or `seq::Settings`. `board/mod.rs` defines these types for every board. `board/dho` implements the thread. The `board::boundary` lint
 stays.
 
 ### `AcqWant` and generations
@@ -44,15 +46,16 @@ Today these are separate `Shared` fields, so a change of `needs_raw` or a mask w
 (`pacing::WANTED` covers `want` only). One struct with one `gen` makes every acquisition-relevant change visible
 in one number.
 
-- `gen` is raised by the change point ([architecture.md](../architecture.md#change-detection)) whenever the
-  `ChangeSet` contains `acq`. It is the only writer.
+- `gen` is raised by the change point ([architecture.md](../architecture.md#generations)) whenever the
+  `ChangeSet` contains `acq` (`classify` calls `new_gen`). It is the only writer.
 - The thread stores `applied` = the `gen` of the want it last applied (configured, or found equal). Every output it
   produces from then on carries `applied` in its `BatchMeta`.
 - `epoch` is the second number in `BatchMeta`. It is raised by explicit requests whose settings may not differ:
   SINGLE armed, CLEAR, RUN after STOP, an autoset or Bode stage, including a retry with identical settings. It
-  replaces `hw_stamp`. The change point raises it synchronously and returns the new value, so autoset and Bode keep
-  the value they need in the same call (`autoset.rs` 180 uses it at once). An epoch change is published as part of
-  `AcqWant`, so the pair (`gen`, `epoch`) is always consistent.
+  replaces `hw_stamp`. Request resolution in the change point calls `new_epoch`. Autoset and Bode return
+  `Request::Epoch(token)` and read their epoch from the next step's `ChangeSet` (today `autoset.rs` 180 stores the
+  stamp in the same call; the token replaces that, adr/0003). An epoch change is published as part of `AcqIntent`
+  and so of `AcqWant`, so the pair (`gen`, `epoch`) is always consistent.
 - Consumers compare the pair:
   - the picture uses the mapping key, not `gen` (picture.md);
   - records and measurements accept only the current `epoch` and, after a hardware reconfiguration, only the current

@@ -14,7 +14,9 @@ Target architecture of the path from acquired frames to the phosphor maps the gr
 | GPU helper | own process | nothing; reads the arena | |
 
 The accumulator is the only writer of `ph` and `phz`. Today eight `ph.clear()` sites and six routes write them
-(draw-architecture.md 1). In the target every write goes through the accumulator's methods, driven by two inputs:
+(draw-architecture.md 1). In the target `ph`, `phz`, W and the window are private fields of the accumulator, and
+readers get only `&Picture`, so the compiler enforces the single writer. Every write goes through the accumulator's
+methods, driven by two inputs:
 - the `ChangeSet` of the change point ([architecture.md](../architecture.md));
 - whole batches from the pipe.
 

@@ -1925,6 +1925,35 @@ impl Model {
         if self.trig_type == TrigType::Edge && self.trig_line().is_none() { self.trig_coup } else { TrigCoup::Dc }
     }
 
+    /// A fixed memory depth the hardware cannot take for the channels acquired now: the depth applied, and the hidden
+    /// trigger channel that caused it (None when the shown channels alone do). The acquisition holds the shown
+    /// channels and every trigger source, shown or not (`board::dho::hw::settings`, trigger.md 2.4), and the deepest
+    /// record depends on how many those are (`limits.mem`). None with Auto or when the menu's depth fits.
+    pub fn depth_cap(&self) -> Option<(u64, Option<usize>)> {
+        let want = mdepths().get(self.mdepth)?.1;
+        let shown = (0..NCH).filter(|&c| self.ch[c].on).fold(0u32, |a, c| a | 1 << c);
+        let trig = self.trig_channels().iter().enumerate().filter(|(_, &u)| u).fold(0u32, |a, (c, _)| a | 1 << c);
+        let lim = |mask: u32| oos_hal::model::platform().limits.mem(mask.count_ones().max(1) as usize, self.la_on());
+        let applied = want.min(lim(shown | trig));
+        if want == 0 || applied >= want {
+            return None;
+        }
+        let hidden = (lim(shown) >= want).then(|| (0..NCH).find(|&c| trig & !shown & 1 << c != 0)).flatten();
+        Some((applied, hidden))
+    }
+
+    /// The Acquire menu's depth text: the menu's choice, and the depth applied when the channels cap it
+    /// ("100M \u{2192} 62.5M (trig CH2)").
+    pub fn depth_label(&self) -> String {
+        let name = mdepths().get(self.mdepth).map_or("Auto", |d| d.0);
+        let Some((applied, hidden)) = self.depth_cap() else { return name.into() };
+        let applied = mdepths().iter().find(|d| d.1 == applied).map_or_else(|| applied.to_string(), |d| d.0.to_string());
+        match hidden {
+            Some(c) => format!("{} \u{2192} {} (trig CH{})", name, applied, c + 1),
+            None => format!("{} \u{2192} {}", name, applied),
+        }
+    }
+
     pub fn la_on(&self) -> bool {
         self.la.on && crate::ui::la::available()
     }
@@ -2030,6 +2059,28 @@ pub fn si_short(v: f64, unit: &str) -> String {
 #[cfg(test)]
 mod platform_tests {
     use super::*;
+
+    // Unit 2026-11-14 (deepraw): 100M with CH1 shown and the trigger on CH2 ran at 62.5M while the menu said 100M.
+    // Break it catches: a label that hides the cap, a cap blamed on the trigger when the shown channels cause it, a
+    // label on a depth that fits.
+    #[test]
+    fn depth_label_shows_the_applied_depth() {
+        let mut m = Model::default();
+        let at = |d: u64| mdepths().iter().position(|x| x.1 == d).unwrap();
+        for c in 0..NCH {
+            m.ch[c].on = c == 0;
+        }
+        (m.trig_type, m.trig_src, m.mdepth) = (TrigType::Edge, 1, at(100_000_000));
+        assert_eq!(m.depth_label(), "100M \u{2192} 62.5M (trig CH2)");
+        m.trig_src = 0;
+        assert_eq!((m.depth_label(), m.depth_cap()), ("100M".to_string(), None));
+        m.ch[1].on = true;
+        assert_eq!(m.depth_label(), "100M \u{2192} 62.5M");
+        m.mdepth = at(50_000_000);
+        assert_eq!(m.depth_label(), "50M");
+        m.mdepth = 0;
+        assert_eq!(m.depth_label(), "Auto");
+    }
 
     #[test]
     fn source_steps_skip_missing_channels() {

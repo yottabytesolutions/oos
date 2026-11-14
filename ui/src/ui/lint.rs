@@ -57,10 +57,11 @@ fn check(ui: &Ui, ctx: &str, out: &mut BTreeSet<String>) {
             }
             Ctl::Value | Ctl::Pick => {
                 let (_, mid, _) = Ui::value_parts(c);
-                let v = ui.value(row.it);
+                let v = ui.value_shown(row.it);
                 let room = if matches!(row.ctl, Ctl::Pick) { mid.w - 44 } else { mid.w - 8 };
-                if f.mb.width(&v) > room {
-                    bad(format!("{} value '{}' {} > {}", name, v, f.mb.width(&v), room));
+                let font = ui.value_font(mid, matches!(row.ctl, Ctl::Pick), &v);
+                if font.width(&v) > room {
+                    bad(format!("{} value '{}' {} > {}", name, v, font.width(&v), room));
                 }
             }
             Ctl::Text => {
@@ -146,6 +147,12 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         u.m.meas2 = vec![(0, 0, 1)];
     };
     walk(&|| open(Display, &trend), "Display Trend", &mut out);
+    // the longest depth text: a fixed depth the hidden trigger channel caps
+    let capped = |u: &mut Ui| {
+        u.m.trig_src = 1;
+        u.m.mdepth = mdepths().iter().position(|d| d.1 == 125_000_000).unwrap_or(0);
+    };
+    walk(&|| open(Acquire, &capped), "Acquire depth capped", &mut out);
     walk(&|| open(Bode, &|u| u.m.bode_gen = bode::FREE), "Bode free sweep", &mut out);
     walk(&|| open(Bode, &|u| { u.m.bode_gen = bode::FREE; u.m.bode_sw_in = 0 }), "Bode free sweep no input", &mut out);
     walk(&|| open(Bode, &|u| u.m.bode_gen = 5), "Bode UNI-T LAN", &mut out);
@@ -1829,4 +1836,19 @@ fn trigger_coupling_by_menu_scpi_and_setup() {
     u.m.trig_type = TrigType::Pulse;
     assert_eq!(u.m.trig_coupling(), TrigCoup::Dc);
     assert!(!u.trigger_items().contains(&Item::TrigCoup));
+}
+
+// A capped depth shows the applied depth, but the row's value stays the menu's choice: the picker still finds it
+// and picking an option still selects it. Break it catches: the label leaking into `value`.
+#[test]
+fn capped_depth_keeps_the_choice_for_the_picker() {
+    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    (u.m.trig_type, u.m.trig_src) = (TrigType::Edge, 1);
+    for c in 0..NCH {
+        u.m.ch[c].on = c == 0;
+    }
+    u.select_option(Item::AcqDepth, "100M");
+    assert_eq!((u.value(Item::AcqDepth), u.value_shown(Item::AcqDepth)), ("100M".to_string(), "100M \u{2192} 62.5M (trig CH2)".to_string()));
+    u.select_option(Item::AcqDepth, "10M");
+    assert_eq!(u.value_shown(Item::AcqDepth), "10M");
 }

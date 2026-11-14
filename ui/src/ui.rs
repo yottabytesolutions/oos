@@ -5257,6 +5257,23 @@ impl Ui {
         }
     }
 
+    /// The text of a value or picker row: `value`, except where the setting in effect differs from the choice (the
+    /// memory depth the channels cap, `Model::depth_label`). `value` stays the choice, so pickers find it among the
+    /// options.
+    fn value_shown(&self, it: Item) -> String {
+        match it {
+            Item::AcqDepth => self.m.depth_label(),
+            _ => self.value(it),
+        }
+    }
+
+    /// The font of a value row's text `v` in its middle button `mid` (a picker keeps room for the chevron): the
+    /// normal bold one, smaller ones for a longer text such as a capped depth.
+    fn value_font(&self, mid: Rect, pick: bool, v: &str) -> &'static Font {
+        let f = self.fonts();
+        fit_font(&[&f.mb, &f.m, &f.s], if pick { mid.w - 44 } else { mid.w - 8 }, v)
+    }
+
     fn value(&self, it: Item) -> String {
         if let Some(v) = self.ana_value(it).or_else(|| self.cal_value(it)).or_else(|| self.bode_value(it)).or_else(|| self.afg_value(it)).or_else(|| self.bw_value(it)).or_else(|| self.la_value(it)).or_else(|| self.win_value(it)).or_else(|| self.time_value(it)).or_else(|| self.remote_value(it)).or_else(|| self.graphics_value(it)).or_else(|| self.views_value(it)).or_else(|| self.backlight_value(it)) {
             return v;
@@ -6638,7 +6655,8 @@ impl Ui {
                     btn(cv, mi, BTN, BTN_BORDER);
                     cv.text_in(&f.mb, mi, 1, "-", TEXT);
                     btn(cv, mid, BTN, if focus { ACCENT } else { BTN_BORDER });
-                    cv.text_in(&f.mb, mid, 1, &self.value(row.it), TEXT);
+                    let v = self.value_shown(row.it);
+                    cv.text_in(self.value_font(mid, matches!(row.ctl, Ctl::Pick), &v), mid, 1, &v, TEXT);
                     if let Ctl::Pick = row.ctl {
                         // the value opens the list
                         chevron_down(cv, mid.x + mid.w - 20, mid.y + mid.h / 2 - 3, DIM);

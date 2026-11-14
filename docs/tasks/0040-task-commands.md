@@ -18,7 +18,7 @@ Implement the deferred tooling in task 0001 after the xtask rewrite merges.
 
 Reserved paths: none. Reserve paths when claimed.
 
-Follow [task 0001, cargo xtask tasks](0001-docs-and-tasks.md#cargo-xtask-tasks).
+Follow [task 0001, cargo xtask tasks](0001-docs-and-tasks.md).
 Implement board filters, schema and dependency checks, relative Markdown file and anchor checks, retained-task
 release notes, atomic new/claim commands and overlapping reservation checks. Use plain Rust and table-driven tests.
 Integrate validation into fast and full gates. Keep front matter at exactly seven keys; read reservations from Plan.

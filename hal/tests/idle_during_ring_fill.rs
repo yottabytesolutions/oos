@@ -20,16 +20,28 @@ fn idle_runs_while_the_ring_fills_and_never_after() {
     let mut dma = DmaBuf::new();
     let (mut calls, mut full_at) = (0u32, None);
     let t = Instant::now();
-    let r = acquire_batch_idle(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 25, |_| {}, || false, || {
-        calls += 1;
-        // the caller's work takes time; meanwhile the FPGA records the next frame
-        let mut e = eng.borrow_mut();
-        e.rd(0x4080);
-        if e.rd(0x4010) + 1 >= 10 && full_at.is_none() {
-            full_at = Some(calls);
-        }
-        true
-    });
+    let r = acquire_batch_idle(
+        &mut st,
+        &s,
+        &p,
+        &mut bar,
+        &mut c2h,
+        &mut dma,
+        false,
+        25,
+        |_| {},
+        || false,
+        || {
+            calls += 1;
+            // the caller's work takes time; meanwhile the FPGA records the next frame
+            let mut e = eng.borrow_mut();
+            e.rd(0x4080);
+            if e.rd(0x4010) + 1 >= 10 && full_at.is_none() {
+                full_at = Some(calls);
+            }
+            true
+        },
+    );
     assert_eq!(r, Ok(10));
     assert!(calls > 0, "the hook was never called");
     // the call that filled the ring was the last one: the read followed at once
@@ -48,10 +60,22 @@ fn without_work_the_wait_is_unchanged() {
     let mut dma = DmaBuf::new();
     let mut calls = 0u32;
     let t = Instant::now();
-    let r = acquire_batch_idle(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 25, |_| {}, || false, || {
-        calls += 1;
-        false
-    });
+    let r = acquire_batch_idle(
+        &mut st,
+        &s,
+        &p,
+        &mut bar,
+        &mut c2h,
+        &mut dma,
+        false,
+        25,
+        |_| {},
+        || false,
+        || {
+            calls += 1;
+            false
+        },
+    );
     assert!(r.as_ref().is_ok_and(|&n| n < 10), "{:?}", r);
     assert!(t.elapsed() >= Duration::from_millis(25) && calls > 10, "{:?} {}", t.elapsed(), calls);
 }

@@ -21,7 +21,18 @@ fn the_trigger_wait_ends_for_new_settings() {
     let mut dma = DmaBuf::new();
     let t = Instant::now();
     let stop_at = Duration::from_millis(30);
-    let r = acquire_batch_until(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 25, |_| {}, || t.elapsed() >= stop_at);
+    let r = acquire_batch_until(
+        &mut st,
+        &s,
+        &p,
+        &mut bar,
+        &mut c2h,
+        &mut dma,
+        false,
+        25,
+        |_| {},
+        || t.elapsed() >= stop_at,
+    );
     let took = t.elapsed();
     assert_eq!(r, Err(NEW_SETTINGS.to_string()));
     assert!(took >= stop_at, "{:?}", took);

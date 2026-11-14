@@ -70,7 +70,11 @@ impl Column {
     /// The table word for column `c`, write enable set.
     pub fn word(&self, c: usize) -> u32 {
         let flag = if self.on { table::IN_ZONE } else { 0 };
-        table::WRITE | (c as u32 & 0x3ff) << table::COL_SHIFT | flag | (self.hi as u32) << table::HI_SHIFT | self.lo as u32
+        table::WRITE
+            | (c as u32 & 0x3ff) << table::COL_SHIFT
+            | flag
+            | (self.hi as u32) << table::HI_SHIFT
+            | self.lo as u32
     }
 }
 
@@ -87,7 +91,17 @@ pub struct Zone {
 /// Column c covers samples c n .. (c + 1) n (n = the layout's samples per column), at times (k - pre) / rate; columns
 /// outside `map.range` are not in the zone.
 #[allow(clippy::too_many_arguments)]
-pub fn table(z: &Zone, points: u32, rate: u64, pre: u32, mask: u32, scale: f64, offset: f64, gain: f64, map: &mask::Map) -> Vec<Column> {
+pub fn table(
+    z: &Zone,
+    points: u32,
+    rate: u64,
+    pre: u32,
+    mask: u32,
+    scale: f64,
+    offset: f64,
+    gain: f64,
+    map: &mask::Map,
+) -> Vec<Column> {
     let (cols, _, n) = map.layout(points, mask);
     let dt = 1.0 / rate.max(1) as f64;
     let poly = box_or_poly(&z.poly);
@@ -98,7 +112,9 @@ pub fn table(z: &Zone, points: u32, rate: u64, pre: u32, mask: u32, scale: f64, 
             }
             let ta = (c as f64 * n - pre as f64 - map.skew) * dt;
             let tb = ((c + 1) as f64 * n - pre as f64 - map.skew) * dt;
-            zonegeom::extent(&poly, ta, tb).map_or(Column::OUT, |(lo, hi)| Column::of_codes(map.code(lo, scale, offset, gain), map.code(hi, scale, offset, gain)))
+            zonegeom::extent(&poly, ta, tb).map_or(Column::OUT, |(lo, hi)| {
+                Column::of_codes(map.code(lo, scale, offset, gain), map.code(hi, scale, offset, gain))
+            })
         })
         .collect()
 }
@@ -121,7 +137,11 @@ pub fn load(k: usize, cols: &[Column]) -> Vec<Write> {
 
 /// The control word for up to two zones.
 pub fn ctrl_word(zones: &[Zone]) -> u32 {
-    zones.iter().take(2).enumerate().fold(0, |w, (k, z)| w | 1 << (ctrl::ON_SHIFT + k as u32) | (z.inside as u32) << (ctrl::MODE_SHIFT + k as u32))
+    zones
+        .iter()
+        .take(2)
+        .enumerate()
+        .fold(0, |w, (k, z)| w | 1 << (ctrl::ON_SHIFT + k as u32) | (z.inside as u32) << (ctrl::MODE_SHIFT + k as u32))
 }
 
 /// 0x4020 with the zone logic armed or not.

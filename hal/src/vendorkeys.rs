@@ -143,7 +143,8 @@ fn inputs(vendor: &[u8]) -> String {
     let mut s = format!("{:08x}", crate::crc32(vendor));
     for p in stock_files() {
         if let Ok(m) = std::fs::metadata(&p) {
-            let t = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+            let t =
+                m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
             s.push_str(&format!(" {}:{}", m.len(), t));
         }
     }
@@ -168,13 +169,14 @@ pub fn for_file(vendor: &[u8]) -> Option<Keys> {
 
 /// Best effort: without it the next start searches again.
 fn keep(line: &str) {
-    use std::os::unix::fs::OpenOptionsExt;
     use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     let tmp = format!("{}.new", KEEP);
-    let done = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).and_then(|mut f| {
-        f.write_all(line.as_bytes())?;
-        f.sync_all()
-    });
+    let done =
+        std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).and_then(|mut f| {
+            f.write_all(line.as_bytes())?;
+            f.sync_all()
+        });
     if done.is_ok() {
         let _ = std::fs::rename(&tmp, KEEP);
     }

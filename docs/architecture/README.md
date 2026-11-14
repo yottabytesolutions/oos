@@ -904,16 +904,38 @@ only.
 
 ## Performance budgets
 
-| Budget | Value |
-|---|---|
-| screen step on the first A72 | p99 <= 15 ms; merge and window <= 2 ms; render and arena copy <= 6 ms |
-| frame rate | >= 29.5 pictures/s in every acceptance mode |
-| worker time per frame on an A53 | <= 2.7 ms; load <= 70 % per little core in the worst mode, deposit, off-path decoding and `to_record`, and measurement jobs together |
-| records stage on the first A72 | <= 1.5 ms per step off the fast path (adding a `RecordBatch` to the store and building the pseudo-batch); records are built on the workers |
-| input to photon | the preview at the next step; the first batch under the new mapping <= 70 ms |
-| memory | RSS <= 120 MB + `memplan` total in every mode, flat over a 2 h soak; `Config.mem_budget` default 512 MB; the RSS watchdog forces STOP at 1 GB ([Memory and queues](#memory-and-queues)) |
+Every budget is a counter in `:SYSTem:STATe?` (p50 and p99 over the last 10 s, one line per thread) and a gate
+(adr/0016). Host perf guards check ratios and allocation counts on every commit; unitlab asserts the absolute values on
+the unit in each round. The values are for 4 channels on the panel unless a row says otherwise; the first unit round
+after each step may tighten them, never loosen them without a doc change.
 
-Measured by the pacing and cost counters in `:SYSTem:STATe?` and by unitlab.
+| Thread or stage | Budget | Counter | Asserted by | Guard lands in |
+|---|---|---|---|---|
+| main, full step (first A72) | p50 <= 8 ms, p99 <= 15 ms | `step` | unitlab | M16 |
+| intake + change | p99 <= 0.5 ms | `stage intake`, `stage change` | host timing guard, unitlab | M2.3 |
+| records stage | p99 <= 1.5 ms off the fast path; records are built on the workers | `stage records` | host timing guard, unitlab | M6 |
+| accumulate (at most 3 map sets, touched rows, fused grade) | p99 <= 2 ms; <= 4 ms on HDMI | `stage accumulate` | host timing guard, unitlab | M9, M10 |
+| compose + present submission | p99 <= 4 ms; <= 6 ms on HDMI | `stage compose`, `stage present` | unitlab | M16 |
+| light step (input or remote) | settings round trip p99 <= 2 ms | `light` | host test on `Session`, unitlab | M15 |
+| remote throughput | >= 500 query/answer exchanges per s on one SCPI connection, picture rate within 10 % | `remote` | unitlab (`ifload.py`) | M15 |
+| acquisition reaction | STOP, a settings change or cancel within 1 ms | `acq wake` | host test with the scripted `Device`, unitlab | M3c |
+| acquisition overhead per batch (excluding DMA) | p99 <= 1 ms | `acq batch` | unitlab | M3c |
+| DMA completion | CPU per read and read latency per mode | `xdma` | unitlab | M5c |
+| deposit worker, per frame | p99 <= 2.7 ms; load <= 70 % per little core with measurements | `worker` | perf guard (ratio), unitlab | M7 |
+| share reduction, per batch | p99 <= 1 ms per worker | `reduce` | perf guard, unitlab | M9 |
+| measure job | cheap set p99 <= 2 ms; full set on 4 x 625 k p99 <= 40 ms | `measure` | perf guard, unitlab | M6 |
+| GPU helper | CPU per composition <= 3 ms on the panel, <= 5 ms on HDMI; GPU time <= 10 ms | `gpu cpu`, `gpu time` | `gpu/test-host.sh` ratio, unitlab | M9b |
+| HDMI | >= 29.5 pictures/s alone; >= 15 with the panel, counted when halved | `hdmi` | unitlab | M9b |
+| picture rate | >= 29.5 pictures/s in every acceptance mode | `fps` | unitlab | exists |
+| input to photon | the preview at the next flip; the first batch under the new mapping <= 70 ms | `latency` | unitlab | M4 |
+| wake latency | as in [Waiting](#waiting) | `wake <thread>` | unitlab | M3c, M16 |
+| idle in STOP | total CPU < 3 % of one A53; main wakes only on flips and input | `cpu`, `wakes` | unitlab | M16 |
+| allocations | 0 per frame after warm-up on every hot path ([Allocations](#allocations)) | `alloc` | counting-allocator tests | each step that touches a hot path; harness in G2 |
+| memory | RSS <= 120 MB + `memplan` total, flat over a 2 h soak ([Memory and queues](#memory-and-queues)) | `rss` | host soak, unitlab | M5b |
+
+Gate step G2 ([migration](migration.md)) adds the tools these guards need: tail-aware perf guards (p99 over repeated
+runs against a reference, not only the best of rounds), the counting-allocator harness, and the unitlab budget table
+read from this section.
 
 ## Enforcement
 

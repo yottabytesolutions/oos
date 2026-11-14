@@ -35,7 +35,8 @@ find them from every crate.
 |---|---|---|---|
 | fmt | `cargo fmt --check` per crate | `rustfmt.toml`: 120 columns, max heuristics | diffs show changes, not style |
 | size limits | syntax walk (`syn`) | file ≤ 400 lines without `#[cfg(test)]` items, fn ≤ 60 lines, struct ≤ 12 fields, a type's inherent impls in ≤ 3 files | small units; the `Ui` of 155 fields over 33 files is what this stops |
-| mutable statics | syntax walk | a `static` whose type holds a `Mutex`, `RwLock`, atomic or `Cell`/`RefCell`/`UnsafeCell` only as a metrics counter (`static` lines in `architecture.txt`); `OnceLock`, `LazyLock` and `OnceCell` around plain data are allowed (set once, then read only) | global mutable state hides ownership |
+| mutable statics | syntax walk | a `static` whose type holds a `Mutex`, `RwLock`, atomic or `Cell`/`RefCell`/`UnsafeCell` (also through the crate's own types) only as a metrics counter (`static` lines in `architecture.txt`); `OnceLock`, `LazyLock` and `OnceCell` around plain data are allowed (set once, then read only) | global mutable state hides ownership |
+| unsafe | syntax walk | `unsafe` blocks, functions, impls and traits only under the `unsafe` path prefixes of `architecture.txt`: oos-hal and the adapters of ui; `dsp` has `#![forbid(unsafe_code)]` | memory safety stays at the hardware edge (AGENTS.md) |
 | architecture | `cargo metadata`, syntax walk | `xtask/data/architecture.txt`: allowed crate dependencies; module rules inside a crate | the layers cannot erode by accident |
 | clippy | `cargo clippy --all-targets` | the `[lints]` table of each crate and `clippy.toml` | correctness, idiom, size and complexity |
 | tests (debug, release) | `cargo test`, `cargo test --release` | every test passes in both profiles, full counts | release-only bugs (overflow checks, timing) show |
@@ -43,21 +44,21 @@ find them from every crate.
 | perf guards | `tools/perf-guard.sh` | the fork's allocation counts and timing ratios; its exit code decides | the fast paths stay fast |
 | coverage | `cargo llvm-cov` per crate | line coverage per crate ≥ the floor in `xtask/data/coverage.txt` | coverage does not fall |
 
-A plain data record (fields and no behaviour, such as a settings snapshot or a wire message) is exempt from the
-field limit with the line `// xtask: record` above it or between its doc comment and `struct`. The exemption is at
-the definition, so a reviewer sees it.
+The limits have no exemptions (ADR 0010): a record over 12 fields groups its fields into sub-structs.
 
 Size limits measure lines from `fn` to the closing brace, including comments and blank lines. Test code is exempt:
 `#[cfg(test)]` modules, `#[test]` functions and the crates' `tests/` directories. Clippy's `too_many_lines` (60 code
 lines, `clippy.toml`) covers test code too.
 
 The lint set (identical in every crate, `[lints]` in its `Cargo.toml`): `clippy::all`, plus `too_many_lines`,
-`cognitive_complexity`, `too_many_arguments`, `type_complexity`, `large_enum_variant` and `unwrap_used` (outside
+`cognitive_complexity`, `too_many_arguments`, `type_complexity`, `large_enum_variant`, `undocumented_unsafe_blocks`
+(every `unsafe` block has a `// SAFETY:` comment), `missing_safety_doc` and `unwrap_used` (outside
 tests: a panic belongs in an `expect` with a reason, or the error is handled). For a `Mutex` use
 `oos_hal::sync::lock(&m)`: it takes the data of a poisoned lock, which only a test can produce since the binaries
 abort on panic. rustc: the `unused` group, and
 `missing_debug_implementations` in the library crates `hal` and `dsp`. Every lint is a warning to rustc and clippy, so
-an ordinary build still runs; the gate turns findings into failures through the ratchet. `xtask` itself denies all of
+an ordinary build still runs; the gate turns findings into failures through the ratchet. At `deny`, clippy would
+stop at the first crate with an old finding and count nothing after it. `xtask` itself denies all of
 them and has no ratchet.
 
 The scope check runs on the host: `cargo check` does not link, so the target's standard library is enough. It
@@ -73,6 +74,7 @@ The rules came in with the code already over them. Those findings are listed, ea
 - `xtask/data/size.txt`: `<size> <kind> <file or crate> <name>`, every item over a size limit.
 - `xtask/data/clippy.txt`: `<count> <crate> <file> <lint>`, every lint finding.
 - `xtask/data/statics.txt`: `1 static <file> <name>`, every mutable static that is not a metric.
+- `xtask/data/unsafe.txt`: `<count> unsafe <file>`, `unsafe` outside the allowed paths.
 - `xtask/data/coverage.txt`: `<floor> <crate>`, line coverage in tenths of a percent.
 
 The gate fails when a listed entry grows, when an entry appears that is not listed (a new oversized function, a new
@@ -109,9 +111,12 @@ file; a renamed or moved item counts as new.
 
   Module rules have no ratchet: the tree must meet a rule when it is added. Phase 2 of the overhaul (`overhaul.md`)
   writes the rules for `ui`.
-- The statics check reads the type as written: a struct of atomics behind its own name, or a `thread_local!`, is not
-  seen.
+- The statics check reads the type as written and follows the structs and enums of the crate it names, through
+  their fields: `OnceLock<Counters>` counts when `Counters` holds atomics. Types match by name, so two types of the
+  same name in one crate count as one. A `thread_local!` is not seen (macro body).
 - A metrics counter as a `static`: `static <file> <name>` in `xtask/data/architecture.txt`, with `<name>` as the
   gate prints it (`<function>::NAME` for a static inside a function). A listed static that no longer exists fails.
+- Where `unsafe` may appear: `unsafe <path prefix>` in `xtask/data/architecture.txt` (a crate directory, a
+  directory, or a file; `x` also covers `x.rs`). The list moves with the migration.
 - A limit: the constants in `xtask/src/size/mod.rs` and the thresholds in `clippy.toml`. Lowering a limit needs
   `ratchet --init` for the new findings; say why in the commit.

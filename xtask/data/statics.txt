@@ -7,6 +7,7 @@
 1 static ui/src/board/dho/hw.rs mask_map_cell::MAP
 1 static ui/src/compress.rs LAST_K
 1 static ui/src/drawpipe.rs Pipe::feed_batch::IDS
+1 static ui/src/drawpipe.rs pipe::P
 1 static ui/src/http.rs SENDERS
 1 static ui/src/input.rs STOP
 1 static ui/src/mdns.rs STATUS

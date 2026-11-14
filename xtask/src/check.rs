@@ -21,6 +21,7 @@ pub fn run(root: &Path, o: Options) -> bool {
         report::step("size limits", || steps::size(root)),
         report::step("architecture", || steps::arch(root)),
         report::step("mutable statics", || steps::statics(root)),
+        report::step("unsafe", || steps::unsafety(root)),
     ];
     if !o.fast {
         s.push(report::step("clippy", || steps::clippy(root)));

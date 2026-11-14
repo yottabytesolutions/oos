@@ -19,6 +19,8 @@ too_many_arguments = "deny"
 type_complexity = "deny"
 large_enum_variant = "deny"
 unwrap_used = "deny"
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
 
 [dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }

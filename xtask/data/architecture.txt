@@ -32,3 +32,16 @@ static ui/src/pacing.rs WANTED
 static ui/src/pacing.rs APPLIED
 static ui/src/pacing.rs STALE
 static ui/src/pacing.rs PARTIAL
+static ui/src/drawpipe.rs counters::C
+#
+# unsafe: allowed only under these path prefixes (a crate dir, a directory, or a file; `x` also covers x.rs).
+# oos-hal and the adapters of ui (AGENTS.md); the SIMD kernels move into ui/src/picture/deposit with the migration.
+# Every other unsafe is listed in unsafe.txt (shrink only); new ones fail. dsp forbids unsafe_code outright.
+unsafe hal
+unsafe ui/src/board/dho
+unsafe ui/src/display
+unsafe ui/src/input
+unsafe ui/src/remote
+unsafe ui/src/system
+unsafe ui/src/instruments
+unsafe ui/src/picture/deposit

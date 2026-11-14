@@ -27,10 +27,13 @@ pub struct Rules {
     pub layers: Vec<Layer>,
     /// the metrics allowlist: `static <file> <name>` keys of statics with interior mutability that may stay
     pub statics: BTreeSet<String>,
+    /// path prefixes where `unsafe` may appear
+    pub unsafe_paths: Vec<String>,
 }
 
 /// Parses `crate <name> -> <deps...>`, `forbid <crate dir> <from module> <to module>` and
-/// `layer <crate dir> <module> -> <modules...>` and `static <file> <name>` lines; `#` starts a comment.
+/// `layer <crate dir> <module> -> <modules...>`, `static <file> <name>` and `unsafe <path prefix>` lines; `#` starts
+/// a comment.
 pub fn parse(text: &str) -> Result<Rules, String> {
     let mut r = Rules::default();
     for (i, line) in text.lines().enumerate() {
@@ -44,6 +47,7 @@ pub fn parse(text: &str) -> Result<Rules, String> {
             ["forbid", krate, from, to] => {
                 r.forbid.push(Forbid { krate: krate.to_string(), from: from.to_string(), to: to.to_string() })
             }
+            ["unsafe", prefix] => r.unsafe_paths.push(prefix.to_string()),
             ["static", file, name] => {
                 r.statics.insert(format!("static {} {}", file, name));
             }
@@ -74,5 +78,6 @@ mod tests {
         assert!(l[1].allowed.is_empty() && l[1].module == "leaf");
         let s = parse("static ui/src/pacing.rs VIEWS\n").unwrap().statics;
         assert!(s.contains("static ui/src/pacing.rs VIEWS"));
+        assert_eq!(parse("unsafe hal\nunsafe ui/src/board/dho\n").unwrap().unsafe_paths, ["hal", "ui/src/board/dho"]);
     }
 }

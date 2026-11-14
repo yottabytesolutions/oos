@@ -91,11 +91,21 @@ pub fn size(root: &Path) -> Outcome {
     ratcheted(root, "size.txt", &now)
 }
 
-/// Statics with interior mutability outside the metrics allowlist, per crate.
-pub fn statics_now(root: &Path, krate: &str, metrics: &std::collections::BTreeSet<String>) -> Result<Ratchet, String> {
-    let mut s = size::measure(root, krate)?.statics;
-    s.0.retain(|k, _| !metrics.contains(k));
-    Ok(s)
+/// `unsafe` outside the allowed paths of a crate (`unsafe` lines in architecture.txt).
+pub fn unsafe_now(m: &size::Measured, allowed: &[String]) -> Ratchet {
+    let ok = |k: &str| k.split_once(' ').is_some_and(|(_, f)| allowed.iter().any(|p| size::unsafety::under(f, p)));
+    Ratchet(m.unsafes.0.iter().filter(|(k, _)| !ok(k)).map(|(k, v)| (k.clone(), *v)).collect())
+}
+
+/// `unsafe` only in the allowed paths (architecture.txt) and the listed old places (unsafe.txt).
+pub fn unsafety(root: &Path) -> Outcome {
+    let rules = arch::load(root).map_err(|e| vec![e])?;
+    let mut now = Vec::new();
+    for c in CRATES {
+        let m = size::measure(root, c.dir).map_err(|e| vec![e])?;
+        now.push((c.dir, c.ratchet, unsafe_now(&m, &rules.unsafe_paths)));
+    }
+    ratcheted(root, "unsafe.txt", &now)
 }
 
 /// Mutable statics: only metrics (allowlist in architecture.txt) and the listed old ones (statics.txt).

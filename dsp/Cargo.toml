@@ -23,5 +23,7 @@ too_many_arguments = "warn"
 type_complexity = "warn"
 large_enum_variant = "warn"
 unwrap_used = "warn"
+undocumented_unsafe_blocks = "warn"
+missing_safety_doc = "warn"
 
 [dependencies]

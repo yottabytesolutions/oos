@@ -16,20 +16,25 @@ Written by `cargo xtask ratchet` (docs/development.md). Floors may only rise.";
 const STATICS_HEAD: &str = "Statics with interior mutability that are not metrics: 1 static <file> <name>.\n\
 Written by `cargo xtask ratchet` (docs/development.md). Entries may only go; metrics are listed in architecture.txt.";
 
-/// The current lint counts, sizes and mutable statics of the ratcheted crates.
-fn current(root: &Path) -> Result<[Ratchet; 3], String> {
-    let metrics = crate::arch::load(root)?.statics;
-    let (mut lints, mut sizes, mut statics) = (Ratchet::default(), Ratchet::default(), Ratchet::default());
+const UNSAFE_HEAD: &str = "unsafe outside the allowed paths (architecture.txt): <count> unsafe <file>.\n\
+Written by `cargo xtask ratchet` (docs/development.md). Counts may only fall.";
+
+/// The current lint counts, sizes, mutable statics and `unsafe` of the ratcheted crates.
+fn current(root: &Path) -> Result<[Ratchet; 4], String> {
+    let rules = crate::arch::load(root)?;
+    let [mut lints, mut sizes, mut statics, mut unsafes] = [(); 4].map(|_| Ratchet::default());
     for c in CRATES.iter().filter(|c| c.ratchet) {
         let f = clippy::run(root, c.dir)?;
         if !f.errors.is_empty() {
             return Err(format!("{}: does not build:\n{}", c.dir, f.errors.join("\n")));
         }
         lints.0.extend(f.counts.0);
-        sizes.0.extend(size::measure(root, c.dir)?.sizes.0);
-        statics.0.extend(steps::statics_now(root, c.dir, &metrics)?.0);
+        let m = size::measure(root, c.dir)?;
+        unsafes.0.extend(steps::unsafe_now(&m, &rules.unsafe_paths).0);
+        sizes.0.extend(m.sizes.0);
+        statics.0.extend(m.statics.0.into_iter().filter(|(k, _)| !rules.statics.contains(k)));
     }
-    Ok([lints, sizes, statics])
+    Ok([lints, sizes, statics, unsafes])
 }
 
 fn write(root: &Path, name: &str, head: &str, r: &Ratchet) -> Result<(), String> {
@@ -47,7 +52,12 @@ fn raised(floor: &Ratchet, now: &Ratchet) -> Ratchet {
 /// Tightens (or with `init` writes) the ratchets; `coverage` also measures and raises the floors.
 pub fn run(root: &Path, init: bool, coverage: bool) -> Result<(), String> {
     let load = |n: &str| Ratchet::load(&steps::ratchet_path(root, n));
-    let files = [("clippy.txt", CLIPPY_HEAD), ("size.txt", SIZE_HEAD), ("statics.txt", STATICS_HEAD)];
+    let files = [
+        ("clippy.txt", CLIPPY_HEAD),
+        ("size.txt", SIZE_HEAD),
+        ("statics.txt", STATICS_HEAD),
+        ("unsafe.txt", UNSAFE_HEAD),
+    ];
     for ((name, head), now) in files.into_iter().zip(current(root)?) {
         let r = if init { now } else { load(name)?.tightened(&now) };
         write(root, name, head, &r)?;

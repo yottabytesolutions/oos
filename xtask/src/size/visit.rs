@@ -14,16 +14,17 @@ pub struct Found {
     pub impls: Vec<String>,
     /// lines inside `#[cfg(test)]` items and `#[test]` functions
     pub test_lines: u64,
-    /// statics with interior mutability, as `<enclosing fn>::NAME` (`NAME` at module level)
-    pub statics: Vec<String>,
+    /// every static outside tests: (`<enclosing fn>::NAME`, or `NAME` at module level; its type as token text)
+    pub statics: Vec<(String, String)>,
+    /// every struct and enum: (name, the token text of all its field types)
+    pub types: Vec<(String, String)>,
+    /// `unsafe` blocks, functions, impls and traits, test code included
+    pub unsafes: u64,
 }
 
-/// Whether a type (as token text) has interior mutability: a lock, an atomic or a cell anywhere in it.
-/// `OnceLock`, `LazyLock` and `OnceCell` around plain data are set once and then read only: not mutable state.
-/// Only the written type counts: a struct of atomics behind its own name is not seen.
-fn interior(ty: &str) -> bool {
-    ty.split(|c: char| !c.is_alphanumeric() && c != '_')
-        .any(|w| matches!(w, "Mutex" | "RwLock" | "Cell" | "RefCell" | "UnsafeCell") || w.starts_with("Atomic"))
+/// The token text of all field types.
+fn field_types<'a>(fields: impl Iterator<Item = &'a syn::Field>) -> String {
+    fields.map(|f| quote_type(&f.ty)).collect::<Vec<_>>().join(" ")
 }
 
 /// `#[cfg(test)]` or `#[test]`.
@@ -54,16 +55,11 @@ fn type_name(t: &Type) -> String {
     }
 }
 
-/// The line above a plain data record: exempt from the field limit (docs/development.md).
-pub const RECORD_MARK: &str = "// xtask: record";
-
-/// The walk: `owner` is the impl or trait the next functions belong to; `marks` the lines (1-based) holding
-/// `RECORD_MARK`.
+/// The walk: `owner` is the impl or trait the next functions belong to.
 #[derive(Debug, Default)]
 pub struct Walk {
     pub found: Found,
     owner: Vec<String>,
-    marks: Vec<usize>,
     /// the qualified names of the enclosing functions
     fns: Vec<String>,
 }
@@ -74,13 +70,6 @@ impl Walk {
             Some(o) => format!("{}::{}", o, name),
             None => name.to_string(),
         }
-    }
-
-    /// A record mark between the struct's first attribute (or doc comment) line minus one and its `struct` line.
-    fn record(&self, s: &ItemStruct) -> bool {
-        let at = s.struct_token.span.start().line;
-        let first = s.attrs.first().map_or(at, |a| a.pound_token.span.start().line);
-        self.marks.iter().any(|&m| m + 1 >= first && m <= at)
     }
 
     fn skip(&mut self, attrs: &[Attribute], start: proc_macro2::Span, end: proc_macro2::Span) -> bool {
@@ -167,18 +156,22 @@ impl<'a> Visit<'a> for Walk {
         if is_test(&s.attrs) {
             return;
         }
-        if interior(&quote_type(&s.ty)) {
-            let name = match self.fns.last() {
-                Some(f) => format!("{}::{}", f, s.ident),
-                None => s.ident.to_string(),
-            };
-            self.found.statics.push(name);
-        }
+        let name = match self.fns.last() {
+            Some(f) => format!("{}::{}", f, s.ident),
+            None => s.ident.to_string(),
+        };
+        self.found.statics.push((name, quote_type(&s.ty)));
         visit::visit_item_static(self, s);
     }
 
+    fn visit_item_enum(&mut self, e: &'a syn::ItemEnum) {
+        let fields = e.variants.iter().map(|v| field_types(v.fields.iter())).collect::<Vec<_>>().join(" ");
+        self.found.types.push((e.ident.to_string(), fields));
+        visit::visit_item_enum(self, e);
+    }
+
     fn visit_item_struct(&mut self, s: &'a ItemStruct) {
-        if is_test(&s.attrs) || self.record(s) {
+        if is_test(&s.attrs) {
             return;
         }
         let n = match &s.fields {
@@ -187,6 +180,7 @@ impl<'a> Visit<'a> for Walk {
             Fields::Unit => 0,
         };
         self.found.structs.push((s.ident.to_string(), n as u64));
+        self.found.types.push((s.ident.to_string(), field_types(s.fields.iter())));
         visit::visit_item_struct(self, s);
     }
 }
@@ -194,9 +188,9 @@ impl<'a> Visit<'a> for Walk {
 /// Walks the source `text`.
 pub fn walk(text: &str) -> Result<Found, String> {
     let file = syn::parse_file(text).map_err(|e| format!("line {}: {}", e.span().start().line, e))?;
-    let marks = text.lines().enumerate().filter(|(_, l)| l.trim() == RECORD_MARK).map(|(i, _)| i + 1).collect();
-    let mut w = Walk { marks, ..Walk::default() };
+    let mut w = Walk::default();
     w.visit_file(&file);
+    w.found.unsafes = super::unsafety::count(&file);
     Ok(w.found)
 }
 
@@ -241,25 +235,19 @@ mod tests {
     }
 
     #[test]
-    fn statics_with_interior_mutability_name_their_function() {
-        let src = "static A: AtomicU64 = AtomicU64::new(0);\nstatic B: u32 = 1;\n\
-                   fn f() { static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new(); }\n\
-                   fn h() { static S: OnceLock<Mutex<u8>> = OnceLock::new(); }\n\
-                   impl S { fn g(&self) { static M: Mutex<u8> = Mutex::new(0); } }\n";
-        assert_eq!(walk(src).unwrap().statics, ["A", "h::S", "S::g::M"]);
-        assert!(
-            interior("RefCell < Vec < f32 > >")
-                && !interior("OnceCell < u8 >")
-                && !interior("LazyLock < Vec < Proto > >")
+    fn statics_name_their_function_and_types_list_their_fields() {
+        let src = "static A: AtomicU64 = AtomicU64::new(0);\n\
+                   fn f() { static ON: OnceLock<bool> = OnceLock::new(); }\n\
+                   impl S { fn g(&self) { static M: Mutex<u8> = Mutex::new(0); } }\n\
+                   struct C { n: AtomicU64, k: u8 }\nenum E { A(Cell<u8>), B { x: u32 } }\n";
+        let f = walk(src).unwrap();
+        let names: Vec<&str> = f.statics.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["A", "f::ON", "S::g::M"]);
+        assert_eq!(f.statics[1].1, "OnceLock < bool >");
+        assert_eq!(
+            f.types,
+            [("C".to_string(), "AtomicU64 u8".to_string()), ("E".to_string(), "Cell < u8 > u32".to_string())]
         );
-    }
-
-    #[test]
-    fn a_marked_record_has_no_field_limit() {
-        let f = walk("// xtask: record\n/// doc\n#[derive(Debug)]\nstruct A { x: u8 }\nstruct B { y: u8 }\n").unwrap();
-        assert_eq!(f.structs, vec![("B".to_string(), 1)]);
-        let g = walk("/// doc\n// xtask: record\npub struct A(u8);\n// xtask: record\n\nstruct C;\n").unwrap();
-        assert_eq!(g.structs, vec![("C".to_string(), 0)]);
     }
 
     #[test]

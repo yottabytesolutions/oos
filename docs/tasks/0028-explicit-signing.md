@@ -2,7 +2,7 @@
 id: 28
 title: "Make package signing explicit"
 kind: fix
-status: done
+status: active
 release: 0.2.0
 owner: codex
 depends: []
@@ -19,7 +19,7 @@ Keep ordinary builds from silently selecting a private signing identity.
 Reserved paths: `boot/build-dev-image.sh`, `boot/sign-dev-image.sh`, `boot/build-gel.py`,
 `fpgad/src/bin/oos-update.rs`, `fpgad/tests/explicit_signing.rs`, `docs/update.md`,
 `docs/tasks/0028-explicit-signing.md`, `README.md`, `docs/fork/unit-dho804.md`,
-`keys/update.pub`, `COMMIT_MSG.txt`.
+`keys/update.pub`, `.github/workflows/image.yml`, `tools/gel-sim.sh`, `COMMIT_MSG.txt`.
 
 Before parallel migration, separate build, package and sign. Remove automatic private-key discovery.
 Require explicit key selection and document public development fixtures and the bench trust policy.
@@ -31,7 +31,35 @@ Generate temporary test keys and verify signed packages with HAL's device verifi
 
 Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
 
+Repair review findings in CI packaging and signing input validation. Reject trusted public keys used as seeds.
+Require explicit opt-in for untrusted signing identities. Restrict wrapper arguments and pack-only flags.
+Add host regressions, run the requested offline checks, and leave a proposed commit message without Git writes.
+
 ## Status
+
+- 2026-11-14: review fixes applied and left uncommitted for the owner. `COMMIT_MSG.txt` has a proposed
+  imperative subject (66 characters) and rationale. The task stays active pending integration checks.
+  In `fpgad`, `cargo test --offline` and `cargo test --offline --release` each exit 0.
+  Both print `9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`,
+  `3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`, and
+  `14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`.
+  In `hal`, `cargo test --offline update::` exits 0 and prints
+  `67 passed; 0 failed; 2 ignored; 0 measured; 260 filtered out`.
+  Its seven integration suites run 0 tests; their filtered counts are 4, 1, 2, 2, 2, 1 and 2.
+  `bash -n boot/sign-dev-image.sh tools/gel-sim.sh` and `git diff --check` exit 0.
+  Added-text style/privacy and commit subject checks exit 0.
+  `CARGO_NET_OFFLINE=true cargo xtask check` exits 101: `error: no such command: xtask`.
+  The gate and development guide are absent. Full gate and independent review remain integration checks.
+  No network, device access, image build, commits, pushes or Git metadata writes.
+- 2026-11-14: restored CI signing and GEL packaging, with checks for each required artifact before upload.
+  Rejected trusted public keys as seeds and required `--untrusted-ok` for other untrusted identities.
+  Restricted wrapper arguments and signing flags. Corrected the build id and simulator guidance.
+  The regression run before fixes (`cargo test --offline --test explicit_signing` in `fpgad`) exited 101:
+  `6 passed; 7 failed; 0 ignored; 0 measured; 0 filtered out`. The missing-build-id regression already passed.
+
+- 2026-11-14: review follow-up claimed by codex on `t0028-explicit-signing`, base `9f03c97`.
+  The owner reassigned this worktree after the previous author finished. Reserved paths include the workflow
+  and GEL simulator. No network, device access, commits, pushes or Git metadata writes are authorized.
 
 - 2026-11-14: implementation done as requested. Owner: codex. Changes remain uncommitted in this worktree.
   `COMMIT_MSG.txt` contains the proposed message. No network, device contact or Git metadata writes.

@@ -148,6 +148,9 @@ starts with the UTC build time; an older build than the installed one is refused
   Builds trust it by default. It proves nothing about who built a package.
 - Signing requires `--key FILE` or `OOS_SIGNING_KEY`. `--key` takes precedence. With neither, only `--community`
   permits signing. Do not combine `--community` with a selected key. There is no home-directory discovery.
+- A trusted public key cannot be used as a signing seed. The derived public key must be trusted by this build.
+  For a deliberate key transition or host test, direct `oos-update pack` accepts `--untrusted-ok`.
+  This flag does not change which keys an installed build trusts.
 - A valid signature does not authorize installation on a shared unit. Installation needs the scope lease with
   install capability and the owner's go.
 - Own keys: `oos-update keygen --out FILE` creates one, mode 0600. Keep it outside the repository.
@@ -231,8 +234,9 @@ Logs: `/tmp/oos-update.log` (start count, watcher), `/tmp/oos-update.job` (GUI /
 - bad: oos-ui restarted 3 times, or no oos-ui that ran 20 s stable by 180 s. The oos-ui process is followed by pid, so a
   forked child does not count as a restart.
 - The trial is about the running image: the watcher only judges when `/etc/oos-build` equals the build on trial
-  (`pack --build` must get the image's own build id, as build-dev-image.sh does), and applies its verdict only if the
-  state still names the same image (an install from the web page during the watch stays on trial).
+  (`pack --build` must get the image's own build id, passed by sign-dev-image.sh via `boot/out/oos-dev.build`),
+  and applies its verdict only if the state still names the same image (an install from the web page during the
+  watch stays on trial).
 - Powering off before "confirmed" (about 20 s after the start-up) counts as an unconfirmed start: the next OOS start
   rolls back. System > Update shows "on trial" until then.
 - `/tmp/oos-ui.off` (oos-ui stopped by hand): no verdict, the trial stays open.

@@ -97,7 +97,7 @@ fn explicit_key_round_trips_through_device_verifier() {
     let f = Fixture::new();
     let key = f.keygen("private key");
     let wrong_key = f.keygen("other key");
-    let out = f.pack().arg("--key").arg(f.path("private key")).output().unwrap();
+    let out = f.pack().arg("--untrusted-ok").arg("--key").arg(f.path("private key")).output().unwrap();
     success(&out);
     f.verify(key);
     let bytes = std::fs::read(f.path("package")).unwrap();
@@ -110,9 +110,17 @@ fn explicit_key_round_trips_through_device_verifier() {
 fn environment_selects_key_and_explicit_key_takes_precedence() {
     let f = Fixture::new();
     let key = f.keygen("private");
-    success(&f.pack().env("OOS_SIGNING_KEY", f.path("private")).output().unwrap());
+    success(&f.pack().arg("--untrusted-ok").env("OOS_SIGNING_KEY", f.path("private")).output().unwrap());
     f.verify(key);
-    success(&f.pack().env("OOS_SIGNING_KEY", f.path("missing")).arg("--key").arg(f.path("private")).output().unwrap());
+    success(
+        &f.pack()
+            .arg("--untrusted-ok")
+            .env("OOS_SIGNING_KEY", f.path("missing"))
+            .arg("--key")
+            .arg(f.path("private"))
+            .output()
+            .unwrap(),
+    );
     f.verify(key);
 }
 
@@ -160,36 +168,151 @@ fn keygen_requires_explicit_output() {
     assert!(!f.path(".config").exists());
 }
 
+impl Fixture {
+    fn script(&self) -> Command {
+        use std::os::unix::fs::PermissionsExt;
+        let out = self.path("boot/out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("oos-dev.img"), image()).unwrap();
+        std::fs::write(out.join("oos-dev.build"), "20261114-120000 kernel test\n").unwrap();
+        std::fs::write(self.path("boot/sign-dev-image.sh"), include_str!("../../boot/sign-dev-image.sh")).unwrap();
+        std::fs::create_dir(self.path("bin")).unwrap();
+        // Skip Cargo's rebuild. Run the signer binary built for this host check.
+        let cargo = self.path("bin/cargo");
+        std::fs::write(
+            &cargo,
+            "#!/bin/sh\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$OOS_TEST_SIGNER\" \"$@\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(cargo, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut cmd = Command::new("sh");
+        cmd.arg(self.path("boot/sign-dev-image.sh"));
+        let path = std::env::join_paths(
+            std::iter::once(self.path("bin")).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        cmd.env("PATH", path).env("OOS_TEST_SIGNER", env!("CARGO_BIN_EXE_oos-update")).env_remove("OOS_SIGNING_KEY");
+        cmd
+    }
+}
+
 #[test]
 fn image_signing_script_uses_saved_build_id_and_output_name() {
-    use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
-    let key = f.keygen("private");
-    let out = f.path("boot/out");
-    std::fs::create_dir_all(&out).unwrap();
-    std::fs::write(out.join("oos-dev.img"), image()).unwrap();
-    std::fs::write(out.join("oos-dev.build"), "20261114-120000 kernel test\n").unwrap();
-    std::fs::write(f.path("boot/sign-dev-image.sh"), include_str!("../../boot/sign-dev-image.sh")).unwrap();
-    std::fs::create_dir(f.path("bin")).unwrap();
-    // Skip Cargo's rebuild in this test. Run the same signer binary Cargo built for this host check.
-    let cargo = f.path("bin/cargo");
-    std::fs::write(
-        &cargo,
-        "#!/bin/sh\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$OOS_TEST_SIGNER\" \"$@\"\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(cargo, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let mut cmd = Command::new("sh");
-    cmd.arg(f.path("boot/sign-dev-image.sh")).arg("--key").arg(f.path("private"));
-    let path = std::env::join_paths(
-        std::iter::once(f.path("bin")).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-    )
-    .unwrap();
-    cmd.env("PATH", path).env("OOS_TEST_SIGNER", env!("CARGO_BIN_EXE_oos-update")).env_remove("OOS_SIGNING_KEY");
-    success(&cmd.output().unwrap());
-    let bytes = std::fs::read(out.join("oos-dev.oosupd")).unwrap();
-    let (header, payload) = pkg::verify(&bytes, &[key]).unwrap();
+    let mut cmd = f.script();
+    std::fs::write(f.path("private key"), include_str!("../../keys/community-signing.key")).unwrap();
+    success(&cmd.arg("--key").arg(f.path("private key")).output().unwrap());
+    let bytes = std::fs::read(f.path("boot/out/oos-dev.oosupd")).unwrap();
+    let (header, payload) = pkg::verify(&bytes, &oos_hal::update::trusted_keys()).unwrap();
     assert_eq!(header.manifest.build, "20261114-120000 kernel test");
     assert_eq!(payload, image());
-    assert!(!out.join("DHO800_DHO900_OOS_Install.GEL").exists());
+    assert!(!f.path("boot/out/DHO800_DHO900_OOS_Install.GEL").exists());
+}
+
+#[test]
+fn trusted_public_keys_are_never_signing_seeds() {
+    let f = Fixture::new();
+    std::fs::write(f.path("public"), include_str!("../../keys/update.pub")).unwrap();
+    refused(&f.pack().arg("--key").arg(f.path("public")).output().unwrap(), "public key");
+    for key in oos_hal::update::trusted_keys() {
+        std::fs::write(f.path("public"), hash::hex(&key)).unwrap();
+        refused(&f.pack().arg("--key").arg(f.path("public")).arg("--untrusted-ok").output().unwrap(), "public key");
+        assert!(!f.path("package").exists());
+    }
+}
+
+#[test]
+fn untrusted_signing_keys_require_explicit_opt_in() {
+    let f = Fixture::new();
+    let key = f.keygen("private");
+    assert!(!oos_hal::update::trusted_keys().contains(&key));
+    refused(&f.pack().arg("--key").arg(f.path("private")).output().unwrap(), "--untrusted-ok");
+    refused(&f.pack().env("OOS_SIGNING_KEY", f.path("private")).output().unwrap(), "--untrusted-ok");
+    assert!(!f.path("package").exists());
+    success(&f.pack().arg("--key").arg(f.path("private")).arg("--untrusted-ok").output().unwrap());
+    f.verify(key);
+}
+
+#[test]
+fn signing_flags_are_pack_only() {
+    let f = Fixture::new();
+    for flag in ["--community", "--untrusted-ok"] {
+        for command in ["verify", "keygen", "status"] {
+            refused(&f.command().args([command, flag]).output().unwrap(), "only valid for pack");
+        }
+        refused(&f.command().arg(flag).output().unwrap(), "only valid for pack");
+    }
+}
+
+#[test]
+fn image_signing_script_requires_saved_build_id() {
+    let f = Fixture::new();
+    let mut cmd = f.script();
+    std::fs::remove_file(f.path("boot/out/oos-dev.build")).unwrap();
+    refused(&cmd.arg("--community").output().unwrap(), "run boot/build-dev-image.sh first");
+    assert!(!f.path("boot/out/oos-dev.oosupd").exists());
+}
+
+#[test]
+fn image_signing_script_accepts_community_and_environment() {
+    let f = Fixture::new();
+    let mut cmd = f.script();
+    refused(&cmd.output().unwrap(), "signing requires --key");
+    assert!(!f.path("boot/out/oos-dev.oosupd").exists());
+    std::fs::write(f.path("private key"), include_str!("../../keys/community-signing.key")).unwrap();
+    success(&cmd.env("OOS_SIGNING_KEY", f.path("private key")).output().unwrap());
+    std::fs::remove_file(f.path("boot/out/oos-dev.oosupd")).unwrap();
+    success(&cmd.env_remove("OOS_SIGNING_KEY").arg("--community").output().unwrap());
+    let bytes = std::fs::read(f.path("boot/out/oos-dev.oosupd")).unwrap();
+    pkg::verify(&bytes, &oos_hal::update::trusted_keys()).unwrap();
+}
+
+#[test]
+fn image_signing_script_refuses_extra_or_incomplete_arguments() {
+    let f = Fixture::new();
+    let cmd = f.script();
+    let path = cmd.get_envs().find(|(key, _)| *key == "PATH").unwrap().1.unwrap().to_owned();
+    // A successful stand-in makes any invocation of Cargo visible as an unexpected exit 0.
+    std::fs::write(f.path("bin/cargo"), "#!/bin/sh\nexit 0\n").unwrap();
+    for args in [
+        vec!["--out", "elsewhere"],
+        vec!["--image", "elsewhere"],
+        vec!["--build", "other"],
+        vec!["--key"],
+        vec!["--key", ""],
+        vec!["--community", "--untrusted-ok"],
+        vec!["pack"],
+    ] {
+        let out =
+            Command::new("sh").arg(f.path("boot/sign-dev-image.sh")).args(&args).env("PATH", &path).output().unwrap();
+        refused(&out, "Usage:");
+    }
+    assert!(!f.path("boot/out/oos-dev.oosupd").exists());
+}
+
+#[test]
+fn image_workflow_requires_signed_update_and_gel() {
+    let workflow = include_str!("../../.github/workflows/image.yml");
+    let build = workflow.find("run: boot/build-dev-image.sh").unwrap();
+    let sign = workflow.find("run: boot/sign-dev-image.sh --community").unwrap();
+    let gel = workflow.find("run: python3 -I boot/build-gel.py").unwrap();
+    let check = workflow.find("      - name: Validate release artifacts\n        run: |\n").unwrap();
+    let upload = workflow[check..].find("      - uses: actions/upload-artifact@").unwrap() + check;
+    assert!(build < sign && sign < gel && gel < check && check < upload);
+    let script = workflow[check..upload].split_once("run: |\n").unwrap().1;
+    let script = script.lines().map(|line| line.strip_prefix("          ").unwrap()).collect::<Vec<_>>().join("\n");
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.path("boot/out")).unwrap();
+    for (update, gel) in [(false, false), (true, false), (false, true), (true, true)] {
+        for (name, present) in [("oos-dev.oosupd", update), ("DHO800_DHO900_OOS_Install.GEL", gel)] {
+            let path = f.path("boot/out").join(name);
+            if present {
+                std::fs::write(path, "artifact").unwrap();
+            } else if path.exists() {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+        let out = Command::new("bash").args(["-e", "-c", &script]).current_dir(&f.0).output().unwrap();
+        assert_eq!(out.status.success(), update && gel, "{}", String::from_utf8_lossy(&out.stderr));
+    }
 }

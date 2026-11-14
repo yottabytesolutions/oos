@@ -38,6 +38,7 @@
 //!                                          prints the public key line for oos/keys/update.pub
 //!   oos-update pack --image IMG --build ID [--kernel REL] [--key FILE | --community] --out FILE.oosupd
 //!                                          or select a key with OOS_SIGNING_KEY; no automatic key discovery
+//!                                          --untrusted-ok permits a key not trusted by this build
 //!
 //! Common options: --card /dev/mmcblk0, --state /oos/update/state, --keys FILE (extra trusted keys: verify, and
 //! install on a card file for tests; refused for the unit's card).
@@ -60,7 +61,7 @@ impl Args {
         while let Some(s) = it.next() {
             match s.as_str() {
                 "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec"
-                | "--new-dt" | "--community" => a.flags.push(s),
+                | "--new-dt" | "--community" | "--untrusted-ok" => a.flags.push(s),
                 _ if s.starts_with("--") => {
                     let v = it.next().unwrap_or_else(|| die(&format!("{} needs a value", s)));
                     a.vals.push((s, v));
@@ -216,6 +217,11 @@ fn read_file(p: &str) -> Vec<u8> {
 fn main() {
     let a = Args::parse();
     let cmd = a.rest.first().map(String::as_str).unwrap_or("status");
+    for flag in ["--community", "--untrusted-ok"] {
+        if a.flag(flag) && cmd != "pack" {
+            die(&format!("{} is only valid for pack", flag));
+        }
+    }
     match cmd {
         "status" => status(&a),
         "verify" => {
@@ -1005,7 +1011,11 @@ fn watch(_: &Args) {
 fn load_seed(path: &Path) -> [u8; 32] {
     let t = std::fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("{}: {} (oos-update keygen)", path.display(), e)));
-    parse_seed(&t).unwrap_or_else(|| die(&format!("{}: no 64-digit hex secret key", path.display())))
+    let seed = parse_seed(&t).unwrap_or_else(|| die(&format!("{}: no 64-digit hex secret key", path.display())));
+    if update::trusted_keys().contains(&seed) {
+        die("selected signing seed is a trusted public key; use its secret seed instead");
+    }
+    seed
 }
 
 fn parse_seed(t: &str) -> Option<[u8; 32]> {
@@ -1079,6 +1089,16 @@ fn keygen(a: &Args) {
 
 fn pack(a: &Args) {
     let seed = signing_seed(a);
+    let pk = oos_hal::update::ed25519::public_key(&seed);
+    if !update::trusted_keys().contains(&pk) {
+        if !a.flag("--untrusted-ok") {
+            die("signing key is not trusted by this build; use --untrusted-ok to sign anyway");
+        }
+        eprintln!(
+            "oos-update: WARNING: key {} is not in oos/keys/update.pub: units will refuse this package",
+            hex(&pkg::key_id(&pk))
+        );
+    }
     let img = read_file(a.val("--image").unwrap_or_else(|| die("pack --image IMG --build ID --out FILE")));
     let build = a.val("--build").unwrap_or_else(|| die("pack needs --build ID (the image's /etc/oos-build)"));
     let out = a.val("--out").unwrap_or_else(|| die("pack needs --out FILE"));
@@ -1089,13 +1109,6 @@ fn pack(a: &Args) {
     let info = card::check_image(&img).unwrap_or_else(|e| die(&format!("image: {}", e)));
     if info.len != img.len() {
         die(&format!("image is {} bytes, its sections end at {}", img.len(), info.len));
-    }
-    let pk = oos_hal::update::ed25519::public_key(&seed);
-    if !update::trusted_keys().contains(&pk) {
-        eprintln!(
-            "oos-update: WARNING: key {} is not in oos/keys/update.pub: units will refuse this package",
-            hex(&pkg::key_id(&pk))
-        );
     }
     // this tree's oos-update finishes a kexec start (update::kexec): the image says so in its package
     let p = pkg::build_with(&seed, build, &kernel, &img, &[kexec::LINE]).unwrap_or_else(|e| die(&e));

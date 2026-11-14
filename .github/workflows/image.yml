@@ -3,7 +3,7 @@
 # compiler for the kernel and oos-hw, QEMU for the arm64 containers). The last job compares what the two put into the
 # image (tools/image-manifest.py: kernel, DTB, every file of the initramfs) and fails when they differ, apart from
 # the programs built from the OOS source (see the job). The packages themselves hold the build time and differ always.
-# The package is signed with the community key of the repository (keys/), as every build without a key of its own.
+# Signing explicitly selects the repository's public community development key (keys/).
 name: Image
 on:
   workflow_dispatch:
@@ -41,6 +41,10 @@ jobs:
         run: kernel/build-base.sh
       - name: Image
         run: boot/build-dev-image.sh
+      - name: Sign update
+        run: boot/sign-dev-image.sh --community
+      - name: GEL
+        run: python3 -I boot/build-gel.py
       - name: Manifest
         run: |
           python3 -I tools/image-manifest.py kernel/out/base/Image boot/out/oos-dho900.dtb boot/out/initramfs.cpio.gz > manifest.txt
@@ -54,6 +58,10 @@ jobs:
         with:
           name: manifest-${{ runner.arch }}
           path: manifest.txt
+      - name: Validate release artifacts
+        run: |
+          test -s boot/out/oos-dev.oosupd
+          test -s boot/out/DHO800_DHO900_OOS_Install.GEL
       - uses: actions/upload-artifact@v4
         with:
           name: oos-image-${{ runner.arch }}

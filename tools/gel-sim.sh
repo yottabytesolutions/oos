@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # gel-sim.sh - the install without opening the scope, on a file laid out like a stock card: a Linux container with the
 # paths of the stock system, a USB stick folder and mksh as /system/bin/sh, running boot/out/DHO800_DHO900_OOS_Install.GEL
-# through the steps of the stock update. Needs Docker and a finished boot/build-dev-image.sh.
+# through the steps of the stock update. Needs Docker and the three completed host steps:
+# boot/build-dev-image.sh, boot/sign-dev-image.sh, then python3 -I boot/build-gel.py.
 #
 #   tools/gel-sim.sh [stock do_update.sh]    the real script of a stock update file, if at hand; else the same steps here
 #
@@ -13,7 +14,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 gel="$root/boot/out/DHO800_DHO900_OOS_Install.GEL"
-[ -f "$gel" ] || { echo "run boot/build-dev-image.sh first" >&2; exit 1; }
+[ -f "$gel" ] || { echo "run boot/build-dev-image.sh, boot/sign-dev-image.sh, then python3 -I boot/build-gel.py first" >&2; exit 1; }
 w="${TMPDIR:-/tmp}/oos-gel-sim"
 rm -rf "$w"; mkdir -p "$w/rigol-data"
 [ -z "${1:-}" ] || cp "$1" "$w/do_update.sh"

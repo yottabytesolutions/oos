@@ -1830,17 +1830,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             let pipe = crate::drawpipe::pipe();
             let idle = || pipe.is_some_and(|x| x.help(&mut helper));
             let t_batch = std::time::Instant::now();
-            // the ring fills for at most `fill` ms after the first frame: the batch cycle stays under a screen frame
-            let fill_ms = fill.ms();
+            // the ring fills for at most `fill_ms` after the first frame: the batch is read and drawn just before a
+            // screen step (pacing.rs)
+            let fill_ms = fill.plan(t_batch, crate::pacing::next_step_after, crate::pacing::ready_ms());
             let got = seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, fill_ms, |_| {}, changed, idle);
             let batch_ms = t_batch.elapsed().as_secs_f32() * 1e3;
-            match &got {
-                Ok(c) => {
-                    let asked = seq::frames(&b, &p);
-                    crate::pacing::batch(batch_ms, *c, asked);
-                    fill.done(std::time::Instant::now(), fill_ms, *c >= asked);
-                }
-                Err(_) => fill.restart(),
+            if let Ok(c) = &got {
+                let asked = seq::frames(&b, &p);
+                crate::pacing::batch(batch_ms, *c, asked, fill_ms);
+                fill.done(batch_ms, fill_ms, *c >= asked);
             }
             if let Some(x) = pipe {
                 x.help_done(&mut helper);

@@ -27,6 +27,10 @@ struct State {
     passes: VecDeque<[f32; 4]>,
     /// per batch: wait (arm to read done, ms), interval since the last batch (ms), frames recorded, frames asked
     batches: VecDeque<(f32, f32, u32, u32)>,
+    /// per batch: its fill time (ms), and from its read to drawn by the workers (ms)
+    fills: VecDeque<f32>,
+    readies: VecDeque<f32>,
+    ready_ms: Option<f32>,
     last_pass: Option<Instant>,
     last_batch: Option<Instant>,
     slow_logged: u64,
@@ -65,62 +69,79 @@ pub fn pass(t0: Instant, t1: Instant, t2: Instant, t3: Instant) {
 }
 
 /// A batch of the hardware done: `wait_ms` from the arm (or the wait of a batch armed ahead) to the read, `count` of
-/// `asked` frames recorded.
-pub fn batch(wait_ms: f32, count: u32, asked: u32) {
+/// `asked` frames recorded, `fill_ms` the ring-fill time it had.
+pub fn batch(wait_ms: f32, count: u32, asked: u32, fill_ms: u64) {
     let mut s = state().lock().unwrap();
     let now = Instant::now();
     let iv = s.last_batch.map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f32() * 1e3);
     s.last_batch = Some(now);
     push(&mut s.batches, (wait_ms, iv, count, asked));
+    push(&mut s.fills, fill_ms as f32);
 }
 
-/// Batch cycle the ring-fill time aims at: under one screen frame (33.3 ms), so every picture gets a new batch.
-pub const CYCLE_MS: f32 = 30.0;
+/// The deposit workers finished the batch read last (drawpipe.rs): the time since its read went into `ready_ms`.
+pub fn ready() {
+    let mut s = state().lock().unwrap();
+    if let Some(t) = s.last_batch {
+        let ms = t.elapsed().as_secs_f32() * 1e3;
+        s.ready_ms = Some(s.ready_ms.map_or(ms, |x| x + 0.2 * (ms - x)));
+        push(&mut s.readies, ms);
+    }
+}
+
+/// Time from a batch's read to its frames being drawn (smoothed), ms.
+pub fn ready_ms() -> f32 {
+    state().lock().unwrap().ready_ms.unwrap_or(3.0)
+}
+
+/// Screen frame period of the frame loop (main.rs: 30 a second).
+const FRAME_MS: f32 = 1000.0 / 30.0;
+
+/// The first frame-loop step at or after `t`, from the last one; None before the first.
+pub fn next_step_after(t: Instant) -> Option<Instant> {
+    let l = state().lock().unwrap().last_pass?;
+    let since = t.saturating_duration_since(l).as_secs_f32() * 1e3;
+    let k = (since / FRAME_MS).ceil().max(1.0);
+    Some(l + std::time::Duration::from_secs_f32(k * FRAME_MS / 1e3))
+}
+
 /// Ring-fill time limits: the hardware source's former fixed wait at most, a few frames' worth at least.
 pub const FILL_MAX_MS: f32 = 25.0;
 pub const FILL_MIN_MS: f32 = 4.0;
+/// A batch is to be drawn this long before the step that shows it (the merge comes a few ms into the step).
+const MARGIN_MS: f32 = 3.0;
 
-/// The ring-fill time of the next batch (`seq::acquire_batch_idle`'s `wait_ms`). A batch took its fill time plus a
-/// rest (arm, first trigger, read, hand-over); with a fixed 25 ms fill the cycle grew to 40-55 ms at 1-10 us/div, longer
-/// than a screen frame, and every few pictures had no new batch (docs/fork/stutter.md). The fill is set so that fill +
-/// rest stays near `CYCLE_MS`, from the rest of the batches before (smoothed).
-#[derive(Clone, Copy, Debug)]
+/// The ring-fill time of the next batch (`seq::acquire_batch_idle`'s `wait_ms`). With a fixed 25 ms fill a batch came
+/// every 40-55 ms at 1-10 us/div, and every 31-34 ms at short time bases, against a screen frame of 33.3 ms: pictures
+/// without a new batch and pictures with two alternated (docs/fork/stutter.md). The fill is set so that the batch is
+/// read and drawn just before a screen step: from the rest of a batch besides its fill (arm, first trigger, read;
+/// smoothed) and the workers' time to draw it (`ready_ms`).
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Fill {
-    ms: f32,
     rest: Option<f32>,
-    last: Option<Instant>,
-}
-
-impl Default for Fill {
-    fn default() -> Fill {
-        Fill { ms: FILL_MAX_MS, rest: None, last: None }
-    }
 }
 
 impl Fill {
-    /// The fill time for the next batch, ms.
-    pub fn ms(&self) -> u64 {
-        self.ms.round() as u64
+    /// The fill time, ms, for a batch starting at `start`, given the next screen step after a time (`next`) and the
+    /// time to draw a batch after its read (`ready`).
+    pub fn plan(&self, start: Instant, next: impl Fn(Instant) -> Option<Instant>, ready: f32) -> u64 {
+        let rest = self.rest.unwrap_or(5.0);
+        let ms = |a: f32| std::time::Duration::from_secs_f32(a.max(0.0) / 1e3);
+        let earliest = start + ms(rest + FILL_MIN_MS + ready + MARGIN_MS);
+        let fill = match next(earliest) {
+            Some(step) => step.saturating_duration_since(start).as_secs_f32() * 1e3 - MARGIN_MS - ready - rest,
+            None => FILL_MAX_MS,
+        };
+        fill.clamp(FILL_MIN_MS, FILL_MAX_MS).round() as u64
     }
 
-    /// A batch done at `now` with fill time `used` ms (what `ms` gave), `full`: the ring filled before it.
-    pub fn done(&mut self, now: Instant, used: u64, full: bool) {
-        if let Some(l) = self.last {
-            let cycle = now.saturating_duration_since(l).as_secs_f32() * 1e3;
-            // a full ring ended the fill early: its rest is not known, keep the last one
-            if !full {
-                let r = (cycle - used as f32).max(0.0);
-                let rest = self.rest.map_or(r, |x| x + 0.3 * (r - x));
-                self.rest = Some(rest);
-                self.ms = (CYCLE_MS - rest).clamp(FILL_MIN_MS, FILL_MAX_MS);
-            }
+    /// A batch took `took` ms from its start to its read with fill time `used` ms; `full`: the ring filled before it
+    /// (its rest is not known then).
+    pub fn done(&mut self, took: f32, used: u64, full: bool) {
+        if !full {
+            let r = (took - used as f32).max(0.0);
+            self.rest = Some(self.rest.map_or(r, |x| x + 0.3 * (r - x)));
         }
-        self.last = Some(now);
-    }
-
-    /// A batch that did not complete (new settings, an error): the next cycle starts anew.
-    pub fn restart(&mut self) {
-        self.last = None;
     }
 }
 
@@ -152,10 +173,12 @@ pub fn summary() -> String {
     let mut bi: Vec<f32> = s.batches.iter().map(|b| b.1).skip(1).collect();
     let mut bc: Vec<f32> = s.batches.iter().map(|b| b.2 as f32).collect();
     let full = s.batches.iter().filter(|b| b.2 >= b.3).count();
+    let mut fl: Vec<f32> = s.fills.iter().copied().collect();
+    let mut rd: Vec<f32> = s.readies.iter().copied().collect();
     let nb = s.batches.len().max(1);
     let p4 = |v: &mut Vec<f32>| format!("{:.1}/{:.1}/{:.1}/{:.1}", pct(v, 0.5), pct(v, 0.9), pct(v, 0.99), pct(v, 1.0));
     format!(
-        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}%",
+        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms drawn {} ms",
         s.pics.len(),
         pct(&mut fr, 0.1),
         pct(&mut fr, 0.5),
@@ -168,6 +191,8 @@ pub fn summary() -> String {
         p4(&mut bi),
         pct(&mut bc, 0.5),
         100.0 * full as f32 / nb as f32,
+        pct(&mut fl, 0.5),
+        p4(&mut rd),
     )
 }
 
@@ -176,40 +201,47 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    // Break it catches: a fill time that keeps the batch cycle above a screen frame, one that grows past the former
-    // fixed wait, one that reacts to a ring that filled early.
+    // Break it catches: a fill time that lets a batch miss the screen step it could make, one beyond the former fixed
+    // wait, one that reacts to a ring that filled early.
     #[test]
-    fn fill_time_keeps_the_batch_cycle_under_a_screen_frame() {
+    fn fill_time_lands_the_batch_before_a_screen_step() {
         let t = Instant::now();
         let at = |ms: f32| t + Duration::from_secs_f32(ms / 1e3);
-        // a rest of 15 ms (1 us/div): the fill comes down to 15 ms
+        // screen steps every 33.3 ms from t
+        let next = |x: Instant| {
+            let since = x.saturating_duration_since(t).as_secs_f32() * 1e3;
+            Some(at((since / FRAME_MS).ceil() * FRAME_MS))
+        };
+        // a rest of 15 ms (read at 1 us/div), drawn 2 ms after the read: a batch starting 1 ms after a step is read
+        // and drawn 3 ms before the next one
         let mut f = Fill::default();
-        let (mut now, mut used) = (0.0f32, f.ms());
-        f.done(at(now), used, false);
-        for _ in 0..30 {
-            now += used as f32 + 15.0;
-            f.done(at(now), used, false);
-            used = f.ms();
+        f.done(40.0, 25, false);
+        for _ in 0..20 {
+            f.done(15.0 + 13.0, 13, false);
         }
-        assert!((14..=16).contains(&f.ms()), "{}", f.ms());
-        // a rest of 5 ms (200 ns/div): back up to the most, 25 ms
-        for _ in 0..30 {
-            now += used as f32 + 5.0;
-            f.done(at(now), used, false);
-            used = f.ms();
+        let fill = f.plan(at(1.0), next, 2.0) as f32;
+        assert!((fill - (33.3 - 1.0 - 3.0 - 2.0 - 15.0)).abs() <= 1.0, "{}", fill);
+        // starting late in the frame: too late for the next step, so the one after it
+        let fill = f.plan(at(30.0), next, 2.0) as f32;
+        assert!((fill - (66.7 - 30.0 - 3.0 - 2.0 - 15.0)).abs() <= 1.0, "{}", fill);
+        // a short rest (200 ns/div): the rest of the frame, at most the former 25 ms
+        let mut g = Fill::default();
+        g.done(7.0, 2, false);
+        assert_eq!(g.plan(at(1.0), next, 2.0), 22);
+        g.done(2.5, 2, false);
+        g.done(2.5, 2, false);
+        assert_eq!(g.plan(at(0.0), next, 0.5), 25);
+        // a long rest (rare triggers, slow read): aimed at a later step, still landing just before it
+        for _ in 0..40 {
+            f.done(80.0, 4, false);
         }
-        assert_eq!(f.ms(), 25);
-        // a rest longer than the cycle (rare triggers): the least
-        for _ in 0..30 {
-            now += used as f32 + 80.0;
-            f.done(at(now), used, false);
-            used = f.ms();
-        }
-        assert_eq!(f.ms(), FILL_MIN_MS as u64);
-        // a full ring says nothing about the rest
-        let before = f.ms();
-        f.done(at(now + 1.0), used, true);
-        assert_eq!(f.ms(), before);
+        let fill = f.plan(at(1.0), next, 2.0) as f32;
+        assert!((fill - (100.0 - 1.0 - 3.0 - 2.0 - 76.0)).abs() <= 1.0, "{}", fill);
+        // a full ring says nothing about the rest; no step known yet: the most
+        let before = f.plan(at(1.0), next, 2.0);
+        f.done(5.0, 25, true);
+        assert_eq!(f.plan(at(1.0), next, 2.0), before);
+        assert_eq!(Fill::default().plan(t, |_| None, 2.0), FILL_MAX_MS as u64);
     }
 
     #[test]

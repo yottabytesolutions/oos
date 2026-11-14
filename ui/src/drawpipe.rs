@@ -311,6 +311,7 @@ impl Drop for Batch {
         Counters::add(&self.counters.dropped, left as u64);
         // every frame is in a mailbox now (the workers hand on before they let go of the batch)
         if let Some(d) = self.deliver.lock().unwrap().take() {
+            crate::pacing::ready();
             self.ready.lock().unwrap().push(d);
         }
         self.live.fetch_sub(1, Ordering::Release);

@@ -99,7 +99,16 @@ impl Ui {
         let frame = self.last[0].as_ref().and_then(|x| x.raw.as_ref()).map(|x| x.frame.clone()).filter(|f| !f.envelope);
         let samples: &[f32] = frame.as_ref().map_or(&[], |f| &f.ch[r.ch][..]);
         let (cols, per) = board().mask_layout(r.points, r.chans);
-        columns_view(&t[..cols.min(t.len())], samples, per, |v| board().mask_code(v as f64, r.scale, r.offset, r.gain), a, b)
+        let view = columns_view(&t[..cols.min(t.len())], samples, per, |v| board().mask_code(v as f64, r.scale, r.offset, r.gain), a, b);
+        // the software trigger point against the record's `pre` (the display aligns on it, the table on `pre`): the
+        // candidate for `mask.map skew` (docs/fork/hwmask.md "Round 19")
+        let skew = frame.as_ref().map_or(String::new(), |f| {
+            let window = self.m.time_per_div() as f64 * crate::model::HDIV as f64;
+            let t_first = self.m.delay as f64 - window / 2.0;
+            let ti = crate::board::trigger_point(f, &self.m, crate::sparse::POINTS, window, t_first);
+            format!("pre={},trig={},", f.pre, ti.map_or("none".to_string(), |x| format!("{:.2}", x - f.pre as f64)))
+        });
+        skew + &view
     }
 }
 

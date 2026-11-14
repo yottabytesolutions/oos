@@ -123,11 +123,14 @@ pub struct Map {
     pub layout: Layout,
     /// columns with their limits enabled (others test nothing): to find the failing ones
     pub range: (u16, u16),
+    /// record samples between `pre` and where the table puts the trigger (round 19: at 2.5 and 0.5 MSa/s the table
+    /// misses a shift or fails clean frames with the right strobe count; the trigger position is the suspect)
+    pub skew: f64,
 }
 
 impl Default for Map {
     fn default() -> Map {
-        Map { domain: Domain::ReadOut, codes_per_div: CODES_PER_DIV, mid: MID, shift: SHIFT, offset: 0.0, invert: false, layout: Layout::Record, range: (0, COLUMNS as u16 - 1) }
+        Map { domain: Domain::ReadOut, codes_per_div: CODES_PER_DIV, mid: MID, shift: SHIFT, offset: 0.0, invert: false, layout: Layout::Record, range: (0, COLUMNS as u16 - 1), skew: 0.0 }
     }
 }
 
@@ -173,7 +176,7 @@ impl Map {
     }
 
     /// Parses `key=value` into the map: domain readout|pregain, cpd <codes/div>, mid <code>, shift <bits>, offs
-    /// <8-bit codes>, invert 0|1, cols record|clocks|stock|<count>|raw:<count>:<samples per strobe>, range <a>-<b>.
+    /// <8-bit codes>, invert 0|1, cols record|clocks|stock|<count>|raw:<count>:<samples per strobe>, range <a>-<b>, skew <samples>.
     pub fn set(&mut self, kv: &str) -> Result<(), String> {
         let (k, v) = kv.split_once('=').ok_or_else(|| format!("no '=' in {}", kv))?;
         let (k, v) = (k.trim(), v.trim());
@@ -207,6 +210,7 @@ impl Map {
                     n => Layout::Count(num(n)?.clamp(1.0, 0x0fff_ffff as f64) as u32),
                 }
             }
+            "skew" => self.skew = num(v)?,
             "range" => {
                 let (a, b) = v.split_once('-').ok_or_else(|| format!("range a-b: {}", v))?;
                 let (a, b) = (num(a)? as u16, num(b)? as u16);
@@ -227,7 +231,10 @@ impl Map {
             Layout::Raw { count, unit } => format!("raw:{}:{}", count, unit),
         };
         let d = if self.domain == Domain::PreGain { "pregain" } else { "readout" };
-        format!("domain={} cpd={} mid={} shift={} offs={} invert={} cols={} range={}-{}", d, self.codes_per_div, self.mid, self.shift, self.offset, self.invert as u8, cols, self.range.0, self.range.1)
+        format!(
+            "domain={} cpd={} mid={} shift={} offs={} invert={} cols={} range={}-{} skew={}",
+            d, self.codes_per_div, self.mid, self.shift, self.offset, self.invert as u8, cols, self.range.0, self.range.1, self.skew
+        )
     }
 }
 
@@ -272,7 +279,7 @@ pub fn table_map(lo: &[f32], hi: &[f32], t: &Timing, scale: f64, offset: f64, ga
     (0..cols)
         .map(|c| {
             let (k0, k1) = (c as f64 * per, (c + 1) as f64 * per);
-            let (f0, f1) = (t.screen_at(k0), t.screen_at(k1));
+            let (f0, f1) = (t.screen_at(k0 - map.skew), t.screen_at(k1 - map.skew));
             // a column reaching past a screen edge holds samples the software mask never sees: it tests nothing
             if k0 >= pts || f0 < 0.0 || f1 > 1.0 || c < map.range.0 as usize || c > map.range.1 as usize {
                 return Column { lo: 0, hi: CODE_MAX as u8, lo_en: false, hi_en: false };
@@ -487,10 +494,10 @@ mod tests {
     #[test]
     fn map_keys_round_trip() {
         let mut m = Map::default();
-        for kv in ["domain=pregain", "cpd=6848", "mid=32000", "shift=8", "offs=-2.5", "invert=1", "cols=clocks", "range=10-20"] {
+        for kv in ["domain=pregain", "cpd=6848", "mid=32000", "shift=8", "offs=-2.5", "invert=1", "cols=clocks", "range=10-20", "skew=-3.5"] {
             m.set(kv).unwrap();
         }
-        assert_eq!(m.text(), "domain=pregain cpd=6848 mid=32000 shift=8 offs=-2.5 invert=1 cols=clocks range=10-20");
+        assert_eq!(m.text(), "domain=pregain cpd=6848 mid=32000 shift=8 offs=-2.5 invert=1 cols=clocks range=10-20 skew=-3.5");
         let mut back = Map::default();
         for kv in m.text().split(' ') {
             back.set(kv).unwrap();
@@ -503,6 +510,20 @@ mod tests {
         assert!(m.text().contains("cols=raw:100:2.5"));
         assert!(m.set("cols=raw:100").is_err() && m.set("cols=raw:100:0").is_err());
         assert!(m.set("cols=").is_err() && m.set("domain=raw").is_err() && m.set("nope=1").is_err() && m.set("cpd").is_err());
+    }
+
+    #[test]
+    fn skew_moves_the_table_against_the_record() {
+        // the record is the screen, 10 samples per column; the trigger 10 samples (one column) after `pre`
+        let (lo, mut hi) = (vec![-1.0f32; 1000], vec![1.0f32; 1000]);
+        hi[500] = 2.0;
+        let t = Timing { points: 10_000, pre: 5000, rate: 10_000_000, mask: 1, screen: (-0.5e-3, 1e-3) };
+        let m = Map { skew: 10.0, ..Map::default() };
+        let tab = table_map(&lo, &hi, &t, 1.0, 0.0, 1.0, &m);
+        let wide = Column::of_band(-1.0, 2.0, 1.0, 0.0);
+        assert!(tab[501] == wide && tab[499] != wide);
+        // column 0 now starts left of the screen: open
+        assert!(!tab[0].lo_en && !tab[0].hi_en && tab[1].lo_en);
     }
 
     #[test]

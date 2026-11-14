@@ -130,6 +130,23 @@ Grid, one channel, clean probe-comp square, then the +10 µs shift:
 The largest count without a stall gives the strobes per record (count x 1000). The samples per strobe that makes hw
 and sw agree on the shift gives the unit.
 
+## Round 19: strobe rule, skew
+
+The sweep settled the strobe rule: one strobe per record sample, at any rate and time base. The largest count that
+runs is points / 1000 (10k: 10, 100k: 100); one more stalls with 0x4030 read-back 0, state 5. Samples per strobe 2 or
+4 fail every clean frame. The default `cols=record` layout is that rule.
+
+With the right count, 10k at 200 µs/div (2.5 MSa/s) misses the +10 µs shift and 10k at 1 ms/div (0.5 MSa/s) fails
+every clean frame. The display aligns each record on the software trigger point near `pre`; the table assumes the
+trigger at `pre`. `skew=<samples>` moves the table (mask and zone) by that many record samples.
+`:SYSTem:DEBug:MASK:COLumns?` now starts with `pre=<p>,trig=<software trigger - pre>`: the candidate skew.
+
+Next run, at 200 µs/div 10k and 1 ms/div 10k: read `trig` over a few frames, set `skew` to it, then to its negative,
+and test clean and shifted. A constant skew per sample rate becomes the default.
+
+The guard counts stalls in a row only with the same settings, and a first block lapses after 5 s for one more try.
+A stall pair during a settings change no longer blocks the new settings for good.
+
 ## On-unit procedure
 
 Probe on CH1 at the probe-comp output. Optional: BNC cable from AUX OUT to CH2 (step 7). Start from a known state:

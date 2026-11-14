@@ -96,8 +96,8 @@ pub fn table(z: &Zone, points: u32, rate: u64, pre: u32, mask: u32, scale: f64, 
             if c < map.range.0 as usize || c > map.range.1 as usize {
                 return Column::OUT;
             }
-            let ta = (c as f64 * n - pre as f64) * dt;
-            let tb = ((c + 1) as f64 * n - pre as f64) * dt;
+            let ta = (c as f64 * n - pre as f64 - map.skew) * dt;
+            let tb = ((c + 1) as f64 * n - pre as f64 - map.skew) * dt;
             zonegeom::extent(&poly, ta, tb).map_or(Column::OUT, |(lo, hi)| Column::of_codes(map.code(lo, scale, offset, gain), map.code(hi, scale, offset, gain)))
         })
         .collect()

@@ -631,33 +631,46 @@ fn unit_key(s: &Settings, map: oos_hal::dho::mask::Map) -> UnitKey {
 /// settings (round 8: 200 us/div at 100k and Auto stopped the acquisition for good).
 const UNIT_STALLS: u32 = 2;
 
-/// The stall guard of the mask/zone unit: counts arms that found no acquisition while the unit ran, and blocks it
-/// for the settings it stalled with.
+/// A first block lapses after this and the hardware is tried once more: stalls during a settings change can land on
+/// the new settings (round 19: switching from a stalled 10k map to a 100k record blocked the 100k record). A second
+/// block of the same settings stays.
+const UNIT_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The stall guard of the mask/zone unit: counts arms in a row that found no acquisition with the unit running and
+/// the same settings, and blocks the unit for those settings.
 #[derive(Default)]
 struct UnitGuard {
-    stalls: u32,
-    blocked: Option<UnitKey>,
+    /// the settings of the last stall and the stalls in a row with them
+    stalls: Option<(UnitKey, u32)>,
+    /// blocked settings, when, and whether the block already lapsed once for them
+    blocked: Option<(UnitKey, std::time::Instant, bool)>,
 }
 
 impl UnitGuard {
     /// A batch ended: `stalled` = no acquisition, `unit` = the mask or zone unit was running. Returns true when the
     /// unit is now blocked for `key`.
-    fn batch(&mut self, stalled: bool, unit: bool, key: UnitKey) -> bool {
+    fn batch(&mut self, stalled: bool, unit: bool, key: UnitKey, now: std::time::Instant) -> bool {
         if !(stalled && unit) {
-            self.stalls = 0;
+            self.stalls = None;
             return false;
         }
-        self.stalls += 1;
-        if self.stalls >= UNIT_STALLS {
-            self.blocked = Some(key);
-            self.stalls = 0;
-            return true;
+        let n = match self.stalls {
+            Some((k, n)) if k == key => n + 1,
+            _ => 1,
+        };
+        if n < UNIT_STALLS {
+            self.stalls = Some((key, n));
+            return false;
         }
-        false
+        self.stalls = None;
+        let again = self.blocked.as_ref().is_some_and(|b| b.0 == key);
+        self.blocked = Some((key, now, again));
+        true
     }
 
-    fn blocks(&self, key: &UnitKey) -> bool {
-        self.blocked.as_ref() == Some(key)
+    /// Whether the unit stays off for `key` at `now`; a first block lapses after `UNIT_RETRY`.
+    fn blocks(&self, key: &UnitKey, now: std::time::Instant) -> bool {
+        self.blocked.as_ref().is_some_and(|(k, at, again)| k == key && (*again || now.duration_since(*at) < UNIT_RETRY))
     }
 }
 
@@ -1438,14 +1451,15 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             raw_for_ui(&mut want, needs_raw);
             let map = mask_map();
             let key = unit_key(&want, map);
-            if guard.blocks(&key) {
+            let blocked = guard.blocks(&key, std::time::Instant::now());
+            if blocked {
                 hw_merge(&mut want, None, None, map);
             } else {
                 hw_merge(&mut want, mask_want.as_ref(), zone_want.as_ref(), map);
             }
             {
                 let mut g = out.lock().unwrap();
-                let why = guard.blocks(&key).then(|| "the mask/zone unit stopped the acquisition with these settings: tested in software".to_string());
+                let why = blocked.then(|| "the mask/zone unit stopped the acquisition with these settings: tested in software".to_string());
                 if g.unit_blocked != why {
                     g.unit_blocked = why;
                 }
@@ -1809,7 +1823,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             match got {
                 Ok(count) => {
-                    guard.batch(false, false, unit_key(&b, mask_map()));
+                    guard.batch(false, false, unit_key(&b, mask_map()), std::time::Instant::now());
                     crate::compress::note_batch_k(if raw_newest(&b, &p) { b.compress } else { 1 });
                     // LA on: the second, raw read of the same record before anything else touches the FPGA
                     // after a few failures in a row the LA read stops until the next set-up: every failed read waits for
@@ -2012,7 +2026,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     status(format!("acquire: {}", e));
                     // the mask/zone unit stalled the arm: drop it for these settings (the next loop reconfigures)
                     let unit = state.mask_ctrl().is_some() || state.zone_ctrl().is_some();
-                    if guard.batch(e.contains("no acquisition"), unit, unit_key(&b, mask_map())) {
+                    if guard.batch(e.contains("no acquisition"), unit, unit_key(&b, mask_map()), std::time::Instant::now()) {
                         status("mask/zone unit: no acquisition twice, software fallback for these settings".into());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -2502,15 +2516,33 @@ mod tests {
         let k = unit_key(&s, map);
         let other = unit_key(&Settings { depth: 100_000, ..s.clone() }, map);
         let mut g = UnitGuard::default();
+        let t0 = std::time::Instant::now();
         // a stall without the unit, or a good batch in between, does not count
-        assert!(!g.batch(true, false, k) && !g.batch(true, true, k) && !g.batch(false, true, k) && !g.batch(true, true, k));
-        assert!(!g.blocks(&k));
+        assert!(!g.batch(true, false, k, t0) && !g.batch(true, true, k, t0) && !g.batch(false, true, k, t0) && !g.batch(true, true, k, t0));
+        assert!(!g.blocks(&k, t0));
         // two in a row with the unit running: blocked for these settings only
-        assert!(g.batch(true, true, k));
-        assert!(g.blocks(&k) && !g.blocks(&other));
+        assert!(g.batch(true, true, k, t0));
+        assert!(g.blocks(&k, t0) && !g.blocks(&other, t0));
         // another mapping tries again
         let swept = unit_key(&s, oos_hal::dho::mask::Map { layout: oos_hal::dho::mask::Layout::Clocks, ..map });
-        assert!(!g.blocks(&swept));
+        assert!(!g.blocks(&swept, t0));
+        // the first block lapses once; a second block of the same settings stays
+        let later = t0 + UNIT_RETRY;
+        assert!(!g.blocks(&k, later));
+        assert!(!g.batch(true, true, k, later) && g.batch(true, true, k, later));
+        assert!(g.blocks(&k, later + UNIT_RETRY * 10));
+    }
+
+    #[test]
+    fn stalls_across_a_settings_change_do_not_block() {
+        // round 19: one stall with the old settings, one with the new ones
+        let map = oos_hal::dho::mask::Map::default();
+        let s = Settings::default();
+        let (old, new) = (unit_key(&s, map), unit_key(&Settings { depth: 100_000, ..s.clone() }, map));
+        let mut g = UnitGuard::default();
+        let t0 = std::time::Instant::now();
+        assert!(!g.batch(true, true, old, t0) && !g.batch(true, true, new, t0));
+        assert!(!g.blocks(&new, t0) && !g.blocks(&old, t0));
     }
 
     #[test]

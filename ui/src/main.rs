@@ -44,6 +44,7 @@ mod perfguard;
 mod sparse;
 mod drawpipe;
 mod framestats;
+mod framecost;
 mod ui;
 mod usbtmc;
 mod vxi11;

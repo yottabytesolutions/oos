@@ -18,6 +18,7 @@
 //! path, kept for comparison until the unit has verified the new one.
 
 use crate::board::Frame;
+use crate::framecost::{self as cost, Part};
 use crate::model::*;
 use crate::wave::Phosphor;
 use std::any::Any;
@@ -58,7 +59,12 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     }
     let src = &f.ch[m.trig_src];
     let present: [bool; NCH] = std::array::from_fn(|c| !f.ch[c].is_empty());
-    let refine = |level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize| crate::trignear::edge_smooth_near(src, f.pre, level, hyst, rising, either, half, col, |_| true);
+    let refine = |hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
+        let t = std::time::Instant::now();
+        let level = crate::board::sw_trig_level(m, f);
+        cost::add(Part::Level, t);
+        refine_near(src, 0, src.len(), f.pre, level, hyst, rising, either, half, col).unwrap_or_else(|| refine_wide(std::time::Instant::now(), src, f.pre, level, hyst, rising, either, half, col))
+    };
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
         if pairs {
             crate::compress::deposit_pairs(map, w, h, &f.ch[c], xm, 24, m.dots_at(x_per_sample));
@@ -74,7 +80,7 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
 /// The dense fast path of `draw_frame` for the frame `f` (its samples reached only through `refine`, the trigger
 /// refinement on the source channel, and `deposit`, one channel into its map): trigger statistics, mapping, channels.
 #[allow(clippy::too_many_arguments)]
-fn dense(ph: &mut Phosphor, m: &Model, f: &Frame, x_per_sample: f64, pairs: bool, present: [bool; NCH], stats: Option<Stats>, refine: impl FnOnce(f32, f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>), mut deposit: impl FnMut(usize, &mut [u16], &crate::fastdraw::Map)) -> bool {
+fn dense(ph: &mut Phosphor, m: &Model, f: &Frame, x_per_sample: f64, pairs: bool, present: [bool; NCH], stats: Option<Stats>, refine: impl FnOnce(f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>), mut deposit: impl FnMut(usize, &mut [u16], &crate::fastdraw::Map)) -> bool {
     let (w, h) = (ph.w, ph.h);
     let tdiv = m.time_per_div() as f64;
     // an LA line as the source: the hardware trigger point stands, the analog samples cannot refine it
@@ -88,7 +94,7 @@ fn dense(ph: &mut Phosphor, m: &Model, f: &Frame, x_per_sample: f64, pairs: bool
     let edge = if on_la {
         None
     } else {
-        let (e, any) = refine(crate::board::sw_trig_level(m, f), hyst, rising, either, half, col);
+        let (e, any) = refine(hyst, rising, either, half, col);
         if let Some(s) = stats {
             let k = match (e, any) {
                 (None, _) => 3,
@@ -160,6 +166,26 @@ impl CodeLayout {
 /// with a header).
 pub type CodesInto = Arc<dyn Fn(&[u8], &mut Frame) -> Option<CodeLayout> + Send + Sync>;
 
+/// The near part of the dense path's trigger refinement on the source `v` (samples `base..` of `len`, covering
+/// `trignear::near_window`): the near search of `trignear::edge_smooth_near`; None where the wide search
+/// (`refine_wide`) must decide.
+#[allow(clippy::too_many_arguments)]
+fn refine_near(v: &[f32], base: usize, len: usize, pre: usize, level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize) -> Option<(Option<f64>, Option<oos_dsp::edges::Edge>)> {
+    let t = std::time::Instant::now();
+    let r = crate::trignear::edge_near_window(v, base, len, pre, level, hyst, rising, either, half, col, |_| true);
+    cost::add(Part::Near, t);
+    r
+}
+
+/// The wide part: `fastdraw::edge_smooth` on all samples `v` of the source, timed from `t` (the codes path includes
+/// its decode).
+#[allow(clippy::too_many_arguments)]
+fn refine_wide(t: std::time::Instant, v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>) {
+    let r = crate::fastdraw::edge_smooth(v, pre, level, hyst, rising, either, half, col, |_| true);
+    cost::add(Part::Wide, t);
+    r
+}
+
 #[cfg(test)]
 thread_local! {
     /// wide searches of the codes path (tests)
@@ -184,19 +210,23 @@ pub fn draw_frame_codes(ph: &mut Phosphor, m: &Model, f: &Frame, bytes: &[u8], l
         return None;
     }
     let present: [bool; NCH] = std::array::from_fn(|c| lay.channel(bytes, c).n > 0);
-    let refine = |level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
+    let refine = |hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
         let src = lay.channel(bytes, m.trig_src);
+        let level = m.trig_level;
         TRIG.with(|t| {
             let v = &mut *t.borrow_mut();
             let (a, b) = crate::trignear::near_window(f.pre, src.n, col);
+            let t0 = std::time::Instant::now();
             (lay.volts)(bytes, src.stride, src.word, a, b, src.affine, v);
-            if let Some(r) = crate::trignear::edge_near_window(v, a, src.n, f.pre, level, hyst, rising, either, half, col, |_| true) {
+            cost::add(Part::Decode, t0);
+            if let Some(r) = refine_near(v, a, src.n, f.pre, level, hyst, rising, either, half, col) {
                 return r;
             }
             #[cfg(test)]
             WIDE.with(|n| n.set(n.get() + 1));
+            let t = std::time::Instant::now();
             (lay.volts)(bytes, src.stride, src.word, 0, src.n, src.affine, v);
-            crate::trignear::edge_smooth_near(v, f.pre, level, hyst, rising, either, half, col, |_| true)
+            refine_wide(t, v, f.pre, level, hyst, rising, either, half, col)
         })
     };
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| crate::fastdraw::deposit_codes(map, w, h, &lay.channel(bytes, c), xm, 24);
@@ -658,6 +688,7 @@ fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
 fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, counters: &Counters) {
     let Some(bytes) = b.lease.raw.as_ref().map(|x| x.bytes()) else { return };
     for i in r {
+        let t_frame = std::time::Instant::now();
         let chunk = &bytes[i * b.fb..(i + 1) * b.fb];
         // without per-frame measurements a large frame is drawn from its read-out words where the board has a view of them
         if a.folds.is_empty() && chunk.len() >= CODES_MIN_BYTES {
@@ -666,16 +697,20 @@ fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, 
             if let Some(t) = lay.and_then(|l| draw_frame_codes(&mut a.ph, &v.m, f, chunk, &l, Some(st))) {
                 a.triggered += t as u64;
                 a.frames += 1;
+                cost::add(Part::Frame, t_frame);
                 continue;
             }
         }
+        let t = std::time::Instant::now();
         (b.decode)(chunk, f);
+        cost::add(Part::Decode, t);
         let st = Stats { edges: &mut a.edges, off: &mut a.off };
         a.triggered += draw_frame(&mut a.ph, &v.m, f, Some(st)) as u64;
         if crate::framestats::fold_frame(f, &v.m, &mut a.folds) {
             Counters::add(&counters.measured, 1);
         }
         a.frames += 1;
+        cost::add(Part::Frame, t_frame);
     }
 }
 
@@ -937,8 +972,9 @@ mod tests {
         let (w, h) = (970, 448);
         let sig = |k: usize, c: usize, i: usize| 0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin();
         let mut worst: f64 = 0.0;
-        for (mask, n, tdiv) in [(1u32, 100_000u32, 1e-5), (3, 70_312, 1e-5), (5, 50_000, 1e-5), (1, 40_000, 2e-6)] {
+        for (mask, n, tdiv, coup) in [(1u32, 100_000u32, 1e-5, TrigCoup::Dc), (3, 70_312, 1e-5, TrigCoup::Dc), (5, 50_000, 1e-5, TrigCoup::Dc), (1, 40_000, 2e-6, TrigCoup::Dc)] {
             let mut m = model(tdiv, false, false);
+            m.trig_coup = coup;
             for c in 0..NCH {
                 m.ch[c].on = mask & (1 << c) != 0;
             }
@@ -967,7 +1003,7 @@ mod tests {
             let r = new.as_secs_f64() / old.as_secs_f64();
             worst = worst.max(r);
             assert!(fb >= CODES_MIN_BYTES && hz::ratio(mask) as usize <= CODES_MAX_STRIDE);
-            println!("codes mask {:#x} {} pt: decode + draw {:?}/frame, from the codes {:?}/frame (ratio {:.2})", mask, n, old, new, r);
+            println!("codes mask {:#x} {} pt {:?}: decode + draw {:?}/frame, from the codes {:?}/frame (ratio {:.2})", mask, n, coup, old, new, r);
         }
         assert!(worst <= 0.9, "drawing from the codes must be cheaper: worst ratio {:.2}", worst);
     }

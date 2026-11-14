@@ -63,7 +63,7 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
         let t = std::time::Instant::now();
         let level = crate::board::sw_trig_level(m, f);
         cost::add(Part::Level, t);
-        refine_near(src, 0, src.len(), f.pre, level, hyst, rising, either, half, col).unwrap_or_else(|| refine_wide(std::time::Instant::now(), src, f.pre, level, hyst, rising, either, half, col))
+        refine_near(src, 0, src.len(), f.pre, filtered(m), level, hyst, rising, either, half, col).unwrap_or_else(|| refine_wide(std::time::Instant::now(), src, f.pre, level, hyst, rising, either, half, col))
     };
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
         if pairs {
@@ -166,13 +166,23 @@ impl CodeLayout {
 /// with a header).
 pub type CodesInto = Arc<dyn Fn(&[u8], &mut Frame) -> Option<CodeLayout> + Send + Sync>;
 
+/// AC or LF-reject trigger coupling: the hardware comparators see a high-passed signal that the samples do not hold
+/// (`trignear::edge_near`).
+fn filtered(m: &Model) -> bool {
+    !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject)
+}
+
 /// The near part of the dense path's trigger refinement on the source `v` (samples `base..` of `len`, covering
-/// `trignear::near_window`): the near search of `trignear::edge_smooth_near`; None where the wide search
-/// (`refine_wide`) must decide.
+/// `trignear::near_window`): a filtered path decides there alone (`trignear::edge_near`), else the near search of
+/// `trignear::edge_smooth_near`; None where the wide search (`wide`) must decide.
 #[allow(clippy::too_many_arguments)]
-fn refine_near(v: &[f32], base: usize, len: usize, pre: usize, level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize) -> Option<(Option<f64>, Option<oos_dsp::edges::Edge>)> {
+fn refine_near(v: &[f32], base: usize, len: usize, pre: usize, filtered: bool, level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize) -> Option<(Option<f64>, Option<oos_dsp::edges::Edge>)> {
     let t = std::time::Instant::now();
-    let r = crate::trignear::edge_near_window(v, base, len, pre, level, hyst, rising, either, half, col, |_| true);
+    let r = if filtered {
+        Some(crate::trignear::edge_near(v, base, len, pre, level, hyst, rising, either, half, col))
+    } else {
+        crate::trignear::edge_near_window(v, base, len, pre, level, hyst, rising, either, half, col, |_| true)
+    };
     cost::add(Part::Near, t);
     r
 }
@@ -200,26 +210,30 @@ thread_local! {
 /// `draw_frame` straight from the read-out `bytes` of a frame (`lay`, meta data in `f`, whose channel vectors stay
 /// empty): the same picture and statistics without the f32 copy of every channel. The trigger source is decoded only
 /// around the hardware trigger point (the near search, `trignear::edge_near_window`), all of it only when the wide
-/// search is needed. None where this path does not apply (sparse, pairs, roll or scan, dots, a coupling that needs the
-/// frame mean): then decode and call `draw_frame`.
+/// search is needed; a filtered trigger path (AC, LF reject) takes its level from about 4096 words of the source and
+/// never searches wide. None where this path does not apply (sparse, pairs, roll or scan, dots): then decode and call
+/// `draw_frame`.
 pub fn draw_frame_codes(ph: &mut Phosphor, m: &Model, f: &Frame, bytes: &[u8], lay: &CodeLayout, stats: Option<Stats>) -> Option<bool> {
     let (w, h) = (ph.w, ph.h);
     let tdiv = m.time_per_div() as f64;
     let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.dots_at(x_per_sample) || !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject) {
+    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.dots_at(x_per_sample) {
         return None;
     }
     let present: [bool; NCH] = std::array::from_fn(|c| lay.channel(bytes, c).n > 0);
     let refine = |hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
+        use crate::fastdraw::Samples;
         let src = lay.channel(bytes, m.trig_src);
-        let level = m.trig_level;
+        let t = std::time::Instant::now();
+        let level = crate::board::sw_trig_level_of(m, src.n, |i| src.at(i));
+        cost::add(Part::Level, t);
         TRIG.with(|t| {
             let v = &mut *t.borrow_mut();
             let (a, b) = crate::trignear::near_window(f.pre, src.n, col);
             let t0 = std::time::Instant::now();
             (lay.volts)(bytes, src.stride, src.word, a, b, src.affine, v);
             cost::add(Part::Decode, t0);
-            if let Some(r) = refine_near(v, a, src.n, f.pre, level, hyst, rising, either, half, col) {
+            if let Some(r) = refine_near(v, a, src.n, f.pre, filtered(m), level, hyst, rising, either, half, col) {
                 return r;
             }
             #[cfg(test)]
@@ -921,7 +935,7 @@ mod tests {
         let mut cases = 0;
         for (mask, n, tdiv) in [(1u32, 100_000u32, 1e-5), (1, 12_512, 1e-6), (3, 70_312, 1e-5), (3, 12_512, 1e-6), (15, 30_000, 1e-5), (5, 25_000, 1e-5), (1, 1408, 1e-7)] {
             for (name, sig) in [("sine", &sine as &dyn Fn(usize, usize, usize) -> f64), ("square", &square), ("flat", &flat)] {
-                for (src, dots, coup) in [(0usize, false, TrigCoup::Dc), (1, false, TrigCoup::Dc), (0, true, TrigCoup::Dc), (0, false, TrigCoup::Ac)] {
+                for (src, dots, coup) in [(0usize, false, TrigCoup::Dc), (1, false, TrigCoup::Dc), (0, true, TrigCoup::Dc), (0, false, TrigCoup::Ac), (0, false, TrigCoup::LfReject), (0, false, TrigCoup::HfReject)] {
                     let mut m = model(tdiv, false, dots);
                     for c in 0..NCH {
                         m.ch[c].on = mask & (1 << c) != 0;
@@ -944,7 +958,7 @@ mod tests {
                                 taken += 1;
                             }
                             None => {
-                                assert!(dots || coup != TrigCoup::Dc || f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64 > 0.5, "{} {} codes path refused", name, mask);
+                                assert!(dots || f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64 > 0.5, "{} {} codes path refused", name, mask);
                                 tb += draw_frame(&mut b, &m, &f, Some(Stats { edges: &mut sb.0, off: &mut sb.1 })) as u32;
                             }
                         }
@@ -964,15 +978,66 @@ mod tests {
         assert!(WIDE.with(|n| n.get()) > 5, "{} wide searches", WIDE.with(|n| n.get()));
     }
 
+    // Break it catches: a filtered trigger path (AC, LF reject) moved to an edge outside the near window, on the
+    // decoded frame or from the words; a DC or HF-reject path that no longer finds that edge, or whose refinement
+    // differs from `trignear::edge_smooth_near` (the refinement before the filtered path had its own).
+    #[test]
+    fn filtered_trigger_path_stays_near_the_hardware_point_dc_unchanged() {
+        let (w, h) = (970, 448);
+        // -1 V up to 10 k samples after the hardware point (50 k), then +1 V: the only rising edge is far away
+        let far = |_k: usize, _c: usize, i: usize| if i < 60_000 { -1.0 } else { 1.0 } + 0.002 * ((i * 7919) % 13) as f64;
+        let (bytes, fb, s, p) = frames_of(1, 100_000, 1, &far);
+        let f = crate::board::dho::hw::decode(&bytes, &s, &p, 0);
+        let mut g = Frame::default();
+        let lay = crate::board::dho::hw::codes_into(&bytes, &s, &p, 0, &mut g).expect("raw frame");
+        assert_eq!(f.pre, 50_000);
+        // at the hardware point: a level no sample reaches finds no edge on DC either
+        let mut at_pre = Phosphor::new(w, h);
+        let mut m = model(1e-5, false, false);
+        m.trig_level = 5.0;
+        assert!(!draw_frame(&mut at_pre, &m, &f, None));
+        for coup in [TrigCoup::Dc, TrigCoup::HfReject, TrigCoup::Ac, TrigCoup::LfReject] {
+            let mut m = model(1e-5, false, false);
+            m.trig_coup = coup;
+            let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
+            let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
+            let ta = draw_frame(&mut a, &m, &f, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }));
+            let tb = draw_frame_codes(&mut b, &m, &g, &bytes[..fb], &lay, Some(Stats { edges: &mut sb.0, off: &mut sb.1 })).expect("codes path");
+            assert!(ta && tb && a.map[0] == b.map[0] && sa == sb, "{:?}: codes path differs", coup);
+            if matches!(coup, TrigCoup::Ac | TrigCoup::LfReject) {
+                assert_eq!(sa.0, [0, 0, 0, 1], "{:?}", coup);
+                assert!(a.map[0] == at_pre.map[0], "{:?}: not drawn at the hardware point", coup);
+            } else {
+                assert_eq!(sa.0, [0, 0, 1, 0], "{:?}", coup);
+                assert!((sa.1 .1 - 10_000.0).abs() < 2.0, "{:?}: offset {:?}", coup, sa.1);
+                assert!(a.map[0] != at_pre.map[0]);
+            }
+        }
+        // DC: the composed near and wide refinement is `edge_smooth_near`, wherever the hardware point lies
+        let sine: Vec<f32> = (0..100_000).map(|i| (0.9 * (i as f64 / 3000.0 * std::f64::consts::TAU).sin() + 0.2 * ((i * 7919) % 17) as f64 / 17.0) as f32).collect();
+        for v in [&f.ch[0], &sine] {
+            for pre in (1000..99_000).step_by(3331) {
+                for (col, half) in [(1, 600), (16, 9000), (128, 62_500)] {
+                    for level in [0.0f32, 0.5, -0.99] {
+                        let got = refine_near(v, 0, v.len(), pre, false, level, 0.1, true, false, half, col).unwrap_or_else(|| refine_wide(std::time::Instant::now(), v, pre, level, 0.1, true, false, half, col));
+                        let want = crate::trignear::edge_smooth_near(v, pre, level, 0.1, true, false, half, col, |_| true);
+                        assert!(got.0 == want.0 && got.1.map(|e| (e.t, e.rising)) == want.1.map(|e| (e.t, e.rising)), "pre {} col {} level {}", pre, col, level);
+                    }
+                }
+            }
+        }
+    }
+
     // Timing guard (tools/perf-guard.sh): a worker frame drawn from the read-out words against decode + draw, lines,
-    // no per-frame measurements. The A53 gains more than the host (the f32 copy is 2x the read-out per channel).
+    // no per-frame measurements, also with AC trigger coupling (its level from the words). The A53 gains more than the
+    // host (the f32 copy is 2x the read-out per channel).
     #[test]
     #[ignore]
     fn perf_guard_codes_per_frame() {
         let (w, h) = (970, 448);
         let sig = |k: usize, c: usize, i: usize| 0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin();
         let mut worst: f64 = 0.0;
-        for (mask, n, tdiv, coup) in [(1u32, 100_000u32, 1e-5, TrigCoup::Dc), (3, 70_312, 1e-5, TrigCoup::Dc), (5, 50_000, 1e-5, TrigCoup::Dc), (1, 40_000, 2e-6, TrigCoup::Dc)] {
+        for (mask, n, tdiv, coup) in [(1u32, 100_000u32, 1e-5, TrigCoup::Dc), (3, 70_312, 1e-5, TrigCoup::Dc), (5, 50_000, 1e-5, TrigCoup::Dc), (1, 40_000, 2e-6, TrigCoup::Dc), (1, 100_000, 1e-5, TrigCoup::Ac)] {
             let mut m = model(tdiv, false, false);
             m.trig_coup = coup;
             for c in 0..NCH {

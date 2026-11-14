@@ -15,7 +15,7 @@
 pub mod dho;
 mod record;
 
-pub use record::{sw_trig_level, to_record, trigger_point};
+pub use record::{sw_trig_level, sw_trig_level_of, to_record, trigger_point};
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
 use std::sync::{Arc, Mutex};

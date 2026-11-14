@@ -63,7 +63,7 @@ fn near_only(v: &[f32], base: usize, len: usize, pre: usize, level: f32, hyst: f
     let (a, s) = smoothed(v, base, len, pre, span, l, level)?;
     let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
     let d = |e: &Edge| (a as f64 + e.t - pre as f64).abs();
-    let near = |ok: &dyn Fn(&Edge) -> bool| edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied();
+    let near = |ok: &dyn Fn(&Edge) -> bool| nearest(&edges, a, pre, ok, fits);
     let want = near(&|e| either || e.rising == rising)?;
     let dist = d(&want);
     // out-of-band samples (they set both comparators) on both sides beyond the result (absolute indices)
@@ -76,6 +76,29 @@ fn near_only(v: &[f32], base: usize, len: usize, pre: usize, level: f32, hyst: f
     }
     let any = near(&|_| true).map(|e| Edge { t: a as f64 + e.t, ..e });
     Some((Some(a as f64 + want.t), any))
+}
+
+/// The edge of `edges` (times from sample `a`) nearest `pre` that `ok` and `fits` accept, its time still from `a`.
+fn nearest(edges: &[Edge], a: usize, pre: usize, ok: &dyn Fn(&Edge) -> bool, fits: &dyn Fn(f64) -> bool) -> Option<Edge> {
+    let d = |e: &Edge| (a as f64 + e.t - pre as f64).abs();
+    edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied()
+}
+
+/// The refinement of a filtered trigger path (AC or LF-reject coupling, docs/fork/ac-trig.md): the edge nearest `pre`
+/// within the near window only (`near_window`: `NEAR_COLS` columns plus `NEAR_PAD` samples, at most `span`), None
+/// without one, never the wide search. The software level (frame mean) only approximates the high-pass the hardware
+/// comparators see, so an edge farther away is a crossing the hardware did not trigger on; the hardware point stands.
+/// `v` holds samples `base..` of a frame of `len` samples and covers `near_window(pre, len, l)`. Returns the edge and
+/// the nearest edge of either direction, as `edge_smooth`.
+#[allow(clippy::too_many_arguments)]
+pub fn edge_near(v: &[f32], base: usize, len: usize, pre: usize, level: f32, hyst: f32, rising: bool, either: bool, span: usize, l: usize) -> (Option<f64>, Option<Edge>) {
+    let l = l.max(1);
+    let near = (NEAR_COLS * l + NEAR_PAD).min(span);
+    let Some((a, s)) = smoothed(v, base, len, pre, near, l, level) else { return (None, None) };
+    let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
+    let all = |_: f64| true;
+    let want = nearest(&edges, a, pre, &|e| either || e.rising == rising, &all).map(|e| a as f64 + e.t);
+    (want, nearest(&edges, a, pre, &|_| true, &all).map(|e| Edge { t: a as f64 + e.t, ..e }))
 }
 
 /// The samples around `pre` (+-`span`, plus `l` for the average) smoothed by a centred moving average of `l` samples,
@@ -223,6 +246,42 @@ mod tests {
             assert!(near_only(&v, 0, v.len(), pre, 0.0, 0.3, true, true, NEAR_COLS + NEAR_PAD, 1, &|_| true).is_none());
             assert!(same(wide, edge_smooth_near(&v, pre, 0.0, 0.3, true, true, 4000, 1, |_| true)));
         }
+    }
+
+    // Break it catches (`edge_near`, AC and LF-reject trigger coupling): an edge outside the near window (a crossing
+    // the hardware did not trigger on), another edge than the nearest within it, or another answer from the window the
+    // codes path decodes than from the whole frame.
+    #[test]
+    fn filtered_path_answers_from_the_near_window_only() {
+        let (mut cases, mut found) = (0, 0);
+        for (name, v) in corpus() {
+            for pre in (300..v.len() - 300).step_by(1733) {
+                for (l, span) in [(1, 600), (4, 2000), (16, 9000), (62, 19_000)] {
+                    let near = (NEAR_COLS * l + NEAR_PAD).min(span);
+                    let (a, b) = near_window(pre, v.len(), l);
+                    for hyst in [0.0f32, 0.06, 0.3] {
+                        for level in [0.0f32, 0.3, -0.97] {
+                            for (rising, either) in [(true, false), (false, false), (true, true)] {
+                                let r = edge_near(&v, 0, v.len(), pre, level, hyst, rising, either, span, l);
+                                let what = format!("{} pre {} l {} hyst {} level {} {:?}/{}", name, pre, l, hyst, level, rising, either);
+                                assert!(same(r, edge_smooth(&v, pre, level, hyst, rising, either, near, l, |_| true)), "{}: {:?}", what, r);
+                                assert!(same(r, edge_near(&v[a..b], a, v.len(), pre, level, hyst, rising, either, span, l)), "{}: window", what);
+                                if let Some(t) = r.0 {
+                                    assert!((t - pre as f64).abs() <= (near + l) as f64, "{}: {} from pre", what, t - pre as f64);
+                                    found += 1;
+                                }
+                                cases += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cases > 5000 && found * 10 > cases, "{} cases, {} edges", cases, found);
+        // the case it is for: one edge, far from the hardware point; the wide search finds it, the filtered path not
+        let far: Vec<f32> = (0..40_000).map(|k| if k < 30_000 { -1.0 } else { 1.0 }).collect();
+        assert!(edge_smooth_near(&far, 20_000, 0.0, 0.1, true, false, 19_000, 16, |_| true).0.is_some_and(|t| (t - 30_000.0).abs() < 1.0));
+        assert!(same(edge_near(&far, 0, far.len(), 20_000, 0.0, 0.1, true, false, 19_000, 16), (None, None)));
     }
 
     /// Reference timing (run with --ignored --nocapture): near-first vs the wide search at 12.5 k and 100 k points with

@@ -13,11 +13,17 @@ use std::sync::Arc;
 /// trigger.md 2.5; the frame holds the signal as the channel's own coupling gives it). At most 4096 samples of the
 /// frame enter the mean.
 pub fn sw_trig_level(m: &Model, f: &Frame) -> f32 {
+    let v = &f.ch[m.trig_src.min(NCH - 1)];
+    sw_trig_level_of(m, v.len(), |i| v[i])
+}
+
+/// `sw_trig_level` of a source of `len` samples read through `at` (the codes path reads the words): the same samples
+/// in the same order, so the same level.
+pub fn sw_trig_level_of(m: &Model, len: usize, at: impl Fn(usize) -> f32) -> f32 {
     match m.trig_coupling() {
         TrigCoup::Ac | TrigCoup::LfReject => {
-            let v = &f.ch[m.trig_src.min(NCH - 1)];
-            let step = (v.len() / 4096).max(1);
-            let (sum, n) = v.iter().step_by(step).filter(|y| y.is_finite()).fold((0.0f64, 0u32), |(s, n), &y| (s + y as f64, n + 1));
+            let step = (len / 4096).max(1);
+            let (sum, n) = (0..len).step_by(step).map(at).filter(|y| y.is_finite()).fold((0.0f64, 0u32), |(s, n), y| (s + y as f64, n + 1));
             m.trig_level + if n > 0 { (sum / n as f64) as f32 } else { 0.0 }
         }
         TrigCoup::Dc | TrigCoup::HfReject => m.trig_level,

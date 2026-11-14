@@ -40,6 +40,10 @@ DC and HF-reject coupling keep the near-then-wide search unchanged. In setup B t
 
 ## Status
 
-- Done: counters (1).
-- In progress: filtered path near-only and on the codes path (2, 3).
+- Done: counters (1), commit "Count per-frame decode, level and trigger search time".
+- Done: filtered path near-only and on the codes path (2, 3) with host tests. The filtered refinement equals
+  `edge_smooth` limited to the near window and stays within it, from the whole frame and from the decoded window
+  alike. A frame with only a far edge is drawn at the hardware point with AC and LF reject, and at the far edge with
+  DC and HF reject. The DC refinement equals `trignear::edge_smooth_near`. The codes path equals the decode path for
+  AC and LF reject. The perf guard includes an AC frame (host: 0.72 of decode + draw).
 - Next: unit before/after (4) when the scope is free.

@@ -1133,11 +1133,16 @@ fn screen_window(s: &Settings, p: &hz::Params) -> Option<(u32, i64)> {
 
 /// `screen_window` for windows of fewer than `cap` points.
 fn window_below(s: &Settings, p: &hz::Params, cap: i64) -> Option<(u32, i64)> {
+    let screen = (s.tdiv * 10.0 * p.rate as f64).ceil() as i64;
+    window_with(s, p, cap, (screen / 4).max(4096))
+}
+
+/// The screen and `margin` points each side (at least 4096 around the trigger), fewer than `cap` points.
+fn window_with(s: &Settings, p: &hz::Params, cap: i64, margin: i64) -> Option<(u32, i64)> {
     if s.la.is_some() || p.rate == 0 {
         return None;
     }
     let screen = (s.tdiv * 10.0 * p.rate as f64).ceil() as i64;
-    let margin = (screen / 4).max(4096);
     let (mem, pre, mid) = (p.memsel as i64, p.pre as i64, p.memsel as i64 / 2);
     // a multiple of 8 points like the stock TX length, inside the record
     let lo = ((mid - screen / 2 - margin).min(pre - 4096).max(0)) / 8 * 8;
@@ -1181,8 +1186,11 @@ fn deep_raw_settings(b: &Settings, p: &hz::Params) -> Option<Settings> {
         return None;
     }
     let cap = (crate::deepmeas::MAX_BYTES / (2 * p.ratio.max(1) as usize)) as i64 + 1;
-    // the whole record when the window would reach past it (`window_below` refuses a window beyond the end)
-    let w = window_below(b, p, cap).or_else(|| ((p.memsel as i64) < cap && b.la.is_none()).then(|| (p.memsel, -(p.pre as i64))))?;
+    // the whole record when the window would reach past it (`window_below` refuses a window beyond the end); else
+    // narrower margins, down to 4096 points (two lanes at 10 M, 1 ms/div: the quarter-screen margins made 37.5 MB)
+    let screen = (b.tdiv * 10.0 * p.rate as f64).ceil() as i64;
+    let narrow = || window_with(b, p, cap, ((cap - screen) / 2 - 16).max(0)).filter(|_| (cap - screen) / 2 - 16 >= 4096);
+    let w = window_below(b, p, cap).or_else(|| ((p.memsel as i64) < cap && b.la.is_none()).then(|| (p.memsel, -(p.pre as i64)))).or_else(narrow)?;
     Some(oos_hal::dho::seq::raw_settings(&Settings { window: Some(w), ..b.clone() }))
 }
 
@@ -1919,7 +1927,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     };
                     // deep record and mean-type measurements wanted: the screen window of the newest frame raw, at most
                     // once per deepmeas::PERIOD while running (deepmeas.rs)
-                    let deep_want = out.lock().unwrap().deep_raw;
+                    let deep_want = {
+                        let mut g = out.lock().unwrap();
+                        g.deep_ok = deep_raw_settings(&b, &p).is_some();
+                        g.deep_raw
+                    };
                     let deep = deep_want.filter(|w| count > 0 && crate::deepmeas::due(*w, deep_last, std::time::Instant::now())).and_then(|_| deep_raw_settings(&b, &p));
                     let raw_frame = match deep {
                         Some(ds) if raw_frame.is_none() => {
@@ -2840,6 +2852,78 @@ mod tests {
     // Break it catches: live compression where the model needs every sample, a factor that leaves fewer than two
     // pairs per column, compression above 1 M points (the deep-memory read), a batch that does not grow with it.
     #[test]
+    // Break it catches, end to end on the host (unit 2026-11-14): 10 M at 1 ms/div, CH2 alone, Vavg on CH2. The pair
+    // frames of the batch hold the measurement, the raw screen window the plan reads gives it; without a planned window
+    // the UI held for a raw record that never came and showed `----`.
+    fn deep_record_gives_vavg_from_the_raw_window() {
+        use crate::wave::Source;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = crate::ui::Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let m = &mut ui.m;
+        m.run = RunState::Run;
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        for c in 0..NCH {
+            m.ch[c].on = c == 1;
+        }
+        m.meas = vec![(Meas::Vavg, 1)];
+        let s = settings(&ui.m, false);
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
+        let b = batch_plan(&s, &p);
+        let d = deep_raw_settings(&b, &p).expect("a raw window for CH2 at 10 M");
+        // what the acquisition thread publishes with the batch
+        shared.lock().unwrap().deep_ok = true;
+        let pairs = decode(&vec![0x5au8; oos_hal::dho::seq::frame_bytes(&b, &p)], &b, &p, 1);
+        let raw = decode(&vec![0x5au8; oos_hal::dho::seq::frame_bytes(&d, &p)], &d, &p, 2);
+        assert!(crate::deepmeas::deep_pairs(&pairs) && crate::deepmeas::deep_raw_frame(&raw));
+        let level = raw.ch[1][raw.pre] as f64;
+        let step = |ui: &mut crate::ui::Ui, f: Frame| {
+            shared.lock().unwrap().queue.push_back(f);
+            for _ in 0..3 {
+                ui.step(0.02);
+            }
+        };
+        step(&mut ui, pairs.clone());
+        assert!(ui.meas(1, Meas::Vavg).is_nan(), "pairs alone: no mean");
+        step(&mut ui, raw);
+        let v = ui.meas(1, Meas::Vavg);
+        assert!((v - level).abs() < 1e-6, "Vavg {} of the raw window, level {}", v, level);
+        // the pair frames after it keep the raw value
+        step(&mut ui, pairs);
+        assert_eq!(ui.meas(1, Meas::Vavg), v);
+        crate::deepmeas::force(None);
+    }
+
+    #[test]
+    // Break it catches (unit 2026-11-14, CH2 Vavg `----` at 10 M, 1 ms/div): no raw window planned for two lanes (the
+    // trigger source CH1 is acquired with CH2), so `deepmeas::hold` waited for a raw record that never came. Every
+    // channel set at 10 M and 1 ms/div now gets a window that holds the screen and the trigger, within MAX_BYTES.
+    fn deep_raw_window_for_one_and_two_lanes_at_10m() {
+        for chans in [vec![0usize], vec![1], vec![0, 1], vec![2, 3]] {
+            let mut m = Model::default();
+            m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+            m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+            for c in 0..NCH {
+                m.ch[c].on = chans.contains(&c);
+            }
+            let s = settings(&m, false);
+            let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
+            let b = batch_plan(&s, &p);
+            assert!(b.compress > 1, "{:?}: a deep record through the compression", chans);
+            let d = deep_raw_settings(&b, &p).unwrap_or_else(|| panic!("{:?}: no raw window (ratio {})", chans, p.ratio));
+            let (n, off) = d.window.unwrap();
+            let screen = (s.tdiv * 10.0 * p.rate as f64).ceil() as i64;
+            // the screen around the middle of the record and the trigger point are inside, the bytes fit
+            let (lo, hi) = (p.pre as i64 + off, p.pre as i64 + off + n as i64);
+            let mid = p.memsel as i64 / 2;
+            assert!(lo <= mid - screen / 2 && hi >= mid + screen / 2 && lo <= p.pre as i64 && hi > p.pre as i64, "{:?}: window {} + {}", chans, lo, n);
+            let bytes = oos_hal::dho::seq::frame_bytes(&d, &p);
+            assert!(bytes <= crate::deepmeas::MAX_BYTES, "{:?}: {} bytes, {} points x {} lanes", chans, bytes, n, p.ratio);
+        }
+    }
+
+    #[test]
     // Break it catches (docs/fork/display.md): Auto marking samples, or drawing dots, on a compressed record. The
     // compression starts at 2 x POINTS_PER_COLUMN samples per column, Auto's marks at MARK_SPACING_PX pixels per sample.
     fn auto_dots_never_meet_the_live_compression() {
@@ -3063,8 +3147,9 @@ mod tests {
         // the decoded frame is raw and knows its trigger point
         let f = decode(&vec![0u8; bytes], &d, &p, 1);
         assert!(!f.envelope && f.ch[0].len() == n as usize && f.pre == (p.pre - start) as usize);
-        // 2 channels at 10 M: 40 MB, beyond the budget
-        assert!(plan(1e-3, 10_000_000, true).2.is_none());
+        // 2 channels at 10 M: the quarter-screen margins made 37.5 MB; narrower margins fit the budget
+        let (_, p2, d2) = plan(1e-3, 10_000_000, true);
+        assert!(oos_hal::dho::seq::frame_bytes(&d2.expect("narrow window"), &p2) <= crate::deepmeas::MAX_BYTES);
         // 25 M at 2 ms/div: 50 MB
         assert!(plan(2e-3, 25_000_000, false).2.is_none());
         // a deep record at a short time base is read raw already (screen window), 1 M is the live path

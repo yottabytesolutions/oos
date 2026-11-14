@@ -95,6 +95,32 @@ Probe on the 1 kHz compensation output, CH1, 1 V/div. Baseline first without the
 
 Record the results here and in `docs/fork/unit-dho804.md`.
 
+## Two lanes and the hold (2026-11-14)
+
+Unit round on a1ef5ea: 1 ms/div, 10 M, `:MEASure:ITEM VAVG,CHANnel2` showed `----` (9.9E37) for good. CH2 alone is
+acquired on two lanes (ratio 2, the trigger source CH1 with it). The screen window with quarter-screen margins was
+9.4 M points x 2 lanes x 2 bytes = 37.5 MB, above `MAX_BYTES`, so `deep_raw_settings` planned no raw read. The UI's
+own estimate (`fits`) counted only the shown channels (one) and held the measurement for a raw record that never
+came. This predates 1a0e4a2, which only changed how the raw window is drawn.
+
+Fix:
+
+- `deep_raw_settings` narrows the margins, down to 4096 points, when the quarter-screen ones do not fit. Two lanes
+  at 10 M and 1 ms/div now read about 6.3 M points.
+- The acquisition publishes whether its plan reads the raw window (`Shared::deep_ok`). `deepmeas::hold` follows
+  that and no longer estimates for itself.
+
+Host tests: `hw::tests::deep_raw_window_for_one_and_two_lanes_at_10m` and
+`hw::tests::deep_record_gives_vavg_from_the_raw_window` (end to end: pair frames, then the raw window, Vavg equal to
+its level). Both fail without the narrow window. Mean-type values at 10 M still need `meas.deep_raw = on` in
+/oos/system.conf. The unit default (`rootfs/unit/dho804/system.conf`) does not set it.
+
+The `measured` counter of `:SYSTem:STATe?` is wired. It counts only the frames that the batch pipeline's workers fold
+into the statistics (`framestats::fold_frame`, the cheap measurements, `acq.pipeline = batch` on the unit). At 1 ms/div
+every depth gives pair frames: live compression up to 1 M, the FPGA compression above. `fold_frame` skips pairs, and
+the UI measures the raw records itself without counting them. So 0 is expected there. It counts at time bases
+without compression and with frames to spare for the workers, for example 1 us/div with Vavg on.
+
 ## Risks
 
 - Replay of a deep frame after a compressed read is not shown on the unit (step 4 decides); a wrong window would put

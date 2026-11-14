@@ -364,6 +364,9 @@ pub struct Shared {
     pub needs_raw: bool,
     /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
     pub deep_raw: Option<crate::deepmeas::Want>,
+    /// the batch plan can read the raw screen window of its deep records (`hw::deep_raw_settings`): the only judge of
+    /// whether a raw record will come, which `deepmeas::hold` waits for
+    pub deep_ok: bool,
     /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading
     pub mask_want: Option<MaskWant>,
     pub mask: Option<MaskRead>,

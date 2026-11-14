@@ -454,6 +454,14 @@ impl Source {
     /// The generator settings for the hardware thread: every step, the output must follow also while stopped.
     /// Readers of the records that only the UI knows of (protocol watch, XY) for the hardware thread
     /// (`Shared::needs_raw`: no live compression).
+    /// The acquisition can read deep records raw for the measurements (`Shared::deep_ok`); false for other sources.
+    pub fn hw_deep_ok(&self) -> bool {
+        match self {
+            Source::Hw { shared, .. } => shared.lock().unwrap().deep_ok,
+            _ => false,
+        }
+    }
+
     pub fn hw_needs_raw(&self, on: bool) {
         if let Source::Hw { shared, .. } = self {
             shared.lock().unwrap().needs_raw = on;

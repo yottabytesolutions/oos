@@ -2005,7 +2005,7 @@ impl Ui {
             // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
             // measurement stays that of the last raw record
             let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
-            let hold = crate::deepmeas::hold(&self.m, shown) || crate::compress::hold(&self.m, shown);
+            let hold = crate::deepmeas::hold(&self.m, shown, self.src.hw_deep_ok()) || crate::compress::hold(&self.m, shown);
             if got > 0 {
                 let p0 = std::time::Instant::now();
                 if hold {
@@ -4435,7 +4435,7 @@ impl Ui {
         let pending = self.meas_pending.take();
         let Some(rec) = pending.as_ref().or(self.last[0].as_ref()) else { return };
         // a held pair record (deepmeas.rs) is never measured: the measurement stays that of the last raw one
-        if crate::deepmeas::hold(&self.m, rec.raw.as_ref().map(|r| &*r.frame)) {
+        if crate::deepmeas::hold(&self.m, rec.raw.as_ref().map(|r| &*r.frame), self.src.hw_deep_ok()) {
             return;
         }
         let env: [bool; NCH] = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
@@ -7875,6 +7875,8 @@ mod tests {
         use super::*;
         crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
+        // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
+        shared.lock().unwrap().deep_ok = true;
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.measure_in_background();
         ui.m.run = RunState::Run;
@@ -8103,6 +8105,8 @@ mod tests {
         use super::*;
         crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
+        // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
+        shared.lock().unwrap().deep_ok = true;
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
         for c in 1..NCH {

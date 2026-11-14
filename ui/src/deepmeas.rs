@@ -73,21 +73,13 @@ pub fn deep_raw_frame(f: &Frame) -> bool {
     !f.envelope && !f.roll && !f.scan && f.acq.1 > crate::compress::MAX_DEPTH as usize
 }
 
-/// Points of the raw screen window `hw` reads for a deep record (screen and a quarter screen each side, at least 4096
-/// points, within the record), and whether its `channels` fit `MAX_BYTES`.
-pub fn fits(rate: f64, tdiv: f64, memsel: usize, channels: usize) -> bool {
-    let screen = (tdiv * HDIV as f64 * rate).ceil() as usize;
-    let n = (screen + 2 * (screen / 4).max(4096)).min(memsel);
-    2 * n * channels.max(1) <= MAX_BYTES
-}
-
-/// Whether the UI leaves the newest record unmeasured: raw deep reads are asked for and running, and the record is
-/// of min/max pairs whose screen window a raw read can hold. The measurement shown then stays that of the last raw
-/// record (at most about `PERIOD` old).
-pub fn hold(m: &Model, f: Option<&Frame>) -> bool {
-    let Some(f) = f.filter(|f| deep_pairs(f)) else { return false };
-    let channels = f.ch.iter().filter(|v| !v.is_empty()).count();
-    m.run == RunState::Run && want(m).is_some_and(|w| !w.every) && fits(f.acq.0, m.hw_time_per_div() as f64, f.acq.1, channels)
+/// Whether the UI leaves the newest record unmeasured: raw deep reads are asked for and running, the record is of
+/// min/max pairs, and the acquisition's plan reads their screen window raw (`planned`, `Shared::deep_ok`). The
+/// measurement shown then stays that of the last raw record (at most about `PERIOD` old). The plan judges, not an
+/// estimate here: the UI counted the channels it shows, the read counts the lanes acquired (a trigger source among
+/// them), and at 10 M, 1 ms/div, CH2 the UI held for a raw record the plan never read (unit 2026-11-14).
+pub fn hold(m: &Model, f: Option<&Frame>, planned: bool) -> bool {
+    f.is_some_and(deep_pairs) && planned && m.run == RunState::Run && want(m).is_some_and(|w| !w.every)
 }
 
 /// The acquisition thread's rate limit: a raw deep read is due for every batch with `every`, else when `PERIOD` has
@@ -137,33 +129,18 @@ mod tests {
         m.ch[0].on = true;
         m.meas = vec![(Meas::Vrms, 0)];
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
-        // 10 M at 1 ms/div: the 10 M record is the window, 20 MB
-        assert!(hold(&m, Some(&deep(true))));
-        assert!(!hold(&m, Some(&deep(false))), "a raw record is measured");
-        assert!(!hold(&m, Some(&Frame { acq: (1.25e9, 1_000_000), ..deep(true) })), "live compression: the newest frame is raw anyway");
-        assert!(!hold(&m, None));
+        // a deep record the plan reads raw (`Shared::deep_ok`)
+        assert!(hold(&m, Some(&deep(true)), true));
+        assert!(!hold(&m, Some(&deep(true)), false), "no raw read planned: the pair measurement stays");
+        assert!(!hold(&m, Some(&deep(false)), true), "a raw record is measured");
+        assert!(!hold(&m, Some(&Frame { acq: (1.25e9, 1_000_000), ..deep(true) }), true), "live compression: the newest frame is raw anyway");
+        assert!(!hold(&m, None, true));
         m.run = RunState::Stop;
-        assert!(!hold(&m, Some(&deep(true))));
+        assert!(!hold(&m, Some(&deep(true)), true));
         m.run = RunState::Run;
         m.trig_mode = TrigMode::Single;
-        assert!(!hold(&m, Some(&deep(true))), "Single: every batch is read raw");
+        assert!(!hold(&m, Some(&deep(true)), true), "Single: every batch is read raw");
         m.trig_mode = TrigMode::Auto;
-        // 125 M: 250 MB, beyond the budget: the pair measurement stays
-        assert!(!hold(&m, Some(&Frame { acq: (1.25e9, 125_000_000), ..deep(true) })));
         force(None);
-    }
-
-    #[test]
-    fn budget_and_rate() {
-        assert!(fits(1.25e9, 1e-3, 10_000_000, 1));
-        assert!(!fits(1.25e9, 1e-3, 10_000_000, 2));
-        assert!(fits(625e6, 1e-3, 5_000_000, 2));
-        assert!(!fits(1.25e9, 10e-3, 125_000_000, 1));
-        let t = std::time::Instant::now();
-        let w = Want { every: false };
-        assert!(due(w, None, t));
-        assert!(!due(w, Some(t), t + std::time::Duration::from_millis(999)));
-        assert!(due(w, Some(t), t + PERIOD));
-        assert!(due(Want { every: true }, Some(t), t));
     }
 }

@@ -191,6 +191,11 @@ Every frame contributes a known weight per screen column (w = 24 in lines), what
 same. A view change while stopped (time base, offset, zoom) replaces the maps with `last[0]` drawn once at W = w.
 History and segment replay do the same for the record they show. Today's 24 x 6 redraw on every step goes.
 
+With persistence above Min, the frozen accumulated picture is in pixels of the old mapping and cannot be re-mapped.
+On the first view change while stopped it is dropped and replaced by `last[0]` drawn once. That is a behaviour
+change: today the redraw also loses it, and scopes that keep a persisted picture across a STOP rescale do not exist
+here. State it in the user notes.
+
 **Persistence changes.** A change between Min and a decay setting, or between decay settings, clears the maps and W
 and starts from `last[0]` drawn once (the preview of 3.5).
 
@@ -203,6 +208,10 @@ shows would blank for the whole spin. So:
   takes the batch's `Settings`; `draw_frame_codes` takes its `code_map`). Its samples are volts at times relative
   to its trigger point. So a frame drawn under a newer display mapping is placed correctly: an old V/div, offset or
   time base frame lands where its signal belongs, only its clip range or window width differs.
+- **The batch carries its acquisition snapshot** for the trigger refinement: trigger source, level, slope,
+  coupling, noise reject and the source's V/div (for the hysteresis). A frame kept across a level change is refined
+  against the level it was acquired at. It never reads the live `Model`, which today's `draw_frame` does through the
+  `View`.
 - **The mapping key** is what turns volts and times into pixels: time base, delay, V/div, offset, channel set, dots,
   zoom, size. It is fixed per batch at its first claim (the batch keeps the `View` it was first drawn under, so all
   its shares share one mapping). A published batch of another mapping key is dropped by the UI (pixels in the wrong
@@ -306,7 +315,7 @@ Each in lines and dots; persistence Min, and 500 ms and 10 s at probe comp 200 u
 | empty pictures | <= 1 % (same condition), also at 5.1 V after step 8 | pacing line |
 | picture steadiness | 20 screenshots: trace pixel count std <= 2 %, mean brightness std <= 2 % | `shotstats.py trace` |
 | input to photon per knob | preview <= 1 step; first batch under the new mapping <= 70 ms; new configuration <= configured + 100 ms | pacing settle fields, new `preview` and `age` fields |
-| continuous spin | 2 s spin of offset, trigger level and time base: no picture older than 150 ms, no frozen or blank trace | pacing `age` (newest frame in the picture) p100; screenshots every step |
+| continuous spin | 2 s spin of offset, trigger level and time base: no picture older than 150 ms; never an empty trace area for more than one step; no frozen trace | pacing `age` (newest frame in the picture) p100; screenshots every step |
 | RUN/STOP/RUN, Single | brightness of the stopped picture within 3 % of the live one | screenshots |
 | history replay | equal to the live picture of the same record (3 %) | screenshots |
 | rare-pixel retention | a pixel hit once stays visible >= tau at 500 ms and 10 s | host test; probe comp single-shot screenshots |
@@ -330,7 +339,7 @@ system.conf for A/B on the unit; step 9 removes the flag and the old code after 
 | 3 | One lines kernel: spans for raw, codes, pairs, records (`draw_ex` lines; Z keeps its drawing; sparse per 3.3); behind `draw.model` | 4 | `pair_raw_mix_report` and `depth_mix_report` x1.000; record-path pictures alone within 3 % | screenshot pairs old/new per mode for the user's eye | `draw_ex` segment joining for lines (after step 9), deep-raw branch in `draw_frame` |
 | 4 | Dots: one count per sample, W_frame = samples per column | 2.5 | dots brightness within 3 % across raw/record frames; no dot lost at 100 samples per column over 40 rows | dots set | none |
 | 5 | `BatchUnit`: shares published together, row bounds; newest frame drawn by the pipe; route C gone; frames mode (default) makes each step's queued frames one batch | 2.5 | every merged picture holds whole batches; the newest frame in the same merge; frames and batch mode give the same picture | stress set, `partial` 0 | `Acc` lists, `Tally`, `Deliver`, `MERGE_WAIT_MAX`, the early `help_done` (the loop-end one stays), the `fast_ok` frame branch in `Ui::step` |
-| 6 | Grading and records together: window at Min (C or A per the user), u32 decay above, STOP freeze, persistence change; routes E/F as pseudo-batches with W; zoom and colour grade on W; GPU gets W as vmax. Behind `draw.model` | 4 | brightness within 3 % for 1..27 frames per picture; band pixel count within 2 % for 13/27 alternating; window age <= 67 ms; single hit visible >= tau at 500 ms and 10 s; stopped picture constant over 100 steps; replay equals live; zoom brightness equals main; `gpu/test-host.sh` 0 differ | full acceptance set, screenshot pairs per mode | `picture_ref`, `per_frame*`, `pic_frames`, `vmax` follow, 24 x 6 redraw (after step 9) |
+| 6 | Grading and records together: window at Min (C or A per the user), u32 decay above, STOP freeze, persistence change; routes E/F as pseudo-batches with W; zoom and colour grade on W; GPU gets W as vmax. Behind `draw.model` | 4 | brightness within 3 % for 1..27 frames per picture; band pixel count within 2 % for 13/27 alternating; window age <= 67 ms; a drop from 27 to 1 frame per step leaves no batch older than the cap in the picture; single hit visible >= tau at 500 ms and 10 s; stopped picture constant over 100 steps; replay equals live; zoom brightness equals main; `gpu/test-host.sh` 0 differ | full acceptance set, screenshot pairs per mode | `picture_ref`, `per_frame*`, `pic_frames`, `vmax` follow, 24 x 6 redraw (after step 9) |
 | 7 | (cut: GPU needs no change, vmax = W, folded into 6) | 0 | | | |
 | 8 | Sparse-event pacing: fill shortened when rest + fill exceeds a frame | 1.5 | Fill plan with rest 24 ms yields a batch every <= 33.3 ms in the pacing tests | setup B at 5.1 V: empty <= 1 % | none |
 | 9 | Acceptance, then remove `draw.model` and the old paths | 1 | full suites | full acceptance set | the old kernels and grade |

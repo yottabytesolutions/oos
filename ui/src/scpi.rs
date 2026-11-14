@@ -5,7 +5,8 @@
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|VERNier|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
 //! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:RS232|SPI|IIC:* (protocol trigger, scpi/ser.rs), :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
-//! :MEASure:ITEM? <item>[,CHANn], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
+//! :MEASure:ITEM[?] <item>[,CHANn[,CHANm]], :MEASure:CLEar ALL|ITEM<n>, :MEASure:STATistic:DISPlay ON|OFF, :MEASure:STATistic:RESet,
+//! :MEASure:STATistic:ITEM? MAXimum|MINimum|CURRent|AVERages|DEViation|CNT,<item>[,CHANn[,CHANm]], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
 //! :COUNter:ENABle|SOURce|MODE FREQuency|PERiod|TOTalize|NDIGits 3..6, :COUNter:CURRent?, :COUNter:TOTalize:CLEar,
 //! :ACQuire:TYPE NORMal|PEAK|AVERages|HRESolution, :ACQuire:AVERages <n> (2..1024, powers of two),
@@ -77,6 +78,93 @@ pub struct Scpi {
 }
 
 /// SCPI keyword match: the long form or its short form (the upper-case part), case-insensitive.
+/// A measurement of the Measure list: one channel, or a delay / phase (`ui::tools::PAIRS` index) from channel A to B.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MeasSel {
+    One(Meas, usize),
+    Pair(usize, usize, usize),
+}
+
+/// The statistics `:MEASure:STATistic:ITEM?` reads.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MeasStat {
+    Max,
+    Min,
+    Current,
+    Mean,
+    Dev,
+    Count,
+}
+
+/// `<item>[,CHANn[,CHANm]]` of :MEASure (the stock programming guide's item names): one channel (CH1 when none is
+/// given), or a delay / phase from channel n to m. None for an item OOS does not measure, a bad or missing source,
+/// or a pair on one channel (the Measure menu refuses that too).
+fn meas_item(arg: &str) -> Option<MeasSel> {
+    const ONE: [(&str, Meas); 32] = [
+        ("VMAX", Meas::Vmax),
+        ("VMIN", Meas::Vmin),
+        ("VPP", Meas::Vpp),
+        ("VTOP", Meas::Vtop),
+        ("VBASe", Meas::Vbase),
+        ("VAMP", Meas::Vamp),
+        ("VAVG", Meas::Vavg),
+        ("VRMS", Meas::Vrms),
+        ("OVERshoot", Meas::Overshoot),
+        ("PREShoot", Meas::Preshoot),
+        ("MARea", Meas::Area),
+        ("MPARea", Meas::AreaCyc),
+        ("PERiod", Meas::Period),
+        ("FREQuency", Meas::Freq),
+        ("RTIMe", Meas::Rise),
+        ("FTIMe", Meas::Fall),
+        ("PWIDth", Meas::PWidth),
+        ("NWIDth", Meas::NWidth),
+        ("PDUTy", Meas::PDuty),
+        ("NDUTy", Meas::NDuty),
+        ("TVMax", Meas::TVmax),
+        ("TVMin", Meas::TVmin),
+        ("PSLewrate", Meas::PSlew),
+        ("NSLewrate", Meas::NSlew),
+        ("VUPPer", Meas::Vupper),
+        ("VMID", Meas::Vmid),
+        ("VLOWer", Meas::Vlower),
+        ("PVRMs", Meas::VrmsCyc),
+        ("PPULses", Meas::PPulses),
+        ("NPULses", Meas::NPulses),
+        ("PEDGes", Meas::PEdges),
+        ("NEDGes", Meas::NEdges),
+    ];
+    // index into the Measure menu's delay / phase list (`ui::tools::PAIRS`)
+    const PAIR: [(&str, usize); 8] = [
+        ("RRDelay", 0),
+        ("FFDelay", 1),
+        ("RFDelay", 2),
+        ("FRDelay", 3),
+        ("RRPHase", 4),
+        ("FFPHase", 5),
+        ("RFPHase", 6),
+        ("FRPHase", 7),
+    ];
+    let mut parts = arg.split(',').map(str::trim);
+    let item = parts.next().unwrap_or("");
+    let src: Vec<&str> = parts.collect();
+    if let Some(&(_, k)) = ONE.iter().find(|(w, _)| kw(item, w)) {
+        let c = match src.first() {
+            Some(s) => parse_ch(s)?,
+            None => 0,
+        };
+        return (src.len() <= 1).then_some(MeasSel::One(k, c));
+    }
+    let &(_, k) = PAIR.iter().find(|(w, _)| kw(item, w))?;
+    match src[..] {
+        [a, b] => {
+            let (a, b) = (parse_ch(a)?, parse_ch(b)?);
+            (a != b).then_some(MeasSel::Pair(k, a, b))
+        }
+        _ => None,
+    }
+}
+
 fn kw(tok: &str, long: &str) -> bool {
     let t = tok.to_ascii_uppercase();
     let short: String = long.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect();
@@ -663,36 +751,8 @@ impl Scpi {
             ui.counter_reset();
             return None;
         }
-        if kw(n0, "MEASure") && nodes.len() == 2 && kw(nodes[1], "ITEM") && query {
-            let mut parts = arg.split(',');
-            let item = parts.next().unwrap_or("").trim().to_ascii_uppercase();
-            let c = parts.next().and_then(parse_ch).unwrap_or(0);
-            let k = match item.as_str() {
-                "VPP" => Meas::Vpp,
-                "VMAX" => Meas::Vmax,
-                "VMIN" => Meas::Vmin,
-                "VAVG" => Meas::Vavg,
-                "VRMS" => Meas::Vrms,
-                "VAMP" => Meas::Vamp,
-                "FREQ" | "FREQUENCY" => Meas::Freq,
-                "PER" | "PERIOD" => Meas::Period,
-                "RTIM" | "RTIME" => Meas::Rise,
-                "FTIM" | "FTIME" => Meas::Fall,
-                "PWID" | "PWIDTH" => Meas::PWidth,
-                "PDUT" | "PDUTY" => Meas::PDuty,
-                "NDUT" | "NDUTY" => Meas::NDuty,
-                "NWID" | "NWIDTH" => Meas::NWidth,
-                "VTOP" => Meas::Vtop,
-                "VBAS" | "VBASE" => Meas::Vbase,
-                "OVER" | "OVERSHOOT" => Meas::Overshoot,
-                "PRES" | "PRESHOOT" => Meas::Preshoot,
-                _ => {
-                    self.err.push("-224,\"Illegal parameter value\"".into());
-                    return t("9.9E37");
-                }
-            };
-            let v = ui.meas(c, k);
-            return t(&if v.is_finite() { e(v) } else { "9.9E37".into() });
+        if kw(n0, "MEASure") && nodes.len() >= 2 {
+            return self.meas_cmd(ui, &nodes[1..], query, arg);
         }
         if kw(n0, "WAVeform") && nodes.len() == 2 {
             let n1 = nodes[1];
@@ -1111,6 +1171,80 @@ impl Scpi {
     /// `:LA:...` (Rigol's names where they exist): state, lines shown, pod thresholds, and the record of the last
     /// acquisition: `:LA:DATA?` is an IEEE block of u16 words, little endian, bit n = Dn, sample k at
     /// t0 + k dt from `:LA:PREamble?` (points,dt,t0).
+    /// :MEASure:ITEM, :CLEar, :STATistic:DISPlay|RESet|ITEM? (the stock programming guide's names; items as in
+    /// `meas_item`). The list follows the Measure menu's rules (`MEAS_MAX` rows, the oldest goes, no duplicates).
+    fn meas_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
+        let t = |s: &str| Some(s.as_bytes().to_vec());
+        let num = |v: Option<f64>| t(&v.filter(|v| v.is_finite()).map_or("9.9E37".into(), e));
+        let bad = "-224,\"Illegal parameter value\"";
+        if n.len() == 1 && kw(n[0], "ITEM") {
+            let Some(sel) = meas_item(arg) else {
+                self.err.push(format!("{} {}", bad, arg));
+                return if query { t("9.9E37") } else { None };
+            };
+            if !query {
+                ui.meas_scpi_add(sel);
+                return None;
+            }
+            return num(Some(match sel {
+                MeasSel::One(k, c) => ui.meas(c, k),
+                MeasSel::Pair(k, a, b) => ui.meas_pair(k, a, b),
+            }));
+        }
+        if n.len() == 1 && kw(n[0], "CLEar") && !query {
+            let a = arg.trim();
+            let (k, i) = suffix(a);
+            let ok = if kw(a, "ALL") {
+                ui.meas_scpi_clear(None)
+            } else {
+                kw(k, "ITEM") && i.is_some_and(|i| i >= 1 && ui.meas_scpi_clear(Some(i - 1)))
+            };
+            if !ok {
+                self.err.push(format!("{} {}", bad, a));
+            }
+            return None;
+        }
+        if n.len() == 2 && kw(n[0], "STATistic") {
+            if kw(n[1], "DISPlay") {
+                if query {
+                    return t(if ui.meas_stats_shown() { "1" } else { "0" });
+                }
+                match parse_bool(arg) {
+                    Some(on) => ui.meas_stats_show(on),
+                    None => self.err.push(format!("{} {}", bad, arg)),
+                }
+                return None;
+            }
+            if kw(n[1], "RESet") && !query {
+                ui.meas_stats_reset();
+                return None;
+            }
+            if kw(n[1], "ITEM") && query {
+                let (kind, rest) = arg.split_once(',').unwrap_or((arg, ""));
+                let what = [
+                    ("MAXimum", MeasStat::Max),
+                    ("MINimum", MeasStat::Min),
+                    ("CURRent", MeasStat::Current),
+                    ("AVERages", MeasStat::Mean),
+                    ("DEViation", MeasStat::Dev),
+                    ("CNT", MeasStat::Count),
+                ]
+                .into_iter()
+                .find(|(w, _)| kw(kind.trim(), w))
+                .map(|x| x.1);
+                return match (what, meas_item(rest)) {
+                    (Some(w), Some(sel)) => num(ui.meas_stat(sel, w)),
+                    _ => {
+                        self.err.push(format!("{} {}", bad, arg));
+                        t("9.9E37")
+                    }
+                };
+            }
+        }
+        self.err.push(format!("-113,\"Undefined header\" :MEASure:{}", n.join(":")));
+        None
+    }
+
     fn la_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
         use crate::ui::la;
         let t = |s: String| Some(s.into_bytes());
@@ -1240,6 +1374,112 @@ pub fn bmp(cv: &Canvas) -> Vec<u8> {
 #[cfg(test)]
 mod vernier_tests {
     use super::*;
+
+    fn meas_setup() -> (Ui, Canvas, Scpi) {
+        let ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = Scpi::open(0);
+        let mut ui = ui;
+        scpi.exec_line(&mut ui, &cv, ":MEAS:CLE ALL;:CHAN2:DISP ON");
+        (ui, cv, scpi)
+    }
+
+    // Break it catches: :MEASure:ITEM not adding (the unit answered -113), a duplicate added twice, the oldest not
+    // giving way at MEAS_MAX, a bad item or source taken silently, the existing query changed.
+    #[test]
+    fn meas_item_adds_to_the_list() {
+        let (mut ui, cv, mut scpi) = meas_setup();
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        assert_eq!(q(&mut ui, ":MEASure:ITEM VPP,CHANnel1"), "");
+        assert_eq!(q(&mut ui, ":MEAS:ITEM VPP,CHAN1;:MEAS:ITEM FREQ,CHAN2;:MEAS:ITEM RRDelay,CHAN1,CHAN2"), "");
+        assert_eq!(ui.meas_list().0, ["Pk-pk 1", "Freq 2", "Delay rise-rise 1-2 1"]);
+        assert_eq!(q(&mut ui, ":SYST:ERR?"), "0,\"No error\"");
+        for bad in [":MEAS:ITEM BOGUS,CHAN1", ":MEAS:ITEM VPP,CHAN9", ":MEAS:ITEM RRD,CHAN1", ":MEAS:ITEM RRD,CHAN1,CHAN1", ":MEAS:ITEM VARiance,CHAN1"] {
+            assert_eq!(q(&mut ui, bad), "", "{}", bad);
+            assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224,"), "{}", bad);
+        }
+        assert_eq!(ui.meas_list().0.len(), 3);
+        // full: the oldest goes, as in the Measure menu
+        for k in ["VMAX", "VMIN", "VTOP", "VBAS", "VAMP", "VAVG", "VRMS", "OVER", "PRES", "PER", "RTIM", "FTIM"] {
+            q(&mut ui, &format!(":MEAS:ITEM {},CHAN1", k));
+        }
+        let (rows, room) = ui.meas_list();
+        assert_eq!(rows.len(), room);
+        assert!(rows.iter().all(|r| r != "Pk-pk 1") && rows.last().unwrap().starts_with("Delay"), "{:?}", rows);
+        // the query stays a query: a value (or 9.9E37), nothing added
+        let v = q(&mut ui, ":MEAS:ITEM? NWIDth,CHAN1");
+        assert!(v.contains('E'), "{}", v);
+        assert_eq!(ui.meas_list().0, rows);
+    }
+
+    // Break it catches: CLEar ITEM<n> counting from 0 or across the wrong list, ALL leaving pairs, an empty slot taken
+    // silently.
+    #[test]
+    fn meas_clear_all_or_one_item() {
+        let (mut ui, cv, mut scpi) = meas_setup();
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        q(&mut ui, ":MEAS:ITEM VPP,CHAN1;:MEAS:ITEM FREQ,CHAN2;:MEAS:ITEM RRPHase,CHAN1,CHAN2");
+        assert_eq!(q(&mut ui, ":MEASure:CLEar ITEM2"), "");
+        assert_eq!(ui.meas_list().0, ["Pk-pk 1", "Phase rise-rise 1-2 1"]);
+        q(&mut ui, ":MEAS:CLE ITEM2");
+        assert_eq!(ui.meas_list().0.len(), 1);
+        for bad in [":MEAS:CLE ITEM2", ":MEAS:CLE ITEM0", ":MEAS:CLE BOGUS"] {
+            q(&mut ui, bad);
+            assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224,"), "{}", bad);
+        }
+        q(&mut ui, ":MEAS:ITEM FFDelay,CHAN2,CHAN1;:MEAS:CLE ALL");
+        assert!(ui.meas_list().0.is_empty());
+        assert_eq!(q(&mut ui, ":SYST:ERR?"), "0,\"No error\"");
+    }
+
+    // Break it catches: the statistics switch not reaching the Measure page, a bad value taken silently.
+    #[test]
+    fn meas_statistic_display() {
+        let (mut ui, cv, mut scpi) = meas_setup();
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        assert_eq!(q(&mut ui, ":MEASure:STATistic:DISPlay?"), "0");
+        assert_eq!(q(&mut ui, ":MEAS:STAT:DISP ON"), "");
+        assert_eq!((q(&mut ui, ":MEAS:STAT:DISP?"), ui.meas_stats_shown()), ("1".to_string(), true));
+        q(&mut ui, ":MEAS:STAT:DISP 0");
+        assert_eq!(q(&mut ui, ":MEAS:STAT:DISP?"), "0");
+        q(&mut ui, ":MEAS:STAT:DISP MAYBE");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224,"));
+    }
+
+    // Break it catches: statistics not counting frames, RESet not starting them again, a statistic of a measurement
+    // that is not listed answering a number, a bad type taken silently.
+    #[test]
+    fn meas_statistic_item_and_reset() {
+        let (mut ui, cv, mut scpi) = meas_setup();
+        q_steps(&mut ui, 0);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        q(&mut ui, ":MEAS:ITEM VPP,CHAN1");
+        q_steps(&mut ui, 30);
+        let cnt: f64 = q(&mut ui, ":MEASure:STATistic:ITEM? CNT,VPP,CHAN1").parse().unwrap();
+        assert!(cnt >= 1.0, "{}", cnt);
+        let num = |s: String| -> f64 { s.parse().unwrap() };
+        let (mx, mn, avg, cur) = (
+            num(q(&mut ui, ":MEAS:STAT:ITEM? MAXimum,VPP,CHAN1")),
+            num(q(&mut ui, ":MEAS:STAT:ITEM? MIN,VPP,CHAN1")),
+            num(q(&mut ui, ":MEAS:STAT:ITEM? AVER,VPP,CHAN1")),
+            num(q(&mut ui, ":MEAS:STAT:ITEM? CURR,VPP,CHAN1")),
+        );
+        assert!(mn <= avg && avg <= mx && mx < 1e30 && cur < 1e30, "{} {} {} {}", mn, avg, mx, cur);
+        assert!(num(q(&mut ui, ":MEAS:STAT:ITEM? DEV,VPP,CHAN1")) >= 0.0);
+        assert_eq!(q(&mut ui, ":MEASure:STATistic:RESet"), "");
+        assert_eq!(q(&mut ui, ":MEAS:STAT:ITEM? CNT,VPP,CHAN1"), "0.000000E+00");
+        // not in the list: no number
+        assert_eq!(q(&mut ui, ":MEAS:STAT:ITEM? MAX,VMAX,CHAN1"), "9.9E37");
+        assert_eq!(q(&mut ui, ":SYST:ERR?"), "0,\"No error\"");
+        assert_eq!(q(&mut ui, ":MEAS:STAT:ITEM? MEDian,VPP,CHAN1"), "9.9E37");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224,"));
+    }
+
+    fn q_steps(ui: &mut Ui, n: usize) {
+        for _ in 0..n {
+            ui.step(0.02);
+        }
+    }
 
     // Break it catches: the socket answering a compound query line by line (unit round 21: `*OPC?;:BOGus?` came as
     // two lines while `exec_line` joined them), a command-only message sending a line.

@@ -5,6 +5,7 @@
 //! labels. All of them work on the records the screen shows.
 
 use super::*;
+use crate::scpi::{MeasSel, MeasStat};
 use oos_dsp::measure::{delay, phase, Pair};
 
 /// Measurements at once.
@@ -84,6 +85,107 @@ impl Ui {
             v.push(MeasRow { name: format!("{} {}-{}", name, a + 1, b + 1), ch: a, v: val, unit: if is_phase { "\u{b0}" } else { "s" } });
         }
         v
+    }
+
+    /// The value of delay or phase `k` (`PAIRS`) from channel `a` to `b`, NaN with either channel off.
+    pub(crate) fn meas_pair(&self, k: usize, a: usize, b: usize) -> f64 {
+        let (_, is_phase, ea, eb) = PAIRS[k.min(PAIRS.len() - 1)];
+        if !(self.m.ch[a].on && self.m.ch[b].on) {
+            return f64::NAN;
+        }
+        if is_phase {
+            phase(&self.ana[a], &self.ana[b], Pair(ea, eb))
+        } else {
+            delay(&self.ana[a], &self.ana[b], Pair(ea, eb))
+        }
+    }
+
+    /// The row of the Measure list showing `sel`, in screen order (single measurements, then pairs).
+    fn meas_row_of(&self, sel: MeasSel) -> Option<usize> {
+        match sel {
+            MeasSel::One(k, c) => self.m.meas.iter().position(|&x| x == (k, c)),
+            MeasSel::Pair(k, a, b) => self.m.meas2.iter().position(|&x| x == (k, a, b)).map(|i| self.m.meas.len() + i),
+        }
+    }
+
+    /// `:MEASure:ITEM` (SCPI): adds `sel` to the Measure list as the Measure menu does (the oldest goes when all
+    /// `MEAS_MAX` are taken); one already shown stays as it is.
+    pub(crate) fn meas_scpi_add(&mut self, sel: MeasSel) {
+        if self.meas_row_of(sel).is_some() {
+            return;
+        }
+        self.meas_make_room();
+        match sel {
+            MeasSel::One(k, c) => self.m.meas.push((k, c)),
+            MeasSel::Pair(k, a, b) => self.m.meas2.push((k, a, b)),
+        }
+        self.mstat.clear();
+    }
+
+    /// `:MEASure:CLEar`: every row (`None`) or row `i` of the list in screen order; false when there is no such row.
+    pub(crate) fn meas_scpi_clear(&mut self, i: Option<usize>) -> bool {
+        match i {
+            None => {
+                self.m.meas.clear();
+                self.m.meas2.clear();
+            }
+            Some(i) if i < self.m.meas.len() => {
+                self.m.meas.remove(i);
+            }
+            Some(i) if i - self.m.meas.len() < self.m.meas2.len() => {
+                self.m.meas2.remove(i - self.m.meas.len());
+            }
+            Some(_) => return false,
+        }
+        self.mstat.clear();
+        true
+    }
+
+    /// The Measure list in screen order as "name channel" (tests outside this module), and its room.
+    #[cfg(test)]
+    pub(crate) fn meas_list(&self) -> (Vec<String>, usize) {
+        (self.meas_rows().iter().map(|r| format!("{} {}", r.name, r.ch + 1)).collect(), MEAS_MAX)
+    }
+
+    /// The statistics shown with the Measure list (`:MEASure:STATistic:DISPlay`).
+    pub(crate) fn meas_stats_shown(&self) -> bool {
+        self.stats_on
+    }
+
+    pub(crate) fn meas_stats_show(&mut self, on: bool) {
+        self.stats_on = on;
+    }
+
+    /// `:MEASure:STATistic:RESet`: the statistics start again.
+    pub(crate) fn meas_stats_reset(&mut self) {
+        self.mstat.clear();
+    }
+
+    /// `:MEASure:STATistic:ITEM?`: one statistic of a listed measurement; None when `sel` is not in the list or has no
+    /// valid value yet.
+    pub(crate) fn meas_stat(&self, sel: MeasSel, what: MeasStat) -> Option<f64> {
+        let i = self.meas_row_of(sel)?;
+        if what == MeasStat::Current {
+            return Some(match sel {
+                MeasSel::One(k, c) => self.meas(c, k),
+                MeasSel::Pair(k, a, b) => self.meas_pair(k, a, b),
+            });
+        }
+        let st = self.mstat.get(i).copied().unwrap_or_default();
+        if what == MeasStat::Count {
+            return Some(st.n as f64);
+        }
+        if st.n == 0 {
+            return None;
+        }
+        let mean = st.sum / st.n as f64;
+        Some(match what {
+            MeasStat::Max => st.max,
+            MeasStat::Min => st.min,
+            MeasStat::Mean => mean,
+            // as the Measure list shows it
+            _ => (st.sumsq / st.n as f64 - mean * mean).max(0.0).sqrt(),
+        })
     }
 
     /// Room for one more: the oldest one goes when all are taken.

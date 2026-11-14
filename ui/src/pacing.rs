@@ -234,15 +234,13 @@ impl Fill {
         fill.clamp(FILL_MIN_MS, FILL_MAX_MS.max(FRAME_MS)).round() as u64
     }
 
-    /// A batch took `took` ms from its start to its read with fill time `used` ms; `full`: the ring filled before it
-    /// (its rest is not known then).
-    pub fn done(&mut self, took: f32, used: u64, full: bool) {
-        if !full {
-            let r = (took - used as f32).max(0.0);
-            let rest = self.rest.map_or(r, |x| x + 0.3 * (r - x));
-            self.dev += 0.3 * ((r - rest).abs() - self.dev);
-            self.rest = Some(rest);
-        }
+    /// A batch spent `rest` ms besides its fill: before it (arm, wait of a batch armed ahead, first trigger) and in the
+    /// read.
+    pub fn done(&mut self, r: f32) {
+        let r = r.max(0.0);
+        let rest = self.rest.map_or(r, |x| x + 0.3 * (r - x));
+        self.dev += 0.3 * ((r - rest).abs() - self.dev);
+        self.rest = Some(rest);
     }
 }
 
@@ -409,7 +407,7 @@ mod tests {
             let fill = f.plan(at(now), next, ready);
             let r = rest(i);
             let read = now + r + fill as f32;
-            f.done(r + fill as f32, fill, false);
+            f.done(r);
             reads.push(read);
             now = read + 0.5;
         }

@@ -1844,10 +1844,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             let fill_ms = fill.plan(t_batch, crate::pacing::next_step_after, crate::pacing::ready_ms());
             // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
             // the frame count; only one that ends before the fill does (by its usual time), so the read is not late
-            let mut fill_from = None;
+            let fill_from = std::cell::Cell::new(None);
             let idle = || {
                 let now = std::time::Instant::now();
-                let from = *fill_from.get_or_insert(now);
+                let from = fill_from.get().unwrap_or(now);
+                fill_from.set(Some(from));
                 if now + help_cost >= from + std::time::Duration::from_millis(fill_ms) {
                     return false;
                 }
@@ -1871,8 +1872,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let asked = seq::frames(&b, &p);
                 let read_ms = fill_end.map_or(0.0, |e| e.elapsed().as_secs_f32() * 1e3);
                 crate::pacing::batch(batch_ms, *c, asked, fill_ms, read_ms);
-                fill.done(batch_ms, fill_ms, *c >= asked);
-                let pre_ms = batch_ms - read_ms - fill_ms as f32;
+                // before the fill: to its first look at the frame count (or to its end, a ring full at once); a fill
+                // ended early by a full ring counts as fill, not as rest
+                let ms = |a: std::time::Instant| a.saturating_duration_since(t_batch).as_secs_f32() * 1e3;
+                let pre_ms = fill_from.get().or(fill_end).map_or(batch_ms - read_ms, ms);
+                fill.done(pre_ms + read_ms);
                 cap.done(*c, read_ms, pre_ms, uncapped, prearm_on() && prearm_keeps_replay(&b, &p, None));
             }
             if let Some(x) = pipe {

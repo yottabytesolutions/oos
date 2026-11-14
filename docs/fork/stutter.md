@@ -79,6 +79,9 @@ shorter fill (1 us/div 73 to 58) while the batches per second rose: acquired fra
 - Auto without a trigger: one frame per ~170 ms (the stock auto timeout, `scu::auto_trigger`: t2 at least 100 ms), so
   about 5 pictures a second while no edge matches, e.g. while the level is being found. Stock behaviour; a shorter OOS
   timeout would make that smoother. Not changed: needs a decision.
+- Setup A at 200 ns/div showed one more gap (14 % empty, batches every 54 ms): with a ring that fills early the
+  planner kept a stale rest. The rest is now measured directly (to the first look at the frame count, plus the read),
+  full ring or not: 1 % empty, gap p99 41 ms. Setup B at 200 ns/div after it: 0 % empty, gap p99 34 ms, step 6 ms.
 - Probe comp (CH1, 200 us/div, 100 k, dots Auto): no signal on CH1 (Vpp 0.36 V, no frequency): not measured.
 
 ## Status

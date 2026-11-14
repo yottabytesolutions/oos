@@ -31,8 +31,8 @@ The code keeps the board apart:
   is to apply (`want`), its start (`spawn`), roll and scan (`slow_mode`), the generator (`gen`, `gen_clamp`, the
   arbitrary wave), the front-end steps, the front panel (port, commands, LEDs, keys) and the board readings. Frames come
   back in volts (`Frame`, made into screen records by the neutral `to_record`).
-- `ui/src/board/dho/`: the DHO800/DHO900 behind it, the acquisition thread included. A lint test
-  (`board::boundary`) fails when other code of the GUI uses `oos_hal::dho` or `board::dho`.
+- `ui/src/board/dho/`: the DHO800/DHO900 behind it, the acquisition thread included. Two `confine` rules
+  in `xtask/data/architecture.txt` fail the gate when other code of the GUI uses `oos_hal::dho` or `board::dho`.
 
 - `hal/src/target.rs`: the description of a board family (`Target`): card layout, update target, partition table
   marks, boot card controller, hardware variants (and which have run OOS), model table, standard limits, overclock steps. `hal/src/dho/target.rs`

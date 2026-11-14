@@ -1,0 +1,3 @@
+# Statics with interior mutability that are not metrics: 1 static <file> <name>.
+# Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
+1 static fpgad/src/bin/oos-update.rs STDOUT_CLOSED

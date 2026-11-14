@@ -161,7 +161,8 @@ first; this recipe does not cover it.
    acquisition thread with `AcqWant` and `AcqCmd` in and `Batch`, `Frame`, `MeasRead`, `Readings` out
    (`acquisition.md`).
 2. **Boundary.** Only `board/<name>` may use its hardware crate. Add the crate line in `xtask/data/architecture.txt`
-   and extend the `board::boundary` lint to the new crate.
+   and two `confine` rules: the hardware crate's paths only from `board::<name>`, and `board::<name>` only from
+   `board`.
 3. **Selection.** `oos_hal::model::platform()` detects the model (`docs/models.md`). `board::select` (target; today
    the type alias `board::Active`) picks the adapter from the platform. Add the new model there. Dispatch is static
    today: one board per build. A second board makes `board::select` an enum of the boards, chosen once at start and

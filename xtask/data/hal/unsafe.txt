@@ -1,0 +1,2 @@
+# unsafe outside the allowed paths (architecture.txt): <count> unsafe <file>.
+# Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.

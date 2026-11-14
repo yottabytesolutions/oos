@@ -29,8 +29,8 @@ requests, outputs and readings side by side, each with its own counter conventio
 
 The change point produces a board-neutral `AcqIntent` (README.md, [Acquisition
 intent](README.md#acquisition-intent)). `app/acq_client` maps it to this board's `AcqWant` through
-`Board::want`, so the domain never names `Want` or `seq::Settings`. `board/mod.rs` defines these types for every board. `board/dho` implements the thread. The `board::boundary` lint
-stays.
+`Board::want`, so the domain never names `Want` or `seq::Settings`. `board/mod.rs` defines these types for every board. `board/dho` implements the thread. The `confine` rules in
+`xtask/data/architecture.txt` keep `oos_hal::dho` inside `board::dho` and `board::dho` inside `board`.
 
 ### `AcqWant` and generations
 

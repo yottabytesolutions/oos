@@ -1,0 +1,2 @@
+# Statics with interior mutability that are not metrics: 1 static <file> <name>.
+# Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.

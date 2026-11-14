@@ -2,7 +2,9 @@
 
 mod deps;
 mod modules;
+mod resolve;
 pub mod rules;
+mod spelled;
 
 use crate::repo::{self, CRATES};
 use crate::sources;
@@ -23,10 +25,16 @@ pub fn check(root: &Path, meta: &Metadata) -> Result<Vec<String>, String> {
     let mut out = meta.unlisted();
     out.extend(deps::check(meta, &rules));
     for c in CRATES {
-        let forbid: Vec<&rules::Forbid> = rules.forbid.iter().filter(|f| f.krate == c.dir).collect();
-        let layers: Vec<&rules::Layer> = rules.layers.iter().filter(|l| l.krate == c.dir).collect();
-        if !forbid.is_empty() || !layers.is_empty() {
-            out.extend(modules::check(&sources::of_dir(meta, c.dir)?, &forbid, &layers));
+        let cr = modules::CrateRules {
+            forbid: rules.forbid.iter().filter(|f| f.krate == c.dir).collect(),
+            layers: rules.layers.iter().filter(|l| l.krate == c.dir).collect(),
+            confines: rules.confines.iter().filter(|x| x.krate == c.dir).collect(),
+            deps: meta.member(c.dir).map_or_else(Default::default, |p| {
+                p.dependencies.iter().map(|d| (d.code_name(), d.canonical())).collect()
+            }),
+        };
+        if !cr.forbid.is_empty() || !cr.layers.is_empty() || !cr.confines.is_empty() {
+            out.extend(modules::check(&sources::of_dir(meta, c.dir)?, &cr));
         }
     }
     Ok(out)

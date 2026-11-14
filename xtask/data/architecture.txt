@@ -47,3 +47,11 @@ unsafe ui/src/remote
 unsafe ui/src/system
 unsafe ui/src/instruments
 unsafe ui/src/picture/deposit
+#
+# Confinements: confine <crate dir> <path> -> <modules...>
+# <path> (a crate module path, or a dependency path such as oos_hal::dho) may be named only from inside the listed
+# modules, and a crate path also from inside itself. Test code is free.
+# The board boundary (docs/porting.md): only board::dho uses the DHO hardware layer, and nothing outside board names
+# board::dho (board/mod.rs selects the port: `Active`). The same boundary as the board::boundary test it replaces.
+confine ui oos_hal::dho -> board::dho
+confine ui board::dho -> board

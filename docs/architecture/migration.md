@@ -19,7 +19,8 @@ keeps running until the new path replaces it, one small step per merge. This fil
   lists its planned moves in `xtask/data/moves.txt` (`<old> -> <new>`, one per line, part of the step's plan, not a
   ratchet file), and the branch gate accepts a listed item at its new place if it is not larger than at the merge
   base. A moving branch passes its own gate from its first commit. At merge the integrator runs
-  `cargo xtask ratchet --move`, which transfers the entries and empties `moves.txt`.
+  `cargo xtask ratchet --move`, which transfers the entries and keeps the moves the base still needs as evidence
+  (`docs/development.md`, Moves).
 - **Shared ratchet files.** Branches do not edit the ratchet and coverage files. The integrator runs
   `cargo xtask ratchet` at merge, so two branches never conflict on them. The coverage gate allows a margin of 0.5
   points below the floor per branch; the integrator raises the floor after the merge. The ratchet files are split per

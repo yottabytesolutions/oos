@@ -1,5 +1,7 @@
 //! Size limits: files, functions, structs and the spread of a type's impl blocks. Only test code is exempt.
 
+mod codelines;
+pub mod marks;
 mod statics;
 pub mod unsafety;
 mod visit;
@@ -10,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Lines of a source file outside `#[cfg(test)]` items.
 pub const FILE_LINES: u64 = 400;
-/// Lines of a function, from `fn` to its closing brace.
+/// Code lines of a function, from `fn` to its closing brace: no blank and no comment lines (ADR 0010).
 pub const FN_LINES: u64 = 60;
 /// Fields of a struct.
 pub const STRUCT_FIELDS: u64 = 12;
@@ -40,6 +42,12 @@ pub struct Measured {
     pub statics: Ratchet,
     /// `unsafe <file>`: the count of `unsafe` in every file that has any
     pub unsafes: Ratchet,
+    /// `allow <file> clippy::disallowed_methods`: exceptions to the disallowed methods
+    pub allows: Ratchet,
+    /// `known <file> <test> <task>`: tests ignored as known failures
+    pub known: Ratchet,
+    /// `#[ignore = "known: .."]` without a task
+    pub malformed: Vec<String>,
 }
 
 /// The walk of one source text, for tests of the checks built on it.
@@ -54,6 +62,7 @@ pub fn measure(krate: &str, sources: &[Source]) -> Measured {
     let mut statics = Ratchet::default();
     let (mut all_statics, mut types) = (Vec::new(), Vec::new());
     let mut unsafes = Ratchet::default();
+    let (mut allows, mut known, mut malformed) = (Ratchet::default(), Ratchet::default(), Vec::new());
     let mut spread: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for src in sources {
         let rel = &src.rel;
@@ -71,6 +80,12 @@ pub fn measure(krate: &str, sources: &[Source]) -> Measured {
             spread.entry(ty).or_default().insert(rel.clone());
         }
         over(&mut unsafes, format!("unsafe {}", rel), found.unsafes, 0);
+        let m = marks::scan(&src.file);
+        over(&mut allows, format!("allow {} {}", rel, marks::DISALLOWED), m.allows, 0);
+        for (f, task) in m.known {
+            over(&mut known, format!("known {} {} {:04}", rel, f, task), 1, 0);
+        }
+        malformed.extend(m.malformed.into_iter().map(|x| format!("{}: {}", rel, x)));
         all_statics.extend(found.statics.into_iter().map(|(n, ty)| (rel.clone(), n, ty)));
         types.extend(found.types);
     }
@@ -83,7 +98,7 @@ pub fn measure(krate: &str, sources: &[Source]) -> Measured {
     for (ty, files) in spread {
         over(&mut now, format!("impls {} {}", krate, ty), files.len() as u64, IMPL_FILES);
     }
-    Measured { sizes: now, statics, unsafes }
+    Measured { sizes: now, statics, unsafes, allows, known, malformed }
 }
 
 #[cfg(test)]

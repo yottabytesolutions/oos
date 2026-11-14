@@ -1,7 +1,7 @@
 //! The repository gate (docs/development.md).
 //!
 //!   cargo xtask check [--fast] [--no-coverage]   the gate; --fast: formatting, size limits, architecture
-//!   cargo xtask ratchet [--init] [--coverage]    write the ratchet files back after an improvement
+//!   cargo xtask ratchet [--coverage] [--move] [--init]   write the ratchet files back after an improvement
 
 mod arch;
 mod attrs;
@@ -10,6 +10,7 @@ mod check;
 mod clippy;
 mod coverage;
 mod fmt;
+mod moves;
 mod ratchet;
 mod repo;
 mod report;
@@ -17,14 +18,18 @@ mod run;
 mod size;
 mod sources;
 mod steps;
+mod store;
 mod target;
+#[cfg(test)]
+mod testrepo;
 mod testrun;
 mod tighten;
 mod workspace;
 
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: cargo xtask check [--fast] [--no-coverage] | cargo xtask ratchet [--init] [--coverage]";
+const USAGE: &str =
+    "usage: cargo xtask check [--fast] [--no-coverage] | cargo xtask ratchet [--coverage] [--move] [--init]";
 
 /// The command line: a command and its flags.
 fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
@@ -32,7 +37,7 @@ fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
     let flags: Vec<&str> = flags.iter().map(String::as_str).collect();
     let allowed: &[&str] = match cmd.as_str() {
         "check" => &["--fast", "--no-coverage"],
-        "ratchet" => &["--init", "--coverage"],
+        "ratchet" => &["--init", "--coverage", "--move"],
         _ => return Err(USAGE.into()),
     };
     match flags.iter().find(|f| !allowed.contains(f)) {
@@ -56,9 +61,16 @@ fn main() -> ExitCode {
             let o = check::Options { fast: flags.contains(&"--fast"), coverage: !flags.contains(&"--no-coverage") };
             check::run(&root, o)
         }
-        _ => tighten::run(&root, flags.contains(&"--init"), flags.contains(&"--coverage"))
-            .map_err(|e| eprintln!("{}", e))
-            .is_ok(),
+        _ => tighten::run(
+            &root,
+            tighten::Options {
+                init: flags.contains(&"--init"),
+                coverage: flags.contains(&"--coverage"),
+                moves: flags.contains(&"--move"),
+            },
+        )
+        .map_err(|e| eprintln!("{}", e))
+        .is_ok(),
     };
     if ok {
         ExitCode::SUCCESS

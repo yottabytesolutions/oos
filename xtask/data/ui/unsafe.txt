@@ -1,7 +1,5 @@
 # unsafe outside the allowed paths (architecture.txt): <count> unsafe <file>.
-# Written by `cargo xtask ratchet` (docs/development.md). Counts may only fall.
-6 unsafe fpgad/src/bin/oos-update.rs
-1 unsafe fpgad/src/board.rs
+# Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
 1 unsafe ui/src/drawpipe.rs
 16 unsafe ui/src/drm.rs
 1 unsafe ui/src/ethlink.rs

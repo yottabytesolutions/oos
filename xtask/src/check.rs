@@ -22,6 +22,8 @@ pub fn run(root: &Path, o: Options) -> bool {
         report::step("architecture", || steps::arch(root)),
         report::step("mutable statics", || steps::statics(root)),
         report::step("unsafe", || steps::unsafety(root)),
+        report::step("disallowed-method exceptions", || steps::allows(root)),
+        report::step("known failures", || steps::known(root)),
     ];
     if !o.fast {
         s.push(report::step("clippy", || steps::clippy(root)));

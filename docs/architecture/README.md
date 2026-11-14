@@ -41,8 +41,8 @@ The [task tracker](../tasks/README.md) carries guardrails, architecture review a
 - **Pure write lists in hal.** hal builds pure write lists and applies them through `dho::bus::Bus` (`Bar1` on the
   unit, `Recorder` in tests).
 - **Pure dsp.** `dsp` is pure functions over `&[f32]` volts with a fixed `dt`.
-- **The `Board` port.** The UI speaks in its own terms and gets frames in volts. The `board::boundary` lint keeps
-  `oos_hal::dho` inside `board/dho`.
+- **The `Board` port.** The UI speaks in its own terms and gets frames in volts. Two `confine` rules in
+  `xtask/data/architecture.txt` keep `oos_hal::dho` inside `board/dho` and `board::dho` inside `board`.
 - **Decoder modules.** The `Protocol` trait for decoder modules (`../protocol-modules.md`).
 - **The rest of the system.** Boot chain, kernel, update and the network services are unchanged
   (`system.md`).
@@ -177,8 +177,8 @@ Rules that neither visibility nor the module rules can see get a mechanical chec
   allows per crate, shrink-only (G1), so a new one shows in review.
 - `Config` and `OnceLock` reads of `system.conf` in policy code (today `hw.rs` 604, 718, 1141) are caught by the same
   `std::fs` rule once they move behind `Config` (M5).
-- The module rules extend to external crate paths (`forbid ui <module> oos_hal::dho`), replacing the
-  `board::boundary` lint (G1, `migration.md`).
+- The module rules cover external crate paths. Two `confine` rules hold the board boundary: `oos_hal::dho` only in
+  `board::dho`, `board::dho` only in `board` (G1, `migration.md`, `docs/development.md`).
 - A snapshot test lists every field classified `Unrelated`, so adding one shows in review.
 
 ## Settings and commands
@@ -1207,8 +1207,8 @@ architecture it checks:
 Known gap: the `// SAFETY:` comments (`../../AGENTS.md`, Code) are not checked yet. That needs clippy
 `undocumented_unsafe_blocks` in the lint set (auxout). Until then, review enforces it.
 
-What the rules cannot see, the code enforces: ownership, by visibility ([Enforced by visibility](#enforced-by-visibility));
-`oos_hal::dho` only inside `board/dho`, by the `board::boundary` lint until the module rules cover external crate paths.
+What the rules cannot see, the code enforces: ownership, by visibility ([Enforced by visibility](#enforced-by-visibility)).
+`oos_hal::dho` only inside `board/dho` is a module rule (`confine`) since G1.
 
 ## Code rules
 

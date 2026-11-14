@@ -3,6 +3,7 @@
 use super::{ratcheted, Outcome};
 use crate::ratchet::Ratchet;
 use crate::repo::{Crate, CRATES};
+use crate::store::Kind;
 use crate::{arch, size, sources, workspace};
 use std::path::Path;
 
@@ -13,9 +14,43 @@ pub fn measured(root: &Path) -> Result<Vec<(Crate, size::Measured)>, String> {
 }
 
 pub fn size(root: &Path) -> Outcome {
-    let now: Vec<_> =
-        measured(root).map_err(|e| vec![e])?.into_iter().map(|(c, m)| (c.dir, c.ratchet, m.sizes)).collect();
-    ratcheted(root, "size.txt", &now)
+    let now: Vec<_> = measured(root).map_err(|e| vec![e])?.into_iter().map(|(c, m)| (c.dir, m.sizes)).collect();
+    ratcheted(root, Kind::Size, &now)
+}
+
+/// Exceptions to `clippy::disallowed_methods`: their count per file may only fall.
+pub fn allows(root: &Path) -> Outcome {
+    let now: Vec<_> = measured(root).map_err(|e| vec![e])?.into_iter().map(|(c, m)| (c.dir, m.allows)).collect();
+    ratcheted(root, Kind::Allow, &now)
+}
+
+/// Whether task `n` is open: `docs/tasks/NNNN-*.md` exists outside `done/`.
+fn open_task(root: &Path, n: &str) -> bool {
+    std::fs::read_dir(root.join("docs").join("tasks"))
+        .map(|d| d.flatten().any(|e| e.file_name().to_string_lossy().starts_with(&format!("{}-", n))))
+        .unwrap_or(false)
+}
+
+/// Known failures: each names an open task, and the list may only shrink.
+pub fn known(root: &Path) -> Outcome {
+    let mut now = Vec::new();
+    let mut bad = Vec::new();
+    for (c, m) in measured(root).map_err(|e| vec![e])? {
+        bad.extend(
+            m.malformed.iter().map(|x| format!("{}: ignore reason \"known: task NNNN\" expected: {}", c.dir, x)),
+        );
+        for k in m.known.0.keys() {
+            let task = k.rsplit(' ').next().unwrap_or("");
+            if !open_task(root, task) {
+                bad.push(format!("{}: task {} is not open in docs/tasks", k, task));
+            }
+        }
+        now.push((c.dir, m.known));
+    }
+    if !bad.is_empty() {
+        return Err(bad);
+    }
+    ratcheted(root, Kind::Known, &now)
 }
 
 /// `unsafe` outside the allowed paths of a crate (`unsafe` lines in architecture.txt).
@@ -30,9 +65,9 @@ pub fn unsafety(root: &Path) -> Outcome {
     let now: Vec<_> = measured(root)
         .map_err(|e| vec![e])?
         .into_iter()
-        .map(|(c, m)| (c.dir, c.ratchet, unsafe_now(&m, &rules.unsafe_paths)))
+        .map(|(c, m)| (c.dir, unsafe_now(&m, &rules.unsafe_paths)))
         .collect();
-    ratcheted(root, "unsafe.txt", &now)
+    ratcheted(root, Kind::Unsafe, &now)
 }
 
 /// Mutable statics: only metrics (allowlist in architecture.txt) and the listed old ones (statics.txt).
@@ -44,7 +79,7 @@ pub fn statics(root: &Path) -> Outcome {
         let mut s = m.statics;
         all.extend(s.0.keys().cloned());
         s.0.retain(|k, _| !rules.statics.contains(k));
-        now.push((c.dir, c.ratchet, s));
+        now.push((c.dir, s));
     }
     let stale: Vec<String> = rules
         .statics
@@ -55,5 +90,5 @@ pub fn statics(root: &Path) -> Outcome {
     if !stale.is_empty() {
         return Err(stale);
     }
-    ratcheted(root, "statics.txt", &now)
+    ratcheted(root, Kind::Statics, &now)
 }

@@ -1,8 +1,13 @@
 //! The gate's steps over every crate. Each returns its summary lines, or the failures.
 
 mod code;
+mod ratchets;
 
-pub use code::{measured, size, statics, unsafe_now, unsafety};
+pub use code::{allows, known, measured, size, statics, unsafe_now, unsafety};
+pub use ratchets::load_moves;
+
+use crate::store::Kind;
+use ratchets::ratcheted;
 
 use crate::ratchet::Ratchet;
 use crate::repo::{self, CRATES};
@@ -14,20 +19,6 @@ pub(crate) type Outcome = Result<Vec<String>, Vec<String>>;
 /// The ratchet file `name` in the data directory.
 pub fn ratchet_path(root: &Path, name: &str) -> std::path::PathBuf {
     repo::data(root).join(name)
-}
-
-/// Entries of `r` that belong to `krate`: the second word is the crate or a path in it.
-pub fn of_crate(r: &Ratchet, krate: &str) -> Ratchet {
-    let prefix = format!("{}/", krate);
-    Ratchet(
-        r.0.iter()
-            .filter(|(k, _)| {
-                k.split(' ').nth(1).is_some_and(|w| w == krate || w.starts_with(&prefix))
-                    || k.starts_with(&format!("{} ", krate))
-            })
-            .map(|(k, v)| (k.clone(), *v))
-            .collect(),
-    )
 }
 
 pub(crate) fn outcome(ok: Vec<String>, bad: Vec<String>) -> Outcome {
@@ -50,39 +41,6 @@ pub fn fmt(root: &Path) -> Outcome {
     outcome(ok, bad)
 }
 
-/// The ratchet file `file`, checked against the base: it may not list more or larger entries than at the merge base.
-fn allowed(root: &Path, file: &str) -> Result<Ratchet, Vec<String>> {
-    let allowed = Ratchet::load(&ratchet_path(root, file)).map_err(|e| vec![e])?;
-    let rel = format!("xtask/data/{}", file);
-    if let Some(t) = base::text(root, &rel).map_err(|e| vec![e])? {
-        let widened =
-            base::widened(&Ratchet::parse(&t).map_err(|e| vec![format!("{} at the base: {}", rel, e)])?, &allowed);
-        if !widened.is_empty() {
-            return Err(widened.into_iter().map(|w| format!("{}: {}", rel, w)).collect());
-        }
-    }
-    Ok(allowed)
-}
-
-/// Compares `now` of every crate with the ratchet file; crates without a ratchet allow nothing.
-pub(crate) fn ratcheted(root: &Path, file: &str, now: &[(&'static str, bool, Ratchet)]) -> Outcome {
-    let allowed = allowed(root, file)?;
-    let (mut ok, mut bad) = (Vec::new(), Vec::new());
-    for (krate, has_ratchet, n) in now {
-        let a = if *has_ratchet { of_crate(&allowed, krate) } else { Ratchet::default() };
-        let v = a.compare(n);
-        bad.extend(v.failures().into_iter().map(|f| format!("{}: {}", krate, f)));
-        let total: u64 = n.0.values().sum();
-        let shrunk = if v.shrunk.is_empty() {
-            String::new()
-        } else {
-            format!(", {} improved (cargo xtask ratchet)", v.shrunk.len())
-        };
-        ok.push(format!("{}: {} entries, {} total{}", krate, n.0.len(), total, shrunk));
-    }
-    outcome(ok, bad)
-}
-
 /// Clippy for the host and, for the scope's crates, for aarch64-unknown-linux-musl: this also checks that the scope
 /// build compiles, with the image build's target flags.
 pub fn clippy(root: &Path) -> Outcome {
@@ -95,7 +53,7 @@ pub fn clippy(root: &Path) -> Outcome {
         match clippy::run(root, c.dir, c.target) {
             Ok(f) => {
                 errors.extend(f.errors.into_iter().map(|e| format!("{}: {}", c.dir, e)));
-                now.push((c.dir, c.ratchet, f.counts));
+                now.push((c.dir, f.counts));
             }
             Err(e) => errors.push(format!("{}: {}", c.dir, e)),
         }
@@ -103,7 +61,7 @@ pub fn clippy(root: &Path) -> Outcome {
     if !errors.is_empty() {
         return Err(errors);
     }
-    ratcheted(root, "clippy.txt", &now)
+    ratcheted(root, Kind::Clippy, &now)
 }
 
 pub fn arch(root: &Path) -> Outcome {
@@ -143,6 +101,15 @@ pub fn coverage_now(root: &Path) -> Result<Ratchet, Vec<String>> {
     Ok(now)
 }
 
+/// A branch may fall this far below a coverage floor (tenths of a percent): measurements move a little between
+/// runs, and the integrator raises the floors after the merge (`cargo xtask ratchet --coverage`).
+pub const MARGIN: u64 = 5;
+
+/// Coverage `n` fails the floor `f` only when it is more than the margin below it.
+fn below(n: u64, f: u64) -> bool {
+    n + MARGIN < f
+}
+
 pub fn coverage(root: &Path) -> Outcome {
     if !coverage::installed() {
         return Err(vec!["cargo install cargo-llvm-cov (or run with --no-coverage)".into()]);
@@ -158,8 +125,17 @@ pub fn coverage(root: &Path) -> Outcome {
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for (k, &n) in &now.0 {
         let f = floor.0.get(k).copied().unwrap_or(0);
-        let line = format!("{}: {}.{}% (floor {}.{}%)", k, n / 10, n % 10, f / 10, f % 10);
-        if n < f {
+        let line = format!(
+            "{}: {}.{}% (floor {}.{}%, margin {}.{})",
+            k,
+            n / 10,
+            n % 10,
+            f / 10,
+            f % 10,
+            MARGIN / 10,
+            MARGIN % 10
+        );
+        if below(n, f) {
             bad.push(line);
         } else {
             ok.push(line);
@@ -173,11 +149,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn entries_are_split_by_crate() {
-        let r = Ratchet::parse("3 file ui/src/a.rs\n2 impls ui Ui\n9 ui ui/src/a.rs clippy::x\n4 file hal/src/b.rs\n")
-            .unwrap();
-        assert_eq!(of_crate(&r, "ui").0.len(), 3);
-        assert_eq!(of_crate(&r, "hal").0.len(), 1);
-        assert!(of_crate(&r, "u").0.is_empty());
+    fn coverage_may_fall_half_a_point() {
+        assert!(!below(900, 900) && !below(895, 900) && below(894, 900) && !below(950, 900));
     }
 }

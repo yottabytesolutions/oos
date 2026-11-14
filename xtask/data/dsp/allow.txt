@@ -1,0 +1,2 @@
+# #[allow] or #[expect] of clippy::disallowed_methods: <count> allow <file> <lint>.
+# Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.

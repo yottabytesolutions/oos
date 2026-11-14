@@ -21,7 +21,23 @@ pub struct Package {
 
 #[derive(Debug, Deserialize)]
 pub struct Dependency {
+    /// the package name
     pub name: String,
+    /// the name in the manifest when it differs (`hal = { package = "oos-hal" }`)
+    #[serde(default)]
+    pub rename: Option<String>,
+}
+
+impl Dependency {
+    /// The crate's name in code: the rename if any, `-` as `_` (`hal`, `oos_hal`).
+    pub fn code_name(&self) -> String {
+        self.rename.as_deref().unwrap_or(&self.name).replace('-', "_")
+    }
+
+    /// The canonical name rules use: the package name, `-` as `_` (`oos_hal`).
+    pub fn canonical(&self) -> String {
+        self.name.replace('-', "_")
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,5 +128,19 @@ mod tests {
     fn test_targets_are_test_code() {
         let t = |k: &str| Target { kind: vec![k.to_string()], src_path: String::new() };
         assert!(t("test").is_test() && t("bench").is_test() && !t("lib").is_test() && !t("bin").is_test());
+    }
+
+    // The hole: `hal = { package = "oos-hal" }` made code say `hal::dho`, and the rules looked for `oos_hal::dho`.
+    #[test]
+    fn a_renamed_dependency_has_its_code_name_and_its_package_name() {
+        let m = parse(
+            r#"{"workspace_root":"/r","packages":[{"name":"oos-ui","manifest_path":"/r/ui/Cargo.toml","targets":[],
+                "dependencies":[{"name":"oos-hal","rename":"hal"},{"name":"oos-dsp","rename":null},{"name":"libc"}]}]}"#,
+        )
+        .expect("metadata");
+        let d: Vec<(String, String)> =
+            m.packages[0].dependencies.iter().map(|d| (d.code_name(), d.canonical())).collect();
+        let s = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(d, [s("hal", "oos_hal"), s("oos_dsp", "oos_dsp"), s("libc", "libc")]);
     }
 }

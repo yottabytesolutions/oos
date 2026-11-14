@@ -1,0 +1,168 @@
+//! The comparison every ratchet step shares: the current entries of each crate against its ratchet file, after the
+//! planned moves, with the file itself checked against the base.
+
+use super::{outcome, Outcome};
+use crate::base::{self, At};
+use crate::moves::{self, Move};
+use crate::ratchet::Ratchet;
+use crate::store::{self, Kind};
+use std::path::Path;
+
+/// The planned moves at the base and on the branch. `ratchet --move` keeps the moves the base still needs, so they
+/// explain the renamed entries in the commit that applies them; at a base that has them they change nothing.
+fn all_moves(root: &Path, commit: Option<&str>) -> Result<Vec<Move>, String> {
+    let mut m = match commit.map(|c| base::at(root, c, "xtask/data/moves.txt")).transpose()? {
+        Some(At::Present(t)) => moves::parse(&t)?,
+        _ => Vec::new(),
+    };
+    m.extend(load_moves(root)?);
+    Ok(m)
+}
+
+/// The moves file of the working tree (missing: none).
+pub fn load_moves(root: &Path) -> Result<Vec<Move>, String> {
+    match std::fs::read_to_string(root.join("xtask/data/moves.txt")) {
+        Ok(t) => moves::parse(&t),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("xtask/data/moves.txt: {}", e)),
+    }
+}
+
+/// The allowed entries of every ratcheted crate for `kind`, moves applied; their base, moves applied, when there is
+/// one.
+fn allowed(root: &Path, kind: Kind, crates: &[&str]) -> Result<(Ratchet, Option<Ratchet>), String> {
+    let commit = base::protected(root)?;
+    let moves = all_moves(root, Some(&commit))?;
+    let (mut work, mut base) = (Ratchet::default(), Some(Ratchet::default()));
+    for k in crates {
+        work.0.extend(store::load(root, k, kind)?.0);
+        base = match (base, store::at_base(root, &commit, k, kind)?) {
+            (Some(mut b), Some(at)) => {
+                b.0.extend(at.0);
+                Some(b)
+            }
+            _ => None,
+        };
+    }
+    Ok((moves::apply(&work, &moves)?, base.map(|b| moves::apply(&b, &moves)).transpose()?))
+}
+
+/// Compares `now` of every crate (`(crate, entries)`) with the ratchet files of `kind`, moves applied. A crate allows
+/// what its files list and what the moves bring into it; a new crate without files starts clean.
+pub fn ratcheted(root: &Path, kind: Kind, now: &[(&'static str, Ratchet)]) -> Outcome {
+    let crates: Vec<&str> = now.iter().map(|n| n.0).collect();
+    let (work, base) = allowed(root, kind, &crates).map_err(|e| vec![e])?;
+    if let Some(b) = &base {
+        let widened = base::widened(b, &work);
+        if !widened.is_empty() {
+            return Err(widened.into_iter().map(|w| format!("{} ratchet: {}", kind.name(), w)).collect());
+        }
+    }
+    let (mut ok, mut bad) = (Vec::new(), Vec::new());
+    for (krate, n) in now {
+        let v = store::of_crate(&work, krate).compare(n);
+        bad.extend(v.failures().into_iter().map(|f| format!("{}: {}", krate, f)));
+        let total: u64 = n.0.values().sum();
+        let shrunk = if v.shrunk.is_empty() {
+            String::new()
+        } else {
+            format!(", {} improved (cargo xtask ratchet)", v.shrunk.len())
+        };
+        ok.push(format!("{}: {} entries, {} total{}", krate, n.0.len(), total, shrunk));
+    }
+    outcome(ok, bad)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testrepo::{commit, git, repo};
+
+    fn r(t: &str) -> Ratchet {
+        Ratchet::parse(t).expect("r")
+    }
+
+    // The point of moves: an entry under its new key passes against the base's old key, a larger one does not.
+    #[test]
+    fn a_moved_entry_is_checked_against_its_old_size() {
+        let m = moves::parse("fn ui/src/ui.rs Ui::step -> fn ui/src/step.rs Ui::step\n").expect("moves");
+        let base = moves::apply(&Ratchet::parse("465 fn ui/src/ui.rs Ui::step\n").expect("r"), &m).expect("apply");
+        let same = Ratchet::parse("465 fn ui/src/step.rs Ui::step\n").expect("r");
+        let grown = Ratchet::parse("470 fn ui/src/step.rs Ui::step\n").expect("r");
+        assert!(base::widened(&base, &moves::apply(&same, &m).expect("apply")).is_empty());
+        assert_eq!(base::widened(&base, &grown).len(), 1);
+        // an unlisted move is a new entry
+        let elsewhere = Ratchet::parse("465 fn ui/src/other.rs Ui::step\n").expect("r");
+        assert_eq!(base::widened(&base, &elsewhere).len(), 1);
+    }
+
+    // The hole: `ratchet --move` emptied moves.txt, so the integration commit had renamed entries and no move that
+    // explained them against a base without moves: the pre-commit gate failed on the integrator's own commit.
+    #[test]
+    fn the_integrated_moves_pass_the_gate_until_the_base_has_them() {
+        let d = repo(
+            "lifecycle",
+            &[(&[("xtask/Cargo.toml", "x"), ("xtask/data/ui/size.txt", "465 fn ui/src/ui.rs Ui::step\n")], "base")],
+        );
+        let same = || [("ui", r("465 fn ui/src/step.rs Ui::step\n"))];
+        let grown = || [("ui", r("466 fn ui/src/step.rs Ui::step\n"))];
+        let gate = |what: &str| {
+            assert!(ratcheted(&d, Kind::Size, &same()).is_ok(), "{}: {:?}", what, ratcheted(&d, Kind::Size, &same()));
+            assert!(ratcheted(&d, Kind::Size, &grown()).is_err(), "{}: growth passed", what);
+        };
+        git(&d, &["checkout", "-q", "-b", "step"]);
+        commit(&d, &[("xtask/data/moves.txt", "fn ui/src/ui.rs Ui::step -> fn ui/src/step.rs Ui::step\n")], "move");
+        gate("the branch");
+        crate::tighten::apply_moves_in(&d, &["ui"]).expect("--move");
+        assert_eq!(store::load(&d, "ui", Kind::Size).expect("load"), r("465 fn ui/src/step.rs Ui::step\n"));
+        gate("the integration, before its commit");
+        commit(&d, &[], "ratchet --move");
+        gate("the integration commit");
+        git(&d, &["checkout", "-q", "overhaul"]);
+        git(&d, &["merge", "-q", "--ff-only", "step"]);
+        gate("overhaul after the fast-forward");
+        // the next step: the base has the renamed entry, so the move is no longer needed and goes
+        git(&d, &["checkout", "-q", "-b", "next"]);
+        commit(&d, &[("README", "next")], "next step");
+        crate::tighten::apply_moves_in(&d, &["ui"]).expect("--move");
+        assert!(load_moves(&d).expect("moves").is_empty());
+        gate("the next step");
+        std::fs::remove_dir_all(&d).expect("clean up");
+    }
+
+    // The hole: a new crate (then `ratchet: false`) dropped the allowances moved into it, so M2.1's pure move of Model
+    // failed; `ratchet --move` saved only the ratcheted crates and lost them.
+    #[test]
+    fn a_new_crate_inherits_the_allowances_moved_into_it() {
+        let d = repo(
+            "newcrate",
+            &[(
+                &[
+                    ("xtask/Cargo.toml", "x"),
+                    ("xtask/data/ui/size.txt", "194 struct ui/src/model.rs Model\n90 fn ui/src/ui.rs f\n"),
+                    ("xtask/data/ui/clippy.txt", "3 ui ui/src/model.rs clippy::x\n"),
+                ],
+                "base",
+            )],
+        );
+        git(&d, &["checkout", "-q", "-b", "m2.1"]);
+        commit(&d, &[("xtask/data/moves.txt", "ui/src/model.rs -> core/src/model.rs\n")], "move Model");
+        let size = || [("ui", r("90 fn ui/src/ui.rs f\n")), ("core", r("194 struct core/src/model.rs Model\n"))];
+        assert!(ratcheted(&d, Kind::Size, &size()).is_ok(), "{:?}", ratcheted(&d, Kind::Size, &size()));
+        let clippy = [("ui", r("")), ("core", r("3 core core/src/model.rs clippy::x\n"))];
+        assert!(ratcheted(&d, Kind::Clippy, &clippy).is_ok());
+        // otherwise the new crate starts clean
+        let more = [("ui", r("")), ("core", r("194 struct core/src/model.rs Model\n61 fn core/src/x.rs g\n"))];
+        assert!(ratcheted(&d, Kind::Size, &more).is_err());
+        // a move into a crate the gate does not cover fails and writes nothing
+        let e = crate::tighten::apply_moves_in(&d, &["ui"]).expect_err("orphans");
+        assert!(e.contains("struct core/src/model.rs Model"), "{}", e);
+        assert_eq!(store::load(&d, "ui", Kind::Size).expect("load").0.len(), 2);
+        crate::tighten::apply_moves_in(&d, &["ui", "core"]).expect("--move");
+        assert_eq!(store::load(&d, "core", Kind::Size).expect("load"), r("194 struct core/src/model.rs Model\n"));
+        assert_eq!(store::load(&d, "ui", Kind::Size).expect("load"), r("90 fn ui/src/ui.rs f\n"));
+        commit(&d, &[], "ratchet --move");
+        assert!(ratcheted(&d, Kind::Size, &size()).is_ok(), "{:?}", ratcheted(&d, Kind::Size, &size()));
+        std::fs::remove_dir_all(&d).expect("clean up");
+    }
+}

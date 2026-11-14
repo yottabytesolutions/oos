@@ -60,6 +60,8 @@ fn type_name(t: &Type) -> String {
 pub struct Walk {
     pub found: Found,
     owner: Vec<String>,
+    /// the lines of the file with code on them (`codelines`)
+    code: std::collections::BTreeSet<usize>,
     /// the qualified names of the enclosing functions
     fns: Vec<String>,
 }
@@ -70,6 +72,11 @@ impl Walk {
             Some(o) => format!("{}::{}", o, name),
             None => name.to_string(),
         }
+    }
+
+    /// Code lines from `start` to `end` (ADR 0010: no blank and no comment lines).
+    fn code_lines(&self, start: proc_macro2::Span, end: proc_macro2::Span) -> u64 {
+        self.code.range(start.start().line..=end.end().line).count() as u64
     }
 
     fn skip(&mut self, attrs: &[Attribute], start: proc_macro2::Span, end: proc_macro2::Span) -> bool {
@@ -93,7 +100,7 @@ impl<'a> Visit<'a> for Walk {
         if self.skip(&f.attrs, f.sig.fn_token.span, f.block.brace_token.span.close()) {
             return;
         }
-        let n = lines(f.sig.fn_token.span, f.block.brace_token.span.close());
+        let n = self.code_lines(f.sig.fn_token.span, f.block.brace_token.span.close());
         let name = self.fn_name(&f.sig.ident);
         self.found.fns.push((name.clone(), n));
         // a nested function counts on its own, outside any impl
@@ -128,7 +135,7 @@ impl<'a> Visit<'a> for Walk {
         if self.skip(&f.attrs, f.sig.fn_token.span, f.block.brace_token.span.close()) {
             return;
         }
-        let n = lines(f.sig.fn_token.span, f.block.brace_token.span.close());
+        let n = self.code_lines(f.sig.fn_token.span, f.block.brace_token.span.close());
         let name = self.fn_name(&f.sig.ident);
         self.found.fns.push((name.clone(), n));
         let outer = std::mem::take(&mut self.owner);
@@ -140,7 +147,7 @@ impl<'a> Visit<'a> for Walk {
 
     fn visit_trait_item_fn(&mut self, f: &'a TraitItemFn) {
         if let Some(b) = &f.default {
-            let n = lines(f.sig.fn_token.span, b.brace_token.span.close());
+            let n = self.code_lines(f.sig.fn_token.span, b.brace_token.span.close());
             self.found.fns.push((self.fn_name(&f.sig.ident), n));
         }
         visit::visit_trait_item_fn(self, f);
@@ -210,7 +217,7 @@ pub fn walk_file(file: &syn::File, lines: u64, test: bool) -> Found {
     if test {
         return Found { test_lines: lines, unsafes, ..Found::default() };
     }
-    let mut w = Walk::default();
+    let mut w = Walk { code: super::codelines::of(file), ..Walk::default() };
     w.visit_file(file);
     w.found.unsafes = unsafes;
     w.found

@@ -1,0 +1,2 @@
+# Known failures, #[ignore = "known: task NNNN"]: 1 known <file> <test> <task>.
+# Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.

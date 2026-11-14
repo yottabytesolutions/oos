@@ -4,6 +4,7 @@
 
 use crate::workspace::{Metadata, Package};
 use std::path::{Path, PathBuf};
+use syn::ext::IdentExt;
 use syn::visit::{self, Visit};
 use syn::ItemMod;
 
@@ -15,8 +16,6 @@ pub struct Source {
     pub module: String,
     /// test code: a test target or below `#[cfg(test)]`
     pub test: bool,
-    /// a file of a test, bench or example target (its `crate::` is that target)
-    pub test_target: bool,
     pub text: String,
     pub file: syn::File,
 }
@@ -74,9 +73,9 @@ impl<'a> Visit<'a> for Decls {
             None if self.depth > 0 => {
                 self.err.get_or_insert(format!("mod {}; inside a function body", m.ident));
             }
-            None => self.out.push(Decl { inline: self.inline.clone(), name: m.ident.to_string(), test }),
+            None => self.out.push(Decl { inline: self.inline.clone(), name: m.ident.unraw().to_string(), test }),
             Some(_) => {
-                self.inline.push(m.ident.to_string());
+                self.inline.push(m.ident.unraw().to_string());
                 self.test.push(test);
                 visit::visit_item_mod(self, m);
                 self.test.pop();
@@ -116,7 +115,7 @@ fn child_dir(path: &Path, is_root: bool) -> PathBuf {
 
 /// Walks the module graph from one target root. A file reached as test code and as production code is production
 /// code: its children are walked again in that context.
-fn walk(root: &Path, start: &Path, test: bool, test_target: bool, out: &mut Vec<Source>) -> Result<(), String> {
+fn walk(root: &Path, start: &Path, test: bool, out: &mut Vec<Source>) -> Result<(), String> {
     let mut todo = vec![(start.to_path_buf(), String::new(), test, true)];
     while let Some((path, module, test, is_root)) = todo.pop() {
         let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
@@ -146,7 +145,7 @@ fn walk(root: &Path, start: &Path, test: bool, test_target: bool, out: &mut Vec<
                 .collect();
             todo.push((child, segs.join("::"), d.test, false));
         }
-        out.push(Source { rel, module, test, test_target, text, file });
+        out.push(Source { rel, module, test, text, file });
     }
     Ok(())
 }
@@ -160,7 +159,7 @@ pub fn of_package(meta: &Metadata, p: &Package) -> Result<Vec<Source>, String> {
     targets.sort_by_key(|t| t.is_test());
     let mut out = Vec::new();
     for t in targets {
-        walk(root, Path::new(&t.src_path), t.is_test(), t.is_test(), &mut out)?;
+        walk(root, Path::new(&t.src_path), t.is_test(), &mut out)?;
     }
     Ok(out)
 }
@@ -249,6 +248,18 @@ mod tests {
             std::fs::remove_dir_all(&root).expect("clean up");
             assert!(e.contains(why), "{}: {}", lib, e);
         }
+    }
+
+    // `mod r#a;` is the module `a` in a.rs; the walk looked for `r#a.rs` and its module path kept the `r#`.
+    #[test]
+    fn a_raw_module_name_is_its_plain_name() {
+        let root = fixture("raw");
+        std::fs::write(root.join("p").join("src").join("lib.rs"), "mod r#a;\nmod outer { mod r#inner {} }\n")
+            .expect("write");
+        let s = of_dir(&meta(&root), "p").expect("sources");
+        std::fs::remove_dir_all(&root).expect("clean up");
+        assert!(s.iter().any(|x| x.rel == "p/src/a.rs" && x.module == "a"), "{:?}", s);
+        assert!(s.iter().any(|x| x.rel == "p/src/a/inner/c.rs" && x.module == "a::inner::c"), "{:?}", s);
     }
 
     #[test]

@@ -99,8 +99,8 @@ menu rows, trigger rules, labels, demo traffic and an optional view of their own
 Everything the UI asks of the hardware goes through the trait `board::Board` (`ui/src/board/mod.rs`): what the
 acquisition thread is to apply, the generator, the front-end steps, the front panel, the board readings. The UI speaks
 in the model's terms and gets frames in volts back (`board::Frame`, `board::to_record`). `board::dho` implements it
-for the DHO800/DHO900 and is the only part of the UI that uses `oos_hal::dho`; a lint test
-(`board::boundary`) keeps it that way. The board is chosen when OOS is built (`board::Active`).
+for the DHO800/DHO900 and is the only part of the UI that uses `oos_hal::dho`; two `confine` rules
+in `xtask/data/architecture.txt` keep it that way. The board is chosen when OOS is built (`board::Active`).
 
 Threads:
 

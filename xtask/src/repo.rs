@@ -2,24 +2,23 @@
 
 use std::path::{Path, PathBuf};
 
-/// A member of the root workspace; the gate runs its steps crate by crate for counts and reports per crate.
+/// A member of the root workspace; the gate runs its steps crate by crate for counts and reports per crate. A crate
+/// without ratchet files allows nothing, except the entries a planned move brings into it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Crate {
     /// directory under the root, also the crate's name in the ratchet files
     pub dir: &'static str,
     /// built for the scope (aarch64-unknown-linux-musl) and checked for it
     pub target: bool,
-    /// held by the ratchets; false = every finding fails (new crates start here)
-    pub ratchet: bool,
 }
 
 /// Every crate the gate covers.
 pub const CRATES: [Crate; 5] = [
-    Crate { dir: "hal", target: true, ratchet: true },
-    Crate { dir: "dsp", target: true, ratchet: true },
-    Crate { dir: "ui", target: true, ratchet: true },
-    Crate { dir: "fpgad", target: true, ratchet: true },
-    Crate { dir: "xtask", target: false, ratchet: false },
+    Crate { dir: "hal", target: true },
+    Crate { dir: "dsp", target: true },
+    Crate { dir: "ui", target: true },
+    Crate { dir: "fpgad", target: true },
+    Crate { dir: "xtask", target: false },
 ];
 
 /// The scope's target triple.
@@ -43,6 +42,6 @@ mod tests {
     fn the_root_holds_the_crates() {
         let r = root();
         assert!(CRATES.iter().all(|c| r.join(c.dir).join("Cargo.toml").exists()));
-        assert!(CRATES.iter().any(|c| c.dir == "xtask" && !c.target && !c.ratchet));
+        assert!(CRATES.iter().any(|c| c.dir == "xtask" && !c.target));
     }
 }

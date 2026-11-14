@@ -18,6 +18,15 @@ pub struct Layer {
     pub allowed: BTreeSet<String>,
 }
 
+/// A confinement: in crate `krate`, `path` (a crate module path or a dependency path such as `oos_hal::dho`) may be
+/// named only from inside `allowed` (and, for a crate path, from inside itself).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Confine {
+    pub krate: String,
+    pub path: String,
+    pub allowed: Vec<String>,
+}
+
 /// The parsed rules.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Rules {
@@ -25,6 +34,7 @@ pub struct Rules {
     pub crates: BTreeMap<String, BTreeSet<String>>,
     pub forbid: Vec<Forbid>,
     pub layers: Vec<Layer>,
+    pub confines: Vec<Confine>,
     /// the metrics allowlist: `static <file> <name>` keys of statics with interior mutability that may stay
     pub statics: BTreeSet<String>,
     /// path prefixes where `unsafe` may appear
@@ -48,6 +58,11 @@ pub fn parse(text: &str) -> Result<Rules, String> {
                 r.forbid.push(Forbid { krate: krate.to_string(), from: from.to_string(), to: to.to_string() })
             }
             ["unsafe", prefix] => r.unsafe_paths.push(prefix.to_string()),
+            ["confine", krate, path, "->", allowed @ ..] => r.confines.push(Confine {
+                krate: krate.to_string(),
+                path: path.to_string(),
+                allowed: allowed.iter().map(|m| m.to_string()).collect(),
+            }),
             ["static", file, name] => {
                 r.statics.insert(format!("static {} {}", file, name));
             }
@@ -79,5 +94,8 @@ mod tests {
         let s = parse("static ui/src/pacing.rs VIEWS\n").unwrap().statics;
         assert!(s.contains("static ui/src/pacing.rs VIEWS"));
         assert_eq!(parse("unsafe hal\nunsafe ui/src/board/dho\n").unwrap().unsafe_paths, ["hal", "ui/src/board/dho"]);
+        let c = parse("confine ui oos_hal::dho -> board::dho\nconfine ui board::dho ->\n").unwrap().confines;
+        assert_eq!(c[0].allowed, ["board::dho"]);
+        assert!(c[1].allowed.is_empty() && c[1].path == "board::dho");
     }
 }

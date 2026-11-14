@@ -62,6 +62,8 @@ function; a file reached both as test and as production code is production code.
 | size limits | syntax walk (`syn`) | file ≤ 400 lines without `#[cfg(test)]` items, fn ≤ 60 lines, struct ≤ 12 fields, a type's inherent impls in ≤ 3 files | small units; the `Ui` of 155 fields over 33 files is what this stops |
 | mutable statics | syntax walk | a `static` whose type holds a `Mutex`, `RwLock`, atomic or `Cell`/`RefCell`/`UnsafeCell` (also through the crate's own types) only as a metrics counter (`static` lines in `architecture.txt`); `OnceLock`, `LazyLock` and `OnceCell` around plain data are allowed (set once, then read only) | global mutable state hides ownership |
 | unsafe | syntax walk | `unsafe` blocks, functions, impls, traits, extern blocks and attributes (`#[unsafe(..)]`, `no_mangle`, `export_name`, `link_section`) only under the `unsafe` path prefixes of `architecture.txt`: oos-hal and the adapters of ui; `dsp` has `#![forbid(unsafe_code)]` | memory safety stays at the hardware edge (AGENTS.md) |
+| disallowed-method exceptions | syntax walk | `#[allow]`/`#[expect]` of `clippy::disallowed_methods` only as listed in `allow.txt` | an exception cannot spread unseen |
+| known failures | syntax walk | `#[ignore = "known: task NNNN"]` only as listed in `known.txt`, each naming an open task | a failing test does not hide |
 | architecture | `cargo metadata`, syntax walk | `xtask/data/architecture.txt`: allowed crate dependencies; module rules inside a crate | the layers cannot erode by accident |
 | clippy | `cargo clippy --all-targets`, for the host and for `aarch64-unknown-linux-musl` | the `[lints]` table of each crate and `clippy.toml`; the scope build compiles | correctness, idiom, size and complexity, also in Linux-only code |
 | tests (debug, release) | `cargo test`, `cargo test --release` | every test passes in both profiles, full counts | release-only bugs (overflow checks, timing) show |
@@ -70,7 +72,9 @@ function; a file reached both as test and as production code is production code.
 
 The limits have no exemptions (ADR 0010): a record over 12 fields groups its fields into sub-structs.
 
-Size limits measure lines from `fn` to the closing brace, including comments and blank lines. Test code is exempt.
+A function's size is its code lines from `fn` to the closing brace: lines with a token on them, so blank lines,
+comments and doc comments do not count (ADR 0010). A file's size is its physical lines outside test code. Test code is
+exempt.
 Clippy's `too_many_lines` (60 code lines, `clippy.toml`) covers test code too.
 
 The lint set (identical in every crate, `[lints]` in its `Cargo.toml`): `clippy::all`, plus `too_many_lines`,
@@ -94,14 +98,24 @@ earlier Docker check mounted every worktree at the same path and could take anot
 
 The rules came in with the code already over them. Those findings are listed, each with its current size or count:
 
-- `xtask/data/size.txt`: `<size> <kind> <file or crate> <name>`, every item over a size limit.
-- `xtask/data/clippy.txt`: `<count> <crate> <file> <lint>`, every lint finding.
-- `xtask/data/statics.txt`: `1 static <file> <name>`, every mutable static that is not a metric.
-- `xtask/data/unsafe.txt`: `<count> unsafe <file>`, `unsafe` outside the allowed paths.
-- `xtask/data/coverage.txt`: `<floor> <crate>`, line coverage in tenths of a percent.
+One file per crate and kind, `xtask/data/<crate>/<kind>.txt`, so branches on different crates do not touch the same
+file:
+
+- `size.txt`: `<size> <kind> <file or crate> <name>`, every item over a size limit.
+- `clippy.txt`: `<count> <crate> <file> <lint>`, every lint finding.
+- `statics.txt`: `1 static <file> <name>`, every mutable static that is not a metric.
+- `unsafe.txt`: `<count> unsafe <file>`, `unsafe` outside the allowed paths.
+- `allow.txt`: `<count> allow <file> clippy::disallowed_methods`, every `#[allow]` or `#[expect]` of the disallowed
+  methods (also inside `cfg_attr` and as `#![allow]`), so an adapter-level exception cannot spread unseen.
+- `known.txt`: `1 known <file> <test> <task>`, every test ignored as a known failure with
+  `#[ignore = "known: task NNNN"]`. The task must be open (in `docs/tasks/`, not in `done/`); an `ignore` reason that
+  starts with `known` but names no task fails.
+
+`xtask/data/coverage.txt` holds the coverage floors, `<floor> <crate>` in tenths of a percent, for all crates.
 
 The gate fails when a listed entry grows, when an entry appears that is not listed (a new oversized function, a new
-lint finding in a file), and when coverage falls below its floor. An entry that shrank passes, and the gate says so.
+lint finding in a file), and when coverage falls more than 0.5 points below its floor: measurements move a little
+between runs, and the integrator raises the floors after the merge. An entry that shrank passes, and the gate says so.
 Write the improvement back:
 
 ```sh
@@ -112,7 +126,29 @@ cargo xtask ratchet --coverage    # also raise the coverage floors to the curren
 `ratchet` never raises a size or count and never adds an entry: a new finding is fixed, not listed. Branches do not
 edit the ratchet and coverage files: the integrator runs `cargo xtask ratchet` at merge, so two branches never
 conflict on them ([migration rules](architecture/migration.md#rules-for-every-step), Shared ratchet files).
-`cargo xtask ratchet --init` writes the files from the current state; it was run when the rules came in.
+`cargo xtask ratchet --init` writes the files from the current state; it only works where the base has no gate.
+
+### Moves
+
+A branch that moves code lists its moves in `xtask/data/moves.txt`, one `<old> -> <new>` per line:
+
+- a key move: both sides are ratchet keys as the gate prints them, `fn ui/src/ui.rs Ui::step -> fn ui/src/step.rs
+  Ui::step`;
+- a file move: both sides are paths, `ui/src/model.rs -> core/src/model.rs`; it renames the path in every key and the
+  crate word of the clippy keys.
+
+The gate then accepts a listed entry under its new key if it is not larger than under the old one at the base. A move
+that is not listed makes the entry new, and it fails. A move onto a key that already has an entry fails, and so do two
+moves onto one key: merged entries would share the larger allowance. Moves apply in the order listed. A moved entry
+may land in a new crate: it brings its allowance with it.
+
+The branch does not edit the ratchet files. At merge the integrator runs `cargo xtask ratchet --move`: it renames the
+entries in the ratchet files and keeps in `moves.txt` the moves that still rename an entry at the base. They are the
+evidence the integration commit needs against a base without them. A move that names no entry changes nothing, so a
+kept move is harmless; the next `ratchet` or `ratchet --move` whose base has the renamed entries drops it. A moved
+entry that lands in no crate of `CRATES` fails before anything is written. Plain `cargo xtask ratchet` refuses while a
+listed move still names an entry of the ratchet files. The base comparison applies the moves of the base and of the
+branch to both sides.
 
 ### Base trust
 
@@ -129,33 +165,36 @@ removed or lowered coverage floor fails. Any git error fails. `--init` refuses a
 
 Lint counts are per file, not per place: fixing one `unwrap` and adding another in the same file passes. That is the
 price of a ratchet that survives line moves. Size entries name the item, so they follow it through moves inside the
-file; a renamed or moved item counts as new.
-
-Planned in gate step G1 ([migration](architecture/migration.md#g1-gate-prerequisites)), before any migration step
-that moves code:
-- move-aware validation: a branch lists its planned moves in `xtask/data/moves.txt` (`<old> -> <new>`, part of the
-  step, not a ratchet file); the branch gate accepts a listed item at its new place if it is not larger than at the
-  merge base, and the integrator transfers the entries with `cargo xtask ratchet --move` at merge;
-- a coverage margin of 0.5 points per branch, raised by the integrator after the merge;
-- the function limit counted in code lines only;
-- module rules over external crate paths;
-- a shrink-only count of `#[allow(clippy::disallowed_methods)]` per crate;
-- the known-failure listing (`#[ignore = "known: task NNNN"]`), shrink-only.
+file; a renamed or moved item counts as new unless `moves.txt` lists it.
 
 ## Changing a rule
 
-- A new crate: add it to `CRATES` in `xtask/src/repo.rs` (with `ratchet: false`, so it starts clean) and a `crate`
-  line to `xtask/data/architecture.txt`.
+- A new crate: add it to `CRATES` in `xtask/src/repo.rs` and a `crate` line to `xtask/data/architecture.txt`. It has
+  no ratchet files, so it starts clean, except for the entries a planned move brings into it. `ratchet --move` writes
+  its files.
 - A new dependency: extend its crate's line in `xtask/data/architecture.txt`. The gate fails until the line allows it,
   so the decision is visible in review.
-- Module rules in `xtask/data/architecture.txt`, over module paths such as `board` or `board::dho`. Every path in
-  the code counts (`use` trees, calls, types), with `self::` and `super::` resolved against the file's module and any
-  inline `mod`. A module is inside a rule's module when its path starts with it segment-wise; for a file, the most
-  specific `layer` rule applies.
+- Module rules in `xtask/data/architecture.txt`, over module paths such as `board` or `board::dho`, and over paths
+  into the crate's dependencies under the package name with `_` (`oos_hal::dho`). Every path in the code counts
+  (`use` trees, calls, types) in every spelling that names the same item: `crate::`, `self::` and `super::` resolved
+  against the file's module and any inline `mod`; a child module named from its parent (`dho::x` in `board`); names
+  bound by `use` or `extern crate ... as`, in the module or, for a `use` inside a function, only in its block; glob
+  imports (into a dependency always, into a crate module where the name exists); re-exports in any module of the
+  crate, followed transitively (`pub use self::dho as hw;` in `board` makes `crate::board::hw` count as
+  `board::dho`); `::oos_hal`; a Cargo rename (`hal = { package = "oos-hal" }` makes `hal::dho` count as
+  `oos_hal::dho`); raw identifiers (`r#dho` is `dho`). Macro bodies are tokens, not paths: a `confine` rule also
+  fails a file whose tokens outside test code spell the confined path (`board::dho`, `oos_hal::dho` or a renamed
+  `hal::dho`) outside the allowed modules. Comments and string literals do not count. A module is inside a rule's module when its path starts with
+  it segment-wise; for a file, the most specific `layer` rule applies. Test code is free: test targets, test files
+  and `#[cfg(test)]` or `#[test]` items.
   - `forbid <crate dir> <from> <to>`: code under `<crate dir>/src/<from>.rs` or `src/<from>/` must not name
     `crate::<to>`.
-  - `layer <crate dir> <module> -> <modules...>`: code of `<module>` may name only the listed modules and itself;
-    nothing after `->` makes it a leaf.
+  - `layer <crate dir> <module> -> <modules...>`: code of `<module>` may name only the listed crate modules and
+    itself; nothing after `->` makes it a leaf. Dependency paths are not layer business.
+  - `confine <crate dir> <path> -> <modules...>`: `<path>`, a crate module or a dependency path, may be named only from
+    inside the listed modules (and a crate module also from inside itself). The board boundary is two of them: only
+    `board::dho` uses `oos_hal::dho`, and nothing outside `board` names `board::dho` (`board/mod.rs` selects the
+    port).
 
   Module rules have no ratchet: the tree must meet a rule when it is added. The target rules for `ui` are in
   [Enforcement](architecture/README.md#enforcement); each migration step adds the ones its modules meet.
@@ -178,6 +217,8 @@ Not enforced yet; each is a task.
   struct, a module path, an `unsafe` block) are not seen. Clippy sees expanded code.
 - Module boundaries: an inline `mod` takes the rules of its file's module, not its own; a glob import (`use
   super::*`) followed by a bare name, and a re-export through an allowed module, hide the module the name comes from.
+  A path relative to the current module (`dho::x` inside `board`, 2018 edition) is not resolved; nor is a
+  dependency path behind a `use oos_hal::dho as d` rename.
 - Impl spread counts the spelling of the self type (its last path segment): aliases split one type, and two types of
   the same name merge.
 - Path dependencies are checked by package name only, not by source: a local fork of an allowed crate passes.

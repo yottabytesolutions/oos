@@ -6,8 +6,8 @@
 //! Everything the UI asks of the hardware goes through `Board`: the acquisition thread and what it is to apply, the
 //! generator, the front-end steps, the front panel, the board readings. The UI speaks in the model's terms (volts per
 //! division, seconds, Hz, the generator page's fields) and gets frames in volts back. Registers, dividers and clocks of
-//! a board stay behind it, in its module: `dho` for the DHO800/DHO900. A lint test keeps `oos_hal::dho` and
-//! `board::dho` out of the rest of the crate.
+//! a board stay behind it, in its module: `dho` for the DHO800/DHO900. Two `confine` rules in
+//! `xtask/data/architecture.txt` keep `oos_hal::dho` and `board::dho` out of the rest of the crate.
 //!
 //! The board is chosen when OOS is built (`Active`): an image is built for one board family anyway (kernel, device
 //! tree). A port adds a module next to `dho`, implements `Board` for it and points `Active` at it.
@@ -450,88 +450,3 @@ pub struct HwSeg {
 pub const QUEUE_MAX: usize = 96;
 
 pub type HwShared = Arc<Mutex<Shared>>;
-
-#[cfg(test)]
-mod boundary {
-    use std::path::{Path, PathBuf};
-
-    fn rs_files(d: &Path, out: &mut Vec<PathBuf>) {
-        for e in std::fs::read_dir(d).unwrap().flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                rs_files(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                out.push(p);
-            }
-        }
-    }
-
-    /// Where the children of a module file live: next to `main.rs` and `mod.rs`, else in the folder of its name.
-    fn child_dir(f: &Path) -> PathBuf {
-        let d = f.parent().unwrap();
-        match f.file_stem().and_then(|s| s.to_str()) {
-            Some("main") | Some("mod") => d.to_path_buf(),
-            Some(s) => d.join(s),
-            None => d.to_path_buf(),
-        }
-    }
-
-    /// The code outside `#[cfg(test)]`: a file declared as a test module is test code as a whole; in other files an
-    /// inline test module at the end of the file is cut off. Comment lines do not count.
-    fn production(text: &str) -> String {
-        let lines: Vec<&str> = text.lines().collect();
-        let mut end = lines.len();
-        for i in 0..lines.len().saturating_sub(1) {
-            let next = lines[i + 1].trim_start();
-            if lines[i].trim() == "#[cfg(test)]" && next.starts_with("mod ") && next.ends_with('{') {
-                end = i;
-                break;
-            }
-        }
-        lines[..end].iter().filter(|l| !l.trim_start().starts_with("//")).cloned().collect::<Vec<_>>().join("\n")
-    }
-
-    /// Only `board::dho` uses `oos_hal::dho`, and nothing outside `board` names `board::dho`: the rest of the UI talks
-    /// to the hardware through `Board` (docs/porting.md). Tests may look behind it.
-    #[test]
-    fn only_the_board_module_touches_the_board() {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut files = Vec::new();
-        rs_files(&src, &mut files);
-        // files declared as `#[cfg(test)] mod name;`
-        let mut test_only = Vec::new();
-        for f in &files {
-            let t = std::fs::read_to_string(f).unwrap();
-            let l: Vec<&str> = t.lines().collect();
-            for w in l.windows(2) {
-                if w[0].trim() == "#[cfg(test)]" {
-                    if let Some(n) = w[1].trim().strip_prefix("mod ").and_then(|r| r.strip_suffix(';')) {
-                        test_only.push(child_dir(f).join(format!("{}.rs", n)));
-                        test_only.push(child_dir(f).join(n).join("mod.rs"));
-                    }
-                }
-            }
-        }
-        let dho = src.join("board").join("dho");
-        let mut bad = Vec::new();
-        for f in &files {
-            if f.starts_with(&dho) || test_only.contains(f) {
-                continue;
-            }
-            let code = production(&std::fs::read_to_string(f).unwrap());
-            let rel = f.strip_prefix(&src).unwrap().display().to_string();
-            for l in code.lines() {
-                if l.contains("oos_hal::dho") || l.contains("board::dho") {
-                    bad.push(format!("{}: {}", rel, l.trim()));
-                }
-            }
-        }
-        assert!(bad.is_empty(), "board code outside board/dho:\n{}", bad.join("\n"));
-        // the check itself sees what it is meant to see
-        assert!(
-            production("use oos_hal::dho::afg;\n#[cfg(test)]\nmod tests {\n use oos_hal::dho::seq;\n}").contains("afg")
-        );
-        assert!(!production("fn a() {}\n#[cfg(test)]\nmod tests {\n use oos_hal::dho::seq;\n}").contains("seq"));
-        assert!(test_only.iter().any(|p| p.ends_with("ui/lint.rs")), "{:?}", test_only);
-    }
-}

@@ -43,24 +43,47 @@ fn exists_at(root: &Path, commit: &str, rel: &str) -> Result<bool, String> {
     Ok(!git(root, &["ls-tree", "--name-only", commit, "--", rel])?.is_empty())
 }
 
-/// The text of `rel` at `commit`. None only when the file is absent there and so is the gate (`xtask/Cargo.toml`):
-/// the one change that brings the ratchets in. Absent while the gate exists fails.
-pub fn text_at(root: &Path, commit: &str, rel: &str) -> Result<Option<String>, String> {
+/// A file at the base.
+#[derive(Debug, PartialEq, Eq)]
+pub enum At {
+    Present(String),
+    /// absent, while the gate exists at the base
+    Absent,
+    /// absent, and so is the gate (`xtask/Cargo.toml`): the change that brings the gate in
+    NoGate,
+}
+
+/// `rel` at `commit`.
+pub fn at(root: &Path, commit: &str, rel: &str) -> Result<At, String> {
     if exists_at(root, commit, rel)? {
-        return git(root, &["show", &format!("{}:{}", commit, rel)]).map(Some);
+        return git(root, &["show", &format!("{}:{}", commit, rel)]).map(At::Present);
     }
     if exists_at(root, commit, "xtask/Cargo.toml")? {
-        return Err(format!("{}: missing at the base {} although the gate exists there", rel, commit));
+        return Ok(At::Absent);
     }
-    Ok(None)
+    Ok(At::NoGate)
+}
+
+/// The text of `rel` at `commit`. None only when the gate is absent there too; a file the gate lost fails.
+pub fn text_at(root: &Path, commit: &str, rel: &str) -> Result<Option<String>, String> {
+    match at(root, commit, rel)? {
+        At::Present(t) => Ok(Some(t)),
+        At::NoGate => Ok(None),
+        At::Absent => Err(format!("{}: missing at the base {} although the gate exists there", rel, commit)),
+    }
+}
+
+/// The base commit of the repository at `root`.
+pub fn protected(root: &Path) -> Result<String, String> {
+    let env = std::env::var("OOS_GATE_BASE").ok();
+    let exists = |r: &str| git(root, &["rev-parse", "--verify", "--quiet", r]).is_ok();
+    let base = select(std::env::var_os("CI").is_some(), env.as_deref(), exists)?;
+    commit(root, &base)
 }
 
 /// The text of `rel` at the protected base of the repository at `root`.
 pub fn text(root: &Path, rel: &str) -> Result<Option<String>, String> {
-    let env = std::env::var("OOS_GATE_BASE").ok();
-    let exists = |r: &str| git(root, &["rev-parse", "--verify", "--quiet", r]).is_ok();
-    let base = select(std::env::var_os("CI").is_some(), env.as_deref(), exists)?;
-    text_at(root, &commit(root, &base)?, rel)
+    text_at(root, &protected(root)?, rel)
 }
 
 /// Entries of `work` that the base does not allow: new keys and raised values.

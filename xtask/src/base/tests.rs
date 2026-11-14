@@ -33,24 +33,7 @@ fn the_base_override_counts_only_in_ci() {
     assert!(select(false, None, |_: &str| false).is_err());
 }
 
-/// A git repository in a fresh temporary directory, with `steps` of (files to write, commit message).
-fn repo(name: &str, steps: &[(&[(&str, &str)], &str)]) -> std::path::PathBuf {
-    let d = std::env::temp_dir().join(format!("xtask-base-{}-{}", name, std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).expect("dir");
-    let g = |a: &[&str]| assert!(run::capture(&d, "git", a).expect("git").ok, "git {:?}", a);
-    g(&["init", "-q", "-b", "overhaul"]);
-    for (files, msg) in steps {
-        for (p, t) in *files {
-            let f = d.join(p);
-            std::fs::create_dir_all(f.parent().expect("parent")).expect("dir");
-            std::fs::write(f, t).expect("write");
-        }
-        g(&["add", "-A"]);
-        g(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", msg]);
-    }
-    d
-}
+use crate::testrepo::repo;
 
 // The holes: on the base branch the merge base was HEAD itself; a missing file at a base that already had the gate
 // was taken as "no ratchet yet".
@@ -70,5 +53,33 @@ fn the_base_is_the_parent_on_the_branch_and_a_lost_file_fails() {
     let first = git(&d, &["rev-list", "--max-parents=0", "HEAD"]).expect("root");
     assert_eq!(text_at(&d, &first, "xtask/data/size.txt").expect("text"), None);
     assert!(text_at(&d, "no-such-commit", "xtask/data/size.txt").is_err());
+    std::fs::remove_dir_all(&d).expect("clean up");
+}
+
+// The split: a base with one combined file per kind gives each crate its own entries; a crate or kind the base does
+// not know starts empty; a base without the gate has nothing to compare.
+#[test]
+fn per_crate_ratchets_read_a_combined_base() {
+    use crate::store::{at_base, Kind};
+    let d = repo(
+        "split",
+        &[
+            (&[("README", "x")], "before the gate"),
+            (
+                &[("xtask/Cargo.toml", "x"), ("xtask/data/size.txt", "5 fn ui/src/a.rs f\n7 fn hal/src/b.rs g\n")],
+                "gate",
+            ),
+            (&[("xtask/data/ui/size.txt", "5 fn ui/src/a.rs f\n")], "split"),
+        ],
+    );
+    let head = git(&d, &["rev-parse", "HEAD"]).expect("head");
+    let gate = git(&d, &["rev-parse", "HEAD^1"]).expect("gate");
+    let first = git(&d, &["rev-list", "--max-parents=0", "HEAD"]).expect("root");
+    let r = |t: &str| Some(Ratchet::parse(t).expect("r"));
+    assert_eq!(at_base(&d, &gate, "hal", Kind::Size).expect("at"), r("7 fn hal/src/b.rs g\n"));
+    assert_eq!(at_base(&d, &head, "ui", Kind::Size).expect("at"), r("5 fn ui/src/a.rs f\n"));
+    assert_eq!(at_base(&d, &head, "core", Kind::Size).expect("at"), r(""));
+    assert_eq!(at_base(&d, &gate, "ui", Kind::Known).expect("at"), r(""));
+    assert_eq!(at_base(&d, &first, "ui", Kind::Size).expect("at"), None);
     std::fs::remove_dir_all(&d).expect("clean up");
 }

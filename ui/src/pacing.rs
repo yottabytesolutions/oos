@@ -113,9 +113,9 @@ const MARGIN_MS: f32 = 3.0;
 
 /// The ring-fill time of the next batch (`seq::acquire_batch_idle`'s `wait_ms`). With a fixed 25 ms fill a batch came
 /// every 40-55 ms at 1-10 us/div, and every 31-34 ms at short time bases, against a screen frame of 33.3 ms: pictures
-/// without a new batch and pictures with two alternated (docs/fork/stutter.md). The fill is set so that the batch is
-/// read and drawn just before a screen step: from the rest of a batch besides its fill (arm, first trigger, read;
-/// smoothed) and the workers' time to draw it (`ready_ms`).
+/// without a new batch and pictures with two alternated (docs/fork/stutter.md). The fill is set so that the reads come
+/// one screen frame apart, each the workers' drawing time (`ready_ms`) before a screen step: from the rest of a batch
+/// besides its fill (arm, first trigger, read; smoothed). The drawing of one batch overlaps the next one's recording.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Fill {
     rest: Option<f32>,
@@ -127,9 +127,12 @@ impl Fill {
     pub fn plan(&self, start: Instant, next: impl Fn(Instant) -> Option<Instant>, ready: f32) -> u64 {
         let rest = self.rest.unwrap_or(5.0);
         let ms = |a: f32| std::time::Duration::from_secs_f32(a.max(0.0) / 1e3);
-        let earliest = start + ms(rest + FILL_MIN_MS + ready + MARGIN_MS);
-        let fill = match next(earliest) {
-            Some(step) => step.saturating_duration_since(start).as_secs_f32() * 1e3 - MARGIN_MS - ready - rest,
+        // the drawing overlaps the next batch: only the reads need a screen frame between them, each one `ready` +
+        // `MARGIN_MS` before a step. The first such read time the batch can make:
+        let lead = ready + MARGIN_MS;
+        let earliest = start + ms(rest + FILL_MIN_MS);
+        let fill = match next(earliest + ms(lead)) {
+            Some(step) => step.saturating_duration_since(start).as_secs_f32() * 1e3 - lead - rest,
             None => FILL_MAX_MS,
         };
         fill.clamp(FILL_MIN_MS, FILL_MAX_MS).round() as u64
@@ -224,6 +227,10 @@ mod tests {
         // starting late in the frame: too late for the next step, so the one after it
         let fill = f.plan(at(30.0), next, 2.0) as f32;
         assert!((fill - (66.7 - 30.0 - 3.0 - 2.0 - 15.0)).abs() <= 1.0, "{}", fill);
+        // drawing longer than the rest of the frame (15 ms at 5 us/div): the reads still one frame apart, each landing
+        // a frame later; from a read 18 ms before a step, the next read 18 ms before the step after
+        let fill = f.plan(at(33.3 - 18.0), next, 15.0) as f32;
+        assert!((fill - (33.3 - 15.0)).abs() <= 1.0, "{}", fill);
         // a short rest (200 ns/div): the rest of the frame, at most the former 25 ms
         let mut g = Fill::default();
         g.done(7.0, 2, false);

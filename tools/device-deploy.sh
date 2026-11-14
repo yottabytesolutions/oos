@@ -13,8 +13,8 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 host=${1:?usage: device-deploy.sh <ip> [--restore]}
 port=${OOS_TELNET_PORT:-23}
-ui=${OOS_DEPLOY_UI:-$here/ui/target/aarch64-unknown-linux-musl/release/oos-ui}
-fpgad=${OOS_DEPLOY_FPGAD:-$here/fpgad/target/aarch64-unknown-linux-musl/release/oos-fpgad}
+ui=${OOS_DEPLOY_UI:-$here/target/aarch64-unknown-linux-musl/release/oos-ui}
+fpgad=${OOS_DEPLOY_FPGAD:-$here/target/aarch64-unknown-linux-musl/release/oos-fpgad}
 
 # one command on the telnet shell; the pauses keep nc from dropping what comes back
 tel() {

@@ -21,13 +21,12 @@ non-zero when a step failed. Humans and agents run the same command; the hooks a
 
 ## The crates
 
-`hal`, `dsp`, `ui` and `fpgad` build separately, each with its own `Cargo.lock`. `gpu` is C (`gpu/oos-gpu.c`), not a
-crate. `xtask` is the gate itself. There is no root workspace, on purpose: the build scripts, the image build and the
-GPU test expect each crate's own `target/` (`ui/target/aarch64-unknown-linux-musl/release/oos-ui`), the crates have
-their own release profiles, and upstream has the same layout. A root workspace would move every target directory and
-merge the lock files for one shared build cache. That can come later as its own change. Until then `cargo xtask`
-iterates over the crates (`xtask/src/repo.rs`). `rustfmt.toml` and `clippy.toml` sit at the root; rustfmt and clippy
-find them from every crate.
+One root workspace (`Cargo.toml`): `hal`, `dsp`, `ui`, `fpgad` and `xtask`, with one `Cargo.lock`, one `target/`
+and the release profile of the scope binaries. `gpu` is C (`gpu/oos-gpu.c`), built in its own container by
+`gpu/build.sh` and `gpu/test-host.sh`, so it is no member. The scope's binaries land in
+`target/aarch64-unknown-linux-musl/release/`; the target flags (rust-lld, static, Cortex-A72) are in the root
+`.cargo/config.toml`. The gate runs each step crate by crate (`CRATES` in `xtask/src/repo.rs`), so its counts and
+ratchets stay per crate. `rustfmt.toml` and `clippy.toml` sit at the root.
 
 ## What each check enforces
 

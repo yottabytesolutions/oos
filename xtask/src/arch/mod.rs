@@ -18,9 +18,7 @@ pub fn load(root: &Path) -> Result<rules::Rules, String> {
 pub fn check(root: &Path) -> Result<Vec<String>, String> {
     let rules = load(root)?;
     let mut out = Vec::new();
-    for c in CRATES {
-        out.extend(deps::check(root, c.dir, &rules)?);
-    }
+    out.extend(deps::check(root, &rules)?);
     for c in CRATES {
         let forbid: Vec<&rules::Forbid> = rules.forbid.iter().filter(|f| f.krate == c.dir).collect();
         let layers: Vec<&rules::Layer> = rules.layers.iter().filter(|l| l.krate == c.dir).collect();

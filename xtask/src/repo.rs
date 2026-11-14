@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// A crate of the repository, built on its own (there is no root workspace: docs/development.md).
+/// A member of the root workspace; the gate runs its steps crate by crate for counts and reports per crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Crate {
     /// directory under the root, also the crate's name in the ratchet files

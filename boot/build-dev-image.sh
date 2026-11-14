@@ -44,10 +44,10 @@ docker run --rm --platform linux/arm64 alpine:3.22 true >/dev/null 2>&1 || {
 }
 sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }
 owner="$(id -u):$(id -g)"
-ui="$root/ui/target/aarch64-unknown-linux-musl/release"
+ui="$root/target/aarch64-unknown-linux-musl/release"
 # always rebuild (incremental), so the image never carries a stale binary
 (cd "$root/ui" && cargo build --release --target aarch64-unknown-linux-musl) || exit 1
-fpgad="$root/fpgad/target/aarch64-unknown-linux-musl/release"
+fpgad="$root/target/aarch64-unknown-linux-musl/release"
 (cd "$root/fpgad" && cargo build --release --target aarch64-unknown-linux-musl) || exit 1
 # oos-hw with the kernel's compiler (kernel/build-base.sh image), for arm64 whatever the host is; ELF e_machine 0xb7 is
 # AArch64, a binary built for the host by an older script is built again
@@ -131,7 +131,7 @@ key="${OOS_UPDATE_KEY:-$HOME/.config/oos/update-signing.key}"
 rm -f "$out/oos-dev.oosupd"
 if [ -f "$key" ]; then
 	(cd "$root/fpgad" && cargo build --release --bin oos-update) || exit 1
-	"$root/fpgad/target/release/oos-update" pack --image "$out/oos-dev.img" --build "$build_id" --key "$key" --out "$out/oos-dev.oosupd"
+	"$root/target/release/oos-update" pack --image "$out/oos-dev.img" --build "$build_id" --key "$key" --out "$out/oos-dev.oosupd"
 else
 	echo "no signing key at $key: no update package (oos-update keygen, docs/update.md)"
 fi

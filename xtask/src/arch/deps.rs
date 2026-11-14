@@ -40,9 +40,9 @@ fn violations(packages: &[(String, Vec<String>)], rules: &Rules) -> Vec<String> 
     out
 }
 
-/// Checks the crate in `root/krate`.
-pub fn check(root: &Path, krate: &str, rules: &Rules) -> Result<Vec<String>, String> {
-    let out = run::capture(&root.join(krate), "cargo", &["metadata", "--format-version", "1", "--no-deps"])?;
+/// Checks every package of the workspace at `root`.
+pub fn check(root: &Path, rules: &Rules) -> Result<Vec<String>, String> {
+    let out = run::capture(root, "cargo", &["metadata", "--format-version", "1", "--no-deps"])?;
     if !out.ok {
         return Err(run::tail(&out.stderr, 10));
     }

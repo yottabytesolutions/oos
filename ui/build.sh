@@ -12,10 +12,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 [ -f assets/font-larger.bin ] || python3 tools/mkfont.py assets/font-larger.bin larger
 cargo build --release --target aarch64-unknown-linux-musl
 cargo build --release
-ls -l target/aarch64-unknown-linux-musl/release/oos-ui
+ls -l ../target/aarch64-unknown-linux-musl/release/oos-ui
 if [ "$1" = test ]; then
 	out=target/test-shots; mkdir -p $out
-	for t in tests/*.txt; do sed "s#\$S#$out#g" "$t" > $out/script.txt; ./target/release/oos-ui --script $out/script.txt; done
+	for t in tests/*.txt; do sed "s#\$S#$out#g" "$t" > $out/script.txt; ../target/release/oos-ui --script $out/script.txt; done
 	python3 -c "import glob; from PIL import Image; [Image.open(f).save(f[:-4]+'.png') for f in glob.glob('$out/*.ppm')]"
 	ls $out/*.png
 fi

@@ -15,7 +15,7 @@ mode=${1:-check}
 base=${2:-target/layout-base}
 case $mode in record | check) ;; *) echo "usage: $0 record|check [dir]" >&2; exit 2 ;; esac
 cargo build --release --quiet
-bin=$PWD/target/release/oos-ui
+bin=$PWD/../target/release/oos-ui
 if [ "$mode" = record ]; then out=$base; else out=target/layout-new; fi
 rm -rf "$out" target/layout-work
 mkdir -p "$out" target/layout-work

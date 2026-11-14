@@ -25,8 +25,3 @@ missing_safety_doc = "warn"
 [dependencies]
 libc = "0.2"
 oos-hal = { path = "../hal" }
-
-[profile.release]
-lto = true
-panic = "abort"
-opt-level = 3

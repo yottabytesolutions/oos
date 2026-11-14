@@ -1,8 +1,8 @@
 //! The scope build: `cargo check` for aarch64-unknown-linux-musl.
 //!
 //! On the host with the target's standard library (`rustup target add aarch64-unknown-linux-musl`): `check` does not
-//! link, so no cross linker is needed. Its own target directory keeps it apart from the host build. The earlier
-//! Docker flow mounted every worktree at the same path and could take another tree's build as fresh.
+//! link, so no cross linker is needed. The flags come from the root `.cargo/config.toml`, as for the image build.
+//! The earlier Docker flow mounted every worktree at the same path and could take another tree's build as fresh.
 
 use crate::repo::TARGET;
 use crate::run;
@@ -10,13 +10,7 @@ use std::path::Path;
 
 /// Checks every target of the crate in `root/krate` for the scope.
 pub fn check(root: &Path, krate: &str) -> Result<(), String> {
-    let dir = root.join("target").join("xtask-arm64");
-    let dir = dir.to_string_lossy();
-    let out = run::capture(
-        &root.join(krate),
-        "cargo",
-        &["check", "--all-targets", "--quiet", "--target", TARGET, "--target-dir", &dir],
-    )?;
+    let out = run::capture(&root.join(krate), "cargo", &["check", "--all-targets", "--quiet", "--target", TARGET])?;
     if out.ok {
         Ok(())
     } else {

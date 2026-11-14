@@ -2356,7 +2356,7 @@ def main():
     ap.add_argument("--baseline", help="fingerprint.json of an earlier run")
     ap.add_argument("--soak-min", type=float, default=0)
     ap.add_argument("--quick", action="store_true")
-    ap.add_argument("--sim", action="store_true", help="start oos-ui --serve from ui/target/debug, generator on CH1 and CH2")
+    ap.add_argument("--sim", action="store_true", help="start oos-ui --serve from target/debug, generator on CH1 and CH2")
     ap.add_argument("--out")
     o = ap.parse_args()
     o.out = o.out or os.path.join("device-test", time.strftime("%Y%m%d-%H%M%S"))
@@ -2364,7 +2364,7 @@ def main():
     proc = None
     if o.sim:
         here = os.path.dirname(os.path.abspath(__file__))
-        proc = subprocess.Popen([os.path.join(here, "../ui/target/debug/oos-ui"), "--serve", "--scpi-port", "15555", "--web-port", "18080"], env={**os.environ, "OOS_DEMO_LOOP": "3"}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen([os.path.join(here, "../target/debug/oos-ui"), "--serve", "--scpi-port", "15555", "--web-port", "18080"], env={**os.environ, "OOS_DEMO_LOOP": "3"}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         o.host, o.scpi_port, o.web_port = "127.0.0.1", 15555, 18080
         time.sleep(1.5)
 

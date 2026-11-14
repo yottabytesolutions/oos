@@ -18,7 +18,7 @@ import boardconf
 ROOT = os.path.dirname(HERE)
 BOARD = boardconf.load()
 PKG = os.path.join(HERE, "out", "oos-dev.oosupd")
-TOOL = os.path.join(ROOT, "fpgad", "target", "aarch64-unknown-linux-musl", "release", "oos-update")
+TOOL = os.path.join(ROOT, "target", "aarch64-unknown-linux-musl", "release", "oos-update")
 OUT = os.path.join(HERE, "out", BOARD["OOS_GEL_STEM"] + "_Install.GEL")
 
 

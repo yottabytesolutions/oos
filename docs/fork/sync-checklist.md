@@ -18,25 +18,21 @@ sync". Nothing here touches the unit.
    itself (`ui/src/ui/ssh.rs`, `ui/src/ssh.rs`, `oos-ssh`) is fork-only. Check: `grep -rn telnetd rootfs ui/src` finds nothing.
 4. Conflicts in `hal/src/dho/seq.rs` Poll handling: upstream's Poll body lives in the fork's `plain_step`. Port any
    upstream change there; `execute_until` stays a thin wrapper.
-5. Host tests, all must pass: `cargo test` in `hal`, `dsp`, `ui`, `fpgad`; `tools/ssh-sim.sh`; `tools/fw-sim.sh`.
+5. `cargo xtask check` (docs/development.md) must pass: formatting, size limits, architecture, clippy, the tests of
+   every crate in debug and release, the scope target check and the perf guards. Then `tools/ssh-sim.sh` and
+   `tools/fw-sim.sh`.
    Downloaded sources: upstream's own build scripts (kexec, fsck, WLAN tools, Mesa) keep their pinned `ver=` and `sum=`
    untouched; `tools/deps-check.sh` reports where a script and `rootfs/deps.lock` differ after a sync, and the
    manifest line follows the script (docs/fork/deps.md).
-6. `cargo check --all-targets` of `hal`, `ui`, `fpgad` on linux/arm64 (container), so the `target_os = "linux"` paths
-   compile:
-   `docker run --rm -v "$PWD:/src" -v oos-target-<worktree>:/tgt -e CARGO_TARGET_DIR=/tgt -w /src/<crate> rust:1-alpine cargo check --all-targets`
-   Use one target volume per worktree, and clean the workspace crates first, in the same container before the check:
-   `for p in oos-hal oos-dsp oos-ui oos-fpgad; do cargo clean -p $p; done` (each separately: one unknown spec fails
-   the whole call). Every worktree mounts at `/src`, so on a shared or reused volume cargo can take another tree's
-   build as fresh and report a false pass or failure. Touching the sources on the host did not force a rebuild
-   through the Docker mount. The output must show `Checking oos-*` lines.
-7. `tools/perf-guard.sh`: allocation counts and the early trigger end (deterministic), then the timing ratios of the
+6. The `target_os = "linux"` paths: the scope target step of `cargo xtask check` checks every crate for
+   aarch64-unknown-linux-musl on the host, with the image build's flags. The earlier Docker check is no longer needed.
+7. `tools/perf-guard.sh` (also a step of the gate): allocation counts and the early trigger end (deterministic), then the timing ratios of the
    fork's fast paths against reference copies of the paths they replaced. A failing ratio means the merge brought an
    upstream path back into the fork's loop, or slowed the fork's one: find which before fast-forwarding.
 8. `gpu/test-host.sh` (since 0.1.12): the GPU picture against the CPU picture for every script in `ui/tests`, and the
    monitor's cost per pixel. It covers the fork's trace paths (drawpipe, sparse, persistence) on the GPU. It needs an
-   aarch64 musl release `oos-ui` in `ui/target/aarch64-unknown-linux-musl/release/`: build it in the rust:1-alpine
-   container with `cargo build --release --target aarch64-unknown-linux-musl` and copy it there. Upstream's other
+   aarch64 musl release `oos-ui` in `target/aarch64-unknown-linux-musl/release/`: `cargo build --release --target
+   aarch64-unknown-linux-musl -p oos-ui` on the host (rust-lld links it, as in the image build). Upstream's other
    speed test (`tools/device-test.py`, frame rate by graphics and monitor) needs the unit.
 9. `tools/plan-matrix.sh` with the old and the new `oos-fpgad`, `diff`: the register sequences must not change unless
    the merge meant to.

@@ -577,8 +577,8 @@ adb connect <scope>:55555        # adb root drops the connection
 # your calibration and licences, onto your computer
 adb pull /rigol/data rigol-data
 
-# the tool for the scope, not the one in fpgad/target/release
-adb push fpgad/target/aarch64-unknown-linux-musl/release/oos-update /data/local/tmp/
+# the tool for the scope, not the one in target/release
+adb push target/aarch64-unknown-linux-musl/release/oos-update /data/local/tmp/
 adb push boot/out/oos-dev.oosupd /data/local/tmp/
 adb shell chmod 755 /data/local/tmp/oos-update
 

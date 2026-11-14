@@ -161,6 +161,8 @@ Every frame contributes a known weight per screen column (w = 24 in lines), what
   0.24-0.28 counts and truncates to 0. So dots keep one count per sample in u16 maps, and the frame's weight
   W_frame is its samples per column (86 for a raw 100 k frame at 200 us/div, about 3.7 for a 3600-point record).
   Brightness = count / W then equals across sources, with no float maps and no extra memory.
+  - W_frame is per map: the zoom map has its own samples per zoom column, so `phz` has its own W, as it has its own
+    grade today.
   - Frames of one generation have the same samples per column, so they weigh the same in a picture.
   - Raw and record frames in one dots picture weigh by their own W, correctly normalised. Such a mix happens only
     during a change, because the newest frame and the deep window no longer draw (3.4).
@@ -305,7 +307,7 @@ Each step: one branch, host tests that fail before and pass after, gates (releas
 | # | Step | Days | Host tests (fail before) | Unit check | Deletes |
 |---|---|---|---|---|---|
 | 0 | Counters: `stale`, frames and W per picture, partial merges | 0.5 | counters present and counting in pipe tests | status line shows them | none |
-| 1 | Settings generation on frames and batches; full key incl. mdepth/k; the acquisition thread clears the queue on reconfigure and drops a fill that `changed()` ended under the old configuration; drop stale; clear on first new batch | 1 | old-generation frames never drawn (pipe and `Source::acquire`); `depth_mix_report` as a test: no live frame in a picture with a deep one after a depth change | settle over 20 changes, `stale` drawn 0 | `hw_stamp` use for the view |
+| 1 | Settings generation on frames and batches; full key incl. mdepth/k; the acquisition thread clears the queue on reconfigure and drops a fill that `changed()` ended under the old configuration; drop stale; blank the trace area on the change, the first new batch fills it | 1 | old-generation frames never drawn (pipe and `Source::acquire`); `depth_mix_report` as a test: no live frame in a picture with a deep one after a depth change | settle over 20 changes, `stale` drawn 0 | `hw_stamp` use for the view |
 | 2 | One lines kernel: spans for raw, codes, pairs, records (`draw_ex` lines); Z and sparse per 3.3 | 4 | `pair_raw_mix_report` and `depth_mix_report` x1.000 for raw/pairs/deep/record mixes; record-path pictures alone keep brightness within 3 % | probe comp 200 us and 1 ms; zoom, Single, roll screenshots | `draw_ex` segment joining (lines), deep-raw branch in `draw_frame` |
 | 3 | Dots: one count per sample, W_frame = samples per column, brightness = count / W | 2.5 | dots brightness within 3 % across raw/record frames and sample counts; no dot lost at 100 samples per column | dots set | none |
 | 4 | `BatchUnit`: a batch's shares published together when the last is in; newest frame drawn by the pipe; route C gone. Route D (frames mode, the default) stays: each step's queued frames, newest included, become one batch through the same kernel | 2.5 | 2ac0ca1/988312b tests rewritten: every merged map holds exactly its batch's frames; the newest frame in the same merge; frames mode and batch mode give the same picture for the same frames | stress set, `partial` 0 | `Acc` lists, `Tally`, `Deliver`, `MERGE_WAIT_MAX`, the helper's early `help_done` (the one at the end of the acquisition loop stays), the `fast_ok` frame branch in `Ui::step` |

@@ -1,7 +1,8 @@
 # Mean-type measurements of deep records from raw samples
 
-Branch `feat/deep-meas`, on top of `fix/envelope-stats`. Opt-in: `meas.deep_raw = on` in /oos/system.conf, or
-`OOS_DEEP_RAW=1` for oos-ui alone. Off until the procedure below has passed on the unit.
+Branch `feat/deep-meas`, on top of `fix/envelope-stats`. On by default since 2026-11-14 (branch
+feat/deep-raw-default). Opt out with `meas.deep_raw = off` in /oos/system.conf. `OOS_DEEP_RAW` overrides for oos-ui
+alone (empty or 0 off).
 
 ## Problem
 
@@ -120,6 +121,32 @@ into the statistics (`framestats::fold_frame`, the cheap measurements, `acq.pipe
 every depth gives pair frames: live compression up to 1 M, the FPGA compression above. `fold_frame` skips pairs, and
 the UI measures the raw records itself without counting them. So 0 is expected there. It counts at time bases
 without compression and with frames to spare for the workers, for example 1 us/div with Vavg on.
+
+## Default on (2026-11-14)
+
+Off, a user who adds Vavg sees `----` above 1 M points while 1 M works. So the default is now on.
+
+Cost of one raw read, at most one per second while running and only when a shown measurement needs samples
+(`want`). Host figures from `hw::tests::deep_raw_read_cost_report` (ignored test) at 1 ms/div. The DMA time is
+estimated at about 600 MB/s (specs/10-transfer-efficiency.md).
+
+| Depth, channels | Rate, lanes | Pair frame | Raw window | DMA est. | Decode (host) | `to_record` (host) |
+|---|---|---|---|---|---|---|
+| 10 M, CH1 | 625 MSa/s, 1 | 1.25 MB | 9.4 M pts, 18.8 MB | 31 ms | 1.5 ms | 25 ms |
+| 10 M, CH1+2 | 625 MSa/s, 2 | 2.5 MB | 6.3 M pts, 25.2 MB | 42 ms | 2.1 ms | 33 ms |
+| 100 M, CH1 | 1.25 GSa/s, 1 | 1.25 MB | 12.6 M pts, 25.2 MB | 42 ms | 3.0 ms | 52 ms |
+| 100 M, CH1+2 | 625 MSa/s, 2 | 2.5 MB | 6.3 M pts, 25.2 MB | 42 ms | 2.2 ms | 33 ms |
+
+The acquisition thread spends the DMA and the decode: about 35 to 50 ms a second plus the A53's decode, which is
+several times the host's. If the batch reads keep the thread busy, that is about 4 to 6 % of acquired/s. The UI
+spends `to_record` once per raw read. It made it twice since 1a0e4a2 (the record in `Source::acquire`, then the
+record path of `draw_frame`). The UI now draws the newest deep raw window from the record it already has. An
+earlier unit round (unit-dho804.md) measured 11.2 -> 9.0 acquired/s with 1 channel at 10 M (−20 %). That build also drew the 9.4 M samples
+densely on the UI thread. To be measured again on this build. 100 M with one channel now gets a window (narrow
+margins); before, it kept `----`.
+
+Levers if the unit shows more than 5 %: drop the quarter-screen margins for this read (screen plus 4096 points,
+about a third fewer bytes with one channel at 10 M), or a longer `PERIOD`.
 
 ## Risks
 

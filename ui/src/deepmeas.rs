@@ -2,7 +2,7 @@
 
 //! Mean-type measurements of deep records from raw samples (fork, docs/fork/deep-meas.md). A record above 1 M points
 //! is read for the screen through the FPGA compression (min/max pairs), and Mean, RMS, Std dev, Area and their cycle
-//! variants cannot come from pairs (`framestats::needs_samples`). With `meas.deep_raw = on` the acquisition thread
+//! variants cannot come from pairs (`framestats::needs_samples`). Unless `meas.deep_raw = off`, the acquisition thread
 //! reads the screen window of the newest frame once more, raw, at most once per `PERIOD` while running and for every
 //! batch in Single; that frame becomes the record of its batch. While such raw records come, the UI measures only
 //! them (`hold`): every value of a measurement then belongs to one raw record, and the statistics count each once.
@@ -37,7 +37,8 @@ pub fn force(on: Option<bool>) {
     FORCE.with(|f| f.set(on));
 }
 
-/// `meas.deep_raw = on` in system.conf, or OOS_DEEP_RAW set (any value but empty or 0). Off until verified on the unit.
+/// On unless `meas.deep_raw = off` in system.conf; OOS_DEEP_RAW overrides (empty or 0 off, anything else on). On by
+/// default since 2026-11-14: without it a mean-type measurement shows `----` above 1 M points while 1 M works.
 pub fn enabled() -> bool {
     #[cfg(test)]
     if let Some(on) = FORCE.with(|f| f.get()) {
@@ -51,9 +52,9 @@ pub fn enabled() -> bool {
     })
 }
 
-/// `env` if set, else the `meas.deep_raw` line of `conf`; off unless `on`.
+/// `env` if set, else the `meas.deep_raw` line of `conf`; on unless `off`.
 pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
-    crate::drawpipe::conf_value(env, conf, "meas.deep_raw").as_deref() == Some("on")
+    crate::drawpipe::conf_value(env, conf, "meas.deep_raw").as_deref() != Some("off")
 }
 
 /// The request for the model: on, and a shown measurement (or the software DVM) needs samples. Normal acquisition
@@ -98,9 +99,11 @@ mod tests {
 
     #[test]
     fn asked_for_only_when_on_and_a_measurement_needs_samples() {
-        assert!(!enabled_from(None, ""));
+        assert!(enabled_from(None, ""), "on by default");
         assert!(enabled_from(None, "meas.deep_raw = on\n"));
+        assert!(!enabled_from(None, "ntp = off\nmeas.deep_raw = off   # opt out\n"));
         assert!(!enabled_from(Some("off"), "meas.deep_raw = on\n"));
+        assert!(enabled_from(Some("on"), "meas.deep_raw = off\n"));
         force(Some(true));
         let mut m = Model::default();
         m.ch[0].on = true;

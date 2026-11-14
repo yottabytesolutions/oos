@@ -2947,6 +2947,40 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
+    // Cost of one raw deep read (deep-meas.md "Default on"): bytes, the decode in the acquisition thread and the
+    // screen record the UI makes of it, host times (best of 3).
+    fn deep_raw_read_cost_report() {
+        for depth in [10_000_000u64, 100_000_000] {
+            for chans in [vec![0usize], vec![0, 1]] {
+                let mut m = Model::default();
+                m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+                m.mdepth = mdepths().iter().position(|d| d.1 == depth).unwrap();
+                for c in 0..NCH {
+                    m.ch[c].on = chans.contains(&c);
+                }
+                let s = settings(&m, false);
+                let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
+                let b = batch_plan(&s, &p);
+                let Some(d) = deep_raw_settings(&b, &p) else {
+                    println!("{} {:?}: no raw window", depth, chans);
+                    continue;
+                };
+                let bytes = oos_hal::dho::seq::frame_bytes(&d, &p);
+                let pair_bytes = oos_hal::dho::seq::frame_bytes(&b, &p);
+                let data: Vec<u8> = (0..bytes).map(|i| (i * 7 % 251) as u8).collect();
+                let best = |f: &mut dyn FnMut()| (0..3).map(|_| { let t = std::time::Instant::now(); f(); t.elapsed().as_secs_f64() * 1e3 }).fold(f64::INFINITY, f64::min);
+                let mut fr = None;
+                let dec = best(&mut || fr = Some(decode(&data, &d, &p, 1)));
+                let fr = std::sync::Arc::new(fr.unwrap());
+                let window = m.time_per_div() as f64 * HDIV as f64;
+                let rec = best(&mut || { std::hint::black_box(crate::board::to_record(&fr, &m, 3600, window, m.delay as f64 - window / 2.0)); });
+                println!("{} pts {:?}: rate {} ratio {} record {:.0} ms; pair frame {:.2} MB; raw window {} pts {:.2} MB (DMA at 600 MB/s {:.0} ms); host decode {:.1} ms, to_record {:.1} ms", depth, chans, p.rate, p.ratio, p.memsel as f64 / p.rate as f64 * 1e3, pair_bytes as f64 / 1e6, d.window.unwrap().0, bytes as f64 / 1e6, bytes as f64 / 600e6 * 1e3, dec, rec);
+            }
+        }
+    }
+
+    #[test]
     // Break it catches (unit 2026-11-14, CH2 Vavg `----` at 10 M, 1 ms/div): no raw window planned for two lanes (the
     // trigger source CH1 is acquired with CH2), so `deepmeas::hold` waited for a raw record that never came. Every
     // channel set at 10 M and 1 ms/div now gets a window that holds the screen and the trigger, within MAX_BYTES.

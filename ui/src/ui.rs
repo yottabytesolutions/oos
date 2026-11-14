@@ -1918,7 +1918,10 @@ impl Ui {
                         // newest one the same way, or it adds about 3.6 times their counts per pixel (3600 record points
                         // against one span per column) and the grading of the picture follows how many of each it holds:
                         // the trace flickered with the batch sizes (docs/fork/flicker.md)
-                        let frame = rec.raw.as_ref().filter(|_| self.fast_ok()).map(|r| r.frame.clone());
+                        // a deep raw window takes the record path in `draw_frame` (flicker.md): that path is this record,
+                        // already made by `Source::acquire`, so it is drawn below instead of made once more (25 to 50 ms
+                        // on the host for a 10 to 12 M-point window)
+                        let frame = rec.raw.as_ref().filter(|r| self.fast_ok() && !crate::deepmeas::deep_raw_frame(&r.frame)).map(|r| r.frame.clone());
                         if let Some(f) = frame {
                             let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
                             crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));

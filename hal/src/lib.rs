@@ -14,6 +14,7 @@
 
 pub mod bootstatus;
 pub mod model;
+pub mod sync;
 pub mod target;
 pub mod update;
 pub mod vendorkeys;

@@ -1331,6 +1331,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut helper = crate::drawpipe::Helper::default();
         // ring-fill time of the batches (pacing.rs)
         let mut fill = crate::pacing::Fill::default();
+        // time this thread takes to draw one frame as a helper (smoothed)
+        let mut help_cost = std::time::Duration::from_micros(500);
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, u64)> = None;
         // the SINGLE stamp whose batch brought its frame (`single_wants_more`)
@@ -1825,14 +1827,27 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let g = out.lock().unwrap();
                 (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || g.force
             };
-            // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
-            // the frame count, so the read waits at most one frame longer
             let pipe = crate::drawpipe::pipe();
-            let idle = || pipe.is_some_and(|x| x.help(&mut helper));
             let t_batch = std::time::Instant::now();
             // the ring fills for at most `fill_ms` after the first frame: the batch is read and drawn just before a
             // screen step (pacing.rs)
             let fill_ms = fill.plan(t_batch, crate::pacing::next_step_after, crate::pacing::ready_ms());
+            // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
+            // the frame count; only one that ends before the fill does (by its usual time), so the read is not late
+            let mut fill_from = None;
+            let idle = || {
+                let now = std::time::Instant::now();
+                let from = *fill_from.get_or_insert(now);
+                if now + help_cost >= from + std::time::Duration::from_millis(fill_ms) {
+                    return false;
+                }
+                let drew = pipe.is_some_and(|x| x.help(&mut helper));
+                if drew {
+                    help_cost += (now.elapsed().saturating_sub(help_cost)) / 4;
+                    help_cost -= help_cost.saturating_sub(now.elapsed()) / 4;
+                }
+                drew
+            };
             // the end of the ring fill (hal logs the count then, before the read): splits the batch for pacing.rs
             let mut fill_end = None;
             let log = |m: String| {

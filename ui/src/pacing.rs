@@ -110,7 +110,8 @@ pub fn next_step_after(t: Instant) -> Option<Instant> {
     Some(l + std::time::Duration::from_secs_f32(k * FRAME_MS / 1e3))
 }
 
-/// Ring-fill time limits: the hardware source's former fixed wait at most, a few frames' worth at least.
+/// Ring-fill time limits: the hardware source's former fixed wait before the first screen step is known (and at most
+/// k screen frames after), a few frames' worth at least.
 pub const FILL_MAX_MS: f32 = 25.0;
 pub const FILL_MIN_MS: f32 = 4.0;
 /// A batch is to be drawn this long before the step that shows it (the merge comes a few ms into the step).
@@ -155,6 +156,9 @@ impl Fill {
         // the drawing overlaps the next batch: only the reads need the frames between them, each one `ready` +
         // `MARGIN_MS` before a step. The first such read time the batch can make, k frames after the last one:
         let lead = ready + MARGIN_MS;
+        // planned with the rest's usual spread on top: a read a little early still shows in the same picture, a late
+        // one a frame later
+        let rest = rest + 2.0 * self.dev;
         let mut lower = start + ms(rest + FILL_MIN_MS);
         if let Some(t) = self.target {
             lower = lower.max(t + ms((self.k as f32 - 0.5) * FRAME_MS));
@@ -163,7 +167,8 @@ impl Fill {
         let read = step - ms(lead);
         self.target = Some(read);
         let fill = read.saturating_duration_since(start).as_secs_f32() * 1e3 - rest;
-        fill.clamp(FILL_MIN_MS, FILL_MAX_MS.max(self.k as f32 * FRAME_MS - rest)).round() as u64
+        // a batch that starts early (the read before was early) fills longer to keep its slot
+        fill.clamp(FILL_MIN_MS, FILL_MAX_MS.max(self.k as f32 * FRAME_MS)).round() as u64
     }
 
     /// Screen frames between two reads (`plan`).

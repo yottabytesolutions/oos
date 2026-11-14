@@ -8185,8 +8185,10 @@ mod tests {
     /// Pictures of three live-compression pair frames against pictures of two pair frames and the raw newest frame
     /// (`compress::RAW_PERIOD`), with dots on or off, in the user's set-up (the 1 kHz probe-comp square, 100 k points
     /// over 1.2 screens, k = 15): per picture with or without the raw frame, the worst brightness difference (of 255)
-    /// to a pairs-only picture, the pixels off by more than 3 and the summed brightness against it.
-    fn pair_raw_mix(dots: bool) -> Vec<(bool, i32, usize, f64)> {
+    /// to a pairs-only picture, the pixels off by more than 3 and the summed brightness against it. `deep`: a 10 M
+    /// record at 1 ms/div instead, its pairs read through the FPGA compression (k = 16, `hw::LIVE_READ`), and the raw
+    /// frame the screen window `deepmeas` reads (1.2 M samples here).
+    fn pair_raw_mix(dots: bool, deep: bool) -> Vec<(bool, i32, usize, f64)> {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
@@ -8197,13 +8199,18 @@ mod tests {
         for c in 1..NCH {
             ui.m.ch[c].on = false;
         }
+        if deep {
+            ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        }
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
-        let (n, k) = (100_000usize, 15usize);
+        // samples, k, the record's depth; a half period of the 1 kHz square in samples
+        let (n, k, depth) = if deep { (1_200_000usize, 16usize, 10_000_000usize) } else { (100_000, 15, 100_000) };
+        let half = n / 24;
         let mut x = 9u32;
         let raw: Vec<f32> = (0..n)
             .map(|i| {
                 x = x.wrapping_mul(1664525).wrapping_add(1013904223);
-                (if (i / 4000) % 2 == 1 { 0.3 } else { 0.0 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
+                (if (i / half) % 2 == 1 { 0.3 } else { 0.0 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
             })
             .collect();
         // every point of a pair frame stands for k samples: a block of 2k samples gives its min and max in time order
@@ -8221,7 +8228,7 @@ mod tests {
             pre: if pair { n / 2 / k } else { n / 2 },
             ch: [if pair { pairs.clone() } else { raw.clone() }, Vec::new(), Vec::new(), Vec::new()],
             envelope: pair,
-            acq: (1.0 / dt, n),
+            acq: (1.0 / dt, depth),
             ..Default::default()
         };
         let mut seq = 0;
@@ -8257,7 +8264,7 @@ mod tests {
     // a raw frame): the live compression is off with dots (`compress::allowed`).
     #[test]
     fn pair_and_raw_frames_in_one_picture_keep_the_grade_with_lines() {
-        for (raw, worst, off, sum) in pair_raw_mix(false) {
+        for (raw, worst, off, sum) in pair_raw_mix(false, false) {
             if raw {
                 assert!(off <= 200 && (sum - 1.0).abs() < 0.05, "with the raw frame: {} pixels off, brightness x{:.3}", off, sum);
             } else {
@@ -8266,12 +8273,26 @@ mod tests {
         }
     }
 
+    // Break it catches: the raw screen window of a deep record (`deepmeas`, once a second) drawn densely among the
+    // record's pair frames, which take the record path: 1.44 times the brightness with lines, 0.54 after it with dots
+    // (docs/fork/flicker.md, third section). It takes their path, so the pictures are the same.
+    #[test]
+    fn deep_raw_window_draws_like_its_pair_frames() {
+        for dots in [false, true] {
+            for (raw, worst, _, sum) in pair_raw_mix(dots, true) {
+                assert!(worst <= 3 && (sum - 1.0).abs() < 0.01, "dots {} raw frame {}: off by {}, brightness x{:.3}", dots, raw, worst, sum);
+            }
+        }
+    }
+
     #[test]
     #[ignore]
     fn pair_raw_mix_report() {
-        for dots in [false, true] {
-            for (raw, worst, off, sum) in pair_raw_mix(dots) {
-                println!("dots {} raw frame {}: worst {} pixels off {} brightness x{:.3}", dots, raw, worst, off, sum);
+        for deep in [false, true] {
+            for dots in [false, true] {
+                for (raw, worst, off, sum) in pair_raw_mix(dots, deep) {
+                    println!("deep {} dots {} raw frame {}: worst {} pixels off {} brightness x{:.3}", deep, dots, raw, worst, off, sum);
+                }
             }
         }
     }

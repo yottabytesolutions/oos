@@ -40,7 +40,9 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
     // min/max pairs of the live compression (compress.rs) take the dense path with a pair deposit
     let pairs = crate::compress::live(f) && x_per_sample <= 0.5;
-    if !pairs && (x_per_sample > 0.5 || f.envelope || f.roll || f.scan) {
+    // the raw screen window of a deep record (`deepmeas`, once a second) takes the record path of its record's pair
+    // frames: drawn densely it was 1.44 times their brightness (lines) and the grade swung (docs/fork/flicker.md)
+    if !pairs && (x_per_sample > 0.5 || f.envelope || f.roll || f.scan || crate::deepmeas::deep_raw_frame(f)) {
         if let Some(t) = crate::sparse::draw(ph, m, f, 24) {
             return t;
         }

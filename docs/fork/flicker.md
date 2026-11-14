@@ -78,10 +78,26 @@ Tests: `compress::tests::opt_in_and_the_model_conditions`, a "dots" row in
 raw frame changes the trace brightness by less than 5 % and leaves the pictures after it unchanged. The same check
 fails with dots.
 
-## Open: deep records with `meas.deep_raw`
+# Deep records with `meas.deep_raw` (2026-11-14)
 
 Records above `compress::MAX_DEPTH` are read through the FPGA compression whatever the display, as envelope frames.
-`draw_frame` draws those through the record path (`sparse::draw` or `draw_ex`). The raw screen window that
-`deepmeas` reads once per `deepmeas::PERIOD` is a plain frame. As the newest frame it goes through the dense path
-(`deposit` or `deposit_dots`). One picture per second then mixes two deposit styles, with lines or dots. This has not
-been measured on the unit.
+`draw_frame` draws those through the record path (`board::to_record`, min/max pairs per record point, then
+`draw_ex`). Once per `deepmeas::PERIOD` (1 s) the raw screen window that `deepmeas` reads replaces the newest frame.
+It was a plain dense frame, so it took the dense deposit (`deposit` or `deposit_dots`). One picture a second mixed
+the two styles.
+
+Host measurement (`pair_raw_mix_report` with `deep`: 10 M at 1 ms/div, k = 16, 1.2 M-sample window, 3 frames per
+picture), against pictures of pair frames only:
+
+| | picture with the raw window | pictures after it |
+|---|---|---|
+| lines | x1.44, 4333 pixels off | unchanged |
+| dots | x1.28, 4453 pixels off | x0.54 |
+
+## Fix
+
+`draw_frame` sends a deep raw frame (`deepmeas::deep_raw_frame`) through the record path of its pair frames.
+`to_record` makes min/max pairs per record point from the raw samples as it does from the pairs, so the picture is
+the same. On the host it matches with lines and with dots: 0 pixels off, x1.000. The test is
+`ui::tests::deep_raw_window_draws_like_its_pair_frames`, and it fails without the fix. A deep raw record shown at
+STOP or in Single now takes the same path as the running pictures.

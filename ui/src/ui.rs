@@ -2006,7 +2006,7 @@ impl Ui {
                 // Hardware queue only: the demo source makes its records here and advances its signal time by each
                 // record, so a wall-clock cut made what it shows depend on the machine's speed and load (the host
                 // tests of the decoders and bus triggers failed on a loaded machine)
-                if got > 0 && self.src.is_hw() && t_records.elapsed() > RECORDS_BUDGET {
+                if got > 0 && self.src.is_hw() && self.host.time_budgets() && t_records.elapsed() > RECORDS_BUDGET {
                     break;
                 }
                 let t0 = std::time::Instant::now();

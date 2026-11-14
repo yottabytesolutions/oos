@@ -109,6 +109,13 @@ fn source(args: &[String], switches: &sysconf::Switches) -> Source {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--headless-script") {
+        return Ui::start_headless_script(&args);
+    }
+    if args.iter().any(|a| a == "--scripted-batch") {
+        eprintln!("oos-ui: --scripted-batch requires --headless-script");
+        std::process::exit(2);
+    }
     if args.iter().any(|a| a == "--fpga-dry") {
         // print the register writes of the live source (no hardware access)
         use board::Board;
@@ -154,36 +161,7 @@ fn main() {
         ui.toast("Experimental limits active (limits.conf), see System > System info");
     }
     if let Some(script) = arg(&args, "--script") {
-        // host test runs store next to the script (build.sh: target/test-shots)
-        if let Some(d) = std::path::Path::new(&script).parent().filter(|d| !d.as_os_str().is_empty()) {
-            ui.store_dir = d.to_path_buf();
-        }
-        if let Some(d) = arg(&args, "--store-dir") {
-            ui.store_dir = d.into();
-        }
-        // another screen than the panel (host only: the device shows the panel it has)
-        if let Some(s) = arg(&args, "--size") {
-            match ui::Screen::parse(&s) {
-                Some(scr) => ui.scr = scr,
-                None => {
-                    eprintln!("oos-ui: --size {}: give WIDTHxHEIGHT, at least {}x{}", s, ui::PANEL_W, ui::PANEL_H);
-                    std::process::exit(2);
-                }
-            }
-        }
-        // `--gpu HELPER`: the picture through the GPU helper, read back every frame (host tests in a container)
-        let gpu = arg(&args, "--gpu").map(|h| {
-            let mut g = gpu::Gpu::start(&h).unwrap_or_else(|e| {
-                eprintln!("oos-ui: --gpu: {}", e);
-                std::process::exit(2)
-            });
-            g.target_memory(0, ui.scr.w, ui.scr.h).unwrap_or_else(|e| {
-                eprintln!("oos-ui: --gpu: {}", e);
-                std::process::exit(2)
-            });
-            g
-        });
-        run_script(&mut ui, &script, gpu);
+        ui.start_script(&script, &args);
         return;
     }
     if let Some(d) = arg(&args, "--store-dir") {
@@ -387,84 +365,6 @@ fn start_gpu(disp: &drm::Display, sw: &sysconf::Switches) -> Result<gpu::Gpu, St
     }
     g.monitor_targets_from(disp.buffers());
     Ok(g)
-}
-
-fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
-    let text = std::fs::read_to_string(path).expect("script");
-    let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
-    let mut gl = GpuLayers::new(ui.scr.w, ui.scr.h);
-    // with --gpu, `OOS_GPU_HDMI=1920x1080 OOS_GPU_HDMI_MODE=Mirror|Waveform|Layout`: each shot also writes the
-    // monitor's picture as the GPU puts it together (`<shot>-hdmi.ppm`)
-    let hdmi = std::env::var("OOS_GPU_HDMI").ok().and_then(|s| ui::Screen::parse(&s)).filter(|_| gpu.is_some());
-    if let Some(m) = std::env::var("OOS_GPU_HDMI_MODE")
-        .ok()
-        .and_then(|v| model::HDMI_MODES.iter().copied().find(|x| format!("{:?}", x) == v))
-    {
-        ui.m.hdmi = m;
-    }
-    let (mut gl_view, mut gl_head, mut hdmi_cv) = (GpuLayers::new(1, 1), None, hdmi.map(|s| Canvas::new(s.w, s.h)));
-    if let (Some(g), Some(s)) = (gpu.as_mut(), hdmi) {
-        g.target_memory(2, s.w, s.h).expect("HDMI target");
-    }
-    ui.info = "host test run".into();
-    let mut shot_n = 0;
-    // one frame: on the CPU, or in layers through the GPU and read back
-    fn frame(ui: &mut Ui, cv: &mut Canvas, gpu: &mut Option<gpu::Gpu>, gl: &mut GpuLayers, shot_n: &mut u32) {
-        ui.step(1.0 / 30.0);
-        ui.hdmi_snap_want = std::env::var_os("OOS_GPU_HDMI").is_some();
-        match gpu.as_mut() {
-            Some(g) => {
-                if let Err(e) = gl.compose(ui, g, cv, 0, true) {
-                    eprintln!("oos-ui: GPU frame: {}", e);
-                    std::process::exit(3);
-                }
-            }
-            None => ui.render(cv),
-        }
-        if let Some(p) = ui.shot_request.take() {
-            save_shot(ui, cv, p, shot_n);
-        }
-    }
-    frame(ui, &mut cv, &mut gpu, &mut gl, &mut shot_n);
-    for line in text.lines() {
-        match cmd::run(ui, line) {
-            cmd::Out::Frames(n) => {
-                for _ in 0..n {
-                    frame(ui, &mut cv, &mut gpu, &mut gl, &mut shot_n);
-                }
-            }
-            cmd::Out::Shot(p) => {
-                frame(ui, &mut cv, &mut gpu, &mut gl, &mut shot_n);
-                cmd::write_ppm(&cv, &p).expect("write shot");
-                println!("shot {}", p);
-                if let (Some(g), Some(hc)) = (gpu.as_mut(), hdmi_cv.as_mut()) {
-                    let (w, h) = (hc.w, hc.h);
-                    if let Err(e) = hdmi_gpu_frame(ui, g, &gl, &mut gl_view, &mut gl_head, w, h, 2, true)
-                        .and_then(|t| g.collect(t, Some(hc)))
-                    {
-                        eprintln!("oos-ui: GPU HDMI: {}", e);
-                        std::process::exit(3);
-                    }
-                    cmd::write_ppm(hc, &p.replace(".ppm", "-hdmi.ppm")).expect("write shot");
-                    // OOS_GPU_TIMES=<file>: the helper's time of the last panel frame and of this monitor frame, a
-                    // line per shot (gpu/test-host.sh: the monitor's cost per pixel against the panel's)
-                    if let Some(f) = std::env::var_os("OOS_GPU_TIMES") {
-                        use std::io::Write;
-                        let line = format!("{:.3} {:.3}\n", g.times.panel, g.times.monitor);
-                        let _ = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(f)
-                            .and_then(|mut f| f.write_all(line.as_bytes()));
-                    }
-                }
-            }
-            cmd::Out::None => {}
-        }
-        if ui.quit {
-            break;
-        }
-    }
 }
 
 /// Writes a requested screenshot of the frame just rendered: "" = /tmp/oos-shot-N.ppm, *.png = PNG (storage, the

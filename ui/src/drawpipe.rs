@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-
 //! Deposit pipeline (fork, docs/fork/perf-plan.md item 1): every acquired frame is used. In `batch` mode the
 //! acquisition thread decodes only the newest frame of a batch for the UI queue (the record for measurements, layers
 //! and the record path) and hands the read-out buffer itself (no copy) with the other frames to the deposit workers,
@@ -17,6 +16,7 @@
 //! `frames` mode. Mode: `acq.pipeline = batch` in system.conf or OOS_PIPELINE=batch; `frames` (default) is the old
 //! path, kept for comparison until the unit has verified the new one.
 
+pub mod host;
 use crate::board::Frame;
 use crate::framecost::{self as cost, Part};
 use crate::model::*;

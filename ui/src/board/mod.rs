@@ -14,7 +14,7 @@
 
 pub mod dho;
 mod record;
-
+pub mod scripted;
 pub use record::{sw_trig_level, sw_trig_level_of, to_record, trigger_point};
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
@@ -68,7 +68,7 @@ pub enum PanelCmd {
 pub type LiveShared = Arc<Mutex<(u64, Vec<u16>, String)>>;
 
 /// The hardware of one board family as the UI sees it.
-pub trait Board: Sync + 'static {
+pub trait Board: scripted::ScriptedBoard + Sync + 'static {
     /// what the acquisition thread is to apply for a model (compared with the last one by the thread)
     type Want: Send + 'static;
     /// the generator settings for a model

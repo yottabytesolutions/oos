@@ -5,9 +5,20 @@
 //! hits something else as soon as the layout or the text size moves the item; a name does not. The mask script tapped
 //! a top-bar button that no longer exists and tested the Display menu instead, unnoticed.
 
+mod batch;
+pub mod host;
+
 use super::*;
 
 impl Ui {
+    pub fn start_headless_script(args: &[String]) {
+        host::headless(args);
+    }
+
+    pub fn start_script(&mut self, path: &str, args: &[String]) {
+        host::start(self, path, args);
+    }
+
     /// Every menu the start menu and the top bar open, with the start menu itself.
     fn script_menus(&self) -> Vec<MenuId> {
         let mut v = vec![

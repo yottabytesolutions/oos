@@ -14,6 +14,7 @@ pub struct Host {
     unix: fn() -> f64,
     directory: fn(&Path) -> bool,
     services: bool,
+    time_budgets: bool,
     usb_root: PathBuf,
     switches: crate::sysconf::Switches,
 }
@@ -27,6 +28,7 @@ impl Host {
             unix: crate::clock::unix_now,
             directory: Path::is_dir,
             services: true,
+            time_budgets: true,
             usb_root: crate::usbtmc::SYSFS.into(),
             switches,
         }
@@ -57,19 +59,29 @@ impl Host {
         &self.switches
     }
 
-    #[cfg(test)]
-    pub fn fixture() -> Self {
+    /// Hermetic off-screen execution, including the ordinary binary built without test configuration.
+    pub fn headless() -> Self {
         Self {
             text: |_| None,
             space: |_| None,
             temperatures: Vec::new,
-            unix: || 946_684_800.0,
+            unix: || 1_762_862_400.0,
             directory: |_| false,
             services: false,
+            time_budgets: false,
             // inside the crate and never created: no USB device of the build machine is seen
             usb_root: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/no-usb-root").into(),
-            switches: crate::sysconf::Switches::default(),
+            switches: crate::sysconf::Switches { pipeline: crate::drawpipe::Mode::Batch, ..Default::default() },
         }
+    }
+
+    pub fn time_budgets(&self) -> bool {
+        self.time_budgets
+    }
+
+    #[cfg(test)]
+    pub fn fixture() -> Self {
+        Self { unix: || 946_684_800.0, time_budgets: true, switches: Default::default(), ..Self::headless() }
     }
 }
 
@@ -86,6 +98,19 @@ mod tests {
     use crate::ui::Item;
     use crate::ui::{sysinfo::Row, Ui};
     use crate::wave::Source;
+
+    #[test]
+    fn headless_host_supplies_config_without_services_or_time_budgets() {
+        let host = Host::headless();
+        assert!(!host.services() && !host.time_budgets());
+        assert!(Host::system(Default::default()).time_budgets());
+        assert_eq!(host.unix_now(), 1_762_862_400.0);
+        assert_eq!(host.switches().pipeline, crate::drawpipe::Mode::Batch);
+        assert_eq!(host.switches().cores, Default::default());
+        assert!(host.text("/etc/oos-build").is_none());
+        assert!(host.disk("/").is_none());
+        assert!(host.temperatures().is_empty());
+    }
 
     #[test]
     fn supplied_clock_controls_ui_dates_without_changing_the_system_clock() {

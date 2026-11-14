@@ -92,7 +92,11 @@ from the worktree root. `gpu/test-host.sh` verifies its receipt and runs every s
 arm64 container twice, on the CPU and through the helper on Mesa's software renderer, and `gpu/compare.py` compares the pictures: all 92 agree to within 4 of 255 (the GPU blends
 in floating point; two single pixels of a corner over colour-graded traces are 4 off, all else within 3). With
 `OOS_GPU_HDMI=1920x1080 OOS_GPU_HDMI_MODE=Mirror|Waveform|Layout` the script runner also writes the monitor's picture
-of every shot; commands and pixel layers (`OOS_GPU_PIXELS=1`) give the same monitor pictures to within 2.
+of every shot when invoked with ordinary `--script FILE --gpu HELPER`.
+`OOS_GPU_HDMI_MODE` selects the model's HDMI mode even without `OOS_GPU_HDMI`; the latter additionally allocates
+the off-screen monitor target and enables `-hdmi.ppm` captures. These variables apply only with `--gpu`;
+the CPU-only script runner ignores both. `--headless-script` rejects `--gpu`.
+Commands and pixel layers (`OOS_GPU_PIXELS=1`) give the same monitor pictures to within 2.
 
 ## Guarding the speed
 

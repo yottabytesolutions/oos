@@ -149,3 +149,19 @@ Builds for the unit: `--target aarch64-unknown-linux-musl` (static, rust-lld).
 - UI state: settings survive oos-ui restarts within a boot (`/tmp/oos-ui.setup`); the settings of the scope itself
   (NTP, time zone, Ethernet) are in `/oos/system.conf` (`sysconf`, `../network.md`), apart from the setups; the power key
   talks to the panel MCU (`FA 05 02`, dialog, `FA 05 01/03`; `../protocols/board.md` 4).
+
+## Platform tuning
+
+To be filled by the kernel and driver tuning study (in progress). The architecture's budgets
+([Performance budgets](README.md#performance-budgets)) assume the settings this section will record. Each entry
+states the setting, where it is set (kernel config, device tree, rcS, `system.conf`), the measurement behind it, and
+the date:
+- CPU frequency governor per cluster, and the frequency floor during acquisition;
+- CPU idle states and their exit latency against the wake budgets ([Waiting](README.md#waiting));
+- IRQ affinity: the xdma IRQ, the DRM and GPU IRQs, network and USB;
+- isolated CPUs, if any, for main and the acquisition thread;
+- the kernel's preemption model;
+- DDR frequency scaling (devfreq) under load;
+- PCIe link settings and power management for the FPGA link;
+- the GPU driver (panfrost) settings and frequency;
+- the DMA completion default decided in M5c ([DMA completion](README.md#dma-completion)).

@@ -521,8 +521,8 @@ and every queue has a bound in bytes, not only in count.
 
 | Class | Holds | Size |
 |---|---|---|
-| `dma` | the read-out buffers of the batch pool | pool size x batch bytes |
-| `raw` | raw re-reads (deep window, `RAW_PERIOD`, STOP final) | one window per channel |
+| `dma` | the read-out buffers of the batch pool | (in-flight batches + a fixed pin allowance of 1) x batch bytes; in flight is at most the pool of 3 |
+| `raw` | raw re-reads (deep window, `RAW_PERIOD`, STOP final) and the holders' copies of kept frame ranges (`last[0]`, measure jobs, remote snapshots, export) | one window per channel for rereads, plus each holder's limit in [Retaining owners](#retaining-owners) |
 | `ring` | the roll and scan ring, immutable chunks (`Arc<[Chunk]>`) | one screen: 10 x tdiv / dt points per channel, x 4 B (`f32`), plus the chunks a reader still pins |
 | `segments` | read-back segments in flight | the segment channel's bound |
 
@@ -532,9 +532,10 @@ record store (`HISTORY_MAX` x screen record), and each view's maps (`EYE_MAX`, `
 in [Performance budgets](#performance-budgets) is `memplan`'s total plus these constants.
 
 - Ring snapshot protocol: the writer appends chunks and never changes a published one. A sweep is a list of chunk
-  `Arc`s. A reader that holds a sweep (a measurement, an export, a remote answer) pins only its chunks, for as long
-  as it holds the `Arc`s. At most 2 sweeps are pinned at once over all readers; the `ring` class is one screen plus
-  2 sweeps of chunks, 3 screens at most. A chunk is freed when the writer has passed it and no reader pins it.
+  `Arc`s. Only in-flight work (the records stage, a measure job's copy step) pins a sweep's chunks, for at most one
+  step; a holder that keeps the sweep longer copies it once, off main, into its own bounded buffer. The `ring` class
+  is one screen plus one pinned sweep, 2 screens at most. A chunk is freed when the writer has passed it and no
+  reader pins it.
 - The acquisition thread and the pipe allocate from the plan, not from their own estimates.
 - A host test sweeps `memplan` over mode x channels x depth x time base on every model's `Caps`. If no reachable
   setting exceeds `Config.mem_budget`, the test asserts that, and there is no depth clamp. If one does, `normalize`
@@ -574,18 +575,18 @@ Every owner that keeps acquired data past its step has a byte limit and a releas
 
 | Owner | Limit | Released when |
 |---|---|---|
-| `last[0]` and its raw `Arc` | one record, one raw frame | the next record replaces it |
-| running measure job | one raw frame per channel | the job ends |
-| pending measure job | one raw frame per channel | a newer record replaces it, or a `stats_gen` or epoch change discards it |
-| ring chunk pins | 2 sweeps over all readers | the reader drops its `Arc`; a third reader gets a busy error and retries |
+| `last[0]` and its raw copy | one record, one raw frame range in its own buffer (`raw` class) | the next record replaces it |
+| running measure job | its own copy of one raw frame range per channel | the job ends |
+| pending measure job | its own copy of one raw frame range per channel | a newer record replaces it, or a `stats_gen` or epoch change discards it |
+| ring chunk pins | 1 sweep, in-flight work only, at most one step | the step ends; longer holders copy |
 | history and segments | `HISTORY_MAX` screen records, no raw | the oldest entry drops out; the `history` class clears it |
-| waveform snapshots held by remote listeners | one per connection, 2 over all connections | the answer is sent, the connection closes, or the send times out |
+| waveform snapshots held by remote listeners | its own copy, one per connection, 2 over all connections | the answer is sent, the connection closes, or the send times out |
 | remote connections | 8 over SCPI, VXI-11, HTTP and MCP together | a ninth is refused at accept |
 | `RemoteRequest` | 8 per connection, 32 over all | see [Queues](#queues) |
-| export (CSV, PNG, setup) | one at a time, streamed from an `Arc` | the file is written |
+| export (CSV, PNG, setup) | one at a time, from its own copy | the file is written |
 
 - A slow waveform client gets 10 s per send. A send that does not progress in that time closes the connection and
-  releases the snapshot, so a stalled client cannot hold a deep record.
+  releases the snapshot. The snapshot is a copy, so even a stalled client holds no DMA buffer.
 - The sum of these limits is the retained term of the budget arithmetic.
 
 ### Queues
@@ -790,11 +791,17 @@ for 4 channels on the panel plot (970 x 448 in the benchmarks, map set M = 3.48 
 ### One ownership path per batch
 
 - **Immutable storage.** The DMA buffer of a batch becomes immutable after the read: `Arc<SampleStore>` with the
-  codes, the `BatchMeta` and the frame offsets. Everything downstream holds an `Arc` and a range, never a copy.
+  codes, the `BatchMeta` and the frame offsets. In-flight work (deposit, the records stage, `to_record`, a measure
+  job's copy step) holds an `Arc` and a range, never a copy.
+- **Holders copy once, off main.** Anything that keeps sample data longer than one step (`last[0]`'s raw range, a
+  pending or running measure job, a remote waveform snapshot, an export) copies its frame range once, on its own
+  thread or a worker, into its own bounded buffer, and drops the `Arc`. Only in-flight work pins the DMA store, so a
+  slow client or a long measurement never holds a DMA buffer and never starves the acquisition.
 - **The newest frame is a view.** It is an index into its batch, not a clone under a lock (today `hw.rs` 2173 clones
   it into `Shared`, and the fast path clones it again, `ui.rs` 1945: two 10 MB copies at 4 x 10 M).
-- **Each record is built once.** `to_record` runs once per frame that needs a record; the record holds its screen
-  points and an `Arc` plus range into the store for measurements. History keeps the screen record only.
+- **Each record is built once.** `to_record` runs once per frame that needs a record. The record holds its screen
+  points; its raw range stays an `Arc` plus range only while in flight, and becomes its holder's copy if it is kept.
+  History keeps the screen record only.
 - **Measurement reads are separate.** A `MeasRead` decodes only the channels and window its measurements need, into a
   reusable buffer of the measure thread. Its reread cost is scheduled: at most one reread per `RAW_PERIOD`, and the
   acquisition counts the time it loses (`cost reread=`).

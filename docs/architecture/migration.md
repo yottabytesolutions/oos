@@ -329,8 +329,9 @@ Deletes: `board::HwShared`, `Shared`, its lock.
 
 Data path in M5 ([One ownership path per batch](README.md#one-ownership-path-per-batch)): the batch storage
 becomes `Arc<SampleStore>`, immutable after the read; the newest frame is a view into it; no sample data is cloned
-under a lock. Test, failing before: publishing the newest frame of a 4 x 10 M batch copies no sample data (counting
-allocator). Adds 1 day.
+under a lock; holders that keep data past a step copy their range once, off main, and only in-flight work pins the
+store. Tests, failing before: publishing the newest frame of a 4 x 10 M batch copies no sample data (counting
+allocator); a stalled remote client holding a waveform does not reduce the batch pool. Adds 1 day.
 
 ### M5b: memory model
 

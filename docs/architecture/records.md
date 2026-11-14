@@ -41,7 +41,9 @@ lists them. `modes_that_need_raw_frames_never_compress` stays the test.
 ## Records
 
 `wave::Record` stays the unit every reader consumes: volts on the screen window (`to_record`, 3600 points), `t0`,
-`dt`, `pairs`, and `Raw` (the `Arc` of the frame and the sample range) for measurements on every sample. In addition
+`dt`, `pairs`, and `Raw` for measurements on every sample: the `Arc` of the batch store and the sample range while
+the record is in flight, its holder's own copy of that range once it is kept (README.md,
+[One ownership path per batch](README.md#one-ownership-path-per-batch)). In addition
 it carries its `BatchMeta` (`id`, `gen`, `epoch`, `mode`).
 
 - **Owner:** the record store (today `Ui::last`, `history`, `seg_*`). It keeps `last[0]`, history and segments. Its

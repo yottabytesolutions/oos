@@ -25,9 +25,9 @@ pub fn sw_trig_level_of(m: &Model, len: usize, at: impl Fn(usize) -> f32) -> f32
     }
 }
 
-/// Samples of the frame mean (docs/fork/trig-gate.md): each costs a cache miss on the A53 (about 50 ns). With 1024 the
-/// noise error is sigma/32, under 0.1 div up to a full-screen sine.
-pub const MEAN_SAMPLES: usize = 1024;
+/// Samples of the frame mean: the noise error is sigma/64. 1024 cost the same on the unit (trig-gate.md: the time is
+/// not per sample), so the smaller error stays.
+pub const MEAN_SAMPLES: usize = 4096;
 
 /// The mean of the finite samples of `at` (0..`len`) at every `len / MEAN_SAMPLES`-th sample. A fixed stride: a
 /// periodic signal not locked to it gives an error of about A/N. Locked (a period of step/j, at most a screen column)
@@ -227,19 +227,12 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
 mod tests {
     use super::*;
 
-    /// The mean as it was before `MEAN_SAMPLES` (4096 samples from 0).
-    fn mean_4096(v: &[f32]) -> f64 {
-        let step = (v.len() / 4096).max(1);
-        let (sum, n) = v.iter().step_by(step).fold((0.0f64, 0u32), |(s, n), &y| (s + y as f64, n + 1));
-        sum / n as f64
-    }
-
     fn exact_mean(v: &[f32]) -> f64 {
         v.iter().map(|&y| y as f64).sum::<f64>() / v.len() as f64
     }
 
-    // Break it catches: a frame mean from too few samples or a start that drifts out of the frame: more than 0.1 div
-    // from the mean of all samples for full-screen signals (+-4 div at 1 V/div), every frame number and length.
+    // Break it catches: a frame mean from too few samples or a stride that leaves part of the frame out: more than
+    // 0.1 div from the mean of all samples for full-screen signals (+-4 div at 1 V/div), every length.
     #[test]
     fn frame_mean_within_a_tenth_of_a_division_at_full_screen() {
         let tau = std::f64::consts::TAU;
@@ -276,40 +269,6 @@ mod tests {
             }
         }
         assert!(frame_mean(10, |_| f32::NAN).is_none());
-    }
-
-    // Break it catches: a level from the smaller mean that moves the near search to another edge on setup A's signal
-    // (ripple at 20 mV/div with noise, AC trigger at 30 mV): it must find the same edge, moved by at most one screen
-    // column (a pixel; the noise on the column average turns a level difference of 0.01 div into tens of samples).
-    #[test]
-    fn smaller_mean_keeps_the_near_result_on_ripple() {
-        let tau = std::f64::consts::TAU;
-        let (mut same, mut cases, mut moved, mut found) = (0, 0, 0.0f64, 0);
-        for (len, col) in [(62_500usize, 64usize), (125_000, 128), (625_000, 640)] {
-            for k in 0..24u64 {
-                let ph = k as f64 * 0.37;
-                let mut v: Vec<f32> = (0..len).map(|i| (0.004 + 0.04 * (i as f64 / 4321.0 * tau + ph).sin()) as f32).collect();
-                oos_dsp::sim::add_noise(&mut v, 0.012, 100 + k);
-                let pre = len / 2;
-                let hyst = 0.3 * 0.02;
-                let old = 0.03 + mean_4096(&v) as f32;
-                let new = 0.03 + frame_mean(v.len(), |i| v[i]).unwrap() as f32;
-                let a = crate::trignear::edge_near(&v, 0, len, pre, old, hyst, true, false, len / 2, col);
-                let b = crate::trignear::edge_near(&v, 0, len, pre, new, hyst, true, false, len / 2, col);
-                cases += 1;
-                match (a.0, b.0) {
-                    (None, None) => same += 1,
-                    (Some(x), Some(y)) if (x - y).abs() <= col as f64 => {
-                        moved = moved.max((x - y).abs() / col as f64);
-                        found += 1;
-                        same += 1
-                    }
-                    (x, y) => panic!("len {} k {}: {:?} vs {:?} (levels {} {})", len, k, x, y, old, new),
-                }
-            }
-        }
-        println!("{} cases, {} edges, largest move {:.2} columns", cases, found, moved);
-        assert!(same == cases && found * 2 > cases, "{} of {} the same, {} edges", same, cases, found);
     }
 
     #[test]

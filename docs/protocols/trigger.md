@@ -405,8 +405,8 @@ trigger position.
 
 The UI does not trust `pre` for the edge trigger: the fast path and `to_record` take the edge of the set
 direction nearest `pre` (up to half a screen) on the smoothed signal. The fast path searches only the near window
-(16 columns plus 64 samples) with AC or LF-reject coupling and for an edge trigger read at the full rate without noise
-reject or holdoff (docs/fork/ac-trig.md, docs/fork/trig-gate.md). `OOS_FRAME_HEADER=1` makes oos-ui read the header and
+(16 columns plus 64 samples) with AC or LF-reject coupling and for an edge trigger read at the full rate, raw or
+compressed (docs/fork/ac-trig.md, docs/fork/trig-gate.md). `OOS_FRAME_HEADER=1` makes oos-ui read the header and
 log it per frame with the edge offsets to `/tmp/oos-hdr.log`; `:SYSTem:STATe?` ends with the fast-path counts
 `edges <at pre> <other direction nearest> <further away> <none> off <sum> <max>`.
 
@@ -420,7 +420,10 @@ log it per frame with the edge offsets to `/tmp/oos-hdr.log`; `:SYSTem:STATe?` e
    the ADC data is not settled.
 6. The units of 0x4050/0x4054 (samples at the ADC rate or after decimation), see `horizontal-config.md`.
 7. With noise reject and full bandwidth the rising edge lies about 200 samples (16 us at 12.5 MSa/s) from the hardware
-   point in nearly every frame (section 7): a fixed delay of the wider comparator band or the noise, not settled.
+   point in nearly every frame (section 7). Not a fixed time: at the full rate (1.25 GSa/s, 2026-11-14) noise reject
+   left the point on the edge (1 kHz probe comp at 5 us/div: 6658 of 6658 frames at the point; USB rail at 200 ns/div:
+   8693 at the point, 4 farther, as many as without noise reject), and so did a 10 us holdoff (6669 and 8988 at the
+   point, 0 farther). Whether it is the comparator band at decimated rates or the noise is not settled.
 
 ## 10. Other trigger types (register level)
 

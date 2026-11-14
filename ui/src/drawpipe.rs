@@ -169,16 +169,15 @@ pub type CodesInto = Arc<dyn Fn(&[u8], &mut Frame) -> Option<CodeLayout> + Send 
 /// The trigger refinement of frame `f` searches the near window only (`trignear::edge_near`), never wide
 /// (docs/fork/ac-trig.md, docs/fork/trig-gate.md). AC or LF-reject coupling: the hardware comparators see a
 /// high-passed signal the samples do not hold, so a farther crossing is not the one they fired on. An edge trigger
-/// on a frame whose `pre` is exact: the edge is at `pre`, within the near window when the column average blurs it.
-/// Kept wide: other trigger types (they fire at the end of a condition, possibly far from the edge), noise reject
-/// (about 200 samples between edge and point at 12.5 MSa/s, trigger.md 8.7, not settled at the full rate) and a
-/// holdoff (not measured).
+/// on a frame whose `pre` is exact: the edge is at `pre` (or in its pair), within the near window when the column
+/// average blurs it; with noise reject and with a holdoff too (measured at the full rate, trig-gate.md). Kept wide:
+/// other trigger types (they fire at the end of a condition, possibly far from the edge).
 // not inlined: inlined into the codes path it cost the two-channel deposit 6-7 us a frame on the host (perf guard
 // ratio 0.76 -> 0.90), the same code at run time either way
 #[inline(never)]
 fn near_only(m: &Model, f: &Frame) -> bool {
     let filtered = !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject);
-    let exact = f.pre_exact && m.trig_type == TrigType::Edge && !m.trig_nrej && m.holdoff <= 0.0;
+    let exact = f.pre_exact && m.trig_type == TrigType::Edge;
     filtered || exact
 }
 
@@ -1010,15 +1009,16 @@ mod tests {
         let mut m = model(1e-5, false, false);
         m.trig_level = 5.0;
         assert!(!draw_frame(&mut at_pre, &m, &f, None));
-        let cases: [(&str, TrigCoup, bool, &dyn Fn(&mut Model), bool); 9] = [
+        let cases: [(&str, TrigCoup, bool, &dyn Fn(&mut Model), bool); 10] = [
             ("dc exact", TrigCoup::Dc, true, &|_| {}, true),
             ("hf reject exact", TrigCoup::HfReject, true, &|_| {}, true),
             ("ac", TrigCoup::Ac, false, &|_| {}, true),
             ("lf reject", TrigCoup::LfReject, false, &|_| {}, true),
             ("dc decimated", TrigCoup::Dc, false, &|_| {}, false),
+            ("dc decimated noise reject", TrigCoup::Dc, false, &|m| m.trig_nrej = true, false),
             ("hf reject decimated", TrigCoup::HfReject, false, &|_| {}, false),
-            ("dc noise reject", TrigCoup::Dc, true, &|m| m.trig_nrej = true, false),
-            ("dc holdoff", TrigCoup::Dc, true, &|m| m.holdoff = 1e-6, false),
+            ("dc noise reject exact", TrigCoup::Dc, true, &|m| m.trig_nrej = true, true),
+            ("dc holdoff exact", TrigCoup::Dc, true, &|m| m.holdoff = 1e-6, true),
             ("pulse", TrigCoup::Dc, true, &|m| m.trig_type = TrigType::Pulse, false),
         ];
         for (name, coup, exact, set, near) in cases {
@@ -1041,11 +1041,11 @@ mod tests {
                 assert!(a.map[0] != at_pre.map[0], "{}", name);
             }
         }
-        // a decimated read and a compressed one are not exact
-        for (rate, compress) in [(625_000_000u64, 1u32), (1_250_000_000, 4)] {
+        // a read at the full rate is exact, compressed too (to its pair); a decimated one is not, compressed or not
+        for (rate, compress, exact) in [(1_250_000_000u64, 4u32, true), (625_000_000, 1, false), (625_000_000, 4, false)] {
             let q = hz::Params { rate, ..p };
             let t = Settings { compress, ..s.clone() };
-            assert!(!crate::board::dho::hw::decode(&bytes, &t, &q, 0).pre_exact, "rate {} compress {}", rate, compress);
+            assert_eq!(crate::board::dho::hw::decode(&bytes, &t, &q, 0).pre_exact, exact, "rate {} compress {}", rate, compress);
         }
         // DC: the composed near and wide refinement is `edge_smooth_near`, wherever the hardware point lies
         let sine: Vec<f32> = (0..100_000).map(|i| (0.9 * (i as f64 / 3000.0 * std::f64::consts::TAU).sin() + 0.2 * ((i * 7919) % 17) as f64 / 17.0) as f32).collect();
@@ -1059,6 +1059,66 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    // Break it catches: a compressed read (min/max pairs of the live compression) at the full rate whose search still
+    // runs wide, or moves to an edge outside the near window; a decimated compressed read that no longer searches
+    // wide; a near window (in points) that does not cover the pair of the hardware point at the largest k the full
+    // rate can have (a record of at most `compress::MAX_DEPTH` points).
+    #[test]
+    fn compressed_full_rate_reads_search_near_decimated_ones_wide() {
+        let (w, h) = (970, 448);
+        // the largest k at the full rate, over every time base and channel ratio, and the near window there
+        let mut worst = (0u32, usize::MAX);
+        for ratio in [1u64, 2, 4] {
+            let rate = 1_250_000_000 / ratio;
+            for &t in tscales().iter() {
+                let memsel = (rate as f64 * t as f64 * HDIV as f64).round();
+                if memsel > crate::compress::MAX_DEPTH as f64 {
+                    continue;
+                }
+                let k = crate::compress::k_for(rate, t as f64, memsel as u32);
+                if k < 2 {
+                    continue;
+                }
+                let x_per_point = k as f64 / rate as f64 / t as f64 * w as f64 / HDIV as f64;
+                let col = crate::compress::smooth_len(x_per_point);
+                let near = crate::trignear::NEAR_COLS * col + crate::trignear::NEAR_PAD;
+                if k > worst.0 || (k == worst.0 && near < worst.1) {
+                    worst = (k, near);
+                }
+            }
+        }
+        println!("largest k at the full rate {}, near window there {} points", worst.0, worst.1);
+        assert!(worst.0 >= 2, "no compressed full-rate read");
+        assert!(worst.1 >= 8 * crate::compress::PAIR, "k {}: near window {} points against a pair of {}", worst.0, worst.1, crate::compress::PAIR);
+        // a compressed frame: pairs (min, max) of a step from -1 to +1 V, the only rising edge 2 k points after the
+        // hardware point (far outside the near window), or in the point's pair
+        let n = 20_000usize;
+        let pairs = |edge_at: usize| -> Vec<f32> {
+            (0..n).flat_map(|j| {
+                let base = if j >= edge_at { 1.0 } else { -1.0 };
+                [base - 0.01, base + 0.01]
+            }).collect()
+        };
+        let mut m = model(1e-5, false, false);
+        m.trig_level = 0.0;
+        let dt = 1e-5 * HDIV as f64 / (2 * n) as f64;
+        let frame = |v: Vec<f32>, exact: bool| Frame { dt, pre: n, ch: [v, Vec::new(), Vec::new(), Vec::new()], envelope: true, acq: (1.25e9, 1_000_000), pre_exact: exact, ..Default::default() };
+        assert!(crate::compress::live(&frame(Vec::new(), true)));
+        for (exact, near) in [(true, true), (false, false)] {
+            let f = frame(pairs(n / 2 + 1000), exact);
+            let mut ph = Phosphor::new(w, h);
+            let mut st = ([0u64; 4], (0.0, 0.0));
+            draw_frame(&mut ph, &m, &f, Some(Stats { edges: &mut st.0, off: &mut st.1 }));
+            let want = if near { [0, 0, 0, 1] } else { [0, 0, 1, 0] };
+            assert_eq!(st.0, want, "exact {}: {:?}", exact, st);
+            // the edge in the pair of the hardware point is found either way
+            let f = frame(pairs(n / 2), exact);
+            let mut st = ([0u64; 4], (0.0, 0.0));
+            draw_frame(&mut ph, &m, &f, Some(Stats { edges: &mut st.0, off: &mut st.1 }));
+            assert_eq!(st.0, [1, 0, 0, 0], "exact {}: edge at the point", exact);
         }
     }
 

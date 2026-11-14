@@ -1046,7 +1046,8 @@ fn set_meta(s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
     let (_, start) = oos_hal::dho::seq::window(s, p);
     let pre = p.pre.saturating_sub(start) as usize / k;
     let ch = std::mem::take(&mut f.ch);
-    let pre_exact = k == 1 && p.rate as i128 * p.ratio.max(1) as i128 == hz::CLOCK;
+    // at the full ADC rate the point is the trigger sample, with compression its pair (trig-gate.md)
+    let pre_exact = p.rate as i128 * p.ratio.max(1) as i128 == hz::CLOCK;
     *f = Frame { seq, dt: k as f64 / p.rate as f64, pre, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false, pre_exact };
 }
 

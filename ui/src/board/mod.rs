@@ -197,8 +197,8 @@ pub struct Frame {
     pub la: Option<crate::ui::la::LaRec>,
     /// the FPGA averaged this frame (Average mode with `Board::avg_hw`): the software average leaves it alone
     pub hw_avg: bool,
-    /// `pre` is the sample the trigger fired on: read at the full rate of the channel set, uncompressed (trigger.md 7:
-    /// the point is off the edge only with decimation). False where not known.
+    /// `pre` is the sample the trigger fired on (with FPGA compression: its pair): read at the full rate of the channel
+    /// set (trigger.md 7: the point is off the edge only with decimation). False where not known.
     pub pre_exact: bool,
 }
 

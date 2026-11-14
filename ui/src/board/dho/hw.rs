@@ -636,6 +636,17 @@ const UNIT_STALLS: u32 = 2;
 /// block of the same settings stays.
 const UNIT_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// An arm that found no acquisition within the poll time (`seq`'s 0x4080 poll).
+fn is_stall(e: &str) -> bool {
+    e.contains("no acquisition")
+}
+
+/// Whether a failed batch goes to the log. No acquisition without the mask/zone unit is the ordinary wait for a
+/// trigger in Normal (round 21: one line every 1.5 s); with the unit running it is a stall and logged.
+fn logs_acquire_error(stalled: bool, unit: bool) -> bool {
+    !stalled || unit
+}
+
 /// The stall guard of the mask/zone unit: counts arms in a row that found no acquisition with the unit running and
 /// the same settings, and blocks the unit for those settings. After every stall one batch runs without the unit: the
 /// read-back state machine stays in state 5 across a reconfiguration (round 20), so new settings armed right after a
@@ -2112,10 +2123,13 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 // new settings while it waited for a trigger: at once to them
                 Err(e) if e == seq::NEW_SETTINGS => {}
                 Err(e) => {
-                    status(format!("acquire: {}", e));
-                    // the mask/zone unit stalled the arm: drop it for these settings (the next loop reconfigures)
                     let unit = state.mask_ctrl().is_some() || state.zone_ctrl().is_some();
-                    if guard.batch(e.contains("no acquisition"), unit, unit_key(&b, mask_map()), std::time::Instant::now()) {
+                    let stalled = is_stall(&e);
+                    if logs_acquire_error(stalled, unit) {
+                        status(format!("acquire: {}", e));
+                    }
+                    // the mask/zone unit stalled the arm: drop it for these settings (the next loop reconfigures)
+                    if guard.batch(stalled, unit, unit_key(&b, mask_map()), std::time::Instant::now()) {
                         status("mask/zone unit: no acquisition twice, software fallback for these settings".into());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -2642,6 +2656,23 @@ mod tests {
         assert!(!g.batch(true, true, k, later) && !g.batch(false, false, k, later) && g.batch(true, true, k, later));
         assert!(!g.batch(false, false, k, later));
         assert!(g.blocks(&k, later + UNIT_RETRY * 10));
+    }
+
+    #[test]
+    fn a_trigger_wait_is_no_stall_and_not_logged() {
+        let wait = "no acquisition (0x4080 bit30 not set; 0x4030 = 0x0f041722, readback 0, state 2)";
+        assert!(is_stall(wait) && !is_stall("c2h read of 4096 bytes: timed out"));
+        // (stalled, unit) -> logged
+        assert!(!logs_acquire_error(true, false));
+        assert!(logs_acquire_error(true, true) && logs_acquire_error(false, false) && logs_acquire_error(false, true));
+        // a wait without the unit neither counts nor flushes
+        let k = unit_key(&Settings::default(), oos_hal::dho::mask::Map::default());
+        let mut g = UnitGuard::default();
+        let t0 = std::time::Instant::now();
+        for _ in 0..5 {
+            assert!(!g.batch(is_stall(wait), false, k, t0));
+        }
+        assert!(!g.blocks(&k, t0) && g.stalls.is_none());
     }
 
     #[test]

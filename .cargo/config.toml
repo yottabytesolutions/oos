@@ -1,0 +1,3 @@
+# `cargo xtask <command>` from the repository root runs the gate (docs/development.md).
+[alias]
+xtask = "run --quiet --manifest-path xtask/Cargo.toml --"

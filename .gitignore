@@ -21,3 +21,5 @@ rootfs/out/
 # results of tools/device-test.py
 device-test/
 kernel/src/
+# cargo xtask: the scope check and coverage builds (docs/development.md)
+/target/

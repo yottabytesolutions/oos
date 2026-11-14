@@ -1,0 +1,244 @@
+# Items over the size limits: <size> <kind> <file or crate> <name>.
+# Written by `cargo xtask ratchet` (docs/development.md). Sizes may only fall.
+406 file dsp/src/bode.rs
+419 file dsp/src/dcc_yard.rs
+610 file dsp/src/decode.rs
+1526 file dsp/src/decode_ext.rs
+1687 file dsp/src/decode_ext2.rs
+1180 file dsp/src/decode_ext3.rs
+884 file dsp/src/eye.rs
+1138 file dsp/src/identify.rs
+422 file dsp/src/measure.rs
+405 file dsp/src/power.rs
+531 file dsp/src/sim.rs
+831 file dsp/src/spectrum.rs
+507 file dsp/src/trigger.rs
+1088 file fpgad/src/bin/oos-update.rs
+1618 file fpgad/src/main.rs
+890 file hal/src/dho/afe.rs
+722 file hal/src/dho/afg.rs
+900 file hal/src/dho/boot/mod.rs
+407 file hal/src/dho/coretrim.rs
+594 file hal/src/dho/lmx2582.rs
+459 file hal/src/dho/mask.rs
+432 file hal/src/dho/seg.rs
+848 file hal/src/dho/selfcal.rs
+1493 file hal/src/dho/seq.rs
+1027 file hal/src/dho/tpu.rs
+586 file hal/src/model.rs
+410 file hal/src/update/ed25519.rs
+726 file hal/src/update/mod.rs
+2579 file ui/src/board/dho/hw.rs
+454 file ui/src/board/mod.rs
+1020 file ui/src/drawpipe.rs
+609 file ui/src/drm.rs
+555 file ui/src/fastdraw.rs
+672 file ui/src/gfx.rs
+731 file ui/src/gpu.rs
+1165 file ui/src/http.rs
+1046 file ui/src/main.rs
+1666 file ui/src/mdns.rs
+2279 file ui/src/model.rs
+452 file ui/src/pacing.rs
+1497 file ui/src/scpi.rs
+1279 file ui/src/store.rs
+8894 file ui/src/ui.rs
+722 file ui/src/ui/analysis.rs
+680 file ui/src/ui/autoset.rs
+930 file ui/src/ui/bode.rs
+797 file ui/src/ui/eyepage.rs
+662 file ui/src/ui/la.rs
+942 file ui/src/ui/lint.rs
+980 file ui/src/ui/panes.rs
+460 file ui/src/ui/startup.rs
+620 file ui/src/ui/time.rs
+551 file ui/src/ui/tools.rs
+853 file ui/src/ui/wlan.rs
+442 file ui/src/usbtmc.rs
+406 file ui/src/vpu.rs
+1517 file ui/src/wave.rs
+83 fn dsp/src/bandwidth.rs step_response
+105 fn dsp/src/dcc_yard.rs Yard::apply_loco
+93 fn dsp/src/decode.rs can_frame
+66 fn dsp/src/decode.rs i2c
+63 fn dsp/src/decode.rs i2s
+68 fn dsp/src/decode.rs uart
+98 fn dsp/src/decode_ext.rs can_fd_bits
+141 fn dsp/src/decode_ext.rs can_fd_frame
+122 fn dsp/src/decode_ext.rs ds2482
+105 fn dsp/src/decode_ext.rs flexray
+64 fn dsp/src/decode_ext.rs modbus_adu
+61 fn dsp/src/decode_ext.rs parallel
+96 fn dsp/src/decode_ext2.rs I3c::bit
+65 fn dsp/src/decode_ext2.rs i3c
+62 fn dsp/src/decode_ext2.rs jtag_walk
+61 fn dsp/src/decode_ext2.rs pd_frame
+108 fn dsp/src/decode_ext2.rs qspi
+71 fn dsp/src/decode_ext2.rs spdif
+74 fn dsp/src/decode_ext2.rs usbpd_msg_name
+169 fn dsp/src/decode_ext3.rs dcc
+85 fn dsp/src/decode_ext3.rs sent
+71 fn dsp/src/decode_ext3.rs usb_bus
+63 fn dsp/src/decode_ext3.rs usb_fields
+113 fn dsp/src/decode_ext3.rs usb_packet
+69 fn dsp/src/identify.rs analog
+122 fn dsp/src/identify.rs find_spi
+105 fn dsp/src/identify.rs periodic_logic
+113 fn dsp/src/identify.rs serial
+89 fn dsp/src/measure.rs analyze_min
+140 fn dsp/src/spectrum.rs analyze
+95 fn dsp/src/spectrum.rs distortion
+179 fn dsp/src/trigger.rs find_all
+76 fn dsp/src/trigger.rs video
+61 fn fpgad/src/bin/oos-update.rs boot
+69 fn fpgad/src/bin/oos-update.rs finish_kexec
+85 fn fpgad/src/bin/oos-update.rs main
+78 fn fpgad/src/bin/oos-update.rs status
+107 fn fpgad/src/bin/oos-update.rs watch
+143 fn fpgad/src/main.rs afg_la
+198 fn fpgad/src/main.rs main
+91 fn fpgad/src/main.rs parse
+149 fn fpgad/src/main.rs roll
+234 fn fpgad/src/main.rs selfcal
+318 fn fpgad/src/main.rs tool
+79 fn hal/src/dho/acq.rs configure_la
+69 fn hal/src/dho/afg.rs Wave::table
+278 fn hal/src/dho/boot/mod.rs Ctx::run
+108 fn hal/src/dho/coretrim.rs trim_gated
+64 fn hal/src/dho/lmx2582.rs Fields::decode
+85 fn hal/src/dho/lmx2582.rs Fields::lines
+69 fn hal/src/dho/lmx2582.rs table_for
+142 fn hal/src/dho/selfcal.rs adc_cores
+74 fn hal/src/dho/selfcal.rs run_all_with
+157 fn hal/src/dho/seq.rs State::configure
+86 fn hal/src/dho/seq.rs State::trigger
+69 fn hal/src/dho/tpu.rs edge_coupled
+90 fn hal/src/model.rs Platform::build_unit
+64 fn hal/src/update/fdt.rs Fdt::to_bytes
+62 fn hal/src/update/fdt.rs with_loader_changes
+127 fn hal/src/update/first.rs first_install
+66 fn hal/src/update/inflate.rs inflate
+146 fn hal/src/update/mod.rs install
+77 fn hal/src/update/mod.rs kexec_stage
+66 fn hal/src/update/pkg.rs verify_header
+140 fn ui/src/board/dho/fpga.rs spawn
+68 fn ui/src/board/dho/hw.rs core_trim
+77 fn ui/src/board/dho/hw.rs hw_trigger
+123 fn ui/src/board/dho/hw.rs seg_step
+150 fn ui/src/board/dho/hw.rs settings
+903 fn ui/src/board/dho/hw.rs spawn
+95 fn ui/src/board/record.rs to_record
+119 fn ui/src/board/record.rs trigger_point
+92 fn ui/src/cmd.rs run
+66 fn ui/src/drawpipe.rs dense
+112 fn ui/src/drm.rs Display::on_fd
+251 fn ui/src/gpu.rs Gpu::submit
+105 fn ui/src/http.rs Http::poll
+92 fn ui/src/http.rs Shots::encoder
+66 fn ui/src/http.rs mcp
+74 fn ui/src/http.rs reader
+74 fn ui/src/input.rs Inputs::read_touch
+77 fn ui/src/json.rs value
+436 fn ui/src/main.rs device_main
+80 fn ui/src/main.rs hdmi_gpu_frame
+100 fn ui/src/main.rs main
+77 fn ui/src/main.rs run_script
+71 fn ui/src/mdns.rs Responder::answer
+61 fn ui/src/mdns.rs interfaces
+96 fn ui/src/mdns.rs run
+217 fn ui/src/model.rs <Model as Default>::default
+80 fn ui/src/model.rs Model::fit_platform
+67 fn ui/src/model.rs Model::trigger
+78 fn ui/src/pacing.rs summary
+887 fn ui/src/scpi.rs Scpi::exec_cmd
+71 fn ui/src/scpi.rs Scpi::la_cmd
+71 fn ui/src/scpi.rs Scpi::meas_cmd
+65 fn ui/src/scpi.rs meas_item
+226 fn ui/src/scpi/ser.rs trig
+68 fn ui/src/sparse.rs lanczos_many
+408 fn ui/src/store.rs set
+231 fn ui/src/store.rs setup_text
+103 fn ui/src/trig.rs decode_at
+290 fn ui/src/ui.rs Ui::activate
+460 fn ui/src/ui.rs Ui::adjust
+61 fn ui/src/ui.rs Ui::draw_axes
+153 fn ui/src/ui.rs Ui::draw_bottom
+74 fn ui/src/ui.rs Ui::draw_decoder
+97 fn ui/src/ui.rs Ui::draw_markers
+76 fn ui/src/ui.rs Ui::draw_math_ch
+111 fn ui/src/ui.rs Ui::draw_menu
+70 fn ui/src/ui.rs Ui::draw_strip
+72 fn ui/src/ui.rs Ui::draw_top
+139 fn ui/src/ui.rs Ui::key
+109 fn ui/src/ui.rs Ui::kind
+96 fn ui/src/ui.rs Ui::knob
+265 fn ui/src/ui.rs Ui::label
+258 fn ui/src/ui.rs Ui::menu_items
+71 fn ui/src/ui.rs Ui::multi_touch
+182 fn ui/src/ui.rs Ui::new
+151 fn ui/src/ui.rs Ui::options
+124 fn ui/src/ui.rs Ui::render_layers
+133 fn ui/src/ui.rs Ui::set_dec_proto
+126 fn ui/src/ui.rs Ui::set_trig_type
+466 fn ui/src/ui.rs Ui::step
+128 fn ui/src/ui.rs Ui::tap
+205 fn ui/src/ui.rs Ui::touch_in
+92 fn ui/src/ui.rs Ui::trigger_items
+302 fn ui/src/ui.rs Ui::value
+67 fn ui/src/ui.rs packet_text
+92 fn ui/src/ui/analysis.rs Ui::analyzer_update
+70 fn ui/src/ui/analysis.rs Ui::draw_spectrum
+112 fn ui/src/ui/autoset.rs Ui::auto_step
+131 fn ui/src/ui/bode.rs Ui::draw_bode
+67 fn ui/src/ui/bode.rs Ui::free_analyse
+84 fn ui/src/ui/bwtest.rs Ui::draw_bw
+66 fn ui/src/ui/eyepage.rs Ui::eye_plot
+64 fn ui/src/ui/la.rs Ui::la_adjust
+70 fn ui/src/ui/lint.rs check
+234 fn ui/src/ui/lint.rs gallery_at
+194 fn ui/src/ui/lint.rs menus_fit_at
+150 fn ui/src/ui/lint.rs screen_in_order_on
+61 fn ui/src/ui/measlabels.rs Ui::draw_meas_labels
+65 fn ui/src/ui/panes.rs Ui::draw_result_table
+120 fn ui/src/ui/startup.rs Ui::draw_start_up
+71 fn ui/src/ui/sysinfo.rs Ui::draw_sysinfo
+167 fn ui/src/ui/sysinfo.rs Ui::sysinfo_rows
+71 fn ui/src/vxi11.rs Server::poll
+109 fn ui/src/vxi11.rs core
+102 fn ui/src/wave.rs Phosphor::draw_ex
+222 fn ui/src/wave.rs Source::acquire
+113 fn ui/src/wave.rs demo_signal
+104 fn ui/src/wave.rs ext_demo
+137 fn ui/src/wave.rs stats
+33 impls ui Ui
+14 struct dsp/src/identify.rs Chan
+18 struct dsp/src/measure.rs Analysis
+16 struct hal/src/dho/boot/sim.rs Unit
+54 struct hal/src/dho/lmx2582.rs Fields
+18 struct hal/src/dho/seg.rs Engine
+28 struct hal/src/dho/seq.rs Settings
+14 struct hal/src/dho/seq.rs State
+13 struct hal/src/target.rs Target
+14 struct ui/src/board/mod.rs Frame
+40 struct ui/src/board/mod.rs Shared
+14 struct ui/src/drawpipe.rs Batch
+14 struct ui/src/drm.rs Display
+16 struct ui/src/drm.rs GetConnector
+15 struct ui/src/drm.rs ModeInfo
+14 struct ui/src/gpu.rs FrameMsg
+13 struct ui/src/gpu.rs JobMsg
+24 struct ui/src/gpu.rs QuadMsg
+19 struct ui/src/http.rs ShotState
+23 struct ui/src/model.rs DecCfg
+15 struct ui/src/model.rs GenCh
+194 struct ui/src/model.rs Model
+13 struct ui/src/model.rs SerialTrig
+14 struct ui/src/pacing.rs State
+15 struct ui/src/sysconf.rs SysConf
+155 struct ui/src/ui.rs Ui
+23 struct ui/src/ui/analysis.rs State
+16 struct ui/src/ui/autoset.rs AutoRun
+16 struct ui/src/ui/bode.rs State
+27 struct ui/src/ui/eyepage.rs Page
+15 struct ui/src/vpu.rs Buffer
+15 struct ui/src/vpu.rs Format

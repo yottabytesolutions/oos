@@ -1,0 +1,13 @@
+# Statics with interior mutability that are not metrics: 1 static <file> <name>.
+# Written by `cargo xtask ratchet` (docs/development.md). Entries may only go; metrics are listed in architecture.txt.
+1 static fpgad/src/bin/oos-update.rs STDOUT_CLOSED
+1 static hal/src/dho/afe.rs set_gear::LINES
+1 static hal/src/dho/afg.rs ARB
+1 static ui/src/board/dho/hw.rs log_header::LINES
+1 static ui/src/board/dho/hw.rs mask_map_cell::MAP
+1 static ui/src/compress.rs LAST_K
+1 static ui/src/drawpipe.rs Pipe::feed_batch::IDS
+1 static ui/src/http.rs SENDERS
+1 static ui/src/input.rs STOP
+1 static ui/src/mdns.rs STATUS
+1 static ui/src/pacing.rs state::S

@@ -1,0 +1,34 @@
+# Architecture rules, checked by `cargo xtask check` (docs/development.md).
+#
+# Crate dependencies, any kind (normal, build, dev): crate <package> -> <allowed packages...>
+# A package without a line fails, so a new crate or dependency is a decision written here.
+crate oos-dsp ->
+crate oos-hal -> libc
+crate oos-ui -> libc oos-hal oos-dsp
+crate oos-fpgad -> libc oos-hal
+crate xtask -> proc-macro2 quote serde serde_json syn
+#
+# gpu is C (gpu/oos-gpu.c): no crate, no rule.
+#
+# Module rules over a crate's top-level modules (the first name after crate::):
+#   forbid <crate dir> <from> <to>          code under src/<from>.rs or src/<from>/ must not name crate::<to>
+#   layer <crate dir> <module> -> <mods...> code of <module> may name only these modules and itself
+# Phase 2 of the overhaul (docs/overhaul.md) defines the layers of ui; until then there are none.
+#
+# Metrics allowlist: statics with interior mutability (locks, atomics, cells, once/lazy values) that may stay.
+#   static <file> <name>     <name> as the gate prints it: NAME, or <function>::NAME inside a function
+# Every other mutable static is global state: the old ones are in statics.txt (shrink only), new ones fail.
+static ui/src/deepmeas.rs READS
+static ui/src/deepmeas.rs DMA_US
+static ui/src/deepmeas.rs DECODE_US
+static ui/src/deepmeas.rs RECORD_US
+static ui/src/deepmeas.rs MEASURE_US
+static ui/src/deepmeas.rs MEASURE_N
+static ui/src/framecost.rs NS
+static ui/src/framecost.rs FRAMES
+static ui/src/framecost.rs WIDES
+static ui/src/pacing.rs VIEWS
+static ui/src/pacing.rs WANTED
+static ui/src/pacing.rs APPLIED
+static ui/src/pacing.rs STALE
+static ui/src/pacing.rs PARTIAL

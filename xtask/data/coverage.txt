@@ -1,0 +1,7 @@
+# Line coverage floor per crate in tenths of a percent: <floor> <crate>.
+# Written by `cargo xtask ratchet` (docs/development.md). Floors may only rise.
+949 dsp
+267 fpgad
+865 hal
+862 ui
+609 xtask

@@ -67,10 +67,18 @@ decided when a share is drawn, so a share drawn just before a change and merged 
   with references made from `overhaul` before M2 (adr/0011).
 - Add the display modes the drawing steps change: lines, dots, persistence Min and 500 ms, zoom, colour grade, at a
   fast and a slow time base.
+- Cover the batch path, not only the Demo frames: a minimal scripted-batch source (raw, codes, pairs, deep pairs)
+  feeds the real `drawpipe` with its workers on the host, and its pictures get references too. The drawing steps
+  change that path most.
 - Tests: new, pass on creation. They pin today's pictures so that M2 to M6 can prove "no change".
 - Deletes: nothing.
 
 ### M2: one change-detection point (D1a)
+
+M2.0 creates the crate `oos-core` (adr/0014) and moves today's flat `Model` into it, with the types it names (math,
+decode, zone and protocol settings types). Its calls into the UI and the board (`board()`, `la::available`, the
+protocol registry) become values passed in: platform capabilities in `Config`, the registry's option lists in
+`Context`. The crate rules in `xtask/data/architecture.txt` hold from here on. Estimate: 2 days on top of D1a.
 
 Design: [Change detection](architecture.md#change-detection), adr/0003. It includes compress's four review changes and
 upstreamarch's review:
@@ -79,7 +87,12 @@ upstreamarch's review:
    (`epoch` replaces `hw_stamp`). Autoset and Bode get their epoch by `Request::Epoch(token)`.
 3. `UiAcq` derived each step as a value: XY, the protocol watch, the mask reference, autoset or Bode active.
 4. Run state by transition.
-5. `normalize` before `classify`: `clamp_offsets` and `fit_platform` move in and stop running elsewhere each step.
+5. `normalize` before `classify`, in a fixed group order: `clamp_offsets`, `fit_platform` and the cross-group clamps
+   move in and stop running elsewhere each step.
+6. The outbox for internal writers: SINGLE or segments done to STOP, autoset and Bode steps, `auto_step`.
+7. The change point publishes `AcqWant` (still through `Shared` until M5) and the route view, so no other code
+   writes the acquisition request.
+8. Each existing view declares the classes it resets on (trend, eye, XY persistence, cursors).
 
 Classes: `acq`, `mapping`, `phosphor`, `stats`, `mask`, `zone`, `hw_average`, `history`, `math`. Measurement state
 (the analysis results, statistics and `meas_n`) is in `stats`. No `decode` class: the decode cache is keyed.
@@ -93,7 +106,11 @@ Tests, failing before:
 - SCPI and HTTP writes (`store::set`) reach the same point as a knob;
 - a mapping change in STOP redraws from `last[0]` and never blanks;
 - an autoset or Bode stage accepts only records of the epoch its token resolved to;
-- `normalize` is idempotent, and `fit_platform` switching a channel off yields `acq`;
+- `normalize` is idempotent, `fit_platform` switching a channel off yields `acq`, a clamped offset yields `mapping`
+  and a preview;
+- SINGLE done switches to STOP through the outbox, and the STOP is in the next `ChangeSet`;
+- every view's declared classes match what it resets in a change of each class;
+- the mapping key changes exactly when a `mapping` field changes;
 - CLEAR, the RUN and SINGLE edges and Create mask reset their consumers with no settings difference.
 
 Deletes: `settings_changed`, `mark_changed`, the 16 `dirty_map = true`, the `hw_stamp` bumps in `ui.rs`, `ui/bode.rs`
@@ -101,7 +118,12 @@ and `ui/autoset.rs`, the per-step calls of `clamp_offsets` and `fit_platform` ou
 
 ### M3: acquisition thread split (D1b)
 
-Split the closure in `hw.rs` `spawn` (lines 1263-2154 on 32041d0) as in `architecture/acquisition.md`:
+M3.0 comes first: the `Device` trait (configure, arm, wait, read, read again, disarm) over today's hardware calls, a
+scripted device, and characterisation tests of the current loop on the host: one pass per phase, STOP, SINGLE, a
+settings change mid-fill, roll and scan. They record today's behaviour, including what the design calls wrong (the
+ended fill that is still read), and M4 then changes those expectations on purpose. Estimate: 1.5 days.
+
+Then split the closure in `hw.rs` `spawn` (lines 1263-2154 on 32041d0) as in `architecture/acquisition.md`:
 - an `AcqLoop` struct for the about 30 loop locals (1328-1393);
 - set-up (1263-1394);
 - apply settings (1476-1548);
@@ -110,7 +132,7 @@ Split the closure in `hw.rs` `spawn` (lines 1263-2154 on 32041d0) as in `archite
 - segments;
 - batch, including the STOP hold (1797-2154).
 
-Pure refactor. Tests: the existing hw tests and all golden pictures unchanged. Deletes: nothing, moved code. The
+Pure refactor. Tests: the M3.0 characterisation tests, the existing hw tests and all golden pictures unchanged. Deletes: nothing, moved code. The
 allowlist entry for `hw.rs` and its `spawn` shrinks. Unit: smoke check (probe comp, setup B) inside round 1.
 
 ### M4: mapping key, preview, generation for records (D1c)
@@ -139,11 +161,19 @@ races show" in `fork/draw-architecture.md` 3.9: the overhaul splits it as part o
   `gen` and `epoch` from M2; `AcqCmd` with ids and `Readings` replace the remaining `Shared` fields,
   one group per part (M5.1 requests with ids: levels, slots, final; M5.2 the unit readings). Follows
   `architecture/acquisition.md`, Migration 2 and 3. `MeasRead` as its own type comes with M6.
-- Atomics for metrics, one writer each.
+- Atomics for metrics, one writer each, on the statics allowlist.
+- Hidden global state goes in this step:
+  - `Config` read once at start and passed in; no policy function reads a `OnceLock` or the environment;
+  - the compression `k` moves into `Readings`;
+  - `Session` (today the UI) creates and owns the deposit pipe;
+  - the `pacing` state other than metrics, and `deepmeas::FORCE`, move into the stages that own them.
+  The statics rule of `cargo xtask check` is enabled at the end of M5.
 - `board::fake` drives the thread's client side; `board/contract.rs` holds the `Board` contract tests.
 
 Tests, failing before:
 - two explicit requests between two loop passes are both served (today a flag can be overwritten);
+- an epoch-only change drops the batch armed ahead and the queued frames of the older epoch;
+- two `Config` values in one test process give two behaviours (no global read);
 - a rearm during configure is not lost;
 - the contract tests against the fake.
 
@@ -172,15 +202,18 @@ column over 40 rows.
 ### M9: `BatchUnit` (D5)
 
 As D5, adr/0006. Tests, failing before: every merged picture holds whole batches; the newest frame is in the same
-merge; frames and batch mode give the same picture. Frames mode becomes the same `BatchUnit`, deposited by the UI thread; a single delivered frame is a batch of
-one (adr/0013). Deletes: the `Acc` lists, `Tally` (if fix/batch-newest was merged), `Deliver`, `MERGE_WAIT_MAX`, the
+merge; frames and batch mode give the same picture; one step's frames in frames mode form one unit. Frames mode
+becomes the same `BatchUnit`, deposited by the UI thread, one unit per step (adr/0013). The accumulator lands in its
+final module, `picture/acc.rs`, with its target signature (`merge(&mut self, units, pseudo, &ChangeSet, now)`, output
+`&Picture`), so M10 and M16 do not move it again. Gate: the perf-guard ratios of adr/0013 (one-frame unit and
+48-frame step against `draw_frame`). Deletes: the `Acc` lists, `Tally` (if fix/batch-newest was merged), `Deliver`, `MERGE_WAIT_MAX`, the
 early `help_done`, the `fast_ok` frame branch in `Ui::step`, route D's `draw_frame` composition.
 
 **Unit round 3:** stress set, `partial` 0.
 
 ### M10: grading and records together (D6)
 
-As D6, adr/0005. Behind `draw.model`. Tests, failing before: as in D6 (brightness within 3 % for 1 to 27 frames per
+As D6, adr/0005, inside `picture/acc.rs` from M9 and `oos_core::window`. Behind `draw.model`. Tests, failing before: as in D6 (brightness within 3 % for 1 to 27 frames per
 picture, window age <= 67 ms, single hit visible, stopped picture constant, replay equals live, zoom equals main,
 `gpu/test-host.sh` 0 differ). Deletes: `picture_ref`, `per_frame*`, `pic_frames`, the `vmax` follow; the 24 x 6
 redraw after M12.
@@ -198,6 +231,10 @@ Remove `draw.model` and the old kernels and grade. Tests: full suites, golden re
 
 **Unit round 5:** full acceptance set; then the postponed stress round (matrix, feature pass, change storm, interfaces
 under load, soak, restart and power cycle) on this build.
+
+**Stable stop point.** After M12 the branch is shippable: the drawing goals are met, every step is through the gate
+and unit-tested, and the structure has its domain crate, change point, typed channels and accumulator. The user can
+take a build from here while M13 to M18 continue, or stop the overhaul here. M13 to M18 are estimated at this point.
 
 ### M13: settings groups replace `Model`
 
@@ -254,9 +291,9 @@ or `model.rs`, since they no longer exist.
 
 ## Estimate
 
-M0 to M12: about 22 days of host work plus five unit rounds of about half a day (from the drawing plan, plus M1 and
-M5 at about 1.5 days each). M13 to M18: not estimated yet. It depends on M1's harness and is estimated after M12,
-when the remaining sizes are known.
+M0 to M12: about 28.5 days of host work plus five unit rounds of about half a day: the drawing plan's 22 days, M1 and
+M5 at about 1.5 days each, M2.0 at 2 days, M3.0 at 1.5 days. M13 to M18: estimated at the stable stop point after
+M12, when the remaining sizes are known.
 
 ## Status
 

@@ -341,11 +341,21 @@ impl UsbBus {
         }
         self.rates.iter().find(|r| (bit / r.0 - 1.0).abs() <= 0.25).map(|r| (bit, r.1))
     }
+    /// The start of a SYNC from segment `k` that the record end cuts: K J K ... of one bit each (the last one shorter)
+    /// up to the end, fewer than the SYNC's seven.
+    fn sync_cut(&self, k: usize, bit: f64) -> bool {
+        let n = self.segs.len();
+        k < n
+            && n - k < 7
+            && (k..n).all(|q| self.segs[q].1 == if (q - k) % 2 == 0 { Ls::K } else { Ls::J })
+            && (k..n).all(|q| self.dur(q) <= 1.4 * bit && (q + 1 == n || self.dur(q) >= 0.6 * bit))
+    }
     /// D+ alone: whether the line after `te` (the end of a candidate packet) looks like the EOP (D+ low for two bit
-    /// times) and then idle or the next SYNC; the segment to go on from.
+    /// times) and then idle or the next SYNC (also one the record end cuts: without it the last packet of a record
+    /// that ends inside the next SYNC was lost with D+ alone, while D+ and D- decoded it); the segment to go on from.
     fn eop_after(&self, te: f64, bit: f64) -> Option<usize> {
         let q = self.at(te + 0.5 * bit);
-        let idle_or_sync = |k: usize| self.end(k) >= self.n || self.dur(k) > 7.0 * bit || self.sync(k + 1).is_some();
+        let idle_or_sync = |k: usize| self.end(k) >= self.n || self.dur(k) > 7.0 * bit || self.sync(k + 1).is_some() || self.sync_cut(k + 1, bit);
         if self.fs_pol {
             // the SE0 looks like K, then J
             let ok = self.segs[q].1 == Ls::K && (self.end(q) - te - 2.0 * bit).abs() <= 0.6 * bit && q + 1 < self.segs.len() && (self.dur(q + 1) >= 1.5 * bit || self.end(q + 1) >= self.n) && idle_or_sync(q + 1);

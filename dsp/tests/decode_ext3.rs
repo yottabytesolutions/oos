@@ -318,6 +318,28 @@ fn usb_full_speed_round_trip() {
     }
 }
 
+// A record that ends inside the next packet's SYNC (OOS host test bus_trigger_on_usb, 2026-11-14): with D+ alone the
+// packet before it must still end at its EOP, as it does with D+ and D-. Break it catches: the EOP after the last
+// packet confirmed only by a whole SYNC or a long idle.
+#[test]
+fn usb_d_plus_alone_keeps_the_packet_before_a_cut_sync() {
+    let pk = [gen::usb_token(0x69, 0x05, 0), gen::usb_token(0x2D, 0x05, 0)];
+    let want = usb_want(&pk[0], 12000);
+    let dt = 1.0 / USB_FULL / 8.0;
+    let bit = 8.0;
+    // two bit times of J between the packets, as in the demo traffic
+    let (dp, dm) = usb_lines(&usb_items(&pk, USB_FULL, 2.0 / USB_FULL), false, 15e-9, dt);
+    let all = usb(&dp, Some(&dm), dt, UsbSpeed::Full, 1.65, 0.3);
+    let sync2 = all.iter().filter(|x| x.kind == F("SYNC")).nth(1).unwrap().t0;
+    for cut in 1..=7 {
+        let n = (sync2 + cut as f64 * bit - 2.0) as usize;
+        let (dp, dm) = (&dp[..n], &dm[..n]);
+        assert_eq!(kv(&usb(dp, Some(dm), dt, UsbSpeed::Full, 1.65, 0.3))[..want.len()], want[..], "D+ D- cut {} bits into the SYNC", cut);
+        let one = usb(dp, None, dt, UsbSpeed::Full, 1.65, 0.3);
+        assert!(kv(&one).len() >= want.len() && kv(&one)[..want.len()] == want[..], "D+ alone cut {} bits into the SYNC: {:?}", cut, kv(&one));
+    }
+}
+
 #[test]
 fn usb_low_speed_keep_alive_reset_and_pre() {
     use gen::UsbItem::*;

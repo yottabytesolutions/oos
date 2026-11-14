@@ -55,10 +55,11 @@ The drawing work (M2 to M12) comes before the UI breakup (M13 to M18) because it
 fast, responsive UI without hiccups or flicker. The UI breakup is guarded by the golden pictures and host tests that
 M1 and the drawing steps leave behind.
 
-### M0: picture counters (done, pending one fix)
+### M0: picture counters (done)
 
-Branch `draw/step-0`: 3692085 on `overhaul`. The review fixes 10bca9b (stale counted at merge, roll and scan carry
-`cfg`) wait for compress's OK, then go on `overhaul`. Tests: counters count in pipe and UI tests.
+3692085 and the review fixes 73236d4 on `overhaul`. Tests: counters count in pipe and UI tests. Known limit: stale is
+decided when a share is drawn, so a share drawn just before a change and merged after it is not counted
+(`fork/draw-architecture.md`, Status). M4's mapping-key counter replaces it as the measure of stale.
 
 ### M1: golden pictures and the host harness
 
@@ -73,7 +74,7 @@ Branch `draw/step-0`: 3692085 on `overhaul`. The review fixes 10bca9b (stale cou
 
 Design: [Change detection](architecture.md#change-detection), adr/0003. It includes compress's four review changes:
 1. Requests next to the diff (`change::request`).
-2. `Generations::new_gen` as the only writer of `gen` and `epoch` (`epoch` replaces `hw_stamp`), returning the
+2. `Generations::new_gen` and `new_epoch` as the only writers of `gen` and `epoch` (`epoch` replaces `hw_stamp`), returning the
    value at once.
 3. `UiAcq` for UI state that changes acquisition or drawing: XY, the protocol watch, the mask reference, autoset or
    Bode active.
@@ -167,8 +168,9 @@ column over 40 rows.
 ### M9: `BatchUnit` (D5)
 
 As D5, adr/0006. Tests, failing before: every merged picture holds whole batches; the newest frame is in the same
-merge; frames and batch mode give the same picture. Deletes: the `Acc` lists, `Tally` (if fix/batch-newest was
-merged), `Deliver`, `MERGE_WAIT_MAX`, the early `help_done`, the `fast_ok` frame branch in `Ui::step`.
+merge; frames and batch mode give the same picture. Frames mode becomes the same `BatchUnit`, deposited by the UI thread; a single delivered frame is a batch of
+one (adr/0013). Deletes: the `Acc` lists, `Tally` (if fix/batch-newest was merged), `Deliver`, `MERGE_WAIT_MAX`, the
+early `help_done`, the `fast_ok` frame branch in `Ui::step`, route D's `draw_frame` composition.
 
 **Unit round 3:** stress set, `partial` 0.
 
@@ -253,4 +255,4 @@ when the remaining sizes are known.
 ## Status
 
 - 2026-11-14: plan written (perfui, with compress). Waiting for review (archreview, upstreamarch) and team-lead
-  approval. M0 done except 10bca9b.
+  approval. M0 done (73236d4). adr/0013 recorded (team-lead: one batch path).

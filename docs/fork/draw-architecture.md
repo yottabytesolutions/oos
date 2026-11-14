@@ -396,7 +396,8 @@ Existing fixes:
 | near-only trigger gate, AC level | kept |
 | live compression, RAW_PERIOD read | kept for measurement, not drawn |
 
-Decisions: frames mode stays the default (the unit keeps `acq.pipeline = batch`); Z input keeps its current drawing
+Decisions: frames mode stays the default on `dho804` (the unit keeps `acq.pipeline = batch`); on `overhaul` frames
+mode becomes the batch path (adr/0013); Z input keeps its current drawing
 (team-lead). C with the cap at minimum persistence (user). Design approved 2026-11-14.
 
 Not in scope: XY and LA (canvas), the auto timeout.
@@ -412,7 +413,8 @@ Not in scope: XY and LA (canvas), the auto timeout.
     and slope included), via `pacing::WANTED`/`APPLIED`, `Frame::cfg` and `Batch::cfg`. Counted where they reach the
     picture: pipe maps at merge (dropped maps do not count), routes C/D and the record path at the draw. Roll and scan
     frames carry the generation too. Not covered: changes outside `Want` (`Shared::needs_raw`, `slow`, `mask_want`,
-    `zone_want`). Step 1c brings a second counter for frames shown under another mapping key (3.5), which is the
+    `zone_want`). The share decides stale at draw time: a share drawn just before a `Want` change and merged after
+    it counts as not stale, so the baseline undercounts slightly at the edge. Step 1c brings a second counter for frames shown under another mapping key (3.5), which is the
     design's meaning of stale; this one is the baseline;
   - `partial`: batches merged in more than one picture.
   `preview` comes with step 1, which adds the preview.

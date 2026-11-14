@@ -37,7 +37,7 @@ UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole 
   from `Settings` (acquisition.md). So a batch of an older hardware generation under the same mapping key is a valid
   picture.
 - **Frames mode** (no worker pipe: the host, `acq.pipeline = frames`, a full buffer pool) is the same unit drawn by
-  the UI thread itself. One composition, not two.
+  the UI thread itself; a single delivered frame is a batch of one. One composition, not two (adr/0013).
 
 ## Weights
 
@@ -62,6 +62,8 @@ min/max pair has no sample density.
   same way. The decay stops when no frames come. Infinite: no decay, halve on saturation with `.max(1)`.
 - **Roll, scan, STOP, Single done, history and segment replay:** a window of 1.
 - **Colour grade:** count / W through the heat LUT. The GPU gets W where it got `vmax`.
+- **Output:** the accumulator exposes `Picture` (`ph`, `phz`, W, grade, the arena) read-only. `compose` and the GPU
+  upload read it by `&` once per step; nothing else reads the maps.
 
 ## Invalidation
 

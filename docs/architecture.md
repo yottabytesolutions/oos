@@ -90,7 +90,7 @@ thread.
 |---|---|---|---|
 | `Settings` | the `settings` groups, through `Command`s applied in the change stage | every stage, by `&` | process; saved by `store` |
 | `ChangeSet` | the change stage | stages after it in the same step | one step |
-| `Generations` (`gen`, `epoch`) | `change::Generations::new_gen` | acquisition client, records, accumulator | process |
+| `Generations` (`gen`, `epoch`) | `change::Generations::new_gen`, `new_epoch` | acquisition client, records, accumulator | process |
 | `AcqWant` with `gen` and `epoch` | the change stage, through `app/acq_client` | acquisition thread, latest value | until the next change |
 | hardware, batch buffers, `AcqLoop` state | acquisition thread (`board/dho`) | nobody; results leave as `Batch`, `Frame`, `MeasRead`, `Readings` | process |
 | `Readings` (status, counters, acknowledged ids, the read plan) | acquisition thread | UI, latest value | process |
@@ -167,12 +167,12 @@ Classes and their consumers:
 
 A keyed cache needs no class. The decode cache is keyed by record and decoder settings, so its key decides.
 
-Generations: two numbers, written only by `Generations::new_gen(kind) -> u64`.
+Generations: two numbers, written only by `Generations::new_gen() -> u64` and `Generations::new_epoch() -> u64`.
 - **`gen`** rises when the `ChangeSet` contains `acq`. The acquisition thread tags every output with the `gen` it
   applied.
 - **`epoch`** rises on requests whose settings may not differ: SINGLE armed, CLEAR, RUN after STOP, an autoset or Bode
   stage (also a retry). It replaces `hw_stamp`.
-- `new_gen` returns the new value at once, so an autoset or Bode stage that keeps it in the same call has the current
+- Both return the new value at once, so an autoset or Bode stage that keeps it in the same call has the current
   one. `classify` and `request` both call it. The pair is published inside `AcqWant`, so it is always consistent.
 - Readers filter on the pair: the picture by its mapping key, records and measurements by `epoch` and `gen`
   (`architecture/records.md`).
@@ -240,7 +240,7 @@ FPGA ring -> acquisition thread: read a batch under `gen` g, tagged with its `Ba
           -> deposit workers and helper: share maps, one weight model per column per frame
           -> BatchUnit: all shares, published when the last is in
           -> accumulator: window of whole batches (minimum persistence) or decay (persistence), weights W
-          -> compose: count / W through the LUT, layers
+          -> compose: reads the accumulator's `Picture` (`ph`, `phz`, W, grade) by `&`; count / W through the LUT, layers
           -> present: DRM (CPU) or the GPU helper (vmax = W)
 ```
 

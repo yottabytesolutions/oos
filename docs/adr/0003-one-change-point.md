@@ -15,7 +15,8 @@ state: old frames in the picture, statistics over two settings, segments from be
   `Unrelated`.
 - Requests cover events with no settings difference: CLEAR, RUN and SINGLE edges, Create mask, a retried autoset or
   Bode stage.
-- `Generations::new_gen` is the only writer of generations, `hw_stamp` included, and returns the new value at once.
+- `Generations::new_gen` and `new_epoch` are the only writers of `gen` and `epoch` (`epoch` replaces `hw_stamp`).
+  Both return the new value at once.
 - UI state that changes what is acquired or drawn sits in `UiAcq` and is part of the diff.
 - Run state is handled by transition. A mapping change in STOP redraws from the last record.
 

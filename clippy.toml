@@ -1,0 +1,8 @@
+# Thresholds of the size and complexity lints that the crates' [lints] tables enable (docs/development.md).
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 25
+too-many-arguments-threshold = 7
+type-complexity-threshold = 250
+# tests may unwrap: a panic there is the failure report
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

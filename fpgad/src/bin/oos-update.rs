@@ -76,6 +76,32 @@ impl Args {
     }
 }
 
+/// `println!` for this tool's output. A failed write to stdout never ends or panics the process: a write sequence
+/// (install, rollback, mode) must not stop between two steps because the reader went away (`oos-update status |
+/// head -1`). After the first failure stdout counts as closed and later output is dropped; an error other than a
+/// closed pipe is reported once on stderr. The exit status stays the command's.
+macro_rules! out {
+    ($($t:tt)*) => {
+        put(&mut std::io::stdout().lock(), &STDOUT_CLOSED, format_args!($($t)*))
+    };
+}
+
+static STDOUT_CLOSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn put(w: &mut dyn std::io::Write, closed: &std::sync::atomic::AtomicBool, a: std::fmt::Arguments) {
+    use std::sync::atomic::Ordering;
+    if closed.load(Ordering::Relaxed) {
+        return;
+    }
+    let r = w.write_fmt(a).and_then(|_| w.write_all(b"\n"));
+    if let Err(e) = r {
+        closed.store(true, Ordering::Relaxed);
+        if e.kind() != std::io::ErrorKind::BrokenPipe {
+            eprintln!("oos-update: stdout: {} (further output dropped)", e);
+        }
+    }
+}
+
 fn die(msg: &str) -> ! {
     eprintln!("oos-update: {}", msg);
     std::process::exit(1)
@@ -83,7 +109,7 @@ fn die(msg: &str) -> ! {
 
 /// Lines also to the kernel log (and the panel console, which shows when oos-ui is down).
 fn tell(msg: &str) {
-    println!("{}", msg);
+    out!("{}", msg);
     // one write per line: every write to /dev/kmsg is a record of its own
     let line = format!("oos-update: {}\n", msg);
     for dev in ["/dev/kmsg", "/dev/tty1"] {
@@ -129,11 +155,11 @@ fn gel_install(a: &Args) {
     let p = read_file(f);
     let opt = update::first::FirstOpt { execute: a.flag("--execute"), any_model: a.flag("--any-model"), reinstall: a.flag("--reinstall") };
     let path = a.val("--card").map(str::to_string).or_else(stock_card).unwrap_or_else(|| die(&format!("no SD card on {}", oos_hal::target::ACTIVE.card_controller)));
-    println!("card {}", path);
+    out!("card {}", path);
     let vendor = std::fs::read(a.val("--vendor").unwrap_or("/rigol/data/vendor.bin")).ok();
     let mut c = Card::open(Path::new(&path), opt.execute).unwrap_or_else(|e| die(&format!("{}: {}", path, e)));
     let keys = keys(a, a.val("--card").is_some());
-    let r = update::first::first_install(&mut c, &p, &keys, Path::new(save), vendor.as_deref(), &opt, &mut |l| println!("{}", l));
+    let r = update::first::first_install(&mut c, &p, &keys, Path::new(save), vendor.as_deref(), &opt, &mut |l| out!("{}", l));
     if let Err(e) = r {
         die(&e);
     }
@@ -183,9 +209,9 @@ fn main() {
             match pkg::verify(&p, &keys(&a, true)) {
                 Ok((h, img)) => {
                     let m = &h.manifest;
-                    println!("{}: signature ok (key {}), build {}, {} bytes", f, hex(&m.key), m.build, m.size);
+                    out!("{}: signature ok (key {}), build {}, {} bytes", f, hex(&m.key), m.build, m.size);
                     match card::check_image(img) {
-                        Ok(i) => println!("image '{}', loader id {} ok", i.name, hex(&i.id)),
+                        Ok(i) => out!("image '{}', loader id {} ok", i.name, hex(&i.id)),
                         Err(e) => die(&format!("image: {}", e)),
                     }
                 }
@@ -200,7 +226,7 @@ fn main() {
             let ex = a.flag("--execute");
             let mut c = open_card(&a, ex);
             match update::rollback(&mut c, &state_path(&a), "by hand", ex, None) {
-                Ok(r) => r.lines.iter().for_each(|l| println!("{}", l)),
+                Ok(r) => r.lines.iter().for_each(|l| out!("{}", l)),
                 Err(e) => die(&e),
             }
         }
@@ -208,8 +234,8 @@ fn main() {
             need_data(&a);
             let running = std::fs::read_to_string("/etc/oos-build").ok();
             match update::confirm_running(&state_path(&a), None, running.as_deref()) {
-                Ok(true) => println!("trial ended: the image in recovery is confirmed"),
-                Ok(false) => println!("no image on trial"),
+                Ok(true) => out!("trial ended: the image in recovery is confirmed"),
+                Ok(false) => out!("no image on trial"),
                 Err(e) => die(&e),
             }
         }
@@ -217,8 +243,8 @@ fn main() {
             need_data(&a);
             let mut c = open_card(&a, true);
             match update::arm_by_hand(&mut c, &state_path(&a)) {
-                Ok(true) => println!("next boot: OOS"),
-                Ok(false) => println!("OOS was already selected"),
+                Ok(true) => out!("next boot: OOS"),
+                Ok(false) => out!("OOS was already selected"),
                 Err(e) => die(&e),
             }
         }
@@ -230,7 +256,7 @@ fn main() {
                 Some("persist") => {
                     update::set_mode(&p, true).unwrap_or_else(|e| die(&e));
                     if let Err(e) = update::arm_checked(&mut open_card(&a, true), &p) {
-                        println!("not selected for the next power-on yet: {}", e);
+                        out!("not selected for the next power-on yet: {}", e);
                     }
                 }
                 Some("oneshot") => {
@@ -241,7 +267,7 @@ fn main() {
                 Some(m) => die(&format!("mode '{}': oneshot or persist", m)),
             }
             let st = State::load(&p).unwrap_or_else(|e| die(&e.to_string()));
-            println!(
+            out!(
                 "mode {}",
                 if st.persist {
                     "persist: OOS arms itself again after every confirmed start (an unconfirmed start -> stock next time)"
@@ -272,13 +298,13 @@ fn install(a: &Args) {
     let by_kexec = !test_card && !a.flag("--no-kexec") && !a.flag("--new-dt") && announced;
     if !by_kexec {
         if !test_card && !a.flag("--no-kexec") && !a.flag("--new-dt") {
-            println!("the package has no 'trial kexec' line (an older build): written directly, without the kexec trial start");
+            out!("the package has no 'trial kexec' line (an older build): written directly, without the kexec trial start");
         }
         if a.flag("--new-dt") {
-            println!("--new-dt: written directly; a kernel or device tree that hangs before rcS starts again at every power-on");
+            out!("--new-dt: written directly; a kernel or device tree that hangs before rcS starts again at every power-on");
         }
         match update::install(&mut c, &sp, &p, &keys, &opt) {
-            Ok(r) => r.lines.iter().for_each(|l| println!("{}", l)),
+            Ok(r) => r.lines.iter().for_each(|l| out!("{}", l)),
             Err(e) => die(&e),
         }
         return;
@@ -293,9 +319,9 @@ fn install(a: &Args) {
             e
         )),
         Err(e) => die(&e),
-        Ok((r, None)) => r.lines.iter().for_each(|l| println!("{}", l)),
+        Ok((r, None)) => r.lines.iter().for_each(|l| out!("{}", l)),
         Ok((r, Some(s))) => {
-            r.lines.iter().for_each(|l| println!("{}", l));
+            r.lines.iter().for_each(|l| out!("{}", l));
             drop(p);
             start_kexec(&sp, s, kexec::Flags { downgrade: opt.downgrade, force: opt.force });
         }
@@ -407,7 +433,7 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
     unsafe { libc::sync() };
     // the kernel does not sync or unmount on kexec
     if !std::process::Command::new("mount").args(["-o", "remount,ro", "/oos"]).status().is_ok_and(|x| x.success()) {
-        println!("warning: /oos stays writable (busy); synced");
+        out!("warning: /oos stays writable (busy); synced");
     }
     let e = kexec::start();
     undo(&e, Some(&q));
@@ -444,7 +470,7 @@ fn kexec_check(a: &Args) {
         Ok(_) => "DIFFERS from the running one (install needs --new-dt)",
         Err(_) => "running one unknown",
     };
-    println!(
+    out!(
         "build {}: kernel {} bytes, initramfs {} bytes loaded in {} ms ({}), unloaded again; announced 'trial kexec': {}; device tree {}",
         update::short(&h.manifest.build),
         k.len(),
@@ -454,7 +480,7 @@ fn kexec_check(a: &Args) {
         kexec::announced(&h.manifest),
         tree
     );
-    println!("command line: {}", cmd);
+    out!("command line: {}", cmd);
     if !ok || kexec::loaded() {
         die("unexpected kexec_loaded state");
     }
@@ -518,7 +544,7 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
     let mut c = open_card(a, true);
     let done = match update::install(&mut c, p, &pk, &keys, &opt) {
         Ok(r) => {
-            r.lines.iter().for_each(|l| println!("{}", l));
+            r.lines.iter().for_each(|l| out!("{}", l));
             if r.written {
                 notice(&format!(
                     "Update {} installed after its kexec start. Power-cycle the scope: its first power-on is the trial start, it confirms itself about 20 s after the start-up",
@@ -586,12 +612,12 @@ fn status(a: &Args) {
         Ok(s) => s,
         Err(e) => {
             // not "no trial": the values below are defaults then
-            println!("state        UNREADABLE ({}): {}; is /oos mounted?", p.display(), e);
+            out!("state        UNREADABLE ({}): {}; is /oos mounted?", p.display(), e);
             State::default()
         }
     };
     match c.boot_magic() {
-        Ok(m) => println!(
+        Ok(m) => out!(
             "boot magic   {} ({})",
             String::from_utf8_lossy(&m),
             match &m {
@@ -600,10 +626,10 @@ fn status(a: &Args) {
                 _ => "unexpected",
             }
         ),
-        Err(e) => println!("boot magic   unreadable: {}", e),
+        Err(e) => out!("boot magic   unreadable: {}", e),
     }
     if let Err(e) = c.check_layout() {
-        println!("layout       {}", e);
+        out!("layout       {}", e);
     }
     for r in [card::Region::Recovery, card::Region::Slot] {
         match c.header(r) {
@@ -613,7 +639,7 @@ fn status(a: &Args) {
                     .filter_map(|e| e.as_ref())
                     .find(|e| e.len == h.len as u64)
                     .map_or("untracked".to_string(), |e| format!("same size as build {}", e.build));
-                println!("{:<12} '{}', {} bytes, {}, loader id {}", if r == card::Region::Recovery { "recovery" } else { "rollback" }, h.name, h.len, known, &hex(&h.id)[..16]);
+                out!("{:<12} '{}', {} bytes, {}, loader id {}", if r == card::Region::Recovery { "recovery" } else { "rollback" }, h.name, h.len, known, &hex(&h.id)[..16]);
             }
             Ok(Some(h)) => {
                 let (b, sha) = c.read_image(r, h.len).unwrap_or_else(|e| die(&e.to_string()));
@@ -623,24 +649,24 @@ fn status(a: &Args) {
                     .filter_map(|e| e.as_ref())
                     .find(|e| e.sha256 == sha)
                     .map_or("untracked".to_string(), |e| format!("build {}", e.build));
-                println!("{:<12} '{}', {} bytes, {}, {}, sha256 {}", if r == card::Region::Recovery { "recovery" } else { "rollback" }, h.name, h.len, known, ok, &hex(&sha)[..16]);
+                out!("{:<12} '{}', {} bytes, {}, {}, sha256 {}", if r == card::Region::Recovery { "recovery" } else { "rollback" }, h.name, h.len, known, ok, &hex(&sha)[..16]);
             }
-            Ok(None) => println!("{:<12} no image", if r == card::Region::Recovery { "recovery" } else { "rollback" }),
-            Err(e) => println!("{:?}: unreadable: {}", r, e),
+            Ok(None) => out!("{:<12} no image", if r == card::Region::Recovery { "recovery" } else { "rollback" }),
+            Err(e) => out!("{:?}: unreadable: {}", r, e),
         }
     }
     match st.trial {
-        Some(n) => println!("trial        on trial, {} start(s) without confirmation", n),
-        None => println!("trial        none"),
+        Some(n) => out!("trial        on trial, {} start(s) without confirmation", n),
+        None => out!("trial        none"),
     }
-    println!("mode         {}", if st.persist { "persist" } else { "oneshot" });
+    out!("mode         {}", if st.persist { "persist" } else { "oneshot" });
     if !st.event.is_empty() {
-        println!("last event   {}", st.event);
+        out!("last event   {}", st.event);
     }
     if let Ok(b) = std::fs::read_to_string("/etc/oos-build") {
-        println!("running      {}", b.trim());
+        out!("running      {}", b.trim());
     }
-    println!("trusted keys {}", update::trusted_keys().iter().map(|k| hex(&pkg::key_id(k))).collect::<Vec<_>>().join(", "));
+    out!("trusted keys {}", update::trusted_keys().iter().map(|k| hex(&pkg::key_id(k))).collect::<Vec<_>>().join(", "));
 }
 
 fn boot(a: &Args) {
@@ -683,7 +709,7 @@ fn boot(a: &Args) {
             let mut c = open_card(a, true);
             match update::rollback(&mut c, &p, "it started a second time without having been confirmed", true, None) {
                 Ok(r) => {
-                    r.lines.iter().for_each(|l| println!("{}", l));
+                    r.lines.iter().for_each(|l| out!("{}", l));
                     let st = State::load(&p).unwrap_or_default();
                     notice(&format!("Update {}. Power-cycle the scope to start the restored build.", st.event));
                 }
@@ -794,7 +820,7 @@ fn watch(a: &Args) {
                 let mut c = open_card(a, true);
                 match update::rollback(&mut c, &p, &why, true, trial_sha) {
                     Ok(r) => {
-                        r.lines.iter().for_each(|l| println!("{}", l));
+                        r.lines.iter().for_each(|l| out!("{}", l));
                         let prev = st.previous.as_ref().map_or("?", |e| update::short(&e.build));
                         notice(&format!(
                             "Update {} failed its first start ({}). Build {} restored: power-cycle the scope.",
@@ -864,9 +890,9 @@ fn keygen(a: &Args) {
             .unwrap_or_else(|e| die(&format!("{}: {}", out.display(), e)));
         f.write_all(text.as_bytes()).unwrap_or_else(|e| die(&e.to_string()));
     }
-    println!("secret key: {} (mode 0600)", out.display());
-    println!("add this line to oos/keys/update.pub:");
-    println!("{}  # id {}", hex(&pk), hex(&pkg::key_id(&pk)));
+    out!("secret key: {} (mode 0600)", out.display());
+    out!("add this line to oos/keys/update.pub:");
+    out!("{}  # id {}", hex(&pk), hex(&pkg::key_id(&pk)));
 }
 
 fn pack(a: &Args) {
@@ -887,5 +913,57 @@ fn pack(a: &Args) {
     let p = pkg::build_with(&seed, build, &kernel, &img, &[kexec::LINE]).unwrap_or_else(|e| die(&e));
     pkg::verify(&p, &[pk]).unwrap_or_else(|e| die(&format!("self-check: {}", e)));
     std::fs::write(out, &p).unwrap_or_else(|e| die(&format!("{}: {}", out, e)));
-    println!("{}: build {}, {} bytes, key {}", out, build, p.len(), hex(&pkg::key_id(&pk)));
+    out!("{}: build {}, {} bytes, key {}", out, build, p.len(), hex(&pkg::key_id(&pk)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Counts write calls; fails every one with `fail`, or none.
+    struct Pipe {
+        calls: usize,
+        fail: Option<std::io::ErrorKind>,
+        got: Vec<u8>,
+    }
+
+    impl std::io::Write for Pipe {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.calls += 1;
+            match self.fail {
+                Some(k) => Err(k.into()),
+                None => {
+                    self.got.extend_from_slice(b);
+                    Ok(b.len())
+                }
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // Break it catches: a closed reader ending or panicking the process mid-command (put returns, so the command
+    // continues), later output still written to the dead pipe, normal output changed.
+    #[test]
+    fn closed_pipe_drops_output_and_continues() {
+        let closed = AtomicBool::new(false);
+        let mut p = Pipe { calls: 0, fail: Some(std::io::ErrorKind::BrokenPipe), got: Vec::new() };
+        put(&mut p, &closed, format_args!("state {}", 1));
+        assert!(closed.load(Ordering::Relaxed));
+        let n = p.calls;
+        put(&mut p, &closed, format_args!("trial {}", "none"));
+        assert_eq!(p.calls, n, "nothing written after the pipe closed");
+
+        let open = AtomicBool::new(false);
+        let mut ok = Pipe { calls: 0, fail: None, got: Vec::new() };
+        put(&mut ok, &open, format_args!("trial {}", "none"));
+        put(&mut ok, &open, format_args!("mode {}", "persist"));
+        assert_eq!((ok.got.as_slice(), open.load(Ordering::Relaxed)), (&b"trial none\nmode persist\n"[..], false));
+
+        let other = AtomicBool::new(false);
+        put(&mut Pipe { calls: 0, fail: Some(std::io::ErrorKind::PermissionDenied), got: Vec::new() }, &other, format_args!("x"));
+        assert!(other.load(Ordering::Relaxed), "any write error closes stdout for the rest of the run");
+    }
 }

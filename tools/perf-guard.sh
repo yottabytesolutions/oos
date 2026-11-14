@@ -16,13 +16,13 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 export PATH="$HOME/.cargo/bin:$PATH"
 
 echo "== hal: deterministic guards"
-(cd "$root/hal" && cargo test --release --quiet --test alloc_batch --test early_trigger_end)
-(cd "$root/hal" && cargo test --release --quiet --lib -- \
+(cd "$root/hal" && cargo test --profile perf --quiet --test alloc_batch --test early_trigger_end)
+(cd "$root/hal" && cargo test --profile perf --quiet --lib -- \
 	fused_decode_equals_deinterleave_and_volts decode_into_kept_vectors_equals_decode unpad_in_place_equals_unpad \
 	prearm_writes_the_same_sequence_as_the_plain_batch_loop dma_buf_is_reused_aligned_and_exact_with_short_reads)
 
 echo "== hal: timing guards"
-(cd "$root/hal" && cargo test --release --quiet --test perf_ratio -- --ignored --nocapture --test-threads=1)
+(cd "$root/hal" && cargo test --profile perf --quiet --test perf_ratio -- --ignored --nocapture --test-threads=1)
 
 echo "== ui: timing guards"
 (cd "$root/ui" && cargo test --release --quiet -- --ignored --nocapture --test-threads=1 perf_guard)

@@ -252,7 +252,16 @@ impl Scpi {
     }
 
     fn exec(&mut self, ui: &mut Ui, cv: &Canvas, cmd: &str) -> Option<Vec<u8>> {
+        let before = self.err.len();
         let r = self.exec_cmd(ui, cv, cmd);
+        // a query without an answer leaves the client waiting for a line until its timeout: it answers with the error
+        // it queued (the error stays in the queue for :SYSTem:ERRor?), a command without `?` stays silent.
+        // Ported from deckerjulian/oos#8, 6d6ea38 by wasimlhr.
+        let query = cmd.split_whitespace().next().unwrap_or("").ends_with('?');
+        let unanswered = query && r.is_none();
+        if unanswered && self.err.len() == before {
+            self.err.push(format!("-113,\"Undefined header\" {}", cmd));
+        }
         // a client that never asks for its errors, or sends megabytes of nonsense, must not fill the memory
         for e in &mut self.err {
             if e.len() > ERR_LEN {
@@ -262,6 +271,9 @@ impl Scpi {
         if self.err.len() > ERR_MAX {
             self.err.truncate(ERR_MAX - 1);
             self.err.push("-350,\"Queue overflow\"".into());
+        }
+        if unanswered {
+            return self.err.last().map(|e| e.as_bytes().to_vec());
         }
         r
     }
@@ -1223,6 +1235,24 @@ pub fn bmp(cv: &Canvas) -> Vec<u8> {
 #[cfg(test)]
 mod vernier_tests {
     use super::*;
+
+    // Break it catches: an unknown query answering nothing (the client waits for its timeout), a command without `?`
+    // answering, the error leaving the queue, the answer of a known query changed. Ported from deckerjulian/oos#8.
+    #[test]
+    fn unknown_query_answers_with_its_error() {
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = Scpi::open(0);
+        let mut q = |c: &str| String::from_utf8(scpi.exec_line(&mut ui, &cv, c)).unwrap();
+        assert_eq!(q(":BOGus:NODE?"), "-113,\"Undefined header\" :BOGus:NODE?");
+        assert_eq!(q(":BOGus:NODE 1"), "", "a command stays silent");
+        assert_eq!(q(":SYST:ERR?"), "-113,\"Undefined header\" :BOGus:NODE?", "the answered error stays queued");
+        assert_eq!(q(":SYST:ERR?"), "-113,\"Undefined header\" :BOGus:NODE 1");
+        assert_eq!(q(":SYST:ERR?"), "0,\"No error\"");
+        assert_eq!(q(":LA:BOGus?"), "-113,\"Undefined header\" :LA:BOGus");
+        assert_eq!(q("*OPC?;:BOGus?"), "1;-113,\"Undefined header\" :BOGus?");
+        assert!(q("*IDN?").starts_with("OOS,"));
+    }
 
     #[test]
     fn vernier_takes_any_scale_at_or_above_a_calibrated_row() {

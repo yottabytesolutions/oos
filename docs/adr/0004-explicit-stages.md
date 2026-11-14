@@ -9,7 +9,8 @@ between distant lines. Moving one line has broken the picture more than once.
 
 ## Decision
 
-- `Session::step` calls fixed stages in order: intake, change, acquire, accumulate, measure, views, compose, present,
+- `Session::step` calls fixed stages in order: intake, change, acquire, records, accumulate, measure, views,
+  compose, present,
   reply.
 - Each stage owns its state and takes and returns typed values. No stage reads another stage's state except through
   those values.

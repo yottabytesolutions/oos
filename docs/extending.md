@@ -14,7 +14,7 @@ limits, boundary rules, perf-guard, `gpu/test-host.sh`).
 2. **Invariants.** Add the range or combination check within the group to its `apply`. A constraint across groups
    (a clamp by another group's value) goes into `Settings::normalize()`
    ([Normalize](architecture.md#normalize)), never into `apply`.
-   If the group passes about 12 fields because it holds variants with their own parameters, split it into an enum of
+   If the group passes 12 fields because it holds variants with their own parameters, split it into an enum of
    per-variant structs: `TriggerKind::Edge(EdgeCfg)`, `TriggerKind::Pulse(PulseCfg)`.
 3. **Command.** Add a variant to the group's command enum, for example `AcquireCmd::Foo(Foo)`.
 4. **Class.** Add the field to the group's `classify` function. It does not compile until you do. Choose the classes from

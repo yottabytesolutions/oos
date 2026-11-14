@@ -289,14 +289,14 @@ Run state goes by transition, not by value:
 is in the code; no stage relies on a side effect of another.
 
 ```
-intake     (input, remote requests, BatchUnits, RecordBatches, Frames, MeasReads, Readings)
+intake     (input, remote requests, outbox, BatchUnits, RecordBatches, Frames, MeasReads, Readings)
                                                        -> commands, requests, acquired data
-change     (commands, requests, UiAcq)                 -> Settings', ChangeSet, AcqIntent, AcqCmds
-acquire    (AcqIntent, AcqCmds)                        -> AcqWant through Board::want, published to the acquisition thread
+change     (commands, requests, UiAcq)                 -> Settings', ChangeSet, AcqIntent, PipeView, AcqCmds
+acquire    (AcqIntent, PipeView, AcqCmds)              -> AcqWant through Board::want, PipeView, published
 records    (RecordBatches, Frames, MeasReads, ChangeSet) -> records, record store, the step's pseudo-batch
-accumulate (BatchUnits, pseudo-batch, ChangeSet, now)  -> picture maps and weights
+accumulate (BatchUnits, pseudo-batch, ChangeSet, now)  -> &Picture
 measure    (records, ChangeSet)                        -> results, statistics
-views      (results, records, ChangeSet)               -> view state
+views      (results, records, events, ChangeSet)       -> view state, outbox (commands, requests for the next step)
 compose    (picture, results, views, menus)            -> layers and trace jobs
 present    (layers)                                    -> DRM or the GPU helper; snapshot for remote clients
 reply      (results)                                   -> answers to remote queries

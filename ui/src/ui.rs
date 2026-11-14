@@ -9513,7 +9513,7 @@ mod tests {
         let (n, dt, pre) = (12_500usize, 0.8e-9, 6250usize);
         let frame = |seq: u64| {
             let v: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() as f32).collect();
-            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None, hw_avg: false }
+            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None, hw_avg: false, pre_exact: false }
         };
         shared.lock().unwrap().queue.extend((1..=10).map(frame));
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });

@@ -63,7 +63,7 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
         let t = std::time::Instant::now();
         let level = crate::board::sw_trig_level(m, f);
         cost::add(Part::Level, t);
-        refine_near(src, 0, src.len(), f.pre, filtered(m), level, hyst, rising, either, half, col).unwrap_or_else(|| refine_wide(std::time::Instant::now(), src, f.pre, level, hyst, rising, either, half, col))
+        refine_near(src, 0, src.len(), f.pre, near_only(m, f), level, hyst, rising, either, half, col).unwrap_or_else(|| refine_wide(std::time::Instant::now(), src, f.pre, level, hyst, rising, either, half, col))
     };
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
         if pairs {
@@ -166,19 +166,29 @@ impl CodeLayout {
 /// with a header).
 pub type CodesInto = Arc<dyn Fn(&[u8], &mut Frame) -> Option<CodeLayout> + Send + Sync>;
 
-/// AC or LF-reject trigger coupling: the hardware comparators see a high-passed signal that the samples do not hold
-/// (`trignear::edge_near`).
-fn filtered(m: &Model) -> bool {
-    !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject)
+/// The trigger refinement of frame `f` searches the near window only (`trignear::edge_near`), never wide
+/// (docs/fork/ac-trig.md, docs/fork/trig-gate.md). AC or LF-reject coupling: the hardware comparators see a
+/// high-passed signal the samples do not hold, so a farther crossing is not the one they fired on. An edge trigger
+/// on a frame whose `pre` is exact: the edge is at `pre`, within the near window when the column average blurs it.
+/// Kept wide: other trigger types (they fire at the end of a condition, possibly far from the edge), noise reject
+/// (about 200 samples between edge and point at 12.5 MSa/s, trigger.md 8.7, not settled at the full rate) and a
+/// holdoff (not measured).
+// not inlined: inlined into the codes path it cost the two-channel deposit 6-7 us a frame on the host (perf guard
+// ratio 0.76 -> 0.90), the same code at run time either way
+#[inline(never)]
+fn near_only(m: &Model, f: &Frame) -> bool {
+    let filtered = !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject);
+    let exact = f.pre_exact && m.trig_type == TrigType::Edge && !m.trig_nrej && m.holdoff <= 0.0;
+    filtered || exact
 }
 
 /// The near part of the dense path's trigger refinement on the source `v` (samples `base..` of `len`, covering
-/// `trignear::near_window`): a filtered path decides there alone (`trignear::edge_near`), else the near search of
-/// `trignear::edge_smooth_near`; None where the wide search (`wide`) must decide.
+/// `trignear::near_window`): with `near_only` it decides there alone (`trignear::edge_near`), else the near search of
+/// `trignear::edge_smooth_near`; None where the wide search (`refine_wide`) must decide.
 #[allow(clippy::too_many_arguments)]
-fn refine_near(v: &[f32], base: usize, len: usize, pre: usize, filtered: bool, level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize) -> Option<(Option<f64>, Option<oos_dsp::edges::Edge>)> {
+fn refine_near(v: &[f32], base: usize, len: usize, pre: usize, near_only: bool, level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize) -> Option<(Option<f64>, Option<oos_dsp::edges::Edge>)> {
     let t = std::time::Instant::now();
-    let r = if filtered {
+    let r = if near_only {
         Some(crate::trignear::edge_near(v, base, len, pre, level, hyst, rising, either, half, col))
     } else {
         crate::trignear::edge_near_window(v, base, len, pre, level, hyst, rising, either, half, col, |_| true)
@@ -210,8 +220,8 @@ thread_local! {
 /// `draw_frame` straight from the read-out `bytes` of a frame (`lay`, meta data in `f`, whose channel vectors stay
 /// empty): the same picture and statistics without the f32 copy of every channel. The trigger source is decoded only
 /// around the hardware trigger point (the near search, `trignear::edge_near_window`), all of it only when the wide
-/// search is needed; a filtered trigger path (AC, LF reject) takes its level from about 4096 words of the source and
-/// never searches wide. None where this path does not apply (sparse, pairs, roll or scan, dots): then decode and call
+/// search is needed (never with `near_only`); a filtered trigger path (AC, LF reject) takes its level from
+/// `board::MEAN_SAMPLES` words of the source. None where this path does not apply (sparse, pairs, roll or scan, dots): then decode and call
 /// `draw_frame`.
 pub fn draw_frame_codes(ph: &mut Phosphor, m: &Model, f: &Frame, bytes: &[u8], lay: &CodeLayout, stats: Option<Stats>) -> Option<bool> {
     let (w, h) = (ph.w, ph.h);
@@ -233,7 +243,7 @@ pub fn draw_frame_codes(ph: &mut Phosphor, m: &Model, f: &Frame, bytes: &[u8], l
             let t0 = std::time::Instant::now();
             (lay.volts)(bytes, src.stride, src.word, a, b, src.affine, v);
             cost::add(Part::Decode, t0);
-            if let Some(r) = refine_near(v, a, src.n, f.pre, filtered(m), level, hyst, rising, either, half, col) {
+            if let Some(r) = refine_near(v, a, src.n, f.pre, near_only(m, f), level, hyst, rising, either, half, col) {
                 return r;
             }
             #[cfg(test)]
@@ -935,7 +945,8 @@ mod tests {
         let mut cases = 0;
         for (mask, n, tdiv) in [(1u32, 100_000u32, 1e-5), (1, 12_512, 1e-6), (3, 70_312, 1e-5), (3, 12_512, 1e-6), (15, 30_000, 1e-5), (5, 25_000, 1e-5), (1, 1408, 1e-7)] {
             for (name, sig) in [("sine", &sine as &dyn Fn(usize, usize, usize) -> f64), ("square", &square), ("flat", &flat)] {
-                for (src, dots, coup) in [(0usize, false, TrigCoup::Dc), (1, false, TrigCoup::Dc), (0, true, TrigCoup::Dc), (0, false, TrigCoup::Ac), (0, false, TrigCoup::LfReject), (0, false, TrigCoup::HfReject)] {
+                // exact false: as a decimated read, where the wide search stays
+                for (src, dots, coup, exact) in [(0usize, false, TrigCoup::Dc, true), (1, false, TrigCoup::Dc, true), (0, true, TrigCoup::Dc, true), (0, false, TrigCoup::Ac, true), (0, false, TrigCoup::LfReject, true), (0, false, TrigCoup::HfReject, true), (0, false, TrigCoup::Dc, false), (1, false, TrigCoup::Dc, false), (0, false, TrigCoup::HfReject, false)] {
                     let mut m = model(tdiv, false, dots);
                     for c in 0..NCH {
                         m.ch[c].on = mask & (1 << c) != 0;
@@ -947,10 +958,12 @@ mod tests {
                     let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
                     let (mut ta, mut tb) = (0, 0);
                     for chunk in bytes.chunks_exact(fb) {
-                        let f = crate::board::dho::hw::decode(chunk, &s, &p, 0);
+                        let mut f = crate::board::dho::hw::decode(chunk, &s, &p, 0);
+                        f.pre_exact &= exact;
                         ta += draw_frame(&mut a, &m, &f, Some(Stats { edges: &mut sa.0, off: &mut sa.1 })) as u32;
                         let mut g = Frame::default();
                         let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut g).expect("raw frame");
+                        g.pre_exact &= exact;
                         assert!(g.ch.iter().all(|v| v.is_empty()) && (g.dt, g.pre, g.acq) == (f.dt, f.pre, f.acq));
                         match draw_frame_codes(&mut b, &m, &g, chunk, &lay, Some(Stats { edges: &mut sb.0, off: &mut sb.1 })) {
                             Some(t) => {
@@ -963,7 +976,7 @@ mod tests {
                             }
                         }
                     }
-                    let what = format!("{} mask {} n {} src {} dots {} {:?}", name, mask, n, src, dots, coup);
+                    let what = format!("{} mask {} n {} src {} dots {} {:?} exact {}", name, mask, n, src, dots, coup, exact);
                     assert_eq!((ta, sa.0), (tb, sb.0), "{}", what);
                     assert!(sa.1 == sb.1, "{}: {:?} vs {:?}", what, sa.1, sb.1);
                     for c in 0..NCH {
@@ -978,40 +991,61 @@ mod tests {
         assert!(WIDE.with(|n| n.get()) > 5, "{} wide searches", WIDE.with(|n| n.get()));
     }
 
-    // Break it catches: a filtered trigger path (AC, LF reject) moved to an edge outside the near window, on the
-    // decoded frame or from the words; a DC or HF-reject path that no longer finds that edge, or whose refinement
-    // differs from `trignear::edge_smooth_near` (the refinement before the filtered path had its own).
+    // Break it catches: a frame moved to an edge outside the near window where the search must stay near (AC, LF
+    // reject; an edge trigger on an exact `pre`), on the decoded frame or from the words; a far edge no longer found
+    // where the wide search must stay (decimated reads, other trigger types, noise reject, holdoff); a DC refinement
+    // that differs from `trignear::edge_smooth_near` (the refinement before the near-only paths).
     #[test]
-    fn filtered_trigger_path_stays_near_the_hardware_point_dc_unchanged() {
+    fn near_only_where_the_hardware_point_stands_wide_elsewhere() {
         let (w, h) = (970, 448);
         // -1 V up to 10 k samples after the hardware point (50 k), then +1 V: the only rising edge is far away
         let far = |_k: usize, _c: usize, i: usize| if i < 60_000 { -1.0 } else { 1.0 } + 0.002 * ((i * 7919) % 13) as f64;
         let (bytes, fb, s, p) = frames_of(1, 100_000, 1, &far);
         let f = crate::board::dho::hw::decode(&bytes, &s, &p, 0);
-        let mut g = Frame::default();
-        let lay = crate::board::dho::hw::codes_into(&bytes, &s, &p, 0, &mut g).expect("raw frame");
-        assert_eq!(f.pre, 50_000);
-        // at the hardware point: a level no sample reaches finds no edge on DC either
+        let mut g0 = Frame::default();
+        let lay = crate::board::dho::hw::codes_into(&bytes, &s, &p, 0, &mut g0).expect("raw frame");
+        assert!(f.pre == 50_000 && f.pre_exact && g0.pre_exact, "a full-rate raw read is exact");
+        // at the hardware point: a level no sample reaches finds no edge
         let mut at_pre = Phosphor::new(w, h);
         let mut m = model(1e-5, false, false);
         m.trig_level = 5.0;
         assert!(!draw_frame(&mut at_pre, &m, &f, None));
-        for coup in [TrigCoup::Dc, TrigCoup::HfReject, TrigCoup::Ac, TrigCoup::LfReject] {
+        let cases: [(&str, TrigCoup, bool, &dyn Fn(&mut Model), bool); 9] = [
+            ("dc exact", TrigCoup::Dc, true, &|_| {}, true),
+            ("hf reject exact", TrigCoup::HfReject, true, &|_| {}, true),
+            ("ac", TrigCoup::Ac, false, &|_| {}, true),
+            ("lf reject", TrigCoup::LfReject, false, &|_| {}, true),
+            ("dc decimated", TrigCoup::Dc, false, &|_| {}, false),
+            ("hf reject decimated", TrigCoup::HfReject, false, &|_| {}, false),
+            ("dc noise reject", TrigCoup::Dc, true, &|m| m.trig_nrej = true, false),
+            ("dc holdoff", TrigCoup::Dc, true, &|m| m.holdoff = 1e-6, false),
+            ("pulse", TrigCoup::Dc, true, &|m| m.trig_type = TrigType::Pulse, false),
+        ];
+        for (name, coup, exact, set, near) in cases {
             let mut m = model(1e-5, false, false);
             m.trig_coup = coup;
+            set(&mut m);
+            let (mut fe, mut g) = (f.clone(), g0.clone());
+            (fe.pre_exact, g.pre_exact) = (exact, exact);
             let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
             let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
-            let ta = draw_frame(&mut a, &m, &f, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }));
+            let ta = draw_frame(&mut a, &m, &fe, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }));
             let tb = draw_frame_codes(&mut b, &m, &g, &bytes[..fb], &lay, Some(Stats { edges: &mut sb.0, off: &mut sb.1 })).expect("codes path");
-            assert!(ta && tb && a.map[0] == b.map[0] && sa == sb, "{:?}: codes path differs", coup);
-            if matches!(coup, TrigCoup::Ac | TrigCoup::LfReject) {
-                assert_eq!(sa.0, [0, 0, 0, 1], "{:?}", coup);
-                assert!(a.map[0] == at_pre.map[0], "{:?}: not drawn at the hardware point", coup);
+            assert!(ta == tb && a.map[0] == b.map[0] && sa == sb, "{}: codes path differs", name);
+            if near {
+                assert_eq!(sa.0, [0, 0, 0, 1], "{}", name);
+                assert!(a.map[0] == at_pre.map[0], "{}: not drawn at the hardware point", name);
             } else {
-                assert_eq!(sa.0, [0, 0, 1, 0], "{:?}", coup);
-                assert!((sa.1 .1 - 10_000.0).abs() < 2.0, "{:?}: offset {:?}", coup, sa.1);
-                assert!(a.map[0] != at_pre.map[0]);
+                assert_eq!(sa.0, [0, 0, 1, 0], "{}", name);
+                assert!((sa.1 .1 - 10_000.0).abs() < 2.0, "{}: offset {:?}", name, sa.1);
+                assert!(a.map[0] != at_pre.map[0], "{}", name);
             }
+        }
+        // a decimated read and a compressed one are not exact
+        for (rate, compress) in [(625_000_000u64, 1u32), (1_250_000_000, 4)] {
+            let q = hz::Params { rate, ..p };
+            let t = Settings { compress, ..s.clone() };
+            assert!(!crate::board::dho::hw::decode(&bytes, &t, &q, 0).pre_exact, "rate {} compress {}", rate, compress);
         }
         // DC: the composed near and wide refinement is `edge_smooth_near`, wherever the hardware point lies
         let sine: Vec<f32> = (0..100_000).map(|i| (0.9 * (i as f64 / 3000.0 * std::f64::consts::TAU).sin() + 0.2 * ((i * 7919) % 17) as f64 / 17.0) as f32).collect();

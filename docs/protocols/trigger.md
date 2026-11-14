@@ -404,7 +404,9 @@ word 3 [13:0] = TX time count; word 4 = frame number in the batch; words 5..7 a 
 trigger position.
 
 The UI does not trust `pre` for the edge trigger: the fast path and `to_record` take the edge of the set
-direction nearest `pre` (up to half a screen) on the smoothed signal. `OOS_FRAME_HEADER=1` makes oos-ui read the header and
+direction nearest `pre` (up to half a screen) on the smoothed signal. The fast path searches only the near window
+(16 columns plus 64 samples) with AC or LF-reject coupling and for an edge trigger read at the full rate without noise
+reject or holdoff (docs/fork/ac-trig.md, docs/fork/trig-gate.md). `OOS_FRAME_HEADER=1` makes oos-ui read the header and
 log it per frame with the edge offsets to `/tmp/oos-hdr.log`; `:SYSTem:STATe?` ends with the fast-path counts
 `edges <at pre> <other direction nearest> <further away> <none> off <sum> <max>`.
 

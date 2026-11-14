@@ -10,8 +10,7 @@ use std::sync::Arc;
 
 /// The level the software trigger looks for on the samples of the source: the set level, and with AC or LF-reject
 /// trigger coupling the level around the mean of the frame (the TPU filters the mean out before its comparators,
-/// trigger.md 2.5; the frame holds the signal as the channel's own coupling gives it). At most 4096 samples of the
-/// frame enter the mean.
+/// trigger.md 2.5; the frame holds the signal as the channel's own coupling gives it), from `MEAN_SAMPLES` samples.
 pub fn sw_trig_level(m: &Model, f: &Frame) -> f32 {
     let v = &f.ch[m.trig_src.min(NCH - 1)];
     sw_trig_level_of(m, v.len(), |i| v[i])
@@ -21,13 +20,24 @@ pub fn sw_trig_level(m: &Model, f: &Frame) -> f32 {
 /// in the same order, so the same level.
 pub fn sw_trig_level_of(m: &Model, len: usize, at: impl Fn(usize) -> f32) -> f32 {
     match m.trig_coupling() {
-        TrigCoup::Ac | TrigCoup::LfReject => {
-            let step = (len / 4096).max(1);
-            let (sum, n) = (0..len).step_by(step).map(at).filter(|y| y.is_finite()).fold((0.0f64, 0u32), |(s, n), y| (s + y as f64, n + 1));
-            m.trig_level + if n > 0 { (sum / n as f64) as f32 } else { 0.0 }
-        }
+        TrigCoup::Ac | TrigCoup::LfReject => m.trig_level + frame_mean(len, at).unwrap_or(0.0) as f32,
         TrigCoup::Dc | TrigCoup::HfReject => m.trig_level,
     }
+}
+
+/// Samples of the frame mean (docs/fork/trig-gate.md): each costs a cache miss on the A53 (about 50 ns). With 1024 the
+/// noise error is sigma/32, under 0.1 div up to a full-screen sine.
+pub const MEAN_SAMPLES: usize = 1024;
+
+/// The mean of the finite samples of `at` (0..`len`) at every `len / MEAN_SAMPLES`-th sample. A fixed stride: a
+/// periodic signal not locked to it gives an error of about A/N. Locked (a period of step/j, at most a screen column)
+/// it gives one fixed error, as every stride does; the column average of the edge search flattens such a signal, so
+/// the level does not move the picture (docs/fork/trig-gate.md). A per-frame start or random offsets would turn it
+/// into frame-to-frame noise of A/sqrt(2N) for every period below the step. None without a finite sample.
+pub fn frame_mean(len: usize, at: impl Fn(usize) -> f32) -> Option<f64> {
+    let step = (len / MEAN_SAMPLES).max(1);
+    let (sum, n) = (0..len).step_by(step).map(at).filter(|y| y.is_finite()).fold((0.0f64, 0u32), |(s, n), y| (s + y as f64, n + 1));
+    (n > 0).then(|| sum / n as f64)
 }
 
 /// The software trigger of `to_record`: the event nearest the hardware trigger point as a fractional sample index
@@ -217,6 +227,91 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
 mod tests {
     use super::*;
 
+    /// The mean as it was before `MEAN_SAMPLES` (4096 samples from 0).
+    fn mean_4096(v: &[f32]) -> f64 {
+        let step = (v.len() / 4096).max(1);
+        let (sum, n) = v.iter().step_by(step).fold((0.0f64, 0u32), |(s, n), &y| (s + y as f64, n + 1));
+        sum / n as f64
+    }
+
+    fn exact_mean(v: &[f32]) -> f64 {
+        v.iter().map(|&y| y as f64).sum::<f64>() / v.len() as f64
+    }
+
+    // Break it catches: a frame mean from too few samples or a start that drifts out of the frame: more than 0.1 div
+    // from the mean of all samples for full-screen signals (+-4 div at 1 V/div), every frame number and length.
+    #[test]
+    fn frame_mean_within_a_tenth_of_a_division_at_full_screen() {
+        let tau = std::f64::consts::TAU;
+        let mut worst: f64 = 0.0;
+        for len in [12_500usize, 62_500, 100_000, 1_000_000] {
+            let mut sigs: Vec<(String, Vec<f32>)> = Vec::new();
+            for period in [37.3, 401.7, 1234.5, 9876.5, 33_333.3] {
+                sigs.push((format!("sine {}", period), (0..len).map(|i| (4.0 * (i as f64 / period * tau + 0.3).sin()) as f32).collect()));
+            }
+            sigs.push(("square 30 %".into(), (0..len).map(|i| if (i as f64 / 5003.7).fract() < 0.3 { 4.0 } else { -4.0 }).collect()));
+            let mut ripple: Vec<f32> = (0..len).map(|i| (1.5 + 2.0 * (i as f64 / 2777.0 * tau).sin()) as f32).collect();
+            oos_dsp::sim::add_noise(&mut ripple, 1.0, 9);
+            sigs.push(("ripple and noise".into(), ripple));
+            for (name, v) in &sigs {
+                let want = exact_mean(v);
+                let got = frame_mean(v.len(), |i| v[i]).unwrap();
+                worst = worst.max((got - want).abs());
+                assert!((got - want).abs() <= 0.1, "{} len {}: {} vs {}", name, len, got, want);
+            }
+        }
+        println!("worst {:.4} div", worst);
+        // locked: a period of the step (one screen column at 100 k points) gives a fixed error up to the amplitude, but
+        // the column average of the edge search flattens the signal: at any level in the error's range the edge found
+        // (if one) stays within a column of the hardware point
+        let (len, col) = (100_000usize, 103usize);
+        let step = len / MEAN_SAMPLES;
+        for period in [step as f64, step as f64 / 2.0, step as f64 + 0.5] {
+            let v: Vec<f32> = (0..len).map(|i| (4.0 * (i as f64 / period * tau + 0.4).sin()) as f32).collect();
+            for k in 0..=16 {
+                let level = -4.0 + 0.5 * k as f32;
+                if let Some(t) = crate::trignear::edge_near(&v, 0, len, len / 2, level, 0.3, true, false, len / 2, col).0 {
+                    assert!((t - (len / 2) as f64).abs() <= col as f64, "period {} level {}: edge at {}", period, level, t);
+                }
+            }
+        }
+        assert!(frame_mean(10, |_| f32::NAN).is_none());
+    }
+
+    // Break it catches: a level from the smaller mean that moves the near search to another edge on setup A's signal
+    // (ripple at 20 mV/div with noise, AC trigger at 30 mV): it must find the same edge, moved by at most one screen
+    // column (a pixel; the noise on the column average turns a level difference of 0.01 div into tens of samples).
+    #[test]
+    fn smaller_mean_keeps_the_near_result_on_ripple() {
+        let tau = std::f64::consts::TAU;
+        let (mut same, mut cases, mut moved, mut found) = (0, 0, 0.0f64, 0);
+        for (len, col) in [(62_500usize, 64usize), (125_000, 128), (625_000, 640)] {
+            for k in 0..24u64 {
+                let ph = k as f64 * 0.37;
+                let mut v: Vec<f32> = (0..len).map(|i| (0.004 + 0.04 * (i as f64 / 4321.0 * tau + ph).sin()) as f32).collect();
+                oos_dsp::sim::add_noise(&mut v, 0.012, 100 + k);
+                let pre = len / 2;
+                let hyst = 0.3 * 0.02;
+                let old = 0.03 + mean_4096(&v) as f32;
+                let new = 0.03 + frame_mean(v.len(), |i| v[i]).unwrap() as f32;
+                let a = crate::trignear::edge_near(&v, 0, len, pre, old, hyst, true, false, len / 2, col);
+                let b = crate::trignear::edge_near(&v, 0, len, pre, new, hyst, true, false, len / 2, col);
+                cases += 1;
+                match (a.0, b.0) {
+                    (None, None) => same += 1,
+                    (Some(x), Some(y)) if (x - y).abs() <= col as f64 => {
+                        moved = moved.max((x - y).abs() / col as f64);
+                        found += 1;
+                        same += 1
+                    }
+                    (x, y) => panic!("len {} k {}: {:?} vs {:?} (levels {} {})", len, k, x, y, old, new),
+                }
+            }
+        }
+        println!("{} cases, {} edges, largest move {:.2} columns", cases, found, moved);
+        assert!(same == cases && found * 2 > cases, "{} of {} the same, {} edges", same, cases, found);
+    }
+
     #[test]
     fn high_res_averages_where_the_record_has_more_samples_than_the_screen() {
         // 100 k samples of noise around 1 V, 3600 points: about 28 samples behind each point
@@ -228,7 +323,7 @@ mod tests {
             })
             .collect();
         let window = 100_000e-9;
-        let frame = Arc::new(Frame { seq: 1, dt: 1e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false });
+        let frame = Arc::new(Frame { seq: 1, dt: 1e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false, pre_exact: false });
         let rms = |v: &[f32]| (v.iter().map(|y| (y - 1.0) * (y - 1.0)).sum::<f32>() / v.len() as f32).sqrt();
         let mut m = Model::default();
         m.trig_level = 5.0; // nothing to trigger on: the window stays at the hardware point
@@ -249,7 +344,7 @@ mod tests {
         let mut m = Model::default();
         m.trig_level = 0.0;
         let window = 9000e-9;
-        let f = Frame { seq: 1, dt: 1e-9, pre: 5400, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false };
+        let f = Frame { seq: 1, dt: 1e-9, pre: 5400, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false, pre_exact: false };
         let r = to_record(&Arc::new(f), &m, 3600, window, -window / 2.0);
         assert!(r.triggered);
         assert!(r.ch[0].iter().all(|y| y.is_finite()), "{} gaps", r.ch[0].iter().filter(|y| !y.is_finite()).count());
@@ -265,7 +360,7 @@ mod peak_detect {
         let m = Model { slope: Slope::Fall, ..Model::default() };
         let mut v: Vec<f32> = (0..100_000).map(|k| if (k / 25_000) % 2 == 0 { 0.0 } else { 3.0 }).collect();
         v[12_345] = 2.0; // one-sample glitch on the low level
-        let f = Arc::new(Frame { seq: 1, dt: 20e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false });
+        let f = Arc::new(Frame { seq: 1, dt: 20e-9, pre: 50_000, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false, pre_exact: false });
         let window = m.time_per_div() as f64 * 10.0; // 2 ms > record: whole record on screen
         let t = std::time::Instant::now();
         let mut r = to_record(&f, &m, 3600, window, -window / 2.0);
@@ -364,7 +459,7 @@ mod bench {
             let dt = 0.8e-9 * (tdiv / 1e-7).max(1.0) * 1408.0 / pts as f64 * if pts == 1408 { 1.0 } else { 1.0 };
             let f = 3.0 / (tdiv * 10.0);
             let v: Vec<f32> = (0..pts).map(|k| (2.0 * std::f64::consts::PI * f * k as f64 * dt).sin() as f32).collect();
-            let fr = Arc::new(Frame { seq: 1, dt, pre: pts / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.0 / dt, pts), stamp: 0, la: None, hw_avg: false });
+            let fr = Arc::new(Frame { seq: 1, dt, pre: pts / 2, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.0 / dt, pts), stamp: 0, la: None, hw_avg: false, pre_exact: false });
             let window = tdiv * 10.0;
             let mut ph = crate::wave::Phosphor::new(970, 448);
             let n = 400;

@@ -1,0 +1,6 @@
+# Stable options only (`cargo fmt` on the stable toolchain).
+# 120 columns: the code and its doc comments were already written to 120, so most lines keep their shape and a
+# side-by-side diff still fits a laptop screen. "Max" keeps short calls and struct literals on one line, as the code
+# did by hand; with the default heuristics the first `cargo fmt` doubles the diff (34k against 15k changed lines).
+max_width = 120
+use_small_heuristics = "Max"

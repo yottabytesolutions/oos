@@ -20,3 +20,4 @@ supersedes the old one. The target architecture is `../README.md`.
 | [0013](0013-one-batch-path.md) | Frames mode becomes the batch path |
 | [0014](0014-domain-crate.md) | The domain is its own crate, oos-core |
 | [0015](0015-safe-start.md) | Safe start breaks restart loops |
+| [0016](0016-performance-principles.md) | Performance principles |

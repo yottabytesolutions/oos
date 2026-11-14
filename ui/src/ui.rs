@@ -43,6 +43,7 @@ mod script;
 #[cfg(test)]
 mod lint;
 mod bwtest;
+mod marks;
 pub mod la;
 
 // The frame (top bar, waveform area, bottom bar with the cards) comes from the screen size: `Ui::frame`,
@@ -2177,6 +2178,7 @@ impl Ui {
             let (o, z) = Self::split_zoom(g);
             self.draw_grid(l.under, o);
             self.traces(l, o, false);
+            self.draw_sample_marks(l.over(), o, (self.m.time_per_div(), self.m.delay));
             // zoom window in the overview: dim the rest, frame the window
             let (tz, dz) = self.view();
             let ppx = o.w as f32 / HDIV;
@@ -2194,6 +2196,7 @@ impl Ui {
             cv.text(&f.sb, o.x, o.y + o.h + 17, &lbl, ACCENT);
             self.draw_grid(l.under, z);
             self.traces(l, z, true);
+            self.draw_sample_marks(l.over(), z, (tz, dz));
         } else {
             for &w in &self.wins {
                 self.draw_grid(l.under, w);
@@ -2216,6 +2219,7 @@ impl Ui {
                     self.area = self.wins[i];
                     self.draw_mask(l.under);
                     self.traces(l, self.area, false);
+                    self.draw_sample_marks(l.over(), self.area, (self.m.time_per_div(), self.m.delay));
                 }
                 let cv = l.over();
                 self.draw_hist(cv);
@@ -3192,15 +3196,24 @@ impl Ui {
         let ppd = side as f32 / 8.0;
         let (ca, cb) = (&self.m.ch[0], &self.m.ch[1]);
         let col = rgb(0x9c, 0xf0, 0x9c);
+        // Display > Dots: dots (On, Auto) or lines from point to point (Off)
+        let dots = trace_style(self.m.dots, true, 0.0) == TraceStyle::Dots;
+        let mut prev: Option<(i32, i32)> = None;
         for k in 0..a.len().min(b.len()) {
             if !a[k].is_finite() || !b[k].is_finite() {
+                prev = None;
                 continue;
             }
             let x = (sq.x as f32 + side as f32 / 2.0 + (a[k] + ca.offset) / ca.volts_per_div() * ppd) as i32;
             let y = (sq.y as f32 + side as f32 / 2.0 - (b[k] + cb.offset) / cb.volts_per_div() * ppd) as i32;
-            cv.pixel(x, y, col, 160);
-            cv.pixel(x + 1, y, col, 70);
-            cv.pixel(x, y + 1, col, 70);
+            if dots {
+                cv.pixel(x, y, col, 160);
+                cv.pixel(x + 1, y, col, 70);
+                cv.pixel(x, y + 1, col, 70);
+            } else if let Some((px, py)) = prev {
+                cv.line(px, py, x, y, col);
+            }
+            prev = Some((x, y));
         }
         cv.no_clip();
         cv.text(&f.s, sq.x + 6, sq.y + 16, "XY  X = CH1  Y = CH2", col);
@@ -5353,7 +5366,7 @@ impl Ui {
             Item::TrigNoise => onoff(m.trig_nrej),
             Item::TrigAutoNoise => onoff(m.auto_nrej),
             Item::TrigCoup => m.trig_coup.name().into(),
-            Item::Dots => onoff(m.dots),
+            Item::Dots => format!("{:?}", m.dots),
             Item::Hdmi => format!("{:?}", m.hdmi),
             Item::TextSize => m.text_size.name().into(),
             Item::ZoneSel => format!("Z{}", self.zone_sel + 1),
@@ -5683,7 +5696,8 @@ impl Ui {
                 z.inside = !z.inside;
             }
             Item::Dots => {
-                m.dots = !m.dots;
+                let i = DOTS_MODES.iter().position(|&x| x == m.dots).unwrap_or(0);
+                m.dots = DOTS_MODES[cyc(i, DOTS_MODES.len(), d)];
                 self.dirty_map = true;
             }
             Item::Hdmi => {
@@ -6321,7 +6335,8 @@ impl Ui {
             Item::CurMode => &["Off", "Time", "Volt", "Track", "XY"],
             Item::GridStyle => &["Full", "Light", "None"],
             Item::GridFrame | Item::TrigNoise | Item::TrigAutoNoise => &["Off", "On"],
-            Item::Dots | Item::ZoneOn => &["Off", "On"],
+            Item::Dots => &["Off", "On", "Auto"],
+            Item::ZoneOn => &["Off", "On"],
             Item::Hdmi => &["Mirror", "Waveform", "Layout"],
             Item::TextSize => return TEXT_SIZES.iter().map(|t| t.name().to_string()).collect(),
             Item::ZoneSel => &["Z1", "Z2"],
@@ -8178,7 +8193,7 @@ mod tests {
         ui.m.run = RunState::Run;
         ui.m.persist = 0;
         ui.m.trig_level = 0.15;
-        ui.m.dots = dots;
+        ui.m.dots = if dots { DotsMode::On } else { DotsMode::Off };
         for c in 1..NCH {
             ui.m.ch[c].on = false;
         }

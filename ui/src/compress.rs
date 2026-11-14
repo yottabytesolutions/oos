@@ -75,7 +75,8 @@ pub fn hold(m: &Model, f: Option<&Frame>) -> bool {
 /// Roll and scan are the caller's (`hw::slow_mode`). Not with dots: a pair cannot carry the dot density of its samples,
 /// and the raw newest frame (`RAW_PERIOD`) drawn as dots among pair frames swings the grade (docs/fork/flicker.md).
 pub fn allowed(m: &Model) -> bool {
-    !m.dots
+    // the samples of a compressed record lie far closer than a pixel: Auto draws lines there (`trace_style`)
+    !m.dots_at(0.0)
         && m.trig_type == TrigType::Edge
         && m.acq == AcqMode::Normal
         && m.trig_mode != TrigMode::Single
@@ -415,7 +416,7 @@ mod tests {
         let (w, h) = (970usize, 448usize);
         for (dots, jitter) in [(false, 0.0), (false, 7.3), (true, 3.1)] {
             let (mut m, p, (raw_bytes, raw_s), (comp_bytes, comp_s)) = square_10us(jitter);
-            m.dots = dots;
+            m.dots = if dots { DotsMode::On } else { DotsMode::Off };
             let fr = crate::board::dho::hw::decode(&raw_bytes, &raw_s, &p, 1);
             let fc = crate::board::dho::hw::decode(&comp_bytes, &comp_s, &p, 1);
             assert!(live(&fc) && !live(&fr));
@@ -437,11 +438,14 @@ mod tests {
     }
 
     // Timing guard (tools/perf-guard.sh): decode + draw of one compressed frame against its raw frame at 10 us/div
-    // (k = 15). The batch gain is the read size (15x fewer bytes); the host work per frame must shrink with it.
+    // (k = 15). The batch gain is the read size (15x fewer bytes); the host work per frame must shrink with it. Lines:
+    // the only display the compression runs with (`allowed`; until 2026-11-14 the default was dots, whose raw deposit
+    // costs about three times as much, and the limit was 0.25 against it; lines measured 0.40 on the host).
     #[test]
     #[ignore]
     fn perf_guard_compressed_frame() {
-        let (m, p, (raw_bytes, raw_s), (comp_bytes, comp_s)) = square_10us(2.0);
+        let (mut m, p, (raw_bytes, raw_s), (comp_bytes, comp_s)) = square_10us(2.0);
+        m.dots = DotsMode::Off;
         let (mut pa, mut pb) = (crate::wave::Phosphor::new(970, 448), crate::wave::Phosphor::new(970, 448));
         let (raw, comp) = crate::perfguard::best_pair(
             crate::perfguard::ROUNDS,
@@ -455,7 +459,7 @@ mod tests {
         );
         let r = comp.as_secs_f64() / raw.as_secs_f64();
         println!("10 us/div 100 k pt, k = 15: raw {:?}/frame, compressed {:?}/frame (ratio {:.3}); read {} -> {} bytes", raw, comp, r, raw_bytes.len(), comp_bytes.len());
-        assert!(r <= 0.25, "a compressed frame must cost far less than its raw frame: {:.3}", r);
+        assert!(r <= 0.5, "a compressed frame must cost far less than its raw frame: {:.3}", r);
     }
 
     #[test]
@@ -505,8 +509,10 @@ mod tests {
         assert!(!enabled_from(Some("off"), "acq.compress = on\n"));
         let mut m = Model::default();
         m.ch[0].on = true;
-        assert!(m.dots && !allowed(&m), "dots (the default) keep frames raw");
-        m.dots = false;
+        assert!(m.dots == DotsMode::Auto && allowed(&m), "Auto (the default) draws lines where frames compress");
+        m.dots = DotsMode::On;
+        assert!(!allowed(&m), "dots keep frames raw");
+        m.dots = DotsMode::Off;
         assert!(allowed(&m));
         for f in [|m: &mut Model| m.trig_mode = TrigMode::Single, |m: &mut Model| m.acq = AcqMode::Average, |m: &mut Model| m.acq = AcqMode::HiRes, |m: &mut Model| m.acq = AcqMode::Peak, |m: &mut Model| m.zoom = true, |m: &mut Model| m.mask_on = true, |m: &mut Model| m.segments = 4, |m: &mut Model| m.trig_type = TrigType::Pulse, |m: &mut Model| m.ch[0].bw = BW_20M, |m: &mut Model| m.ch[0].coupling = Coupling::Ac] {
             let mut x = m.clone();

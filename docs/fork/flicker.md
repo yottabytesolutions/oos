@@ -67,8 +67,8 @@ from the pairs' (the trigger refinement on pairs is good to about a pair).
 ## Fix (branch fix/dots-flicker)
 
 `compress::allowed` is false with dots. A pair cannot carry the dot density of its samples. With dots the frames
-stay raw and are all drawn by `deposit_dots`. Dots are the default display, so the live compression only takes effect
-with lines. The UI publishes the wanted settings on every step (`Source::acquire`), and the acquisition thread
+stay raw and are all drawn by `deposit_dots`. Since then Display > Dots has Off / On / Auto, with Auto the default and drawing lines where frames
+compress (display.md). Only On keeps frames raw. The UI publishes the wanted settings on every step (`Source::acquire`), and the acquisition thread
 re-plans when they differ. Toggling dots therefore switches the compression without a restart: `compress k` in
 `:SYSTem:STATe?` goes to 1 with dots and back with lines.
 

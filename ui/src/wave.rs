@@ -976,7 +976,7 @@ impl Phosphor {
 
     /// Draws a record channel into the map: every segment between two samples adds `w` to the pixels it covers,
     /// so the brightness follows the dwell time of the trace like on an analog/digital-phosphor screen. Display
-    /// options: dots (`Model::dots`, one pixel per sample) and per-sample brightness weights 0..1 (Z input).
+    /// options: dots (`Model::dots_at`, one pixel per sample) and per-sample brightness weights 0..1 (Z input).
     /// `pairs` (`Record::pairs`): with dots, each min/max pair is one vertical span, since it stands for every sample
     /// between its extremes; two dots would drop the edges of a slow time base.
     #[allow(clippy::too_many_arguments)]
@@ -997,7 +997,9 @@ impl Phosphor {
             Some(z) => (w as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
             None => w,
         };
-        if m.dots && pairs {
+        // dots or lines for points `dt` apart (`trace_style`; Auto never dots outside XY)
+        let dots = m.dots_at(dt / tdiv * ppd_x);
+        if dots && pairs {
             for (j, p) in v.chunks(2).enumerate() {
                 let fin = p.iter().copied().filter(|y| y.is_finite());
                 let (lo, hi_) = fin.fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), y| (a.min(y), b.max(y)));
@@ -1028,7 +1030,7 @@ impl Phosphor {
             }
             let w = wt(k);
             let p = (x_of(k), y_of(val));
-            if m.dots {
+            if dots {
                 let (x, y) = (p.0.floor() as i32, p.1.round() as i32);
                 if (0..wi).contains(&x) && (0..hi).contains(&y) {
                     let idx = (y * wi + x) as usize;

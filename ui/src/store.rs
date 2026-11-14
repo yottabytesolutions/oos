@@ -288,7 +288,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("zoom_tdiv", tscales()[m.zscale].to_string());
     kv("zdelay", m.zdelay.to_string());
     kv("color_grade", m.color_grade.to_string());
-    kv("dots", m.dots.to_string());
+    kv("dots", name(m.dots));
     kv("hdmi", name(m.hdmi));
     kv("view", name(m.view));
     // Display > Views: the count and the one shown, then what each of the others keeps (ui/views.rs)
@@ -620,7 +620,13 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "zscale" => m.zscale = p_idx(v, ntime - 2)? + 2,
         "zdelay" => m.zdelay = p_f32(v)?,
         "color_grade" => m.color_grade = p_bool(v)?,
-        "dots" => m.dots = p_bool(v)?,
+        // before Off/On/Auto: a bool, whose true was the old default rather than a choice: either loads as Auto
+        "dots" => {
+            m.dots = match v {
+                "true" | "false" => DotsMode::Auto,
+                _ => p_enum(v, &DOTS_MODES)?,
+            }
+        }
         "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
         "views" => {
             let n = p_list(v, 2, |x| x.parse::<usize>().map_err(|e| e.to_string()))?;
@@ -1256,7 +1262,7 @@ mod tests {
         m.maths[3] = crate::math::MathCh { op: MathOp::Bpf, a: 4, b: 0, scale: 7, fc: 1234.0, bw: 56.0, offset: -1.5, win: Window::Blackman, lin: (1.0, 0.0) };
         m.math_bw = 777.0;
         m.zones[1] = crate::zone::Zone { on: true, src: 2, inside: false, pts: vec![(-1e-4, 0.5), (2.5e-5, 1.25), (3e-5, -0.75)] };
-        m.dots = true;
+        m.dots = DotsMode::Off;
         m.z_src = Some(3);
         m.hist = Hist::Horizontal;
         (m.view, m.spec_src, m.spec_center, m.spec_span, m.spec_rbw, m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist) = (AView::Spectrum, 2, 1.5e6, 2e5, 1e3, 2, -12.5, true, true);
@@ -1318,6 +1324,18 @@ mod tests {
     }
 
     /// AUX OUT: written by name, missing key = trigger out (the FPGA's power-up state).
+    #[test]
+    fn setup_dots_by_name_and_legacy_bool() {
+        assert!(setup_text(&Model::default()).contains("dots = Auto\n"));
+        for &d in DOTS_MODES.iter() {
+            assert_eq!(parse_setup(&format!("dots = {:?}", d)).unwrap().dots, d);
+        }
+        // saved before Auto existed (true was the old default, not a choice): both load as Auto
+        assert_eq!(parse_setup("dots = true").unwrap().dots, DotsMode::Auto);
+        assert_eq!(parse_setup("dots = false").unwrap().dots, DotsMode::Auto);
+        assert!(parse_setup("dots = sometimes").is_err());
+    }
+
     #[test]
     fn setup_aux_out() {
         assert_eq!(parse_setup("ch2.on = true").unwrap().aux_out, AuxOut::TrigOut);

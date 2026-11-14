@@ -343,7 +343,7 @@ mod tests {
                     for (k, slope) in [Slope::Rise, Slope::Fall, Slope::Either].into_iter().enumerate() {
                         for (delay, level, dots, coup) in [(0.0f32, 0.0f32, false, TrigCoup::Dc), (3e-9, 0.2, true, TrigCoup::Dc), (-2e-8, 2.0, false, TrigCoup::Dc), (0.0, 2.0, false, TrigCoup::Ac)] {
                             let mut m = model(tdiv, chans);
-                            (m.slope, m.delay, m.trig_level, m.dots) = (slope, delay, level, dots);
+                            (m.slope, m.delay, m.trig_level, m.dots) = (slope, delay, level, if dots { DotsMode::On } else { DotsMode::Off });
                             m.trig_coup = coup;
                             let f = frame(len, chans, f_sig, k as u64 * 7 + len as u64);
                             let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;

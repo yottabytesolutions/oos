@@ -59,8 +59,8 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     let refine = |level: f32, hyst: f32, rising: bool, either: bool, half: usize, col: usize| crate::trignear::edge_smooth_near(src, f.pre, level, hyst, rising, either, half, col, |_| true);
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
         if pairs {
-            crate::compress::deposit_pairs(map, w, h, &f.ch[c], xm, 24, m.dots);
-        } else if m.dots {
+            crate::compress::deposit_pairs(map, w, h, &f.ch[c], xm, 24, m.dots_at(x_per_sample));
+        } else if m.dots_at(x_per_sample) {
             crate::fastdraw::deposit_dots(map, w, h, &f.ch[c], xm, 24);
         } else {
             crate::fastdraw::deposit(map, w, h, &f.ch[c], xm, 24);
@@ -178,7 +178,7 @@ pub fn draw_frame_codes(ph: &mut Phosphor, m: &Model, f: &Frame, bytes: &[u8], l
     let (w, h) = (ph.w, ph.h);
     let tdiv = m.time_per_div() as f64;
     let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.dots || !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject) {
+    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.dots_at(x_per_sample) || !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject) {
         return None;
     }
     let present: [bool; NCH] = std::array::from_fn(|c| lay.channel(bytes, c).n > 0);
@@ -323,7 +323,7 @@ struct Key {
     delay: f32,
     trig: (usize, Option<u8>, TrigType, Slope, f32, TrigCoup, bool, bool),
     acq: AcqMode,
-    dots: bool,
+    dots: DotsMode,
     size: (usize, usize),
 }
 
@@ -751,7 +751,7 @@ mod tests {
     fn model(tdiv: f64, two: bool, dots: bool) -> Model {
         let mut m = Model::default();
         m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
-        (m.trig_level, m.dots) = (0.0, dots);
+        (m.trig_level, m.dots) = (0.0, if dots { DotsMode::On } else { DotsMode::Off });
         for c in 0..NCH {
             (m.ch[c].on, m.ch[c].offset) = (c == 0 || c == 1 && two, 0.0);
         }

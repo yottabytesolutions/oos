@@ -674,6 +674,42 @@ pub enum HdmiMode {
 
 pub const HDMI_MODES: [HdmiMode; 3] = [HdmiMode::Mirror, HdmiMode::Waveform, HdmiMode::Layout];
 
+/// Display > Dots (docs/fork/display.md): Off draws lines between the points, On a dot per point, Auto chooses per
+/// picture (`trace_style`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DotsMode {
+    Off,
+    On,
+    #[default]
+    Auto,
+}
+
+pub const DOTS_MODES: [DotsMode; 3] = [DotsMode::Off, DotsMode::On, DotsMode::Auto];
+
+/// How a trace is drawn.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TraceStyle {
+    Vectors,
+    Dots,
+    /// lines, and the real samples marked over them (`Ui::draw_sample_marks`)
+    VectorsMarked,
+}
+
+/// Auto marks the samples once they lie this many pixels apart on the screen (the interpolated, sparse regime).
+pub const MARK_SPACING_PX: f64 = 4.0;
+
+/// The trace style for `mode`: in XY (`xy`), or for samples `x_per_sample` pixels apart on the screen. Auto: dots in
+/// XY, lines with the samples marked from `MARK_SPACING_PX` apart, else lines. Off: lines; On: dots.
+pub fn trace_style(mode: DotsMode, xy: bool, x_per_sample: f64) -> TraceStyle {
+    match mode {
+        DotsMode::Off => TraceStyle::Vectors,
+        DotsMode::On => TraceStyle::Dots,
+        DotsMode::Auto if xy => TraceStyle::Dots,
+        DotsMode::Auto if x_per_sample >= MARK_SPACING_PX => TraceStyle::VectorsMarked,
+        DotsMode::Auto => TraceStyle::Vectors,
+    }
+}
+
 /// Size of the text on the screen (Display > Text size): Normal is the original look, Large and Larger use fonts 2 and
 /// 4 px bigger with the rows, cards and dialogs grown to match. A preference: Default keeps it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -1038,8 +1074,8 @@ pub struct Model {
     pub zdelay: f32,   // centre of the zoom window relative to the trigger
     /// colour-graded persistence: trace pixels coloured by hit density (temperature map)
     pub color_grade: bool,
-    /// draw the samples as dots instead of connected lines (pseudo dot mode)
-    pub dots: bool,
+    /// Display > Dots: lines, dots, or Auto (`trace_style`)
+    pub dots: DotsMode,
     /// what an HDMI monitor shows (Display > HDMI)
     pub hdmi: HdmiMode,
     /// Display > Views: how many screen arrangements there are to switch between (1: off; ui/views.rs)
@@ -1348,8 +1384,7 @@ impl Default for Model {
             zscale: 0,
             zdelay: 0.0,
             color_grade: false,
-            // samples as dots by default
-            dots: true,
+            dots: DotsMode::Auto,
             hdmi: HdmiMode::Waveform,
             views: 1,
             view_cur: 0,
@@ -1436,6 +1471,11 @@ impl Default for Model {
 }
 
 impl Model {
+    /// The deposits draw dots (YT): `trace_style` for samples `x_per_sample` pixels apart.
+    pub fn dots_at(&self, x_per_sample: f64) -> bool {
+        trace_style(self.dots, false, x_per_sample) == TraceStyle::Dots
+    }
+
     /// The settings of the selected generator.
     pub fn gen_read(&self) -> GenCh {
         GenCh {

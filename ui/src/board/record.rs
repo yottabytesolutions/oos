@@ -267,7 +267,7 @@ mod dots {
     /// The probe square (1 kHz, 0 / 0.3 V) at `tdiv`, 100 k samples over the window, drawn with dots; returns the
     /// columns that hold a period's edge and how many of them are lit from the low to the high level.
     fn edge_columns(tdiv: f64, pairs: bool) -> (usize, usize) {
-        let mut m = Model { dots: true, slope: Slope::Rise, trig_level: 0.15, ..Model::default() };
+        let mut m = Model { dots: DotsMode::On, slope: Slope::Rise, trig_level: 0.15, ..Model::default() };
         m.tscale = tscales().iter().position(|&x| (x as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
         m.ch[0].offset = -0.15;
         m.ch[0].vscale = VSCALES.iter().position(|&x| (x - 0.1).abs() < 1e-6).unwrap();

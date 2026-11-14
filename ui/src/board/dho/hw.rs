@@ -2293,7 +2293,7 @@ mod tests {
     fn a_mask_keeps_live_compression_off() {
         let mut m = Model::default();
         // dots keep frames raw (compress::allowed)
-        m.dots = false;
+        m.dots = DotsMode::Off;
         m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
         let mut s = settings(&m, false);
         live_compress(&m, &mut s);
@@ -2772,11 +2772,42 @@ mod tests {
     // Break it catches: live compression where the model needs every sample, a factor that leaves fewer than two
     // pairs per column, compression above 1 M points (the deep-memory read), a batch that does not grow with it.
     #[test]
+    // Break it catches (docs/fork/display.md): Auto marking samples, or drawing dots, on a compressed record. The
+    // compression starts at 2 x POINTS_PER_COLUMN samples per column, Auto's marks at MARK_SPACING_PX pixels per sample.
+    fn auto_dots_never_meet_the_live_compression() {
+        let mut seen = 0;
+        for (t, &tdiv) in tscales().iter().enumerate() {
+            for d in 0..mdepths().len() {
+                for chans in [1usize, 2, 4] {
+                    let mut m = Model::default();
+                    assert_eq!(m.dots, DotsMode::Auto);
+                    (m.tscale, m.mdepth) = (t, d);
+                    for c in 0..NCH {
+                        m.ch[c].on = c < chans;
+                    }
+                    let mut s = settings(&m, false);
+                    live_compress(&m, &mut s);
+                    if s.compress <= 1 {
+                        continue;
+                    }
+                    seen += 1;
+                    let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+                    // the widest screen of the panel: pixels per sample of the raw record
+                    let x_per_sample = crate::ui::PANEL_W as f64 / HDIV as f64 / (p.rate as f64 * tdiv as f64);
+                    assert_eq!(trace_style(m.dots, false, x_per_sample), TraceStyle::Vectors, "{} s/div depth {} {} ch: {} px per sample", tdiv, d, chans, x_per_sample);
+                    assert!(x_per_sample * (s.compress as f64) < 1.0, "{} s/div: a pair of k samples within a pixel", tdiv);
+                }
+            }
+        }
+        assert!(seen > 0, "some set-ups compress");
+    }
+
+    #[test]
     fn live_compression_plan_by_time_base() {
         let plan = |tdiv: f64, two: bool| {
             let mut m = Model::default();
             // dots keep frames raw (compress::allowed)
-            m.dots = false;
+            m.dots = DotsMode::Off;
             m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap();
             m.ch[1].on = two;
             let mut s = settings(&m, false);
@@ -2830,7 +2861,7 @@ mod tests {
         let base = || {
             let mut m = Model::default();
             m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
-            m.dots = false;
+            m.dots = DotsMode::Off;
             m
         };
         let k = |m: &Model, needs_raw: bool| {
@@ -2842,7 +2873,7 @@ mod tests {
         assert!(k(&base(), false) > 1, "the base set-up compresses");
         let zone = crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0), (2e-6, 0.0)] };
         let rows: Vec<(&str, Box<dyn Fn(&mut Model)>)> = vec![
-            ("dots", Box::new(|m| m.dots = true)),
+            ("dots", Box::new(|m| m.dots = DotsMode::On)),
             ("Single", Box::new(|m| m.trig_mode = TrigMode::Single)),
             ("zoom", Box::new(|m| m.zoom = true)),
             ("FFT math channel", Box::new(|m| m.maths[0].op = MathOp::Fft)),
@@ -2897,7 +2928,7 @@ mod tests {
     fn final_replay_at_stop() {
         let mut m = Model::default();
         // dots keep frames raw (compress::allowed)
-        m.dots = false;
+        m.dots = DotsMode::Off;
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
         m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
         let s = settings(&m, false);

@@ -4,6 +4,18 @@ The zone trigger in the FPGA. Opt-in: `zone.hw = on` in system.conf, read once a
 `hal/src/dho/zone.rs`, `hal/src/dho/zonegeom.rs`, `seq::State::zone_steps`, `ui/src/ui/hwzone.rs`. Register facts:
 private RE notes `docs/fpga.md` "Zone trigger" (static analysis).
 
+Status: experimental, not working (round 20). With the strobe count that works for the mask test (`cols=record`), the
+frame counter 0x11a0 stays 0 at 20 µs/div 10k and 200 µs/div 100k. The readings show armed=0 and state=0. The hardware
+path is slower than the software zones: 141 against 777 frames/s, and 90 against 177. Keep `zone.hw` off.
+
+Hypothesis, not tested: the column window never completes, so the counter never ticks. regmap: the counter ticks only
+on a completed window. The window runs on the read-back strobe, which the read-back state machine produces (0x4030
+bit 20, started by the FSM state with 0x1004[3] and the play bits 0x4000[3:0]). The mask test sets 0x4020 bits
+15..13 (enable, keep pass, keep fail); the zone path sets only bit 1. If the read-back only starts with the mask
+enable, the zone path gets no strobes. That would also explain the low rate: every frame waits for a window that does
+not end and costs a re-arm. In a zone run 0x4030 bit 20 read 0 (s4030 = 0xcf04a880), consistent with this. A test
+needs a new register combination (bit 15 with the zone tables), so it waits for a decision.
+
 ## Hardware
 
 - Two zone tables on the mask unit's 8-bit sample path and column strobe: the source slot in 0x1190 bits 23:20 and

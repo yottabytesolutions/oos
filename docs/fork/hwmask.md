@@ -149,6 +149,15 @@ A stall pair during a settings change no longer blocks the new settings for good
 
 ## Round 20: skew default, flush batch
 
+The table is built when the settings are applied, before any record exists, and the hardware compares every frame
+against it. A per-record offset cannot reach it, so the skew is a constant. Medians: 6.51 (200 µs 10k), 6.23 (1 ms 10k),
+6.34 (20 µs 10k), 6.84 (200 µs 100k). 6.5 is their middle and within 0.35 samples of each. The skew is fractional,
+and 6 or 7 would be off by up to 0.84.
+
+The flush batch reuses the documented mask/zone off sequence (0x4020 bits cleared, 0x1184 and 0x1190 back to off).
+It writes no new registers. No reset of the read-back state machine is documented. Unitlab saw it clear during the
+software batches of a block.
+
 The software trigger lies 6.2 to 6.8 record samples after `pre`. This holds at 20 µs, 200 µs and 1 ms/div, with 10k
 and 100k. With `skew` at the measured value the hardware agrees with the software test at all four settings. At
 200 µs/div 10k it now catches the +10 µs shift. At 1 ms/div 10k clean frames pass. A negative skew fails clean frames.

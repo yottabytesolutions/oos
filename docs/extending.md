@@ -4,7 +4,7 @@ How a feature crosses the layers of the target architecture (`architecture.md`).
 in order, and the tests that must exist before the change merges. Paths are the target layout. Until the migration
 step named in `overhaul-migration.md` has landed, the old location applies; the step says where.
 
-Every recipe ends with the gate: `tools/check/gate.sh` (fmt, clippy, tests in release and debug, arm64 check, size
+Every recipe ends with the overhaul gate (phase 1, `docs/development.md`): `cargo xtask check` and the test runs (fmt, clippy, tests in release and debug, arm64 check, size
 limits, boundary rules, perf-guard, `gpu/test-host.sh`).
 
 ## Add a setting
@@ -114,7 +114,8 @@ A board is a `board::Board` adapter. `board/dho` is the reference.
 1. **Adapter.** Create `board/<name>/`. Implement `Board`: capabilities, apply an acquisition request, the
    acquisition thread with `AcqWant` and `AcqCmd` in and `Batch`, `Frame`, `MeasRead`, `Readings` out
    (`architecture/acquisition.md`).
-2. **Boundary.** Only `board/<name>` may use its hardware crate. Add the rule to `arch-rules.toml`.
+2. **Boundary.** Only `board/<name>` may use its hardware crate. Add the crate line in `xtask/data/architecture.txt`
+   and extend the `board::boundary` lint to the new crate.
 3. **Selection.** `oos_hal::model::platform()` detects the model (`docs/models.md`). `board::select` (target; today
    the type alias `board::Active`) picks the adapter from the platform. Add the new model there.
 4. **Fake first.** Run the full host suite against `board::fake` with the new board's capabilities before touching

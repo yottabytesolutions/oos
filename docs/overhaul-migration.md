@@ -10,10 +10,10 @@ keeps running until the new path replaces it, one small step per merge. This fil
 - **Failing-before tests.** The step's tests fail on the parent commit and pass after. A refactor step names the
   existing tests and golden pictures that must stay unchanged instead.
 - **Deletions.** The step deletes what it lists. The reviewer checks with grep that the names are gone.
-- **Gate.** `tools/check/gate.sh` passes: fmt, clippy, ui and hal tests in release and debug with full counts, arm64
+- **Gate.** The overhaul gate passes (phase 1, `docs/development.md`): `cargo xtask check` and the test runs, fmt, clippy, ui and hal tests in release and debug with full counts, arm64
   check, size limits, boundary rules, perf-guard, `gpu/test-host.sh`.
-- **Ratchet.** The size allowlist shrinks or stays. A module that reaches its target layout switches its boundary rules
-  from report to enforce (`arch-rules.toml`).
+- **Ratchet.** The size allowlist shrinks or stays (`cargo xtask ratchet`). Module rules have no ratchet: a step adds
+  the rules in `xtask/data/architecture.txt` that its modules now meet ([Enforcement](architecture.md#enforcement)).
 - **Docs.** The step updates the "code still differs" notes and, if a decision changed, adds an ADR.
 - **Unit rounds.** Only where marked. Install rule: `oos-update install <pkg> --no-kexec --execute`, then reboot.
   Unit rules as in the project: no hand FPGA register writes while oos-ui runs, no reads of 0x205c, never FPGA flash,
@@ -22,7 +22,7 @@ keeps running until the new path replaces it, one small step per merge. This fil
 ## Prerequisite: phase 1 guardrails
 
 Phase 1 of `overhaul.md` lands first: `rustfmt.toml` and the format commits, the clippy set (adr/0009), the gate
-script, the size checker with its allowlist (adr/0010), the boundary checker reading `arch-rules.toml` in report mode,
+script, the size checker with its allowlist (adr/0010), the module and crate rules (`xtask/data/architecture.txt`),
 the pre-commit hook. Migration steps start when the gate script exists.
 
 ## Steps

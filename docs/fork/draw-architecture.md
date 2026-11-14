@@ -221,7 +221,9 @@ with W = sum of the weights of the frames in the maps.
   plus `phz`.
 
 **(C) A frame-count window, exact weight.** The picture is the newest whole batches until they hold at least N frames.
-N = the frames that arrived per screen frame, smoothed. Brightness = count / W.
+N = the frames that arrived per screen frame, smoothed. Brightness = count / W. The window applies to live triggered
+batches only. Roll and scan frames (the sweep so far), STOP, Single done, history and segment replay use a window of
+1 (3.4).
 - The band visibility then varies only within [N, N + one batch), not from 1 to 27.
 - A step without a batch keeps the same window: the same picture.
 - An older batch stays in the picture only while the newest ones hold fewer than N frames: at most one batch,

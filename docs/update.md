@@ -176,6 +176,8 @@ request ends in an answer within bounded time (fork, `ui/src/http.rs`):
 | more than 8 requests being read, or the screen's loop does not take a complete request within 10 s | 503 |
 
 `--max-time` on the client is still worth giving: it bounds the network path too.
+In a script, do not put a plain `nc` SCPI query (port 5555) before the curl: the SCPI server keeps the connection
+open, and macOS `nc -w` does not exit on it, so the curl never runs (`nc -G 3 -w 3` or a script with a timeout does).
 - shell: upload the file to /tmp, `oos-update install /tmp/oos-dev.oosupd` (dry run), then `--execute`
 
 The scope restarts into the new build by kexec, which installs itself (about a minute); System > Update shows the

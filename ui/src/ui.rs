@@ -18,6 +18,7 @@ pub mod bode;
 mod busview;
 mod eyepage;
 mod graphics;
+pub mod host;
 mod hwmask;
 mod hwzone;
 mod logger;
@@ -891,13 +892,13 @@ struct MeasWorker {
 }
 
 impl MeasWorker {
-    fn start() -> Option<MeasWorker> {
+    fn start(little: u64) -> Option<MeasWorker> {
         let (tx, jobs) = std::sync::mpsc::channel::<MeasJob>();
         let (done, rx) = std::sync::mpsc::channel::<MeasDone>();
         std::thread::Builder::new()
             .name("measure".into())
             .spawn(move || {
-                crate::http::to_little_cores();
+                crate::http::to_little_cores(little);
                 while let Ok((n, cheap, work)) = jobs.recv() {
                     let w: Vec<(usize, &[f32], f64, f64)> =
                         work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
@@ -920,6 +921,7 @@ impl MeasWorker {
 }
 
 pub struct Ui {
+    host: host::Host,
     pub m: Model,
     pub src: Source,
     pub ph: Phosphor,
@@ -1080,8 +1082,6 @@ pub struct Ui {
     pub net_ifs: Vec<(String, String)>,
     /// no DHCP answer at the start: the fixed address of rcS
     pub net_fixed: bool,
-    /// a WLAN stick is plugged in (its interface exists)
-    wlan_stick: bool,
     /// System > Overclock: limits.conf and the ADC clock of the next start (overclock.rs)
     pub limits_path: String,
     clock_next: f64,
@@ -1187,7 +1187,7 @@ impl Ui {
         &LAYS[self.m.text_size.index()]
     }
 
-    pub fn new(src: Source) -> Ui {
+    pub fn new(src: Source, host: host::Host) -> Ui {
         let mut m = Model::default();
         m.meas = Self::default_meas();
         if let Source::Replay { .. } = src {
@@ -1198,6 +1198,7 @@ impl Ui {
             m.ch[0].offset = -1.25;
         }
         let mut ui = Ui {
+            host,
             m,
             src,
             ph: Phosphor::new(1, 1),
@@ -1319,7 +1320,6 @@ impl Ui {
             net_if: String::new(),
             net_ifs: Vec::new(),
             net_fixed: false,
-            wlan_stick: false,
             limits_path: oos_hal::model::LIMITS_CONF.into(),
             clock_next: oos_hal::model::platform().limits.adc_clock_hz,
             eth_link: false,
@@ -1727,7 +1727,7 @@ impl Ui {
             && self.seg_pos.is_none()
             && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| {
                 crate::compress::live(&r.frame)
-                    || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame))
+                    || (crate::deepmeas::want(m, self.switches()).is_some() && crate::deepmeas::deep_pairs(&r.frame))
             })
     }
 
@@ -1951,15 +1951,15 @@ impl Ui {
             // what this picture is made of (pacing::composition): frames through a deposit kernel, through the record
             // path, and when the newest pipe batch in it was fed
             let (mut n_dep, mut n_rec, mut newest) = (0usize, 0usize, None);
-            let (mut ta, mut td) = (0f32, 0f32);
+            let (mut ta, mut td, sw) = (0f32, 0f32, *self.host.switches());
             // the newest raw deep record of this step (deepmeas.rs): with one frame per batch (2 ms/div and up at
             // 10 M) the next pair frame is often queued behind it, which drew it on the fast path or replaced it as
             // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
-            let deep_raw = crate::deepmeas::want(&self.m).is_some();
+            let deep_raw = crate::deepmeas::want(&self.m, &sw).is_some();
             let mut raw_rec: Option<Record> = None;
             if !self.fast_ok() {
-                if let Some(p) = crate::drawpipe::pipe() {
-                    p.set_view(None, 0, 0);
+                if let Some(p) = crate::drawpipe::pipe(&sw) {
+                    p.set_view(None, 0, 0, sw.interp);
                 }
             }
             // fast display path (fastdraw.rs): every queued frame but the newest straight into the phosphor map
@@ -1985,8 +1985,8 @@ impl Ui {
                 got += frames.len();
                 let t_merge = std::time::Instant::now();
                 // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
-                if let Some(p) = crate::drawpipe::pipe() {
-                    p.set_view(Some(&self.m), self.ph.w, self.ph.h);
+                if let Some(p) = crate::drawpipe::pipe(&sw) {
+                    p.set_view(Some(&self.m), self.ph.w, self.ph.h, sw.interp);
                     let d = p.merge(&mut self.ph, &mut clear_pending, &mut self.fast_edges, &mut self.fast_off);
                     if d.triggered > 0 {
                         self.m.status = TrigStatus::Triggered;
@@ -2010,7 +2010,7 @@ impl Ui {
                     break;
                 }
                 let t0 = std::time::Instant::now();
-                let r = self.src.acquire(&self.m, dt_wall / k as f64, &mut self.rng);
+                let r = self.src.acquire(&self.m, dt_wall / k as f64, &mut self.rng, &sw);
                 ta += t0.elapsed().as_secs_f32() * 1000.0;
                 match r {
                     Some(mut rec) if !crate::zone::pass(&self.m.zones, &rec.ch, rec.t0, rec.dt) => {
@@ -2079,7 +2079,7 @@ impl Ui {
                         }
                         if let Some(f) = frame {
                             let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
-                            crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));
+                            crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, sw.interp, Some(stats));
                             n_dep += 1;
                         } else {
                             n_rec += 1;
@@ -2195,8 +2195,8 @@ impl Ui {
             // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
             // measurement stays that of the last raw record
             let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
-            let hold =
-                crate::deepmeas::hold(&self.m, shown, self.src.hw_deep_ok()) || crate::compress::hold(&self.m, shown);
+            let hold = crate::deepmeas::hold(&self.m, &sw, shown, self.src.hw_deep_ok())
+                || crate::compress::hold(&self.m, shown);
             if got > 0 {
                 let p0 = std::time::Instant::now();
                 if hold {
@@ -2216,7 +2216,7 @@ impl Ui {
                     self.meas_want = true;
                     // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
                     // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
-                    if crate::deepmeas::want(&self.m).is_some() {
+                    if crate::deepmeas::want(&self.m, &sw).is_some() {
                         self.meas_pending = self.last[0].clone();
                     }
                 } else {
@@ -2374,7 +2374,7 @@ impl Ui {
     /// hardware trigger point. Sparse frames (fewer than 2 samples per column) take the record path instead.
     fn fast_draw(&mut self, f: &crate::board::Frame) -> bool {
         let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
-        crate::drawpipe::draw_frame(&mut self.ph, &self.m, f, Some(stats))
+        crate::drawpipe::draw_frame(&mut self.ph, &self.m, f, self.host.switches().interp, Some(stats))
     }
 
     // ------------------------------------------------------------------ rendering
@@ -3931,13 +3931,13 @@ impl Ui {
 
     /// While a USB stick is mounted: left of the network and WLAN boxes; the top-bar buttons move over for it.
     fn usb_box(&self) -> Rect {
-        let next = if self.wlan_stick { self.wlan_box().x } else { self.net_box().x };
+        let next = if self.wlan.stick { self.wlan_box().x } else { self.net_box().x };
         Rect::new(next - 52, 5, 46, 30)
     }
 
     /// Where the buttons of the top bar end: the leftmost of the boxes on the right.
     fn top_right(&self) -> i32 {
-        match (self.usb, self.wlan_stick) {
+        match (self.usb, self.wlan.stick) {
             (true, _) => self.usb_box().x,
             (false, true) => self.wlan_box().x,
             _ => self.net_box().x,
@@ -4059,7 +4059,7 @@ impl Ui {
             lan,
         );
         // WLAN and USB sticks, while they are there
-        if self.wlan_stick {
+        if self.wlan.stick {
             self.draw_link(cv, self.wlan_box(), "WLAN", self.addr_of(oos_hal::wlan::IFACE));
         }
         if self.usb {
@@ -4934,7 +4934,7 @@ impl Ui {
 
     /// From now on the measurements of new records are made in the background (the frame loop on the unit).
     pub fn measure_in_background(&mut self) {
-        self.meas_bg = MeasWorker::start();
+        self.meas_bg = MeasWorker::start(self.host.switches().cores.little);
     }
 
     /// The background's side, every frame: takes a finished result, and gives it the record shown when it wants one.
@@ -4956,7 +4956,8 @@ impl Ui {
         let pending = self.meas_pending.take();
         let Some(rec) = pending.as_ref().or(self.last[0].as_ref()) else { return };
         // a held pair record (deepmeas.rs) is never measured: the measurement stays that of the last raw one
-        if crate::deepmeas::hold(&self.m, rec.raw.as_ref().map(|r| &*r.frame), self.src.hw_deep_ok()) {
+        let sw = self.switches();
+        if crate::deepmeas::hold(&self.m, sw, rec.raw.as_ref().map(|r| &*r.frame), self.src.hw_deep_ok()) {
             return;
         }
         let env: [bool; NCH] = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
@@ -6288,6 +6289,7 @@ impl Ui {
             || self.graphics_adjust(it, d)
             || self.views_adjust(it, d)
             || self.backlight_adjust(it, d)
+            || self.aux_adjust(it, d)
         {
             return;
         }
@@ -6560,11 +6562,6 @@ impl Ui {
                 m.grid = all[cyc(i, 3, d)];
             }
             Item::TouchLock => m.touch_lock = !m.touch_lock,
-            Item::AuxOut => {
-                let all = AuxOut::choices(board().mask_hw() || board().zone_hw());
-                let i = all.iter().position(|&a| a == m.aux_out).unwrap_or(0);
-                m.aux_out = all[cyc(i, all.len(), d)];
-            }
             Item::QuickAct => {
                 let i = QUICKS.iter().position(|&q| q == m.quick).unwrap_or(0);
                 m.quick = QUICKS[cyc(i, QUICKS.len(), d)];
@@ -6938,7 +6935,7 @@ impl Ui {
                 Item::ViewSettings => self.view_settings(),
                 Item::About => {
                     let p = oos_hal::model::platform();
-                    let build = std::fs::read_to_string("/etc/oos-build").unwrap_or_default();
+                    let build = self.host.text("/etc/oos-build").unwrap_or_default();
                     let mut d = vec![
                         "OOS".into(),
                         "An open operating system for the DHO800/DHO900".into(),
@@ -7076,11 +7073,11 @@ impl Ui {
 
     /// From `step`: is a stick mounted (`/bin/oos-usb`); says so when that changes.
     fn usb_poll(&mut self) {
-        if cfg!(test) || self.now < self.usb_check {
+        if !self.host.services() || self.now < self.usb_check {
             return;
         }
         self.usb_check = self.now + 2.0;
-        self.wlan_stick = wlan::stick_there();
+        self.wlan.stick = wlan::stick_there();
         let on = std::fs::read_to_string("/proc/mounts").is_ok_and(|t| crate::store::usb_mounted(&t));
         if on != self.usb {
             self.usb = on;
@@ -7094,7 +7091,7 @@ impl Ui {
     /// in RAM is not used for it when OOS's data partition is there.
     fn setup_path(&self) -> std::path::PathBuf {
         let keep = std::path::Path::new("/oos/setups");
-        let dir = if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) && keep.is_dir() {
+        let dir = if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) && self.host.is_dir(keep) {
             keep
         } else {
             self.store_dir.as_path()
@@ -7251,7 +7248,7 @@ impl Ui {
             Item::Histogram => &["Off", "Vertical", "Horizontal"],
             Item::TouchLock => &["On", "Locked"],
             Item::AuxOut => {
-                return AuxOut::choices(board().mask_hw() || board().zone_hw())
+                return AuxOut::choices(board().mask_hw(self.switches()) || board().zone_hw(self.switches()))
                     .iter()
                     .map(|a| a.name().to_string())
                     .collect()
@@ -8498,7 +8495,7 @@ impl Ui {
         if self.top_hit(self.net_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Network);
         }
-        if self.wlan_stick && self.top_hit(self.wlan_box()).contains(x, y) {
+        if self.wlan.stick && self.top_hit(self.wlan_box()).contains(x, y) {
             return self.toggle_menu(MenuId::Network);
         }
         if self.usb && self.top_hit(self.usb_box()).contains(x, y) {
@@ -8897,7 +8894,7 @@ mod tests {
         let shared: crate::board::HwShared = Default::default();
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
         shared.lock().unwrap().deep_ok = true;
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.measure_in_background();
         ui.m.run = RunState::Run;
         for c in 1..NCH {
@@ -8955,7 +8952,7 @@ mod tests {
     fn measurements_on_min_max_pairs_leave_out_the_mean_type() {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
         for c in 1..NCH {
             ui.m.ch[c].on = false;
@@ -9009,7 +9006,7 @@ mod tests {
     fn live_pair_records_keep_the_raw_measurement_and_stop_takes_a_raw_frame() {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
         for c in 1..NCH {
             ui.m.ch[c].on = false;
@@ -9069,7 +9066,7 @@ mod tests {
     fn protocol_watch_and_xy_ask_for_raw_frames() {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.step(0.02);
         assert!(!shared.lock().unwrap().needs_raw);
         ui.azr.watch = true;
@@ -9091,7 +9088,7 @@ mod tests {
         use super::*;
         crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
         for c in 1..NCH {
             ui.m.ch[c].on = false;
@@ -9179,7 +9176,7 @@ mod tests {
     #[test]
     fn only_shown_cheap_values_take_the_cheap_measurement() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let rec = |acq: usize, envelope: bool| {
             let f = std::sync::Arc::new(crate::board::Frame {
                 seq: 1,
@@ -9230,7 +9227,7 @@ mod tests {
         let shared: crate::board::HwShared = Default::default();
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
         shared.lock().unwrap().deep_ok = true;
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
         for c in 1..NCH {
             ui.m.ch[c].on = false;
@@ -9290,7 +9287,7 @@ mod tests {
     fn hardware_pictures_look_the_same_whatever_the_frames_per_picture() {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
         ui.m.persist = 0;
         ui.m.trig_level = 0.15;
@@ -9345,7 +9342,7 @@ mod tests {
     fn pair_raw_mix(dots: bool, deep: bool) -> Vec<(bool, i32, usize, f64)> {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
         ui.m.persist = 0;
         ui.m.trig_level = 0.15;
@@ -9460,8 +9457,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "manual report: set OOS_REPORTS=1"]
     fn pair_raw_mix_report() {
+        assert_eq!(std::env::var("OOS_REPORTS").as_deref(), Ok("1"), "set OOS_REPORTS=1");
         for deep in [false, true] {
             for dots in [false, true] {
                 for (raw, worst, off, sum) in pair_raw_mix(dots, deep) {
@@ -9480,7 +9478,7 @@ mod tests {
     fn hardware_trigger_status_overrides_the_software_one() {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
         ui.m.trig_level = 0.5;
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
@@ -9520,7 +9518,7 @@ mod tests {
     // frame after a batch of several came out dim: the flicker after autoset, docs/fork/trigger-lockin.md)
     #[test]
     fn equal_frames_give_equal_brightness_whatever_their_number() {
-        let mut ui = super::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = super::Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         ui.m.persist = 0;
         for c in 1..super::NCH {
             ui.m.ch[c].on = false;
@@ -9570,7 +9568,7 @@ mod tests {
     /// still arrive (0.1.7 to 0.1.10 dropped each one as older than the record shown, and the values froze in Run).
     #[test]
     fn background_measurements_follow_a_running_record() {
-        let mut u = super::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut u = super::Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         u.measure_in_background();
         let n = |u: &super::Ui| u.mstat.iter().map(|s| s.n).max().unwrap_or(0);
         for _ in 0..120 {
@@ -9585,7 +9583,7 @@ mod tests {
     fn add_item_toggles_a_measurement() {
         use super::*;
 
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.meas.clear();
         ui.meas_src = 0;
         let (a, b) = (ALL_MEAS[0], ALL_MEAS[1]);
@@ -9610,7 +9608,7 @@ mod tests {
         use oos_dsp::decode::Kind;
         for (proto, tdiv, want_id) in [(Proto::Can, 100e-6f32, 0x123u32), (Proto::Lin, 1e-3, 0x21)] {
             // (I2S and 1553 have their own test below)
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.m.dec_on = true;
             ui.set_dec_proto(proto);
             ui.m.tscale = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
@@ -9639,7 +9637,7 @@ mod tests {
     fn wait_comes_back_soon_after_each_forced_frame() {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.trig_mode = TrigMode::Normal;
         ui.m.run = RunState::Run;
         ui.m.tscale = tscales().iter().position(|&t| (t - 500e-6).abs() < 1e-9).unwrap();
@@ -9678,8 +9676,8 @@ mod tests {
     fn force_asks_the_acquisition_thread_for_a_pulse() {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let cv = Canvas::new(PANEL_W, PANEL_H);
         let take = |s: &crate::board::HwShared| std::mem::take(&mut s.lock().unwrap().force);
         ui.m.run = RunState::Stop;
@@ -9705,7 +9703,7 @@ mod tests {
     #[test]
     fn leaving_the_bus_trigger_undoes_only_what_it_switched_on() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         for c in 0..NCH {
             ui.m.ch[c].on = c == 0;
         }
@@ -9737,7 +9735,7 @@ mod tests {
         use super::*;
         use oos_dsp::decode::Kind;
         for id in [0x123u32, 0x18da_f110] {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.m.dec_proto = Proto::Can;
             ui.set_trig_type(TrigType::Bus);
             ui.m.trig_bus_val = id as u64;
@@ -9762,7 +9760,7 @@ mod tests {
                 let _ = crate::store::write(&dir.join("j-bus-trigger.png"), &crate::store::png_of(&cv));
             }
         }
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.dec_proto = Proto::Can;
         ui.set_trig_type(TrigType::Bus);
         ui.m.trig_bus = BusWhat::Error;
@@ -9784,7 +9782,7 @@ mod tests {
             let tsc = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
             let tol = 3.0 * tdiv as f64 * HDIV as f64 / 3600.0; // three record samples
             for what in [BusWhat::Id, BusWhat::Data, BusWhat::Frame, BusWhat::Error] {
-                let mut ui = Ui::new(Source::Demo { t: 0.0 });
+                let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
                 ui.m.dec_proto = proto;
                 ui.set_trig_type(TrigType::Bus);
                 let id_default = ui.m.trig_bus_val;
@@ -9854,7 +9852,7 @@ mod tests {
             (BusWhat::Frame, None),
             (BusWhat::Error, None),
         ] {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.m.dec_proto = Proto::Usb;
             ui.set_trig_type(TrigType::Bus);
             assert_eq!((ui.m.dec_src, ui.m.dec_cs, ui.m.trig_bus, ui.m.trig_bus_val), (2, Some(3), BusWhat::Id, 5));
@@ -9917,7 +9915,7 @@ mod tests {
     #[test]
     fn math_on_math() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.ch[1].on = true;
         ui.step(0.02);
         // M1 = CH1 + CH2, M2 = Abs(M1); M1 offers only the channels, M2 also M1
@@ -9943,7 +9941,7 @@ mod tests {
     #[test]
     fn zone_drawn_by_touch_filters_records() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.relayout();
         ui.open_menu(MenuId::Zone);
         ui.activate(Item::ZoneBox);
@@ -9992,7 +9990,7 @@ mod tests {
             (Proto::Usb, 5e-6, "ENDP"),
         ];
         for (p, tdiv, want) in cases {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.set_dec_proto(p);
             ui.m.dec_on = true;
             ui.m.tscale = tscales().iter().position(|&x| (x - tdiv).abs() < tdiv * 1e-3).unwrap();
@@ -10014,7 +10012,7 @@ mod tests {
     #[test]
     fn segmented_recording_stops_after_n_records() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.segments = 10;
         for _ in 0..20 {
             ui.step(0.02);
@@ -10029,7 +10027,7 @@ mod tests {
     #[test]
     fn analysers_on_the_demo_signal() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap();
         ui.step(0.05);
         // spectrum: the strongest line of the 1 kHz square is its fundamental
@@ -10065,16 +10063,16 @@ mod tests {
 
     /// Screenshots of the new views for a visual check: `OOS_SHOTS=<dir> cargo test shots -- --ignored`.
     #[test]
-    #[ignore]
+    #[ignore = "manual screenshots: set OOS_SHOTS"]
     fn shots_of_new_views() {
         use super::*;
-        let dir = std::env::var("OOS_SHOTS").unwrap_or_else(|_| ".".into());
+        let dir = crate::store::tests::test_output_dir("OOS_SHOTS");
         let shot = |ui: &mut Ui, name: &str| {
             let mut cv = Canvas::new(PANEL_W, PANEL_H);
             ui.render(&mut cv);
             std::fs::write(format!("{}/{}.png", dir, name), crate::store::png_of(&cv)).unwrap();
         };
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap();
         ui.m.ch[1].on = true;
         ui.step(0.05);
@@ -10154,7 +10152,7 @@ mod tests {
                 );
             }
         };
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.ch[1].on = true;
         for _ in 0..5 {
             ui.step(0.05);
@@ -10198,7 +10196,7 @@ mod tests {
     #[test]
     fn protocol_watch_names_a_new_bus() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.set_dec_proto(Proto::Uart);
         // demo UART on CH3 (115200 Bd): watch on at 100 us/div (a screen record resolves the bits), a few seconds
         ui.m.ch[2].on = true;
@@ -10239,7 +10237,7 @@ mod tests {
                 }
             }
         });
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         (ui.m.bode_addr, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_gen) = (addr, 1e3, 1e5, 5, 1);
         let ts0 = ui.m.tscale;
         ui.activate(Item::BodeRun);
@@ -10269,7 +10267,7 @@ mod tests {
     #[test]
     fn bode_sweep_with_the_builtin_generator() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points, ui.m.bode_in, ui.m.bode_out) =
             (bode::BUILTIN, 1e3, 1e5, 3, 0, 0);
         (ui.m.afg_on, ui.m.afg_freq) = (false, 1234.0);
@@ -10295,7 +10293,7 @@ mod tests {
     #[test]
     fn web_csv_refuses_a_record_it_would_have_to_cut() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         assert!(ui.web_wave_csv().is_err());
         for _ in 0..30 {
             ui.step(0.02);
@@ -10308,7 +10306,7 @@ mod tests {
     #[test]
     fn keypad_enters_a_long_can_id() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.dec_proto = Proto::Can;
         ui.set_trig_type(TrigType::Bus);
         ui.open_menu(MenuId::Trigger);
@@ -10344,7 +10342,7 @@ mod tests {
         use super::*;
         use oos_dsp::decode::Kind;
         for (proto, tdiv) in [(Proto::I2s, 10e-6f32), (Proto::Mil1553, 20e-6)] {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.m.dec_on = true;
             ui.set_dec_proto(proto);
             ui.m.tscale = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
@@ -10381,7 +10379,7 @@ mod tests {
     #[test]
     fn power_key_dialog() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.key(key::POWER);
         assert!(ui.power_dlg);
         assert_eq!(ui.panel_tx, vec![crate::board::PanelCmd::CancelPowerDown]);
@@ -10415,7 +10413,7 @@ mod tests {
     fn every_trigger_type_triggers_on_the_demo() {
         use super::*;
         for &t in TRIG_TYPES.iter() {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.set_trig_type(t);
             ui.m.trig_mode = TrigMode::Normal;
             let mut hits = 0;
@@ -10445,7 +10443,7 @@ mod tests {
     #[test]
     fn colour_grade_renders() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.ch[1].on = true;
         ui.m.color_grade = true;
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
@@ -10469,7 +10467,7 @@ mod tests {
     #[test]
     fn mask_test_counts_and_stops() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.step(0.033);
         ui.create_mask();
         assert!(ui.m.mask_on && ui.mask.is_some());
@@ -10499,7 +10497,7 @@ mod tests {
     fn storage_save_and_recall() {
         use super::*;
         let dir = std::env::temp_dir().join(format!("oos-ui-store-{}", std::process::id()));
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.store_dir = dir.join("sub");
         ui.m.ch[2].on = true;
         ui.m.tscale -= 2;
@@ -10532,7 +10530,7 @@ mod tests {
         use super::*;
         use crate::board::SegPhase;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
         (ui.m.segments, ui.m.seg_hw, ui.m.seg_ivl) = (100, true, 1e-3);
         ui.m.run = RunState::Run;
@@ -10598,7 +10596,7 @@ mod tests {
     fn segment_counts_follow_the_limit_of_the_set_up() {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared, seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared, seen: 0 });
         ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
         ui.m.segments = 10;
         assert_eq!(*ui.seg_options().last().unwrap(), SEG_MAX);
@@ -10632,9 +10630,9 @@ mod tests {
     #[test]
     fn segment_scpi() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
         q(&mut ui, ":ACQ:SEGM 5000");
         q(&mut ui, ":ACQ:SEGM:HARD ON");
@@ -10683,7 +10681,7 @@ mod tests {
             }
         };
         shared.lock().unwrap().queue.extend((1..=10).map(frame));
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         ui.m.trig_level = 0.0;
         ui.m.ch[0].offset = 0.0;
@@ -10709,7 +10707,7 @@ mod tests {
         use super::*;
         use oos_hal::dho::acq::Mode;
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         // 100 us/div, Auto depth: 62.5 MSa/s
         ui.m.tscale = tscales().iter().position(|&x| (x - 100e-6).abs() < 1e-9).unwrap();
         (ui.m.acq, ui.m.avg_count, ui.m.avg_hw) = (AcqMode::Average, 16, true);
@@ -10776,9 +10774,9 @@ mod tests {
     #[test]
     fn dvm_lane_scpi() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
         assert_eq!(q(&mut ui, ":SYST:DEB:DVM:LANE?"), "AUTO");
         q(&mut ui, ":SYSTem:DEBug:DVM:LANE 3");
@@ -10793,9 +10791,9 @@ mod tests {
     #[test]
     fn average_scpi() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
         assert_eq!(q(&mut ui, ":ACQ:TYPE?"), "NORM");
         q(&mut ui, ":ACQuire:TYPE AVERages");
@@ -10825,7 +10823,7 @@ mod tests {
     #[test]
     fn layout_plot_size_and_touch_targets() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         // default: one measurement row under the plot
         assert_eq!((ui.grid.x, ui.grid.y, ui.grid.w, ui.grid.h), (0, 40, 1024, 456));
         ui.m.meas.clear();
@@ -10840,7 +10838,7 @@ mod tests {
             assert!(ui.top_hit(r).h >= 40 && r.x + r.w <= ui.net_box().x, "{:?}", r);
         }
         // sticks: their boxes beside the network box, the buttons move over and stay on the bar
-        (ui.usb, ui.wlan_stick) = (true, true);
+        (ui.usb, ui.wlan.stick) = (true, true);
         for (_, _, r) in ui.top_buttons() {
             assert!(r.x > ui.run_pill().x + ui.run_pill().w && r.x + r.w <= ui.usb_box().x, "{:?}", r);
         }
@@ -10852,7 +10850,7 @@ mod tests {
         ui.tap(ui.wlan_box().x + 5, 10);
         assert!(ui.menu_open && ui.menu_root() == MenuId::Network);
         ui.tap(ui.wlan_box().x + 5, 10);
-        (ui.usb, ui.wlan_stick) = (false, false);
+        (ui.usb, ui.wlan.stick) = (false, false);
         for n in 0..=NCH {
             for c in 0..NCH {
                 ui.m.ch[c].on = c < n;
@@ -10890,7 +10888,7 @@ mod tests {
     #[test]
     fn pickers_open_and_set_the_value() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.open_menu(MenuId::Main);
         ui.activate(Item::Open(MenuId::Trigger));
         let row = row_of(&ui, Item::TrigType);
@@ -10941,7 +10939,7 @@ mod tests {
     #[test]
     fn every_option_selects() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let items = [
             Item::TrigType,
             Item::MathOpI,
@@ -10991,7 +10989,7 @@ mod tests {
     #[test]
     fn clear_empties_the_display_in_stop() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let lit = |ui: &Ui| ui.ph.map.iter().map(|m| m.iter().filter(|&&v| v > 0).count()).sum::<usize>();
         for _ in 0..5 {
             ui.step(0.033);
@@ -11033,7 +11031,7 @@ mod tests {
     fn quick_key_dispatch() {
         use super::*;
         let dir = std::env::temp_dir().join(format!("oos-ui-quick-{}", std::process::id()));
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.store_dir = dir.clone();
         ui.step(0.033);
         // default: screenshot as before
@@ -11080,7 +11078,7 @@ mod tests {
     fn the_acquisition_text_fits_before_the_buttons() {
         use super::*;
         for ts in TEXT_SIZES {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.m.text_size = ts;
             ui.relayout();
             let f = ui.fonts();
@@ -11100,7 +11098,7 @@ mod tests {
     #[test]
     fn a_long_press_of_a_channel_key_switches_ac_dc() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.step(0.033);
         assert!(ui.m.ch[0].on && ui.m.ch[0].coupling == Coupling::Dc && !ui.menu_open);
         // short: the menu opens when the key is let go
@@ -11146,7 +11144,7 @@ mod tests {
     #[test]
     fn start_menu_and_keys_reach_everything() {
         use super::*;
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         for _ in 0..3 {
             ui.step(0.033);
         }
@@ -11279,9 +11277,9 @@ mod aux_out_tests {
 
     #[test]
     fn aux_out_in_the_system_menu_with_the_offered_choices() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         assert!(ui.items(MenuId::Utility).contains(&Item::AuxOut));
-        let want: &[&str] = if board().mask_hw() || board().zone_hw() {
+        let want: &[&str] = if board().mask_hw(ui.switches()) || board().zone_hw(ui.switches()) {
             &["Trigger out", "Off", "Pass/fail"]
         } else {
             &["Trigger out", "Off"]

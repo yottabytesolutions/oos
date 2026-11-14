@@ -7,8 +7,8 @@
   tools/device-test.py --host <ip> --tier a0       no cable needed
   tools/device-test.py --host <ip> --only trig     tests whose name contains "trig"
   tools/device-test.py --host <ip> --soak-min 480  with a long run at the end
-  tools/device-test.py --tier la --pico /dev/cu.usbmodem101    (needs pyserial)
-  tools/device-test.py --tier rf --rf /dev/cu.wchusbserial110
+  tools/device-test.py --tier la --pico /path/to/serial    (needs pyserial)
+  tools/device-test.py --tier rf --rf /path/to/serial
   tools/device-test.py --sim                       against `oos-ui --serve` on this computer (no scope)
 
 Tiers, in this order:
@@ -22,11 +22,18 @@ Tiers, in this order:
 A test that cannot run for lack of wiring is SKIP. A result that needs a decision is INFO. The results go to
 device-test/<time>/ as report.md, results.json and screenshots.
 
-It only talks to the published interfaces, plus read-only commands on the telnet shell. shell() refuses everything
+It checks and renews the device lease over SSH before and during hardware tests.
+Tests use the published interfaces, plus read-only commands on the telnet shell. shell() refuses everything
 that could write the FPGA flash, the calibration or the boot partitions, so a typo here cannot.
 """
 
+from contextlib import nullcontext
+from pathlib import Path
+
 import argparse, base64, json, math, os, random, re, signal, socket, statistics, struct, subprocess, sys, time, traceback, urllib.error, urllib.request
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import scope_lease
 
 CH = (1, 2, 3, 4)
 VSCALES = [1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0]
@@ -47,14 +54,22 @@ class Info(Exception):
 
 
 class Scope:
-    def __init__(self, host, scpi=5555, web=8080, sim=False):
+    def __init__(self, host, scpi=5555, web=8080, sim=False, lease=None):
         self.host, self.port, self.web, self.sim = host, scpi, web, sim
+        self.lease = lease
         self.s = None
         self.loop = []  # channels the generator reaches
         self.connect()
 
+    def check_lease(self):
+        if not self.sim:
+            if self.lease is None:
+                raise scope_lease.LeaseError("scope access requires a held test lease")
+            self.lease.check()
+
     def connect(self):
         for _ in range(30):
+            self.check_lease()
             try:
                 self.s = socket.create_connection((self.host, self.port), timeout=10)
                 self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -64,16 +79,19 @@ class Scope:
         raise Gone(f"no SCPI on {self.host}:{self.port}")
 
     def w(self, cmd):
+        self.check_lease()
         try:
             self.s.sendall(cmd.encode() + b"\n")
         except OSError as e:
             raise Gone(f"SCPI write: {e}")
 
     def line(self, timeout=15):
+        self.check_lease()
         self.s.settimeout(timeout)
         b = b""
         try:
             while not b.endswith(b"\n"):
+                self.check_lease()
                 c = self.s.recv(65536)
                 if not c:
                     raise Gone("SCPI connection closed")
@@ -100,6 +118,7 @@ class Scope:
         def need(n):
             b = b""
             while len(b) < n:
+                self.check_lease()
                 c = self.s.recv(min(1 << 20, n - len(b)))
                 if not c:
                     raise Gone("SCPI connection closed")
@@ -179,6 +198,7 @@ class Scope:
         return 2 * math.hypot(a, b)
 
     def http(self, path, data=None, headers=None, timeout=30):
+        self.check_lease()
         r = urllib.request.Request(f"http://{self.host}:{self.web}{path}", data=data, headers=headers or {})
         try:
             with urllib.request.urlopen(r, timeout=timeout) as x:
@@ -200,14 +220,17 @@ class Scope:
         """A read-only command on the telnet shell, the output as text."""
         if self.sim:
             raise Skip("no shell in the simulation")
+        self.check_lease()
         if FORBIDDEN.search(cmd) and not reads_card:
             raise AssertionError(f"refused here: {cmd}")
         s = socket.create_connection((self.host, 23), timeout=10)
         time.sleep(1)
+        self.check_lease()
         s.sendall(b"echo @@S; " + cmd.encode() + b"; echo @@E\n")
         s.settimeout(wait + 8)
         b, end = b"", time.time() + wait + 8
         while b.count(b"@@E") < 2 and time.time() < end:
+            self.check_lease()
             try:
                 c = s.recv(65536)
             except socket.timeout:
@@ -502,15 +525,18 @@ def vxi11_answers(s, o):
     """create_link and *IDN? by hand: no VISA needed."""
 
     def call(k, xid, proc, args):
+        s.check_lease()
         m = struct.pack(">IIIIII", xid, 0, 2, 0x0607AF, 1, proc) + b"\0" * 16 + args
         k.sendall(struct.pack(">I", len(m) | 1 << 31) + m)
         h = k.recv(4)
         n = struct.unpack(">I", h)[0] & 0x7FFFFFFF
         b = b""
         while len(b) < n:
+            s.check_lease()
             b += k.recv(n - len(b))
         return b[24:]
 
+    s.check_lease()
     try:
         k = socket.create_connection((s.host, 9009), timeout=5)
     except OSError as e:
@@ -539,6 +565,7 @@ def limits_hold(s, o):
     assert len(e) <= 21 and all(len(x) < 400 for x in e), len(e)
     extra = []
     for _ in range(12):
+        s.check_lease()
         try:
             extra.append(socket.create_connection((s.host, s.port), timeout=3))
         except OSError:
@@ -2343,7 +2370,7 @@ def soak(s, o, minutes, log):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default="192.168.177.64")
+    ap.add_argument("--host", help="scope host, otherwise OOS_SCOPE; no default")
     ap.add_argument("--scpi-port", type=int, default=5555)
     ap.add_argument("--web-port", type=int, default=8080)
     ap.add_argument("--tier", help="a0, a1, a2, la (default: all the wiring allows)")
@@ -2359,6 +2386,17 @@ def main():
     ap.add_argument("--sim", action="store_true", help="start oos-ui --serve from target/debug, generator on CH1 and CH2")
     ap.add_argument("--out")
     o = ap.parse_args()
+    try:
+        if not o.sim:
+            o.host = scope_lease.host_value(o.host)
+        with nullcontext(None) if o.sim else scope_lease.held(o.host, cap="test") as lease:
+            result = run_tests(o, lease)
+        sys.exit(result)
+    except scope_lease.LeaseError as exc:
+        ap.exit(1, f"device-test: {exc}\n")
+
+
+def run_tests(o, lease):
     o.out = o.out or os.path.join("device-test", time.strftime("%Y%m%d-%H%M%S"))
     os.makedirs(o.out, exist_ok=True)
     proc = None
@@ -2383,7 +2421,7 @@ def main():
 
     signal.signal(signal.SIGTERM, stop)
     try:
-        s = Scope(o.host, o.scpi_port, o.web_port, sim=o.sim)
+        s = Scope(o.host, o.scpi_port, o.web_port, sim=o.sim, lease=lease)
         log(f"scope: {s.q('*IDN?')}")
         for tier, name, f, need in TESTS:
             always = name in ("generator_reaches", "protected_areas_before", "protected_areas_after")
@@ -2411,6 +2449,8 @@ def main():
                 gone = name
             except AssertionError as e:
                 res, detail = "FAIL", str(e) or traceback.format_exc(limit=2)
+            except scope_lease.LeaseError:
+                raise
             except Exception:
                 res, detail = "ERROR", traceback.format_exc(limit=3)
             results.append({"tier": tier, "test": name, "result": res, "s": round(time.time() - t0, 1), "detail": str(detail or "")})
@@ -2449,7 +2489,7 @@ def main():
         for r in results:
             f.write(f"| {r['result']} | {r['tier']} | {r['test']} | {r['s']} | {r['detail'][:300].replace('|', '/').replace(chr(10), ' ')} |\n")
     log(f"done: {count}, report in {o.out}")
-    sys.exit(1 if count["FAIL"] or count["ERROR"] or count["GONE"] or gone else 0)
+    return 1 if count["FAIL"] or count["ERROR"] or count["GONE"] or gone else 0
 
 
 if __name__ == "__main__":

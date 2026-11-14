@@ -92,12 +92,13 @@ pub struct Sample {
     pub addr: SocketAddr,
 }
 
-fn ask(addr: SocketAddr) -> Result<Sample, String> {
+/// One exchange with `addr`; `now` is the clock the offset is measured against.
+fn ask(addr: SocketAddr, now: fn() -> f64) -> Result<Sample, String> {
     let any: SocketAddr = if addr.is_ipv4() { "0.0.0.0:0".parse().unwrap() } else { "[::]:0".parse().unwrap() };
     let s = UdpSocket::bind(any).map_err(|e| e.to_string())?;
     s.set_read_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
     s.connect(addr).map_err(|e| e.to_string())?;
-    let t1f = crate::clock::unix_now();
+    let t1f = now();
     let t1 = to_ntp(t1f);
     s.send(&request(t1)).map_err(|e| e.to_string())?;
     let mut b = [0u8; 128];
@@ -111,7 +112,7 @@ fn ask(addr: SocketAddr) -> Result<Sample, String> {
             }
             Err(e) => return Err(e.to_string()),
         };
-        let t4 = crate::clock::unix_now();
+        let t4 = now();
         match parse(&b[..n], t1) {
             Ok(r) => {
                 let (offset, delay) = offset_delay(t1f, r.t2, r.t3, t4);
@@ -124,7 +125,7 @@ fn ask(addr: SocketAddr) -> Result<Sample, String> {
 }
 
 /// Asks `server` (a name or an address) for the time; the first of its addresses that answers counts.
-pub fn query(server: &str) -> Result<Sample, String> {
+pub fn query(server: &str, now: fn() -> f64) -> Result<Sample, String> {
     let addrs: Vec<SocketAddr> =
         (server, PORT).to_socket_addrs().map_err(|_| "name not found (DNS)".to_string())?.collect();
     // IPv4 first: OOS gets no IPv6 route from DHCP
@@ -133,7 +134,7 @@ pub fn query(server: &str) -> Result<Sample, String> {
     v.truncate(4);
     let mut err = "name without an address".to_string();
     for a in v {
-        match ask(a) {
+        match ask(a, now) {
             Ok(s) => return Ok(s),
             Err(e) => err = e,
         }
@@ -283,10 +284,10 @@ mod tests {
             let mut b = [0u8; 48];
             let (_, from) = srv.recv_from(&mut b).unwrap();
             let t1 = ts(&b, 40);
-            let now = crate::clock::unix_now() + 100.0;
-            srv.send_to(&answer(t1, now, now), from).unwrap();
+            srv.send_to(&answer(t1, 1_000_100.0, 1_000_100.0), from).unwrap();
         });
-        let s = ask(format!("127.0.0.1:{}", port).parse().unwrap()).unwrap();
+        // the supplied clock, not the system's (nor OOS_FIXED_TIME): the offset is exact
+        let s = ask(format!("127.0.0.1:{}", port).parse().unwrap(), || 1_000_000.0).unwrap();
         assert!((s.offset - 100.0).abs() < 1.0, "{:?}", s);
         assert!(s.delay >= 0.0 && s.delay < 1.0);
     }
@@ -297,7 +298,7 @@ mod tests {
         let s = UdpSocket::bind("127.0.0.1:0").unwrap();
         let a = s.local_addr().unwrap();
         drop(s);
-        assert!(ask(a).is_err());
-        assert!(query("name.invalid").is_err());
+        assert!(ask(a, || 1_000_000.0).is_err());
+        assert!(query("name.invalid", || 0.0).is_err());
     }
 }

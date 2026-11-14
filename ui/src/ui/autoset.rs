@@ -42,17 +42,6 @@ const UNIT_RUNS: u32 = 24;
 const UNIT_GIVE_UP_S: f64 = 0.5;
 const UNIT_TRIES: u32 = 2;
 
-/// The auto set-up reads the levels with the FPGA's measure unit where the source has one, unless system.conf says
-/// `autoset.levels = records` (or OOS_AUTOSET_LEVELS=records).
-fn unit_levels_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_AUTOSET_LEVELS").ok();
-        let conf = crate::sysconf::fork_text();
-        crate::drawpipe::conf_value(env.as_deref(), &conf, "autoset.levels").as_deref() != Some("records")
-    })
-}
-
 /// What the measure-unit step did (`Ui::auto_unit`).
 enum UnitStep {
     /// waits for the answer, or asked again at another scale
@@ -184,8 +173,9 @@ impl Ui {
         let stamp = m.hw_stamp;
         // any channel set: the slots per channel follow libscope's core table (`levels::slots`); a channel whose slots
         // disagree falls back to the records (`auto_unit`)
-        let unit = (unit_levels_on() && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some())
-            .then_some(Unit { id: stamp, tries: 1, since: self.now });
+        let unit = (self.host.switches().autoset_unit_levels
+            && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some())
+        .then_some(Unit { id: stamp, tries: 1, since: self.now });
         self.auto = Some(AutoRun {
             back,
             stamp,
@@ -684,7 +674,18 @@ mod tests {
     /// The bar after an auto set-up: periods and edges of the trigger channel, gone after a tap elsewhere.
     #[test]
     fn view_bar_sets_periods_and_edges() {
-        let mut u = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        view_bar_sets_periods_and_edges_with_shots(None);
+    }
+
+    #[test]
+    #[ignore = "manual screenshots: set OOS_SHOT_DIR"]
+    fn view_bar_sets_periods_and_edges_manual_screenshots() {
+        let dir = crate::store::tests::test_output_dir("OOS_SHOT_DIR");
+        view_bar_sets_periods_and_edges_with_shots(Some(std::path::Path::new(&dir)));
+    }
+
+    fn view_bar_sets_periods_and_edges_with_shots(dir: Option<&std::path::Path>) {
+        let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         u.m.trig_src = 0;
         for _ in 0..20 {
             u.step(0.05);
@@ -694,8 +695,8 @@ mod tests {
         u.auto_bar = Some(u.now);
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         u.render(&mut cv);
-        if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
-            let _ = std::fs::write(format!("{}/auto-bar.png", d), crate::store::png_of(&cv));
+        if let Some(dir) = dir {
+            std::fs::write(dir.join("auto-bar.png"), crate::store::png_of(&cv)).unwrap();
         }
         let tap = |u: &mut Ui, v: AutoView| {
             let r = u.auto_bar_rects().into_iter().find(|b| b.1 == Some(v)).unwrap().0;
@@ -749,7 +750,7 @@ mod tests {
 
     #[test]
     fn looks_only_at_the_channels_that_are_on() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         for c in 0..NCH {
             ui.m.ch[c].on = c == 0;
         }
@@ -767,7 +768,7 @@ mod tests {
 
     #[test]
     fn noise_reject_menu_setup_scpi_and_hardware() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         // a new set-up: Auto bandwidth, noise reject off
         assert!(ui.m.ch.iter().all(|c| c.bw == BW_AUTO) && !ui.m.trig_nrej);
         assert!(ui.trigger_items().contains(&Item::TrigNoise));
@@ -775,9 +776,9 @@ mod tests {
         assert!(ui.m.trig_nrej && ui.m.trig_hyst_div() == 0.7);
         let back = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
         assert!(back.trig_nrej);
-        assert!(crate::board::dho::hw::settings(&ui.m, false).noise_reject);
+        assert!(crate::board::dho::hw::settings(&ui.m, false, &Default::default()).noise_reject);
         ui.m.trig_nrej = false;
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let cv = Canvas::new(PANEL_W, PANEL_H);
         scpi.exec_line(&mut ui, &cv, ":TRIG:NREJ ON");
         assert_eq!(scpi.exec_line(&mut ui, &cv, ":TRIG:NREJ?"), b"1");
@@ -788,10 +789,10 @@ mod tests {
     // after the auto set-up (docs/fork/trigger-lockin.md)
     #[test]
     fn levels_stages_use_the_fast_auto_trigger_only() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
-        assert!(!crate::board::dho::hw::settings(&ui.m, false).auto_fast);
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+        assert!(!crate::board::dho::hw::settings(&ui.m, false, &Default::default()).auto_fast);
         ui.auto_start();
-        assert!(crate::board::dho::hw::settings(&ui.m, false).auto_fast);
+        assert!(crate::board::dho::hw::settings(&ui.m, false, &Default::default()).auto_fast);
         let mut seen_search = false;
         for _ in 0..4000 {
             ui.step(0.02);
@@ -806,7 +807,7 @@ mod tests {
         }
         assert!(seen_search && ui.auto.is_none() && !ui.m.auto_fast);
         // a failed run (no channel worth a period) ends without it too
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         for c in 0..NCH {
             ui.m.ch[c].on = c == 3;
         }
@@ -866,7 +867,7 @@ mod tests {
     #[test]
     fn hardware_records_settle_a_stage_at_once() {
         // probe-comp output: 0.3 V at 1 V/div is under 0.4 div, so the wide stage rescales and looks again
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let now = ui.now;
         let stages = run_hw(&mut ui, 0.0, 0.3);
         assert_eq!(ui.now, now);
@@ -876,7 +877,7 @@ mod tests {
         let p = ui.m.time_per_div() as f64 * HDIV as f64;
         assert!((1.5e-3..=12e-3).contains(&p), "window {} s for a 1 ms period", p);
         // a signal that reads well at the wide scale: no second look
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let stages = run_hw(&mut ui, -1.0, 2.0);
         assert_eq!(&stages[..2], ["wide", "search 0"]);
         assert!(ui.auto.is_none() && (ui.m.trig_level - 0.5).abs() < 0.1, "level {}", ui.m.trig_level);
@@ -886,7 +887,7 @@ mod tests {
     // period (the noisy 5 V signal of docs/fork/trigger-lockin.md), or one that keeps a channel without a signal
     #[test]
     fn a_signal_without_a_steady_period_keeps_scale_and_level() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let back = ui.m.clone();
         // 0..5 V pulses at irregular distances (0.2 to 1.9 ms), seen at every time base
         let edges: Vec<f64> = {
@@ -916,7 +917,7 @@ mod tests {
         assert!(ui.toast.as_ref().is_some_and(|t| t.0.contains("no steady period")));
         assert!(!ui.auto_bar_on());
         // a flat input is still no signal: the set-up stays
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let back = ui.m.clone();
         run_hw_of(&mut ui, &|_| 0.004);
         assert_eq!(ui.m.ch[0], back.ch[0]);
@@ -938,13 +939,13 @@ mod tests {
         for (opt, sig, want) in
             [(true, &noisy as &dyn Fn(f64) -> f32, true), (true, &clean, false), (false, &noisy, false)]
         {
-            let mut ui = Ui::new(Source::Demo { t: 0.0 });
+            let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.m.auto_nrej = opt;
             run_hw_of(&mut ui, sig);
             assert_eq!(ui.m.trig_nrej, want, "opt-in {} noise {:?}", opt, crate::wave::flat_noise(&ui.record_volts(0)));
         }
         // the option is part of the set-up and of the trigger menu
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         assert!(ui.trigger_items().contains(&Item::TrigAutoNoise));
         ui.select_option(Item::TrigAutoNoise, "On");
         assert!(crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap().auto_nrej);
@@ -953,7 +954,7 @@ mod tests {
     /// A hardware source whose thread is played by hand, CH1 alone.
     fn hw_ui() -> (Ui, crate::board::HwShared) {
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         for c in 0..NCH {
             ui.m.ch[c].on = c == 0;
         }
@@ -1072,7 +1073,7 @@ mod tests {
     #[test]
     fn several_channels_keep_the_deep_record_small_and_use_the_measure_unit() {
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         for c in 0..NCH {
             ui.m.ch[c].on = c < 3;
         }
@@ -1103,7 +1104,7 @@ mod tests {
     #[test]
     fn debug_slots_dump_all_eight_over_scpi() {
         let (mut ui, shared) = hw_ui();
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let cv = Canvas::new(PANEL_W, PANEL_H);
         assert_eq!(scpi.exec_line(&mut ui, &cv, ":DEB:SLOT?"), b"pending");
         let id = shared.lock().unwrap().slots_want.unwrap();
@@ -1115,7 +1116,7 @@ mod tests {
         assert_eq!(parts[0], id.to_string());
         assert_eq!(parts[8], "7,4007,32768.5");
         assert!(shared.lock().unwrap().slots_want.unwrap() > id, "each query asks for a new run");
-        let mut demo = Ui::new(Source::Demo { t: 0.0 });
+        let mut demo = Ui::for_tests(Source::Demo { t: 0.0 });
         assert_eq!(scpi.exec_line(&mut demo, &cv, ":DEB:SLOT?"), b"no hardware");
     }
 
@@ -1137,7 +1138,7 @@ mod tests {
 
     #[test]
     fn with_no_channel_on_nothing_happens() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         for c in 0..NCH {
             ui.m.ch[c].on = false;
         }

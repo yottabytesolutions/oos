@@ -102,7 +102,7 @@ impl Schedule {
         true
     }
 
-    pub fn done(&mut self, now: f64, r: Result<Synced, String>) {
+    pub fn done(&mut self, now: f64, unix: f64, r: Result<Synced, String>) {
         self.busy = false;
         match r {
             Ok(s) => {
@@ -113,7 +113,7 @@ impl Schedule {
             }
             Err(e) => {
                 self.fails += 1;
-                self.last_err = Some((clock::unix_now(), short_err(&e)));
+                self.last_err = Some((unix, short_err(&e)));
                 self.due = Some(now + retry_wait(self.fails));
             }
         }
@@ -138,7 +138,7 @@ pub(super) struct NtpUi {
 
 /// One sync: ask, then set the clock.
 fn sync(server: &str) -> Result<Synced, String> {
-    let s = sntp::query(server)?;
+    let s = sntp::query(server, clock::unix_now)?;
     sntp::step(s.offset).map_err(|e| format!("clock not set: {}", e))?;
     eprintln!(
         "oos-ui: NTP {} ({}, stratum {}): offset {:+.3} s, delay {:.3} s",
@@ -180,10 +180,10 @@ impl Ui {
 
     /// At the start on the unit: the settings file, the time zone for the kernel, whether the clock was set already.
     pub fn load_system(&mut self, path: std::path::PathBuf) {
-        self.sys = sysconf::SysConf::load(&path);
+        self.sys = sysconf::SysConf::load_with_image(&path, &self.host.text(sysconf::IMAGE_PATH).unwrap_or_default());
         self.sys_path = Some(path);
         self.net_name_init();
-        self.clock_known = std::path::Path::new(CLOCK_SET).exists();
+        self.clock_known = self.host.text(CLOCK_SET).is_some();
         self.apply_tz();
         self.apply_backlight();
     }
@@ -223,15 +223,15 @@ impl Ui {
 
     /// Local time now.
     pub fn local_now(&self) -> Local {
-        self.zone().local(clock::unix_now().floor() as i64)
+        self.zone().local(self.host.unix_now().floor() as i64)
     }
 
     /// The zone with the lease (`resolve_zone`) and its local offset for the kernel (FAT time stamps on a stick), when
     /// it changed.
     fn apply_tz(&mut self) {
         self.resolve_zone();
-        let off = self.zone().offset_at(clock::unix_now() as i64).0;
-        if self.ntp.kernel_tz == Some(off) || cfg!(test) {
+        let off = self.zone().offset_at(self.host.unix_now() as i64).0;
+        if self.ntp.kernel_tz == Some(off) || !self.host.services() {
             return;
         }
         // a failure is logged once per offset (not as root on a host: EPERM)
@@ -244,7 +244,7 @@ impl Ui {
     /// The clock is right (set by NTP or by hand in this boot).
     fn clock_set(&mut self) {
         self.clock_known = true;
-        if !cfg!(test) {
+        if self.host.services() {
             let _ = std::fs::write(CLOCK_SET, b"");
         }
     }
@@ -270,7 +270,7 @@ impl Ui {
                 let base = std::path::Path::new(file).file_name()?.to_string_lossy();
                 std::fs::read_to_string(d.join(format!("{}{}", base, iface))).ok()
             }
-            None if cfg!(test) => None,
+            None if !self.host.services() => None,
             None => std::fs::read_to_string(format!("{}{}", file, iface)).ok(),
         }
     }
@@ -292,7 +292,7 @@ impl Ui {
         }
         let up = self.net_up();
         if self.ntp.st.tick(self.now, self.sys.ntp, up) {
-            if self.ntp.tx.is_none() && !cfg!(test) {
+            if self.ntp.tx.is_none() && self.host.services() {
                 let (tx, jobs) = channel();
                 let (out, rx) = channel();
                 if std::thread::Builder::new().name("ntp".into()).spawn(move || worker(jobs, out)).is_ok() {
@@ -302,8 +302,8 @@ impl Ui {
             }
             let (server, origin) = self.ntp_target();
             self.ntp.asked = Some((server.clone(), origin));
-            if !self.ntp.tx.as_ref().is_some_and(|tx| tx.send(server).is_ok()) && !cfg!(test) {
-                self.ntp.st.done(self.now, Err("no worker".into()));
+            if !self.ntp.tx.as_ref().is_some_and(|tx| tx.send(server).is_ok()) && self.host.services() {
+                self.ntp.st.done(self.now, self.host.unix_now(), Err("no worker".into()));
             }
         }
         while let Some(r) = self.ntp.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
@@ -313,7 +313,7 @@ impl Ui {
 
     pub(super) fn ntp_report(&mut self, r: Result<Synced, String>) {
         let ok = r.is_ok();
-        self.ntp.st.done(self.now, r);
+        self.ntp.st.done(self.now, self.host.unix_now(), r);
         if ok {
             self.clock_set();
             self.apply_tz();
@@ -422,7 +422,7 @@ impl Ui {
         let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
             Item::TimeNow => {
-                let t = clock::unix_now() as i64;
+                let t = self.host.unix_now() as i64;
                 let z = self.zone();
                 let s = format!("{} {}", z.local(t).text(), z.abbr_at(t));
                 if self.clock_known {
@@ -455,7 +455,7 @@ impl Ui {
         if self.sys.tz != sysconf::DHCP {
             return clock::zone_name(&self.sys.tz).map_or_else(|| short(&self.sys.tz), str::to_string);
         }
-        let abbr = self.zone().abbr_at(clock::unix_now() as i64).to_string();
+        let abbr = self.zone().abbr_at(self.host.unix_now() as i64).to_string();
         match self.ntp.zone.as_ref().map(|z| z.2) {
             Some(NtpOrigin::Dhcp(_)) => format!("{} ({})", abbr, DHCP_LABEL),
             _ => format!("{} (no {})", abbr, DHCP_LABEL),
@@ -603,7 +603,7 @@ impl Ui {
                     }
                 };
                 let unix = self.zone().to_unix(&l);
-                if !cfg!(test) {
+                if self.host.services() {
                     if let Err(e) = sntp::set_clock(unix as f64) {
                         self.toast(&format!("Clock not set: {}", e));
                         return true;
@@ -657,18 +657,18 @@ mod tests {
         assert!(s.tick(5.0, true, true));
         // one request at a time
         assert!(!s.tick(6.0, true, true));
-        s.done(10.0, Err("no answer".into()));
+        s.done(10.0, 0.0, Err("no answer".into()));
         assert!(!s.tick(24.9, true, true));
         assert!(s.tick(25.0, true, true));
-        s.done(28.0, Err("no answer".into()));
+        s.done(28.0, 0.0, Err("no answer".into()));
         assert!(!s.tick(57.9, true, true));
         assert!(s.tick(58.0, true, true));
-        s.done(60.0, ok(1e9, 0.01));
+        s.done(60.0, 0.0, ok(1e9, 0.01));
         assert_eq!(s.fails, 0);
         assert!(s.last_err.is_none());
         assert!(!s.tick(60.0 + RESYNC - 1.0, true, true));
         assert!(s.tick(60.0 + RESYNC, true, true));
-        s.done(4000.0, ok(1e9, 0.01));
+        s.done(4000.0, 0.0, ok(1e9, 0.01));
         // a link that went and came back asks soon, not in an hour
         assert!(!s.tick(4001.0, true, false));
         assert!(!s.tick(4002.0, true, true));
@@ -684,7 +684,7 @@ mod tests {
     }
 
     fn ui() -> Ui {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         u.net_ifs = vec![("eth0".into(), "192.168.1.20".into())];
         u.eth_link = true;
         u
@@ -705,11 +705,11 @@ mod tests {
         assert_eq!(u.value(Item::NtpStatus), "Asking the server ...");
         u.ntp_report(Err("no answer".into()));
         assert!(u.value(Item::NtpStatus).starts_with("no answer at "), "{}", u.value(Item::NtpStatus));
-        u.ntp_report(ok(clock::unix_now(), 412_000_000.0));
+        u.ntp_report(ok(u.host.unix_now(), 412_000_000.0));
         assert!(u.clock_known);
         assert!(u.value(Item::NtpStatus).ends_with(", clock set"));
         assert!(!u.value(Item::TimeNow).contains("not set"));
-        u.ntp_report(ok(clock::unix_now(), -0.25));
+        u.ntp_report(ok(u.host.unix_now(), -0.25));
         assert!(u.value(Item::NtpStatus).ends_with("(-0.25 s)"), "{}", u.value(Item::NtpStatus));
         // zone and server from the pickers
         u.select_option(Item::TimeZone, "Berlin, Paris, Rome");
@@ -748,7 +748,7 @@ mod tests {
         u.ntp_sync_now();
         u.step(0.04);
         assert_eq!(u.value(Item::NtpStatus), "Asking 192.168.1.1 (DHCP) ...");
-        u.ntp_report(Ok(Synced { at: clock::unix_now(), server: "192.168.1.1".into(), offset: 0.02, stratum: 2 }));
+        u.ntp_report(Ok(Synced { at: u.host.unix_now(), server: "192.168.1.1".into(), offset: 0.02, stratum: 2 }));
         let s = u.value(Item::NtpStatus);
         assert!(s.starts_with("Synced ") && s.ends_with(", 192.168.1.1 (DHCP)"), "{}", s);
         // a server of its own: the line as before
@@ -844,8 +844,7 @@ mod tests {
         let p = u.new_file(&dir, "shot", "png");
         let name = crate::store::file_name(&p);
         let want = format!("shot-{}.png", u.local_now().stamp());
-        // the second may have turned between the two readings
-        assert!(name == want || name.len() == want.len(), "{} {}", name, want);
+        assert_eq!(name, want);
         std::fs::write(&p, b"x").unwrap();
         let q = crate::store::file_name(&crate::store::next_name_at(&dir, "shot", "png", Some(&name[5..20])));
         assert_eq!(q, format!("shot-{}-2.png", &name[5..20]));
@@ -863,7 +862,7 @@ mod tests {
         u.select_option(Item::NtpOn, "On");
         u.select_option(Item::TimeZone, "New York, Toronto");
         u.select_option(Item::NetRetry10, "Off");
-        let c = sysconf::SysConf::load(&p);
+        let c = sysconf::SysConf::load_with_image(&p, "");
         assert!(c.ntp && !c.eth_retry_10m);
         assert_eq!(c.tz, "EST5EDT,M3.2.0,M11.1.0");
         std::fs::remove_dir_all(&dir).unwrap();

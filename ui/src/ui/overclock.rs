@@ -79,7 +79,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("limits.conf");
         fs::write(&path, "# my limits\nafg.sine_max_hz = 7e7\nadc.clock_hz = 2e9\n").unwrap();
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.limits_path = path.to_str().unwrap().into();
         assert_eq!(ui.value(Item::Overclock), "1.25 GHz");
         ui.select_option(Item::Overclock, "1.5 GHz");
@@ -108,7 +108,7 @@ mod tests {
     fn steps_stop_at_both_ends() {
         let dir = std::env::temp_dir().join(format!("oos-overclock-ends-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.limits_path = dir.join("limits.conf").to_str().unwrap().into();
         ui.overclock_step(-1);
         assert_eq!(ui.value(Item::Overclock), "1.25 GHz");
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn a_step_the_file_cannot_take_stays_as_it_was() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.limits_path = "/nonexistent-dir/limits.conf".into();
         ui.select_option(Item::Overclock, "1.5 GHz");
         assert_eq!(ui.value(Item::Overclock), "1.25 GHz");

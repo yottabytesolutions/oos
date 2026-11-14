@@ -69,6 +69,10 @@ pub fn build(payload: &[u8], s: Stamp) -> Vec<u8> {
 /// UTC now as a stamp (the unit has no time zone set under OOS).
 pub fn now() -> Stamp {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    stamp_at(secs)
+}
+
+fn stamp_at(secs: u64) -> Stamp {
     let (days, rem) = (secs / 86400, secs % 86400);
     // civil from days (Howard Hinnant's algorithm)
     let z = days as i64 + 719_468;
@@ -138,6 +142,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn utc_stamps_use_explicit_seconds() {
+        for (secs, want) in [
+            (0, (1970, 1, 1, 0, 0, 0)),
+            (951_827_696, (2000, 2, 29, 12, 34, 56)),
+            (1_762_862_400, (2025, 11, 11, 12, 0, 0)),
+        ] {
+            assert_eq!(stamp_at(secs), want);
+        }
+    }
+
+    #[test]
     fn data_partition_mounted() {
         assert!(oos_mounted("rootfs / rootfs rw 0 0\n/dev/mmcblk0p1 /oos ext4 rw,noatime 0 0\n"));
         assert!(!oos_mounted(
@@ -145,32 +160,23 @@ mod tests {
         ));
     }
 
-    fn unit_dir() -> String {
-        std::env::var("OOS_CAL_DIR")
-            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full").into())
+    #[test]
+    fn synthetic_files_parse_and_rebuild_byte_for_byte() {
+        for (name, bytes) in crate::dho::fixtures::files() {
+            let payload = parse(&bytes).unwrap_or_else(|e| panic!("{}: {:?}", name, e));
+            assert_eq!(build(payload, stamp(&bytes).unwrap()), bytes, "{}", name);
+            assert_eq!(stamp(&bytes), Some((2000, 1, 1, 0, 0, 0)));
+        }
     }
 
     #[test]
-    fn unit_files_parse_and_rebuild_byte_for_byte() {
-        let dir = unit_dir();
-        let mut n = 0;
-        for f in [
-            "cal_adc.hex",
-            "cal_afe_bandwidth.hex",
-            "cal_afe_zero.hex",
-            "cal_lsb.hex",
-            "cal_vertical.hex",
-            "cal_ddr.hex",
-            "cal_la.hex",
-            "cal_afg.hex",
-        ] {
-            let Ok(b) = std::fs::read(format!("{}/{}", dir, f)) else { continue };
-            let p = parse(&b).unwrap_or_else(|e| panic!("{}: {:?}", f, e));
-            assert_eq!(build(p, stamp(&b).unwrap()), b, "{}", f);
-            n += 1;
-        }
-        if n == 0 {
-            eprintln!("calfile: no unit files in {}, skipped", dir);
+    #[ignore = "private calibration: set OOS_CAL_DIR"]
+    fn private_files_parse_and_rebuild_byte_for_byte() {
+        for name in crate::dho::fixtures::NAMES {
+            // Explicit opt-in requires every file, so a missing scenario fails.
+            let bytes = crate::dho::fixtures::private(name);
+            let payload = parse(&bytes).unwrap_or_else(|e| panic!("{}: {:?}", name, e));
+            assert_eq!(build(payload, stamp(&bytes).unwrap()), bytes, "{}", name);
         }
     }
 
@@ -186,20 +192,19 @@ mod tests {
         bad[12] ^= 1;
         assert_eq!(parse(&bad), Err(Error::HeaderCrc));
         assert_eq!(parse(&b[..20]), Err(Error::Short));
-        assert!(save("/rigol/data", "cal_vertical.hex", &[0], now()).is_err());
-        assert!(save("/rigol//data/", "x", &[0], now()).is_err());
-        assert!(save("/tmp/../rigol/data", "x", &[0], now()).is_err());
+        assert!(save("/rigol/data", "cal_vertical.hex", &[0], (2000, 1, 1, 0, 0, 0)).is_err());
+        assert!(save("/rigol//data/", "x", &[0], (2000, 1, 1, 0, 0, 0)).is_err());
+        assert!(save("/tmp/../rigol/data", "x", &[0], (2000, 1, 1, 0, 0, 0)).is_err());
         // atomic save with .bak
         let d = std::env::temp_dir().join(format!("oos-calfile-{}", std::process::id()));
         let ds = d.to_str().unwrap();
-        save(ds, "c.hex", &[7; 10], now()).unwrap();
-        save(ds, "c.hex", &[8; 10], now()).unwrap();
+        save(ds, "c.hex", &[7; 10], (2000, 1, 1, 0, 0, 0)).unwrap();
+        save(ds, "c.hex", &[8; 10], (2000, 1, 1, 0, 0, 0)).unwrap();
         assert_eq!(parse(&std::fs::read(d.join("c.hex")).unwrap()), Ok(&[8u8; 10][..]));
         assert_eq!(parse(&std::fs::read(d.join("c.hex.bak")).unwrap()), Ok(&[7u8; 10][..]));
-        let (_, from) = load_first("c.hex", &["/nonexistent", ds]).unwrap();
+        let missing = d.join("missing");
+        let (_, from) = load_first("c.hex", &[missing.to_str().unwrap(), ds]).unwrap();
         assert_eq!(from, ds);
         std::fs::remove_dir_all(&d).unwrap();
-        let (y, m, day, ..) = now();
-        assert!(y >= 2026 && (1..=12).contains(&m) && (1..=31).contains(&day));
     }
 }

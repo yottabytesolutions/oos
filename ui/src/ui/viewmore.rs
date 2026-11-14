@@ -91,7 +91,7 @@ mod tests {
     use super::*;
 
     fn at(view: AView) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.view = view;
         ui.step(1.0 / 30.0);
         ui.render(&mut Canvas::new(super::super::PANEL_W, super::super::PANEL_H));

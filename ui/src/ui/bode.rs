@@ -165,11 +165,6 @@ pub fn free_plan(m: &Model, sw: &bode::Sweep) -> Result<FreePlan, String> {
     Ok(FreePlan { tscale: i, delay: 0.0, mdepth: 0, scan: board().slow_mode(&c) != crate::board::Slow::Off })
 }
 
-/// Where the generator thread finds USB devices (none in the tests: they must never talk to a real instrument).
-fn usb_root() -> &'static std::path::Path {
-    std::path::Path::new(if cfg!(test) { "/nonexistent/oos-test" } else { crate::usbtmc::SYSFS })
-}
-
 /// The connection to an external generator.
 enum Link {
     Tcp(std::net::TcpStream),
@@ -177,11 +172,11 @@ enum Link {
 }
 
 impl Link {
-    /// Opens the connection: the first USBTMC device (`usb`), else `addr` (port 5555 if none). Returns it with its
-    /// name for messages and, on USB, the `*IDN?` answer for the user.
-    fn open(usb: bool, addr: &str) -> Result<(Link, String, Option<String>), String> {
-        if usb {
-            let (mut t, d) = crate::usbtmc::connect(usb_root()).map_err(|e| format!("generator USB: {}", e))?;
+    /// Opens the connection: the first USBTMC device under `usb` (the USB root), else `addr` (port 5555 if none).
+    /// Returns it with its name for messages and, on USB, the `*IDN?` answer for the user.
+    fn open(usb: Option<&std::path::Path>, addr: &str) -> Result<(Link, String, Option<String>), String> {
+        if let Some(root) = usb {
+            let (mut t, d) = crate::usbtmc::connect(root).map_err(|e| format!("generator USB: {}", e))?;
             let what = format!("generator USB {}", d.id);
             let note = match t.query("*IDN?") {
                 Ok(idn) if !idn.is_empty() => format!("Generator on USB: {}", idn),
@@ -213,14 +208,14 @@ impl Link {
 
 /// The generator thread: connects, sends every line it receives (a message with `\n` as several commands).
 fn gen_thread(
-    usb: bool,
+    usb: Option<std::path::PathBuf>,
     addr: String,
     err: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     note: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 ) -> mpsc::Sender<String> {
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
-        let (mut link, what) = match Link::open(usb, &addr) {
+        let (mut link, what) = match Link::open(usb.as_deref(), &addr) {
             Ok((l, w, n)) => {
                 *note.lock().unwrap() = n;
                 (l, w)
@@ -526,8 +521,8 @@ impl Ui {
             self.bode_send_freq();
         } else {
             *self.bode.note.lock().unwrap() = None;
-            let tx =
-                gen_thread(self.m.bode_usb, self.m.bode_addr.clone(), self.bode.err.clone(), self.bode.note.clone());
+            let usb = self.m.bode_usb.then(|| self.host.usb_root());
+            let tx = gen_thread(usb, self.m.bode_addr.clone(), self.bode.err.clone(), self.bode.note.clone());
             let g = &GENERATORS[self.bode_gen()];
             let (f0, a) = (self.bode.freqs[0], self.m.bode_amp);
             let _ = tx.send(gen_lines(g.setup, f0, a).join("\n"));
@@ -935,7 +930,7 @@ mod tests {
     /// a first-order low-pass at 1 kHz, CH4 the sync pulse at the start.
     #[test]
     fn free_sweep_reads_one_record() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_points) = (FREE, 20.0, 20e3, 40);
         (ui.m.bode_sw_time, ui.m.bode_sw_log, ui.m.bode_sw_in, ui.m.bode_out, ui.m.bode_sync, ui.m.bode_sync_level) =
             (0.5, true, 1, 1, 3, 1.5);
@@ -1025,7 +1020,7 @@ mod tests {
 
     #[test]
     fn free_sweep_refuses_what_does_not_fit() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         (ui.m.bode_gen, ui.m.bode_start, ui.m.bode_stop, ui.m.bode_sw_time) = (FREE, 1e3, 200e6, 0.5);
         ui.activate(Item::BodeRun);
         assert!(!ui.bode.running && ui.toast.as_ref().unwrap().0.contains("does not fit the memory"), "{:?}", ui.toast);
@@ -1068,7 +1063,7 @@ mod tests {
 
     #[test]
     fn free_sweep_menu_settings() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.bode_gen = FREE;
         assert_eq!(ui.value(Item::BodeGen), "Free-running sweep");
         assert_eq!(
@@ -1116,7 +1111,7 @@ mod tests {
 
     #[test]
     fn usb_connection_in_the_menu() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         assert!(!ui.items(MenuId::Bode).contains(&Item::BodeLink), "not for the built-in generator");
         ui.m.bode_gen = 5;
         assert_eq!(ui.value(Item::BodeGen), "UNI-T UTG900");

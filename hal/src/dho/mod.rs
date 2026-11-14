@@ -5,6 +5,9 @@
 //! generator and logic analyser, the panel MCU and the board I/O (docs/hardware, docs/protocols). Everything here is
 //! specific to this board; another board family gets a module of its own (docs/porting.md).
 
+#[cfg(test)]
+pub(crate) mod fixtures;
+
 pub mod acq;
 pub mod adc;
 pub mod afe;

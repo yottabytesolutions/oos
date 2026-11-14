@@ -7,6 +7,7 @@
 
 pub mod fpga;
 pub mod hw;
+pub mod switches;
 #[cfg(test)]
 mod tests;
 
@@ -76,8 +77,8 @@ impl Board for Dho {
         "DHO800/DHO900"
     }
 
-    fn want(&self, m: &Model) -> Self::Want {
-        hw::settings(m, false)
+    fn want(&self, m: &Model, sw: &crate::sysconf::Switches) -> Self::Want {
+        hw::settings(m, false, sw)
     }
 
     fn slow_mode(&self, m: &Model) -> Slow {
@@ -93,8 +94,9 @@ impl Board for Dho {
     }
 
     #[cfg(target_os = "linux")]
-    fn spawn(&self, o: super::Spawn) -> super::HwShared {
-        hw::spawn(o.mask, o.program_afe, o.cal_dir, o.start_up)
+    fn spawn(&self, o: super::Spawn, sw: crate::sysconf::Switches) -> super::HwShared {
+        hw::mask_map_init(sw.board.mask_map);
+        hw::spawn(o, sw)
     }
 
     #[cfg(target_os = "linux")]
@@ -134,20 +136,20 @@ impl Board for Dho {
         hw::seg_max(m)
     }
 
-    fn dvm_hw(&self) -> bool {
-        hw::dvm_hw_on()
+    fn dvm_hw(&self, sw: &crate::sysconf::Switches) -> bool {
+        sw.board.dvm
     }
 
-    fn mask_hw(&self) -> bool {
-        hw::mask_hw_on()
+    fn mask_hw(&self, sw: &crate::sysconf::Switches) -> bool {
+        sw.board.mask
     }
 
-    fn zone_hw(&self) -> bool {
-        hw::zone_hw_on()
+    fn zone_hw(&self, sw: &crate::sysconf::Switches) -> bool {
+        sw.board.zone
     }
 
-    fn uart_debug(&self, m: &Model) -> String {
-        hw::serial_debug(m)
+    fn uart_debug(&self, m: &Model, sw: &crate::sysconf::Switches) -> String {
+        hw::serial_debug(m, sw.board.serial_hw)
     }
 
     fn mask_map(&self, kv: Option<&str>) -> Result<String, String> {

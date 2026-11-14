@@ -309,7 +309,7 @@ impl Ui {
 mod arb_tests {
     #[test]
     fn the_frequency_value_opens_the_keypad() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.open_menu(MenuId::Afg);
         assert!(!ui.items(MenuId::Afg).contains(&Item::AfgFreqEntry));
         let d = ui.dlg_layout().unwrap();
@@ -323,7 +323,7 @@ mod arb_tests {
 
     #[test]
     fn frequency_keypad_ends_with_the_unit_and_keeps_the_limit() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.open_menu(MenuId::Afg);
         let type_in = |ui: &mut Ui, keys: &[&str]| {
             ui.open_picker(Item::AfgFreqEntry);
@@ -357,7 +357,7 @@ mod arb_tests {
     fn capture_load_and_scpi() {
         let dir = std::env::temp_dir().join(format!("oos-ui-arb-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.store_dir = dir.clone();
         assert!(ui.afg_arb_capture(0).is_err(), "no record yet");
         for _ in 0..3 {
@@ -383,7 +383,7 @@ mod arb_tests {
         assert_eq!(ui.m.afg_freq, 10e6);
 
         let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let id = ui.m.afg_arb;
         scpi.exec_line(&mut ui, &cv, ":SOUR:ARB:DATA 0,1,0,-1");
         assert_ne!(ui.m.afg_arb, id);
@@ -393,7 +393,7 @@ mod arb_tests {
 
     #[test]
     fn grid_settings() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.adjust(Item::GridBright, -3);
         ui.adjust(Item::GridFrame, 1);
         assert_eq!((ui.m.grid_bright, ui.m.grid_frame), (70, false));

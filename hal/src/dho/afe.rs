@@ -891,8 +891,6 @@ pub fn configure_ch(
 mod tests {
     use super::*;
 
-    const CAL_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal");
-
     #[derive(Default)]
     struct Rec {
         w: Vec<(usize, u8, u16)>,
@@ -941,7 +939,7 @@ mod tests {
     }
 
     /// Compares the full write sequence with tools/afesim.py (testdata/afe_expected.txt) for six channel set-ups.
-    /// Needs the unit's calibration files (device data, not in the tree); skipped when they are missing.
+    /// Uses the generated synthetic calibration.
     #[test]
     fn the_ladder_is_the_table() {
         let l = scale_ladder();
@@ -950,10 +948,7 @@ mod tests {
             (801, 1_000_000, 5_000_000, 100_000_000, 200_000_000, 1_000_000_000, 10_000_000_000)
         );
         assert!(l.windows(2).all(|w| w[0] < w[1] && w[1] as f64 / w[0] as f64 <= 1.0251));
-        let Ok(cal) = Cal::load(&std::env::var("OOS_CAL_DIR").unwrap_or(CAL_DIR.into())) else {
-            eprintln!("calibration files not found, skipped");
-            return;
-        };
+        let cal = crate::dho::fixtures::afe();
         assert_eq!(l, (0..801).map(|i| cal.key(i)).collect::<Vec<_>>());
         // a scale that went through f32 finds its own row
         for (i, &k) in l.iter().enumerate() {
@@ -964,10 +959,7 @@ mod tests {
 
     #[test]
     fn matches_afesim() {
-        let Ok(cal) = Cal::load(&std::env::var("OOS_CAL_DIR").unwrap_or(CAL_DIR.into())) else {
-            eprintln!("calibration files not found, skipped");
-            return;
-        };
+        let cal = crate::dho::fixtures::afe();
         let want = include_str!("../../testdata/afe_expected.txt");
         let bwv = |s: &str| match s {
             "OFF" => bw::OFF,

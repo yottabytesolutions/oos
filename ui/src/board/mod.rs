@@ -20,8 +20,9 @@ pub use record::{sw_trig_level, sw_trig_level_of, to_record, trigger_point};
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
 use std::sync::{Arc, Mutex};
 
-/// The board this build drives.
+/// The board this build drives, and its part of the switches (`sysconf::Switches`).
 pub type Active = dho::Dho;
+pub type BoardSwitches = dho::switches::Switches;
 
 /// The board of this build.
 pub fn board() -> &'static Active {
@@ -82,7 +83,7 @@ pub trait Board: Sync + 'static {
     fn name(&self) -> &'static str;
 
     // ---- acquisition
-    fn want(&self, m: &Model) -> Self::Want;
+    fn want(&self, m: &Model, sw: &crate::sysconf::Switches) -> Self::Want;
     /// roll, scan or ordinary records for the model's time base
     fn slow_mode(&self, m: &Model) -> Slow;
     /// time base (s/div) from which the board streams in roll mode
@@ -91,7 +92,7 @@ pub trait Board: Sync + 'static {
     fn trig_hyst_div(&self, scale_bnc: f64, noise_reject: bool) -> f64;
     /// starts the acquisition thread
     #[cfg(target_os = "linux")]
-    fn spawn(&self, o: Spawn) -> HwShared;
+    fn spawn(&self, o: Spawn, sw: crate::sysconf::Switches) -> HwShared;
     /// the read-out-only debug source (`--fpga-live`), if the board has one
     #[cfg(target_os = "linux")]
     fn live(&self, args: &[String]) -> Option<LiveShared>;
@@ -107,20 +108,19 @@ pub trait Board: Sync + 'static {
     /// the frames.
     fn avg_hw(&self, m: &Model) -> bool;
 
-    /// The DVM reads the board's hardware DVM (`DvmWant`) instead of the records; off where the board has none or it is
-    /// not enabled.
-    fn dvm_hw(&self) -> bool;
+    /// The DVM reads the board's DVM block (`DvmWant`) instead of the records where the board has one and `sw` enables it.
+    fn dvm_hw(&self, sw: &crate::sysconf::Switches) -> bool;
 
     /// The mask test runs in the board's hardware (`MaskWant`) instead of on the records; off where the board has none
     /// or it is not enabled.
-    fn mask_hw(&self) -> bool;
+    fn mask_hw(&self, sw: &crate::sysconf::Switches) -> bool;
 
     /// The zone trigger qualifies frames in the board's hardware (`ZoneWant`) instead of the records being filtered;
     /// off where the board has none or it is not enabled.
-    fn zone_hw(&self) -> bool;
+    fn zone_hw(&self, sw: &crate::sysconf::Switches) -> bool;
 
     /// Fork: the hardware protocol trigger's set-up for the model as one line (`:SYSTem:DEBug:SERial?`, `UART?`).
-    fn uart_debug(&self, m: &Model) -> String;
+    fn uart_debug(&self, m: &Model, sw: &crate::sysconf::Switches) -> String;
 
     /// Fork, the mask/zone comparator mapping under test (docs/fork/hwmask.md "Sweep"): with `kv` one `key=value` set,
     /// then the whole mapping as one line; an error for a bad key or value, or where the board has none.

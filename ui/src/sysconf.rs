@@ -18,9 +18,12 @@
 //! backlight = 100            # Display > Backlight, percent (10..100)
 //! ```
 
+pub mod switches;
+
 use crate::clock::Tz;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+pub use switches::Switches;
 
 /// On OOS's own data partition.
 pub const PATH: &str = "/oos/system.conf";
@@ -271,19 +274,13 @@ impl SysConf {
         (c, bad)
     }
 
-    /// From a file over the image defaults (`IMAGE_PATH`, none on most images); a missing file gives the defaults.
-    /// Problems go to the log.
-    pub fn load(path: &Path) -> SysConf {
-        let base = match std::fs::read_to_string(IMAGE_PATH) {
-            Ok(t) => {
-                let (c, bad) = SysConf::image_defaults(&t);
-                for e in bad {
-                    eprintln!("oos-ui: {}: {}", IMAGE_PATH, e);
-                }
-                c
-            }
-            Err(_) => SysConf::default(),
-        };
+    /// From a file over the image defaults (`image`: the text of `IMAGE_PATH`, none on most images, supplied by the
+    /// UI's host); a missing file gives the defaults. Problems go to the log.
+    pub fn load_with_image(path: &Path, image: &str) -> SysConf {
+        let (base, bad) = SysConf::image_defaults(image);
+        for e in bad {
+            eprintln!("oos-ui: {}: {}", IMAGE_PATH, e);
+        }
         SysConf::load_over(base, path)
     }
 
@@ -321,14 +318,6 @@ impl SysConf {
 /// The text the fork's keys (`acq.*`, `perf.*`, `trig.*`, ...; `drawpipe::conf_value`) are looked up in: the settings
 /// file (`default_path`), then the image defaults (`IMAGE_PATH`). `conf_value` takes the first line of a key, so the
 /// settings file wins, also with an empty value, as `oos-conf` has it for the scripts.
-pub fn fork_text() -> String {
-    fork_text_of(
-        &std::fs::read_to_string(default_path()).unwrap_or_default(),
-        &std::fs::read_to_string(IMAGE_PATH).unwrap_or_default(),
-    )
-}
-
-/// `fork_text` from the two files' text.
 pub fn fork_text_of(settings: &str, image: &str) -> String {
     format!("{}\n{}", settings, image)
 }
@@ -499,12 +488,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("system.conf");
         let _ = std::fs::remove_file(&p);
-        assert_eq!(SysConf::load(&p), SysConf::default());
+        assert_eq!(SysConf::load_with_image(&p, ""), SysConf::default());
         let mut c = SysConf::default();
         c.ntp = true;
         c.tz = "JST-9".into();
         c.save(&p).unwrap();
-        assert_eq!(SysConf::load(&p), c);
+        assert_eq!(SysConf::load_with_image(&p, ""), c);
         assert!(!dir.join("system.conf.new").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }

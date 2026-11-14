@@ -124,9 +124,8 @@ pub struct DemoGen {
 }
 
 impl DemoGen {
-    fn of(m: &Model) -> Option<DemoGen> {
-        static LOOP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-        let mask = *LOOP.get_or_init(|| std::env::var("OOS_DEMO_LOOP").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
+    /// The generator looped back into the channels of `mask` (`Switches::demo_loop`; 0: none).
+    fn of(m: &Model, mask: u32) -> Option<DemoGen> {
         (mask != 0).then_some(DemoGen {
             mask,
             on: m.afg_on,
@@ -169,12 +168,12 @@ impl DemoGen {
 }
 
 impl DemoCfg {
-    pub fn of(m: &Model) -> DemoCfg {
+    pub fn of(m: &Model, demo_loop: u32) -> DemoCfg {
         DemoCfg {
             runts: matches!(m.trig_type, TrigType::Runt | TrigType::Timeout),
             video: if m.trig_type == TrigType::Video { Some(m.video_std) } else { None },
             bus: if m.dec_on && m.dec_proto != Proto::Uart { Some(m.dec_proto) } else { None },
-            gen: DemoGen::of(m),
+            gen: DemoGen::of(m, demo_loop),
         }
     }
 }
@@ -800,7 +799,7 @@ impl Source {
     }
 
     /// One acquisition for the current settings, or None if Normal/Single mode found no trigger.
-    pub fn acquire(&mut self, m: &Model, dt_wall: f64, rng: &mut Rng) -> Option<Record> {
+    pub fn acquire(&mut self, m: &Model, dt_wall: f64, rng: &mut Rng, sw: &crate::sysconf::Switches) -> Option<Record> {
         let tdiv = m.time_per_div() as f64;
         let window = tdiv * HDIV as f64;
         let n = 3600usize;
@@ -809,12 +808,12 @@ impl Source {
         let level = m.trig_level as f64;
         if let Source::Hw { shared, seen } = self {
             let mut g = shared.lock().unwrap();
-            let want = board().want(m);
+            let want = board().want(m, sw);
             if g.want.as_ref() != Some(&want) {
                 crate::pacing::changed();
             }
             g.want = Some(want);
-            g.deep_raw = crate::deepmeas::want(m);
+            g.deep_raw = crate::deepmeas::want(m, sw);
             g.slow = board().slow_mode(m);
             g.stamp = m.hw_stamp;
             g.avg_clear = m.hw_avg_clear;
@@ -853,7 +852,7 @@ impl Source {
             drop(g);
             let mut tmp =
                 Source::Replay { words: std::mem::take(words), xinc: *xinc, yinc: *yinc, yorg: *yorg, yref: *yref };
-            let r = tmp.acquire(m, dt_wall, rng);
+            let r = tmp.acquire(m, dt_wall, rng, sw);
             if let Source::Replay { words: w, .. } = tmp {
                 *words = w;
             }
@@ -865,7 +864,7 @@ impl Source {
                 let start = *t + rng.uniform() * 1e-3;
                 // software trigger (oos-dsp) on the noise-free signals of the channels the trigger reads, sampled finely
                 // enough for the trigger's time condition and long enough to decide it
-                let cfg = DemoCfg::of(m);
+                let cfg = DemoCfg::of(m, sw.demo_loop);
                 let used = m.trig_channels();
                 let span = window * 1.5 + m.trig_span();
                 let mut dts = dt.min(m.trig_feature()).max(1e-9);
@@ -1581,7 +1580,7 @@ mod tests {
         let mut src = Source::Demo { t: 0.0 };
         let mut rng = Rng::new(1);
         for _ in 0..50 {
-            if let Some(r) = src.acquire(&m, 0.0123, &mut rng) {
+            if let Some(r) = src.acquire(&m, 0.0123, &mut rng, &Default::default()) {
                 if r.triggered {
                     return r;
                 }

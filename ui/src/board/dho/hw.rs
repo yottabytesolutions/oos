@@ -77,7 +77,7 @@ fn delay_depth(mask: u32, tdiv: f64, delay: f64, base: i128) -> i128 {
 }
 
 /// The hardware settings for the UI model.
-pub fn settings(m: &Model, program_afe: bool) -> Settings {
+pub fn settings(m: &Model, program_afe: bool, sw: &crate::sysconf::Switches) -> Settings {
     let mut mask = (0..NCH).filter(|&c| m.ch[c].on).fold(0u32, |a, c| a | 1 << c);
     // a trigger source is acquired whether it is shown or not (trigger.md 2.1, 2.4)
     mask |= m.trig_channels().iter().enumerate().filter(|(_, &u)| u).fold(0u32, |a, (c, _)| a | 1 << c);
@@ -189,7 +189,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         single: single_takes_first(m),
         play4: true,
         blocks: 7,
-        header: header_probe(),
+        header: sw.board.header_probe,
         noise_reject: m.trig_nrej,
         trig_couple: match m.trig_coupling() {
             TrigCoup::Dc => tpu::Coupling::Dc,
@@ -199,7 +199,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         },
         frames: 1,
         compress: 1,
-        trigger: hw_trigger(m),
+        trigger: hw_trigger(m, sw.board.serial_hw),
         window: None,
         la,
         segments: (m.seg_hw && m.segments > 0 && hw_segments_ok(m))
@@ -222,7 +222,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
     }
-    if crate::compress::enabled() {
+    if sw.compress {
         live_compress(m, &mut s);
     }
     s
@@ -279,33 +279,13 @@ fn hw_avg_count(m: &Model, s: &Settings) -> Option<u32> {
     oos_hal::dho::avg::hw_count(m.avg_count).filter(|_| p.max_frames > 0)
 }
 
-/// The model's set-up averages in the FPGA (`Board::avg_hw`).
+/// The model's set-up averages in the FPGA (`Board::avg_hw`). The switches do not change the mode.
 pub fn avg_hw_ok(m: &Model) -> bool {
-    matches!(settings(m, false).mode, oos_hal::dho::acq::Mode::Average { .. })
-}
-
-/// How the FPGA average is read (spec 01, 6.1): running (default), or with OOS_HWAVG=hold a cumulative average of the
-/// count that is shown when complete and then cleared. The hardware test in docs/fork/unit-dho804.md decides.
-fn avg_kind() -> oos_hal::dho::avg::Kind {
-    static K: std::sync::OnceLock<oos_hal::dho::avg::Kind> = std::sync::OnceLock::new();
-    *K.get_or_init(|| {
-        if std::env::var("OOS_HWAVG").is_ok_and(|v| v == "hold") {
-            oos_hal::dho::avg::Kind::Hold
-        } else {
-            oos_hal::dho::avg::Kind::Running
-        }
-    })
-}
-
-/// `cal.core_offset = tight` in system.conf (docs/fork/core-offset.md): the core offsets of every ADC mode used are
-/// matched to each other at its first configuration, and kept in OOS's own cal_adc.hex. Off by default.
-fn core_offset_tight() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| core_offset_from(&crate::sysconf::fork_text()))
+    matches!(settings(m, false, &crate::sysconf::Switches::default()).mode, oos_hal::dho::acq::Mode::Average { .. })
 }
 
 /// The `cal.core_offset` line; `tight` or not.
-fn core_offset_from(conf: &str) -> bool {
+pub(super) fn core_offset_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "cal.core_offset").as_deref() == Some("tight")
 }
 
@@ -459,12 +439,13 @@ fn hw_segments_ok(m: &Model) -> bool {
     slow_mode(m) == Slow::Off && !m.la_on()
 }
 
-/// Most hardware segments for the model's set-up (`Board::seg_max`): the whole-memory limit of its segment size.
+/// Most hardware segments for the model's set-up (`Board::seg_max`): the whole-memory limit of its segment size. The
+/// switches do not change the depth.
 pub fn seg_max(m: &Model) -> Option<usize> {
     if !hw_segments_ok(m) {
         return None;
     }
-    let s = settings(m, false);
+    let s = settings(m, false, &crate::sysconf::Switches::default());
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
     Some(hz::max_record_frames(p.seg) as usize)
 }
@@ -472,7 +453,8 @@ pub fn seg_max(m: &Model) -> Option<usize> {
 /// Settings for reading hardware segments back: the live batch plan (compression above 1 M points) with the header
 /// on, at most ~4 MB and half the UI queue per read.
 pub fn seg_read_plan(s: &Settings, p: &hz::Params) -> Settings {
-    let b = batch_plan(s, p);
+    // the frames per read come from `read_settings`
+    let b = batch_plan(s, p, 1);
     let fb = oos_hal::dho::seq::frame_bytes(&oos_hal::dho::seg::read_settings(&b, 1), p).max(1);
     let k = ((4_000_000 / fb) as u32).clamp(1, (crate::board::QUEUE_MAX / 2) as u32);
     oos_hal::dho::seg::read_settings(&b, k)
@@ -496,7 +478,7 @@ fn bus_line(m: &Model) -> Option<u8> {
 }
 
 /// The UI trigger as a hardware (TPU) trigger. Two-level types: `Settings::level` is the upper level.
-fn hw_trigger(m: &Model) -> Trig {
+fn hw_trigger(m: &Model, serial_hw: bool) -> Trig {
     use tpu::{Edge, Pat, Polarity, VideoStd as HStd, VideoSync as HSync, When, WindowEvent};
     let (t1, t2) = (m.trig_t1 as f64, m.trig_t2 as f64);
     let (when, lower, upper) = match m.trig_when {
@@ -559,7 +541,7 @@ fn hw_trigger(m: &Model) -> Trig {
         TrigType::NthEdge => Trig::Nth { count: m.nth_n, idle: m.nth_idle as f64 },
         // protocol trigger: the TPU's UART, SPI or I2C receiver where it can (`trig.serial_hw = on`, `hw_serial`); else the TPU fires
         // on edges of the decoder's line (see `settings`) and the software picks the matching frame out of the record
-        TrigType::Bus => hw_serial(m).unwrap_or(Trig::Edge),
+        TrigType::Bus => hw_serial(m, serial_hw).unwrap_or(Trig::Edge),
         TrigType::Video => Trig::Video {
             std: if m.video_std == VideoStd::Pal { HStd::Pal } else { HStd::Ntsc },
             // the TPU has no "all fields": odd field triggers once per frame [A]
@@ -572,13 +554,6 @@ fn hw_trigger(m: &Model) -> Trig {
             line: m.video_line,
         },
     }
-}
-
-/// Trigger investigation (trigger.md 8): with OOS_FRAME_HEADER set, frames are read with the 16-byte header of the stock
-/// live loop and every frame's header is logged to /tmp/oos-hdr.log next to where the edge actually is.
-fn header_probe() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("OOS_FRAME_HEADER").is_some())
 }
 
 /// `runs` runs of the measure unit, folded into the levels of the channels of `s` (`oos_hal::dho::levels`), in the
@@ -604,51 +579,18 @@ fn levels_measure(
     })
 }
 
-/// The trigger status from the SCU status bits, cleared after every batch as the stock UI does
-/// (docs/fork/trigger-lockin.md; verified on the unit 2026-11-13). `trig.hw_status = off` in system.conf, or
-/// OOS_TRIG_HW_STATUS=0, takes it from the software refinement instead.
-pub fn hw_status_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_TRIG_HW_STATUS").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = crate::sysconf::fork_text();
-        crate::drawpipe::conf_value(env, &conf, "trig.hw_status").as_deref() != Some("off")
-    })
-}
-
-/// `dvm.hw = on` in system.conf: the DVM reads the FPGA's DVM block (docs/fork/dvm.md) instead of the records. Off by
-/// default until the result layout is verified on the unit.
-pub fn dvm_hw_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| dvm_hw_from(&crate::sysconf::fork_text()))
-}
-
 /// The `dvm.hw` line of system.conf; off unless `on`.
-fn dvm_hw_from(conf: &str) -> bool {
+pub(super) fn dvm_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "dvm.hw").as_deref() == Some("on")
 }
 
-/// `mask.hw = on` in system.conf: the mask test runs in the FPGA's mask unit (docs/fork/hwmask.md) and the software
-/// test only where it cannot. Off by default until the sample scale and the slots are verified on the unit.
-pub fn mask_hw_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| mask_hw_from(&crate::sysconf::fork_text()))
-}
-
 /// The `mask.hw` line of system.conf; off unless `on`.
-fn mask_hw_from(conf: &str) -> bool {
+pub(super) fn mask_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "mask.hw").as_deref() == Some("on")
 }
 
-/// `zone.hw = on` in system.conf: the zone trigger qualifies frames in the FPGA (docs/fork/hwzone.md) and the records
-/// are no longer filtered in software where it can. Off by default until the mapping is verified on the unit.
-pub fn zone_hw_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| zone_hw_from(&crate::sysconf::fork_text()))
-}
-
 /// The `zone.hw` line of system.conf; off unless `on`.
-fn zone_hw_from(conf: &str) -> bool {
+pub(super) fn zone_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "zone.hw").as_deref() == Some("on")
 }
 
@@ -656,7 +598,7 @@ fn zone_hw_from(conf: &str) -> bool {
 const MASK_MAP_KEYS: [&str; 8] = ["domain", "cpd", "mid", "shift", "offs", "invert", "cols", "range"];
 
 /// The mapping of system.conf's `mask.map.*` lines over the default; bad lines are reported and skipped.
-fn mask_map_from(conf: &str) -> oos_hal::dho::mask::Map {
+pub(super) fn mask_map_from(conf: &str) -> oos_hal::dho::mask::Map {
     let mut m = oos_hal::dho::mask::Map::default();
     for k in MASK_MAP_KEYS {
         if let Some(v) = crate::drawpipe::conf_value(None, conf, &format!("mask.map.{}", k)) {
@@ -668,16 +610,27 @@ fn mask_map_from(conf: &str) -> oos_hal::dho::mask::Map {
     m
 }
 
+/// The mapping under test: `Map::default()` until the acquisition thread starts with the switches' mapping
+/// (`mask_map_init`); no file is read here.
 fn mask_map_cell() -> &'static std::sync::Mutex<oos_hal::dho::mask::Map> {
     static MAP: std::sync::OnceLock<std::sync::Mutex<oos_hal::dho::mask::Map>> = std::sync::OnceLock::new();
-    MAP.get_or_init(|| {
-        std::sync::Mutex::new(mask_map_from(
-            &std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default(),
-        ))
-    })
+    MAP.get_or_init(Default::default)
 }
 
-/// The comparator mapping of the mask test and the zone trigger now (system.conf, then `mask_map_set`).
+/// Starts the mapping under test at `m` (`BoardSwitches::mask_map`, read at start).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // only the acquisition thread of the unit starts it
+pub(super) fn mask_map_init(m: oos_hal::dho::mask::Map) {
+    *oos_hal::sync::lock(mask_map_cell()) = m;
+}
+
+/// Tests that set another mapping under test hold this while they do, and put the default back.
+#[cfg(test)]
+pub fn mask_map_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    oos_hal::sync::lock(&LOCK)
+}
+
+/// The comparator mapping of the mask test and the zone trigger now (`mask_map_init`, then `mask_map_set`).
 pub fn mask_map() -> oos_hal::dho::mask::Map {
     *mask_map_cell().lock().unwrap()
 }
@@ -798,15 +751,8 @@ fn hw_merge(
     }
 }
 
-/// `trig.serial_hw = on` in system.conf: the UART protocol trigger runs in the TPU's receiver (docs/fork/hwuart.md).
-/// Off by default until it is verified on the unit.
-pub fn serial_hw_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| serial_hw_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
-}
-
 /// The `trig.serial_hw` line of system.conf; off unless `on`.
-fn serial_hw_from(conf: &str) -> bool {
+pub(super) fn serial_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "trig.serial_hw").as_deref() == Some("on")
 }
 
@@ -870,14 +816,14 @@ fn uart_of(m: &Model) -> Option<uarttrig::Uart> {
 
 /// Fork, `:SYSTem:DEBug:UART?`: what the TPU's UART receiver gets for the model (`off,...` when the software trigger
 /// stays in charge), the words, the event time and the record shift.
-pub fn uart_debug(m: &Model) -> String {
+pub fn uart_debug(m: &Model, serial_hw: bool) -> String {
     let Some(u) = uart_of(m) else {
-        return format!("off,enabled={}", serial_hw_on() as u8);
+        return format!("off,enabled={}", serial_hw as u8);
     };
     let w = uarttrig::words(&u);
     format!(
         "{},src=CH{},baud={},bits={},parity={:?},cond={:?},invert={},clocks={},r2100={:#010x},r2104={:#010x},r221c={:#010x},mux={},event_s={:.4e},shift_s={:.4e}",
-        if serial_hw_on() { "on" } else { "off" },
+        if serial_hw { "on" } else { "off" },
         m.dec_src + 1,
         u.baud,
         u.bits,
@@ -896,8 +842,8 @@ pub fn uart_debug(m: &Model) -> String {
 
 /// The protocol trigger in the TPU's receivers (`trig.serial_hw = on`): UART (`uart_of`), SPI or I2C (`spi_of`,
 /// `i2c_of`); None keeps the edge trigger and the software decoder.
-pub fn hw_serial(m: &Model) -> Option<Trig> {
-    if !serial_hw_on() {
+pub fn hw_serial(m: &Model, serial_hw: bool) -> Option<Trig> {
+    if !serial_hw {
         return None;
     }
     serial_of(m)
@@ -1006,10 +952,10 @@ fn serial_lines_acquired(t: &Trig, mask: u32) -> bool {
 
 /// Fork, `:SYSTem:DEBug:SERial?`: the receiver and its words for the model (UART: `uart_debug`), `off,...` where the
 /// software trigger stays in charge.
-pub fn serial_debug(m: &Model) -> String {
-    let on = if serial_hw_on() { "on" } else { "off" };
+pub fn serial_debug(m: &Model, serial_hw: bool) -> String {
+    let on = if serial_hw { "on" } else { "off" };
     match serial_of(m) {
-        Some(Trig::Uart(_)) => uart_debug(m),
+        Some(Trig::Uart(_)) => uart_debug(m, serial_hw),
         Some(Trig::Spi(s)) => {
             let w: Vec<String> =
                 serialtrig::spi_words(&s).iter().map(|(r, v)| format!("r{:04x}={:#010x}", r, v)).collect();
@@ -1038,7 +984,7 @@ pub fn serial_debug(m: &Model) -> String {
                 serialtrig::MUX_I2C
             )
         }
-        _ => format!("off,enabled={}", serial_hw_on() as u8),
+        _ => format!("off,enabled={}", serial_hw as u8),
     }
 }
 
@@ -1117,20 +1063,8 @@ fn dvm_reading(
     }
 }
 
-/// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
-/// `acq.prearm = on` in system.conf, or OOS_PREARM set (any value). Off by default: the stop of an acquisition armed
-/// ahead that is then not read (a settings change, the generator, self-cal, roll) is not verified on the unit yet
-/// (docs/fork/specs/10-transfer-efficiency.md).
-fn prearm_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let conf = crate::sysconf::fork_text();
-        prearm_from(std::env::var_os("OOS_PREARM").is_some(), &conf)
-    })
-}
-
 /// OOS_PREARM set, else the `acq.prearm` line of system.conf; off unless `on`.
-fn prearm_from(env_set: bool, conf: &str) -> bool {
+pub(super) fn prearm_from(env_set: bool, conf: &str) -> bool {
     env_set || crate::drawpipe::conf_value(None, conf, "acq.prearm").as_deref() == Some("on")
 }
 
@@ -1181,21 +1115,34 @@ fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
     }
 }
 
-/// Decodes a read-out of the whole record into a frame.
+/// Decodes a read-out of the whole record into a frame (tests: no header probe).
+#[cfg(test)]
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
+    decode_probed(bytes, s, p, seq, false)
+}
+
+/// `decode_into` without the header probe (tests).
+#[cfg(test)]
+pub fn decode_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
+    decode_into_probed(bytes, s, p, seq, f, false)
+}
+
+/// Decodes a read-out of the whole record into a frame; with `probe` (`BoardSwitches::header_probe`, trigger.md 8)
+/// a frame read with its header has the header logged next to where the edge actually is.
+pub fn decode_probed(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, probe: bool) -> Frame {
     let mut f = Frame::default();
-    decode_into(bytes, s, p, seq, &mut f);
+    decode_into_probed(bytes, s, p, seq, &mut f, probe);
     f
 }
 
-/// `decode` into a kept frame: its channel vectors are refilled (no allocation once they have room), every other
-/// field is set as `decode` sets it.
-pub fn decode_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
+/// `decode_probed` into a kept frame: its channel vectors are refilled (no allocation once they have room), every
+/// other field is set as `decode_probed` sets it.
+pub fn decode_into_probed(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame, probe: bool) {
     let (hdr, bytes) = if s.header && bytes.len() >= 16 { bytes.split_at(16) } else { (&bytes[..0], bytes) };
     oos_hal::dho::seq::decode_volts_into(bytes, s.mask, s.ch.map(|k| (k.scale, k.offset)), &mut f.ch);
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
     let k = oos_hal::dho::seq::compress_k(s, p) as usize;
-    if !hdr.is_empty() && header_probe() {
+    if !hdr.is_empty() && probe {
         let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
         log_header(hdr, &f.ch[tc], s, p.pre as usize / k, k);
     }
@@ -1300,7 +1247,7 @@ const LIVE_READ: u32 = 625_000;
 /// - the screen holds most of the record: the whole record through the FPGA compression to ~`LIVE_READ` points;
 /// - the screen is a small part of it (a fixed depth at a short time base, at the full rate): the screen window with a
 ///   margin, every sample. Compressed, 10 M at 100 ns/div left about 80 min/max points for the screen.
-pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
+pub fn batch_plan(s: &Settings, p: &hz::Params, zone_batch: u32) -> Settings {
     let mut b = s.clone();
     if p.memsel > 1_000_000 {
         match screen_window(s, p) {
@@ -1321,18 +1268,12 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     // the zone trigger: the ring gets one qualified frame per arm on the unit (round 3: 29 frames/s, the 25 ms wait
     // for more frames per batch), so a batch is `zone_batch` frames (docs/fork/hwzone.md "Rate")
     if s.hwzone.is_some() {
-        b.frames = b.frames.min(zone_batch());
+        b.frames = b.frames.min(zone_batch);
     }
     b
 }
 
-/// Frames per batch while the zone trigger runs: `zone.batch = <n>` in system.conf, default 1.
-fn zone_batch() -> u32 {
-    static N: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *N.get_or_init(|| zone_batch_from(&std::fs::read_to_string(crate::sysconf::default_path()).unwrap_or_default()))
-}
-
-fn zone_batch_from(conf: &str) -> u32 {
+pub(super) fn zone_batch_from(conf: &str) -> u32 {
     crate::drawpipe::conf_value(None, conf, "zone.batch")
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(1)
@@ -1466,21 +1407,21 @@ fn counter_tick(
 /// Starts the acquisition thread (`app_mask` = channel set the stock system left behind; `program_afe` = OOS sets the
 /// AFEs from the UI channel settings, else they keep the stock set-up and the UI V/div must match it).
 #[cfg(target_os = "linux")]
-pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option<String>) -> HwShared {
+pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwShared {
     use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
     use oos_hal::dho::{adc, seq};
     let shared: HwShared = Arc::new(Mutex::new(Shared::default()));
     let out = shared.clone();
     // named for `top -H` on the unit
     let spawned = std::thread::Builder::new().name("acq".into()).spawn(move || {
-        crate::placement::place(crate::placement::Role::Hw);
+        crate::placement::place(crate::placement::Role::Hw, &switches);
         let status = |s: String| {
             eprintln!("oos-ui hw: {}", s);
             out.lock().unwrap().status = s;
         };
         // started with the start-up (rcS): nothing of the hardware is touched before its `end` line, written after
         // oos-fpgad cold-boot exited (its GPIO lines are free then)
-        if let Some(path) = &start_up {
+        if let Some(path) = &o.start_up {
             status("waiting for the start-up".into());
             loop {
                 let v = oos_hal::bootstatus::parse(&std::fs::read_to_string(path).unwrap_or_default());
@@ -1504,7 +1445,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             Ok(f) => f,
             Err(e) => return status(format!("/dev/xdma0_c2h_0: {}", e)),
         };
-        let mut afe_bus = if program_afe {
+        let mut afe_bus = if o.program_afe {
             match afe::GpioAfe::open() {
                 Ok(b) => Some(b),
                 Err(e) => return status(format!("AFE GPIO: {}", e)),
@@ -1512,29 +1453,29 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         } else {
             None
         };
-        let mut cal = match afe::Cal::load_from(&cal_dir) {
+        let mut cal = match afe::Cal::load_from(&o.cal_dir) {
             Ok((c, from)) => {
                 status(format!("calibration: {}", from.iter().map(|(n, d)| format!("{} from {}", n, d)).collect::<Vec<_>>().join(", ")));
                 Some(c)
             }
             Err(_) => None,
         };
-        let mut cal_adc = adc::CalAdc::load(&cal_dir).ok();
+        let mut cal_adc = adc::CalAdc::load(&o.cal_dir).ok();
         // the matched core offsets: only with `cal.core_offset = tight` (key off = the cal_adc.hex above, unchanged)
-        let mut trim_overlay = overlay_in_use(core_offset_tight(), load_overlay);
+        let mut trim_overlay = overlay_in_use(switches.board.core_offset_tight, load_overlay);
         if let Some(c) = cal_adc.as_mut() {
             trim_overlay.apply(c);
         }
         // LA pod zero codes (cal_la.hex, read only); without the file the middle of the DAC range (la.md 8.1)
         let la_cal = if oos_hal::model::platform().caps.la {
-            oos_hal::dho::la::Cal::load(&cal_dir).unwrap_or_else(|| {
+            oos_hal::dho::la::Cal::load(&o.cal_dir).unwrap_or_else(|| {
                 status("cal_la.hex not found: LA thresholds with the zero code 0x2180".into());
                 oos_hal::dho::la::Cal { zero: [0x2180; 2] }
             })
         } else {
             oos_hal::dho::la::Cal::default()
         };
-        let mut state = seq::State::handover(app_mask, cal_adc.as_ref());
+        let mut state = seq::State::handover(o.mask, cal_adc.as_ref());
         let mut current: Option<(Settings, hz::Params)> = None;
         let mut n = 0u64;
         // roll/scan mode: streaming state (parameters, ring of volts per channel, last publish)
@@ -1552,7 +1493,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         // 0x40d0 reported done; the last chunks of the sweep are read once more before the stop
         let mut done_seen: Option<std::time::Instant> = None;
         let mut mode = Slow::Off;
-        let afg_cal = oos_hal::dho::afg::Cal::load(&cal_dir);
+        let afg_cal = oos_hal::dho::afg::Cal::load(&o.cal_dir);
         let mut afg_io: Option<oos_hal::dho::afg::Io> = None;
         let mut afg_done: Option<(bool, f64, f64, f64, oos_hal::dho::afg::Wave, oos_hal::dho::afg::Mod)> = None;
         let mut stamp;
@@ -1639,7 +1580,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             prog_out.lock().unwrap().cal_progress = Some((d, t, s.to_string()));
                         });
                         match r {
-                            Ok(r) => oos_hal::dho::selfcal::save(&r, &cal_dir).map(|files| format!("{} configurations, largest change {:.2} %, saved {}", r.measured, r.worst * 100.0, files.join(", "))),
+                            Ok(r) => oos_hal::dho::selfcal::save(&r, &o.cal_dir).map(|files| format!("{} configurations, largest change {:.2} %, saved {}", r.measured, r.worst * 100.0, files.join(", "))),
                             Err(e) => Err(e),
                         }
                     }
@@ -1648,8 +1589,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 status(format!("self-cal CH{:?}: {}", chans.iter().map(|c| c + 1).collect::<Vec<_>>(), match &res { Ok(s) => format!("done, {}", s), Err(e) => format!("failed: {}", e) }));
                 // the new tables take effect at the next set-up
                 if res.is_ok() {
-                    cal = afe::Cal::load(&cal_dir).ok();
-                    cal_adc = adc::CalAdc::load(&cal_dir).ok();
+                    cal = afe::Cal::load(&o.cal_dir).ok();
+                    cal_adc = adc::CalAdc::load(&o.cal_dir).ok();
                     // the matched offsets over the new trims; every mode is matched again from there
                     if let Some(c) = cal_adc.as_mut() {
                         trim_overlay.apply(c);
@@ -1699,7 +1640,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             };
             // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
             let asked = (Some(want.clone()), want_mode);
-            want.afe = program_afe;
+            want.afe = o.program_afe;
             raw_for_ui(&mut want, needs_raw);
             let map = mask_map();
             let key = unit_key(&want, map);
@@ -1742,11 +1683,11 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         // core offsets of the ADC mode (opt-in): once this configuration has stood for TRIM_HOLD; a new
                         // configuration replaces the wait
                         let m = state.mode.min(10);
-                        trim_pending = (core_offset_tight() && !trim_done[m] && trim_tries[m] < TRIM_TRIES)
+                        trim_pending = (switches.board.core_offset_tight && !trim_done[m] && trim_tries[m] < TRIM_TRIES)
                             .then(|| TrimPending { mode: m, mask: want.mask, since: std::time::Instant::now() });
                         // the configuration cleared the average (`seq::State::configure`)
                         avg = match want.mode {
-                            oos_hal::dho::acq::Mode::Average { count } => Some((oos_hal::dho::avg::Tracker::new(avg_kind(), count), avg_clear, 0)),
+                            oos_hal::dho::acq::Mode::Average { count } => Some((oos_hal::dho::avg::Tracker::new(switches.board.avg_kind(), count), avg_clear, 0)),
                             _ => None,
                         };
                     }
@@ -2019,7 +1960,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let last = replay.and_then(|(ds, lp, count)| match seq::read_raw_again(&mut state, &ds, &lp, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
                     Ok(()) => {
                         n += 1;
-                        Some(Frame { stamp, ..decode(raw_dma.data(), &ds, &lp, n) })
+                        Some(Frame { stamp, ..decode_probed(raw_dma.data(), &ds, &lp, n, switches.board.header_probe) })
                     }
                     Err(e) => {
                         status(format!("raw read of the deep window at STOP: {}", e));
@@ -2041,7 +1982,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 // RUN or SINGLE: the frames of the batch before the STOP are not new
                 out.lock().unwrap().queue.clear();
             }
-            let mut b = batch_plan(&s, &p);
+            let mut b = batch_plan(&s, &p, switches.board.zone_batch);
             // fewer frames where the read would take the screen frame (pacing.rs; not the hardware average, whose
             // batches count triggers)
             let uncapped = b.frames;
@@ -2086,7 +2027,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let g = out.lock().unwrap();
                 (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || g.force
             };
-            let pipe = crate::drawpipe::pipe();
+            let pipe = crate::drawpipe::pipe(&switches);
             let t_batch = std::time::Instant::now();
             // the ring fills for at most `fill_ms` after the first frame: the batch is read and drawn just before a
             // screen step (pacing.rs)
@@ -2126,7 +2067,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let ms = |a: std::time::Instant| a.saturating_duration_since(t_batch).as_secs_f32() * 1e3;
                 let pre_ms = fill_from.get().or(fill_end).map_or(batch_ms - read_ms, ms);
                 fill.done(pre_ms + read_ms);
-                cap.done(*c, read_ms, pre_ms, uncapped, prearm_on() && prearm_keeps_replay(&b, &p, None));
+                cap.done(*c, read_ms, pre_ms, uncapped, switches.board.prearm && prearm_keeps_replay(&b, &p, None));
             }
             if let Some(x) = pipe {
                 x.help_done(&mut helper);
@@ -2158,7 +2099,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     let raw_frame = if raw_newest(&b, &p) && count > 0 && comp_last.is_none_or(|t| t.elapsed() >= crate::compress::RAW_PERIOD) {
                         comp_last = Some(std::time::Instant::now());
                         match seq::read_raw_again(&mut state, &b, &p, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
-                            Ok(()) => Some(decode(raw_dma.data(), &seq::raw_settings(&b), &p, 0)),
+                            Ok(()) => Some(decode_probed(raw_dma.data(), &seq::raw_settings(&b), &p, 0, switches.board.header_probe)),
                             Err(e) => {
                                 status(format!("raw read of the newest frame: {}", e));
                                 None
@@ -2183,7 +2124,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 Ok(()) => {
                                     use crate::deepmeas::cost;
                                     let t1 = std::time::Instant::now();
-                                    let f = decode(raw_dma.data(), &ds, &p, 0);
+                                    let f = decode_probed(raw_dma.data(), &ds, &p, 0, switches.board.header_probe);
                                     cost::set(&cost::DMA_US, t1 - t0);
                                     cost::set(&cost::DECODE_US, t1.elapsed());
                                     cost::READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2200,7 +2141,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     fresh = Some((b.clone(), p, count, raw_frame.is_some()));
                     // trigger status of this batch from the SCU's sticky bits, then the stock status clear, before the next
                     // arm (prearm below) can record anything
-                    if hw_status_on() {
+                    if switches.board.trig_hw_status {
                         let v = bar.rd(0x4034);
                         bar.apply(&oos_hal::dho::scu::clear_status(v));
                         let f = match oos_hal::dho::scu::fired(v) {
@@ -2268,7 +2209,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     if count > 0 && b.single {
                         single_done = Some(stamp);
                     }
-                    if prearm_on() && avg.is_none() && !b.single && prearm_keeps_replay(&b, &p, deep_want) {
+                    if switches.board.prearm && avg.is_none() && !b.single && prearm_keeps_replay(&b, &p, deep_want) {
                         match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
                             Ok(()) => armed = Some((b.clone(), stamp)),
                             Err(e) => status(format!("prearm: {}", e)),
@@ -2285,7 +2226,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
                     // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
                     // deposit workers, the next batch read into a buffer they gave back
-                    let pipe = crate::drawpipe::pipe().filter(|x| after.is_none() && avail > 1 && x.accepting());
+                    let pipe = crate::drawpipe::pipe(&switches).filter(|x| after.is_none() && avail > 1 && x.accepting());
                     // the raw newest frame stands for the newest compressed one (same record)
                     let raw_frame = raw_frame.filter(|_| avail as u32 == count);
                     let mut la_words = la_words;
@@ -2293,7 +2234,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         n += avail as u64;
                         let mut newest = match raw_frame {
                             Some(f) => Frame { stamp, seq: n, ..f },
-                            None => Frame { stamp, ..decode(&dma.data()[(avail - 1) * fb..avail * fb], &b, &p, n) },
+                            None => Frame { stamp, ..decode_probed(&dma.data()[(avail - 1) * fb..avail * fb], &b, &p, n, switches.board.header_probe) },
                         };
                         if let Some(w) = la_words.take() {
                             newest.la = Some(la_record(w, &b, &p));
@@ -2313,7 +2254,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 // batch in one picture, not the newest alone and the rest a picture later
                                 let o = out.clone();
                                 let deliver: crate::drawpipe::Deliver = Box::new(move || push_frames(&o, vec![newest]));
-                                pipe.feed_with(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)), Some(codes), deliver);
+                                pipe.feed_with(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into_probed(c, &bs, &ps, 0, f, switches.board.header_probe)), Some(codes), deliver);
                                 Vec::new()
                             }
                             None => {
@@ -2329,7 +2270,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             .skip(if after.is_some() { avail.saturating_sub(1) } else { 0 })
                             .map(|chunk| {
                                 n += 1;
-                                Frame { stamp, hw_avg: after.is_some(), ..decode(chunk, &b, &p, n) }
+                                Frame { stamp, hw_avg: after.is_some(), ..decode_probed(chunk, &b, &p, n, switches.board.header_probe) }
                             })
                             .collect();
                         if let (Some(r), Some(last)) = (raw_frame, all.last_mut()) {
@@ -2424,7 +2365,8 @@ fn seg_abort(
 
 /// One step of the hardware segmented recording: start on a new `HwSeg::run`, poll the progress every 10 ms (no
 /// transfer), then stop and read back one batch per step (stamps by single-frame plays, frames into the queue), then
-/// play single segments on request.
+/// play single segments on request. The segments are read with their headers (`seg::read_settings`); they are logged
+/// only with the header probe, which the live settings `s` carry as `header` (`settings`).
 #[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
 fn seg_step(
@@ -2518,7 +2460,7 @@ fn seg_step(
                 .take(cnt as usize)
                 .map(|chunk| {
                     *n += 1;
-                    Frame { stamp, ..decode(chunk, &rs, p, *n) }
+                    Frame { stamp, ..decode_probed(chunk, &rs, p, *n, s.header) }
                 })
                 .collect();
         }
@@ -2542,7 +2484,7 @@ fn seg_step(
             let one = oos_hal::dho::seg::read_settings(&rs, 1);
             seg::read(state, &one, p, bar, c2h, dma, k, 1)?;
             *n += 1;
-            let f = Frame { stamp, ..decode(&dma.data()[..fb.min(dma.data().len())], &one, p, *n) };
+            let f = Frame { stamp, ..decode_probed(&dma.data()[..fb.min(dma.data().len())], &one, p, *n, s.header) };
             out.lock().unwrap().seg.shown = Some((k, f));
         }
         Some(_) => out.lock().unwrap().seg.want = None,
@@ -2588,9 +2530,9 @@ mod tests {
                 ..Default::default()
             };
             let frames = |m: &Model| {
-                let s = settings(m, false);
+                let s = settings(m, false, &Default::default());
                 let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-                batch_plan(&s, &p).frames
+                batch_plan(&s, &p, 1).frames
             };
             assert!(tdiv > 1e-4 || frames(&m) > 1, "{} s/div: RUN reads batches", tdiv);
             m.trig_mode = TrigMode::Single;
@@ -2603,20 +2545,20 @@ mod tests {
     #[test]
     fn single_stops_after_the_batch_with_its_frame() {
         let mut m = Model { trig_mode: TrigMode::Single, ..Default::default() };
-        let b = settings(&m, false);
+        let b = settings(&m, false, &Default::default());
         assert!(b.single);
         assert!(single_wants_more(&b, None, 4), "the first batch after the press");
         assert!(!single_wants_more(&b, Some(4), 4), "its frame came: no more for this press");
         assert!(single_wants_more(&b, Some(4), 5), "the next press");
         m.trig_mode = TrigMode::Normal;
-        assert!(single_wants_more(&settings(&m, false), Some(4), 4), "RUN is not limited");
+        assert!(single_wants_more(&settings(&m, false, &Default::default()), Some(4), 4), "RUN is not limited");
         // the UI may refuse the frame: protocol trigger, zone trigger
         m.trig_mode = TrigMode::Single;
         m.trig_type = TrigType::Bus;
-        assert!(!settings(&m, false).single);
+        assert!(!settings(&m, false, &Default::default()).single);
         m.trig_type = TrigType::Edge;
         m.zones[0] = crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0)] };
-        assert!(m.zones[0].usable() && !settings(&m, false).single);
+        assert!(m.zones[0].usable() && !settings(&m, false, &Default::default()).single);
     }
 
     // Break it catches: Auto depth that ignores the trigger delay, so the record (centred on the delay, the trigger
@@ -2634,7 +2576,7 @@ mod tests {
             for c in 0..NCH {
                 m.ch[c].on = c < chans;
             }
-            let s = settings(&m, false);
+            let s = settings(&m, false, &Default::default());
             let mut st = oos_hal::dho::seq::State::handover(s.mask, None);
             let (_, p) = st.configure(&s, None, None).unwrap();
             // the record's span relative to the trigger: [first, last] in s
@@ -2663,14 +2605,14 @@ mod tests {
     #[test]
     fn aux_out_reaches_the_settings() {
         let mut m = Model::default();
-        assert_eq!(settings(&m, false).aux, auxout::AuxOut::TriggerOut);
+        assert_eq!(settings(&m, false, &Default::default()).aux, auxout::AuxOut::TriggerOut);
         m.aux_out = AuxOut::Off;
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         assert_eq!(s.aux, auxout::AuxOut::Off);
         let w = oos_hal::dho::seq::State::handover(s.mask, None).configure(&s, None, None).unwrap().0;
         assert!(w.iter().any(|x| matches!(x, oos_hal::dho::seq::Step::Wr((0x1430, 2)))));
         m.aux_out = AuxOut::PassFail;
-        assert_eq!(settings(&m, false).aux, auxout::AuxOut::PassFail(auxout::PassFail::DEFAULT));
+        assert_eq!(settings(&m, false, &Default::default()).aux, auxout::AuxOut::PassFail(auxout::PassFail::DEFAULT));
     }
 
     #[test]
@@ -2686,11 +2628,11 @@ mod tests {
         // dots keep frames raw (compress::allowed)
         m.dots = DotsMode::Off;
         m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
-        let mut s = settings(&m, false);
+        let mut s = settings(&m, false, &Default::default());
         live_compress(&m, &mut s);
         assert!(s.compress > 1, "compression applies at 10 us/div without a mask");
         m.mask_on = true;
-        let mut s = settings(&m, false);
+        let mut s = settings(&m, false, &Default::default());
         live_compress(&m, &mut s);
         assert_eq!(s.compress, 1);
     }
@@ -2785,7 +2727,7 @@ mod tests {
             assert_eq!(uart_of(&x), None);
         }
         assert!(!serial_hw_from("") && serial_hw_from("trig.serial_hw = on\n"));
-        assert!(uart_debug(&m).starts_with("off,src=CH2,"), "{}", uart_debug(&m));
+        assert!(uart_debug(&m, false).starts_with("off,src=CH2,"), "{}", uart_debug(&m, false));
     }
 
     #[test]
@@ -2836,9 +2778,9 @@ mod tests {
         let i = i2c_of(&m).unwrap();
         assert_eq!((i.scl, i.sda, i.addr), (2, 1, (0x50, 0x50, 0x7f)));
         assert!(
-            serial_debug(&m).starts_with("off,proto=I2C,scl=CH2,sda=CH1,cond=Address,r2190="),
+            serial_debug(&m, false).starts_with("off,proto=I2C,scl=CH2,sda=CH1,cond=Address,r2190="),
             "{}",
-            serial_debug(&m)
+            serial_debug(&m, false)
         );
         // lines that are not acquired fall back to the edge trigger
         assert!(serial_lines_acquired(&Trig::I2c(i), 0b11) && !serial_lines_acquired(&Trig::I2c(i), 0b01));
@@ -2897,7 +2839,7 @@ mod tests {
         let mut m = Model::default();
         (m.trig_type, m.dec_proto, m.dec_src, m.trig_bus) = (TrigType::Bus, Proto::Uart, 0, BusWhat::Frame);
         let u = uart_of(&m).unwrap();
-        let mut s = settings(&m, false);
+        let mut s = settings(&m, false, &Default::default());
         let d0 = s.delay;
         s.trigger = Trig::Uart(u);
         // `settings` applies the shift only with the switch on; the same arithmetic here
@@ -2926,9 +2868,9 @@ mod tests {
         );
         let mut m = Model::default();
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap();
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-        assert!(batch_plan(&s, &p).frames > 1);
+        assert!(batch_plan(&s, &p, 1).frames > 1);
         let z = Settings {
             hwzone: Some(oos_hal::dho::seq::HwZone {
                 ch: 0,
@@ -2938,7 +2880,7 @@ mod tests {
             }),
             ..s
         };
-        assert_eq!(batch_plan(&z, &p).frames, zone_batch());
+        assert_eq!(batch_plan(&z, &p, 8).frames, 8);
     }
 
     /// Unit round 5: at 100 us/div with 10k points the record is 1.6 screens long, and a table spread over the record
@@ -3233,7 +3175,7 @@ mod tests {
         assert_eq!(at(&mut m, 0.5), Slow::Off);
         // roll and scan stream with the stock Auto depth
         m.acq = AcqMode::Normal;
-        assert_eq!(settings(&m, false).depth, 0);
+        assert_eq!(settings(&m, false, &Default::default()).depth, 0);
     }
 
     #[test]
@@ -3283,7 +3225,7 @@ mod tests {
         let mut m = Model::default();
         m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
         // 100 ns/div, one channel: 1250 points per screen at 1.25 GSa/s -> 1408 at the same rate
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         assert_eq!(s.depth, 1408);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(1e-7), s.depth, 0);
         assert_eq!((p.rate, p.memsel, p.pre + p.post), (1_250_000_000, 1408, 1408));
@@ -3293,7 +3235,7 @@ mod tests {
         // 1 ns/div: 12 points per screen, read 80 at the full rate (more than stock's smallest record, 62 at 5 ns)
         m.tscale = 0;
         assert_eq!(tscales()[0], 1e-9);
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(1e-9), s.depth, 0);
         assert_eq!((p.rate, p.memsel, p.pre), (1_250_000_000, 80, 40), "depth {}", s.depth);
     }
@@ -3308,7 +3250,7 @@ mod tests {
         use crate::wave::Source;
         crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
-        let mut ui = crate::ui::Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut ui = crate::ui::Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         let m = &mut ui.m;
         m.run = RunState::Run;
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
@@ -3317,9 +3259,9 @@ mod tests {
             m.ch[c].on = c == 1;
         }
         m.meas = vec![(Meas::Vavg, 1)];
-        let s = settings(&ui.m, false);
+        let s = settings(&ui.m, false, &Default::default());
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
-        let b = batch_plan(&s, &p);
+        let b = batch_plan(&s, &p, 1);
         let d = deep_raw_settings(&b, &p).expect("a raw window for CH2 at 10 M");
         // what the acquisition thread publishes with the batch
         shared.lock().unwrap().deep_ok = true;
@@ -3345,10 +3287,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "manual report: set OOS_REPORTS=1"]
     // Cost of one raw deep read (deep-meas.md "Default on"): bytes, the decode in the acquisition thread and the
     // screen record the UI makes of it, host times (best of 3).
     fn deep_raw_read_cost_report() {
+        assert_eq!(std::env::var("OOS_REPORTS").as_deref(), Ok("1"), "set OOS_REPORTS=1");
         for depth in [10_000_000u64, 100_000_000] {
             for chans in [vec![0usize], vec![0, 1]] {
                 let mut m = Model::default();
@@ -3357,10 +3300,10 @@ mod tests {
                 for c in 0..NCH {
                     m.ch[c].on = chans.contains(&c);
                 }
-                let s = settings(&m, false);
+                let s = settings(&m, false, &Default::default());
                 let p =
                     hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
-                let b = batch_plan(&s, &p);
+                let b = batch_plan(&s, &p, 1);
                 let Some(d) = deep_raw_settings(&b, &p) else {
                     println!("{} {:?}: no raw window", depth, chans);
                     continue;
@@ -3422,9 +3365,9 @@ mod tests {
             for c in 0..NCH {
                 m.ch[c].on = chans.contains(&c);
             }
-            let s = settings(&m, false);
+            let s = settings(&m, false, &Default::default());
             let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
-            let b = batch_plan(&s, &p);
+            let b = batch_plan(&s, &p, 1);
             assert!(b.compress > 1, "{:?}: a deep record through the compression", chans);
             let d =
                 deep_raw_settings(&b, &p).unwrap_or_else(|| panic!("{:?}: no raw window (ratio {})", chans, p.ratio));
@@ -3466,7 +3409,7 @@ mod tests {
                     for c in 0..NCH {
                         m.ch[c].on = c < chans;
                     }
-                    let mut s = settings(&m, false);
+                    let mut s = settings(&m, false, &Default::default());
                     live_compress(&m, &mut s);
                     if s.compress <= 1 {
                         continue;
@@ -3503,11 +3446,11 @@ mod tests {
             m.dots = DotsMode::Off;
             m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap();
             m.ch[1].on = two;
-            let mut s = settings(&m, false);
+            let mut s = settings(&m, false, &Default::default());
             let raw = s.clone();
             live_compress(&m, &mut s);
             let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-            let (b, r) = (batch_plan(&s, &p), batch_plan(&raw, &p));
+            let (b, r) = (batch_plan(&s, &p, 1), batch_plan(&raw, &p, 1));
             (b.compress, oos_hal::dho::seq::frame_bytes(&b, &p), b.frames, r.frames, p)
         };
         // every sample at 100 ns/div
@@ -3542,13 +3485,13 @@ mod tests {
         let mut m = Model::default();
         m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
         m.trig_mode = TrigMode::Single;
-        let mut s = settings(&m, false);
+        let mut s = settings(&m, false, &Default::default());
         live_compress(&m, &mut s);
         assert_eq!(s.compress, 1);
         // deep records keep the deep-memory read
         m.trig_mode = TrigMode::Auto;
         m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
-        let mut s = settings(&m, false);
+        let mut s = settings(&m, false, &Default::default());
         live_compress(&m, &mut s);
         assert_eq!(s.compress, 1);
     }
@@ -3568,7 +3511,7 @@ mod tests {
             m
         };
         let k = |m: &Model, needs_raw: bool| {
-            let mut s = settings(m, false);
+            let mut s = settings(m, false, &Default::default());
             live_compress(m, &mut s);
             raw_for_ui(&mut s, needs_raw);
             s.compress
@@ -3641,9 +3584,9 @@ mod tests {
         m.dots = DotsMode::Off;
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
         m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
-        let b = batch_plan(&s, &p);
+        let b = batch_plan(&s, &p, 1);
         let w = Some(crate::deepmeas::Want { every: false });
         assert_eq!(final_replay(&b, &p, 3, false, false, w), deep_raw_settings(&b, &p));
         assert!(final_replay(&b, &p, 3, false, false, w).is_some());
@@ -3660,16 +3603,16 @@ mod tests {
         assert!(prearm_keeps_replay(&b, &p, None));
         m.mdepth = 0;
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap();
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-        assert!(prearm_keeps_replay(&batch_plan(&s, &p), &p, w));
+        assert!(prearm_keeps_replay(&batch_plan(&s, &p, 1), &p, w));
         // the live compression at 10 us/div: the whole newest frame raw at STOP, with or without deep measurements;
         // no arming ahead for its batches
         m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
-        let mut s = settings(&m, false);
+        let mut s = settings(&m, false, &Default::default());
         live_compress(&m, &mut s);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-        let b = batch_plan(&s, &p);
+        let b = batch_plan(&s, &p, 1);
         assert!(b.compress > 1 && raw_newest(&b, &p));
         let r = final_replay(&b, &p, 3, false, false, None).expect("raw newest at STOP");
         assert_eq!((r.compress, r.window), (1, None));
@@ -3686,9 +3629,9 @@ mod tests {
             m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap();
             m.mdepth = mdepths().iter().position(|d| d.1 == depth).unwrap();
             m.ch[1].on = two;
-            let s = settings(&m, false);
+            let s = settings(&m, false, &Default::default());
             let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
-            let b = batch_plan(&s, &p);
+            let b = batch_plan(&s, &p, 1);
             (b.clone(), p, deep_raw_settings(&b, &p))
         };
         // 10 M at 1 ms/div, CH1: the batch reads pairs, the measurement window raw: the whole record, 20 MB
@@ -3731,9 +3674,9 @@ mod tests {
         let mut m = Model::default();
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-7).abs() < 1e-12).unwrap();
         m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
-        let b = batch_plan(&s, &p);
+        let b = batch_plan(&s, &p, 1);
         assert_eq!(b.compress, 1, "every sample, not ~80 min/max points for the screen");
         let (n, start) = oos_hal::dho::seq::window(&b, &p);
         assert!(n < 20_000 && n % 8 == 0, "{}", n);
@@ -3747,9 +3690,9 @@ mod tests {
         assert_eq!(f.pre, (p.pre - start) as usize);
         // a long time base keeps the compressed whole record
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-        let b = batch_plan(&s, &p);
+        let b = batch_plan(&s, &p, 1);
         assert!(b.compress > 1 && b.window.is_none());
     }
 
@@ -3765,11 +3708,11 @@ mod tests {
         for c in 0..NCH {
             m.ch[c].on = c == 0;
         }
-        assert_eq!(settings(&m, false).depth, 125_000_000);
+        assert_eq!(settings(&m, false, &Default::default()).depth, 125_000_000);
         for c in 0..NCH {
             m.ch[c].on = true;
         }
-        assert_eq!(settings(&m, false).depth, m.max_mem() as i128);
+        assert_eq!(settings(&m, false, &Default::default()).depth, m.max_mem() as i128);
         assert_eq!(m.max_mem(), 31_250_000);
     }
 
@@ -3780,21 +3723,21 @@ mod tests {
         let mut m = Model::default();
         m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
         (m.segments, m.seg_hw, m.seg_ivl) = (500, true, 0.0);
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         assert_eq!(s.segments, Some(Segments { n: 500, interval: 0.0 }));
         assert_eq!(seg_max(&m), Some(61_440));
         m.seg_hw = false;
-        assert_eq!(settings(&m, false).segments, None);
+        assert_eq!(settings(&m, false, &Default::default()).segments, None);
         m.seg_hw = true;
         m.la.on = true;
-        assert_eq!((settings(&m, false).segments, seg_max(&m)), (None, None));
+        assert_eq!((settings(&m, false, &Default::default()).segments, seg_max(&m)), (None, None));
         m.la.on = false;
         m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
-        assert_eq!(settings(&m, false).segments, None);
+        assert_eq!(settings(&m, false, &Default::default()).segments, None);
         // read-back: header on, at most half the queue, ~4 MB
         for t in [1e-7, 1e-5, 1e-3] {
             m.tscale = tscales().iter().position(|&x| (x as f64 - t).abs() < t * 1e-3).unwrap();
-            let s = settings(&m, false);
+            let s = settings(&m, false, &Default::default());
             let p = oos_hal::dho::seq::State::handover(s.mask, None).configure(&s, None, None).unwrap().1;
             let r = seg_read_plan(&s, &p);
             let fb = oos_hal::dho::seq::frame_bytes(&r, &p);
@@ -3807,7 +3750,7 @@ mod tests {
     fn settings_from_the_model() {
         let mut m = Model::default();
         m.ch[1].on = true;
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         assert_eq!(s.mask, 3);
         assert_eq!(s.trig_src, 1);
         // 200 us/div with 2 channels: Auto would be 1.25 M points -> live depth 100 k
@@ -3815,10 +3758,10 @@ mod tests {
         assert!(s.window.is_none());
         // edge: the level itself, even below level 2; runt: upper level and lower level
         m.trig_level = 0.2;
-        assert_eq!(settings(&m, false).level, 0.2f32 as f64);
+        assert_eq!(settings(&m, false, &Default::default()).level, 0.2f32 as f64);
         m.trig_type = TrigType::Runt;
         m.trig_level2 = 1.8;
-        let s = settings(&m, false);
+        let s = settings(&m, false, &Default::default());
         assert_eq!(s.level, 1.8f32 as f64);
         assert!(matches!(s.trigger, Trig::Runt { lo, .. } if (lo - 0.2).abs() < 1e-6));
     }
@@ -3843,12 +3786,12 @@ mod tests {
                     }
                     for d in 0..mdepths().len() {
                         m.mdepth = d;
-                        let s = settings(&m, false);
+                        let s = settings(&m, false, &Default::default());
                         let Ok((_, p)) = oos_hal::dho::seq::State::handover(s.mask, None).configure(&s, None, None)
                         else {
                             continue;
                         };
-                        let b = batch_plan(&s, &p);
+                        let b = batch_plan(&s, &p, 1);
                         let fb = oos_hal::dho::seq::frame_bytes(&b, &p);
                         checked += 1;
                         la_seen |= s.la.is_some();

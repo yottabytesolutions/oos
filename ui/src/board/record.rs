@@ -529,8 +529,9 @@ mod bench {
 
     /// Per-record cost of the display path (`cargo test --release bench_record -- --ignored --nocapture`).
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn bench_record() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         for &(tdiv, pts) in &[(1e-7, 1408usize), (1e-6, 12_500), (1e-5, 100_000)] {
             let mut m = Model::default();
             m.tscale = tscales().iter().position(|&x| (x as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();

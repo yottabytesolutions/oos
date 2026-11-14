@@ -152,8 +152,9 @@ const CASES: [(u32, usize, usize); 5] =
 /// faster (a merge that brought back deinterleave + volts in the batch loop, or slowed the fused decode; measured
 /// 3.4-5x on an M3 Max, 1.6x before the f32 decode). `cargo test --release --test perf_ratio -- --ignored --nocapture`.
 #[test]
-#[ignore]
+#[ignore = "host timing: set OOS_PERF_TESTS=1"]
 fn bench_batch_decode() {
+    assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
     for (mask, frame, frames) in CASES {
         let data = noise(frames * frame, 1);
         let mut dma = DmaBuf::new();
@@ -200,8 +201,9 @@ fn bench_batch_decode() {
 /// vectorising or went back to f64 (measured 0.5-0.65x on an M3 Max; the loop is near memory bandwidth, so not the
 /// 0.2x of the arithmetic alone that perf-plan item 8 estimated).
 #[test]
-#[ignore]
+#[ignore = "host timing: set OOS_PERF_TESTS=1"]
 fn bench_decode_f32_vs_f64() {
+    assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
     for (mask, frame, frames) in CASES {
         let data = noise(frames * frame, 2);
         let (f64_ms, f32_ms) = best_pair_ms(

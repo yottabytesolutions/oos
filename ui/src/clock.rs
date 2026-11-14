@@ -365,13 +365,8 @@ impl Local {
     }
 }
 
-/// Seconds since 1970 now (system clock). `OOS_FIXED_TIME=<seconds>` stops it there, for host test runs whose pictures
-/// must not change with the time of day (tools/layout-check.sh).
+/// Seconds since 1970 now (system clock). The UI reads it through its host, which `Switches::fixed_time` can stop.
 pub fn unix_now() -> f64 {
-    static FIXED: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
-    if let Some(t) = FIXED.get_or_init(|| std::env::var("OOS_FIXED_TIME").ok().and_then(|v| v.parse().ok())) {
-        return *t;
-    }
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
 }
 
@@ -381,6 +376,16 @@ mod tests {
 
     fn unix(y: i64, mo: u32, d: u32, h: u32, mi: u32) -> i64 {
         days_from_civil(y, mo, d) * DAY + (h * 3600 + mi * 60) as i64
+    }
+
+    #[test]
+    fn fixed_epoch_converts_in_explicit_zones() {
+        let unix = 946_684_800.0;
+        for (zone, want) in
+            [("UTC0", "2000-01-01 00:00:00"), ("JST-9", "2000-01-01 09:00:00"), ("EST5", "1999-12-31 19:00:00")]
+        {
+            assert_eq!(Tz::parse(zone).unwrap().local(unix as i64).text(), want);
+        }
     }
 
     #[test]

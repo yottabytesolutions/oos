@@ -4,7 +4,7 @@
 # platform-probe.sh - READ-ONLY description of a Rigol scope running its stock software, for porting OOS to it
 # (MHO900, DHO1000, ...). Run it on a PC with adb, the scope on the same network with network adb on.
 #
-#   platform-probe.sh <scope-ip>[:port]
+#   platform-probe.sh [--host scope.example]
 #
 # It copies tools/platform-probe/probe.sh to /data/local/tmp on the scope, runs it there, fetches the result and
 # removes both from the scope. probe.sh only reads (see its header). On the PC the serial number and MAC addresses
@@ -12,9 +12,16 @@
 #
 # Result: platform-probe-<model>-<date>.tar.gz in the current directory.
 set -eu
-target=${1:?usage: platform-probe.sh <scope-ip>[:port]}
-case "$target" in *:*) ;; *) target="$target:55555";; esac
+host=${OOS_SCOPE:-}
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--host) [ "$#" -ge 2 ] || { echo "--host needs a value" >&2; exit 1; }; host=$2; shift 2 ;;
+		*) echo "usage: platform-probe.sh [--host HOST]; or set OOS_SCOPE" >&2; exit 1 ;;
+	esac
+done
+[ -n "$host" ] || { echo "specify --host or set OOS_SCOPE; no default scope" >&2; exit 1; }
 here=$(cd "$(dirname "$0")" && pwd)
+target="$host:${OOS_ADB_PORT:-55555}"
 command -v adb >/dev/null || { echo "adb not found (Android platform tools)"; exit 1; }
 command -v perl >/dev/null || { echo "perl not found (needed to remove the serial number)"; exit 1; }
 

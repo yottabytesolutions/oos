@@ -213,7 +213,7 @@ mod tests {
     use super::*;
 
     fn ui_for(p: Proto, what: BusWhat) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.dec_proto = p;
         ui.set_trig_type(TrigType::Bus);
         ui.m.trig_bus = what;

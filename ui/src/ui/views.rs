@@ -252,7 +252,7 @@ mod tests {
     use super::*;
 
     fn ui() -> Ui {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         u.step(1.0 / 30.0);
         u
     }
@@ -364,7 +364,7 @@ mod tests {
     fn views_by_scpi() {
         let mut u = ui();
         let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         assert_eq!(scpi.exec_line(&mut u, &cv, ":DISP:VIEW:COUN?"), b"1");
         scpi.exec_line(&mut u, &cv, ":DISP:VIEW:COUN 3");
         scpi.exec_line(&mut u, &cv, ":DISPlay:VIEW 3");

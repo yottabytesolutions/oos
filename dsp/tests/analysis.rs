@@ -1218,8 +1218,9 @@ fn a_followed_span_holds_still_on_a_noisy_frequency() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "host timing: set OOS_PERF_TESTS=1"]
 fn spectrum_cost_on_the_host() {
+    assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
     for (n, span, name) in [
         (70_000usize, 2.5e6, "70k pane"),
         (70_000, 0.0, "70k full"),

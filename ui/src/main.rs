@@ -69,7 +69,7 @@ fn arg(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())
 }
 
-fn source(args: &[String]) -> Source {
+fn source(args: &[String], switches: &sysconf::Switches) -> Source {
     #[cfg(target_os = "linux")]
     if args.iter().any(|a| a == "--fpga-live") {
         use board::Board;
@@ -86,12 +86,12 @@ fn source(args: &[String]) -> Source {
             arg(args, "--app-mask").and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()).unwrap_or(1);
         let cal_dir = arg(args, "--cal").unwrap_or_else(|| "/rigol/data".into());
         eprintln!("oos-ui: board {}", board::board().name());
-        let shared = board::board().spawn(board::Spawn {
-            mask,
-            program_afe: args.iter().any(|a| a == "--afe"),
-            cal_dir,
-            start_up: arg(args, "--start-up"),
-        });
+        // on the unit the frame loop and the acquisition thread keep the two A72 for themselves
+        http::pin_to_big_cores(switches.cores);
+        placement::place(placement::Role::Ui, switches);
+        let program_afe = args.iter().any(|a| a == "--afe");
+        let o = board::Spawn { mask, program_afe, cal_dir, start_up: arg(args, "--start-up") };
+        let shared = board::board().spawn(o, *switches);
         return Source::Hw { shared, seen: 0 };
     }
     if let Some(path) = arg(args, "--replay") {
@@ -102,6 +102,8 @@ fn source(args: &[String]) -> Source {
         let p: Vec<f64> = pre.trim().split(',').map(|s| s.trim().parse().unwrap_or(0.0)).collect();
         return Source::Replay { words, xinc: p[4], yinc: p[7], yorg: p[8], yref: p[9] };
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = switches;
     Source::Demo { t: 0.0 }
 }
 
@@ -139,13 +141,8 @@ fn main() {
         Some(_) => args.iter().filter(|a| !matches!(a.as_str(), "--hw" | "--fpga-live" | "--afe")).cloned().collect(),
         None => args,
     };
-    // on the unit the frame loop and the acquisition thread (started with the source) keep the two A72 for themselves
-    #[cfg(target_os = "linux")]
-    if args.iter().any(|a| a == "--hw") {
-        http::pin_to_big_cores();
-        placement::place(placement::Role::Ui);
-    }
-    let mut ui = Ui::new(source(&args));
+    let switches = sysconf::Switches::read();
+    let mut ui = Ui::new(source(&args, &switches), ui::host::Host::system(switches));
     if let Some(m) = &foreign {
         ui.toast(&format!(
             "This is a {}: OOS drives DHO800/DHO900 hardware only. Demo signal shown (docs/porting.md)",
@@ -193,11 +190,11 @@ fn main() {
         ui.store_dir = d.into();
     }
     if args.iter().any(|a| a == "--serve") {
-        return serve(ui, &args);
+        return serve(ui, &args, &switches);
     }
     #[cfg(target_os = "linux")]
     {
-        device_main(ui, &args);
+        device_main(ui, &args, switches);
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -208,11 +205,11 @@ fn main() {
 
 /// No display and no hardware: the demo source behind SCPI, the web server and VXI-11, for tools/device-test.py on a
 /// host. `OOS_DEMO_LOOP=<mask>` puts the generator on those channels, as a cable from the output would.
-fn serve(mut ui: Ui, args: &[String]) {
+fn serve(mut ui: Ui, args: &[String], sw: &sysconf::Switches) {
     let port = |name: &str, d: u16| arg(args, name).and_then(|p| p.parse().ok()).unwrap_or(d);
-    let mut web = http::Http::open(port("--web-port", 8080));
-    let mut scpi = scpi::Scpi::open(port("--scpi-port", 5555));
-    let mut vxi = vxi11::Server::open();
+    let mut web = http::Http::open(port("--web-port", 8080), sw);
+    let mut scpi = scpi::Scpi::open(port("--scpi-port", 5555), sw.ipv6);
+    let mut vxi = vxi11::Server::open(sw.ipv6);
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     while !ui.quit {
         ui.step(0.04);
@@ -380,9 +377,9 @@ const HDMI_BG: u32 = 0x0d1117;
 
 /// The GPU helper with the panel's scan-out buffers as targets 0 to 2 (the monitor's follow them, up to the helper's 8).
 #[cfg(target_os = "linux")]
-fn start_gpu(disp: &drm::Display) -> Result<gpu::Gpu, String> {
-    http::pin_to_big_cores();
-    placement::place(placement::Role::Ui);
+fn start_gpu(disp: &drm::Display, sw: &sysconf::Switches) -> Result<gpu::Gpu, String> {
+    http::pin_to_big_cores(sw.cores);
+    placement::place(placement::Role::Ui, sw);
     let mut g = gpu::Gpu::start(gpu::HELPER)?;
     for i in 0..disp.buffers() {
         let (fd, pitch) = disp.export(i).map_err(|e| format!("export: {}", e))?;
@@ -518,7 +515,7 @@ fn power(inp: &mut input::Inputs, a: ui::PowerAction) {
 }
 
 #[cfg(target_os = "linux")]
-fn device_main(mut ui: Ui, args: &[String]) {
+fn device_main(mut ui: Ui, args: &[String], sw: sysconf::Switches) {
     use board::Board;
     use std::time::Instant;
     ui.measure_in_background();
@@ -588,9 +585,9 @@ fn device_main(mut ui: Ui, args: &[String]) {
     input::install_signal_handlers();
     let web_port = arg(args, "--web-port").and_then(|p| p.parse().ok()).unwrap_or(8080);
     let scpi_port = arg(args, "--scpi-port").and_then(|p| p.parse().ok()).unwrap_or(5555);
-    let mut web = http::Http::open(web_port);
-    let mut scpi = scpi::Scpi::open(scpi_port);
-    let mut vxi = vxi11::Server::open();
+    let mut web = http::Http::open(web_port, &sw);
+    let mut scpi = scpi::Scpi::open(scpi_port, sw.ipv6);
+    let mut vxi = vxi11::Server::open(sw.ipv6);
     // who may update or control the scope over the network: net.allow (docs/network.md 6); read once per start
     let acl = netacl::Acl::load(&sysconf::default_path());
     web.acl = acl.clone();
@@ -657,13 +654,13 @@ fn device_main(mut ui: Ui, args: &[String]) {
         if remote_now != Some(want) {
             let was = remote_now.unwrap_or([true, true, true, want[3], want[4]]);
             if want[0] != was[0] {
-                web.set_open(want[0].then_some(web_port));
+                web.set_open(want[0].then_some(web_port), sw.ipv6);
             }
             if want[1] != was[1] {
-                scpi.set_open(want[1].then_some(scpi_port));
+                scpi.set_open(want[1].then_some(scpi_port), sw.ipv6);
             }
             if want[2] != was[2] {
-                vxi.set_open(want[2]);
+                vxi.set_open(want[2], sw.ipv6);
             }
             if want[3] != was[3] || want[4] != was[4] {
                 ssh::apply(want[3]);
@@ -708,7 +705,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
             (hdmi_gpu, gpu_pending) = (None, None);
         }
         if gpu_want && gpu.is_none() && !gpu_failed {
-            match start_gpu(&disp) {
+            match start_gpu(&disp, &sw) {
                 Ok(g) => {
                     eprintln!("oos-ui: GPU on");
                     if gpu_changed {
@@ -1051,7 +1048,18 @@ mod tests {
     /// The HDMI workspace on a 1920 x 1080 monitor: settings line on top, the waveform area below without menus.
     #[test]
     fn hdmi_workspace_picture() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        hdmi_workspace_picture_with_shots(None);
+    }
+
+    #[test]
+    #[ignore = "manual screenshots: set OOS_SHOT_DIR"]
+    fn hdmi_workspace_picture_manual_screenshots() {
+        let dir = crate::store::tests::test_output_dir("OOS_SHOT_DIR");
+        hdmi_workspace_picture_with_shots(Some(std::path::Path::new(&dir)));
+    }
+
+    fn hdmi_workspace_picture_with_shots(dir: Option<&std::path::Path>) {
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(ui::PANEL_W, ui::PANEL_H);
         ui.hdmi_snap_want = true;
         for _ in 0..10 {
@@ -1063,8 +1071,8 @@ mod tests {
         // the plot fills the width under the settings band (1024 x 486 -> 1920 x 911 under an 84-px band)
         assert_eq!(ui.hdmi_snap.len(), (ui.scr.w * ui.frame().body.h) as usize);
         assert!(ui.hdmi_header().contains("CH1 1 V/div"));
-        if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
-            let _ = std::fs::write(format!("{}/hdmi-workspace.png", d), store::png_of(&hc));
+        if let Some(dir) = dir {
+            std::fs::write(dir.join("hdmi-workspace.png"), crate::store::png_of(&hc)).unwrap();
         }
     }
 }

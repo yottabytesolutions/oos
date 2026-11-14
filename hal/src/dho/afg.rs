@@ -717,14 +717,14 @@ impl Io {
 mod tests {
     use super::*;
 
-    fn unit_cal() -> Option<Cal> {
-        Cal::load(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full"))
+    fn synthetic_cal() -> Cal {
+        Cal::from_file_bytes(crate::dho::fixtures::AFG).unwrap()
     }
 
     #[test]
     fn retune_only_within_a_gear_and_a_table() {
-        let cal = unit_cal();
-        let c = cal.as_ref();
+        let cal = synthetic_cal();
+        let c = Some(&cal);
         let sine = Wave::Sine;
         let gear_of = |a, o| gear(a, o, false).code;
         let g = gear_of(1e9, 0.0);
@@ -864,7 +864,20 @@ mod tests {
         // uncalibrated codes
         let (a, o, _) = codes(None, 1e9, 0.0, 1e9, false, false);
         assert_eq!((0xffff - a, 0xffff - o), (0x5121, 0x7aeb));
-        let Some(cal) = unit_cal() else { return };
+        let cal = synthetic_cal();
+        let (a, o, _) = codes(Some(&cal), 1e9, 0.0, 1e9, false, false);
+        // generate-test-cal.py: rows 0..29 use k=1 and b=1_000_000 nV.
+        // docs/protocols/afg.md 5.2: gain=1, corrected A=1.001 V, O=0.001 V.
+        // Invert trunc(((1.001/1.158+2.75)/5.29)*65535) and
+        // trunc(((0.001*1.1+2.75)/5.29)*65535) to get these vectors.
+        assert_eq!((0xffff - a, 0xffff - o), (0x5116, 0x7ade));
+    }
+
+    #[test]
+    #[ignore = "private calibration: set OOS_CAL_DIR"]
+    fn unit_section_9_codes() {
+        let bytes = crate::dho::fixtures::private("cal_afg.hex");
+        let cal = Cal::from_file_bytes(&bytes).expect("private AFG calibration");
         let (a, o, _) = codes(Some(&cal), 1e9, 0.0, 1e9, false, false);
         assert_eq!((0xffff - a, 0xffff - o), (0x523f, 0x7c31));
     }

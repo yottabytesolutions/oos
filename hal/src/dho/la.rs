@@ -277,6 +277,14 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "private calibration: set OOS_CAL_DIR"]
+    fn unit_calibration_equals_default() {
+        let bytes = crate::dho::fixtures::private("cal_la.hex");
+        let f = Cal::from_file_bytes(&bytes).expect("private LA calibration");
+        assert_eq!(f, Cal::default());
+    }
+
+    #[test]
     fn codes_match_the_analysis() {
         // la.md 5.1: TTL 1.4 V -> 9043 / 9014, 0 V -> the zero codes, +-15 V -> 13260 / 3957 for D0-7
         let c = Cal::default();
@@ -285,10 +293,9 @@ mod tests {
         assert_eq!((code(15e9, 8609), code(-15e9, 8609), code(99e9, 8609)), (13260, 3957, 13260));
         assert_eq!(code(2.5e9, 8580), 9355);
         assert_eq!(lines(0x8001)[0] && lines(0x8001)[15] && !lines(0x8001)[1], true);
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full");
-        if let Some(f) = Cal::load(dir) {
-            assert_eq!(f, Cal::default());
-        }
+        let f = Cal::from_file_bytes(crate::dho::fixtures::LA).unwrap();
+        assert_eq!(f.zero, [8500, 8520]);
+        assert_eq!(thresholds(&f, 0.0, 0.0).1, 8520 << 16 | 8500);
     }
 
     #[test]

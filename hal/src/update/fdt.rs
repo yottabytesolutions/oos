@@ -480,7 +480,7 @@ mod tests {
     /// The trees of the unit (0.1.6's image, the tree its kernel got, the image with the GPU and the VPU): run with
     /// OOS_DT_OLD, OOS_DT_RUNNING, OOS_DT_NEW set to the files.
     #[test]
-    #[ignore]
+    #[ignore = "private device trees: set OOS_DT_OLD, OOS_DT_RUNNING and OOS_DT_NEW"]
     fn the_units_trees() {
         let f = |v: &str| std::fs::read(std::env::var(v).unwrap()).unwrap();
         let (old, run, new) = (f("OOS_DT_OLD"), f("OOS_DT_RUNNING"), f("OOS_DT_NEW"));

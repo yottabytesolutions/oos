@@ -434,8 +434,9 @@ mod tests {
     /// Reference timing (run with --ignored --nocapture): near-first vs the wide search at 12.5 k and 100 k points with
     /// the edge at the hardware point.
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn near_first_is_much_cheaper_at_the_hardware_point() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         for (n, l) in [(12_500usize, 12usize), (100_000, 100)] {
             let p = sim::PulseTrain::square(1e6 / (n as f64 / 1000.0), -1.0, 1.0, 1e-9);
             let mut v = sim::sample(|t| p.v(t), -(n as f64) / 2.0 * 1e-9, 1e-9, n);

@@ -59,7 +59,7 @@ impl Ui {
 
     /// On the unit only (tests and host runs have no settings file).
     pub(super) fn apply_backlight(&self) {
-        if self.sys_path.is_some() {
+        if self.sys_path.is_some() && self.host.services() {
             apply(self.sys.backlight);
         }
     }
@@ -73,7 +73,7 @@ mod tests {
     fn the_backlight_follows_the_eye() {
         assert_eq!((level(100, 255), level(50, 255), level(10, 255), level(0, 255)), (255, 64, 3, 3));
         assert_eq!(level(10, 10), 1, "never dark");
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         assert_eq!(u.value(Item::Backlight), "100 %");
         assert!(u.items(MenuId::Display).contains(&Item::Backlight));
         u.adjust(Item::Backlight, -3);

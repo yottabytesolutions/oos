@@ -1579,11 +1579,7 @@ mod tests {
     }
     #[test]
     fn the_afe_sees_the_bnc_behind_a_probe() {
-        let dir = std::env::var("OOS_CAL_DIR").unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal").into());
-        let Ok(cal) = afe::Cal::load(&dir) else {
-            eprintln!("calibration files not found, skipped");
-            return;
-        };
+        let cal = crate::dho::fixtures::afe();
         let afe_ops = |k: Chan| {
             let s = Settings { afe: true, ch: [k; 4], ..Settings::default() };
             let (st, _) = plan(&mut State::handover(1, None), &s, Some(&cal), None).unwrap();
@@ -1598,11 +1594,8 @@ mod tests {
         assert_eq!(afe_ops(Chan { offset: 0.35, bias: 0.1, ..k }), afe_ops(k));
     }
 
-    fn cal() -> Option<afe::Cal> {
-        afe::Cal::load(
-            &std::env::var("OOS_CAL_DIR").unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal").into()),
-        )
-        .ok()
+    fn cal() -> afe::Cal {
+        crate::dho::fixtures::afe()
     }
 
     fn afe_writes(st: &[Step], reg: u8) -> Vec<u16> {
@@ -1619,7 +1612,7 @@ mod tests {
 
     #[test]
     fn coupling_goes_to_the_afe_and_gnd_to_the_fpga() {
-        let Some(cal) = cal() else { return };
+        let cal = cal();
         let mut st = State::handover(1, None);
         let k = Settings::default().ch[0];
         let run = |st: &mut State, couple: Couple| {
@@ -1640,7 +1633,7 @@ mod tests {
 
     #[test]
     fn invert_is_done_in_the_fpga_with_a_mirrored_offset() {
-        let Some(cal) = cal() else { return };
+        let cal = cal();
         let k = Settings::default().ch[0];
         let run = |invert: bool, offset: f64| {
             let s = Settings { afe: true, ch: [Chan { invert, offset, ..k }; 4], ..Settings::default() };
@@ -2051,15 +2044,14 @@ mod tests {
         let s = Settings { mask: 3, ..Settings::default() };
         let mut state = State::handover(1, None);
         assert!(state.configure(&s, None, None).is_err());
-        if let Ok(cal) = adc::CalAdc::load(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal")) {
-            let mut state = State::handover(1, Some(&cal));
-            let (st, _) = state.configure(&s, None, Some(&cal)).unwrap();
-            let w = writes(&st);
-            assert_eq!(&w[..2], &[(0x1034, 0x0154_1860), (0x1034, 0x0155_0005)]);
-            // second configure with the same set: no ADC writes
-            let (st2, _) = state.configure(&s, None, Some(&cal)).unwrap();
-            assert!(!writes(&st2).iter().any(|w| w.0 == 0x1034));
-        }
+        let cal = crate::dho::fixtures::adc();
+        let mut state = State::handover(1, Some(&cal));
+        let (st, _) = state.configure(&s, None, Some(&cal)).unwrap();
+        let w = writes(&st);
+        assert_eq!(&w[..2], &[(0x1034, 0x0154_1860), (0x1034, 0x0155_0005)]);
+        // second configure with the same set: no ADC writes
+        let (st2, _) = state.configure(&s, None, Some(&cal)).unwrap();
+        assert!(!writes(&st2).iter().any(|w| w.0 == 0x1034));
     }
 
     #[test]

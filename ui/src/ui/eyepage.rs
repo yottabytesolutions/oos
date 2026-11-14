@@ -865,7 +865,7 @@ mod tests {
     }
 
     fn page(s: Sig, records: usize) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.step(0.05);
         ui.m.run = RunState::Stop;
         ui.m.view = AView::Eye;
@@ -960,8 +960,9 @@ mod tests {
 
     /// Time of the parts on a deep record: `cargo test --release eye_page_timing -- --ignored --nocapture`.
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn eye_page_timing() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         let s = Sig { rate: 10e6, uis: 8000, prbs: true, spu: 125, rj: 50e-12, pj: 0.0, volt_noise: 0.01 };
         let mut ui = page(s, 3);
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
@@ -1126,9 +1127,9 @@ mod tests {
 
     /// Pictures for a visual check: `OOS_SHOTS=<dir> cargo test eye_page_shots -- --ignored`.
     #[test]
-    #[ignore]
+    #[ignore = "manual screenshots: set OOS_SHOTS"]
     fn eye_page_shots() {
-        let dir = std::env::var("OOS_SHOTS").unwrap_or_else(|_| ".".into());
+        let dir = crate::store::tests::test_output_dir("OOS_SHOTS");
         let few = Sig { uis: 10, ..CLEAN };
         for (name, s, n) in [
             ("eye-clean", CLEAN, 40),

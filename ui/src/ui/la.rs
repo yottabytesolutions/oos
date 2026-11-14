@@ -717,18 +717,18 @@ mod tests {
         assert_eq!(m.max_srate(), sr / 2.0);
         // the hardware settings carry the LA, depth capped to the LA memory
         m.mdepth = mdepths().iter().position(|d| d.1 == 125_000_000).unwrap();
-        let s = crate::board::dho::hw::settings(&m, false);
+        let s = crate::board::dho::hw::settings(&m, false, &Default::default());
         let l = s.la.expect("LA in the settings");
         assert!(l.analog_shown && (l.thr[0] - 1.4).abs() < 1e-6);
         assert_eq!(s.depth, m.max_mem() as i128);
         m.la.on = false;
-        assert!(crate::board::dho::hw::settings(&m, false).la.is_none());
-        assert_eq!(crate::board::dho::hw::settings(&m, false).depth, 125_000_000);
+        assert!(crate::board::dho::hw::settings(&m, false, &Default::default()).la.is_none());
+        assert_eq!(crate::board::dho::hw::settings(&m, false, &Default::default()).depth, 125_000_000);
     }
 
     #[test]
     fn la_page_key_and_lanes_on_the_demo() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         assert!(ui.items(MenuId::Main).contains(&Item::Open(MenuId::La)));
         ui.key(key::LA);
         assert!(ui.m.la.on && ui.menu_open && ui.menu == MenuId::La);
@@ -788,7 +788,7 @@ mod decode_tests {
 
     /// A UI with the LA on and the decoder on LA lines, some records acquired.
     fn ui_on(p: Proto) -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.la.on = true;
         ui.m.dec_on = true;
         ui.set_dec_proto(p);
@@ -843,7 +843,7 @@ mod decode_tests {
     /// Without the probe the LA stays off, whichever way it is asked for; pulling the probe switches it off.
     #[test]
     fn the_la_needs_its_probe() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         // demo signals: no probe to ask for
         assert!(ui.la_probe_ok());
         ui.la_probe_set(Some(false));
@@ -923,9 +923,9 @@ mod remote_tests {
 
     #[test]
     fn scpi_and_csv() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let mut q = |ui: &mut Ui, c: &str| scpi.exec_line(ui, &cv, c);
         let s = |b: Vec<u8>| String::from_utf8(b).unwrap();
         assert_eq!(s(q(&mut ui, ":LA:STAT?")), "0");
@@ -969,7 +969,7 @@ mod trigger_tests {
     use super::*;
 
     fn ui_la() -> Ui {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.la.on = true;
         ui
     }
@@ -1024,16 +1024,16 @@ mod trigger_tests {
         let mut m = Model::default();
         m.la.on = true;
         m.trig_la = Some(5);
-        assert_eq!(crate::board::dho::hw::settings(&m, false).trig_src, 14);
+        assert_eq!(crate::board::dho::hw::settings(&m, false, &Default::default()).trig_src, 14);
         m.trig_la = None;
-        assert_eq!(crate::board::dho::hw::settings(&m, false).trig_src, 1);
+        assert_eq!(crate::board::dho::hw::settings(&m, false, &Default::default()).trig_src, 1);
     }
 
     #[test]
     fn scpi_source() {
         let mut ui = ui_la();
         let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         scpi.exec_line(&mut ui, &cv, ":TRIG:EDGE:SOUR D7");
         assert_eq!(ui.m.trig_line(), Some(7));
         assert_eq!(scpi.exec_line(&mut ui, &cv, ":TRIG:EDGE:SOUR?"), b"D7");
@@ -1059,7 +1059,7 @@ mod pattern_tests {
     #[test]
     fn demo_triggers_on_a_counter_value() {
         // D0-D7 count at 100 kHz: 0x5a begins every 2.56 ms; the trigger point must sit on that change
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.la.on = true;
         ui.m.trig_type = TrigType::Pattern;
         ui.m.pat = [Bit::X; NCH];
@@ -1086,14 +1086,14 @@ mod pattern_tests {
         m.trig_type = TrigType::Pattern;
         m.pat_la[0] = Bit::H;
         m.pat_la[15] = Bit::L;
-        let s = crate::board::dho::hw::settings(&m, false);
+        let s = crate::board::dho::hw::settings(&m, false, &Default::default());
         let oos_hal::dho::seq::Trig::Pattern { la, .. } = s.trigger else { panic!() };
         assert_eq!(
             (la[0], la[15], la[1]),
             (oos_hal::dho::tpu::Pat::H, oos_hal::dho::tpu::Pat::L, oos_hal::dho::tpu::Pat::X)
         );
         m.la.on = false;
-        let s = crate::board::dho::hw::settings(&m, false);
+        let s = crate::board::dho::hw::settings(&m, false, &Default::default());
         let oos_hal::dho::seq::Trig::Pattern { la, .. } = s.trigger else { panic!() };
         assert!(la.iter().all(|&p| p == oos_hal::dho::tpu::Pat::X));
     }
@@ -1107,7 +1107,7 @@ mod bus_tests {
     #[test]
     fn protocol_trigger_on_la_lines() {
         // I2C on D12/D13: trigger on the data byte 0x42, the field ends at the trigger point
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.la.on = true;
         ui.m.dec_on = true;
         ui.set_dec_proto(Proto::I2c);
@@ -1135,11 +1135,11 @@ mod bus_tests {
         m.dec_la_in = true;
         m.trig_type = TrigType::Bus;
         (m.dec_proto, m.dec_la) = (Proto::Spi, [Some(11), Some(10), Some(9), None]);
-        assert_eq!(crate::board::dho::hw::settings(&m, false).trig_src, 9 + 9);
+        assert_eq!(crate::board::dho::hw::settings(&m, false, &Default::default()).trig_src, 9 + 9);
         (m.dec_proto, m.dec_la) = (Proto::Uart, [Some(8), None, None, None]);
-        assert_eq!(crate::board::dho::hw::settings(&m, false).trig_src, 9 + 8);
+        assert_eq!(crate::board::dho::hw::settings(&m, false, &Default::default()).trig_src, 9 + 8);
         m.dec_la_in = false;
-        assert!(crate::board::dho::hw::settings(&m, false).trig_src <= 4);
+        assert!(crate::board::dho::hw::settings(&m, false, &Default::default()).trig_src <= 4);
     }
 }
 
@@ -1150,7 +1150,7 @@ mod duration_tests {
     #[test]
     fn duration_on_a_line() {
         // D14 = the 1 kHz square, high for 500 us: "longer than 300 us" fires 300 us after the rising edge
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.la.on = true;
         ui.m.trig_type = TrigType::Duration;
         ui.m.pat = [Bit::X; NCH];
@@ -1165,7 +1165,7 @@ mod duration_tests {
         let la = ui.la_record().unwrap().clone();
         let at = |t: f64| la.words[((t - la.t0) / la.dt) as usize] >> 14 & 1;
         assert_eq!(at(0.0), 1, "the line is high at the trigger point");
-        let s = crate::board::dho::hw::settings(&ui.m, false);
+        let s = crate::board::dho::hw::settings(&ui.m, false, &Default::default());
         assert!(
             matches!(s.trigger, oos_hal::dho::seq::Trig::Duration { la, .. } if la[14] == oos_hal::dho::tpu::Pat::H)
         );
@@ -1184,7 +1184,7 @@ mod review_tests {
         m.trig_la = Some(5);
         m.tscale = tscales().iter().position(|&t| t >= 0.2).unwrap();
         assert_ne!(crate::board::dho::hw::slow_mode(&m), crate::board::Slow::Off);
-        let s = crate::board::dho::hw::settings(&m, false);
+        let s = crate::board::dho::hw::settings(&m, false, &Default::default());
         assert!(s.la.is_some_and(|l| l.roll) && s.trig_src == 14, "{:?}", s.trig_src);
         let mut st = oos_hal::dho::seq::State::handover(1, None);
         let (steps, _) = st.configure(&s, None, None).unwrap();
@@ -1208,9 +1208,9 @@ mod review_tests {
         m.la.on = true;
         m.ch[0].on = false;
         m.trig_src = 1;
-        let s = crate::board::dho::hw::settings(&m, false);
+        let s = crate::board::dho::hw::settings(&m, false, &Default::default());
         assert_eq!((s.mask, s.trig_src), (2, 2));
         m.la.on = false;
-        assert_eq!(crate::board::dho::hw::settings(&m, false).mask, 2);
+        assert_eq!(crate::board::dho::hw::settings(&m, false, &Default::default()).mask, 2);
     }
 }

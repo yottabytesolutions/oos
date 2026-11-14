@@ -1,0 +1,1283 @@
+{
+  "version": 2,
+  "date": "2026-11-15",
+  "base_commit": "aae6c0e",
+  "network": "offline",
+  "device_access": false,
+  "committed": false,
+  "runs": [
+    {
+      "crate": "hal",
+      "profile": "debug",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--no-fail-fast"
+      ],
+      "working_directory": "hal",
+      "exit_code": 101,
+      "targets": [
+        {
+          "target": "unittests src/lib.rs",
+          "failed_tests": [
+            "wlan::tests::join_commands"
+          ],
+          "ignored_tests": [
+            {
+              "name": "dho::afg::tests::unit_section_9_codes",
+              "reason": "private calibration: set OOS_CAL_DIR"
+            },
+            {
+              "name": "dho::boot::cal::tests::unit_ddr_taps",
+              "reason": "private calibration: set OOS_CAL_DIR"
+            },
+            {
+              "name": "dho::boot::tests::unit_adc_parameter_sequence",
+              "reason": "private calibration: set OOS_CAL_DIR"
+            },
+            {
+              "name": "dho::calfile::tests::private_files_parse_and_rebuild_byte_for_byte",
+              "reason": "private calibration: set OOS_CAL_DIR"
+            },
+            {
+              "name": "dho::la::tests::unit_calibration_equals_default",
+              "reason": "private calibration: set OOS_CAL_DIR"
+            },
+            {
+              "name": "update::fdt::tests::the_units_trees",
+              "reason": "private device trees: set OOS_DT_OLD, OOS_DT_RUNNING and OOS_DT_NEW"
+            },
+            {
+              "name": "update::inflate::tests::the_build_of_an_image",
+              "reason": "private image: set OOS_IMG"
+            },
+            {
+              "name": "vendorkeys::tests::stock_file_of_the_environment",
+              "reason": "private stock files: set OOS_TEST_STOCK and OOS_TEST_VENDOR"
+            }
+          ],
+          "counts": {
+            "passed": 328,
+            "failed": 1,
+            "ignored": 8,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: FAILED. 328 passed; 1 failed; 8 ignored; 0 measured; 0 filtered out; finished in 52.86s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/alloc_batch.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 4,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/compress_raw_again.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/early_trigger_end.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 2,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/idle_during_ring_fill.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 2,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/overclock.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 2,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/overclock_1375.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/perf_ratio.rs",
+          "failed_tests": [],
+          "ignored_tests": [
+            {
+              "name": "bench_batch_decode",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "bench_decode_f32_vs_f64",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            }
+          ],
+          "counts": {
+            "passed": 0,
+            "failed": 0,
+            "ignored": 2,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "ignored_only"
+        },
+        {
+          "target": "Doc-tests oos_hal",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 0,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "zero_tests"
+        }
+      ],
+      "totals": {
+        "passed": 340,
+        "failed": 1,
+        "ignored": 10,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "sandbox_socket_failures": [
+        "wlan::tests::join_commands"
+      ]
+    },
+    {
+      "crate": "hal",
+      "profile": "release",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--no-fail-fast",
+        "--release"
+      ],
+      "working_directory": "hal",
+      "exit_code": 101,
+      "targets": [
+        {
+          "target": "unittests src/lib.rs",
+          "failed_tests": [
+            "wlan::tests::join_commands"
+          ],
+          "ignored_tests": [
+            {
+              "name": "dho::afg::tests::unit_section_9_codes",
+              "reason": "private calibration: set OOS_CAL_DIR"
+            },
+            {
+              "name": "dho::boot::cal::tests::unit_ddr_taps",
+              "reason": "private calibration: set OOS_CAL_DIR"
+            },
+            {
+              "name": "dho::boot::tests::unit_adc_parameter_sequence",
+              "reason": "private calibration: set OOS_CAL_DIR"
+            },
+            {
+              "name": "dho::calfile::tests::private_files_parse_and_rebuild_byte_for_byte",
+              "reason": "private calibration: set OOS_CAL_DIR"
+            },
+            {
+              "name": "dho::la::tests::unit_calibration_equals_default",
+              "reason": "private calibration: set OOS_CAL_DIR"
+            },
+            {
+              "name": "update::fdt::tests::the_units_trees",
+              "reason": "private device trees: set OOS_DT_OLD, OOS_DT_RUNNING and OOS_DT_NEW"
+            },
+            {
+              "name": "update::inflate::tests::the_build_of_an_image",
+              "reason": "private image: set OOS_IMG"
+            },
+            {
+              "name": "vendorkeys::tests::stock_file_of_the_environment",
+              "reason": "private stock files: set OOS_TEST_STOCK and OOS_TEST_VENDOR"
+            }
+          ],
+          "counts": {
+            "passed": 328,
+            "failed": 1,
+            "ignored": 8,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: FAILED. 328 passed; 1 failed; 8 ignored; 0 measured; 0 filtered out; finished in 4.13s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/alloc_batch.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 4,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/compress_raw_again.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/early_trigger_end.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 2,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/idle_during_ring_fill.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 2,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/overclock.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 2,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/overclock_1375.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 1,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/perf_ratio.rs",
+          "failed_tests": [],
+          "ignored_tests": [
+            {
+              "name": "bench_batch_decode",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "bench_decode_f32_vs_f64",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            }
+          ],
+          "counts": {
+            "passed": 0,
+            "failed": 0,
+            "ignored": 2,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "ignored_only"
+        },
+        {
+          "target": "Doc-tests oos_hal",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 0,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "zero_tests"
+        }
+      ],
+      "totals": {
+        "passed": 340,
+        "failed": 1,
+        "ignored": 10,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "sandbox_socket_failures": [
+        "wlan::tests::join_commands"
+      ]
+    },
+    {
+      "crate": "dsp",
+      "profile": "debug",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--no-fail-fast"
+      ],
+      "working_directory": "dsp",
+      "exit_code": 0,
+      "targets": [
+        {
+          "target": "unittests src/lib.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 50,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/analysis.rs",
+          "failed_tests": [],
+          "ignored_tests": [
+            {
+              "name": "spectrum_cost_on_the_host",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            }
+          ],
+          "counts": {
+            "passed": 46,
+            "failed": 0,
+            "ignored": 1,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 46 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 17.36s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/bus.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 6,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/bus2.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 3,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/decode_ext.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 19,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.51s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/decode_ext2.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 13,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/decode_ext3.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 14,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/measure.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 6,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/triggers.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 11,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+          "classification": "executed"
+        },
+        {
+          "target": "Doc-tests oos_dsp",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 0,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "zero_tests"
+        }
+      ],
+      "totals": {
+        "passed": 168,
+        "failed": 0,
+        "ignored": 1,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "sandbox_socket_failures": []
+    },
+    {
+      "crate": "dsp",
+      "profile": "release",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--no-fail-fast",
+        "--release"
+      ],
+      "working_directory": "dsp",
+      "exit_code": 0,
+      "targets": [
+        {
+          "target": "unittests src/lib.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 50,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/analysis.rs",
+          "failed_tests": [],
+          "ignored_tests": [
+            {
+              "name": "spectrum_cost_on_the_host",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            }
+          ],
+          "counts": {
+            "passed": 46,
+            "failed": 0,
+            "ignored": 1,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 46 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.60s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/bus.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 6,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/bus2.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 3,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/decode_ext.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 19,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/decode_ext2.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 13,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/decode_ext3.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 14,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/measure.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 6,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "tests/triggers.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 11,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "Doc-tests oos_dsp",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 0,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "zero_tests"
+        }
+      ],
+      "totals": {
+        "passed": 168,
+        "failed": 0,
+        "ignored": 1,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "sandbox_socket_failures": []
+    },
+    {
+      "crate": "ui",
+      "profile": "debug",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--no-fail-fast"
+      ],
+      "working_directory": "ui",
+      "exit_code": 101,
+      "targets": [
+        {
+          "target": "unittests src/main.rs",
+          "failed_tests": [
+            "http::tests::a_body_without_content_length_gets_411",
+            "http::tests::a_request_the_frame_loop_does_not_take_gets_503",
+            "http::tests::cmd_takes_keys_knobs_and_touch_only",
+            "http::tests::every_limit_answers",
+            "http::tests::expect_continue_is_answered_and_refusals_come_first",
+            "http::tests::large_answers_go_through_a_thread",
+            "http::tests::live_picture_from_the_frame_loop_without_a_copy",
+            "http::tests::live_picture_once_per_screen_and_long_poll",
+            "http::tests::page_lets_the_viewer_pick_png_or_bmp",
+            "http::tests::live_picture_with_the_gpu_is_a_picture_read_back",
+            "http::tests::pages_and_downloads",
+            "http::tests::too_many_connections_get_503",
+            "http::tests::update_upload_limits",
+            "net6::tests::dual_stack_or_ipv4",
+            "net::tests::reads_without_waiting",
+            "scpi::vernier_tests::compound_query_is_one_line_on_the_socket",
+            "sntp::tests::no_server_means_an_error",
+            "sntp::tests::query_against_a_local_server",
+            "ui::tests::bode_sweep_drives_the_generator"
+          ],
+          "ignored_tests": [
+            {
+              "name": "board::dho::hw::tests::deep_raw_read_cost_report",
+              "reason": "manual report: set OOS_REPORTS=1"
+            },
+            {
+              "name": "board::record::bench::bench_record",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "compress::tests::perf_guard_compressed_frame",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "drawpipe::tests::perf_guard_codes_per_frame",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "drawpipe::tests::perf_guard_deposit_worker_per_frame",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "fastdraw::tests::perf_guard_deposit_spans",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "fastdraw::tests::perf_guard_dots",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "framestats::tests::perf_guard_framestats",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "http::tests::page_script_lets_the_viewer_pick_png_or_bmp",
+              "reason": "external tool: requires Node.js"
+            },
+            {
+              "name": "http::tests::web_demo",
+              "reason": "manual web server: set OOS_WEB_DEMO_S"
+            },
+            {
+              "name": "mdns::tests::host_responder",
+              "reason": "live multicast: set OOS_MDNS_IF"
+            },
+            {
+              "name": "sparse::tests::perf_guard_fast_interpolation",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "sparse::tests::sparse_path_is_cheaper_than_the_record_path",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "store::tests::png_encode_time",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "store::tests::png_opens_in_pillow",
+              "reason": "external tool: requires python3 with Pillow"
+            },
+            {
+              "name": "tests::hdmi_workspace_picture_manual_screenshots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "trignear::tests::near_first_is_much_cheaper_at_the_hardware_point",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "ui::autoset::tests::view_bar_sets_periods_and_edges_manual_screenshots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "ui::eyepage::tests::eye_page_shots",
+              "reason": "manual screenshots: set OOS_SHOTS"
+            },
+            {
+              "name": "ui::eyepage::tests::eye_page_timing",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "ui::lint::gallery",
+              "reason": "manual screenshots: set OOS_GALLERY"
+            },
+            {
+              "name": "ui::lint::pane_pictures",
+              "reason": "manual screenshots: set OOS_PANES"
+            },
+            {
+              "name": "ui::lint::the_hdmi_layout_leaves_the_panel_alone_manual_screenshots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "ui::startup::tests::failed_start_up_stays_until_a_tap_manual_screenshots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "ui::startup::tests::screen_follows_the_start_up_manual_screenshots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "ui::tests::pair_raw_mix_report",
+              "reason": "manual report: set OOS_REPORTS=1"
+            },
+            {
+              "name": "ui::tests::shots_of_new_views",
+              "reason": "manual screenshots: set OOS_SHOTS"
+            },
+            {
+              "name": "ui::windows::tests::shots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "ui::wlan::tests::live_radio",
+              "reason": "simulated radios: set OOS_WLAN_SIM=1"
+            }
+          ],
+          "counts": {
+            "passed": 500,
+            "failed": 19,
+            "ignored": 29,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: FAILED. 500 passed; 19 failed; 29 ignored; 0 measured; 0 filtered out; finished in 71.42s",
+          "classification": "executed"
+        }
+      ],
+      "totals": {
+        "passed": 500,
+        "failed": 19,
+        "ignored": 29,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "sandbox_socket_failures": [
+        "http::tests::a_body_without_content_length_gets_411",
+        "http::tests::a_request_the_frame_loop_does_not_take_gets_503",
+        "http::tests::cmd_takes_keys_knobs_and_touch_only",
+        "http::tests::every_limit_answers",
+        "http::tests::expect_continue_is_answered_and_refusals_come_first",
+        "http::tests::large_answers_go_through_a_thread",
+        "http::tests::live_picture_from_the_frame_loop_without_a_copy",
+        "http::tests::live_picture_once_per_screen_and_long_poll",
+        "http::tests::page_lets_the_viewer_pick_png_or_bmp",
+        "http::tests::live_picture_with_the_gpu_is_a_picture_read_back",
+        "http::tests::pages_and_downloads",
+        "http::tests::too_many_connections_get_503",
+        "http::tests::update_upload_limits",
+        "net6::tests::dual_stack_or_ipv4",
+        "net::tests::reads_without_waiting",
+        "scpi::vernier_tests::compound_query_is_one_line_on_the_socket",
+        "sntp::tests::no_server_means_an_error",
+        "sntp::tests::query_against_a_local_server",
+        "ui::tests::bode_sweep_drives_the_generator"
+      ]
+    },
+    {
+      "crate": "ui",
+      "profile": "release",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--no-fail-fast",
+        "--release"
+      ],
+      "working_directory": "ui",
+      "exit_code": 101,
+      "targets": [
+        {
+          "target": "unittests src/main.rs",
+          "failed_tests": [
+            "http::tests::a_body_without_content_length_gets_411",
+            "http::tests::a_request_the_frame_loop_does_not_take_gets_503",
+            "http::tests::cmd_takes_keys_knobs_and_touch_only",
+            "http::tests::every_limit_answers",
+            "http::tests::expect_continue_is_answered_and_refusals_come_first",
+            "http::tests::large_answers_go_through_a_thread",
+            "http::tests::live_picture_from_the_frame_loop_without_a_copy",
+            "http::tests::live_picture_once_per_screen_and_long_poll",
+            "http::tests::live_picture_with_the_gpu_is_a_picture_read_back",
+            "http::tests::page_lets_the_viewer_pick_png_or_bmp",
+            "http::tests::pages_and_downloads",
+            "http::tests::too_many_connections_get_503",
+            "http::tests::update_upload_limits",
+            "net6::tests::dual_stack_or_ipv4",
+            "net::tests::reads_without_waiting",
+            "scpi::vernier_tests::compound_query_is_one_line_on_the_socket",
+            "sntp::tests::no_server_means_an_error",
+            "sntp::tests::query_against_a_local_server",
+            "ui::tests::bode_sweep_drives_the_generator"
+          ],
+          "ignored_tests": [
+            {
+              "name": "board::dho::hw::tests::deep_raw_read_cost_report",
+              "reason": "manual report: set OOS_REPORTS=1"
+            },
+            {
+              "name": "board::record::bench::bench_record",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "compress::tests::perf_guard_compressed_frame",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "drawpipe::tests::perf_guard_codes_per_frame",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "drawpipe::tests::perf_guard_deposit_worker_per_frame",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "fastdraw::tests::perf_guard_deposit_spans",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "fastdraw::tests::perf_guard_dots",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "framestats::tests::perf_guard_framestats",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "http::tests::page_script_lets_the_viewer_pick_png_or_bmp",
+              "reason": "external tool: requires Node.js"
+            },
+            {
+              "name": "http::tests::web_demo",
+              "reason": "manual web server: set OOS_WEB_DEMO_S"
+            },
+            {
+              "name": "mdns::tests::host_responder",
+              "reason": "live multicast: set OOS_MDNS_IF"
+            },
+            {
+              "name": "sparse::tests::perf_guard_fast_interpolation",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "sparse::tests::sparse_path_is_cheaper_than_the_record_path",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "store::tests::png_encode_time",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "store::tests::png_opens_in_pillow",
+              "reason": "external tool: requires python3 with Pillow"
+            },
+            {
+              "name": "tests::hdmi_workspace_picture_manual_screenshots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "trignear::tests::near_first_is_much_cheaper_at_the_hardware_point",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "ui::autoset::tests::view_bar_sets_periods_and_edges_manual_screenshots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "ui::eyepage::tests::eye_page_shots",
+              "reason": "manual screenshots: set OOS_SHOTS"
+            },
+            {
+              "name": "ui::eyepage::tests::eye_page_timing",
+              "reason": "host timing: set OOS_PERF_TESTS=1"
+            },
+            {
+              "name": "ui::lint::gallery",
+              "reason": "manual screenshots: set OOS_GALLERY"
+            },
+            {
+              "name": "ui::lint::pane_pictures",
+              "reason": "manual screenshots: set OOS_PANES"
+            },
+            {
+              "name": "ui::lint::the_hdmi_layout_leaves_the_panel_alone_manual_screenshots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "ui::startup::tests::failed_start_up_stays_until_a_tap_manual_screenshots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "ui::startup::tests::screen_follows_the_start_up_manual_screenshots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "ui::tests::pair_raw_mix_report",
+              "reason": "manual report: set OOS_REPORTS=1"
+            },
+            {
+              "name": "ui::tests::shots_of_new_views",
+              "reason": "manual screenshots: set OOS_SHOTS"
+            },
+            {
+              "name": "ui::windows::tests::shots",
+              "reason": "manual screenshots: set OOS_SHOT_DIR"
+            },
+            {
+              "name": "ui::wlan::tests::live_radio",
+              "reason": "simulated radios: set OOS_WLAN_SIM=1"
+            }
+          ],
+          "counts": {
+            "passed": 500,
+            "failed": 19,
+            "ignored": 29,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: FAILED. 500 passed; 19 failed; 29 ignored; 0 measured; 0 filtered out; finished in 10.11s",
+          "classification": "executed"
+        }
+      ],
+      "totals": {
+        "passed": 500,
+        "failed": 19,
+        "ignored": 29,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "sandbox_socket_failures": [
+        "http::tests::a_body_without_content_length_gets_411",
+        "http::tests::a_request_the_frame_loop_does_not_take_gets_503",
+        "http::tests::cmd_takes_keys_knobs_and_touch_only",
+        "http::tests::every_limit_answers",
+        "http::tests::expect_continue_is_answered_and_refusals_come_first",
+        "http::tests::large_answers_go_through_a_thread",
+        "http::tests::live_picture_from_the_frame_loop_without_a_copy",
+        "http::tests::live_picture_once_per_screen_and_long_poll",
+        "http::tests::live_picture_with_the_gpu_is_a_picture_read_back",
+        "http::tests::page_lets_the_viewer_pick_png_or_bmp",
+        "http::tests::pages_and_downloads",
+        "http::tests::too_many_connections_get_503",
+        "http::tests::update_upload_limits",
+        "net6::tests::dual_stack_or_ipv4",
+        "net::tests::reads_without_waiting",
+        "scpi::vernier_tests::compound_query_is_one_line_on_the_socket",
+        "sntp::tests::no_server_means_an_error",
+        "sntp::tests::query_against_a_local_server",
+        "ui::tests::bode_sweep_drives_the_generator"
+      ]
+    },
+    {
+      "crate": "fpgad",
+      "profile": "debug",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--no-fail-fast"
+      ],
+      "working_directory": "fpgad",
+      "exit_code": 0,
+      "targets": [
+        {
+          "target": "unittests src/main.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 9,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+          "classification": "executed"
+        },
+        {
+          "target": "unittests src/bin/oos-update.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 3,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        }
+      ],
+      "totals": {
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "sandbox_socket_failures": []
+    },
+    {
+      "crate": "fpgad",
+      "profile": "release",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--no-fail-fast",
+        "--release"
+      ],
+      "working_directory": "fpgad",
+      "exit_code": 0,
+      "targets": [
+        {
+          "target": "unittests src/main.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 9,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        },
+        {
+          "target": "unittests src/bin/oos-update.rs",
+          "failed_tests": [],
+          "ignored_tests": [],
+          "counts": {
+            "passed": 3,
+            "failed": 0,
+            "ignored": 0,
+            "measured": 0,
+            "filtered_out": 0
+          },
+          "summary_as_printed": "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+          "classification": "executed"
+        }
+      ],
+      "totals": {
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "sandbox_socket_failures": []
+    }
+  ],
+  "checks": {
+    "production_ui_check": {
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "ui/Cargo.toml"
+      ],
+      "exit_code": 0
+    },
+    "fixture_generation": {
+      "command": [
+        "python3",
+        "tools/generate-test-cal.py"
+      ],
+      "exit_code": 0,
+      "unchanged_stored_files": 9,
+      "vertical_generated_in_memory": true,
+      "vertical_length": 717724,
+      "vertical_reference_crc32": "9dce7aed"
+    },
+    "private_opt_in_without_environment": {
+      "exit_code": 101,
+      "expected_failure": true,
+      "summary_as_printed": "test result: FAILED. 0 passed; 5 failed; 0 ignored; 0 measured; 332 filtered out; finished in 0.00s"
+    },
+    "screenshots_without_environment": {
+      "exit_code": 101,
+      "expected_failure": true,
+      "summary_as_printed": "test result: FAILED. 0 passed; 8 failed; 0 ignored; 0 measured; 540 filtered out; finished in 0.00s"
+    },
+    "restored_manual_screenshots": {
+      "exit_code": 0,
+      "summary_as_printed": "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 543 filtered out; finished in 0.31s",
+      "png_count": 13,
+      "temporary_images_removed": true
+    },
+    "diff_check": {
+      "exit_code": 0
+    },
+    "production_cfg_test_branches": 0,
+    "bare_ignored_attributes": 0,
+    "full_xtask_gate": {
+      "status": "unavailable",
+      "reason": "This snapshot has no root Cargo workspace or xtask implementation."
+    },
+    "explicit_inputs_with_hostile_environment": {
+      "exit_code": 0,
+      "summary_as_printed": "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 530 filtered out; finished in 0.02s"
+    }
+  }
+}

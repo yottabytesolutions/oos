@@ -96,7 +96,7 @@ mod tests {
     use crate::wave::Source;
 
     fn ui() -> Ui {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         for c in 0..n_ch() {
             u.m.ch[c].on = true;
         }
@@ -314,9 +314,9 @@ mod tests {
 
     /// Pictures of the layouts for a look by eye: OOS_SHOT_DIR=dir cargo test windows -- --ignored
     #[test]
-    #[ignore]
+    #[ignore = "manual screenshots: set OOS_SHOT_DIR"]
     fn shots() {
-        let Ok(d) = std::env::var("OOS_SHOT_DIR") else { return };
+        let d = crate::store::tests::test_output_dir("OOS_SHOT_DIR");
         let mut u = ui();
         for _ in 0..30 {
             u.step(0.05);

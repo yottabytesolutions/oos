@@ -275,8 +275,10 @@ mod tests {
 
     /// The real thing, when the environment names a stock file and the unit's vendor file (not distributed).
     #[test]
+    #[ignore = "private stock files: set OOS_TEST_STOCK and OOS_TEST_VENDOR"]
     fn stock_file_of_the_environment() {
-        let (Ok(lib), Ok(ven)) = (std::env::var("OOS_TEST_STOCK"), std::env::var("OOS_TEST_VENDOR")) else { return };
+        let lib = std::env::var("OOS_TEST_STOCK").expect("set OOS_TEST_STOCK");
+        let ven = std::env::var("OOS_TEST_VENDOR").expect("set OOS_TEST_VENDOR");
         let (b, v) = (std::fs::read(lib).unwrap(), std::fs::read(ven).unwrap());
         let t = std::time::Instant::now();
         let k = find(&b, &v).expect("keys in the stock file");

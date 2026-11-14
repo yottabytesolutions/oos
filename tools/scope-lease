@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+# Copyright (C) 2026 OOS contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Vendor-neutral scope lease command."""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from scope_lease import main
+
+if __name__ == "__main__":
+    sys.exit(main())

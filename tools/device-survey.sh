@@ -3,21 +3,28 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # device-survey.sh - READ-ONLY inventory of the running stock system (Android 7.1) over adb.
 #
-#   device-survey.sh [ip[:port]] [--keys]
+#   device-survey.sh [--host scope.example] [--keys]
 #
 # Collects into local/device-survey/<date>/: properties, kernel cmdline, partitions, mounts, modules,
 # input devices, USB devices, PCIe, GPIO ownership (debugfs), pinmux, serial ports, ttyS0 line settings,
 # interrupts, dmesg. With --keys it records 20 s of raw input events while you press every front-panel
 # key and turn every knob once (to find the device that delivers the panel keys).
 #
-# Nothing is written on the scope except: debugfs is mounted on /sys/kernel/debug if it is not mounted
-# yet (a pseudo filesystem, gone after reboot).
+# The survey mounts debugfs on /sys/kernel/debug if needed (gone after reboot).
 set -eu
-target=${1:?usage: device-survey.sh <scope>[:port] [--keys]}
-case "$target" in *:*) ;; *) target="$target:55555";; esac
-keys=0; for a in "$@"; do [ "$a" = "--keys" ] && keys=1; done
-
+host=${OOS_SCOPE:-}
+keys=0
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--host) [ "$#" -ge 2 ] || { echo "--host needs a value" >&2; exit 1; }; host=$2; shift 2 ;;
+		--keys) keys=1; shift ;;
+		*) echo "usage: device-survey.sh [--host HOST] [--keys]; or set OOS_SCOPE" >&2; exit 1 ;;
+	esac
+done
+[ -n "$host" ] || { echo "specify --host or set OOS_SCOPE; no default scope" >&2; exit 1; }
 here=$(cd "$(dirname "$0")" && pwd)
+echo "Reminder: on our shared unit, the owner's release for this task is required. See tools/README.md." >&2
+target="$host:${OOS_ADB_PORT:-55555}"
 out="$here/../local/device-survey/$(date +%Y-%m-%d_%H%M%S)"
 mkdir -p "$out"
 

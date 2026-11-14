@@ -20,6 +20,7 @@
 use crate::board::Frame;
 use crate::framecost::{self as cost, Part};
 use crate::model::*;
+use crate::sparse::Interp;
 use crate::wave::Phosphor;
 use std::any::Any;
 use std::ops::Range;
@@ -34,8 +35,8 @@ pub struct Stats<'a> {
 }
 
 /// One frame of the fast path into `ph`; false if its trigger edge was not found near the hardware trigger point.
-/// Sparse frames (fewer than 2 samples per column) take the record path (`sparse::draw`, else `board::to_record`).
-pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>) -> bool {
+/// Sparse frames (fewer than 2 samples per column) take the record path (`sparse::draw_with`, else `board::to_record`).
+pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, interp: Interp, stats: Option<Stats>) -> bool {
     let (w, h) = (ph.w, ph.h);
     let tdiv = m.time_per_div() as f64;
     let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
@@ -44,7 +45,7 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     // the raw screen window of a deep record (`deepmeas`, once a second) takes the record path of its record's pair
     // frames: drawn densely it was 1.44 times their brightness (lines) and the grade swung (docs/fork/flicker.md)
     if !pairs && (x_per_sample > 0.5 || f.envelope || f.roll || f.scan || crate::deepmeas::deep_raw_frame(f)) {
-        if let Some(t) = crate::sparse::draw(ph, m, f, 24) {
+        if let Some(t) = crate::sparse::draw_with(ph, m, f, 24, interp) {
             return t;
         }
         let fr = std::sync::Arc::new(f.clone());
@@ -440,6 +441,7 @@ const CLAIM: usize = 4;
 struct View {
     gen: u64,
     m: Model,
+    interp: Interp,
     w: usize,
     h: usize,
 }
@@ -619,8 +621,8 @@ pub struct Merged {
 }
 
 impl Pipe {
-    /// A pipe with `n` workers counting into `counters`; `little`: the workers go to the little cores.
-    pub fn start(n: usize, little: bool, counters: &'static Counters) -> Pipe {
+    /// A pipe with `n` workers counting into `counters`; the workers go to the cores of `little` (`Cores::little`).
+    pub fn start(n: usize, little: u64, counters: &'static Counters) -> Pipe {
         let view: Arc<Mutex<ViewState>> = Default::default();
         let mut mails = Vec::new();
         let mut workers = Vec::new();
@@ -630,9 +632,7 @@ impl Pipe {
             let mail: Arc<Mutex<Mail>> = Default::default();
             let (v, m) = (view.clone(), mail.clone());
             match std::thread::Builder::new().name(format!("deposit{}", k)).spawn(move || {
-                if little {
-                    crate::http::to_little_cores();
-                }
+                crate::http::to_little_cores(little);
                 work(rx, &v, &m)
             }) {
                 Ok(_) => {
@@ -661,7 +661,7 @@ impl Pipe {
     }
 
     /// The UI's mapping for the frames to come (None: the fast path does not apply).
-    pub fn set_view(&self, m: Option<&Model>, w: usize, h: usize) {
+    pub fn set_view(&self, m: Option<&Model>, w: usize, h: usize, interp: Interp) {
         let mut v = self.view.lock().unwrap();
         let Some(m) = m else {
             (v.view, v.key) = (None, None);
@@ -673,7 +673,7 @@ impl Pipe {
         if v.key.as_ref() != Some(&key) {
             crate::pacing::VIEWS.fetch_add(1, Ordering::Relaxed);
             v.gen += 1;
-            v.view = Some(Arc::new(View { gen: v.gen, m: m.clone(), w, h }));
+            v.view = Some(Arc::new(View { gen: v.gen, m: m.clone(), interp, w, h }));
             v.key = Some(key);
         }
         v.stamp = m.hw_stamp;
@@ -936,7 +936,7 @@ fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, 
         (b.decode)(chunk, f);
         cost::add(Part::Decode, t);
         let st = Stats { edges: &mut a.edges, off: &mut a.off };
-        a.triggered += draw_frame(&mut a.ph, &v.m, f, Some(st)) as u64;
+        a.triggered += draw_frame(&mut a.ph, &v.m, f, v.interp, Some(st)) as u64;
         if crate::framestats::fold_frame(f, &v.m, &mut a.folds) {
             Counters::add(&counters.measured, 1);
         }
@@ -1010,25 +1010,11 @@ fn add(dst: &mut Phosphor, src: &Phosphor, used: [bool; NCH]) {
 /// Workers where the cores are all alike (the host): two.
 const WORKERS: usize = 2;
 
-/// The pipe in `batch` mode (started on first use), else None.
-pub fn pipe() -> Option<&'static Pipe> {
-    static P: OnceLock<Option<Pipe>> = OnceLock::new();
-    P.get_or_init(|| {
-        let env = std::env::var("OOS_PIPELINE").ok();
-        let conf = crate::sysconf::fork_text();
-        (mode_from(env.as_deref(), &conf) == Mode::Batch)
-            .then(|| Pipe::start(crate::placement::little_count().unwrap_or(WORKERS), true, counters()))
-    })
-    .as_ref()
-}
-
-/// The mode in force, for the status line.
-pub fn mode() -> Mode {
-    if pipe().is_some() {
-        Mode::Batch
-    } else {
-        Mode::Frames
-    }
+/// The pipe in `batch` mode (started on first use, one per process), else None.
+pub fn pipe(sw: &crate::sysconf::Switches) -> Option<&'static Pipe> {
+    static P: OnceLock<Pipe> = OnceLock::new();
+    (sw.pipeline == Mode::Batch)
+        .then(|| P.get_or_init(|| Pipe::start(sw.cores.little_count().unwrap_or(WORKERS), sw.cores.little, counters())))
 }
 
 #[cfg(test)]
@@ -1158,8 +1144,8 @@ mod tests {
             m.meas = Vec::new();
             let (bytes, fb, s, p) = frames_of(mask, n, 9, &sig);
             assert!(fb >= CODES_MIN_BYTES);
-            let pipe = Pipe::start(2, false, fresh());
-            pipe.set_view(Some(&m), w, h);
+            let pipe = Pipe::start(2, 0, fresh());
+            pipe.set_view(Some(&m), w, h, Interp::Exact);
             let (cs, cp) = (s.clone(), p);
             let codes: CodesInto =
                 Arc::new(move |c: &[u8], f: &mut Frame| crate::board::dho::hw::codes_into(c, &cs, &cp, 0, f));
@@ -1233,7 +1219,9 @@ mod tests {
                     for chunk in bytes.chunks_exact(fb) {
                         let mut f = crate::board::dho::hw::decode(chunk, &s, &p, 0);
                         f.pre_exact &= exact;
-                        ta += draw_frame(&mut a, &m, &f, Some(Stats { edges: &mut sa.0, off: &mut sa.1 })) as u32;
+                        ta +=
+                            draw_frame(&mut a, &m, &f, Interp::Exact, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }))
+                                as u32;
                         let mut g = Frame::default();
                         let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut g).expect("raw frame");
                         g.pre_exact &= exact;
@@ -1257,8 +1245,13 @@ mod tests {
                                     name,
                                     mask
                                 );
-                                tb +=
-                                    draw_frame(&mut b, &m, &f, Some(Stats { edges: &mut sb.0, off: &mut sb.1 })) as u32;
+                                tb += draw_frame(
+                                    &mut b,
+                                    &m,
+                                    &f,
+                                    Interp::Exact,
+                                    Some(Stats { edges: &mut sb.0, off: &mut sb.1 }),
+                                ) as u32;
                             }
                         }
                     }
@@ -1297,7 +1290,7 @@ mod tests {
         let mut at_pre = Phosphor::new(w, h);
         let mut m = model(1e-5, false, false);
         m.trig_level = 5.0;
-        assert!(!draw_frame(&mut at_pre, &m, &f, None));
+        assert!(!draw_frame(&mut at_pre, &m, &f, Interp::Exact, None));
         let cases: [(&str, TrigCoup, bool, &dyn Fn(&mut Model), bool); 10] = [
             ("dc exact", TrigCoup::Dc, true, &|_| {}, true),
             ("hf reject exact", TrigCoup::HfReject, true, &|_| {}, true),
@@ -1318,7 +1311,7 @@ mod tests {
             (fe.pre_exact, g.pre_exact) = (exact, exact);
             let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
             let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
-            let ta = draw_frame(&mut a, &m, &fe, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }));
+            let ta = draw_frame(&mut a, &m, &fe, Interp::Exact, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }));
             let tb =
                 draw_frame_codes(&mut b, &m, &g, &bytes[..fb], &lay, Some(Stats { edges: &mut sb.0, off: &mut sb.1 }))
                     .expect("codes path");
@@ -1440,13 +1433,13 @@ mod tests {
             let f = frame(pairs(n / 2 + 1000), exact);
             let mut ph = Phosphor::new(w, h);
             let mut st = ([0u64; 4], (0.0, 0.0));
-            draw_frame(&mut ph, &m, &f, Some(Stats { edges: &mut st.0, off: &mut st.1 }));
+            draw_frame(&mut ph, &m, &f, Interp::Exact, Some(Stats { edges: &mut st.0, off: &mut st.1 }));
             let want = if near { [0, 0, 0, 1] } else { [0, 0, 1, 0] };
             assert_eq!(st.0, want, "exact {}: {:?}", exact, st);
             // the edge in the pair of the hardware point is found either way
             let f = frame(pairs(n / 2), exact);
             let mut st = ([0u64; 4], (0.0, 0.0));
-            draw_frame(&mut ph, &m, &f, Some(Stats { edges: &mut st.0, off: &mut st.1 }));
+            draw_frame(&mut ph, &m, &f, Interp::Exact, Some(Stats { edges: &mut st.0, off: &mut st.1 }));
             assert_eq!(st.0, [1, 0, 0, 0], "exact {}: edge at the point", exact);
         }
     }
@@ -1486,8 +1479,8 @@ mod tests {
     #[test]
     fn partial_merges_and_picture_age_are_counted() {
         let m = model(1e-6, false, false);
-        let pipe = Pipe::start(2, false, fresh());
-        pipe.set_view(Some(&m), 970, 448);
+        let pipe = Pipe::start(2, 0, fresh());
+        pipe.set_view(Some(&m), 970, 448, Interp::Exact);
         let mut ph = Phosphor::new(970, 448);
         let mut merge = |pipe: &Pipe| pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
         // whole: drawn, then merged once
@@ -1527,7 +1520,7 @@ mod tests {
         settle(&pipe);
         let mut m2 = m.clone();
         m2.tscale += 1;
-        pipe.set_view(Some(&m2), 970, 448);
+        pipe.set_view(Some(&m2), 970, 448, Interp::Exact);
         assert_eq!(merge(&pipe).stale, 0, "maps of the old mapping dropped, not counted");
     }
 
@@ -1535,8 +1528,9 @@ mod tests {
     // no per-frame measurements, also with AC trigger coupling (its level from the words). The A53 gains more than the
     // host (the f32 copy is 2x the read-out per channel).
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn perf_guard_codes_per_frame() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         let (w, h) = (970, 448);
         let sig = |k: usize, c: usize, i: usize| {
             0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin()
@@ -1565,7 +1559,7 @@ mod tests {
                 || {
                     for chunk in bytes.chunks_exact(fb) {
                         crate::board::dho::hw::decode_into(chunk, &s, &p, 0, &mut fa);
-                        std::hint::black_box(draw_frame(&mut pa, &m, &fa, None));
+                        std::hint::black_box(draw_frame(&mut pa, &m, &fa, Interp::Exact, None));
                     }
                 },
                 || {
@@ -1611,7 +1605,8 @@ mod tests {
         let mut folds = crate::framestats::folds_for(m);
         for chunk in bytes.chunks_exact(fb) {
             let f = crate::board::dho::hw::decode(chunk, s, p, 0);
-            trig += draw_frame(&mut want, m, &f, Some(Stats { edges: &mut edges, off: &mut off })) as u64;
+            trig +=
+                draw_frame(&mut want, m, &f, Interp::Exact, Some(Stats { edges: &mut edges, off: &mut off })) as u64;
             crate::framestats::fold_frame(&f, m, &mut folds);
         }
         (want, trig, edges, off, folds)
@@ -1634,8 +1629,8 @@ mod tests {
             m.meas = vec![(Meas::Vpp, 0), (Meas::Vavg, 0), (Meas::Vrms, 1)];
             let (bytes, fb, s, p) = batch(41, memsel, two);
             let c = fresh();
-            let pipe = Pipe::start(workers, false, c);
-            pipe.set_view(Some(&m), w, h);
+            let pipe = Pipe::start(workers, 0, c);
+            pipe.set_view(Some(&m), w, h, Interp::Exact);
             assert!(pipe.accepting());
             pipe.feed(Box::new(Bytes(bytes[..17 * fb].to_vec())), fb, 17, 0, dec(&s, &p));
             pipe.feed(Box::new(Bytes(bytes[17 * fb..].to_vec())), fb, 24, 0, dec(&s, &p));
@@ -1686,8 +1681,8 @@ mod tests {
         let (w, h) = (970, 448);
         let m = model(1e-6, false, false);
         let (bytes, fb, s, p) = batch(30, 12_512, false);
-        let pipe = Pipe::start(2, false, fresh());
-        pipe.set_view(Some(&m), w, h);
+        let pipe = Pipe::start(2, 0, fresh());
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
         let got = Arc::new(Mutex::new(Vec::new()));
         for k in 0..3u32 {
             let g = got.clone();
@@ -1722,7 +1717,7 @@ mod tests {
             Box::new(move || g.lock().unwrap().push(9)),
         );
         settle(&pipe);
-        pipe.set_view(None, 0, 0);
+        pipe.set_view(None, 0, 0, Interp::Exact);
         assert_eq!(got.lock().unwrap().last(), Some(&9));
     }
 
@@ -1734,8 +1729,8 @@ mod tests {
             let mut m = model(tdiv, false, false);
             m.meas = vec![(Meas::Vpp, 0)];
             let (bytes, fb, s, p) = batch(20, memsel, false);
-            let pipe = Pipe::start(0, false, fresh());
-            pipe.set_view(Some(&m), w, h);
+            let pipe = Pipe::start(0, 0, fresh());
+            pipe.set_view(Some(&m), w, h, Interp::Exact);
             let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 20, 0, dec(&s, &p), None);
             let mut hp = Helper::default();
             let mut k = 0;
@@ -1760,13 +1755,13 @@ mod tests {
         let mut m = model(1e-6, false, false);
         let (bytes, fb, s, p) = batch(10, 12_512, false);
         let c = fresh();
-        let pipe = Pipe::start(2, false, c);
+        let pipe = Pipe::start(2, 0, c);
         let mut ph = Phosphor::new(w, h);
         let merge = |ph: &mut Phosphor| pipe.merge(ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert!(!pipe.accepting());
         // settings stamp older than the view's: dropped
         m.hw_stamp = 3;
-        pipe.set_view(Some(&m), w, h);
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
         pipe.feed(Box::new(Bytes(bytes.clone())), fb, 10, 2, dec(&s, &p));
         settle(&pipe);
         assert_eq!(merge(&mut ph), Merged::default());
@@ -1775,7 +1770,7 @@ mod tests {
         pipe.feed(Box::new(Bytes(bytes.clone())), fb, 10, 3, dec(&s, &p));
         settle(&pipe);
         m.ch[0].offset = 0.5;
-        pipe.set_view(Some(&m), w, h);
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
         assert_eq!(merge(&mut ph), Merged::default());
         assert!(ph.map.iter().all(|x| x.iter().all(|&y| y == 0)));
         assert_eq!(c.read(), (0, 0, 20));
@@ -1783,7 +1778,7 @@ mod tests {
         pipe.feed(Box::new(Bytes(bytes.clone())), fb, 10, 3, dec(&s, &p));
         settle(&pipe);
         m.status = TrigStatus::Wait;
-        pipe.set_view(Some(&m), w, h);
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
         assert_eq!(merge(&mut ph).frames, 10);
         // many batches at once: all drawn, nothing more dropped
         let (big, fb2, s2, p2) = batch(200, 12_512, false);
@@ -1794,12 +1789,12 @@ mod tests {
         assert_eq!(merge(&mut ph).frames, 1200);
         assert_eq!(c.read().2, 20);
         // a batch dropped before anybody claimed a frame counts all of them
-        let pipe0 = Pipe::start(0, false, c);
-        pipe0.set_view(Some(&m), w, h);
+        let pipe0 = Pipe::start(0, 0, c);
+        pipe0.set_view(Some(&m), w, h, Interp::Exact);
         pipe0.feed(Box::new(Bytes(bytes.clone())), fb, 10, 3, dec(&s, &p));
         assert_eq!(c.read().2, 30);
         // no view: the acquisition thread queues the frames itself
-        pipe.set_view(None, 0, 0);
+        pipe.set_view(None, 0, 0, Interp::Exact);
         assert!(!pipe.accepting());
     }
 
@@ -1816,8 +1811,9 @@ mod tests {
     /// mode's per-frame work on the UI thread (`decode` + `Ui::fast_draw`), and the rate of 1, 2 and 4 workers (the
     /// helper runs the same code per frame). Run by tools/perf-guard.sh.
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn perf_guard_deposit_worker_per_frame() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         let (w, h) = (970, 448);
         for (tdiv, memsel, meas) in [
             (1e-7, 1408u32, false),
@@ -1834,8 +1830,8 @@ mod tests {
             // the frames mode: decode + fast_draw on one thread (its measurements: a few records a second), against
             // one worker of the pipeline, alternating (perfguard.rs); 2 and 4 workers are reported only
             let mut ph = Phosphor::new(w, h);
-            let one = Pipe::start(1, false, fresh());
-            one.set_view(Some(&m), w, h);
+            let one = Pipe::start(1, 0, fresh());
+            one.set_view(Some(&m), w, h, Interp::Exact);
             // the buffers fed are copied before, outside the timing (the copy is not the pipeline's work)
             let mut copies: Vec<Bytes> = (0..crate::perfguard::ROUNDS).map(|_| Bytes(bytes.clone())).collect();
             let (old, one_t) = crate::perfguard::best_pair(
@@ -1847,6 +1843,7 @@ mod tests {
                             &mut ph,
                             &m,
                             &crate::board::dho::hw::decode(chunk, &s, &p, 0),
+                            Interp::Exact,
                             None,
                         ));
                     }
@@ -1858,8 +1855,8 @@ mod tests {
             );
             let (old, mut per) = (old / frames as u32, vec![one_t / frames as u32]);
             for n in [2usize, 4] {
-                let pipe = Pipe::start(n, false, fresh());
-                pipe.set_view(Some(&m), w, h);
+                let pipe = Pipe::start(n, 0, fresh());
+                pipe.set_view(Some(&m), w, h, Interp::Exact);
                 let t0 = std::time::Instant::now();
                 for _ in 0..3 {
                     pipe.feed(Box::new(Bytes(bytes.clone())), fb, frames, 0, dec(&s, &p));

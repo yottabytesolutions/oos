@@ -849,11 +849,8 @@ pub fn zero_payload(base: &[u8], ch: usize, z: &[i32; 20]) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    fn unit_cal() -> Option<(Cal, Vec<u8>)> {
-        let dir = std::env::var("OOS_CAL_DIR")
-            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full").into());
-        let v = std::fs::read(format!("{}/cal_vertical.hex", dir)).ok()?;
-        Some((Cal::load(&dir).ok()?, v))
+    fn synthetic_cal() -> (Cal, Vec<u8>) {
+        (crate::dho::fixtures::afe(), crate::dho::fixtures::vertical())
     }
 
     /// A model of the AFE comparators and the ADC: every trim has a hidden threshold (the comparator reads 1 above
@@ -957,7 +954,7 @@ mod tests {
 
     #[test]
     fn vertical_entry_measures_scale_and_zero() {
-        let Some((cal, _)) = unit_cal() else { return };
+        let (cal, _) = synthetic_cal();
         // IG 0 path with 7500 ADC codes per division = 300 DAC codes per division
         let mut m = Model::new(25.0, 31000.0);
         let mut a = Afe::new(0);
@@ -972,8 +969,8 @@ mod tests {
     }
 
     #[test]
-    fn table_rebuild_reproduces_the_unit_file() {
-        let Some((cal, _)) = unit_cal() else { return };
+    fn table_rebuild_reproduces_the_synthetic_file() {
+        let (cal, _) = synthetic_cal();
         let keys: Vec<i64> = (0..801).map(|i| cal.key(i)).collect();
         for var in 0..3 {
             for ch in 0..4 {
@@ -1008,7 +1005,7 @@ mod tests {
 
     #[test]
     fn run_all_covers_every_pass() {
-        let Some((cal, _)) = unit_cal() else { return };
+        let (cal, _) = synthetic_cal();
         let mut m = Model::new(25.0, 31000.0);
         let mut steps = 0;
         let r = run_all(&mut m, &cal, &[1], true, &mut |d, t, _| {
@@ -1089,12 +1086,7 @@ mod tests {
 
     #[test]
     fn adc_cores_converge_on_a_permuted_core_model() {
-        let Some(cal) = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full/cal_adc.hex"))
-            .ok()
-            .and_then(|d| crate::dho::adc::CalAdc::from_file_bytes(&d))
-        else {
-            return;
-        };
+        let cal = crate::dho::fixtures::adc();
         let mut hw = Cores {
             dac: 32768.0,
             order: [0, 2, 1, 3, 4, 6, 5, 7],
@@ -1126,13 +1118,13 @@ mod tests {
 
     #[test]
     fn payloads_round_trip() {
-        let Some((cal, v)) = unit_cal() else { return };
+        let (cal, v) = synthetic_cal();
         let base = crate::dho::calfile::parse(&v).unwrap();
         let b = cal.block(1, 2);
         assert_eq!(vertical_payload(base, &[(1, 2, b)]), base);
         let z = cal.zero_trims(3);
-        let zb = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal-full/cal_afe_zero.hex")).unwrap();
-        let zp = crate::dho::calfile::parse(&zb).unwrap();
+        let zb = crate::dho::fixtures::ZERO;
+        let zp = crate::dho::calfile::parse(zb).unwrap();
         assert_eq!(zero_payload(zp, 3, &z), zp);
     }
 }

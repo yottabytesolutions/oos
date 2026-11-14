@@ -1,17 +1,31 @@
 #!/bin/sh
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-# device-deploy.sh - runs the oos-ui of this tree on a running OOS, without touching the card: it goes to /tmp, which is
-# RAM, and the next power cycle is back to the installed image. No reboot is needed, and none would work: from OOS to
+# OWNER-ONLY: requires the owner's go for this task and an install lease.
+# Agents must use signed packages through oos-update or the web update page.
+# device-deploy.sh - runs the oos-ui of this tree from /tmp on a running OOS.
+# Programs stay in RAM; the lease check writes coordination metadata under /oos.
+# The next power cycle is back to the installed image. No reboot is needed, and none would work: from OOS to
 # OOS takes a power cycle.
 #
-#   tools/device-deploy.sh <ip>             upload oos-ui, oos-fpgad and plan-matrix.sh, switch to the new oos-ui
-#   tools/device-deploy.sh <ip> --restore   back to the installed oos-ui
+#   tools/device-deploy.sh --host scope.example
+#     upload oos-ui, oos-fpgad and plan-matrix.sh, switch to the new oos-ui
+#   tools/device-deploy.sh --host scope.example --restore   back to the installed oos-ui
 #
 # Build first: (cd ui && cargo build --release --target aarch64-unknown-linux-musl), same for fpgad.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
-host=${1:?usage: device-deploy.sh <ip> [--restore]}
+host=${OOS_SCOPE:-}
+restore=0
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--host) [ "$#" -ge 2 ] || { echo "--host needs a value" >&2; exit 1; }; host=$2; shift 2 ;;
+		--restore) restore=1; shift ;;
+		*) echo "usage: device-deploy.sh [--host HOST] [--restore]; or set OOS_SCOPE" >&2; exit 1 ;;
+	esac
+done
+[ -n "$host" ] || { echo "specify --host or set OOS_SCOPE; no default scope" >&2; exit 1; }
+"$here/tools/scope-lease" status --host "$host" --cap install
 port=${OOS_TELNET_PORT:-23}
 ui=${OOS_DEPLOY_UI:-$here/target/aarch64-unknown-linux-musl/release/oos-ui}
 fpgad=${OOS_DEPLOY_FPGAD:-$here/target/aarch64-unknown-linux-musl/release/oos-fpgad}
@@ -37,7 +51,7 @@ loop() {
 	tel "(setsid sh -c 'while [ ! -e $2 ]; do $1 --hw --afe >> /tmp/oos-ui.log 2>&1; sleep 2; done' </dev/null >/dev/null 2>&1 &)" 1 >/dev/null
 }
 
-if [ "${2:-}" = --restore ]; then
+if [ "$restore" -eq 1 ]; then
 	tel "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new)" 3 >/dev/null
 	tel "rm -f /tmp/oos-ui.off" 1 >/dev/null
 	loop /bin/oos-ui /tmp/oos-ui.off

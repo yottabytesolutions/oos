@@ -2245,12 +2245,11 @@ mod tests {
     /// en0 the kernel does not loop it to the socket, so the answer check needs lo0 there; mDNSResponder's own
     /// queries and the announcements do arrive on en0. Verified 2026-11-13 with dns-sd -G and -B.)
     #[test]
-    #[ignore]
+    #[ignore = "live multicast: set OOS_MDNS_IF"]
     #[cfg(unix)]
     fn host_responder() {
-        let lo = if cfg!(target_os = "linux") { "lo" } else { "lo0" };
         let only: Vec<String> =
-            std::env::var("OOS_MDNS_IF").unwrap_or(lo.into()).split(',').map(str::to_string).collect();
+            std::env::var("OOS_MDNS_IF").expect("set OOS_MDNS_IF").split(',').map(str::to_string).collect();
         let ifs = net::interfaces(Some(&only));
         assert!(!ifs.is_empty(), "no interface {:?}", only);
         let name = format!("oos-test-{}", std::process::id());

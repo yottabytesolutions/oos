@@ -25,6 +25,11 @@ fn short_name(n: &str) -> String {
 }
 
 impl Ui {
+    /// The switches read at start (the remote protocols ask for the board's and the pipeline's).
+    pub fn switches(&self) -> &crate::sysconf::Switches {
+        self.host.switches()
+    }
+
     /// Switches in the left column, what they open in the right one, row by row.
     pub(super) fn remote_items(&self) -> Vec<Item> {
         vec![
@@ -100,7 +105,7 @@ impl Ui {
             instance: mdns::instance_name(&p.caps.name, p.serial.as_deref(), &name),
             name,
             services,
-            v6: crate::net6::enabled(),
+            v6: self.host.switches().ipv6,
         }
     }
 
@@ -253,7 +258,7 @@ mod tests {
 
     #[test]
     fn switches_stand_next_to_what_they_open() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
         // two columns of five: each switch has its address, port, settings or name on the same row
@@ -272,7 +277,7 @@ mod tests {
 
     #[test]
     fn a_service_switched_off_says_so() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11, "on by default");
         assert!(!u.sys.remote_ssh, "SSH off by default");
         u.net = "192.168.1.9".into();
@@ -289,7 +294,7 @@ mod tests {
 
     #[test]
     fn the_name_and_what_mdns_announces() {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         let p = oos_hal::model::platform();
         let d = mdns::default_name(&p.caps.name, p.serial.as_deref());
         assert!(u.sys.remote_mdns, "on by default");

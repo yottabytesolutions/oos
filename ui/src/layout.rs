@@ -191,7 +191,8 @@ mod tests {
         let end = (0..lines.len().saturating_sub(1))
             .find(|&i| {
                 let next = lines[i + 1].trim_start();
-                lines[i].trim() == "#[cfg(test)]" && next.starts_with("mod ") && next.ends_with('{')
+                let module = next.starts_with("mod ") || next.starts_with("pub(crate) mod ");
+                lines[i].trim() == "#[cfg(test)]" && module && next.ends_with('{')
             })
             .unwrap_or(lines.len());
         lines[..end].iter().filter(|l| !l.trim_start().starts_with("//")).cloned().collect::<Vec<_>>().join("\n")

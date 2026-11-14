@@ -12,6 +12,7 @@
 #    contains `perf_guard`.
 # Host only: touches no hardware. Exits non-zero on the first failing guard.
 set -eu
+export OOS_PERF_TESTS=1
 root=$(cd "$(dirname "$0")/.." && pwd)
 export PATH="$HOME/.cargo/bin:$PATH"
 

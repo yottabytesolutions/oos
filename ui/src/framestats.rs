@@ -340,8 +340,9 @@ mod tests {
     // Timing guard (tools/perf-guard.sh): the per-frame statistics of a 125 k-point screen window with every cheap
     // measurement on, against the old one-pass-plus-second-pass computation; the values must agree.
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn perf_guard_framestats() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         let len = 125_000usize;
         let dt = 1.0 / 1.25e9;
         let p = oos_dsp::sim::PulseTrain::square(3e5, -0.7, 0.9, 2e-8);

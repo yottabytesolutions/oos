@@ -25,19 +25,6 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// From (cpu, `cpu_capacity`) pairs: None without two kinds of core.
-    pub fn from_capacities(cap: &[(usize, u32)]) -> Option<Plan> {
-        let max = cap.iter().map(|x| x.1).max()?;
-        let mut big: Vec<usize> = cap.iter().filter(|x| x.1 == max).map(|x| x.0).collect();
-        if big.len() == cap.len() {
-            return None;
-        }
-        big.sort_unstable();
-        // one big core: the frame loop and the acquisition share it, as without a plan
-        let hw = big.get(1).copied().unwrap_or(big[0]);
-        Some(Plan { ui: vec![big[0]], hw: vec![hw] })
-    }
-
     pub fn cpus(&self, r: Role) -> &[usize] {
         match r {
             Role::Ui => &self.ui,
@@ -58,40 +45,60 @@ pub fn capacities(root: &Path) -> Vec<(usize, u32)> {
         .collect()
 }
 
-/// The number of little cores (None on a SoC whose cores are all alike, or without `cpu_capacity`): the deposit
-/// workers of the batch pipeline, one per little core.
-pub fn little_count() -> Option<usize> {
-    little_of(&capacities(Path::new("/sys/devices/system/cpu")))
+/// The CPUs of a big.LITTLE SoC as bit masks (bit n: CPU n), read once at start (`Switches::cores`): `little` the
+/// cores below the largest `cpu_capacity`, `big` those at it. Both empty where the cores are all alike or the files
+/// are missing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cores {
+    pub big: u64,
+    pub little: u64,
 }
 
-fn little_of(cap: &[(usize, u32)]) -> Option<usize> {
-    let max = cap.iter().map(|x| x.1).max()?;
-    Some(cap.iter().filter(|x| x.1 < max).count()).filter(|&n| n > 0)
+impl Cores {
+    /// From (cpu, `cpu_capacity`) pairs.
+    pub fn of(cap: &[(usize, u32)]) -> Cores {
+        let Some(max) = cap.iter().map(|x| x.1).max() else { return Cores::default() };
+        let mask = |big: bool| cap.iter().filter(|x| x.0 < 64 && (x.1 == max) == big).fold(0, |m, x| m | 1u64 << x.0);
+        match mask(false) {
+            0 => Cores::default(),
+            little => Cores { big: mask(true), little },
+        }
+    }
+
+    /// The cores of this machine (`/sys/devices/system/cpu`).
+    pub fn read() -> Cores {
+        Self::of(&capacities(Path::new("/sys/devices/system/cpu")))
+    }
+
+    /// The number of little cores: the deposit workers of the batch pipeline, one per little core.
+    pub fn little_count(&self) -> Option<usize> {
+        (self.little != 0).then(|| self.little.count_ones() as usize)
+    }
+
+    /// The CPUs of each role: None without two kinds of core. One big core: the frame loop and the acquisition share
+    /// it, as without a plan.
+    pub fn plan(&self) -> Option<Plan> {
+        let big = cpus(self.big);
+        let first = *big.first().filter(|_| self.little != 0)?;
+        Some(Plan { ui: vec![first], hw: vec![big.get(1).copied().unwrap_or(first)] })
+    }
 }
 
-/// `perf.place = on` in system.conf (it also moves the xdma interrupts: rootfs `oos-irq-place`), or OOS_PLACE set
-/// (any value but empty or 0; off with those).
-fn enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_PLACE").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = crate::sysconf::fork_text();
-        crate::drawpipe::conf_value(env, &conf, "perf.place").as_deref() == Some("on")
-    })
+/// The CPU numbers of a mask, ascending.
+pub fn cpus(mask: u64) -> Vec<usize> {
+    (0..64).filter(|c| mask >> c & 1 == 1).collect()
 }
 
-/// The calling thread (and the threads and processes it starts after this) onto the CPUs of `r`, when placement is on.
-pub fn place(r: Role) {
-    if !enabled() {
+/// The calling thread (and the threads and processes it starts after this) onto the CPUs of `r`, when placement is on
+/// (`Switches::place`: `perf.place = on` in system.conf, which also moves the xdma interrupts: rootfs
+/// `oos-irq-place`; or OOS_PLACE set to any value but empty or 0).
+pub fn place(r: Role, sw: &crate::sysconf::Switches) {
+    if !sw.place {
         return;
     }
     #[cfg(target_os = "linux")]
     {
-        static PLAN: std::sync::OnceLock<Option<Plan>> = std::sync::OnceLock::new();
-        let Some(plan) = PLAN.get_or_init(|| Plan::from_capacities(&capacities(Path::new("/sys/devices/system/cpu"))))
-        else {
-            return;
-        };
+        let Some(plan) = sw.cores.plan() else { return };
         let cpus = plan.cpus(r);
         // SAFETY: a local CPU set for the calling thread
         let rc = unsafe {
@@ -135,18 +142,20 @@ mod tests {
     #[test]
     fn rk3399_frame_loop_and_acquisition_get_one_a72_each() {
         let root = fake_sysfs(&[(0, 485), (1, 485), (2, 485), (3, 485), (4, 1024), (5, 1024)]);
-        let p = Plan::from_capacities(&capacities(&root)).unwrap();
+        let c = Cores::of(&capacities(&root));
+        assert_eq!(c, Cores { big: 0b11_0000, little: 0b1111 });
+        let p = c.plan().unwrap();
         assert_eq!((p.cpus(Role::Ui), p.cpus(Role::Hw)), (&[4][..], &[5][..]));
-        assert_eq!(little_of(&capacities(&root)), Some(4));
+        assert_eq!(c.little_count(), Some(4));
         std::fs::remove_dir_all(&root).unwrap();
         // all alike, or no capacity files: nothing to place
         let root = fake_sysfs(&[(0, 1024), (1, 1024), (2, 1024), (3, 1024)]);
-        assert_eq!(Plan::from_capacities(&capacities(&root)), None);
-        assert_eq!(little_of(&capacities(&root)), None);
+        assert_eq!(Cores::of(&capacities(&root)), Cores::default());
+        assert_eq!(Cores::of(&capacities(&root)).little_count(), None);
         std::fs::remove_dir_all(&root).unwrap();
-        assert_eq!(Plan::from_capacities(&[]), None);
+        assert_eq!(Cores::of(&[]).plan(), None);
         // one big core: the frame loop and the acquisition share it; the order of the files does not matter
-        let p = Plan::from_capacities(&[(3, 1024), (2, 400), (0, 400), (1, 400)]).unwrap();
+        let p = Cores::of(&[(3, 1024), (2, 400), (0, 400), (1, 400)]).plan().unwrap();
         assert_eq!((p.ui.clone(), p.hw.clone()), (vec![3], vec![3]));
     }
 }

@@ -35,6 +35,9 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Never change a remote or its push URL. Never push. The owner pushes.
 - Never merge your own branch. The coordinator merges after review.
 - On the scope, stop at the first unexpected state. Report it. Do not repair it by hand.
+- No `rm -rf` outside your own worktree and scratch directories. Never force push,
+  write partitions, run `dd` to block devices, or delete another contributor's
+  worktrees or branches.
 
 ## The gate
 
@@ -135,6 +138,15 @@ to the document that explains it. When a rule and your task conflict, stop and a
 
 The unit is real hardware and can be bricked. Rules for anything that runs on it:
 
+- Take the device lease with `tools/scope-lease` before OOS access. Set `--host` or `OOS_SCOPE`; there is no default.
+  Stock adb survey and platform probe need no SSH lease. The owner's release still applies to our shared unit.
+- Lease tools need SSH enabled on the unit with a trusted key. `remote.ssh` is off by default.
+- Use the capability you need: `observe`, `test`, `install` or `reboot`, in that order.
+- Renew at least every two minutes while using the unit. Release the lease at the end.
+- An expired lease quarantines the unit. Never break a lease you do not own without the owner.
+- Install and reboot need the owner's go for that task. Record it with `--go TASK` when acquiring the lease.
+  An agent never issues a go for its own task. The coordinator relays the owner's go.
+  Permission to test does not grant permission to install or reboot.
 - No hand writes to FPGA registers while `oos-ui` runs. No reads of register `0x205c`.
 - Never write the FPGA flash. Never write slot `0x000000`. Never write the `p4`, `p5` or `uboot`
   partitions.
@@ -142,4 +154,5 @@ The unit is real hardware and can be bricked. Rules for anything that runs on it
 - Install only signed packages through `oos-update` or the web update page. No hand-copied binaries.
 - After a reboot, wait for the `OOSK` re-arm before the next one. Never two reboots within 60 s.
 - A wedged unit needs its power removed by the owner. Report it at once; do not retry.
+- Agents never attempt automatic recovery of the unit. Stop and report unexpected state.
 - No hardware access without the owner's release of the unit for your task.

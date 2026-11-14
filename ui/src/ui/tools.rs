@@ -319,7 +319,7 @@ impl Ui {
     /// latest reading.
     pub(super) fn dvm_poll(&mut self) {
         let m = &self.m;
-        let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw())
+        let want = (m.dvm_on && m.ch[m.dvm_src].on && crate::board::board().dvm_hw(self.host.switches()))
             .then_some(crate::board::DvmWant { ch: m.dvm_src, lane: self.dvm_lane });
         if let Some(r) = self.src.hw_dvm(want) {
             self.dvm_hw = r;
@@ -558,9 +558,9 @@ mod counter_tests {
     /// The counter through SCPI, off the hardware: set-up, a value from the records, the totalizer's clear.
     #[test]
     fn the_counter_by_scpi() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let cv = crate::gfx::Canvas::new(ui.scr.w, ui.scr.h);
-        let mut s = crate::scpi::Scpi::open(0);
+        let mut s = crate::scpi::Scpi::open(0, false);
         let mut q = |ui: &mut Ui, c: &str| String::from_utf8(s.exec_line(ui, &cv, c)).unwrap().trim().to_string();
         q(&mut ui, ":COUNter:ENABle 1;:COUNter:SOURce CHAN1;:COUNter:MODE FREQuency;:COUNter:NDIGits 6");
         assert_eq!(q(&mut ui, ":COUNter:ENABle?;:COUNter:SOURce?;:COUNter:MODE?;:COUNter:NDIGits?"), "1;CHAN1;FREQ;6");

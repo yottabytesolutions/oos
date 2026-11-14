@@ -677,8 +677,9 @@ mod tests {
     // Timing guard (tools/perf-guard.sh): the span pass against one scattered write per pixel, per signal, at 100 k and
     // 12.5 k points over 970 columns. Never slower on short spans (square), faster on long ones (sine, noise).
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn perf_guard_deposit_spans() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         let (w, h) = (970usize, 448usize);
         let names = ["sine", "two sines", "square", "ramp", "clipped", "flat", "noise", "noisy square", "gaps"];
         let mut worst: f64 = 0.0;
@@ -738,8 +739,9 @@ mod tests {
 
     // Timing guard (tools/perf-guard.sh): dots in runs against one add per sample, per signal at 100 k points.
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn perf_guard_dots() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         let (w, h) = (970usize, 448usize);
         let names = ["sine", "two sines", "square", "ramp", "clipped", "flat", "noise", "noisy square", "gaps"];
         let n = 100_000usize;

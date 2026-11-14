@@ -239,7 +239,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn open() -> Server {
+    pub fn open(v6: bool) -> Server {
         let mut s = Server {
             pm_tcp: None,
             pm_udp: None,
@@ -248,12 +248,12 @@ impl Server {
             links: Vec::new(),
             acl: crate::netacl::Acl::default(),
         };
-        s.set_open(true);
+        s.set_open(true, v6);
         s
     }
 
     /// System > Network > Remote services: portmapper and core port open, or closed with their connections.
-    pub fn set_open(&mut self, on: bool) {
+    pub fn set_open(&mut self, on: bool, v6: bool) {
         if !on {
             if self.pm_tcp.take().is_some() | self.core_tcp.take().is_some() | self.pm_udp.take().is_some() {
                 eprintln!("oos-ui: VXI-11 off");
@@ -264,8 +264,8 @@ impl Server {
         if self.pm_tcp.is_some() || self.core_tcp.is_some() {
             return;
         }
-        let tcp = |p: u16| crate::net6::tcp(p).inspect(|l| drop(l.set_nonblocking(true)));
-        self.pm_udp = crate::net6::udp(111).inspect(|u| drop(u.set_nonblocking(true)));
+        let tcp = |p: u16| crate::net6::tcp(p, v6).inspect(|l| drop(l.set_nonblocking(true)));
+        self.pm_udp = crate::net6::udp(111, v6).inspect(|u| drop(u.set_nonblocking(true)));
         (self.pm_tcp, self.core_tcp) = (tcp(111), tcp(CORE_PORT));
         eprintln!(
             "oos-ui: VXI-11 portmapper {} / core {}",

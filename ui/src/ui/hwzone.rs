@@ -13,7 +13,7 @@ impl Ui {
     /// The zone trigger runs in the hardware: enabled on this board, live hardware frames, at least one usable zone,
     /// all of them on one acquired channel, and the mask unit not taken by the hardware mask test.
     pub(super) fn zone_hw_active(&self) -> bool {
-        board().zone_hw()
+        board().zone_hw(self.host.switches())
             && self.src.is_hw()
             && self.zone_hw_src().is_some_and(|c| self.m.ch[c].on)
             && !self.mask_hw_active()
@@ -45,7 +45,12 @@ impl Ui {
         let (acq, used, _) = crate::drawpipe::counters().read();
         let sw = format!("sw_drops={},acquired={},used={},records={}", self.zone_drops, acq, used, self.records);
         let Some(r) = self.zone_hw else {
-            return format!("off,enabled={},active={},{}", board().zone_hw() as u8, self.zone_hw_active() as u8, sw);
+            return format!(
+                "off,enabled={},active={},{}",
+                board().zone_hw(self.host.switches()) as u8,
+                self.zone_hw_active() as u8,
+                sw
+            );
         };
         format!(
             "ch={},slot={},ctrl={:#010x},s4030={:#010x},s4038={:#010x},frames_lo={:#010x},frames_hi={:#010x},fails_lo={:#010x},fails_hi={:#010x},armed={},pass={},cycle={},state={},frames={},n={},batch={}/{},batch_ms={:.1},{}",
@@ -79,7 +84,7 @@ mod tests {
 
     #[test]
     fn one_source_for_the_hardware() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let z = |src| Zone { on: true, src, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0)] };
         assert_eq!(ui.zone_hw_src(), None);
         ui.m.zones[0] = z(1);

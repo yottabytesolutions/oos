@@ -61,6 +61,8 @@ pub(super) struct WlanUi {
     /// a scan or join is running (the text is for the status dialog)
     pub busy: Option<&'static str>,
     pub osk: Option<Osk>,
+    /// a WLAN stick is plugged in (its interface exists)
+    pub(in crate::ui) stick: bool,
     tx: Option<Sender<Job>>,
     rx: Option<Receiver<Report>>,
 }
@@ -78,10 +80,7 @@ pub(super) fn stick_there() -> bool {
 
 fn link() -> (Option<Ctrl>, Link) {
     let mut l = Link { stick: stick_there(), ..Link::default() };
-    if !l.stick {
-        return (None, l);
-    }
-    let Ok(c) = Ctrl::open(Path::new(wlan::CTRL)) else { return (None, l) };
+    let Some(c) = l.stick.then(|| Ctrl::open(Path::new(wlan::CTRL)).ok()).flatten() else { return (None, l) };
     if let Ok(s) = c.status() {
         l.ctrl = true;
         l.signal = if s.connected() { c.signal() } else { None };
@@ -190,7 +189,7 @@ impl Ui {
     pub(super) fn wlan_poll(&mut self) {
         let in_menu =
             self.menu_open && (self.menu == MenuId::Network || self.pick.is_some_and(|p| p.menu == MenuId::Network));
-        if in_menu && self.wlan.tx.is_none() && !cfg!(test) {
+        if in_menu && self.wlan.tx.is_none() && self.host.services() {
             let (tx, jobs) = channel();
             let (out, rx) = channel();
             if std::thread::Builder::new().name("wlan".into()).spawn(move || worker(jobs, out)).is_ok() {
@@ -241,7 +240,7 @@ impl Ui {
     fn wlan_blocked(&self) -> Option<&'static str> {
         if self.wlan.busy.is_some() {
             Some("WLAN is busy")
-        } else if !self.wlan.link.stick && !stick_there() {
+        } else if !self.wlan.link.stick && !self.host.is_dir(&Path::new("/sys/class/net").join(wlan::IFACE)) {
             Some("No WLAN stick in the front USB port")
         } else {
             None
@@ -326,7 +325,7 @@ impl Ui {
     /// Text rows of the network page.
     pub(super) fn net_value(&self, it: Item) -> String {
         let addr = |n: &str| self.net_ifs.iter().find(|i| i.0 == n).map(|i| i.1.as_str());
-        let file = |p: &str| std::fs::read_to_string(p).map(|t| t.trim().to_string()).unwrap_or_default();
+        let file = |p: &str| self.host.text(p).map(|t| t.trim().to_string()).unwrap_or_default();
         match it {
             Item::NetEth => {
                 let link = file("/sys/class/net/eth0/carrier") == "1";
@@ -932,7 +931,7 @@ mod tests {
 
     #[test]
     fn typing_a_password() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.wlan.osk = Some(Osk::new(OskFor::Pass(b"Labor".to_vec())));
         type_text(&mut ui, "aB3 #x");
         let o = ui.wlan.osk.as_ref().unwrap();
@@ -947,7 +946,7 @@ mod tests {
 
     #[test]
     fn entry_stops_at_the_limit_and_del_is_safe() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.wlan.osk = Some(Osk::new(OskFor::Name));
         ui.osk_press(Key::Del);
         for _ in 0..40 {
@@ -958,7 +957,7 @@ mod tests {
 
     #[test]
     fn arrows_fix_a_typo_without_deleting_the_rest() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.wlan.osk = Some(Osk::new(OskFor::Pass(b"Labor".to_vec())));
         type_text(&mut ui, "abxdef");
         // back to the x, out with it, the c in its place
@@ -989,7 +988,7 @@ mod tests {
 
     #[test]
     fn a_tap_into_the_entry_moves_the_insertion_point() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.wlan.osk = Some(Osk::for_label(0, "abcd"));
         assert_eq!(ui.wlan.osk.as_ref().unwrap().cur(), 4);
         let f = &ui.fonts().lb;
@@ -1004,7 +1003,7 @@ mod tests {
 
     #[test]
     fn a_long_entry_keeps_the_insertion_point_in_view() {
-        let ui = Ui::new(Source::Demo { t: 0.0 });
+        let ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let f = &ui.fonts().lb;
         let mut o = Osk::new(OskFor::Pass(b"Labor".to_vec()));
         o.show = true;
@@ -1023,7 +1022,7 @@ mod tests {
 
     #[test]
     fn knobs_reach_every_key() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.wlan.osk = Some(Osk::new(OskFor::Name));
         let n = ui.wlan.osk.as_ref().unwrap().keys().len();
         for _ in 0..n {
@@ -1049,7 +1048,7 @@ mod tests {
 
     #[test]
     fn scan_list_and_the_way_to_each_network() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.open_menu(MenuId::Network);
         ui.wlan.link.stick = true;
         ui.wlan.link.saved = vec![Saved { id: 7, ssid: b"Bekannt".to_vec(), temp_disabled: false, disabled: false }];
@@ -1088,7 +1087,7 @@ mod tests {
 
     #[test]
     fn forget_needs_a_saved_network() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.open_menu(MenuId::Network);
         ui.wlan.link.stick = true;
         ui.wlan_forget_tap();
@@ -1101,7 +1100,7 @@ mod tests {
 
     #[test]
     fn network_page_says_what_is_there() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.tap(950, 20);
         assert!(ui.menu_open && ui.menu == MenuId::Network);
         assert_eq!(ui.value(Item::NetWeb), "not connected");
@@ -1124,7 +1123,7 @@ mod tests {
 
     #[test]
     fn status_lines() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         assert!(ui.wlan_lines()[1].starts_with("No stick"));
         ui.wlan.link = Link { stick: true, ctrl: true, signal: Some(-55), ..Link::default() };
         ui.wlan.link.status = wlan::parse_status(
@@ -1138,7 +1137,7 @@ mod tests {
     /// Whatever arrives on the touch panel and the knobs, with hostile names on the list.
     #[test]
     fn random_input() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         let mut x = 0x2545_f491_4f6c_dd1du64;
         let mut next = move || {
@@ -1179,8 +1178,9 @@ mod tests {
     /// Against a real wpa_supplicant, `oos-wlan` and access points on simulated radios: tools/wlan-sim.sh runs this
     /// inside a virtual machine. Nothing here runs in a normal `cargo test`.
     #[test]
-    #[ignore]
+    #[ignore = "simulated radios: set OOS_WLAN_SIM=1"]
     fn live_radio() {
+        assert_eq!(std::env::var("OOS_WLAN_SIM").as_deref(), Ok("1"), "set OOS_WLAN_SIM=1");
         let conf = "/oos/wlan/wpa_supplicant.conf";
         let wait = |what: &str, secs: u64, f: &dyn Fn() -> bool| {
             let end = Instant::now() + Duration::from_secs(secs);
@@ -1260,7 +1260,7 @@ mod tests {
             ui.render(&mut cv);
             let _ = crate::store::write(&dir.join(n), &crate::store::png_of(&cv));
         };
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.wlan.link.stick = true;
         ui.open_menu(MenuId::Utility);
         shot(&mut ui, "wlan-0-system.png");

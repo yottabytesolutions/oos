@@ -76,7 +76,7 @@ impl Ui {
         if self.log.next < self.now {
             self.log.next = self.now + step;
         }
-        let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+        let unix = self.host.unix_now();
         let mut row = format!("{:.3},{:.3}", self.now - self.log.start, unix);
         for r in self.meas_rows() {
             row.push(',');

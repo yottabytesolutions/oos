@@ -23,13 +23,8 @@ thread_local! {
     static BUF: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Draws a sparse frame into `ph` like `to_record` + `draw_ex` with weight `wgt`: Some(triggered), or None when the
-/// frame needs `to_record`.
-pub fn draw(ph: &mut Phosphor, m: &Model, f: &Frame, wgt: u16) -> Option<bool> {
-    draw_with(ph, m, f, wgt, interp())
-}
-
-/// `draw` with interpolation `mode`.
+/// Draws a sparse frame into `ph` like `to_record` + `draw_ex` with weight `wgt` and interpolation `mode`
+/// (`Switches::interp`): Some(triggered), or None when the frame needs `to_record`.
 pub fn draw_with(ph: &mut Phosphor, m: &Model, f: &Frame, wgt: u16, mode: Interp) -> Option<bool> {
     let tdiv = m.time_per_div() as f64;
     let window = tdiv * HDIV as f64;
@@ -274,15 +269,6 @@ pub fn interp_from(env: Option<&str>, conf: &str) -> Interp {
         Some("fast") => Interp::Fast,
         _ => Interp::Exact,
     }
-}
-
-/// The interpolation in force (read once).
-pub fn interp() -> Interp {
-    static I: std::sync::OnceLock<Interp> = std::sync::OnceLock::new();
-    *I.get_or_init(|| {
-        let env = std::env::var("OOS_INTERP").ok();
-        interp_from(env.as_deref(), &crate::sysconf::fork_text())
-    })
 }
 
 /// The trigger point `to_record` takes for an edge trigger on a channel, or None where it would look further (no edge
@@ -548,8 +534,9 @@ mod tests {
 
     /// Host timing (run with --ignored --nocapture): the sparse path against `to_record` + `draw_ex`.
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn sparse_path_is_cheaper_than_the_record_path() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         let (w, h) = (970, 448);
         for (tdiv, len, chans) in [(5e-9, 80usize, 1usize), (1e-7, 1408, 1), (2e-7, 5000, 4)] {
             let mut m = model(tdiv, chans);
@@ -589,8 +576,9 @@ mod tests {
 
     /// Host cost of the fast interpolation against the exact one per sparse frame (run by tools/perf-guard.sh).
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn perf_guard_fast_interpolation() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         let (w, h) = (970, 448);
         for (tdiv, chans) in [(5e-9, 1usize), (2e-8, 1), (5e-8, 1), (1e-7, 1), (2e-8, 4), (1e-7, 4), (2e-7, 4)] {
             let dt = chans as f64 / 1.25e9;

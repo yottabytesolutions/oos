@@ -34,20 +34,16 @@ fn yes_no(b: bool) -> &'static str {
     }
 }
 
-fn read(path: &str) -> Option<String> {
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
-}
-
 /// Uptime "3 h 12 min" from /proc/uptime.
-fn uptime() -> Option<String> {
-    let s: f64 = read("/proc/uptime")?.split_whitespace().next()?.parse().ok()?;
+fn uptime(text: Option<String>) -> Option<String> {
+    let s: f64 = text?.split_whitespace().next()?.parse().ok()?;
     let (h, m) = ((s / 3600.0) as u64, ((s % 3600.0) / 60.0) as u64);
     Some(if h > 0 { format!("{} h {} min", h, m) } else { format!("{} min {} s", m, s as u64 % 60) })
 }
 
 /// (available, total) bytes of RAM from /proc/meminfo.
-fn memory() -> Option<(u64, u64)> {
-    let t = read("/proc/meminfo")?;
+fn memory(text: Option<String>) -> Option<(u64, u64)> {
+    let t = text?;
     let get = |k: &str| {
         t.lines()
             .find(|l| l.starts_with(k))
@@ -59,9 +55,11 @@ fn memory() -> Option<(u64, u64)> {
 }
 
 /// (free, total) bytes of the file system holding `path`.
-fn disk(path: &str) -> Option<(u64, u64)> {
+pub(super) fn disk(path: &str) -> Option<(u64, u64)> {
     let c = std::ffi::CString::new(path).ok()?;
+    // SAFETY: statvfs is a C output record and the pointer remains live for the call.
     let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: c is NUL terminated and s is a writable statvfs record.
     if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
         return None;
     }
@@ -69,12 +67,9 @@ fn disk(path: &str) -> Option<(u64, u64)> {
     Some((s.f_bavail as u64 * fr, s.f_blocks as u64 * fr))
 }
 
-/// Current clock of CPU `n` in Hz (cpufreq).
-fn cpu_hz(n: usize) -> Option<f64> {
-    read(&format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", n))?
-        .parse::<f64>()
-        .ok()
-        .map(|khz| khz * 1e3)
+/// CPU clock in Hz from cpufreq's kHz text.
+fn cpu_hz(text: Option<String>) -> Option<f64> {
+    text?.trim().parse::<f64>().ok().map(|khz| khz * 1e3)
 }
 
 /// SI value with up to 5 digits and no trailing zeros ("312.5 MSa/s", "31.25 Mpts", "1.25 GSa/s").
@@ -104,6 +99,11 @@ fn temp_col(t: f32, warn: f32, limit: f32) -> Rgb {
 }
 
 impl Ui {
+    /// cpufreq's current clock text of CPU `n` (kHz).
+    fn cpu_freq(&self, n: usize) -> Option<String> {
+        self.host.text(&format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", n))
+    }
+
     /// Opens the page (System > System info).
     pub(super) fn sysinfo_open(&mut self) {
         self.sysinfo = Some(self.sysinfo_rows());
@@ -156,7 +156,7 @@ impl Ui {
             Some((v, _)) => kvc("FPGA", format!("{:#010x} (unexpected)", v), RED),
             None => kv("FPGA", "-"),
         });
-        a.push(kv("Uptime", uptime().unwrap_or("-".into())));
+        a.push(kv("Uptime", uptime(self.host.text("/proc/uptime")).unwrap_or("-".into())));
         a.push(if self.net.is_empty() {
             kvc("Network", "not connected", DIM)
         } else {
@@ -166,7 +166,7 @@ impl Ui {
 
         // ---- column 2: temperatures, load
         let mut b = vec![Row::Head("Temperatures".into())];
-        let zones = board().thermal_zones();
+        let zones = self.host.temperatures();
         let (soc, fpga) = board().temp_limits();
         for z in &zones {
             let name = match z.name.as_str() {
@@ -196,17 +196,17 @@ impl Ui {
         b.push(kv("SoC alarm", format!("{:.0} \u{b0}C", soc)));
         b.push(kv("FPGA alarm", format!("{:.0} \u{b0}C", fpga)));
         b.push(Row::Head("Load".into()));
-        if let Some(la) = read("/proc/loadavg") {
+        if let Some(la) = self.host.text("/proc/loadavg") {
             b.push(kv("CPU load", la.split_whitespace().take(3).collect::<Vec<_>>().join("  ")));
         }
-        if let (Some(lo), Some(hi)) = (cpu_hz(0), cpu_hz(4)) {
+        if let (Some(lo), Some(hi)) = (cpu_hz(self.cpu_freq(0)), cpu_hz(self.cpu_freq(4))) {
             b.push(kv("CPU clock", format!("A53 {}  A72 {}", si_short(lo, "Hz"), si_short(hi, "Hz"))));
         }
-        match memory() {
+        match memory(self.host.text("/proc/meminfo")) {
             Some((avail, total)) => b.push(kv("RAM", format!("{} free of {}", bytes(avail), bytes(total)))),
             None => b.push(kvc("RAM", "-", DIM)),
         }
-        match disk("/oos") {
+        match self.host.disk("/oos") {
             Some((free, total)) => b.push(kvc(
                 "/oos",
                 format!("{} free of {}", bytes(free), bytes(total)),
@@ -266,11 +266,11 @@ impl Ui {
                     fmt_count(used as f64),
                     fmt_count(acq as f64),
                     fmt_count(dropped as f64),
-                    crate::drawpipe::mode()
+                    self.host.switches().pipeline
                 ),
             ));
             let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
-            if crate::drawpipe::mode() == crate::drawpipe::Mode::Batch {
+            if self.host.switches().pipeline == crate::drawpipe::Mode::Batch {
                 // short time bases measure the interpolated record: those frames stay out of the statistics
                 d.push(kv(
                     "Frames in statistics",
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn opens_refreshes_and_closes_like_a_dialog() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.activate(Item::SysInfo);
         assert!(ui.sysinfo.is_some() && ui.dialog.is_some());
         let rows = ui.sysinfo.as_ref().unwrap();
@@ -385,6 +385,19 @@ mod tests {
         ui.key(key::RUNSTOP);
         ui.step(0.02);
         assert!(ui.dialog.is_none() && ui.sysinfo.is_none());
+    }
+
+    #[test]
+    fn parses_supplied_host_readings() {
+        assert_eq!(uptime(Some("12345.0 100.0".into())).as_deref(), Some("3 h 25 min"));
+        assert_eq!(uptime(Some("bad".into())), None);
+        assert_eq!(
+            memory(Some("MemAvailable: 524288 kB\nMemTotal: 1048576 kB".into())),
+            Some((512 * 1024 * 1024, 1024 * 1024 * 1024))
+        );
+        assert_eq!(memory(Some("MemTotal: 1024 kB".into())), None);
+        assert_eq!(cpu_hz(Some("1200000\n".into())), Some(1.2e9));
+        assert_eq!(cpu_hz(None), None);
     }
 
     #[test]

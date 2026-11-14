@@ -9,10 +9,23 @@ use super::*;
 use crate::board::{MaskRead, MaskWant};
 
 impl Ui {
+    /// Utility > Aux out: the next output this board offers (pass/fail only with a hardware mask or zone unit).
+    pub(super) fn aux_adjust(&mut self, it: Item, d: i32) -> bool {
+        if it != Item::AuxOut {
+            return false;
+        }
+        let sw = self.host.switches();
+        let all = AuxOut::choices(board().mask_hw(sw) || board().zone_hw(sw));
+        let i = all.iter().position(|&a| a == self.m.aux_out).unwrap_or(0);
+        self.m.aux_out = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
+        self.settings_changed();
+        true
+    }
+
     /// The mask test runs in the hardware: enabled on this board, live hardware frames, the mask on and built, its
     /// channel acquired. The fast display path then stays on.
     pub(super) fn mask_hw_active(&self) -> bool {
-        board().mask_hw()
+        board().mask_hw(self.host.switches())
             && self.src.is_hw()
             && self.m.mask_on
             && self.mask.is_some()
@@ -85,7 +98,7 @@ impl Ui {
         let Some(r) = self.mask_hw else {
             return format!(
                 "off,enabled={},active={},blocked={},{}",
-                board().mask_hw() as u8,
+                board().mask_hw(self.host.switches()) as u8,
                 self.mask_hw_active() as u8,
                 self.unit_blocked.is_some() as u8,
                 sw
@@ -229,7 +242,7 @@ mod tests {
 
     #[test]
     fn hardware_counts_while_the_hardware_tests() {
-        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         (ui.mask_pass, ui.mask_fail) = (7, 2);
         ui.mask_hw = rd(0, 4, 3);
         // the demo source is no hardware: the software counts

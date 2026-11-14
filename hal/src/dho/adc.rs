@@ -354,8 +354,6 @@ mod tests {
         assert_eq!(c.get16(CalAdc::off_at(5, 3)), 1023);
     }
 
-    const CAL_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal");
-
     #[test]
     fn modes_and_input_words() {
         assert_eq!(mode_of_mask(1), Some(0));
@@ -372,13 +370,10 @@ mod tests {
     }
 
     /// Identical to tools/adcmodel.py (testdata/adc_expected.txt) for boot, 1 -> 3 -> f -> c -> 1, input mode restore.
-    /// Needs the unit's cal_adc.hex (device data, not in the tree); skipped when missing.
+    /// Uses the generated synthetic calibration, with every parameter assertion mandatory.
     #[test]
     fn matches_adcmodel() {
-        let Ok(cal) = CalAdc::load(&std::env::var("OOS_CAL_DIR").unwrap_or(CAL_DIR.into())) else {
-            eprintln!("cal_adc.hex not found, skipped");
-            return;
-        };
+        let cal = crate::dho::fixtures::adc();
         let fmt = |w: &[Wr]| {
             w.iter().map(|x| format!("{} {:#x} {:#x} {}", x.pre_us, x.reg, x.val, x.post_us)).collect::<Vec<_>>()
         };

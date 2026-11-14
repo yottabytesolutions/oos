@@ -30,19 +30,26 @@ pub(super) struct UpdateUi {
     pub(super) last: String,
 }
 
-fn state() -> Option<State> {
-    Path::new(update::STATE_PATH).parent().filter(|d| d.exists())?;
-    State::load(Path::new(update::STATE_PATH)).ok()
+/// The update state: None without the update directory (`dir`), else the state file's text, the defaults while no
+/// state file was written (`State::load`).
+fn state(dir: bool, text: Option<String>) -> Option<State> {
+    dir.then(|| text.map_or_else(State::default, |t| State::parse(&t)))
 }
 
 impl Ui {
+    /// The update state through the host.
+    fn update_state(&self) -> Option<State> {
+        let path = Path::new(update::STATE_PATH);
+        state(path.parent().is_some_and(|d| self.host.is_dir(d)), self.host.text(update::STATE_PATH))
+    }
+
     /// Dialog lines of System > Update.
     pub(super) fn update_lines(&self) -> Vec<String> {
         let mut d = vec!["Update".to_string()];
-        if let Ok(b) = std::fs::read_to_string("/etc/oos-build") {
+        if let Some(b) = self.host.text("/etc/oos-build") {
             d.push(format!("Running {}", update::short(b.trim())));
         }
-        match state() {
+        match self.update_state() {
             None => d.push("No update installed yet".into()),
             Some(st) => {
                 let b = |e: &Option<update::Entry>| {
@@ -78,7 +85,7 @@ impl Ui {
 
     /// System > Boot mode.
     pub(super) fn boot_mode(&self) -> &'static str {
-        if state().is_some_and(|s| s.persist) {
+        if self.update_state().is_some_and(|s| s.persist) {
             "Persist"
         } else {
             "One-shot"
@@ -90,13 +97,13 @@ impl Ui {
         if self.update_busy() {
             return self.toast("An update job is running");
         }
-        let to = if state().is_some_and(|s| s.persist) { "oneshot" } else { "persist" };
+        let to = if self.update_state().is_some_and(|s| s.persist) { "oneshot" } else { "persist" };
         self.update_spawn(&["mode", to], "Boot mode");
     }
 
     /// System > Back to stock: says what the next power-on really does.
     pub(super) fn stock_tap(&mut self) {
-        if state().is_some_and(|s| s.persist) {
+        if self.update_state().is_some_and(|s| s.persist) {
             self.toast("Boot mode is Persist: set it to One-shot, then power-cycle");
         } else {
             self.toast("Power-cycle the scope: stock boots next");
@@ -108,7 +115,9 @@ impl Ui {
         if self.update_busy() {
             return self.toast("An update job is running");
         }
-        let Some(st) = state() else { return self.toast("No rollback image (no update installed)") };
+        let Some(st) = self.update_state() else {
+            return self.toast("No rollback image (no update installed)");
+        };
         let Some(prev) = st.previous else { return self.toast("No rollback image kept") };
         if st.current.as_ref().is_some_and(|c| c.sha256 == prev.sha256) {
             return self.toast("Recovery already holds the rollback image");
@@ -214,10 +223,8 @@ impl Ui {
                 }
             }
         }
-        // (not in unit tests: a notice file on the build machine must not open dialogs there)
-        if let Ok(n) =
-            std::fs::read_to_string(NOTICE).map_err(|_| ()).and_then(|n| if cfg!(test) { Err(()) } else { Ok(n) })
-        {
+        // Read notices from the host supplied at construction.
+        if let Some(n) = self.host.text(NOTICE) {
             let n = n.trim().to_string();
             if !n.is_empty() && n != self.upd.notice_shown && self.dialog.is_none() && !self.start_up_active() {
                 self.upd.notice_shown = n.clone();
@@ -307,6 +314,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn state_needs_the_update_directory_not_the_state_file() {
+        assert!(state(false, None).is_none());
+        assert!(state(false, Some("persist = 1\n".into())).is_none());
+        let st = state(true, None).expect("the directory alone gives the default state");
+        assert!(st.current.is_none() && st.previous.is_none() && !st.persist);
+    }
+
+    #[test]
     fn wraps_at_words() {
         let l =
             wrap_lines("Update 20261105-170000 failed its first start (oos-ui crashed 3 times). Build x restored.", 30);
@@ -319,7 +334,7 @@ mod tests {
 
     #[test]
     fn upload_refuses_unsigned_packages() {
-        let mut u = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let e = u.update_upload(b"OOS-UPDATE 1\ntarget dho900-recovery\n\nxx".to_vec()).unwrap_err();
         assert!(e.contains("signature") || e.contains("header"), "{}", e);
         assert!(u.upd.job.is_none() && u.upd.upload.is_none());

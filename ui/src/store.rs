@@ -1277,8 +1277,16 @@ pub fn png_of(cv: &Canvas) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// Manual picture suites must name their output directory explicitly.
+    pub(crate) fn test_output_dir(key: &str) -> String {
+        let dir = std::env::var(key).unwrap_or_else(|_| panic!("set {}", key));
+        assert!(!dir.trim().is_empty(), "set {} to a nonempty directory", key);
+        std::fs::create_dir_all(&dir).expect("create screenshot output directory");
+        dir
+    }
     use crate::gfx::rgb;
     use crate::math::{MathOp, Window};
 
@@ -1863,16 +1871,10 @@ mod tests {
         assert!(screen.len() < raw as usize / 20, "screen-like picture: {} bytes of {}", screen.len(), raw);
     }
 
-    /// Cross-check with an independent decoder when the host has Python with Pillow (skipped otherwise).
+    /// Explicit cross-check with an independent decoder installed by the caller.
     #[test]
+    #[ignore = "external tool: requires python3 with Pillow"]
     fn png_opens_in_pillow() {
-        let has_pillow = std::process::Command::new("python3")
-            .args(["-c", "import PIL"])
-            .output()
-            .map_or(false, |o| o.status.success());
-        if !has_pillow {
-            return eprintln!("python3 with Pillow not found: check skipped");
-        }
         let (w, h) = (64u32, 40u32);
         let px: Vec<u32> = (0..w * h).map(|i| rgb((i % w) * 4, (i / w) * 6, 0x80)).collect();
         let dir = std::env::temp_dir().join(format!("oos-ui-png-{}", std::process::id()));
@@ -1903,7 +1905,7 @@ mod tests {
     /// A real screen (the demo, four channels and the menus of the UI) decodes back to its pixels.
     #[test]
     fn png_of_the_demo_screen_round_trips() {
-        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = crate::ui::Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         for c in ["key ch2", "key ch3", "key ch4", "key measure"] {
             crate::cmd::run(&mut ui, c);
         }
@@ -1918,9 +1920,10 @@ mod tests {
     /// Time of one PNG of a real screen (the demo source, 4 channels on, as the web remote sends it) and of the
     /// screen-like test picture: `cargo test --release png_encode_time -- --ignored --nocapture`.
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn png_encode_time() {
-        let mut ui = crate::ui::Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
+        let mut ui = crate::ui::Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         for c in ["key ch2", "key ch3", "key ch4"] {
             crate::cmd::run(&mut ui, c);
         }

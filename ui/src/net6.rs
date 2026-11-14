@@ -15,15 +15,6 @@ pub const PREFIX_FILE: &str = "/tmp/oos-net6.prefixes";
 /// `2000::/3`) must not open the scope to the internet. The same bound is in `oos-firewall`.
 pub const PREFIX_MIN: u8 = 48;
 
-/// `net.ipv6` (OOS_IPV6 overrides it), read once.
-pub fn enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_IPV6").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        enabled_from(env, &crate::sysconf::fork_text())
-    })
-}
-
 /// `env` if set, else the `net.ipv6` line of `conf`; off unless `on`.
 pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
     crate::drawpipe::conf_value(env, conf, "net.ipv6").as_deref() == Some("on")
@@ -40,12 +31,12 @@ pub fn bind_any<T>(v6: bool, port: u16, bind: impl Fn(SocketAddr) -> std::io::Re
 }
 
 /// A listening TCP socket for a service on all addresses of the families in use.
-pub fn tcp(port: u16) -> Option<TcpListener> {
-    bind_any(enabled(), port, TcpListener::bind)
+pub fn tcp(port: u16, v6: bool) -> Option<TcpListener> {
+    bind_any(v6, port, TcpListener::bind)
 }
 
-pub fn udp(port: u16) -> Option<UdpSocket> {
-    bind_any(enabled(), port, UdpSocket::bind)
+pub fn udp(port: u16, v6: bool) -> Option<UdpSocket> {
+    bind_any(v6, port, UdpSocket::bind)
 }
 
 /// The prefixes of a `PREFIX_FILE` text; what does not parse, is IPv4 or shorter than `PREFIX_MIN` is left out.

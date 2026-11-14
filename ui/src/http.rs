@@ -58,7 +58,7 @@ const SEND_TIMEOUT_S: u64 = 30;
 static SENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A large answer in the background. False when too many run already, or no thread could be started.
-fn send_in_background(s: &TcpStream, head: String, body: impl AsRef<[u8]> + Send + 'static) -> bool {
+fn send_in_background(s: &TcpStream, head: String, body: impl AsRef<[u8]> + Send + 'static, little: u64) -> bool {
     use std::sync::atomic::Ordering::SeqCst;
     let Ok(mut c) = s.try_clone() else { return false };
     if SENDERS.fetch_add(1, SeqCst) >= MAX_SENDERS {
@@ -66,7 +66,7 @@ fn send_in_background(s: &TcpStream, head: String, body: impl AsRef<[u8]> + Send
         return false;
     }
     let t = std::thread::Builder::new().name("web-send".into()).spawn(move || {
-        lower_priority();
+        lower_priority(little);
         let _ = c.set_write_timeout(Some(Duration::from_secs(SEND_TIMEOUT_S)));
         let _ = c.write_all(head.as_bytes());
         let _ = c.write_all(body.as_ref());
@@ -90,8 +90,9 @@ const WEB_NICE: i32 = 10;
 
 /// The threads of the web remote (encoder, senders) run only on what the scope leaves over: scheduling class
 /// `SCHED_IDLE` (they get a core only while nothing else wants it), and only on the slower cores of a big.LITTLE SoC
-/// (RK3399: the four A53; the frame loop keeps the two A72 for itself). Nice 10 where that fails.
-fn lower_priority() {
+/// (RK3399: the four A53 in `little`, `Cores::little`; the frame loop keeps the two A72 for itself). Nice 10 where
+/// that fails.
+fn lower_priority(little: u64) {
     #[cfg(target_os = "linux")]
     // SAFETY: plain system calls on the calling thread; the parameter and the CPU set are local values.
     unsafe {
@@ -102,68 +103,47 @@ fn lower_priority() {
         if libc::syscall(libc::SYS_sched_setscheduler, tid, libc::SCHED_IDLE, &p as *const libc::sched_param) != 0 {
             libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, WEB_NICE);
         }
-        let little = little_cores();
-        if !little.is_empty() {
+        if little != 0 {
             let mut set: libc::cpu_set_t = std::mem::zeroed();
-            for c in little {
+            for c in crate::placement::cpus(little) {
                 libc::CPU_SET(c, &mut set);
             }
             libc::sched_setaffinity(tid, std::mem::size_of::<libc::cpu_set_t>(), &set);
         }
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = little;
 }
 
-/// The cores with less than the largest `cpu_capacity` (empty on a SoC whose cores are all alike, or without the
-/// file): where the background threads go.
-#[cfg(target_os = "linux")]
-fn little_cores() -> Vec<usize> {
-    static L: std::sync::OnceLock<Vec<usize>> = std::sync::OnceLock::new();
-    L.get_or_init(|| {
-        let cap: Vec<(usize, u32)> = (0..64)
-            .filter_map(|c| {
-                std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c))
-                    .ok()
-                    .and_then(|v| v.trim().parse().ok())
-                    .map(|v| (c, v))
-            })
-            .collect();
-        let max = cap.iter().map(|x| x.1).max().unwrap_or(0);
-        cap.iter().filter(|x| x.1 < max).map(|x| x.0).collect()
-    })
-    .clone()
-}
-
-/// The calling thread onto the slower cores of a big.LITTLE SoC (RK3399: the four A53), at normal priority: the
-/// measurements in the background (`ui::MeasWorker`); the threads it starts after this stay there too.
-pub fn to_little_cores() {
+/// The calling thread onto the slower cores of a big.LITTLE SoC (`little`, `Cores::little`; RK3399: the four A53), at
+/// normal priority: the measurements in the background (`ui::MeasWorker`); the threads it starts after this stay
+/// there too. Nothing without little cores.
+pub fn to_little_cores(little: u64) {
     #[cfg(target_os = "linux")]
     {
-        let little = little_cores();
-        if little.is_empty() {
+        if little == 0 {
             return;
         }
         // SAFETY: a local CPU set for the calling thread
         unsafe {
             let mut set: libc::cpu_set_t = std::mem::zeroed();
-            for c in little {
+            for c in crate::placement::cpus(little) {
                 libc::CPU_SET(c, &mut set);
             }
             libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
         }
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = little;
 }
 
 /// The calling thread onto the fastest cores (RK3399: the two A72), and the processes it starts after this with it.
 /// System > Graphics = GPU: the frame loop and the GPU helper compare and send the layers there (on an A53 a
 /// frame's compare took three times as long).
 #[cfg(target_os = "linux")]
-pub fn pin_to_big_cores() {
-    let little = little_cores();
-    let all: Vec<usize> = (0..64)
-        .filter(|c| std::path::Path::new(&format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", c)).exists())
-        .collect();
-    let big: Vec<usize> = all.into_iter().filter(|c| !little.contains(c)).collect();
-    if big.is_empty() || little.is_empty() {
+pub fn pin_to_big_cores(cores: crate::placement::Cores) {
+    let big = crate::placement::cpus(cores.big);
+    if big.is_empty() || cores.little == 0 {
         return;
     }
     // SAFETY: a local CPU set for the calling thread
@@ -186,7 +166,7 @@ const SHOT_STILL: Duration = Duration::from_millis(200);
 /// After a request, pictures are made ahead for this long (a viewer that left costs no more than this).
 const SHOT_AHEAD: Duration = Duration::from_secs(1);
 /// A viewer that has the newest picture waits this long for the next one (long poll), then gets 304.
-const LONG_POLL: Duration = if cfg!(test) { Duration::from_millis(1000) } else { Duration::from_secs(2) };
+const LONG_POLL: Duration = Duration::from_secs(2);
 /// A picture from a copy at most this old goes out at once to a viewer that does not have it; else a fresh copy first.
 const SHOT_FRESH: Duration = Duration::from_millis(300);
 /// Connections waiting for a picture at most (more are answered 503).
@@ -209,6 +189,8 @@ const VPU_RETRY: Duration = Duration::from_secs(60);
 pub struct Shots {
     st: Mutex<ShotState>,
     wake: Condvar,
+    /// the little cores the encoder and the senders run on (`Cores::little`)
+    little: u64,
 }
 
 #[derive(Default)]
@@ -248,8 +230,8 @@ struct ShotState {
 }
 
 impl Shots {
-    fn new() -> Arc<Shots> {
-        Arc::new(Shots { st: Default::default(), wake: Default::default() })
+    fn new(little: u64) -> Arc<Shots> {
+        Arc::new(Shots { st: Default::default(), wake: Default::default(), little })
     }
 
     fn lock(&self) -> MutexGuard<'_, ShotState> {
@@ -275,7 +257,7 @@ impl Shots {
         {
             let tag = st.tag.clone();
             drop(st);
-            return answer_shot(s, have.as_deref(), png, &tag);
+            return answer_shot(s, have.as_deref(), png, &tag, self.little);
         }
         if st.waiting.len() >= SHOT_WAITING {
             drop(st);
@@ -286,7 +268,7 @@ impl Shots {
             if std::thread::Builder::new().name("web-png".into()).spawn(move || me.encoder()).is_err() {
                 // no thread: the old way, in the frame loop
                 drop(st);
-                return answer_shot(s, None, crate::store::png_of(cv).into(), "");
+                return answer_shot(s, None, crate::store::png_of(cv).into(), "", self.little);
             }
             st.thread = true;
         }
@@ -317,7 +299,7 @@ impl Shots {
             for ((c, have, _, _), ok) in old.into_iter().zip(fits) {
                 // the last picture in the format asked for, else "busy" (the page asks again)
                 if ok {
-                    answer_shot(&c, have.as_deref(), png.clone(), &tag);
+                    answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little);
                 } else {
                     busy_answer(&c);
                 }
@@ -374,7 +356,7 @@ impl Shots {
     }
 
     fn encoder(&self) {
-        lower_priority();
+        lower_priority(self.little);
         let mut vpu: Option<crate::vpu::JpegEnc> = None;
         let mut vpu_size = (0, 0);
         let boot = std::time::SystemTime::now()
@@ -441,7 +423,7 @@ impl Shots {
                 let png = st.png.clone().unwrap_or_else(|| Arc::from(&[][..]));
                 drop(st);
                 for (c, have, _, _) in lack {
-                    answer_shot(&c, have.as_deref(), png.clone(), &tag);
+                    answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little);
                 }
                 continue;
             };
@@ -461,7 +443,7 @@ impl Shots {
             let tag = st.tag.clone();
             drop(st);
             for (c, have, _, _) in waiting {
-                answer_shot(&c, have.as_deref(), png.clone(), &tag);
+                answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little);
             }
         }
     }
@@ -480,7 +462,7 @@ pub fn same_pixels(a: &[u32], b: &[u32]) -> bool {
 }
 
 /// 304 when the viewer has this picture, else the PNG through a sender thread (503 when all are busy).
-fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str) {
+fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str, little: u64) {
     let etag = if tag.is_empty() { String::new() } else { format!("ETag: {}\r\n", tag) };
     if !tag.is_empty() && have == Some(tag) {
         let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
@@ -492,7 +474,7 @@ fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str) {
     }
     let ctype = if png.starts_with(&[0xff, 0xd8]) { "image/jpeg" } else { "image/png" };
     let head = format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", ctype, png.len(), etag);
-    if !send_in_background(s, head, png) {
+    if !send_in_background(s, head, png, little) {
         busy_answer(s);
     }
 }
@@ -820,26 +802,27 @@ fn unescape(s: &str) -> String {
 }
 
 impl Http {
-    pub fn open(port: u16) -> Http {
-        Self::open_with(port, LIMITS)
+    /// The web remote on `port`, with the switches' IPv6 and little cores.
+    pub fn open(port: u16, sw: &crate::sysconf::Switches) -> Http {
+        Self::open_with(port, LIMITS, sw)
     }
 
-    fn open_with(port: u16, limits: Limits) -> Http {
+    fn open_with(port: u16, limits: Limits, sw: &crate::sysconf::Switches) -> Http {
         let mut h = Http {
             open: None,
             inbox: Arc::new(Inbox::default()),
             limits,
-            shots: Shots::new(),
+            shots: Shots::new(sw.cores.little),
             acl: crate::netacl::Acl::default(),
             acl_shared: Arc::new(Mutex::new(crate::netacl::Acl::default())),
         };
-        h.start(port);
+        h.start(port, sw.ipv6);
         h
     }
 
     /// Binds the port and starts its accept thread.
-    fn start(&mut self, port: u16) {
-        let Some(l) = crate::net6::tcp(port) else {
+    fn start(&mut self, port: u16, v6: bool) {
+        let Some(l) = crate::net6::tcp(port, v6) else {
             eprintln!("oos-ui: web port {} not available", port);
             return;
         };
@@ -865,9 +848,9 @@ impl Http {
     }
 
     /// System > Network > Remote services: the port open (`Some`), or closed with the requests waiting on it.
-    pub fn set_open(&mut self, port: Option<u16>) {
+    pub fn set_open(&mut self, port: Option<u16>, v6: bool) {
         match port {
-            Some(p) if self.open.is_none() => self.start(p),
+            Some(p) if self.open.is_none() => self.start(p, v6),
             Some(_) => {}
             None => {
                 if let Some((_, stop)) = self.open.take() {
@@ -1006,7 +989,7 @@ impl Http {
                 };
                 let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, ctype, body.len());
                 if body.len() > SEND_INLINE {
-                    if !send_in_background(s, head, body) {
+                    if !send_in_background(s, head, body, self.shots.little) {
                         busy_answer(s);
                     }
                 } else {
@@ -1244,7 +1227,11 @@ mod tests {
 
     fn quick(idle_ms: u64, deadline_ms: u64, take_ms: u64) -> Http {
         let ms = Duration::from_millis;
-        Http::open_with(0, Limits { idle: ms(idle_ms), deadline: ms(deadline_ms), take: ms(take_ms) })
+        Http::open_with(
+            0,
+            Limits { idle: ms(idle_ms), deadline: ms(deadline_ms), take: ms(take_ms) },
+            &Default::default(),
+        )
     }
 
     // Break it catches: a client held for ever when the frame loop does not run (the 55 min upload of 2026-11-14 is
@@ -1261,10 +1248,10 @@ mod tests {
     // for a request that is refused anyway.
     #[test]
     fn expect_continue_is_answered_and_refusals_come_first() {
-        let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let port = h.addr().port();
         let body = b"OOS-UPDATE 1\ntarget x\n\nxx".to_vec();
         let t = std::thread::spawn(move || {
@@ -1343,7 +1330,7 @@ mod tests {
     // Break it catches: a POST without a length read as an empty body (a chunked upload was cut to nothing).
     #[test]
     fn a_body_without_content_length_gets_411() {
-        let h = Http::open(0);
+        let h = Http::open(0, &Default::default());
         for req in [
             "POST /update HTTP/1.1\r\nHost: x\r\n\r\n",
             "POST /update HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
@@ -1367,7 +1354,7 @@ mod tests {
         let r = talk(h.addr().port(), head, head.len(), Duration::from_millis(100));
         assert!(r.starts_with("HTTP/1.1 408"), "deadline: {}", r);
         // head too long
-        let h = Http::open(0);
+        let h = Http::open(0, &Default::default());
         let r = talk(
             h.addr().port(),
             format!("GET / HTTP/1.1\r\nX: {}", "a".repeat(MAX_HEAD + 100)).as_bytes(),
@@ -1380,7 +1367,7 @@ mod tests {
     // Break it catches: more connections than `MAX_PENDING` closed without a word.
     #[test]
     fn too_many_connections_get_503() {
-        let h = Http::open(0);
+        let h = Http::open(0, &Default::default());
         let port = h.addr().port();
         let held: Vec<TcpStream> = (0..MAX_PENDING)
             .map(|_| {
@@ -1401,13 +1388,15 @@ mod tests {
     /// The web remote with the demo signals, to try it without a scope: `cargo test web_demo -- --ignored --nocapture`,
     /// then open http://localhost:8080/. Runs for OOS_WEB_DEMO_S seconds (default 300), on OOS_WEB_DEMO_PORT.
     #[test]
-    #[ignore]
+    #[ignore = "manual web server: set OOS_WEB_DEMO_S"]
     fn web_demo() {
+        let _: u64 =
+            std::env::var("OOS_WEB_DEMO_S").expect("set OOS_WEB_DEMO_S").parse().expect("OOS_WEB_DEMO_S seconds");
         let var = |k: &str, d: u64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
-        let mut h = Http::open(var("OOS_WEB_DEMO_PORT", 8080) as u16);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut h = Http::open(var("OOS_WEB_DEMO_PORT", 8080) as u16, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let end = Instant::now() + Duration::from_secs(var("OOS_WEB_DEMO_S", 300));
         while Instant::now() < end {
             ui.step(0.04);
@@ -1424,13 +1413,8 @@ mod tests {
         request(h, ui, cv, scpi, format!("GET {} HTTP/1.1\r\nHost: x\r\n\r\n", path).into_bytes())
     }
 
-    /// Runs the page's script under Node with a small stand-in for the browser (skipped without `node`) and returns the
-    /// picture addresses it asked for: first before and then after `setfmt('bmp')`, and what it kept in localStorage.
-    fn run_page_script(script: &str, preset: &str, storage_throws: bool) -> Option<String> {
-        if !std::process::Command::new("node").arg("--version").output().map_or(false, |o| o.status.success()) {
-            eprintln!("node not found: page script check skipped");
-            return None;
-        }
+    /// Runs the opt-in page-script checks under Node with a stand-in browser.
+    fn run_page_script(script: &str, preset: &str, storage_throws: bool) -> String {
         const HARNESS: &str = r#"
 const fs = require('fs'), vm = require('vm');
 const log = [], inm = [], store = {};
@@ -1472,14 +1456,19 @@ setTimeout(() => {
         std::fs::write(dir.join("page.js"), script).unwrap();
         std::fs::write(dir.join("run.js"), HARNESS).unwrap();
         let mut cmd = std::process::Command::new("node");
-        cmd.arg(dir.join("run.js")).arg(dir.join("page.js")).env("PRESET", preset);
+        cmd.arg(dir.join("run.js"))
+            .arg(dir.join("page.js"))
+            .env("PRESET", preset)
+            .env_remove("THROWS")
+            .env_remove("NODE_OPTIONS")
+            .env_remove("NODE_PATH");
         if storage_throws {
             cmd.env("THROWS", "1");
         }
         let out = cmd.output().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(out.status.success(), "node: {}", String::from_utf8_lossy(&out.stderr));
-        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
     /// The background senders (`SENDERS`, at most `MAX_SENDERS`) are one count for the whole process: tests that
@@ -1492,20 +1481,25 @@ setTimeout(() => {
 
     #[test]
     fn page_lets_the_viewer_pick_png_or_bmp() {
-        let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let page = get(&mut h, &mut ui, &cv, &mut scpi, "/");
-        let script =
-            page.split("<script>").nth(1).and_then(|s| s.split("</script>").next()).expect("script in the page");
+        assert!(page.contains("<script>"), "script in the page");
         // the picture the browser loads before the script runs is the small one, too
         assert!(
             page.contains(r#"id="s" width="1024" height="600" alt="scope screen" src="/screen.png""#),
             "first picture"
         );
         assert!(page.contains("setfmt('png')") && page.contains("setfmt('bmp')"), "buttons for both formats");
-        let Some(r) = run_page_script(script, "", false) else { return };
+    }
+
+    #[test]
+    #[ignore = "external tool: requires Node.js"]
+    fn page_script_lets_the_viewer_pick_png_or_bmp() {
+        let script = PAGE.split("<script>").nth(1).unwrap().split("</script>").next().unwrap();
+        let r = run_page_script(script, "", false);
         // default: PNG, then BMP after the switch, and the choice is kept
         assert!(r.contains(r#""first":["/screen.png?t="#), "{}", r);
         assert!(!r.contains(r#""first":["/screen.bmp"#), "{}", r);
@@ -1519,10 +1513,10 @@ setTimeout(() => {
         // the button of the format in use is lit
         assert!(r.contains(r#""cls0":["on",""],"cls1":["","on"]"#), "{}", r);
         // a kept choice comes back at the next visit
-        let r = run_page_script(script, "bmp", false).unwrap();
+        let r = run_page_script(script, "bmp", false);
         assert!(r.contains(r#""first":["/screen.bmp?t="#), "{}", r);
         // storage blocked (private window): still PNG, and switching does not fail
-        let r = run_page_script(script, "", true).unwrap();
+        let r = run_page_script(script, "", true);
         assert!(r.contains(r#""first":["/screen.png?t="#) && r.contains(r#""err":"""#), "{}", r);
         assert!(r.split(r#""after":["#).nth(1).unwrap().contains("/screen.bmp?t="), "{}", r);
     }
@@ -1530,10 +1524,10 @@ setTimeout(() => {
     #[test]
     fn pages_and_downloads() {
         let _alone = senders_alone();
-        let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let r = get(&mut h, &mut ui, &cv, &mut scpi, "/");
         assert!(r.starts_with("HTTP/1.1 200") && r.contains("/screen.png") && r.contains("/update"), "{}", &r[..200]);
         assert!(get(&mut h, &mut ui, &cv, &mut scpi, "/style.css").contains("text/css"));
@@ -1559,8 +1553,7 @@ setTimeout(() => {
         ui.sys.tz = "JST-9".into();
         let st = body(&get(&mut h, &mut ui, &cv, &mut scpi, "/stamp"));
         let want = ui.local_now().stamp();
-        // the second may have turned between the two readings
-        assert!(st.len() == 15 && st[..13] == want[..13], "{} {}", st, want);
+        assert_eq!(st, want);
     }
 
     /// Large answers leave the frame loop: the whole body arrives, also several at once, and the count goes back.
@@ -1568,12 +1561,12 @@ setTimeout(() => {
     fn large_answers_go_through_a_thread() {
         let _alone = senders_alone();
         use std::sync::atomic::Ordering::SeqCst;
-        let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         // a real screen: a blank canvas would be a few KB as a PNG, which is not a large answer
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         ui.render(&mut cv);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         for path in ["/screen.bmp", "/screen.png"] {
             let addr = h.addr();
             let t = std::thread::spawn(move || {
@@ -1625,10 +1618,10 @@ setTimeout(() => {
     }
 
     fn live_picture_hand_over(frames_first: bool) {
-        let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let port = h.addr().port();
         let mut frame = 0u32;
         // the first screen handed over (the canvas got another buffer): the one before the render
@@ -1699,10 +1692,10 @@ setTimeout(() => {
     #[test]
     fn live_picture_with_the_gpu_is_a_picture_read_back() {
         let _alone = senders_alone();
-        let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let port = h.addr().port();
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -1752,11 +1745,11 @@ setTimeout(() => {
             }
             assert!(!same_pixels(&a, &a[..n.saturating_sub(1)]) || n == 0);
         }
-        let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         ui.render(&mut cv);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let port = h.addr().port();
         // a viewer in a thread; the server is polled meanwhile, and `change` alters the screen after 100 ms
         let shot = |h: &mut Http,
@@ -1823,10 +1816,10 @@ setTimeout(() => {
 
     #[test]
     fn update_upload_limits() {
-        let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let post = |path: &str, body: &[u8]| {
             let mut r =
                 format!("POST {} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n", path, body.len()).into_bytes();
@@ -1868,10 +1861,10 @@ setTimeout(() => {
 
     #[test]
     fn cmd_takes_keys_knobs_and_touch_only() {
-        let mut h = Http::open(0);
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let get = |c: &str| format!("GET /cmd?c={} HTTP/1.1\r\n\r\n", c).into_bytes();
         for c in ["shot%20/dev/mmcblk1", "storedir%20/", "stat%20/etc/passwd", "quit", "frames%2010", "selfcal%20x", ""]
         {
@@ -1897,9 +1890,9 @@ setTimeout(() => {
     #[test]
     fn mcp_session() {
         use crate::json::{parse, J};
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let mut call = |b: &str| mcp(b, &mut ui, &cv, &mut scpi).map(|r| parse(&r).unwrap());
         let r = call(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#)
             .unwrap();
@@ -1919,9 +1912,9 @@ setTimeout(() => {
 
     #[test]
     fn scpi_extensions() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         for _ in 0..3 {
             ui.step(0.05);
         }
@@ -1979,9 +1972,9 @@ setTimeout(() => {
 
     #[test]
     fn scpi_refuses_what_is_not_a_number() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         let (delay, offset, probe) = (ui.m.delay, ui.m.ch[0].offset, ui.m.ch[0].probe);
         for c in [
             ":TIM:OFFS nan",
@@ -2012,9 +2005,9 @@ setTimeout(() => {
 
     #[test]
     fn empty_bode_address_keeps_the_setup_readable() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         scpi.exec_line(&mut ui, &cv, ":BODE:GEN \"\"");
         assert_eq!(ui.m.bode_addr, "");
         let m = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();

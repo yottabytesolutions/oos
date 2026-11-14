@@ -164,8 +164,8 @@ impl Ui {
                         "Self-calibration".into(),
                         "Disconnect ALL inputs (no probes, no cables).".into(),
                         Self::cal_warmup(
-                            std::fs::read_to_string("/proc/uptime")
-                                .ok()
+                            self.host
+                                .text("/proc/uptime")
                                 .and_then(|t| t.split(' ').next()?.parse::<f64>().ok())
                                 .unwrap_or(self.now)
                                 / 60.0,

@@ -70,17 +70,13 @@ pub fn force(on: Option<bool>) {
 
 /// On unless `meas.deep_raw = off` in system.conf; OOS_DEEP_RAW overrides (empty or 0 off, anything else on). On by
 /// default since 2026-11-14: without it a mean-type measurement shows `----` above 1 M points while 1 M works.
-pub fn enabled() -> bool {
+/// `Switches::deep_raw`, or the test override of this thread.
+pub fn enabled(sw: &crate::sysconf::Switches) -> bool {
     #[cfg(test)]
     if let Some(on) = FORCE.with(|f| f.get()) {
         return on;
     }
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_DEEP_RAW").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = crate::sysconf::fork_text();
-        enabled_from(env, &conf)
-    })
+    sw.deep_raw
 }
 
 /// `env` if set, else the `meas.deep_raw` line of `conf`; on unless `off`.
@@ -90,10 +86,10 @@ pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
 
 /// The request for the model: on, and a shown measurement (or the software DVM) needs samples. Normal acquisition
 /// only: in Peak the memory holds peak pairs, not samples; Average and High res have their own records.
-pub fn want(m: &Model) -> Option<Want> {
+pub fn want(m: &Model, sw: &crate::sysconf::Switches) -> Option<Want> {
     let needs = m.meas.iter().any(|&(k, c)| m.ch[c].on && crate::framestats::needs_samples(k))
         || (m.dvm_on && m.ch[m.dvm_src].on);
-    (enabled() && needs && m.acq == AcqMode::Normal).then_some(Want { every: m.trig_mode == TrigMode::Single })
+    (enabled(sw) && needs && m.acq == AcqMode::Normal).then_some(Want { every: m.trig_mode == TrigMode::Single })
 }
 
 /// A frame of the deep-memory read through the compression (min/max pairs of a record above 1 M points).
@@ -111,8 +107,8 @@ pub fn deep_raw_frame(f: &Frame) -> bool {
 /// measurement shown then stays that of the last raw record (at most about `PERIOD` old). The plan judges, not an
 /// estimate here: the UI counted the channels it shows, the read counts the lanes acquired (a trigger source among
 /// them), and at 10 M, 1 ms/div, CH2 the UI held for a raw record the plan never read (unit 2026-11-14).
-pub fn hold(m: &Model, f: Option<&Frame>, planned: bool) -> bool {
-    f.is_some_and(deep_pairs) && planned && m.run == RunState::Run && want(m).is_some_and(|w| !w.every)
+pub fn hold(m: &Model, sw: &crate::sysconf::Switches, f: Option<&Frame>, planned: bool) -> bool {
+    f.is_some_and(deep_pairs) && planned && m.run == RunState::Run && want(m, sw).is_some_and(|w| !w.every)
 }
 
 /// The acquisition thread's rate limit: a raw deep read is due for every batch with `every`, else when `PERIOD` has
@@ -145,20 +141,20 @@ mod tests {
         let mut m = Model::default();
         m.ch[0].on = true;
         m.meas = vec![(Meas::Vmax, 0)];
-        assert_eq!(want(&m), None, "max needs no samples");
+        assert_eq!(want(&m, &Default::default()), None, "max needs no samples");
         m.meas.push((Meas::Vavg, 0));
-        assert_eq!(want(&m), Some(Want { every: false }));
+        assert_eq!(want(&m, &Default::default()), Some(Want { every: false }));
         m.trig_mode = TrigMode::Single;
-        assert_eq!(want(&m), Some(Want { every: true }));
+        assert_eq!(want(&m, &Default::default()), Some(Want { every: true }));
         m.acq = AcqMode::Peak;
-        assert_eq!(want(&m), None);
+        assert_eq!(want(&m, &Default::default()), None);
         m.acq = AcqMode::Normal;
         m.ch[0].on = false;
-        assert_eq!(want(&m), None);
+        assert_eq!(want(&m, &Default::default()), None);
         (m.ch[0].on, m.meas, m.dvm_on, m.dvm_src) = (true, Vec::new(), true, 0);
-        assert!(want(&m).is_some(), "the software DVM reads the mean");
+        assert!(want(&m, &Default::default()).is_some(), "the software DVM reads the mean");
         force(Some(false));
-        assert_eq!(want(&m), None);
+        assert_eq!(want(&m, &Default::default()), None);
         force(None);
     }
 
@@ -170,19 +166,22 @@ mod tests {
         m.meas = vec![(Meas::Vrms, 0)];
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
         // a deep record the plan reads raw (`Shared::deep_ok`)
-        assert!(hold(&m, Some(&deep(true)), true));
-        assert!(!hold(&m, Some(&deep(true)), false), "no raw read planned: the pair measurement stays");
-        assert!(!hold(&m, Some(&deep(false)), true), "a raw record is measured");
+        assert!(hold(&m, &Default::default(), Some(&deep(true)), true));
         assert!(
-            !hold(&m, Some(&Frame { acq: (1.25e9, 1_000_000), ..deep(true) }), true),
+            !hold(&m, &Default::default(), Some(&deep(true)), false),
+            "no raw read planned: the pair measurement stays"
+        );
+        assert!(!hold(&m, &Default::default(), Some(&deep(false)), true), "a raw record is measured");
+        assert!(
+            !hold(&m, &Default::default(), Some(&Frame { acq: (1.25e9, 1_000_000), ..deep(true) }), true),
             "live compression: the newest frame is raw anyway"
         );
-        assert!(!hold(&m, None, true));
+        assert!(!hold(&m, &Default::default(), None, true));
         m.run = RunState::Stop;
-        assert!(!hold(&m, Some(&deep(true)), true));
+        assert!(!hold(&m, &Default::default(), Some(&deep(true)), true));
         m.run = RunState::Run;
         m.trig_mode = TrigMode::Single;
-        assert!(!hold(&m, Some(&deep(true)), true), "Single: every batch is read raw");
+        assert!(!hold(&m, &Default::default(), Some(&deep(true)), true), "Single: every batch is read raw");
         m.trig_mode = TrigMode::Auto;
         force(None);
     }

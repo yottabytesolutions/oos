@@ -312,7 +312,7 @@ pub mod tests {
 
     /// An image's build: OOS_IMG set to a boot image (boot/out/oos-dev.img).
     #[test]
-    #[ignore]
+    #[ignore = "private image: set OOS_IMG"]
     fn the_build_of_an_image() {
         let img = std::fs::read(std::env::var("OOS_IMG").unwrap()).unwrap();
         let t = std::time::Instant::now();

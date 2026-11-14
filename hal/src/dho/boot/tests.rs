@@ -6,8 +6,6 @@
 use super::sim::{AfeStub, PllRec, SimClock, Unit, UNIT_IDELAY};
 use super::*;
 
-const CAL_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal");
-
 /// Every register the cold boot may write.
 const ALLOWED: [u32; 21] = [
     0x1000, 0x1010, 0x1014, 0x1018, 0x1020, 0x1034, 0x1058, 0x105c, 0x1418, 0x141c, 0x1420, 0x1424, 0x1428, 0x1470,
@@ -39,19 +37,6 @@ fn with(f: impl FnOnce(&mut Unit)) -> Unit {
 
 fn last(unit: &Unit, off: u32) -> Option<u32> {
     unit.writes.iter().rev().find(|w| w.0 == off).map(|w| w.1)
-}
-
-fn ddr_container(taps: [u32; 6]) -> Vec<u8> {
-    let mut p = vec![0u8; 48];
-    for (k, v) in taps.iter().enumerate() {
-        p[8 * k..8 * k + 4].copy_from_slice(&v.to_le_bytes());
-    }
-    let mut d = Vec::new();
-    for w in [0xad2b_9fefu32, 0x14, 0, 0, 0, 48, cal::crc32(&p)] {
-        d.extend(w.to_le_bytes());
-    }
-    d.extend(p);
-    d
 }
 
 fn check_safe(unit: &Unit) {
@@ -287,25 +272,18 @@ fn adc_trim_timeout_warns_and_continues() {
 
 #[test]
 fn cal_files_write_adc_parameters_and_ddr_taps() {
-    let mut cal = CalFiles {
-        ddr: DdrCal::from_file_bytes(&ddr_container([0x12, 0x4d6, 0x8a2, 0x924, 0x1ef, 0])),
-        ..Default::default()
-    };
-    assert!(cal.ddr.is_some());
-    let unit_cal = crate::dho::adc::CalAdc::load(&std::env::var("OOS_CAL_DIR").unwrap_or(CAL_DIR.into())).ok();
-    let have_adc = unit_cal.is_some();
-    cal.adc = unit_cal;
+    let cal = crate::dho::fixtures::boot();
     let mut unit = Unit::nominal();
     let run = boot(&mut unit, &cal);
     let o = run.r.result.unwrap_or_else(|e| panic!("{}", e));
     check_safe(&unit);
     let taps = [
         (0x1000, 8),
-        (0x1470, 0x12),
-        (0x1474, 0x4d6),
-        (0x147c, 0x8a2),
-        (0x1484, 0x924),
-        (0x148c, 0x1ef),
+        (0x1470, 0x21),
+        (0x1474, 0x345),
+        (0x147c, 0x678),
+        (0x1484, 0x789),
+        (0x148c, 0x123),
         (0x1494, 0),
         (0x1000, 0),
     ];
@@ -314,23 +292,45 @@ fn cal_files_write_adc_parameters_and_ddr_taps() {
     let si = unit.writes.iter().position(|w| *w == (0x1034, 0x0187_0000)).unwrap();
     assert!(ti < si);
     assert_eq!(o.ddr_status, 0x2400_0201);
-    if have_adc {
-        // cold-boot.md 3.7 / adc-mode.md 5.3: ref word, 0x1058 = 0xab2a, ..., the boot's first reg-0x04 word 0x0080
-        let pi = unit.writes.iter().position(|w| *w == (0x1058, 0xab2a)).unwrap();
-        assert_eq!(unit.writes[pi - 1], (0x1034, 0x0109_7700));
-        assert!(pi < ti);
-        assert_eq!(unit.writes[pi + 1], (0x1034, 0x0115_0009));
-        let tail = [0x0104_0080, 0x0104_8080, 0x0105_8080, 0x0105_8080, 0x0101_0000].map(|v| (0x1034, v));
-        assert!(unit.writes[pi..ti].ends_with(&tail));
-        assert!(o.warnings.is_empty(), "{:?}", o.warnings);
-    } else {
-        eprintln!("cal_adc.hex not found, ADC parameter part skipped");
-    }
+    // generate-test-cal.py, mode 0: delay=[2,3,4,5], refs=[17,19],
+    // core gain=core-3 and fine gain=(channel+slot)%4. adc-mode.md
+    // 5.3: (0x5020 & 0xffc0 | 17) ^ 0x2720 = 0x7731;
+    // packed two-bit fine gains = 0xe4e4_e4e4; (-3 & 0x7f) = 0x7d.
+    // Delays update shadows from r04=0x8000, r05=0, XOR 0x8080.
+    // Record 4 supplies reg-1: (3 << 10) | 2 = 0x0c02.
+    let pi = unit.writes.iter().position(|w| *w == (0x1058, 0xe4e4_e4e4)).unwrap();
+    assert_eq!(unit.writes[pi - 1], (0x1034, 0x0109_7731));
+    assert!(pi < ti);
+    assert_eq!(unit.writes[pi + 1], (0x1034, 0x0115_007d));
+    let tail = [0x0104_0082, 0x0104_8382, 0x0105_8084, 0x0105_8584, 0x0101_0c02].map(|v| (0x1034, v));
+    assert!(unit.writes[pi..ti].ends_with(&tail), "{:x?}", &unit.writes[ti - 5..ti]);
+    assert!(o.warnings.is_empty(), "{:?}", o.warnings);
+}
+
+#[test]
+#[ignore = "private calibration: set OOS_CAL_DIR"]
+fn unit_adc_parameter_sequence() {
+    let mut cal = crate::dho::fixtures::boot();
+    let bytes = crate::dho::fixtures::private("cal_adc.hex");
+    cal.adc = Some(crate::dho::adc::CalAdc::from_file_bytes(&bytes).expect("private ADC calibration"));
+    let mut unit = Unit::nominal();
+    let run = boot(&mut unit, &cal);
+    let o = run.r.result.unwrap_or_else(|e| panic!("{}", e));
+    check_safe(&unit);
+    let ti = unit.writes.iter().position(|w| *w == (0x1000, 8)).expect("DDR taps");
+    // cold-boot.md 3.7 / adc-mode.md 5.3, the original unit sequence.
+    let pi = unit.writes.iter().position(|w| *w == (0x1058, 0xab2a)).unwrap();
+    assert_eq!(unit.writes[pi - 1], (0x1034, 0x0109_7700));
+    assert!(pi < ti);
+    assert_eq!(unit.writes[pi + 1], (0x1034, 0x0115_0009));
+    let tail = [0x0104_0080, 0x0104_8080, 0x0105_8080, 0x0105_8080, 0x0101_0000].map(|v| (0x1034, v));
+    assert!(unit.writes[pi..ti].ends_with(&tail));
+    assert!(o.warnings.is_empty(), "{:?}", o.warnings);
 }
 
 #[test]
 fn dry_run_prints_the_plan() {
-    let cal = CalFiles::load(&std::env::var("OOS_CAL_DIR").unwrap_or(CAL_DIR.into()));
+    let cal = crate::dho::fixtures::boot();
     let s = dry_run(&cal, &Options::default());
     for want in [
         "DRY RUN",
@@ -355,7 +355,7 @@ fn progress_reports_every_step_in_order() {
     let mut steps = Vec::new();
     let r = cold_boot_with(
         Hw { bus: &mut unit, clock: &mut clk, pll: Some(&mut pll), afe: Some(&mut afe), early: None },
-        &CalFiles::load(CAL_DIR),
+        &crate::dho::fixtures::boot(),
         &Options::default(),
         &mut |n| steps.push(n),
     );
@@ -387,7 +387,7 @@ fn progress_reports_every_step_in_order() {
     let mut steps = Vec::new();
     let r = cold_boot_with(
         Hw { bus: &mut unit, clock: &mut clk, pll: None, afe: None, early: None },
-        &CalFiles::load(CAL_DIR),
+        &crate::dho::fixtures::boot(),
         &Options::default(),
         &mut |n| steps.push(n),
     );

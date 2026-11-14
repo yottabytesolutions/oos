@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 pub(super) const SCREENS: [Screen; 3] = [Screen::PANEL, Screen { w: 1280, h: 800 }, Screen { w: 1920, h: 1080 }];
 
 fn demo_on(scr: Screen) -> Ui {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.scr = scr;
     u
 }
@@ -323,7 +323,7 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
 
 #[test]
 fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.tap(160, 20);
     assert!(u.menu_open && u.menu == MenuId::Acquire);
     u.tap(160, 20);
@@ -341,7 +341,7 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
 
 #[test]
 fn a_page_offers_to_switch_on_its_channels() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.open_menu(MenuId::Power);
     assert!(!u.m.ch[1].on);
     assert_eq!(u.off_sources(MenuId::Power), [1]);
@@ -364,7 +364,7 @@ fn a_page_offers_to_switch_on_its_channels() {
 fn files_go_to_the_stick_while_it_is_there() {
     assert!(crate::store::usb_mounted("/dev/sda1 /mnt/usb vfat rw 0 0\n"));
     assert!(!crate::store::usb_mounted("/dev/mmcblk0p1 /oos ext4 rw 0 0\n/dev/sda1 /mnt/usb2 vfat rw 0 0\n"));
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     assert_eq!(u.save_dir(), std::path::Path::new(crate::store::DEFAULT_DIR));
     assert!(u.menu_title(MenuId::Storage).contains("lost at power-off"));
     u.usb = true;
@@ -378,7 +378,7 @@ fn files_go_to_the_stick_while_it_is_there() {
 
 #[test]
 fn system_info_has_the_rates() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.wfm_rate = 123.0;
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
@@ -439,7 +439,7 @@ fn screen_in_order_on(scr: Screen) {
         let f = u.fonts();
         // top bar, with and without the stick boxes
         for (usb, wlan) in [(false, false), (true, false), (false, true), (true, true)] {
-            (u.usb, u.wlan_stick) = (usb, wlan);
+            (u.usb, u.wlan.stick) = (usb, wlan);
             let pill = u.run_pill();
             assert!(f.mb.width("TRIG'D") + 30 <= pill.w, "{:?}: run pill {:?}", ts, pill);
             let boxes: Vec<Rect> = [Some(u.net_box()), wlan.then(|| u.wlan_box()), usb.then(|| u.usb_box())]
@@ -460,7 +460,7 @@ fn screen_in_order_on(scr: Screen) {
                 assert!(f.mb.width(l) + 8 <= r.w, "{:?}: {}", ts, l);
             }
         }
-        (u.usb, u.wlan_stick) = (false, false);
+        (u.usb, u.wlan.stick) = (false, false);
         // the two lines of the network box: room for an address, the first line's descent above the second's capitals
         let n = u.net_box();
         assert!(20 + f.sb.width("255.255.255.255") <= n.w && 20 + f.sb.width("not connected") <= n.w, "{:?}", ts);
@@ -583,7 +583,7 @@ fn screen_in_order_on(scr: Screen) {
 
 #[test]
 fn la_and_generator_cards_open_their_pages() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     let tap = |u: &mut Ui, r: Rect| u.tap(r.x + r.w / 2, r.y + r.h / 2);
     // an LA that is off comes on, like a channel; a second tap only closes the page
     let r = u.aux_cards().0.unwrap();
@@ -601,7 +601,7 @@ fn la_and_generator_cards_open_their_pages() {
 
 /// Stage of frames with demo signals on channels 1 and 2.
 fn with_two_channels() -> Ui {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.m.ch[1].on = true;
     for _ in 0..12 {
         u.step(0.04);
@@ -785,7 +785,7 @@ fn a_channel_keeps_its_name() {
 
 #[test]
 fn holdoff_steps_and_setups() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     assert_eq!(u.value(Item::TrigHoldoff), "Off");
     u.adjust(Item::TrigHoldoff, 1);
     assert!(u.value(Item::TrigHoldoff).ends_with("s"), "{}", u.value(Item::TrigHoldoff));
@@ -793,9 +793,12 @@ fn holdoff_steps_and_setups() {
     assert_eq!(u.m.holdoff, 0.0);
     u.adjust(Item::TrigHoldoff, 100);
     assert!(u.m.holdoff <= 10.0);
-    let s = crate::board::dho::hw::settings(&u.m, false);
+    let s = crate::board::dho::hw::settings(&u.m, false, &Default::default());
     assert!(s.holdoff > 1.0);
-    assert!(crate::board::dho::hw::settings(&Model::default(), false).holdoff == oos_hal::dho::seq::HOLDOFF_MIN);
+    assert!(
+        crate::board::dho::hw::settings(&Model::default(), false, &Default::default()).holdoff
+            == oos_hal::dho::seq::HOLDOFF_MIN
+    );
     for t in TRIG_TYPES {
         u.set_trig_type(t);
         assert!(u.trigger_items().contains(&Item::TrigHoldoff), "{:?}", t);
@@ -1210,7 +1213,7 @@ fn a_channel_can_measure_something_else() {
     u.adjust(Item::ChBias(0), 3);
     let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
     assert_eq!((b.ch[0].unit, b.ch[0].bias, b.ch[0].skew), (AmpUnit::A, u.m.ch[0].bias, SKEW_MAX));
-    assert_eq!(crate::board::dho::hw::settings(&u.m, false).ch[0].skew, SKEW_MAX as f64);
+    assert_eq!(crate::board::dho::hw::settings(&u.m, false, &Default::default()).ch[0].skew, SKEW_MAX as f64);
     // the mean of the input goes into the correction
     for _ in 0..24 {
         u.step(0.04);
@@ -1238,7 +1241,7 @@ fn old_setups_at_20_volts_land_on_the_top_step() {
 
 #[test]
 fn what_the_screen_says_reaches_the_settings() {
-    let hw = |m: &Model| crate::board::dho::hw::settings(m, false);
+    let hw = |m: &Model| crate::board::dho::hw::settings(m, false, &Default::default());
     let mut m = Model::default();
     // SINGLE and NORMAL wait for a trigger, only AUTO fires by itself
     for (t, auto) in [(TrigMode::Auto, true), (TrigMode::Normal, false), (TrigMode::Single, false)] {
@@ -1304,7 +1307,7 @@ fn the_offset_stays_in_the_range_of_the_scale() {
 fn scpi_errors_and_answers_stay_bounded() {
     let mut u = with_two_channels();
     let cv = Canvas::new(PANEL_W, PANEL_H);
-    let mut s = crate::scpi::Scpi::open(0);
+    let mut s = crate::scpi::Scpi::open(0, false);
     for _ in 0..1000 {
         s.exec_line(&mut u, &cv, &format!(":NOPE{}", "x".repeat(10_000)));
     }
@@ -1406,6 +1409,7 @@ fn the_logger_writes_rows_at_its_interval() {
     assert!(l[0].starts_with("Elapsed (s),Unix time (s),") && l[0].contains("CH2 (Hz)"), "{}", l[0]);
     assert!((5..=7).contains(&l.len()), "5.2 s at 1 s: {} lines", l.len());
     assert_eq!(l[1].split(',').count(), 4);
+    assert!(l[1..].iter().all(|row| row.split(',').nth(1) == Some("946684800.000")));
     assert!(l[1].split(',').nth(2).unwrap().parse::<f64>().is_ok());
     // a changed list ends the log, it no longer fits the head
     u.adjust(Item::LogOn, 1);
@@ -1479,7 +1483,7 @@ fn peak_hz(u: &Ui) -> Vec<f64> {
 
 #[test]
 fn the_pane_follows_a_square_wave_and_finds_its_harmonics() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.m.pane = tables::PANE_SPECTRUM;
     u.step(0.04);
     square_on_ch1(&mut u);
@@ -1515,7 +1519,7 @@ fn the_pane_follows_a_square_wave_and_finds_its_harmonics() {
 
 #[test]
 fn the_sort_button_works_by_touch_in_pane_and_view() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.m.pane = tables::PANE_SPECTRUM;
     u.step(0.04);
     square_on_ch1(&mut u);
@@ -1547,7 +1551,7 @@ fn the_sort_button_works_by_touch_in_pane_and_view() {
     u.tap(v.x + 5, v.y + 5);
     assert!(u.menu_open && u.menu == MenuId::ViewMore);
     // the close button of the pane too
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.m.pane = tables::PANE_SPECTRUM;
     u.step(0.04);
     u.relayout();
@@ -1584,7 +1588,7 @@ fn pane_text_fits() {
 /// A pane uses its height: a short list makes it lower and the plot larger, and the rows reach its end.
 #[test]
 fn panes_leave_no_empty_rows() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.m.pane = tables::PANE_RESULTS;
     u.m.meas = vec![(Meas::Vpp, 0)];
     u.m.ch[0].on = false;
@@ -1616,7 +1620,7 @@ fn panes_leave_no_empty_rows() {
 
 #[test]
 fn a_long_results_list_scrolls_by_touch() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.m.pane = tables::PANE_RESULTS;
     u.m.meas = ALL_MEAS.iter().take(14).map(|&k| (k, 0)).collect();
     for _ in 0..3 {
@@ -1647,7 +1651,7 @@ fn a_long_results_list_scrolls_by_touch() {
 
 #[test]
 fn the_results_pane_shows_cursors_and_peaks() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     u.m.pane = tables::PANE_RESULTS;
     u.m.cursor = CursorMode::Time;
     u.step(0.04);
@@ -1733,9 +1737,9 @@ fn trend_charts_are_chosen_in_the_display_menu() {
 
 /// Pictures of the panes for looking at: `OOS_PANES=dir cargo test pane_pictures -- --ignored`.
 #[test]
-#[ignore]
+#[ignore = "manual screenshots: set OOS_PANES"]
 fn pane_pictures() {
-    let Ok(dir) = std::env::var("OOS_PANES") else { return };
+    let dir = crate::store::tests::test_output_dir("OOS_PANES");
     let dir = std::path::PathBuf::from(dir);
     let shot = |u: &mut Ui, n: &str| {
         u.relayout();
@@ -1745,7 +1749,7 @@ fn pane_pictures() {
         let _ = crate::store::write(&dir.join(format!("{}.png", n)), &crate::store::png_of(&cv));
     };
     let square = |pane: usize, f: &dyn Fn(&mut Ui)| {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         u.m.pane = pane;
         u.step(0.04);
         square_on_ch1(&mut u);
@@ -1782,7 +1786,7 @@ fn pane_pictures() {
     });
     shot(&mut u, "results-table-only");
     let live = |pane: usize, f: &dyn Fn(&mut Ui), secs: usize| {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         u.m.pane = pane;
         u.m.ch[1].on = true;
         f(&mut u);
@@ -1941,9 +1945,9 @@ fn a_reference_travels_through_a_file() {
 /// Every screen as a picture, for looking at: `OOS_GALLERY=dir cargo test gallery -- --ignored`, one directory per
 /// text size (`OOS_TEXT_SIZE=Large` for one of them; `OOS_SIZE=1920x1080` for another screen than the panel).
 #[test]
-#[ignore]
+#[ignore = "manual screenshots: set OOS_GALLERY"]
 fn gallery() {
-    let Ok(base) = std::env::var("OOS_GALLERY") else { return };
+    let base = crate::store::tests::test_output_dir("OOS_GALLERY");
     let only = std::env::var("OOS_TEXT_SIZE").ok();
     for ts in TEXT_SIZES.into_iter().filter(|t| only.as_deref().map_or(true, |o| o == t.name())) {
         gallery_at(&std::path::PathBuf::from(&base).join(ts.name().to_lowercase()), ts);
@@ -2189,6 +2193,17 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
 /// after it is the same), and its plot shows the traces, stretched from the panel's maps, in every kind of view.
 #[test]
 fn the_hdmi_layout_leaves_the_panel_alone() {
+    the_hdmi_layout_leaves_the_panel_alone_with_shots(None);
+}
+
+#[test]
+#[ignore = "manual screenshots: set OOS_SHOT_DIR"]
+fn the_hdmi_layout_leaves_the_panel_alone_manual_screenshots() {
+    let dir = crate::store::tests::test_output_dir("OOS_SHOT_DIR");
+    the_hdmi_layout_leaves_the_panel_alone_with_shots(Some(std::path::Path::new(&dir)));
+}
+
+fn the_hdmi_layout_leaves_the_panel_alone_with_shots(dir: Option<&std::path::Path>) {
     type View = (&'static str, fn(&mut Ui));
     let views: [View; 8] = [
         ("plain", |_| {}),
@@ -2223,11 +2238,9 @@ fn the_hdmi_layout_leaves_the_panel_alone() {
                 hc.px.iter().filter(|&&p| (p >> 16) & 255 > 150 && (p >> 8) & 255 > 120 && p & 255 < 90).count();
             assert!(yellow > 2000, "{}: {} trace pixels on the monitor", name, yellow);
         }
-        if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
-            let _ = crate::store::write(
-                &std::path::Path::new(&d).join(format!("hdmi-layout-{}.png", name.replace(' ', "-"))),
-                &crate::store::png_of(&hc),
-            );
+        if let Some(dir) = dir {
+            std::fs::write(dir.join(format!("hdmi-layout-{}.png", name.replace(' ', "-"))), crate::store::png_of(&hc))
+                .unwrap();
         }
     }
 }
@@ -2236,7 +2249,7 @@ fn the_hdmi_layout_leaves_the_panel_alone() {
 fn trigger_coupling_by_menu_scpi_and_setup() {
     let mut u = with_two_channels();
     let cv = Canvas::new(PANEL_W, PANEL_H);
-    let mut s = crate::scpi::Scpi::open(0);
+    let mut s = crate::scpi::Scpi::open(0, false);
     assert!(u.trigger_items().contains(&Item::TrigCoup));
     s.exec_line(&mut u, &cv, ":TRIG:COUP AC");
     assert_eq!(u.m.trig_coup, TrigCoup::Ac);
@@ -2246,7 +2259,7 @@ fn trigger_coupling_by_menu_scpi_and_setup() {
     let back = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
     assert_eq!(back.trig_coup, TrigCoup::HfReject);
     // only the edge trigger on a channel is filtered; the hardware gets it
-    assert_eq!(board().want(&u.m).trig_couple, oos_hal::dho::tpu::Coupling::HfReject);
+    assert_eq!(board().want(&u.m, &Default::default()).trig_couple, oos_hal::dho::tpu::Coupling::HfReject);
     u.m.trig_type = TrigType::Pulse;
     assert_eq!(u.m.trig_coupling(), TrigCoup::Dc);
     assert!(!u.trigger_items().contains(&Item::TrigCoup));
@@ -2256,7 +2269,7 @@ fn trigger_coupling_by_menu_scpi_and_setup() {
 // and picking an option still selects it. Break it catches: the label leaking into `value`.
 #[test]
 fn capped_depth_keeps_the_choice_for_the_picker() {
-    let mut u = Ui::new(Source::Demo { t: 0.0 });
+    let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     (u.m.trig_type, u.m.trig_src) = (TrigType::Edge, 1);
     for c in 0..NCH {
         u.m.ch[c].on = c == 0;

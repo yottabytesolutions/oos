@@ -86,9 +86,13 @@ impl CalFiles {
     /// Reads `cal_adc.hex` (OOS's own self-cal result first, as `adc::CalAdc::load` does) and `cal_ddr.hex` (OOS never
     /// makes one) from `dir` (on the unit `/rigol/data`), read only.
     pub fn load(dir: &str) -> CalFiles {
+        Self::load_from(Some(crate::dho::calfile::OOS_CAL_DIR), dir)
+    }
+
+    fn load_from(own: Option<&str>, dir: &str) -> CalFiles {
         let mut notes = Vec::new();
         let adc = read_first(
-            Some(crate::dho::calfile::OOS_CAL_DIR),
+            own,
             dir,
             "cal_adc.hex",
             |d| payload(d).is_some() && CalAdc::from_file_bytes(d).is_some(),
@@ -130,17 +134,30 @@ mod tests {
         assert!(DdrCal::from_file_bytes(&d[..60]).is_none());
     }
 
-    /// The unit's files (device data, not in the tree); skipped when missing.
     #[test]
-    fn unit_files() {
-        let dir = std::env::var("OOS_CAL_DIR").unwrap_or(concat!(env!("CARGO_MANIFEST_DIR"), "/../local/cal").into());
-        let c = CalFiles::load(&dir);
-        if let Some(d) = c.ddr {
-            assert_eq!(d.taps, [0x12, 0x4d6, 0x8a2, 0x924, 0x1ef, 0]); // = oos-hw ddr-cal, cold-boot.md 3.2
-        } else {
-            eprintln!("cal_ddr.hex not found, skipped");
-        }
-        let none = CalFiles::load("/nonexistent-oos-dir");
+    fn synthetic_files_load_without_private_search_paths() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/synthetic");
+        let c = CalFiles::load_from(None, dir);
+        assert!(c.adc.is_some());
+        assert_eq!(c.ddr.unwrap().taps, [0x21, 0x345, 0x678, 0x789, 0x123, 0]);
+        assert_eq!(c.notes.len(), 2);
+        assert!(c.notes.iter().all(|n| n.contains("crc ok")));
+    }
+
+    #[test]
+    #[ignore = "private calibration: set OOS_CAL_DIR"]
+    fn unit_ddr_taps() {
+        let bytes = crate::dho::fixtures::private("cal_ddr.hex");
+        let d = DdrCal::from_file_bytes(&bytes).expect("private DDR calibration");
+        assert_eq!(d.taps, [0x12, 0x4d6, 0x8a2, 0x924, 0x1ef, 0]);
+    }
+
+    #[test]
+    fn missing_files_are_reported() {
+        let dir = std::env::temp_dir().join(format!("oos-boot-cal-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let none = CalFiles::load_from(None, dir.to_str().unwrap());
+        std::fs::remove_dir(dir).unwrap();
         assert!(none.adc.is_none() && none.ddr.is_none() && none.notes.len() == 2);
     }
 }

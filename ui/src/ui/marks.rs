@@ -104,9 +104,9 @@ mod tests {
     // Break it catches: the query in another spelling, the long and short forms not taken, a bad value taken silently
     #[test]
     fn display_type_by_scpi() {
-        let mut u = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(PANEL_W, PANEL_H);
-        let mut scpi = crate::scpi::Scpi::open(0);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
         assert_eq!(scpi.exec_line(&mut u, &cv, ":DISPlay:TYPE?"), b"AUTO");
         for (cmd, mode, answer) in [
             ("VECTors", DotsMode::Off, &b"VECT"[..]),
@@ -152,7 +152,7 @@ mod tests {
     // from pair frames
     #[test]
     fn only_auto_marks_and_only_sparse_samples() {
-        let mut u = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let area = Rect::new(0, 0, 1000, 400);
         let n = 101usize;
         let frame = |dt: f64, envelope: bool| crate::board::Frame {

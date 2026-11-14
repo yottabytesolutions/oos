@@ -35,17 +35,6 @@ pub const RAW_PERIOD: std::time::Duration = std::time::Duration::from_millis(200
 /// raw, or the whole record compressed to ~625 k points).
 pub const MAX_DEPTH: u32 = 1_000_000;
 
-/// `acq.compress = on` in system.conf, or OOS_COMPRESS set (any value but empty or 0). Off by default until the unit
-/// has passed the procedure in docs/fork/compress.md.
-pub fn enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let env = std::env::var("OOS_COMPRESS").ok().map(|v| if v.is_empty() || v == "0" { "off" } else { "on" });
-        let conf = crate::sysconf::fork_text();
-        enabled_from(env, &conf)
-    })
-}
-
 /// The live-compression factor of the last batch read: 1 for raw frames (`:SYSTem:STATe?` `compress k`).
 static LAST_K: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
@@ -474,8 +463,8 @@ mod tests {
             let fc = crate::board::dho::hw::decode(&comp_bytes, &comp_s, &p, 1);
             assert!(live(&fc) && !live(&fr));
             let (mut a, mut b) = (crate::wave::Phosphor::new(w, h), crate::wave::Phosphor::new(w, h));
-            assert!(crate::drawpipe::draw_frame(&mut a, &m, &fr, None));
-            assert!(crate::drawpipe::draw_frame(&mut b, &m, &fc, None));
+            assert!(crate::drawpipe::draw_frame(&mut a, &m, &fr, crate::sparse::Interp::Exact, None));
+            assert!(crate::drawpipe::draw_frame(&mut b, &m, &fc, crate::sparse::Interp::Exact, None));
             let (sa, sb) = (spans(&a), spans(&b));
             let off: Vec<usize> = (0..w)
                 .filter(|&c| match (sa[c], sb[c]) {
@@ -502,8 +491,9 @@ mod tests {
     // the only display the compression runs with (`allowed`; until 2026-11-14 the default was dots, whose raw deposit
     // costs about three times as much, and the limit was 0.25 against it; lines measured 0.40 on the host).
     #[test]
-    #[ignore]
+    #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn perf_guard_compressed_frame() {
+        assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
         let (mut m, p, (raw_bytes, raw_s), (comp_bytes, comp_s)) = square_10us(2.0);
         m.dots = DotsMode::Off;
         let (mut pa, mut pb) = (crate::wave::Phosphor::new(970, 448), crate::wave::Phosphor::new(970, 448));
@@ -515,6 +505,7 @@ mod tests {
                     &mut pa,
                     &m,
                     &crate::board::dho::hw::decode(&raw_bytes, &raw_s, &p, 0),
+                    crate::sparse::Interp::Exact,
                     None,
                 ));
             },
@@ -523,6 +514,7 @@ mod tests {
                     &mut pb,
                     &m,
                     &crate::board::dho::hw::decode(&comp_bytes, &comp_s, &p, 0),
+                    crate::sparse::Interp::Exact,
                     None,
                 ));
             },

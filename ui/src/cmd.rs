@@ -142,8 +142,8 @@ pub fn stat_text(ui: &Ui) -> String {
     let gpu = format!(
         "{} pipeline {:?} interp {:?} acquired {} used {} dropped {} measured {} compress k {}{}",
         gpu,
-        crate::drawpipe::mode(),
-        crate::sparse::interp(),
+        ui.switches().pipeline,
+        ui.switches().interp,
         acq,
         used,
         dropped,

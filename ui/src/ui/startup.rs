@@ -40,7 +40,7 @@ fn version_line(build: Option<&str>) -> String {
 impl Ui {
     /// Shows the start-up screen until the file says the start-up is complete.
     pub fn start_up_begin(&mut self, splash: Option<Vec<u32>>) {
-        let version = version_line(std::fs::read_to_string("/etc/oos-build").ok().as_deref());
+        let version = version_line(self.host.text("/etc/oos-build").as_deref());
         self.start_up =
             Some(StartScreen { view: View::default(), uptime: 0.0, done_at: None, dismissed: false, splash, version });
     }
@@ -463,13 +463,24 @@ mod tests {
     use oos_hal::bootstatus::line;
 
     fn ui() -> Ui {
-        let mut u = Ui::new(Source::Demo { t: 0.0 });
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         u.start_up_begin(None);
         u
     }
 
     #[test]
     fn screen_follows_the_start_up() {
+        screen_follows_the_start_up_with_shots(None);
+    }
+
+    #[test]
+    #[ignore = "manual screenshots: set OOS_SHOT_DIR"]
+    fn screen_follows_the_start_up_manual_screenshots() {
+        let dir = crate::store::tests::test_output_dir("OOS_SHOT_DIR");
+        screen_follows_the_start_up_with_shots(Some(std::path::Path::new(&dir)));
+    }
+
+    fn screen_follows_the_start_up_with_shots(dir: Option<&std::path::Path>) {
         let mut u = ui();
         let mut text =
             line(3.9, "ok", "Linux", "6.12.115") + &line(4.0, "run", "FPGA image", "loading the image from flash");
@@ -480,8 +491,8 @@ mod tests {
         assert!(u.start_up_active());
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         u.draw_start_up(&mut cv);
-        if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
-            let _ = std::fs::write(format!("{}/start-up-running.png", d), crate::store::png_of(&cv));
+        if let Some(dir) = dir {
+            std::fs::write(dir.join("start-up-running.png"), crate::store::png_of(&cv)).unwrap();
         }
         text += &(line(14.2, "ok", "FPGA image", "")
             + &line(14.3, "warn", "Calibration data", "missing: cal_afg.hex")
@@ -489,8 +500,8 @@ mod tests {
         u.start_up_update(&text, 18.1);
         assert!(u.start_up_active());
         u.draw_start_up(&mut cv);
-        if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
-            let _ = std::fs::write(format!("{}/start-up-done.png", d), crate::store::png_of(&cv));
+        if let Some(dir) = dir {
+            std::fs::write(dir.join("start-up-done.png"), crate::store::png_of(&cv)).unwrap();
         }
         assert_eq!(u.start_up_summary().unwrap(), "Start-up 18.0 s, warnings: Calibration data");
         // with a warning it stays 5 s, then the scope screen
@@ -511,6 +522,17 @@ mod tests {
 
     #[test]
     fn failed_start_up_stays_until_a_tap() {
+        failed_start_up_stays_until_a_tap_with_shots(None);
+    }
+
+    #[test]
+    #[ignore = "manual screenshots: set OOS_SHOT_DIR"]
+    fn failed_start_up_stays_until_a_tap_manual_screenshots() {
+        let dir = crate::store::tests::test_output_dir("OOS_SHOT_DIR");
+        failed_start_up_stays_until_a_tap_with_shots(Some(std::path::Path::new(&dir)));
+    }
+
+    fn failed_start_up_stays_until_a_tap_with_shots(dir: Option<&std::path::Path>) {
         let mut u = ui();
         let text = line(4.0, "run", "FPGA image", "")
             + &line(14.0, "fail", "FPGA image", "PCIe / BAR1: FPGA did not appear on PCIe")
@@ -520,8 +542,8 @@ mod tests {
         assert!(u.start_up_active());
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         u.draw_start_up(&mut cv);
-        if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
-            let _ = std::fs::write(format!("{}/start-up-failed.png", d), crate::store::png_of(&cv));
+        if let Some(dir) = dir {
+            std::fs::write(dir.join("start-up-failed.png"), crate::store::png_of(&cv)).unwrap();
         }
         assert!(u.start_up_input(&Ev::Touch { id: 0, phase: Phase::Up, x: 10, y: 10 }));
         assert!(!u.start_up_active());

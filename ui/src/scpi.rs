@@ -237,9 +237,9 @@ fn e(v: f64) -> String {
 }
 
 impl Scpi {
-    pub fn open(port: u16) -> Scpi {
+    pub fn open(port: u16, v6: bool) -> Scpi {
         Scpi {
-            l: Self::bind(port),
+            l: Self::bind(port, v6),
             clients: Vec::new(),
             wav_src: 0,
             wav_fmt: 0,
@@ -249,8 +249,8 @@ impl Scpi {
         }
     }
 
-    fn bind(port: u16) -> Option<TcpListener> {
-        let l = crate::net6::tcp(port);
+    fn bind(port: u16, v6: bool) -> Option<TcpListener> {
+        let l = crate::net6::tcp(port, v6);
         if let Some(l) = &l {
             let _ = l.set_nonblocking(true);
             eprintln!(
@@ -265,9 +265,9 @@ impl Scpi {
     }
 
     /// System > Network > Remote services: the port open (`Some`), or closed with its connections.
-    pub fn set_open(&mut self, port: Option<u16>) {
+    pub fn set_open(&mut self, port: Option<u16>, v6: bool) {
         match port {
-            Some(p) if self.l.is_none() => self.l = Self::bind(p),
+            Some(p) if self.l.is_none() => self.l = Self::bind(p, v6),
             Some(_) => {}
             None => {
                 if self.l.take().is_some() {
@@ -1175,7 +1175,7 @@ impl Scpi {
                     "PFA" | "PFAIL" => Some(AuxOut::PassFail),
                     _ => None,
                 };
-                match want.filter(|a| a.offered(board().mask_hw() || board().zone_hw())) {
+                match want.filter(|a| a.offered(board().mask_hw(ui.switches()) || board().zone_hw(ui.switches()))) {
                     Some(a) => {
                         ui.m.aux_out = a;
                         ui.mark_changed();
@@ -1205,7 +1205,7 @@ impl Scpi {
             && (kw(nodes[2], "UART") || kw(nodes[2], "SERial"))
             && query
         {
-            return t(&board().uart_debug(&ui.m));
+            return t(&board().uart_debug(&ui.m, ui.switches()));
         }
         // fork: the zone unit's raw status and counter next to the software filter (docs/fork/hwzone.md)
         if kw(n0, "SYSTem") && nodes.len() == 3 && kw(nodes[1], "DEBug") && kw(nodes[2], "ZONE") && query {
@@ -1498,9 +1498,9 @@ mod vernier_tests {
     use super::*;
 
     fn meas_setup() -> (Ui, Canvas, Scpi) {
-        let ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = Scpi::open(0);
+        let mut scpi = Scpi::open(0, false);
         let mut ui = ui;
         scpi.exec_line(&mut ui, &cv, ":MEAS:CLE ALL;:CHAN2:DISP ON");
         (ui, cv, scpi)
@@ -1614,9 +1614,9 @@ mod vernier_tests {
     #[test]
     fn compound_query_is_one_line_on_the_socket() {
         use std::io::{BufRead, Write};
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = Scpi::open(0);
+        let mut scpi = Scpi::open(0, false);
         let port = scpi.l.as_ref().expect("listener").local_addr().unwrap().port();
         let mut c = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
         c.set_read_timeout(Some(std::time::Duration::from_millis(50))).unwrap();
@@ -1644,9 +1644,9 @@ mod vernier_tests {
     // answering, the error leaving the queue, the answer of a known query changed. Ported from deckerjulian/oos#8.
     #[test]
     fn unknown_query_answers_with_its_error() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = Scpi::open(0);
+        let mut scpi = Scpi::open(0, false);
         let mut q = |c: &str| String::from_utf8(scpi.exec_line(&mut ui, &cv, c)).unwrap();
         assert_eq!(q(":BOGus:NODE?"), "-113,\"Undefined header\" :BOGus:NODE?");
         assert_eq!(q(":BOGus:NODE 1"), "", "a command stays silent");
@@ -1660,9 +1660,9 @@ mod vernier_tests {
 
     #[test]
     fn vernier_takes_any_scale_at_or_above_a_calibrated_row() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = Scpi::open(0);
+        let mut scpi = Scpi::open(0, false);
         let mut q = |c: &str| String::from_utf8(scpi.exec_line(&mut ui, &cv, c)).unwrap();
         // coarse: the nearest 1-2-5 step
         assert_eq!(q(":CHAN1:VERN?"), "0");
@@ -1701,9 +1701,9 @@ mod aux_out_tests {
 
     #[test]
     fn aux_out_over_scpi_and_in_the_setup() {
-        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
-        let mut scpi = Scpi::open(0);
+        let mut scpi = Scpi::open(0, false);
         let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
         assert_eq!(q(&mut ui, ":SYST:AOUT?"), "TOUT", "trigger out by default, as the FPGA powers up");
         q(&mut ui, ":SYSTem:AOUTput off");
@@ -1712,7 +1712,7 @@ mod aux_out_tests {
         q(&mut ui, ":SYST:AOUT TOUT");
         assert_eq!(ui.m.aux_out, AuxOut::TrigOut);
         q(&mut ui, ":SYST:AOUT PFAil");
-        assert_eq!(ui.m.aux_out == AuxOut::PassFail, board().mask_hw() || board().zone_hw());
+        assert_eq!(ui.m.aux_out == AuxOut::PassFail, board().mask_hw(ui.switches()) || board().zone_hw(ui.switches()));
         q(&mut ui, ":SYST:AOUT TOUT");
         q(&mut ui, ":SYST:AOUT blink");
         assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
@@ -1733,7 +1733,9 @@ mod aux_out_tests {
         q(&mut ui, ":TRIG:IIC:AWIDth 8");
         assert!(q(&mut ui, ":SYST:ERR?").starts_with("-"));
         while !q(&mut ui, ":SYST:ERR?").starts_with("0,") {}
-        // the comparator mapping: set one key, read it back, put the original back
+        // the comparator mapping: set one key, read it back, put the original back (one test at a time: the mapping
+        // under test is process-wide until M5)
+        let _map = crate::board::dho::hw::mask_map_test_lock();
         let orig = q(&mut ui, ":SYSTem:DEBug:MASK:MAP?");
         assert!(orig.starts_with("domain="), "{}", orig);
         q(&mut ui, ":SYSTem:DEBug:MASK:MAP cols=stock");

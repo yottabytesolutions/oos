@@ -1050,21 +1050,21 @@ after each step may tighten them, never loosen them without a doc change.
 
 | Thread or stage | Budget | Counter | Asserted by | Guard lands in |
 |---|---|---|---|---|
-| main, full step (first A72) | p50 <= 8 ms, p99 <= 15 ms | `step` | unitlab | M16 |
+| main, full step (first A72) | p50 <= 8 ms, p99 <= 15 ms | `step` | unitlab | M3d (counter), asserted from round 1 |
 | intake + change | p99 <= 0.5 ms | `stage intake`, `stage change` | host timing guard, unitlab | M2.3 |
 | records stage | p99 <= 1.5 ms off the fast path; records are built on the workers | `stage records` | host timing guard, unitlab | M6 |
 | accumulate (at most 3 map sets, touched rows, fused grade) | p99 <= 2 ms; <= 4 ms on HDMI | `stage accumulate` | host timing guard, unitlab | M9, M10 |
-| compose + present submission | p99 <= 4 ms; <= 6 ms on HDMI | `stage compose`, `stage present` | unitlab | M16 |
+| compose + present submission (sum) | p99 <= 4 ms; <= 6 ms on HDMI | `stage compose`, `stage present` | unitlab | M3d (counter), asserted from M9b |
 | light step (input or remote) | settings round trip p99 <= 2 ms when main is idle | `light` | host test, unitlab | M3d |
 | remote arrival to reply during full steps | p99 <= 3 ms, measured from the listener's read timestamp to the reply in the output queue | `remote latency` | unitlab (`ifload.py` with pictures running) | M3d |
 | remote throughput | >= 500 query/answer exchanges per s on one SCPI connection, picture rate within 10 % | `remote` | unitlab (`ifload.py`) | M3d |
 | acquisition notification | under 1 ms outside a C2H read (provisional until Platform tuning) | `acq wake` | host test with the scripted `Device`, unitlab | M3c |
 | acquisition read chunk | p99 <= 20 ms per 4 MiB chunk; this bounds application and cancellation inside a read | `acq chunk` | unitlab | M3c |
-| acquisition overhead per batch (excluding DMA) | p99 <= 1 ms | `acq batch` | unitlab | M3c |
-| DMA completion | CPU per read and read latency per mode | `xdma` | unitlab | M5c |
+| acquisition overhead per batch (excluding DMA and rereads) | p99 <= 1 ms | `acq batch` | unitlab | M3c |
+| DMA completion | completion CPU <= 5 % of one A53; overhead <= 1 ms per 4 MiB beyond link time | `xdma` | unitlab | M5c |
 | deposit worker, per frame | p99 <= 2.7 ms; load <= 70 % per little core with measurements | `worker` | perf guard (ratio), unitlab | M7 |
 | share reduction, per batch (1 and 2 channels; none at 3 and 4) | p99 <= 1.5 ms per worker | `reduce` | perf guard, unitlab | M9 |
-| measure job | cheap set p99 <= 2 ms; full set on 4 x 625 k p99 <= 40 ms | `measure` | perf guard, unitlab | M6 |
+| measure job | cheap set p99 <= 2 ms; full set on 4 x 625 k p99 <= 40 ms; deep work per [Depth baselines](#depth-baselines) | `measure` | perf guard, unitlab | M6 |
 | GPU helper | CPU per composition <= 3 ms on the panel, <= 5 ms on HDMI; GPU time <= 10 ms | `gpu cpu`, `gpu time` | `gpu/test-host.sh` ratio, unitlab | M9b |
 | HDMI | >= 29.5 pictures/s alone; >= 15 with the panel, counted when halved | `hdmi` | unitlab | M9b |
 | picture rate | >= 29.5 pictures/s in every acceptance mode | `fps` | unitlab | exists |
@@ -1073,6 +1073,50 @@ after each step may tighten them, never loosen them without a doc change.
 | idle in STOP | total CPU < 3 % of one A53; main wakes only on flips and input | `cpu`, `wakes` | unitlab | M3d |
 | allocations | 0 per frame after warm-up on every hot path ([Allocations](#allocations)) | `alloc` | counting-allocator tests | each step that touches a hot path; harness in G2 |
 | memory | RSS <= 120 MB + `memplan` total, flat over a 2 h soak ([Memory and queues](#memory-and-queues)) | `rss` | host soak, unitlab | M5b |
+
+### How each budget is measured
+
+Two kinds of distribution are kept apart:
+- **Runtime events** on the unit: every occurrence in the window is a sample, timestamped where it starts.
+- **Host benchmarks**: repeated runs of a fixed workload; the perf guard compares the p99 of the runs with a reference
+  path measured in the same process.
+
+For runtime counters the window is 10 s, or 60 s for events slower than 5 per second (measure jobs, rereads); a
+quantile is reported only with at least 50 samples, otherwise the line says `n<50`. Quantiles are exact (sorted
+samples of the window, sorted outside any lock). CPU counts are per process and per thread from `/proc/self/task`.
+
+| Counter | Start | End | Time | Workload for the assertion |
+|---|---|---|---|---|
+| `step` | the vblank event that starts the full step | the last stage returns | elapsed | each acceptance mode for 60 s |
+| `stage <name>` | stage entry | stage return, service-point slices excluded | elapsed | as `step` |
+| `light` | the request's arrival in main (its listener timestamp) | its reply in the output queue | elapsed | main idle, 1000 settings writes |
+| `remote latency` | the listener's read of the request (`CLOCK_MONOTONIC` taken in the listener) | the reply in the output queue | elapsed | `ifload.py` with pictures running |
+| `acq wake`, `wake <thread>` | the source's timestamp: the writer stamps the item before it writes the `eventfd`; the kernel timestamp for vblank and flip events | the consumer starts handling the item | elapsed | change storm and remote load |
+| `acq chunk` | `read()` call | `read()` return | elapsed | deep raw window and 4 channels at 10 M |
+| `acq batch` | the batch's ring read returns | its publish to the pipe returns; DMA and rereads excluded | elapsed | every acceptance mode |
+| `xdma` | per read | per read | CPU of the completion path (IRQ thread or poll thread) and elapsed read time minus bytes / link rate | 10 min of 4-channel acquisition; pass: CPU <= 5 % of one A53, overhead <= 1 ms per 4 MiB |
+| `worker`, `reduce` | claim | publish | CPU of the worker thread | 4 channels and 1 channel, deep pairs |
+| `measure` | job taken | result sent | elapsed and CPU | cheap set and full set per depth class ([Depth baselines](#depth-baselines)) |
+| `stage compose` + `stage present` | compose entry | submission to the helper returns | elapsed; the sum is asserted, not each part | every acceptance mode, panel and HDMI |
+| `gpu time` | GPU timer query (`EXT_disjoint_timer_query`) around the composition; without it, the helper's wall time from submit to fence | as start | GPU elapsed | as `step` |
+| `gpu cpu` | helper receives a submission | helper flushes it | CPU of the helper | as `step` |
+| `cpu`, `wakes` | window start | window end | process CPU over the window; wakes per thread | STOP, 60 s, no input |
+
+### Depth baselines
+
+The earlier deep-raw measurements (`../fork/deep-meas.md`, 1 ms/div, 10 M, CH1: a window of 12.5 MB) are the
+reference for deep work. They measured: DMA 52 ms, decode 51 ms, screen record 5.5 ms, cheap measurement 58 ms. The
+budgets above are for normal depths (up to 1 M points per channel on screen); deep work has its own targets:
+
+| Work | Normal depth | Deep raw window (12.5 MB) | Basis |
+|---|---|---|---|
+| decode | none: codes stay codes | none for drawing; the measure thread converts only what a non-cheap measurement needs | adr/0016, codes until volts |
+| screen record | inside the records stage budget | <= 5.5 ms, off main | measured |
+| cheap measurement set | p99 <= 2 ms | p99 <= 10 ms: one pass over 12.5 MB of codes at >= 2 GB/s, plus margin | from 58 ms today, which included the decode to `f32` |
+| full measurement set | p99 <= 40 ms on 4 x 625 k | measured in M6, recorded here | no baseline yet |
+| reread DMA | not used | 52 ms per window, at most once per `RAW_PERIOD`, outside `acq batch` | measured |
+
+Every guard of a shipping budget lands by M12, so the stable stop point ships with its budgets enforced.
 
 Gate step G2 ([migration](migration.md)) adds the tools these guards need: tail-aware perf guards (p99 over repeated
 runs against a reference, not only the best of rounds), the counting-allocator harness, and the unitlab budget table

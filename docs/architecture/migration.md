@@ -289,6 +289,7 @@ every later unit round measures latency against it.
   `ChangeSet` with ordered transitions that the next full step consumes behind a generation barrier.
 - Service points between stages of a full step, with quotas (8 requests, 64 kB, 0.5 ms) and the 2 ms bound between
   points.
+- The HTTP listener's 20 ms polling becomes `epoll` with the other listeners.
 - Remote replies go into per-connection output queues written by the listeners on `EPOLLOUT`; main never writes to a
   socket (today `scpi.rs` 46 and `vxi11.rs` 319). The request inbox becomes a bounded MPSC queue with main's wake.
 - Tests, failing before: a stalled SCPI client does not delay a step; a settings round trip stays under 2 ms on the
@@ -546,6 +547,49 @@ Move the remaining modules into the layout of [Module map](README.md#module-map)
 or `model.rs`, since they no longer exist.
 
 **Unit round 6:** the full stress round again on the final overhaul build, against the M12 numbers.
+
+## Performance acceptance matrix
+
+Every finding of the performance reviews has a step and a check. A step is not done until its rows pass.
+
+Codex code audit (2026-11-15, 15 items, and its three structural changes):
+
+| # | Finding | Step | Check |
+|---|---|---|---|
+| 1 | SCPI and VXI-11 replies written from the UI thread, 2 s stall | M3d | stalled-client test; `remote latency` p99 <= 3 ms |
+| 2 | deep newest frame cloned under `Shared`, then again on the fast path | M5 | counting allocator: no sample copy on publish |
+| 3 | raw rereads stall acquisition and decode whole windows | M6 | `acq batch` excludes rereads; reread decodes only the needed window; `cost reread` |
+| 4 | repeated measurement scans; cheap results computed before the test | M6 | one pass per record (test); `measure` budget |
+| 5 | modes outside `fast_ok` build records on main | M6, M9 | records built on the workers; `stage records` p99 <= 1.5 ms |
+| 6 | full-map publish and add per share | M9 | at most 3 map sets added per step (test); `reduce` budget |
+| 7 | GPU snapshot readback chain | M9b | a snapshot does not delay a composition; leases counted |
+| 8 | four-channel deposits through `f32` | M7 | fused code deposit; unit benchmark decides |
+| 9 | row compare and double copy to the GPU | M9b | an unchanged picture uploads nothing |
+| 10 | per-frame folds repeat the trigger search and extrema | M7 | folds reuse the deposit pass (test) |
+| 11 | grade maxima, decay and STOP redraw sweep every step | M10 | one pass per step above Min; none frozen; no maxima |
+| 12 | `glFinish` per composition | M9b | `gpu cpu` and `gpu time` budgets |
+| 13 | XDMA busy polling | M5c | `xdma` budget; INTx after kexec |
+| 14 | 500 and 200 us sleep polls, 10 us BAR-write sleeps | M3c | `acq wake`; configure time <= 4 ms; timer slack 1 ns |
+| 15 | busy last millisecond of frame pacing | M3d | `cpu` and `wakes` in STOP |
+| S1 | one ownership path per batch | M5, M6 | the rows of 2 to 5 |
+| S2 | GPU work proportional to change | M9, M9b, M10 | the rows of 6, 7, 9, 11, 12 |
+| S3 | one event and deadline model | M3c, M3d | the Waiting table's latencies |
+
+Fable performance review (P1 to P8):
+
+| # | Finding | Step | Check |
+|---|---|---|---|
+| P1 | no waiting model | M3c, M3d | Waiting table; `wake <thread>` |
+| P2 | XDMA completion undecided | M5c | `xdma`; Platform tuning row 2 and 3 |
+| P3 | remote capped near 30 exchanges/s | M3d | `remote` >= 500 per s |
+| P4 | window rebuild at 4 channels, no HDMI budget | M9, M10, M9b | `stage accumulate`; `hdmi` |
+| P5 | allocation rules only for `Batch` | G2, each data-path step | counting-allocator tests per hot path |
+| P6 | GPU helper on the first A72, `glFinish`, two map copies | M9b | `gpu cpu`, `gpu time`; the helper's core decided |
+| P7 | pacing by timer; `wait_flip` blocks main | M3d | vblank clock tests; `step` |
+| P8 | budgets incomplete and not gated | G2 | the budget table with its measurement schema |
+
+Services outside the step (HTTP listener polling every 20 ms, mDNS, WLAN and NTP waits) move to the Waiting table's
+model with M3d for HTTP and M18 for the others; their cost is small and they do not block a shipping budget.
 
 ## Estimate
 

@@ -420,11 +420,14 @@ struct Acc {
     /// the batches with frames in these maps (`Batch::id`) and when the newest of them was fed
     batches: Vec<u64>,
     newest: Option<std::time::Instant>,
+    /// frames in these maps acquired before the last settings change (`pacing::is_stale` when drawn), counted as
+    /// stale only if the maps reach the picture
+    stale: u64,
 }
 
 impl Acc {
     fn new(gen: u64, w: usize, h: usize) -> Acc {
-        Acc { gen, ph: Phosphor::new(w, h), folds: Vec::new(), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0), used: [true; NCH], batches: Vec::new(), newest: None }
+        Acc { gen, ph: Phosphor::new(w, h), folds: Vec::new(), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0), used: [true; NCH], batches: Vec::new(), newest: None, stale: 0 }
     }
     /// Empty again, keeping the maps' memory.
     fn reset(&mut self, gen: u64) {
@@ -436,6 +439,7 @@ impl Acc {
         self.folds.clear();
         self.batches.clear();
         self.newest = None;
+        self.stale = 0;
         (self.gen, self.frames, self.triggered, self.edges, self.off) = (gen, 0, 0, [0; 4], (0.0, 0.0));
     }
     fn add(&mut self, o: &Acc) {
@@ -453,6 +457,7 @@ impl Acc {
         for &b in &o.batches {
             self.note(b, o.newest);
         }
+        self.stale += o.stale;
     }
     /// Frames of batch `id`, fed at `fed`, drawn into these maps.
     fn note(&mut self, id: u64, fed: Option<std::time::Instant>) {
@@ -523,6 +528,8 @@ pub struct Merged {
     pub folds: crate::framestats::Folds,
     /// when the newest batch with frames in this merge was fed (picture age)
     pub newest: Option<std::time::Instant>,
+    /// frames in this merge acquired before the last settings change (`pacing::is_stale`)
+    pub stale: u64,
 }
 
 impl Pipe {
@@ -703,6 +710,7 @@ impl Pipe {
                     got.frames += a.frames;
                     got.triggered += a.triggered;
                     got.newest = got.newest.max(a.newest);
+                    got.stale += a.stale;
                     self.note_merged(&a.batches);
                     crate::framestats::add_folds(&mut got.folds, &a.folds);
                 } else {
@@ -769,7 +777,9 @@ fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
 fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, counters: &Counters) {
     let Some(bytes) = b.lease.raw.as_ref().map(|x| x.bytes()) else { return };
     a.note(b.id, Some(b.fed));
-    crate::pacing::drawn(b.cfg, r.len() as u64);
+    if crate::pacing::is_stale(b.cfg) {
+        a.stale += r.len() as u64;
+    }
     for i in r {
         let t_frame = std::time::Instant::now();
         let chunk = &bytes[i * b.fb..(i + 1) * b.fb];
@@ -1239,6 +1249,26 @@ mod tests {
         assert_eq!(pipe.partial.load(Ordering::Relaxed), 1);
         // an empty merge reports no age
         assert_eq!(merge(&pipe).newest, None);
+        // stale: frames acquired before a settings change count where their maps reach the picture, not where they
+        // are drawn: maps of an older mapping are dropped and do not count
+        crate::pacing::changed();
+        crate::pacing::changed();
+        let wanted = crate::pacing::WANTED.load(Ordering::Relaxed);
+        crate::pacing::APPLIED.store(wanted - 1, Ordering::Relaxed);
+        let (bytes, fb, s, p) = batch(20, 12_512, false);
+        pipe.feed(Box::new(Bytes(bytes)), fb, 20, 0, dec(&s, &p));
+        crate::pacing::APPLIED.store(0, Ordering::Relaxed);
+        settle(&pipe);
+        assert_eq!(merge(&pipe).stale, 20, "shown");
+        let (bytes, fb, s, p) = batch(20, 12_512, false);
+        crate::pacing::APPLIED.store(wanted - 1, Ordering::Relaxed);
+        pipe.feed(Box::new(Bytes(bytes)), fb, 20, 0, dec(&s, &p));
+        crate::pacing::APPLIED.store(0, Ordering::Relaxed);
+        settle(&pipe);
+        let mut m2 = m.clone();
+        m2.tscale += 1;
+        pipe.set_view(Some(&m2), 970, 448);
+        assert_eq!(merge(&pipe).stale, 0, "maps of the old mapping dropped, not counted");
     }
 
     // Timing guard (tools/perf-guard.sh): a worker frame drawn from the read-out words against decode + draw, lines,

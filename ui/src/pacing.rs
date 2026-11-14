@@ -114,9 +114,11 @@ pub fn fast_block(draw_ms: f32, merge_ms: f32) {
     push(&mut s.fast, [draw_ms, merge_ms]);
 }
 
-/// Settings generations (docs/fork/draw-architecture.md, step 0): `WANTED` counts the acquisition settings the UI asked
-/// for (`changed`), `APPLIED` the one the acquisition thread acquires under. A frame carries `APPLIED` as it was when
-/// it was acquired (`Frame::cfg`); drawn while `WANTED` is newer, it shows the settings before a change: `STALE`.
+/// Settings generations (docs/fork/draw-architecture.md, step 0): `WANTED` counts the acquisition settings (`Want`) the
+/// UI asked for (`changed`), `APPLIED` the one the acquisition thread acquires under. A frame carries `APPLIED` as it
+/// was when it was acquired (`Frame::cfg`); shown while `WANTED` is newer, it was acquired before a change of `Want`
+/// (trigger level and slope included): `STALE`. Not covered: changes outside `Want` (`Shared::needs_raw`, `slow`,
+/// `mask_want`, `zone_want`).
 pub static WANTED: AtomicU64 = AtomicU64::new(0);
 pub static APPLIED: AtomicU64 = AtomicU64::new(0);
 /// Frames of older settings drawn after a change (above).
@@ -127,9 +129,19 @@ pub static PARTIAL: AtomicU64 = AtomicU64::new(0);
 /// A frame acquired under settings generation `cfg` (0: not from the hardware) drawn now: counted when the UI has asked
 /// for newer settings since.
 pub fn drawn(cfg: u64, frames: u64) {
-    if stale(cfg, WANTED.load(Ordering::Relaxed)) {
+    if is_stale(cfg) {
         STALE.fetch_add(frames, Ordering::Relaxed);
     }
+}
+
+/// `n` stale frames reached the picture through the pipe's maps (counted by `is_stale` when they were drawn).
+pub fn drawn_stale(n: u64) {
+    STALE.fetch_add(n, Ordering::Relaxed);
+}
+
+/// A frame of generation `cfg` would be stale if shown now (`drawn`); the pipe counts it once its maps are merged.
+pub fn is_stale(cfg: u64) -> bool {
+    stale(cfg, WANTED.load(Ordering::Relaxed))
 }
 
 /// A frame of generation `cfg` is stale when the UI has asked for a newer one (`wanted`); 0 is not from the hardware.

@@ -1872,6 +1872,7 @@ impl Ui {
                     }
                     got += d.frames as usize;
                     (n_dep, newest) = (n_dep + d.frames as usize, d.newest);
+                    crate::pacing::drawn_stale(d.stale);
                     self.mstat_fold(&d.folds);
                 }
                 crate::pacing::fast_block((t_merge - t0).as_secs_f32() * 1e3, t_merge.elapsed().as_secs_f32() * 1e3);

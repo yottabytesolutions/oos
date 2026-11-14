@@ -406,8 +406,13 @@ Not in scope: XY and LA (canvas), the auto timeout.
 - Step 0 (branch draw/step-0): counters in the pacing line, after `views`:
   - per picture, frames through a deposit kernel and through the record path (p10/p50/p90);
   - the weight in deposit frames (record frames x 3.7);
-  - the age of the newest pipe batch in the picture (p50/p90/p99/max);
-  - `stale`: frames of older acquisition settings drawn after a change, via `pacing::WANTED`/`APPLIED` and
-    `Frame::cfg`, `Batch::cfg`;
+  - the age of the newest pipe batch in the picture (p50/p90/p99/max; batch mode only, frames-mode pictures have no
+    age);
+  - `stale`: frames shown that were acquired before the last change of `Want` (the hardware settings, trigger level
+    and slope included), via `pacing::WANTED`/`APPLIED`, `Frame::cfg` and `Batch::cfg`. Counted where they reach the
+    picture: pipe maps at merge (dropped maps do not count), routes C/D and the record path at the draw. Roll and scan
+    frames carry the generation too. Not covered: changes outside `Want` (`Shared::needs_raw`, `slow`, `mask_want`,
+    `zone_want`). Step 1c brings a second counter for frames shown under another mapping key (3.5), which is the
+    design's meaning of stale; this one is the baseline;
   - `partial`: batches merged in more than one picture.
   `preview` comes with step 1, which adds the preview.

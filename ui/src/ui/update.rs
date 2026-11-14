@@ -4,6 +4,8 @@
 //! Signed updates in the GUI (docs/update.md): System > Update shows the update state, System > Roll back update
 //! writes the kept image back (two taps within 5 s), the web page /update takes a package (http.rs). The work is
 //! done by /bin/oos-update in a child process (the card writes take a few seconds); its result comes as a dialog.
+//! A package from the web page is checked in two steps: its header (signature, target, length) in the frame loop,
+//! which answers the upload at once; the image hash and the copy to /tmp in a thread of their own, then the child.
 //! A notice from the start-up watcher (/tmp/oos-update.notice: rolled back after a failed start) is shown once.
 
 use super::*;
@@ -18,6 +20,8 @@ const JOB_LOG: &str = "/tmp/oos-update.job";
 #[derive(Default)]
 pub(super) struct UpdateUi {
     job: Option<(std::process::Child, String)>,
+    /// an uploaded package being checked and stored (`upload_store`) before the install job starts; its build
+    upload: Option<(std::thread::JoinHandle<Result<(), String>>, String)>,
     /// first tap on Roll back: the second must come before this time
     arm_until: f64,
     next_check: f64,
@@ -54,6 +58,9 @@ impl Ui {
                     d.push(e);
                 }
             }
+        }
+        if self.upd.upload.is_some() {
+            d.push("Checking the package ...".into());
         }
         if self.upd.job.is_some() {
             d.push("Working ...".into());
@@ -108,28 +115,33 @@ impl Ui {
         self.update_spawn(&["rollback", "--execute"], "Roll back");
     }
 
-    /// A package from the web page: checked here (signature, image hash) before the child process writes the card.
-    pub fn update_upload(&mut self, body: &[u8]) -> Result<String, String> {
+    /// A package from the web page (http.rs, after its whole body arrived). The frame loop checks only its header
+    /// (`upload_header`) and answers at once; the image hash and the copy to /tmp run in a thread (`upload_store`,
+    /// ~31 MB), and `update_poll` starts the install job from there. Err: refused, nothing kept.
+    pub fn update_upload(&mut self, body: Vec<u8>) -> Result<String, String> {
         if self.update_busy() {
             return Err("an update job is running".into());
         }
-        let (h, _) = pkg::verify(body, &update::trusted_keys())?;
-        std::fs::write(UPLOAD, body).map_err(|e| format!("{}: {}", UPLOAD, e))?;
+        let keys = update::trusted_keys();
+        let h = upload_header(&body, &keys)?;
         let b = update::short(&h.manifest.build).to_string();
-        if !self.update_spawn(&["install", UPLOAD, "--execute"], "Install") {
-            return Err(format!("{} could not be started, nothing installed", BIN));
-        }
+        let t = std::thread::Builder::new()
+            .name("update-check".into())
+            .spawn(move || upload_store(&body, &keys, Path::new(UPLOAD)))
+            .map_err(|e| format!("no thread for the check ({}), nothing installed", e))?;
+        self.upd.upload = Some((t, b.clone()));
+        self.upd.last = format!("package of build {} received, checking it", b);
         Ok(if update::kexec::announced(&h.manifest) {
-            format!("signature ok, build {}: the scope restarts into it by kexec and installs it from there, unless a check refuses it (about a minute; System > Update shows the result). Then power-cycle the scope: that start is its trial", b)
+            format!("accepted, build {}: header signature ok; the image is checked now, then the scope restarts into it by kexec and installs it from there (about a minute; System > Update and this page show the result). Then power-cycle the scope: that start is its trial", b)
         } else {
-            format!("signature ok, installing build {} (the result shows on the scope and on this page)", b)
+            format!("accepted, build {}: header signature ok; the image is checked now, then installed (System > Update and this page show the result)", b)
         })
     }
 
     /// A job of ours is running, or another process (the start-up watcher) holds the update lock: the card is being
     /// written, so no second job and no power-off from here.
     pub(super) fn update_busy(&self) -> bool {
-        self.upd.job.is_some() || update::busy(std::path::Path::new(update::STATE_PATH))
+        self.upd.job.is_some() || self.upd.upload.is_some() || update::busy(std::path::Path::new(update::STATE_PATH))
     }
 
     /// Starts `oos-update`; false when that failed (toast).
@@ -166,6 +178,21 @@ impl Ui {
             return;
         }
         self.upd.next_check = self.now + 0.5;
+        if self.upd.upload.as_ref().is_some_and(|u| u.0.is_finished()) {
+            let (t, b) = self.upd.upload.take().unwrap();
+            match t.join().unwrap_or_else(|_| Err("the package check stopped".into())) {
+                Ok(()) => {
+                    if !self.update_spawn(&["install", UPLOAD, "--execute"], "Install") {
+                        let _ = std::fs::remove_file(UPLOAD);
+                        self.upd.last = format!("build {}: {} could not be started, nothing installed", b, BIN);
+                    }
+                }
+                Err(e) => {
+                    self.upd.last = format!("REFUSED: build {}: {}", b, e);
+                    self.dialog = Some(vec!["Install REFUSED".into(), e, "Tap to close".into()]);
+                }
+            }
+        }
         if let Some((ch, what)) = &mut self.upd.job {
             if let Ok(Some(st)) = ch.try_wait() {
                 let what = what.clone();
@@ -193,6 +220,28 @@ impl Ui {
             }
         }
     }
+}
+
+/// The checks of an uploaded package that the frame loop can afford: header signature against `keys`, target and the
+/// image length the header names (a truncated upload fails here). The image hash is `upload_store`'s.
+fn upload_header(body: &[u8], keys: &[[u8; 32]]) -> Result<pkg::Header, String> {
+    let h = pkg::verify_header(body, keys)?;
+    let m = &h.manifest;
+    if m.target != pkg::TARGET {
+        return Err(format!("package is for '{}', this unit takes '{}'", m.target, pkg::TARGET));
+    }
+    let img = body.len().saturating_sub(h.data_offset) as u64;
+    if img != m.size {
+        return Err(format!("image is {} bytes, the header says {} (truncated upload?)", img, m.size));
+    }
+    Ok(h)
+}
+
+/// The whole check (`pkg::verify`: also the image hash), then the package to `path` for `oos-update install`. Off the
+/// frame loop. Err: nothing written.
+fn upload_store(body: &[u8], keys: &[[u8; 32]], path: &Path) -> Result<(), String> {
+    pkg::verify(body, keys)?;
+    std::fs::write(path, body).map_err(|e| format!("{}: {}", path.display(), e))
 }
 
 /// Text wrapped at word boundaries to `w` characters.
@@ -232,7 +281,8 @@ fn page(last: &str) -> String {
 <p>Package (<code>.oosupd</code>, signed): <input type="file" id="f" accept=".oosupd"> <button onclick="up()">Install</button></p>
 <pre id="r">{}</pre>
 <p>The new build starts on trial at the next power-on; a failed start writes the previous build back.
-Command line: <code>curl --data-binary @oos-dev.oosupd http://&lt;scope&gt;:8080/update</code></p>
+Command line: <code>curl --max-time 300 --data-binary @oos-dev.oosupd http://&lt;scope&gt;:8080/update</code>
+(the answer comes once the package has arrived and its header is checked; the image check and the install follow, their result shows here).</p>
 <script>
 function up(){{const f=document.getElementById('f').files[0];if(!f)return;const r=document.getElementById('r');
 r.textContent='uploading '+f.size+' bytes ...';
@@ -258,8 +308,38 @@ mod tests {
     #[test]
     fn upload_refuses_unsigned_packages() {
         let mut u = Ui::new(crate::wave::Source::Demo { t: 0.0 });
-        let e = u.update_upload(b"OOS-UPDATE 1\ntarget dho900-recovery\n\nxx").unwrap_err();
+        let e = u.update_upload(b"OOS-UPDATE 1\ntarget dho900-recovery\n\nxx".to_vec()).unwrap_err();
         assert!(e.contains("signature") || e.contains("header"), "{}", e);
-        assert!(u.upd.job.is_none());
+        assert!(u.upd.job.is_none() && u.upd.upload.is_none());
+    }
+
+    // Break it catches: the image hash left to nobody once it moved out of the frame loop, a truncated upload taken by
+    // the header check, a refused package still written for the install job.
+    #[test]
+    fn upload_checks_header_first_and_image_off_the_frame_loop() {
+        let seed = [9u8; 32];
+        let keys = [update::ed25519::public_key(&seed)];
+        let image: Vec<u8> = (0..4096u32).map(|i| (i * 7) as u8).collect();
+        let good = pkg::build(&seed, "20261114-150000", "6.12.115+", &image).unwrap();
+        let dir = std::env::temp_dir().join(format!("oos-upload-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("upload");
+        // whole and signed: header ok, stored
+        assert!(upload_header(&good, &keys).is_ok());
+        upload_store(&good, &keys, &path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), good);
+        std::fs::remove_file(&path).unwrap();
+        // one image byte changed: the header still checks, the image hash refuses it, nothing written
+        let mut bad = good.clone();
+        let last = bad.len() - 1;
+        bad[last] ^= 1;
+        assert!(upload_header(&bad, &keys).is_ok());
+        assert!(upload_store(&bad, &keys, &path).unwrap_err().contains("sha256") || !path.exists());
+        assert!(!path.exists());
+        // cut short: the header check already refuses it
+        assert!(upload_header(&good[..good.len() - 10], &keys).unwrap_err().contains("truncated"));
+        // another key
+        assert!(upload_header(&good, &[update::ed25519::public_key(&[1; 32])]).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

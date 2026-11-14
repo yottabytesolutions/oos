@@ -12,8 +12,10 @@
 //!   GET /lxi/identification   LXI identification XML (LXI Device Specification 2011, 10.2)
 //!   POST /mcp         Model Context Protocol (JSON-RPC 2.0, streamable HTTP transport, plain JSON responses): tools
 //!                     `scpi` (any SCPI command of scpi.rs, returns the response) and `screenshot` (PNG)
-//!   GET /update       update state and upload form; POST /update with a signed package (.oosupd) installs it
-//!                     (ui/update.rs: the signature is checked before anything is written)
+//!   GET /update       update state and upload form; POST /update with a signed package (.oosupd) installs it;
+//!                     (ui/update.rs: the header is checked here, the image off the frame loop, before anything is
+//!                     written). Requests are read by threads with time limits (`reader`, `Limits`); every limit
+//!                     ends in an answer (docs/update.md).
 //! Unauthenticated: bench LAN only (an update must carry a trusted signature, but the community key is public).
 //! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
@@ -27,11 +29,24 @@ use std::time::{Duration, Instant};
 /// Longest request: `POST /update` (a package is ~31 MB, the image at most 64 MiB), every other request.
 const MAX_UPDATE: usize = 70 << 20;
 const MAX_OTHER: usize = 1 << 20;
-/// Open connections at once (more are closed at accept).
+/// Requests being read at once (more are answered 503 at accept).
 const MAX_PENDING: usize = 8;
-/// Idle time and whole time a request may take (the upload of a package over 10 Mbit/s takes ~30 s).
-const IDLE_S: u64 = 10;
-const DEADLINE_S: u64 = 120;
+/// Longest request head; a longer one is answered 431.
+const MAX_HEAD: usize = 16384;
+
+/// Time limits of a request (`reader`). Requests are read in threads of their own, not in the frame loop: a frame loop
+/// that stalls (a long step, a stuck lock) cannot keep a client waiting for ever; every limit ends in an answer.
+#[derive(Clone, Copy, Debug)]
+struct Limits {
+    /// no data for this long: 408 (the socket's read time-out)
+    idle: Duration,
+    /// the whole request, head and body (the upload of a package over 10 Mbit/s takes ~30 s): 408
+    deadline: Duration,
+    /// a complete request the frame loop has not taken after this long: 503
+    take: Duration,
+}
+
+const LIMITS: Limits = Limits { idle: Duration::from_secs(10), deadline: Duration::from_secs(120), take: Duration::from_secs(10) };
 /// Answers above this size are sent from a thread of their own: over WLAN a picture takes long enough to stall the
 /// frame loop, and with it the scope's own screen and keys. A screen as PNG is 60 to 175 KB (a BMP 1.8 MB), so it
 /// goes the same way; the page and the small answers fit into the socket's buffer and go at once.
@@ -458,18 +473,213 @@ fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str) {
 }
 
 pub struct Http {
-    l: Option<TcpListener>,
-    /// connection, request so far, last data, accepted
-    pending: Vec<(TcpStream, Vec<u8>, Instant, Instant)>,
+    /// the accept thread's address and stop flag while the port is open
+    open: Option<(std::net::SocketAddr, Arc<std::sync::atomic::AtomicBool>)>,
+    /// complete requests from the reader threads
+    inbox: Arc<Inbox>,
+    limits: Limits,
     shots: Arc<Shots>,
     /// who may install an update or use MCP (empty: everyone)
     pub acl: crate::netacl::Acl,
+    /// the copy of `acl` the reader threads see (refused before the body is read)
+    acl_shared: Arc<Mutex<crate::netacl::Acl>>,
 }
 
 impl Drop for Http {
     fn drop(&mut self) {
         self.shots.lock().quit = true;
         self.shots.wake.notify_all();
+        if let Some((_, stop)) = self.open.take() {
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+/// A complete request from a reader thread: its number, the connection, the head (as sent) and the body.
+struct Req {
+    id: u64,
+    s: TcpStream,
+    head: String,
+    body: Vec<u8>,
+}
+
+/// Requests read and waiting for the frame loop; the reader waits on `taken` until the frame loop took its request.
+#[derive(Default)]
+struct Inbox {
+    q: Mutex<std::collections::VecDeque<Req>>,
+    taken: Condvar,
+    next: std::sync::atomic::AtomicU64,
+    /// reader threads running
+    active: std::sync::atomic::AtomicUsize,
+}
+
+impl Inbox {
+    fn lock(&self) -> MutexGuard<'_, std::collections::VecDeque<Req>> {
+        self.q.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// A short answer and the end of the connection (every refused or dropped request gets one): at most 1 s to write.
+/// The rest of an unread body is read away for up to 1 s, so the client sees the answer and not a reset.
+fn answer(s: &TcpStream, status: &str, msg: &str) {
+    answer_now(s, status, msg);
+    let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
+    let end = Instant::now() + Duration::from_secs(1);
+    let mut b = [0u8; 16384];
+    while Instant::now() < end {
+        match std::io::Read::read(&mut &*s, &mut b) {
+            Ok(n) if n > 0 => {}
+            _ => break,
+        }
+    }
+}
+
+/// `answer` without reading the rest away (the accept thread: it must not wait).
+fn answer_now(s: &TcpStream, status: &str, msg: &str) {
+    let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
+    let _ = (&*s).write_all(format!("HTTP/1.1 {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", status, msg.len(), msg).as_bytes());
+    let _ = s.shutdown(std::net::Shutdown::Write);
+}
+
+/// The parts of a request head the reader needs (names without case).
+#[derive(Debug, PartialEq)]
+struct Head {
+    post: bool,
+    route: String,
+    /// Content-Length; None without one
+    len: Option<usize>,
+    chunked: bool,
+    expect_continue: bool,
+}
+
+fn parse_head(text: &str) -> Head {
+    let mut words = text.split_whitespace();
+    let post = words.next() == Some("POST");
+    let path = words.next().unwrap_or("/");
+    let route = path.split_once('?').map_or(path, |x| x.0).to_string();
+    let len = header(text, "content-length").and_then(|v| v.parse::<usize>().ok());
+    let chunked = header(text, "transfer-encoding").is_some_and(|v| !v.eq_ignore_ascii_case("identity"));
+    let expect_continue = header(text, "expect").is_some_and(|v| v.eq_ignore_ascii_case("100-continue"));
+    Head { post, route, len, chunked, expect_continue }
+}
+
+/// Why a request is answered before its body is read: the status line and text, or None to read it.
+fn refuse_early(h: &Head, text: &str, peer_ok: bool) -> Option<(&'static str, &'static str)> {
+    let limit = if h.post && h.route == "/update" { MAX_UPDATE } else { MAX_OTHER };
+    if h.post && (h.chunked || h.len.is_none()) {
+        return Some(("411 Length Required", "a body needs a Content-Length"));
+    }
+    if h.len.is_some_and(|n| n > limit) {
+        return Some(("413 Payload Too Large", "request too large"));
+    }
+    if foreign(text, &h.route, h.post) || (matches!(h.route.as_str(), "/update" | "/mcp") && (h.post || h.route == "/mcp") && !peer_ok) {
+        return Some(("403 Forbidden", "refused"));
+    }
+    None
+}
+
+/// One connection: the head (`MAX_HEAD`), the early refusals, `100 Continue` when asked for, the body within the
+/// limits, then the request to the frame loop; 503 when the frame loop does not take it in `Limits::take`.
+fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Acl>, lim: Limits) {
+    use std::io::Read;
+    let t0 = Instant::now();
+    let _ = s.set_nonblocking(false);
+    let _ = s.set_nodelay(true);
+    let mut req: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 65536];
+    // one read, within the idle time and what is left of the deadline; Err: answered or gone
+    let read_some = |req: &mut Vec<u8>, buf: &mut [u8]| -> Result<(), ()> {
+        let left = lim.deadline.saturating_sub(t0.elapsed());
+        if left.is_zero() {
+            answer(&s, "408 Request Timeout", "request took too long");
+            return Err(());
+        }
+        let _ = s.set_read_timeout(Some(lim.idle.min(left)));
+        match (&s).read(buf) {
+            Ok(0) => Err(()),
+            Ok(n) => {
+                req.extend_from_slice(&buf[..n]);
+                Ok(())
+            }
+            Err(e) if crate::net::later(&e) => {
+                answer(&s, "408 Request Timeout", "request timed out");
+                Err(())
+            }
+            Err(_) => Err(()),
+        }
+    };
+    let end = loop {
+        if let Some(p) = req.windows(4).position(|w| w == b"\r\n\r\n") {
+            break p + 4;
+        }
+        if req.len() > MAX_HEAD {
+            return answer(&s, "431 Request Header Fields Too Large", "request head too long");
+        }
+        if read_some(&mut req, &mut buf).is_err() {
+            return;
+        }
+    };
+    let text = String::from_utf8_lossy(&req[..end]).into_owned();
+    let h = parse_head(&text);
+    let peer_ok = s.peer_addr().is_ok_and(|a| acl.lock().unwrap_or_else(|e| e.into_inner()).permits(a.ip()));
+    if let Some((status, msg)) = refuse_early(&h, &text, peer_ok) {
+        return answer(&s, status, msg);
+    }
+    let need = end + h.len.unwrap_or(0);
+    if h.expect_continue && req.len() < need {
+        let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
+        if (&s).write_all(b"HTTP/1.1 100 Continue\r\n\r\n").is_err() {
+            return;
+        }
+    }
+    while req.len() < need {
+        if read_some(&mut req, &mut buf).is_err() {
+            return;
+        }
+    }
+    req.truncate(need);
+    let body = req.split_off(end);
+    let id = inbox.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let Ok(sc) = s.try_clone() else { return };
+    let mut q = inbox.lock();
+    q.push_back(Req { id, s: sc, head: text, body });
+    let until = Instant::now() + lim.take;
+    while q.iter().any(|r| r.id == id) {
+        let now = Instant::now();
+        if now >= until {
+            q.retain(|r| r.id != id);
+            drop(q);
+            return answer(&s, "503 Service Unavailable", "busy, try again");
+        }
+        q = inbox.taken.wait_timeout(q, until - now).map(|x| x.0).unwrap_or_else(|e| e.into_inner().0);
+    }
+}
+
+/// The accept thread of an open port: a reader thread per connection, at most `MAX_PENDING` (503 beyond). Polls the
+/// listener every 20 ms so that `stop` ends it.
+fn acceptor(l: TcpListener, inbox: Arc<Inbox>, acl: Arc<Mutex<crate::netacl::Acl>>, stop: Arc<std::sync::atomic::AtomicBool>, lim: Limits) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let _ = l.set_nonblocking(true);
+    while !stop.load(SeqCst) {
+        match l.accept() {
+            Ok((s, _)) => {
+                if inbox.active.fetch_add(1, SeqCst) >= MAX_PENDING {
+                    inbox.active.fetch_sub(1, SeqCst);
+                    let _ = s.set_nonblocking(false);
+                    answer_now(&s, "503 Service Unavailable", "busy, try again");
+                    continue;
+                }
+                let (ib, acl) = (inbox.clone(), acl.clone());
+                let spawned = std::thread::Builder::new().name("web-read".into()).spawn(move || {
+                    reader(s, &ib, &acl, lim);
+                    ib.active.fetch_sub(1, SeqCst);
+                });
+                if spawned.is_err() {
+                    inbox.active.fetch_sub(1, SeqCst);
+                }
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+        }
     }
 }
 
@@ -570,31 +780,51 @@ fn unescape(s: &str) -> String {
 
 impl Http {
     pub fn open(port: u16) -> Http {
-        Http { l: Self::bind(port), pending: Vec::new(), shots: Shots::new(), acl: crate::netacl::Acl::default() }
+        Self::open_with(port, LIMITS)
     }
 
-    fn bind(port: u16) -> Option<TcpListener> {
-        let l = crate::net6::tcp(port);
-        match &l {
-            Some(l) => {
-                let _ = l.set_nonblocking(true);
-                eprintln!("oos-ui: web remote on port {}{}", port, if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" });
-            }
-            None => eprintln!("oos-ui: web port {} not available", port),
+    fn open_with(port: u16, limits: Limits) -> Http {
+        let mut h = Http { open: None, inbox: Arc::new(Inbox::default()), limits, shots: Shots::new(), acl: crate::netacl::Acl::default(), acl_shared: Arc::new(Mutex::new(crate::netacl::Acl::default())) };
+        h.start(port);
+        h
+    }
+
+    /// Binds the port and starts its accept thread.
+    fn start(&mut self, port: u16) {
+        let Some(l) = crate::net6::tcp(port) else {
+            eprintln!("oos-ui: web port {} not available", port);
+            return;
+        };
+        let Ok(addr) = l.local_addr() else { return };
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (inbox, acl, st, lim) = (self.inbox.clone(), self.acl_shared.clone(), stop.clone(), self.limits);
+        if std::thread::Builder::new().name("web-accept".into()).spawn(move || acceptor(l, inbox, acl, st, lim)).is_err() {
+            eprintln!("oos-ui: web remote: no accept thread");
+            return;
         }
-        l
+        eprintln!("oos-ui: web remote on port {}{}", port, if addr.is_ipv6() { " (IPv4 and IPv6)" } else { "" });
+        self.open = Some((addr, stop));
+    }
+
+    /// The address the port is open on (tests).
+    #[cfg(test)]
+    fn addr(&self) -> std::net::SocketAddr {
+        self.open.as_ref().expect("web port open").0
     }
 
     /// System > Network > Remote services: the port open (`Some`), or closed with the requests waiting on it.
     pub fn set_open(&mut self, port: Option<u16>) {
         match port {
-            Some(p) if self.l.is_none() => self.l = Self::bind(p),
+            Some(p) if self.open.is_none() => self.start(p),
             Some(_) => {}
             None => {
-                if self.l.take().is_some() {
+                if let Some((_, stop)) = self.open.take() {
+                    stop.store(true, std::sync::atomic::Ordering::SeqCst);
                     eprintln!("oos-ui: web remote off");
                 }
-                self.pending.clear();
+                // the readers waiting for the frame loop answer 503 when they give up
+                self.inbox.lock().clear();
+                self.inbox.taken.notify_all();
             }
         }
     }
@@ -634,67 +864,23 @@ impl Http {
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
         let mut cmds = Vec::new();
         self.shots.tick(cv);
-        if let Some(l) = &self.l {
-            while let Ok((s, _)) = l.accept() {
-                if self.pending.len() >= MAX_PENDING {
-                    continue; // dropped: closes the connection
-                }
-                let _ = s.set_nonblocking(false);
-                let now = Instant::now();
-                self.pending.push((s, Vec::new(), now, now));
+        {
+            let mut a = self.acl_shared.lock().unwrap_or_else(|e| e.into_inner());
+            if *a != self.acl {
+                *a = self.acl.clone();
             }
         }
-        let mut i = 0;
-        while i < self.pending.len() {
-            let mut buf = [0u8; 65536];
-            let (s, req, t, t_acc) = &mut self.pending[i];
-            let mut dead = false;
-            // up to 2 MB per connection and frame (an update package is ~31 MB: a few seconds at 100 Mbit/s)
-            let mut got = 0;
-            while got < 2 << 20 {
-                match crate::net::read_now(s, &mut buf) {
-                    Ok(0) => {
-                        dead = true;
-                        break;
-                    }
-                    Ok(n) => {
-                        req.extend_from_slice(&buf[..n]);
-                        got += n;
-                        *t = Instant::now();
-                    }
-                    Err(e) if crate::net::later(&e) => break,
-                    Err(_) => {
-                        dead = true;
-                        break;
-                    }
-                }
-            }
-            // headers complete, and the body when there is a Content-Length
-            let hdr_end = req.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4);
-            if hdr_end.is_none() && req.len() > 16384 {
-                dead = true; // no header end in 16 KiB
-            }
-            let mut too_big = false;
-            let complete = hdr_end.is_some_and(|e| {
-                let h = String::from_utf8_lossy(&req[..e]).to_ascii_lowercase();
-                let n = h.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
-                let limit = if h.starts_with("post /update") { MAX_UPDATE } else { MAX_OTHER };
-                too_big = n > limit || req.len() > limit + e;
-                too_big || e.checked_add(n).is_some_and(|need| req.len() >= need)
-            });
-            if too_big {
-                let msg = b"request too large";
-                let head = format!("HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", msg.len());
-                let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-                let _ = s.write_all(head.as_bytes());
-                let _ = s.write_all(msg);
-                dead = true;
-            } else if complete {
+        let reqs: Vec<Req> = self.inbox.lock().drain(..).collect();
+        if !reqs.is_empty() {
+            self.inbox.taken.notify_all();
+        }
+        for Req { s, head: text, body, .. } in reqs {
+            let s = &s;
+            {
                 // only the header as text: the body may be a 31 MB binary package
-                let text = String::from_utf8_lossy(&req[..hdr_end.unwrap_or(req.len())]).into_owned();
                 let path = text.split_whitespace().nth(1).unwrap_or("/").to_string();
                 let (route, query) = path.split_once('?').unwrap_or((&path, ""));
-                let req_body = &req[hdr_end.unwrap_or(req.len())..];
+                let mut req_body = body;
                 let post = text.starts_with("POST ");
                 // what changes the scope beyond keys and knobs: only from the allowed prefixes
                 let peer_ok = s.peer_addr().is_ok_and(|a| self.acl.permits(a.ip()));
@@ -715,7 +901,6 @@ impl Http {
                     "/screen.png" | "/screen.jpg" => {
                         let have = header(&text, "if-none-match").map(str::to_string);
                         self.shots.request(s, have, cv, route == "/screen.jpg");
-                        self.pending.remove(i);
                         continue;
                     }
                     // the scope's local time for the names of the page's downloads; empty while its clock is not set
@@ -729,13 +914,13 @@ impl Http {
                             ("text/plain", e.into_bytes())
                         }
                     },
-                    "/update" if post => match ui.update_upload(req_body) {
+                    "/update" if post => match ui.update_upload(std::mem::take(&mut req_body)) {
                         Ok(m) => ("text/plain", m.into_bytes()),
                         Err(e) => ("text/plain", format!("REFUSED: {}", e).into_bytes()),
                     },
                     "/update" => ("text/html; charset=utf-8", ui.update_page().into_bytes()),
                     "/lxi/identification" => ("text/xml", lxi_identification().into_bytes()),
-                    "/mcp" => match mcp(&String::from_utf8_lossy(req_body), ui, cv, scpi) {
+                    "/mcp" => match mcp(&String::from_utf8_lossy(&req_body), ui, cv, scpi) {
                         Some(r) => ("application/json", r.into_bytes()),
                         None => ("", Vec::new()),
                     },
@@ -764,17 +949,9 @@ impl Http {
                     }
                 } else {
                     let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
-                    let _ = s.write_all(head.as_bytes());
-                    let _ = s.write_all(&body);
+                    let _ = (&*s).write_all(head.as_bytes());
+                    let _ = (&*s).write_all(&body);
                 }
-                dead = true;
-            } else if t.elapsed().as_secs() > IDLE_S || t_acc.elapsed().as_secs() > DEADLINE_S {
-                dead = true;
-            }
-            if dead {
-                self.pending.remove(i);
-            } else {
-                i += 1;
             }
         }
         cmds
@@ -944,7 +1121,7 @@ mod tests {
     }
 
     fn request_raw(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, req: Vec<u8>) -> Vec<u8> {
-        let addr = h.l.as_ref().unwrap().local_addr().unwrap();
+        let addr = h.addr();
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", addr.port())).unwrap();
             c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
@@ -958,6 +1135,139 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         t.join().unwrap()
+    }
+
+    /// Sends `req` to `port` (in pieces of `pieces`, `gap` apart) and reads the answer until the server closes.
+    fn talk(port: u16, req: &[u8], pieces: usize, gap: Duration) -> String {
+        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        let n = req.len().div_ceil(pieces.max(1)).max(1);
+        for p in req.chunks(n) {
+            if c.write_all(p).is_err() {
+                break;
+            }
+            std::thread::sleep(gap);
+        }
+        let mut out = Vec::new();
+        let _ = c.read_to_end(&mut out);
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    fn quick(idle_ms: u64, deadline_ms: u64, take_ms: u64) -> Http {
+        let ms = Duration::from_millis;
+        Http::open_with(0, Limits { idle: ms(idle_ms), deadline: ms(deadline_ms), take: ms(take_ms) })
+    }
+
+    // Break it catches: a client held for ever when the frame loop does not run (the 55 min upload of 2026-11-14 is
+    // the case this is for): the reader answers 503 once `take` passed.
+    #[test]
+    fn a_request_the_frame_loop_does_not_take_gets_503() {
+        let h = quick(10_000, 120_000, 300);
+        let r = talk(h.addr().port(), b"GET / HTTP/1.1\r\nHost: x\r\n\r\n", 1, Duration::ZERO);
+        assert!(r.starts_with("HTTP/1.1 503"), "{}", r);
+        assert!(h.inbox.lock().is_empty(), "the request left the inbox");
+    }
+
+    // Break it catches: no answer to `Expect: 100-continue` (curl waits a second, other clients longer), the 100 sent
+    // for a request that is refused anyway.
+    #[test]
+    fn expect_continue_is_answered_and_refusals_come_first() {
+        let mut h = Http::open(0);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let port = h.addr().port();
+        let body = b"OOS-UPDATE 1\ntarget x\n\nxx".to_vec();
+        let t = std::thread::spawn(move || {
+            let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+            c.write_all(format!("POST /update HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nExpect: 100-continue\r\n\r\n", body.len()).as_bytes()).unwrap();
+            let mut first = [0u8; 25];
+            c.read_exact(&mut first).unwrap();
+            c.write_all(&body).unwrap();
+            let mut rest = Vec::new();
+            let _ = c.read_to_end(&mut rest);
+            (String::from_utf8_lossy(&first).into_owned(), String::from_utf8_lossy(&rest).into_owned())
+        });
+        while !t.is_finished() {
+            h.poll(&mut ui, &cv, &mut scpi);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let (first, rest) = t.join().unwrap();
+        assert_eq!(first, "HTTP/1.1 100 Continue\r\n\r\n");
+        assert!(rest.starts_with("HTTP/1.1 200") && rest.contains("REFUSED"), "{}", rest);
+        // too large or from a refused address: the answer at once, no 100, no body read
+        let r = talk(port, format!("POST /update HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nExpect: 100-continue\r\n\r\n", MAX_UPDATE + 1).as_bytes(), 1, Duration::ZERO);
+        assert!(r.starts_with("HTTP/1.1 413"), "{}", r);
+        // (the address list always lets the scope's own loopback in, so a page elsewhere stands in for a refusal)
+        let r = talk(port, b"POST /update HTTP/1.1\r\nHost: x\r\nOrigin: https://evil.example\r\nContent-Length: 2\r\nExpect: 100-continue\r\n\r\n", 1, Duration::ZERO);
+        assert!(r.starts_with("HTTP/1.1 403"), "{}", r);
+    }
+
+    // Break it catches: an update or MCP request from an address outside `net.allow` read in full before it is
+    // refused (31 MB for nothing), the length limit of other requests applied to /update.
+    #[test]
+    fn early_refusals_from_the_head() {
+        let t = |r: &str| format!("{}\r\nHost: x\r\n\r\n", r);
+        let head = |r: &str, len: Option<usize>| Head { post: r.starts_with("POST"), route: r.split_whitespace().nth(1).unwrap().into(), len, chunked: false, expect_continue: true };
+        let h = head("POST /update HTTP/1.1", Some(31 << 20));
+        assert_eq!(refuse_early(&h, &t("POST /update HTTP/1.1"), true), None);
+        assert_eq!(refuse_early(&h, &t("POST /update HTTP/1.1"), false).map(|x| x.0), Some("403 Forbidden"));
+        assert_eq!(refuse_early(&head("POST /mcp HTTP/1.1", Some(10)), &t("POST /mcp HTTP/1.1"), false).map(|x| x.0), Some("403 Forbidden"));
+        assert_eq!(refuse_early(&head("POST /mcp HTTP/1.1", Some(31 << 20)), &t("POST /mcp HTTP/1.1"), true).map(|x| x.0), Some("413 Payload Too Large"));
+        assert_eq!(refuse_early(&head("GET /screen.png HTTP/1.1", None), &t("GET /screen.png HTTP/1.1"), false), None);
+        let p = parse_head("POST /update?x=1 HTTP/1.1\r\ncontent-LENGTH: 12\r\nEXPECT: 100-Continue\r\n\r\n");
+        assert_eq!(p, Head { post: true, route: "/update".into(), len: Some(12), chunked: false, expect_continue: true });
+    }
+
+    // Break it catches: a POST without a length read as an empty body (a chunked upload was cut to nothing).
+    #[test]
+    fn a_body_without_content_length_gets_411() {
+        let h = Http::open(0);
+        for req in ["POST /update HTTP/1.1\r\nHost: x\r\n\r\n", "POST /update HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"] {
+            let r = talk(h.addr().port(), req.as_bytes(), 1, Duration::ZERO);
+            assert!(r.starts_with("HTTP/1.1 411"), "{:?}: {}", req, r);
+        }
+    }
+
+    // Break it catches: a silent close where the limits end a request (the client sees no reason), a slow trickle that
+    // keeps a connection longer than the deadline, a head without an end read for ever.
+    #[test]
+    fn every_limit_answers() {
+        // idle: half a head, then nothing
+        let h = quick(300, 120_000, 10_000);
+        let r = talk(h.addr().port(), b"GET / HTTP/1.1\r\nHo", 1, Duration::ZERO);
+        assert!(r.starts_with("HTTP/1.1 408"), "idle: {}", r);
+        // deadline: a byte every 100 ms keeps the idle time from running out
+        let h = quick(10_000, 600, 10_000);
+        let head = b"GET / HTTP/1.1\r\nHost: x\r\nX-Slow: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n";
+        let r = talk(h.addr().port(), head, head.len(), Duration::from_millis(100));
+        assert!(r.starts_with("HTTP/1.1 408"), "deadline: {}", r);
+        // head too long
+        let h = Http::open(0);
+        let r = talk(h.addr().port(), format!("GET / HTTP/1.1\r\nX: {}", "a".repeat(MAX_HEAD + 100)).as_bytes(), 1, Duration::ZERO);
+        assert!(r.starts_with("HTTP/1.1 431"), "head: {}", r);
+    }
+
+    // Break it catches: more connections than `MAX_PENDING` closed without a word.
+    #[test]
+    fn too_many_connections_get_503() {
+        let h = Http::open(0);
+        let port = h.addr().port();
+        let held: Vec<TcpStream> = (0..MAX_PENDING)
+            .map(|_| {
+                let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                c.write_all(b"GET / HTTP/1.1\r\n").unwrap();
+                c
+            })
+            .collect();
+        let until = Instant::now() + Duration::from_secs(10);
+        while h.inbox.active.load(std::sync::atomic::Ordering::SeqCst) < MAX_PENDING && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let r = talk(port, b"GET / HTTP/1.1\r\nHost: x\r\n\r\n", 1, Duration::ZERO);
+        assert!(r.starts_with("HTTP/1.1 503"), "{}", r);
+        drop(held);
     }
 
     /// The web remote with the demo signals, to try it without a scope: `cargo test web_demo -- --ignored --nocapture`,
@@ -1125,7 +1435,7 @@ setTimeout(() => {
         ui.render(&mut cv);
         let mut scpi = crate::scpi::Scpi::open(0);
         for path in ["/screen.bmp", "/screen.png"] {
-            let addr = h.l.as_ref().unwrap().local_addr().unwrap();
+            let addr = h.addr();
             let t = std::thread::spawn(move || {
                 let mut c = TcpStream::connect(("127.0.0.1", addr.port())).unwrap();
                 c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
@@ -1178,7 +1488,7 @@ setTimeout(() => {
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
-        let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+        let port = h.addr().port();
         let mut frame = 0u32;
         // the first screen handed over (the canvas got another buffer): the one before the render
         let mut shown: Option<Vec<u32>> = None;
@@ -1252,7 +1562,7 @@ setTimeout(() => {
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0);
-        let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+        let port = h.addr().port();
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
             c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
@@ -1303,7 +1613,7 @@ setTimeout(() => {
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         ui.render(&mut cv);
         let mut scpi = crate::scpi::Scpi::open(0);
-        let port = h.l.as_ref().unwrap().local_addr().unwrap().port();
+        let port = h.addr().port();
         // a viewer in a thread; the server is polled meanwhile, and `change` alters the screen after 100 ms
         let shot = |h: &mut Http, ui: &mut Ui, scpi: &mut crate::scpi::Scpi, cv: &mut Canvas, have: Option<&str>, change: bool| {
             let inm = have.map_or(String::new(), |t| format!("If-None-Match: {}\r\n", t));

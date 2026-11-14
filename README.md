@@ -723,7 +723,7 @@ which are never changed.
 build a package yourself (`boot/out/oos-dev.oosupd`), then install it on the running scope:
 
 ```sh
-curl --data-binary @oos-<version>.oosupd http://<scope>:8080/update
+curl --max-time 300 --data-binary @oos-<version>.oosupd http://<scope>:8080/update
 ```
 
 or open `http://<scope>:8080/update` in a browser. The scope restarts into the new build by kexec before anything is

@@ -158,7 +158,24 @@ Build (host): `boot/build-dev-image.sh` writes `boot/out/oos-dev.img` and, when 
 Install on a running OOS:
 
 - browser: `http://<scope>:8080/update`, choose the file, Install; or
-  `curl --data-binary @boot/out/oos-dev.oosupd http://<scope>:8080/update`
+  `curl --max-time 300 --data-binary @boot/out/oos-dev.oosupd http://<scope>:8080/update`
+
+The web server answers the upload once the whole package has arrived and its header (signature, target, length)
+checked out: `accepted, build ...`, or `REFUSED: ...`. The image hash and the copy for the install job run after
+that, off the screen's loop; their result and the install's show in System > Update and on `GET /update`. Every
+request ends in an answer within bounded time (fork, `ui/src/http.rs`):
+
+| case | answer |
+|---|---|
+| `Expect: 100-continue` (curl sends it for large bodies) | `100 Continue`, or the refusal at once without reading the body |
+| POST without `Content-Length` (also chunked) | 411 |
+| body over the limit (70 MiB for `/update`, 1 MiB otherwise) | 413, before the body |
+| foreign page, or an address outside `net.allow` for `/update` and `/mcp` | 403, before the body |
+| no data for 10 s, or the whole request over 120 s | 408 |
+| request head over 16 KiB | 431 |
+| more than 8 requests being read, or the screen's loop does not take a complete request within 10 s | 503 |
+
+`--max-time` on the client is still worth giving: it bounds the network path too.
 - shell: upload the file to /tmp, `oos-update install /tmp/oos-dev.oosupd` (dry run), then `--execute`
 
 The scope restarts into the new build by kexec, which installs itself (about a minute); System > Update shows the

@@ -110,7 +110,7 @@ Tests, failing before:
   and a preview;
 - SINGLE done switches to STOP through the outbox, and the STOP is in the next `ChangeSet`;
 - every view's declared classes match what it resets in a change of each class;
-- the mapping key changes exactly when a `mapping` field changes;
+- the mapping key changes exactly when a `mapping` field changes, a relayout (panes, HDMI) included;
 - CLEAR, the RUN and SINGLE edges and Create mask reset their consumers with no settings difference.
 
 Deletes: `settings_changed`, `mark_changed`, the 16 `dirty_map = true`, the `hw_stamp` bumps in `ui.rs`, `ui/bode.rs`

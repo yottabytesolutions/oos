@@ -175,7 +175,9 @@ Commands come from the edges only:
 The change stage applies one step's commands in a fixed order of sources: the outbox (internal writers, see
 [Internal writers](#internal-writers)), then store, then remote, then input. Within a
 source, arrival order. A setup load is the base; remote writes apply on top; the panel, where a person acts, applies
-last and wins a conflict between two absolute values of the same field. Relative commands never conflict.
+last and wins a conflict between two absolute values of the same field. Relative commands never conflict. A remote
+set's reply, a later query on the same connection and `*OPC?` report the value after `normalize`, so a client sees
+when its write was overridden; SCPI also queues `-221` (settings conflict) for it.
 
 ### Normalize
 
@@ -216,10 +218,12 @@ apply commands -> normalize -> ChangeSet = classify(previous Settings, current S
   `Request::Epoch(token)` from an autoset or Bode stage (also a retry with the same settings). SINGLE arm, CLEAR and
   RUN after STOP are seen in the change stage itself (from intake or the run transition) and get their epoch in the
   same step. Requests from later stages go through the outbox and resolve at the next step.
-- **`MappingKey`** is built by `classify` from exactly the fields it puts in the `mapping` class, in the same
-  destructure. A field cannot be in the class and missing from the key.
+- **`MappingKey`** is built by `classify` from exactly the fields of `Settings` and `UiAcq` it puts in the `mapping`
+  class, in the same destructure. A field cannot be in the class and missing from the key.
 - **`UiAcq`:** UI state that changes what is acquired or drawn but is not a setting: the XY view, the protocol watch
-  (both need raw records), the mask reference, autoset or Bode being active. It is not stored. Each step derives it as
+  (both need raw records), the mask reference, autoset or Bode being active, and the main and zoom plot sizes from the
+  layout (panes, HDMI, menus). The plot sizes are classified `mapping`, so they enter `MappingKey` through the same
+  destructure as the settings fields. It is not stored. Each step derives it as
   a value from the views' and menus' state (`UiAcq::of`), and the change stage diffs it against the previous step's
   value.
 

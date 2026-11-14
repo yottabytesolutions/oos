@@ -35,8 +35,8 @@ UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole 
 - **Mapping key.** It is fixed per batch at its first claim, so all shares of a batch use one mapping. It has one
   source: `classify` builds `MappingKey` from exactly the fields it classifies `mapping`, in the same destructure, so a
   field cannot be in the class and missing from the key (architecture.md, [Change detection](../architecture.md#change-detection)).
-  Today these are time base, delay, V/div, offset, channel set, dots, zoom, size, and per channel invert, coupling and
-  bandwidth. A unit of another key is dropped at merge.
+  Today these are time base, delay, V/div, offset, channel set, dots, zoom, and per channel invert, coupling and
+  bandwidth, plus the main and zoom plot sizes from `UiAcq` (today the `(w, h)` check in `drawpipe::merge`). A unit of another key is dropped at merge.
 - **Frames convert with their own `BatchMeta`.** Volts, times and the trigger refinement come from the batch, not
   from `Settings` (acquisition.md). So a batch of an older hardware generation under the same mapping key is a valid
   picture.

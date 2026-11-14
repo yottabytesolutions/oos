@@ -128,7 +128,8 @@ generation and the list of its shares.
 - A finished share goes into its batch's unit, not into a mailbox.
 - The share that brings the drawn and dropped count to the batch's frames publishes the unit, all shares, to the UI
   inbox.
-- The UI adds the shares at merge, as now, on the A72. No map add on the A53 and no lock on the hot path. Adding into
+- The UI adds the shares at merge, as now, on the A72, each only over the rows it touched (per-share row bounds,
+  kept by the worker). No map add on the A53 and no lock on the hot path. Adding into
   one `BatchMap` would be about 120 map adds a second on the little cores, serialised on the batch lock.
 - The UI only ever sees whole batches. This is 988312b's gating per batch instead of per mailbox, so its hold-chain
   residual cannot occur.
@@ -151,9 +152,8 @@ Every frame contributes a known weight per screen column (w = 24 in lines), what
   - What changes is the shape inside the band, not the brightness of a picture of one route. `draw_ex`'s overlapping
     segments make a graded core with dimmer edges. A span per column is uniform. Zoom, Single, segments,
     Peak/Avg/HiRes, roll/scan and the stopped view look different; mixed pictures stop jumping.
-  - Open design point, Z input: today a weight per point (24 x z). A span per column needs one weight per column,
-    for example the mean z of its points, which changes how a Z-modulated trace looks. Alternative: keep `draw_ex`
-    for Z, which is a route of its own and never mixes with deposited frames.
+  - Z input keeps its current drawing (`draw_ex`, 24 x z per point; team-lead's decision). A per-column z weight would
+    be inexact, and Z is a route of its own that never mixes with deposited frames. Documented as the one exception.
   - Open design point, sparse records (fewer points than columns): the interpolation is the content. They are
     interpolated to at least 2 points per column (`sparse.rs`), then the same spans, so the segment joining survives
     as the interpolation, not as a second kernel.
@@ -163,6 +163,9 @@ Every frame contributes a known weight per screen column (w = 24 in lines), what
   Brightness = count / W then equals across sources, with no float maps and no extra memory.
   - W_frame is per map: the zoom map has its own samples per zoom column, so `phz` has its own W, as it has its own
     grade today.
+  - No pixel rounds to 0. A noisy column spreading 86 samples over 40+ rows gets about 2 counts per pixel, but every
+    count is an integer hit. The division by W happens only in the grade, where any count > 0 gets at least the LUT
+    floor.
   - Frames of one generation have the same samples per column, so they weigh the same in a picture.
   - Raw and record frames in one dots picture weigh by their own W, correctly normalised. Such a mix happens only
     during a change, because the newest frame and the deep window no longer draw (3.4).
@@ -176,168 +179,183 @@ Every frame contributes a known weight per screen column (w = 24 in lines), what
 - Records (`wave::Record`) feed the measurements, history, masks, protocols, XY and SCPI.
 - The raw newest frame (RAW_PERIOD) and the deep raw window are measurement reads. They reach `deepmeas` and the
   measurements, never the picture.
-- STOP, Single done, history and segment replay draw their stored frame once, as a batch of one frame with W = w,
-  not 6w every step. The window of 3.6 does not apply to them: they replace the picture (a window of 1).
-- Roll and scan frames are the whole sweep so far, not one frame among many. They replace the picture too (a window
-  of 1).
-- `fast_ok` keeps only conditions on what the picture needs (zoom, XY, roll/scan). Measurement options never
-  move a frame to another route.
+- On the fast path (`fast_ok`) the UI takes only the newest record of a step for measurement: every frame is in the
+  picture through the pipe. Off the fast path every record still goes through the record loop: it feeds mask counts,
+  the zone pass, the software average, the Bus trigger decision, Single, segments and history. There the records of
+  one step form one pseudo-batch (W = their weight sum) into the picture.
+- `fast_ok` keeps only conditions on what the picture needs (zoom, XY, roll/scan). Measurement options never move a
+  frame to another route.
+- Roll and scan frames are the whole sweep so far: each replaces the picture (a window of 1, outside 3.6's window).
 
-### 3.5 Settings generation, no stale frames
+**STOP.** STOP freezes the accumulated maps and W as they are. Nothing is redrawn while stopped. Single done is the
+same. A view change while stopped (time base, offset, zoom) replaces the maps with `last[0]` drawn once at W = w.
+History and segment replay do the same for the record they show. Today's 24 x 6 redraw on every step goes.
 
-- The acquisition thread numbers each configuration (`gen_acq`, raised whenever `want` differs and `configure`
-  runs). Every frame and batch carries it.
-- The UI's view key is the full acquisition key: today's `Key` plus mdepth, the compression factor, the source and
-  the slow mode.
-- A batch or record of another generation is dropped and counted (`stale`), in the pipe and in `Source::acquire`.
-- The trace area is blanked when the settings change, as today: the grid and labels change at once. The first
-  batch of the new generation fills it. Keeping the old maps would show them at the old pixel positions under the
-  new axis labels for 70-130 ms, which is a wrong picture.
+**Persistence changes.** A change between Min and a decay setting, or between decay settings, clears the maps and W
+and starts from `last[0]` drawn once (the preview of 3.5).
 
-Latency from a settings change to the first correct picture: configure (25-50 ms measured) + the first fill and read
-(at most one fill, <= 33 ms) + drawing (Fill plan: ready before the next step) + at most one screen step. About 70-130
-ms. Today it is about the same, but stale frames can be drawn into the blanked area before it.
+### 3.5 Settings changes: preview, mapping key, hardware generation
+
+A knob spins at 8-10 detents a second; a new configuration settles in 70-130 ms. Blanking until the new configuration
+shows would blank for the whole spin. So:
+
+- **Frames carry their own conversion.** A batch is decoded with the settings it was acquired under (`Pipe::feed_*`
+  takes the batch's `Settings`; `draw_frame_codes` takes its `code_map`). Its samples are volts at times relative
+  to its trigger point. So a frame drawn under a newer display mapping is placed correctly: an old V/div, offset or
+  time base frame lands where its signal belongs, only its clip range or window width differs.
+- **The mapping key** is what turns volts and times into pixels: time base, delay, V/div, offset, channel set, dots,
+  zoom, size. It is fixed per batch at its first claim (the batch keeps the `View` it was first drawn under, so all
+  its shares share one mapping). A published batch of another mapping key is dropped by the UI (pixels in the wrong
+  place); its frames are not redrawn.
+- **The hardware generation** (`gen_acq`, raised when `configure` runs: depth, k, coupling, bandwidth, trigger,
+  acquisition mode) does not invalidate the picture. Live and deep frames after a depth change may share a picture;
+  with one weight model (3.3, step 3) that is correct, so `depth_mix_report` becomes step 3's test, not step 1's. A level, slope or coupling change keeps the old batches valid as
+  pictures. It matters to the records: measurements and Single take only the current generation. The queue is
+  cleared on reconfigure, and a fill that `changed()` ended under the old configuration is dropped.
+- **Preview.** On a mapping change the UI draws `last[0]` once under the new mapping as the picture (W = w, window of
+  1), at the next step. The first batch drawn under the new mapping replaces it. During a spin the picture is a
+  preview or a real batch at every step, never blank and never at old pixel positions under new labels.
+
+Input to photon: the preview at the next step (<= 33 ms). The first batch under the new mapping: the batches in
+flight are dropped, the next one is drawn under the new view (fill + read + draw, <= about 70 ms). A batch of the new
+hardware configuration: configure (25-50 ms measured) + fill + read + draw, about 70-130 ms.
 
 ### 3.6 Grading
 
 Three options. Numbers for a frame weight w = 24, 30 pictures/s.
 
-**(A) Per picture, exact weight.** Clear per picture, picture = the batches merged in this step. Brightness = count / W
-with W = sum of the weights of the frames in the maps.
+**(A) Per picture, exact weight.** Clear per picture, picture = the newest whole batch. Brightness = count / W, W = sum
+of the frame weights in the maps.
 - Brightness of the core is exact whatever the frame count.
-- But the visible noise band depends on the frames n in the picture. A pixel hit with probability p per frame shows
-  with probability 1-(1-p)^n. At p = 0.1: n = 1: 10 %, n = 6: 47 %, n = 13: 75 %, n = 27: 94 %.
-- Batches of 13 and 27 frames alternating (sparse events, stutter.md) or a 1-frame picture (the 2ac0ca1 shots)
-  change the band visibly.
-- A step without a batch shows the previous picture again: unchanged, no dip.
+- The visible noise band depends on the frames n in the picture. A pixel hit with probability p per frame shows with
+  probability 1-(1-p)^n. At p = 0.1: n = 1: 10 %, n = 6: 47 %, n = 13: 75 %, n = 27: 94 %.
+- Batches of 13 and 27 alternating (sparse events) or of 3 change the band visibly.
+- No ghost: a picture holds one batch.
 
 **(B) Exponential decay over wall-clock time, constant tau, normalised by the decayed W.**
-- N_eff = rate x tau. At 180 frames/s and tau = 33 ms, N_eff = 6.
-- A missing batch changes the picture only by its share of N_eff.
-- But the previous picture remains at e^-1 = 37 % after one screen frame and 14 % after two: a moving trace (offset
-  knob, drift) smears over 2-3 pictures. That is a ghost at a setting called "minimum".
-- u16 counts: a pixel of count 24 decays below 1 after tau x ln 24 = 3.2 tau. At tau = 33 ms that is 105 ms, so below
-  about 10 frames/s the trace vanishes between frames. Avoiding that takes either float maps (2x memory and bandwidth)
-  or holding the decay while no frames come.
-- Cost: one pass over all maps per step, 4 x 970 x 448 u16 = 1.7 M operations, about 1-2 ms on the A72 with NEON,
-  plus `phz`.
+- N_eff = rate x tau. At 180 frames/s and tau = 33 ms, N_eff = 6. A missing batch changes the picture by its share.
+- The previous picture remains at e^-1 = 37 % after one screen frame and 14 % after two: a moving trace smears over
+  2-3 pictures. A ghost at a setting called "minimum".
+- Cost: one decay pass over all maps per step, about 1-2 ms on the A72 plus `phz`, and the precision problem below.
 
-**(C) A frame-count window, exact weight.** The picture is the newest whole batches until they hold at least N frames.
-N = the frames that arrived per screen frame, smoothed. Brightness = count / W. The window applies to live triggered
-batches only. Roll and scan frames (the sweep so far), STOP, Single done, history and segment replay use a window of
-1 (3.4).
-- The band visibility then varies only within [N, N + one batch), not from 1 to 27.
-- A step without a batch keeps the same window: the same picture.
-- An older batch stays in the picture only while the newest ones hold fewer than N frames: at most one batch,
-  about 33 ms, and only when batches are small.
-- No decay pass, no float maps.
-- A batch shown in two consecutive pictures (when the newest holds fewer than N frames) is a one-batch ghost at
-  full weight. It is C's counterpart of B's ghost, bounded to one batch.
-- Cost: the picture is rebuilt each step from the 1-3 batches in the window. That is 1-3 map adds, 1-2 ms on the A72,
-  with no subtraction and no saturation case (a batch is at most 27 frames x 24 = 648 per pixel).
+**(C) A capped frame-count window, exact weight.** The picture is the newest whole batches until they hold at least
+N frames (N = frames per screen frame, smoothed), capped at 3 batches and at an age of 2 screen frames (67 ms).
+Brightness = count / W. Rebuilt each step from the window's batches (1-3 map adds, 1-2 ms on the A72, no subtraction,
+no saturation: a batch is at most 27 x 24 = 648 per pixel).
+- Band visibility varies within [N, N + one batch), not from 3 to 27.
+- A batch shown in two consecutive pictures is a one-batch ghost at full weight, at most 67 ms old.
+- A rate drop cannot leave seconds of ghost: the age cap empties the window to the newest batch.
+- Live triggered batches only; roll, scan, STOP and replays use a window of 1.
 
-What the 2ac0ca1 shots were: a band-width effect, not a brightness effect. A picture of one frame has a narrower union
-of spans. count / W normalises brightness, but cannot widen that band. So per-picture pictures (A, C) need whole
-batches and a floor on the frames in a picture; decay (B) does not. That trade-off, more than the ghost, is the
-user decision behind the choice.
+The 2ac0ca1 shots were a band-width effect: a picture of one frame has a narrower union of spans. count / W
+normalises brightness but cannot widen the band. So A and C need whole batches, and C also a floor on the frames in a
+picture; B needs neither. The user chooses between A and C (5-line comparison and pictures below); B is not
+offered at Min because of its ghost.
 
-**Choice:**
-- **Minimum persistence: C.** It keeps replacement semantics (no exponential ghost), makes the brightness exact, and
-  bounds band jitter by the batch size. A cannot hold band jitter at sparse events or partial pictures. B puts a
-  ghost on a setting meant to have none.
-- **Persistence > minimum: B with tau = the persistence (100 ms .. 10 s), normalised by the decayed W.** There the
-  ghost is the feature.
-  - The decay stops when no frames come (STOP, Single done, replay), so the last picture does not fade.
-  - The 100 ms setting meets the u16 floor below about 3 frames/s. There the decay is applied only on steps that
-    bring frames.
-- **Infinite:** no decay. On saturation counts and W halve together (`Phosphor::halve`).
-- **Saturation above Min:** the steady count is about w x rate x tau. At 24 x 1000 frames/s x 3 s it is 72,000,
-  above u16. So B halves counts and W together whenever a pixel nears saturation (`Phosphor::halve`), as Infinite
-  does. Without that, B holds only up to rate x tau of about 2,700.
-- **Decay to zero:** today's halving keeps `.max(1)`, so a pixel never reaches 0. With count / W and the LUT floor
-  for any hit, those residual 1s would be a permanent faint ghost. In B the decay rounds to 0 below one count.
-  `.max(1)` stays only for Infinite's halving, where keeping rare hits is the point.
-- **Colour grade:** count / W per pixel through the heat LUT. Same normalisation, merged channels summed.
+**Persistence > Min: B with tau = the persistence, in u32 fixed point.** Today's decay, `(x * k) >> 16` in u16,
+truncates: it removes about 1 per step from small counts, so a single hit (24) is gone in 0.8 s at "10 s". Options:
+- deferred decay (apply when the accumulated factor drops below about 0.94): still truncates, about 1 count per
+  application, so a single hit is still gone well before tau at 10 s;
+- stochastic rounding: unbiased, but faint pixels sparkle from picture to picture;
+- u32 counts in 16.16 fixed point: exact to 2^-16 per step. Memory 2x: 4 x 970 x 448 x 4 bytes = 7 MB for `ph`, 7 MB
+  more with zoom. The decay pass costs about the same on the A72.
 
-compress's view (answers, 2026-11-14): time decay plus one weight model everywhere, batch-atomic merging then
-unnecessary for brightness. I take B above minimum. At minimum, C needs whole batches, so 3.2 stays.
+Chosen: u32 fixed point for the persistence maps only (Min keeps u16 batch maps and the window). A single hit (24)
+stays above one count for tau x ln 24 = 3.2 tau, so it is visible for at least tau. A pixel below one count goes to 0,
+so no residual ghost. W decays in the same fixed point. Near saturation counts and W halve together. The decay stops
+when no frames come (STOP, Single done, replay). Infinite: no decay; on saturation halve with `.max(1)`, which keeps
+rare hits.
+
+**Colour grade:** count / W per pixel through the heat LUT, merged channels summed. Zoom: `phz` with its own W.
 
 ### 3.7 GPU upload and CPU budget per step
 
-- **GPU:** the UI copies the changed rows of the picture maps into the arena (`gpu.rs`, today: copy 0.6 ms; helper
-  upload 2.3 ms, draw 7 ms, on its own core time). New: one reference per channel, 1/W, in the frame message instead
-  of `vmax`. The LUT is unchanged in form. No protocol change beyond that field.
-- **Screen step budget** (33.3 ms on the first A72; measured today at setup B 200 ns: step 6 ms, render 2.9 ms):
-  - merge into the window: <= 2 ms
-  - grade: <= 0.5 ms
-  - render + arena copy: <= 6 ms
-  - target step p99 <= 15 ms, leaving room for menus and measurements.
-- **A53:** per frame today 0.5-2.7 ms of worker time (setup A/B, probe comp). At 1100 frames/s x 1.9 ms that is 2.1
-  cores of 4. Target <= 70 % average per little core in the worst measured mode. The FrameCap keeps batches to what
-  the workers draw in time.
+- **GPU:** the LUT maps count / vmax today. With vmax = W it computes count / W exactly, so neither the protocol nor
+  the shader changes: the UI passes W where it passed `vmax`. The UI copies the changed rows of the picture into the
+  arena (today: copy 0.6 ms; helper upload 2.3 ms and draw 7 ms on its own core).
+- **Screen step** (33.3 ms on the first A72; today at setup B 200 ns: step 6 ms, render 2.9 ms): merge and window
+  rebuild <= 2 ms, decay pass (persistence only) <= 2 ms, grade <= 0.5 ms, render and arena copy <= 6 ms. Target step
+  p99 <= 15 ms.
+- **A53:** per frame today 0.5-2.7 ms of worker time. At 1100 frames/s x 1.9 ms that is 2.1 cores of 4. Target <= 70 %
+  per little core in the worst mode. No map adds on the A53 (3.2).
+- **Memory:** the window holds at most 3 batches of shares (3 x up to 4 shares x 3.5 MB worst case, used channels
+  only), plus 7-14 MB of u32 maps with persistence. Bound: RSS growth <= 60 MB against today.
+
+### 3.8 Pacing with sparse events
+
+"No hiccups" includes setup B at its present rail (1650 events/s at 5.1 V): batches came every 34-40 ms against
+33.3 ms screen steps, 2-5 % empty pictures (stutter.md). C keeps such a picture steady (the window holds), but the
+trace still updates late. The Fill plan should end the fill so a batch is ready every screen step when events are
+rare: the fill is planned from the measured rest (arm, first trigger, read) and shortened when rest + fill exceeds a
+frame, down to `FILL_MIN`. Scheduled as step 8.
 
 ## 4. Acceptance criteria (unitlab)
 
 Setups:
 - probe comp CH1 (100 mV/div, 0.15 V, DC) at 200 ns, 5 us, 200 us (100 k) and 1 ms (10 M, deep);
-- setup B at 200 ns and 5 us, trigger 5.05 V (the rail now; stutter.md sparse section);
+- setup B at 200 ns and 5 us, at 5.05 V and at 5.1 V (sparse events);
 - setup A at 10 us;
-- 2 channels at 5 us.
+- 2 and 4 channels at 5 us (worst case).
 
-Each in lines and dots. Persistence Min, plus 500 ms at probe comp 200 us.
+Each in lines and dots; persistence Min, and 500 ms and 10 s at probe comp 200 us.
 
 | Criterion | Target | How |
 |---|---|---|
 | fps | >= 29.5 | `:SYSTem:STATe?` fps |
-| gap p99 | <= 45 ms where trigger events >= 2 per screen frame | pacing line |
-| empty pictures | <= 1 % (same condition) | pacing line |
-| picture steadiness | over 20 screenshots: trace pixel count std <= 2 %, mean brightness std <= 2 % | `tools/oos-stress/shotstats.py trace` |
-| stale frames drawn | 0 | new `stale` counter; host test |
-| settings change to first correct picture | <= configured + 100 ms, no stale picture | pacing settle fields (`first`, `steady`) over 20 time-base and V/div changes |
-| forced or partial merges | 0 | pipe counters |
-| A53 load | <= 70 % average per little core | `/proc/stat` (`oos-baseline.py`) |
-| UI step p99 | <= 15 ms | status step, pacing pass |
-| dropped frames | not more than today in the same set-up | counters |
+| gap p99 | <= 45 ms where events >= 2 per screen frame | pacing line |
+| empty pictures | <= 1 % (same condition), also at 5.1 V after step 8 | pacing line |
+| picture steadiness | 20 screenshots: trace pixel count std <= 2 %, mean brightness std <= 2 % | `shotstats.py trace` |
+| input to photon per knob | preview <= 1 step; first batch under the new mapping <= 70 ms; new configuration <= configured + 100 ms | pacing settle fields, new `preview` and `age` fields |
+| continuous spin | 2 s spin of offset, trigger level and time base: no picture older than 150 ms, no frozen or blank trace | pacing `age` (newest frame in the picture) p100; screenshots every step |
+| RUN/STOP/RUN, Single | brightness of the stopped picture within 3 % of the live one | screenshots |
+| history replay | equal to the live picture of the same record (3 %) | screenshots |
+| rare-pixel retention | a pixel hit once stays visible >= tau at 500 ms and 10 s | host test; probe comp single-shot screenshots |
+| stale or partial | `stale` drawn 0, partial merges 0 | counters |
+| A53 load | <= 70 % per little core, 4 channels worst case | `/proc/stat` (`oos-baseline.py`) |
+| UI step p99 | <= 15 ms, 4 channels worst case | status step |
+| RSS | growth <= 60 MB against dho804 32041d0 | `/proc/<pid>/status` VmRSS |
+| dropped frames | not more than today | counters |
 
 ## 5. Implementation plan
 
 Each step: one branch, host tests that fail before and pass after, gates (release and debug, arm64, perf-guard,
-`gpu/test-host.sh`), then the unit check named. Days are host work.
+`gpu/test-host.sh`), then the unit check named. Steps 3 and 6 ship behind a temporary `draw.model = old|new` in
+system.conf for A/B on the unit; step 9 removes the flag and the old code after acceptance.
 
 | # | Step | Days | Host tests (fail before) | Unit check | Deletes |
 |---|---|---|---|---|---|
-| 0 | Counters: `stale`, frames and W per picture, partial merges | 0.5 | counters present and counting in pipe tests | status line shows them | none |
-| 1 | Settings generation on frames and batches; full key incl. mdepth/k; the acquisition thread clears the queue on reconfigure and drops a fill that `changed()` ended under the old configuration; drop stale; blank the trace area on the change, the first new batch fills it | 1 | old-generation frames never drawn (pipe and `Source::acquire`); `depth_mix_report` as a test: no live frame in a picture with a deep one after a depth change | settle over 20 changes, `stale` drawn 0 | `hw_stamp` use for the view |
-| 2 | One lines kernel: spans for raw, codes, pairs, records (`draw_ex` lines); Z and sparse per 3.3 | 4 | `pair_raw_mix_report` and `depth_mix_report` x1.000 for raw/pairs/deep/record mixes; record-path pictures alone keep brightness within 3 % | probe comp 200 us and 1 ms; zoom, Single, roll screenshots | `draw_ex` segment joining (lines), deep-raw branch in `draw_frame` |
-| 3 | Dots: one count per sample, W_frame = samples per column, brightness = count / W | 2.5 | dots brightness within 3 % across raw/record frames and sample counts; no dot lost at 100 samples per column | dots set | none |
-| 4 | `BatchUnit`: a batch's shares published together when the last is in; newest frame drawn by the pipe; route C gone. Route D (frames mode, the default) stays: each step's queued frames, newest included, become one batch through the same kernel | 2.5 | 2ac0ca1/988312b tests rewritten: every merged map holds exactly its batch's frames; the newest frame in the same merge; frames mode and batch mode give the same picture for the same frames | stress set, `partial` 0 | `Acc` lists, `Tally`, `Deliver`, `MERGE_WAIT_MAX`, the helper's early `help_done` (the one at the end of the acquisition loop stays), the `fast_ok` frame branch in `Ui::step` |
-| 5 | Measurement reads never draw (RAW_PERIOD raw newest, deep window); `RECORDS_BUDGET` gone | 0.5 | a raw measurement read leaves the picture unchanged; record loop takes only the newest | probe comp 200 us dots/lines | `compress::hold` draw branch, `deepmeas` draw cases, `RECORDS_BUDGET` |
-| 6 | Grading C at Min, B above, freeze when stopped; zoom and colour grade on the same W | 2.5 | brightness within 3 % for 1..27 frames per picture; band pixel count within 2 % for batches of 13/27 alternating; stopped picture constant over 100 steps | full acceptance set | `picture_ref`, `per_frame*`, `pic_frames`, `vmax` follow |
-| 7 | Routes E/F through the same kernel and W (zoom, Z, average, replay at weight w once) | 1.5 | zoom picture brightness equals main; replay picture equals the live picture of the same frame | zoom, replay, Single | 24 x 6 redraw |
-| 8 | GPU: 1/W per channel in the frame message | 0.5 | `gpu/test-host.sh` 0 differ | GPU on/off screenshots equal | `vmax` in the protocol |
+| 0 | Counters: `stale`, `partial`, `preview`, picture `age`, frames and W per picture | 0.5 | counters count in pipe and UI tests | status line shows them | none |
+| 1 | Mapping key split (3.5): batch keeps its first `View`, UI drops published batches of another mapping; preview of `last[0]` on a mapping change; `gen_acq` for records; queue cleared on reconfigure, early-ended fill dropped | 1.5 | a mapping change gives a preview at the next step and never a blank trace; no batch drawn under two mappings; records of an old generation not measured | knob spin, settle over 20 changes | `hw_stamp` use for the view, blank-on-change |
+| 2 | Measurement reads never draw (RAW_PERIOD raw newest, deep window); on `fast_ok` the UI takes only the newest record; off it, all records as before | 0.5 | a raw measurement read leaves the picture unchanged; mask counts, zones, average, Bus trigger, Single, segments unchanged off the fast path | probe comp 200 us dots/lines | `compress::hold` draw branch, `deepmeas` draw cases, `RECORDS_BUDGET` |
+| 3 | One lines kernel: spans for raw, codes, pairs, records (`draw_ex` lines; Z keeps its drawing; sparse per 3.3); behind `draw.model` | 4 | `pair_raw_mix_report` and `depth_mix_report` x1.000; record-path pictures alone within 3 % | screenshot pairs old/new per mode for the user's eye | `draw_ex` segment joining for lines (after step 9), deep-raw branch in `draw_frame` |
+| 4 | Dots: one count per sample, W_frame = samples per column | 2.5 | dots brightness within 3 % across raw/record frames; no dot lost at 100 samples per column over 40 rows | dots set | none |
+| 5 | `BatchUnit`: shares published together, row bounds; newest frame drawn by the pipe; route C gone; frames mode (default) makes each step's queued frames one batch | 2.5 | every merged picture holds whole batches; the newest frame in the same merge; frames and batch mode give the same picture | stress set, `partial` 0 | `Acc` lists, `Tally`, `Deliver`, `MERGE_WAIT_MAX`, the early `help_done` (the loop-end one stays), the `fast_ok` frame branch in `Ui::step` |
+| 6 | Grading and records together: window at Min (C or A per the user), u32 decay above, STOP freeze, persistence change; routes E/F as pseudo-batches with W; zoom and colour grade on W; GPU gets W as vmax. Behind `draw.model` | 4 | brightness within 3 % for 1..27 frames per picture; band pixel count within 2 % for 13/27 alternating; window age <= 67 ms; single hit visible >= tau at 500 ms and 10 s; stopped picture constant over 100 steps; replay equals live; zoom brightness equals main; `gpu/test-host.sh` 0 differ | full acceptance set, screenshot pairs per mode | `picture_ref`, `per_frame*`, `pic_frames`, `vmax` follow, 24 x 6 redraw (after step 9) |
+| 7 | (cut: GPU needs no change, vmax = W, folded into 6) | 0 | | | |
+| 8 | Sparse-event pacing: fill shortened when rest + fill exceeds a frame | 1.5 | Fill plan with rest 24 ms yields a batch every <= 33.3 ms in the pacing tests | setup B at 5.1 V: empty <= 1 % | none |
+| 9 | Acceptance, then remove `draw.model` and the old paths | 1 | full suites | full acceptance set | the old kernels and grade |
 
-About 15 days of host work, plus a unit round after steps 1, 2, 4, 6 and 8 (about 2 days). Risk:
-- **High:** steps 2 and 6 change the look of every mode. Step 2 changes the shape inside the band of every
-  record-path picture (zoom, Single, roll, replay), not its brightness. Step 6 changes the grade. They need
-  screenshots before and after in each mode, and the user's eye.
-- **Medium:** step 4 (concurrency).
-- **Low:** the others.
+Order: 0, 1, 2 (step 2 next to step 1), 3, 4, 5, 6, 8, 9. About 18 days of host work, plus unit rounds after 1, 3, 5,
+6 and 9 (about 3 days). Risk: high for 3 and 6 (look of every mode: A/B by flag, screenshot pairs, the user's eye);
+medium for 1 and 5 (concurrency, knob behaviour); low for the others.
 
 Existing fixes:
 
 | Fix | Fate |
 |---|---|
-| flicker-weight (newest via `draw_frame`) | absorbed by 4, code removed |
+| flicker-weight (newest via `draw_frame`) | absorbed by 5, code removed |
 | dots-flicker (`compress::allowed` false with dots On) | kept |
-| f536413 (deep raw window) | draw part removed by 5 (the window does not draw); the near-only trigger search for the window in `to_record` kept: the measurement window (i0..i1) depends on the trigger point |
-| deliver after merge (`Deliver`) | absorbed by 4 |
-| fix/batch-newest 988312b (`Tally`) | interim only: merge it if the stress round needs it before step 4, which replaces it. The hold-chain residual is not fixed |
-| `picture_ref` (trigger lock-in) | removed by 6 |
-| `RECORDS_BUDGET` (hw only since 8dd7eb0) | removed by 5 |
+| f536413 (deep raw window) | draw part removed by 2; the near-only trigger search for the window in `to_record` kept: the measurement window (i0..i1) depends on the trigger point |
+| deliver after merge (`Deliver`) | absorbed by 5 |
+| fix/batch-newest 988312b (`Tally`) | interim only: merge it if the stress round needs it before step 5, which replaces it. Its hold-chain residual is not fixed |
+| `picture_ref` (trigger lock-in) | removed by 6/9 |
+| `RECORDS_BUDGET` (hw only since 8dd7eb0) | removed by 2 |
 | AC/BW 20M on the fast path | kept; `fast_ok` shrinks further |
-| Fill plan, FrameCap, helper bound | kept; the sparse-event planner stays a separate open item |
+| Fill plan, FrameCap, helper bound | kept; extended by 8 |
 | near-only trigger gate, AC level | kept |
 | live compression, RAW_PERIOD read | kept for measurement, not drawn |
 
-Not in scope: XY and LA (canvas), the sparse-event planner, the auto timeout. A change of the `acq.pipeline` default
-is a separate decision; this plan keeps both modes.
+Decisions taken (team-lead): frames mode stays the default (the unit keeps `acq.pipeline = batch`); Z input keeps
+its current drawing. Open for the user: A or C at minimum persistence.
+
+Not in scope: XY and LA (canvas), the auto timeout.

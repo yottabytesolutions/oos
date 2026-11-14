@@ -32,8 +32,6 @@ struct State {
     reads: VecDeque<f32>,
     readies: VecDeque<f32>,
     ready_ms: Option<f32>,
-    /// screen frames between two reads (`Fill`)
-    frames_per_read: u32,
     last_pass: Option<Instant>,
     last_batch: Option<Instant>,
     slow_logged: u64,
@@ -73,7 +71,7 @@ pub fn pass(t0: Instant, t1: Instant, t2: Instant, t3: Instant) {
 
 /// A batch of the hardware done: `wait_ms` from the arm (or the wait of a batch armed ahead) to the read, `count` of
 /// `asked` frames recorded, `fill_ms` the ring-fill time it had, `read_ms` from the end of the fill to the read done.
-pub fn batch(wait_ms: f32, count: u32, asked: u32, fill_ms: u64, read_ms: f32, frames_per_read: u32) {
+pub fn batch(wait_ms: f32, count: u32, asked: u32, fill_ms: u64, read_ms: f32) {
     let mut s = state().lock().unwrap();
     let now = Instant::now();
     let iv = s.last_batch.map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f32() * 1e3);
@@ -81,7 +79,6 @@ pub fn batch(wait_ms: f32, count: u32, asked: u32, fill_ms: u64, read_ms: f32, f
     push(&mut s.batches, (wait_ms, iv, count, asked));
     push(&mut s.fills, fill_ms as f32);
     push(&mut s.reads, read_ms);
-    s.frames_per_read = frames_per_read;
 }
 
 /// The deposit workers finished the batch read last (drawpipe.rs): the time since its read went into `ready_ms`.
@@ -127,15 +124,13 @@ pub struct Fill {
     /// the rest of a batch besides its fill (smoothed) and its mean deviation
     rest: Option<f32>,
     dev: f32,
-    /// screen frames between two reads: 1, or more while the rest leaves no room for a batch in one frame
-    k: u32,
     /// the read time the last plan aimed at
     target: Option<Instant>,
 }
 
 impl Default for Fill {
     fn default() -> Fill {
-        Fill { rest: None, dev: 0.0, k: 1, target: None }
+        Fill { rest: None, dev: 0.0, target: None }
     }
 }
 
@@ -145,35 +140,29 @@ impl Fill {
     pub fn plan(&mut self, start: Instant, next: impl Fn(Instant) -> Option<Instant>, ready: f32) -> u64 {
         let rest = self.rest.unwrap_or(5.0);
         let ms = |a: f32| std::time::Duration::from_secs_f32(a.max(0.0) / 1e3);
-        // reads one screen frame apart when a batch fits (with its usual spread), else every k-th frame, evenly: an
-        // uneven 33/66 ms mix is the stutter. Down again only with room to spare (no flapping at the edge).
-        let need = rest + 2.0 * self.dev + FILL_MIN_MS;
-        if need > self.k as f32 * FRAME_MS {
-            self.k = ((need / FRAME_MS).ceil() as u32).clamp(1, 4);
-        } else if self.k > 1 && need < (self.k - 1) as f32 * FRAME_MS - 3.0 {
-            self.k -= 1;
-        }
-        // the drawing overlaps the next batch: only the reads need the frames between them, each one `ready` +
-        // `MARGIN_MS` before a step. The first such read time the batch can make, k frames after the last one:
+        // the drawing overlaps the next batch: only the reads need a screen frame between them, each one `ready` +
+        // `MARGIN_MS` before a step. The first such read time the batch can make, the slot after the last one's. (Every
+        // second slot was tried where a batch does not fit one frame: the longer fill brought more frames and a longer
+        // read, and the reads fell 20-30 ms behind their slots; docs/fork/stutter.md.)
         let lead = ready + MARGIN_MS;
         // planned with the rest's usual spread on top: a read a little early still shows in the same picture, a late
         // one a frame later
         let rest = rest + 2.0 * self.dev;
+        // no room for a batch in a frame: as fast as it goes (waiting for a slot would read more frames, longer)
+        if rest + FILL_MIN_MS > FRAME_MS {
+            self.target = None;
+            return FILL_MIN_MS as u64;
+        }
         let mut lower = start + ms(rest + FILL_MIN_MS);
         if let Some(t) = self.target {
-            lower = lower.max(t + ms((self.k as f32 - 0.5) * FRAME_MS));
+            lower = lower.max(t + ms(0.5 * FRAME_MS));
         }
         let Some(step) = next(lower + ms(lead)) else { return FILL_MAX_MS as u64 };
         let read = step - ms(lead);
         self.target = Some(read);
         let fill = read.saturating_duration_since(start).as_secs_f32() * 1e3 - rest;
         // a batch that starts early (the read before was early) fills longer to keep its slot
-        fill.clamp(FILL_MIN_MS, FILL_MAX_MS.max(self.k as f32 * FRAME_MS)).round() as u64
-    }
-
-    /// Screen frames between two reads (`plan`).
-    pub fn frames_per_read(&self) -> u32 {
-        self.k
+        fill.clamp(FILL_MIN_MS, FILL_MAX_MS.max(FRAME_MS)).round() as u64
     }
 
     /// A batch took `took` ms from its start to its read with fill time `used` ms; `full`: the ring filled before it
@@ -224,7 +213,7 @@ pub fn summary() -> String {
     let nb = s.batches.len().max(1);
     let p4 = |v: &mut Vec<f32>| format!("{:.1}/{:.1}/{:.1}/{:.1}", pct(v, 0.5), pct(v, 0.9), pct(v, 0.99), pct(v, 1.0));
     format!(
-        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms every {} frame(s) until fill end {} ms read {} ms drawn {} ms",
+        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms until fill end {} ms read {} ms drawn {} ms",
         s.pics.len(),
         pct(&mut fr, 0.1),
         pct(&mut fr, 0.5),
@@ -238,7 +227,6 @@ pub fn summary() -> String {
         pct(&mut bc, 0.5),
         100.0 * full as f32 / nb as f32,
         pct(&mut fl, 0.5),
-        s.frames_per_read,
         p4(&mut pre),
         p4(&mut re),
         p4(&mut rd),
@@ -251,8 +239,8 @@ mod tests {
     use std::time::Duration;
 
     /// Batches against screen steps every `FRAME_MS`: each batch takes `rest(k)` ms besides its fill, the next one
-    /// starts 0.5 ms after a read. Returns the read times (ms) and the k of the planner at the end.
-    fn run(rest: impl Fn(usize) -> f32, ready: f32, n: usize) -> (Vec<f32>, u32) {
+    /// starts 0.5 ms after a read. Returns the read times (ms).
+    fn run(rest: impl Fn(usize) -> f32, ready: f32, n: usize) -> Vec<f32> {
         let t = Instant::now();
         let at = |ms: f32| t + Duration::from_secs_f32(ms / 1e3);
         let next = |x: Instant| {
@@ -269,21 +257,20 @@ mod tests {
             reads.push(read);
             now = read + 0.5;
         }
-        (reads, f.frames_per_read())
+        reads
     }
 
     // Break it catches: reads that drift against the screen steps (pictures without a new batch next to pictures with
-    // two), an uneven mix of one- and two-frame gaps where the batch does not fit one frame, reads that land after
-    // the step minus the drawing time.
+    // two), reads that land after the step minus the drawing time, a batch that does not fit a frame (its reads then
+    // come as fast as they can, not a frame late on purpose).
     #[test]
     fn reads_come_evenly_before_the_screen_steps() {
         let lead = 5.0 + MARGIN_MS;
-        for (name, rest, k_want) in [("200 ns/div", 7.0f32, 1u32), ("1 us/div", 15.0, 1), ("5 us/div", 32.0, 2), ("slow", 75.0, 3)] {
-            let (reads, k) = run(|i| rest + if i % 3 == 0 { 0.8 } else { -0.4 }, 5.0, 60);
-            assert_eq!(k, k_want, "{}", name);
+        for (name, rest) in [("200 ns/div", 7.0f32), ("1 us/div", 15.0), ("50 us/div", 18.0)] {
+            let reads = run(|i| rest + if i % 3 == 0 { 0.8 } else { -0.4 }, 5.0, 60);
             for w in reads[20..].windows(2) {
                 let gap = w[1] - w[0];
-                assert!((gap - k as f32 * FRAME_MS).abs() < 2.5, "{}: gap {} ({:?})", name, gap, &reads[20..30]);
+                assert!((gap - FRAME_MS).abs() < 2.5, "{}: gap {} ({:?})", name, gap, &reads[20..30]);
             }
             for r in &reads[20..] {
                 // lead before a step, within the jitter of the rest and the whole-ms fill
@@ -291,6 +278,9 @@ mod tests {
                 assert!(ph < 2.5 || ph > FRAME_MS - 2.5, "{}: read {} is {} ms off the lead before a step", name, r, ph);
             }
         }
+        // 32 ms besides the fill (5 us/div): the least fill, a read every 36.5 ms
+        let reads = run(|_| 32.0, 5.0, 40);
+        assert!(reads[20..].windows(2).all(|w| (w[1] - w[0] - (32.0 + FILL_MIN_MS + 0.5)).abs() < 0.6), "{:?}", &reads[20..26]);
         // no step known yet: the former fixed wait
         assert_eq!(Fill::default().plan(Instant::now(), |_| None, 2.0), FILL_MAX_MS as u64);
     }

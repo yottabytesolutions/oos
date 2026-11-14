@@ -1860,7 +1860,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             if let Ok(c) = &got {
                 let asked = seq::frames(&b, &p);
                 let read_ms = fill_end.map_or(0.0, |e| e.elapsed().as_secs_f32() * 1e3);
-                crate::pacing::batch(batch_ms, *c, asked, fill_ms, read_ms, fill.frames_per_read());
+                crate::pacing::batch(batch_ms, *c, asked, fill_ms, read_ms);
                 fill.done(batch_ms, fill_ms, *c >= asked);
             }
             if let Some(x) = pipe {

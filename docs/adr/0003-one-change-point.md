@@ -10,19 +10,30 @@ state: old frames in the picture, statistics over two settings, segments from be
 
 ## Decision
 
-- Once per step, in the change stage: apply commands, `normalize`, then
+- Once per step, in the change stage: apply commands (outbox, store, remote, input), `normalize`, then
   `ChangeSet = classify(previous, current) | requests`.
-- `classify` is one function per group and destructures every group without `..`. A new field does not compile until it has a class or is marked
-  `Unrelated`.
+- `classify` is one function per group and destructures every group without `..`. A new field does not compile
+  until it has a class or is marked `Unrelated`. The same destructure builds `MappingKey` from the `mapping` fields.
+- Internal writers (SINGLE or segments done to STOP, autoset and Bode steps, `auto_step`) do not write `Settings`.
+  They put commands and requests into an outbox that the next step's change stage applies first.
 - Requests cover events with no settings difference: CLEAR, RUN and SINGLE edges, Create mask, and
   `Request::Epoch(token)` from an autoset or Bode stage. Stages return requests as values.
-- `Generations` is private to `change`. `classify` calls `new_gen` on `acq`; request resolution calls `new_epoch`
-  (`epoch` replaces `hw_stamp`).
+- `Generations` is private to `change`. `classify` calls `new_gen` on `acq` and raises `stats_gen` on `stats`;
+  request resolution calls `new_epoch` (`epoch` replaces `hw_stamp`).
 - An autoset or Bode stage gets its epoch by token: it returns `Request::Epoch(token)`, the next step's
-  `ChangeSet::epochs` carries `(token, epoch)`, and the stage accepts only records of that epoch.
+  `ChangeSet::epochs` carries `(token, epoch)`, and the stage accepts only records of that epoch. Conditions
+  (compress):
+  1. The settings commands a stage emits with its token are applied in the same change step, before the epoch, so
+     `AcqIntent` carries the new `gen` and `epoch` together.
+  2. An epoch-only change is an acquisition boundary: the thread drops a batch armed ahead and queued frames of the
+     older epoch.
+  3. A token without an epoch accepts nothing. SINGLE arm, CLEAR and RUN after STOP are seen in the change stage
+     itself and get their epoch in the same step; they never go through a later stage.
+  Tokens are unique per request; several requests in one step may share one epoch.
 - UI state that changes what is acquired or drawn is derived each step as a value, `UiAcq`, and diffed against the
   previous step's value. It is not stored.
-- The change stage produces a board-neutral `AcqIntent`. `app/acq_client` maps it to the board's `AcqWant`.
+- The change stage produces a board-neutral `AcqIntent` and the pipe's `PipeView` from the same `ChangeSet`.
+  `app/acq_client` maps the intent to the board's `AcqWant` through the pure `Board::want`.
 - Run state is handled by transition. A mapping change in STOP redraws from the last record.
 
 Details: architecture.md, [Change detection](../architecture.md#change-detection). The review that shaped this is in

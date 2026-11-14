@@ -13,8 +13,11 @@ anyway, and two composition paths are what the overhaul removes.
 ## Decision
 
 - There is one composition: whole `BatchUnit`s into the accumulator (adr/0005, adr/0006).
-- Frames mode produces the same `BatchUnit`. The UI thread deposits it itself when no worker pipe exists. Where the
-  hardware delivers single frames, a unit is a batch of one frame.
+- Frames mode produces the same `BatchUnit`. The UI thread deposits it itself when no worker pipe exists, one unit
+  per step: the step's queued frames of one mapping key form one unit. Where the hardware delivers a single frame in
+  a step, the unit has one frame.
+- The window's bounds stay N frames and 67 ms of age. The 3-batch cap (the user's option C) also stays; with one unit
+  per step it never binds before the age cap.
 - `acq.pipeline` selects only who deposits (the workers or the UI thread), not how the picture is composed.
 - The pipe has two outputs to main, in every mode: a `BatchUnit` on the fast path and a `RecordBatch` (decoded
   frames) off it (`architecture/picture.md`, Route per batch). Off the fast path the step's records are drawn as one
@@ -25,7 +28,8 @@ anyway, and two composition paths are what the overhaul removes.
 
 - Route D and its `draw_frame` composition are deleted with M9 (`overhaul-migration.md`).
 - Frames and batch mode give the same picture for the same frames. M9 tests this.
-- A batch of one frame carries the full `BatchMeta` and unit overhead. The per-frame cost is small against the
-  deposit. The M9 gate has a pass/fail perf-guard ratio: a one-frame `BatchUnit` with full `BatchMeta` against
-  today's `draw_frame`, on the host and in frames mode.
+- One unit per frame would cost 2 full-map passes per frame at merge: 48 frames per step is about 2.5 GB/s. One unit
+  per step avoids it.
+- The M9 gate has pass/fail perf-guard ratios against today's `draw_frame`, on the host and in frames mode: a
+  one-frame unit with full `BatchMeta`, and a 48-frame step.
 - Merging back to upstream gets harder in this area. Accepted in `overhaul.md`.

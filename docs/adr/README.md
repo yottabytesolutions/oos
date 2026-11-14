@@ -18,3 +18,4 @@ supersedes the old one. The target architecture is `../architecture.md`.
 | [0011](0011-golden-pictures.md) | Golden pictures pin the drawing |
 | [0012](0012-error-policy.md) | Error policy |
 | [0013](0013-one-batch-path.md) | Frames mode becomes the batch path |
+| [0014](0014-domain-crate.md) | The domain is its own crate, oos-core |

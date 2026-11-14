@@ -10,7 +10,12 @@ its context, and a 10k-line file does not.
 
 ## Decision
 
-- New code: at most 400 lines per file (test modules excluded), 60 lines per function, about 12 fields per struct.
+- Hard limits for new code, counted by `cargo xtask check` (auxout, phase 1):
+  - 400 physical lines per file under `src/`, minus items marked `#[cfg(test)]` or `#[test]`;
+  - 60 physical lines per function, comments included, test functions exempt (clippy `too_many_lines` also covers
+    tests);
+  - 12 fields per struct, named or tuple;
+  - a type's inherent `impl` blocks in at most 3 files of its crate (`Ui` is in 33 today).
 - Existing violations are listed in an allowlist with their current size. An entry may only shrink or disappear. The
   checker fails if a listed item grows or a new one appears.
 - The same limits and checker are used for auxout's crates.
@@ -18,8 +23,7 @@ its context, and a 10k-line file does not.
 ## Consequences
 
 - Splitting is part of each migration step. The allowlist shows progress.
-- Plain data records are exempt from the field limit by rule: a struct with no method that takes `&mut self` (for
-  example `BatchMeta`, a settings snapshot). The checker tests that rule. Other exceptions go on the allowlist with a
-  reason.
+- No exemptions by kind. A record with more than 12 fields groups them into sub-structs (`BatchMeta` holds an
+  `AcqSnapshot`). The only exceptions are allowlist entries, which can only shrink.
 - A type that outgrows the limit because it holds variants splits into an enum of per-variant structs
   (`TriggerKind::Edge(EdgeCfg)`), not into an allowlist entry.

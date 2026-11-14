@@ -84,9 +84,30 @@ shorter fill (1 us/div 73 to 58) while the batches per second rose: acquired fra
   full ring or not: 1 % empty, gap p99 41 ms. Setup B at 200 ns/div after it: 0 % empty, gap p99 34 ms, step 6 ms.
 - Probe comp (CH1, 200 us/div, 100 k, dots Auto): no signal on CH1 (Vpp 0.36 V, no frequency): not measured.
 
+## Sparse trigger events (2026-11-14 evening)
+
+Setup B at 5 us/div dropped from 761 to about 395 frames/s, with 1-5 % empty pictures and gap p99 about 70 ms. Not a
+code change: dho804 2631907, built again, gave the same 396/s that evening. The USB rail's overshoots had become
+smaller. Trigger level against the hardware counter on CH2 (level crossings per second) and the pipeline, dho804
+4e2357c, Normal, 5 us/div (1.25 GSa/s, k = 15):
+
+| Level | Crossings/s | Acquired/s | Frames per batch (p50) | Empty | Gap p99 |
+|---|---|---|---|---|---|
+| 5.10 V | 1648 | 401 | 13 | 2 % | 69.5 ms |
+| 5.05 V | 10314 | 775 | 27 | 0 % | 42.6 ms |
+| 5.00 V | 18351 | 776 | 27 | 0 % | 37.7 ms |
+| 4.95 V | 45035 | 839 | 30 | 0 % | 42.6 ms |
+
+At 1650 events a second the fill is event-limited (13 frames in 20 ms). A batch then comes every 34-40 ms against the
+33.3 ms screen frame, and a few pictures have no new batch: root cause 1 again, now from the event rate instead of a
+fixed fill. Ruled out on the unit: `meas.deep_raw = off`, the six measurements of the morning setup, Auto sweep (all
+392-396/s).
+
 ## Status
 
 - Done: instrumentation, delivery with the batch, fill planning, helper bound, frame cap, AC/BW 20M on the fast path,
   record budget, lock-free merge. Host tests, arm64 check, perf-guard pass.
-- Open: the dropped frames on noisy signals (cheaper edge refinement when the smoothed search keeps failing); the auto
-  timeout decision; the probe comp check with the probe on CH1.
+- Done since: the noisy-signal drops (ac-trig.md, trig-gate.md); auto timeout left stock (decision); probe comp on
+  CH1 measured in trig-gate.md.
+- Open, not started: pacing with sparse trigger events. The fill planner should shorten the fill when events are rare,
+  so that a batch still comes every screen frame (section above).

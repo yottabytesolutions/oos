@@ -147,6 +147,21 @@ and test clean and shifted. A constant skew per sample rate becomes the default.
 The guard counts stalls in a row only with the same settings, and a first block lapses after 5 s for one more try.
 A stall pair during a settings change no longer blocks the new settings for good.
 
+## Round 20: skew default, flush batch
+
+The software trigger lies 6.2 to 6.8 record samples after `pre`. This holds at 20 µs, 200 µs and 1 ms/div, with 10k
+and 100k. With `skew` at the measured value the hardware agrees with the software test at all four settings. At
+200 µs/div 10k it now catches the +10 µs shift. At 1 ms/div 10k clean frames pass. A negative skew fails clean frames.
+`mask::SKEW = 6.5` is the default now.
+
+Resolution limit: at 1 ms/div 10k a column is 10 samples (20 µs). A shift of 10 µs, half a column, stays inside the
+column bands and passes in hardware while the software test fails it. 200 µs shifts fail in both.
+
+Stalls after a stalled map: the read-back state machine stays in state 5 across a reconfiguration. New settings armed
+right after a stall stalled twice and were blocked. After every stall the guard now runs one batch without the unit,
+then arms the unit again. The stall count survives that batch, so a map that stalls on its own is still blocked after
+two stalls.
+
 ## On-unit procedure
 
 Probe on CH1 at the probe-comp output. Optional: BNC cable from AUX OUT to CH2 (step 7). Start from a known state:

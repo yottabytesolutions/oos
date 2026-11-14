@@ -61,6 +61,11 @@ pub mod scu {
 
 /// Columns of the table; the stock system always fills all of them and spreads them over the whole record.
 pub const COLUMNS: usize = 1000;
+/// Record samples from `pre` to the trigger. Round 20 measured 6.2 to 6.8 at 20 µs, 200 µs and 1 ms/div with 10k and
+/// 100k. With 6.5 the hardware agrees with the software test at all four. At 0 it missed the shift at 200 µs/div 10k
+/// and failed every clean frame at 1 ms/div 10k.
+pub const SKEW: f64 = 6.5;
+
 /// Largest strobe count the comparator takes (0x1184 bits 9:0).
 pub const MAX_COUNT: u32 = 1023;
 
@@ -123,14 +128,13 @@ pub struct Map {
     pub layout: Layout,
     /// columns with their limits enabled (others test nothing): to find the failing ones
     pub range: (u16, u16),
-    /// record samples between `pre` and where the table puts the trigger (round 19: at 2.5 and 0.5 MSa/s the table
-    /// misses a shift or fails clean frames with the right strobe count; the trigger position is the suspect)
+    /// record samples from `pre` to the trigger, where the table puts it (`SKEW`)
     pub skew: f64,
 }
 
 impl Default for Map {
     fn default() -> Map {
-        Map { domain: Domain::ReadOut, codes_per_div: CODES_PER_DIV, mid: MID, shift: SHIFT, offset: 0.0, invert: false, layout: Layout::Record, range: (0, COLUMNS as u16 - 1), skew: 0.0 }
+        Map { domain: Domain::ReadOut, codes_per_div: CODES_PER_DIV, mid: MID, shift: SHIFT, offset: 0.0, invert: false, layout: Layout::Record, range: (0, COLUMNS as u16 - 1), skew: SKEW }
     }
 }
 
@@ -531,7 +535,8 @@ mod tests {
         // 1000 source bands over the screen: -1..1 V, band 500 (the screen centre) reaches +2 V
         let (mut lo, mut hi) = (vec![-1.0f32; 1000], vec![1.0f32; 1000]);
         hi[500] = 2.0;
-        let d = Map::default();
+        // no skew: the record's columns line up with the screen bands
+        let d = Map { skew: 0.0, ..Map::default() };
         // a record that is the screen: 10,000 samples at 10 MSa/s, trigger in the middle, screen -0.5..0.5 ms
         let same = Timing { points: 10_000, pre: 5000, rate: 10_000_000, mask: 1, screen: (-0.5e-3, 1e-3) };
         let t = table_map(&lo, &hi, &same, 1.0, 0.0, 1.0, &d);

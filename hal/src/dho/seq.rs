@@ -1319,7 +1319,7 @@ mod tests {
         let only = |st: &mut State, s: &Settings| -> Vec<Write> {
             writes(&st.configure(s, None, None).unwrap().0).into_iter().filter(|w| matches!(w.0, 0x1184 | 0x1190 | 0x1194) || w.0 == 0x4020).collect()
         };
-        let band = |h: f32| HwMask { ch: 0, lo: vec![-h; mask::COLUMNS], hi: vec![h; mask::COLUMNS], stop_on_fail: false, clear: 0, map: mask::Map::default() };
+        let band = |h: f32| HwMask { ch: 0, lo: vec![-h; mask::COLUMNS], hi: vec![h; mask::COLUMNS], stop_on_fail: false, clear: 0, map: mask::Map { skew: 0.0, ..mask::Map::default() } };
         let mut st = State::handover(1, None);
         let base = Settings { window: None, ..Settings::default() };
         let on = Settings { hwmask: Some(band(1.0)), ..base.clone() };

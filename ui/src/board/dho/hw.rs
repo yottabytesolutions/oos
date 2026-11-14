@@ -637,23 +637,33 @@ const UNIT_STALLS: u32 = 2;
 const UNIT_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The stall guard of the mask/zone unit: counts arms in a row that found no acquisition with the unit running and
-/// the same settings, and blocks the unit for those settings.
+/// the same settings, and blocks the unit for those settings. After every stall one batch runs without the unit: the
+/// read-back state machine stays in state 5 across a reconfiguration (round 20), so new settings armed right after a
+/// stall stalled as well.
 #[derive(Default)]
 struct UnitGuard {
     /// the settings of the last stall and the stalls in a row with them
     stalls: Option<(UnitKey, u32)>,
     /// blocked settings, when, and whether the block already lapsed once for them
     blocked: Option<(UnitKey, std::time::Instant, bool)>,
+    /// the next batch runs without the unit
+    flush: bool,
 }
 
 impl UnitGuard {
     /// A batch ended: `stalled` = no acquisition, `unit` = the mask or zone unit was running. Returns true when the
     /// unit is now blocked for `key`.
     fn batch(&mut self, stalled: bool, unit: bool, key: UnitKey, now: std::time::Instant) -> bool {
-        if !(stalled && unit) {
+        if !unit {
+            // the flush batch (or no unit at all): the stall count stays
+            self.flush = false;
+            return false;
+        }
+        if !stalled {
             self.stalls = None;
             return false;
         }
+        self.flush = true;
         let n = match self.stalls {
             Some((k, n)) if k == key => n + 1,
             _ => 1,
@@ -668,9 +678,10 @@ impl UnitGuard {
         true
     }
 
-    /// Whether the unit stays off for `key` at `now`; a first block lapses after `UNIT_RETRY`.
+    /// Whether the unit stays off for `key` at `now`: the flush batch after a stall, or a block (a first block lapses
+    /// after `UNIT_RETRY`).
     fn blocks(&self, key: &UnitKey, now: std::time::Instant) -> bool {
-        self.blocked.as_ref().is_some_and(|(k, at, again)| k == key && (*again || now.duration_since(*at) < UNIT_RETRY))
+        self.flush || self.blocked.as_ref().is_some_and(|(k, at, again)| k == key && (*again || now.duration_since(*at) < UNIT_RETRY))
     }
 }
 
@@ -1473,7 +1484,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             {
                 let mut g = out.lock().unwrap();
-                let why = blocked.then(|| "the mask/zone unit stopped the acquisition with these settings: tested in software".to_string());
+                // the flush batch is no block: the UI keeps the hardware view
+                let why = (blocked && !guard.flush).then(|| "the mask/zone unit stopped the acquisition with these settings: tested in software".to_string());
                 if g.unit_blocked != why {
                     g.unit_blocked = why;
                 }
@@ -1892,7 +1904,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             match got {
                 Ok(count) => {
-                    guard.batch(false, false, unit_key(&b, mask_map()), std::time::Instant::now());
+                    let unit = state.mask_ctrl().is_some() || state.zone_ctrl().is_some();
+                    guard.batch(false, unit, unit_key(&b, mask_map()), std::time::Instant::now());
                     crate::compress::note_batch_k(if raw_newest(&b, &p) { b.compress } else { 1 });
                     // LA on: the second, raw read of the same record before anything else touches the FPGA
                     // after a few failures in a row the LA read stops until the next set-up: every failed read waits for
@@ -2579,8 +2592,8 @@ mod tests {
         use oos_hal::dho::mask;
         let (n, pre, rate) = (10_000usize, 5_000u32, 6_250_000u64);
         let dt = 1.0 / rate as f64;
-        // 0 / 3 V, 1 kHz, rising edge at the trigger; `shift` seconds later
-        let wave = |shift: f64| -> Vec<f32> { (0..n).map(|k| (k as f64 - pre as f64) * dt - shift).map(|t| if (t * 1e3).rem_euclid(1.0) < 0.5 { 3.0 } else { 0.0 }).collect() };
+        // 0 / 3 V, 1 kHz, rising edge at the trigger (`mask::SKEW` samples after `pre`, round 20); `shift` seconds later
+        let wave = |shift: f64| -> Vec<f32> { (0..n).map(|k| (k as f64 - pre as f64 - mask::SKEW) * dt - shift).map(|t| if (t * 1e3).rem_euclid(1.0) < 0.5 { 3.0 } else { 0.0 }).collect() };
         // the screen: -0.5..0.5 ms = samples 1875..8125; the mask from it
         let (s0, s1) = (1875, 8125);
         let m = oos_dsp::mask::build(&wave(0.0)[s0..s1], 20, 0.3);
@@ -2611,11 +2624,14 @@ mod tests {
         let other = unit_key(&Settings { depth: 100_000, ..s.clone() }, map);
         let mut g = UnitGuard::default();
         let t0 = std::time::Instant::now();
-        // a stall without the unit, or a good batch in between, does not count
+        // a stall without the unit, or a good batch with it in between, does not count
         assert!(!g.batch(true, false, k, t0) && !g.batch(true, true, k, t0) && !g.batch(false, true, k, t0) && !g.batch(true, true, k, t0));
-        assert!(!g.blocks(&k, t0));
+        // after a stall one batch runs without the unit; it keeps the count
+        assert!(g.blocks(&k, t0) && g.blocks(&other, t0));
+        assert!(!g.batch(false, false, k, t0) && !g.blocks(&k, t0));
         // two in a row with the unit running: blocked for these settings only
         assert!(g.batch(true, true, k, t0));
+        assert!(!g.batch(false, false, k, t0));
         assert!(g.blocks(&k, t0) && !g.blocks(&other, t0));
         // another mapping tries again
         let swept = unit_key(&s, oos_hal::dho::mask::Map { layout: oos_hal::dho::mask::Layout::Clocks, ..map });
@@ -2623,7 +2639,8 @@ mod tests {
         // the first block lapses once; a second block of the same settings stays
         let later = t0 + UNIT_RETRY;
         assert!(!g.blocks(&k, later));
-        assert!(!g.batch(true, true, k, later) && g.batch(true, true, k, later));
+        assert!(!g.batch(true, true, k, later) && !g.batch(false, false, k, later) && g.batch(true, true, k, later));
+        assert!(!g.batch(false, false, k, later));
         assert!(g.blocks(&k, later + UNIT_RETRY * 10));
     }
 
@@ -2635,7 +2652,10 @@ mod tests {
         let (old, new) = (unit_key(&s, map), unit_key(&Settings { depth: 100_000, ..s.clone() }, map));
         let mut g = UnitGuard::default();
         let t0 = std::time::Instant::now();
-        assert!(!g.batch(true, true, old, t0) && !g.batch(true, true, new, t0));
+        assert!(!g.batch(true, true, old, t0));
+        // round 20: the new settings run the flush batch first, then the unit again
+        assert!(g.blocks(&new, t0) && !g.batch(false, false, new, t0) && !g.blocks(&new, t0));
+        assert!(!g.batch(true, true, new, t0) && !g.batch(false, false, new, t0));
         assert!(!g.blocks(&new, t0) && !g.blocks(&old, t0));
     }
 

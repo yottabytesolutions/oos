@@ -18,5 +18,8 @@ its context, and a 10k-line file does not.
 ## Consequences
 
 - Splitting is part of each migration step. The allowlist shows progress.
-- 12 fields is a guide, not a hard limit, for data records such as `BatchMeta`. Exceptions go on the allowlist with a
+- Plain data records are exempt from the field limit by rule: a struct with no method that takes `&mut self` (for
+  example `BatchMeta`, a settings snapshot). The checker tests that rule. Other exceptions go on the allowlist with a
   reason.
+- A type that outgrows the limit because it holds variants splits into an enum of per-variant structs
+  (`TriggerKind::Edge(EdgeCfg)`), not into an allowlist entry.

@@ -10,8 +10,10 @@ step cannot run in a test.
 
 ## Decision
 
-- Ports for IO the step depends on: `Board`, `display::Present`, `input::Source`, `remote::Transport`, `store::Files`,
-  `clock::Clock`, `instruments::Bulk`, `Protocol`.
+- Ports for IO the step depends on: `Board`, `display::Present`, `input::Source`, `clock::Clock`, `instruments::Bulk`,
+  `Protocol`.
+- No port where `std` has the abstraction: remote transports are generic over `Read + Write`, `store` over paths and
+  `Read`/`Write`. Tests use in-memory streams and a temporary directory.
 - Each port has a fake next to it.
 - No port for pure helpers (`font`, `layout`, `json`, `gfx`). A trait with one implementation and no test need is
   ceremony.

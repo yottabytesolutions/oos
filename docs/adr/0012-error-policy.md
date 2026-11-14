@@ -14,6 +14,10 @@ errors block the main thread.
 - The acquisition thread retries hardware errors with bounded backoff and reports them in `Readings::status`.
 - A broken invariant panics in debug and tests, and in release logs one line and recovers to a safe state.
 - Log lines: `oos-ui <area>: <what> <values>`.
+- Mutex locks go through one helper, `lock(&m)`, that takes the guard with
+  `lock().unwrap_or_else(PoisonError::into_inner)`. The release profile has `panic = abort`, so a poisoned lock is
+  never observed there; in debug and tests the panic that poisoned it already fails the run. `unwrap_used` stays
+  denied.
 
 ## Consequences
 

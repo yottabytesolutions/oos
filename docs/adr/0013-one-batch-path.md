@@ -26,5 +26,6 @@ anyway, and two composition paths are what the overhaul removes.
 - Route D and its `draw_frame` composition are deleted with M9 (`overhaul-migration.md`).
 - Frames and batch mode give the same picture for the same frames. M9 tests this.
 - A batch of one frame carries the full `BatchMeta` and unit overhead. The per-frame cost is small against the
-  deposit; perf-guard checks it in M9.
+  deposit. The M9 gate has a pass/fail perf-guard ratio: a one-frame `BatchUnit` with full `BatchMeta` against
+  today's `draw_frame`, on the host and in frames mode.
 - Merging back to upstream gets harder in this area. Accepted in `overhaul.md`.

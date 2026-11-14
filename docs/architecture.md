@@ -35,12 +35,13 @@ Hexagonal where it pays, plain modules where it does not.
 
 | Layer | Contents | May depend on |
 |---|---|---|
-| domain | settings and their commands, change detection, acquisition semantics (settings to an acquisition request), the picture model (weights, windows), measurement and trigger definitions from `dsp` | `dsp`, std |
+| domain | settings and their commands, change detection, `AcqIntent` (settings to a board-neutral acquisition request), the picture window and weights (`picture::window`), measurement and trigger definitions from `dsp` | `dsp`, std; never `board` |
 | application | the step pipeline: stages with typed inputs and outputs, wired by `Session` | domain, port traits |
 | ports | traits the application calls: board, display, input, remote transport, files, clock | domain types |
 | adapters | `board/dho` (hal), DRM, GPU helper, VPU, panel UART and touch, SCPI, HTTP, MCP, VXI-11, USBTMC, setups and `system.conf`, network services | the port they implement, domain types, their device or protocol |
 
-Rules (enforced by the boundary checker, `arch-rules.toml`):
+Rules (enforced by the boundary checker, `arch-rules.toml`; a module belongs to the layer of its longest matching
+prefix, so `picture::window` is domain and the rest of `picture` is application):
 - **Domain is pure.** Domain code does no IO, starts no thread, reads no clock and holds no global state. Time enters
   as an argument: the window's 67 ms age cap and pacing take `now` from the caller, which reads `clock::Clock`.
 - **Adapters stay apart.** Adapters do not call each other. Two adapters that must cooperate do it through the
@@ -61,10 +62,10 @@ files are in brackets where they are split or moved.
 |---|---|
 | `app/session.rs` | creates the stages and channels, runs one step: calls the stages in order and passes their outputs. Holds no domain state |
 | `app/intake.rs` | collects the inputs of one step (input events, remote requests, acquisition events) and turns them into commands and requests |
-| `app/acq_client.rs` | the UI side of the acquisition: publishes `AcqWant`, sends `AcqCmd`, takes `Frame`, `MeasRead` and `Readings` (`architecture/acquisition.md`) |
+| `app/acq_client.rs` | the UI side of the acquisition: maps `AcqIntent` to the board's `AcqWant` and publishes it, sends `AcqCmd`, takes `Frame`, `MeasRead` and `Readings` (`architecture/acquisition.md`) |
 | `settings/` | `Settings` and one module per group: `channels`, `timebase`, `trigger`, `acquire`, `display`, `measure`, `analysis`, `interfaces`. Each: struct, invariants, command enum, `apply`, its part of `classify`, tests [`model.rs`] |
 | `command.rs` | `Command` (top-level enum of the group enums), `CmdError`, the reply type |
-| `change/` | the change stage: owns `Settings`, applies commands; `classify`, `Request`, `ChangeSet`, `Generations` |
+| `change/` | the change stage: owns `Settings` privately and hands out `&Settings`; applies commands, normalizes; `classify`, `Request`, `ChangeSet`, `Generations`, `AcqIntent` |
 | `picture/` | accumulator, grade, window and decay; `picture/deposit/`: the batch pipe, `BatchUnit`, kernels (spans, dots), workers (`architecture/picture.md`) [`drawpipe.rs`, `fastdraw.rs`, `sparse.rs`, drawing parts of `compress.rs`, `wave::Phosphor`] |
 | `records/` | the record store (`last`, history, segments), measurement jobs, statistics, compression and deep-read policy (`architecture/records.md`) [`wave.rs`, `framestats.rs`, `deepmeas.rs`, parts of `ui.rs`] |
 | `compose/` | the screen from layers: plot, traces from the accumulator, overlays, top bar; `gfx`, `font`, `layout` [`ui.rs` rendering] |
@@ -91,8 +92,9 @@ thread.
 |---|---|---|---|
 | `Settings` | the `settings` groups, through `Command`s applied in the change stage | every stage, by `&` | process; saved by `store` |
 | `ChangeSet` | the change stage | stages after it in the same step | one step |
-| `Generations` (`gen`, `epoch`) | `change::Generations::new_gen`, `new_epoch` | acquisition client, records, accumulator | process |
-| `AcqWant` with `gen` and `epoch` | the change stage, through `app/acq_client` | acquisition thread, latest value | until the next change |
+| `Generations` (`gen`, `epoch`) | `change` (`new_gen` from `classify`, `new_epoch` from request resolution) | acquisition client, records, accumulator | process |
+| `AcqIntent` with `gen` and `epoch` | the change stage | `app/acq_client` | one step |
+| `AcqWant` (board-specific) | `app/acq_client`, through `Board::want` | acquisition thread, latest value | until the next change |
 | hardware, batch buffers, `AcqLoop` state | acquisition thread (`board/dho`) | nobody; results leave as `Batch`, `Frame`, `MeasRead`, `Readings` | process |
 | `Readings` (status, counters, acknowledged ids, the read plan) | acquisition thread | UI, latest value | process |
 | a batch's share maps | the worker or helper drawing that share | the accumulator, after the batch is published | one batch |
@@ -105,7 +107,19 @@ thread.
 | a network service's state | that `system` service | its menu page | process |
 | composed picture for remote clients | `present` | web PNG thread, by snapshot | one picture |
 
-These types have no `pub` fields. Groups expose accessors and take commands.
+### Enforced by visibility
+
+Ownership is enforced by the compiler, not by a checker rule:
+- The change stage holds `Settings` in a private field and hands out `&Settings`. Group setters are
+  `pub(in crate::change)`.
+- `Generations` is private to `change`; other stages see `gen` and `epoch` only as values in `ChangeSet` and
+  `AcqIntent`.
+- `ph`, `phz`, W and the window are private fields of the accumulator, exposed only as `&Picture`.
+- Owned types have no `pub` fields.
+
+`arch-rules.toml` covers what visibility cannot: which modules may import which (layers, adapters, exclusive users).
+The checker scans every path in the source, including fully qualified paths inside expressions, not only `use`
+lines.
 
 ## Settings and commands
 
@@ -113,50 +127,73 @@ These types have no `pub` fields. Groups expose accessors and take commands.
 per area comes from the group modules.
 
 Each group module (`settings/trigger.rs`, ...) holds:
-- the group struct, private fields, accessors;
-- its invariants, checked in `apply` (ranges, combinations within the group);
+- the group struct, private fields, `pub` accessors, setters visible only to `crate::change`;
+- its invariants within the group, checked in `apply` (ranges, combinations of its own fields);
 - its command enum (`TriggerCmd::Level(f32)`, `TriggerCmd::Slope(Slope)`, ...);
-- `apply(&mut self, cmd, &Context) -> Result<(), CmdError>`. `Context` carries what the group may read of others:
-  the model's limits, channel scales;
-- its part of `classify`;
+- `apply(&mut self, cmd, &Context) -> Result<(), CmdError>`. `Context` is read-only: the model's limits and the values
+  of other groups the check needs;
+- its part of `classify`, a function of its own;
 - host tests of the invariants and of every command.
+
+A group with variants that carry their own parameters uses an enum of per-variant structs
+(`TriggerKind::Edge(EdgeCfg)`, `TriggerKind::Pulse(PulseCfg)`), not one flat struct of every parameter
+(`extending.md`, [Add a setting](extending.md#add-a-setting)).
 
 `Command` is a top-level enum: `Command::Channel(ChannelCmd)`, `Command::Timebase(TimebaseCmd)`,
 `Command::Trigger(TriggerCmd)`, and so on. Adding a setting touches one group module.
 
 Commands come from the edges only:
-- **input:** a key or knob in a menu context maps to a command (`input/`, `menus/`);
+- **input:** a key or knob in a menu context maps to a command (`input/`, `menus/`). Knobs produce relative commands
+  (`TimebaseCmd::ScaleStep(i32)`); `apply` clamps. A knob turn and a remote write in the same step then both take
+  effect;
 - **remote:** SCPI, HTTP, MCP and VXI-11 parse their text into commands and queries (`remote/`);
 - **store:** a setup file is parsed into a list of commands and applied like any other. The `key = value` names live
   only in `store`.
 
-A change that affects another group, such as a channel scale that clamps the trigger level, is applied by the group
-that owns the changed value. The other group's `Context` check follows in the same apply. There is no second writer.
+### Merge order
+
+The change stage applies one step's commands in a fixed order of sources: store, then remote, then input. Within a
+source, arrival order. A setup load is the base; remote writes apply on top; the panel, where a person acts, applies
+last and wins a conflict between two absolute values of the same field. Relative commands never conflict.
+
+### Normalize
+
+Cross-group constraints have one model: `Settings::normalize()`, run by the change stage after the step's commands and
+before `classify`. It is the only code with `&mut` access to more than one group. It holds today's per-step rewrites:
+- `clamp_offsets` (offsets within the range of the current scale);
+- `fit_platform` (what the board lacks: CH3 and CH4 off on a 2-channel model, an unsupported coupling to DC, LA off
+  without the LA port, sources that point at a missing input);
+- clamps across groups, such as the trigger level within the source channel's range after a scale change.
+
+Normalize runs in a fixed order and is idempotent: running it twice gives the same `Settings`. A value it changes is
+part of the diff like any other, so `fit_platform` switching a channel off is an `acq` change.
 
 ## Change detection
 
-One point per step, two inputs:
+One point per step, inside the change stage:
 
 ```
-ChangeSet = classify(previous Settings, current Settings) | requests
+apply commands -> normalize -> ChangeSet = classify(previous Settings, current Settings, previous UiAcq, current UiAcq)
+                                           | requests
 ```
 
 - **`classify`** compares the groups and maps each changed field to classes.
-  - It destructures every group without `..`, so a new field does not compile until it is placed in a class or in
-    `Unrelated`.
-  - Values the change point writes itself (`gen`, `epoch`, `AvgClear` ids) are outputs, excluded from the diff.
-- **`requests`** are events with no settings difference: CLEAR, the RUN and SINGLE edges, Create mask, and an
-  autoset or Bode stage retried with the same settings. The stage that sees the event calls
-  `change::request(Request)`.
-- **`UiAcq`:** UI state that changes what is acquired or drawn but is not a setting is part of the diff, as a small
-  struct rather than hidden in components. That covers the XY view, the protocol watch (both need raw records), the
-  mask reference, and autoset or Bode being active.
+  - It is split per group from the start (one function per group), and destructures every group without `..`. A new
+    field does not compile until it is placed in a class or in `Unrelated`.
+  - Values the change stage writes itself (`gen`, `epoch`, `AvgClear` ids) are outputs, excluded from the diff.
+- **`requests`** are events with no settings difference: CLEAR, the RUN and SINGLE edges, Create mask, and
+  `Request::Epoch(token)` from an autoset or Bode stage (also a retry with the same settings). Stages return requests
+  as values; the change stage takes them at the next step.
+- **`UiAcq`:** UI state that changes what is acquired or drawn but is not a setting: the XY view, the protocol watch
+  (both need raw records), the mask reference, autoset or Bode being active. It is not stored. Each step derives it as
+  a value from the views' and menus' state (`UiAcq::of`), and the change stage diffs it against the previous step's
+  value.
 
 Classes and their consumers:
 
 | Class | Consumers |
 |---|---|
-| `acq` | `AcqWant` and `gen`; records of an older `gen` after a reconfiguration are not measured |
+| `acq` | `AcqIntent` and `gen`; records of an older `gen` after a reconfiguration are not measured |
 | `mapping` | accumulator: preview, drop maps of the old mapping key (`architecture/picture.md`) |
 | `phosphor` | accumulator: maps and weights reset |
 | `stats` | measurement statistics and results |
@@ -168,19 +205,32 @@ Classes and their consumers:
 
 A keyed cache needs no class. The decode cache is keyed by record and decoder settings, so its key decides.
 
-Generations: two numbers, written only by `Generations::new_gen() -> u64` and `Generations::new_epoch() -> u64`.
-- **`gen`** rises when the `ChangeSet` contains `acq`. The acquisition thread tags every output with the `gen` it
-  applied.
+### Generations
+
+Two numbers, private to `change` (`Generations`):
+- **`gen`** rises when the `ChangeSet` contains `acq`. `classify` calls `new_gen`. The acquisition thread tags every
+  output with the `gen` it applied.
 - **`epoch`** rises on requests whose settings may not differ: SINGLE armed, CLEAR, RUN after STOP, an autoset or Bode
-  stage (also a retry). It replaces `hw_stamp`.
-- Both return the new value at once, so an autoset or Bode stage that keeps it in the same call has the current
-  one. `classify` and `request` both call it. The pair is published inside `AcqWant`, so it is always consistent.
+  stage. Request resolution calls `new_epoch`. It replaces `hw_stamp`.
+- **Tokens instead of synchronous returns.** An autoset or Bode stage runs in `views`, after `change`, and cannot
+  write generations without breaking the stage order (adr/0004). It returns `Request::Epoch(token)`. The next step's
+  change stage resolves it, and `ChangeSet::epochs` carries `(token, epoch)`. The stage then accepts only records of
+  that epoch. Cost: one step (33 ms) before its acquisition starts, against stages that wait several batches anyway.
+- The pair is published inside `AcqIntent`, so it is always consistent.
 - Readers filter on the pair: the picture by its mapping key, records and measurements by `epoch` and `gen`
   (`architecture/records.md`).
 
+### Acquisition intent
+
+The change stage produces `AcqIntent`: what to acquire, in the domain's terms (channels, time base, depth, trigger,
+modes, the raw and deep-read needs, the unit wants), with `gen` and `epoch`. It is board-neutral. `app/acq_client`
+maps it to the board's `AcqWant` through `Board::want(&AcqIntent)` (`architecture/acquisition.md`). The domain never
+names a board type.
+
+### Run state
+
 Run state goes by transition, not by value:
-- `run`, the trigger sweep together with `run`, and the fields that `clamp_offsets` or `fit_platform` rewrite each
-  step are not settings changes.
+- `run` and the trigger sweep together with `run` are not settings changes.
 - Each consumer acts on the run-state transition of the step. RUN to STOP keeps the picture; STOP to RUN restarts the
   average.
 - A mapping change in STOP redraws from the last record and never blanks.
@@ -193,8 +243,8 @@ is in the code; no stage relies on a side effect of another.
 ```
 intake     (input, remote requests, BatchUnits, RecordBatches, Frames, MeasReads, Readings)
                                                        -> commands, requests, acquired data
-change     (commands, requests)                        -> Settings', ChangeSet, AcqWant, AcqCmds
-acquire    (AcqWant, AcqCmds)                          -> published to the acquisition thread
+change     (commands, requests, UiAcq)                 -> Settings', ChangeSet, AcqIntent, AcqCmds
+acquire    (AcqIntent, AcqCmds)                        -> AcqWant through Board::want, published to the acquisition thread
 records    (RecordBatches, Frames, MeasReads, ChangeSet) -> records, record store, the step's pseudo-batch
 accumulate (BatchUnits, pseudo-batch, ChangeSet, now)  -> picture maps and weights
 measure    (records, ChangeSet)                        -> results, statistics
@@ -208,8 +258,10 @@ reply      (results)                                   -> answers to remote quer
 records form one pseudo-batch (`architecture/picture.md`). History and segments are part of the record store, so
 `records` updates them, not `measure`.
 
-A remote query is answered in `reply` from that step's state. A query that needs a newer record waits for a later
-step; the transport thread holds the connection.
+A remote query is answered in `reply` from that step's state. Each query carries a typed wait condition: `After {
+gen, epoch }`, set by the commands that came before it on the same connection. `:SINGLE; :WAV:DATA?` therefore waits
+for a record of the SINGLE's epoch and never returns the old record. The transport thread holds the connection while
+the query waits.
 
 ## Threads and messages
 
@@ -277,14 +329,16 @@ Records and measurements: `architecture/records.md`.
 | `hal::dho::bus::Bus` | `Bar1` | `Recorder` (exists) |
 | `display::Present` | DRM dumb buffers, the GPU helper | `display::fake`: keeps the last layers for picture comparison |
 | `input::Source` | panel UART, touch evdev | scripted events |
-| `remote::Transport` | TCP, the Unix FIFO | in-memory streams |
-| `store::Files` | the file system (`/oos`, `/tmp`, USB storage) | in-memory files |
 | `clock::Clock` | the system clock | a stepped clock |
 | `instruments::Bulk` | usbfs | scripted replies (exists in `usbtmc`) |
 | `protocols::Protocol` | the decoder modules | `protocols::example` |
 
 A fake lives next to its trait, in a `fake` module or under `#[cfg(test)]`, so a test of any stage runs without the
 unit.
+
+No port where `std` already has the abstraction. Remote transports are generic over `Read + Write` (a `TcpStream`,
+the FIFO, or an in-memory `Cursor` pair in tests). `store` takes paths and `Read`/`Write`; its tests use a temporary
+directory.
 
 ## Error handling
 

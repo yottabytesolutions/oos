@@ -11,10 +11,13 @@ limits, boundary rules, perf-guard, `gpu/test-host.sh`).
 
 1. **Group.** Pick the group in `settings/` that owns the value. Add the private field, its default and an accessor.
    If no group fits, the setting is probably UI state (menus, views), not a setting.
-2. **Invariants.** Add the range or combination check to the group's `apply`. Cross-group effects go through
-   `Context` ([Settings and commands](architecture.md#settings-and-commands)).
+2. **Invariants.** Add the range or combination check within the group to its `apply`. A constraint across groups
+   (a clamp by another group's value) goes into `Settings::normalize()`
+   ([Normalize](architecture.md#normalize)), never into `apply`.
+   If the group passes about 12 fields because it holds variants with their own parameters, split it into an enum of
+   per-variant structs: `TriggerKind::Edge(EdgeCfg)`, `TriggerKind::Pulse(PulseCfg)`.
 3. **Command.** Add a variant to the group's command enum, for example `AcquireCmd::Foo(Foo)`.
-4. **Class.** Add the field to the group's `classify`. It does not compile until you do. Choose the classes from
+4. **Class.** Add the field to the group's `classify` function. It does not compile until you do. Choose the classes from
    [Change detection](architecture.md#change-detection). If the setting changes what the hardware acquires, it is
    `acq`. If it changes where samples land on screen, it is `mapping`. If it changes nothing that holds state, it is
    `Unrelated`.
@@ -22,8 +25,8 @@ limits, boundary rules, perf-guard, `gpu/test-host.sh`).
    the default.
 6. **Edges.** Expose it: a menu item ([Add a menu item](#add-a-menu-item)), an SCPI command
    ([Add an SCPI command](#add-an-scpi-command)). Both produce the new command.
-7. **Consumer.** If the acquisition needs it, extend the acquisition request in `board/` and its translation in
-   `board/dho`. The domain does not see hal types.
+7. **Consumer.** If the acquisition needs it, add it to `AcqIntent` in `change/` and map it in `Board::want` in
+   `board/dho`. The domain does not see board or hal types.
 
 Tests:
 - group unit tests for the invariants and the command;
@@ -44,7 +47,8 @@ Tests:
 
 Tests:
 - parser test: text to command, text to query, malformed text to the right error;
-- a host test through `remote::Transport`'s in-memory stream: send, step, read the answer.
+- a host test over an in-memory `Read + Write` stream: send, step, read the answer;
+- a set followed by a query on the same connection answers after the set (`After { gen, epoch }`).
 
 ## Add a measurement
 
@@ -63,7 +67,8 @@ Tests:
 ## Add a menu item
 
 1. **Item.** Add the item to its page in `menus/`. An item has a label, a value reader (from settings or a component's
-   state) and an action that returns a `Command` or a component event. It writes nothing itself.
+   state) and an action that returns a `Command` or a component event. It writes nothing itself. A knob on the item
+   returns a relative command (`Step(i32)`).
 2. **Layout.** The menu layout lint (`menus/lint`) runs in the tests. It checks label width and page height.
 3. **Script access.** If the item should be reachable from scripts and unitlab, give it a stable id in `menus/script`.
 

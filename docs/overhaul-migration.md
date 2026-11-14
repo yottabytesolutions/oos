@@ -72,29 +72,32 @@ decided when a share is drawn, so a share drawn just before a change and merged 
 
 ### M2: one change-detection point (D1a)
 
-Design: [Change detection](architecture.md#change-detection), adr/0003. It includes compress's four review changes:
-1. Requests next to the diff (`change::request`).
-2. `Generations::new_gen` and `new_epoch` as the only writers of `gen` and `epoch` (`epoch` replaces `hw_stamp`), returning the
-   value at once.
-3. `UiAcq` for UI state that changes acquisition or drawing: XY, the protocol watch, the mask reference, autoset or
-   Bode active.
+Design: [Change detection](architecture.md#change-detection), adr/0003. It includes compress's four review changes and
+upstreamarch's review:
+1. Requests next to the diff, returned by stages as values.
+2. `Generations`, private to the change point: `classify` calls `new_gen`, request resolution calls `new_epoch`
+   (`epoch` replaces `hw_stamp`). Autoset and Bode get their epoch by `Request::Epoch(token)`.
+3. `UiAcq` derived each step as a value: XY, the protocol watch, the mask reference, autoset or Bode active.
 4. Run state by transition.
+5. `normalize` before `classify`: `clamp_offsets` and `fit_platform` move in and stop running elsewhere each step.
 
 Classes: `acq`, `mapping`, `phosphor`, `stats`, `mask`, `zone`, `hw_average`, `history`, `math`. Measurement state
 (the analysis results, statistics and `meas_n`) is in `stats`. No `decode` class: the decode cache is keyed.
 
-`classify` destructures today's flat `Model` without `..`, with the fields grouped in the order of the future settings
-groups so that M13 can split it without reclassifying.
+`classify` is split per future settings group from the start: one function per group, each destructuring its fields
+of today's flat `Model` (one destructuring of `Model` without `..` checks that every field belongs to a group). M13
+then moves the fields without reclassifying.
 
 Tests, failing before:
 - every class: changing a representative field resets exactly its consumers;
 - SCPI and HTTP writes (`store::set`) reach the same point as a knob;
 - a mapping change in STOP redraws from `last[0]` and never blanks;
-- an autoset or Bode stage that stores the stamp in the same call sees the new generation;
+- an autoset or Bode stage accepts only records of the epoch its token resolved to;
+- `normalize` is idempotent, and `fit_platform` switching a channel off yields `acq`;
 - CLEAR, the RUN and SINGLE edges and Create mask reset their consumers with no settings difference.
 
 Deletes: `settings_changed`, `mark_changed`, the 16 `dirty_map = true`, the `hw_stamp` bumps in `ui.rs`, `ui/bode.rs`
-and `ui/autoset.rs`. Risk: medium. Every clear and reset moves to one point.
+and `ui/autoset.rs`, the per-step calls of `clamp_offsets` and `fit_platform` outside the change point. Risk: medium. Every clear and reset moves to one point.
 
 ### M3: acquisition thread split (D1b)
 
@@ -132,7 +135,8 @@ statistics); probe comp and setup B smoke for M3.
 Design: [Threads and messages](architecture.md#threads-and-messages), adr/0007. This supersedes "split `Shared` only if
 races show" in `fork/draw-architecture.md` 3.9: the overhaul splits it as part of the structure.
 
-- `AcqWant` with `gen` and `epoch` from M2; `AcqCmd` with ids and `Readings` replace the remaining `Shared` fields,
+- `AcqIntent` (board-neutral, from the change point) and `Board::want`, which maps it to the board's `AcqWant` with
+  `gen` and `epoch` from M2; `AcqCmd` with ids and `Readings` replace the remaining `Shared` fields,
   one group per part (M5.1 requests with ids: levels, slots, final; M5.2 the unit readings). Follows
   `architecture/acquisition.md`, Migration 2 and 3. `MeasRead` as its own type comes with M6.
 - Atomics for metrics, one writer each.
@@ -209,26 +213,28 @@ remainder.
 
 ### M14: commands per area
 
-adr/0002. Per-area command enums; menus and input return commands; setup files load as command lists.
+adr/0002. Per-area command enums; menus and input return commands, knobs relative ones; setup files load as command
+lists; the merge order store, remote, input.
 
 Tests, failing before: for every settable key, the SCPI write and the menu action give the same `Settings` and the same
-`ChangeSet`; an out-of-range value returns the same `CmdError` on every edge. Deletes: the string-keyed `store::set`
+`ChangeSet`; an out-of-range value returns the same `CmdError` on every edge; a knob turn and a remote write to the
+same field in one step both take effect. Deletes: the string-keyed `store::set`
 dispatch and every direct write to settings outside `change`. Boundary rules for `settings` and `change` switch to
 enforce.
 
 ### M15: remote adapters on commands and queries
 
-`remote::Transport` with an in-memory fake; `RemoteRequest` to main; SCPI, HTTP, MCP, VXI-11 and the control FIFO parse
+Transports generic over `Read + Write`, tested with in-memory streams; `RemoteRequest` to main; SCPI, HTTP, MCP, VXI-11 and the control FIFO parse
 into `Command` and `Query`; answers come from the `reply` stage.
 
-Tests, failing before: a query answered from one step's state (no mixed values across a change); a slow client does
-not block the step. Deletes: listener-thread access to UI state other than the request channel and the picture
+Tests, failing before: a query answered from one step's state (no mixed values across a change); `:SINGLE;
+:WAV:DATA?` waits for a record of the SINGLE's epoch (`After { gen, epoch }`); a slow client does not block the step. Deletes: listener-thread access to UI state other than the request channel and the picture
 snapshot.
 
 ### M16: stages and `Session` replace `Ui::step`
 
-adr/0004, adr/0008. `Session` wires intake, change, acquire, accumulate, measure, views, compose, present, reply.
-Ports with fakes: `display::Present`, `input::Source`, `clock::Clock`, `store::Files`.
+adr/0004, adr/0008. `Session` wires intake, change, acquire, records, accumulate, measure, views, compose, present, reply.
+Ports with fakes: `display::Present`, `input::Source`, `clock::Clock`; `store` on paths and `Read`/`Write`.
 
 Tests: `Session` end to end on the fakes; a change storm replayed from a command log on the host; golden pictures
 unchanged. Deletes: `Ui::step`.

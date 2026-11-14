@@ -1,18 +1,25 @@
 # Architecture rules for oos-ui, checked by tools/check/ in the gate.
 # Format is provisional until it matches the shared checker's format (auxout). Semantics are fixed:
-# a module may `use` only the modules listed in `may_use`; `forbid` lists paths it must never name.
-# Section anchors refer to docs/architecture.md.
+# - a module may name only the modules listed in `may_use`; `forbid` lists paths it must never name;
+# - the checker scans every path in the source, `use` lines and fully qualified paths inside expressions alike;
+# - a module belongs to the layer whose `modules` entry is its longest matching prefix
+#   (`picture::window` is domain, the rest of `picture` is application).
+# Ownership (who may write which state) is enforced by visibility in the code, not here
+# (architecture.md#enforced-by-visibility).
 
 [limits]                       # architecture.md#size-limits, adr/0010
 file_lines = 400               # test modules excluded
 fn_lines = 60
-struct_fields = 12
+struct_fields = 12             # plain data records exempt, see adr/0010
 allowlist = "tools/check/size-allowlist.txt"   # shrink-only
 
 [layer.domain]                 # architecture.md#layers
-modules = ["settings", "command", "change", "picture::model", "records::measure"]
+modules = ["settings", "command", "change", "picture::window", "records::measure"]
 may_use = ["oos_dsp", "std", "settings", "command", "change"]
-forbid = ["std::fs", "std::net", "std::thread", "std::time::Instant", "std::time::SystemTime", "libc", "oos_hal"]
+forbid = [
+  "std::fs", "std::net", "std::thread", "std::time::Instant", "std::time::SystemTime",
+  "libc", "oos_hal", "crate::board",
+]
 
 [layer.application]
 modules = ["app", "picture", "records", "compose", "views", "menus"]
@@ -24,8 +31,6 @@ traits = [
   "board::Board",
   "display::Present",
   "input::Source",
-  "remote::Transport",
-  "store::Files",
   "clock::Clock",
   "instruments::Bulk",
   "protocols::Protocol",
@@ -41,12 +46,3 @@ no_cross = true                # adapters do not use each other
 "drm" = ["display"]
 "gpu" = ["display"]
 "vpu" = ["display"]
-
-[writes]                       # architecture.md#state-and-ownership
-# Types whose fields are private and whose `&mut` methods may be called only from the listed modules.
-"settings::Settings" = ["change"]           # the change stage owns Settings
-"change::Generations" = ["change"]
-"picture::Accumulator" = ["picture"]
-
-[pub_fields]
-deny_in = ["settings", "change", "picture", "records", "app"]

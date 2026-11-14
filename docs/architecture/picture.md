@@ -59,8 +59,8 @@ UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole 
 ```
 
 - **`BatchUnit`.** The pipe creates one per `Batch`: frame count, `BatchMeta`, mapping key, list of shares. A share
-  is a map set plus its touched rows. When the last share is in, the workers sum the shares by row bands, and the
-  unit is published with one summed map set (README.md, [Maps: workers pre-sum](README.md#maps-workers-pre-sum)).
+  is a map set plus its touched rows. At 3 and 4 channels each worker owns one channel and there is nothing to sum;
+  at 1 and 2 channels the workers sum the shares by row bands, and the unit is published with one summed map set (README.md, [Maps: workers pre-sum](README.md#maps-workers-pre-sum)).
   The UI sees only whole batches.
 - **Mapping key.** It is fixed per batch at its first claim, from `DepositView`, so all shares of a batch use one mapping. It has one
   source: `classify` builds `MappingKey` from exactly the fields it classifies `mapping`, in the same destructure, so a

@@ -818,26 +818,42 @@ for 4 channels on the panel plot (970 x 448 in the benchmarks, map set M = 3.48 
 
 ### Maps: workers pre-sum
 
-- Each worker deposits its claimed frames into its own share maps and records the rows it touched.
-- When the last share of a batch is in, the workers reduce the shares by row bands: each worker sums one band of
-  rows over all shares, touched rows only. The `BatchUnit` then holds one summed map set and its touched-row range.
+A channel's map pair (`ph`, `phz`) on the panel plot is 970 x 448 x 2 maps x 2 B = 1.74 MB. How the work is split
+depends on the channel count, so that no batch needs more than one reduction pass:
+
+| Channels | Split | Reduction |
+|---|---|---|
+| 3 or 4 | by channel: each worker owns one channel's maps and deposits that channel of every frame of the batch; the helper does not deposit | none: the unit is the workers' channel maps side by side |
+| 2 | by channel and frame: two workers per channel claim frames; no helper share | per channel, 2 shares: each of the two workers sums one row band |
+| 1 | by frame: four workers and the helper claim frames | 5 shares, each of the four workers sums one row band |
+
+- Each share records the rows it touched; reduction and the later adds cover touched rows only.
+- Reduction cost, worst case (every row touched, 2 GB/s copy bandwidth): at 1 channel, 5 shares x 1.74 MB read plus
+  1.74 MB written, over 4 workers, is 2.6 MB per worker, 1.3 ms; at 2 channels, 2 x 1.74 MB read plus 1.74 MB written
+  per channel over 2 workers is the same 2.6 MB, 1.3 ms. Budget: p99 <= 1.5 ms per worker.
+- **Who waits for whom.** Nobody blocks on a reduction. A worker that finishes its frames claims the next reduction
+  band of a batch whose shares are all in, as it claims frames. The unit is published when its last band is done. Main
+  never waits: it takes the units that are published at its step. The acquisition never waits for the workers: a full
+  pool drops the batch ([Queues](#queues)). Worst-case batch latency is the slowest share plus one band.
 - Main adds at most 3 map sets per step (the window's units at Min persistence, or one unit into the decay maps), over
-  touched rows only. This removes today's per-share adds on main (about 52 MB of merge traffic per batch with five
-  shares).
-- No arithmetic under a mailbox lock: a share moves by ownership through the SPSC ring.
+  touched rows. This removes today's per-share adds on main (about 52 MB of merge traffic per batch with five shares).
+- No arithmetic under a mailbox lock: a share moves by ownership through its hand-off.
 
 ### Fused accumulation
 
-- One pass over the touched rows adds the unit, applies decay where persistence needs it, and updates the per-column
-  maxima that the grade reads. No separate maxima or decay sweeps.
-- Decay above Min is applied in that pass to the touched rows; rows not touched decay lazily by a per-row age that the
-  next touch or the grade applies. A full-map sweep happens only on a reset.
+- At Min persistence one pass over the touched rows rebuilds the window and updates the per-column maxima that the
+  grade reads. No separate maxima sweep.
+- Above Min, one fused pass over the whole map per step applies the decay, adds the step's unit and updates the
+  maxima (1 to 2 ms, [Performance budgets](#performance-budgets)). Every row decays every step, so replay equals live
+  and the CPU picture equals the GPU picture. There is no lazy decay.
 - A frozen picture (STOP, SINGLE done, replay) does no accumulation work at all.
 
 ### GPU work proportional to change
 
 - The accumulator hands the helper the dirty row ranges of the maps; the helper uploads those rows only. The row
-  compare against the arena copy (`gpu.rs` 460) goes.
+  compare against the arena copy (`gpu.rs` 460) goes. Under persistence above Min every row is dirty every step
+  (the decay touches all of them), so the whole map is uploaded; dirty rows pay off at Min persistence and in a frozen
+  picture.
 - The arena is a pool of 3 fenced buffers per output. Each submission carries a fence (`EGL_KHR_fence_sync`); the
   helper reuses a buffer only after its fence signalled, and waits for a fence before a page flip that needs it. The
   per-composition `glFinish` (`oos-gpu.c` 817) goes.
@@ -938,7 +954,7 @@ after each step may tighten them, never loosen them without a doc change.
 | acquisition overhead per batch (excluding DMA) | p99 <= 1 ms | `acq batch` | unitlab | M3c |
 | DMA completion | CPU per read and read latency per mode | `xdma` | unitlab | M5c |
 | deposit worker, per frame | p99 <= 2.7 ms; load <= 70 % per little core with measurements | `worker` | perf guard (ratio), unitlab | M7 |
-| share reduction, per batch | p99 <= 1 ms per worker | `reduce` | perf guard, unitlab | M9 |
+| share reduction, per batch (1 and 2 channels; none at 3 and 4) | p99 <= 1.5 ms per worker | `reduce` | perf guard, unitlab | M9 |
 | measure job | cheap set p99 <= 2 ms; full set on 4 x 625 k p99 <= 40 ms | `measure` | perf guard, unitlab | M6 |
 | GPU helper | CPU per composition <= 3 ms on the panel, <= 5 ms on HDMI; GPU time <= 10 ms | `gpu cpu`, `gpu time` | `gpu/test-host.sh` ratio, unitlab | M9b |
 | HDMI | >= 29.5 pictures/s alone; >= 15 with the panel, counted when halved | `hdmi` | unitlab | M9b |

@@ -393,10 +393,11 @@ output `&Picture`), so M10 and M16 do not move it again. Gate: the perf-guard ra
 48-frame step against `draw_frame`). Deletes: the `Acc` lists, `Tally` (if fix/batch-newest was merged), `Deliver`, `MERGE_WAIT_MAX`, the
 early `help_done`, the `fast_ok` frame branch in `Ui::step`, route D's `draw_frame` composition.
 
-Data path in M9 ([Maps: workers pre-sum](README.md#maps-workers-pre-sum)): each share records its touched rows; the
-workers reduce the shares of a batch by row bands; main adds at most 3 map sets per step over touched rows; shares move
-through SPSC rings, no arithmetic under a lock. Tests, failing before: main's adds per step are at most 3 map sets with
-5 shares per batch; the reduction allocates nothing. Adds 1 day.
+Data path in M9 ([Maps: workers pre-sum](README.md#maps-workers-pre-sum)): at 3 and 4 channels each worker owns one
+channel; at 1 and 2 channels the workers reduce the shares by row bands; each share records its touched rows; main
+adds at most 3 map sets per step over touched rows; no arithmetic under a lock. Tests, failing before: main's adds per
+step are at most 3 map sets in every channel count; at 4 channels no reduction runs; the reduction allocates nothing
+and no thread blocks on it. Adds 1.5 days.
 
 ### M9b: GPU work proportional to change
 
@@ -422,9 +423,10 @@ picture, window age <= 67 ms, single hit visible, stopped picture constant, repl
 `gpu/test-host.sh` 0 differ). Deletes: `picture_ref`, `per_frame*`, `pic_frames`, the `vmax` follow; the 24 x 6
 redraw after M12.
 
-Data path in M10 ([Fused accumulation](README.md#fused-accumulation)): one pass over touched rows adds, decays and
-updates the column maxima; untouched rows decay lazily; a frozen picture does no work. Test, failing before: a step
-with one touched row band sweeps only that band. Adds 1 day.
+Data path in M10 ([Fused accumulation](README.md#fused-accumulation)): at Min one pass over touched rows rebuilds the
+window and the column maxima; above Min one fused full pass decays, adds and updates the maxima; a frozen picture does
+no work. Tests, failing before: at Min a step with one touched row band sweeps only that band; above Min the pass
+count per step is one; replay equals live. Adds 1 day.
 
 **Unit round 4:** full acceptance set ([drawing acceptance criteria](drawing.md#acceptance-criteria-unitlab)), screenshot pairs per mode.
 
@@ -501,10 +503,10 @@ or `model.rs`, since they no longer exist.
 
 ## Estimate
 
-M0 to M12: about 48.5 days of host work plus six unit rounds (0 to 5) of about half a day: the drawing plan's 22 days
+M0 to M12: about 49 days of host work plus six unit rounds (0 to 5) of about half a day: the drawing plan's 22 days
 with D1a (3 days) replaced by M2.1 to M2.3 (7.5 days), M1 and M5 at about 1.5 days each, M1b at 2 days, M3.0 at 1.5
-days, M5b (memory model) at 2 days, and the performance work of adr/0016 at 13.5 days (M3c 1.5, M3d 2, M5c 1, M9b 3,
-the data path in M5, M6, M7, M9 and M10 6). G1 and G2 add 3.5 days of gate work by auxout, in parallel. M13 to
+days, M5b (memory model) at 2 days, and the performance work of adr/0016 at 14 days (M3c 1.5, M3d 2, M5c 1, M9b 3,
+the data path in M5, M6, M7, M9 and M10 6.5). G1 and G2 add 3.5 days of gate work by auxout, in parallel. M13 to
 M18: estimated at the stable stop point after M12, when the remaining sizes are known.
 
 ## Status

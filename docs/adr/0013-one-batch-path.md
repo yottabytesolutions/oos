@@ -16,6 +16,9 @@ anyway, and two composition paths are what the overhaul removes.
 - Frames mode produces the same `BatchUnit`. The UI thread deposits it itself when no worker pipe exists. Where the
   hardware delivers single frames, a unit is a batch of one frame.
 - `acq.pipeline` selects only who deposits (the workers or the UI thread), not how the picture is composed.
+- The pipe has two outputs to main, in every mode: a `BatchUnit` on the fast path and a `RecordBatch` (decoded
+  frames) off it (`architecture/picture.md`, Route per batch). Off the fast path the step's records are drawn as one
+  pseudo-batch through the same accumulator.
 - This supersedes "frames mode stays the default" in `fork/draw-architecture.md` section 5 for `overhaul`.
 
 ## Consequences

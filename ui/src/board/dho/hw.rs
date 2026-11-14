@@ -1257,7 +1257,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
     use oos_hal::dho::{adc, seq};
     let shared: HwShared = Arc::new(Mutex::new(Shared::default()));
     let out = shared.clone();
-    std::thread::spawn(move || {
+    // named for `top -H` on the unit
+    let spawned = std::thread::Builder::new().name("acq".into()).spawn(move || {
         crate::placement::place(crate::placement::Role::Hw);
         let status = |s: String| {
             eprintln!("oos-ui hw: {}", s);
@@ -1960,8 +1961,17 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     let raw_frame = match deep {
                         Some(ds) if raw_frame.is_none() => {
                             deep_last = Some(std::time::Instant::now());
+                            let t0 = std::time::Instant::now();
                             match seq::read_raw_again(&mut state, &ds, &p, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
-                                Ok(()) => Some(decode(raw_dma.data(), &ds, &p, 0)),
+                                Ok(()) => {
+                                    use crate::deepmeas::cost;
+                                    let t1 = std::time::Instant::now();
+                                    let f = decode(raw_dma.data(), &ds, &p, 0);
+                                    cost::set(&cost::DMA_US, t1 - t0);
+                                    cost::set(&cost::DECODE_US, t1.elapsed());
+                                    cost::READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    Some(f)
+                                }
                                 Err(e) => {
                                     status(format!("raw read of the deep window: {}", e));
                                     None
@@ -2137,6 +2147,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
         }
     });
+    if let Err(e) = spawned {
+        eprintln!("oos-ui hw: no acquisition thread: {}", e);
+    }
     shared
 }
 

@@ -737,7 +737,13 @@ impl Source {
             };
             *seen = f.seq;
             drop(g);
-            return Some(hw_record(m, f));
+            let deep = crate::deepmeas::deep_raw_frame(&f);
+            let t = std::time::Instant::now();
+            let r = hw_record(m, f);
+            if deep {
+                crate::deepmeas::cost::set(&crate::deepmeas::cost::RECORD_US, t.elapsed());
+            }
+            return Some(r);
         }
         if let Source::Live { shared, seen, words, xinc, yinc, yorg, yref } = self {
             let g = shared.lock().unwrap();

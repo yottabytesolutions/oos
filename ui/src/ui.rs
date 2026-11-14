@@ -826,7 +826,15 @@ impl MeasWorker {
                 crate::http::to_little_cores();
                 while let Ok((n, work)) = jobs.recv() {
                     let w: Vec<(usize, &[f32], f64, f64)> = work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
-                    if done.send((n, measure_channels(&w))).is_err() {
+                    let t0 = std::time::Instant::now();
+                    let r = measure_channels(&w);
+                    // deep raw records (millions of samples): their cost on the state line (deepmeas::cost)
+                    let pts: usize = w.iter().map(|x| x.1.len()).sum();
+                    if pts > crate::compress::MAX_DEPTH as usize {
+                        crate::deepmeas::cost::set(&crate::deepmeas::cost::MEASURE_US, t0.elapsed());
+                        crate::deepmeas::cost::MEASURE_N.store(pts as u64, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    if done.send((n, r)).is_err() {
                         break;
                     }
                 }
@@ -1840,7 +1848,9 @@ impl Ui {
                     }
                 }
                 if let Some(f) = frames.iter().rev().find(|f| deep_raw && crate::deepmeas::deep_raw_frame(f)) {
+                    let t = std::time::Instant::now();
                     raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
+                    crate::deepmeas::cost::set(&crate::deepmeas::cost::RECORD_US, t.elapsed());
                 }
                 got += frames.len();
                 let t_merge = std::time::Instant::now();
@@ -9984,3 +9994,4 @@ mod aux_out_tests {
         assert_eq!(AuxOut::choices(false), [AuxOut::TrigOut, AuxOut::Off]);
     }
 }
+

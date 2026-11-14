@@ -18,6 +18,37 @@ pub const PERIOD: std::time::Duration = std::time::Duration::from_secs(1);
 /// screen window above it keeps the pair measurement (mean-type values NaN).
 pub const MAX_BYTES: usize = 24 << 20;
 
+/// Where a raw deep read spends its time (`:SYSTem:STATe?` `deep ...`): the last read's DMA and decode in the
+/// acquisition thread, the screen record the UI makes of it, the measurement of it in the worker, and how many reads.
+pub mod cost {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    pub static READS: AtomicU64 = AtomicU64::new(0);
+    pub static DMA_US: AtomicU64 = AtomicU64::new(0);
+    pub static DECODE_US: AtomicU64 = AtomicU64::new(0);
+    pub static RECORD_US: AtomicU64 = AtomicU64::new(0);
+    pub static MEASURE_US: AtomicU64 = AtomicU64::new(0);
+    /// samples of the last measurement job (all channels)
+    pub static MEASURE_N: AtomicU64 = AtomicU64::new(0);
+
+    pub fn set(a: &AtomicU64, t: std::time::Duration) {
+        a.store(t.as_micros() as u64, Relaxed);
+    }
+
+    pub fn text() -> String {
+        let ms = |a: &AtomicU64| a.load(Relaxed) as f64 / 1e3;
+        format!(
+            " deep reads {} dma {:.1} decode {:.1} record {:.1} measure {:.1} ms ({} pts)",
+            READS.load(Relaxed),
+            ms(&DMA_US),
+            ms(&DECODE_US),
+            ms(&RECORD_US),
+            ms(&MEASURE_US),
+            MEASURE_N.load(Relaxed)
+        )
+    }
+}
+
 /// What the UI asks of the acquisition thread (`Shared::deep_raw`): raw deep reads, for every batch (`every`, Single:
 /// the one record is the answer) or at most once per `PERIOD`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -27,7 +27,9 @@ Policy and mechanism are split:
   `deep_raw_settings` with the narrowed margins), the raw re-reads and their cadence. The thread publishes what its
   plan does for the current `gen` in `Readings`:
   - `k`;
-  - `raw_planned`: whether raw re-reads come for this generation (today `deep_ok`).
+  - `raw_planned { gen, planned }`: whether raw re-reads come for that generation (today `deep_ok`). Until the
+    thread has published a plan for the current `gen`, the plan is unknown, and unknown means hold: pair records are
+    not measured.
 
 The UI never estimates the plan itself (the 2026-11-14 two-lane bug).
 
@@ -52,11 +54,11 @@ it carries its `BatchMeta` (`id`, `gen`, `epoch`, `mode`).
 | Reader | Accepts |
 |---|---|
 | measurements and statistics | current `epoch`; after a reconfiguration the current `gen`; raw records, or pairs when no raw read is planned |
-| Single | the first record of its `epoch` |
+| Single | the first qualifying record of its `epoch`: current `gen`, built from a batch armed in that epoch (not one armed ahead before it) |
 | autoset, Bode | their stage's `epoch` |
-| software mask, zones, average, Bus trigger | current `gen` |
+| software mask, zones, average, Bus trigger | current `gen`; a `RecordBatch` of an older `gen` is dropped whole (picture.md, route per batch) |
 | decode | any; the cache is keyed by record `id` and decoder settings, so it needs no invalidation |
-| history | every record, tagged with its `BatchMeta` |
+| history | per route: off the fast path every record of the `RecordBatch`; on it the newest `Frame` per batch. History density therefore follows the route, and each entry carries its `BatchMeta` so replay knows which it is |
 
 ## The measurement path
 
@@ -85,19 +87,23 @@ Two feeds go into the Measure statistics (`mstat`):
   `epoch`.
 - **per record:** the measurement results.
 
-Rule: every raw frame counts once. A frame folded by a worker is not counted again when its record is measured. The
-newest frame is now in the batch (picture.md), so the record result of a folded frame updates the values but not the
-statistics counts. Pair frames are never folded.
+Rule: every raw frame counts once. Per route:
+- fast path: frames count through the worker folds. The record result of the newest `Frame` updates the values, not
+  the counts. Pair frames are never folded, so with pairs only raw `MeasRead` records count.
+- off the fast path: no folds. Every record of the `RecordBatch` that is measured counts once.
+- `MeasRead`: counts once unless its frame was already folded (the raw newest of a raw batch is; a deep window is not).
 
-The `stats` class of `ChangeSet` resets `mstat` and raises the statistics generation. Today `settings_changed`
+The `stats` class of `ChangeSet` resets `mstat` and raises the statistics generation, `stats_gen`, the third number
+owned by `Generations` (architecture.md, [Generations](../architecture.md#generations)). Today `settings_changed`
 clears `mstat` on every settings change, including changes that alter no measurement. Which fields belong to `stats`
 is decided in `classify`.
 
 ## STOP and Single
 
 - STOP (`AcqCmd::Hold`): the thread finishes the batch, then reads the final frame raw when the record shown is of
-  pairs (`Final(id)`). That `MeasRead` becomes `last[0]` and is measured. The UI waits for the acknowledged id up to
-  `STOP_FINAL_WAIT`.
+  pairs (`Final(id)`). That `MeasRead` becomes `last[0]` and is measured. The wait is state across steps, never a block: the record
+  store keeps `final_pending { id, since }`, each step checks `Readings::acked`, and after `STOP_FINAL_WAIT` it keeps
+  the last record it has. The step never sleeps on it.
 - Batches that a STOP may need to replay are not armed ahead (`prearm_keeps_replay`). Open lever: let the armed batch
   finish and replay its newest frame instead (deep-meas.md, open levers).
 - Single: one batch per `epoch`. In Single, deep raw windows come with every batch.

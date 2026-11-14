@@ -32,24 +32,34 @@ UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole 
 - **`BatchUnit`.** The pipe creates one per `Batch`: frame count, `BatchMeta`, mapping key, list of shares. A share
   is a map set plus its row bounds. The share that brings drawn plus dropped to the frame count publishes the unit.
   The UI sees only whole batches.
-- **Mapping key.** It is fixed per batch at its first claim, so all shares of a batch use one mapping. It covers time
-  base, delay, V/div, offset, channel set, dots, zoom, size, and per channel invert, coupling and bandwidth. A unit of
-  another key is dropped at merge.
+- **Mapping key.** It is fixed per batch at its first claim, so all shares of a batch use one mapping. It has one
+  source: `classify` builds `MappingKey` from exactly the fields it classifies `mapping`, in the same destructure, so a
+  field cannot be in the class and missing from the key (architecture.md, [Change detection](../architecture.md#change-detection)).
+  Today these are time base, delay, V/div, offset, channel set, dots, zoom, size, and per channel invert, coupling and
+  bandwidth. A unit of another key is dropped at merge.
 - **Frames convert with their own `BatchMeta`.** Volts, times and the trigger refinement come from the batch, not
   from `Settings` (acquisition.md). So a batch of an older hardware generation under the same mapping key is a valid
   picture.
 - **Frames mode** (no worker pipe: the host, `acq.pipeline = frames`, a full buffer pool) is the same unit drawn by
-  the UI thread itself; a single delivered frame is a batch of one. One composition, not two (adr/0013).
-- **Route per batch, decided by the pipe.** The acquisition thread sends every `Batch` to the pipe and knows nothing
-  about drawing policy. The pipe routes it by the view it holds:
-  - on the fast path (`fast_ok`) the batch is deposited (shares, `BatchUnit`);
-  - off it, the workers only decode the frames and pass them to the UI as one `RecordBatch`. The UI builds a record
-    of every frame (mask counts, zones, software average, Bus trigger, Single, segments) and draws the step's
-    records as the pseudo-batch.
-
-  Decoding stays off the first A72 in both routes. Today the acquisition thread decodes them on the second A72. A
-  batch fed under one route and claimed after a route change is handled under the route of its claim. Its mapping
-  key decides whether it is shown.
+  the UI thread itself. The UI thread groups one step's queued frames of one mapping key into one unit; a single
+  delivered frame in a step is a unit of one. One composition, not two (adr/0013). One unit per step matters for cost:
+  48 frames as 48 units would mean 48 x 2 full-map passes per step (about 2.5 GB/s); perf-guard measures the 48-frame
+  case.
+- **Route per batch, decided by the pipe from `PipeView`.** The acquisition thread sends every `Batch` to the pipe
+  and knows nothing about drawing policy. The change stage publishes `PipeView { gen, epoch, mapping_key, route }`, a
+  latest-value cell next to `AcqWant`, derived from the same `ChangeSet` (architecture.md, [State and
+  ownership](../architecture.md#state-and-ownership)). The pipe routes each batch by its own `gen` and `epoch`
+  against `PipeView`:
+  - on the fast path the batch is deposited (shares, `BatchUnit`);
+  - off it, the workers decode the frames and build the records (`to_record`), and pass them to the UI as one
+    `RecordBatch`. The UI adds them to the record store (mask counts, zones, software average, Bus trigger, Single,
+    segments) and draws the step's records as the pseudo-batch.
+  - Decoding and `to_record` use the batch's calibration and trigger snapshot from `BatchMeta`, never `Settings`.
+    They stay off the first A72 in both routes. Today the acquisition thread decodes on the second A72.
+  - A route change is an `acq` change: it changes what the UI needs from every frame, so it raises `gen`. A batch of
+    an older `gen` is routed as it was fed: shown if its mapping key matches, never turned into records. Records drop
+    batches of an older `gen` (records.md). So batches acquired before mask, Single or segments were switched on are
+    never counted or taken as the Single frame.
 
 ## Weights
 
@@ -68,7 +78,9 @@ min/max pair has no sample density.
 ## Window and grade
 
 - **Min persistence:** a capped frame-count window. It holds the newest whole batches until they reach N frames
-  (frames per screen frame, smoothed), at most 3 batches and at most 2 screen frames (67 ms) old. Each step rebuilds
+  (frames per screen frame, smoothed), at most 3 batches and at most 2 screen frames (67 ms) old. N and the age are
+  the bounds that shape the picture. The 3-batch cap (the user's option C) bounds how many units the window
+  rebuilds; with one unit per step in frames mode it never binds before the age cap. Each step rebuilds
   `ph` from the window's share maps. Brightness = count / W.
 - **Persistence above Min:** exponential decay with tau = the persistence, in u32 16.16 fixed point. W decays the
   same way. The decay stops when no frames come. Infinite: no decay, halve on saturation with `.max(1)`.
@@ -92,13 +104,14 @@ STOP freezes the maps and W. A view change while stopped is a `mapping` change a
 
 ## Records and measurement reads
 
-- Records never draw on the fast path. The decoded newest `Frame` is for measurement. `MeasRead`s (raw newest, deep
-  window) cannot reach a kernel (acquisition.md, records.md).
-- Off the fast path (software mask and zones, software average, Bus trigger, Single, segments, zoom on records), the
-  UI makes a record of every frame of each `Batch`. The records of one step form one pseudo-batch with W = their
-  weight sum, drawn with the same span kernel. Records from a `Frame` or `MeasRead` are never in it.
-- `fast_ok` depends only on what the picture needs (zoom, XY, roll and scan). Measurement options never move a frame
-  to another route.
+- Records never draw on the fast path. The decoded newest `Frame` is for measurement.
+- A `MeasRead` (raw newest, deep window, STOP final) is never part of a live picture. It is drawn only alone, as
+  `last[0]`: the preview after a mapping change and the stopped picture (window of 1).
+- Off the fast path the records of one step, built from `Batch` frames, form one pseudo-batch with W = their weight
+  sum, drawn with the same span kernel. Records from a `Frame` or `MeasRead` are never in it.
+- The route is off the fast path when the picture needs it (XY, roll and scan) or when every frame must become a
+  record (software mask and zones, software average, Bus trigger, Single, segments). Zoom stays on the fast path: a
+  second span set per frame for `phz` with the zoom mapping and the same w (`fork/draw-architecture.md` 3.3).
 
 ## Rules
 

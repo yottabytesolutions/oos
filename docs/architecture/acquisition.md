@@ -120,13 +120,19 @@ loop {
 
 ### `apply`
 
-1. Take the newest `AcqWant`. Unchanged `gen`: nothing to do.
-2. Changed: disarm a batch armed ahead (its settings are the old ones), configure if `Want` or `slow` differ,
+1. Take the newest `AcqWant`. Unchanged `gen` and `epoch`: nothing to do.
+2. Changed `gen`: disarm a batch armed ahead (its settings are the old ones), configure if `Want` or `slow` differ,
    restart the units whose wants changed, set `applied = gen`.
-3. Drop what the old generation left in flight: the queued `Frame`s of an older `gen` and a fill that `NEW_SETTINGS`
-   ended. Today both are still read and queued (draw-architecture.md 1). The ended fill is not read at all.
+3. Changed `epoch` alone (a retry with identical settings, CLEAR, RUN after STOP): no reconfiguration, but the same
+   boundary. Disarm a batch armed ahead under the older epoch.
+4. Drop what the older `gen` or `epoch` left in flight: the queued `Frame`s and a fill that `NEW_SETTINGS` ended.
+   Today both are still read and queued (draw-architecture.md 1). The ended fill is not read at all.
 
-The invariant: after `apply` returns, nothing the thread publishes carries a `gen` below `applied`.
+The invariant: after `apply` returns, nothing the thread publishes carries a (`gen`, `epoch`) older than the applied
+pair.
+
+`Board::want` is pure: the same `AcqIntent` gives the same `AcqWant`, so `gen` and `epoch` stay the only change
+signals.
 
 ### `batch`
 

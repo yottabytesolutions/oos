@@ -46,8 +46,9 @@ Rules:
   which reads `clock::Clock`. Cargo enforces the dependency; the crate's tests run on the host.
 - **Configuration is read once.** `Config` (from `system.conf`, the environment and the platform) is read at start and
   passed in. No policy function reads a `OnceLock` or the environment.
-- **No hidden global state.** A `static` with interior mutability (atomics, `Mutex`, `Cell`, `OnceLock`) is allowed
-  only for metrics, on an allowlist the checker enforces. Today's `pacing` state and `deepmeas::FORCE` move into the
+- **No hidden global state.** A `static` with interior mutability (atomics, `Mutex`, `Cell`, `RefCell`) is allowed
+  only for metrics, on an allowlist the checker enforces. A lazy `static` (`OnceLock`, `LazyLock`) whose value type has
+  no interior mutability, such as the demo signal caches in `wave.rs`, is exempt: it is a constant computed late. Today's `pacing` state and `deepmeas::FORCE` move into the
   stages that own them.
 - **Adapters stay apart.** Adapters do not name each other. Two adapters that must cooperate do it through the
   application.
@@ -75,7 +76,7 @@ module is a top-level module of its crate, so the rules in [Enforcement](#enforc
 | `change/` | the change stage: owns `Settings` privately and hands out `&Settings`; applies commands in merge order, normalizes, classifies; `Request`, `ChangeSet`, `Generations`, `MappingKey` construction, `AcqIntent`, `PipeView` |
 | `acq.rs` | the acquisition data types: `BatchMeta`, `Frame`, `MeasRead`, `Record`, `RecordBatch` headers (`architecture/acquisition.md`) |
 | `window.rs` | the picture model: window bounds (N, the 3-batch cap, the age cap), decay in 16.16, weights; pure, `now` as argument |
-| `config.rs` | `Config`: parsed once at start from `system.conf`, the environment and the platform |
+| `config.rs` | `Config` and `Config::parse(&str, env pairs, &Platform)`: pure. `oos-ui` reads `system.conf`, the environment and the platform once at start and passes them in |
 
 `oos-ui`:
 
@@ -115,7 +116,7 @@ thread.
 | `AcqIntent` with `gen` and `epoch` | the change stage | `app/acq_client` | one step |
 | `AcqWant` (board-specific) | `app/acq_client`, through `Board::want` | acquisition thread, latest value | until the next change |
 | hardware, batch buffers, `AcqLoop` state | acquisition thread (`board/dho`) | nobody; results leave as `Batch`, `Frame`, `MeasRead`, `Readings` | process |
-| `Readings` (status, counters, acknowledged ids, the read plan, `k`) | acquisition thread | UI, latest value | process |
+| `Readings` (status, counters, acknowledged ids, the read plan, `k`, the applied `(gen, epoch)`) | acquisition thread | UI, latest value | process |
 | `PipeView { gen, epoch, mapping_key, route }` | the change stage, from the same `ChangeSet` as `AcqIntent` | deposit pipe and workers, latest value | until the next change |
 | the deposit pipe | `Session` (created and owned) | workers by claim, main by `BatchUnit` and `RecordBatch` | process |
 | a batch's share maps | the worker or helper drawing that share | the accumulator, after the batch is published | one batch |
@@ -131,8 +132,10 @@ thread.
 ### Enforced by visibility
 
 Ownership is enforced by the compiler, not by a checker rule:
-- The change stage holds `Settings` in a private field and hands out `&Settings`. Group setters are
-  `pub(in crate::change)`.
+- The change stage holds `Settings` in a private field and hands out `&Settings`. Group setters and `apply` are
+  `pub(crate)` in `oos-core`, so no code in `oos-ui` can call them. Inside `oos-core` only `change` calls them; the
+  crate is small enough that review holds this. (`pub(in crate::change)` would not compile: the path must name an
+  ancestor, and `change` is a sibling of `settings`.)
 - `Generations` is private to `change`; other stages see `gen` and `epoch` only as values in `ChangeSet` and
   `AcqIntent`.
 - `ph`, `phz`, W and the window are private fields of the accumulator, exposed only as `&Picture`.
@@ -147,11 +150,13 @@ fully qualified paths inside expressions as well as `use` lines.
 per area comes from the group modules.
 
 Each group module (`settings/trigger.rs`, ...) holds:
-- the group struct, private fields, `pub` accessors, setters visible only to `crate::change`;
+- the group struct, private fields, `pub` accessors, `pub(crate)` setters (visible inside `oos-core` only);
 - its invariants within the group, checked in `apply` (ranges, combinations of its own fields);
 - its command enum (`TriggerCmd::Level(f32)`, `TriggerCmd::Slope(Slope)`, ...);
 - `apply(&mut self, cmd, &Context) -> Result<(), CmdError>`. `Context` is read-only and narrow: the model's limits
-  and, per group, a few named accessors of other groups' values (`ctx.channel_range(ch)`), never a whole `&Settings`;
+  and, per group, a few named accessors of other groups' values (`ctx.channel_exists(ch)`), never a whole `&Settings`.
+  `Context` is only for rejecting a command (the source channel does not exist on this model). Clamping is
+  `normalize`'s job, so a command never changes another group;
 - its part of `classify`, a function of its own;
 - host tests of the invariants and of every command.
 
@@ -248,7 +253,7 @@ A keyed cache needs no class. The decode cache is keyed by record and decoder se
 
 ### Generations
 
-Two numbers, private to `change` (`Generations`):
+Three numbers, private to `change` (`Generations`):
 - **`gen`** rises when the `ChangeSet` contains `acq`. `classify` calls `new_gen`. The acquisition thread tags every
   output with the `gen` it applied.
 - **`epoch`** rises on requests whose settings may not differ: SINGLE armed, CLEAR, RUN after STOP, an autoset or Bode
@@ -312,9 +317,18 @@ records form one pseudo-batch (`architecture/picture.md`). History and segments 
 
 A remote query is answered in `reply` from that step's state. Each query carries a typed wait condition: `After {
 gen, epoch }`, set by the commands that came before it on the same connection. `:SINGLE; :WAV:DATA?` therefore waits
-for a record of the SINGLE's epoch and never returns the old record. The transport thread holds the connection while
-the query waits. `*OPC?` uses the same condition: it answers when the acquisition has applied the connection's last
-`gen` and `epoch`.
+for a record of the SINGLE's epoch and never returns the old record. `*OPC?` uses the same condition: it answers when
+`Readings::applied` reaches the connection's last `gen` and `epoch`. The transport thread holds the connection while
+the query waits.
+
+A waiting query never hangs silently, but it has no fixed server-side timeout: a SINGLE may legitimately wait hours for
+its trigger. It ends on the first of:
+- the condition is met: the answer is sent;
+- the connection closes: dropped, nothing queued (a client-side timeout that closes the socket ends here);
+- a device clear (VXI-11 `device_clear`, `*CLS`), or `:STOP` or `:RUN` from any source that makes the condition
+  unreachable: cancelled, `-410` (query interrupted) queued;
+- a new command on the same connection before the answer was read: cancelled, `-410` queued, as SCPI prescribes;
+- a VXI-11 read: its own `io_timeout` from the call, then `-410`.
 
 ## Threads and messages
 
@@ -461,7 +475,10 @@ Measured by the pacing and cost counters in `:SYSTem:STATe?` and by unitlab.
   - views and menus name only the stages whose outputs they read: `layer ui views -> compose records picture`,
     `layer ui menus -> compose records`.
 - **size limits**, below.
-- **statics**: a `static` with interior mutability only on the metrics allowlist.
+- **statics**: a `static` with interior mutability only on the metrics allowlist; lazy statics of immutable values
+  exempt.
+- **`super::` paths**: a `super::` path must not leave its top-level module. The checker resolves `super::` against
+  the file path and treats a path that crosses a top-level module like the `crate::` path it names.
 
 What the module rules cannot see, the code enforces:
 - ownership, by visibility ([Enforced by visibility](#enforced-by-visibility));

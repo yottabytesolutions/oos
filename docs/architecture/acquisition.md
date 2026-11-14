@@ -25,7 +25,7 @@ requests, outputs and readings side by side, each with its own counter conventio
 | `Batch` | acq | deposit pipe | owned buffer plus `BatchMeta`, moved, never shared |
 | `Frame` | acq | UI record path | decoded volts plus `BatchMeta` |
 | `MeasRead` | acq | measurement path | decoded volts plus `BatchMeta`; a separate type that no drawing kernel accepts |
-| `Readings` | acq | UI | latest value: status, unit counters, board readings, acknowledged ids |
+| `Readings` | acq | UI | latest value: status, unit counters, board readings, acknowledged ids, the applied `(gen, epoch)` |
 
 The change point produces a board-neutral `AcqIntent` (architecture.md, [Acquisition
 intent](../architecture.md#acquisition-intent)). `app/acq_client` maps it to this board's `AcqWant` through
@@ -124,13 +124,16 @@ loop {
 2. Changed `gen`: disarm a batch armed ahead (its settings are the old ones), configure if `Want` or `slow` differ,
    restart the units whose wants changed, set `applied = gen`, and publish `Readings::raw_planned { gen, .. }` before
    any output of that `gen` (records.md).
+   A route-only change (`PipeView.route`) is `acq` too, so it raises `gen` with an unchanged `Want`: no
+   reconfiguration, but the batch armed ahead is disarmed. That costs one batch per route flip and is intended. A
+   batch armed under the old route would otherwise be routed by a stale `gen`.
 3. Changed `epoch` alone (a retry with identical settings, CLEAR, RUN after STOP): no reconfiguration, but the same
    boundary. Disarm a batch armed ahead under the older epoch.
 4. Drop what the older `gen` or `epoch` left in flight: the queued `Frame`s and a fill that `NEW_SETTINGS` ended.
    Today both are still read and queued (draw-architecture.md 1). The ended fill is not read at all.
 
 The invariant: after `apply` returns, nothing the thread publishes carries a (`gen`, `epoch`) older than the applied
-pair.
+pair. The thread publishes the applied pair in `Readings::applied`; `*OPC?` and remote waits read it.
 
 `Board::want` is pure: the same `AcqIntent` gives the same `AcqWant`, so `gen` and `epoch` stay the only change
 signals.

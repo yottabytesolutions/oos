@@ -14,7 +14,7 @@ string-keyed setter. Nothing sees all writes, so nothing can say reliably what c
 - Each group lives in its own module under `settings/`, with private fields, accessors, invariants, a command enum
   and `apply`.
 - The change stage is the only writer. It holds `Settings` privately and hands out `&Settings`; group setters are
-  `pub(in crate::change)` ([Settings and commands](../architecture.md#settings-and-commands)).
+  `pub(crate)` in `oos-core`, so `oos-ui` cannot call them ([Settings and commands](../architecture.md#settings-and-commands)).
 - Cross-group constraints have one model: `Settings::normalize()`, run by the change stage after the step's commands
   and before `classify`. Group `apply` checks only its own group, with read-only `Context`. Today's per-step rewrites
   (`clamp_offsets`, `fit_platform`) move into `normalize`, so they are no longer a second writer outside `classify`.

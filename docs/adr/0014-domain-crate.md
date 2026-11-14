@@ -13,9 +13,10 @@ macro bodies), and the shared checker (auxout) works on top-level modules only.
 - A workspace crate `oos-core` holds the domain:
   - settings, their commands and `normalize`;
   - the change stage: `classify`, `Generations`, `ChangeSet`, `MappingKey`, `AcqIntent`, `PipeView`;
-  - the acquisition data types: `BatchMeta`, `Frame`, `MeasRead`, `Record`;
+  - the acquisition data types: `BatchMeta`, `Frame`, `MeasRead`, `Record`, and the LA record type that `Frame`
+    carries (today `ui::la::LaRec`, `board/mod.rs` `Frame::la`), which moves with it;
   - the picture model: window bounds, decay, weights;
-  - `Config`.
+  - `Config` with a pure `Config::parse`; `oos-ui` does the reading.
 - `oos-core` depends on `oos-dsp` and std only. `oos-ui` depends on it.
 - Ownership inside the domain is enforced by visibility. The rules file covers only what Cargo and visibility cannot:
   adapter no-cross, stages against adapters, the statics allowlist and size limits.
@@ -27,3 +28,5 @@ macro bodies), and the shared checker (auxout) works on top-level modules only.
 - Types the acquisition thread and the UI share (`BatchMeta`, `Frame`) live in `oos-core`, so `board/dho` depends on
   `oos-core` too, which is the right direction.
 - The crate split lands with M2, so its rules hold from the first migration step.
+- The module checker resolves `super::` paths against the file path, so the gap named above does not reopen inside
+  `oos-ui`.

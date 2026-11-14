@@ -13,7 +13,8 @@ limits, boundary rules, perf-guard, `gpu/test-host.sh`).
    If no group fits, the setting is probably UI state (menus, views), not a setting.
 2. **Invariants.** Add the range or combination check within the group to its `apply`. A constraint across groups
    (a clamp by another group's value) goes into `Settings::normalize()`
-   ([Normalize](architecture.md#normalize)), never into `apply`.
+   ([Normalize](architecture.md#normalize)), never into `apply`. `apply` may reject a command through `Context` (the
+   source channel does not exist on this model) but never clamps another group.
    If the group passes 12 fields because it holds variants with their own parameters, split it into an enum of
    per-variant structs: `TriggerKind::Edge(EdgeCfg)`, `TriggerKind::Pulse(PulseCfg)`.
 3. **Command.** Add a variant to the group's command enum, for example `AcquireCmd::Foo(Foo)`.

@@ -1,0 +1,90 @@
+# The owner enables these rules when real teams exist.
+# All rules are commented placeholders for a public repository.
+# Review responsibility only. No edit reservations or merge authority.
+
+# Catch-all first. Later specific rules take precedence.
+# * <architecture-reviewers>
+
+# Acquisition and HAL, including the target acquisition types.
+# /hal/ <acquisition-reviewers>
+# /fpgad/ <acquisition-reviewers>
+# /ui/src/board/ <acquisition-reviewers>
+# /core/src/acq.rs <acquisition-reviewers>
+
+# Core settings and change detection, in the target layout.
+# /core/src/settings/ <core-reviewers>
+# /core/src/change/ <core-reviewers>
+# /ui/src/model.rs <core-reviewers>
+
+# DSP, instruments and protocols, in the current and target layouts.
+# /dsp/ <analysis-reviewers>
+# /ui/src/instruments/ <analysis-reviewers>
+# /ui/src/protocols/ <analysis-reviewers>
+
+# Picture and GPU, in the current and target layouts.
+# /gpu/ <picture-reviewers>
+# /core/src/window.rs <picture-reviewers>
+# /ui/src/picture/ <picture-reviewers>
+# /ui/src/display/ <picture-reviewers>
+# /ui/src/drawpipe.rs <picture-reviewers>
+# /ui/src/fastdraw.rs <picture-reviewers>
+# /ui/src/sparse.rs <picture-reviewers>
+# /ui/src/compress.rs <picture-reviewers>
+# /ui/src/wave.rs <picture-reviewers>
+# /ui/src/drm.rs <picture-reviewers>
+# /ui/src/gpu.rs <picture-reviewers>
+# /ui/src/vpu.rs <picture-reviewers>
+# /ui/tests/golden/ <picture-reviewers>
+
+# Interfaces and remote transports.
+# /ui/src/remote/ <interfaces-reviewers>
+# /ui/src/input/ <interfaces-reviewers>
+# /ui/src/input.rs <interfaces-reviewers>
+# /ui/src/scpi/ <interfaces-reviewers>
+# /ui/src/scpi.rs <interfaces-reviewers>
+# /ui/src/http.rs <interfaces-reviewers>
+# /ui/src/json.rs <interfaces-reviewers>
+# /ui/src/usbtmc.rs <interfaces-reviewers>
+# /ui/src/vxi11.rs <interfaces-reviewers>
+# /ui/src/cmd.rs <interfaces-reviewers>
+# /ui/src/net.rs <interfaces-reviewers>
+# /ui/src/net6.rs <interfaces-reviewers>
+# /ui/src/netacl.rs <interfaces-reviewers>
+# /ui/src/store/ <interfaces-reviewers>
+# /ui/src/store.rs <interfaces-reviewers>
+# /ui/src/sysconf.rs <interfaces-reviewers>
+
+# Boot, update and rootfs. Later specific rules override the HAL area above.
+# /boot/ <system-reviewers>
+# /kernel/ <system-reviewers>
+# /rootfs/ <system-reviewers>
+# /hal/src/update/ <system-reviewers>
+# /ui/src/system/ <system-reviewers>
+# /ui/src/ui/update.rs <system-reviewers>
+# /ui/src/mdns.rs <system-reviewers>
+# /ui/src/sntp.rs <system-reviewers>
+# /ui/src/ssh.rs <system-reviewers>
+# /ui/src/ethlink.rs <system-reviewers>
+# /ui/src/hostname.rs <system-reviewers>
+# /ui/src/placement.rs <system-reviewers>
+# /ui/src/ui/ssh.rs <system-reviewers>
+# /ui/src/ui/wlan.rs <system-reviewers>
+# /ui/src/ui/backlight.rs <system-reviewers>
+# /ui/src/ui/time.rs <system-reviewers>
+
+# Guardrails and CI.
+# /xtask/ <guardrails-reviewers>
+# /.cargo/ <guardrails-reviewers>
+# /.githooks/ <guardrails-reviewers>
+# /.github/workflows/ <guardrails-reviewers>
+# /.github/CODEOWNERS <guardrails-reviewers>
+# /rustfmt.toml <guardrails-reviewers>
+# /clippy.toml <guardrails-reviewers>
+# /tools/perf-guard.sh <guardrails-reviewers>
+# /gpu/test-host.sh <guardrails-reviewers>
+
+# Architecture and the shared process.
+# /docs/architecture/ <architecture-reviewers>
+# /docs/process/ <architecture-reviewers>
+# /.github/pull_request_template.md <architecture-reviewers>
+# /AGENTS.md <architecture-reviewers>

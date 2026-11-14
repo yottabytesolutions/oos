@@ -412,7 +412,7 @@ A hardware poll remains only where the FPGA raises no event; it runs at the hard
 |---|---|---|---|---|
 | main | `epoll_pwait2` | vblank sequence event and page-flip event (DRM fd); wake `eventfd` (a `BatchUnit`, a `RecordBatch`, a remote request, `Readings` changed, the outbox of a worker); input fds; GPU helper reply socket; a `timerfd` deadline only without a display (host, headless) | an input or remote event: under 1 ms to the light step; a picture: the next flip | none |
 | acquisition | `ppoll` on its command `eventfd` with a timeout of the hardware period (sub-millisecond, so `ppoll`, not `poll`) | `AcqWant` changed, `AcqCmd` queued, cancel | under 1 ms for STOP, a settings change or cancel | trigger done (BAR1 `0x4080` bit 30): every 500 us while armed; ring count during a fill: every 200 us, or helper work between reads; each read is one MMIO load |
-| deposit workers | channel receive (SPSC ring plus futex) | a claimable batch, shutdown | under 50 us | none |
+| deposit workers | channel receive (`sync_channel`) | a claimable batch, shutdown | under 50 us | none |
 | measure | channel receive | a job, shutdown | under 50 us | none |
 | input | `ppoll` | panel UART, touch evdev, shutdown `eventfd` | under 1 ms | none |
 | remote listeners | `epoll_wait` per listener thread | accept, readable, writable (`EPOLLOUT` while an output queue is non-empty), reply ready `eventfd`, shutdown | under 1 ms | none |
@@ -469,19 +469,26 @@ The display paces the steps (adr/0016):
 
 ### Hand-offs
 
-| Hand-off | Primitive | Lock |
+The default is the standard library: a bounded `sync_channel`, or a `Mutex` cell around a small copy, with an
+`eventfd` wake where the reader must react within a step. Each hand-off has a contention counter (lock waits and wait
+time, per thread). A hand-off moves to a lock-free primitive only when its counter shows contention on the unit, and
+the lock-free primitives (SPSC ring, triple buffer, seqlock) live in exactly one reviewed module, `oos_hal::sync`, with
+their own tests, Miri runs (task 0034) and the same contention counter (adr/0016).
+
+| Hand-off | Default | Lock-free candidate if contended |
 |---|---|---|
-| `Batch` into the pipe; a worker's share maps back to its owner | per-producer SPSC ring of owned values | none |
-| `BatchUnit`, `RecordBatch` to main | SPSC ring per worker, plus main's wake `eventfd` | none |
-| `AcqWant`, `DepositView`, `Readings`, `Pacing` | latest-value cell (seqlock for `Copy` parts, swap of an `Arc` for the rest) plus a wake `eventfd` where the reader must react within a step | a swap only |
-| `AcqCmd` | bounded MPSC queue plus the acquisition `eventfd` | push and pop only |
-| composed picture to remote clients | triple buffer | index swap only |
-| `RemoteRequest` | bounded MPSC queue plus main's wake `eventfd` | push and pop only |
-| replies to a connection | bounded output queue per connection, written on `EPOLLOUT` by the listener | push and pop only |
-| metrics | per-thread counters, cache-line aligned, summed by the reader | none |
+| `Batch` into the pipe; a share back to its owner | bounded `sync_channel` of owned values | per-producer SPSC ring |
+| `BatchUnit`, `RecordBatch` to main | bounded `sync_channel`, plus main's wake `eventfd` | SPSC ring per worker |
+| `AcqWant`, `DepositView`, `Readings`, `Pacing` | `Mutex` cell, held for a copy or an `Arc` swap, plus a wake `eventfd` where the reader must react within a step | seqlock for the `Copy` parts |
+| `AcqCmd` | bounded `sync_channel` plus the acquisition `eventfd` | none needed: rare |
+| composed picture to remote clients | `Mutex` around an index swap of three buffers | triple buffer |
+| `RemoteRequest` | bounded `sync_channel` plus main's wake `eventfd` | none needed: rare |
+| replies to a connection | bounded output queue per connection, written on `EPOLLOUT` by the listener | none needed: per connection |
+| metrics | per-thread counters, cache-line aligned, summed by the reader | already lock-free |
 
 No lock is held across a copy of sample data, an allocation, a format or a sort. Summaries of metrics (`pacing.rs`
-362 sorts histories under its lock today) take a snapshot first and work outside the lock.
+362 sorts histories under its lock today) take a snapshot first and work outside the lock. The contention counters
+show in `:SYSTem:STATe?` (`lock <name> waits=N p99=us`).
 
 ### Placement
 

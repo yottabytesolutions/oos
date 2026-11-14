@@ -43,9 +43,13 @@ And five rules for the code:
   records; a consumer that needs volts converts its own window, with the batch's calibration.
 - **One ownership path per batch.** Sample storage is immutable after the read and shared by `Arc`; each record is
   built once; measurements and history share it. No clone of sample data under a lock.
-- **Locks are short.** On per-frame paths no lock is held longer than a small copy. Hand-offs between threads use
-  lock-free SPSC rings or triple buffers. A latest-value cell whose reader must react within a step is paired with a
-  wake (`eventfd`).
+- **Locks are short, and lock-free only where measured.** On per-frame paths no lock is held longer than a small
+  copy. The default hand-off is a bounded `sync_channel` or a `Mutex` cell around a small copy; a latest-value cell
+  whose reader must react within a step is paired with a wake (`eventfd`). Every hand-off has a contention counter. A
+  hot path switches to a lock-free primitive (SPSC ring, triple buffer, seqlock) only when its counter shows
+  contention on the unit. Those primitives live in exactly one reviewed module, `oos_hal::sync`, with their own tests,
+  Miri runs (task 0034) and a contention counter; no other module implements one. This keeps contention off the hot
+  paths without spreading `unsafe`.
 - **Remote IO never blocks main.** Replies go into bounded per-connection output queues, written by the listener
   thread on `EPOLLOUT`.
 - **Hot shared counters are per thread**, cache-line aligned, summed by the reader.

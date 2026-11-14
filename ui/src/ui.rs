@@ -8167,6 +8167,100 @@ mod tests {
         }
     }
 
+    /// Pictures of three live-compression pair frames against pictures of two pair frames and the raw newest frame
+    /// (`compress::RAW_PERIOD`), with dots on or off, in the user's set-up (the 1 kHz probe-comp square, 100 k points
+    /// over 1.2 screens, k = 15): per picture with or without the raw frame, the worst brightness difference (of 255)
+    /// to a pairs-only picture, the pixels off by more than 3 and the summed brightness against it.
+    fn pair_raw_mix(dots: bool) -> Vec<(bool, i32, usize, f64)> {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        ui.m.persist = 0;
+        ui.m.trig_level = 0.15;
+        ui.m.dots = dots;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let (n, k) = (100_000usize, 15usize);
+        let mut x = 9u32;
+        let raw: Vec<f32> = (0..n)
+            .map(|i| {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                (if (i / 4000) % 2 == 1 { 0.3 } else { 0.0 }) + ((x >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.004
+            })
+            .collect();
+        // every point of a pair frame stands for k samples: a block of 2k samples gives its min and max in time order
+        let pairs: Vec<f32> = raw
+            .chunks_exact(2 * k)
+            .flat_map(|b| {
+                let (lo, hi) = b.iter().enumerate().fold(((0, f32::MAX), (0, f32::MIN)), |(lo, hi), (i, &v)| (if v < lo.1 { (i, v) } else { lo }, if v > hi.1 { (i, v) } else { hi }));
+                if lo.0 <= hi.0 { [lo.1, hi.1] } else { [hi.1, lo.1] }
+            })
+            .collect();
+        let dt = window * 1.2 / n as f64;
+        let frame = |seq: u64, pair: bool| crate::board::Frame {
+            seq,
+            dt: if pair { dt * k as f64 } else { dt },
+            pre: if pair { n / 2 / k } else { n / 2 },
+            ch: [if pair { pairs.clone() } else { raw.clone() }, Vec::new(), Vec::new(), Vec::new()],
+            envelope: pair,
+            acq: (1.0 / dt, n),
+            ..Default::default()
+        };
+        let mut seq = 0;
+        let mut picture = |ui: &mut Ui, with_raw: bool| -> Vec<u32> {
+            {
+                let mut g = shared.lock().unwrap();
+                for i in 0..3 {
+                    seq += 1;
+                    g.queue.push_back(frame(seq, !(with_raw && i == 2)));
+                }
+            }
+            ui.step(0.033);
+            let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
+            ui.ph.map[0].iter().map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] }).collect()
+        };
+        picture(&mut ui, false);
+        let first = picture(&mut ui, false);
+        let sum = |q: &[u32]| q.iter().map(|&c| c as f64).sum::<f64>();
+        [true, false, true, false]
+            .iter()
+            .map(|&r| {
+                let p = picture(&mut ui, r);
+                let d: Vec<i32> = first.iter().zip(&p).map(|(a, b)| (*a as i32 - *b as i32).abs()).collect();
+                (r, *d.iter().max().unwrap(), d.iter().filter(|&&x| x > 3).count(), sum(&p) / sum(&first))
+            })
+            .collect()
+    }
+
+    // Break it catches: with lines, the raw newest frame weighted unlike the pair frames of its picture, so the grade of
+    // the whole trace swings at the raw read period (docs/fork/flicker.md, second section). The raw frame may light a
+    // few pixels at the edges (refinement on pairs is good to about a pair), not change the trace's brightness, and the
+    // pictures after it are unchanged. Dots would swing (`pair_raw_mix_report`: the whole trace, every picture after
+    // a raw frame): the live compression is off with dots (`compress::allowed`).
+    #[test]
+    fn pair_and_raw_frames_in_one_picture_keep_the_grade_with_lines() {
+        for (raw, worst, off, sum) in pair_raw_mix(false) {
+            if raw {
+                assert!(off <= 200 && (sum - 1.0).abs() < 0.05, "with the raw frame: {} pixels off, brightness x{:.3}", off, sum);
+            } else {
+                assert!(worst <= 3, "after a raw frame: brightness off by {}", worst);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn pair_raw_mix_report() {
+        for dots in [false, true] {
+            for (raw, worst, off, sum) in pair_raw_mix(dots) {
+                println!("dots {} raw frame {}: worst {} pixels off {} brightness x{:.3}", dots, raw, worst, off, sum);
+            }
+        }
+    }
+
     // Break it catches: Trig'd shown for a batch the auto timeout forced (the software found an edge in it), or the
     // hardware status ignored when the thread reports it
     #[test]

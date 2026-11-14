@@ -38,3 +38,50 @@ Build 20261113-165356 (dho804 6223967): the user confirmed by eye that the flick
 
 At the reported settings: screenshots in a row (`:DISPlay:DATA?`, only the changed ones count), the number of trace
 pixels and their mean red must stay within a few percent; by eye the trace is steady.
+
+# Flicker with dots and live compression (2026-11-14)
+
+Report: CH1 100 mV/div, 200 us/div, 100 k points, Auto, the 1 kHz probe-comp square, dots on, `compress k 15`.
+Build 20261114-083030 (dho804 eba0da5). With dots off most of the flicker goes.
+
+## Cause
+
+The same mechanism as above, with another pair of deposits. With live compression the frames of a batch are min/max
+pairs, drawn by `compress::deposit_pairs`. With dots, that is one span per column at weight 24 per pixel. Every
+`compress::RAW_PERIOD` (200 ms) the newest frame is read again raw. It reaches the picture through `draw_frame` ->
+`fastdraw::deposit_dots`: about 100 samples per column on a band of 2 to 3 pixels, so many times the counts per
+pixel. `picture_ref` grades as if all frames were equal, so a picture holding the raw frame resets the grade and
+the pair pictures after it come out dark. That repeats at about 5 Hz.
+
+Host measurement (`ui::tests::pair_raw_mix_report`, the user's set-up, k = 15). Brightness of the whole trace
+against a picture of pair frames only:
+
+| | picture with the raw frame | pair pictures after it |
+|---|---|---|
+| dots | x0.81, 1844 pixels off by more than 3 of 255 | x0.57, every pixel off |
+| lines | x1.02, 137 pixels off (edge columns) | unchanged |
+
+With lines a raw frame is a span per column like a pair, so the grade holds. Its edges can land one column away
+from the pairs' (the trigger refinement on pairs is good to about a pair).
+
+## Fix (branch fix/dots-flicker)
+
+`compress::allowed` is false with dots. A pair cannot carry the dot density of its samples. With dots the frames
+stay raw and are all drawn by `deposit_dots`. Dots are the default display, so the live compression only takes effect
+with lines. The UI publishes the wanted settings on every step (`Source::acquire`), and the acquisition thread
+re-plans when they differ. Toggling dots therefore switches the compression without a restart: `compress k` in
+`:SYSTem:STATe?` goes to 1 with dots and back with lines.
+
+Tests: `compress::tests::opt_in_and_the_model_conditions`, a "dots" row in
+`hw::tests::modes_that_need_raw_frames_never_compress`, and
+`ui::tests::pair_and_raw_frames_in_one_picture_keep_the_grade_with_lines`. The last one checks that with lines the
+raw frame changes the trace brightness by less than 5 % and leaves the pictures after it unchanged. The same check
+fails with dots.
+
+## Open: deep records with `meas.deep_raw`
+
+Records above `compress::MAX_DEPTH` are read through the FPGA compression whatever the display, as envelope frames.
+`draw_frame` draws those through the record path (`sparse::draw` or `draw_ex`). The raw screen window that
+`deepmeas` reads once per `deepmeas::PERIOD` is a plain frame. As the newest frame it goes through the dense path
+(`deposit` or `deposit_dots`). One picture per second then mixes two deposit styles, with lines or dots. This has not
+been measured on the unit.

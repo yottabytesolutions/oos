@@ -2292,6 +2292,8 @@ mod tests {
     #[test]
     fn a_mask_keeps_live_compression_off() {
         let mut m = Model::default();
+        // dots keep frames raw (compress::allowed)
+        m.dots = false;
         m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
         let mut s = settings(&m, false);
         live_compress(&m, &mut s);
@@ -2773,6 +2775,8 @@ mod tests {
     fn live_compression_plan_by_time_base() {
         let plan = |tdiv: f64, two: bool| {
             let mut m = Model::default();
+            // dots keep frames raw (compress::allowed)
+            m.dots = false;
             m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-6).unwrap();
             m.ch[1].on = two;
             let mut s = settings(&m, false);
@@ -2826,6 +2830,7 @@ mod tests {
         let base = || {
             let mut m = Model::default();
             m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
+            m.dots = false;
             m
         };
         let k = |m: &Model, needs_raw: bool| {
@@ -2837,6 +2842,7 @@ mod tests {
         assert!(k(&base(), false) > 1, "the base set-up compresses");
         let zone = crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(0.0, 0.0), (1e-6, 1.0), (2e-6, 0.0)] };
         let rows: Vec<(&str, Box<dyn Fn(&mut Model)>)> = vec![
+            ("dots", Box::new(|m| m.dots = true)),
             ("Single", Box::new(|m| m.trig_mode = TrigMode::Single)),
             ("zoom", Box::new(|m| m.zoom = true)),
             ("FFT math channel", Box::new(|m| m.maths[0].op = MathOp::Fft)),
@@ -2890,6 +2896,8 @@ mod tests {
     #[test]
     fn final_replay_at_stop() {
         let mut m = Model::default();
+        // dots keep frames raw (compress::allowed)
+        m.dots = false;
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
         m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
         let s = settings(&m, false);

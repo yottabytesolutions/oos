@@ -72,9 +72,11 @@ pub fn hold(m: &Model, f: Option<&Frame>) -> bool {
 /// The model allows compressed frames: the frames of a batch are only drawn, and drawn by the dense fast path
 /// (`Ui::fast_ok`: plain edge trigger, Normal acquisition, no mask, zones, zoom or Z input, DC coupling without the
 /// 20 MHz limit), not Single (the one record is the answer), no segments, no LA (its own second read of the record), no
-/// Roll and scan are the caller's (`hw::slow_mode`).
+/// Roll and scan are the caller's (`hw::slow_mode`). Not with dots: a pair cannot carry the dot density of its samples,
+/// and the raw newest frame (`RAW_PERIOD`) drawn as dots among pair frames swings the grade (docs/fork/flicker.md).
 pub fn allowed(m: &Model) -> bool {
-    m.trig_type == TrigType::Edge
+    !m.dots
+        && m.trig_type == TrigType::Edge
         && m.acq == AcqMode::Normal
         && m.trig_mode != TrigMode::Single
         && m.segments == 0
@@ -503,7 +505,7 @@ mod tests {
         assert!(!enabled_from(Some("off"), "acq.compress = on\n"));
         let mut m = Model::default();
         m.ch[0].on = true;
-        assert!(allowed(&m));
+        assert!(m.dots && !allowed(&m), "dots (the default) keep frames raw");
         m.dots = false;
         assert!(allowed(&m));
         for f in [|m: &mut Model| m.trig_mode = TrigMode::Single, |m: &mut Model| m.acq = AcqMode::Average, |m: &mut Model| m.acq = AcqMode::HiRes, |m: &mut Model| m.acq = AcqMode::Peak, |m: &mut Model| m.zoom = true, |m: &mut Model| m.mask_on = true, |m: &mut Model| m.segments = 4, |m: &mut Model| m.trig_type = TrigType::Pulse, |m: &mut Model| m.ch[0].bw = BW_20M, |m: &mut Model| m.ch[0].coupling = Coupling::Ac] {

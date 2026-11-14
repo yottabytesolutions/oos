@@ -468,10 +468,11 @@ picture, window age <= 67 ms, single hit visible, stopped picture constant, repl
 `gpu/test-host.sh` 0 differ). Deletes: `picture_ref`, `per_frame*`, `pic_frames`, the `vmax` follow; the 24 x 6
 redraw after M12.
 
-Data path in M10 ([Fused accumulation](README.md#fused-accumulation)): at Min one pass over touched rows rebuilds the
-window and the column maxima; above Min one fused full pass decays, adds and updates the maxima; a frozen picture does
-no work. Tests, failing before: at Min a step with one touched row band sweeps only that band; above Min the pass
-count per step is one; replay equals live. Adds 1 day.
+Data path in M10 ([Fused accumulation](README.md#fused-accumulation)): at Min a step rebuilds the rows of the
+entering and the leaving unit; above Min one fused full pass decays and adds; no maxima scans; the dirty rows go to the
+upload; a frozen picture does no work. Tests, failing before: a trace that moves between disjoint row bands leaves no
+ghost once its unit leaves the window, and the dirty range covers both bands; at Min a step sweeps only those rows;
+above Min the pass count per step is one; replay equals live. Adds 1 day.
 
 **Unit round 4:** full acceptance set ([drawing acceptance criteria](drawing.md#acceptance-criteria-unitlab)), screenshot pairs per mode.
 

@@ -913,19 +913,27 @@ depends on the channel count, so that no batch needs more than one reduction pas
 
 ### Fused accumulation
 
-- At Min persistence one pass over the touched rows rebuilds the window and updates the per-column maxima that the
-  grade reads. No separate maxima sweep.
-- Above Min, one fused pass over the whole map per step applies the decay, adds the step's unit and updates the
-  maxima (1 to 2 ms, [Performance budgets](#performance-budgets)). Every row decays every step, so replay equals live
-  and the CPU picture equals the GPU picture. There is no lazy decay.
-- A frozen picture (STOP, SINGLE done, replay) does no accumulation work at all.
+- **No maxima.** The grade is count / W through the LUT, with W the weight sum ([picture.md](picture.md), Window
+  and grade). It needs no per-column or per-map maximum, so nothing has to find or invalidate one. Today's maxima
+  scans (`ui.rs` 2558) go with the `vmax` follow.
+- **Min persistence.** The window holds up to 3 units. A step rebuilds the rows that changed: rows touched by the unit
+  that entered and rows touched by the unit that left the window. Each unit keeps its touched-row range, so the
+  rebuild knows both. Rows that only the leaving unit touched are cleared in the same pass, so its trace does not stay
+  as a ghost.
+- **Above Min.** One fused pass over the whole map per step applies the decay and adds the step's unit (1 to 2 ms,
+  [Performance budgets](#performance-budgets)). Every row decays every step, so replay equals live and the CPU picture
+  equals the GPU picture. There is no lazy decay.
+- **Dirty rows.** The rows the step changed are dirty: at Min the union of the entering and the leaving unit's rows; a
+  reset or a `Replace` makes every row dirty; above Min every row is dirty every step (the decay). The dirty range goes
+  to the upload.
+- A frozen picture (STOP, SINGLE done, replay) does no accumulation work and has no dirty rows.
 
 ### GPU work proportional to change
 
-- The accumulator hands the helper the dirty row ranges of the maps; the helper uploads those rows only. The row
-  compare against the arena copy (`gpu.rs` 460) goes. Under persistence above Min every row is dirty every step
-  (the decay touches all of them), so the whole map is uploaded; dirty rows pay off at Min persistence and in a frozen
-  picture.
+- The accumulator hands the helper the dirty row ranges of the maps ([Fused accumulation](#fused-accumulation)); the
+  helper uploads those rows only. The row compare against the arena copy (`gpu.rs` 460) goes. Under persistence above
+  Min every row is dirty every step, so the whole map is uploaded; dirty rows pay off at Min persistence and in a
+  frozen picture.
 - The arena is a pool of 3 fenced buffers per output. Each submission carries a fence (`EGL_KHR_fence_sync`); the
   helper reuses a buffer only after its fence signalled, and waits for a fence before a page flip that needs it. The
   per-composition `glFinish` (`oos-gpu.c` 817) goes.

@@ -32,7 +32,7 @@ Eight principles, from the Fable review:
    adds at most 3 maps per step.
 5. **Zero allocations per frame after warm-up** on every hot path, guarded by a counting allocator in tests.
 6. **GPU work proportional to change.** Dirty regions, a fenced buffer pool instead of `glFinish`, asynchronous
-   snapshots on demand, accumulate, maxima and decay fused.
+   snapshots on demand, accumulate and decay fused, no maxima scans (the grade is count / W).
 7. **The display paces the steps.** A step starts on the page-flip event, never on a timer, and a flip wait never
    blocks main.
 8. **Every budget is a counter and a gate.** Per thread and stage, p50 and p99 in `:SYSTem:STATe?`, asserted by

@@ -134,6 +134,8 @@ merge ([Memory and queues](#memory-and-queues)).
 | `Settings` | the change stage, through `Command`s and `normalize` | every stage, by `&` | process; saved by `store` | < 64 kB |
 | `Config` | read once at start | every stage, by `&` | process | < 16 kB |
 | `ChangeSet` | the change stage | stages after it in the same step | one step | < 4 kB |
+| pending `ChangeSet` (light steps since the last full step) | the change stage | the next full step, which clears it | until the next full step | < 4 kB |
+| `Pacing { next_step, period }` | main | acquisition (`pacing::Fill`), latest value | process | < 64 B |
 | `Generations` (`gen`, `epoch`, `stats_gen`) | `change` (`new_gen` from `classify`, `new_epoch` from request resolution, `stats_gen` on the `stats` class) | every stage, as values in `ChangeSet` | process | 24 B |
 | outbox of internal commands and requests | the stage that emits them | the change stage, next step | one step | 64 entries |
 | `AcqIntent` with `gen` and `epoch` | the change stage | `app/acq_client` | one step | < 4 kB |
@@ -349,8 +351,9 @@ Run state goes by transition, not by value:
 is in the code; no stage relies on a side effect of another.
 
 Two kinds of step run the same stages in the same order ([Main loop and pacing](#main-loop-and-pacing)): the full
-step on a page flip runs all of them; the light step on an input or remote event runs intake, change, acquire and
-reply only.
+step on the vblank clock runs all of them; the light step on an input or remote event runs intake (input and remote
+only), change, acquire and reply. The change stage keeps the light steps' `ChangeSet`s pending until the next full
+step consumes them.
 
 ```
 intake     (input, remote requests, outbox, BatchUnits, RecordBatches, Frames, MeasReads, Readings)
@@ -407,11 +410,11 @@ A hardware poll remains only where the FPGA raises no event; it runs at the hard
 
 | Thread | The one blocking call | Wake sources | Worst-case wake latency | Hardware poll (period, cost) |
 |---|---|---|---|---|
-| main | `epoll_wait` | page-flip event (DRM fd); wake `eventfd` (a `BatchUnit`, a `RecordBatch`, a remote request, `Readings` changed, the outbox of a worker); input fds; GPU helper reply socket; a `timerfd` deadline only without a display (host, headless) | an input or remote event: under 1 ms to the light step; a picture: the next flip | none |
-| acquisition | `poll` on its command `eventfd` with a timeout of the hardware period | `AcqWant` changed, `AcqCmd` queued, cancel | under 1 ms for STOP, a settings change or cancel | trigger done (BAR1 `0x4080` bit 30): every 500 us while armed; ring count during a fill: every 200 us, or helper work between reads; each read is one MMIO load |
+| main | `epoll_pwait2` | vblank sequence event and page-flip event (DRM fd); wake `eventfd` (a `BatchUnit`, a `RecordBatch`, a remote request, `Readings` changed, the outbox of a worker); input fds; GPU helper reply socket; a `timerfd` deadline only without a display (host, headless) | an input or remote event: under 1 ms to the light step; a picture: the next flip | none |
+| acquisition | `ppoll` on its command `eventfd` with a timeout of the hardware period (sub-millisecond, so `ppoll`, not `poll`) | `AcqWant` changed, `AcqCmd` queued, cancel | under 1 ms for STOP, a settings change or cancel | trigger done (BAR1 `0x4080` bit 30): every 500 us while armed; ring count during a fill: every 200 us, or helper work between reads; each read is one MMIO load |
 | deposit workers | channel receive (SPSC ring plus futex) | a claimable batch, shutdown | under 50 us | none |
 | measure | channel receive | a job, shutdown | under 50 us | none |
-| input | `poll` | panel UART, touch evdev, shutdown `eventfd` | under 1 ms | none |
+| input | `ppoll` | panel UART, touch evdev, shutdown `eventfd` | under 1 ms | none |
 | remote listeners | `epoll_wait` per listener thread | accept, readable, writable (`EPOLLOUT` while an output queue is non-empty), reply ready `eventfd`, shutdown | under 1 ms | none |
 | web PNG / send | channel receive | a snapshot ready, shutdown | not latency-bound | none |
 | GPU helper | `poll` on its socket and the GPU fences | a submission, a fence signalled, shutdown | under 1 ms | none |
@@ -422,7 +425,8 @@ to handling. unitlab asserts the latency column; an idle scope in STOP wakes mai
 
 The FPGA raises no usable user interrupt for trigger done, ring count or roll chunks: stock firmware polls BAR1
 (`0x4080` bit 30) and then does one blocking C2H read, with the driver on legacy INTx and MSI off (RE, `regmap`).
-So those two polls stay, but inside `poll(eventfd, period)`: a command interrupts them at once, and an armed scope in
+So those two polls stay, but inside `ppoll(eventfd, period)` (`poll` takes milliseconds; the 200 and 500 us periods
+need `ppoll`, `epoll_pwait2` or a `timerfd`): a command interrupts them at once, and an armed scope in
 STOP costs nothing. The 10 us sleep after every BAR write (`bus.rs` 167) stays until a unit measurement shows the
 minimum spacing; then it becomes that spacing, done once per write list rather than per write where the hardware
 allows it.
@@ -440,15 +444,27 @@ default. If INTx works after kexec, the poll mode goes.
 ### Main loop and pacing
 
 The display paces the steps (adr/0016):
-- **Full step on the flip.** A step that composes starts on the page-flip event of the previous picture. The panel's
-  refresh decides the step period; the target of 30 pictures/s holds by composing on every flip at 30 Hz or every
-  second flip at 60 Hz. Without a display (host, headless) a `timerfd` with an absolute deadline stands in.
+- **Vblank, not flips.** Main queues a CRTC sequence event (`drmCrtcQueueSequence`) for every vblank and receives it in
+  its `epoll_wait`. The vblank clock is independent of whether a flip completed, so a late composition never shifts the
+  step clock. At a 60 Hz refresh a full step starts on every second vblank (30 Hz); at 30 Hz on every vblank.
+- **First picture after idle.** When main was idle (STOP, nothing changed) and something changes, the full step runs
+  at the next vblank, not the next even one; the 30 Hz phase restarts from there.
+- **Without vblanks.** With the display off, HDMI unplugged as the only output, or on the host, a `timerfd` with
+  absolute 33.3 ms deadlines stands in. Switching between the two keeps the step count continuous.
+- **The phase goes to the acquisition.** Main publishes `Pacing { next_step, period }` (the time of the next full
+  step and the step period) in a latest-value cell. `pacing::Fill` in the acquisition thread ends a ring fill so that
+  the batch is ready before the next step.
 - **A flip never blocks main.** Main submits a picture and returns to `epoll_wait`. It composes the next only when a
   free buffer exists (double buffering with the GPU helper's fenced pool, triple where the budget allows); otherwise it
-  waits for the flip event in the same `epoll_wait`. Today's `wait_flip` with a 100 ms timeout (`drm.rs` 390) goes.
-- **Light step between flips.** An input event or remote request wakes main at once and runs a light step: intake,
-  change, acquire, reply. No records, accumulation or compose. A settings round trip (SCPI write, reply) stays under
-  2 ms; the picture follows at the next flip.
+  skips that step's compose and counts it. Today's `wait_flip` with a 100 ms timeout (`drm.rs` 390) goes.
+- **Light step between full steps.** An input event or remote request wakes main at once and runs a light step:
+  intake of input and remote requests only, change, acquire, reply. It does not drain `BatchUnit`s or `RecordBatch`es,
+  and it runs no records, accumulation or compose. A settings round trip (SCPI write, reply) stays under 2 ms; the
+  picture follows at the next full step.
+- **Pending changes.** The change stage keeps a pending `ChangeSet`. A light step merges its own into it: the union of
+  the classes, the newest generations, all `(token, epoch)` pairs. The next full step consumes the pending set and
+  clears it, so every consumer that runs only in full steps (records, accumulator, views) sees every change since its
+  last step. Host test: a mapping change in a light step gives a preview at the next full step.
 - **No busy wait.** The last-millisecond loop of today's pacing (`main.rs` 563, 610) goes with the timer.
 
 ### Hand-offs
@@ -457,7 +473,7 @@ The display paces the steps (adr/0016):
 |---|---|---|
 | `Batch` into the pipe; a worker's share maps back to its owner | per-producer SPSC ring of owned values | none |
 | `BatchUnit`, `RecordBatch` to main | SPSC ring per worker, plus main's wake `eventfd` | none |
-| `AcqWant`, `DepositView`, `Readings` | latest-value cell (seqlock for `Copy` parts, swap of an `Arc` for the rest) plus a wake `eventfd` where the reader must react within a step | a swap only |
+| `AcqWant`, `DepositView`, `Readings`, `Pacing` | latest-value cell (seqlock for `Copy` parts, swap of an `Arc` for the rest) plus a wake `eventfd` where the reader must react within a step | a swap only |
 | `AcqCmd` | bounded MPSC queue plus the acquisition `eventfd` | push and pop only |
 | composed picture to remote clients | triple buffer | index swap only |
 | `RemoteRequest` | bounded MPSC queue plus main's wake `eventfd` | push and pop only |

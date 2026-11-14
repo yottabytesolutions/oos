@@ -10,6 +10,11 @@ not documented.
 
 ## Decision
 
+- Commands are bound or unbound. A bound `AcqCmd` (`Single`, `Force`, `Rearm`, `Final`, `Segments`, `SegRead`,
+  `Levels`, `Slots`) carries the `(gen, epoch)` it belongs to and is served after that pair is applied, or
+  acknowledged as `Superseded`. An unbound one (`AvgClear`, `SelfCal`, `CalCancel`) is always served in order. A
+  SINGLE arm is a queued command, so no SINGLE epoch is lost in the latest-value cell.
+- STOP and RUN are the `hold` level in `AcqWant`, not a command: run state is state and must never be superseded.
 - One writer per kind (`../acquisition.md`, Port). In: `AcqWant` (latest value with `gen` and `epoch`)
   and `AcqCmd` (one-shot commands with ids, queued, acknowledged in `Readings`). Out: `Batch`, `Frame`, `MeasRead`,
   `Readings`.
@@ -17,7 +22,7 @@ not documented.
 - Remote listeners send `RemoteRequest { command or query, wait, reply sender }` to main.
 - The only mutexes are latest-value cells, each with one writer, held only for a copy or a swap, never across IO:
   - `AcqWant` (writer: `app/acq_client`; reader: the acquisition thread);
-  - `PipeView` (writer: `app/acq_client`; readers: the pipe and its workers);
+  - `DepositView` (writer: `app/acq_client`; readers: the deposit workers, at first claim);
   - `Readings` (writer: the acquisition thread; reader: main);
   - the composed-picture snapshot (writer: `present`; reader: the web PNG thread).
   Everything else moves through bounded channels or is moved by value (`Batch` into the pipe).

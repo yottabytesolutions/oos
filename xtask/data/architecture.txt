@@ -15,7 +15,7 @@ crate xtask -> proc-macro2 quote serde serde_json syn
 # Module rules over a crate's top-level modules (the first name after crate::):
 #   forbid <crate dir> <from> <to>          code under src/<from>.rs or src/<from>/ must not name crate::<to>
 #   layer <crate dir> <module> -> <mods...> code of <module> may name only these modules and itself
-# Phase 2 of the overhaul (docs/overhaul.md) defines the layers of ui; until then there are none.
+# The target layers of ui are in docs/architecture/README.md (Enforcement); migration steps add them as the tree meets them.
 #
 # Metrics allowlist: statics with interior mutability (locks, atomics, cells, once/lazy values) that may stay.
 #   static <file> <name>     <name> as the gate prints it: NAME, or <function>::NAME inside a function

@@ -20,6 +20,9 @@ its context, and a 10k-line file does not.
   checker fails if a listed item grows or a new one appears.
 - The same limits and checker are used for auxout's crates.
 
+The 12-field and 60-line limits stay hard (user decision). Gate step G1 (auxout): count only code lines for
+the function limit (no comments, no blank lines), so that documenting a function never pushes it over.
+
 ## Consequences
 
 - Splitting is part of each migration step. The allowlist shows progress.

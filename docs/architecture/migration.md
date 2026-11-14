@@ -12,8 +12,25 @@ keeps running until the new path replaces it, one small step per merge. This fil
 - **Deletions.** The step deletes what it lists. The reviewer checks with grep that the names are gone.
 - **Gate.** The overhaul gate passes (`../development.md`, pending the guardrails merge): `cargo xtask check` and the test runs, fmt, clippy, ui and hal tests in release and debug with full counts, arm64
   check, size limits, boundary rules, perf-guard, `gpu/test-host.sh`.
-- **Ratchet.** The size allowlist shrinks or stays (`cargo xtask ratchet`). Module rules have no ratchet: a step adds
-  the rules in `xtask/data/architecture.txt` that its modules now meet ([Enforcement](README.md#enforcement)).
+- **Ratchet.** The ratchet files shrink or stay. Module rules have no ratchet: a step adds the rules in
+  `xtask/data/architecture.txt` that its modules now meet ([Enforcement](README.md#enforcement)).
+- **Moves.** The size check counts a moved or renamed item as new, which would reject the migration's own moves (M2.1,
+  M3, M13 to M18) at their first commit. So the gate is move-aware before any moving step starts (G1): the branch
+  lists its planned moves in `xtask/data/moves.txt` (`<old> -> <new>`, one per line, part of the step's plan, not a
+  ratchet file), and the branch gate accepts a listed item at its new place if it is not larger than at the merge
+  base. A moving branch passes its own gate from its first commit. At merge the integrator runs
+  `cargo xtask ratchet --move`, which transfers the entries and empties `moves.txt`.
+- **Shared ratchet files.** Branches do not edit the ratchet and coverage files. The integrator runs
+  `cargo xtask ratchet` at merge, so two branches never conflict on them. The coverage gate allows a margin of 0.5
+  points below the floor per branch; the integrator raises the floor after the merge. The ratchet files are split per
+  crate so that unrelated merges touch different files. Implemented in G1. `docs/development.md` lives on
+  `overhaul-guardrails`; its ratchet text is aligned with these rules when that branch merges (team-lead).
+- **Hotfix lane.** A fix the unit needs before the overhaul ships branches from `dho804` as `fix/<name>`, is merged to
+  `dho804`, and is forward-ported to `overhaul` as a regression test plus the fix in its target place, not as a
+  cherry-pick of the old code.
+- **Known failures.** A test that records a known bug before its fix is marked `#[ignore = "known: task NNNN"]`, with
+  the task file that fixes it. The gate lists every known failure (from G1); the list may only shrink, and the fixing
+  step removes the mark.
 - **Docs.** The step updates the "code still differs" notes and, if a decision changed, adds an ADR.
 - **Unit rounds.** Only where marked. Install rule: `oos-update install <pkg> --no-kexec --execute`, then reboot.
   Unit rules as in the project: no hand FPGA register writes while oos-ui runs, no reads of 0x205c, never FPGA flash,
@@ -25,6 +42,22 @@ keeps running until the new path replaces it, one small step per merge. This fil
 script, the size checker with its allowlist (adr/0010), the module and crate rules (`xtask/data/architecture.txt`),
 the pre-commit hook. Migration steps start when the gate script exists.
 
+## G1: gate prerequisites
+
+Owner: auxout. Lands before M2.1, because M2.1 is the first step that moves code. Each item is a gate change with its
+own tests in `xtask`:
+- move-aware validation: `xtask/data/moves.txt` on the branch, no growth against the merge base, and
+  `cargo xtask ratchet --move` for the integrator at merge;
+- the coverage margin of 0.5 points per branch;
+- ratchet files split per crate;
+- the function limit counts code lines only (no comments, no blank lines; adr/0010);
+- module rules over external crate paths (`forbid ui <module> oos_hal::dho`), replacing the `board::boundary` lint;
+- a shrink-only count of `#[allow(clippy::disallowed_methods)]` per crate, so an adapter-level exception cannot spread
+  without showing in review;
+- the known-failure listing.
+
+Estimate: 2 days, auxout, in parallel with M1 and M1b.
+
 ## Steps
 
 D-numbers are the steps of [drawing implementation plan](drawing.md#implementation-plan). Unit marks the steps followed by a unit round.
@@ -33,10 +66,14 @@ D-numbers are the steps of [drawing implementation plan](drawing.md#implementati
 |---|---|---|---|
 | M0 | Picture counters: stale, partial, age, composition | 0 | |
 | M1 | Golden pictures and the host harness | | |
-| M2 | One change-detection point | 1a | |
+| M1b | Safe start, exit contract, shutdown order (adr/0015) | | round 0 |
+| M2.1 | `oos-core` crate with today's `Model` | | |
+| M2.2 | `classify` in shadow mode next to the old mechanisms | 1a | round 0 (shadow) |
+| M2.3 | Consumers switch to the `ChangeSet`, one class per part; old mechanisms deleted last | 1a | |
 | M3 | Acquisition thread split | 1b | |
 | M4 | Mapping key, preview, generation for records | 1c | round 1 |
 | M5 | Typed channels replace `Shared` | | |
+| M5b | Memory model: `memplan`, byte bounds, ring chunks, watchdog, drop counters | | |
 | M6 | Measurement reads never draw | 2 | |
 | M7 | One lines kernel, behind `draw.model` | 3 | round 2 |
 | M8 | Dots: one count per sample | 4 | |
@@ -71,14 +108,74 @@ decided when a share is drawn, so a share drawn just before a change and merged 
   feeds the real `drawpipe` with its workers on the host, and its pictures get references too. The drawing steps
   change that path most.
 - Tests: new, pass on creation. They pin today's pictures so that M2 to M6 can prove "no change".
+- The host soak (`ui/tests/soak.rs`, README.md, [Testing](README.md#testing)) as a passing
+  characterisation test: today's `Ui` (not yet `Session`) on the scripted-batch source, for the modes that source
+  covers (normal, pairs, deep pairs, average). It asserts the allocation plateau those modes already reach. It does
+  not claim to cover the acquisition producer: the scripted source bypasses it. The producer part (roll, scan,
+  segments through the real loop) comes with the shared acquisition-loop harness in M3.0, and its bounded-memory
+  assertion becomes mandatory with the fix that makes it pass (M5b, or earlier with the forward-ported roll fix).
 - Deletes: nothing.
+
+### M1b: safe start and exit
+
+Prerequisite: the `dho804` roll fix (`fix/roll-queue`) is forward-ported to `overhaul` through the hotfix lane as
+soon as it merges, so the roll path that bypasses the hold check is closed before M1b relies on STOP. M1b does not
+wait for M5 or M5b for roll.
+
+adr/0015, [Safe start and exit](README.md#safe-start-and-exit). Independent of the drawing steps; it lands
+early because every later unit round depends on a scope that cannot loop.
+- rcS: the exit counter and `--safe`. `oos-ui`: the markers, `--safe`, persist after `stable_s`, the bounded
+  shutdown order, the GPU helper fallback, the RSS watchdog.
+- Tests, failing before: a scripted `oos-ui` stand-in that aborts at start reaches `--safe` within 3 restarts in a
+  host test of the rcS loop; a setup changed less than `stable_s` before an abort is not restored; the durable-write
+  interruption tests for every marker, counter and setup transition; the shutdown order joins the threads that exist
+  at M1b (main loop, remote listeners, deposit workers, GPU helper) within their bounds; a killed helper gives CPU
+  pictures at the next step. Cancellation of the acquisition thread through trigger waits and split reads comes with
+  the scripted `Device` in M3.0, and its join bound is tested there; `AcqCmd`-based shutdown is tested in M5.
+- Tests also: three aborts 20 minutes apart reach `--safe`; exit 75 goes to `--safe` at once; a same-boot restart
+  after an abort restores the last stable settings from `/tmp`; a clean power-off within `stable_s` persists.
+- Unit check in round 0: a restart-loop case with a setup that aborts at start; a clean shutdown by update.
+- Estimate: 2 days.
 
 ### M2: one change-detection point (D1a)
 
-M2.0 creates the crate `oos-core` (adr/0014) and moves today's flat `Model` into it, with the types it names (math,
+M2 is split into three steps, because every clear and reset moves to one point and a wrong class shows only on the
+unit.
+
+**M2.1** creates the crate `oos-core` (adr/0014) and moves today's flat `Model` into it, with the types it names (math,
 decode, zone and protocol settings types). Its calls into the UI and the board (`board()`, `la::available`, the
 protocol registry) become values passed in: platform capabilities in `Config`, the registry's option lists in
-`Context`. The crate rules in `xtask/data/architecture.txt` hold from here on. Estimate: 2 days on top of D1a.
+`Context`. The crate rules in `xtask/data/architecture.txt` hold from here on. Pure move; moves recorded with
+`ratchet --move`. Estimate: 2 days.
+
+**M2.2** adds `classify`, `normalize`, the outbox and `Generations` in shadow mode. The old mechanisms still act, and
+the shadow writes nothing:
+- **Separate shadow state.** The shadow keeps its own previous `Model` snapshot, its own `Generations` and its own
+  outbox. `normalize` runs on a copy of the step's `Model`, never on the live one; the old `clamp_offsets` and
+  `fit_platform` calls stay where they are until M2.3.
+- **Observe-only outputs.** The shadow `ChangeSet`, the shadow outbox and the shadow `normalize` result are only
+  compared and counted. Nothing reads them to act.
+- Each step the shadow `ChangeSet` is compared with what the old mechanisms did (which clears ran, whether
+  `hw_stamp` moved), the shadow `normalize` result with the live `Model` after the old clamps, and the shadow outbox
+  with the old internal writes. Every disagreement is counted per class in `:SYSTem:STATe?` (`shadow acq=N
+  mapping=N ...`) and logged once with the field.
+
+Items 5 and 6 of the list below (normalize moving in, the outbox) therefore take effect in M2.3, not M2.2. **Round 0 (shadow):** knob spins, SCPI writes, setup loads, autoset and Bode on the unit, with all counters
+at 0 or each disagreement explained as a bug of the old code. Estimate: 3 days.
+
+**M2.3** switches to the `ChangeSet` in parts, each through the gate. A part switches a writer and its consumers
+together, because switching one side alone acts twice or not at all:
+
+| Part | Switch together |
+|---|---|
+| M2.3a `normalize` | the live `normalize` call before `classify`; the removal of the per-step `clamp_offsets` and `fit_platform` calls (both at once, or the clamps run twice) |
+| M2.3b `acq` | the `gen` and `epoch` writers (`hw_stamp` bumps in `ui.rs`, `ui/bode.rs`, `ui/autoset.rs` replaced by tokens); `AcqWant` publication from the change point; the records and measurement filters on `gen` and `epoch` |
+| M2.3c outbox | SINGLE or segments done to STOP, autoset and Bode steps and `auto_step` writing through the outbox; the run-state transition consumers that react to them |
+| M2.3d `mapping`, `phosphor` | the 16 `dirty_map = true` sites; the accumulator's preview and map reset on the `ChangeSet` |
+| M2.3e `stats`, `history`, `mask`, `zone`, `hw_average`, `math`, `view` | `settings_changed` and `mark_changed` callers for these classes; `stats_gen` on measure jobs; each view's `RESETS_ON` |
+
+The old mechanisms are deleted in the last part, when the shadow counters have been 0 since M2.2's round. Estimate:
+2.5 days.
 
 Design: [Change detection](README.md#change-detection), adr/0003. It includes compress's four review changes and
 upstreamarch's review:
@@ -90,16 +187,18 @@ upstreamarch's review:
 5. `normalize` before `classify`, in a fixed group order: `clamp_offsets`, `fit_platform` and the cross-group clamps
    move in and stop running elsewhere each step.
 6. The outbox for internal writers: SINGLE or segments done to STOP, autoset and Bode steps, `auto_step`.
-7. The change point publishes `AcqWant` (still through `Shared` until M5) and the route view, so no other code
-   writes the acquisition request.
+7. The change point publishes `AcqWant` (still through `Shared` until M5) with its `route` tag, and the mapping for
+   the pipe, so no other code writes the acquisition request.
 8. Each existing view declares the classes it resets on (trend, eye, XY persistence, cursors).
 
-Classes: `acq`, `mapping`, `phosphor`, `stats`, `mask`, `zone`, `hw_average`, `history`, `math`. Measurement state
+Classes: `acq`, `mapping`, `phosphor`, `stats`, `mask`, `zone`, `hw_average`, `history`, `math`, `view`. Measurement state
 (the analysis results, statistics and `meas_n`) is in `stats`. No `decode` class: the decode cache is keyed.
 
-`classify` is split per future settings group from the start: one function per group, each destructuring its fields
-of today's flat `Model` (one destructuring of `Model` without `..` checks that every field belongs to a group). M13
-then moves the fields without reclassifying.
+`classify` is split per future settings group from the start, as hand-written functions, each under 60 lines: one
+or more per group, each destructuring its own fields of today's flat `Model`. No macro generates them (macro bodies
+are a blind spot of the gate). One destructuring of `Model` without `..` checks at compile time that every field
+belongs to a group. It lives in a `#[test]` function, which the size limit exempts, so its length (178 fields) is
+not a size violation. M13 then moves the fields without reclassifying.
 
 Tests, failing before:
 - every class: changing a representative field resets exactly its consumers;
@@ -111,17 +210,23 @@ Tests, failing before:
 - SINGLE done switches to STOP through the outbox, and the STOP is in the next `ChangeSet`;
 - every view's declared classes match what it resets in a change of each class;
 - the mapping key changes exactly when a `mapping` field changes, a relayout (panes, HDMI) included;
-- CLEAR, the RUN and SINGLE edges and Create mask reset their consumers with no settings difference.
+- CLEAR, the RUN and SINGLE edges and Create mask reset their consumers with no settings difference;
+- a snapshot test lists every field classified `Unrelated`, so adding one shows in review;
+- in M2.2: the shadow counters stay 0 over the scripted change storm on the host.
 
 Deletes: `settings_changed`, `mark_changed`, the 16 `dirty_map = true`, the `hw_stamp` bumps in `ui.rs`, `ui/bode.rs`
 and `ui/autoset.rs`, the per-step calls of `clamp_offsets` and `fit_platform` outside the change point. Risk: medium. Every clear and reset moves to one point.
 
 ### M3: acquisition thread split (D1b)
 
-M3.0 comes first: the `Device` trait (configure, arm, wait, read, read again, disarm) over today's hardware calls, a
+M3.0 comes first: the `Device` trait (configure, arm, wait, read, read again, disarm, each cancellable,
+[Cancellation](README.md#cancellation)) over today's hardware calls, a
 scripted device, and characterisation tests of the current loop on the host: one pass per phase, STOP, SINGLE, a
 settings change mid-fill, roll and scan. They record today's behaviour, including what the design calls wrong (the
-ended fill that is still read), and M4 then changes those expectations on purpose. Estimate: 1.5 days.
+ended fill that is still read), and M4 then changes those expectations on purpose. The roll soak case lives here: roll
+after SINGLE over 10 000 passes with a byte count of what the loop publishes. Unless the `dho804` fix
+(`fix/roll-queue`) has been forward-ported by then, it is a known failure (`#[ignore = "known: ..."]`) until M5b.
+Estimate: 1.5 days.
 
 Then split the closure in `hw.rs` `spawn` (lines 1263-2154 on 32041d0) as in `acquisition.md`:
 - an `AcqLoop` struct for the about 30 loop locals (1328-1393);
@@ -162,6 +267,7 @@ races show" in [the change-detection design](drawing.md#one-change-detection-poi
   one group per part (M5.1 requests with ids: levels, slots, final; M5.2 the unit readings). Follows
   `acquisition.md`, Migration 2 and 3. `MeasRead` as its own type comes with M6.
 - Atomics for metrics, one writer each, on the statics allowlist.
+- The `Frame` and `MeasRead` latest-value cells and the segment channel; the rest of the memory model is M5b.
 - Hidden global state goes in this step:
   - `Config` read once at start and passed in; no policy function reads a `OnceLock` or the environment;
   - the compression `k` moves into `Readings`;
@@ -175,9 +281,24 @@ Tests, failing before:
 - an epoch-only change drops the batch armed ahead and the queued frames of the older epoch;
 - two `Config` values in one test process give two behaviours (no global read);
 - a rearm during configure is not lost;
+- a command bound to an older pair is acknowledged as `Superseded`, not executed; two SINGLE presses within one loop
+  pass give two acknowledgements; an unbound command (`CalCancel`, `AvgClear`) is served across a `gen` change;
+- STOP (`hold` in `AcqWant`) and a `gen` change in one loop pass end held;
 - the contract tests against the fake.
 
 Deletes: `board::HwShared`, `Shared`, its lock.
+
+### M5b: memory model
+
+[Memory and queues](README.md#memory-and-queues). After M5, because the bounds sit on M5's channels.
+- `memplan(&Settings, &Caps)` and its sweep test; the depth clamp only if the sweep shows it is needed.
+- Byte bounds and overload policies on every channel; the degradation order; drop counters in `:SYSTem:STATe?`.
+- The roll and scan ring as immutable chunks; a sweep as min/max plus chunk `Arc`s; nothing after a complete SINGLE
+  sweep until `Rearm`.
+- The RSS watchdog.
+- Tests, failing before: the `memplan` sweep; a SINGLE roll sweep publishes once; a reader's pin holds chunks without
+  a copy; a full pipe drops and counts instead of blocking or moving deposit to main; the M3.0 roll soak case passes.
+- Estimate: 2 days (moved out of M5).
 
 ### M6: measurement reads never draw (D2)
 
@@ -204,8 +325,8 @@ column over 40 rows.
 As D5, adr/0006. Tests, failing before: every merged picture holds whole batches; the newest frame is in the same
 merge; frames and batch mode give the same picture; one step's frames in frames mode form one unit. Frames mode
 becomes the same `BatchUnit`, deposited by the UI thread, one unit per step (adr/0013). The accumulator lands in its
-final module, `picture/acc.rs`, with its target signature (`merge(&mut self, units, pseudo, &ChangeSet, now)`, output
-`&Picture`), so M10 and M16 do not move it again. Gate: the perf-guard ratios of adr/0013 (one-frame unit and
+final module, `picture/acc.rs`, with its target signature (`merge(&mut self, units, pseudo, replace: Option<Replace>, &ChangeSet, now)`,
+output `&Picture`), so M10 and M16 do not move it again. Gate: the perf-guard ratios of adr/0013 (one-frame unit and
 48-frame step against `draw_frame`). Deletes: the `Acc` lists, `Tally` (if fix/batch-newest was merged), `Deliver`, `MERGE_WAIT_MAX`, the
 early `help_done`, the `fast_ok` frame branch in `Ui::step`, route D's `draw_frame` composition.
 
@@ -229,7 +350,9 @@ Unit check inside round 5: setup B at 5.1 V, empty pictures <= 1 %.
 
 Remove `draw.model` and the old kernels and grade. Tests: full suites, golden references from M10 unchanged.
 
-**Unit round 5:** full acceptance set; then the postponed stress round (matrix, feature pass, change storm, interfaces
+**Unit round 5:** full acceptance set, plus memory: roll at 0.5 s/div and 50 s/div in RUN and after SINGLE for
+10 min each, scan, and 4 channels at maximum depth, each with RSS flat within 10 MB and all drop counters as expected;
+then the restart-loop case of adr/0015; then the postponed stress round (matrix, feature pass, change storm, interfaces
 under load, soak, restart and power cycle) on this build.
 
 **Stable stop point.** After M12 the branch is shippable: the drawing goals are met, every step is through the gate
@@ -240,7 +363,7 @@ take a build from here while M13 to M18 continue, or stop the overhaul here. M13
 
 Design: [Settings and commands](README.md#settings-and-commands), adr/0001.
 
-- Move `Model`'s fields into the groups in `settings/`, private, with accessors and invariants.
+- Move `Model`'s fields into the groups in `change/settings/`, private, with accessors and invariants.
 - `classify` from M2 splits into per-group parts.
 - Parts: one group per sub-step (M13.1 channels, M13.2 timebase, ...), each through the gate.
 
@@ -291,9 +414,10 @@ or `model.rs`, since they no longer exist.
 
 ## Estimate
 
-M0 to M12: about 28.5 days of host work plus five unit rounds of about half a day: the drawing plan's 22 days, M1 and
-M5 at about 1.5 days each, M2.0 at 2 days, M3.0 at 1.5 days. M13 to M18: estimated at the stable stop point after
-M12, when the remaining sizes are known.
+M0 to M12: about 35 days of host work plus six unit rounds (0 to 5) of about half a day: the drawing plan's 22 days with D1a
+(3 days) replaced by M2.1 to M2.3 (7.5 days), M1 and M5 at about 1.5 days each, M1b at 2 days, M3.0 at 1.5 days,
+and M5b (memory model) at 2 days. G1 adds 2 days of gate work by auxout, in parallel with M1 and M1b. M13 to
+M18: estimated at the stable stop point after M12, when the remaining sizes are known.
 
 ## Status
 

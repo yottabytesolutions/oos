@@ -96,9 +96,10 @@ cargo xtask ratchet               # lower sizes and counts to the current values
 cargo xtask ratchet --coverage    # also raise the coverage floors to the current values
 ```
 
-`ratchet` never raises a size or count and never adds an entry: a new finding is fixed, not listed. Commit the
-changed files with the change that earned them. `cargo xtask ratchet --init` writes the files from the current state;
-it was run when the rules came in.
+`ratchet` never raises a size or count and never adds an entry: a new finding is fixed, not listed. Branches do not
+edit the ratchet and coverage files: the integrator runs `cargo xtask ratchet` at merge, so two branches never
+conflict on them ([migration rules](architecture/migration.md#rules-for-every-step), Shared ratchet files).
+`cargo xtask ratchet --init` writes the files from the current state; it was run when the rules came in.
 
 ### Base trust
 
@@ -117,6 +118,17 @@ Lint counts are per file, not per place: fixing one `unwrap` and adding another 
 price of a ratchet that survives line moves. Size entries name the item, so they follow it through moves inside the
 file; a renamed or moved item counts as new.
 
+Planned in gate step G1 ([migration](architecture/migration.md#g1-gate-prerequisites)), before any migration step
+that moves code:
+- move-aware validation: a branch lists its planned moves in `xtask/data/moves.txt` (`<old> -> <new>`, part of the
+  step, not a ratchet file); the branch gate accepts a listed item at its new place if it is not larger than at the
+  merge base, and the integrator transfers the entries with `cargo xtask ratchet --move` at merge;
+- a coverage margin of 0.5 points per branch, raised by the integrator after the merge;
+- the function limit counted in code lines only;
+- module rules over external crate paths;
+- a shrink-only count of `#[allow(clippy::disallowed_methods)]` per crate;
+- the known-failure listing (`#[ignore = "known: task NNNN"]`), shrink-only.
+
 ## Changing a rule
 
 - A new crate: add it to `CRATES` in `xtask/src/repo.rs` (with `ratchet: false`, so it starts clean) and a `crate`
@@ -132,8 +144,8 @@ file; a renamed or moved item counts as new.
   - `layer <crate dir> <module> -> <modules...>`: code of `<module>` may name only the listed modules and itself;
     nothing after `->` makes it a leaf.
 
-  Module rules have no ratchet: the tree must meet a rule when it is added. Phase 2 of the overhaul (`overhaul.md`)
-  writes the rules for `ui`.
+  Module rules have no ratchet: the tree must meet a rule when it is added. The target rules for `ui` are in
+  [Enforcement](architecture/README.md#enforcement); each migration step adds the ones its modules meet.
 - The statics check reads the type as written and follows the structs, enums, type aliases and `use ... as`
   renames of the crate it names (not associated types, `<T as Trait>::X`): `OnceLock<Counters>` counts when `Counters` holds atomics, `static S: M<u8>` counts
   after `use std::sync::Mutex as M`. Types match by name, so two types of the same name in one crate count as one.

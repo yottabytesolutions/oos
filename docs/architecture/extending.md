@@ -1,15 +1,17 @@
 # Extending OOS
 
 How a feature crosses the layers of the target architecture (`README.md`). Each recipe lists the files to touch,
-in order, and the tests that must exist before the change merges. Paths are the target layout. Until the migration
-step named in `migration.md` has landed, the old location applies; the step says where.
+in order, and the tests that must exist before the change merges. Paths are the target layout. Each recipe starts with
+an "Until" line: what to do while the migration step it depends on has not landed.
 
 Every recipe ends with the overhaul gate (`../development.md`, pending the guardrails merge): `cargo xtask check` and the test runs (fmt, clippy, tests in release and debug, arm64 check, size
 limits, boundary rules, perf-guard, `gpu/test-host.sh`).
 
 ## Add a setting
 
-1. **Group.** Pick the group in `oos-core`'s `settings/` that owns the value. Add the private field, its default and an accessor.
+Until M13 (settings groups) and M14 (commands): add the field to `Model` in `oos-core`, classify it in its future group's `classify` function, and write it only from the change point.
+
+1. **Group.** Pick the group in `oos-core`'s `change/settings/` that owns the value. Add the private field, its default and an accessor.
    If no group fits, the setting is probably UI state (menus, views), not a setting.
 2. **Invariants.** Add the range or combination check within the group to its `apply`. A constraint across groups
    (a clamp by another group's value) goes into `Settings::normalize()`
@@ -42,6 +44,9 @@ Tests:
 
 ## Add an SCPI command
 
+Until M14 (commands) and M15 (remote on commands): add the header to `scpi.rs` and write through today's setter, which
+M2.3 routes to the change point; the command variant comes with M14 and the wait condition with M15.
+
 1. **Parse.** Add the header to the table in `remote/scpi/`. It maps to a `Command` (set) or a `Query` (read). No
    settings logic in the parser.
 2. **Query.** A query reads from the step's state in the `reply` stage. If it needs a value that does not exist yet,
@@ -63,6 +68,8 @@ Tests:
 
 ## Add a measurement
 
+Until M16 (stages): steps 1 to 3 apply as written; the records side is in `ui.rs` and `framestats.rs`.
+
 1. **Function.** The measurement is a pure function in `dsp/src/measure.rs` over volts and `dt`. Add the variant to
    `dsp::measure::Meas` with its unit.
 2. **Records.** `records/measure` runs the enabled measurements on each record of the current generation. A new
@@ -81,6 +88,9 @@ Tests:
 
 ## Add a menu item
 
+Until M14 (commands) and M17 (menus as components): add the item in `ui.rs`'s menu tables; its action writes through
+today's setter, which M2.3 routes to the change point. It returns a command from M14.
+
 1. **Item.** Add the item to its page in `menus/`. An item has a label, a value reader (from settings or a component's
    state) and an action that returns a `Command` or a component event. It writes nothing itself. A knob on the item
    returns a relative command (`Step(i32)`).
@@ -97,9 +107,11 @@ Tests:
 
 ## Add a trigger type
 
+Until M13: the type is a `Model` field; steps 2 to 5 apply as written from M4 (BatchMeta snapshot) on.
+
 A trigger type is a setting with a hardware side and a software side.
 
-1. **Setting.** Add a variant with its own config struct to `settings/trigger`'s `TriggerKind`
+1. **Setting.** Add a variant with its own config struct to `change/settings/trigger`'s `TriggerKind`
    (`TriggerKind::Pulse(PulseCfg)`), following [Add a setting](#add-a-setting). Class: `acq`, and `mapping` only if
    it moves the trigger point on screen.
 2. **Snapshot.** Put the parameters that refinement or conversion needs into the trigger part of `BatchMeta`.
@@ -122,7 +134,9 @@ Tests:
 
 ## Add a decoder
 
-Decoders are `protocols::Protocol` modules (`protocol-modules.md`).
+Applies now: `protocols/` is already in its target shape.
+
+Decoders are `protocols::Protocol` modules (`../protocol-modules.md`).
 
 1. **Module.** Copy `protocols/example` to `protocols/<name>`. Implement `Protocol`: its settings, decode over a
    record, annotation rows.
@@ -136,7 +150,12 @@ Tests:
 
 ## Add a board
 
-A board is a `board::Board` adapter. `board/dho` is the reference.
+Until M5 (typed channels): the port is `board::Board` with `Shared`; a second board is not supported before M5.
+
+A board is a `board::Board` adapter. `board/dho` is the reference. The port is DHO-family: `AcqIntent`, `BatchMeta`
+and the batch, pairs and roll model describe the DHO800/900 acquisition. A board of that family (another FPGA image,
+another channel count) fits. A board with a different acquisition model needs an ADR that generalises `AcqIntent`
+first; this recipe does not cover it.
 
 1. **Adapter.** Create `board/<name>/`. Implement `Board`: capabilities, apply an acquisition request, the
    acquisition thread with `AcqWant` and `AcqCmd` in and `Batch`, `Frame`, `MeasRead`, `Readings` out
@@ -157,6 +176,8 @@ Tests:
 
 ## Add an analysis view
 
+Until M17: views live in `ui/`; declare `RESETS_ON` from M2.2 on.
+
 A view (spectrum, eye, Bode, power, a new one) is a component in `views/` with its own state.
 
 1. **Component.** `views/<name>.rs`: its state, `step(&mut self, &Records, &ChangeSet, events) -> Outbox`, and
@@ -172,6 +193,8 @@ Tests:
 - for each declared class, a change resets it; for each other class, it does not.
 
 ## Add a display mode or kernel
+
+Until M12 (old paths removed): add the kernel to the new path behind `draw.model` only.
 
 A display mode changes how frames are deposited (lines, dots, a new one).
 
@@ -189,6 +212,8 @@ Tests:
 
 ## Add a math function
 
+Applies now for the `dsp` part; the state part from M17.
+
 1. **Function.** A pure function in `dsp/src/math.rs` (`Op1` or `Op2`) or an expression form in `dsp/src/expr.rs`,
    over volts and `dt`.
 2. **Setting.** The selection is part of the `analysis` group ([Add a setting](#add-a-setting)); class `math`, and
@@ -199,6 +224,8 @@ Tests: `dsp` tests with known answers; a records test that it reads only current
 
 ## Add a system.conf flag
 
+Until M5 (`Config`): read the key in the module that uses it, once at start, and note it for M5.
+
 1. **Parse.** Add the key to `Config` in `oos-core` with its default and range. `Config` is read once at start.
 2. **Use.** Pass the value to the code that needs it. No code reads `system.conf` or the environment elsewhere.
 3. **Runtime change.** A flag that changes at runtime is not a flag: it is a setting in `interfaces`, written through
@@ -208,6 +235,8 @@ Tests: `dsp` tests with known answers; a records test that it reads only current
 Tests: parse with and without the key; two `Config` values give two behaviours in one test process.
 
 ## Add a system service
+
+Until M18 (target layout): the service lives in `ui/src/<name>.rs`; steps 1 to 4 apply.
 
 A network or unit service (ntp, ssh, mdns, a new one) lives in `system/`.
 

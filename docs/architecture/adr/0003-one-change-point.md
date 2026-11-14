@@ -32,7 +32,8 @@ state: old frames in the picture, statistics over two settings, segments from be
   Tokens are unique per request; several requests in one step may share one epoch.
 - UI state that changes what is acquired or drawn is derived each step as a value, `UiAcq`, and diffed against the
   previous step's value. It is not stored.
-- The change stage produces a board-neutral `AcqIntent` and the pipe's `PipeView` from the same `ChangeSet`.
+- The change stage produces a board-neutral `AcqIntent`, which carries the pipe's `route` tag; the thread echoes it
+  into every `BatchMeta`. The current mapping goes to the pipe in its own cell, `DepositView`.
   `app/acq_client` maps the intent to the board's `AcqWant` through the pure `Board::want`.
 - Run state is handled by transition. A mapping change in STOP redraws from the last record.
 

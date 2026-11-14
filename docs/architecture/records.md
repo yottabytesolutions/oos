@@ -10,9 +10,9 @@ The acquisition produces three kinds of data (acquisition.md). Their roles do no
 
 | Kind | Content | Drawn | Becomes a record |
 |---|---|---|---|
-| `Batch` | every frame of one ring read: raw words, live-compressed pairs (k > 1) or deep pairs (> 1 M) | yes, the only drawn kind | off the fast path: every frame (the record loop); on it: none |
-| `Frame` | the newest frame of a batch, decoded | no | yes, on the fast path |
-| `MeasRead` | a raw re-read: the newest frame of a compressed batch (`RAW_PERIOD`), the deep screen window (`deepmeas::PERIOD`), the STOP final frame | no | yes, and it is the record shown |
+| `Batch` | every frame of one ring read: raw words, live-compressed pairs (k > 1) or deep pairs (> 1 M) | yes, as units or the pseudo-batch | off the fast path: every frame (the record loop); on it: none |
+| `Frame` | the newest frame of a batch, decoded; or a roll or scan sweep | only a sweep, through `Replace` | yes, on the fast path |
+| `MeasRead` | a raw re-read: the newest frame of a compressed batch (`RAW_PERIOD`), the deep screen window (`deepmeas::PERIOD`), the STOP final frame | only alone, through `Replace` (STOP, preview) | yes, and it is the record shown |
 
 The day's flicker came from measurement reads drawn among pair frames ([drawing bugs](drawing.md#the-days-bugs-on-that-flow)). In the target a
 `MeasRead` is a type that no kernel takes. The off-path pseudo-batch is built from `Batch` frames only.
@@ -46,8 +46,16 @@ it carries its `BatchMeta` (`id`, `gen`, `epoch`, `mode`).
 
 - **Owner:** the record store (today `Ui::last`, `history`, `seg_*`). It keeps `last[0]`, history and segments. Its
   `ChangeSet` classes are `history` (clear history and segments) and `phosphor` (CLEAR drops `last[0]`).
-- **Built by the UI** from a `Frame`, `MeasRead` or batch frame. The window comes from the current view. The trigger
-  point comes from the frame's own `BatchMeta` (`record::trigger_point`, near-only search for deep raw windows).
+- **One conversion.** A record is built by one function, `to_record`, with the frame's own `BatchMeta` (calibration,
+  trigger snapshot; `record::trigger_point`, near-only search for deep raw windows) and a mapping. Who runs it:
+  - batch frames off the fast path: the deposit workers, with the mapping fixed at the batch's first claim
+    (picture.md);
+  - a `Frame` or `MeasRead`: the records stage, with the current mapping.
+
+  Each record carries the mapping key it was built under. The records stage builds the step's pseudo-batch only from
+  records of the current mapping key and epoch. Other records go to the store and the readers that accept them, but
+  are not drawn. A mapping-only change keeps `gen`, so the generation filter alone would admit old-mapping records;
+  the key filter closes that.
 - **Readers:** measurements, cursors, math and FFT, decode, XY, the software mask and zones, the software average,
   the Bus trigger decision, Single, history, SCPI `:WAVeform`, autoset and Bode. Each reader states which records it
   accepts:
@@ -64,8 +72,8 @@ it carries its `BatchMeta` (`id`, `gen`, `epoch`, `mode`).
 ## The measurement path
 
 ```
-record (raw, current epoch) -> measure job (record id, epoch, stats gen) -> measure thread (A53, one scoped thread
-per channel) -> result -> UI: accepted if epoch and stats gen are still current -> values, statistics
+record (raw, current epoch) -> measure job (record id, gen, epoch, stats_gen) -> measure thread (A53, one scoped
+thread per channel) -> result -> UI: accepted if gen, epoch and stats_gen are still current -> values, statistics
 ```
 
 - **One hold rule.** Today two holds exist: `compress::hold` and `deepmeas::hold`. While `raw_planned` is true for the
@@ -74,8 +82,9 @@ per channel) -> result -> UI: accepted if epoch and stats gen are still current 
 - **Which record.** The newest raw record of the step, not the newest record. A raw record that comes while the
   worker is busy waits (`meas_pending`); a newer raw one replaces it.
 - **Jobs carry identity.** Today a job carries `meas_n`, a counter raised by clears and by local measurements. The
-  target job carries the record `id`, its `epoch` and the statistics generation. A late result for an older epoch or
-  from before a statistics reset is dropped by comparison, not by counter conventions.
+  target job carries the record `id`, its `gen`, its `epoch` and `stats_gen`, and the result carries them back. A late
+  result for an older `gen` (after a reconfiguration), an older epoch or from before a statistics reset is dropped by
+  comparison, not by counter conventions. Test: a result that arrives after each kind of change is dropped.
 - **Cheap path.** Deep raw windows (millions of samples) measure only the cheap measurements when only those are shown
   (`framestats::cheap_results`, NEON min/max).
 - **Cost on the state line:** `deepmeas::cost` (reads, DMA, decode, record, measure) stays as instrumentation.
@@ -84,8 +93,9 @@ per channel) -> result -> UI: accepted if epoch and stats gen are still current 
 
 Two feeds go into the Measure statistics (`mstat`):
 - **per frame:** the deposit workers fold the cheap measurements of every raw frame they draw (`framestats::fold_frame`).
-  In the target the folds travel in the `BatchUnit` and reach `mstat` when the unit is merged, with the unit's
-  `epoch`.
+  In the target the folds travel in the `BatchUnit` and reach `mstat` when the unit is merged. They carry the unit's
+  `gen`, `epoch` and the `stats_gen` current when the batch was claimed; the merge drops folds whose `stats_gen` is
+  older, so a stats-only reset is not refilled by folds of batches already in flight.
 - **per record:** the measurement results.
 
 Rule: every raw frame counts once. Per route:
@@ -102,7 +112,7 @@ is decided in `classify`.
 
 ## STOP and Single
 
-- STOP (`AcqCmd::Hold`): the thread finishes the batch, then reads the final frame raw when the record shown is of
+- STOP (`hold` in `AcqWant`): the thread finishes the batch, then reads the final frame raw when the record shown is of
   pairs (`Final(id)`). That `MeasRead` becomes `last[0]` and is measured. The wait is state across steps, never a block: the record
   store keeps `final_pending { id, since }`, each step checks `Readings::acked`, and after `STOP_FINAL_WAIT` it keeps
   the last record it has. The step never sleeps on it.
@@ -112,7 +122,8 @@ is decided in `classify`.
 
 ## Rules
 
-- Only `Batch` frames are drawn. `Frame` and `MeasRead` feed records only.
+- `Batch` frames are drawn as units or the pseudo-batch. A `Frame` or `MeasRead` is drawn only alone, through
+  `Replace` (picture.md).
 - Records carry `BatchMeta`. Readers filter on `epoch` and `gen`, never on wall-clock time.
 - Policy in the UI, mechanism in the acquisition. The UI reads the plan from `Readings` and never re-derives it.
 - One hold rule for pair records.

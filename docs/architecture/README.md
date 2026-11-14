@@ -92,10 +92,11 @@ module is a top-level module of its crate, so the rules in [Enforcement](#enforc
 
 | Module | Responsibility |
 |---|---|
-| `settings/` | `Settings`, `normalize`, and one module per group: `channels`, `timebase`, `trigger`, `acquire`, `display`, `measure`, `analysis`, `interfaces`. Each: struct, invariants, command enum, `apply`, its `classify` function, tests [`model.rs`] |
+| `change/settings/` | `Settings`, `normalize`, and one module per group: `channels`, `timebase`, `trigger`, `acquire`, `display`, `measure`, `analysis`, `interfaces`. Each: struct, invariants, command enum, `apply`, its `classify` function, tests [`model.rs`] |
 | `command.rs` | `Command` (top-level enum of the group enums), `CmdError`, `Query`, the reply type |
-| `change/` | the change stage: owns `Settings` privately and hands out `&Settings`; applies commands in merge order, normalizes, classifies; `Request`, `ChangeSet`, `Generations`, `MappingKey` construction, `AcqIntent`, `PipeView` |
+| `change/` | the change stage, with `settings/` inside it so visibility can name it: owns `Settings` privately and hands out `&Settings`; applies commands in merge order, normalizes, classifies; `Request`, `ChangeSet`, `Generations`, `MappingKey` construction, `AcqIntent` with the `route` tag, `DepositView` |
 | `acq.rs` | the acquisition data types: `BatchMeta`, `Frame`, `MeasRead`, `Record`, `RecordBatch` headers (`acquisition.md`) |
+| `memplan.rs` | `memplan(&Settings, &Caps) -> MemPlan`: bytes per acquisition buffer class; pure |
 | `window.rs` | the picture model: window bounds (N, the 3-batch cap, the age cap), decay in 16.16, weights; pure, `now` as argument |
 | `config.rs` | `Config` and `Config::parse(&str, env pairs, &Platform)`: pure. `oos-ui` reads `system.conf`, the environment and the platform once at start and passes them in |
 
@@ -103,7 +104,7 @@ module is a top-level module of its crate, so the rules in [Enforcement](#enforc
 
 | Module | Responsibility |
 |---|---|
-| `app/` | `session.rs`: creates the stages, the channels and the deposit pipe, runs one step, holds no domain state. `intake.rs`: collects one step's inputs into commands, requests and acquired data. `acq_client.rs`: maps `AcqIntent` to the board's `AcqWant` through `Board::want`, publishes it and `PipeView`, sends `AcqCmd`, takes `Frame`, `MeasRead`, `Readings`. `outbox.rs`: internal commands and requests for the next step |
+| `app/` | `session.rs`: creates the stages, the channels and the deposit pipe, runs one step, holds no domain state. `intake.rs`: collects one step's inputs into commands, requests and acquired data, and owns `Layout`. `acq_client.rs`: maps `AcqIntent` to the board's `AcqWant` through `Board::want`, publishes it and `DepositView`, sends `AcqCmd`, takes `Frame`, `MeasRead`, `Readings`. `outbox.rs`: internal commands and requests for the next step |
 | `picture/` | accumulator (`acc.rs`, using `oos_core::window`), grade; `picture/deposit/`: the batch pipe, `BatchUnit`, kernels (spans, dots), workers (`picture.md`) [`drawpipe.rs`, `fastdraw.rs`, `sparse.rs`, drawing parts of `compress.rs`, `wave::Phosphor`] |
 | `records/` | the records stage: record store (`last`, history, segments), measurement jobs, statistics, compression and deep-read policy (`records.md`) [`wave.rs`, `framestats.rs`, `deepmeas.rs`, parts of `ui.rs`] |
 | `compose/` | the screen from layers: plot, traces from the accumulator, overlays, top bar; `gfx`, `font`, `layout` [`ui.rs` rendering] |
@@ -125,38 +126,40 @@ above, each the single writer of its part.
 ## State and ownership
 
 Every piece of state has one writer. Readers get it by value, by `&` within the step, or as a message to another
-thread.
+thread. Every piece of state has a bound in bytes. A change that adds state without a bound in this table does not
+merge ([Memory and queues](#memory-and-queues)).
 
-| State | Writer | Readers | Lifetime |
-|---|---|---|---|
-| `Settings` | the change stage, through `Command`s and `normalize` | every stage, by `&` | process; saved by `store` |
-| `Config` | read once at start | every stage, by `&` | process |
-| `ChangeSet` | the change stage | stages after it in the same step | one step |
-| `Generations` (`gen`, `epoch`, `stats_gen`) | `change` (`new_gen` from `classify`, `new_epoch` from request resolution, `stats_gen` on the `stats` class) | every stage, as values in `ChangeSet` | process |
-| outbox of internal commands and requests | the stage that emits them | the change stage, next step | one step |
-| `AcqIntent` with `gen` and `epoch` | the change stage | `app/acq_client` | one step |
-| `AcqWant` (board-specific) | `app/acq_client`, through `Board::want` | acquisition thread, latest value | until the next change |
-| hardware, batch buffers, `AcqLoop` state | acquisition thread (`board/dho`) | nobody; results leave as `Batch`, `Frame`, `MeasRead`, `Readings` | process |
-| `Readings` (status, counters, acknowledged ids, the read plan, `k`, the applied `(gen, epoch)`) | acquisition thread | UI, latest value | process |
-| `PipeView { gen, epoch, mapping_key, route }` | the change stage, from the same `ChangeSet` as `AcqIntent` | deposit pipe and workers, latest value | until the next change |
-| the deposit pipe | `Session` (created and owned) | workers by claim, main by `BatchUnit` and `RecordBatch` | process |
-| a batch's share maps | the worker or helper drawing that share | the accumulator, after the batch is published | one batch |
-| accumulator maps (`ph`, `phz`), weights, window | `picture` accumulator | `compose`, by `&` | until a `ChangeSet` resets them |
-| records, the last record, history, segments | `records` | measurement, views, store, remote queries | per class |
-| measurement results and statistics | `records` measurement | views, remote queries | per class |
-| view state (spectrum, eye, Bode, LA) | its view component | `compose` | until the view closes or its class resets |
-| menu state (open menu, focus, dialogs) | `menus` | `compose` | process |
-| system settings (`system.conf`) | `store::sysconf`, through `interfaces` commands | `system` services | file |
-| a network service's state | that `system` service | its menu page | process |
-| composed picture for remote clients | `present` | web PNG thread, by snapshot | one picture |
+| State | Writer | Readers | Lifetime | Bound (bytes) |
+|---|---|---|---|---|
+| `Settings` | the change stage, through `Command`s and `normalize` | every stage, by `&` | process; saved by `store` | < 64 kB |
+| `Config` | read once at start | every stage, by `&` | process | < 16 kB |
+| `ChangeSet` | the change stage | stages after it in the same step | one step | < 4 kB |
+| `Generations` (`gen`, `epoch`, `stats_gen`) | `change` (`new_gen` from `classify`, `new_epoch` from request resolution, `stats_gen` on the `stats` class) | every stage, as values in `ChangeSet` | process | 24 B |
+| outbox of internal commands and requests | the stage that emits them | the change stage, next step | one step | 64 entries |
+| `AcqIntent` with `gen` and `epoch` | the change stage | `app/acq_client` | one step | < 4 kB |
+| `AcqWant` (board-specific) | `app/acq_client`, through `Board::want` | acquisition thread, latest value | until the next change | < 4 kB |
+| hardware, batch buffers, `AcqLoop` state | acquisition thread (`board/dho`) | nobody; results leave as `Batch`, `Frame`, `MeasRead`, `Readings` | process | `memplan` classes `dma`, `raw`, `ring`, `segments` |
+| `DepositView { mapping }` | the change stage, through `app/acq_client` | deposit workers, at first claim of a batch | until the next mapping change | < 1 kB |
+| `Readings` (status, counters, acknowledged ids, the read plan, `k`, the applied `(gen, epoch)`) | acquisition thread | UI, latest value | process | < 4 kB |
+| the deposit pipe | `Session` (created and owned) | workers by claim, main by `BatchUnit` and `RecordBatch` | process | its buffers are the `dma` class; queue count = pool size |
+| a batch's share maps | the worker or helper drawing that share | the accumulator, after the batch is published | one batch | workers x 2 maps x plot pixels x 4 B |
+| accumulator maps (`ph`, `phz`), weights, window | `picture` accumulator | `compose`, by `&` | until a `ChangeSet` resets them | window <= 3 units of maps, plus 2 persistence maps |
+| records, the last record, history, segments | `records` | measurement, views, store, remote queries | per class | `HISTORY_MAX` x screen record; raw `Arc`s as in [Retaining owners](#retaining-owners) |
+| measurement results and statistics | `records` measurement | views, remote queries | per class | < 64 kB |
+| view state (spectrum, eye, Bode, LA) | its view component | `compose` | until the view closes or its class resets | per view, its own constant (`EYE_MAX`, `SPECTRUM_MAX`) |
+| `Layout` (panes, plot areas, HDMI, menu width) | intake, from layout events and requests | change (`UiAcq::of`), menus, views, compose, by `&` | process | < 4 kB |
+| menu state (open menu, focus, dialogs) | `menus` | `compose` | process | < 64 kB |
+| system settings (`system.conf`) | `store::sysconf`, through `interfaces` commands | `system` services | file | file, < 16 kB |
+| a network service's state | that `system` service | its menu page | process | per service, < 1 MB |
+| composed picture for remote clients | `present` | web PNG thread, by snapshot | one picture | one picture |
 
 ### Enforced by visibility
 
 Ownership is enforced by the compiler, not by a checker rule:
-- The change stage holds `Settings` in a private field and hands out `&Settings`. Group setters and `apply` are
-  `pub(crate)` in `oos-core`, so no code in `oos-ui` can call them. Inside `oos-core` only `change` calls them; the
-  crate is small enough that review holds this. (`pub(in crate::change)` would not compile: the path must name an
-  ancestor, and `change` is a sibling of `settings`.)
+- The change stage holds `Settings` in a private field and hands out `&Settings`. The settings groups live inside
+  the change module (`change::settings`), so their setters and `apply` are `pub(in crate::change)`: nothing outside the
+  change stage can call them, in `oos-core` or in `oos-ui`. `oos-core` re-exports the read-only types
+  (`pub use change::settings::Settings`).
 - `Generations` is private to `change`; other stages see `gen` and `epoch` only as values in `ChangeSet` and
   `AcqIntent`.
 - `ph`, `phz`, W and the window are private fields of the accumulator, exposed only as `&Picture`.
@@ -165,13 +168,24 @@ Ownership is enforced by the compiler, not by a checker rule:
 The checker covers what visibility cannot: which modules may name which ([Enforcement](#enforcement)). It finds
 fully qualified paths inside expressions as well as `use` lines.
 
+Rules that neither visibility nor the module rules can see get a mechanical check, so none is left to review alone:
+- `oos-core` has clippy `disallowed_methods` and `disallowed_types` for `std::env`, `std::fs`, `std::net`,
+  `Instant::now`, `SystemTime::now` and `thread::sleep`, crate-wide. In `oos-ui` the same list applies to the stages;
+  only the adapters and `clock` may call them, by an `#[allow]` with a reason at module level. The gate counts these
+  allows per crate, shrink-only (G1), so a new one shows in review.
+- `Config` and `OnceLock` reads of `system.conf` in policy code (today `hw.rs` 604, 718, 1141) are caught by the same
+  `std::fs` rule once they move behind `Config` (M5).
+- The module rules extend to external crate paths (`forbid ui <module> oos_hal::dho`), replacing the
+  `board::boundary` lint (G1, `migration.md`).
+- A snapshot test lists every field classified `Unrelated`, so adding one shows in review.
+
 ## Settings and commands
 
 `Settings` is one owned struct of grouped sub-structs. Change detection needs one snapshot of everything; ownership
 per area comes from the group modules.
 
-Each group module (`settings/trigger.rs`, ...) holds:
-- the group struct, private fields, `pub` accessors, `pub(crate)` setters (visible inside `oos-core` only);
+Each group module (`change/settings/trigger.rs`, ...) holds:
+- the group struct, private fields, `pub` accessors, `pub(in crate::change)` setters;
 - its invariants within the group, checked in `apply` (ranges, combinations of its own fields);
 - its command enum (`TriggerCmd::Level(f32)`, `TriggerCmd::Slope(Slope)`, ...);
 - `apply(&mut self, cmd, &Context) -> Result<(), CmdError>`. `Context` is read-only and narrow: the model's limits
@@ -201,7 +215,8 @@ Commands come from the edges only:
 The change stage applies one step's commands in a fixed order of sources: the outbox (internal writers, see
 [Internal writers](#internal-writers)), then store, then remote, then input. Within a
 source, arrival order. A setup load is the base; remote writes apply on top; the panel, where a person acts, applies
-last and wins a conflict between two absolute values of the same field. Relative commands never conflict. A remote
+last and wins a conflict between two absolute values of the same field. Relative commands never conflict. Four
+sources stay, because each has its own reply path and error semantics; collapsing them would lose who to answer. A remote
 set's reply, a later query on the same connection and `*OPC?` report the value after `normalize`, so a client sees
 when its write was overridden; SCPI also queues `-221` (settings conflict) for it.
 
@@ -214,7 +229,9 @@ seen by a later one. It holds today's per-step rewrites:
 - `clamp_offsets` (offsets within the range of the current scale);
 - `fit_platform` (what the board lacks: CH3 and CH4 off on a 2-channel model, an unsupported coupling to DC, LA off
   without the LA port, sources that point at a missing input);
-- clamps across groups, such as the trigger level within the source channel's range after a scale change.
+- clamps across groups, such as the trigger level within the source channel's range after a scale change;
+- the memory depth, Auto included, clamped so that `memplan` stays within `Config.mem_budget`, if the `memplan`
+  sweep shows any setting can exceed it ([Memory plan](#memory-plan)).
 
 Normalize is idempotent: running it twice gives the same `Settings`, and a test checks it. A value it changes is part
 of the diff like any other: `fit_platform` switching a channel off is an `acq` change, and a clamped offset is a
@@ -249,9 +266,12 @@ apply commands -> normalize -> ChangeSet = classify(previous Settings, current S
 - **`UiAcq`:** UI state that changes what is acquired or drawn but is not a setting: the XY view, the protocol watch
   (both need raw records), the mask reference, autoset or Bode being active, and the main and zoom plot sizes from the
   layout (panes, HDMI, menus). The plot sizes are classified `mapping`, so they enter `MappingKey` through the same
-  destructure as the settings fields. It is not stored. Each step derives it as
-  a value from the views' and menus' state (`UiAcq::of`), and the change stage diffs it against the previous step's
-  value.
+  destructure as the settings fields. It is not stored. Each step derives it as a value from the views' and menus'
+  state (`UiAcq::of`), and the change stage diffs it against the previous step's value.
+- **Layout.** The screen layout (panes, plot areas, HDMI output, the menu's width) is its own value, `Layout`, owned
+  by intake. Intake applies this step's layout events before the change stage runs. `UiAcq::of`, menus, views and
+  compose read `&Layout`; none of them writes it. A menu that wants a wider area returns a layout request to intake
+  for the next step. So `UiAcq::of` sees this step's plot sizes, and no component derives its own copy.
 
 Classes and their consumers. A setting can be in more than one class: V/div is `acq` (the AFE gain changes) and
 `mapping` (traces move on screen). Each consumer, views included, declares the classes it reacts to next to its state
@@ -292,18 +312,28 @@ Three numbers, private to `change` (`Generations`):
     frames of the older epoch, as for `gen` (`acquisition.md`, `apply`).
   - **A token without an epoch accepts nothing.** Until its `ChangeSet` arrives, the stage takes no records.
   - Tokens are unique per request (requester, run id, stage). Several requests in one step may share one epoch.
-- The pair is published inside `AcqIntent` and `PipeView`, so it is always consistent.
+- The pair is published inside `AcqIntent`, so it is always consistent.
 - Readers filter on the pair: the picture by its mapping key and `epoch`, records and measurements by `epoch` and `gen`
   (`records.md`).
 
 ### Acquisition intent
 
 The change stage produces `AcqIntent`: what to acquire, in the domain's terms (channels, time base, depth, trigger,
-modes, the raw and deep-read needs, the unit wants), with `gen` and `epoch`. It is board-neutral. `app/acq_client`
+modes, the raw and deep-read needs, the unit wants), with `gen` and `epoch`. It names no board type, but it describes the DHO800/900 family's acquisition model
+(batches, pairs, roll); another family needs an ADR that generalises it. `app/acq_client`
 maps it to the board's `AcqWant` through `Board::want(&AcqIntent)` (`acquisition.md`). `Board::want` is
-pure: the same intent gives the same `AcqWant`. The domain never names a board type. The change stage also produces
-`PipeView { gen, epoch, mapping_key, route }` for the deposit pipe from the same `ChangeSet`; a route change is an
-`acq` change (`picture.md`, route per batch).
+pure: the same intent gives the same `AcqWant`. The domain never names a board type. `AcqIntent`
+also carries the `route` tag for the deposit pipe (fast path or records). A route change is an `acq` change, so it
+always comes with a new `gen`. The thread does not interpret the tag; it copies it into the `BatchMeta` of every batch
+it arms, so a batch's route, `gen` and `epoch` come from one cell written once. `gen` and `epoch` stay the only change
+signals.
+
+The mapping is not a tag. The change stage publishes `DepositView { mapping }`, a latest-value cell with the current
+`MappingKey` and its values, through `app/acq_client`. A worker reads it when it first claims a batch, and all shares of
+that batch use that mapping (`picture.md`). It carries no change signal: a batch drawn under a newer
+mapping than it was armed with is what the user wants to see, and the accumulator drops units whose key is not the
+current one at merge. This cell is why `PipeView` is not needed: the route went into `AcqWant`, and the mapping alone
+needs no consistency with `gen`.
 
 ### Run state
 
@@ -321,10 +351,10 @@ is in the code; no stage relies on a side effect of another.
 ```
 intake     (input, remote requests, outbox, BatchUnits, RecordBatches, Frames, MeasReads, Readings)
                                                        -> commands, requests, acquired data
-change     (commands, requests, UiAcq)                 -> Settings', ChangeSet, AcqIntent, PipeView, AcqCmds
-acquire    (AcqIntent, PipeView, AcqCmds)              -> AcqWant through Board::want, PipeView, published
-records    (RecordBatches, Frames, MeasReads, ChangeSet) -> records, record store, the step's pseudo-batch
-accumulate (BatchUnits, pseudo-batch, ChangeSet, now)  -> &Picture
+change     (commands, requests, UiAcq)                 -> Settings', ChangeSet, AcqIntent, AcqCmds
+acquire    (AcqIntent, AcqCmds)                        -> AcqWant through Board::want, published
+records    (RecordBatches, Frames, MeasReads, ChangeSet) -> records, record store, pseudo-batch, Replace
+accumulate (BatchUnits, pseudo-batch, Replace, ChangeSet, now) -> &Picture
 measure    (records, ChangeSet)                        -> results, statistics
 views      (results, records, events, ChangeSet)       -> view state, outbox (commands, requests for the next step)
 compose    (picture, results, views, menus)            -> layers and trace jobs
@@ -337,7 +367,8 @@ records form one pseudo-batch (`picture.md`). History and segments are part of t
 `records` updates them, not `measure`.
 
 A remote query is answered in `reply` from that step's state. Each query carries a typed wait condition: `After {
-gen, epoch }`, set by the commands that came before it on the same connection. `:SINGLE; :WAV:DATA?` therefore waits
+gen, epoch }`. Each connection keeps its own `(gen, epoch)`: the values the change stage returned with the reply to
+that connection's last command. A query copies it. Another connection's commands never delay it. `:SINGLE; :WAV:DATA?` therefore waits
 for a record of the SINGLE's epoch and never returns the old record. `*OPC?` uses the same condition: it answers when
 `Readings::applied` reaches the connection's last `gen` and `epoch`. The transport thread holds the connection while
 the query waits.
@@ -358,7 +389,7 @@ its trigger. It ends on the first of:
 | main | first A72 | SCHED_OTHER | `Session` and every stage | the channels below; never blocks on IO |
 | GPU helper (process) | first A72, with main | SCHED_OTHER | nothing; reads the arena | the arena and its pipe |
 | acquisition (`board/dho`) | second A72 | SCHED_OTHER | hardware, batch buffers, `AcqLoop`, the helper's share | `AcqWant` and `AcqCmd` in; `Batch`, `Frame`, `MeasRead`, `Readings` out |
-| deposit workers | A53, one per little core | SCHED_OTHER | their share maps; the route per batch from `PipeView` | `BatchUnit` (fast path) or `RecordBatch` (records, off it) to main (`picture.md`) |
+| deposit workers | A53, one per little core | SCHED_OTHER | their share maps; the route per batch from its `BatchMeta` tag, the mapping from `DepositView` at first claim | `BatchUnit` (fast path) or `RecordBatch` (records, off it) to main (`picture.md`) |
 | measure | A53, scoped per channel | SCHED_OTHER | one measurement job | job and result channels (`records.md`) |
 | input | A53 | SCHED_OTHER, blocked on read | the panel UART, the touch device | `InputEvent` channel to main |
 | remote listeners | A53 | SCHED_OTHER, blocked on sockets | sockets of SCPI, HTTP, MCP, VXI-11, the control FIFO; encoding of large answers | `RemoteRequest { command or query, wait, reply sender }` to main |
@@ -387,6 +418,251 @@ requests, outputs and readings under one lock. Each kind gets one writer (`acqui
 
 No lock is held across a register access, a C2H read or a decode. The migration does this after the change point
 (`migration.md`, M5). Until then `Shared` stays.
+
+## Memory and queues
+
+The unit has 3.9 GB of RAM, about 3.6 GB available after boot, and no swap ([Budget arithmetic](#budget-arithmetic)). An unbounded buffer ends in an OOM kill. With `panic = abort` and
+the restart in rcS, an OOM kill becomes a restart loop ([Safe start and exit](#safe-start-and-exit)). So every buffer
+and every queue has a bound in bytes, not only in count.
+
+### Memory plan
+
+`oos_core::memplan(&Settings, &Caps) -> MemPlan` computes the bytes of each acquisition buffer class:
+
+| Class | Holds | Size |
+|---|---|---|
+| `dma` | the read-out buffers of the batch pool | pool size x batch bytes |
+| `raw` | raw re-reads (deep window, `RAW_PERIOD`, STOP final) | one window per channel |
+| `ring` | the roll and scan ring, immutable chunks (`Arc<[Chunk]>`) | one screen: 10 x tdiv / dt points per channel, x 4 B (`f32`), plus the chunks a reader still pins |
+| `segments` | read-back segments in flight | the segment channel's bound |
+
+The other buffers do not depend on the acquisition and are bounded by their own constants, each next to its owner:
+the share maps (workers x 2 maps x plot pixels x 4 B), the accumulator (3 units of maps plus 2 persistence maps), the
+record store (`HISTORY_MAX` x screen record), and each view's maps (`EYE_MAX`, `SPECTRUM_MAX`). The memory budget
+in [Performance budgets](#performance-budgets) is `memplan`'s total plus these constants.
+
+- Ring snapshot protocol: the writer appends chunks and never changes a published one. A sweep is a list of chunk
+  `Arc`s. A reader that holds a sweep (a measurement, an export, a remote answer) pins only its chunks, for as long
+  as it holds the `Arc`s. At most 2 sweeps are pinned at once over all readers; the `ring` class is one screen plus
+  2 sweeps of chunks, 3 screens at most. A chunk is freed when the writer has passed it and no reader pins it.
+- The acquisition thread and the pipe allocate from the plan, not from their own estimates.
+- A host test sweeps `memplan` over mode x channels x depth x time base on every model's `Caps`. If no reachable
+  setting exceeds `Config.mem_budget`, the test asserts that, and there is no depth clamp. If one does, `normalize`
+  clamps the depth (Auto included) so that the total stays within the budget, and the test covers the clamp. The
+  sweep, not a guess, decides whether the clamp exists.
+
+### Budget arithmetic
+
+Memory available to `oos-ui`: the RK3399 has 3.9 GB of RAM, and about 3.6 GB is available after boot (measured
+2026-11-14, `MemAvailable`). The Zynq-side DDR belongs to the FPGA and is not visible to Linux; it is not part of any
+budget. There is no swap.
+
+Peak use is the sum of four terms. Each factor is a named constant or a `Caps` value, and the `memplan` sweep computes
+the sum for every reachable setting:
+
+| Term | Formula | Factors |
+|---|---|---|
+| base | process, fonts, layout, GPU arena | measured: 73 MB RSS with 4 channels in RUN on the panel (2026-11-14) |
+| maps | (workers + helper) x in-flight shares x map set, plus the accumulator's window (3 units) and 2 persistence maps; map set = 2 maps x channels x plot pixels x bytes per count | plot pixels: 1024 x 486 on the panel, up to 1920 x 1080 on HDMI; 2 B per count in the window, 4 B with decay |
+| acquisition | `dma` + `raw` + `ring` + `segments` + decoded copies | `dma` = pool (3) x batch bytes; decoded = 2 x code bytes (u16 codes to f32 volts) for every frame decoded at once; `raw` <= `deepmeas::MAX_BYTES` (24 MiB) per window |
+| retained | every retaining owner below at its limit | [Retaining owners](#retaining-owners) |
+
+- **Reconfiguration overlap.** The acquisition thread frees the old plan's `dma` and `raw` buffers before it allocates
+  the new plan's, while nothing is armed, so a reconfiguration adds nothing. Where a buffer must outlive the switch
+  (a pinned ring chunk, a `RecordBatch` in flight), it counts in the retained term until it is released.
+- **The two figures.** The baseline in [Performance budgets](#performance-budgets) (120 MB) is the measured base plus
+  the maps term at HDMI size. `Config.mem_budget` (default 512 MB) bounds the acquisition and retained terms. M5b
+  replaces both with the values the sweep computes, and the sweep test fails if a later change moves them by more
+  than 10 % without a doc change.
+- **Rejection.** If even the smallest plan for a setting (minimum depth, fewest buffers) does not fit
+  `Config.mem_budget`, `apply` rejects the command with a `CmdError`, and a setup file that holds it loads without
+  that key. The depth clamp in `normalize` applies only when a smaller depth fits.
+
+### Retaining owners
+
+Every owner that keeps acquired data past its step has a byte limit and a release rule:
+
+| Owner | Limit | Released when |
+|---|---|---|
+| `last[0]` and its raw `Arc` | one record, one raw frame | the next record replaces it |
+| running measure job | one raw frame per channel | the job ends |
+| pending measure job | one raw frame per channel | a newer record replaces it, or a `stats_gen` or epoch change discards it |
+| ring chunk pins | 2 sweeps over all readers | the reader drops its `Arc`; a third reader gets a busy error and retries |
+| history and segments | `HISTORY_MAX` screen records, no raw | the oldest entry drops out; the `history` class clears it |
+| waveform snapshots held by remote listeners | one per connection, 2 over all connections | the answer is sent, the connection closes, or the send times out |
+| remote connections | 8 over SCPI, VXI-11, HTTP and MCP together | a ninth is refused at accept |
+| `RemoteRequest` | 8 per connection, 32 over all | see [Queues](#queues) |
+| export (CSV, PNG, setup) | one at a time, streamed from an `Arc` | the file is written |
+
+- A slow waveform client gets 10 s per send. A send that does not progress in that time closes the connection and
+  releases the snapshot, so a stalled client cannot hold a deep record.
+- The sum of these limits is the retained term of the budget arithmetic.
+
+### Queues
+
+Every channel between threads is bounded in count and in bytes, and has a stated overload policy. The acquisition
+thread never blocks on a full queue.
+
+| Channel | Bound | When full |
+|---|---|---|
+| `Batch` into the pipe | the pool (count) and the `dma` class (bytes) | the acquisition thread drops the batch and counts it; deposit never moves to main |
+| `BatchUnit` to main | pool size | cannot fill: a unit returns its buffer when merged |
+| `RecordBatch` to main | 2 per step, `records` class | thin to the newest batch and count; a reader that needs every frame (mask, segments) counts the loss |
+| `Frame` (newest frame, live roll and scan sweeps) | latest-value cell: one frame | replaced; a sweep is screen-resolution min/max plus the `Arc`s of its ring chunks, never a copy |
+| segment read-back | 2 batches of segments, `segments` class | back-pressure: the read-back waits for space. Safe because acquisition is stopped during read-back (today `seg_step` waits the same way, `hw.rs` 2252) |
+| `MeasRead` | latest-value cell per kind | replaced by the newer read |
+| `AcqCmd` | 16 | the sender gets an error; commands are never dropped silently; a superseded command is acknowledged as `Superseded` |
+| `RemoteRequest` | 8 per connection, 32 over all connections | the listener answers SCPI `-350` (queue overflow) or HTTP 503 |
+| `InputEvent` | 64 | knob steps coalesce (relative steps add up); keys are never dropped |
+| measure jobs | one running, one pending | the pending job is replaced by a newer record |
+
+The roll OOM of 2026-11-14 is the case these bounds close. The ring itself is one screen. The frame queue kept every
+complete roll sweep after SINGLE, each a full copy of the ring: `hw.rs` cleared the queue only when its last entry was
+partial, and roll's `continue` skipped the hold check. With a latest-value cell and immutable ring chunks, roll holds
+one ring and the chunks a reader pins. After a complete SINGLE sweep, `stream` publishes nothing until `Rearm`
+(`acquisition.md`).
+
+### Degradation order
+
+Under overload the step sheds work in this order, and counts each shed:
+1. measurement reads (`MeasRead`): the newest wins;
+2. records beyond the newest per step, where no reader needs every frame;
+3. records that a reader needs (mask, zones, segments): counted as lost frames in that reader's statistics;
+4. whole batches at the pipe intake.
+
+The picture's newest batch and input handling are never shed.
+
+### Watchdog
+
+The protection is in this order. The watchdog is the last line, never the design:
+1. **Bounded allocation.** `memplan` and the byte bounds above keep use within the budget in every reachable setting.
+   A setting that cannot fit is rejected.
+2. **STOP releases.** STOP (from the user or the watchdog) releases what is in flight: queued `Frame`s and
+   `RecordBatch`es, the pending measure job, ring pins beyond the current sweep, and remote waveform snapshots that
+   are not being sent. It keeps `last[0]` and the allocated pool, so RUN needs no allocation. At the watchdog's hard
+   limit memory wins: its `reset()` drops `last[0]` too, and the stopped picture keeps only the maps.
+3. **Watchdog.** `system/` reads the process RSS once a second. A once-a-second check cannot catch a fast runaway on
+   its own; it catches a slow leak that the bounds missed. Above the soft limit (`Config.mem_budget` + 256 MB) it
+   logs and shows a warning. Above the hard limit (1 GB) it forces STOP through the outbox without a `Final` command, so the
+   watchdog's STOP never does the allocating final raw read, calls `reset()` on the stages that hold buffers (records,
+   accumulator, views), and shows a toast. If RSS is still above the hard limit 5 s later, `oos-ui` exits with code
+   75, and rcS starts safe at once. The limits are `Config` values, tuned on the unit.
+
+### Observability
+
+Each channel and each shed above has a drop counter. `:SYSTem:STATe?` prints them on one line,
+`drops batch=N recbatch=N frame=N measread=N acqcmd=N remote=N input=N measjob=N frozen=N`, next to RSS, the `memplan` total
+and the watchdog state. unitlab fails a run where a counter grows that must stay 0 in that mode.
+
+## Safe start and exit
+
+rcS restarts `oos-ui` after every exit, and `oos-ui` restores the last saved setup at every start. The release build
+has `panic = abort`. Together that turns any panic or OOM kill that a setting provokes into a restart loop, and the
+loop survives a power cycle because the setup is on `/oos`. The design breaks that loop (adr/0015).
+
+### Exit contract
+
+| Exit | Meaning | rcS counts it |
+|---|---|---|
+| 0 | clean: stop requested, update, shutdown | no |
+| 75 | memory: the watchdog's hard limit was reached | yes, and rcS starts safe at once |
+| other non-zero, or a signal (SIGABRT from a panic, SIGKILL from the OOM killer) | abnormal | yes |
+
+- At start `oos-ui` writes `/oos/oos-ui.running`. A clean exit removes it. After `Config.stable_s` (60 s) of running
+  it is replaced by `/oos/oos-ui.stable`. So a start that finds `oos-ui.running` knows the last run ended abnormally
+  before it was stable, even across a power cycle.
+- The rcS loop keeps `/oos/oos-ui.exits`: the times of abnormal exits within the last hour. A slow loop (a crash
+  every 10 minutes) is counted as well as a fast one. Entries older than an hour drop out; a run that stays up for an
+  hour clears the list.
+
+### Safe start
+
+- When `oos-ui.exits` holds 3 entries, or the last exit was 75, rcS starts `oos-ui --safe`. Safe start uses default settings and the default
+  acquisition, renames the saved setup to `/oos/oos-ui.setup.bad`, and shows a toast that says so and where the file
+  is.
+- Two setup files exist. `/tmp/oos-ui.setup` is what a restart within the same boot restores; `/oos/oos-ui.setup` is
+  what a power-on restores (rcS copies it to `/tmp`). Today both are written every 2 s with the current settings
+  (`main.rs`, `SETUP_FILE`). In the target both are written only with settings that ran `stable_s` without an
+  abnormal exit, so neither a same-boot restart nor a power cycle restores a setting that crashed the scope within a
+  minute. The timer belongs to the candidate settings, not to the process: it restarts at every settings change, and
+  the candidate is promoted to both files after `stable_s` without a change and without an abnormal exit. Each
+  candidate that stays unchanged for `stable_s` is persisted at that moment, so a client that writes settings every
+  few seconds still leaves the last setup that held for a minute; only settings that never rest for a minute are not
+  persisted, and the previous persisted setup stays.
+- A clean power-off from the panel or SCPI writes the current settings to both files before the power goes, even
+  within `stable_s` of a change: a clean power-off is no evidence against them.
+- The RSS watchdog ([Watchdog](#watchdog)) forces STOP before the OOM killer acts, and exits with 75 if memory does not
+  come back, so a memory runaway ends in a stopped scope or in safe start, never in an OOM kill loop.
+- On an image in its trial start, safe start is off. The update watcher's crash-loop rule writes the previous image
+  back instead (`../update.md`), because there the image, not the setup, is the suspect.
+
+### Shutdown order
+
+On a clean exit (SIGTERM, an update, the stop request) `oos-ui` shuts down in this order. Each step has a bound; a step
+that overruns is logged and skipped, and the exit continues:
+1. remote listeners stop accepting and close their connections (1 s);
+2. the acquisition is cancelled (below), then joined: disarm, DMA released (2 s);
+3. the pipe closes; the deposit workers and the measure thread finish their item and are joined (1 s);
+4. the setup is persisted if it is stable;
+5. the GPU helper is told to exit and waited for (1 s), then killed;
+6. DRM is released; exit 0.
+
+### Cancellation
+
+STOP (`hold`) finishes the acquisition in progress, which may wait for a trigger for ever. Shutdown needs a path that ends
+every wait:
+- **One cancel flag** per thread, an `AtomicBool` owned by `Session` and shared by `Arc`. Setting it is the request.
+- **Every blocking wait checks it.** Trigger waits poll with a timeout of at most 50 ms and return `Cancelled`. A C2H
+  read is split into `MAX_READ` pieces today; the loop checks the flag between pieces. A read already in the driver
+  ends within its own timeout (the xdma C2H timeout), owned by `hal`.
+- **No buffer is freed while a thread can still use it.** The thread that owns a buffer frees it, after its last
+  read returned. Shutdown waits for the join; if the join times out, `oos-ui` exits without freeing that buffer
+  (the process ends anyway) rather than freeing memory a live read may still write to.
+- Host tests with the scripted `Device`: cancel during a trigger wait, during a split read, and during a
+  reconfiguration, each ending within the bound.
+
+### Durable writes
+
+Every file the next start depends on (both setup files, `oos-ui.running`, `oos-ui.stable`, `oos-ui.exits`) is
+written the same way, in this order:
+1. write the new content to `<name>.new` in the same directory;
+2. `fsync` the file;
+3. `rename` it over `<name>`;
+4. `fsync` the directory.
+
+The markers change in a fixed order: `oos-ui.running` is written before any setting is applied; `oos-ui.stable`
+replaces it only after the stable setup has been written durably. rcS updates `oos-ui.exits` durably before it starts
+the next `oos-ui`. Host tests cut each sequence after every step (a file system fake that drops what was not synced)
+and check that the next start sees a consistent state: the old file or the new one, and a marker that never claims
+stable for a setup that was not written.
+
+### GPU helper death
+
+The GPU helper is a separate process. When it dies (pipe EOF or `waitpid`), `present` switches to the CPU path at the
+next step, counts the event, and restarts the helper with a backoff of 1, 5 and 30 s. After 3 failed restarts it stays
+on the CPU path until the next start of `oos-ui`, and `:SYSTem:STATe?` says so. A helper death never ends `oos-ui`.
+
+## Setup files
+
+A setup file is `key = value` lines under a header line, `# OOS setup v<N>: key = value (oos-ui)`. Today `N` is 1.
+`store` owns the format (adr/0002: a setup loads as a list of commands).
+
+- **Unknown keys** are ignored with one log line, so an older build reads a newer file.
+- **Missing keys** keep their default, so a newer build reads an older file.
+- **A key never changes its meaning.** A value with an incompatible meaning (another unit, another range, another
+  set of names) gets a new key name; the old key is read by a migration step and never written again. An older
+  build then ignores the new key instead of applying it with the old meaning.
+- **Renamed keys** raise `N`. `store` keeps one migration function per step,
+  `migrate_v<N>_to_v<N+1>(lines) -> lines`, applied in order before parsing. Migration functions are never edited
+  after release; a fix is a new step.
+- **A value out of range** is a `CmdError` from `apply` like any remote write: the key is skipped, the rest of the file
+  loads, and the toast names the key.
+- **A file from a newer `N`** loads as far as the keys are known, with a toast that the file is newer than the build.
+- Setup files, the safe-start markers and the exit counter are written durably ([Durable writes](#durable-writes)),
+  so a power loss leaves the old or the new file, never half of one, and never an old one after a reported write.
+
+Tests: a round trip per `N`; every migration step on a fixture from that version; a file with an unknown key, a missing
+key, an out-of-range value and a newer `N`; a truncated file.
 
 ## Data flow
 
@@ -440,12 +716,16 @@ a test helper, not a port. `store` takes paths and `Read`/`Write`; its tests use
 
 - **Typed errors.** Domain functions return typed errors: one enum per module (`CmdError`, `AcqError`,
   `StoreError`), with `Display` for the UI and remote.
-- **Nothing swallowed.** No error is swallowed. No `unwrap` or `expect` on input or IO.
+- **Nothing swallowed.** No error is swallowed. No `unwrap` outside tests. `expect` only for an invariant the code
+  itself just established (a value checked a line above, a non-empty array by construction), with the invariant as
+  its message. Never on input or IO.
 - **Errors go back to their sender:** the SCPI error queue, the HTTP status, a toast.
 - **Hardware errors.** The acquisition thread retries them with bounded backoff, reports each in `Readings::status`,
   and never blocks the main thread.
-- **Broken invariants.** They panic in debug builds and tests. In release they log one line and recover to a safe
-  state. Each stage has `reset()`, which returns it to its start state (the accumulator: empty maps; records: empty
+- **Inconsistent state.** A condition that can be detected at run time (a count that does not match, a unit of an
+  unknown key) is not an invariant: it is an error. It is a `debug_assert!` in debug builds and tests. In release it
+  logs one line and recovers to a safe state. A violated `expect` aborts in release, and safe start
+  ([Safe start and exit](#safe-start-and-exit)) handles a repeated abort. Each stage has `reset()`, which returns it to its start state (the accumulator: empty maps; records: empty
   store; the acquisition client: re-publish `AcqWant`), and a test that a stage after `reset()` behaves as a new one.
 - **Locks.** One helper, `oos_hal::sync::lock`, takes a guard with `lock().unwrap_or_else(PoisonError::into_inner)`
   (`adr/0012`).
@@ -458,11 +738,17 @@ a test helper, not a port. `store` takes paths and `Read`/`Write`; its tests use
 | unit | settings groups, commands, `classify`, kernels, measurement functions | in the module, pure |
 | host | stages and `Session` with fakes; the step pipeline end to end on the Demo source | `ui/tests/` |
 | golden pictures | the composed picture per display mode and time base against reference PNGs, with a tolerance | `ui/tests/golden/` |
+| memory | the `memplan` sweep over every model's `Caps`; every queue's bound and overload policy; a SINGLE roll sweep publishes once | `oos-core` tests, `ui/tests/` |
+| host soak | the step loop on a scripted source (today's `Ui` until M16, then `Session` on `board::fake`), 10 000 steps per acquisition mode (normal, pairs, deep pairs, average from M1; roll, scan, segments through the real acquisition loop from M3.0) with a scripted change storm; heap allocation reaches a plateau after the first 1 000 steps and stays within 1 % of it, and every drop counter matches the mode | `ui/tests/soak.rs`, in the full gate |
 | perf guards | ratios against reference paths | `tools/perf-guard.sh` |
 | GPU | the CPU picture against the GPU picture | `gpu/test-host.sh` |
 | unit lab | the acceptance set on the scope | `tools/oos-stress/`; criteria in `drawing.md` |
 
 Every bug fix comes with a test that fails before the fix. Tests pin behaviour, not internals.
+
+The host soak finds the class of the roll OOM on the host: a buffer that grows per step shows as a missing
+plateau within seconds, without the unit. It counts allocations with a counting global allocator in the test binary
+only.
 
 ## Performance budgets
 
@@ -473,7 +759,7 @@ Every bug fix comes with a test that fails before the fix. Tests pin behaviour, 
 | worker time per frame on an A53 | <= 2.7 ms; load <= 70 % per little core in the worst mode, deposit, off-path decoding and `to_record`, and measurement jobs together |
 | records stage on the first A72 | <= 1.5 ms per step off the fast path (adding a `RecordBatch` to the store and building the pseudo-batch); records are built on the workers |
 | input to photon | the preview at the next step; the first batch under the new mapping <= 70 ms |
-| memory | RSS growth <= 60 MB against dho804 32041d0 |
+| memory | RSS <= 120 MB + `memplan` total in every mode, flat over a 2 h soak; `Config.mem_budget` default 512 MB; the RSS watchdog forces STOP at 1 GB ([Memory and queues](#memory-and-queues)) |
 
 Measured by the pacing and cost counters in `:SYSTem:STATe?` and by unitlab.
 
@@ -509,7 +795,7 @@ Known gap: the `// SAFETY:` comments (`../../AGENTS.md`, Code) are not checked y
 `undocumented_unsafe_blocks` in the lint set (auxout). Until then, review enforces it.
 
 What the rules cannot see, the code enforces: ownership, by visibility ([Enforced by visibility](#enforced-by-visibility));
-`oos_hal::dho` only inside `board/dho`, by the `board::boundary` lint (module rules name `crate::` paths only).
+`oos_hal::dho` only inside `board/dho`, by the `board::boundary` lint until the module rules cover external crate paths.
 
 ## Code rules
 

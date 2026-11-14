@@ -17,7 +17,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
   [picture](docs/architecture/picture.md), [records](docs/architecture/records.md) or
   [system](docs/architecture/system.md).
 - [Extending OOS](docs/architecture/extending.md): follow the recipe for your change.
-- `docs/development.md`: the gate and ratchets. This guide arrives with the guardrails branch.
+- [Development](docs/development.md): the gate and ratchets.
 - [Migration](docs/architecture/migration.md): the relevant step is the specification.
 - [ADRs](docs/architecture/adr/README.md): do not reopen a decision without a new ADR.
 - [Tasks](docs/tasks/README.md) and [releases](docs/releases.md): claim work before starting.
@@ -42,10 +42,9 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Run `cargo xtask check` before every commit. pre-commit runs `cargo xtask check --fast`, pre-push the full gate.
 - Report a change as done only after the full gate (no `--fast`, no `--no-coverage`) passed on its final commit.
 - Never bypass a hook (`--no-verify`, `core.hooksPath` changes, editing `.githooks/`).
-- Never raise an entry in a ratchet file (`xtask/data/size.txt`, `clippy.txt`, `statics.txt`,
-  `unsafe.txt`) and never lower a
-  coverage floor (`coverage.txt`). Fix the finding. `cargo xtask ratchet` only lowers values; commit its result with
-  the change that earned it.
+- Never edit a ratchet file (`xtask/data/size.txt`, `clippy.txt`, `statics.txt`, `unsafe.txt`, `coverage.txt`). Fix
+  the finding. The integrator runs `cargo xtask ratchet` (and `--move` for planned moves) at merge. A step that moves
+  code lists its moves in `xtask/data/moves.txt`; that file is part of the step, not a ratchet file.
 - Never loosen a lint, a limit, `rustfmt.toml`, `clippy.toml` or `xtask/data/architecture.txt` without an ADR the
   owner has approved. Adding a module rule that the tree meets is not loosening.
 - No `#[allow(...)]` without a reason comment on the same item.
@@ -113,6 +112,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Subject in the imperative mood, under 72 characters. The body says why, not what.
 - No em-dashes in commit messages, docs or comments.
 - Never rebase or amend commits that someone else has reviewed or merged.
+- A fix the unit needs now branches from `dho804` as `fix/<name>` and is forward-ported to `overhaul` as a test plus
+  the fix in its target place ([Migration](docs/architecture/migration.md), Hotfix lane).
 - Never push. The owner pushes. There is a public remote; never push to it.
 
 ## Docs
@@ -125,7 +126,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - In the same merge that finishes the task, set `status: done`, add a dated Status line and move the file to
   `docs/tasks/done/`. Keep completed files and ids forever. Never reuse or delete an id.
 - Fold lasting facts into permanent docs when the change merges.
-- Any architectural decision gets an ADR in `docs/architecture/adr/` (`0000-template.md`).
+- Any architectural decision gets an ADR in `docs/architecture/adr/` (from `docs/architecture/adr/0000-template.md`).
   The owner approves it before code.
 - Update `docs/architecture/README.md` when code matches it or when the target changes.
 - Statements about hardware say how they are known: verified on the unit, assumed, or not yet verified.

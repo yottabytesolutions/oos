@@ -40,7 +40,9 @@ stays.
 - the generator request;
 - `needs_raw`;
 - `deep_raw`;
-- the counter, DVM, mask and zone wants.
+- the counter, DVM, mask and zone wants;
+- `hold`: the run state as a level (STOP holds, RUN does not). Run state is state, not an event, so it lives in the
+  want and is never superseded.
 
 Today these are separate `Shared` fields, so a change of `needs_raw` or a mask want raises no generation
 (`pacing::WANTED` covers `want` only). One struct with one `gen` makes every acquisition-relevant change visible
@@ -64,22 +66,50 @@ in one number.
 `BatchMeta`: `id` (batch number), `gen`, `epoch`, `frames`, the acquisition snapshot (sample interval, pre-trigger
 samples, per-channel scale, offset, invert, coupling, bandwidth, trigger source, level, slope, coupling and noise
 reject), `mode` (normal, pairs with k, deep pairs, roll sweep, scan sweep, segment, hardware average) and `t_read`
-(when the read finished). A frame is converted and refined only from its own `BatchMeta`, never from `Settings`.
+(when the read finished), and the `route` tag copied from `AcqWant` at arm. A frame is converted and
+refined only from its own `BatchMeta`, never from `Settings`.
 
 ### `AcqCmd`
 
+Bound to a `(gen, epoch)`, may be superseded:
+
 | Command | Today |
 |---|---|
+| `Single { epoch }` | `run`/`single` edges via `Shared` |
 | `Force` | `Shared::force` |
 | `Rearm` (a SINGLE scan complete, SINGLE pressed again) | `halted`/`rearm` |
-| `Hold(bool)` and `Final(id)` (STOP exact, stop-exact.md) | `hold`, `final_req`/`final_ack` |
-| `AvgClear(id)` | `avg_clear` counter |
+| `Final(id)` (the STOP final raw read, stop-exact.md) | `final_req`/`final_ack` |
 | `Segments(run, want)`, `SegRead(k)` | `seg` |
-| `SelfCal(..)`, `CalCancel` | `cal_req`, `cal_cancel` |
 | `Levels(id, ..)`, `Slots(id)` (autoset, debug) | `levels_want`, `slots_want` |
+
+Unbound, always served in order:
+
+| Command | Today |
+|---|---|
+| `AvgClear(id)` | `avg_clear` counter |
+| `SelfCal(..)`, `CalCancel` | `cal_req`, `cal_cancel` |
+
+STOP and RUN are not commands: they are the `hold` level in `AcqWant` (today `Shared::hold`).
 
 Each command is taken once. The thread puts its id into `Readings::acked` when done. The answer to a request
 (levels, slots, cal result) is in `Readings` under the same id. No counter conventions per field.
+
+Commands and the want are separate channels, so their order needs a rule:
+- **Bound to a pair.** Every bound command carries the `(gen, epoch)` it belongs to, taken from the `AcqIntent` of the step
+  that sent it. The thread serves a command only once it has applied that pair.
+- **Superseded.** A command whose pair is older than the applied pair is not executed. The thread acknowledges it
+  as `Superseded(id)` in `Readings` and counts it (`drops acqcmd`). The sender sees the outcome; a `Force` or `Final`
+  never reaches a newer acquisition than it was meant for.
+- **Ahead.** A command whose pair is newer than the applied pair waits in the queue until `apply` has taken that want.
+- **SINGLE cannot vanish.** `AcqWant` is a latest-value cell, so a SINGLE epoch followed by another epoch in quick
+  succession could be overwritten before the thread reads it. A SINGLE arm is therefore also a queued command,
+  `Single { epoch }`. The thread serves each in order: it arms that epoch's batch, or, if a newer epoch was applied
+  first, acknowledges it as `Superseded`, so the UI ends that SINGLE explicitly instead of waiting for it.
+- **Unbound commands** carry no pair and are served in order whatever the want: a calibration cancel or an average
+  clear must never be lost to a settings change.
+- Host tests: a `Force` sent before a reconfiguration is superseded, not applied to the new settings; two SINGLE
+  presses within one loop pass give two acknowledgements; a `Final` waits for its want; STOP and a `gen` change in
+  one loop pass end held; a `CalCancel` sent before a reconfiguration is served.
 
 ### Locking
 
@@ -124,7 +154,7 @@ loop {
 2. Changed `gen`: disarm a batch armed ahead (its settings are the old ones), configure if `Want` or `slow` differ,
    restart the units whose wants changed, set `applied = gen`, and publish `Readings::raw_planned { gen, .. }` before
    any output of that `gen` (records.md).
-   A route-only change (`PipeView.route`) is `acq` too, so it raises `gen` with an unchanged `Want`: no
+   A route-only change (the `route` tag) is `acq` too, so it raises `gen` with an unchanged `Want`: no
    reconfiguration, but the batch armed ahead is disarmed. That costs one batch per route flip and is intended. A
    batch armed under the old route would otherwise be routed by a stale `gen`.
 3. Changed `epoch` alone (a retry with identical settings, CLEAR, RUN after STOP): no reconfiguration, but the same
@@ -142,8 +172,8 @@ signals.
 
 One batch: arm, fill, read, post-read reads, publish. In order:
 
-1. STOP (`Hold`): finish the batch in progress, do the final raw read where the measurements want it (stop-exact.md),
-   then no arming until `Hold(false)`.
+1. STOP (`hold` set in `AcqWant`): finish the batch in progress, do the final raw read if a `Final` asks for it
+   (stop-exact.md), then no arming while `hold` is set.
 2. SINGLE: one batch per epoch (`single_wants_more`).
 3. Hardware average: clear on `AvgClear`.
 4. Arm, unless armed ahead under the same `gen` and `epoch`.
@@ -160,8 +190,9 @@ One batch: arm, fill, read, post-read reads, publish. In order:
 9. Unit counters of this batch: trigger status, mask, zone, average progress. They go into `Readings`.
 10. Arm ahead (`prearm`) where nothing needs this ring any more.
 11. Publish: the buffer with every frame to the pipe as one `Batch` (the pipe decides between deposit and records,
-    picture.md). The newest frame decoded as a `Frame` to the
-    record path, with the LA record. `MeasRead`s to the measurement path.
+    picture.md). On the fast path the newest frame decoded as a `Frame` to the record path, with the LA record. Off
+    the fast path no `Frame`: the `RecordBatch` already holds the newest frame's record, so the newest frame is
+    decoded once, not twice. `MeasRead`s to the measurement path.
 
 What changes against today:
 - The newest frame is in the `Batch` like the others. The decoded newest `Frame` is for records only and is never
@@ -175,8 +206,17 @@ What changes against today:
 - `stream` covers roll and scan together. They share the chunk reads, the LA words and the 33 ms publish; scan adds
   the sweep writer and the SINGLE sweep stop. A published sweep is a `Frame` with `mode` roll or scan and the current
   `gen`. It replaces the picture (window of 1, picture.md), so a sweep never mixes with batches.
+- The ring is immutable chunks (`Arc<[Chunk]>`, `f32` points). The writer appends new chunks and drops old ones; it
+  never changes a published chunk. A sweep is published as screen-resolution min/max per column plus the `Arc`s of
+  its chunks for measurements, never a copy. It goes into the latest-value `Frame` cell, so a newer sweep replaces an
+  unread one. The ring is one screen (10 x tdiv / dt points per channel) plus the chunks a reader still pins, the
+  `ring` class of `memplan` (README.md, [Memory plan](README.md#memory-plan)).
+- After a complete SINGLE sweep, `stream` publishes nothing until `Rearm`. Host test: a SINGLE roll sweep publishes
+  exactly one complete sweep, and nothing more over 1000 passes. (`fix/roll-queue` does the same in the old code on
+  `dho804`.)
 - `segments` stays `seg_step`. Read-back segments are `Frame`s with `mode = segment`. They go to the record path,
-  not to the pipe.
+  not to the pipe, through their own bounded channel with back-pressure, not through the `Frame` cell. Acquisition is
+  stopped during read-back, so waiting for space there blocks nothing else.
 
 ## Rules
 

@@ -146,7 +146,8 @@ One batch: arm, fill, read, post-read reads, publish. In order:
    The two raw reads are `MeasRead`s (records.md).
 9. Unit counters of this batch: trigger status, mask, zone, average progress. They go into `Readings`.
 10. Arm ahead (`prearm`) where nothing needs this ring any more.
-11. Publish: the buffer with every frame to the pipe as one `Batch`. The newest frame decoded as a `Frame` to the
+11. Publish: the buffer with every frame to the pipe as one `Batch` (the pipe decides between deposit and records,
+    picture.md). The newest frame decoded as a `Frame` to the
     record path, with the LA record. `MeasRead`s to the measurement path.
 
 What changes against today:

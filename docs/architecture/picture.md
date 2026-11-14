@@ -38,6 +38,16 @@ UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole 
   picture.
 - **Frames mode** (no worker pipe: the host, `acq.pipeline = frames`, a full buffer pool) is the same unit drawn by
   the UI thread itself; a single delivered frame is a batch of one. One composition, not two (adr/0013).
+- **Route per batch, decided by the pipe.** The acquisition thread sends every `Batch` to the pipe and knows nothing
+  about drawing policy. The pipe routes it by the view it holds:
+  - on the fast path (`fast_ok`) the batch is deposited (shares, `BatchUnit`);
+  - off it, the workers only decode the frames and pass them to the UI as one `RecordBatch`. The UI builds a record
+    of every frame (mask counts, zones, software average, Bus trigger, Single, segments) and draws the step's
+    records as the pseudo-batch.
+
+  Decoding stays off the first A72 in both routes. Today the acquisition thread decodes them on the second A72. A
+  batch fed under one route and claimed after a route change is handled under the route of its claim. Its mapping
+  key decides whether it is shown.
 
 ## Weights
 

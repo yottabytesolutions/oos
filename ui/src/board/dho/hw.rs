@@ -1489,6 +1489,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         }
                         la_fails = 0;
                         status(format!("configured: mask {:#x}, {} Sa/s, {} points", want.mask, p.rate, p.memsel));
+                        crate::pacing::configured();
                         current = Some((want.clone(), p));
                         configs += 1;
                         // core offsets of the ADC mode (opt-in): once this configuration has stood for TRIM_HOLD; a new

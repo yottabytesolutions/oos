@@ -32,10 +32,34 @@ struct State {
     reads: VecDeque<f32>,
     readies: VecDeque<f32>,
     ready_ms: Option<f32>,
+    /// per step with the fast path: its queued-frame drawing and merge (ms)
+    fast: VecDeque<[f32; 2]>,
     last_pass: Option<Instant>,
     last_batch: Option<Instant>,
     slow_logged: u64,
+    /// the settings change being followed (`changed`), and the last results (`Settle`)
+    settle: Option<Settle>,
+    settled: VecDeque<Settle>,
 }
+
+/// From a change of the acquisition settings to steady pictures again: times (ms after the change) of the hardware
+/// configuration, the first picture with new frames and the picture that began `STEADY` pictures with new frames in a
+/// row; pictures without new frames in between.
+#[derive(Clone, Copy, Debug)]
+struct Settle {
+    at: Instant,
+    configured: Option<f32>,
+    first: Option<f32>,
+    steady: Option<f32>,
+    run_from: Option<f32>,
+    run: u32,
+    empty: u32,
+}
+
+/// Pictures with new frames in a row that count as steady again.
+const STEADY: u32 = 10;
+/// A change not steady after this long is reported as such.
+const SETTLE_MAX_MS: f32 = 5000.0;
 
 fn state() -> &'static Mutex<State> {
     static S: std::sync::OnceLock<Mutex<State>> = std::sync::OnceLock::new();
@@ -52,7 +76,52 @@ fn push<T>(q: &mut VecDeque<T>, x: T) {
 /// A screen picture took `frames` new frames (records and fast-path frames, `Ui::step`).
 pub fn picture(frames: usize) {
     let mut s = state().lock().unwrap();
-    push(&mut s.pics, (Instant::now(), frames as u32));
+    let now = Instant::now();
+    push(&mut s.pics, (now, frames as u32));
+    if let Some(mut c) = s.settle {
+        let ms = now.saturating_duration_since(c.at).as_secs_f32() * 1e3;
+        if frames > 0 {
+            c.first.get_or_insert(ms);
+            c.run_from.get_or_insert(ms);
+            c.run += 1;
+            if c.run >= STEADY {
+                c.steady = c.run_from;
+            }
+        } else {
+            c.empty += 1;
+            (c.run, c.run_from) = (0, None);
+        }
+        if c.steady.is_some() || ms > SETTLE_MAX_MS {
+            eprintln!("oos-ui pacing: settings change: configured {:?} ms, first new frames {:?} ms, steady {:?} ms, {} empty pictures", c.configured.map(|x| x.round()), c.first.map(|x| x.round()), c.steady.map(|x| x.round()), c.empty);
+            push(&mut s.settled, c);
+            s.settle = None;
+        } else {
+            s.settle = Some(c);
+        }
+    }
+}
+
+/// Counters for the status line: new screen mappings of the deposit workers (`Pipe::set_view`).
+pub static VIEWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// UI-side times of a step's fast block (ms): drawing the queued frames, merging the workers' maps.
+pub fn fast_block(draw_ms: f32, merge_ms: f32) {
+    let mut s = state().lock().unwrap();
+    push(&mut s.fast, [draw_ms, merge_ms]);
+}
+
+/// The UI asked for other acquisition settings (wave.rs): follow how long until the pictures are steady again.
+pub fn changed() {
+    let mut s = state().lock().unwrap();
+    s.settle = Some(Settle { at: Instant::now(), configured: None, first: None, steady: None, run_from: None, run: 0, empty: 0 });
+}
+
+/// The hardware took the settings (hw.rs).
+pub fn configured() {
+    let mut s = state().lock().unwrap();
+    if let Some(c) = s.settle.as_mut().filter(|c| c.configured.is_none()) {
+        c.configured = Some(c.at.elapsed().as_secs_f32() * 1e3);
+    }
 }
 
 /// A frame-loop pass from `t0` (step start) with its step, render and present ends.
@@ -262,10 +331,13 @@ pub fn summary() -> String {
     let mut re: Vec<f32> = s.reads.iter().copied().collect();
     // before the fill ended: arm or the wait of a batch armed ahead, first trigger, fill
     let mut pre: Vec<f32> = s.batches.iter().zip(s.reads.iter()).map(|(b, r)| b.0 - r).collect();
+    let mut fd: Vec<f32> = s.fast.iter().map(|x| x[0]).collect();
+    let mut fm: Vec<f32> = s.fast.iter().map(|x| x[1]).collect();
+    let settles: Vec<String> = s.settled.iter().rev().take(4).map(|c| format!("{}/{}/{}/{}", c.configured.map_or(-1.0, |x| x.round()), c.first.map_or(-1.0, |x| x.round()), c.steady.map_or(-1.0, |x| x.round()), c.empty)).collect();
     let nb = s.batches.len().max(1);
     let p4 = |v: &mut Vec<f32>| format!("{:.1}/{:.1}/{:.1}/{:.1}", pct(v, 0.5), pct(v, 0.9), pct(v, 0.99), pct(v, 1.0));
     format!(
-        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms until fill end {} ms read {} ms drawn {} ms",
+        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms until fill end {} ms read {} ms drawn {} ms ui fast {} merge {} ms views {} settle configured/first/steady ms/empty {}",
         s.pics.len(),
         pct(&mut fr, 0.1),
         pct(&mut fr, 0.5),
@@ -282,6 +354,10 @@ pub fn summary() -> String {
         p4(&mut pre),
         p4(&mut re),
         p4(&mut rd),
+        p4(&mut fd),
+        p4(&mut fm),
+        VIEWS.load(std::sync::atomic::Ordering::Relaxed),
+        if settles.is_empty() { "-".to_string() } else { settles.join(" ") },
     )
 }
 

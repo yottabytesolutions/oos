@@ -703,7 +703,11 @@ impl Source {
         let level = m.trig_level as f64;
         if let Source::Hw { shared, seen } = self {
             let mut g = shared.lock().unwrap();
-            g.want = Some(board().want(m));
+            let want = board().want(m);
+            if g.want.as_ref() != Some(&want) {
+                crate::pacing::changed();
+            }
+            g.want = Some(want);
             g.deep_raw = crate::deepmeas::want(m);
             g.slow = board().slow_mode(m);
             g.stamp = m.hw_stamp;

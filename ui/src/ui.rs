@@ -114,6 +114,8 @@ pub const LAYS: [Lay; 3] = [
 const DLG_HEAD: i32 = 50;
 const DLG_ROW: i32 = 44;
 const DLG_CTRL: i32 = 40;
+/// The time a screen step spends on records from the source at most once it has one (docs/fork/stutter.md).
+const RECORDS_BUDGET: std::time::Duration = std::time::Duration::from_millis(15);
 /// records kept for history playback
 const HISTORY: usize = 200;
 /// Longest wait of a STOP for the hardware's final frame (`Ui::stop_final`): a batch in progress, its read and the raw
@@ -1841,6 +1843,7 @@ impl Ui {
                     raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
                 }
                 got += frames.len();
+                let t_merge = std::time::Instant::now();
                 // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
                 if let Some(p) = crate::drawpipe::pipe() {
                     p.set_view(Some(&self.m), self.ph.w, self.ph.h);
@@ -1851,9 +1854,16 @@ impl Ui {
                     got += d.frames as usize;
                     self.mstat_fold(&d.folds);
                 }
+                crate::pacing::fast_block((t_merge - t0).as_secs_f32() * 1e3, t_merge.elapsed().as_secs_f32() * 1e3);
                 td += t0.elapsed().as_secs_f32() * 1000.0;
             }
+            let t_records = std::time::Instant::now();
             for _ in 0..k {
+                // the records of a step within a time budget: where every frame takes the record path, 48 of them a step
+                // took the frame rate down to 5-13 fps (stutter.md); the rest of the queue goes, counted as dropped
+                if got > 0 && t_records.elapsed() > RECORDS_BUDGET {
+                    break;
+                }
                 let t0 = std::time::Instant::now();
                 let r = self.src.acquire(&self.m, dt_wall / k as f64, &mut self.rng);
                 ta += t0.elapsed().as_secs_f32() * 1000.0;
@@ -2141,7 +2151,9 @@ impl Ui {
             && m.z_src.is_none()
             && (!m.zones.iter().any(|z| z.usable()) || self.zone_hw_active())
             && board().slow_mode(m) == crate::board::Slow::Off
-            && (0..NCH).all(|c| !m.ch[c].on || (matches!(m.ch[c].coupling, Coupling::Dc | Coupling::Dc50) && m.ch[c].bw != BW_20M))
+        // coupling and the 20 MHz limit: the hardware source sets them in the AFE (`hw::settings`), the records of it
+        // are not conditioned in software (`condition` is for the demo source), so its frames take the fast path too.
+        // Kept out, AC and BW 20M sent every frame through the record path: 48 records a step, 5-13 fps (stutter.md)
     }
 
     /// One frame of the fast path into the main phosphor map; false if its trigger edge was not found near the

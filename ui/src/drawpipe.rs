@@ -357,20 +357,29 @@ struct Acc {
     triggered: u64,
     edges: [u64; 4],
     off: (f64, f64),
+    /// the channels drawn into (on in the view): only their maps are added and cleared
+    used: [bool; NCH],
 }
 
 impl Acc {
     fn new(gen: u64, w: usize, h: usize) -> Acc {
-        Acc { gen, ph: Phosphor::new(w, h), folds: Vec::new(), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0) }
+        Acc { gen, ph: Phosphor::new(w, h), folds: Vec::new(), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0), used: [true; NCH] }
     }
     /// Empty again, keeping the maps' memory.
     fn reset(&mut self, gen: u64) {
-        self.ph.clear();
+        for (m, u) in self.ph.map.iter_mut().zip(self.used) {
+            if u {
+                m.iter_mut().for_each(|x| *x = 0);
+            }
+        }
         self.folds.clear();
         (self.gen, self.frames, self.triggered, self.edges, self.off) = (gen, 0, 0, [0; 4], (0.0, 0.0));
     }
     fn add(&mut self, o: &Acc) {
-        add(&mut self.ph, &o.ph);
+        add(&mut self.ph, &o.ph, o.used);
+        for (a, b) in self.used.iter_mut().zip(o.used) {
+            *a |= b;
+        }
         crate::framestats::add_folds(&mut self.folds, &o.folds);
         self.frames += o.frames;
         self.triggered += o.triggered;
@@ -384,9 +393,13 @@ impl Acc {
 /// A worker's mailbox: the drawn maps the UI takes, and the maps it gives back to be cleared and reused.
 #[derive(Default)]
 struct Mail {
-    full: Option<Acc>,
-    spare: Option<Acc>,
+    /// handed on, in order; the worker never adds under the lock (the UI waited 18-34 ms for that on the unit)
+    full: Vec<Acc>,
+    spare: Vec<Acc>,
 }
+
+/// Maps handed on that a mailbox holds at most before a worker adds into the last one.
+const MAIL_MAX: usize = 4;
 
 /// The acquisition thread's state as a helper (`Pipe::help`): its maps and its kept frame.
 #[derive(Default)]
@@ -469,6 +482,7 @@ impl Pipe {
         };
         let key = Key::of(m, w, h);
         if v.key.as_ref() != Some(&key) {
+            crate::pacing::VIEWS.fetch_add(1, Ordering::Relaxed);
             v.gen += 1;
             v.view = Some(Arc::new(View { gen: v.gen, m: m.clone(), w, h }));
             v.key = Some(key);
@@ -557,7 +571,7 @@ impl Pipe {
                     self.help_done(h);
                 }
                 if h.acc.is_none() {
-                    let spare = h.spare.take().or_else(|| mails.lock().unwrap().spare.take());
+                    let spare = h.spare.take().or_else(|| mails.lock().unwrap().spare.pop());
                     h.acc = Some(fresh_acc(spare, &v));
                 }
                 let a = h.acc.as_mut().expect("helper maps");
@@ -587,26 +601,29 @@ impl Pipe {
         let gen = self.view.lock().unwrap().view.as_ref().map(|v| v.gen);
         let mut got = Merged::default();
         for mail in &self.mails {
-            let full = mail.lock().unwrap().full.take();
-            let Some(a) = full else { continue };
-            if Some(a.gen) == gen && (a.ph.w, a.ph.h) == (ph.w, ph.h) && a.frames > 0 {
-                if *clear {
-                    ph.clear();
-                    *clear = false;
+            let full = std::mem::take(&mut mail.lock().unwrap().full);
+            let mut back = Vec::with_capacity(full.len());
+            for a in full {
+                if Some(a.gen) == gen && (a.ph.w, a.ph.h) == (ph.w, ph.h) && a.frames > 0 {
+                    if *clear {
+                        ph.clear();
+                        *clear = false;
+                    }
+                    add(ph, &a.ph, a.used);
+                    for (x, y) in edges.iter_mut().zip(a.edges) {
+                        *x += y;
+                    }
+                    *off = (off.0 + a.off.0, off.1.max(a.off.1));
+                    got.frames += a.frames;
+                    got.triggered += a.triggered;
+                    crate::framestats::add_folds(&mut got.folds, &a.folds);
+                } else {
+                    Counters::add(&self.counters.dropped, a.frames);
                 }
-                add(ph, &a.ph);
-                for (x, y) in edges.iter_mut().zip(a.edges) {
-                    *x += y;
-                }
-                *off = (off.0 + a.off.0, off.1.max(a.off.1));
-                got.frames += a.frames;
-                got.triggered += a.triggered;
-                crate::framestats::add_folds(&mut got.folds, &a.folds);
-            } else {
-                Counters::add(&self.counters.dropped, a.frames);
+                back.push(a);
             }
             // back to the worker, which clears it
-            mail.lock().unwrap().spare = Some(a);
+            mail.lock().unwrap().spare.extend(back);
         }
         // after the maps: a batch hands its maps on before it goes on `ready`
         self.release();
@@ -632,6 +649,7 @@ fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
         }
         _ => Acc::new(v.gen, v.w, v.h),
     };
+    a.used = std::array::from_fn(|c| v.m.ch[c].on);
     a.folds = crate::framestats::folds_for(&v.m);
     a
 }
@@ -664,19 +682,22 @@ fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, 
 /// Hands drawn maps to `mail` (added to what the UI has not taken yet); returns maps to draw the next ones into.
 fn publish(mail: &Mutex<Mail>, a: Acc, counters: &Counters) -> Option<Acc> {
     let mut mb = mail.lock().unwrap();
-    match mb.full.as_mut() {
-        Some(full) if full.gen == a.gen && (full.ph.w, full.ph.h) == (a.ph.w, a.ph.h) => {
-            full.add(&a);
-            Some(a)
-        }
-        _ => {
-            if let Some(old) = mb.full.take() {
-                Counters::add(&counters.dropped, old.frames);
-            }
-            mb.full = Some(a);
-            mb.spare.take()
-        }
+    // maps of an older mapping: the UI would drop them
+    let (keep, old): (Vec<Acc>, Vec<Acc>) = std::mem::take(&mut mb.full).into_iter().partition(|f| f.gen == a.gen && (f.ph.w, f.ph.h) == (a.ph.w, a.ph.h));
+    mb.full = keep;
+    for o in old {
+        Counters::add(&counters.dropped, o.frames);
+        mb.spare.push(o);
     }
+    if mb.full.len() < MAIL_MAX {
+        mb.full.push(a);
+        return mb.spare.pop();
+    }
+    // the UI is far behind: added under the lock, rare
+    if let Some(last) = mb.full.last_mut() {
+        last.add(&a);
+    }
+    Some(a)
 }
 
 /// A worker: claims frames of each batch until none are left, draws them into its own maps, then hands them on.
@@ -695,7 +716,7 @@ fn work(rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>) {
             }
             continue;
         };
-        let mut a = fresh_acc(spare.take().or_else(|| mail.lock().unwrap().spare.take()), &v);
+        let mut a = fresh_acc(spare.take().or_else(|| mail.lock().unwrap().spare.pop()), &v);
         while let Some(r) = b.claim(CLAIM) {
             draw_range(&b, r, &v, &mut a, &mut f, b.counters);
         }
@@ -709,10 +730,12 @@ fn work(rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>) {
 }
 
 /// `dst` += `src`, saturating, per channel map.
-fn add(dst: &mut Phosphor, src: &Phosphor) {
-    for (d, s) in dst.map.iter_mut().zip(src.map.iter()) {
-        for (x, y) in d.iter_mut().zip(s.iter()) {
-            *x = x.saturating_add(*y);
+fn add(dst: &mut Phosphor, src: &Phosphor, used: [bool; NCH]) {
+    for ((d, s), u) in dst.map.iter_mut().zip(src.map.iter()).zip(used) {
+        if u {
+            for (x, y) in d.iter_mut().zip(s.iter()) {
+                *x = x.saturating_add(*y);
+            }
         }
     }
 }

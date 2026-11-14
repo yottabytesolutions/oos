@@ -46,10 +46,41 @@ pub enum Meas {
 }
 
 pub const ALL: [Meas; 35] = [
-    Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vtop, Meas::Vbase, Meas::Vamp, Meas::Vupper, Meas::Vmid, Meas::Vlower, Meas::Vavg,
-    Meas::Vrms, Meas::VavgCyc, Meas::VrmsCyc, Meas::VrmsAc, Meas::StdDev, Meas::Overshoot, Meas::Preshoot, Meas::Area,
-    Meas::AreaCyc, Meas::Period, Meas::Freq, Meas::Rise, Meas::Fall, Meas::PWidth, Meas::NWidth, Meas::PDuty, Meas::NDuty,
-    Meas::PPulses, Meas::NPulses, Meas::PEdges, Meas::NEdges, Meas::TVmax, Meas::TVmin, Meas::PSlew, Meas::NSlew,
+    Meas::Vmax,
+    Meas::Vmin,
+    Meas::Vpp,
+    Meas::Vtop,
+    Meas::Vbase,
+    Meas::Vamp,
+    Meas::Vupper,
+    Meas::Vmid,
+    Meas::Vlower,
+    Meas::Vavg,
+    Meas::Vrms,
+    Meas::VavgCyc,
+    Meas::VrmsCyc,
+    Meas::VrmsAc,
+    Meas::StdDev,
+    Meas::Overshoot,
+    Meas::Preshoot,
+    Meas::Area,
+    Meas::AreaCyc,
+    Meas::Period,
+    Meas::Freq,
+    Meas::Rise,
+    Meas::Fall,
+    Meas::PWidth,
+    Meas::NWidth,
+    Meas::PDuty,
+    Meas::NDuty,
+    Meas::PPulses,
+    Meas::NPulses,
+    Meas::PEdges,
+    Meas::NEdges,
+    Meas::TVmax,
+    Meas::TVmin,
+    Meas::PSlew,
+    Meas::NSlew,
 ];
 
 impl Meas {
@@ -255,12 +286,15 @@ pub fn analyze_min(v: &[f32], dt: f64, min_amp: f64) -> Analysis {
     // noisy samples that seldom reach the 10 % and 90 % levels held the main thread for half a minute
     for (k, x) in e.iter().enumerate() {
         let i = x.t as usize + 1;
-        let (before, after) = (if k > 0 { e[k - 1].t as usize } else { 0 }, e.get(k + 1).map_or(v.len(), |n| n.t as usize + 1));
+        let (before, after) =
+            (if k > 0 { e[k - 1].t as usize } else { 0 }, e.get(k + 1).map_or(v.len(), |n| n.t as usize + 1));
         if x.rising {
             if let (Some(p), Some(q)) = (cross(v, i, l10, true, true, before), cross(v, i, l90, true, false, after)) {
                 rt.push((q - p) * dt);
             }
-        } else if let (Some(p), Some(q)) = (cross(v, i, l90, false, true, before), cross(v, i, l10, false, false, after)) {
+        } else if let (Some(p), Some(q)) =
+            (cross(v, i, l90, false, true, before), cross(v, i, l10, false, false, after))
+        {
             ft.push((q - p) * dt);
         }
     }
@@ -394,7 +428,13 @@ mod tests {
         // what they mean, edge by edge
         fn width(a: &[f64], b: &[f64]) -> f64 {
             let w: Vec<f64> = a.iter().filter_map(|&s| b.iter().find(|&&e| e > s).map(|&e| e - s)).collect();
-            mean(&a.iter().zip(w.iter()).filter(|(&s, &wd)| !a.iter().any(|&x| x > s && x < s + wd)).map(|(_, &wd)| wd).collect::<Vec<f64>>())
+            mean(
+                &a.iter()
+                    .zip(w.iter())
+                    .filter(|(&s, &wd)| !a.iter().any(|&x| x > s && x < s + wd))
+                    .map(|(_, &wd)| wd)
+                    .collect::<Vec<f64>>(),
+            )
         }
         let mut x = 7u32;
         let mut r = || {
@@ -402,7 +442,8 @@ mod tests {
             (x >> 16) as f64
         };
         for n in [0usize, 1, 2, 3, 10, 200] {
-            let (mut rises, mut falls): (Vec<f64>, Vec<f64>) = ((0..n).map(|_| r()).collect(), (0..n + 1).map(|_| r()).collect());
+            let (mut rises, mut falls): (Vec<f64>, Vec<f64>) =
+                ((0..n).map(|_| r()).collect(), (0..n + 1).map(|_| r()).collect());
             rises.sort_by(f64::total_cmp);
             falls.sort_by(f64::total_cmp);
             let an = Analysis { rises: rises.clone(), falls: falls.clone(), ..Default::default() };

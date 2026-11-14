@@ -121,7 +121,8 @@ pub fn quality(v: &[f32], i: &[f32], dt: f64, f_line: Option<f64>) -> Quality {
     let (ir, ii) = dft(i, dt, a, b, f);
     let ph = (vi.atan2(vr) - ii.atan2(ir)).to_degrees();
     q.phase_deg = (ph + 180.0).rem_euclid(360.0) - 180.0;
-    q.q_reactive = (q.s_apparent * q.s_apparent - q.p_real * q.p_real).max(0.0).sqrt() * if q.phase_deg < 0.0 { -1.0 } else { 1.0 };
+    q.q_reactive = (q.s_apparent * q.s_apparent - q.p_real * q.p_real).max(0.0).sqrt()
+        * if q.phase_deg < 0.0 { -1.0 } else { 1.0 };
     q.crest_v = if q.vrms > 0.0 { pv / q.vrms } else { f64::NAN };
     q.crest_i = if q.irms > 0.0 { pi / q.irms } else { f64::NAN };
     q
@@ -230,7 +231,11 @@ pub fn switching(vds: &[f32], id: &[f32], dt: f64, thr_pct: f64) -> Switching {
         return out;
     }
     let (vds, id) = (&vds[..n], &id[..n]);
-    let p: Vec<f64> = vds.iter().zip(id).map(|(&v, &i)| if v.is_finite() && i.is_finite() { v as f64 * i as f64 } else { 0.0 }).collect();
+    let p: Vec<f64> = vds
+        .iter()
+        .zip(id)
+        .map(|(&v, &i)| if v.is_finite() && i.is_finite() { v as f64 * i as f64 } else { 0.0 })
+        .collect();
     out.p_avg = p.iter().sum::<f64>() / n as f64;
     let (av, ai) = (analyze(vds, dt), analyze(id, dt));
     if !av.valid || !ai.valid {

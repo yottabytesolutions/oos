@@ -71,7 +71,10 @@ impl Clock {
 
 /// Mean |x/u - round(x/u)| over the spacings of at most 12 units.
 fn fit_err(d: &[f64], u: f64) -> f64 {
-    let (s, n) = d.iter().filter(|&&x| x / u < 12.5).fold((0.0, 0usize), |(s, n), &x| (s + (x / u - (x / u).round()).abs(), n + 1));
+    let (s, n) = d
+        .iter()
+        .filter(|&&x| x / u < 12.5)
+        .fold((0.0, 0usize), |(s, n), &x| (s + (x / u - (x / u).round()).abs(), n + 1));
     if n == 0 {
         1.0
     } else {
@@ -184,7 +187,15 @@ pub fn clock_from_edges(e: Vec<f64>, nominal_rate: Option<f64>) -> Option<Clock>
 /// by the phase error. `loop_bw` = closed-loop bandwidth in Hz (0 = rate / 1667, the common "golden PLL"); 1st order
 /// (phase only) or 2nd order (phase and frequency, damping 0.707). The gains account for the edge density (edges per
 /// UI). The ticks cover the whole record.
-pub fn recover_clock_pll(v: &[f32], dt: f64, thr: f32, hyst: f32, nominal_rate: Option<f64>, loop_bw: f64, second_order: bool) -> Option<Clock> {
+pub fn recover_clock_pll(
+    v: &[f32],
+    dt: f64,
+    thr: f32,
+    hyst: f32,
+    nominal_rate: Option<f64>,
+    loop_bw: f64,
+    second_order: bool,
+) -> Option<Clock> {
     let c = recover_clock(v, dt, thr, hyst, nominal_rate)?;
     let end = v.len() as f64 * dt;
     let (first, last) = (c.edges[0], c.edges[c.edges.len() - 1]);
@@ -192,7 +203,8 @@ pub fn recover_clock_pll(v: &[f32], dt: f64, thr: f32, hyst: f32, nominal_rate: 
     let density = (c.edges.len() as f64 / uis).clamp(0.01, 1.0);
     let bw = if loop_bw > 0.0 { loop_bw } else { c.rate() / 1667.0 };
     let wn_te = 2.0 * std::f64::consts::PI * bw * c.period / density; // natural frequency x time between edges
-    let (kp, ki) = if second_order { ((2.0 * 0.707 * wn_te).min(1.0), wn_te * wn_te * density) } else { (wn_te.min(1.0), 0.0) };
+    let (kp, ki) =
+        if second_order { ((2.0 * 0.707 * wn_te).min(1.0), wn_te * wn_te * density) } else { (wn_te.min(1.0), 0.0) };
     let mut period = c.period;
     let mut next = c.phase - (c.phase / period).ceil() * period; // first tick at or before t = 0
     let mut ticks = Vec::with_capacity((end / period) as usize + 2);
@@ -288,12 +300,30 @@ pub struct Jitter {
 
 /// Inverse of the standard normal CDF (Acklam's rational approximation, relative error < 1.2e-9).
 fn norm_inv(p: f64) -> f64 {
-    const A: [f64; 6] = [-3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.383577518672690e2, -3.066479806614716e1, 2.506628277459239];
-    const B: [f64; 5] = [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1];
-    const C: [f64; 6] = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+    const A: [f64; 6] = [
+        -3.969683028665376e1,
+        2.209460984245205e2,
+        -2.759285104469687e2,
+        1.383577518672690e2,
+        -3.066479806614716e1,
+        2.506628277459239,
+    ];
+    const B: [f64; 5] =
+        [-5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1];
+    const C: [f64; 6] = [
+        -7.784894002430293e-3,
+        -3.223964580411365e-1,
+        -2.400758277161838,
+        -2.549732539343734,
+        4.374664141464968,
+        2.938163982698783,
+    ];
     const D: [f64; 4] = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416];
     let p = p.clamp(1e-300, 1.0 - 1e-16);
-    let tail = |q: f64| (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5]) / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0);
+    let tail = |q: f64| {
+        (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
+            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
+    };
     if p < 0.02425 {
         tail((-2.0 * p.ln()).sqrt())
     } else if p > 1.0 - 0.02425 {
@@ -301,7 +331,8 @@ fn norm_inv(p: f64) -> f64 {
     } else {
         let q = p - 0.5;
         let r = q * q;
-        (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0)
+        (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q
+            / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0)
     }
 }
 
@@ -316,7 +347,8 @@ fn tail_fit(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
         let x: Vec<f64> = pts.iter().map(|&(x, _)| x).collect();
         if let Some((mu, sigma)) = line_fit(&z, &x) {
             if sigma > 0.0 {
-                let rss: f64 = z.iter().zip(&x).map(|(z, x)| (x - mu - sigma * z).powi(2)).sum::<f64>() / (sigma * sigma * z.len() as f64);
+                let rss: f64 = z.iter().zip(&x).map(|(z, x)| (x - mu - sigma * z).powi(2)).sum::<f64>()
+                    / (sigma * sigma * z.len() as f64);
                 if best.map_or(true, |b| rss < b.2) {
                     best = Some((mu, sigma, rss));
                 }
@@ -354,7 +386,9 @@ fn tail_points(s: &[f64], k_max: usize, tol: f64) -> Vec<(f64, f64)> {
         return pts;
     }
     let (first, last) = (TAIL_SKIP as f64 + 1.0, pts.len() as f64);
-    let mut idx: Vec<usize> = (0..TAIL_POINTS).map(|k| (first * (last / first).powf(k as f64 / (TAIL_POINTS - 1) as f64) - 1.0).round() as usize).collect();
+    let mut idx: Vec<usize> = (0..TAIL_POINTS)
+        .map(|k| (first * (last / first).powf(k as f64 / (TAIL_POINTS - 1) as f64) - 1.0).round() as usize)
+        .collect();
     idx.dedup();
     idx.into_iter().map(|k| pts[k]).collect()
 }
@@ -371,7 +405,19 @@ fn tail_points(s: &[f64], k_max: usize, tol: f64) -> Vec<(f64, f64)> {
 /// filled. The caller pools records to reach the tail fit.
 pub fn jitter(tie: &[f64]) -> Jitter {
     let t: Vec<f64> = tie.iter().copied().filter(|x| x.is_finite()).collect();
-    let mut j = Jitter { fit: JitterFit::TooFew, tj_pp: f64::NAN, rj_rms: f64::NAN, dj_pp: f64::NAN, left: (f64::NAN, f64::NAN), right: (f64::NAN, f64::NAN), pp: f64::NAN, rms: rms_dev(&t), period_jitter_rms: f64::NAN, c2c_rms: f64::NAN, histogram: Vec::new() };
+    let mut j = Jitter {
+        fit: JitterFit::TooFew,
+        tj_pp: f64::NAN,
+        rj_rms: f64::NAN,
+        dj_pp: f64::NAN,
+        left: (f64::NAN, f64::NAN),
+        right: (f64::NAN, f64::NAN),
+        pp: f64::NAN,
+        rms: rms_dev(&t),
+        period_jitter_rms: f64::NAN,
+        c2c_rms: f64::NAN,
+        histogram: Vec::new(),
+    };
     if t.is_empty() {
         return j;
     }
@@ -506,7 +552,11 @@ pub fn pj_lines(df: f64, spec: &[f64], count: usize) -> Vec<(f64, f64)> {
     let mut s: Vec<f64> = spec[2..].to_vec();
     s.sort_by(f64::total_cmp);
     let floor = s[s.len() / 2];
-    crate::math::peaks(spec, count).into_iter().filter(|&(_, v)| v > 6.0 * floor).map(|(k, v)| (k as f64 * df, v)).collect()
+    crate::math::peaks(spec, count)
+        .into_iter()
+        .filter(|&(_, v)| v > 6.0 * floor)
+        .map(|(k, v)| (k as f64 * df, v))
+        .collect()
 }
 
 /// Gaussian tail probability Q(z), relative error below 1 % out to where it underflows.
@@ -683,7 +733,8 @@ impl Eye {
             let u = ui(k as f64 * dt) + off;
             let x = x as f64;
             if let Some((pu, pv)) = prev {
-                let steps = (((u - pu) * cols_per_ui).abs().max((x - pv).abs() * rows_per_v).ceil() as usize).clamp(1, max_steps);
+                let steps = (((u - pu) * cols_per_ui).abs().max((x - pv).abs() * rows_per_v).ceil() as usize)
+                    .clamp(1, max_steps);
                 for s in 0..steps {
                     let a = s as f64 / steps as f64;
                     self.plot(pu + a * (u - pu), pv + a * (x - pv));
@@ -771,7 +822,10 @@ impl Eye {
     /// Offsets (UI) from the crossing of the hits in row y within ±0.5 UI: (offset, count).
     fn row_offsets(&self, y: usize) -> Vec<(f64, f64)> {
         let c = self.span() / 2.0 - 0.5;
-        (0..self.w).filter(|&x| self.at(x, y) > 0).map(|x| (((self.col_u(x) - c + 0.5).rem_euclid(1.0)) - 0.5, self.at(x, y) as f64)).collect()
+        (0..self.w)
+            .filter(|&x| self.at(x, y) > 0)
+            .map(|x| (((self.col_u(x) - c + 0.5).rem_euclid(1.0)) - 0.5, self.at(x, y) as f64))
+            .collect()
     }
     /// (mean, sigma) of the crossing time (UI, relative to the nominal crossing) in the rows at the crossing level.
     fn crossing_time(&self) -> (f64, f64) {

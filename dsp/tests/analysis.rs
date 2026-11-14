@@ -63,7 +63,12 @@ fn spectrum_tone_marker_within_0p1_percent_and_0p1_db() {
 #[test]
 fn spectrum_peak_table_next_peak_and_delta() {
     let dt = 1e-5;
-    let v = sample(|t| (2.0 * PI * 1000.0 * t).sin() + 0.1 * (2.0 * PI * 3000.0 * t).sin() + 0.01 * (2.0 * PI * 7000.0 * t).sin(), 0.0, dt, 100_000);
+    let v = sample(
+        |t| (2.0 * PI * 1000.0 * t).sin() + 0.1 * (2.0 * PI * 3000.0 * t).sin() + 0.01 * (2.0 * PI * 7000.0 * t).sin(),
+        0.0,
+        dt,
+        100_000,
+    );
     let s = Settings { center: 5000.0, span: 10_000.0, window: Window::Flattop, ..Default::default() };
     let sp = spectrum::analyze(&v, dt, &s, &mut None);
     let p = spectrum::peak_table(&sp, 5, -80.0, 500.0);
@@ -101,7 +106,14 @@ fn spectrum_rbw_and_noise_floor() {
     }
     // a tone's channel power is its mean square
     let v = sample(|t| 2.0 * (2.0 * PI * 10e3 * t).sin(), 0.0, dt, 100_000);
-    let s = Settings { center: 10e3, span: 10e3, rbw: 200.0, window: Window::Hann, detector: Detector::Avg, ..Default::default() };
+    let s = Settings {
+        center: 10e3,
+        span: 10e3,
+        rbw: 200.0,
+        window: Window::Hann,
+        detector: Detector::Avg,
+        ..Default::default()
+    };
     let sp = spectrum::analyze(&v, dt, &s, &mut None);
     assert!(close(spectrum::channel_power(&sp, 8e3, 12e3), 2.0, 0.02));
     let (a, b) = spectrum::occupied_bw(&sp, 99.0).unwrap();
@@ -111,7 +123,14 @@ fn spectrum_rbw_and_noise_floor() {
 #[test]
 fn spectrum_trace_average_max_and_min_hold() {
     let dt = 1e-6;
-    let s = Settings { center: 50e3, span: 100e3, rbw: 2000.0, window: Window::Hann, detector: Detector::Sample, ..Default::default() };
+    let s = Settings {
+        center: 50e3,
+        span: 100e3,
+        rbw: 2000.0,
+        window: Window::Hann,
+        detector: Detector::Sample,
+        ..Default::default()
+    };
     let mut g = Gauss(3);
     let (mut avg, mut mx, mut mn, mut single) = (None, None, None, Vec::new());
     for k in 0..32 {
@@ -151,7 +170,16 @@ fn spectrum_short_and_bad_input() {
 #[test]
 fn distortion_thd_of_known_harmonics() {
     let dt = 1e-5;
-    let v = sample(|t| (2.0 * PI * 1000.0 * t).sin() + 0.01 * (2.0 * PI * 2000.0 * t).sin() + 0.005 * (2.0 * PI * 3000.0 * t + 1.0).sin(), 0.0, dt, 65_000);
+    let v = sample(
+        |t| {
+            (2.0 * PI * 1000.0 * t).sin()
+                + 0.01 * (2.0 * PI * 2000.0 * t).sin()
+                + 0.005 * (2.0 * PI * 3000.0 * t + 1.0).sin()
+        },
+        0.0,
+        dt,
+        65_000,
+    );
     let d = spectrum::distortion(&v, dt, None, 5).unwrap();
     let thd = 20.0 * ((0.01f64.powi(2) + 0.005f64.powi(2)).sqrt()).log10(); // -39.03 dB
     assert!(close(d.f1, 1000.0, 0.01), "{}", d.f1);
@@ -171,7 +199,8 @@ fn distortion_thd_of_known_harmonics() {
 fn distortion_snr_of_white_noise() {
     let dt = 1e-6;
     let mut g = Gauss(11);
-    let v: Vec<f32> = (0..100_000).map(|k| ((2.0 * PI * 12_345.0 * k as f64 * dt).sin() + g.next(0.01)) as f32).collect();
+    let v: Vec<f32> =
+        (0..100_000).map(|k| ((2.0 * PI * 12_345.0 * k as f64 * dt).sin() + g.next(0.01)) as f32).collect();
     let d = spectrum::distortion(&v, dt, None, 5).unwrap();
     let snr = 10.0 * (0.5f64 / 1e-4).log10(); // 36.99 dB
     assert!(close(d.snr_db, snr, 0.5), "{} {}", d.snr_db, snr);
@@ -353,7 +382,13 @@ fn clean_square(rate: f64, tr: f64, dt: f64, n: usize, lsb: f64, noise: f64, g: 
             let t = k as f64 * dt + 0.13 * ui;
             let x = (t / ui).rem_euclid(2.0) * ui; // time in the period, edges at 0 and ui
             let up = |d: f64| (d / tr + 0.5).clamp(0.0, 1.0);
-            let y = if x < 0.5 * ui { up(x) } else if x < 1.5 * ui { 1.0 - up(x - ui) } else { up(x - 2.0 * ui) };
+            let y = if x < 0.5 * ui {
+                up(x)
+            } else if x < 1.5 * ui {
+                1.0 - up(x - ui)
+            } else {
+                up(x - 2.0 * ui)
+            };
             (((y + g.next(noise)) / lsb).round() * lsb) as f32
         })
         .collect()
@@ -562,7 +597,11 @@ fn power_resistive_load_has_unity_power_factor() {
     assert!(close(q.freq, 50.0, 0.05), "{:?}", q);
     assert!(close(q.vrms, 325.0 / 2f64.sqrt(), 0.1), "{:?}", q);
     assert!(close(q.p_real, 325.0f64.powi(2) / 2.0 / 23.0, 1.0), "{:?}", q);
-    assert!(close(q.pf, 1.0, 1e-3) && close(q.phase_deg, 0.0, 0.1) && q.q_reactive.abs() < 0.03 * q.s_apparent, "{:?}", q);
+    assert!(
+        close(q.pf, 1.0, 1e-3) && close(q.phase_deg, 0.0, 0.1) && q.q_reactive.abs() < 0.03 * q.s_apparent,
+        "{:?}",
+        q
+    );
     assert!(close(q.crest_v, 2f64.sqrt(), 0.01) && close(q.crest_i, 2f64.sqrt(), 0.01));
 }
 
@@ -578,7 +617,11 @@ fn power_rl_load_phase_and_reactive_power() {
     let s = 325.0 / 2f64.sqrt() * ip / 2f64.sqrt();
     assert!(close(q.phase_deg, 45.0, 0.2), "{:?}", q);
     assert!(close(q.pf, 0.70711, 0.003), "{:?}", q);
-    assert!(close(q.s_apparent, s, 0.5) && close(q.p_real, s * 0.70711, 2.0) && close(q.q_reactive, s * 0.70711, 2.0), "{:?}", q);
+    assert!(
+        close(q.s_apparent, s, 0.5) && close(q.p_real, s * 0.70711, 2.0) && close(q.q_reactive, s * 0.70711, 2.0),
+        "{:?}",
+        q
+    );
     // capacitive: negative phase and reactive power
     let i = sample(|t| ip * (w * t + PI / 6.0).sin(), 0.0, dt, 10_000);
     let q = power::quality(&v, &i, dt, None);
@@ -589,7 +632,17 @@ fn power_rl_load_phase_and_reactive_power() {
 fn power_current_harmonics_against_class_a() {
     let dt = 20e-6;
     let w = 2.0 * PI * 50.0;
-    let i = sample(|t| 5.0 * (w * t).sin() + 3.0 * (3.0 * w * t + 0.4).sin() + 0.5 * (5.0 * w * t).sin() + 1.5 * (7.0 * w * t).sin(), 0.0, dt, 20_000);
+    let i = sample(
+        |t| {
+            5.0 * (w * t).sin()
+                + 3.0 * (3.0 * w * t + 0.4).sin()
+                + 0.5 * (5.0 * w * t).sin()
+                + 1.5 * (7.0 * w * t).sin()
+        },
+        0.0,
+        dt,
+        20_000,
+    );
     let h = power::harmonics(&i, dt, Some(50.0), 15);
     assert_eq!(h.len(), 15);
     let r = std::f64::consts::FRAC_1_SQRT_2;
@@ -668,7 +721,20 @@ fn power_ripple_inrush_efficiency_soa_and_duty() {
     assert_eq!(power::soa(&vds, &id, &lim), vec![2, 3]);
     // PWM, duty ramping 20 % .. 80 % over 50 periods
     let f = 10e3;
-    let v = sample(|t| { let k = (t * f).floor(); let d = 0.2 + 0.6 * k / 49.0; if t * f - k < d { 3.3 } else { 0.0 } }, 0.0, 1e-7, 50 * 1000);
+    let v = sample(
+        |t| {
+            let k = (t * f).floor();
+            let d = 0.2 + 0.6 * k / 49.0;
+            if t * f - k < d {
+                3.3
+            } else {
+                0.0
+            }
+        },
+        0.0,
+        1e-7,
+        50 * 1000,
+    );
     let d = power::duty_trend(&v, 1e-7);
     assert!(d.len() >= 47, "{}", d.len());
     for &(t, x) in &d {
@@ -709,8 +775,16 @@ fn identify_dc_noise_and_sine() {
     let mut s = sample(|t| 0.8 * (2.0 * PI * 12_500.0 * t).sin() + 0.2, 0.0, dt, 20_000);
     add_noise(&mut s, 0.01, 3);
     let f = top(&[&s], dt);
-    assert!(matches!(f.kind, SignalKind::Sine { freq, amp } if close(freq, 12_500.0, 10.0) && close(amp, 0.8, 0.02)), "{:?}", f);
-    assert!(matches!(f.trigger, TriggerHint::Edge { source: 0, level, rising: true, .. } if close(level as f64, 0.2, 0.05)), "{:?}", f);
+    assert!(
+        matches!(f.kind, SignalKind::Sine { freq, amp } if close(freq, 12_500.0, 10.0) && close(amp, 0.8, 0.02)),
+        "{:?}",
+        f
+    );
+    assert!(
+        matches!(f.trigger, TriggerHint::Edge { source: 0, level, rising: true, .. } if close(level as f64, 0.2, 0.05)),
+        "{:?}",
+        f
+    );
     assert!(f.summary.starts_with("Sine 12.50 kHz"), "{}", f.summary);
 }
 
@@ -719,11 +793,31 @@ fn identify_mains_triangle_sawtooth() {
     let dt = 20e-6;
     let m = sample(|t| 325.0 * (2.0 * PI * 50.0 * t).sin(), 0.0, dt, 10_000);
     let f = top(&[&m], dt);
-    assert!(matches!(f.kind, SignalKind::Mains { freq, vrms } if close(freq, 50.0, 0.1) && close(vrms, 229.8, 1.0)), "{:?}", f);
+    assert!(
+        matches!(f.kind, SignalKind::Mains { freq, vrms } if close(freq, 50.0, 0.1) && close(vrms, 229.8, 1.0)),
+        "{:?}",
+        f
+    );
     let dt = 1e-6;
-    let tri = sample(|t| { let x = (t * 1000.0).fract(); if x < 0.5 { 4.0 * x - 1.0 } else { 3.0 - 4.0 * x } }, 0.0, dt, 20_000);
+    let tri = sample(
+        |t| {
+            let x = (t * 1000.0).fract();
+            if x < 0.5 {
+                4.0 * x - 1.0
+            } else {
+                3.0 - 4.0 * x
+            }
+        },
+        0.0,
+        dt,
+        20_000,
+    );
     let f = top(&[&tri], dt);
-    assert!(matches!(f.kind, SignalKind::Triangle { freq, amp } if close(freq, 1000.0, 1.0) && close(amp, 1.0, 0.02)), "{:?}", f);
+    assert!(
+        matches!(f.kind, SignalKind::Triangle { freq, amp } if close(freq, 1000.0, 1.0) && close(amp, 1.0, 0.02)),
+        "{:?}",
+        f
+    );
     let saw = sample(|t| 2.0 * (t * 1000.0).fract() - 1.0, 0.0, dt, 20_000);
     let f = top(&[&saw], dt);
     assert!(matches!(f.kind, SignalKind::Sawtooth { freq, rising: true, .. } if close(freq, 1000.0, 1.0)), "{:?}", f);
@@ -738,24 +832,59 @@ fn identify_clock_pwm_and_glitchy_pulse_train() {
     let mut v = sample(|t| clk.v(t), 0.0, dt, 5000);
     add_noise(&mut v, 0.05, 4);
     let f = top(&[&v], dt);
-    assert!(matches!(f.kind, SignalKind::Clock { freq, duty, lo, hi } if close(freq, 1e6, 1e3) && close(duty, 0.5, 0.02) && close(lo, 0.0, 0.05) && close(hi, 3.3, 0.05)), "{:?}", f);
+    assert!(
+        matches!(f.kind, SignalKind::Clock { freq, duty, lo, hi } if close(freq, 1e6, 1e3) && close(duty, 0.5, 0.02) && close(lo, 0.0, 0.05) && close(hi, 3.3, 0.05)),
+        "{:?}",
+        f
+    );
     assert!(matches!(f.trigger, TriggerHint::Edge { level, rising: true, .. } if close(level as f64, 1.65, 0.05)));
     // PWM 10 kHz, duty 20 .. 80 % (the first period starts before the record, the last one is incomplete)
     let fr = 10e3;
-    let v = sample(|t| { let k = (t * fr).floor(); let d = 0.2 + 0.6 * (k / 19.0).min(1.0); if t * fr - k < d { 5.0 } else { 0.0 } }, 0.0, 1e-7, 20_000);
+    let v = sample(
+        |t| {
+            let k = (t * fr).floor();
+            let d = 0.2 + 0.6 * (k / 19.0).min(1.0);
+            if t * fr - k < d {
+                5.0
+            } else {
+                0.0
+            }
+        },
+        0.0,
+        1e-7,
+        20_000,
+    );
     let f = top(&[&v], 1e-7);
-    assert!(matches!(f.kind, SignalKind::Pwm { freq, duty_min, duty_max } if close(freq, fr, 10.0) && close(duty_min, 0.2 + 0.6 / 19.0, 0.01) && close(duty_max, 0.2 + 0.6 * 18.0 / 19.0, 0.01)), "{:?}", f);
+    assert!(
+        matches!(f.kind, SignalKind::Pwm { freq, duty_min, duty_max } if close(freq, fr, 10.0) && close(duty_min, 0.2 + 0.6 / 19.0, 0.01) && close(duty_max, 0.2 + 0.6 * 18.0 / 19.0, 0.01)),
+        "{:?}",
+        f
+    );
     // narrow pulses: 5 % duty
     let p = PulseTrain { width: 0.05e-3, ..PulseTrain::square(1e3, 0.0, 5.0, 1e-7) };
     let v = sample(|t| p.v(t), 0.0, 1e-6, 20_000);
     let f = top(&[&v], 1e-6);
-    assert!(matches!(f.kind, SignalKind::PulseTrain { freq, width, positive: true, anomalies: 0 } if close(freq, 1e3, 1.0) && close(width, 50e-6, 2e-6)), "{:?}", f);
+    assert!(
+        matches!(f.kind, SignalKind::PulseTrain { freq, width, positive: true, anomalies: 0 } if close(freq, 1e3, 1.0) && close(width, 50e-6, 2e-6)),
+        "{:?}",
+        f
+    );
     // every 5th pulse is a glitch of 5 % of the width: pulse width trigger below half the normal width
-    let p = PulseTrain { width: 0.3e-3, every: 5, at: 2, special: sim::Pulse { width: 0.015e-3, height: 1.0 }, ..PulseTrain::square(1e3, 0.0, 5.0, 1e-7) };
+    let p = PulseTrain {
+        width: 0.3e-3,
+        every: 5,
+        at: 2,
+        special: sim::Pulse { width: 0.015e-3, height: 1.0 },
+        ..PulseTrain::square(1e3, 0.0, 5.0, 1e-7)
+    };
     let v = sample(|t| p.v(t), 0.0, 1e-6, 20_000);
     let f = top(&[&v], 1e-6);
     assert!(matches!(f.kind, SignalKind::PulseTrain { anomalies: 4, positive: true, .. }), "{:?}", f);
-    assert!(matches!(f.trigger, TriggerHint::PulseWidth { positive: true, less_than: Some(w), .. } if close(w, 0.15e-3, 0.01e-3)), "{:?}", f);
+    assert!(
+        matches!(f.trigger, TriggerHint::PulseWidth { positive: true, less_than: Some(w), .. } if close(w, 0.15e-3, 0.01e-3)),
+        "{:?}",
+        f
+    );
 }
 
 #[test]
@@ -763,15 +892,27 @@ fn identify_am_fm_and_bursts() {
     let dt = 1e-6;
     let v = sample(|t| (1.0 + 0.5 * (2.0 * PI * 500.0 * t).sin()) * (2.0 * PI * 10e3 * t).sin(), 0.0, dt, 100_000);
     let f = top(&[&v], dt);
-    assert!(matches!(f.kind, SignalKind::Am { carrier, modulation, depth } if close(carrier, 10e3, 20.0) && close(modulation, 500.0, 10.0) && close(depth, 0.5, 0.05)), "{:?}", f);
+    assert!(
+        matches!(f.kind, SignalKind::Am { carrier, modulation, depth } if close(carrier, 10e3, 20.0) && close(modulation, 500.0, 10.0) && close(depth, 0.5, 0.05)),
+        "{:?}",
+        f
+    );
     let v = sample(|t| (2.0 * PI * 10e3 * t + 5.0 * (2.0 * PI * 200.0 * t).sin()).sin(), 0.0, dt, 100_000);
     let f = top(&[&v], dt);
-    assert!(matches!(f.kind, SignalKind::Fm { carrier, modulation, deviation } if close(carrier, 10e3, 300.0) && close(modulation, 200.0, 5.0) && close(deviation, 1000.0, 100.0)), "{:?}", f);
+    assert!(
+        matches!(f.kind, SignalKind::Fm { carrier, modulation, deviation } if close(carrier, 10e3, 300.0) && close(modulation, 200.0, 5.0) && close(deviation, 1000.0, 100.0)),
+        "{:?}",
+        f
+    );
     // 20 cycles of 100 kHz every 1 ms
     let dt = 1e-7;
     let v = sample(|t| if t % 1e-3 < 0.2e-3 { (2.0 * PI * 100e3 * t).sin() } else { 0.0 }, 0.0, dt, 50_000);
     let f = top(&[&v], dt);
-    assert!(matches!(f.kind, SignalKind::Burst { freq, length, period } if close(freq, 100e3, 5e3) && close(length, 0.2e-3, 0.01e-3) && close(period, 1e-3, 0.01e-3)), "{:?}", f);
+    assert!(
+        matches!(f.kind, SignalKind::Burst { freq, length, period } if close(freq, 100e3, 5e3) && close(length, 0.2e-3, 0.01e-3) && close(period, 1e-3, 0.01e-3)),
+        "{:?}",
+        f
+    );
     assert!(matches!(f.trigger, TriggerHint::Edge { holdoff, .. } if holdoff > 0.2e-3 && holdoff < 0.8e-3), "{:?}", f);
 }
 
@@ -785,7 +926,11 @@ fn identify_uart_and_inverted_uart() {
     add_noise(&mut v, 0.05, 6);
     let f = top(&[&v], dt);
     assert!(matches!(f.kind, SignalKind::Uart { baud: b, idle_high: true } if b == baud), "{:?}", f);
-    assert!(matches!(f.decoder, Some(DecoderHint::Uart { ch: 0, baud: b, bits: 8, parity: Parity::None, invert: false, .. }) if b == baud), "{:?}", f);
+    assert!(
+        matches!(f.decoder, Some(DecoderHint::Uart { ch: 0, baud: b, bits: 8, parity: Parity::None, invert: false, .. }) if b == baud),
+        "{:?}",
+        f
+    );
     assert!(matches!(f.trigger, TriggerHint::Edge { rising: false, .. }));
     assert!(f.confidence > 0.8);
     assert_eq!(identify::estimate_baud(&v, dt, 1.65, 0.3), Some(baud));
@@ -806,7 +951,10 @@ fn identify_uart_and_inverted_uart() {
 
 #[test]
 fn identify_can_lin_onewire_manchester() {
-    let frames = [sim::CanFrame { id: 0x123, ext: false, rtr: false, data: vec![1, 2, 3, 4] }, sim::CanFrame { id: 0x7e0, ext: false, rtr: false, data: vec![0x55; 8] }];
+    let frames = [
+        sim::CanFrame { id: 0x123, ext: false, rtr: false, data: vec![1, 2, 3, 4] },
+        sim::CanFrame { id: 0x7e0, ext: false, rtr: false, data: vec![0x55; 8] },
+    ];
     let l = sim::can_logic(&frames, 500e3, 0.0, 3.3);
     let dt = 1.0 / 25e6;
     let v = sample(|t| l.v(t), 0.0, dt, 15_000);
@@ -885,8 +1033,15 @@ fn identify_spi_roles_and_mode() {
         let s = |l: &Logic| sample(|t| l.v(t), 0.0, dt, n);
         let (cs, clk, mosi, miso) = (s(&cs), s(&clk), s(&mosi), s(&miso));
         let f = identify::identify(&[&mosi, &cs, &clk, &miso], dt);
-        let spi = f.iter().find(|x| matches!(x.kind, SignalKind::Spi { .. })).unwrap_or_else(|| panic!("mode {}: {:?}", mode, f));
-        assert!(matches!(spi.kind, SignalKind::Spi { rate, mode: m, bits: 8 } if rate == 1e6 && m == mode), "{:?}", spi);
+        let spi = f
+            .iter()
+            .find(|x| matches!(x.kind, SignalKind::Spi { .. }))
+            .unwrap_or_else(|| panic!("mode {}: {:?}", mode, f));
+        assert!(
+            matches!(spi.kind, SignalKind::Spi { rate, mode: m, bits: 8 } if rate == 1e6 && m == mode),
+            "{:?}",
+            spi
+        );
         match &spi.decoder {
             Some(DecoderHint::Spi { clk: 2, data, cs: Some(1), mode: m, bits: 8, .. }) => {
                 assert_eq!(*m, mode);
@@ -905,7 +1060,11 @@ fn identify_video_pal_and_ntsc() {
         let t0 = sim::video_line_time(std, 1, 20);
         let v = sample(|t| sim::video(std, t), t0, dt, 20_000);
         let f = top(&[&v], dt);
-        assert!(matches!(f.kind, SignalKind::Video { ntsc: n, line_rate } if n == ntsc && close(line_rate, 1.0 / std.line(), 5.0)), "{:?}", f);
+        assert!(
+            matches!(f.kind, SignalKind::Video { ntsc: n, line_rate } if n == ntsc && close(line_rate, 1.0 / std.line(), 5.0)),
+            "{:?}",
+            f
+        );
         assert_eq!(f.trigger, TriggerHint::Video { source: 0, ntsc });
     }
 }
@@ -955,7 +1114,14 @@ fn a_square_wave_shows_its_odd_harmonics_in_a_followed_span() {
     let (v, dt) = square_record(0.5, 2.0);
     let stop = spectrum::auto_stop(200e3, 10, 0.0);
     assert_eq!(stop, 2.5e6);
-    let s = Settings { center: stop / 2.0, span: stop, rbw: 1.0, window: Window::Blackman, points: 780, ..Default::default() };
+    let s = Settings {
+        center: stop / 2.0,
+        span: stop,
+        rbw: 1.0,
+        window: Window::Blackman,
+        points: 780,
+        ..Default::default()
+    };
     let sp = spectrum::analyze(&v, dt, &s, &mut None);
     // the record sets the resolution: ENBW / 56 us
     assert!((sp.rbw / (1.727 / 56e-6) - 1.0).abs() < 0.02, "RBW {}", sp.rbw);
@@ -983,7 +1149,8 @@ fn two_periods_on_the_screen_still_give_the_fundamental() {
     // 1 kHz square around +1.25 V, 2 ms of it: the main lobe is wider than the distance to DC
     let dt = 2e-3 / 3600.0;
     let v: Vec<f32> = (0..3600).map(|i| if (i as f64 * dt * 1e3).rem_euclid(1.0) < 0.5 { 2.5 } else { 0.0 }).collect();
-    let s = Settings { center: 7.5e3, span: 15e3, rbw: 1.0, window: Window::Blackman, points: 780, ..Default::default() };
+    let s =
+        Settings { center: 7.5e3, span: 15e3, rbw: 1.0, window: Window::Blackman, points: 780, ..Default::default() };
     let sp = spectrum::analyze(&v, dt, &s, &mut None);
     let m = spectrum::rank_lines(&sp, Some(1e3), 8);
     assert!(!m.is_empty() && (m[0].f - 1e3).abs() < 200.0, "{:?}", sp.lines);
@@ -1028,7 +1195,9 @@ fn window_side_lobes_are_no_lines() {
 #[test]
 fn decimation_keeps_level_and_noise_density() {
     let dt = 0.8e-9;
-    let v: Vec<f32> = (0..200_000).map(|i| (2.0_f64.sqrt() * (2.0 * std::f64::consts::PI * 1.7e6 * i as f64 * dt).sin()) as f32).collect();
+    let v: Vec<f32> = (0..200_000)
+        .map(|i| (2.0_f64.sqrt() * (2.0 * std::f64::consts::PI * 1.7e6 * i as f64 * dt).sin()) as f32)
+        .collect();
     // 1.7 MHz near the top of a 2 MHz band, where the droop is largest
     let s = Settings { center: 1e6, span: 2e6, rbw: 1e3, window: Window::Hann, points: 800, ..Default::default() };
     let sp = spectrum::analyze(&v, dt, &s, &mut None);
@@ -1051,9 +1220,21 @@ fn a_followed_span_holds_still_on_a_noisy_frequency() {
 #[test]
 #[ignore]
 fn spectrum_cost_on_the_host() {
-    for (n, span, name) in [(70_000usize, 2.5e6, "70k pane"), (70_000, 0.0, "70k full"), (1_000_000, 2.5e6, "1M pane"), (1_000_000, 0.0, "1M full")] {
+    for (n, span, name) in [
+        (70_000usize, 2.5e6, "70k pane"),
+        (70_000, 0.0, "70k full"),
+        (1_000_000, 2.5e6, "1M pane"),
+        (1_000_000, 0.0, "1M full"),
+    ] {
         let v: Vec<f32> = (0..n).map(|i| ((i as f64 * 0.8e-9 * 200e3).rem_euclid(1.0) < 0.5) as u8 as f32).collect();
-        let s = Settings { center: span / 2.0, span, rbw: 1.0, window: Window::Blackman, points: 780, ..Default::default() };
+        let s = Settings {
+            center: span / 2.0,
+            span,
+            rbw: 1.0,
+            window: Window::Blackman,
+            points: 780,
+            ..Default::default()
+        };
         let mut st = None;
         let t = std::time::Instant::now();
         for _ in 0..10 {

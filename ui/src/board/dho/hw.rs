@@ -1048,7 +1048,7 @@ fn set_meta(s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
     let ch = std::mem::take(&mut f.ch);
     // at the full ADC rate the point is the trigger sample, with compression its pair (trig-gate.md)
     let pre_exact = p.rate as i128 * p.ratio.max(1) as i128 == hz::CLOCK;
-    *f = Frame { seq, dt: k as f64 / p.rate as f64, pre, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false, pre_exact };
+    *f = Frame { seq, dt: k as f64 / p.rate as f64, pre, ch, roll: false, envelope: k > 1, scan: false, partial: false, acq: (p.rate as f64, p.memsel as usize), stamp: 0, la: None, hw_avg: false, pre_exact, cfg: crate::pacing::APPLIED.load(std::sync::atomic::Ordering::Relaxed) };
 }
 
 /// `decode_into` without the decode (drawpipe::draw_frame_codes): the frame's fields as the decode sets them, the
@@ -1475,9 +1475,10 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             // read with the generator request; the settings read below are as new or newer
             stamp = stamp_now;
-            let (want, want_mode, avg_clear, mask_want, zone_want, needs_raw) = {
+            // the settings generation of this `want` (`pacing::WANTED`, raised by the UI under the same lock)
+            let (want, want_mode, avg_clear, mask_want, zone_want, needs_raw, want_gen) = {
                 let g = out.lock().unwrap();
-                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.clone(), g.zone_want.clone(), g.needs_raw)
+                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.clone(), g.zone_want.clone(), g.needs_raw, crate::pacing::WANTED.load(std::sync::atomic::Ordering::Relaxed))
             };
             let Some(mut want) = want else {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -1544,6 +1545,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     }
                 }
             }
+            // what is acquired from here on is acquired under `want` (configured now or already)
+            crate::pacing::APPLIED.store(want_gen, std::sync::atomic::Ordering::Relaxed);
             let (s, p) = current.clone().unwrap();
             // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
             {
@@ -1750,7 +1753,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                         }
                         // word 0 at the left edge like analog point 0; only what the sweeps have written so far
                         let la = la_t.map(|_| crate::ui::la::LaRec { words: Arc::new(sweep_la.iter().take_while(|x| !x.is_nan()).map(|&x| x as u16).collect()), t0: 0.0, dt: la_dt });
-                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false }
+                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: 0 }
                     } else {
                         let len = ring.iter().map(|r| r.len()).max().unwrap_or(0);
                         // the newest point at the right edge: index len - 1 sits half a screen right of `pre`
@@ -1761,7 +1764,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                             words: Arc::new(ring_la.iter().copied().collect()),
                             dt: la_dt,
                         });
-                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false }
+                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: 0 }
                     };
                     let mut g = out.lock().unwrap();
                     // a complete sweep must not be dropped by the next partial picture
@@ -2881,7 +2884,7 @@ mod tests {
         // a scan frame of 1000 points spans the screen: point 0 left, point 999 right
         let m = Model::default();
         let v: Vec<f32> = (0..1000).map(|i| i as f32).collect();
-        let f = Frame { seq: 1, dt: 1e-3, pre: 0, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: true, scan: true, partial: true, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false, pre_exact: false };
+        let f = Frame { seq: 1, dt: 1e-3, pre: 0, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: true, scan: true, partial: true, acq: (0.0, 0), stamp: 0, la: None, hw_avg: false, pre_exact: false, cfg: 0 };
         let r = to_record(&Arc::new(f), &m, 100, 1.0, -0.5);
         assert!(r.partial && !r.triggered);
         assert!(r.ch[0][0] < 10.0 && r.ch[0][99] > 980.0, "{} {}", r.ch[0][0], r.ch[0][99]);

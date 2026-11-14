@@ -374,3 +374,14 @@ Decisions: frames mode stays the default (the unit keeps `acq.pipeline = batch`)
 (team-lead). C with the cap at minimum persistence (user). Design approved 2026-11-14.
 
 Not in scope: XY and LA (canvas), the auto timeout.
+
+## Status
+
+- Step 0 (branch draw/step-0): counters in the pacing line, after `views`:
+  - per picture, frames through a deposit kernel and through the record path (p10/p50/p90);
+  - the weight in deposit frames (record frames x 3.7);
+  - the age of the newest pipe batch in the picture (p50/p90/p99/max);
+  - `stale`: frames of older acquisition settings drawn after a change, via `pacing::WANTED`/`APPLIED` and
+    `Frame::cfg`, `Batch::cfg`;
+  - `partial`: batches merged in more than one picture.
+  `preview` comes with step 1, which adds the preview.

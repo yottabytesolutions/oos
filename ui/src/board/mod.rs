@@ -200,6 +200,8 @@ pub struct Frame {
     /// `pre` is the sample the trigger fired on (with FPGA compression: its pair): read at the full rate of the channel
     /// set (trigger.md 7: the point is off the edge only with decimation). False where not known.
     pub pre_exact: bool,
+    /// the settings generation it was acquired under (`pacing::APPLIED`; 0: not from the hardware thread)
+    pub cfg: u64,
 }
 
 /// Acquisition mode for slow time bases (roll-mode.md 1.2).

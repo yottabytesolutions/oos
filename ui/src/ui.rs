@@ -1827,6 +1827,9 @@ impl Ui {
                 _ => 2,
             };
             let mut got = 0;
+            // what this picture is made of (pacing::composition): frames through a deposit kernel, through the record
+            // path, and when the newest pipe batch in it was fed
+            let (mut n_dep, mut n_rec, mut newest) = (0usize, 0usize, None);
             let (mut ta, mut td) = (0f32, 0f32);
             // the newest raw deep record of this step (deepmeas.rs): with one frame per batch (2 ms/div and up at
             // 10 M) the next pair frame is often queued behind it, which drew it on the fast path or replaced it as
@@ -1847,10 +1850,12 @@ impl Ui {
                     clear_pending = false;
                 }
                 for f in &frames {
+                    crate::pacing::drawn(f.cfg, 1);
                     if self.fast_draw(f) {
                         self.m.status = TrigStatus::Triggered;
                     }
                 }
+                n_dep += frames.len();
                 if let Some(f) = frames.iter().rev().find(|f| deep_raw && crate::deepmeas::deep_raw_frame(f)) {
                     let t = std::time::Instant::now();
                     raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
@@ -1866,6 +1871,7 @@ impl Ui {
                         self.m.status = TrigStatus::Triggered;
                     }
                     got += d.frames as usize;
+                    (n_dep, newest) = (n_dep + d.frames as usize, d.newest);
                     self.mstat_fold(&d.folds);
                 }
                 crate::pacing::fast_block((t_merge - t0).as_secs_f32() * 1e3, t_merge.elapsed().as_secs_f32() * 1e3);
@@ -1936,10 +1942,15 @@ impl Ui {
                         // already made by `Source::acquire`, so it is drawn below instead of made once more (25 to 50 ms
                         // on the host for a 10 to 12 M-point window)
                         let frame = rec.raw.as_ref().filter(|r| self.fast_ok() && !crate::deepmeas::deep_raw_frame(&r.frame)).map(|r| r.frame.clone());
+                        if let Some(r) = rec.raw.as_ref() {
+                            crate::pacing::drawn(r.frame.cfg, 1);
+                        }
                         if let Some(f) = frame {
                             let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
                             crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));
+                            n_dep += 1;
                         } else {
+                            n_rec += 1;
                             for c in 0..NCH {
                                 if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
                                     self.ph.draw_ex(c, &self.m, mainv, rec.t0, rec.dt, &rec.ch[c], 24, zw.as_deref(), rec.pairs);
@@ -2021,6 +2032,7 @@ impl Ui {
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
             self.wfm_total += got as u64;
             crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
+            crate::pacing::composition(n_dep, n_rec, newest.map(|t: std::time::Instant| t.elapsed().as_secs_f32() * 1e3));
             crate::pacing::picture(got);
             // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
             // measurement stays that of the last raw record
@@ -9513,7 +9525,7 @@ mod tests {
         let (n, dt, pre) = (12_500usize, 0.8e-9, 6250usize);
         let frame = |seq: u64| {
             let v: Vec<f32> = (0..n).map(|k| (2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() as f32).collect();
-            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None, hw_avg: false, pre_exact: false }
+            crate::board::Frame { seq, dt, pre, ch: [v, Vec::new(), Vec::new(), Vec::new()], roll: false, envelope: false, scan: false, partial: false, acq: (1.25e9, n), stamp: 0, la: None, hw_avg: false, pre_exact: false, cfg: 0 }
         };
         shared.lock().unwrap().queue.extend((1..=10).map(frame));
         let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });

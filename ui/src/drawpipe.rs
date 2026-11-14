@@ -345,6 +345,11 @@ struct Batch {
     /// `ready` for the UI's next `merge`
     deliver: Mutex<Option<Deliver>>,
     ready: Arc<Mutex<Vec<Deliver>>>,
+    /// a number of its own (`Acc::batches`, partial merges), its settings generation (`pacing::APPLIED` when fed:
+    /// stale frames) and when it was fed, right after its read (picture age)
+    id: u64,
+    cfg: u64,
+    fed: std::time::Instant,
 }
 
 /// Run by the UI after the merge that holds a batch's frames (`Pipe::feed_with`).
@@ -412,11 +417,14 @@ struct Acc {
     off: (f64, f64),
     /// the channels drawn into (on in the view): only their maps are added and cleared
     used: [bool; NCH],
+    /// the batches with frames in these maps (`Batch::id`) and when the newest of them was fed
+    batches: Vec<u64>,
+    newest: Option<std::time::Instant>,
 }
 
 impl Acc {
     fn new(gen: u64, w: usize, h: usize) -> Acc {
-        Acc { gen, ph: Phosphor::new(w, h), folds: Vec::new(), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0), used: [true; NCH] }
+        Acc { gen, ph: Phosphor::new(w, h), folds: Vec::new(), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0), used: [true; NCH], batches: Vec::new(), newest: None }
     }
     /// Empty again, keeping the maps' memory.
     fn reset(&mut self, gen: u64) {
@@ -426,6 +434,8 @@ impl Acc {
             }
         }
         self.folds.clear();
+        self.batches.clear();
+        self.newest = None;
         (self.gen, self.frames, self.triggered, self.edges, self.off) = (gen, 0, 0, [0; 4], (0.0, 0.0));
     }
     fn add(&mut self, o: &Acc) {
@@ -440,6 +450,16 @@ impl Acc {
             *a += b;
         }
         self.off = (self.off.0 + o.off.0, self.off.1.max(o.off.1));
+        for &b in &o.batches {
+            self.note(b, o.newest);
+        }
+    }
+    /// Frames of batch `id`, fed at `fed`, drawn into these maps.
+    fn note(&mut self, id: u64, fed: Option<std::time::Instant>) {
+        if !self.batches.contains(&id) {
+            self.batches.push(id);
+        }
+        self.newest = self.newest.max(fed);
     }
 }
 
@@ -485,7 +505,15 @@ pub struct Pipe {
     ready: Arc<Mutex<Vec<Deliver>>>,
     home: Sender<Box<dyn RawBatch>>,
     pool: Mutex<Receiver<Box<dyn RawBatch>>>,
+    /// merges so far, and the batches seen in them: (`Batch::id`, merge, counted as partial)
+    merges: AtomicU64,
+    seen: Mutex<std::collections::VecDeque<(u64, u64, bool)>>,
+    /// batches of this pipe merged in parts (also counted in `pacing::PARTIAL`)
+    partial: AtomicU64,
 }
+
+/// Batches `Pipe::seen` remembers: more than are ever in flight.
+const SEEN_KEEP: usize = 64;
 
 /// Merged frames: how many, how many found their trigger, the statistics of the cheap measurements over them.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -493,6 +521,8 @@ pub struct Merged {
     pub frames: u64,
     pub triggered: u64,
     pub folds: crate::framestats::Folds,
+    /// when the newest batch with frames in this merge was fed (picture age)
+    pub newest: Option<std::time::Instant>,
 }
 
 impl Pipe {
@@ -521,7 +551,7 @@ impl Pipe {
         }
         mails.push(Default::default());
         let (home, pool) = channel();
-        Pipe { view, counters, workers, mails, open: Default::default(), live: Default::default(), ready: Default::default(), home, pool: Mutex::new(pool) }
+        Pipe { view, counters, workers, mails, open: Default::default(), live: Default::default(), ready: Default::default(), home, pool: Mutex::new(pool), merges: AtomicU64::new(0), seen: Default::default(), partial: AtomicU64::new(0) }
     }
 
     /// The UI's mapping for the frames to come (None: the fast path does not apply).
@@ -579,7 +609,9 @@ impl Pipe {
     /// `feed`, returning the batch (tests hold it to let the helper alone draw it).
     fn feed_batch(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) -> Arc<Batch> {
         let frames = if fb == 0 { 0 } else { frames.min(raw.bytes().len() / fb) };
-        let b = Arc::new(Batch { lease: Lease { raw: Some(raw), home: self.home.clone() }, fb, frames, decode, codes, stamp, next: AtomicUsize::new(0), counters: self.counters, live: self.live.clone(), deliver: Mutex::new(None), ready: self.ready.clone() });
+        static IDS: AtomicU64 = AtomicU64::new(0);
+        let (id, cfg) = (IDS.fetch_add(1, Ordering::Relaxed) + 1, crate::pacing::APPLIED.load(Ordering::Relaxed));
+        let b = Arc::new(Batch { lease: Lease { raw: Some(raw), home: self.home.clone() }, fb, frames, decode, codes, stamp, next: AtomicUsize::new(0), counters: self.counters, live: self.live.clone(), deliver: Mutex::new(None), ready: self.ready.clone(), id, cfg, fed: std::time::Instant::now() });
         self.live.fetch_add(1, Ordering::Acquire);
         {
             let mut open = self.open.lock().unwrap();
@@ -651,6 +683,7 @@ impl Pipe {
     /// Adds what the workers drew under the current mapping to `ph` and the trigger statistics to `edges`, `off`.
     /// `clear`: minimum persistence, the picture is replaced: cleared first if anything is merged.
     pub fn merge(&self, ph: &mut Phosphor, clear: &mut bool, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Merged {
+        self.merges.fetch_add(1, Ordering::Relaxed);
         let gen = self.view.lock().unwrap().view.as_ref().map(|v| v.gen);
         let mut got = Merged::default();
         for mail in &self.mails {
@@ -669,6 +702,8 @@ impl Pipe {
                     *off = (off.0 + a.off.0, off.1.max(a.off.1));
                     got.frames += a.frames;
                     got.triggered += a.triggered;
+                    got.newest = got.newest.max(a.newest);
+                    self.note_merged(&a.batches);
                     crate::framestats::add_folds(&mut got.folds, &a.folds);
                 } else {
                     Counters::add(&self.counters.dropped, a.frames);
@@ -681,6 +716,29 @@ impl Pipe {
         // after the maps: a batch hands its maps on before it goes on `ready`
         self.release();
         got
+    }
+
+    /// Batches `ids` reached the picture in this merge; one that reached it in an earlier merge too came in parts
+    /// (`pacing::PARTIAL`, docs/fork/draw-architecture.md step 0).
+    fn note_merged(&self, ids: &[u64]) {
+        let n = self.merges.load(Ordering::Relaxed);
+        let mut seen = self.seen.lock().unwrap();
+        for &id in ids {
+            match seen.iter_mut().find(|e| e.0 == id) {
+                Some(e) if e.1 != n && !e.2 => {
+                    e.2 = true;
+                    self.partial.fetch_add(1, Ordering::Relaxed);
+                    crate::pacing::PARTIAL.fetch_add(1, Ordering::Relaxed);
+                }
+                Some(_) => {}
+                None => {
+                    if seen.len() >= SEEN_KEEP {
+                        seen.pop_front();
+                    }
+                    seen.push_back((id, n, false));
+                }
+            }
+        }
     }
 
     /// Runs the `deliver` of the batches done.
@@ -710,6 +768,8 @@ fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
 /// Frames `r` of batch `b` decoded into `f` and drawn into `a`.
 fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, counters: &Counters) {
     let Some(bytes) = b.lease.raw.as_ref().map(|x| x.bytes()) else { return };
+    a.note(b.id, Some(b.fed));
+    crate::pacing::drawn(b.cfg, r.len() as u64);
     for i in r {
         let t_frame = std::time::Instant::now();
         let chunk = &bytes[i * b.fb..(i + 1) * b.fb];
@@ -1120,6 +1180,65 @@ mod tests {
             draw_frame(&mut ph, &m, &f, Some(Stats { edges: &mut st.0, off: &mut st.1 }));
             assert_eq!(st.0, [1, 0, 0, 0], "exact {}: edge at the point", exact);
         }
+    }
+
+    /// A batch of 20 frames for 2 workers where one worker waits in its first decode until the returned gate opens;
+    /// returns once the other worker has handed on its 16 frames.
+    fn one_worker_held(pipe: &Pipe) -> Arc<(Mutex<bool>, std::sync::Condvar)> {
+        let (bytes, fb, s, p) = batch(20, 12_512, false);
+        let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let (blocked_tx, blocked) = std::sync::mpsc::channel::<()>();
+        let first = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let inner = dec(&s, &p);
+        let (g, tx) = (gate.clone(), Mutex::new(blocked_tx));
+        let decode: DecodeInto = Arc::new(move |c: &[u8], f: &mut Frame| {
+            if first.swap(false, Ordering::AcqRel) {
+                let _ = tx.lock().unwrap().send(());
+                let mut open = g.0.lock().unwrap();
+                while !*open {
+                    open = g.1.wait(open).unwrap();
+                }
+            }
+            inner(c, f)
+        });
+        pipe.feed(Box::new(Bytes(bytes)), fb, 20, 0, decode);
+        blocked.recv_timeout(std::time::Duration::from_secs(20)).expect("a worker in its first decode");
+        let t0 = std::time::Instant::now();
+        while pipe.mails.iter().map(|m| m.lock().unwrap().full.iter().map(|a| a.frames).sum::<u64>()).sum::<u64>() < 16 {
+            assert!(t0.elapsed() < std::time::Duration::from_secs(20), "the other worker's share");
+            std::thread::yield_now();
+        }
+        gate
+    }
+
+    // Break it catches (step 0 counters, docs/fork/draw-architecture.md): a batch whose frames reach the picture in two
+    // merges not counted as partial, a whole batch counted, or the picture age of a merge not reported.
+    #[test]
+    fn partial_merges_and_picture_age_are_counted() {
+        let m = model(1e-6, false, false);
+        let pipe = Pipe::start(2, false, fresh());
+        pipe.set_view(Some(&m), 970, 448);
+        let mut ph = Phosphor::new(970, 448);
+        let mut merge = |pipe: &Pipe| pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
+        // whole: drawn, then merged once
+        let (bytes, fb, s, p) = batch(20, 12_512, false);
+        pipe.feed(Box::new(Bytes(bytes)), fb, 20, 0, dec(&s, &p));
+        settle(&pipe);
+        let whole = merge(&pipe);
+        assert_eq!(whole.frames, 20);
+        assert!(whole.newest.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(20)), "picture age");
+        assert_eq!(pipe.partial.load(Ordering::Relaxed), 0);
+        // in parts: 16 frames in one merge, the held worker's 4 in the next
+        let gate = one_worker_held(&pipe);
+        let first = merge(&pipe).frames;
+        *gate.0.lock().unwrap() = true;
+        gate.1.notify_all();
+        settle(&pipe);
+        let second = merge(&pipe).frames;
+        assert_eq!((first, second), (16, 4));
+        assert_eq!(pipe.partial.load(Ordering::Relaxed), 1);
+        // an empty merge reports no age
+        assert_eq!(merge(&pipe).newest, None);
     }
 
     // Timing guard (tools/perf-guard.sh): a worker frame drawn from the read-out words against decode + draw, lines,

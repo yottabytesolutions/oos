@@ -11,6 +11,7 @@
 //! `summary` gives percentiles for the status line.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -40,6 +41,9 @@ struct State {
     /// the settings change being followed (`changed`), and the last results (`Settle`)
     settle: Option<Settle>,
     settled: VecDeque<Settle>,
+    /// per picture (`composition`): frames drawn by a deposit kernel, frames drawn through the record path, and the
+    /// age (ms) of the newest batch the pipe merged into it
+    comps: VecDeque<(u32, u32, Option<f32>)>,
 }
 
 /// From a change of the acquisition settings to steady pictures again: times (ms after the change) of the hardware
@@ -110,8 +114,39 @@ pub fn fast_block(draw_ms: f32, merge_ms: f32) {
     push(&mut s.fast, [draw_ms, merge_ms]);
 }
 
+/// Settings generations (docs/fork/draw-architecture.md, step 0): `WANTED` counts the acquisition settings the UI asked
+/// for (`changed`), `APPLIED` the one the acquisition thread acquires under. A frame carries `APPLIED` as it was when
+/// it was acquired (`Frame::cfg`); drawn while `WANTED` is newer, it shows the settings before a change: `STALE`.
+pub static WANTED: AtomicU64 = AtomicU64::new(0);
+pub static APPLIED: AtomicU64 = AtomicU64::new(0);
+/// Frames of older settings drawn after a change (above).
+pub static STALE: AtomicU64 = AtomicU64::new(0);
+/// Batches whose frames reached the picture in more than one merge (drawpipe.rs).
+pub static PARTIAL: AtomicU64 = AtomicU64::new(0);
+
+/// A frame acquired under settings generation `cfg` (0: not from the hardware) drawn now: counted when the UI has asked
+/// for newer settings since.
+pub fn drawn(cfg: u64, frames: u64) {
+    if stale(cfg, WANTED.load(Ordering::Relaxed)) {
+        STALE.fetch_add(frames, Ordering::Relaxed);
+    }
+}
+
+/// A frame of generation `cfg` is stale when the UI has asked for a newer one (`wanted`); 0 is not from the hardware.
+fn stale(cfg: u64, wanted: u64) -> bool {
+    cfg != 0 && cfg < wanted
+}
+
+/// What a picture is made of: `deposit` frames through a deposit kernel (one span per column), `record` frames through
+/// the record path (`draw_ex`, about 3.7 times the weight in lines), `age_ms` of the newest pipe batch in it.
+pub fn composition(deposit: usize, record: usize, age_ms: Option<f32>) {
+    let mut s = state().lock().unwrap();
+    push(&mut s.comps, (deposit as u32, record as u32, age_ms));
+}
+
 /// The UI asked for other acquisition settings (wave.rs): follow how long until the pictures are steady again.
 pub fn changed() {
+    WANTED.fetch_add(1, Ordering::Relaxed);
     let mut s = state().lock().unwrap();
     s.settle = Some(Settle { at: Instant::now(), configured: None, first: None, steady: None, run_from: None, run: 0, empty: 0 });
 }
@@ -333,9 +368,26 @@ pub fn summary() -> String {
     let mut fm: Vec<f32> = s.fast.iter().map(|x| x[1]).collect();
     let settles: Vec<String> = s.settled.iter().rev().take(4).map(|c| format!("{}/{}/{}/{}", c.configured.map_or(-1.0, |x| x.round()), c.first.map_or(-1.0, |x| x.round()), c.steady.map_or(-1.0, |x| x.round()), c.empty)).collect();
     let nb = s.batches.len().max(1);
+    let mut cd: Vec<f32> = s.comps.iter().map(|c| c.0 as f32).collect();
+    let mut cr: Vec<f32> = s.comps.iter().map(|c| c.1 as f32).collect();
+    // the weight of a picture in deposit frames: a record-path frame weighs about 3.7 (docs/fork/draw-architecture.md)
+    let mut cw: Vec<f32> = s.comps.iter().map(|c| c.0 as f32 + 3.7 * c.1 as f32).collect();
+    let mut age: Vec<f32> = s.comps.iter().filter_map(|c| c.2).collect();
+    let p3 = |v: &mut Vec<f32>| format!("{:.0}/{:.0}/{:.0}", pct(v, 0.1), pct(v, 0.5), pct(v, 0.9));
+    let comp = format!(
+        " picture deposit p10/p50/p90 {} record {} weight {} age p50/p90/p99/max {} ms stale {} partial {} wanted {} applied {}",
+        p3(&mut cd),
+        p3(&mut cr),
+        p3(&mut cw),
+        format!("{:.1}/{:.1}/{:.1}/{:.1}", pct(&mut age, 0.5), pct(&mut age, 0.9), pct(&mut age, 0.99), pct(&mut age, 1.0)),
+        STALE.load(Ordering::Relaxed),
+        PARTIAL.load(Ordering::Relaxed),
+        WANTED.load(Ordering::Relaxed),
+        APPLIED.load(Ordering::Relaxed),
+    );
     let p4 = |v: &mut Vec<f32>| format!("{:.1}/{:.1}/{:.1}/{:.1}", pct(v, 0.5), pct(v, 0.9), pct(v, 0.99), pct(v, 1.0));
     format!(
-        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms until fill end {} ms read {} ms drawn {} ms ui fast {} merge {} ms views {} settle configured/first/steady ms/empty {}",
+        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms until fill end {} ms read {} ms drawn {} ms ui fast {} merge {} ms views {}{} settle configured/first/steady ms/empty {}",
         s.pics.len(),
         pct(&mut fr, 0.1),
         pct(&mut fr, 0.5),
@@ -355,6 +407,7 @@ pub fn summary() -> String {
         p4(&mut fd),
         p4(&mut fm),
         VIEWS.load(std::sync::atomic::Ordering::Relaxed),
+        comp,
         if settles.is_empty() { "-".to_string() } else { settles.join(" ") },
     )
 }
@@ -363,6 +416,25 @@ pub fn summary() -> String {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    // Break it catches (step 0, docs/fork/draw-architecture.md): a frame of the current settings counted as stale, one
+    // of older settings not counted, a frame not from the hardware (generation 0) counted, or the picture composition
+    // missing from the status line.
+    #[test]
+    fn stale_frames_and_composition() {
+        assert!(!stale(0, 5) && !stale(5, 5) && !stale(6, 5) && stale(4, 5));
+        let w0 = WANTED.load(Ordering::Relaxed);
+        changed();
+        changed();
+        assert!(WANTED.load(Ordering::Relaxed) >= w0 + 2, "a settings change raises the wanted generation");
+        let s0 = STALE.load(Ordering::Relaxed);
+        drawn(1, 3);
+        assert!(STALE.load(Ordering::Relaxed) >= s0 + 3);
+        composition(20, 1, Some(12.5));
+        let line = summary();
+        assert!(line.contains(" picture deposit p10/p50/p90 ") && line.contains(" stale ") && line.contains(" partial "), "{}", line);
+        assert!(line.find(" picture deposit").unwrap() < line.find(" settle ").unwrap(), "settle stays last");
+    }
 
     // Break it catches: a cap where the batch fits a frame anyway, no cap where its read takes the frame (5 us/div), a
     // cap that changes with every batch while a prearmed batch would have to be re-armed for it.

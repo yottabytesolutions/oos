@@ -77,7 +77,8 @@ mod tests {
             (DotsMode::Auto, true, 0.0, Dots),
             (DotsMode::Auto, true, 10.0, Dots),
             (DotsMode::Auto, false, 0.01, Vectors),
-            (DotsMode::Auto, false, 3.99, Vectors),
+            (DotsMode::Auto, false, 4.0, Vectors),
+            (DotsMode::Auto, false, 7.99, Vectors),
             (DotsMode::Auto, false, MARK_SPACING_PX, VectorsMarked),
             (DotsMode::Auto, false, 50.0, VectorsMarked),
         ];

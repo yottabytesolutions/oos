@@ -695,8 +695,9 @@ pub enum TraceStyle {
     VectorsMarked,
 }
 
-/// Auto marks the samples once they lie this many pixels apart on the screen (the interpolated, sparse regime).
-pub const MARK_SPACING_PX: f64 = 4.0;
+/// Auto marks the samples once they lie this many pixels apart on the screen (the interpolated, sparse regime). At 4 px
+/// (20 ns/div, unit 2026-11-14) the marks made a dense dotted band over the trace.
+pub const MARK_SPACING_PX: f64 = 8.0;
 
 /// The trace style for `mode`: in XY (`xy`), or for samples `x_per_sample` pixels apart on the screen. Auto: dots in
 /// XY, lines with the samples marked from `MARK_SPACING_PX` apart, else lines. Off: lines; On: dots.

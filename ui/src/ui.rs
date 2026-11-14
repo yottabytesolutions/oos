@@ -1077,6 +1077,8 @@ pub struct Ui {
     last_rec_t: f64,
     /// smoothed time between two records (deep hardware records arrive about once per second)
     rec_iv: f64,
+    /// a force trigger was asked for: the next record is the forced one and says nothing about how often records come
+    forced: bool,
     /// hex entry of the keypad picker (protocol trigger value)
     keypad: String,
     /// logic analyser lanes: pixel columns of the last LA record drawn (la.rs)
@@ -1155,6 +1157,7 @@ impl Ui {
             wlan: Default::default(),
             last_rec_t: 0.0,
             rec_iv: 0.0,
+            forced: false,
             keypad: String::new(),
             la_cols: Default::default(),
             dec_cache: Default::default(),
@@ -1970,8 +1973,13 @@ impl Ui {
                 self.pic_frames = got as u32;
             }
             if got > 0 {
-                let iv = (self.now - self.last_rec_t).min(2.0);
-                self.rec_iv += 0.3 * (iv - self.rec_iv);
+                // a forced record is not part of the trigger's rhythm: counted in, forces seconds apart in Normal
+                // stretched the wait before WAIT to several seconds and the status read TD while the scope waited
+                // (unit round 21)
+                if !std::mem::take(&mut self.forced) {
+                    let iv = (self.now - self.last_rec_t).min(2.0);
+                    self.rec_iv += 0.3 * (iv - self.rec_iv);
+                }
                 self.last_rec_t = self.now;
             } else if self.m.run == RunState::Run && self.now - self.last_rec_t > wait_after {
                 self.m.status = TrigStatus::Wait;
@@ -4785,6 +4793,7 @@ impl Ui {
         }
         if board().slow_mode(&self.m) == crate::board::Slow::Off {
             self.src.force_hw();
+            self.forced = true;
         }
     }
 
@@ -8307,6 +8316,40 @@ mod tests {
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
             let _ = std::fs::create_dir_all(&dir);
             let _ = crate::store::write(&dir.join(format!("i-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
+        }
+    }
+
+    // Break it catches: the status after a forced frame in Normal without a crossing. Forces 2 s apart fed the record
+    // interval, so WAIT came back only after 2.5 of those intervals and `:TRIGger:STATus?` read TD for seconds while
+    // the scope waited (unit round 21: WAIT, TD, TD)
+    #[test]
+    fn wait_comes_back_soon_after_each_forced_frame() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.trig_mode = TrigMode::Normal;
+        ui.m.run = RunState::Run;
+        ui.m.tscale = tscales().iter().position(|&t| (t - 500e-6).abs() < 1e-9).unwrap();
+        let mut seq = 0;
+        for k in 0..4 {
+            // waiting, no crossing
+            for _ in 0..100 {
+                ui.step(0.02);
+            }
+            assert_eq!(ui.m.status, TrigStatus::Wait, "before force {}", k);
+            ui.force_trigger();
+            assert!(std::mem::take(&mut shared.lock().unwrap().force));
+            seq += 1;
+            let n = 2000;
+            let f = crate::board::Frame { seq, dt: 5e-3 / n as f64, pre: n / 2, ch: [vec![0.0; n], Vec::new(), Vec::new(), Vec::new()], ..Default::default() };
+            shared.lock().unwrap().queue.push_back(f);
+            ui.step(0.02);
+            assert_ne!(ui.m.status, TrigStatus::Wait, "the forced frame came (force {})", k);
+            // the scope waits again: WAIT within the plain 0.5 s, as read 2 s after a force on the unit and sooner
+            for _ in 0..30 {
+                ui.step(0.02);
+            }
+            assert_eq!(ui.m.status, TrigStatus::Wait, "0.6 s after force {}", k);
         }
     }
 

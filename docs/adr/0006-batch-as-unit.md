@@ -9,11 +9,13 @@ flicker. Batches from old settings were drawn after a change.
 
 ## Decision
 
-- A batch carries its generation, its configuration and a trigger snapshot.
+- A batch carries its `BatchMeta`: `gen`, `epoch`, the acquisition snapshot and the trigger settings. Its frames
+  convert from it, never from `Settings`.
 - Its shares are published together as one `BatchUnit`. The accumulator adds whole units only.
 - Minimum persistence: a window of whole batches, at most 3 batches or 67 ms (user decision, option C).
   Persistence: decay in u32 16.16. STOP freezes.
-- A unit with an old generation is counted as stale and dropped.
+- A unit of another mapping key is counted as stale and dropped at merge. A unit of an older `gen` under the same
+  mapping key is a valid picture.
 
 ## Consequences
 

@@ -60,12 +60,12 @@ files are in brackets where they are split or moved.
 |---|---|
 | `app/session.rs` | creates the stages and channels, runs one step: calls the stages in order and passes their outputs. Holds no domain state |
 | `app/intake.rs` | collects the inputs of one step (input events, remote requests, acquisition events) and turns them into commands and requests |
-| `app/acq_client.rs` | the UI side of the acquisition: sends `AcqCmd`, receives `AcqEvent` |
+| `app/acq_client.rs` | the UI side of the acquisition: publishes `AcqWant`, sends `AcqCmd`, takes `Frame`, `MeasRead` and `Readings` (`architecture/acquisition.md`) |
 | `settings/` | `Settings` and one module per group: `channels`, `timebase`, `trigger`, `acquire`, `display`, `measure`, `analysis`, `interfaces`. Each: struct, invariants, command enum, `apply`, its part of `classify`, tests [`model.rs`] |
 | `command.rs` | `Command` (top-level enum of the group enums), `CmdError`, the reply type |
 | `change/` | the change stage: owns `Settings`, applies commands; `classify`, `Request`, `ChangeSet`, `Generations` |
-| `picture/` | accumulator, kernels (spans, dots), window and decay, `BatchUnit` intake, deposit workers (`architecture/picture.md`) [`drawpipe.rs`, `fastdraw.rs`, `sparse.rs`, drawing parts of `compress.rs`, `wave::Phosphor`] |
-| `records/` | records, measurement, statistics, history, segments, deep raw window (`architecture/records.md`) [`wave.rs`, `framestats.rs`, `deepmeas.rs`, parts of `ui.rs`] |
+| `picture/` | accumulator, grade, window and decay; `picture/deposit/`: the batch pipe, `BatchUnit`, kernels (spans, dots), workers (`architecture/picture.md`) [`drawpipe.rs`, `fastdraw.rs`, `sparse.rs`, drawing parts of `compress.rs`, `wave::Phosphor`] |
+| `records/` | the record store (`last`, history, segments), measurement jobs, statistics, compression and deep-read policy (`architecture/records.md`) [`wave.rs`, `framestats.rs`, `deepmeas.rs`, parts of `ui.rs`] |
 | `compose/` | the screen from layers: plot, traces from the accumulator, overlays, top bar; `gfx`, `font`, `layout` [`ui.rs` rendering] |
 | `views/` | scope, windows, spectrum, eye, Bode, power, LA, XY, bus view: one component each, with its own state, inputs and drawing [`ui/analysis.rs`, `ui/eyepage.rs`, `ui/bode.rs`, `ui/la.rs`, ...] |
 | `menus/` | the menu tree, items, dialogs, the layout lint, script access [`ui.rs` menus, `ui/lint.rs`, `ui/script.rs`] |
@@ -90,9 +90,10 @@ thread.
 |---|---|---|---|
 | `Settings` | the `settings` groups, through `Command`s applied in the change stage | every stage, by `&` | process; saved by `store` |
 | `ChangeSet` | the change stage | stages after it in the same step | one step |
-| `Generations` | `change::Generations::new_gen` | acquisition client, records, accumulator | process |
-| acquisition request with its generation | `app/acq_client` | acquisition thread, by message | until the next change |
-| hardware, batch buffers, the acquisition's own state | acquisition thread (`board/dho`) | nobody; results leave as `AcqEvent` | process |
+| `Generations` (`gen`, `epoch`) | `change::Generations::new_gen` | acquisition client, records, accumulator | process |
+| `AcqWant` with `gen` and `epoch` | the change stage, through `app/acq_client` | acquisition thread, latest value | until the next change |
+| hardware, batch buffers, `AcqLoop` state | acquisition thread (`board/dho`) | nobody; results leave as `Batch`, `Frame`, `MeasRead`, `Readings` | process |
+| `Readings` (status, counters, acknowledged ids, the read plan) | acquisition thread | UI, latest value | process |
 | a batch's share maps | the worker or helper drawing that share | the accumulator, after the batch is published | one batch |
 | accumulator maps (`ph`, `phz`), weights, window | `picture` accumulator | `compose`, by `&` | until a `ChangeSet` resets them |
 | records, the last record, history, segments | `records` | measurement, views, store, remote queries | per class |
@@ -142,7 +143,7 @@ ChangeSet = classify(previous Settings, current Settings) | requests
 - **`classify`** compares the groups and maps each changed field to classes.
   - It destructures every group without `..`, so a new field does not compile until it is placed in a class or in
     `Unrelated`.
-  - Counters the change point writes itself (generations, `hw_avg_clear`) are outputs, excluded from the diff.
+  - Values the change point writes itself (`gen`, `epoch`, `AvgClear` ids) are outputs, excluded from the diff.
 - **`requests`** are events with no settings difference: CLEAR, the RUN and SINGLE edges, Create mask, and an
   autoset or Bode stage retried with the same settings. The stage that sees the event calls
   `change::request(Request)`.
@@ -154,7 +155,7 @@ Classes and their consumers:
 
 | Class | Consumers |
 |---|---|
-| `acq` | the acquisition request and generation; records of older generations are not measured |
+| `acq` | `AcqWant` and `gen`; records of an older `gen` after a reconfiguration are not measured |
 | `mapping` | accumulator: preview, drop maps of the old mapping key (`architecture/picture.md`) |
 | `phosphor` | accumulator: maps and weights reset |
 | `stats` | measurement statistics and results |
@@ -166,9 +167,15 @@ Classes and their consumers:
 
 A keyed cache needs no class. The decode cache is keyed by record and decoder settings, so its key decides.
 
-Generations: `Generations::new_gen(kind) -> u64` is the one writer of every generation, `hw_stamp` included. It
-returns the new value at once, so an autoset or Bode stage that stores the stamp in the same call gets the current
-one. Both `classify` and `request` call it.
+Generations: two numbers, written only by `Generations::new_gen(kind) -> u64`.
+- **`gen`** rises when the `ChangeSet` contains `acq`. The acquisition thread tags every output with the `gen` it
+  applied.
+- **`epoch`** rises on requests whose settings may not differ: SINGLE armed, CLEAR, RUN after STOP, an autoset or Bode
+  stage (also a retry). It replaces `hw_stamp`.
+- `new_gen` returns the new value at once, so an autoset or Bode stage that keeps it in the same call has the current
+  one. `classify` and `request` both call it. The pair is published inside `AcqWant`, so it is always consistent.
+- Readers filter on the pair: the picture by its mapping key, records and measurements by `epoch` and `gen`
+  (`architecture/records.md`).
 
 Run state goes by transition, not by value:
 - `run`, the trigger sweep together with `run`, and the fields that `clamp_offsets` or `fit_platform` rewrite each
@@ -183,10 +190,11 @@ Run state goes by transition, not by value:
 is in the code; no stage relies on a side effect of another.
 
 ```
-intake     (input events, remote requests, AcqEvents)  -> commands, requests, BatchUnits, records
-change     (commands, requests)                        -> Settings', ChangeSet, AcqCmd
-acquire    (AcqCmd, ChangeSet)                         -> sent to the acquisition thread
-accumulate (BatchUnits, records to draw, ChangeSet)    -> picture maps and weights
+intake     (input, remote requests, BatchUnits, Frames, MeasReads, Readings)
+                                                       -> commands, requests, acquired data
+change     (commands, requests)                        -> Settings', ChangeSet, AcqWant, AcqCmds
+acquire    (AcqWant, AcqCmds)                          -> published to the acquisition thread
+accumulate (BatchUnits, record pseudo-batch, ChangeSet) -> picture maps and weights
 measure    (records, ChangeSet)                        -> results, statistics, history
 views      (results, records, ChangeSet)               -> view state
 compose    (picture, results, views, menus)            -> layers and trace jobs
@@ -202,27 +210,33 @@ step; the transport thread holds the connection.
 | Thread | Owns | Talks through |
 |---|---|---|
 | main | `Session` and every stage | the channels below; never blocks on IO |
-| acquisition (`board/dho`) | hardware, batch buffers, the helper's share | `AcqCmd` in, `AcqEvent` out, an atomic status snapshot |
-| deposit workers (A53) | their share maps | `BatchUnit` to the main thread (`architecture/picture.md`) |
+| acquisition (`board/dho`, second A72) | hardware, batch buffers, `AcqLoop`, the helper's share | `AcqWant` and `AcqCmd` in; `Batch`, `Frame`, `MeasRead`, `Readings` out |
+| deposit workers (A53) | their share maps | `BatchUnit` to main (`architecture/picture.md`) |
+| measure (A53, scoped per channel) | one measurement job | job and result channels (`architecture/records.md`) |
 | input | the panel UART, the touch device | `InputEvent` channel to main |
 | remote listeners | sockets of SCPI, HTTP, MCP, VXI-11, the control FIFO | `RemoteRequest { command or query, reply sender }` to main |
 | web PNG / send | encoding and sending pictures | the composed-picture snapshot |
 | ntp, ssh, mdns, wlan | their service | status values the menus read; settings by command |
 
-Typed channels replace `board::HwShared`, today an `Arc<Mutex<Shared>>` with commands and state mixed under one lock:
-- **`AcqCmd`:** the acquisition request with its generation, plus explicit requests: rearm, segment read, counter,
-  DVM, levels, slots, self-cal, generator. The thread takes the newest request; requests are not lost.
-- **`AcqEvent`:** `Batch(BatchUnit)`, `Record(Record)`, `Status(AcqStatus)`, `Configured(gen)`, `Error(AcqError)`.
+Typed outputs replace `board::HwShared`, today an `Arc<Mutex<Shared>>` of about 40 fields with settings, one-shot
+requests, outputs and readings under one lock. Each kind gets one writer (`architecture/acquisition.md`, Port):
+- **`AcqWant`:** everything the UI wants applied, with `gen` and `epoch`. A latest-value cell, replaced whole.
+- **`AcqCmd`:** one-shot commands with an id (force, rearm, hold and final, average clear, segments, self-cal, levels,
+  slots). A bounded queue; each is taken once and acknowledged in `Readings`.
+- **`Batch`, `Frame`, `MeasRead`:** acquired data with its `BatchMeta`. A `Batch` moves into the deposit pipe; `Frame`
+  and `MeasRead` go to the record path. No kernel accepts a `MeasRead`.
+- **`Readings`:** status, unit counters, board readings, acknowledged ids, the read plan. A latest-value cell.
 - **Atomics:** metrics read often and changing all the time (frame counters, pacing) stay atomics, one writer each.
 
-The migration does this after the change point. Until then `Shared` stays.
+No lock is held across a register access, a C2H read or a decode. The migration does this after the change point
+(`overhaul-migration.md`, M5). Until then `Shared` stays.
 
 ## Data flow
 
 The picture:
 
 ```
-FPGA ring -> acquisition thread: read a batch under generation g
+FPGA ring -> acquisition thread: read a batch under `gen` g, tagged with its `BatchMeta`
           -> deposit workers and helper: share maps, one weight model per column per frame
           -> BatchUnit: all shares, published when the last is in
           -> accumulator: window of whole batches (minimum persistence) or decay (persistence), weights W
@@ -238,7 +252,7 @@ Settings:
 knob, key, touch           -> input  -> Command --+
 SCPI, HTTP, MCP, VXI-11    -> remote -> Command --+-> change: apply -> Settings' -> classify | requests -> ChangeSet
 setup file                 -> store  -> Commands -+                                 -> consumers
-                                                                                     -> AcqCmd -> acquisition thread
+                                                                                     -> AcqWant -> acquisition thread
 ```
 
 Records and measurements: `architecture/records.md`.
@@ -247,7 +261,8 @@ Records and measurements: `architecture/records.md`.
 
 | Port (trait) | Adapters | Fake for tests |
 |---|---|---|
-| `board::Board` | `board/dho` (hal) | `board::fake`: scripted frames, batches, status |
+| `board::Board` and the acquisition outputs | `board/dho` (hal) | `board::fake`: scripted batches, frames, readings |
+| `board::dho::Device` (configure, arm, wait, read, read again, disarm) | the DHO hardware | scripted device for `AcqLoop` host tests |
 | `hal::dho::bus::Bus` | `Bar1` | `Recorder` (exists) |
 | `display::Present` | DRM dumb buffers, the GPU helper | `display::fake`: keeps the last layers for picture comparison |
 | `input::Source` | panel UART, touch evdev | scripted events |
@@ -266,7 +281,7 @@ unit.
   `StoreError`), with `Display` for the UI and remote.
 - **Nothing swallowed.** No error is swallowed. No `unwrap` or `expect` on input or IO.
 - **Errors go back to their sender:** the SCPI error queue, the HTTP status, a toast.
-- **Hardware errors.** The acquisition thread retries them with bounded backoff, reports each as `AcqEvent::Error`,
+- **Hardware errors.** The acquisition thread retries them with bounded backoff, reports each in `Readings::status`,
   and never blocks the main thread.
 - **Broken invariants.** They panic in debug builds and tests. In release they log one line and recover to a safe
   state (picture reset, acquisition re-armed).

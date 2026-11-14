@@ -73,7 +73,8 @@ Branch `draw/step-0`: 3692085 on `overhaul`. The review fixes 10bca9b (stale cou
 
 Design: [Change detection](architecture.md#change-detection), adr/0003. It includes compress's four review changes:
 1. Requests next to the diff (`change::request`).
-2. `Generations::new_gen` as the only generation writer, returning the value at once.
+2. `Generations::new_gen` as the only writer of `gen` and `epoch` (`epoch` replaces `hw_stamp`), returning the
+   value at once.
 3. `UiAcq` for UI state that changes acquisition or drawing: XY, the protocol watch, the mask reference, autoset or
    Bode active.
 4. Run state by transition.
@@ -130,7 +131,9 @@ statistics); probe comp and setup B smoke for M3.
 Design: [Threads and messages](architecture.md#threads-and-messages), adr/0007. This supersedes "split `Shared` only if
 races show" in `fork/draw-architecture.md` 3.9: the overhaul splits it as part of the structure.
 
-- `AcqCmd` in, `AcqEvent` out. The acquisition request with its generation from M2; explicit requests queued.
+- `AcqWant` with `gen` and `epoch` from M2; `AcqCmd` with ids and `Readings` replace the remaining `Shared` fields,
+  one group per part (M5.1 requests with ids: levels, slots, final; M5.2 the unit readings). Follows
+  `architecture/acquisition.md`, Migration 2 and 3. `MeasRead` as its own type comes with M6.
 - Atomics for metrics, one writer each.
 - `board::fake` drives the thread's client side; `board/contract.rs` holds the `Board` contract tests.
 

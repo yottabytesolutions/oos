@@ -20,7 +20,7 @@ The day's flicker came from measurement reads drawn among pair frames (draw-arch
 ## Compression and deep reads
 
 Policy and mechanism are split:
-- **Policy (UI, pure):** `compress::allowed(Model)`, `raw_consumers_off`, `needs_raw` and `deepmeas::want` decide
+- **Policy (UI, pure):** `compress::allowed(&Settings)`, `raw_consumers_off`, `needs_raw` and `deepmeas::want` decide
   what the screen and the readers allow. The change point evaluates them into `AcqWant` (`compress`, `needs_raw`,
   `deep_raw`). Changing any of them raises `gen`.
 - **Mechanism (acq):** k from rate, time base and depth (`compress::k_for`), the deep read plan (`batch_plan`,
@@ -42,7 +42,7 @@ lists them. `modes_that_need_raw_frames_never_compress` stays the test.
 it carries its `BatchMeta` (`id`, `gen`, `epoch`, `mode`).
 
 - **Owner:** the record store (today `Ui::last`, `history`, `seg_*`). It keeps `last[0]`, history and segments. Its
-  `Invalidate` classes are `history` (clear history and segments) and `phosphor` (CLEAR drops `last[0]`).
+  `ChangeSet` classes are `history` (clear history and segments) and `phosphor` (CLEAR drops `last[0]`).
 - **Built by the UI** from a `Frame`, `MeasRead` or batch frame. The window comes from the current view. The trigger
   point comes from the frame's own `BatchMeta` (`record::trigger_point`, near-only search for deep raw windows).
 - **Readers:** measurements, cursors, math and FFT, decode, XY, the software mask and zones, the software average,
@@ -89,7 +89,7 @@ Rule: every raw frame counts once. A frame folded by a worker is not counted aga
 newest frame is now in the batch (picture.md), so the record result of a folded frame updates the values but not the
 statistics counts. Pair frames are never folded.
 
-The `stats` class of `Invalidate` resets `mstat` and raises the statistics generation. Today `settings_changed`
+The `stats` class of `ChangeSet` resets `mstat` and raises the statistics generation. Today `settings_changed`
 clears `mstat` on every settings change, including changes that alter no measurement. Which fields belong to `stats`
 is decided in `classify`.
 

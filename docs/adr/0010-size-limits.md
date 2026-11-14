@@ -18,5 +18,5 @@ its context, and a 10k-line file does not.
 ## Consequences
 
 - Splitting is part of each migration step. The allowlist shows progress.
-- 12 fields is a guide, not a hard limit, for data records such as `AcqStatus`. Exceptions go on the allowlist with a
+- 12 fields is a guide, not a hard limit, for data records such as `BatchMeta`. Exceptions go on the allowlist with a
   reason.

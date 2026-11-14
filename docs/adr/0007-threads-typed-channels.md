@@ -10,11 +10,12 @@ not documented.
 
 ## Decision
 
-- `AcqCmd` in, `AcqEvent` out, over channels. The acquisition thread takes the newest acquisition request. Explicit
-  requests (rearm, segment read, DVM, self-cal, ...) are queued and not lost.
+- One writer per kind (`architecture/acquisition.md`, Port). In: `AcqWant` (latest value with `gen` and `epoch`)
+  and `AcqCmd` (one-shot commands with ids, queued, acknowledged in `Readings`). Out: `Batch`, `Frame`, `MeasRead`,
+  `Readings`.
 - Metrics that change all the time stay atomics, one writer each.
 - Remote listeners send `RemoteRequest { command or query, reply sender }` to main.
-- Migrated after the change point (step 1c), since the request type comes from it.
+- Migrated after the change point (`overhaul-migration.md`, M5), since `gen` and `epoch` come from it.
 
 ## Consequences
 

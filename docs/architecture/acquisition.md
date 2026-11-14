@@ -8,7 +8,7 @@ referenced as of dho804 32041d0.
 
 The acquisition thread (`acq`, second A72 with `perf.place`) owns the acquisition hardware: BAR1, the C2H stream,
 the AFE lines, the FPGA ring, the DMA buffers and the configuration shadow (`seq::State`). Nothing else touches them
-while oos-ui runs. It never draws, never reads `Model` and never decides what the screen shows. It turns a settings
+while oos-ui runs. It never draws, never reads `Settings` and never decides what the screen shows. It turns a settings
 snapshot into acquired data, tagged with the generation it was acquired under, and hands that data out through typed
 outputs.
 
@@ -44,8 +44,8 @@ Today these are separate `Shared` fields, so a change of `needs_raw` or a mask w
 (`pacing::WANTED` covers `want` only). One struct with one `gen` makes every acquisition-relevant change visible
 in one number.
 
-- `gen` is raised by the change point ([architecture.md](../architecture.md), change detection) whenever the
-  `Invalidate` set contains `acq`. It is the only writer.
+- `gen` is raised by the change point ([architecture.md](../architecture.md#change-detection)) whenever the
+  `ChangeSet` contains `acq`. It is the only writer.
 - The thread stores `applied` = the `gen` of the want it last applied (configured, or found equal). Every output it
   produces from then on carries `applied` in its `BatchMeta`.
 - `epoch` is the second number in `BatchMeta`. It is raised by explicit requests whose settings may not differ:
@@ -61,7 +61,7 @@ in one number.
 `BatchMeta`: `id` (batch number), `gen`, `epoch`, `frames`, the acquisition snapshot (sample interval, pre-trigger
 samples, per-channel scale, offset, invert, coupling, bandwidth, trigger source, level, slope, coupling and noise
 reject), `mode` (normal, pairs with k, deep pairs, roll sweep, scan sweep, segment, hardware average) and `t_read`
-(when the read finished). A frame is converted and refined only from its own `BatchMeta`, never from `Model`.
+(when the read finished). A frame is converted and refined only from its own `BatchMeta`, never from `Settings`.
 
 ### `AcqCmd`
 
@@ -168,7 +168,7 @@ What changes against today:
 
 - One writer per output. The thread writes `Readings`, `Batch`, `Frame`, `MeasRead`. The UI writes `AcqWant` and
   `AcqCmd`.
-- Every output carries `BatchMeta`. Nothing downstream reads `Model` to interpret acquired data.
+- Every output carries `BatchMeta`. Nothing downstream reads `Settings` to interpret acquired data.
 - A measurement read is a `MeasRead`, never a `Frame` and never in a `Batch`.
 - No `std::thread::sleep` in the loop except the error back-off and the start-up wait. Waiting for a trigger ends on
   a new `AcqWant` or an `AcqCmd` (today `acquire_batch_until` with `changed()`).

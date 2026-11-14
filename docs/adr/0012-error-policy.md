@@ -11,7 +11,7 @@ errors block the main thread.
 
 - One error enum per module, with `Display`. No `unwrap` or `expect` on input or IO.
 - Errors return to their sender: SCPI error queue, HTTP status, toast.
-- The acquisition thread retries hardware errors with bounded backoff and reports them as `AcqEvent::Error`.
+- The acquisition thread retries hardware errors with bounded backoff and reports them in `Readings::status`.
 - A broken invariant panics in debug and tests, and in release logs one line and recovers to a safe state.
 - Log lines: `oos-ui <area>: <what> <values>`.
 

@@ -107,7 +107,8 @@ Tests:
 A board is a `board::Board` adapter. `board/dho` is the reference.
 
 1. **Adapter.** Create `board/<name>/`. Implement `Board`: capabilities, apply an acquisition request, the
-   acquisition thread with `AcqCmd` in and `AcqEvent` out (`architecture/acquisition.md`).
+   acquisition thread with `AcqWant` and `AcqCmd` in and `Batch`, `Frame`, `MeasRead`, `Readings` out
+   (`architecture/acquisition.md`).
 2. **Boundary.** Only `board/<name>` may use its hardware crate. Add the rule to `arch-rules.toml`.
 3. **Selection.** `oos_hal::model::platform()` detects the model (`docs/models.md`). `board::select` (target; today
    the type alias `board::Active`) picks the adapter from the platform. Add the new model there.

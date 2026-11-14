@@ -15,7 +15,7 @@ Target architecture of the path from acquired frames to the phosphor maps the gr
 
 The accumulator is the only writer of `ph` and `phz`. Today eight `ph.clear()` sites and six routes write them
 (draw-architecture.md 1). In the target every write goes through the accumulator's methods, driven by two inputs:
-- the `Invalidate` set of the change point ([architecture.md](../architecture.md));
+- the `ChangeSet` of the change point ([architecture.md](../architecture.md));
 - whole batches from the pipe.
 
 ## The batch path
@@ -23,7 +23,7 @@ The accumulator is the only writer of `ph` and `phz`. Today eight `ph.clear()` s
 ```
 acq: Batch (buffer + BatchMeta) -> pipe -> shares claimed by workers / helper -> share maps
                                        -> BatchUnit complete -> UI inbox
-UI step: Invalidate -> accumulator: drop units of another mapping key, add whole units to the window,
+UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole units to the window,
          rebuild ph/phz from the window (Min) or decay and add (persistence), W, grade, arena
 ```
 
@@ -34,7 +34,7 @@ UI step: Invalidate -> accumulator: drop units of another mapping key, add whole
   base, delay, V/div, offset, channel set, dots, zoom, size, and per channel invert, coupling and bandwidth. A unit of
   another key is dropped at merge.
 - **Frames convert with their own `BatchMeta`.** Volts, times and the trigger refinement come from the batch, not
-  from `Model` (acquisition.md). So a batch of an older hardware generation under the same mapping key is a valid
+  from `Settings` (acquisition.md). So a batch of an older hardware generation under the same mapping key is a valid
   picture.
 - **Frames mode** (no worker pipe: the host, `acq.pipeline = frames`, a full buffer pool) is the same unit drawn by
   the UI thread itself. One composition, not two.
@@ -65,7 +65,7 @@ min/max pair has no sample density.
 
 ## Invalidation
 
-The accumulator reacts to the change point's `Invalidate` set only:
+The accumulator reacts to the change point's `ChangeSet` only:
 
 | Class | Accumulator action |
 |---|---|
@@ -91,7 +91,7 @@ STOP freezes the maps and W. A view change while stopped is a `mapping` change a
 - Only the accumulator writes `ph`, `phz`, W and the window.
 - A picture holds whole batches of one mapping key.
 - Every frame of a mode weighs the same per column, whatever its source.
-- Nothing draws from `Model` state that a batch carries itself.
+- Nothing draws from `Settings` state that a batch carries itself.
 - No map adds on the A53. No lock on the deposit hot path beyond the claim and the publish.
 
 ## Counters
@@ -117,6 +117,6 @@ target:
 |---|---|---|
 | `picture/acc.rs` | accumulator: window, merge, preview, invalidation | `Ui::step` parts, `drawpipe::merge` |
 | `picture/grade.rs` | W, LUT, persistence decay | `grade_refs`, `picture_ref`, `Phosphor::decay` |
-| `deposit/pipe.rs` | `Batch` intake, claims, `BatchUnit`, free buffer list | `drawpipe.rs` |
-| `deposit/kernel.rs` | span and dots kernels per source | `fastdraw.rs`, `compress::deposit_pairs`, `draw_frame` |
+| `picture/deposit/pipe.rs` | `Batch` intake, claims, `BatchUnit`, free buffer list | `drawpipe.rs` |
+| `picture/deposit/kernel.rs` | span and dots kernels per source | `fastdraw.rs`, `compress::deposit_pairs`, `draw_frame` |
 | `wave::Phosphor` | map storage only | as now, without `draw_ex` lines |

@@ -916,8 +916,8 @@ after each step may tighten them, never loosen them without a doc change.
 | records stage | p99 <= 1.5 ms off the fast path; records are built on the workers | `stage records` | host timing guard, unitlab | M6 |
 | accumulate (at most 3 map sets, touched rows, fused grade) | p99 <= 2 ms; <= 4 ms on HDMI | `stage accumulate` | host timing guard, unitlab | M9, M10 |
 | compose + present submission | p99 <= 4 ms; <= 6 ms on HDMI | `stage compose`, `stage present` | unitlab | M16 |
-| light step (input or remote) | settings round trip p99 <= 2 ms | `light` | host test on `Session`, unitlab | M15 |
-| remote throughput | >= 500 query/answer exchanges per s on one SCPI connection, picture rate within 10 % | `remote` | unitlab (`ifload.py`) | M15 |
+| light step (input or remote) | settings round trip p99 <= 2 ms | `light` | host test, unitlab | M3d |
+| remote throughput | >= 500 query/answer exchanges per s on one SCPI connection, picture rate within 10 % | `remote` | unitlab (`ifload.py`) | M3d |
 | acquisition reaction | STOP, a settings change or cancel within 1 ms | `acq wake` | host test with the scripted `Device`, unitlab | M3c |
 | acquisition overhead per batch (excluding DMA) | p99 <= 1 ms | `acq batch` | unitlab | M3c |
 | DMA completion | CPU per read and read latency per mode | `xdma` | unitlab | M5c |
@@ -928,8 +928,8 @@ after each step may tighten them, never loosen them without a doc change.
 | HDMI | >= 29.5 pictures/s alone; >= 15 with the panel, counted when halved | `hdmi` | unitlab | M9b |
 | picture rate | >= 29.5 pictures/s in every acceptance mode | `fps` | unitlab | exists |
 | input to photon | the preview at the next flip; the first batch under the new mapping <= 70 ms | `latency` | unitlab | M4 |
-| wake latency | as in [Waiting](#waiting) | `wake <thread>` | unitlab | M3c, M16 |
-| idle in STOP | total CPU < 3 % of one A53; main wakes only on flips and input | `cpu`, `wakes` | unitlab | M16 |
+| wake latency | as in [Waiting](#waiting) | `wake <thread>` | unitlab | M3c, M3d |
+| idle in STOP | total CPU < 3 % of one A53; main wakes only on flips and input | `cpu`, `wakes` | unitlab | M3d |
 | allocations | 0 per frame after warm-up on every hot path ([Allocations](#allocations)) | `alloc` | counting-allocator tests | each step that touches a hot path; harness in G2 |
 | memory | RSS <= 120 MB + `memplan` total, flat over a 2 h soak ([Memory and queues](#memory-and-queues)) | `rss` | host soak, unitlab | M5b |
 

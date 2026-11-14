@@ -58,6 +58,16 @@ own tests in `xtask`:
 
 Estimate: 2 days, auxout, in parallel with M1 and M1b.
 
+## G2: performance gates
+
+Owner: auxout. Lands before M3c, the first step with a performance budget of its own ([Performance
+budgets](README.md#performance-budgets)):
+- tail-aware perf guards: p99 over repeated runs against a reference path, next to today's best-of-rounds ratios;
+- a counting-allocator harness for the hot paths, asserting zero allocations per frame after warm-up;
+- unitlab reads the budget table from the architecture and asserts each row it can measure.
+
+Estimate: 1.5 days, auxout, in parallel with M2.
+
 ## Steps
 
 D-numbers are the steps of [drawing implementation plan](drawing.md#implementation-plan). Unit marks the steps followed by a unit round.
@@ -71,13 +81,17 @@ D-numbers are the steps of [drawing implementation plan](drawing.md#implementati
 | M2.2 | `classify` in shadow mode next to the old mechanisms | 1a | round 0 (shadow) |
 | M2.3 | Consumers switch to the `ChangeSet`, one class per part; old mechanisms deleted last | 1a | |
 | M3 | Acquisition thread split | 1b | |
+| M3c | Acquisition waiting: command `eventfd`, hardware polls inside `poll` | | |
+| M3d | Main event loop: `epoll`, page-flip pacing, light step, non-blocking remote output | | round 1 |
 | M4 | Mapping key, preview, generation for records | 1c | round 1 |
 | M5 | Typed channels replace `Shared` | | |
 | M5b | Memory model: `memplan`, byte bounds, ring chunks, watchdog, drop counters | | |
+| M5c | DMA completion: MSI, INTx and poll measured; default decided | | round 2 |
 | M6 | Measurement reads never draw | 2 | |
 | M7 | One lines kernel, behind `draw.model` | 3 | round 2 |
 | M8 | Dots: one count per sample | 4 | |
-| M9 | `BatchUnit` | 5 | round 3 |
+| M9 | `BatchUnit`, workers pre-sum by row bands | 5 | round 3 |
+| M9b | GPU work proportional to change: dirty rows, fenced pool, on-demand snapshots, HDMI budget | | round 3 |
 | M10 | Grading and records together, behind `draw.model` | 6 | round 4 |
 | M11 | Sparse-event pacing | 8 | |
 | M12 | Acceptance, remove `draw.model` and the old paths | 9 | round 5 |
@@ -240,6 +254,31 @@ Then split the closure in `hw.rs` `spawn` (lines 1263-2154 on 32041d0) as in `ac
 Pure refactor. Tests: the M3.0 characterisation tests, the existing hw tests and all golden pictures unchanged. Deletes: nothing, moved code. The
 allowlist entry for `hw.rs` and its `spawn` shrinks. Unit: smoke check (probe comp, setup B) inside round 1.
 
+### M3c: acquisition waiting
+
+[Waiting](README.md#waiting), adr/0016. After M3, on its `AcqLoop`.
+- One blocking call: `poll` on the acquisition's command `eventfd`, with the hardware period as timeout. The trigger
+  poll (500 us) and the ring-count poll (200 us) move inside it; helper work between ring reads stays.
+- The 9, 5, 2, 20 and 500 ms sleeps of roll, hold, SINGLE and scan, the 50 ms settings poll, the 10 ms segment
+  polls and the error back-offs become deadlines in the same call.
+- Tests, failing before: with the scripted `Device`, STOP, a settings change and cancel are handled within 1 ms
+  in every phase (armed, filling, roll, hold, segments); an armed scope in STOP does no hardware poll.
+- Estimate: 1.5 days.
+
+### M3d: main event loop
+
+[Main loop and pacing](README.md#main-loop-and-pacing), [Hand-offs](README.md#hand-offs). Independent of the
+drawing steps; it comes early because every later unit round measures latency against it.
+- Main blocks in one `epoll_wait`: the DRM page-flip fd, a wake `eventfd`, input fds, the GPU helper socket. Steps
+  start on the flip; `wait_flip` and its 100 ms timeout go; the 33 ms timer and its busy last millisecond go.
+- The light step for input and remote requests: intake, change, acquire, reply.
+- Remote replies go into per-connection output queues written by the listeners on `EPOLLOUT`; main never writes to a
+  socket (today `scpi.rs` 46 and `vxi11.rs` 319). The request inbox becomes a bounded MPSC queue with main's wake.
+- Tests, failing before: a stalled SCPI client does not delay a step; a settings round trip stays under 2 ms on the
+  host with a busy picture; an idle main wakes only on flips and input.
+- Unit check in round 1: settings round trip, remote throughput (`ifload.py`), idle CPU in STOP.
+- Estimate: 2 days.
+
 ### M4: mapping key, preview, generation for records (D1c)
 
 As D1c: the batch keeps its first `View`; the UI drops published batches of another mapping; preview of `last[0]` on
@@ -254,7 +293,7 @@ Tests, failing before:
 
 Deletes: `hw_stamp` use for the view, blank-on-change.
 
-**Unit round 1** (M2 to M4): knob spin, settle over 20 changes; clears and resets as before (screenshots, measurement
+**Unit round 1** (M2 to M4, with M3c and M3d): knob spin, settle over 20 changes; clears and resets as before (screenshots, measurement
 statistics); probe comp and setup B smoke for M3.
 
 ### M5: typed channels replace `Shared`
@@ -288,6 +327,11 @@ Tests, failing before:
 
 Deletes: `board::HwShared`, `Shared`, its lock.
 
+Data path in M5 ([One ownership path per batch](README.md#one-ownership-path-per-batch)): the batch storage
+becomes `Arc<SampleStore>`, immutable after the read; the newest frame is a view into it; no sample data is cloned
+under a lock. Test, failing before: publishing the newest frame of a 4 x 10 M batch copies no sample data (counting
+allocator). Adds 1 day.
+
 ### M5b: memory model
 
 [Memory and queues](README.md#memory-and-queues). After M5, because the bounds sit on M5's channels.
@@ -300,11 +344,26 @@ Deletes: `board::HwShared`, `Shared`, its lock.
   a copy; a full pipe drops and counts instead of blocking or moving deposit to main; the M3.0 roll soak case passes.
 - Estimate: 2 days (moved out of M5).
 
+### M5c: DMA completion
+
+[DMA completion](README.md#dma-completion). A measurement step with a unit round, no new code beyond switches.
+- `oos-irq-place` puts the xdma IRQ on an A53; under kexec the completion poll threads are pinned to an A53.
+- `:SYSTem:STATe?` shows the mode and CPU (`xdma=`).
+- Round 2 measures, on cold boot and after kexec: MSI, legacy INTx (MSI off, as stock) and poll mode, each for CPU per
+  read, read latency and errors. The result sets the default and goes into `system.md`, Platform tuning.
+- Estimate: 1 day plus the round.
+
 ### M6: measurement reads never draw (D2)
 
 As D2. Tests, failing before: a raw measurement read leaves the picture unchanged. Unchanged: mask counts, zones,
 average, Bus trigger, Single, segments off the fast path. Deletes: the `compress::hold` draw branch, the `deepmeas`
 draw cases, `RECORDS_BUDGET`.
+
+Data path in M6 ([Measurements](README.md#measurements)): a `MeasRead` decodes only the channels and window it needs
+into the measure thread's reusable buffer; the shared statistics come from one pass; only requested products are
+computed; the measure thread and its helpers are persistent; the cheap set runs on codes. Tests, failing before: a
+measure job spawns no thread and allocates nothing after warm-up; the cheap set on codes equals the set on volts.
+Adds 1.5 days.
 
 ### M7: one lines kernel (D3)
 
@@ -312,7 +371,11 @@ As D3, behind `draw.model = old|new` in `system.conf`. Tests, failing before: `p
 `depth_mix_report` at x1.000; record-path pictures alone within 3 %. Golden references for lines change in this step,
 each with the reason. Deletes: the deep-raw branch in `draw_frame`; segment joining for lines after M12.
 
-**Unit round 2** (M5 to M7): screenshot pairs old and new per mode for the user's eye; the acquisition under change
+Data path in M7 ([Codes until volts](README.md#codes-until-volts)): the kernel deposits from codes for every channel
+count, with a fused four-channel decode-and-deposit kernel; the per-frame folds reuse the deposit's trigger position and
+extrema. A unit benchmark decides whether the four-channel code path replaces the `f32` one. Adds 1.5 days.
+
+**Unit round 2** (M5 to M7, with M5c): screenshot pairs old and new per mode for the user's eye; the acquisition under change
 storm for M5.
 
 ### M8: dots (D4)
@@ -330,6 +393,26 @@ output `&Picture`), so M10 and M16 do not move it again. Gate: the perf-guard ra
 48-frame step against `draw_frame`). Deletes: the `Acc` lists, `Tally` (if fix/batch-newest was merged), `Deliver`, `MERGE_WAIT_MAX`, the
 early `help_done`, the `fast_ok` frame branch in `Ui::step`, route D's `draw_frame` composition.
 
+Data path in M9 ([Maps: workers pre-sum](README.md#maps-workers-pre-sum)): each share records its touched rows; the
+workers reduce the shares of a batch by row bands; main adds at most 3 map sets per step over touched rows; shares move
+through SPSC rings, no arithmetic under a lock. Tests, failing before: main's adds per step are at most 3 map sets with
+5 shares per batch; the reduction allocates nothing. Adds 1 day.
+
+### M9b: GPU work proportional to change
+
+[GPU work proportional to change](README.md#gpu-work-proportional-to-change). After M9, because the dirty rows come from
+the accumulator.
+- The helper uploads dirty row ranges only; the arena row compare goes.
+- A pool of 3 fenced buffers per output; `glFinish` goes.
+- Snapshots on demand into a pool of 2 readback buffers, handed to the encoder by ownership; the snapshot every 15
+  frames goes.
+- HDMI with its own budget and the half-rate rule.
+- Tests, failing before: `gpu/test-host.sh` with 0 differences; an unchanged picture uploads nothing; a snapshot does
+  not delay a composition.
+- Unit check in round 3: helper CPU and GPU time per composition, panel alone and with HDMI; the helper's core (first
+  A72 or an A53).
+- Estimate: 3 days.
+
 **Unit round 3:** stress set, `partial` 0.
 
 ### M10: grading and records together (D6)
@@ -338,6 +421,10 @@ As D6, adr/0005, inside `picture/acc.rs` from M9 and `oos_core::window`. Behind 
 picture, window age <= 67 ms, single hit visible, stopped picture constant, replay equals live, zoom equals main,
 `gpu/test-host.sh` 0 differ). Deletes: `picture_ref`, `per_frame*`, `pic_frames`, the `vmax` follow; the 24 x 6
 redraw after M12.
+
+Data path in M10 ([Fused accumulation](README.md#fused-accumulation)): one pass over touched rows adds, decays and
+updates the column maxima; untouched rows decay lazily; a frozen picture does no work. Test, failing before: a step
+with one touched row band sweeps only that band. Adds 1 day.
 
 **Unit round 4:** full acceptance set ([drawing acceptance criteria](drawing.md#acceptance-criteria-unitlab)), screenshot pairs per mode.
 
@@ -414,9 +501,10 @@ or `model.rs`, since they no longer exist.
 
 ## Estimate
 
-M0 to M12: about 35 days of host work plus six unit rounds (0 to 5) of about half a day: the drawing plan's 22 days with D1a
-(3 days) replaced by M2.1 to M2.3 (7.5 days), M1 and M5 at about 1.5 days each, M1b at 2 days, M3.0 at 1.5 days,
-and M5b (memory model) at 2 days. G1 adds 2 days of gate work by auxout, in parallel with M1 and M1b. M13 to
+M0 to M12: about 48.5 days of host work plus six unit rounds (0 to 5) of about half a day: the drawing plan's 22 days
+with D1a (3 days) replaced by M2.1 to M2.3 (7.5 days), M1 and M5 at about 1.5 days each, M1b at 2 days, M3.0 at 1.5
+days, M5b (memory model) at 2 days, and the performance work of adr/0016 at 13.5 days (M3c 1.5, M3d 2, M5c 1, M9b 3,
+the data path in M5, M6, M7, M9 and M10 6). G1 and G2 add 3.5 days of gate work by auxout, in parallel. M13 to
 M18: estimated at the stable stop point after M12, when the remaining sizes are known.
 
 ## Status

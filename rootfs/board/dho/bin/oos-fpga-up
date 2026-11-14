@@ -32,6 +32,11 @@ for w in $p; do
 done
 set +f
 [ -n "$p" ] || p=poll_mode=1
+# a start by kexec polls whatever the setting says: the GICv3 keeps the previous kernel's ITS tables and the MSI
+# completions never arrive (docs/update.md), the same rule as oos-fpgad
+case " $(cat /proc/cmdline) " in
+*" oos.kexec="*) [ "$p" = poll_mode=1 ] || echo "oos-fpga-up: started by kexec: MSI does not reach this kernel, xdma.params \"$p\" overridden; loading xdma with poll_mode=1"; p=poll_mode=1;;
+esac
 echo "insmod xdma.ko $p"
 insmod $M/updates/xdma.ko $p || exit 1
 sleep 1

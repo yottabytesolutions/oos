@@ -38,6 +38,13 @@ Route E covers:
 
 XY and LA draw on the canvas directly, without phosphor or grade.
 
+Batch mode also uses route D:
+- When the pipe is not accepting, every frame of a batch is decoded into the queue.
+- When no read-out buffer is free (`take_buffer` None), the other frames are dropped and only the newest is queued.
+
+Both give batch-mode pictures of a different composition. `acq.pipeline` defaults to `frames` (`drawpipe::mode_from`):
+route D is upstream's path and every non-unit user's.
+
 Kernels in `draw_frame` (`drawpipe.rs:38`), weight 24:
 - `fastdraw::deposit` / `deposit_codes`: one min/max span per screen column.
 - `deposit_dots`: every sample its pixel.
@@ -46,9 +53,17 @@ Kernels in `draw_frame` (`drawpipe.rs:38`), weight 24:
 - `to_record` + `draw_ex`: envelope, roll, scan and deep raw windows.
 
 **Two weight models.** A deposit puts one span per column per frame (24). `draw_ex` in lines joins consecutive record
-points: about 3.6 segments per column at 3600 points, so about 3.6 x 24 per pixel per frame. Every route E/F
-picture, sparse frames and deep pair frames weigh about 3.6x a deposited frame. With dots, a raw frame adds its
-sample count per column, about 100 at 200 us/div k = 15. A pair frame adds one span.
+points: 3600 points over 970 columns is about 3.7 segments per column, so about 3.7 x 24 per pixel per frame. Every
+route E/F picture, sparse frames and deep pair frames weigh about 3.7x a deposited frame. Measured
+(`ui::tests::depth_mix_report`, compress, a766aca): one deep frame 3.73x a live pair frame in summed counts, 5.0x
+at the brightest pixel.
+
+Dots weights:
+- `deposit_dots`: one hit per sample, about 86 per column at 100 k / 200 us/div. On a flat trace that is about 30
+  hits per pixel per frame (86 samples on 2-3 pixels), x 24, so about 720 counts per frame.
+- `draw_ex` dots on a record: one hit per record point, about 3.7 per column, so about 1/20 of a deposited dots
+  frame.
+- Pairs with dots: one span per pair.
 
 **Grading** (`Ui::grade_refs`, `ui.rs:2545`; `picture_ref`, `ui.rs:7903`; `trace_lut`):
 - Minimum persistence: the maps are cleared when a step brings frames. `pic_frames` = frames of the step. The
@@ -61,9 +76,13 @@ sample count per column, about 100 at 200 us/div k = 15. A pair frame adds one s
 
 **Settings changes.** `Pipe::set_view` bumps `gen` when `Key` changes. `Key` holds channels, time base, delay, trigger,
 acquisition mode, dots and size, but not mdepth. `Ui::settings_changed` clears the maps (`dirty_map`). Frames carry
-`stamp`, but `hw_stamp` only changes when Single is armed (`ui.rs:1762`). On a reconfiguration the acquisition thread
-does not clear `Shared::queue` (`hw.rs` ~1510). From the code, not verified on the unit: frames acquired under the
-old settings can still be drawn with the new mapping after the clear, by the workers (same stamp) and by route C.
+`stamp`, but `hw_stamp` changes only for Single, Bode and autoset (`ui.rs:1762`). On a reconfiguration the acquisition
+thread does not clear `Shared::queue` (`hw.rs` ~1510; only on RUN after a pause, and for roll). So frames acquired under
+the old settings can be drawn with the new mapping, by the workers (same stamp, same `gen`) and by routes C/D.
+Verified on the host for a depth change (`depth_mix_report`): 2 live + 1 deep frame in one step gave exactly
+2 x live + deep counts. Nothing filters them. On the unit the window is small (the first deep batch comes at least
+configure + fill + about 68 ms read after the change), but a late UI step can merge both. With persistence > 0 the
+mix lasts for the decay time.
 Measured settle on the unit (stutter.md 5): configured 25-50 ms after the change, steady 5-150 ms, at most 1 empty
 picture.
 
@@ -72,7 +91,7 @@ picture.
 | Bug | Where | Property broken |
 |---|---|---|
 | Flicker 500 us/div (flicker.md 1) | route C `draw_ex`, 3.6x a deposit | one weight per frame |
-| Dots + compression flicker (flicker.md 2) | raw newest (RAW_PERIOD) via `deposit_dots` among pair frames | one weight; measurement read drawn |
+| Dots + compression flicker (flicker.md 2) | raw newest (RAW_PERIOD) via `deposit_dots` among pair frames | one weight; measurement read drawn. Avoided, not restored: no compression with dots |
 | Deep raw window 1 Hz pulse (flicker.md 3) | raw window via dense deposit among `to_record` pairs, x1.44 | one weight; measurement read drawn |
 | Trigger lock-in pumping (trigger-lockin.md) | `pic_frames` varies per picture | brightness tied to frames per picture |
 | Newest split delivery (stutter.md 2) | route C a picture before A | whole batches |
@@ -80,7 +99,7 @@ picture.
 | AC / BW 20M at 5-13 fps (stutter.md 4) | `fast_ok` excluded them: route E for every frame | drawing tied to measurement options |
 | `RECORDS_BUDGET` demo bug (8dd7eb0) | wall-clock bound in the record loop | picture content tied to UI timing |
 | Fill timing, sparse events (stutter.md 1, open) | batch cadence vs 33.3 ms steps | picture depends on batch arrival |
-| Unverified: live (<= 1 M) and deep (> 1 M) frames in one picture after Auto depth crosses 1 M | `deposit_pairs` 1x vs `to_record` 3.6x; `Key` without mdepth | one weight; no stale frames |
+| Live (<= 1 M) and deep (> 1 M) frames in one picture after a depth change (host-verified, not seen on the unit) | `deposit_pairs` 1x vs `to_record` 3.7x; `Key` without mdepth; queue not cleared | one weight; no stale frames |
 
 The lines residue between pair and raw frames (137 edge-column pixels, x1.016-1.022) is position, not weight:
 trigger refinement on pairs is good to about one pair, and a pair straddling a column boundary lands in the column
@@ -119,8 +138,16 @@ Every frame contributes weight w (24) per screen column it covers, whatever its 
 
 - **Lines:** each source becomes per-column spans (`fastdraw::spans`, joined to the previous column), one span per
   column per frame. Sources: raw f32, read-out words, pairs, deep `to_record` pairs, and records of routes E/F
-  (zoom, replay, Z, average). `draw_ex` lines rasterises through the same span builder. Z input multiplies w per
-  column by the column's z. Sparse records (< 2 points per column) interpolate first, then the same spans.
+  (zoom, replay, Z, average). `draw_ex` lines rasterises through the same span builder.
+  - What changes is the shape inside the band, not the brightness of a picture of one route. `draw_ex`'s overlapping
+    segments make a graded core with dimmer edges. A span per column is uniform. Zoom, Single, segments,
+    Peak/Avg/HiRes, roll/scan and the stopped view look different; mixed pictures stop jumping.
+  - Open design point, Z input: today a weight per point (24 x z). A span per column needs one weight per column,
+    for example the mean z of its points, which changes how a Z-modulated trace looks. Alternative: keep `draw_ex`
+    for Z, which is a route of its own and never mixes with deposited frames.
+  - Open design point, sparse records (fewer points than columns): the interpolation is the content. They are
+    interpolated to at least 2 points per column (`sparse.rs`), then the same spans, so the segment joining survives
+    as the interpolation, not as a second kernel.
 - **Dots:** per column, the frame's samples are counted per row, then normalised to w per column. A pair has no
   sample density, so dots keep compression off (`compress::allowed`, kept).
 - **Zoom:** a second span set per frame for `phz` with the zoom mapping. The same w, so the same grade.
@@ -184,6 +211,11 @@ N = the frames that arrived per screen frame, smoothed. Brightness = count / W.
   1-2 map adds per step, 1-2 ms on the A72. The subtraction is exact only without saturation. Batch maps stay below
   u16 (27 frames x 24 = 648 per pixel), so the window sum is rebuilt from its batches whenever a pixel saturates.
 
+What the 2ac0ca1 shots were: a band-width effect, not a brightness effect. A picture of one frame has a narrower union
+of spans. count / W normalises brightness, but cannot widen that band. So per-picture pictures (A, C) need whole
+batches and a floor on the frames in a picture; decay (B) does not. That trade-off, more than the ghost, is the
+user decision behind the choice.
+
 **Choice:**
 - **Minimum persistence: C.** It keeps replacement semantics (no exponential ghost), makes the brightness exact, and
   bounds band jitter by the batch size. A cannot hold band jitter at sparse events or partial pictures. B puts a
@@ -194,6 +226,9 @@ N = the frames that arrived per screen frame, smoothed. Brightness = count / W.
   - The 100 ms setting meets the u16 floor below about 3 frames/s. There the decay is applied only on steps that
     bring frames.
 - **Infinite:** no decay. On saturation counts and W halve together (`Phosphor::halve`).
+- **Headroom:** with dots normalised to w per column (3.3), a frame adds at most w = 24 per pixel in lines and dots
+  alike. Above Min the sum reaches rate x tau x w: at 800 frames/s that is 640 at tau 33 ms, but 192,000 at tau
+  10 s. So long persistence saturates u16 and relies on halving counts and W together, as Infinite does.
 - **Colour grade:** count / W per pixel through the heat LUT. Same normalisation, merged channels summed.
 
 compress's view (answers, 2026-11-14): time decay plus one weight model everywhere, batch-atomic merging then
@@ -244,18 +279,19 @@ Each step: one branch, host tests that fail before and pass after, gates (releas
 | # | Step | Days | Host tests (fail before) | Unit check | Deletes |
 |---|---|---|---|---|---|
 | 0 | Counters: `stale`, frames and W per picture, partial merges | 0.5 | counters present and counting in pipe tests | status line shows them | none |
-| 1 | Settings generation on frames and batches; full key incl. mdepth/k; drop stale; clear on first new batch | 1 | old-generation frames never drawn (pipe and `Source::acquire`); live then deep after depth crossing 1 M | settle over 20 changes, `stale` drawn 0 | `hw_stamp` use for the view |
-| 2 | One lines kernel: spans for raw, codes, pairs, records (`draw_ex` lines) | 3 | `pair_raw_mix_report` x1.000 for raw/pairs/deep/record mixes; record-path picture equals deposit picture | probe comp 200 us and 1 ms screenshots | `draw_ex` segment joining (lines), deep-raw branch in `draw_frame` |
+| 1 | Settings generation on frames and batches; full key incl. mdepth/k; the acquisition thread clears the queue on reconfigure; drop stale; clear on first new batch | 1 | old-generation frames never drawn (pipe and `Source::acquire`); `depth_mix_report` as a test: no live frame in a picture with a deep one after a depth change | settle over 20 changes, `stale` drawn 0 | `hw_stamp` use for the view |
+| 2 | One lines kernel: spans for raw, codes, pairs, records (`draw_ex` lines); Z and sparse per 3.3 | 4 | `pair_raw_mix_report` and `depth_mix_report` x1.000 for raw/pairs/deep/record mixes; record-path pictures alone keep brightness within 3 % | probe comp 200 us and 1 ms; zoom, Single, roll screenshots | `draw_ex` segment joining (lines), deep-raw branch in `draw_frame` |
 | 3 | Dots normalised per column | 1.5 | dots brightness within 3 % across raw/record frames and sample counts | dots set | none |
-| 4 | `BatchMap`: shares added per batch, published whole; newest frame drawn by the pipe; route C, D gone | 2.5 | 2ac0ca1/988312b tests rewritten: every merged map holds exactly its batch's frames; the newest frame in the same merge | stress set, `partial` 0 | `Acc` lists, `Tally`, `Deliver`, `MERGE_WAIT_MAX`, `fast_draw`, frames mode, the `fast_ok` frame branch in `Ui::step` |
+| 4 | `BatchMap`: shares added per batch, published whole; newest frame drawn by the pipe; route C gone. Route D (frames mode, the default) stays: each step's queued frames, newest included, become one batch through the same kernel | 2.5 | 2ac0ca1/988312b tests rewritten: every merged map holds exactly its batch's frames; the newest frame in the same merge; frames mode and batch mode give the same picture for the same frames | stress set, `partial` 0 | `Acc` lists, `Tally`, `Deliver`, `MERGE_WAIT_MAX`, the helper's early `help_done` (the one at the end of the acquisition loop stays), the `fast_ok` frame branch in `Ui::step` |
 | 5 | Measurement reads never draw (RAW_PERIOD raw newest, deep window); `RECORDS_BUDGET` gone | 0.5 | a raw measurement read leaves the picture unchanged; record loop takes only the newest | probe comp 200 us dots/lines | `compress::hold` draw branch, `deepmeas` draw cases, `RECORDS_BUDGET` |
 | 6 | Grading C at Min, B above, freeze when stopped; zoom and colour grade on the same W | 2.5 | brightness within 3 % for 1..27 frames per picture; band pixel count within 2 % for batches of 13/27 alternating; stopped picture constant over 100 steps | full acceptance set | `picture_ref`, `per_frame*`, `pic_frames`, `vmax` follow |
 | 7 | Routes E/F through the same kernel and W (zoom, Z, average, replay at weight w once) | 1.5 | zoom picture brightness equals main; replay picture equals the live picture of the same frame | zoom, replay, Single | 24 x 6 redraw |
 | 8 | GPU: 1/W per channel in the frame message | 0.5 | `gpu/test-host.sh` 0 differ | GPU on/off screenshots equal | `vmax` in the protocol |
 
-About 13 days of host work, plus a unit round after steps 1, 2, 4, 6 and 8 (about 2 days). Risk:
-- **High:** steps 2 and 6 change the look of every mode. Every record-path picture gets about 1/3.6 of its counts,
-  and the grade changes. They need screenshots before and after in each mode, and the user's eye.
+About 14 days of host work, plus a unit round after steps 1, 2, 4, 6 and 8 (about 2 days). Risk:
+- **High:** steps 2 and 6 change the look of every mode. Step 2 changes the shape inside the band of every
+  record-path picture (zoom, Single, roll, replay), not its brightness. Step 6 changes the grade. They need
+  screenshots before and after in each mode, and the user's eye.
 - **Medium:** step 4 (concurrency).
 - **Low:** the others.
 
@@ -275,4 +311,5 @@ Existing fixes:
 | near-only trigger gate, AC level | kept |
 | live compression, RAW_PERIOD read | kept for measurement, not drawn |
 
-Not in scope: XY and LA (canvas), the sparse-event planner, the auto timeout.
+Not in scope: XY and LA (canvas), the sparse-event planner, the auto timeout. A change of the `acq.pipeline` default
+is a separate decision; this plan keeps both modes.

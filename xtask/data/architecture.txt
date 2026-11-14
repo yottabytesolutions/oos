@@ -4,7 +4,9 @@
 # A package without a line fails, so a new crate or dependency is a decision written here.
 crate oos-dsp ->
 crate oos-hal -> libc
-crate oos-ui -> libc oos-hal oos-dsp
+# oos-core comes with the migration (ADR 0014, architecture.md "Enforcement")
+crate oos-core -> oos-dsp
+crate oos-ui -> libc oos-hal oos-dsp oos-core
 crate oos-fpgad -> libc oos-hal
 crate xtask -> proc-macro2 quote serde serde_json syn
 #

@@ -1,0 +1,4 @@
+#!/bin/sh
+# The seconds-long part of the gate: formatting, size limits, architecture (docs/development.md).
+# Setup once per clone: git config core.hooksPath .githooks
+exec cargo xtask check --fast

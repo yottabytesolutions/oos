@@ -1,27 +1,25 @@
-# Tests without hardware. Tests that need the calibration files of a real unit skip themselves.
+# The gate (`cargo xtask check`, docs/development.md) and the script syntax checks. Without hardware: tests that need
+# the calibration files of a real unit skip themselves.
 name: CI
 on:
   push:
   pull_request:
 jobs:
-  test:
+  gate:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install stable --profile minimal && rustup target add aarch64-unknown-linux-musl
-      - name: Tests
-        run: |
-          for c in hal dsp ui fpgad; do
-            (cd "$c" && cargo test --locked) || exit 1
-          done
-      - name: Target build
-        run: |
-          for c in ui fpgad; do
-            (cd "$c" && cargo check --locked --target aarch64-unknown-linux-musl) || exit 1
-          done
+      - run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy,llvm-tools-preview
+          rustup target add aarch64-unknown-linux-musl
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Gate
+        run: cargo xtask check
       - name: Python and shell syntax
         run: |
           python3 -m py_compile boot/*.py tools/*.py
-          for f in boot/*.sh boot/gel/*.sh kernel/*.sh rootfs/*.sh tools/*.sh rootfs/initramfs/bin/* rootfs/initramfs/etc/rcS; do
+          for f in boot/*.sh boot/gel/*.sh kernel/*.sh rootfs/*.sh tools/*.sh rootfs/initramfs/bin/* rootfs/initramfs/etc/rcS .githooks/*; do
             sh -n "$f" || exit 1
           done

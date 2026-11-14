@@ -1,0 +1,4 @@
+#!/bin/sh
+# The full gate before anything leaves the machine (docs/development.md).
+# Setup once per clone: git config core.hooksPath .githooks
+exec cargo xtask check

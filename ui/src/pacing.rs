@@ -177,6 +177,58 @@ impl Fill {
     }
 }
 
+/// The fill a capped batch keeps room for (the ring then fills in it, and the planner keeps the reads on their slots).
+const CAP_FILL_MS: f32 = 6.0;
+
+/// The most frames a batch reads (`Settings::frames`), where its read would otherwise leave no room for a batch in a
+/// screen frame. At 5 us/div with the live compression (no prearm) a batch spent 12-20 ms arming and 21-29 ms reading
+/// ~25 frames at ~0.8 ms each: it did not fit 33 ms, and about one picture in ten had nothing new
+/// (docs/fork/stutter.md). The cap comes from the read time per frame and the time before the fill (both smoothed);
+/// a full ring ends the fill early.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FrameCap {
+    per_frame: Option<f32>,
+    pre: Option<f32>,
+    /// mean deviation of the rest (time before the fill and read)
+    dev: f32,
+    cap: Option<u32>,
+}
+
+impl FrameCap {
+    /// `frames` (what the batch would read) capped.
+    pub fn apply(&self, frames: u32) -> u32 {
+        self.cap.map_or(frames, |c| frames.min(c))
+    }
+
+    /// A batch read `count` frames in `read_ms` after `pre_ms` from its start to the start of its fill; `asked` is
+    /// what it would read without the cap. `keep` (prearm: a new cap re-arms): only a change of more than a quarter.
+    pub fn done(&mut self, count: u32, read_ms: f32, pre_ms: f32, asked: u32, keep: bool) {
+        if count == 0 || read_ms <= 0.0 {
+            return;
+        }
+        let ema = |x: Option<f32>, v: f32| Some(x.map_or(v, |x| x + 0.2 * (v - x)));
+        if let (Some(per), Some(pre)) = (self.per_frame, self.pre) {
+            let r = pre_ms.max(0.0) + read_ms;
+            self.dev += 0.2 * ((r - pre - per * count as f32).abs() - self.dev);
+        }
+        self.per_frame = ema(self.per_frame, read_ms / count as f32);
+        self.pre = ema(self.pre, pre_ms.max(0.0));
+        let (per, pre) = (self.per_frame.unwrap_or(1.0), self.pre.unwrap_or(0.0));
+        // the read that leaves the batch a frame: the time before the fill, its spread, a fill of `CAP_FILL_MS` and the
+        // margin taken off
+        let budget = FRAME_MS - MARGIN_MS - CAP_FILL_MS - pre - 2.0 * self.dev;
+        let want = ((budget / per.max(0.01)).floor().max(1.0) as u32).min(asked.max(1));
+        let new = (want < asked).then_some(want);
+        let far = match (self.cap, new) {
+            (Some(a), Some(b)) => (a as f32 - b as f32).abs() > 0.25 * a as f32,
+            (a, b) => a != b,
+        };
+        if !keep || far {
+            self.cap = new;
+        }
+    }
+}
+
 /// The value at fraction `q` (0..1) of the sorted `v` (0 when empty).
 fn pct(v: &mut [f32], q: f32) -> f32 {
     if v.is_empty() {
@@ -237,6 +289,34 @@ pub fn summary() -> String {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    // Break it catches: a cap where the batch fits a frame anyway, no cap where its read takes the frame (5 us/div), a
+    // cap that changes with every batch while a prearmed batch would have to be re-armed for it.
+    #[test]
+    fn frame_cap_where_the_read_takes_the_frame() {
+        let mut c = FrameCap::default();
+        // 1 us/div: 58 frames in 10 ms, 5 ms before the fill: fits, no cap
+        for _ in 0..10 {
+            c.done(58, 10.0, 5.0, 100, false);
+        }
+        assert_eq!(c.apply(100), 100);
+        // 5 us/div: 25 frames in 20 ms (0.8 ms each), 12 ms before the fill: 33.3 - 3 - 6 - 12 = 12.3 ms of read
+        let mut c = FrameCap::default();
+        for _ in 0..20 {
+            c.done(25, 20.0, 12.0, 32, false);
+        }
+        assert_eq!(c.apply(32), 15);
+        // with prearm a small change keeps the cap, a large one takes the new one
+        for _ in 0..20 {
+            c.done(15, 13.5, 12.0, 32, true);
+        }
+        assert_eq!(c.apply(32), 15, "13 is within a quarter of 15");
+        for _ in 0..20 {
+            c.done(15, 24.0, 12.0, 32, true);
+        }
+        // 1.6 ms a frame: 12.3 / 1.6 = 7, one less while the spread of the change has not settled
+        assert!((6..=7).contains(&c.apply(32)), "{}", c.apply(32));
+    }
 
     /// Batches against screen steps every `FRAME_MS`: each batch takes `rest(k)` ms besides its fill, the next one
     /// starts 0.5 ms after a read. Returns the read times (ms).

@@ -1331,6 +1331,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut helper = crate::drawpipe::Helper::default();
         // ring-fill time of the batches (pacing.rs)
         let mut fill = crate::pacing::Fill::default();
+        // frames per batch at most (pacing.rs)
+        let mut cap = crate::pacing::FrameCap::default();
         // time this thread takes to draw one frame as a helper (smoothed)
         let mut help_cost = std::time::Duration::from_micros(500);
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
@@ -1789,7 +1791,14 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 // RUN or SINGLE: the frames of the batch before the STOP are not new
                 out.lock().unwrap().queue.clear();
             }
-            let b = batch_plan(&s, &p);
+            let mut b = batch_plan(&s, &p);
+            // fewer frames where the read would take the screen frame (pacing.rs; not the hardware average, whose
+            // batches count triggers)
+            let uncapped = b.frames;
+            if !matches!(b.mode, oos_hal::dho::acq::Mode::Average { .. }) {
+                b.frames = cap.apply(b.frames);
+            }
+            let b = b;
             if !single_wants_more(&b, single_done, stamp) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 std::thread::sleep(std::time::Duration::from_millis(2));
@@ -1862,6 +1871,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                 let read_ms = fill_end.map_or(0.0, |e| e.elapsed().as_secs_f32() * 1e3);
                 crate::pacing::batch(batch_ms, *c, asked, fill_ms, read_ms);
                 fill.done(batch_ms, fill_ms, *c >= asked);
+                let pre_ms = batch_ms - read_ms - fill_ms as f32;
+                cap.done(*c, read_ms, pre_ms, uncapped, prearm_on() && prearm_keeps_replay(&b, &p, None));
             }
             if let Some(x) = pipe {
                 x.help_done(&mut helper);

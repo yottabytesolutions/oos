@@ -33,13 +33,32 @@ fn print(s: &Step) {
     }
 }
 
-/// The closing line; true when every step passed.
-pub fn summary(steps: &[Step], total: f64) -> bool {
+/// The closing line; true when every step passed. A subset (`partial`) never says the gate passed: the done rule is
+/// the full gate.
+pub fn summary(steps: &[Step], total: f64, partial: bool) -> bool {
+    println!("{}", closing(steps, total, partial));
+    steps.iter().all(|s| s.ok)
+}
+
+fn closing(steps: &[Step], total: f64, partial: bool) -> String {
     let failed: Vec<&str> = steps.iter().filter(|s| !s.ok).map(|s| s.name.as_str()).collect();
-    if failed.is_empty() {
-        println!("gate passed: {} steps in {:.0} s", steps.len(), total);
-    } else {
-        println!("gate FAILED in {:.0} s: {}", total, failed.join(", "));
+    match (failed.is_empty(), partial) {
+        (true, false) => format!("gate passed: {} steps in {:.0} s", steps.len(), total),
+        (true, true) => format!("partial gate passed (not done): {} steps in {:.0} s", steps.len(), total),
+        (false, _) => format!("gate FAILED in {:.0} s: {}", total, failed.join(", ")),
     }
-    failed.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The hole: --fast and --no-coverage printed "gate passed" like the full gate.
+    #[test]
+    fn a_partial_run_never_says_the_gate_passed() {
+        let s = |ok| Step { name: "fmt".into(), secs: 0.0, ok, lines: vec![] };
+        assert_eq!(closing(&[s(true)], 3.0, false), "gate passed: 1 steps in 3 s");
+        assert_eq!(closing(&[s(true)], 3.0, true), "partial gate passed (not done): 1 steps in 3 s");
+        assert_eq!(closing(&[s(false)], 3.0, true), "gate FAILED in 3 s: fmt");
+    }
 }

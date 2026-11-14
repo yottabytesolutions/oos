@@ -20,9 +20,10 @@ non-zero when a step failed. Humans and agents run the same command; the hooks a
   fails at the coverage step; `--no-coverage` skips it.
 - Hooks, once per clone: `git config core.hooksPath .githooks`. pre-commit runs `check --fast`, pre-push the full
   gate.
-- The ratchet files are compared with the base branch (`overhaul`, or `OOS_GATE_BASE`): the clone needs it
+- The ratchet files are compared with the base branch `overhaul` (or `origin/overhaul`): the clone needs it
   (`git fetch origin overhaul`; CI checks out with full history).
-- Every cargo call of the gate uses `--locked`: a change of a dependency comes with its `Cargo.lock` change.
+- Every cargo call that resolves dependencies uses `--locked` (the `cargo xtask` alias, clippy, tests, metadata,
+  coverage and `tools/perf-guard.sh`): a change of a dependency comes with its `Cargo.lock` change.
 
 ## The crates
 
@@ -35,8 +36,10 @@ ratchets stay per crate; a workspace member without an entry there fails the arc
 `clippy.toml` sit at the root.
 
 The syntax checks (size, statics, unsafe, module rules) read every file reachable from a member's cargo targets
-through its `mod` declarations: library, binaries, integration tests, benches, examples. `#[path]` on a module fails.
-Test code is a test, bench or example target, a `#[cfg(test)]` module (in its own file too), or a `#[test]` function.
+through its `mod` declarations, inline modules included: library, binaries, integration tests, benches, examples.
+They refuse what they cannot follow: `#[path]` on a module (also inside `cfg_attr`) and a `mod x;` inside a function
+body. Test code is a test, bench or example target, a `#[cfg(test)]` module (in its own file too), or a `#[test]`
+function; a file reached both as test and as production code is production code.
 
 ## What each check enforces
 
@@ -45,7 +48,7 @@ Test code is a test, bench or example target, a `#[cfg(test)]` module (in its ow
 | fmt | `cargo fmt --check` per crate | `rustfmt.toml`: 120 columns, max heuristics | diffs show changes, not style |
 | size limits | syntax walk (`syn`) | file ≤ 400 lines without `#[cfg(test)]` items, fn ≤ 60 lines, struct ≤ 12 fields, a type's inherent impls in ≤ 3 files | small units; the `Ui` of 155 fields over 33 files is what this stops |
 | mutable statics | syntax walk | a `static` whose type holds a `Mutex`, `RwLock`, atomic or `Cell`/`RefCell`/`UnsafeCell` (also through the crate's own types) only as a metrics counter (`static` lines in `architecture.txt`); `OnceLock`, `LazyLock` and `OnceCell` around plain data are allowed (set once, then read only) | global mutable state hides ownership |
-| unsafe | syntax walk | `unsafe` blocks, functions, impls and traits only under the `unsafe` path prefixes of `architecture.txt`: oos-hal and the adapters of ui; `dsp` has `#![forbid(unsafe_code)]` | memory safety stays at the hardware edge (AGENTS.md) |
+| unsafe | syntax walk | `unsafe` blocks, functions, impls, traits, extern blocks and attributes (`#[unsafe(..)]`, `no_mangle`, `export_name`, `link_section`) only under the `unsafe` path prefixes of `architecture.txt`: oos-hal and the adapters of ui; `dsp` has `#![forbid(unsafe_code)]` | memory safety stays at the hardware edge (AGENTS.md) |
 | architecture | `cargo metadata`, syntax walk | `xtask/data/architecture.txt`: allowed crate dependencies; module rules inside a crate | the layers cannot erode by accident |
 | clippy | `cargo clippy --all-targets`, for the host and for `aarch64-unknown-linux-musl` | the `[lints]` table of each crate and `clippy.toml`; the scope build compiles | correctness, idiom, size and complexity, also in Linux-only code |
 | tests (debug, release) | `cargo test`, `cargo test --release` | every test passes in both profiles, full counts | release-only bugs (overflow checks, timing) show |
@@ -97,9 +100,14 @@ cargo xtask ratchet --coverage    # also raise the coverage floors to the curren
 changed files with the change that earned them. `cargo xtask ratchet --init` writes the files from the current state;
 it was run when the rules came in.
 
-The ratchet files cannot authorize themselves: the gate compares each with its version at the merge base of `HEAD`
-and the base branch. An entry that is not there, a larger value, or a removed or lowered coverage floor fails. Only
-a file that did not exist at the base (a rule coming in) is taken as it is.
+The gate compares each ratchet file with its version at the merge base of `HEAD` and `overhaul` (`origin/overhaul`
+in a CI checkout), or `HEAD^1` when `HEAD` is on `overhaul` itself. An entry that is not there, a larger value, or a
+removed or lowered coverage floor fails. A file absent at that base is taken as it is only while the gate itself is
+absent there (the change that brought the gate in); once the gate exists, a missing ratchet file fails. Any git error
+fails. `OOS_GATE_BASE` names another base, in CI only. `--init` refuses a ratchet file the base already has.
+
+This holds against an edit of the ratchet files in a change. It trusts the local `overhaul` ref: whoever moves it
+moves the base. CI, with a fresh checkout, is the authority.
 
 Lint counts are per file, not per place: fixing one `unwrap` and adding another in the same file passes. That is the
 price of a ratchet that survives line moves. Size entries name the item, so they follow it through moves inside the
@@ -123,7 +131,7 @@ file; a renamed or moved item counts as new.
   Module rules have no ratchet: the tree must meet a rule when it is added. Phase 2 of the overhaul (`overhaul.md`)
   writes the rules for `ui`.
 - The statics check reads the type as written and follows the structs, enums, type aliases and `use ... as`
-  renames of the crate it names: `OnceLock<Counters>` counts when `Counters` holds atomics, `static S: M<u8>` counts
+  renames of the crate it names (not associated types, `<T as Trait>::X`): `OnceLock<Counters>` counts when `Counters` holds atomics, `static S: M<u8>` counts
   after `use std::sync::Mutex as M`. Types match by name, so two types of the same name in one crate count as one.
 - A metrics counter as a `static`: `static <file> <name>` in `xtask/data/architecture.txt`, with `<name>` as the
   gate prints it (`<function>::NAME` for a static inside a function). A listed static that no longer exists fails.
@@ -143,6 +151,7 @@ Not enforced yet; each is a task.
 - Impl spread counts the spelling of the self type (its last path segment): aliases split one type, and two types of
   the same name merge.
 - Path dependencies are checked by package name only, not by source: a local fork of an allowed crate passes.
-- Types imported from another workspace crate are not followed by the statics check.
+- Types imported from another workspace crate, and associated types, are not followed by the statics check.
+- The base branch is the local `overhaul` ref; CI is the authority on it.
 - pre-commit checks the working tree, not the staged index, and only the fast part. The done rule is the full gate
   on the final commit.

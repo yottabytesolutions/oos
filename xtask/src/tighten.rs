@@ -47,8 +47,26 @@ fn raised(floor: &Ratchet, now: &Ratchet) -> Ratchet {
     Ratchet(now.0.iter().map(|(k, &n)| (k.clone(), n.max(floor.0.get(k).copied().unwrap_or(0)))).collect())
 }
 
+/// `--init` only brings in a ratchet file the base does not have yet: over an existing one it would list anything.
+fn refuse_init(root: &Path, coverage: bool) -> Result<(), String> {
+    let mut names = vec!["clippy.txt", "size.txt", "statics.txt", "unsafe.txt"];
+    if coverage {
+        names.push("coverage.txt");
+    }
+    for n in names {
+        let rel = format!("xtask/data/{}", n);
+        if crate::base::text(root, &rel)?.is_some() {
+            return Err(format!("{} exists at the base: --init only introduces a new ratchet file", rel));
+        }
+    }
+    Ok(())
+}
+
 /// Tightens (or with `init` writes) the ratchets; `coverage` also measures and raises the floors.
 pub fn run(root: &Path, init: bool, coverage: bool) -> Result<(), String> {
+    if init {
+        refuse_init(root, coverage)?;
+    }
     let load = |n: &str| Ratchet::load(&steps::ratchet_path(root, n));
     let files = [
         ("clippy.txt", CLIPPY_HEAD),

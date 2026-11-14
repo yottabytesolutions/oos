@@ -1,4 +1,4 @@
-//! `unsafe` in a file: blocks, functions, impls and traits, test code included.
+//! `unsafe` in a file: blocks, functions, impls, traits, extern blocks and unsafe attributes, test code included.
 
 use syn::visit::{self, Visit};
 
@@ -19,6 +19,13 @@ impl<'a> Visit<'a> for Count {
     fn visit_item_impl(&mut self, i: &'a syn::ItemImpl) {
         self.0 += i.unsafety.is_some() as u64;
         visit::visit_item_impl(self, i);
+    }
+
+    /// `#[unsafe(no_mangle)]` and the attributes that are unsafe without saying so in edition 2021.
+    fn visit_attribute(&mut self, a: &'a syn::Attribute) {
+        let p = a.path();
+        self.0 += ["unsafe", "no_mangle", "export_name", "link_section"].iter().any(|n| p.is_ident(n)) as u64;
+        visit::visit_attribute(self, a);
     }
 
     fn visit_item_foreign_mod(&mut self, m: &'a syn::ItemForeignMod) {
@@ -60,6 +67,10 @@ mod tests {
         assert_eq!(count(&f), 5);
         // the hole: an unsafe extern block counted nothing
         assert_eq!(count(&syn::parse_file("unsafe extern \"C\" { fn e(); }\n").expect("parses")), 1);
+        // the hole: unsafe attributes counted nothing
+        let attrs = "#[unsafe(no_mangle)]\nfn a() {}\n#[unsafe(export_name = \"b\")]\nfn b() {}\n\
+                     #[no_mangle]\nfn c() {}\n#[link_section = \".x\"]\nstatic S: u8 = 0;\n#[inline]\nfn d() {}\n";
+        assert_eq!(count(&syn::parse_file(attrs).expect("parses")), 4);
     }
 
     #[test]

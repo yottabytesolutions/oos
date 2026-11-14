@@ -32,5 +32,5 @@ pub fn run(root: &Path, o: Options) -> bool {
             s.push(report::step("coverage", || steps::coverage(root)));
         }
     }
-    report::summary(&s, t.elapsed().as_secs_f64())
+    report::summary(&s, t.elapsed().as_secs_f64(), o.fast || !o.coverage)
 }

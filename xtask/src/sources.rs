@@ -4,7 +4,8 @@
 
 use crate::workspace::{Metadata, Package};
 use std::path::{Path, PathBuf};
-use syn::{Item, ItemMod};
+use syn::visit::{self, Visit};
+use syn::ItemMod;
 
 /// One source file of a crate.
 pub struct Source {
@@ -31,10 +32,21 @@ impl std::fmt::Debug for Source {
 }
 
 /// `#[cfg(test)]`.
-fn cfg_test(m: &ItemMod) -> bool {
-    m.attrs
+fn cfg_test(attrs: &[syn::Attribute]) -> bool {
+    attrs
         .iter()
         .any(|a| a.path().is_ident("cfg") && a.meta.require_list().is_ok_and(|l| l.tokens.to_string().trim() == "test"))
+}
+
+/// `#[path = ..]`, also inside `#[cfg_attr(.., path = ..)]`.
+fn path_attr(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        a.path().is_ident("path")
+            || (a.path().is_ident("cfg_attr")
+                && a.meta
+                    .require_list()
+                    .is_ok_and(|l| l.tokens.to_string().split(',').any(|p| p.trim().starts_with("path"))))
+    })
 }
 
 /// A `mod x;` found in a file: the inline modules around it, its name, and whether it is test code.
@@ -44,24 +56,56 @@ struct Decl {
     test: bool,
 }
 
-/// The `mod x;` declarations in `items`, inside inline modules too.
-fn decls(items: &[Item], inline: &[String], test: bool, out: &mut Vec<Decl>) -> Result<(), String> {
-    for it in items {
-        let Item::Mod(m) = it else { continue };
-        if m.attrs.iter().any(|a| a.path().is_ident("path")) {
-            return Err(format!("mod {}: #[path] is not allowed (the gate follows the default module files)", m.ident));
+/// Every `mod` in a file, in function bodies and impls too: the `mod x;` declarations to follow, or why the file is
+/// refused (`#[path]`, a `mod x;` inside a function body).
+#[derive(Default)]
+struct Decls {
+    inline: Vec<String>,
+    test: Vec<bool>,
+    depth: usize,
+    out: Vec<Decl>,
+    err: Option<String>,
+}
+
+impl<'a> Visit<'a> for Decls {
+    fn visit_item_mod(&mut self, m: &'a ItemMod) {
+        if path_attr(&m.attrs) {
+            self.err.get_or_insert(format!(
+                "mod {}: #[path] is not allowed (the gate follows the default module files)",
+                m.ident
+            ));
         }
-        let t = test || cfg_test(m);
+        let test = self.test.last().copied().unwrap_or(false) || cfg_test(&m.attrs);
         match &m.content {
-            None => out.push(Decl { inline: inline.to_vec(), name: m.ident.to_string(), test: t }),
-            Some((_, inner)) => {
-                let mut path = inline.to_vec();
-                path.push(m.ident.to_string());
-                decls(inner, &path, t, out)?;
+            None if self.depth > 0 => {
+                self.err.get_or_insert(format!("mod {}; inside a function body", m.ident));
+            }
+            None => self.out.push(Decl { inline: self.inline.clone(), name: m.ident.to_string(), test }),
+            Some(_) => {
+                self.inline.push(m.ident.to_string());
+                self.test.push(test);
+                visit::visit_item_mod(self, m);
+                self.test.pop();
+                self.inline.pop();
             }
         }
     }
-    Ok(())
+
+    fn visit_block(&mut self, b: &'a syn::Block) {
+        self.depth += 1;
+        visit::visit_block(self, b);
+        self.depth -= 1;
+    }
+}
+
+/// The `mod x;` declarations of `file`; `test` is the file's own context.
+fn decls(file: &syn::File, test: bool) -> Result<Vec<Decl>, String> {
+    let mut d = Decls { test: vec![test], ..Decls::default() };
+    d.visit_file(file);
+    match d.err {
+        Some(e) => Err(e),
+        None => Ok(d.out),
+    }
 }
 
 /// The directory a file's child modules live in: its own for `lib.rs`, `main.rs`, `mod.rs` and target roots,
@@ -76,28 +120,29 @@ fn child_dir(path: &Path, is_root: bool) -> PathBuf {
     }
 }
 
-/// Walks the module graph from one target root.
+/// Walks the module graph from one target root. A file reached as test code and as production code is production
+/// code: its children are walked again in that context.
 fn walk(root: &Path, start: &Path, test: bool, test_target: bool, out: &mut Vec<Source>) -> Result<(), String> {
     let mut todo = vec![(start.to_path_buf(), String::new(), test, true)];
     while let Some((path, module, test, is_root)) = todo.pop() {
         let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
-        if out.iter().any(|s| s.rel == rel) {
-            continue;
+        match out.iter().position(|s| s.rel == rel) {
+            Some(i) if out[i].test && !test => {
+                out.remove(i);
+            }
+            Some(_) => continue,
+            None => {}
         }
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", rel, e))?;
         let file = syn::parse_file(&text).map_err(|e| format!("{}: line {}: {}", rel, e.span().start().line, e))?;
-        let mut found = Vec::new();
-        decls(&file.items, &[], test, &mut found).map_err(|e| format!("{}: {}", rel, e))?;
         let dir = child_dir(&path, is_root);
-        for d in found {
+        for d in decls(&file, test).map_err(|e| format!("{}: {}", rel, e))? {
             let base = d.inline.iter().fold(dir.clone(), |p, s| p.join(s));
             let (flat, nested) = (base.join(format!("{}.rs", d.name)), base.join(&d.name).join("mod.rs"));
-            let child = if flat.exists() {
-                flat
-            } else if nested.exists() {
-                nested
-            } else {
-                return Err(format!("{}: mod {}: no {} or {}", rel, d.name, flat.display(), nested.display()));
+            let child = match (flat.exists(), nested.exists()) {
+                (true, _) => flat,
+                (false, true) => nested,
+                _ => return Err(format!("{}: mod {}: no {} or {}", rel, d.name, flat.display(), nested.display())),
             };
             let segs: Vec<&str> = [module.as_str()]
                 .into_iter()
@@ -181,6 +226,35 @@ mod tests {
                 ("p/tests/it.rs", "", true),
             ]
         );
+    }
+
+    // The hole: the same file declared under cfg(test) and cfg(not(test)) kept whichever context came first.
+    #[test]
+    fn production_context_wins_over_test() {
+        let root = fixture("twice");
+        let src = root.join("p").join("src");
+        std::fs::write(src.join("lib.rs"), "#[cfg(test)]\nmod a;\n#[cfg(not(test))]\nmod a;\n").expect("write");
+        let s = of_dir(&meta(&root), "p").expect("sources");
+        std::fs::remove_dir_all(&root).expect("clean up");
+        let a: Vec<bool> = s.iter().filter(|x| x.rel.starts_with("p/src/a")).map(|x| x.test).collect();
+        assert_eq!(a, [false, false, false], "{:?}", s);
+    }
+
+    // The holes: a module declared in a function body, or with #[path] inside cfg_attr, escaped the walk.
+    #[test]
+    fn modules_in_function_bodies_and_cfg_attr_paths_fail() {
+        for (lib, why) in [
+            ("fn f() {\n    #[path = \"x.rs\"]\n    mod hidden;\n}\n", "#[path]"),
+            ("fn f() { mod hidden; }\n", "inside a function body"),
+            ("impl S { fn f() { mod inner { mod deep; } } }\n", "inside a function body"),
+            ("#[cfg_attr(all(), path = \"../x.rs\")]\nmod a;\n", "#[path]"),
+        ] {
+            let root = fixture("body");
+            std::fs::write(root.join("p").join("src").join("lib.rs"), lib).expect("write");
+            let e = of_dir(&meta(&root), "p").expect_err(lib);
+            std::fs::remove_dir_all(&root).expect("clean up");
+            assert!(e.contains(why), "{}: {}", lib, e);
+        }
     }
 
     #[test]

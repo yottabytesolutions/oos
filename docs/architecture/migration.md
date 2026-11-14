@@ -287,7 +287,9 @@ every later unit round measures latency against it.
   socket (today `scpi.rs` 46 and `vxi11.rs` 319). The request inbox becomes a bounded MPSC queue with main's wake.
 - Tests, failing before: a stalled SCPI client does not delay a step; a settings round trip stays under 2 ms on the
   host with a busy picture; an idle main wakes only on vblanks it needs and input; a mapping change in a light step
-  gives a preview at the next full step; the first picture after idle comes at the next vblank.
+  gives a preview at the next full step; the first picture after idle comes at the next vblank; with the DRM fake,
+  a missing vblank event switches to the timer within 3 periods and back; panel and HDMI flips are accounted per
+  output; a failed flip does not stop the clock.
 - Unit check in round 1: settings round trip, remote throughput (`ifload.py`), idle CPU in STOP, the step clock
   against vblank, display off.
 - Estimate: 3 days.

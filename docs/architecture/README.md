@@ -466,9 +466,19 @@ The display paces the steps (adr/0016):
 - **The phase goes to the acquisition.** Main publishes `Pacing { next_step, period }` (the time of the next full
   step and the step period) in a latest-value cell. `pacing::Fill` in the acquisition thread ends a ring fill so that
   the batch is ready before the next step.
+- **Outputs.** The panel and HDMI share one DRM fd. Each output has its own id (CRTC), its own vblank subscription,
+  its own buffer states and its own pending flip; events carry the CRTC id and are accounted per output. The step
+  clock follows the panel. With HDMI as the only output, it follows HDMI's vblank.
+- **Startup.** Main sets the mode, submits a first picture (the splash or a blank), and queues the first vblank
+  sequence event before it enters `epoll_wait`, so the clock runs from the first iteration.
+- **Liveness.** If no vblank event arrives within 3 periods (a disconnect, a disabled CRTC, a missing event), main
+  switches that output to the `timerfd` clock and counts it; the next vblank event switches it back. If the GPU
+  helper dies, presentation falls back to the CPU path ([GPU helper death](#gpu-helper-death)) and the clock keeps
+  running on vblanks. A failed flip releases its buffer and is counted; it never stops the clock.
 - **A flip never blocks main.** Main submits a picture and returns to `epoll_wait`. It composes the next only when a
   free buffer exists (double buffering with the GPU helper's fenced pool, triple where the budget allows); otherwise it
-  skips that step's compose and counts it. Today's `wait_flip` with a 100 ms timeout (`drm.rs` 390) goes.
+  skips that step's compose and counts it. Per output a buffer is in one of four states: free, being rendered, pending
+  flip, scanned out ([GPU work proportional to change](#gpu-work-proportional-to-change)). Today's `wait_flip` with a 100 ms timeout (`drm.rs` 390) goes.
 - **Light step between full steps.** An input event or remote request wakes main at once and runs a light step:
   intake of input and remote requests only, change, acquire, reply. It does not drain `BatchUnit`s or `RecordBatch`es,
   and it runs no records, accumulation or compose. A settings round trip (SCPI write, reply) stays under 2 ms; the

@@ -29,7 +29,8 @@ Policy and mechanism are split:
   - `k`;
   - `raw_planned { gen, planned }`: whether raw re-reads come for that generation (today `deep_ok`). Until the
     thread has published a plan for the current `gen`, the plan is unknown, and unknown means hold: pair records are
-    not measured.
+    not measured. The thread publishes the plan in `apply`, before any output of that `gen` (acquisition.md,
+    `apply` step 2), so a pair record never arrives before its plan.
 
 The UI never estimates the plan itself (the 2026-11-14 two-lane bug).
 
@@ -91,7 +92,8 @@ Rule: every raw frame counts once. Per route:
 - fast path: frames count through the worker folds. The record result of the newest `Frame` updates the values, not
   the counts. Pair frames are never folded, so with pairs only raw `MeasRead` records count.
 - off the fast path: no folds. Every record of the `RecordBatch` that is measured counts once.
-- `MeasRead`: counts once unless its frame was already folded (the raw newest of a raw batch is; a deep window is not).
+- `MeasRead`: always counts once. It is made only of pair batches (the `RAW_PERIOD` read with live compression, the
+  deep window of deep pairs, the STOP final when the record shown is pairs), whose frames are never folded.
 
 The `stats` class of `ChangeSet` resets `mstat` and raises the statistics generation, `stats_gen`, the third number
 owned by `Generations` (architecture.md, [Generations](../architecture.md#generations)). Today `settings_changed`

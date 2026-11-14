@@ -122,7 +122,8 @@ loop {
 
 1. Take the newest `AcqWant`. Unchanged `gen` and `epoch`: nothing to do.
 2. Changed `gen`: disarm a batch armed ahead (its settings are the old ones), configure if `Want` or `slow` differ,
-   restart the units whose wants changed, set `applied = gen`.
+   restart the units whose wants changed, set `applied = gen`, and publish `Readings::raw_planned { gen, .. }` before
+   any output of that `gen` (records.md).
 3. Changed `epoch` alone (a retry with identical settings, CLEAR, RUN after STOP): no reconfiguration, but the same
    boundary. Disarm a batch armed ahead under the older epoch.
 4. Drop what the older `gen` or `epoch` left in flight: the queued `Frame`s and a fill that `NEW_SETTINGS` ended.

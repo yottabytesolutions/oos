@@ -55,6 +55,8 @@ UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole 
     `RecordBatch`. The UI adds them to the record store (mask counts, zones, software average, Bus trigger, Single,
     segments) and draws the step's records as the pseudo-batch.
   - Decoding and `to_record` use the batch's calibration and trigger snapshot from `BatchMeta`, never `Settings`.
+    `to_record` takes the screen window (`window`, `t_first`) from the batch's mapping key, fixed at first claim like
+    the deposit mapping.
     They stay off the first A72 in both routes. Today the acquisition thread decodes on the second A72.
   - A route change is an `acq` change: it changes what the UI needs from every frame, so it raises `gen`. A batch of
     an older `gen` is routed as it was fed: shown if its mapping key matches, never turned into records. Records drop
@@ -97,6 +99,7 @@ The accumulator reacts to the change point's `ChangeSet` only:
 |---|---|
 | `mapping` | drop window and in-flight units of the old key; draw `last[0]` once under the new key as the preview (window of 1, W = w); the first batch of the new key replaces it |
 | `phosphor` | clear maps and W (persistence setting changed, CLEAR) |
+| epoch raised (CLEAR, RUN after STOP, SINGLE, an autoset or Bode stage) | drop units of an epoch older than `PipeView`'s at merge, counted as stale. Without it, units in flight from before CLEAR come back after the reset, and units from before a STOP after RUN (today `paused` in `hw.rs` drops them). Epoch raises are rare events, never knob spins, so nothing visible is lost |
 | `acq` | nothing: batches convert with their own `BatchMeta` |
 
 STOP freezes the maps and W. A view change while stopped is a `mapping` change and replaces the frozen picture with
@@ -133,6 +136,7 @@ target:
 - Per mode: pictures of raw, codes, pairs, deep pairs and records within 3 % of each other at equal content
   (`pair_raw_mix_report`, `depth_mix_report` as asserting tests).
 - No unit drawn under two mapping keys. No partial unit merged.
+- Units fed before CLEAR never reach the picture after it; units fed before STOP never reach it after RUN.
 - A mapping change gives a preview at the next step and never a blank or old-position picture.
 - Window bounds: N, the 3-batch cap, the 67 ms age cap.
 - Persistence: a single hit stays visible for at least tau; nothing remains after decay to below one count.

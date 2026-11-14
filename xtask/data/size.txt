@@ -48,7 +48,6 @@
 930 file ui/src/ui/bode.rs
 797 file ui/src/ui/eyepage.rs
 662 file ui/src/ui/la.rs
-942 file ui/src/ui/lint.rs
 980 file ui/src/ui/panes.rs
 460 file ui/src/ui/startup.rs
 620 file ui/src/ui/time.rs
@@ -194,10 +193,6 @@
 84 fn ui/src/ui/bwtest.rs Ui::draw_bw
 66 fn ui/src/ui/eyepage.rs Ui::eye_plot
 64 fn ui/src/ui/la.rs Ui::la_adjust
-70 fn ui/src/ui/lint.rs check
-234 fn ui/src/ui/lint.rs gallery_at
-194 fn ui/src/ui/lint.rs menus_fit_at
-150 fn ui/src/ui/lint.rs screen_in_order_on
 61 fn ui/src/ui/measlabels.rs Ui::draw_meas_labels
 65 fn ui/src/ui/panes.rs Ui::draw_result_table
 120 fn ui/src/ui/startup.rs Ui::draw_start_up

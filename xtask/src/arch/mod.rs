@@ -5,6 +5,8 @@ mod modules;
 pub mod rules;
 
 use crate::repo::{self, CRATES};
+use crate::sources;
+use crate::workspace::Metadata;
 use std::path::Path;
 
 /// The rules of the repository at `root`.
@@ -14,16 +16,17 @@ pub fn load(root: &Path) -> Result<rules::Rules, String> {
     rules::parse(&text).map_err(|e| format!("{}: {}", path.display(), e))
 }
 
-/// Every violation of the crate and module rules in the repository at `root`.
-pub fn check(root: &Path) -> Result<Vec<String>, String> {
+/// Every violation of the crate and module rules in the workspace `meta` at `root`, and members without a gate
+/// entry.
+pub fn check(root: &Path, meta: &Metadata) -> Result<Vec<String>, String> {
     let rules = load(root)?;
-    let mut out = Vec::new();
-    out.extend(deps::check(root, &rules)?);
+    let mut out = meta.unlisted();
+    out.extend(deps::check(meta, &rules));
     for c in CRATES {
         let forbid: Vec<&rules::Forbid> = rules.forbid.iter().filter(|f| f.krate == c.dir).collect();
         let layers: Vec<&rules::Layer> = rules.layers.iter().filter(|l| l.krate == c.dir).collect();
         if !forbid.is_empty() || !layers.is_empty() {
-            out.extend(modules::check(root, c.dir, &forbid, &layers)?);
+            out.extend(modules::check(&sources::of_dir(meta, c.dir)?, &forbid, &layers));
         }
     }
     Ok(out)

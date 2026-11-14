@@ -27,7 +27,6 @@ pub fn run(root: &Path, o: Options) -> bool {
         s.push(report::step("clippy", || steps::clippy(root)));
         s.push(report::step("tests (debug)", || steps::tests(root, false)));
         s.push(report::step("tests (release)", || steps::tests(root, true)));
-        s.push(report::step("scope target", || steps::target(root)));
         s.push(report::step("perf guards", || steps::perf(root)));
         if o.coverage {
             s.push(report::step("coverage", || steps::coverage(root)));

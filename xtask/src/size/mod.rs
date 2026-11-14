@@ -5,8 +5,8 @@ pub mod unsafety;
 mod visit;
 
 use crate::ratchet::Ratchet;
+use crate::sources::Source;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
 
 /// Lines of a source file outside `#[cfg(test)]` items.
 pub const FILE_LINES: u64 = 400;
@@ -16,25 +16,6 @@ pub const FN_LINES: u64 = 60;
 pub const STRUCT_FIELDS: u64 = 12;
 /// Files with inherent impl blocks of one type in a crate.
 pub const IMPL_FILES: u64 = 3;
-
-/// The Rust files under `dir`, sorted.
-pub fn rust_files(dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut todo = vec![dir.to_path_buf()];
-    while let Some(d) = todo.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else { continue };
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                todo.push(p);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                out.push(p);
-            }
-        }
-    }
-    out.sort();
-    out
-}
 
 /// Adds `key` with `value` when it is over `limit`; a key seen twice in a file gets `#2`, `#3`.
 fn over(now: &mut Ratchet, key: String, value: u64, limit: u64) {
@@ -61,18 +42,24 @@ pub struct Measured {
     pub unsafes: Ratchet,
 }
 
-/// Walks the crate in `root/krate`. Files under `src` only: integration tests are test code.
-pub fn measure(root: &Path, krate: &str) -> Result<Measured, String> {
+/// The walk of one source text, for tests of the checks built on it.
+#[cfg(test)]
+pub fn visit_for_test(text: &str) -> visit::Found {
+    visit::walk(text).expect("parses")
+}
+
+/// Walks the sources of crate `krate` (`sources::of_dir`).
+pub fn measure(krate: &str, sources: &[Source]) -> Measured {
     let mut now = Ratchet::default();
     let mut statics = Ratchet::default();
     let (mut all_statics, mut types) = (Vec::new(), Vec::new());
     let mut unsafes = Ratchet::default();
     let mut spread: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for path in rust_files(&root.join(krate).join("src")) {
-        let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
-        let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", rel, e))?;
-        let found = visit::walk(&text).map_err(|e| format!("{}: {}", rel, e))?;
-        let lines = (text.lines().count() as u64).saturating_sub(found.test_lines);
+    for src in sources {
+        let rel = &src.rel;
+        let total = src.text.lines().count() as u64;
+        let found = visit::walk_file(&src.file, total, src.test);
+        let lines = total.saturating_sub(found.test_lines);
         over(&mut now, format!("file {}", rel), lines, FILE_LINES);
         for (name, n) in found.fns {
             over(&mut now, format!("fn {} {}", rel, name), n, FN_LINES);
@@ -96,7 +83,7 @@ pub fn measure(root: &Path, krate: &str) -> Result<Measured, String> {
     for (ty, files) in spread {
         over(&mut now, format!("impls {} {}", krate, ty), files.len() as u64, IMPL_FILES);
     }
-    Ok(Measured { sizes: now, statics, unsafes })
+    Measured { sizes: now, statics, unsafes }
 }
 
 #[cfg(test)]
@@ -114,7 +101,9 @@ mod tests {
 
     #[test]
     fn xtask_keeps_its_own_limits() {
-        let m = measure(&crate::repo::root(), "xtask").unwrap();
+        let root = crate::repo::root();
+        let meta = crate::workspace::load(&root).unwrap();
+        let m = measure("xtask", &crate::sources::of_dir(&meta, "xtask").unwrap());
         assert!(m.sizes.0.is_empty() && m.statics.0.is_empty() && m.unsafes.0.is_empty(), "{:?}", m);
     }
 }

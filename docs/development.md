@@ -4,9 +4,11 @@ Every change passes one gate before it is committed, pushed or merged:
 
 ```sh
 cargo xtask check                  # the full gate
-cargo xtask check --fast           # seconds: formatting, size limits, architecture
-cargo xtask check --no-coverage    # the full gate without the coverage run
+cargo xtask check --fast           # partial, seconds: formatting, size limits, statics, unsafe, architecture
+cargo xtask check --no-coverage    # partial: the full gate without the coverage run
 ```
+
+A change is done when the full gate passes on its final commit. `--fast` and `--no-coverage` are partial results.
 
 Run it from the repository root. It prints one line per step with its time, the details of a failure, and exits
 non-zero when a step failed. Humans and agents run the same command; the hooks and CI run it too.
@@ -18,6 +20,9 @@ non-zero when a step failed. Humans and agents run the same command; the hooks a
   fails at the coverage step; `--no-coverage` skips it.
 - Hooks, once per clone: `git config core.hooksPath .githooks`. pre-commit runs `check --fast`, pre-push the full
   gate.
+- The ratchet files are compared with the base branch (`overhaul`, or `OOS_GATE_BASE`): the clone needs it
+  (`git fetch origin overhaul`; CI checks out with full history).
+- Every cargo call of the gate uses `--locked`: a change of a dependency comes with its `Cargo.lock` change.
 
 ## The crates
 
@@ -26,7 +31,12 @@ and the release profile of the scope binaries. `gpu` is C (`gpu/oos-gpu.c`), bui
 `gpu/build.sh` and `gpu/test-host.sh`, so it is no member. The scope's binaries land in
 `target/aarch64-unknown-linux-musl/release/`; the target flags (rust-lld, static, Cortex-A72) are in the root
 `.cargo/config.toml`. The gate runs each step crate by crate (`CRATES` in `xtask/src/repo.rs`), so its counts and
-ratchets stay per crate. `rustfmt.toml` and `clippy.toml` sit at the root.
+ratchets stay per crate; a workspace member without an entry there fails the architecture step. `rustfmt.toml` and
+`clippy.toml` sit at the root.
+
+The syntax checks (size, statics, unsafe, module rules) read every file reachable from a member's cargo targets
+through its `mod` declarations: library, binaries, integration tests, benches, examples. `#[path]` on a module fails.
+Test code is a test, bench or example target, a `#[cfg(test)]` module (in its own file too), or a `#[test]` function.
 
 ## What each check enforces
 
@@ -37,17 +47,15 @@ ratchets stay per crate. `rustfmt.toml` and `clippy.toml` sit at the root.
 | mutable statics | syntax walk | a `static` whose type holds a `Mutex`, `RwLock`, atomic or `Cell`/`RefCell`/`UnsafeCell` (also through the crate's own types) only as a metrics counter (`static` lines in `architecture.txt`); `OnceLock`, `LazyLock` and `OnceCell` around plain data are allowed (set once, then read only) | global mutable state hides ownership |
 | unsafe | syntax walk | `unsafe` blocks, functions, impls and traits only under the `unsafe` path prefixes of `architecture.txt`: oos-hal and the adapters of ui; `dsp` has `#![forbid(unsafe_code)]` | memory safety stays at the hardware edge (AGENTS.md) |
 | architecture | `cargo metadata`, syntax walk | `xtask/data/architecture.txt`: allowed crate dependencies; module rules inside a crate | the layers cannot erode by accident |
-| clippy | `cargo clippy --all-targets` | the `[lints]` table of each crate and `clippy.toml` | correctness, idiom, size and complexity |
+| clippy | `cargo clippy --all-targets`, for the host and for `aarch64-unknown-linux-musl` | the `[lints]` table of each crate and `clippy.toml`; the scope build compiles | correctness, idiom, size and complexity, also in Linux-only code |
 | tests (debug, release) | `cargo test`, `cargo test --release` | every test passes in both profiles, full counts | release-only bugs (overflow checks, timing) show |
-| scope target | `cargo check --all-targets --target aarch64-unknown-linux-musl` | the scope build compiles, `cfg(target_os = "linux")` code included | the host build hides Linux-only code |
 | perf guards | `tools/perf-guard.sh` | the fork's allocation counts and timing ratios; its exit code decides | the fast paths stay fast |
 | coverage | `cargo llvm-cov` per crate | line coverage per crate ≥ the floor in `xtask/data/coverage.txt` | coverage does not fall |
 
 The limits have no exemptions (ADR 0010): a record over 12 fields groups its fields into sub-structs.
 
-Size limits measure lines from `fn` to the closing brace, including comments and blank lines. Test code is exempt:
-`#[cfg(test)]` modules, `#[test]` functions and the crates' `tests/` directories. Clippy's `too_many_lines` (60 code
-lines, `clippy.toml`) covers test code too.
+Size limits measure lines from `fn` to the closing brace, including comments and blank lines. Test code is exempt.
+Clippy's `too_many_lines` (60 code lines, `clippy.toml`) covers test code too.
 
 The lint set (identical in every crate, `[lints]` in its `Cargo.toml`): `clippy::all`, plus `too_many_lines`,
 `cognitive_complexity`, `too_many_arguments`, `type_complexity`, `large_enum_variant`, `undocumented_unsafe_blocks`
@@ -60,11 +68,11 @@ an ordinary build still runs; the gate turns findings into failures through the 
 stop at the first crate with an old finding and count nothing after it. `xtask` itself denies all of
 them and has no ratchet.
 
-The scope check runs on the host: `cargo check` does not link, so the target's standard library is enough. It
-compiles the same crates with the same (default) features, target and target flags (`.cargo/config.toml`) as the
-image build (`boot/build-dev-image.sh`), only without code generation and linking. Its own
-target directory (`target/xtask-arm64` at the root) keeps it apart from the host build. The earlier Docker check
-mounted every worktree at the same path and could take another tree's build as fresh.
+The scope's target runs as a second clippy pass per scope crate, on the host: clippy does not link, so the
+target's standard library is enough. It compiles the same crates with the same (default) features, target and target
+flags (`.cargo/config.toml`) as the image build (`boot/build-dev-image.sh`), without code generation and linking, and
+lints the code that only builds there (`cfg(target_os = "linux")`). A finding seen in both passes counts once. The
+earlier Docker check mounted every worktree at the same path and could take another tree's build as fresh.
 
 ## Ratchets
 
@@ -87,7 +95,11 @@ cargo xtask ratchet --coverage    # also raise the coverage floors to the curren
 
 `ratchet` never raises a size or count and never adds an entry: a new finding is fixed, not listed. Commit the
 changed files with the change that earned them. `cargo xtask ratchet --init` writes the files from the current state;
-it was run once when the rules came in, and a reviewer must see a reason before it runs again.
+it was run when the rules came in.
+
+The ratchet files cannot authorize themselves: the gate compares each with its version at the merge base of `HEAD`
+and the base branch. An entry that is not there, a larger value, or a removed or lowered coverage floor fails. Only
+a file that did not exist at the base (a rule coming in) is taken as it is.
 
 Lint counts are per file, not per place: fixing one `unwrap` and adding another in the same file passes. That is the
 price of a ratchet that survives line moves. Size entries name the item, so they follow it through moves inside the
@@ -110,12 +122,27 @@ file; a renamed or moved item counts as new.
 
   Module rules have no ratchet: the tree must meet a rule when it is added. Phase 2 of the overhaul (`overhaul.md`)
   writes the rules for `ui`.
-- The statics check reads the type as written and follows the structs and enums of the crate it names, through
-  their fields: `OnceLock<Counters>` counts when `Counters` holds atomics. Types match by name, so two types of the
-  same name in one crate count as one. A `thread_local!` is not seen (macro body).
+- The statics check reads the type as written and follows the structs, enums, type aliases and `use ... as`
+  renames of the crate it names: `OnceLock<Counters>` counts when `Counters` holds atomics, `static S: M<u8>` counts
+  after `use std::sync::Mutex as M`. Types match by name, so two types of the same name in one crate count as one.
 - A metrics counter as a `static`: `static <file> <name>` in `xtask/data/architecture.txt`, with `<name>` as the
   gate prints it (`<function>::NAME` for a static inside a function). A listed static that no longer exists fails.
 - Where `unsafe` may appear: `unsafe <path prefix>` in `xtask/data/architecture.txt` (a crate directory, a
   directory, or a file; `x` also covers `x.rs`). The list moves with the migration.
 - A limit: the constants in `xtask/src/size/mod.rs` and the thresholds in `clippy.toml`. Lowering a limit needs
   `ratchet --init` for the new findings; say why in the commit.
+
+## Known limits
+
+Not enforced yet; each is a task.
+
+- Macros: the syntax checks read unexpanded code. Items a `macro_rules!` or `thread_local!` generates (a static, a
+  struct, a module path, an `unsafe` block) are not seen. Clippy sees expanded code.
+- Module boundaries: an inline `mod` takes the rules of its file's module, not its own; a glob import (`use
+  super::*`) followed by a bare name, and a re-export through an allowed module, hide the module the name comes from.
+- Impl spread counts the spelling of the self type (its last path segment): aliases split one type, and two types of
+  the same name merge.
+- Path dependencies are checked by package name only, not by source: a local fork of an allowed crate passes.
+- Types imported from another workspace crate are not followed by the statics check.
+- pre-commit checks the working tree, not the staged index, and only the fast part. The done rule is the full gate
+  on the final commit.

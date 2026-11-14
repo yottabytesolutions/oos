@@ -1,31 +1,7 @@
 //! Crate dependency direction, from `cargo metadata`.
 
 use super::rules::Rules;
-use crate::run;
-use serde::Deserialize;
-use std::path::Path;
-
-#[derive(Debug, Deserialize)]
-struct Metadata {
-    packages: Vec<Package>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Package {
-    name: String,
-    dependencies: Vec<Dependency>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Dependency {
-    name: String,
-}
-
-/// The package name and its direct dependencies, from the metadata JSON of one crate.
-fn direct(json: &str) -> Result<Vec<(String, Vec<String>)>, String> {
-    let m: Metadata = serde_json::from_str(json).map_err(|e| format!("cargo metadata: {}", e))?;
-    Ok(m.packages.into_iter().map(|p| (p.name, p.dependencies.into_iter().map(|d| d.name).collect())).collect())
-}
+use crate::workspace::Metadata;
 
 /// Violations of the crate rules by `packages`: a package without a rule, or a dependency its rule does not allow.
 fn violations(packages: &[(String, Vec<String>)], rules: &Rules) -> Vec<String> {
@@ -40,13 +16,14 @@ fn violations(packages: &[(String, Vec<String>)], rules: &Rules) -> Vec<String> 
     out
 }
 
-/// Checks every package of the workspace at `root`.
-pub fn check(root: &Path, rules: &Rules) -> Result<Vec<String>, String> {
-    let out = run::capture(root, "cargo", &["metadata", "--format-version", "1", "--no-deps"])?;
-    if !out.ok {
-        return Err(run::tail(&out.stderr, 10));
-    }
-    Ok(violations(&direct(&out.stdout)?, rules))
+/// Checks every member of the workspace.
+pub fn check(meta: &Metadata, rules: &Rules) -> Vec<String> {
+    let packages: Vec<(String, Vec<String>)> = meta
+        .packages
+        .iter()
+        .map(|p| (p.name.clone(), p.dependencies.iter().map(|d| d.name.clone()).collect()))
+        .collect();
+    violations(&packages, rules)
 }
 
 #[cfg(test)]
@@ -56,9 +33,8 @@ mod tests {
     #[test]
     fn a_dependency_outside_the_rule_fails() {
         let rules = super::super::rules::parse("crate oos-dsp ->\ncrate oos-ui -> oos-dsp\n").unwrap();
-        let json = r#"{"packages":[{"name":"oos-dsp","dependencies":[{"name":"oos-hal"}]},
-            {"name":"oos-ui","dependencies":[{"name":"oos-dsp"}]},{"name":"x","dependencies":[]}]}"#;
-        let v = violations(&direct(json).unwrap(), &rules);
+        let p = |n: &str, d: &[&str]| (n.to_string(), d.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        let v = violations(&[p("oos-dsp", &["oos-hal"]), p("oos-ui", &["oos-dsp"]), p("x", &[])], &rules);
         assert_eq!(v, ["oos-dsp may not depend on oos-hal", "x: no crate rule in xtask/data/architecture.txt"]);
     }
 }

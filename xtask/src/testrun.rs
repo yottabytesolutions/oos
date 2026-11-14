@@ -35,13 +35,10 @@ pub fn counts(out: &str) -> Counts {
 /// Runs the tests of the crate in `root/krate`; `release` adds `--release`. Err with the end of the output when a
 /// test fails or the build breaks.
 pub fn run(root: &Path, krate: &str, release: bool) -> Result<Counts, String> {
-    let mut args = vec!["test"];
+    // the committed Cargo.lock, never a rewritten one
+    let mut args = vec!["test", "--locked"];
     if release {
         args.push("--release");
-    }
-    // CI builds exactly the committed lock files
-    if std::env::var_os("CI").is_some() {
-        args.push("--locked");
     }
     let out = run::capture(&root.join(krate), "cargo", &args)?;
     let c = counts(&out.stdout);

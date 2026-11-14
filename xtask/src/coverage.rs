@@ -42,7 +42,7 @@ pub fn installed() -> bool {
 pub fn measure(root: &Path, krate: &str) -> Result<u64, String> {
     let dir = root.join("target").join("xtask-cov");
     let out = std::process::Command::new("cargo")
-        .args(["llvm-cov", "--json", "--summary-only"])
+        .args(["llvm-cov", "--locked", "--json", "--summary-only"])
         .env("CARGO_TARGET_DIR", dir)
         .current_dir(root.join(krate))
         .output()

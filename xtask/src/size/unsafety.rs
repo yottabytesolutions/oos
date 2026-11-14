@@ -21,6 +21,11 @@ impl<'a> Visit<'a> for Count {
         visit::visit_item_impl(self, i);
     }
 
+    fn visit_item_foreign_mod(&mut self, m: &'a syn::ItemForeignMod) {
+        self.0 += m.unsafety.is_some() as u64;
+        visit::visit_item_foreign_mod(self, m);
+    }
+
     fn visit_item_trait(&mut self, t: &'a syn::ItemTrait) {
         self.0 += t.unsafety.is_some() as u64;
         visit::visit_item_trait(self, t);
@@ -53,6 +58,8 @@ mod tests {
         )
         .expect("parses");
         assert_eq!(count(&f), 5);
+        // the hole: an unsafe extern block counted nothing
+        assert_eq!(count(&syn::parse_file("unsafe extern \"C\" { fn e(); }\n").expect("parses")), 1);
     }
 
     #[test]

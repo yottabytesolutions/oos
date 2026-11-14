@@ -45,9 +45,18 @@ pub struct Findings {
 
 /// Reads clippy's JSON lines; only messages of the crate whose manifest is `manifest` count (path dependencies report
 /// their own warnings too). A finding reported for the library and again for its test build counts once.
+#[cfg(test)]
 pub fn parse(json: &str, krate: &str, manifest: &str) -> Findings {
     let mut f = Findings::default();
-    let mut seen = BTreeSet::new();
+    add(json, krate, manifest, &mut BTreeSet::new(), &mut f);
+    f
+}
+
+/// A place a lint fired: file, line, column, lint.
+type Place = (String, u64, u64, String);
+
+/// Adds the findings of one clippy output to `f`; `seen` holds the places counted already, across runs.
+fn add(json: &str, krate: &str, manifest: &str, seen: &mut BTreeSet<Place>, f: &mut Findings) {
     for l in json.lines().filter_map(|l| serde_json::from_str::<Line>(l).ok()) {
         let (Some(m), Some(mp)) = (l.message, l.manifest_path) else { continue };
         if l.reason != "compiler-message" || mp != manifest {
@@ -62,17 +71,27 @@ pub fn parse(json: &str, krate: &str, manifest: &str) -> Findings {
             *f.counts.0.entry(format!("{} {} {}", krate, s.file_name, code.code)).or_default() += 1;
         }
     }
-    f
 }
 
-/// Runs clippy on every target of the crate in `root/krate`.
-pub fn run(root: &Path, krate: &str) -> Result<Findings, String> {
+/// Runs clippy on every target of the crate in `root/krate`, for the host and, with `scope`, for the scope's target
+/// too: code under `cfg(target_os = "linux")` or `cfg(target_arch = "aarch64")` only builds there. A finding seen in
+/// both counts once.
+pub fn run(root: &Path, krate: &str, scope: bool) -> Result<Findings, String> {
     let dir = root.join(krate);
-    let out = run::capture(&dir, "cargo", &["clippy", "--all-targets", "--message-format=json", "--quiet"])?;
     let manifest = dir.join("Cargo.toml").to_string_lossy().into_owned();
-    let mut f = parse(&out.stdout, krate, &manifest);
-    if !out.ok && f.errors.is_empty() {
-        f.errors.push(run::tail(&out.stderr, 20));
+    let mut f = Findings::default();
+    let mut seen = BTreeSet::new();
+    let host = ["clippy", "--locked", "--all-targets", "--message-format=json", "--quiet"];
+    let mut runs = vec![host.to_vec()];
+    if scope {
+        runs.push([&host[..], &["--target", crate::repo::TARGET]].concat());
+    }
+    for args in runs {
+        let out = run::capture(&dir, "cargo", &args)?;
+        add(&out.stdout, krate, &manifest, &mut seen, &mut f);
+        if !out.ok && f.errors.is_empty() {
+            f.errors.push(run::tail(&out.stderr, 20));
+        }
     }
     Ok(f)
 }

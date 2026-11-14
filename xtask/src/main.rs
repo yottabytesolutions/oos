@@ -4,6 +4,7 @@
 //!   cargo xtask ratchet [--init] [--coverage]    write the ratchet files back after an improvement
 
 mod arch;
+mod base;
 mod check;
 mod clippy;
 mod coverage;
@@ -13,10 +14,12 @@ mod repo;
 mod report;
 mod run;
 mod size;
+mod sources;
 mod steps;
 mod target;
 mod testrun;
 mod tighten;
+mod workspace;
 
 use std::process::ExitCode;
 

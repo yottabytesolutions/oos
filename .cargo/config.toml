@@ -1,6 +1,6 @@
 # `cargo xtask <command>` from the repository root runs the gate (docs/development.md).
 [alias]
-xtask = "run --quiet --manifest-path xtask/Cargo.toml --"
+xtask = "run --locked --quiet --manifest-path xtask/Cargo.toml --"
 
 # The scope build (boot/build-dev-image.sh) and the gate's scope check: static, linked by rust-lld, for the A72 cores.
 [target.aarch64-unknown-linux-musl]

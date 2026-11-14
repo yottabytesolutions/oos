@@ -2,8 +2,7 @@
 //! coverage floors only rise. `--init` writes them from the current state (once, when a rule comes in).
 
 use crate::ratchet::Ratchet;
-use crate::repo::CRATES;
-use crate::{clippy, size, steps};
+use crate::{clippy, steps};
 use std::path::Path;
 
 const CLIPPY_HEAD: &str = "Clippy and rustc lint findings per crate, file and lint: <count> <crate> <file> <lint>.\n\
@@ -23,13 +22,12 @@ Written by `cargo xtask ratchet` (docs/development.md). Counts may only fall.";
 fn current(root: &Path) -> Result<[Ratchet; 4], String> {
     let rules = crate::arch::load(root)?;
     let [mut lints, mut sizes, mut statics, mut unsafes] = [(); 4].map(|_| Ratchet::default());
-    for c in CRATES.iter().filter(|c| c.ratchet) {
-        let f = clippy::run(root, c.dir)?;
+    for (c, m) in steps::measured(root)?.into_iter().filter(|(c, _)| c.ratchet) {
+        let f = clippy::run(root, c.dir, c.target)?;
         if !f.errors.is_empty() {
             return Err(format!("{}: does not build:\n{}", c.dir, f.errors.join("\n")));
         }
         lints.0.extend(f.counts.0);
-        let m = size::measure(root, c.dir)?;
         unsafes.0.extend(steps::unsafe_now(&m, &rules.unsafe_paths).0);
         sizes.0.extend(m.sizes.0);
         statics.0.extend(m.statics.0.into_iter().filter(|(k, _)| !rules.statics.contains(k)));

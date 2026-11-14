@@ -164,6 +164,18 @@ impl<'a> Visit<'a> for Walk {
         visit::visit_item_static(self, s);
     }
 
+    /// `type X = Mutex<u8>;`: an alias is a type whose one field is its definition.
+    fn visit_item_type(&mut self, t: &'a syn::ItemType) {
+        self.found.types.push((t.ident.to_string(), quote_type(&t.ty)));
+        visit::visit_item_type(self, t);
+    }
+
+    /// `use std::sync::Mutex as M;`: `M` stands for `Mutex`.
+    fn visit_use_rename(&mut self, r: &'a syn::UseRename) {
+        self.found.types.push((r.rename.to_string(), r.ident.to_string()));
+        visit::visit_use_rename(self, r);
+    }
+
     fn visit_item_enum(&mut self, e: &'a syn::ItemEnum) {
         let fields = e.variants.iter().map(|v| field_types(v.fields.iter())).collect::<Vec<_>>().join(" ");
         self.found.types.push((e.ident.to_string(), fields));
@@ -186,12 +198,22 @@ impl<'a> Visit<'a> for Walk {
 }
 
 /// Walks the source `text`.
+#[cfg(test)]
 pub fn walk(text: &str) -> Result<Found, String> {
     let file = syn::parse_file(text).map_err(|e| format!("line {}: {}", e.span().start().line, e))?;
+    Ok(walk_file(&file, text.lines().count() as u64, false))
+}
+
+/// Walks a parsed file of `lines` lines; a file of test code (`test`) only has its `unsafe` counted.
+pub fn walk_file(file: &syn::File, lines: u64, test: bool) -> Found {
+    let unsafes = super::unsafety::count(file);
+    if test {
+        return Found { test_lines: lines, unsafes, ..Found::default() };
+    }
     let mut w = Walk::default();
-    w.visit_file(&file);
-    w.found.unsafes = super::unsafety::count(&file);
-    Ok(w.found)
+    w.visit_file(file);
+    w.found.unsafes = unsafes;
+    w.found
 }
 
 #[cfg(test)]

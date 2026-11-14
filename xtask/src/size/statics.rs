@@ -44,6 +44,17 @@ mod tests {
         (n.to_string(), f.to_string())
     }
 
+    // The hole: `use Mutex as M` and `type X = Mutex<..>` hid the lock from the check.
+    #[test]
+    fn aliases_are_followed() {
+        let f = crate::size::visit_for_test(
+            "use std::sync::Mutex as M;\ntype Shared = std::sync::Arc<M<u8>>;\nstatic A: M<u8> = M::new(0);\nstatic B: OnceLock<Shared> = OnceLock::new();\n",
+        );
+        let i = interior_types(&f.types);
+        let flagged: Vec<&str> = f.statics.iter().filter(|(_, ty)| mutable(ty, &i)).map(|(n, _)| n.as_str()).collect();
+        assert_eq!(flagged, ["A", "B"]);
+    }
+
     #[test]
     fn named_types_are_followed_through_the_crate() {
         let types = [t("Counters", "AtomicU64 AtomicU64"), t("Outer", "Vec < Counters >"), t("Plain", "u8 String")];

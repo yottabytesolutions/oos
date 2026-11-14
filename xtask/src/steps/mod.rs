@@ -1,11 +1,15 @@
 //! The gate's steps over every crate. Each returns its summary lines, or the failures.
 
+mod code;
+
+pub use code::{measured, size, statics, unsafe_now, unsafety};
+
 use crate::ratchet::Ratchet;
 use crate::repo::{self, CRATES};
-use crate::{arch, clippy, coverage, fmt, size, target, testrun};
+use crate::{arch, base, clippy, coverage, fmt, target, testrun, workspace};
 use std::path::Path;
 
-type Outcome = Result<Vec<String>, Vec<String>>;
+pub(crate) type Outcome = Result<Vec<String>, Vec<String>>;
 
 /// The ratchet file `name` in the data directory.
 pub fn ratchet_path(root: &Path, name: &str) -> std::path::PathBuf {
@@ -26,7 +30,7 @@ pub fn of_crate(r: &Ratchet, krate: &str) -> Ratchet {
     )
 }
 
-fn outcome(ok: Vec<String>, bad: Vec<String>) -> Outcome {
+pub(crate) fn outcome(ok: Vec<String>, bad: Vec<String>) -> Outcome {
     if bad.is_empty() {
         Ok(ok)
     } else {
@@ -46,9 +50,23 @@ pub fn fmt(root: &Path) -> Outcome {
     outcome(ok, bad)
 }
 
-/// Compares `now` of every crate with the ratchet file; crates without a ratchet allow nothing.
-fn ratcheted(root: &Path, file: &str, now: &[(&'static str, bool, Ratchet)]) -> Outcome {
+/// The ratchet file `file`, checked against the base: it may not list more or larger entries than at the merge base.
+fn allowed(root: &Path, file: &str) -> Result<Ratchet, Vec<String>> {
     let allowed = Ratchet::load(&ratchet_path(root, file)).map_err(|e| vec![e])?;
+    let rel = format!("xtask/data/{}", file);
+    if let Some(t) = base::text(root, &rel).map_err(|e| vec![e])? {
+        let widened =
+            base::widened(&Ratchet::parse(&t).map_err(|e| vec![format!("{} at the base: {}", rel, e)])?, &allowed);
+        if !widened.is_empty() {
+            return Err(widened.into_iter().map(|w| format!("{}: {}", rel, w)).collect());
+        }
+    }
+    Ok(allowed)
+}
+
+/// Compares `now` of every crate with the ratchet file; crates without a ratchet allow nothing.
+pub(crate) fn ratcheted(root: &Path, file: &str, now: &[(&'static str, bool, Ratchet)]) -> Outcome {
+    let allowed = allowed(root, file)?;
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for (krate, has_ratchet, n) in now {
         let a = if *has_ratchet { of_crate(&allowed, krate) } else { Ratchet::default() };
@@ -65,11 +83,16 @@ fn ratcheted(root: &Path, file: &str, now: &[(&'static str, bool, Ratchet)]) -> 
     outcome(ok, bad)
 }
 
+/// Clippy for the host and, for the scope's crates, for aarch64-unknown-linux-musl: this also checks that the scope
+/// build compiles, with the image build's target flags.
 pub fn clippy(root: &Path) -> Outcome {
+    if !target::installed() {
+        return Err(vec![format!("rustup target add {}", repo::TARGET)]);
+    }
     let mut now = Vec::new();
     let mut errors = Vec::new();
     for c in CRATES {
-        match clippy::run(root, c.dir) {
+        match clippy::run(root, c.dir, c.target) {
             Ok(f) => {
                 errors.extend(f.errors.into_iter().map(|e| format!("{}: {}", c.dir, e)));
                 now.push((c.dir, c.ratchet, f.counts));
@@ -83,56 +106,9 @@ pub fn clippy(root: &Path) -> Outcome {
     ratcheted(root, "clippy.txt", &now)
 }
 
-pub fn size(root: &Path) -> Outcome {
-    let mut now = Vec::new();
-    for c in CRATES {
-        now.push((c.dir, c.ratchet, size::measure(root, c.dir).map_err(|e| vec![e])?.sizes));
-    }
-    ratcheted(root, "size.txt", &now)
-}
-
-/// `unsafe` outside the allowed paths of a crate (`unsafe` lines in architecture.txt).
-pub fn unsafe_now(m: &size::Measured, allowed: &[String]) -> Ratchet {
-    let ok = |k: &str| k.split_once(' ').is_some_and(|(_, f)| allowed.iter().any(|p| size::unsafety::under(f, p)));
-    Ratchet(m.unsafes.0.iter().filter(|(k, _)| !ok(k)).map(|(k, v)| (k.clone(), *v)).collect())
-}
-
-/// `unsafe` only in the allowed paths (architecture.txt) and the listed old places (unsafe.txt).
-pub fn unsafety(root: &Path) -> Outcome {
-    let rules = arch::load(root).map_err(|e| vec![e])?;
-    let mut now = Vec::new();
-    for c in CRATES {
-        let m = size::measure(root, c.dir).map_err(|e| vec![e])?;
-        now.push((c.dir, c.ratchet, unsafe_now(&m, &rules.unsafe_paths)));
-    }
-    ratcheted(root, "unsafe.txt", &now)
-}
-
-/// Mutable statics: only metrics (allowlist in architecture.txt) and the listed old ones (statics.txt).
-pub fn statics(root: &Path) -> Outcome {
-    let rules = arch::load(root).map_err(|e| vec![e])?;
-    let mut now = Vec::new();
-    let mut all = std::collections::BTreeSet::new();
-    for c in CRATES {
-        let mut m = size::measure(root, c.dir).map_err(|e| vec![e])?.statics;
-        all.extend(m.0.keys().cloned());
-        m.0.retain(|k, _| !rules.statics.contains(k));
-        now.push((c.dir, c.ratchet, m));
-    }
-    let stale: Vec<String> = rules
-        .statics
-        .iter()
-        .filter(|k| !all.contains(*k))
-        .map(|k| format!("{}: listed as metrics, not found", k))
-        .collect();
-    if !stale.is_empty() {
-        return Err(stale);
-    }
-    ratcheted(root, "statics.txt", &now)
-}
-
 pub fn arch(root: &Path) -> Outcome {
-    let v = arch::check(root).map_err(|e| vec![e])?;
+    let meta = workspace::load(root).map_err(|e| vec![e])?;
+    let v = arch::check(root, &meta).map_err(|e| vec![e])?;
     outcome(vec!["crate and module rules hold".into()], v)
 }
 
@@ -141,20 +117,6 @@ pub fn tests(root: &Path, release: bool) -> Outcome {
     for c in CRATES {
         match testrun::run(root, c.dir, release) {
             Ok(n) => ok.push(format!("{}: {}", c.dir, n)),
-            Err(e) => bad.push(format!("{}: {}", c.dir, e)),
-        }
-    }
-    outcome(ok, bad)
-}
-
-pub fn target(root: &Path) -> Outcome {
-    if !target::installed() {
-        return Err(vec![format!("rustup target add {}", repo::TARGET)]);
-    }
-    let (mut ok, mut bad) = (Vec::new(), Vec::new());
-    for c in CRATES.iter().filter(|c| c.target) {
-        match target::check(root, c.dir) {
-            Ok(()) => ok.push(format!("{}: checks for {}", c.dir, repo::TARGET)),
             Err(e) => bad.push(format!("{}: {}", c.dir, e)),
         }
     }
@@ -186,6 +148,12 @@ pub fn coverage(root: &Path) -> Outcome {
         return Err(vec!["cargo install cargo-llvm-cov (or run with --no-coverage)".into()]);
     }
     let floor = Ratchet::load(&ratchet_path(root, "coverage.txt")).map_err(|e| vec![e])?;
+    if let Some(t) = base::text(root, "xtask/data/coverage.txt").map_err(|e| vec![e])? {
+        let lowered = base::lowered(&Ratchet::parse(&t).map_err(|e| vec![e])?, &floor);
+        if !lowered.is_empty() {
+            return Err(lowered);
+        }
+    }
     let now = coverage_now(root)?;
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for (k, &n) in &now.0 {

@@ -421,7 +421,9 @@ A hardware poll remains only where the FPGA raises no event; it runs at the hard
 | ntp, mdns, wlan | `poll` | their sockets, rtnetlink link events, supplicant events, config `eventfd`, protocol deadlines (`timerfd`) | protocol-bound | none |
 
 Measured on the unit and shown in `:SYSTem:STATe?`: per thread its wakes per second and the p99 time from wake source
-to handling. unitlab asserts the latency column; an idle scope in STOP wakes main only on input and flips.
+to handling. unitlab asserts the latency column; an idle scope in STOP wakes main only on input and the vblanks it
+needs. The latency column is provisional until [Platform tuning](system.md#platform-tuning) records the idle states,
+governor and IRQ affinity it depends on.
 
 The FPGA raises no usable user interrupt for trigger done, ring count or roll chunks: stock firmware polls BAR1
 (`0x4080` bit 30) and then does one blocking C2H read, with the driver on legacy INTx and MSI off (RE, `regmap`).
@@ -964,7 +966,7 @@ after each step may tighten them, never loosen them without a doc change.
 | compose + present submission | p99 <= 4 ms; <= 6 ms on HDMI | `stage compose`, `stage present` | unitlab | M16 |
 | light step (input or remote) | settings round trip p99 <= 2 ms | `light` | host test, unitlab | M3d |
 | remote throughput | >= 500 query/answer exchanges per s on one SCPI connection, picture rate within 10 % | `remote` | unitlab (`ifload.py`) | M3d |
-| acquisition reaction | STOP, a settings change or cancel within 1 ms | `acq wake` | host test with the scripted `Device`, unitlab | M3c |
+| acquisition reaction | STOP, a settings change or cancel within 1 ms (provisional until Platform tuning) | `acq wake` | host test with the scripted `Device`, unitlab | M3c |
 | acquisition overhead per batch (excluding DMA) | p99 <= 1 ms | `acq batch` | unitlab | M3c |
 | DMA completion | CPU per read and read latency per mode | `xdma` | unitlab | M5c |
 | deposit worker, per frame | p99 <= 2.7 ms; load <= 70 % per little core with measurements | `worker` | perf guard (ratio), unitlab | M7 |
@@ -974,7 +976,7 @@ after each step may tighten them, never loosen them without a doc change.
 | HDMI | >= 29.5 pictures/s alone; >= 15 with the panel, counted when halved | `hdmi` | unitlab | M9b |
 | picture rate | >= 29.5 pictures/s in every acceptance mode | `fps` | unitlab | exists |
 | input to photon | the preview at the next flip; the first batch under the new mapping <= 70 ms | `latency` | unitlab | M4 |
-| wake latency | as in [Waiting](#waiting) | `wake <thread>` | unitlab | M3c, M3d |
+| wake latency | as in [Waiting](#waiting), provisional until [Platform tuning](system.md#platform-tuning) | `wake <thread>` | unitlab | M3c, M3d |
 | idle in STOP | total CPU < 3 % of one A53; main wakes only on flips and input | `cpu`, `wakes` | unitlab | M3d |
 | allocations | 0 per frame after warm-up on every hot path ([Allocations](#allocations)) | `alloc` | counting-allocator tests | each step that touches a hot path; harness in G2 |
 | memory | RSS <= 120 MB + `memplan` total, flat over a 2 h soak ([Memory and queues](#memory-and-queues)) | `rss` | host soak, unitlab | M5b |

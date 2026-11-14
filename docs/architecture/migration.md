@@ -82,7 +82,7 @@ D-numbers are the steps of [drawing implementation plan](drawing.md#implementati
 | M2.3 | Consumers switch to the `ChangeSet`, one class per part; old mechanisms deleted last | 1a | |
 | M3 | Acquisition thread split | 1b | |
 | M3c | Acquisition waiting: command `eventfd`, hardware polls inside `poll` | | |
-| M3d | Main event loop: `epoll`, page-flip pacing, light step, non-blocking remote output | | round 1 |
+| M3d | Main event loop (after M2.3): `epoll`, vblank pacing, light step with a pending `ChangeSet`, non-blocking remote output | | round 1 |
 | M4 | Mapping key, preview, generation for records | 1c | round 1 |
 | M5 | Typed channels replace `Shared` | | |
 | M5b | Memory model: `memplan`, byte bounds, ring chunks, watchdog, drop counters | | |
@@ -267,17 +267,23 @@ allowlist entry for `hw.rs` and its `spawn` shrinks. Unit: smoke check (probe co
 
 ### M3d: main event loop
 
-[Main loop and pacing](README.md#main-loop-and-pacing), [Hand-offs](README.md#hand-offs). Independent of the
-drawing steps; it comes early because every later unit round measures latency against it.
-- Main blocks in one `epoll_wait`: the DRM page-flip fd, a wake `eventfd`, input fds, the GPU helper socket. Steps
-  start on the flip; `wait_flip` and its 100 ms timeout go; the 33 ms timer and its busy last millisecond go.
-- The light step for input and remote requests: intake, change, acquire, reply.
+[Main loop and pacing](README.md#main-loop-and-pacing), [Hand-offs](README.md#hand-offs). After M2.3, because the
+light step needs the change stage and its pending `ChangeSet`. Independent of the drawing steps; it comes early because
+every later unit round measures latency against it.
+- Main blocks in one `epoll_pwait2`: the DRM fd (vblank sequence events and page flips), a wake `eventfd`, input fds,
+  the GPU helper socket. Full steps run on the vblank clock at 30 Hz; `wait_flip` and its 100 ms timeout go; the 33 ms
+  timer and its busy last millisecond go; a `timerfd` stands in without vblanks.
+- `Pacing { next_step, period }` to the acquisition for `pacing::Fill`.
+- The light step for input and remote requests: intake of input and remote only, change, acquire, reply; the pending
+  `ChangeSet` that the next full step consumes.
 - Remote replies go into per-connection output queues written by the listeners on `EPOLLOUT`; main never writes to a
   socket (today `scpi.rs` 46 and `vxi11.rs` 319). The request inbox becomes a bounded MPSC queue with main's wake.
 - Tests, failing before: a stalled SCPI client does not delay a step; a settings round trip stays under 2 ms on the
-  host with a busy picture; an idle main wakes only on flips and input.
-- Unit check in round 1: settings round trip, remote throughput (`ifload.py`), idle CPU in STOP.
-- Estimate: 2 days.
+  host with a busy picture; an idle main wakes only on vblanks it needs and input; a mapping change in a light step
+  gives a preview at the next full step; the first picture after idle comes at the next vblank.
+- Unit check in round 1: settings round trip, remote throughput (`ifload.py`), idle CPU in STOP, the step clock
+  against vblank, display off.
+- Estimate: 3 days.
 
 ### M4: mapping key, preview, generation for records (D1c)
 
@@ -504,9 +510,9 @@ or `model.rs`, since they no longer exist.
 
 ## Estimate
 
-M0 to M12: about 49 days of host work plus six unit rounds (0 to 5) of about half a day: the drawing plan's 22 days
+M0 to M12: about 50 days of host work plus six unit rounds (0 to 5) of about half a day: the drawing plan's 22 days
 with D1a (3 days) replaced by M2.1 to M2.3 (7.5 days), M1 and M5 at about 1.5 days each, M1b at 2 days, M3.0 at 1.5
-days, M5b (memory model) at 2 days, and the performance work of adr/0016 at 14 days (M3c 1.5, M3d 2, M5c 1, M9b 3,
+days, M5b (memory model) at 2 days, and the performance work of adr/0016 at 15 days (M3c 1.5, M3d 3, M5c 1, M9b 3,
 the data path in M5, M6, M7, M9 and M10 6.5). G1 and G2 add 3.5 days of gate work by auxout, in parallel. M13 to
 M18: estimated at the stable stop point after M12, when the remaining sizes are known.
 

@@ -213,14 +213,14 @@ impl Scpi {
             'lines: while let Some(p) = self.clients[i].buf.iter().position(|&c| c == b'\n') {
                 let line: Vec<u8> = self.clients[i].buf.drain(..=p).collect();
                 let line = String::from_utf8_lossy(&line).trim().to_string();
-                for cmd in line.split(';') {
-                    if let Some(resp) = self.exec(ui, cv, cmd.trim()) {
-                        let mut out = resp;
-                        out.push(b'\n');
-                        if !send(&mut self.clients[i].s, &out) {
-                            closed = true;
-                            break 'lines;
-                        }
+                // one program message, one response message: the answers of its queries joined by ';' on one line
+                // (IEEE 488.2); `*IDN?;*OPC?` used to come as two lines
+                let mut out = self.exec_line(ui, cv, &line);
+                if !out.is_empty() {
+                    out.push(b'\n');
+                    if !send(&mut self.clients[i].s, &out) {
+                        closed = true;
+                        break 'lines;
                     }
                 }
             }
@@ -1240,6 +1240,37 @@ pub fn bmp(cv: &Canvas) -> Vec<u8> {
 #[cfg(test)]
 mod vernier_tests {
     use super::*;
+
+    // Break it catches: the socket answering a compound query line by line (unit round 21: `*OPC?;:BOGus?` came as
+    // two lines while `exec_line` joined them), a command-only message sending a line.
+    #[test]
+    fn compound_query_is_one_line_on_the_socket() {
+        use std::io::{BufRead, Write};
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = Scpi::open(0);
+        let port = scpi.l.as_ref().expect("listener").local_addr().unwrap().port();
+        let mut c = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        c.set_read_timeout(Some(std::time::Duration::from_millis(50))).unwrap();
+        let mut r = std::io::BufReader::new(c.try_clone().unwrap());
+        let mut ask = |scpi: &mut Scpi, ui: &mut Ui, msg: &str| -> String {
+            c.write_all(msg.as_bytes()).unwrap();
+            let mut line = String::new();
+            for _ in 0..40 {
+                scpi.poll(ui, &cv);
+                match r.read_line(&mut line) {
+                    Ok(n) if n > 0 && line.ends_with('\n') => return line,
+                    _ => {}
+                }
+            }
+            line
+        };
+        let idn = ask(&mut scpi, &mut ui, "*IDN?;*OPC?\n");
+        assert!(idn.starts_with("OOS,") && idn.ends_with(";1\n") && idn.matches('\n').count() == 1, "{:?}", idn);
+        assert_eq!(ask(&mut scpi, &mut ui, "*OPC?;:BOGus?\n"), "1;-113,\"Undefined header\" :BOGus?\n");
+        // a message without a query sends nothing: the next answer is the next query's
+        assert_eq!(ask(&mut scpi, &mut ui, ":BOGus 1;*CLS\n*OPC?\n"), "1\n");
+    }
 
     // Break it catches: an unknown query answering nothing (the client waits for its timeout), a command without `?`
     // answering, the error leaving the queue, the answer of a known query changed. Ported from deckerjulian/oos#8.

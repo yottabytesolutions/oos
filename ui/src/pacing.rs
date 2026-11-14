@@ -29,6 +29,7 @@ struct State {
     batches: VecDeque<(f32, f32, u32, u32)>,
     /// per batch: its fill time (ms), and from its read to drawn by the workers (ms)
     fills: VecDeque<f32>,
+    reads: VecDeque<f32>,
     readies: VecDeque<f32>,
     ready_ms: Option<f32>,
     last_pass: Option<Instant>,
@@ -69,14 +70,15 @@ pub fn pass(t0: Instant, t1: Instant, t2: Instant, t3: Instant) {
 }
 
 /// A batch of the hardware done: `wait_ms` from the arm (or the wait of a batch armed ahead) to the read, `count` of
-/// `asked` frames recorded, `fill_ms` the ring-fill time it had.
-pub fn batch(wait_ms: f32, count: u32, asked: u32, fill_ms: u64) {
+/// `asked` frames recorded, `fill_ms` the ring-fill time it had, `read_ms` from the end of the fill to the read done.
+pub fn batch(wait_ms: f32, count: u32, asked: u32, fill_ms: u64, read_ms: f32) {
     let mut s = state().lock().unwrap();
     let now = Instant::now();
     let iv = s.last_batch.map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f32() * 1e3);
     s.last_batch = Some(now);
     push(&mut s.batches, (wait_ms, iv, count, asked));
     push(&mut s.fills, fill_ms as f32);
+    push(&mut s.reads, read_ms);
 }
 
 /// The deposit workers finished the batch read last (drawpipe.rs): the time since its read went into `ready_ms`.
@@ -178,10 +180,13 @@ pub fn summary() -> String {
     let full = s.batches.iter().filter(|b| b.2 >= b.3).count();
     let mut fl: Vec<f32> = s.fills.iter().copied().collect();
     let mut rd: Vec<f32> = s.readies.iter().copied().collect();
+    let mut re: Vec<f32> = s.reads.iter().copied().collect();
+    // before the fill ended: arm or the wait of a batch armed ahead, first trigger, fill
+    let mut pre: Vec<f32> = s.batches.iter().zip(s.reads.iter()).map(|(b, r)| b.0 - r).collect();
     let nb = s.batches.len().max(1);
     let p4 = |v: &mut Vec<f32>| format!("{:.1}/{:.1}/{:.1}/{:.1}", pct(v, 0.5), pct(v, 0.9), pct(v, 0.99), pct(v, 1.0));
     format!(
-        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms drawn {} ms",
+        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms until fill end {} ms read {} ms drawn {} ms",
         s.pics.len(),
         pct(&mut fr, 0.1),
         pct(&mut fr, 0.5),
@@ -195,6 +200,8 @@ pub fn summary() -> String {
         pct(&mut bc, 0.5),
         100.0 * full as f32 / nb as f32,
         pct(&mut fl, 0.5),
+        p4(&mut pre),
+        p4(&mut re),
         p4(&mut rd),
     )
 }

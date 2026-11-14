@@ -1833,11 +1833,19 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             // the ring fills for at most `fill_ms` after the first frame: the batch is read and drawn just before a
             // screen step (pacing.rs)
             let fill_ms = fill.plan(t_batch, crate::pacing::next_step_after, crate::pacing::ready_ms());
-            let got = seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, fill_ms, |_| {}, changed, idle);
+            // the end of the ring fill (hal logs the count then, before the read): splits the batch for pacing.rs
+            let mut fill_end = None;
+            let log = |m: String| {
+                if m.contains(" frames after ") {
+                    fill_end = Some(std::time::Instant::now());
+                }
+            };
+            let got = seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, fill_ms, log, changed, idle);
             let batch_ms = t_batch.elapsed().as_secs_f32() * 1e3;
             if let Ok(c) = &got {
                 let asked = seq::frames(&b, &p);
-                crate::pacing::batch(batch_ms, *c, asked, fill_ms);
+                let read_ms = fill_end.map_or(0.0, |e| e.elapsed().as_secs_f32() * 1e3);
+                crate::pacing::batch(batch_ms, *c, asked, fill_ms, read_ms);
                 fill.done(batch_ms, fill_ms, *c >= asked);
             }
             if let Some(x) = pipe {

@@ -13,8 +13,10 @@ previous kernel are still there); the display and the acquisition work, and the 
 That held with `poll_mode=1`. With MSI (`xdma.params = poll_mode=0`) every C2H read in a kexec start timed out
 (0x4034 = 0x21c0, descriptor engine stopped, nothing acquired): the completion interrupts go through those tables and
 never arrive. A real restart fixed it. So `oos-fpgad` loads xdma with `poll_mode=1` in a kexec start (`oos.kexec=` on
-the command line) whatever the setting says, and logs the override. After a successful install the kexec start
-restarts the scope at once (step 4), so the acquisition rarely runs in it.
+the command line) whatever the setting says, and logs the override (`oos-fpga-up` does the same). After a successful
+install the kexec start restarts the scope at once (step 4). rcS runs that restart before the acquisition bring-up, so
+on this path the kexec session never loads xdma. The override only matters when the restart is refused or fails. It
+is covered by host tests only: no real install path leaves a kexec session running, so it is untested on the unit.
 
 Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/src/bin/oos-update.rs` (command line),
 `ui/src/ui/update.rs` and `ui/src/http.rs` (GUI, web upload), `rootfs/initramfs/etc/rcS` (start count, watcher).

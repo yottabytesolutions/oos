@@ -4776,6 +4776,18 @@ impl Ui {
     }
 
     /// Switches the trigger type and sets starting values that trigger on the demo signals.
+    /// Force trigger (front-panel key, `:TFORce`): RUN when stopped; on the hardware one pulse of the FPGA's force bit
+    /// (`Shared::force`), which releases Normal and Single without a trigger crossing. Roll and scan stream without a
+    /// trigger: nothing to force there. Ported from deckerjulian/oos#8, 3479a58 by wasimlhr.
+    pub(crate) fn force_trigger(&mut self) {
+        if self.m.run == RunState::Stop {
+            self.m.run = RunState::Run;
+        }
+        if board().slow_mode(&self.m) == crate::board::Slow::Off {
+            self.src.force_hw();
+        }
+    }
+
     fn set_trig_type(&mut self, t: TrigType) {
         let was_bus = self.m.trig_type == TrigType::Bus;
         // leaving Bus: off again what entering it switched on (the decoder kept the live picture raw, its demo sources
@@ -6833,6 +6845,10 @@ impl Ui {
         if k == 0 {
             return; // release
         }
+        // a dialog or the keyboard takes the key, but not the force trigger
+        if k == key::FORCE {
+            self.force_trigger();
+        }
         if k == key::POWER {
             // the stock Launcher answers every power-key press with "cancel power-down" (FA 05 02); the MCU very
             // likely cuts power by itself otherwise (board.md section 4)
@@ -6916,12 +6932,7 @@ impl Ui {
                 self.toast("Default set-up");
             }
             key::SLOPE => self.adjust(Item::TrigSlope, 1),
-            key::FORCE => {
-                if self.m.run == RunState::Stop {
-                    self.m.run = RunState::Run;
-                }
-                self.toast("Force trigger");
-            }
+            key::FORCE => self.toast("Force trigger"),
             key::MEASURE => self.toggle_menu(MenuId::Measure),
             key::CURSOR => {
                 if self.m.cursor == CursorMode::Off {
@@ -8297,6 +8308,34 @@ mod tests {
             let _ = std::fs::create_dir_all(&dir);
             let _ = crate::store::write(&dir.join(format!("i-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
         }
+    }
+
+    // Break it catches: Force that only switches RUN on (the FPGA never got its pulse: Normal and Single without a
+    // crossing stayed in WAIT), a dialog that takes the key, or a pulse asked for in roll, which has no trigger
+    #[test]
+    fn force_asks_the_acquisition_thread_for_a_pulse() {
+        use super::*;
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        let mut scpi = crate::scpi::Scpi::open(0);
+        let cv = Canvas::new(PANEL_W, PANEL_H);
+        let take = |s: &crate::board::HwShared| std::mem::take(&mut s.lock().unwrap().force);
+        ui.m.run = RunState::Stop;
+        ui.m.trig_mode = TrigMode::Normal;
+        assert!(scpi.exec_line(&mut ui, &cv, ":TFORce").is_empty());
+        assert!(take(&shared), ":TFORce asks for the pulse");
+        assert_eq!(ui.m.run, RunState::Run);
+        scpi.exec_line(&mut ui, &cv, ":TFOR?");
+        assert!(!take(&shared), "no query form");
+        // the front-panel key, also with a dialog open: the dialog closes, the force still goes out
+        ui.dialog = Some(vec!["a dialog".into()]);
+        ui.key(key::FORCE);
+        assert!(take(&shared) && ui.dialog.is_none());
+        // roll streams without a trigger: no pulse
+        ui.m.auto_roll = true;
+        ui.m.tscale = tscales().iter().position(|&t| (t - 0.2).abs() < 1e-6).unwrap();
+        ui.key(key::FORCE);
+        assert!(!take(&shared));
     }
 
     // Break it catches: the Bus trigger's own switches staying after going back to Edge (decoder on: the live picture

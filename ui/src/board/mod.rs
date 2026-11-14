@@ -336,6 +336,9 @@ pub struct Shared {
     /// counter set by the UI with the settings; frames acquired after applying them carry it (`Frame::stamp`), so a
     /// sweep can tell frames of the new step from queued ones
     pub stamp: u64,
+    /// one force trigger asked for (key, `:TFORce`): the acquisition thread arms, pulses the FPGA's force bit and reads
+    /// the frame (`hw.rs`); a wait for a trigger ends for it
+    pub force: bool,
     /// FPGA version register 0x4000 (0 until the FPGA was reached)
     pub fpga_version: u32,
     /// FPGA XADC: die temperature (degC) and VCCINT (V), read about once a second (System info page)

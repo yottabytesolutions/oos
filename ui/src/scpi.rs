@@ -326,6 +326,11 @@ impl Scpi {
             ui.key(crate::ui::key::CLEAR);
             return None;
         }
+        // the front panel's Force key: RUN when stopped, one FPGA force pulse on the hardware (`Ui::force_trigger`)
+        if nodes.len() == 1 && kw(nodes[0], "TFORce") && !query {
+            ui.force_trigger();
+            return None;
+        }
         let m = &mut ui.m;
         let src = &ui.src;
         let r: Option<Option<Vec<u8>>> = (|| {

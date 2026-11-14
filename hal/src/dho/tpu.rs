@@ -939,6 +939,24 @@ mod tests {
         assert!(w.iter().all(|x| !(0x2200..=0x2218).contains(&x.0)));
     }
 
+    // Break it catches: a force pulse that writes 0x205c from a constant (0x20, then 0) and so switches a serial
+    // trigger's mux and the type select off: the trigger after a Force would never fire again
+    #[test]
+    fn force_pulses_bit5_over_the_shadow() {
+        use crate::dho::serialtrig::{Dir, I2c, I2cCond};
+        use crate::dho::uarttrig::Relation;
+        let vt = [Vert { scale: 1e9, offset: 0.0, g: 1.0, noise: 0.0 }; 4];
+        let mut sh = Shadows::APP;
+        let i = I2c { scl: 1, sda: 2, cond: I2cCond::Start, dir: Dir::Either, ten_bit: false, addr_rel: Relation::Eq, addr: (0, 0, 0), data_rel: Relation::Eq, bytes: 1, data: (0, 0, 0) };
+        let w = i2c(&mut sh, &i, 1.5e9, &vt);
+        let mux = w.iter().filter(|x| x.0 == 0x205c).last().unwrap().1;
+        assert_eq!(sh.s205c, mux, "the shadow follows the last write");
+        assert_eq!(force(&sh), vec![(0x205c, mux | 0x20), (0x205c, mux)]);
+        // the ABR flags of the other types stay too
+        sh.s205c |= 0b10111 << 6;
+        assert_eq!(force(&sh)[1], (0x205c, sh.s205c));
+    }
+
     #[test]
     fn uart_routes_the_line_and_selects_the_receiver() {
         use crate::dho::uarttrig::{Cond, Parity, Stop, Uart};

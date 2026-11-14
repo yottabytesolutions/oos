@@ -471,6 +471,13 @@ impl Source {
         true
     }
 
+    /// Asks the acquisition thread for one force-trigger pulse; other sources ignore it.
+    pub fn force_hw(&self) {
+        if let Source::Hw { shared, .. } = self {
+            shared.lock().unwrap().force = true;
+        }
+    }
+
     pub fn publish_afg(&self, m: &Model) {
         if let Source::Hw { shared, .. } = self {
             let mut g = shared.lock().unwrap();

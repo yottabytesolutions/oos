@@ -1802,14 +1802,26 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             }
             // one batch: arm, let the ring fill for up to 25 ms after the first frame, one play, one read
             // armed ahead with these settings and since the last SINGLE press: only the wait is left
-            let ahead = armed.as_ref().is_some_and(|(a, st)| *a == b && *st == stamp);
+            let mut ahead = armed.as_ref().is_some_and(|(a, st)| *a == b && *st == stamp);
             if !ahead {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
             }
             armed = None;
+            // Force (key, `:TFORce`; ported from deckerjulian/oos#8, 3479a58 by wasimlhr): the FPGA armed for this batch,
+            // then one pulse of the force bit, and the batch only waits for that frame. The pulse writes the 0x205c
+            // shadow with bit 5 and then the shadow again, so the trigger type and the serial mux bits stay. Not in the
+            // hardware average (its batches count triggers).
+            if std::mem::take(&mut out.lock().unwrap().force) && avg.is_none() {
+                let armed_now = ahead || seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}).map_err(|e| status(format!("force: arm: {}", e))).is_ok();
+                if armed_now {
+                    bar.apply(&oos_hal::dho::tpu::force(&state.ts));
+                    ahead = true;
+                }
+            }
+            // a wait for a trigger also ends for a force request: the next pass arms and pulses (above)
             let changed = || {
                 let g = out.lock().unwrap();
-                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1)
+                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || g.force
             };
             // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
             // the frame count, so the read waits at most one frame longer

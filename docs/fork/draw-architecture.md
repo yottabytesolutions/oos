@@ -192,9 +192,9 @@ same. A view change while stopped (time base, offset, zoom) replaces the maps wi
 History and segment replay do the same for the record they show. Today's 24 x 6 redraw on every step goes.
 
 With persistence above Min, the frozen accumulated picture is in pixels of the old mapping and cannot be re-mapped.
-On the first view change while stopped it is dropped and replaced by `last[0]` drawn once. That is a behaviour
-change: today the redraw also loses it, and scopes that keep a persisted picture across a STOP rescale do not exist
-here. State it in the user notes.
+On the first view change while stopped it is dropped and replaced by `last[0]` drawn once. OOS today loses it the
+same way (the stopped redraw clears the maps). Against the stock firmware it may be a change: not checked whether
+stock rescales a stopped persistence picture. It goes in the user notes as a known behaviour.
 
 **Persistence changes.** A change between Min and a decay setting, or between decay settings, clears the maps and W
 and starts from `last[0]` drawn once (the preview of 3.5).

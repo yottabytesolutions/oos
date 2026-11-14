@@ -121,19 +121,10 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	chown -R "$OUT_OWNER" /out
 	ls -la /out
 '
+# Invalidate metadata and install files before replacing the image. A failed build must not leave them usable.
+rm -f "$out/oos-dev.build" "$out/oos-dev.oosupd" "$out/${OOS_GEL_STEM}_Install.GEL"
 python3 -I "$here/oos-bootimg.py" build --kernel "$k/Image" --dtb "$out/$OOS_IMAGE_NAME.dtb" \
 	--ramdisk "$out/initramfs.cpio.gz" --name "$OOS_IMAGE_NAME" --out "$out/oos-dev.img"
 (cd "$out" && sha256 oos-dev.img > oos-dev.img.sha256 && cat oos-dev.img.sha256)
-# signed update package (docs/update.md): install on a running OOS through http://<scope>:8080/update
-# your own key if you have one, else the community key every OOS build trusts
-key="${OOS_UPDATE_KEY:-$HOME/.config/oos/update-signing.key}"
-[ -f "$key" ] || key="$root/keys/community-signing.key"
-rm -f "$out/oos-dev.oosupd"
-if [ -f "$key" ]; then
-	(cd "$root/fpgad" && cargo build --release --bin oos-update) || exit 1
-	"$root/target/release/oos-update" pack --image "$out/oos-dev.img" --build "$build_id" --key "$key" --out "$out/oos-dev.oosupd"
-else
-	echo "no signing key at $key: no update package (oos-update keygen, docs/update.md)"
-fi
-# the same image as an update file of the stock system, for an install without opening the scope (docs/install-usb.md)
-[ -f "$out/oos-dev.oosupd" ] && python3 -I "$here/build-gel.py"
+printf '%s\n' "$build_id" > "$out/oos-dev.build"
+echo "image built. Sign explicitly with boot/sign-dev-image.sh, then package with boot/build-gel.py (docs/update.md)."

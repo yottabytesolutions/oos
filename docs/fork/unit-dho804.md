@@ -36,7 +36,9 @@ release, `kernel/README.md`).
 
 ```sh
 kernel/build-base.sh                                   # kernel + rk3399-rigol-dho900{,-uhs}.dtb into kernel/out/base
-OOS_UNIT=dho804 boot/build-dev-image.sh     # boot/out/oos-dev.img, .oosupd, GEL
+OOS_UNIT=dho804 boot/build-dev-image.sh        # boot/out/oos-dev.img
+boot/sign-dev-image.sh --key /path/to/signing.key        # boot/out/oos-dev.oosupd
+boot/build-gel.py                                      # GEL package
 ```
 
 Check the result before it goes anywhere near the scope:

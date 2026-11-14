@@ -409,8 +409,9 @@ You only have to repeat this when the kernel changes.
 ### 4. Signing key
 
 Update packages must be signed. To let everyone build updates for every OOS scope, the repository includes a **public
-community key**, `keys/community-signing.key`, and all builds trust it. You do not have to do anything: the build uses
-it automatically.
+community key**, `keys/community-signing.key`, and builds trust it by default. Signing requires explicit selection.
+The image build never signs. Select a private key with `--key` or `OOS_SIGNING_KEY`, or the public development fixture
+with `--community`.
 
 The community key only protects against damaged packages. It says nothing about who built one, so **only install
 packages from people you trust.**
@@ -418,20 +419,22 @@ packages from people you trust.**
 If you want a scope to accept only your own builds, create your own key before you build:
 
 ```sh
-cd fpgad && cargo run --release --bin oos-update -- keygen && cd ..
+cargo run --offline --release --manifest-path fpgad/Cargo.toml --bin oos-update -- keygen --out /path/to/signing.key
 ```
 
-Replace all keys in `keys/update.pub` with the line it prints. The secret key is in
-`~/.config/oos/update-signing.key`. **Back it up and never publish it.** Details:
+Replace all keys in `keys/update.pub` with the line it prints. Keep the secret key outside the repository.
+**Back it up and never publish it.** Details:
 [docs/update.md](docs/update.md).
 
 ### 5. Build the image
 
 ```sh
 boot/build-dev-image.sh
+boot/sign-dev-image.sh --key /path/to/signing.key # or --community for development
+boot/build-gel.py
 ```
 
-This produces `boot/out/oos-dev.img` for the card, `boot/out/oos-dev.oosupd`, the signed update package, and
+These separate steps produce `boot/out/oos-dev.img` for the card, `boot/out/oos-dev.oosupd`, the signed update package, and
 `boot/out/DHO800_DHO900_OOS_Install.GEL` for the USB stick. If the script fails, the previous image stays in place, so
 check the file's time.
 

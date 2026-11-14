@@ -34,9 +34,10 @@
 //!                                          (+ arm in persist mode) or roll back; message in /tmp/oos-update.notice
 //! Anywhere:
 //!   oos-update verify FILE.oosupd [--keys FILE]   signature and image check, no card access
-//!   oos-update keygen [--out FILE]         new signing key (default ~/.config/oos/update-signing.key, mode 0600),
+//!   oos-update keygen --out FILE          new signing key outside the repository (mode 0600),
 //!                                          prints the public key line for oos/keys/update.pub
-//!   oos-update pack --image IMG --build ID [--kernel REL] [--key FILE] --out FILE.oosupd
+//!   oos-update pack --image IMG --build ID [--kernel REL] [--key FILE | --community] --out FILE.oosupd
+//!                                          or select a key with OOS_SIGNING_KEY; no automatic key discovery
 //!
 //! Common options: --card /dev/mmcblk0, --state /oos/update/state, --keys FILE (extra trusted keys: verify, and
 //! install on a card file for tests; refused for the unit's card).
@@ -59,7 +60,7 @@ impl Args {
         while let Some(s) = it.next() {
             match s.as_str() {
                 "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec"
-                | "--new-dt" => a.flags.push(s),
+                | "--new-dt" | "--community" => a.flags.push(s),
                 _ if s.starts_with("--") => {
                     let v = it.next().unwrap_or_else(|| die(&format!("{} needs a value", s)));
                     a.vals.push((s, v));
@@ -1001,24 +1002,42 @@ fn watch(_: &Args) {
     die("watch runs on the unit only");
 }
 
-fn default_key() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/oos/update-signing.key")
-}
-
 fn load_seed(path: &Path) -> [u8; 32] {
     let t = std::fs::read_to_string(path)
         .unwrap_or_else(|e| die(&format!("{}: {} (oos-update keygen)", path.display(), e)));
+    parse_seed(&t).unwrap_or_else(|| die(&format!("{}: no 64-digit hex secret key", path.display())))
+}
+
+fn parse_seed(t: &str) -> Option<[u8; 32]> {
     t.lines()
         .map(|l| l.split('#').next().unwrap_or("").trim())
         .find(|l| !l.is_empty())
         .and_then(update::hash::unhex)
         .and_then(|b| b.try_into().ok())
-        .unwrap_or_else(|| die(&format!("{}: no 64-digit hex secret key", path.display())))
+}
+
+fn signing_seed(a: &Args) -> [u8; 32] {
+    let key = a
+        .val("--key")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("OOS_SIGNING_KEY").filter(|v| !v.is_empty()).map(PathBuf::from));
+    if a.flag("--community") {
+        if key.is_some() {
+            die("--community cannot be combined with --key or OOS_SIGNING_KEY");
+        }
+        // This public development fixture is intentionally shipped with the host signer.
+        return parse_seed(include_str!("../../../keys/community-signing.key"))
+            .unwrap_or_else(|| die("invalid community development key"));
+    }
+    let key = key.unwrap_or_else(|| {
+        die("signing requires --key FILE or OOS_SIGNING_KEY; use --community for the public development key")
+    });
+    load_seed(&key)
 }
 
 fn keygen(a: &Args) {
-    let out = a.val("--out").map(PathBuf::from).unwrap_or_else(default_key);
+    let out =
+        a.val("--out").map(PathBuf::from).unwrap_or_else(|| die("keygen needs --out FILE outside the repository"));
     if out.exists() {
         die(&format!(
             "{} exists: not overwritten (a lost key means every unit needs a hand-installed image)",
@@ -1059,6 +1078,7 @@ fn keygen(a: &Args) {
 }
 
 fn pack(a: &Args) {
+    let seed = signing_seed(a);
     let img = read_file(a.val("--image").unwrap_or_else(|| die("pack --image IMG --build ID --out FILE")));
     let build = a.val("--build").unwrap_or_else(|| die("pack needs --build ID (the image's /etc/oos-build)"));
     let out = a.val("--out").unwrap_or_else(|| die("pack needs --out FILE"));
@@ -1070,7 +1090,6 @@ fn pack(a: &Args) {
     if info.len != img.len() {
         die(&format!("image is {} bytes, its sections end at {}", img.len(), info.len));
     }
-    let seed = load_seed(&a.val("--key").map(PathBuf::from).unwrap_or_else(default_key));
     let pk = oos_hal::update::ed25519::public_key(&seed);
     if !update::trusted_keys().contains(&pk) {
         eprintln!(

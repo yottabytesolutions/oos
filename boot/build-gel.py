@@ -6,7 +6,7 @@
 
     boot/build-gel.py        -> boot/out/DHO800_DHO900_OOS_Install.GEL
 
-From boot/out/oos-dev.oosupd and oos-update, as boot/build-dev-image.sh leaves them. The stock update takes any gzip tar
+From boot/out/oos-dev.oosupd and oos-update, after boot/sign-dev-image.sh. The stock update takes any gzip tar
 whose name ends in .GEL and holds DHO800_DHO900, unpacks it and runs its shell/do_extract.sh.
 """
 import gzip, io, os, sys, tarfile
@@ -40,7 +40,7 @@ def folder(t, name):
 def main():
     for p in (PKG, TOOL):
         if not os.path.exists(p):
-            sys.exit(f"missing {p}: run boot/build-dev-image.sh first")
+            sys.exit(f"missing {p}: build with boot/build-dev-image.sh, then sign with boot/sign-dev-image.sh")
     if os.path.getmtime(TOOL) > os.path.getmtime(PKG) + 3600 or os.path.getmtime(PKG) > os.path.getmtime(TOOL) + 3600:
         print("note: oos-update and the package are more than an hour apart")
     b = io.BytesIO()

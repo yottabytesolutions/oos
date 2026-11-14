@@ -144,11 +144,14 @@ starts with the UTC build time; an older build than the installed one is refused
 
 ## Keys
 
-- Community key: `keys/community-signing.key` is in the repository **on purpose**, and every build trusts it, so that
-  anyone can build an update that installs on any OOS scope. `boot/build-dev-image.sh` uses it when there is no own key.
-  It proves nothing about who built a package.
-- Own keys: `oos-update keygen` creates one, mode 0600, outside the repository. Back it up (password manager or an
-  offline copy) and never publish it. Whoever wants only their own builds on a scope adds the public line of their key
+- Community key: `keys/community-signing.key` is a public development fixture. Select it with `--community`.
+  Builds trust it by default. It proves nothing about who built a package.
+- Signing requires `--key FILE` or `OOS_SIGNING_KEY`. `--key` takes precedence. With neither, only `--community`
+  permits signing. Do not combine `--community` with a selected key. There is no home-directory discovery.
+- A valid signature does not authorize installation on a shared unit. Installation needs the scope lease with
+  install capability and the owner's go.
+- Own keys: `oos-update keygen --out FILE` creates one, mode 0600. Keep it outside the repository.
+  Back it up (password manager or an offline copy) and never publish it. Whoever wants only their own builds on a scope adds the public line of their key
   to `keys/update.pub`, removes the community line and the other lines they do not want, and installs that build. From
   then on that scope refuses community packages. If the own key is lost, a scope that trusts only this key needs an
   image installed by hand (`card-install.py` on a host, or `dd` over telnet).
@@ -163,8 +166,19 @@ starts with the UTC build time; an older build than the installed one is refused
 
 ## Use
 
-Build (host): `boot/build-dev-image.sh` writes `boot/out/oos-dev.img` and, when the key exists,
-`boot/out/oos-dev.oosupd`.
+Build, sign and package are separate host steps:
+
+```sh
+boot/build-dev-image.sh                         # image, checksum and matching build id; never signs
+boot/sign-dev-image.sh --key /path/to/signing.key # boot/out/oos-dev.oosupd
+boot/build-gel.py                               # boot/out/DHO800_DHO900_OOS_Install.GEL
+```
+
+For signing, `OOS_SIGNING_KEY=/path/to/signing.key boot/sign-dev-image.sh` also works.
+Use `boot/sign-dev-image.sh --community` only for the public development fixture.
+The signer uses `boot/out/oos-dev.build`, saved with the image. It builds the host tool offline.
+`oos-update pack --image IMG --build ID [--key FILE | --community] --out FILE.oosupd` is the direct signing step.
+It also accepts `OOS_SIGNING_KEY`. The package format and output names are unchanged.
 
 Install on a running OOS:
 

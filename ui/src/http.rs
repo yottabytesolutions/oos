@@ -1040,6 +1040,14 @@ setTimeout(() => {
         Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
+    /// The background senders (`SENDERS`, at most `MAX_SENDERS`) are one count for the whole process: tests that
+    /// send large answers in parallel took each other's slots, and a picture came back 503 (about 1 run in 12 under
+    /// load, `live_picture_from_the_frame_loop_without_a_copy`). Those tests run one at a time.
+    fn senders_alone() -> std::sync::MutexGuard<'static, ()> {
+        static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        ALONE.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn page_lets_the_viewer_pick_png_or_bmp() {
         let mut h = Http::open(0);
@@ -1075,6 +1083,7 @@ setTimeout(() => {
 
     #[test]
     fn pages_and_downloads() {
+        let _alone = senders_alone();
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
@@ -1107,6 +1116,7 @@ setTimeout(() => {
     /// Large answers leave the frame loop: the whole body arrives, also several at once, and the count goes back.
     #[test]
     fn large_answers_go_through_a_thread() {
+        let _alone = senders_alone();
         use std::sync::atomic::Ordering::SeqCst;
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
@@ -1157,6 +1167,7 @@ setTimeout(() => {
     /// failed about 1 in 7 under load; both orders now run on purpose.
     #[test]
     fn live_picture_from_the_frame_loop_without_a_copy() {
+        let _alone = senders_alone();
         for frames_first in [true, false] {
             live_picture_hand_over(frames_first);
         }
@@ -1224,6 +1235,7 @@ setTimeout(() => {
     /// A screenshot asked for as PNG never gets JPEG bytes, a JPEG viewer gets PNG only once the VPU failed.
     #[test]
     fn a_picture_answers_only_its_own_format() {
+        let _alone = senders_alone();
         assert!(Shots::fits(false, false, false) && Shots::fits(true, true, false));
         assert!(!Shots::fits(false, true, false) && !Shots::fits(false, true, true), "PNG asked, JPEG made");
         assert!(!Shots::fits(true, false, false), "JPEG asked, PNG made while the VPU works: wait for the JPEG");
@@ -1235,6 +1247,7 @@ setTimeout(() => {
     /// and forth between the new and an older screen), and the picture is one that came back.
     #[test]
     fn live_picture_with_the_gpu_is_a_picture_read_back() {
+        let _alone = senders_alone();
         let mut h = Http::open(0);
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
@@ -1273,6 +1286,7 @@ setTimeout(() => {
     /// nothing changes, or the new picture as soon as the screen changes; a viewer without it gets it at once.
     #[test]
     fn live_picture_once_per_screen_and_long_poll() {
+        let _alone = senders_alone();
         // the comparison of two screens, at every length and a difference at every place
         for n in [0usize, 1, 7, 8, 9, 63, 64, 65] {
             let a: Vec<u32> = (0..n as u32).map(|i| i.wrapping_mul(2654435761)).collect();

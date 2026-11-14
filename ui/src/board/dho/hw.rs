@@ -1208,11 +1208,11 @@ fn deep_raw_settings(b: &Settings, p: &hz::Params) -> Option<Settings> {
         return None;
     }
     let cap = (crate::deepmeas::MAX_BYTES / (2 * p.ratio.max(1) as usize)) as i64 + 1;
-    // the whole record when the window would reach past it (`window_below` refuses a window beyond the end); else
-    // narrower margins, down to 4096 points (two lanes at 10 M, 1 ms/div: the quarter-screen margins made 37.5 MB)
-    let screen = (b.tdiv * 10.0 * p.rate as f64).ceil() as i64;
-    let narrow = || window_with(b, p, cap, ((cap - screen) / 2 - 16).max(0)).filter(|_| (cap - screen) / 2 - 16 >= 4096);
-    let w = window_below(b, p, cap).or_else(|| ((p.memsel as i64) < cap && b.la.is_none()).then(|| (p.memsel, -(p.pre as i64)))).or_else(narrow)?;
+    // the screen and 4096 points each side (the measurements need the screen, the trigger search the points around
+    // the trigger): the quarter-screen margins of `screen_window` added half again to the DMA and the decode, which
+    // blocked the acquisition about 186 ms a second at 10 M (unit 2026-11-14); the whole record where the window
+    // would reach past it
+    let w = window_with(b, p, cap, 4096).or_else(|| ((p.memsel as i64) < cap && b.la.is_none()).then(|| (p.memsel, -(p.pre as i64))))?;
     Some(oos_hal::dho::seq::raw_settings(&Settings { window: Some(w), ..b.clone() }))
 }
 
@@ -2985,9 +2985,21 @@ mod tests {
                 let best = |f: &mut dyn FnMut()| (0..3).map(|_| { let t = std::time::Instant::now(); f(); t.elapsed().as_secs_f64() * 1e3 }).fold(f64::INFINITY, f64::min);
                 let mut fr = None;
                 let dec = best(&mut || fr = Some(decode(&data, &d, &p, 1)));
-                let fr = std::sync::Arc::new(fr.unwrap());
+                // the probe-comp square (1 kHz) with its rising edge at the trigger point, as on the unit
+                let mut fr = fr.unwrap();
+                let half = (0.5e-3 / fr.dt) as usize;
+                let pre = fr.pre;
+                for v in fr.ch.iter_mut().filter(|v| !v.is_empty()) {
+                    for (i, y) in v.iter_mut().enumerate() {
+                        *y = if (i + 2 * half - pre % (2 * half)) / half % 2 == 0 { 2.5 } else { 0.0 } + (i % 7) as f32 * 1e-3;
+                    }
+                }
+                m.trig_level = 1.25;
+                let fr = std::sync::Arc::new(fr);
                 let window = m.time_per_div() as f64 * HDIV as f64;
                 let rec = best(&mut || { std::hint::black_box(crate::board::to_record(&fr, &m, 3600, window, m.delay as f64 - window / 2.0)); });
+                let trig = best(&mut || { std::hint::black_box(crate::board::trigger_point(&fr, &m, 3600, window, m.delay as f64 - window / 2.0)); });
+                println!("  of to_record: trigger_point {:.1} ms", trig);
                 println!("{} pts {:?}: rate {} ratio {} record {:.0} ms; pair frame {:.2} MB; raw window {} pts {:.2} MB (DMA at 600 MB/s {:.0} ms); host decode {:.1} ms, to_record {:.1} ms", depth, chans, p.rate, p.ratio, p.memsel as f64 / p.rate as f64 * 1e3, pair_bytes as f64 / 1e6, d.window.unwrap().0, bytes as f64 / 1e6, bytes as f64 / 600e6 * 1e3, dec, rec);
             }
         }

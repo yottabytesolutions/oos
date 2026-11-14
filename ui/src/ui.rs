@@ -789,13 +789,17 @@ impl MeasSrc {
 }
 
 /// One record's measurements: (channel, samples, dt, the smallest swing that counts as a signal).
-type MeasJob = (u64, Vec<(usize, MeasSrc, f64, f64)>);
+/// (number, only the cheap measurements (`Ui::meas_cheap`), channels)
+type MeasJob = (u64, bool, Vec<(usize, MeasSrc, f64, f64)>);
 type MeasDone = (u64, Vec<(usize, Stats, oos_dsp::measure::Analysis)>);
 
 /// The measurements of a record, each channel on its own thread (the four channels of 100 kpts took 27 ms in a row
 /// on the unit).
-fn measure_channels(work: &[(usize, &[f32], f64, f64)]) -> Vec<(usize, Stats, oos_dsp::measure::Analysis)> {
-    let one = |&(c, v, dt, min): &(usize, &[f32], f64, f64)| (c, stats(v, dt), oos_dsp::measure::analyze_min(v, dt, min));
+fn measure_channels(work: &[(usize, &[f32], f64, f64)], cheap: bool) -> Vec<(usize, Stats, oos_dsp::measure::Analysis)> {
+    let one = |&(c, v, dt, min): &(usize, &[f32], f64, f64)| match crate::framestats::cheap_results(v).filter(|_| cheap) {
+        Some((st, an)) => (c, st, an),
+        None => (c, stats(v, dt), oos_dsp::measure::analyze_min(v, dt, min)),
+    };
     if work.len() < 2 {
         return work.iter().map(one).collect();
     }
@@ -824,10 +828,10 @@ impl MeasWorker {
             .name("measure".into())
             .spawn(move || {
                 crate::http::to_little_cores();
-                while let Ok((n, work)) = jobs.recv() {
+                while let Ok((n, cheap, work)) = jobs.recv() {
                     let w: Vec<(usize, &[f32], f64, f64)> = work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
                     let t0 = std::time::Instant::now();
-                    let r = measure_channels(&w);
+                    let r = measure_channels(&w, cheap);
                     // deep raw records (millions of samples): their cost on the state line (deepmeas::cost)
                     let pts: usize = w.iter().map(|x| x.1.len()).sum();
                     if pts > crate::compress::MAX_DEPTH as usize {
@@ -4389,7 +4393,7 @@ impl Ui {
                 (c, v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64)
             })
             .collect();
-        let done = measure_channels(&work);
+        let done = measure_channels(&work, self.meas_cheap(rec));
         self.meas_env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         self.meas_set(done);
         self.meas_n += 1;
@@ -4468,8 +4472,9 @@ impl Ui {
                 }
             })
             .collect();
+        let cheap = self.meas_cheap(rec);
         let w = self.meas_bg.as_mut().expect("worker");
-        if w.tx.send((self.meas_n, job)).is_ok() {
+        if w.tx.send((self.meas_n, cheap, job)).is_ok() {
             w.busy = true;
             self.meas_env_sent = env;
         } else {
@@ -4478,6 +4483,19 @@ impl Ui {
             self.measure_last();
             self.meas_new = true;
         }
+    }
+
+    /// Only the cheap measurements of `rec` are wanted (`framestats::cheap_results`): a deep raw window (millions of
+    /// samples, `deepmeas`), every shown measurement one of `framestats::CHEAP`, and nothing else that reads the
+    /// analysis (the DVM, the software counter, the analyser views, XY).
+    fn meas_cheap(&self, rec: &Record) -> bool {
+        let m = &self.m;
+        rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame))
+            && m.meas.iter().all(|(k, _)| crate::framestats::CHEAP.contains(k))
+            && !m.dvm_on
+            && !m.cnt_on
+            && m.view == AView::Scope
+            && !self.xy
     }
 
     /// The window of the hardware frame `meas_slice` measures channel `c` on, if it does.
@@ -8130,6 +8148,37 @@ mod tests {
         steps(&mut ui, 1);
         assert!(ui.stop_final.is_none() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 2);
         crate::deepmeas::force(None);
+    }
+
+    // Break it catches: the cheap measurement (sums only) for a deep raw window while something shown needs the full
+    // analysis (a frequency, the DVM, the counter, an analyser view), or the full analysis of millions of samples when
+    // only cheap values are shown (1.16 s per raw window on the unit)
+    #[test]
+    fn only_shown_cheap_values_take_the_cheap_measurement() {
+        use super::*;
+        let mut ui = Ui::new(Source::Demo { t: 0.0 });
+        let rec = |acq: usize, envelope: bool| {
+            let f = std::sync::Arc::new(crate::board::Frame { seq: 1, dt: 1e-9, pre: 50, ch: [vec![0.0; 100], Vec::new(), Vec::new(), Vec::new()], envelope, acq: (1e9, acq), ..Default::default() });
+            Record { t0: 0.0, dt: 1e-9, ch: Default::default(), triggered: true, partial: false, raw: Some(crate::wave::Raw { frame: f, i0: 0, i1: 100, t0: 0.0 }), la: None, pairs: false }
+        };
+        let deep = rec(10_000_000, false);
+        ui.m.meas = vec![(Meas::Vavg, 0), (Meas::Vpp, 0), (Meas::StdDev, 0)];
+        assert!(ui.meas_cheap(&deep));
+        assert!(!ui.meas_cheap(&rec(100_000, false)), "not a deep raw window");
+        assert!(!ui.meas_cheap(&rec(10_000_000, true)), "deep pairs");
+        let full = |ui: &mut Ui, f: &dyn Fn(&mut Ui)| {
+            let keep = (ui.m.meas.clone(), ui.m.dvm_on, ui.m.cnt_on, ui.m.view, ui.xy);
+            f(ui);
+            let r = ui.meas_cheap(&deep);
+            (ui.m.meas, ui.m.dvm_on, ui.m.cnt_on, ui.m.view, ui.xy) = keep;
+            r
+        };
+        assert!(!full(&mut ui, &|u| u.m.meas.push((Meas::Freq, 0))));
+        assert!(!full(&mut ui, &|u| u.m.dvm_on = true));
+        assert!(!full(&mut ui, &|u| u.m.cnt_on = true));
+        assert!(!full(&mut ui, &|u| u.m.view = AView::Spectrum));
+        assert!(!full(&mut ui, &|u| u.xy = true));
+        assert!(ui.meas_cheap(&deep));
     }
 
     // Break it catches (deepmeas.rs): with raw deep reads on, a pair record measured between two raw ones (Mean back

@@ -164,10 +164,17 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
                 }
                 let a = (xm - per).max(0.0) as usize;
                 let b = ((xm + per).ceil() as usize).min(v.len());
-                let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
-                for &y in v[a.min(b)..b].iter().filter(|y| y.is_finite()) {
-                    lo = lo.min(y);
-                    hi = hi.max(y);
+                // the extremes of the span (`fastdraw::min_max`, NEON; NaN gaps are skipped as by the filter below);
+                // an infinite sample takes the filtered loop. A 10 M deep raw window took 197 ms on the unit's UI
+                // thread with the scalar loop alone
+                let span = &v[a.min(b)..b];
+                let (mut lo, mut hi) = crate::fastdraw::min_max(span);
+                if lo.is_infinite() && lo < 0.0 || hi.is_infinite() && hi > 0.0 {
+                    (lo, hi) = (f32::INFINITY, f32::NEG_INFINITY);
+                    for &y in span.iter().filter(|y| y.is_finite()) {
+                        lo = lo.min(y);
+                        hi = hi.max(y);
+                    }
                 }
                 if lo <= hi {
                     out[2 * j] = lo;
@@ -378,6 +385,55 @@ mod bench {
             }
             let us = |t: f64| t / n as f64 * 1e6;
             eprintln!("bench {:>6} pts {:>8.0e} s/div: to_record {:7.1} us, draw {:6.1} us, clone {:5.1} us | fast {:6.1} us", pts, tdiv, us(t_rec), us(t_draw), us(t_clone), us(t_fast));
+        }
+    }
+}
+
+#[cfg(test)]
+mod pair_tests {
+    use super::*;
+
+    // Break it catches: the NEON extremes of a pair span other than the filtered scalar loop's: a NaN gap that is not
+    // skipped, an infinite sample that counts, a span left out. Every pair point of a dense record equals the
+    // extremes of the finite samples of its span.
+    #[test]
+    fn pair_points_are_the_extremes_of_their_finite_samples() {
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-3).abs() < 1e-9).unwrap();
+        m.trig_level = 0.0;
+        let n_s = 400_000usize;
+        let dt = 1e-2 / n_s as f64;
+        let mut x = 7u32;
+        let v: Vec<f32> = (0..n_s)
+            .map(|k| {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                match k % 997 {
+                    0 => f32::NAN,
+                    500 => f32::INFINITY,
+                    501 => f32::NEG_INFINITY,
+                    _ => (k as f32 * 3e-4).sin() + ((x >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * 0.1,
+                }
+            })
+            .collect();
+        let fr = Arc::new(Frame { seq: 1, dt, pre: n_s / 2, ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()], acq: (1.0 / dt, n_s), ..Default::default() });
+        let (n, window) = (3600usize, 1e-2);
+        let t_first = -window / 2.0;
+        let rec = to_record(&fr, &m, n, window, t_first);
+        assert!(rec.pairs);
+        let ti = trigger_point(&fr, &m, n, window, t_first).unwrap_or(fr.pre as f64);
+        let (rdt, per) = (window / n as f64, window / n as f64 / dt);
+        for j in 0..n / 2 {
+            let xm = ti + (t_first + (2 * j) as f64 * rdt + 0.5 * rdt) / dt;
+            let a = (xm - per).max(0.0) as usize;
+            let b = ((xm + per).ceil() as usize).min(v.len());
+            let fin = v[a.min(b)..b].iter().copied().filter(|y| y.is_finite());
+            let (lo, hi) = fin.fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), y| (l.min(y), h.max(y)));
+            let got = (rec.ch[0][2 * j], rec.ch[0][2 * j + 1]);
+            if lo > hi {
+                assert!(got.0.is_nan() && got.1.is_nan(), "pair {} outside the frame: {:?}", j, got);
+            } else {
+                assert_eq!(got, (lo, hi), "pair {}", j);
+            }
         }
     }
 }

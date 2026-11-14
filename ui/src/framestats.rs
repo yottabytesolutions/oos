@@ -86,6 +86,38 @@ pub fn add_folds(a: &mut Folds, b: &Folds) {
     }
 }
 
+/// The cheap measurements of `v` as the worker's results (`Ui::meas_set`): the values `analyze_min` and `wave::stats`
+/// give for Vmax, Vmin, Vpp, Vavg, Vrms, Std dev and AC RMS, the others NaN. For a deep raw window whose shown
+/// measurements are all cheap (`Ui::meas_cheap`): the full analysis of 6 M samples took 1.16 s on the unit, these
+/// sums a few ms. None where `Values::of` gives nothing.
+pub fn cheap_results(v: &[f32]) -> Option<(crate::wave::Stats, oos_dsp::measure::Analysis)> {
+    let x = Values::of(v, true)?;
+    let nan = f64::NAN;
+    let an = oos_dsp::measure::Analysis {
+        valid: true,
+        vmax: x.vmax,
+        vmin: x.vmin,
+        avg: x.avg,
+        rms: x.rms,
+        std: x.std,
+        top: nan,
+        base: nan,
+        area: nan,
+        t_vmax: nan,
+        t_vmin: nan,
+        rises: Vec::new(),
+        falls: Vec::new(),
+        rise_time: nan,
+        fall_time: nan,
+        cyc_avg: nan,
+        cyc_rms: nan,
+        cyc_area: nan,
+    };
+    // the level keys take (top + base) / 2, or the middle of the extremes where top is not above base
+    let st = crate::wave::Stats { vmax: x.vmax as f32, vmin: x.vmin as f32, vavg: x.avg as f32, vrms: x.rms as f32, top: f32::NAN, base: f32::NAN, period: nan, pwidth: nan, rise: nan, fall: nan, valid: true };
+    Some((st, an))
+}
+
 /// What `analyze_min` gives for the cheap measurements of `v`; None where it gives nothing (too few samples) or the
 /// record path would measure a filtered copy (a gap).
 struct Values {
@@ -406,4 +438,28 @@ mod tests {
         assert!(!fold_frame(&live, &m, &mut folds));
     }
 
+}
+
+#[cfg(test)]
+mod cheap_tests {
+    use super::*;
+
+    // Break it catches: a cheap result other than the full analysis for the cheap kinds (Vmax, Vmin, Vpp, Vavg, Vrms,
+    // Std dev, AC RMS), or a value for a kind it does not compute (it must be NaN, not 0)
+    #[test]
+    fn cheap_results_equal_the_analysis_for_the_cheap_kinds() {
+        let v: Vec<f32> = (0..200_000).map(|k| if (k / 5000) % 2 == 1 { 3.3 } else { 0.1 } + (k as f32 * 0.37).sin() * 0.01).collect();
+        let (st, an) = cheap_results(&v).expect("values");
+        let full = oos_dsp::measure::analyze_min(&v, 1e-9, 0.1);
+        for k in CHEAP {
+            let (a, b) = (an.get(k), full.get(k));
+            assert!((a - b).abs() <= 1e-9 * b.abs().max(1.0), "{:?}: {} vs {}", k, a, b);
+        }
+        for k in [Meas::Freq, Meas::Period, Meas::Vtop, Meas::Vbase, Meas::Rise, Meas::VavgCyc] {
+            assert!(an.get(k).is_nan(), "{:?} must be NaN", k);
+        }
+        let mid = crate::wave::mid_level(&st);
+        assert!(st.valid && (mid - 1.7).abs() < 0.05, "50 % level {}", mid);
+        assert!(cheap_results(&[1.0, f32::NAN, 2.0, 3.0, 4.0]).is_none(), "a gap takes the full path");
+    }
 }

@@ -23,8 +23,8 @@ impl<'a> Visit<'a> for Count {
 
     /// `#[unsafe(no_mangle)]` and the attributes that are unsafe without saying so in edition 2021.
     fn visit_attribute(&mut self, a: &'a syn::Attribute) {
-        let p = a.path();
-        self.0 += ["unsafe", "no_mangle", "export_name", "link_section"].iter().any(|n| p.is_ident(n)) as u64;
+        let unsafe_ = ["unsafe", "no_mangle", "export_name", "link_section"];
+        self.0 += crate::attrs::names(a).iter().filter(|n| unsafe_.contains(&n.as_str())).count() as u64;
         visit::visit_attribute(self, a);
     }
 
@@ -71,6 +71,8 @@ mod tests {
         let attrs = "#[unsafe(no_mangle)]\nfn a() {}\n#[unsafe(export_name = \"b\")]\nfn b() {}\n\
                      #[no_mangle]\nfn c() {}\n#[link_section = \".x\"]\nstatic S: u8 = 0;\n#[inline]\nfn d() {}\n";
         assert_eq!(count(&syn::parse_file(attrs).expect("parses")), 4);
+        let hidden = "#[cfg_attr(all(), unsafe(no_mangle))]\nfn e() {}\n";
+        assert_eq!(count(&syn::parse_file(hidden).expect("parses")), 1);
     }
 
     #[test]

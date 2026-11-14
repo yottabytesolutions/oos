@@ -100,14 +100,18 @@ cargo xtask ratchet --coverage    # also raise the coverage floors to the curren
 changed files with the change that earned them. `cargo xtask ratchet --init` writes the files from the current state;
 it was run when the rules came in.
 
+### Base trust
+
 The gate compares each ratchet file with its version at the merge base of `HEAD` and `overhaul` (`origin/overhaul`
 in a CI checkout), or `HEAD^1` when `HEAD` is on `overhaul` itself. An entry that is not there, a larger value, or a
-removed or lowered coverage floor fails. A file absent at that base is taken as it is only while the gate itself is
-absent there (the change that brought the gate in); once the gate exists, a missing ratchet file fails. Any git error
-fails. `OOS_GATE_BASE` names another base, in CI only. `--init` refuses a ratchet file the base already has.
+removed or lowered coverage floor fails. Any git error fails. `--init` refuses a ratchet file the base already has.
 
-This holds against an edit of the ratchet files in a change. It trusts the local `overhaul` ref: whoever moves it
-moves the base. CI, with a fresh checkout, is the authority.
+- A ratchet file absent at the base is legal only while the base has no `xtask`: the one merge that brings the gate
+  in. After it, a missing ratchet file fails.
+- CI (GitHub Actions, the base of a pull request is its target branch) is the authority. Locally the gate trusts the
+  `overhaul` ref; setting `CI` or `OOS_GATE_BASE` by hand, or moving `overhaul` to pass a check, breaks the rules.
+- On the integration branch, `HEAD^1` covers one commit. A push of several commits is not compared commit by commit:
+  the integrator runs the full gate on the branch before the fast-forward.
 
 Lint counts are per file, not per place: fixing one `unwrap` and adding another in the same file passes. That is the
 price of a ratchet that survives line moves. Size entries name the item, so they follow it through moves inside the
@@ -137,8 +141,9 @@ file; a renamed or moved item counts as new.
   gate prints it (`<function>::NAME` for a static inside a function). A listed static that no longer exists fails.
 - Where `unsafe` may appear: `unsafe <path prefix>` in `xtask/data/architecture.txt` (a crate directory, a
   directory, or a file; `x` also covers `x.rs`). The list moves with the migration.
-- A limit: the constants in `xtask/src/size/mod.rs` and the thresholds in `clippy.toml`. Lowering a limit needs
-  `ratchet --init` for the new findings; say why in the commit.
+- A limit: the constants in `xtask/src/size/mod.rs` and the thresholds in `clippy.toml`. Raising a limit lets
+  findings go: `cargo xtask ratchet` writes the decreases. Lowering a limit makes findings the ratchet files do not
+  list, and they cannot be added (`--init` refuses existing files): the change that lowers a limit fixes them.
 
 ## Known limits
 

@@ -4,6 +4,7 @@
 //!   cargo xtask ratchet [--init] [--coverage]    write the ratchet files back after an improvement
 
 mod arch;
+mod attrs;
 mod base;
 mod check;
 mod clippy;

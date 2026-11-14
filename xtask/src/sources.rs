@@ -38,15 +38,9 @@ fn cfg_test(attrs: &[syn::Attribute]) -> bool {
         .any(|a| a.path().is_ident("cfg") && a.meta.require_list().is_ok_and(|l| l.tokens.to_string().trim() == "test"))
 }
 
-/// `#[path = ..]`, also inside `#[cfg_attr(.., path = ..)]`.
+/// `#[path = ..]`, also inside `cfg_attr` (`crate::attrs`).
 fn path_attr(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|a| {
-        a.path().is_ident("path")
-            || (a.path().is_ident("cfg_attr")
-                && a.meta
-                    .require_list()
-                    .is_ok_and(|l| l.tokens.to_string().split(',').any(|p| p.trim().starts_with("path"))))
-    })
+    crate::attrs::any(attrs, &["path"])
 }
 
 /// A `mod x;` found in a file: the inline modules around it, its name, and whether it is test code.

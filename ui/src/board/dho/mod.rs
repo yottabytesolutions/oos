@@ -7,6 +7,7 @@
 
 pub mod fpga;
 pub mod hw;
+pub(crate) mod roll;
 pub mod switches;
 #[cfg(test)]
 mod tests;

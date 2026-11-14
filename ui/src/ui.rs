@@ -8876,6 +8876,8 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    mod roll;
+
     use super::axis_label;
 
     // Break it catches (unit 2026-11-13, 1 ms/div 10 M, meas.deep_raw = on): the background measurement measuring the

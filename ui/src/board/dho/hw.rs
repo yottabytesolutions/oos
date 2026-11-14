@@ -1761,6 +1761,10 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 slots_done = Some(id);
             }
             if mode != Slow::Off {
+                if !super::roll::poll(mode, &out, &mut rolling, &mut ring, &mut ring_la, &mut state.sh, &mut bar) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    continue;
+                }
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 // roll and scan (roll-mode.md): stream chunks; roll keeps 10 divisions and puts the newest point at the
                 // right edge, scan writes the screen from left to right; publish ~30 pictures per second
@@ -1920,12 +1924,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: crate::pacing::APPLIED.load(std::sync::atomic::Ordering::Relaxed) }
                     };
                     let mut g = out.lock().unwrap();
-                    // a complete sweep must not be dropped by the next partial picture
-                    if g.queue.back().map_or(true, |b| b.partial) {
-                        g.queue.clear();
-                    }
-                    g.queue.push_back(f.clone());
-                    g.frame = f;
+                    super::roll::publish(&mut g, f, scan.is_some());
                     g.halted = halted;
                 }
                 if done && !halted {

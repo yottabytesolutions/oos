@@ -2,24 +2,24 @@
 
 Upstream's architecture description, kept for boot, kernel, `hal`, `dsp`, `fpgad` and the data path of one
 acquisition. Its `oos-ui` part (threads, sources) describes the code before the overhaul; the target is in
-`../architecture.md`.
+`README.md`.
 
 How the pieces of OOS fit together: from the SD card over the kernel to the Rust crates and the GUI. The register-level
-details are in `protocols/`.
+details are in `../protocols/`.
 
 ## Boot and system
 
 ```
-SD card (stock layout, boot.md)
+SD card (stock layout, ../boot.md)
  ├─ boot       stock Android kernel; magic "KRNL" -> stock boots, "OOSK" -> the loader falls back to recovery
  ├─ recovery   OOS image (kernel 6.12 + DTB + initramfs), built by boot/build-dev-image.sh
- ├─ backup     copy of the stock boot image (fallback), rollback slot, /oos data partition (update.md)
+ ├─ backup     copy of the stock boot image (fallback), rollback slot, /oos data partition (../update.md)
  └─ rigol      stock data incl. /rigol/data/cal_*.hex; OOS mounts it read only (oos-mount-rigol)
 
 initramfs /etc/rcS:  oos-oneshot (KRNL back, next power-on = stock) + start count -> oos-board early (FPGA BOOT command) ->
                      network in the background -> telnetd -> oos-board drivers (touch edt-ft5x06, beeper pwm-gpio) ->
                      oos-ui (start-up screen) -> in the background oos-mount-rigol (read only) +
-                     oos-board bring-up (oos-fpgad cold-boot --execute --power-on) (order and status: boot.md)
+                     oos-board bring-up (oos-fpgad cold-boot --execute --power-on) (order and status: ../boot.md)
 FPGA:                cold boot by OOS (default); the warm hand-over from the stock system still works
 ```
 
@@ -54,7 +54,7 @@ is a separate step through `dho::bus::Bus` (`Bar1` on the unit, `Recorder` in te
 
 The crate root holds what does not depend on the board: `model`, `update`, `wlan`, `bootstatus`, `vendorkeys`. Everything
 of the DHO800/DHO900 board is in `oos_hal::dho` (`hal/src/dho/`); a port to another board family adds a module next to
-it ([porting.md](porting.md)).
+it ([porting.md](../porting.md)).
 
 | Module (in `dho` unless noted) | Role |
 |---|---|
@@ -65,11 +65,11 @@ it ([porting.md](porting.md)).
 | `boot` | cold boot steps 1-21 (FPGA boot command, PLL, AFE, ADC, SPU/SCU, checks, calibrations) against a `Hw` bundle, plus a unit model for dry runs |
 | `panel` | front-panel MCU frames: LEDs, power commands |
 | `board` | XADC (FPGA temperature, VCCINT), thermal zones, over-temperature guard, beeper |
-| `afg` | built-in generator (`protocols/afg.md`) |
-| `clock` | ADC clock domain (`models.md`) |
-| `model` (root) | model identity, capabilities and limits (`models.md`) |
-| `update` (root) | signed updates with rollback (`update.md`) |
-| `wlan` (root) | control socket of wpa_supplicant, its answers, key derivation (`wlan.md`) |
+| `afg` | built-in generator (`../protocols/afg.md`) |
+| `clock` | ADC clock domain (`../models.md`) |
+| `model` (root) | model identity, capabilities and limits (`../models.md`) |
+| `update` (root) | signed updates with rollback (`../update.md`) |
+| `wlan` (root) | control socket of wpa_supplicant, its answers, key derivation (`../wlan.md`) |
 
 ### oos-dsp: signal processing
 
@@ -78,12 +78,12 @@ decoders, mask test, signal generators for tests and the demo source. Waveforms 
 
 ### oos-ui: the scope screen
 
-Superseded by `../architecture.md` on the `overhaul` branch. This section describes the code before the overhaul and
+Superseded by `README.md` on the `overhaul` branch. This section describes the code before the overhaul and
 is kept for the migration.
 
 One process, software renderer on DRM dumb buffers (`drm`, `gfx`, `font`), layout in `ui`, state in `model`.
 
-Protocol decoders that come as modules (`ui/src/protocols`, [protocol-modules.md](protocol-modules.md)) bring their
+Protocol decoders that come as modules (`ui/src/protocols`, [protocol-modules.md](../protocol-modules.md)) bring their
 menu rows, trigger rules, labels, demo traffic and an optional view of their own through one trait, `Protocol`.
 
 Everything the UI asks of the hardware goes through the trait `board::Board` (`ui/src/board/mod.rs`): what the
@@ -103,7 +103,7 @@ Threads:
 | scpi, http | SCPI server on 5555, web remote on 8080 (polled by the main thread) |
 | web-png, web-send | the web remote's PNG of the screen (made only of a changed screen, at most 20 a second and half a core) and the large answers; SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
-| ntp | SNTP exchange and clock step when Time from NTP is on (`sntp`, `ui/time.rs`; `network.md`) |
+| ntp | SNTP exchange and clock step when Time from NTP is on (`sntp`, `ui/time.rs`; `../network.md`) |
 
 Sources (`wave::Source`): `Demo` (dsp generators, triggers checked by the software trigger), `Replay` (a saved frame),
 `Live` (read-out loop), `Hw` (real acquisitions of the board; on the DHO800/DHO900 the TPU trigger is set to the
@@ -143,9 +143,9 @@ Builds for the unit: `--target aarch64-unknown-linux-musl` (static, rust-lld).
 ## Lessons from the first device tests
 
 - Read-out after an own arm needs the play-side chain in pass-through (`scu::passthrough`), else the live compression
-  starves the TX and the c2h read times out (`protocols/record-play.md`).
+  starves the TX and the c2h read times out (`../protocols/record-play.md`).
 - The read-path gain/offset (WPU) must be OOS's own: values left by the stock system shift the codes.
 - 0x1210 counts the ADC data clock, which runs only after the ADC sync and eye scan: check it after step 12.
 - UI state: settings survive oos-ui restarts within a boot (`/tmp/oos-ui.setup`); the settings of the scope itself
-  (NTP, time zone, Ethernet) are in `/oos/system.conf` (`sysconf`, `network.md`), apart from the setups; the power key
-  talks to the panel MCU (`FA 05 02`, dialog, `FA 05 01/03`; `protocols/board.md` 4).
+  (NTP, time zone, Ethernet) are in `/oos/system.conf` (`sysconf`, `../network.md`), apart from the setups; the power key
+  talks to the panel MCU (`FA 05 02`, dialog, `FA 05 01/03`; `../protocols/board.md` 4).

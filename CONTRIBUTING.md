@@ -32,7 +32,7 @@ usually in `oos-dsp`. [docs/protocol-modules.md](docs/protocol-modules.md) walks
 ```
 
 Tests that need the calibration files of a real unit skip themselves without them. See the Development section of the
-[README](README.md). [docs/architecture.md](docs/architecture.md) is the place to start reading.
+[README](README.md). [docs/architecture/README.md](docs/architecture/README.md) is the place to start reading.
 
 Text and code comments are in English. Changes to the hardware knowledge go into `docs/`, in the same pull request.
 

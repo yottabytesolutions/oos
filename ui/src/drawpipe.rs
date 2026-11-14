@@ -866,7 +866,7 @@ impl Pipe {
     }
 
     /// Batches `ids` reached the picture in this merge; one that reached it in an earlier merge too came in parts
-    /// (`pacing::PARTIAL`, docs/fork/draw-architecture.md step 0).
+    /// (`pacing::PARTIAL`, docs/architecture/drawing.md step 0).
     fn note_merged(&self, ids: &[u64]) {
         let n = self.merges.load(Ordering::Relaxed);
         let mut seen = self.seen.lock().unwrap();
@@ -1481,7 +1481,7 @@ mod tests {
         gate
     }
 
-    // Break it catches (step 0 counters, docs/fork/draw-architecture.md): a batch whose frames reach the picture in two
+    // Break it catches (step 0 counters, docs/architecture/drawing.md): a batch whose frames reach the picture in two
     // merges not counted as partial, a whole batch counted, or the picture age of a merge not reported.
     #[test]
     fn partial_merges_and_picture_age_are_counted() {

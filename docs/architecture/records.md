@@ -1,7 +1,7 @@
 # Records and measurements
 
 Target architecture of compression, deep memory, records and the measurement path. Part of
-[architecture.md](../architecture.md). Details and unit numbers are in [fork/compress.md](../fork/compress.md),
+[README.md](README.md). Details and unit numbers are in [fork/compress.md](../fork/compress.md),
 [fork/deep-meas.md](../fork/deep-meas.md) and [fork/stop-exact.md](../fork/stop-exact.md).
 
 ## Data kinds
@@ -14,7 +14,7 @@ The acquisition produces three kinds of data (acquisition.md). Their roles do no
 | `Frame` | the newest frame of a batch, decoded | no | yes, on the fast path |
 | `MeasRead` | a raw re-read: the newest frame of a compressed batch (`RAW_PERIOD`), the deep screen window (`deepmeas::PERIOD`), the STOP final frame | no | yes, and it is the record shown |
 
-The day's flicker came from measurement reads drawn among pair frames (draw-architecture.md 2). In the target a
+The day's flicker came from measurement reads drawn among pair frames ([drawing bugs](drawing.md#the-days-bugs-on-that-flow)). In the target a
 `MeasRead` is a type that no kernel takes. The off-path pseudo-batch is built from `Batch` frames only.
 
 ## Compression and deep reads
@@ -96,7 +96,7 @@ Rule: every raw frame counts once. Per route:
   deep window of deep pairs, the STOP final when the record shown is pairs), whose frames are never folded.
 
 The `stats` class of `ChangeSet` resets `mstat` and raises the statistics generation, `stats_gen`, the third number
-owned by `Generations` (architecture.md, [Generations](../architecture.md#generations)). Today `settings_changed`
+owned by `Generations` (README.md, [Generations](README.md#generations)). Today `settings_changed`
 clears `mstat` on every settings change, including changes that alter no measurement. Which fields belong to `stats`
 is decided in `classify`.
 

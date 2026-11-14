@@ -114,7 +114,7 @@ pub fn fast_block(draw_ms: f32, merge_ms: f32) {
     push(&mut s.fast, [draw_ms, merge_ms]);
 }
 
-/// Settings generations (docs/fork/draw-architecture.md, step 0): `WANTED` counts the acquisition settings (`Want`) the
+/// Settings generations (docs/architecture/drawing.md, step 0): `WANTED` counts the acquisition settings (`Want`) the
 /// UI asked for (`changed`), `APPLIED` the one the acquisition thread acquires under. A frame carries `APPLIED` as it
 /// was when it was acquired (`Frame::cfg`); shown while `WANTED` is newer, it was acquired before a change of `Want`
 /// (trigger level and slope included): `STALE`. Not covered: changes outside `Want` (`Shared::needs_raw`, `slow`,
@@ -407,7 +407,7 @@ pub fn summary() -> String {
     let nb = s.batches.len().max(1);
     let mut cd: Vec<f32> = s.comps.iter().map(|c| c.0 as f32).collect();
     let mut cr: Vec<f32> = s.comps.iter().map(|c| c.1 as f32).collect();
-    // the weight of a picture in deposit frames: a record-path frame weighs about 3.7 (docs/fork/draw-architecture.md)
+    // the weight of a picture in deposit frames: a record-path frame weighs about 3.7 (docs/architecture/drawing.md)
     let mut cw: Vec<f32> = s.comps.iter().map(|c| c.0 as f32 + 3.7 * c.1 as f32).collect();
     let mut age: Vec<f32> = s.comps.iter().filter_map(|c| c.2).collect();
     let p3 = |v: &mut Vec<f32>| format!("{:.0}/{:.0}/{:.0}", pct(v, 0.1), pct(v, 0.5), pct(v, 0.9));
@@ -454,7 +454,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    // Break it catches (step 0, docs/fork/draw-architecture.md): a frame of the current settings counted as stale, one
+    // Break it catches (step 0, docs/architecture/drawing.md): a frame of the current settings counted as stale, one
     // of older settings not counted, a frame not from the hardware (generation 0) counted, or the picture composition
     // missing from the status line.
     #[test]

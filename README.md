@@ -210,7 +210,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 | LXI identification | 8080 | `/lxi/identification` |
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
 | SSH | 22 | root shell with the scope's own password or a trusted key, off by default ([docs/network.md](docs/network.md) 7) |
-| mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-204527.local:8080`, and its services for browsing ([docs/network.md](docs/network.md)) |
+| mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-xxxxxx.local:8080`, and its services for browsing ([docs/network.md](docs/network.md)) |
 
 None of them slows the scope down: they are read without waiting, and the live picture of the web remote is made on
 the slow cores with spare time only (on a DHO924S the screen stays at 30 frames a second with two web viewers). All of
@@ -661,7 +661,7 @@ On USB the scope takes the first USBTMC instrument it finds (no PC, no driver), 
 answer; without one the sweep stops with the reason (no USB device, a device that is not USBTMC, no permission). Rigol
 DG and Siglent SDG generators are USBTMC instruments as well. The scope sets channel 1 of the generator to a sine of
 Amplitude (Vpp) without offset, switches its output on and steps through the frequencies. Over SCPI,
-`:BODE:GENerator "usb"` selects USB and `:BODE:GENerator "192.168.1.20:5025"` the LAN again.
+`:BODE:GENerator "usb"` selects USB and `:BODE:GENerator "192.0.2.20:5025"` the LAN again.
 - UNI-T UTG900 commands: `:CHANnel1:MODe CONTINUE`, `:CHANnel1:BASE:WAVe SINe`, `:CHANnel1:AMPLitude:UNIT VPP`,
   `:CHANnel1:BASE:AMPLitude`, `:CHANnel1:BASE:OFFSet 0`, `:CHANnel1:BASE:FREQuency`, `:CHANnel1:OUTPut ON`, from the
   UNI-T UTG900 series programming manual (REV 00, 2022-07-15; the English UTG900E manual has the same commands). Not
@@ -827,7 +827,7 @@ The test `every_menu_fits` walks all menus and fails on text wider than its cont
 `tools/wlan-sim.sh` tests the WLAN path on simulated radios in a virtual machine, without a stick. It needs Docker,
 `qemu-system-aarch64` and one finished image build.
 
-Start with the [hardware overview](https://deckerjulian.github.io/oos/hardware/overview.html) and [docs/architecture.md](docs/architecture.md).
+Start with the [hardware overview](https://deckerjulian.github.io/oos/hardware/overview.html) and [docs/architecture/README.md](docs/architecture/README.md).
 
 ## Licences
 

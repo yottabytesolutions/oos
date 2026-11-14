@@ -1,8 +1,8 @@
 # Picture
 
 Target architecture of the path from acquired frames to the phosphor maps the grade and the GPU read. Part of
-[architecture.md](../architecture.md). Derivations, measurements and the step plan are in
-[fork/draw-architecture.md](../fork/draw-architecture.md). This page states the structure and the rules.
+[README.md](README.md). Derivations, measurements and the step plan are in
+[drawing.md](drawing.md). This page states the structure and the rules.
 
 ## Owners
 
@@ -14,10 +14,10 @@ Target architecture of the path from acquired frames to the phosphor maps the gr
 | GPU helper | own process | nothing; reads the arena | |
 
 The accumulator is the only writer of `ph` and `phz`. Today eight `ph.clear()` sites and six routes write them
-(draw-architecture.md 1). In the target `ph`, `phz`, W and the window are private fields of the accumulator, and
+([current data flow](drawing.md#current-data-flow-dho804-32041d0)). In the target `ph`, `phz`, W and the window are private fields of the accumulator, and
 readers get only `&Picture`, so the compiler enforces the single writer. Every write goes through the accumulator's
 methods, driven by two inputs:
-- the `ChangeSet` of the change point ([architecture.md](../architecture.md));
+- the `ChangeSet` of the change point ([README.md](README.md));
 - whole batches from the pipe.
 
 ## The batch path
@@ -34,7 +34,7 @@ UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole 
   The UI sees only whole batches.
 - **Mapping key.** It is fixed per batch at its first claim, so all shares of a batch use one mapping. It has one
   source: `classify` builds `MappingKey` from exactly the fields it classifies `mapping`, in the same destructure, so a
-  field cannot be in the class and missing from the key (architecture.md, [Change detection](../architecture.md#change-detection)).
+  field cannot be in the class and missing from the key (README.md, [Change detection](README.md#change-detection)).
   Today these are time base, delay, V/div, offset, channel set, dots, zoom, and per channel invert, coupling and
   bandwidth, plus the main and zoom plot sizes from `UiAcq` (today the `(w, h)` check in `drawpipe::merge`). A unit of another key is dropped at merge.
 - **Frames convert with their own `BatchMeta`.** Volts, times and the trigger refinement come from the batch, not
@@ -47,8 +47,8 @@ UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole 
   case.
 - **Route per batch, decided by the pipe from `PipeView`.** The acquisition thread sends every `Batch` to the pipe
   and knows nothing about drawing policy. The change stage publishes `PipeView { gen, epoch, mapping_key, route }`, a
-  latest-value cell next to `AcqWant`, derived from the same `ChangeSet` (architecture.md, [State and
-  ownership](../architecture.md#state-and-ownership)). The pipe routes each batch by its own `gen` and `epoch`
+  latest-value cell next to `AcqWant`, derived from the same `ChangeSet` (README.md, [State and
+  ownership](README.md#state-and-ownership)). The pipe routes each batch by its own `gen` and `epoch`
   against `PipeView`:
   - on the fast path the batch is deposited (shares, `BatchUnit`);
   - off it, the workers decode the frames and build the records (`to_record`), and pass them to the UI as one
@@ -114,7 +114,7 @@ STOP freezes the maps and W. A view change while stopped is a `mapping` change a
   sum, drawn with the same span kernel. Records from a `Frame` or `MeasRead` are never in it.
 - The route is off the fast path when the picture needs it (XY, roll and scan) or when every frame must become a
   record (software mask and zones, software average, Bus trigger, Single, segments). Zoom stays on the fast path: a
-  second span set per frame for `phz` with the zoom mapping and the same w (`fork/draw-architecture.md` 3.3).
+  second span set per frame for `phz` with the zoom mapping and the same w ([the weight model](drawing.md#one-weight-model-per-display-mode)).
 
 ## Rules
 

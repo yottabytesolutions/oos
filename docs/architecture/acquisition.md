@@ -1,6 +1,6 @@
 # Acquisition
 
-Target architecture of the acquisition thread and its port to the UI. Part of [architecture.md](../architecture.md).
+Target architecture of the acquisition thread and its port to the UI. Part of [README.md](README.md).
 Drawing is in [picture.md](picture.md), records and measurements in [records.md](records.md). Today's code is
 referenced as of dho804 32041d0.
 
@@ -27,8 +27,8 @@ requests, outputs and readings side by side, each with its own counter conventio
 | `MeasRead` | acq | measurement path | decoded volts plus `BatchMeta`; a separate type that no drawing kernel accepts |
 | `Readings` | acq | UI | latest value: status, unit counters, board readings, acknowledged ids, the applied `(gen, epoch)` |
 
-The change point produces a board-neutral `AcqIntent` (architecture.md, [Acquisition
-intent](../architecture.md#acquisition-intent)). `app/acq_client` maps it to this board's `AcqWant` through
+The change point produces a board-neutral `AcqIntent` (README.md, [Acquisition
+intent](README.md#acquisition-intent)). `app/acq_client` maps it to this board's `AcqWant` through
 `Board::want`, so the domain never names `Want` or `seq::Settings`. `board/mod.rs` defines these types for every board. `board/dho` implements the thread. The `board::boundary` lint
 stays.
 
@@ -46,7 +46,7 @@ Today these are separate `Shared` fields, so a change of `needs_raw` or a mask w
 (`pacing::WANTED` covers `want` only). One struct with one `gen` makes every acquisition-relevant change visible
 in one number.
 
-- `gen` is raised by the change point ([architecture.md](../architecture.md#generations)) whenever the
+- `gen` is raised by the change point ([README.md](README.md#generations)) whenever the
   `ChangeSet` contains `acq` (`classify` calls `new_gen`). It is the only writer.
 - The thread stores `applied` = the `gen` of the want it last applied (configured, or found equal). Every output it
   produces from then on carries `applied` in its `BatchMeta`.
@@ -130,7 +130,7 @@ loop {
 3. Changed `epoch` alone (a retry with identical settings, CLEAR, RUN after STOP): no reconfiguration, but the same
    boundary. Disarm a batch armed ahead under the older epoch.
 4. Drop what the older `gen` or `epoch` left in flight: the queued `Frame`s and a fill that `NEW_SETTINGS` ended.
-   Today both are still read and queued (draw-architecture.md 1). The ended fill is not read at all.
+   Today both are still read and queued ([current data flow](drawing.md#current-data-flow-dho804-32041d0)). The ended fill is not read at all.
 
 The invariant: after `apply` returns, nothing the thread publishes carries a (`gen`, `epoch`) older than the applied
 pair. The thread publishes the applied pair in `Readings::applied`; `*OPC?` and remote waits read it.

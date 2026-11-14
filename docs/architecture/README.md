@@ -348,6 +348,10 @@ Run state goes by transition, not by value:
 `Session::step` runs fixed stages. Each stage owns its state, takes typed inputs and returns typed outputs. The order
 is in the code; no stage relies on a side effect of another.
 
+Two kinds of step run the same stages in the same order ([Main loop and pacing](#main-loop-and-pacing)): the full
+step on a page flip runs all of them; the light step on an input or remote event runs intake, change, acquire and
+reply only.
+
 ```
 intake     (input, remote requests, outbox, BatchUnits, RecordBatches, Frames, MeasReads, Readings)
                                                        -> commands, requests, acquired data
@@ -387,21 +391,91 @@ its trigger. It ends on the first of:
 | Thread | Core | Policy | Owns | Talks through |
 |---|---|---|---|---|
 | main | first A72 | SCHED_OTHER | `Session` and every stage | the channels below; never blocks on IO |
-| GPU helper (process) | first A72, with main | SCHED_OTHER | nothing; reads the arena | the arena and its pipe |
+| GPU helper (process) | first A72, with main, within its budget; the unit round of M5c tries an A53 | SCHED_OTHER | nothing; reads the arena | the arena, its socket and fences |
 | acquisition (`board/dho`) | second A72 | SCHED_OTHER | hardware, batch buffers, `AcqLoop`, the helper's share | `AcqWant` and `AcqCmd` in; `Batch`, `Frame`, `MeasRead`, `Readings` out |
 | deposit workers | A53, one per little core | SCHED_OTHER | their share maps; the route per batch from its `BatchMeta` tag, the mapping from `DepositView` at first claim | `BatchUnit` (fast path) or `RecordBatch` (records, off it) to main (`picture.md`) |
 | measure | A53, scoped per channel | SCHED_OTHER | one measurement job | job and result channels (`records.md`) |
 | input | A53 | SCHED_OTHER, blocked on read | the panel UART, the touch device | `InputEvent` channel to main |
-| remote listeners | A53 | SCHED_OTHER, blocked on sockets | sockets of SCPI, HTTP, MCP, VXI-11, the control FIFO; encoding of large answers | `RemoteRequest { command or query, wait, reply sender }` to main |
+| remote listeners | A53 | SCHED_OTHER, in `epoll_wait` | sockets of SCPI, HTTP, MCP, VXI-11, the control FIFO; encoding of large answers | `RemoteRequest { command or query, wait, reply sender }` to main |
 | web PNG / send | A53 | SCHED_IDLE (nice 10 where refused) | encoding and sending pictures | the composed-picture snapshot |
 | ntp, ssh, mdns, wlan | A53 | SCHED_OTHER | their service | status values the menus read; settings by command |
+
+### Waiting
+
+Every thread blocks in exactly one call, on its event sources and one deadline (adr/0016). No thread sleeps in a loop.
+A hardware poll remains only where the FPGA raises no event; it runs at the hardware's period inside the same call.
+
+| Thread | The one blocking call | Wake sources | Worst-case wake latency | Hardware poll (period, cost) |
+|---|---|---|---|---|
+| main | `epoll_wait` | page-flip event (DRM fd); wake `eventfd` (a `BatchUnit`, a `RecordBatch`, a remote request, `Readings` changed, the outbox of a worker); input fds; GPU helper reply socket; a `timerfd` deadline only without a display (host, headless) | an input or remote event: under 1 ms to the light step; a picture: the next flip | none |
+| acquisition | `poll` on its command `eventfd` with a timeout of the hardware period | `AcqWant` changed, `AcqCmd` queued, cancel | under 1 ms for STOP, a settings change or cancel | trigger done (BAR1 `0x4080` bit 30): every 500 us while armed; ring count during a fill: every 200 us, or helper work between reads; each read is one MMIO load |
+| deposit workers | channel receive (SPSC ring plus futex) | a claimable batch, shutdown | under 50 us | none |
+| measure | channel receive | a job, shutdown | under 50 us | none |
+| input | `poll` | panel UART, touch evdev, shutdown `eventfd` | under 1 ms | none |
+| remote listeners | `epoll_wait` per listener thread | accept, readable, writable (`EPOLLOUT` while an output queue is non-empty), reply ready `eventfd`, shutdown | under 1 ms | none |
+| web PNG / send | channel receive | a snapshot ready, shutdown | not latency-bound | none |
+| GPU helper | `poll` on its socket and the GPU fences | a submission, a fence signalled, shutdown | under 1 ms | none |
+| ntp, mdns, wlan | `poll` | their sockets, rtnetlink link events, supplicant events, config `eventfd`, protocol deadlines (`timerfd`) | protocol-bound | none |
+
+Measured on the unit and shown in `:SYSTem:STATe?`: per thread its wakes per second and the p99 time from wake source
+to handling. unitlab asserts the latency column; an idle scope in STOP wakes main only on input and flips.
+
+The FPGA raises no usable user interrupt for trigger done, ring count or roll chunks: stock firmware polls BAR1
+(`0x4080` bit 30) and then does one blocking C2H read, with the driver on legacy INTx and MSI off (RE, `regmap`).
+So those two polls stay, but inside `poll(eventfd, period)`: a command interrupts them at once, and an armed scope in
+STOP costs nothing. The 10 us sleep after every BAR write (`bus.rs` 167) stays until a unit measurement shows the
+minimum spacing; then it becomes that spacing, done once per write list rather than per write where the hardware
+allows it.
+
+### DMA completion
+
+| Boot | C2H completion | Where | Shown as |
+|---|---|---|---|
+| cold boot | interrupt: MSI today; legacy INTx (as stock) to evaluate | the IRQ on an A53 (`oos-irq-place`) | `xdma=msi cpuN` or `xdma=intx cpuN` |
+| kexec start | `poll_mode=1` (MSI after kexec gives C2H time-outs, `dho804` fix) | the completion poll threads pinned to one A53, never an A72 | `xdma=poll cpuN` |
+
+A unit round (M5c) measures CPU per read, read latency and kexec behaviour for MSI, INTx and poll, and decides the
+default. If INTx works after kexec, the poll mode goes.
+
+### Main loop and pacing
+
+The display paces the steps (adr/0016):
+- **Full step on the flip.** A step that composes starts on the page-flip event of the previous picture. The panel's
+  refresh decides the step period; the target of 30 pictures/s holds by composing on every flip at 30 Hz or every
+  second flip at 60 Hz. Without a display (host, headless) a `timerfd` with an absolute deadline stands in.
+- **A flip never blocks main.** Main submits a picture and returns to `epoll_wait`. It composes the next only when a
+  free buffer exists (double buffering with the GPU helper's fenced pool, triple where the budget allows); otherwise it
+  waits for the flip event in the same `epoll_wait`. Today's `wait_flip` with a 100 ms timeout (`drm.rs` 390) goes.
+- **Light step between flips.** An input event or remote request wakes main at once and runs a light step: intake,
+  change, acquire, reply. No records, accumulation or compose. A settings round trip (SCPI write, reply) stays under
+  2 ms; the picture follows at the next flip.
+- **No busy wait.** The last-millisecond loop of today's pacing (`main.rs` 563, 610) goes with the timer.
+
+### Hand-offs
+
+| Hand-off | Primitive | Lock |
+|---|---|---|
+| `Batch` into the pipe; a worker's share maps back to its owner | per-producer SPSC ring of owned values | none |
+| `BatchUnit`, `RecordBatch` to main | SPSC ring per worker, plus main's wake `eventfd` | none |
+| `AcqWant`, `DepositView`, `Readings` | latest-value cell (seqlock for `Copy` parts, swap of an `Arc` for the rest) plus a wake `eventfd` where the reader must react within a step | a swap only |
+| `AcqCmd` | bounded MPSC queue plus the acquisition `eventfd` | push and pop only |
+| composed picture to remote clients | triple buffer | index swap only |
+| `RemoteRequest` | bounded MPSC queue plus main's wake `eventfd` | push and pop only |
+| replies to a connection | bounded output queue per connection, written on `EPOLLOUT` by the listener | push and pop only |
+| metrics | per-thread counters, cache-line aligned, summed by the reader | none |
+
+No lock is held across a copy of sample data, an allocation, a format or a sort. Summaries of metrics (`pacing.rs`
+362 sorts histories under its lock today) take a snapshot first and work outside the lock.
+
+### Placement
 
 Placement comes from `system/placement` (`perf.place`), with the cores read from `cpu_capacity`. The xdma interrupt
 goes to a little core from the rootfs. No thread runs a real-time policy: a stuck real-time thread on this SoC stalls
 the panel, and the budgets hold without it.
 
 Large answers are encoded off main: a deep `:WAVeform:DATA?` gets an `Arc` snapshot of the record in its reply, and
-the listener thread encodes and sends it.
+the listener thread encodes and sends it. Main never writes to a socket: every reply goes into the connection's output
+queue (today `scpi.rs` 46 writes from the UI thread with a 2 s stall timeout).
 
 Typed outputs replace `board::HwShared`, today an `Arc<Mutex<Shared>>` of about 40 fields with settings, one-shot
 requests, outputs and readings under one lock. Each kind gets one writer (`acquisition.md`, Port):

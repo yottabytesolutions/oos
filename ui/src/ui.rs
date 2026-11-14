@@ -1991,6 +1991,7 @@ impl Ui {
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
             self.wfm_total += got as u64;
             crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
+            crate::pacing::picture(got);
             // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
             // measurement stays that of the last raw record
             let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);

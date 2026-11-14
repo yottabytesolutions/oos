@@ -54,6 +54,7 @@ mod layout;
 mod ssh;
 mod wave;
 mod zone;
+mod pacing;
 #[cfg(target_os = "linux")]
 mod drm;
 #[cfg(target_os = "linux")]
@@ -792,6 +793,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
             }
         }
         ui.hdmi_out = hdmi.as_ref().map(|h| (h.width as u32, h.height as u32));
+        pacing::pass(t0, t1, t2, t3);
         let a = 0.05;
         ui.t_step += a * ((t1 - t0).as_secs_f32() * 1000.0 - ui.t_step);
         ui.t_render += a * ((t2 - t1).as_secs_f32() * 1000.0 - ui.t_render);

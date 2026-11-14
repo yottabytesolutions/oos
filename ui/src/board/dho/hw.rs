@@ -1830,6 +1830,9 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             let t_batch = std::time::Instant::now();
             let got = seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, 25, |_| {}, changed, idle);
             let batch_ms = t_batch.elapsed().as_secs_f32() * 1e3;
+            if let Ok(c) = got {
+                crate::pacing::batch(batch_ms, c, seq::frames(&b, &p));
+            }
             if let Some(x) = pipe {
                 x.help_done(&mut helper);
             }

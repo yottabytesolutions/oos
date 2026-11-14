@@ -484,9 +484,22 @@ The display paces the steps (adr/0016):
   and it runs no records, accumulation or compose. A settings round trip (SCPI write, reply) stays under 2 ms; the
   picture follows at the next full step.
 - **Pending changes.** The change stage keeps a pending `ChangeSet`. A light step merges its own into it: the union of
-  the classes, the newest generations, all `(token, epoch)` pairs. The next full step consumes the pending set and
-  clears it, so every consumer that runs only in full steps (records, accumulator, views) sees every change since its
-  last step. Host test: a mapping change in a light step gives a preview at the next full step.
+  the classes, the newest generations, all `(token, epoch)` pairs, and the run-state transitions as an ordered list
+  (STOP then RUN stays two transitions, not none). The next full step consumes the pending set and clears it, so every
+  consumer that runs only in full steps (records, accumulator, views) sees every change since its last step.
+- **Generation barrier.** A full step applies the pending set to its consumers before it takes any unit, record or
+  result, so data of a generation older than the pending `gen` or `epoch` is filtered as stale, not drawn first and
+  reset after. Host tests: a mapping change in a light step gives a preview at the next full step; four light steps
+  (a mapping change, CLEAR, STOP, RUN) before one full step deliver both classes, both transitions in order and the
+  newest generations.
+- **Service points.** A full step can take up to 15 ms, so main does not wait for its end to serve requests. Between
+  stages it checks its reactor without blocking (`epoll_pwait2` with a zero timeout). Pending input and remote
+  requests get a light-step slice within a quota (at most 8 requests, 64 kB of input and 0.5 ms per service point),
+  then the full step continues where it was. No stage runs longer than 2 ms between two service points; a stage that
+  would (accumulate on HDMI, compose) has service points inside it, at row-band boundaries.
+- **Fairness.** A full step always finishes before the next one starts, whatever the remote load: light work per full
+  step is capped by the quotas. Requests beyond a quota wait for the next service point, in arrival order. A full step
+  never delays a request by more than one service interval (2 ms) plus its slice.
 - **No busy wait.** The last-millisecond loop of today's pacing (`main.rs` 563, 610) goes with the timer.
 
 ### Hand-offs
@@ -984,7 +997,8 @@ after each step may tighten them, never loosen them without a doc change.
 | records stage | p99 <= 1.5 ms off the fast path; records are built on the workers | `stage records` | host timing guard, unitlab | M6 |
 | accumulate (at most 3 map sets, touched rows, fused grade) | p99 <= 2 ms; <= 4 ms on HDMI | `stage accumulate` | host timing guard, unitlab | M9, M10 |
 | compose + present submission | p99 <= 4 ms; <= 6 ms on HDMI | `stage compose`, `stage present` | unitlab | M16 |
-| light step (input or remote) | settings round trip p99 <= 2 ms | `light` | host test, unitlab | M3d |
+| light step (input or remote) | settings round trip p99 <= 2 ms when main is idle | `light` | host test, unitlab | M3d |
+| remote arrival to reply during full steps | p99 <= 3 ms, measured from the listener's read timestamp to the reply in the output queue | `remote latency` | unitlab (`ifload.py` with pictures running) | M3d |
 | remote throughput | >= 500 query/answer exchanges per s on one SCPI connection, picture rate within 10 % | `remote` | unitlab (`ifload.py`) | M3d |
 | acquisition reaction | STOP, a settings change or cancel within 1 ms (provisional until Platform tuning) | `acq wake` | host test with the scripted `Device`, unitlab | M3c |
 | acquisition overhead per batch (excluding DMA) | p99 <= 1 ms | `acq batch` | unitlab | M3c |

@@ -282,12 +282,17 @@ every later unit round measures latency against it.
   timer and its busy last millisecond go; a `timerfd` stands in without vblanks.
 - `Pacing { next_step, period }` to the acquisition for `pacing::Fill`.
 - The light step for input and remote requests: intake of input and remote only, change, acquire, reply; the pending
-  `ChangeSet` that the next full step consumes.
+  `ChangeSet` with ordered transitions that the next full step consumes behind a generation barrier.
+- Service points between stages of a full step, with quotas (8 requests, 64 kB, 0.5 ms) and the 2 ms bound between
+  points.
 - Remote replies go into per-connection output queues written by the listeners on `EPOLLOUT`; main never writes to a
   socket (today `scpi.rs` 46 and `vxi11.rs` 319). The request inbox becomes a bounded MPSC queue with main's wake.
 - Tests, failing before: a stalled SCPI client does not delay a step; a settings round trip stays under 2 ms on the
   host with a busy picture; an idle main wakes only on vblanks it needs and input; a mapping change in a light step
-  gives a preview at the next full step; the first picture after idle comes at the next vblank; with the DRM fake,
+  gives a preview at the next full step; four light steps before one full step deliver every class and both
+  transitions in order; a remote request that arrives during a full step is answered within 3 ms; a flood of
+  requests does not delay the next full step beyond its quota; the first picture after idle comes at the next vblank;
+  with the DRM fake,
   a missing vblank event switches to the timer within 3 periods and back; panel and HDMI flips are accounted per
   output; a failed flip does not stop the clock.
 - Unit check in round 1: settings round trip, remote throughput (`ifload.py`), idle CPU in STOP, the step clock

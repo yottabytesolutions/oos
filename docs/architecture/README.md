@@ -426,7 +426,8 @@ needs. The latency column is provisional until [Platform tuning](system.md#platf
 governor and IRQ affinity it depends on.
 
 The FPGA raises no usable user interrupt for trigger done, ring count or roll chunks: stock firmware polls BAR1
-(`0x4080` bit 30) and then does one blocking C2H read, with the driver on legacy INTx and MSI off (RE, `regmap`).
+(`0x4080` bit 30) and then does one blocking C2H read, with the driver on legacy INTx and MSI off (RE, `regmap`;
+the same INTx mode fails under OOS's kernel, [DMA completion](#dma-completion)).
 So those two polls stay, but inside `ppoll(eventfd, period)` (`poll` takes milliseconds; the 200 and 500 us periods
 need `ppoll`, `epoll_pwait2` or a `timerfd`): a command interrupts them at once, and an armed scope in
 STOP costs nothing. The 10 us sleep after every BAR write (`bus.rs` 167) lasts 60 to 70 us today, because a
@@ -454,20 +455,24 @@ Four different things, with different bounds:
 
 | Boot | C2H completion | Where | Shown as |
 |---|---|---|---|
-| cold boot | interrupt: legacy INTx (as stock), or MSI if the round shows it is better | the IRQ placed explicitly on an A53 | `xdma=intx cpuN` or `xdma=msi cpuN` |
-| kexec start | legacy INTx (`poll_mode=0 interrupt_mode=2`) | the IRQ placed explicitly on an A53 | `xdma=intx cpuN` |
-| fallback only | `poll_mode=1` | the completion threads, bound by the driver to cpu0 and cpu1 (A53s) | `xdma=poll cpu0,1` |
+| cold boot | MSI (`poll_mode=0`, today's unit config) | on an A53: IRQ 78 on cpu1, measured | `xdma=msi cpu1` |
+| kexec start | `poll_mode=1`, unless M5c finds a working alternative | the completion threads, bound by the driver to cpu0 and cpu1 (A53s) | `xdma=poll cpu0,1` |
 
-- **IRQ placement is explicit.** GICv3 routes every device IRQ to cpu0 by default, so rcS writes
-  `/proc/irq/<n>/smp_affinity_list` for the xdma, DRM, GPU, network and USB IRQs ([Platform
-  tuning](system.md#platform-tuning)). `oos-irq-place` does nothing today.
+- **IRQ placement is explicit.** GICv3 routes a wired device IRQ to cpu0 by default, so rcS writes
+  `/proc/irq/<n>/smp_affinity_list` for the DRM, GPU, network and USB IRQs and checks the xdma MSI ([Platform
+  tuning](system.md#platform-tuning)). Measured 2026-11-15: the xdma MSI is IRQ 78 on cpu1, at 31 interrupts/s at setup
+  B and 8/s at 4 channels 10 M.
 - **Why not MSI after kexec.** The GIC-500 cannot disable LPIs once enabled, and without an EFI boot the next kernel
-  cannot reuse the old LPI tables, so MSIs never arrive after kexec (inferred; the symptom is verified). INTx does not
-  use the ITS.
+  cannot reuse the old LPI tables, so MSIs never arrive after kexec (inferred; the symptom is verified).
+- **Why not INTx.** INTx (`poll_mode=0 interrupt_mode=2`) failed on the unit on 2026-11-15: the legacy line came up as
+  IRQ 76 on chip `dummy` with about 230,000 interrupts/s on cpu0, 10 C2H time-outs in 2 min, 3.8 fps (log:
+  `oos_tuning_20261115.md` in the unit repo). The RK3399 PCIe legacy interrupt routing in this kernel does not deliver
+  a usable line. INTx is rejected as configured; it needs a PCIe legacy IRQ fix first.
 - **Why not poll.** The poll threads are bound to cpu0 and cpu1 and burn an A53 per transfer, competing with the
   deposit workers.
-- A unit round (M5c) measures CPU per read, read latency and time-outs for INTx and MSI on cold boot and INTx after
-  kexec, and records the default in Platform tuning. Poll mode stays only as a fallback.
+- A unit round (M5c) measures CPU per read, read latency and time-outs for MSI on cold boot and poll mode after
+  kexec, and looks for a working kexec alternative to poll mode. The poll threads cost an A53 per transfer until one
+  is found.
 
 ### Main loop and pacing
 
@@ -771,6 +776,31 @@ loop survives a power cycle because the setup is on `/oos`. The design breaks th
 - On an image in its trial start, safe start is off. The update watcher's crash-loop rule writes the previous image
   back instead (`../update.md`), because there the image, not the setup, is the suspect.
 
+### Kernel panics
+
+- **Reboot instead of halt.** The OOS kernel command line carries `panic=10`, so a panic reboots after 10 s instead
+  of halting until someone pulls the power cable. It is set in `OOS_BOOTARGS` (`rootfs/board/dho/etc/oos-board`) and
+  the image's own boot config, never in p4, p5 or U-Boot. `panic_on_oops` stays 0.
+- **Trial starts.** A panic after rcS's first commands (`oos-oneshot` and the start count) reboots into the fallback
+  that those commands set up, as a hang there does today (`../update.md`). A panic before rcS leaves `OOSK` armed, so
+  `panic=10` restarts the same image in a loop. That is the documented limitation of `../update.md` ("nothing counts
+  the starts before rcS"), now automatic instead of at each power-on; recovery is the card in a reader. The trial
+  fallback is covered by tests for panics after rcS's first commands. In rcS, `oos-oneshot` and the trial bookkeeping
+  run before the crash archive below.
+- **Keep the text.** ramoops (at 0x110000, 896 kB: console 512 kB, dmesg 128 kB for oops and panic, pmsg 256 kB)
+  survives a warm reset but not a power cut. At the next boot rcS archives the pstore records to `/oos/crash/`:
+  - **Byte budget.** `/oos` is 16 MiB and holds the counters, the setup quarantine and the update state, so the crash
+    archive has a budget of 1 MiB in total. rcS prunes the oldest boots before it writes, copies each record bounded
+    (the dmesg record whole, the console record's last 64 kB), and never writes when less than 4 MiB of `/oos` would
+    stay free. A failed archive is logged and skipped; it never blocks the boot or recovery.
+  - **Order.** First the archive, durably ([Durable writes](#durable-writes)); then the counter, durably; then pstore
+    is cleared. Each record is named by its pstore id and time, so a boot interrupted at any step repeats the steps
+    without archiving or counting a record twice.
+- **What counts.** Console and pmsg records are present after every warm reboot, clean ones too, so they do not count.
+  A boot counts one abnormal exit for safe start ([Safe start](#safe-start)) only if pstore holds a dmesg record whose
+  reason is a panic or an oops. A stale `oos-ui.running` marker from the same boot is the same event and is not counted
+  again. `:SYSTem:STATe?` and the System page show the last crash's time and first line.
+
 ### Shutdown order
 
 On a clean exit (SIGTERM, an update, the stop request) `oos-ui` shuts down in this order. Each step has a bound; a step
@@ -1071,7 +1101,7 @@ after each step may tighten them, never loosen them without a doc change.
 | acquisition notification | under 1 ms outside a C2H read (provisional until Platform tuning) | `acq wake` | host test with the scripted `Device`, unitlab | M3c |
 | acquisition read chunk | p99 <= 20 ms per 4 MiB chunk; this bounds application and cancellation inside a read | `acq chunk` | unitlab | M3c |
 | acquisition overhead per batch (excluding DMA and rereads) | p99 <= 1 ms | `acq batch` | unitlab | M3c |
-| DMA completion | completion CPU <= 5 % of one A53; overhead <= 1 ms per 4 MiB beyond link time | `xdma` | unitlab | M5c |
+| DMA completion | completion CPU <= 5 % of one A53; overhead <= 1 ms per 4 MiB beyond link time. Exception: a kexec session runs in poll mode, which burns an A53 per transfer, and is exempt; it normally ends with a warm reboot after the install | `xdma` | unitlab | M5c |
 | deposit worker, per frame | p99 <= 2.7 ms; load <= 70 % per little core with measurements | `worker` | perf guard (ratio), unitlab | M7 |
 | share reduction, per batch (1 and 2 channels; none at 3 and 4) | p99 <= 1.5 ms per worker | `reduce` | perf guard, unitlab | M9 |
 | measure job | cheap set p99 <= 2 ms; full set on 4 x 625 k p99 <= 40 ms; deep work per [Depth baselines](#depth-baselines) | `measure` | perf guard, unitlab | M6 |
@@ -1104,7 +1134,7 @@ samples of the window, sorted outside any lock). CPU counts are per process and 
 | `acq wake`, `wake <thread>` | the source's timestamp: the writer stamps the item before it writes the `eventfd`; the kernel timestamp for vblank and flip events | the consumer starts handling the item | elapsed | change storm and remote load |
 | `acq chunk` | `read()` call | `read()` return | elapsed | deep raw window and 4 channels at 10 M |
 | `acq batch` | the batch's ring read returns | its publish to the pipe returns; DMA and rereads excluded | elapsed | every acceptance mode |
-| `xdma` | per read | per read | CPU of the completion path (IRQ thread or poll thread) and elapsed read time minus bytes / link rate | 10 min of 4-channel acquisition; pass: CPU <= 5 % of one A53, overhead <= 1 ms per 4 MiB |
+| `xdma` | per read | per read | CPU of the completion path (IRQ thread or poll thread) and elapsed read time minus bytes / link rate | 10 min of 4-channel acquisition after a normal boot; pass: CPU <= 5 % of one A53, overhead <= 1 ms per 4 MiB. Not asserted in a kexec session (poll mode, exempt) |
 | `worker`, `reduce` | claim | publish | CPU of the worker thread | 4 channels and 1 channel, deep pairs |
 | `measure` | job taken | result sent | elapsed and CPU | cheap set and full set per depth class ([Depth baselines](#depth-baselines)) |
 | `stage compose` + `stage present` | compose entry | submission to the helper returns | elapsed; the sum is asserted, not each part | every acceptance mode, panel and HDMI |

@@ -21,6 +21,14 @@ the data partition. The roll OOM of 2026-11-14 was one such case.
   the counter are written durably: temporary file, `fsync`, `rename`, `fsync` of the directory. A clean power-off writes the current settings.
 - The RSS watchdog forces STOP and resets the buffer-holding stages at the hard limit, and exits with 75 if memory
   does not come back.
+- Kernel panics restart the unit: `panic=10` on the OOS kernel command line (`OOS_BOOTARGS` in the board's boot
+  config and the image's own boot config, never p4, p5 or U-Boot). Today there is no `panic=`, and
+  `/proc/sys/kernel/panic` is 0, so a panic halts until the power cable is pulled (2026-11-15, after the INTx revert
+  reboot). At the next boot, after the one-shot and trial bookkeeping, rcS archives the ramoops records
+  (`/sys/fs/pstore`, kept across a warm reset) to `/oos/crash/` within a 1 MiB budget, durably and idempotently by
+  record id, then counts the boot as one abnormal exit only if a dmesg record holds a panic or an oops, then clears
+  pstore. It shows in `:SYSTem:STATe?` and on the System page. A panic before rcS still loops the same image, the
+  known limitation of `../../update.md`.
 - Off during an image's trial start; there the update watcher rolls the image back.
 - A bounded shutdown order, and a GPU helper death that falls back to the CPU path instead of ending the process.
 

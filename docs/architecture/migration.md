@@ -86,8 +86,8 @@ D-numbers are the steps of [drawing implementation plan](drawing.md#implementati
 | M4 | Mapping key, preview, generation for records | 1c | round 1 |
 | M5 | Typed channels replace `Shared` | | |
 | M5b | Memory model: `memplan`, byte bounds, ring chunks, watchdog, drop counters | | |
-| M5c | DMA completion: INTx and MSI measured, INTx after kexec, explicit IRQ placement | | round 2 |
-| P1 | Platform settings: `uclamp_min`, `pm_qos`, console log level, PCIe MPS, preemption, IRQ affinity | | round 2 |
+| M5c | DMA completion: MSI measured, a kexec alternative to poll mode sought, explicit IRQ placement | | round 2 |
+| P1 | Platform settings: `uclamp_min`, console log level, preemption, IRQ affinity | | round 2 |
 | M6 | Measurement reads never draw | 2 | |
 | M7 | One lines kernel, behind `draw.model` | 3 | round 2 |
 | M8 | Dots: one count per sample | 4 | |
@@ -141,6 +141,14 @@ adr/0015, [Safe start and exit](README.md#safe-start-and-exit). Independent of t
 early because every later unit round depends on a scope that cannot loop.
 - rcS: the exit counter and `--safe`. `oos-ui`: the markers, `--safe`, persist after `stable_s`, the bounded
   shutdown order, the GPU helper fallback, the RSS watchdog.
+- Kernel panics ([Kernel panics](README.md#kernel-panics)): `panic=10` in `OOS_BOOTARGS` and the image's boot config
+  (never p4, p5 or U-Boot); rcS archives pstore to `/oos/crash/` within 1 MiB after the one-shot and trial
+  bookkeeping, counts only panic or oops dmesg records, and `oos-ui` shows the last crash. Host tests with a fake
+  pstore and a 16 MiB fake `/oos`: a panic record is archived and counted once; console and pmsg records alone count
+  nothing; a panic record plus a stale `oos-ui.running` counts once; the archive stays within budget and never takes
+  the reserved 4 MiB; an interruption after the archive, after the counter, and after the clear each repeat without a
+  second count; a failed archive does not stop the boot; a panic after the trial bookkeeping falls back as a hang
+  does. Unit check in round 0: `/proc/sys/kernel/panic` reads 10 after boot.
 - Tests, failing before: a scripted `oos-ui` stand-in that aborts at start reaches `--safe` within 3 restarts in a
   host test of the rcS loop; a setup changed less than `stable_s` before an abort is not restored; the durable-write
   interruption tests for every marker, counter and setup transition; the shutdown order joins the threads that exist
@@ -375,11 +383,11 @@ allocator); a stalled remote client holding a waveform does not reduce the batch
 
 [DMA completion](README.md#dma-completion), Platform tuning items 2, 3 and 9 (`system.md`). A measurement step with a
 unit round, and switches.
-- rcS places the xdma IRQ on an A53 explicitly (the GIC sends every SPI to cpu0 otherwise).
-- The kexec path uses INTx (`poll_mode=0 interrupt_mode=2` in `oos-fpga-up` and `oos-fpgad` under `oos.kexec=`), not
-  poll mode.
+- rcS places the wired IRQs explicitly and checks the xdma MSI's CPU (measured on cpu1 today).
+- The kexec path keeps `poll_mode=1`. INTx failed on 2026-11-15 ([DMA completion](README.md#dma-completion)); M5c
+  looks for a working alternative (a PCIe legacy IRQ fix, or a way to reuse the LPI tables) and records it.
 - `:SYSTem:STATe?` shows the mode and CPU (`xdma=`).
-- Round 2 measures, on cold boot: INTx and MSI; after kexec: INTx; each for CPU per read, read latency and time-outs
+- Round 2 measures, on cold boot: MSI; after kexec: poll mode; each for CPU per read, read latency and time-outs
   over 10 min. The result sets the default and goes into Platform tuning.
 - The persistent DMA mapping in the xdma driver (one streaming mapping, sync over the bytes received) is a driver task
   after this step, opened with the measured per-read overhead.
@@ -387,16 +395,16 @@ unit round, and switches.
 
 ### P1: platform settings
 
-[Platform tuning](system.md#platform-tuning) items 4 to 8. Each is an A/B on the unit with the measurement and pass
-criterion of its row; only the ones that pass are kept, and the row records the result.
-- `oos-ui`: `uclamp_min` 1024 on main and the acquisition thread (`sched_setattr`); `pm_qos_resume_latency_us = 100`
-  on cpu4 and cpu5 while acquiring, released in STOP.
-- Kernel command line: `loglevel=4`; `pci=pcie_bus_perf` (MPS 256).
+[Platform tuning](system.md#platform-tuning) items 4, 7 and 8 (5 dropped and 6 already done, measured 2026-11-15).
+Each is an A/B on the unit with the measurement and pass criterion of its row; only the ones that pass are kept, and
+the row records the result.
+- `oos-ui`: `uclamp_min` 1024 on main and the acquisition thread (`sched_setattr`); the governor stays schedutil.
+- Kernel command line: `loglevel=4`.
 - Kernel config: `PREEMPT_DYNAMIC`, then A/B `preempt=full`.
 - rcS: explicit IRQ affinity for xdma, DRM, GPU, network and USB.
 - DMC devfreq stays disabled.
-- Tests: host tests for the `oos-ui` calls (failing before: the thread has no clamp; the QoS file is written while
-  acquiring and released in STOP). The rest is measured in round 2 with the M5c checks.
+- Tests: host tests for the `oos-ui` calls (failing before: the two threads have no clamp). The rest is measured in
+  round 2 with the M5c checks.
 - Estimate: 1.5 days plus a kernel build.
 
 ### M6: measurement reads never draw (D2)
@@ -571,7 +579,7 @@ Codex code audit (2026-11-15, 15 items, and its three structural changes):
 | 10 | per-frame folds repeat the trigger search and extrema | M7 | folds reuse the deposit pass (test) |
 | 11 | grade maxima, decay and STOP redraw sweep every step | M10 | one pass per step above Min; none frozen; no maxima |
 | 12 | `glFinish` per composition | M9b | `gpu cpu` and `gpu time` budgets |
-| 13 | XDMA busy polling | M5c | `xdma` budget; INTx after kexec |
+| 13 | XDMA busy polling | M5c | `xdma` budget after a normal boot (MSI); a kexec session is exempt from it (poll mode, ended by a warm reboot) until an alternative works |
 | 14 | 500 and 200 us sleep polls, 10 us BAR-write sleeps | M3c | `acq wake`; configure time <= 4 ms; timer slack 1 ns |
 | 15 | busy last millisecond of frame pacing | M3d | `cpu` and `wakes` in STOP |
 | S1 | one ownership path per batch | M5, M6 | the rows of 2 to 5 |

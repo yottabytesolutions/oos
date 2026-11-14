@@ -9,7 +9,7 @@ Target architecture of the path from acquired frames to the phosphor maps the gr
 | Owner | Thread | Owns | Never |
 |---|---|---|---|
 | Accumulator | UI (first A72) | the batch window, `ph`, `phz`, the weight sums W, the persistence maps, the grade, the arena copy | draws a frame itself, except a `Replace` record and the record pseudo-batch |
-| Deposit workers | 4 x A53 | the share maps of the batch they draw | touch the picture or another share |
+| Deposit workers | 4 x A53 | the share maps of the batch they draw | touch the picture; read another worker's share before the batch's barrier (all shares in), after which shares are immutable and the reduction reads them |
 | Helper | acq (second A72) | the share it draws during the fill | as the workers |
 | GPU helper | own process | nothing; reads the arena | |
 

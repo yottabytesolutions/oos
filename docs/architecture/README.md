@@ -526,16 +526,28 @@ time, per thread). A hand-off moves to a lock-free primitive only when its count
 the lock-free primitives (SPSC ring, triple buffer, seqlock) live in exactly one reviewed module, `oos_hal::sync`, with
 their own tests, Miri runs (task 0034) and the same contention counter (adr/0016).
 
-| Hand-off | Default | Lock-free candidate if contended |
-|---|---|---|
-| `Batch` into the pipe; a share back to its owner | bounded `sync_channel` of owned values | per-producer SPSC ring |
-| `BatchUnit`, `RecordBatch` to main | bounded `sync_channel`, plus main's wake `eventfd` | SPSC ring per worker |
-| `AcqWant`, `DepositView`, `Readings`, `Pacing` | `Mutex` cell, held for a copy or an `Arc` swap, plus a wake `eventfd` where the reader must react within a step | seqlock for the `Copy` parts |
-| `AcqCmd` | bounded `sync_channel` plus the acquisition `eventfd` | none needed: rare |
-| picture snapshot to the encoder | bounded `sync_channel` of leases (readback buffers, at most 2 out) | none needed: at most 30 per s |
-| `RemoteRequest` | bounded `sync_channel` plus main's wake `eventfd` | none needed: rare |
-| replies to a connection | bounded output queue per connection, written on `EPOLLOUT` by the listener | none needed: per connection |
-| metrics | per-thread counters, cache-line aligned, summed by the reader | already lock-free |
+| Hand-off | Producers -> consumers | Default | Return path | Lock-free candidate if contended |
+|---|---|---|---|---|
+| `Batch` into the pipe | acquisition -> workers (each claims frames or a channel) | bounded `sync_channel` of `Arc<SampleStore>` | the buffer returns to the acquisition's free pool when the last `Arc` drops: an MPSC return channel, any thread may drop last | per-producer SPSC ring for the batch; the return stays MPSC |
+| a share between deposit and reduction | worker -> the workers reducing its batch | the share is published into the batch's slot and becomes immutable; reduction reads it only after the batch's barrier (all shares in) | shares go back to their owner worker's free list | none needed |
+| `BatchUnit`, `RecordBatch` | workers -> main | bounded `sync_channel`, plus main's wake `eventfd` | maps return to their worker through a bounded channel per worker | SPSC ring per worker |
+| `AcqWant`, `DepositView`, `Pacing` | main -> acquisition, workers | `Mutex` cell, held for a copy or an `Arc` swap, plus the reader's wake `eventfd` | none | seqlock only over `Copy` fields stored as atomics |
+| `Readings` | acquisition -> main | `Mutex` cell plus main's wake `eventfd` | none | as above |
+| `AcqCmd` | main -> acquisition | bounded `sync_channel` plus the acquisition `eventfd` | acknowledgements in `Readings` | none needed: rare |
+| picture snapshot | helper -> encoder | bounded `sync_channel` of leases (readback buffers, at most 2 out) | the lease returns through a channel to the helper | none needed: at most 30 per s |
+| `RemoteRequest` | listeners -> main | bounded `sync_channel` plus main's wake `eventfd` | the reply goes to the connection's output queue | none needed: rare |
+| replies | main -> a listener | bounded output queue per connection plus the listener's wake `eventfd`; written on `EPOLLOUT` | none | none needed: per connection |
+| metrics | each thread -> the status reader | per-thread counters, cache-line aligned, summed by the reader | none | already lock-free |
+
+Wake protocol, for every `eventfd` pair:
+- **Enqueue before notify.** A producer puts the item into the channel or cell first and writes the `eventfd` after,
+  so a woken consumer always finds it.
+- **Drain, then recheck.** Reading an `eventfd` resets its counter. A consumer that stops early (a quota, a service
+  point) writes the `eventfd` again before it returns, so the remaining items are not lost; a consumer that drains
+  everything rechecks the channel once after reading the `eventfd`.
+- **Seqlocks** only over fields that are atomics themselves; never over ordinary `Copy` fields, which is undefined
+  behaviour in Rust.
+- **No ring crates.** Every primitive is in `oos_hal::sync`, on `std` and `libc` only (the one dependency).
 
 No lock is held across a copy of sample data, an allocation, a format or a sort. Summaries of metrics (`pacing.rs`
 362 sorts histories under its lock today) take a snapshot first and work outside the lock. The contention counters

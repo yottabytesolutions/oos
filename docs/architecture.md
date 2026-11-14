@@ -41,7 +41,8 @@ Hexagonal where it pays, plain modules where it does not.
 | adapters | `board/dho` (hal), DRM, GPU helper, VPU, panel UART and touch, SCPI, HTTP, MCP, VXI-11, USBTMC, setups and `system.conf`, network services | the port they implement, domain types, their device or protocol |
 
 Rules (enforced by the boundary checker, `arch-rules.toml`):
-- **Domain is pure.** Domain code does no IO, starts no thread, reads no clock and holds no global state.
+- **Domain is pure.** Domain code does no IO, starts no thread, reads no clock and holds no global state. Time enters
+  as an argument: the window's 67 ms age cap and pacing take `now` from the caller, which reads `clock::Clock`.
 - **Adapters stay apart.** Adapters do not call each other. Two adapters that must cooperate do it through the
   application.
 - **One user per outside interface.** Only `board/dho` uses `oos_hal::dho`. Only `display/` uses DRM, the GPU helper
@@ -190,17 +191,22 @@ Run state goes by transition, not by value:
 is in the code; no stage relies on a side effect of another.
 
 ```
-intake     (input, remote requests, BatchUnits, Frames, MeasReads, Readings)
+intake     (input, remote requests, BatchUnits, RecordBatches, Frames, MeasReads, Readings)
                                                        -> commands, requests, acquired data
 change     (commands, requests)                        -> Settings', ChangeSet, AcqWant, AcqCmds
 acquire    (AcqWant, AcqCmds)                          -> published to the acquisition thread
-accumulate (BatchUnits, record pseudo-batch, ChangeSet) -> picture maps and weights
-measure    (records, ChangeSet)                        -> results, statistics, history
+records    (RecordBatches, Frames, MeasReads, ChangeSet) -> records, record store, the step's pseudo-batch
+accumulate (BatchUnits, pseudo-batch, ChangeSet, now)  -> picture maps and weights
+measure    (records, ChangeSet)                        -> results, statistics
 views      (results, records, ChangeSet)               -> view state
 compose    (picture, results, views, menus)            -> layers and trace jobs
 present    (layers)                                    -> DRM or the GPU helper; snapshot for remote clients
 reply      (results)                                   -> answers to remote queries
 ```
+
+`records` runs before `accumulate` because off the fast path the picture is drawn from records: the step's
+records form one pseudo-batch (`architecture/picture.md`). History and segments are part of the record store, so
+`records` updates them, not `measure`.
 
 A remote query is answered in `reply` from that step's state. A query that needs a newer record waits for a later
 step; the transport thread holds the connection.
@@ -211,7 +217,7 @@ step; the transport thread holds the connection.
 |---|---|---|
 | main | `Session` and every stage | the channels below; never blocks on IO |
 | acquisition (`board/dho`, second A72) | hardware, batch buffers, `AcqLoop`, the helper's share | `AcqWant` and `AcqCmd` in; `Batch`, `Frame`, `MeasRead`, `Readings` out |
-| deposit workers (A53) | their share maps | `BatchUnit` to main (`architecture/picture.md`) |
+| deposit workers (A53) | their share maps; the route per batch | `BatchUnit` (fast path) or `RecordBatch` (decoded frames, off it) to main (`architecture/picture.md`) |
 | measure (A53, scoped per channel) | one measurement job | job and result channels (`architecture/records.md`) |
 | input | the panel UART, the touch device | `InputEvent` channel to main |
 | remote listeners | sockets of SCPI, HTTP, MCP, VXI-11, the control FIFO | `RemoteRequest { command or query, reply sender }` to main |
@@ -223,8 +229,11 @@ requests, outputs and readings under one lock. Each kind gets one writer (`archi
 - **`AcqWant`:** everything the UI wants applied, with `gen` and `epoch`. A latest-value cell, replaced whole.
 - **`AcqCmd`:** one-shot commands with an id (force, rearm, hold and final, average clear, segments, self-cal, levels,
   slots). A bounded queue; each is taken once and acknowledged in `Readings`.
-- **`Batch`, `Frame`, `MeasRead`:** acquired data with its `BatchMeta`. A `Batch` moves into the deposit pipe; `Frame`
-  and `MeasRead` go to the record path. No kernel accepts a `MeasRead`.
+- **`Batch`, `Frame`, `MeasRead`:** acquired data with its `BatchMeta`. Every `Batch` moves into the deposit pipe; the
+  acquisition thread knows no drawing policy. `Frame` and `MeasRead` go to the record path. No kernel accepts a
+  `MeasRead`.
+- **`BatchUnit`, `RecordBatch`:** the pipe's outputs to main. The pipe routes each batch by its view: deposited into a
+  `BatchUnit` on the fast path, decoded only into a `RecordBatch` off it. Decoding stays off the first A72.
 - **`Readings`:** status, unit counters, board readings, acknowledged ids, the read plan. A latest-value cell.
 - **Atomics:** metrics read often and changing all the time (frame counters, pacing) stay atomics, one writer each.
 
@@ -237,8 +246,10 @@ The picture:
 
 ```
 FPGA ring -> acquisition thread: read a batch under `gen` g, tagged with its `BatchMeta`
-          -> deposit workers and helper: share maps, one weight model per column per frame
-          -> BatchUnit: all shares, published when the last is in
+          -> pipe: route by view
+               fast path: deposit workers and helper draw share maps, one weight model per column per frame
+                          -> BatchUnit: all shares, published when the last is in
+               off it:    workers decode -> RecordBatch -> records -> the step's pseudo-batch
           -> accumulator: window of whole batches (minimum persistence) or decay (persistence), weights W
           -> compose: reads the accumulator's `Picture` (`ph`, `phz`, W, grade) by `&`; count / W through the LUT, layers
           -> present: DRM (CPU) or the GPU helper (vmax = W)

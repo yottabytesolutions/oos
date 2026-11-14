@@ -1329,6 +1329,8 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         let mut pool_made = 1usize;
         // this thread's share of the deposit work while it waits (drawpipe.rs)
         let mut helper = crate::drawpipe::Helper::default();
+        // ring-fill time of the batches (pacing.rs)
+        let mut fill = crate::pacing::Fill::default();
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, u64)> = None;
         // the SINGLE stamp whose batch brought its frame (`single_wants_more`)
@@ -1828,10 +1830,17 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
             let pipe = crate::drawpipe::pipe();
             let idle = || pipe.is_some_and(|x| x.help(&mut helper));
             let t_batch = std::time::Instant::now();
-            let got = seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, 25, |_| {}, changed, idle);
+            // the ring fills for at most `fill` ms after the first frame: the batch cycle stays under a screen frame
+            let fill_ms = fill.ms();
+            let got = seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, fill_ms, |_| {}, changed, idle);
             let batch_ms = t_batch.elapsed().as_secs_f32() * 1e3;
-            if let Ok(c) = got {
-                crate::pacing::batch(batch_ms, c, seq::frames(&b, &p));
+            match &got {
+                Ok(c) => {
+                    let asked = seq::frames(&b, &p);
+                    crate::pacing::batch(batch_ms, *c, asked);
+                    fill.done(std::time::Instant::now(), fill_ms, *c >= asked);
+                }
+                Err(_) => fill.restart(),
             }
             if let Some(x) = pipe {
                 x.help_done(&mut helper);
@@ -1979,12 +1988,16 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     let pipe = crate::drawpipe::pipe().filter(|x| after.is_none() && avail > 1 && x.accepting());
                     // the raw newest frame stands for the newest compressed one (same record)
                     let raw_frame = raw_frame.filter(|_| avail as u32 == count);
+                    let mut la_words = la_words;
                     let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
                         n += avail as u64;
-                        let newest = match raw_frame {
+                        let mut newest = match raw_frame {
                             Some(f) => Frame { stamp, seq: n, ..f },
                             None => Frame { stamp, ..decode(&dma.data()[(avail - 1) * fb..avail * fb], &b, &p, n) },
                         };
+                        if let Some(w) = la_words.take() {
+                            newest.la = Some(la_record(w, &b, &p));
+                        }
                         let next = pipe.take_buffer().and_then(|x| x.downcast::<oos_hal::dho::bus::DmaBuf>().ok()).map(|x| *x);
                         let next = next.or_else(|| (pool_made < POOL).then(|| {
                             pool_made += 1;
@@ -1996,11 +2009,18 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                                 let (bs, ps) = (b.clone(), p);
                                 let (cs, cp) = (b.clone(), p);
                                 let codes: crate::drawpipe::CodesInto = Arc::new(move |c: &[u8], f: &mut Frame| codes_into(c, &cs, &cp, 0, f));
-                                pipe.feed_codes(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)), Some(codes));
+                                // the newest frame goes to the queue when the others are drawn: the screen gets the
+                                // batch in one picture, not the newest alone and the rest a picture later
+                                let o = out.clone();
+                                let deliver: crate::drawpipe::Deliver = Box::new(move || push_frames(&o, vec![newest]));
+                                pipe.feed_with(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into(c, &bs, &ps, 0, f)), Some(codes), deliver);
+                                Vec::new()
                             }
-                            None => crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1),
+                            None => {
+                                crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1);
+                                vec![newest]
+                            }
                         }
-                        vec![newest]
                     } else {
                         let mut all: Vec<Frame> = dma
                             .data()
@@ -2025,15 +2045,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
                     if let (Some(w), Some(f)) = (la_words, frames.last_mut()) {
                         f.la = Some(la_record(w, &b, &p));
                     }
-                    let mut g = out.lock().unwrap();
-                    g.queue.extend(frames);
-                    let over = g.queue.len().saturating_sub(QUEUE_MAX);
-                    g.queue.drain(..over);
-                    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, over as u64);
-                    if let Some(f) = g.queue.back() {
-                        g.frame = f.clone();
-                    }
-                    drop(g);
+                    push_frames(&out, frames);
                 }
                 // new settings while it waited for a trigger: at once to them
                 Err(e) if e == seq::NEW_SETTINGS => {}
@@ -2050,6 +2062,22 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
         }
     });
     shared
+}
+
+/// Frames of a batch into the UI queue, the oldest dropped beyond `QUEUE_MAX`.
+#[cfg(target_os = "linux")]
+fn push_frames(out: &HwShared, frames: Vec<Frame>) {
+    if frames.is_empty() {
+        return;
+    }
+    let mut g = out.lock().unwrap();
+    g.queue.extend(frames);
+    let over = g.queue.len().saturating_sub(QUEUE_MAX);
+    g.queue.drain(..over);
+    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, over as u64);
+    if let Some(f) = g.queue.back() {
+        g.frame = f.clone();
+    }
 }
 
 /// A hardware segmented recording (docs/fork/specs/03-segmented-timestamps.md 3.2).

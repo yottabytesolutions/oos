@@ -288,7 +288,14 @@ struct Batch {
     counters: &'static Counters,
     /// batches not done yet (`Pipe::live`)
     live: Arc<AtomicUsize>,
+    /// what the acquisition thread wants done once every frame is drawn (the newest frame to the UI queue), put on
+    /// `ready` for the UI's next `merge`
+    deliver: Mutex<Option<Deliver>>,
+    ready: Arc<Mutex<Vec<Deliver>>>,
 }
+
+/// Run by the UI after the merge that holds a batch's frames (`Pipe::feed_with`).
+pub type Deliver = Box<dyn FnOnce() + Send>;
 
 impl Batch {
     /// The next `n` frames nobody has taken yet.
@@ -302,6 +309,10 @@ impl Drop for Batch {
     fn drop(&mut self) {
         let left = self.frames.saturating_sub(self.next.load(Ordering::Relaxed));
         Counters::add(&self.counters.dropped, left as u64);
+        // every frame is in a mailbox now (the workers hand on before they let go of the batch)
+        if let Some(d) = self.deliver.lock().unwrap().take() {
+            self.ready.lock().unwrap().push(d);
+        }
         self.live.fetch_sub(1, Ordering::Release);
     }
 }
@@ -403,6 +414,8 @@ pub struct Pipe {
     open: Mutex<std::collections::VecDeque<std::sync::Weak<Batch>>>,
     /// batches fed and not done (drawn and handed on, or dropped)
     live: Arc<AtomicUsize>,
+    /// `Batch::deliver` of the batches done, for the next `merge`
+    ready: Arc<Mutex<Vec<Deliver>>>,
     home: Sender<Box<dyn RawBatch>>,
     pool: Mutex<Receiver<Box<dyn RawBatch>>>,
 }
@@ -441,7 +454,7 @@ impl Pipe {
         }
         mails.push(Default::default());
         let (home, pool) = channel();
-        Pipe { view, counters, workers, mails, open: Default::default(), live: Default::default(), home, pool: Mutex::new(pool) }
+        Pipe { view, counters, workers, mails, open: Default::default(), live: Default::default(), ready: Default::default(), home, pool: Mutex::new(pool) }
     }
 
     /// The UI's mapping for the frames to come (None: the fast path does not apply).
@@ -449,6 +462,8 @@ impl Pipe {
         let mut v = self.view.lock().unwrap();
         let Some(m) = m else {
             (v.view, v.key) = (None, None);
+            drop(v);
+            self.release();
             return;
         };
         let key = Key::of(m, w, h);
@@ -479,15 +494,24 @@ impl Pipe {
     /// From the acquisition thread: the first `frames` frames of `fb` bytes in `raw`, recorded under settings stamp
     /// `stamp`, for the workers (and the helper) to claim, decoded with `decode` or, without per-frame measurements,
     /// drawn from their words with `codes` (`draw_frame_codes`). The buffer comes back through `take_buffer` when the
-    /// batch is done. Frames nobody claims are counted as dropped.
+    /// batch is done. Frames nobody claims are counted as dropped. The unit feeds with `feed_with`.
+    #[cfg(test)]
     pub fn feed_codes(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) {
         self.feed_batch(raw, fb, frames, stamp, decode, codes);
+    }
+
+    /// `feed_codes`, and `deliver` run by the UI right after the merge that brings the batch's frames: the newest
+    /// frame of the batch reaches the screen in the same picture as the others (docs/fork/stutter.md).
+    #[allow(clippy::too_many_arguments)]
+    pub fn feed_with(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>, deliver: Deliver) {
+        let b = self.feed_batch(raw, fb, frames, stamp, decode, codes);
+        *b.deliver.lock().unwrap() = Some(deliver);
     }
 
     /// `feed`, returning the batch (tests hold it to let the helper alone draw it).
     fn feed_batch(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto, codes: Option<CodesInto>) -> Arc<Batch> {
         let frames = if fb == 0 { 0 } else { frames.min(raw.bytes().len() / fb) };
-        let b = Arc::new(Batch { lease: Lease { raw: Some(raw), home: self.home.clone() }, fb, frames, decode, codes, stamp, next: AtomicUsize::new(0), counters: self.counters, live: self.live.clone() });
+        let b = Arc::new(Batch { lease: Lease { raw: Some(raw), home: self.home.clone() }, fb, frames, decode, codes, stamp, next: AtomicUsize::new(0), counters: self.counters, live: self.live.clone(), deliver: Mutex::new(None), ready: self.ready.clone() });
         self.live.fetch_add(1, Ordering::Acquire);
         {
             let mut open = self.open.lock().unwrap();
@@ -583,7 +607,17 @@ impl Pipe {
             // back to the worker, which clears it
             mail.lock().unwrap().spare = Some(a);
         }
+        // after the maps: a batch hands its maps on before it goes on `ready`
+        self.release();
         got
+    }
+
+    /// Runs the `deliver` of the batches done.
+    pub fn release(&self) {
+        let ready = std::mem::take(&mut *self.ready.lock().unwrap());
+        for d in ready {
+            d();
+        }
     }
 
 }
@@ -988,6 +1022,37 @@ mod tests {
             assert_eq!(back.len(), 2);
             assert!(back.into_iter().all(|b| b.downcast::<Bytes>().is_ok()));
         }
+    }
+
+    // Break it catches: the newest frame of a batch reaching the UI before the batch's other frames (a picture with
+    // the newest frame alone, the rest a picture later: docs/fork/stutter.md), or not at all.
+    #[test]
+    fn a_batch_is_delivered_with_its_frames() {
+        let (w, h) = (970, 448);
+        let m = model(1e-6, false, false);
+        let (bytes, fb, s, p) = batch(30, 12_512, false);
+        let pipe = Pipe::start(2, false, fresh());
+        pipe.set_view(Some(&m), w, h);
+        let got = Arc::new(Mutex::new(Vec::new()));
+        for k in 0..3u32 {
+            let g = got.clone();
+            pipe.feed_with(Box::new(Bytes(bytes.clone())), fb, 30, 0, dec(&s, &p), None, Box::new(move || g.lock().unwrap().push(k)));
+        }
+        // nothing before a merge, even with every frame drawn
+        settle(&pipe);
+        assert!(got.lock().unwrap().is_empty());
+        let mut ph = Phosphor::new(w, h);
+        let n = pipe.merge(&mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        assert_eq!(n.frames, 90);
+        let mut d = got.lock().unwrap().clone();
+        d.sort();
+        assert_eq!(d, [0, 1, 2]);
+        // no view any more: what is done is delivered too
+        let g = got.clone();
+        pipe.feed_with(Box::new(Bytes(bytes.clone())), fb, 30, 0, dec(&s, &p), None, Box::new(move || g.lock().unwrap().push(9)));
+        settle(&pipe);
+        pipe.set_view(None, 0, 0);
+        assert_eq!(got.lock().unwrap().last(), Some(&9));
     }
 
     // Break it catches: the acquisition thread's share drawn differently from the workers', or not handed to the UI.

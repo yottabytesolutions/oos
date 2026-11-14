@@ -74,6 +74,56 @@ pub fn batch(wait_ms: f32, count: u32, asked: u32) {
     push(&mut s.batches, (wait_ms, iv, count, asked));
 }
 
+/// Batch cycle the ring-fill time aims at: under one screen frame (33.3 ms), so every picture gets a new batch.
+pub const CYCLE_MS: f32 = 30.0;
+/// Ring-fill time limits: the hardware source's former fixed wait at most, a few frames' worth at least.
+pub const FILL_MAX_MS: f32 = 25.0;
+pub const FILL_MIN_MS: f32 = 4.0;
+
+/// The ring-fill time of the next batch (`seq::acquire_batch_idle`'s `wait_ms`). A batch took its fill time plus a
+/// rest (arm, first trigger, read, hand-over); with a fixed 25 ms fill the cycle grew to 40-55 ms at 1-10 us/div, longer
+/// than a screen frame, and every few pictures had no new batch (docs/fork/stutter.md). The fill is set so that fill +
+/// rest stays near `CYCLE_MS`, from the rest of the batches before (smoothed).
+#[derive(Clone, Copy, Debug)]
+pub struct Fill {
+    ms: f32,
+    rest: Option<f32>,
+    last: Option<Instant>,
+}
+
+impl Default for Fill {
+    fn default() -> Fill {
+        Fill { ms: FILL_MAX_MS, rest: None, last: None }
+    }
+}
+
+impl Fill {
+    /// The fill time for the next batch, ms.
+    pub fn ms(&self) -> u64 {
+        self.ms.round() as u64
+    }
+
+    /// A batch done at `now` with fill time `used` ms (what `ms` gave), `full`: the ring filled before it.
+    pub fn done(&mut self, now: Instant, used: u64, full: bool) {
+        if let Some(l) = self.last {
+            let cycle = now.saturating_duration_since(l).as_secs_f32() * 1e3;
+            // a full ring ended the fill early: its rest is not known, keep the last one
+            if !full {
+                let r = (cycle - used as f32).max(0.0);
+                let rest = self.rest.map_or(r, |x| x + 0.3 * (r - x));
+                self.rest = Some(rest);
+                self.ms = (CYCLE_MS - rest).clamp(FILL_MIN_MS, FILL_MAX_MS);
+            }
+        }
+        self.last = Some(now);
+    }
+
+    /// A batch that did not complete (new settings, an error): the next cycle starts anew.
+    pub fn restart(&mut self) {
+        self.last = None;
+    }
+}
+
 /// The value at fraction `q` (0..1) of the sorted `v` (0 when empty).
 fn pct(v: &mut [f32], q: f32) -> f32 {
     if v.is_empty() {
@@ -125,6 +175,42 @@ pub fn summary() -> String {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    // Break it catches: a fill time that keeps the batch cycle above a screen frame, one that grows past the former
+    // fixed wait, one that reacts to a ring that filled early.
+    #[test]
+    fn fill_time_keeps_the_batch_cycle_under_a_screen_frame() {
+        let t = Instant::now();
+        let at = |ms: f32| t + Duration::from_secs_f32(ms / 1e3);
+        // a rest of 15 ms (1 us/div): the fill comes down to 15 ms
+        let mut f = Fill::default();
+        let (mut now, mut used) = (0.0f32, f.ms());
+        f.done(at(now), used, false);
+        for _ in 0..30 {
+            now += used as f32 + 15.0;
+            f.done(at(now), used, false);
+            used = f.ms();
+        }
+        assert!((14..=16).contains(&f.ms()), "{}", f.ms());
+        // a rest of 5 ms (200 ns/div): back up to the most, 25 ms
+        for _ in 0..30 {
+            now += used as f32 + 5.0;
+            f.done(at(now), used, false);
+            used = f.ms();
+        }
+        assert_eq!(f.ms(), 25);
+        // a rest longer than the cycle (rare triggers): the least
+        for _ in 0..30 {
+            now += used as f32 + 80.0;
+            f.done(at(now), used, false);
+            used = f.ms();
+        }
+        assert_eq!(f.ms(), FILL_MIN_MS as u64);
+        // a full ring says nothing about the rest
+        let before = f.ms();
+        f.done(at(now + 1.0), used, true);
+        assert_eq!(f.ms(), before);
+    }
 
     #[test]
     fn percentiles_and_gaps() {

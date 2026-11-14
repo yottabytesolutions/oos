@@ -261,8 +261,9 @@ no saturation: a batch is at most 27 x 24 = 648 per pixel).
 
 The 2ac0ca1 shots were a band-width effect: a picture of one frame has a narrower union of spans. count / W
 normalises brightness but cannot widen the band. So A and C need whole batches, and C also a floor on the frames in a
-picture; B needs neither. The user chooses between A and C (5-line comparison and pictures below); B is not
-offered at Min because of its ghost.
+picture; B needs neither. Decision (user, 2026-11-14): C with the cap (3 batches, 2 screen frames). B is not
+used at Min because of its ghost. Host render behind the decision (noisy 1 kHz square, 200 us/div, batches 27, 3, 13,
+3, 27, 13, N = 14): lit pixels per picture A 12,891-24,319 (1.9x range), C 19,583-28,138 (1.4x).
 
 **Persistence > Min: B with tau = the persistence, in u32 fixed point.** Today's decay, `(x * k) >> 16` in u16,
 truncates: it removes about 1 per step from small counts, so a single hit (24) is gone in 0.8 s at "10 s". Options:
@@ -344,7 +345,7 @@ system.conf for A/B on the unit; step 9 removes the flag and the old code after 
 | 3 | One lines kernel: spans for raw, codes, pairs, records (`draw_ex` lines; Z keeps its drawing; sparse per 3.3); behind `draw.model` | 4 | `pair_raw_mix_report` and `depth_mix_report` x1.000; record-path pictures alone within 3 % | screenshot pairs old/new per mode for the user's eye | `draw_ex` segment joining for lines (after step 9), deep-raw branch in `draw_frame` |
 | 4 | Dots: one count per sample, W_frame = samples per column | 2.5 | dots brightness within 3 % across raw/record frames; no dot lost at 100 samples per column over 40 rows | dots set | none |
 | 5 | `BatchUnit`: shares published together, row bounds; newest frame drawn by the pipe; route C gone; frames mode (default) makes each step's queued frames one batch | 2.5 | every merged picture holds whole batches; the newest frame in the same merge; frames and batch mode give the same picture | stress set, `partial` 0 | `Acc` lists, `Tally`, `Deliver`, `MERGE_WAIT_MAX`, the early `help_done` (the loop-end one stays), the `fast_ok` frame branch in `Ui::step` |
-| 6 | Grading and records together: window at Min (C or A per the user), u32 decay above, STOP freeze, persistence change; routes E/F as pseudo-batches with W; zoom and colour grade on W; GPU gets W as vmax. Behind `draw.model` | 4 | brightness within 3 % for 1..27 frames per picture; band pixel count within 2 % for 13/27 alternating; window age <= 67 ms; a drop from 27 to 1 frame per step leaves no batch older than the cap in the picture; single hit visible >= tau at 500 ms and 10 s; stopped picture constant over 100 steps; replay equals live; zoom brightness equals main; `gpu/test-host.sh` 0 differ | full acceptance set, screenshot pairs per mode | `picture_ref`, `per_frame*`, `pic_frames`, `vmax` follow, 24 x 6 redraw (after step 9) |
+| 6 | Grading and records together: window at Min (C with the cap), u32 decay above, STOP freeze, persistence change; routes E/F as pseudo-batches with W; zoom and colour grade on W; GPU gets W as vmax. Behind `draw.model` | 4 | brightness within 3 % for 1..27 frames per picture; band pixel count within 2 % for 13/27 alternating; window age <= 67 ms; a drop from 27 to 1 frame per step leaves no batch older than the cap in the picture; single hit visible >= tau at 500 ms and 10 s; stopped picture constant over 100 steps; replay equals live; zoom brightness equals main; `gpu/test-host.sh` 0 differ | full acceptance set, screenshot pairs per mode | `picture_ref`, `per_frame*`, `pic_frames`, `vmax` follow, 24 x 6 redraw (after step 9) |
 | 7 | (cut: GPU needs no change, vmax = W, folded into 6) | 0 | | | |
 | 8 | Sparse-event pacing: fill shortened when rest + fill exceeds a frame | 1.5 | Fill plan with rest 24 ms yields a batch every <= 33.3 ms in the pacing tests | setup B at 5.1 V: empty <= 1 % | none |
 | 9 | Acceptance, then remove `draw.model` and the old paths | 1 | full suites | full acceptance set | the old kernels and grade |
@@ -369,7 +370,7 @@ Existing fixes:
 | near-only trigger gate, AC level | kept |
 | live compression, RAW_PERIOD read | kept for measurement, not drawn |
 
-Decisions taken (team-lead): frames mode stays the default (the unit keeps `acq.pipeline = batch`); Z input keeps
-its current drawing. Open for the user: A or C at minimum persistence.
+Decisions: frames mode stays the default (the unit keeps `acq.pipeline = batch`); Z input keeps its current drawing
+(team-lead). C with the cap at minimum persistence (user). Design approved 2026-11-14.
 
 Not in scope: XY and LA (canvas), the auto timeout.

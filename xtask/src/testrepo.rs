@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 /// Runs git in `dir`; panics on failure (test code).
 pub fn git(dir: &Path, args: &[&str]) {
-    let out = run::capture(dir, "git", args).expect("git");
+    let out = run::capture(&Default::default(), dir, "git", args).expect("git");
     assert!(out.ok, "git {:?}: {}", args, out.stderr);
 }
 

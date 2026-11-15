@@ -107,6 +107,7 @@ class RootfsReceipts(unittest.TestCase):
             dest = self.root / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, dest)
+        (self.root / 'tools/build-env.sh').chmod(0o700)
         shutil.copytree(ROOT / 'tools/build-env', self.root / 'tools/build-env')
         for script in ROOT.glob('rootfs/build-*.sh'):
             shutil.copyfile(script, self.root / 'rootfs' / script.name)
@@ -145,6 +146,27 @@ class RootfsReceipts(unittest.TestCase):
         for name in artifacts:
             with self.assertRaisesRegex(ValueError, 'stale'):
                 output.verify(out / name)
+
+    def test_all_native_receipts_use_the_shell_environment_seam(self):
+        resolver = self.root / 'tools/build-env.sh'
+        resolver.write_text('#!/bin/sh\n[ "$1" = identity ] || exit 1\n'
+                            'case "$2" in rootfs-*) echo "fixture:$2" ;; *) exit 1 ;; esac\n')
+        (self.root / 'tools/build_env.py').unlink()
+        out = self.root / 'rootfs/out'
+        out.mkdir()
+        with patch.object(output, 'revision', side_effect=AssertionError('whole tree used')):
+            for name in ('e2fsck', 'kexec', 'wpa_supplicant', 'wpa_cli', 'nft', 'dropbearmulti', 'sftp-server'):
+                binary = out / name
+                binary.write_bytes(b'executable')
+                output.stamp(binary, output.source_identity(binary))
+                output.verify(binary)
+
+    def test_dependency_artifact_names_outside_rootfs_use_whole_tree_identity(self):
+        binary = self.root / 'nft'
+        binary.write_bytes(b'executable')
+        with patch.object(output, 'revision', return_value='whole-tree'):
+            output.stamp(binary, 'whole-tree')
+            self.assertEqual(output.verify(binary)['tree'], 'whole-tree')
 
     def test_rootfs_receipts_reject_midbuild_input_changes_and_payload_replacement(self):
         binary = self.root / 'rootfs/out/nft'

@@ -6,9 +6,10 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
 - The fork's own builds read it: `rootfs/build-dropbear.sh` (Dropbear), `rootfs/build-sftp-server.sh` (OpenSSH,
   `sftp-server` only), `rootfs/build-nft.sh` (libmnl, libnftnl, nftables). They source `rootfs/deps.sh`, which
   downloads once into `rootfs/out/`, refuses a file whose SHA-256 differs, and stamps each binary with the manifest
-  lines and the build script it came from (`<binary>.stamp`). `boot/unit-hook.sh` builds a binary again when it is
-  missing or its stamp no longer matches, so a version bump or a changed build option takes effect at the next image
-  build without deleting anything by hand.
+  name/version/checksum fields, builder hash, `deps.sh` hash and per-tool `rootfs-<tool>` build-environment identity
+  (`<binary>.stamp`). Native binary receipts from `tools/output.py` hash this same input description.
+  `boot/unit-hook.sh` rebuilds a missing binary or one whose stamp no longer matches, so a version
+  bump, builder option or helper-only change takes effect at the next image build.
 - Upstream's builds (`rootfs/build-kexec.sh`, `rootfs/build-fsck.sh`, `rootfs/build-wlan-tools.sh`, `gpu/build.sh`)
   keep their own `ver=` and `sum=`: changing them would conflict at every upstream sync. Their lines in the manifest
   (`upstream:<script>`) document them, and `tools/deps-check.sh` reports when a script and its line differ.

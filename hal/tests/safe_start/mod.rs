@@ -4,6 +4,8 @@
 #[cfg(test)]
 mod cuts;
 #[cfg(test)]
+mod lock;
+#[cfg(test)]
 mod review;
 #[cfg(test)]
 mod round2;
@@ -45,6 +47,16 @@ PY_SYNC
 "#,
         );
         f.exec("bin/crash-save", "#!/bin/sh\nexit 0\n");
+        // Supply Linux proc identities to the actual POSIX shell script on non-Linux hosts too.
+        f.exec(
+            "host-bin/test-shell",
+            r#"#!/bin/sh
+mkdir -p "$OOS_PROC/$$"
+printf '%s (fixture ) process) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12345 0\n' "$$" > "$OOS_PROC/$$/stat"
+exec "$OOS_REAL_SHELL" "$@"
+"#,
+        );
+        f.exec("host-bin/test-exits", "#!/bin/sh\nexec \"$OOS_TEST_SHELL_WRAPPER\" \"$OOS_EXITS_SCRIPT\" \"$@\"\n");
         f
     }
 
@@ -64,14 +76,18 @@ PY_SYNC
     }
 
     pub fn command(&self, script: &str) -> Command {
-        let mut c = Command::new(std::env::var("OOS_TEST_SHELL").unwrap_or_else(|_| "sh".into()));
+        let mut c = Command::new(self.p("host-bin/test-shell"));
         c.arg(image_script(script))
+            .env("OOS_REAL_SHELL", std::env::var("OOS_TEST_SHELL").unwrap_or_else(|_| "sh".into()))
+            .env("OOS_PROC", self.p("proc"))
+            .env("OOS_TEST_SHELL_WRAPPER", self.p("host-bin/test-shell"))
+            .env("OOS_EXITS_SCRIPT", image_script("oos-ui-exits"))
             .env("PATH", format!("{}:{}", self.p("host-bin").display(), std::env::var("PATH").unwrap_or_default()))
             .env("OOS_UI_DATA", self.p("oos"))
             .env("OOS_UI_TMP", self.p("tmp"))
             .env("OOS_UI_BIN", self.p("bin/ui"))
             .env("OOS_CRASH_SAVE", self.p("bin/crash-save"))
-            .env("OOS_UI_EXITS", image_script("oos-ui-exits"))
+            .env("OOS_UI_EXITS", self.p("host-bin/test-exits"))
             .env("OOS_NOW_FILE", self.p("now"))
             .env("OOS_BOOT_ID", self.p("boot_id"))
             .env("OOS_UPTIME", self.p("uptime"))

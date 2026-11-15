@@ -47,12 +47,15 @@ fn the_base_is_the_parent_on_the_branch_and_a_lost_file_fails() {
             (&[("xtask/data/size.txt", "9 fn a.rs f\n")], "raise"),
         ],
     );
-    let c = commit(&d, "overhaul").expect("commit");
-    assert_eq!(text_at(&d, &c, "xtask/data/size.txt").expect("text").as_deref(), Some("5 fn a.rs f"));
-    assert!(text_at(&d, &c, "xtask/data/unsafe.txt").is_err());
-    let first = git(&d, &["rev-list", "--max-parents=0", "HEAD"]).expect("root");
-    assert_eq!(text_at(&d, &first, "xtask/data/size.txt").expect("text"), None);
-    assert!(text_at(&d, "no-such-commit", "xtask/data/size.txt").is_err());
+    let c = commit(&Default::default(), &d, "overhaul").expect("commit");
+    assert_eq!(
+        text_at(&Default::default(), &d, &c, "xtask/data/size.txt").expect("text").as_deref(),
+        Some("5 fn a.rs f")
+    );
+    assert!(text_at(&Default::default(), &d, &c, "xtask/data/unsafe.txt").is_err());
+    let first = git(&Default::default(), &d, &["rev-list", "--max-parents=0", "HEAD"]).expect("root");
+    assert_eq!(text_at(&Default::default(), &d, &first, "xtask/data/size.txt").expect("text"), None);
+    assert!(text_at(&Default::default(), &d, "no-such-commit", "xtask/data/size.txt").is_err());
     std::fs::remove_dir_all(&d).expect("clean up");
 }
 
@@ -72,14 +75,14 @@ fn per_crate_ratchets_read_a_combined_base() {
             (&[("xtask/data/ui/size.txt", "5 fn ui/src/a.rs f\n")], "split"),
         ],
     );
-    let head = git(&d, &["rev-parse", "HEAD"]).expect("head");
-    let gate = git(&d, &["rev-parse", "HEAD^1"]).expect("gate");
-    let first = git(&d, &["rev-list", "--max-parents=0", "HEAD"]).expect("root");
+    let head = git(&Default::default(), &d, &["rev-parse", "HEAD"]).expect("head");
+    let gate = git(&Default::default(), &d, &["rev-parse", "HEAD^1"]).expect("gate");
+    let first = git(&Default::default(), &d, &["rev-list", "--max-parents=0", "HEAD"]).expect("root");
     let r = |t: &str| Some(Ratchet::parse(t).expect("r"));
-    assert_eq!(at_base(&d, &gate, "hal", Kind::Size).expect("at"), r("7 fn hal/src/b.rs g\n"));
-    assert_eq!(at_base(&d, &head, "ui", Kind::Size).expect("at"), r("5 fn ui/src/a.rs f\n"));
-    assert_eq!(at_base(&d, &head, "core", Kind::Size).expect("at"), r(""));
-    assert_eq!(at_base(&d, &gate, "ui", Kind::Known).expect("at"), r(""));
-    assert_eq!(at_base(&d, &first, "ui", Kind::Size).expect("at"), None);
+    assert_eq!(at_base(&Default::default(), &d, &gate, "hal", Kind::Size).expect("at"), r("7 fn hal/src/b.rs g\n"));
+    assert_eq!(at_base(&Default::default(), &d, &head, "ui", Kind::Size).expect("at"), r("5 fn ui/src/a.rs f\n"));
+    assert_eq!(at_base(&Default::default(), &d, &head, "core", Kind::Size).expect("at"), r(""));
+    assert_eq!(at_base(&Default::default(), &d, &gate, "ui", Kind::Known).expect("at"), r(""));
+    assert_eq!(at_base(&Default::default(), &d, &first, "ui", Kind::Size).expect("at"), None);
     std::fs::remove_dir_all(&d).expect("clean up");
 }

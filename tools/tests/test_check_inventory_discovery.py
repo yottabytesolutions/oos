@@ -1,5 +1,7 @@
 """Discovery and artifact contracts, independent of Docker or private fixtures."""
 import importlib.util
+import io
+from contextlib import redirect_stdout
 import os
 from pathlib import Path
 import subprocess
@@ -74,7 +76,22 @@ class Discovery(unittest.TestCase):
         for text in ('Ran 0 tests in 0s', 'PASS', 'Ran 2 tests in 0s\nOK (skipped=2)'):
             with self.assertRaises(ValueError):
                 host.test_summary(text, 2)
-        host.test_summary('Ran 2 tests in 0.1s\nOK (skipped=1)', 2)
+        with redirect_stdout(io.StringIO()) as log:
+            host.test_summary("test_fixture (fixture.Tests) ... skipped 'requires fixture'\n"
+                              'Ran 2 tests in 0.1s\nOK (skipped=1)', 2)
+        self.assertIn("skip reason: 'requires fixture'", log.getvalue())
+        with self.assertRaisesRegex(ValueError, 'missing reasons'):
+            host.test_summary('Ran 2 tests in 0.1s\nOK (skipped=1)', 2)
+
+    def test_git_tests_outside_discovered_roots_fail(self):
+        self.write('ui/tools/test_fixture.py', 'pass\n')
+        self.write('tools/tests/test_fixture.py', 'pass\n')
+        self.write('tools/privacy/test_fixture.py', 'pass\n')
+        host.validate_test_roots(self.root)
+        for name in ('test_new.py', 'nested/test_new.py', 'tools/test_new.py'):
+            path = self.write(name, 'pass\n')
+            self.assertRaisesRegex(ValueError, name, host.validate_test_roots, self.root)
+            path.unlink()
 
 
 class Artifacts(unittest.TestCase):

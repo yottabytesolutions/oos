@@ -26,8 +26,11 @@ Consumers with explicit image arguments must use the selected directory. Kernel 
 existing worktree-local locations; their builders record the selected environment and installed package inventory.
 
 Rootfs tool receipts use the specific builder script and its `rootfs-<tool>` environment identity.
-For builders using `deps.sh`, they also cover that helper and their selected dependency versions, checksums
-and URLs from `deps.lock`. Inline source versions/checksums are covered by the builder script itself.
+For builders using `deps.sh`, they hash the exact `dep_stamp_text` description consumed by unit-hook:
+builder hash, helper hash, per-tool environment identity and selected dependency name/version/checksum
+fields from `deps.lock`. URL-only edits leave both receipts and stamps current. Environment queries use
+`tools/build-env.sh` so callers can supply a fixture resolver. Inline source versions/checksums are
+covered by the builder script itself.
 A Rust edit leaves e2fsck, kexec, WLAN, nft, Dropbear and SFTP receipts valid; changing their actual inputs
 or replacing their payloads invalidates them. Builders capture `tools/output.py identity ARTIFACT` before
 building and pass it to `stamp`, which checks for input changes during the build. Rust compiler probes run

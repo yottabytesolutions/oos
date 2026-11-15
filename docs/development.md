@@ -133,7 +133,7 @@ and the coverage margin of 0.5 percentage points are unchanged.
 | `perf` | `sh tools/perf-guard.sh` | toolchain | full |
 | `coverage` | `cargo llvm-cov` per crate | llvm-tools, cargo-llvm-cov | full; omitted only by partial mode |
 | `script-syntax` | `python3 -I tools/script_syntax.py` | Git, Python, declared shells | full |
-| `python-tests` | receipted UI build; isolated unittest discovery in tools/tests and tools/privacy | host toolchain, local sockets | full |
+| `python-tests` | receipted UI build; isolated unittest discovery in tools/tests, tools/privacy and ui/tools | host toolchain, local sockets | full |
 | `arm64-release-link` | receipted release build with `--bins -p oos-ui -p oos-fpgad --target aarch64-unknown-linux-musl` | musl std, rust-lld | `--image` |
 | `gpu-host` | `sh gpu/test-host.sh` | ARM link and gpu-test profile | `--image` |
 | `ssh-sim` | prepare initramfs/rootfs and nft/Dropbear/SFTP; `sh tools/ssh-sim.sh` | simulation profile | `--image` |
@@ -146,7 +146,8 @@ including extensionless shebangs, hooks and rootfs entry scripts. Python is comp
 execution, with bytecode under the selected target. Shell fragments have explicit interpreter
 mappings; executable C sources and the kernel's recorded Git answers are classified as data.
 Unknown executable scripts fail. Python selections must be nonzero, their executed counts must
-match discovery, and skipped counts are reported. Host socket cases use synthetic fixtures and
+match discovery, and every skip reason is reported with the skipped count. Git-listed `test_*.py`
+files outside the declared discovery roots fail the check. Host socket cases use synthetic fixtures and
 the freshly receipted UI. No default-target fallback is accepted.
 
 The ARM link verifies all three Rust executables (`oos-ui`, `oos-fpgad`, `oos-update`), their receipts,

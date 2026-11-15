@@ -7,17 +7,17 @@ mod tests;
 
 use std::path::Path;
 
-pub(crate) fn syntax(root: &Path) -> crate::steps::Outcome {
-    pins::check(root)
+pub(crate) fn syntax(ctx: &crate::run::Context, root: &Path) -> crate::steps::Outcome {
+    pins::check(ctx, root)
 }
 
-pub(crate) fn check(root: &Path) -> crate::steps::Outcome {
-    inventory(root, &[])
+pub(crate) fn check(ctx: &crate::run::Context, root: &Path) -> crate::steps::Outcome {
+    inventory(ctx, root, &[])
 }
 
-pub(crate) fn inventory(root: &Path, flags: &[&str]) -> crate::steps::Outcome {
+pub(crate) fn inventory(ctx: &crate::run::Context, root: &Path, flags: &[&str]) -> crate::steps::Outcome {
     let pins = pins::load(root).map_err(|e| vec![e])?;
-    let exec = |program: &str, args: &[&str]| crate::run::capture(root, program, args);
+    let exec = |program: &str, args: &[&str]| crate::run::capture(ctx, root, program, args);
     let mut report = probes::Inventory::new(&exec);
     report.base(&pins);
     report.check(
@@ -29,9 +29,9 @@ pub(crate) fn inventory(root: &Path, flags: &[&str]) -> crate::steps::Outcome {
     );
     report.check(
         "protected base",
-        crate::base::protected(root).is_ok(),
+        crate::base::protected(ctx, root).is_ok(),
         "G1 protected base",
-        if crate::base::protected(root).is_ok() { "available" } else { "unavailable" },
+        if crate::base::protected(ctx, root).is_ok() { "available" } else { "unavailable" },
         "git fetch origin overhaul",
     );
     let config = std::fs::read_to_string(root.join(".cargo/config.toml")).unwrap_or_default();
@@ -57,6 +57,6 @@ pub(crate) fn inventory(root: &Path, flags: &[&str]) -> crate::steps::Outcome {
 }
 
 pub(crate) fn run(root: &Path, flags: &[&str]) -> bool {
-    let step = crate::report::step("doctor", || inventory(root, flags));
+    let step = crate::report::step("doctor", || inventory(&Default::default(), root, flags));
     step.ok
 }

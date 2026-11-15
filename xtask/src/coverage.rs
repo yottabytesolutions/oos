@@ -34,18 +34,19 @@ fn tenths(json: &str) -> Result<u64, String> {
 }
 
 /// Whether cargo-llvm-cov is installed.
-pub fn installed() -> bool {
-    run::available("cargo", &["llvm-cov", "--version"])
+pub fn installed(ctx: &crate::run::Context) -> bool {
+    run::available(ctx, "cargo", &["llvm-cov", "--version"])
 }
 
 /// Line coverage of the crate in `root/krate`, in tenths of a percent. Runs the tests once more, instrumented.
-pub fn measure(root: &Path, krate: &str) -> Result<u64, String> {
-    let target = run::capture(root, "python3", &["tools/output.py", "target"])?;
+pub fn measure(ctx: &crate::run::Context, root: &Path, krate: &str) -> Result<u64, String> {
+    let target = run::capture(ctx, root, "python3", &["tools/output.py", "target"])?;
     if !target.ok {
         return Err(target.stderr);
     }
     let dir = coverage_dir(Path::new(target.stdout.trim()));
     let out = run::capture_env(
+        ctx,
         &root.join(krate),
         "cargo",
         &["llvm-cov", "--locked", "--json", "--summary-only"],

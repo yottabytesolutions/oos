@@ -75,6 +75,27 @@ class GoldenTests(unittest.TestCase):
             prune_runs(root)
             self.assertEqual({p.name for p in root.iterdir()}, {'run-2', 'run-3', 'unrelated'})
 
+    def test_pruning_cannot_cross_build_profiles(self):
+        from golden_run import prune_runs, run_base
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            bases = []
+            for coverage in (False, True):
+                for profile in ('debug', 'release'):
+                    with patch.dict(os.environ, {'LLVM_PROFILE_FILE': 'test-%p.profraw'} if coverage else {}, clear=True):
+                        base = run_base(root, profile)
+                    bases.append(base)
+            self.assertEqual(len(set(bases)), 4)
+            for base in bases:
+                for index in range(3):
+                    run = base / f'run-{index}'
+                    run.mkdir(parents=True)
+                    os.utime(run, ns=(index + 1, index + 1))
+            prune_runs(bases[0], keep=1)
+            self.assertEqual(len(list(bases[0].iterdir())), 1)
+            for base in bases[1:]:
+                self.assertEqual(len(list(base.iterdir())), 3)
+
     def test_observed_decode_route_and_failure_only_reports(self):
         from golden_run import capture_case
         from types import SimpleNamespace

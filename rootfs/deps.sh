@@ -11,7 +11,10 @@ dep_line() {
 	awk -v n="$1" '!/^#/ && $1 == n { print; f = 1 } END { exit !f }' "$DEPS_LOCK" || { echo "deps.lock: no $1" >&2; return 1; }
 }
 dep_ver() { dep_line "$1" | awk '{ print $3 }'; }
-dep_sha256() { { shasum -a 256 "$1" 2>/dev/null || sha256sum "$1"; } | cut -d' ' -f1; }
+dep_sha256() {
+	sum=$(shasum -a 256 "$1" 2>/dev/null || sha256sum "$1") || return 1
+	printf '%s\n' "${sum%% *}"
+}
 dep_fetch() {
 	l=$(dep_line "$1") || return 1
 	sum=$(echo "$l" | awk '{ print $4 }'); url=$(echo "$l" | awk '{ print $5 }')
@@ -23,11 +26,17 @@ dep_fetch() {
 }
 dep_stamp_text() {
 	s=$2; shift 2
-	echo "script $(dep_sha256 "$s")"
 	deps_root=$(CDPATH= cd -- "$(dirname -- "$DEPS_LOCK")/.." && pwd)
+	script_sum=$(dep_sha256 "$s") || return 1
+	helper_sum=$(dep_sha256 "$deps_root/rootfs/deps.sh") || return 1
+	echo "script $script_sum"
+	echo "helper $helper_sum"
 	deps_environment=$("$deps_root/tools/build-env.sh" identity "rootfs-$(basename "$s" .sh | sed 's/^build-//')") || return 1
 	echo "environment $deps_environment"
-	for n in "$@"; do dep_line "$n" | awk '{ print $1, $3, $4 }'; done
+	for n in "$@"; do
+		line=$(dep_line "$n") || return 1
+		printf '%s\n' "$line" | awk '{ print $1, $3, $4 }'
+	done
 }
 dep_stale() {
 	a=$1; shift

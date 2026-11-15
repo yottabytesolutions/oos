@@ -181,7 +181,7 @@ fn missing_repository_prerequisites_are_all_visible() {
     for name in ["rust-toolchain.toml", "tools/build-tools.json"] {
         std::fs::copy(crate::repo::root().join(name), root.join(name)).expect("pin fixture");
     }
-    let lines = super::inventory(&root, &[]).expect_err("missing prerequisites");
+    let lines = super::inventory(&Default::default(), &root, &[]).expect_err("missing prerequisites");
     for name in ["Cargo.lock", "protected base", "musl configuration", "writable isolated output"] {
         assert!(lines.iter().any(|l| l.starts_with(&format!("FAIL {}:", name))), "{}", name);
     }

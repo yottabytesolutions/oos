@@ -26,8 +26,8 @@ pub struct Options {
 fn current(root: &Path) -> Result<BTreeMap<(&'static str, &'static str), Ratchet>, String> {
     let rules = crate::arch::load(root)?;
     let mut out = BTreeMap::new();
-    for (c, m) in steps::measured(root)? {
-        let f = clippy::run(root, c.dir, c.target)?;
+    for (c, m) in steps::measured(&Default::default(), root)? {
+        let f = clippy::run(&Default::default(), root, c.dir, c.target)?;
         if !f.errors.is_empty() {
             return Err(format!("{}: does not build:\n{}", c.dir, f.errors.join("\n")));
         }
@@ -54,8 +54,8 @@ fn raised(floor: &Ratchet, now: &Ratchet) -> Ratchet {
 
 /// `--init` only where the base has no gate: over an existing ratchet it would list anything.
 fn refuse_init(root: &Path) -> Result<(), String> {
-    let commit = crate::base::protected(root)?;
-    if store::at_base(root, &commit, "hal", Kind::Size)?.is_some() {
+    let commit = crate::base::protected(&Default::default(), root)?;
+    if store::at_base(&Default::default(), root, &commit, "hal", Kind::Size)?.is_some() {
         return Err("the base has the gate: --init only brings the ratchets in".into());
     }
     Ok(())
@@ -79,7 +79,7 @@ fn combined(root: &Path, crates: &[&str], k: Kind, commit: Option<&str>) -> Resu
     let mut all = Ratchet::default();
     for c in crates {
         let r = match commit {
-            Some(b) => store::at_base(root, b, c, k)?.unwrap_or_default(),
+            Some(b) => store::at_base(&Default::default(), root, b, c, k)?.unwrap_or_default(),
             None => store::load(root, c, k)?,
         };
         all.0.extend(r.0);
@@ -90,7 +90,7 @@ fn combined(root: &Path, crates: &[&str], k: Kind, commit: Option<&str>) -> Resu
 /// The moves the base still needs: those that rename an entry of its ratchets, in order. The others are applied
 /// there and change nothing.
 fn needed(root: &Path, crates: &[&str], moves: &[Move]) -> Result<Vec<Move>, String> {
-    let commit = crate::base::protected(root)?;
+    let commit = crate::base::protected(&Default::default(), root)?;
     let mut keep = vec![false; moves.len()];
     for k in Kind::ALL {
         let mut cur = combined(root, crates, k, Some(&commit))?;
@@ -167,7 +167,7 @@ pub fn run(root: &Path, o: Options) -> Result<(), String> {
     }
     if o.coverage {
         let path = steps::ratchet_path(root, "coverage.txt");
-        let now = steps::coverage_now(root).map_err(|e| e.join("\n"))?;
+        let now = steps::coverage_now(&Default::default(), root).map_err(|e| e.join("\n"))?;
         let floor = if o.init { Ratchet::default() } else { Ratchet::load(&path)? };
         std::fs::write(&path, raised(&floor, &now).text(COVERAGE_HEAD))
             .map_err(|e| format!("{}: {}", path.display(), e))?;

@@ -32,6 +32,13 @@ impl Fake {
         }
         std::fs::write(fake.p("boot_id"), "00000000-0000-4000-8000-000000000001\n").expect("boot_id");
         std::fs::write(fake.p("oos-build"), "test build\n").expect("build");
+        // oos-ui-exits reads its own Linux proc identity for the lock; supply one on non-Linux hosts too.
+        write_exec(
+            &fake.p("bin/test-exits"),
+            "#!/bin/sh\nmkdir -p \"$OOS_PROC/$$\"\n\
+             printf '%s (fixture ) process) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12345 0\\n' \"$$\" > \"$OOS_PROC/$$/stat\"\n\
+             exec sh \"$OOS_EXITS_SCRIPT\" \"$@\"\n",
+        );
         fake
     }
     /// A pass-through `cmd` that fails (`fail N`) or corrupts its last argument (`corrupt N`) on its N-th call, as
@@ -96,7 +103,9 @@ impl Fake {
             .env("OOS_KMSG", self.p("kmsg"))
             .env("OOS_BOOT_ID", self.p("boot_id"))
             .env("OOS_BUILD_FILE", self.p("oos-build"))
-            .env("OOS_UI_EXITS", script("oos-ui-exits"));
+            .env("OOS_PROC", self.p("proc"))
+            .env("OOS_EXITS_SCRIPT", script("oos-ui-exits"))
+            .env("OOS_UI_EXITS", self.p("bin/test-exits"));
     }
     fn save(&self) -> String {
         let mut c = Command::new("sh");
@@ -408,8 +417,8 @@ fn panic_and_running_marker_are_one_exit() {
     std::fs::write(f.p("oos/oos-ui.running"), "boot:run1\n").unwrap();
     f.panic("one");
     f.save();
-    let mut c = Command::new("sh");
-    c.arg(script("oos-ui-exits")).args(["count", "boot:run1", "1", "boot:run1"]);
+    let mut c = Command::new(f.p("bin/test-exits"));
+    c.args(["count", "boot:run1", "1", "boot:run1"]);
     f.env(&mut c);
     assert!(c.env("OOS_UI_DATA", f.p("oos")).status().unwrap().success());
     assert_eq!(exits(&f), 1);
@@ -450,8 +459,8 @@ fn an_old_archive_retry_does_not_consume_a_new_runs_marker() {
     std::fs::write(f.p("oos/oos-ui.running"), "boot:new\n").unwrap();
     f.plan("rm", "");
     f.save();
-    let mut c = Command::new("sh");
-    c.arg(script("oos-ui-exits")).args(["count", "boot:new", "1", "boot:new"]);
+    let mut c = Command::new(f.p("bin/test-exits"));
+    c.args(["count", "boot:new", "1", "boot:new"]);
     f.env(&mut c);
     assert!(c.env("OOS_UI_DATA", f.p("oos")).status().unwrap().success());
     assert_eq!(exits(&f), 2);
@@ -479,8 +488,8 @@ fn an_old_panic_retry_preserves_the_newer_run_receipt() {
     f.plan("rm", "fail 1");
     f.save();
     let count = || {
-        let mut c = Command::new("sh");
-        c.arg(script("oos-ui-exits")).args(["count", "boot:new", "1", "boot:new"]);
+        let mut c = Command::new(f.p("bin/test-exits"));
+        c.args(["count", "boot:new", "1", "boot:new"]);
         f.env(&mut c);
         assert!(c.env("OOS_UI_DATA", f.p("oos")).status().unwrap().success());
     };

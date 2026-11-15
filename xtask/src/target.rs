@@ -7,7 +7,7 @@ use crate::run;
 use std::path::Path;
 
 /// Whether the target's standard library is installed.
-pub fn installed() -> bool {
-    run::capture(Path::new("."), "rustup", &["target", "list", "--installed"])
+pub fn installed(ctx: &crate::run::Context) -> bool {
+    run::capture(ctx, Path::new("."), "rustup", &["target", "list", "--installed"])
         .is_ok_and(|o| o.stdout.lines().any(|l| l.trim() == TARGET))
 }

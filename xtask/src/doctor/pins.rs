@@ -78,9 +78,9 @@ fn version(s: &str) -> bool {
     parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
 }
 
-pub(crate) fn check(root: &Path) -> crate::steps::Outcome {
+pub(crate) fn check(ctx: &crate::run::Context, root: &Path) -> crate::steps::Outcome {
     load(root).map_err(|e| vec![e])?;
-    let out = crate::run::capture(root, "python3", &["-I", "tools/build_env.py", "validate"])
+    let out = crate::run::capture(ctx, root, "python3", &["-I", "tools/build_env.py", "validate"])
         .map_err(|_| vec!["pin syntax: install Python with tomllib, then tools/bootstrap.sh".into()])?;
     if !out.ok {
         return Err(vec!["container lock/recipe syntax: run python3 -I tools/build_env.py validate".into()]);

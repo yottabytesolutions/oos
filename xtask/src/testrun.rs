@@ -34,13 +34,13 @@ pub fn counts(out: &str) -> Counts {
 
 /// Runs the tests of the crate in `root/krate`; `release` adds `--release`. Err with the end of the output when a
 /// test fails or the build breaks.
-pub fn run(root: &Path, krate: &str, release: bool) -> Result<Counts, String> {
+pub fn run(ctx: &crate::run::Context, root: &Path, krate: &str, release: bool) -> Result<Counts, String> {
     // the committed Cargo.lock, never a rewritten one
     let mut args = vec!["test", "--locked"];
     if release {
         args.push("--release");
     }
-    let out = run::capture(&root.join(krate), "cargo", &args)?;
+    let out = run::capture(ctx, &root.join(krate), "cargo", &args)?;
     let c = counts(&out.stdout);
     if !out.ok || c.failed > 0 {
         return Err(format!("{}\n{}", run::tail(&out.stdout, 30), run::tail(&out.stderr, 20)));

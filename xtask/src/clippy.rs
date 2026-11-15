@@ -76,7 +76,7 @@ fn add(json: &str, krate: &str, manifest: &str, seen: &mut BTreeSet<Place>, f: &
 /// Runs clippy on every target of the crate in `root/krate`, for the host and, with `scope`, for the scope's target
 /// too: code under `cfg(target_os = "linux")` or `cfg(target_arch = "aarch64")` only builds there. A finding seen in
 /// both counts once.
-pub fn run(root: &Path, krate: &str, scope: bool) -> Result<Findings, String> {
+pub fn run(ctx: &crate::run::Context, root: &Path, krate: &str, scope: bool) -> Result<Findings, String> {
     let dir = root.join(krate);
     let manifest = dir.join("Cargo.toml").to_string_lossy().into_owned();
     let mut f = Findings::default();
@@ -87,7 +87,7 @@ pub fn run(root: &Path, krate: &str, scope: bool) -> Result<Findings, String> {
         runs.push([&host[..], &["--target", crate::repo::TARGET]].concat());
     }
     for args in runs {
-        let out = run::capture(&dir, "cargo", &args)?;
+        let out = run::capture(ctx, &dir, "cargo", &args)?;
         add(&out.stdout, krate, &manifest, &mut seen, &mut f);
         if !out.ok && f.errors.is_empty() {
             f.errors.push(run::tail(&out.stderr, 20));

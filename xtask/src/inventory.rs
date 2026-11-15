@@ -5,7 +5,7 @@ use std::path::Path;
 #[cfg(test)]
 mod tests;
 
-pub(crate) type Runner = fn(&Path) -> steps::Outcome;
+pub(crate) type Runner = fn(&crate::run::Context, &Path) -> steps::Outcome;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Selection {
@@ -86,12 +86,24 @@ pub(crate) const CHECKS: &[Check] = &[
         steps::host::doctor
     ),
     entry!("clippy", "clippy", "cargo clippy --all-targets, host and ARM", "pinned toolchain", Rust, [], steps::clippy),
-    entry!("tests-debug", "tests (debug)", "cargo test per crate", "pinned toolchain", Rust, [], |r| steps::tests(
-        r, false
-    )),
-    entry!("tests-release", "tests (release)", "cargo test --release per crate", "pinned toolchain", Rust, [], |r| {
-        steps::tests(r, true)
-    }),
+    entry!(
+        "tests-debug",
+        "tests (debug)",
+        "cargo test per crate",
+        "pinned toolchain",
+        Rust,
+        [],
+        |ctx, r| steps::tests(ctx, r, false)
+    ),
+    entry!(
+        "tests-release",
+        "tests (release)",
+        "cargo test --release per crate",
+        "pinned toolchain",
+        Rust,
+        [],
+        |ctx, r| { steps::tests(ctx, r, true) }
+    ),
     entry!("perf", "perf guards", "sh tools/perf-guard.sh", "pinned toolchain", Rust, [], steps::perf),
     entry!(
         "coverage",
@@ -115,7 +127,7 @@ pub(crate) const CHECKS: &[Check] = &[
         "python-tests",
         "python-tests",
         "python3 -I tools/check_inventory.py python-tests",
-        "receipted host UI; tools/tests and tools/privacy",
+        "receipted host UI; tools/tests, tools/privacy and ui/tools",
         Host,
         [],
         steps::host::python

@@ -69,18 +69,11 @@ def source_identity(path):
     if path.resolve().parent != (ROOT / "rootfs/out").resolve() or path.name not in tools:
         return revision()
     tool, dependencies = tools[path.name]
-    inputs = {"builder": digest(ROOT / f"rootfs/build-{tool}.sh")}
     if dependencies:
-        inputs["helper"] = digest(ROOT / "rootfs/deps.sh")
-        lines = [line.split() for line in (ROOT / "rootfs/deps.lock").read_text().splitlines()
-                 if line.strip() and not line.startswith("#")]
-        for name in dependencies:
-            selected = [line for line in lines if line[0] == name]
-            if len(selected) != 1 or len(selected[0]) < 5:
-                raise ValueError("rootfs dependency input missing or duplicated")
-            inputs[name] = selected[0][2:5]
+        return hashlib.sha256(dependency_inputs(path.name)).hexdigest()
+    inputs = {"builder": digest(ROOT / f"rootfs/build-{tool}.sh")}
     inputs["environment"] = subprocess.check_output(
-        [sys.executable, "-I", str(ROOT / "tools/build_env.py"), "identity", "rootfs-" + tool],
+        [str(ROOT / "tools/build-env.sh"), "identity", "rootfs-" + tool],
         cwd=ROOT, text=True).strip()
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
@@ -96,6 +89,21 @@ def compiler_identity():
         identity.update(result.stdout)
         identity.update(b"\0")
     return identity.hexdigest()
+
+
+def dependency_inputs(name):
+    # Use the very same input description as unit-hook's dep_stale/dep_stamp decision.
+    dependencies = {
+        "nft": ("nft", "libmnl", "libnftnl", "nftables"),
+        "dropbearmulti": ("dropbear", "dropbear"),
+        "sftp-server": ("sftp-server", "openssh"),
+    }
+    builder, *names = dependencies[name]
+    env = {**os.environ, "DEPS_LOCK": str(ROOT / "rootfs/deps.lock")}
+    return subprocess.check_output(
+        ["sh", "-eu", "-c", '. "$1"; shift; dep_stamp_text "$@"', "dependency-inputs",
+         str(ROOT / "rootfs/deps.sh"), name, str(ROOT / f"rootfs/build-{builder}.sh"), *names],
+        cwd=ROOT, env=env)
 
 
 def metadata(path, tree):

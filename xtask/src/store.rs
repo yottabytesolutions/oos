@@ -76,12 +76,18 @@ pub fn save(root: &Path, krate: &str, kind: Kind, r: &Ratchet) -> Result<(), Str
 
 /// The ratchet of `kind` for `krate` at the base `commit`. None when the base has no gate (nothing to compare);
 /// empty when the gate exists but the file does not (a new crate or kind starts clean).
-pub fn at_base(root: &Path, commit: &str, krate: &str, kind: Kind) -> Result<Option<Ratchet>, String> {
-    let split = base::at(root, commit, &rel(krate, kind))?;
+pub fn at_base(
+    ctx: &crate::run::Context,
+    root: &Path,
+    commit: &str,
+    krate: &str,
+    kind: Kind,
+) -> Result<Option<Ratchet>, String> {
+    let split = base::at(ctx, root, commit, &rel(krate, kind))?;
     let text = match split {
         At::Present(t) => return Ratchet::parse(&t).map(Some),
         At::NoGate => return Ok(None),
-        At::Absent => base::at(root, commit, &format!("xtask/data/{}.txt", kind.name()))?,
+        At::Absent => base::at(ctx, root, commit, &format!("xtask/data/{}.txt", kind.name()))?,
     };
     match text {
         At::Present(t) => Ok(Some(of_crate(&Ratchet::parse(&t)?, krate))),

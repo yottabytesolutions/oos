@@ -2,8 +2,8 @@
 use super::Outcome;
 use std::path::Path;
 
-pub(crate) fn command(root: &Path, program: &str, args: &[&str]) -> Outcome {
-    let out = crate::run::capture(root, program, args).map_err(|e| vec![e])?;
+pub(crate) fn command(ctx: &crate::run::Context, root: &Path, program: &str, args: &[&str]) -> Outcome {
+    let out = crate::run::capture(ctx, root, program, args).map_err(|e| vec![e])?;
     let lines = vec![format!("{}{}", out.stdout, out.stderr)];
     if out.ok {
         Ok(lines)
@@ -12,26 +12,26 @@ pub(crate) fn command(root: &Path, program: &str, args: &[&str]) -> Outcome {
     }
 }
 
-pub(crate) fn doctor(root: &Path) -> Outcome {
-    crate::doctor::inventory(root, &["--gpu", "--sim"])
+pub(crate) fn doctor(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    crate::doctor::inventory(ctx, root, &["--gpu", "--sim"])
 }
 
-fn host(root: &Path, id: &str) -> Outcome {
-    command(root, "python3", &["-I", "tools/check_inventory.py", id])
+fn host(ctx: &crate::run::Context, root: &Path, id: &str) -> Outcome {
+    command(ctx, root, "python3", &["-I", "tools/check_inventory.py", id])
 }
 
-pub(crate) fn python(root: &Path) -> Outcome {
-    host(root, "python-tests")
+pub(crate) fn python(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    host(ctx, root, "python-tests")
 }
-pub(crate) fn arm(root: &Path) -> Outcome {
-    host(root, "arm64-release-link")
+pub(crate) fn arm(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    host(ctx, root, "arm64-release-link")
 }
-pub(crate) fn ssh(root: &Path) -> Outcome {
-    host(root, "ssh-sim")
+pub(crate) fn ssh(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    host(ctx, root, "ssh-sim")
 }
-pub(crate) fn firewall(root: &Path) -> Outcome {
-    host(root, "firewall-sim")
+pub(crate) fn firewall(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    host(ctx, root, "firewall-sim")
 }
-pub(crate) fn gpu(root: &Path) -> Outcome {
-    command(root, "sh", &["gpu/test-host.sh"])
+pub(crate) fn gpu(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    command(ctx, root, "sh", &["gpu/test-host.sh"])
 }

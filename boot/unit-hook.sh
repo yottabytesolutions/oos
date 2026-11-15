@@ -38,7 +38,7 @@ if [ -n "${OOS_UNIT:-}" ]; then
 fi
 [ -f "$k/$OOS_KERNEL_DTB" ] || { echo "no $k/$OOS_KERNEL_DTB: run kernel/build-base.sh again" >&2; exit 1; }
 # the fork's own builds from rootfs/deps.lock (docs/fork/deps.md): built again when missing, or when the manifest line
-# or the build script changed since (deps.sh stamps)
+# or the builder, deps.sh helper or build environment changed since (shared receipt/stamp inputs)
 DEPS_LOCK="$root/rootfs/deps.lock"
 . "$root/rootfs/deps.sh"
 o="$root/rootfs/out"

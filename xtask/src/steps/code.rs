@@ -8,20 +8,20 @@ use crate::{arch, size, sources, workspace};
 use std::path::Path;
 
 /// Every crate with what the walk of its sources found.
-pub fn measured(root: &Path) -> Result<Vec<(Crate, size::Measured)>, String> {
-    let meta = workspace::load(root)?;
+pub fn measured(ctx: &crate::run::Context, root: &Path) -> Result<Vec<(Crate, size::Measured)>, String> {
+    let meta = workspace::load(ctx, root)?;
     CRATES.iter().map(|c| Ok((*c, size::measure(c.dir, &sources::of_dir(&meta, c.dir)?)))).collect()
 }
 
-pub fn size(root: &Path) -> Outcome {
-    let now: Vec<_> = measured(root).map_err(|e| vec![e])?.into_iter().map(|(c, m)| (c.dir, m.sizes)).collect();
-    ratcheted(root, Kind::Size, &now)
+pub fn size(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    let now: Vec<_> = measured(ctx, root).map_err(|e| vec![e])?.into_iter().map(|(c, m)| (c.dir, m.sizes)).collect();
+    ratcheted(ctx, root, Kind::Size, &now)
 }
 
 /// Exceptions to `clippy::disallowed_methods`: their count per file may only fall.
-pub fn allows(root: &Path) -> Outcome {
-    let now: Vec<_> = measured(root).map_err(|e| vec![e])?.into_iter().map(|(c, m)| (c.dir, m.allows)).collect();
-    ratcheted(root, Kind::Allow, &now)
+pub fn allows(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    let now: Vec<_> = measured(ctx, root).map_err(|e| vec![e])?.into_iter().map(|(c, m)| (c.dir, m.allows)).collect();
+    ratcheted(ctx, root, Kind::Allow, &now)
 }
 
 /// Whether task `n` is open: `docs/tasks/NNNN-*.md` exists outside `done/`.
@@ -32,10 +32,10 @@ fn open_task(root: &Path, n: &str) -> bool {
 }
 
 /// Known failures: each names an open task, and the list may only shrink.
-pub fn known(root: &Path) -> Outcome {
+pub fn known(ctx: &crate::run::Context, root: &Path) -> Outcome {
     let mut now = Vec::new();
     let mut bad = Vec::new();
-    for (c, m) in measured(root).map_err(|e| vec![e])? {
+    for (c, m) in measured(ctx, root).map_err(|e| vec![e])? {
         bad.extend(
             m.malformed.iter().map(|x| format!("{}: ignore reason \"known: task NNNN\" expected: {}", c.dir, x)),
         );
@@ -50,7 +50,7 @@ pub fn known(root: &Path) -> Outcome {
     if !bad.is_empty() {
         return Err(bad);
     }
-    ratcheted(root, Kind::Known, &now)
+    ratcheted(ctx, root, Kind::Known, &now)
 }
 
 /// `unsafe` outside the allowed paths of a crate (`unsafe` lines in architecture.txt).
@@ -60,22 +60,22 @@ pub fn unsafe_now(m: &size::Measured, allowed: &[String]) -> Ratchet {
 }
 
 /// `unsafe` only in the allowed paths (architecture.txt) and the listed old places (unsafe.txt).
-pub fn unsafety(root: &Path) -> Outcome {
+pub fn unsafety(ctx: &crate::run::Context, root: &Path) -> Outcome {
     let rules = arch::load(root).map_err(|e| vec![e])?;
-    let now: Vec<_> = measured(root)
+    let now: Vec<_> = measured(ctx, root)
         .map_err(|e| vec![e])?
         .into_iter()
         .map(|(c, m)| (c.dir, unsafe_now(&m, &rules.unsafe_paths)))
         .collect();
-    ratcheted(root, Kind::Unsafe, &now)
+    ratcheted(ctx, root, Kind::Unsafe, &now)
 }
 
 /// Mutable statics: only metrics (allowlist in architecture.txt) and the listed old ones (statics.txt).
-pub fn statics(root: &Path) -> Outcome {
+pub fn statics(ctx: &crate::run::Context, root: &Path) -> Outcome {
     let rules = arch::load(root).map_err(|e| vec![e])?;
     let mut now = Vec::new();
     let mut all = std::collections::BTreeSet::new();
-    for (c, m) in measured(root).map_err(|e| vec![e])? {
+    for (c, m) in measured(ctx, root).map_err(|e| vec![e])? {
         let mut s = m.statics;
         all.extend(s.0.keys().cloned());
         s.0.retain(|k, _| !rules.statics.contains(k));
@@ -90,5 +90,5 @@ pub fn statics(root: &Path) -> Outcome {
     if !stale.is_empty() {
         return Err(stale);
     }
-    ratcheted(root, Kind::Statics, &now)
+    ratcheted(ctx, root, Kind::Statics, &now)
 }

@@ -90,8 +90,8 @@ pub fn parse(json: &str) -> Result<Metadata, String> {
 }
 
 /// The workspace at `root`.
-pub fn load(root: &Path) -> Result<Metadata, String> {
-    let out = run::capture(root, "cargo", &["metadata", "--format-version", "1", "--no-deps", "--locked"])?;
+pub fn load(ctx: &crate::run::Context, root: &Path) -> Result<Metadata, String> {
+    let out = run::capture(ctx, root, "cargo", &["metadata", "--format-version", "1", "--no-deps", "--locked"])?;
     if !out.ok {
         return Err(run::tail(&out.stderr, 10));
     }

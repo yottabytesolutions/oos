@@ -20,29 +20,52 @@ case "$op" in count|mode|clear|recover) ;; *) exit 2 ;; esac
 # mode reads the atomically renamed ledger without locking. Every writer, including recover's
 # validation, holds the same lock until directory sync finishes. /tmp clears orphan locks at boot.
 lock=${OOS_UI_TMP:-/tmp}/oos-ui-exits.lock
-unlock() { rmdir "$lock/$$" "$lock" 2>/dev/null || :; }
+proc=/proc
+[ -z "${OOS_TEST:-}" ] || proc=${OOS_PROC:-/proc}
+proc_start() (
+    IFS= read -r stat < "$proc/$1/stat" || return 1
+    # comm may contain spaces and closing parentheses. Fields after its final ") " start at 3.
+    stat=${stat##*) }
+    set -f
+    set -- $stat
+    [ "$#" -ge 20 ] || return 1
+    shift 19
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$1"
+)
+unlock() { rmdir "$mine" "$lock" 2>/dev/null || :; }
 acquire() {
+    started=$(proc_start "$$") || { echo 'oos-ui-exits: no process identity' >&2; return 1; }
+    mine=$lock/$$.$started
     while :; do
-        if mkdir "$lock" 2>/dev/null && mkdir "$lock/$$" 2>/dev/null; then
-            # Publish a PID-named claim before checking for an initializer whose empty directory
+        if mkdir "$lock" 2>/dev/null && mkdir "$mine" 2>/dev/null; then
+            # Publish a PID/starttime claim before checking for an initializer whose empty directory
             # was reaped. Both cannot pass: a later publication must see the earlier live claim.
             alone=true
             for claim in "$lock"/*; do
-                [ "$claim" = "$lock/$$" ] || [ ! -e "$claim" ] || alone=false
+                [ "$claim" = "$mine" ] || [ ! -e "$claim" ] || alone=false
             done
             if [ "$alone" = true ]; then
                 trap unlock EXIT
                 trap 'exit 1' HUP INT TERM
                 return 0
             fi
-            rmdir "$lock/$$" 2>/dev/null
+            rmdir "$mine" 2>/dev/null
         fi
-        # Remove only the specific dead PID's empty claim. Concurrent reapers cannot unlink a
-        # new owner's different claim, and rmdir never removes an occupied lock directory.
+        # Reap only that exact dead identity. A new process reusing its PID has a different claim.
+        # Legacy PID-only claims stay protected while live; /tmp also clears them at boot.
         for claim in "$lock"/*; do
             owner=${claim##*/}
+            start=${owner#*.}
+            owner=${owner%%.*}
             case "$owner" in ''|*[!0-9]*) continue ;; esac
-            kill -0 "$owner" 2>/dev/null || rmdir "$claim" 2>/dev/null
+            if ! kill -0 "$owner" 2>/dev/null; then
+                rmdir "$claim" 2>/dev/null
+            elif [ "$claim" != "$lock/$owner" ]; then
+                case "$start" in ''|*[!0-9]*) continue ;; esac
+                current=$(proc_start "$owner") || continue
+                [ "$current" = "$start" ] || rmdir "$claim" 2>/dev/null
+            fi
         done
         rmdir "$lock" 2>/dev/null
         sleep 1

@@ -10,8 +10,21 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import output
+from script_syntax import tracked
 
 ROOT = output.ROOT
+TEST_ROOTS = ('tools/tests', 'tools/privacy', 'ui/tools')
+
+
+def validate_test_roots(root):
+    missing = []
+    for name in tracked(root):
+        path = Path(name)
+        if path.name.startswith('test_') and path.suffix == '.py' and (root / path).is_file():
+            if not any(path.is_relative_to(directory) for directory in TEST_ROOTS):
+                missing.append(name)
+    if missing:
+        raise ValueError(f'Python tests outside discovered roots: {missing}; register their runner')
 
 
 def run(args):
@@ -70,15 +83,21 @@ def test_summary(text, expected):
         raise ValueError('test selection differs from executed test count')
     skips = re.search(r'\bskipped=(\d+)', text)
     print(f'python-tests: {expected} executed; {skips[1] if skips else 0} skipped')
+    reasons = re.findall(r'^.*\.\.\. skipped (.+)$', text, re.MULTILINE)
+    for reason in reasons:
+        print(f'python-tests: skip reason: {reason}')
+    if skips and len(reasons) != int(skips[1]):
+        raise ValueError('skipped tests have missing reasons')
     if skips and int(skips[1]) >= expected:
         raise ValueError('all tests were skipped')
 
 
 def python_tests():
+    validate_test_roots(ROOT)
     run(['python3', 'tools/output.py', 'build', '-p', 'oos-ui'])
     output.verify(output.target() / 'debug/oos-ui')
     # Discover in separate interpreters: unittest caches top-level import directories.
-    for directory in ('tools/tests', 'tools/privacy'):
+    for directory in TEST_ROOTS:
         selection = subprocess.run(['python3', '-I', str(Path(__file__).resolve()), 'count-tests', directory],
                                    cwd=ROOT, check=True, capture_output=True, text=True)
         expected = int(selection.stdout.strip())

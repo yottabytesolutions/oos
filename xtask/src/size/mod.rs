@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn xtask_keeps_its_own_limits() {
         let root = crate::repo::root();
-        let meta = crate::workspace::load(&root).unwrap();
+        let meta = crate::workspace::load(&Default::default(), &root).unwrap();
         let m = measure("xtask", &crate::sources::of_dir(&meta, "xtask").unwrap());
         assert!(m.sizes.0.is_empty() && m.statics.0.is_empty() && m.unsafes.0.is_empty(), "{:?}", m);
     }

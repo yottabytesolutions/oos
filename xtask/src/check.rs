@@ -24,9 +24,9 @@ pub(crate) fn plan(o: Options) -> Vec<(&'static str, inventory::Runner)> {
         .collect()
 }
 
-pub(crate) fn formatting_and_pins(root: &Path) -> steps::Outcome {
-    let pins = crate::doctor::syntax(root);
-    let fmt = steps::fmt(root);
+pub(crate) fn formatting_and_pins(ctx: &crate::run::Context, root: &Path) -> steps::Outcome {
+    let pins = crate::doctor::syntax(ctx, root);
+    let fmt = steps::fmt(ctx, root);
     match (pins, fmt) {
         (Ok(mut a), Ok(b)) => {
             a.extend(b);
@@ -45,7 +45,7 @@ pub fn run(root: &Path, o: Options, image: bool, list: bool) -> bool {
         inventory::list(o, image);
         return true;
     }
-    let log = match crate::run::start_logs(root) {
+    let (ctx, log) = match crate::run::start_logs(root) {
         Ok(path) => path,
         Err(e) => {
             eprintln!("{}", e);
@@ -65,7 +65,7 @@ pub fn run(root: &Path, o: Options, image: bool, list: bool) -> bool {
             if !missing.is_empty() {
                 return Err(vec![format!("missing prerequisite results: {:?}", missing)]);
             }
-            (c.run)(root)
+            (c.run)(&ctx, root)
         }));
     }
     let tier = if image { "image" } else { "default" };

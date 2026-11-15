@@ -2,7 +2,7 @@
 id: 35
 title: "Count acquired roll frames"
 kind: fix
-status: active
+status: done
 release: 0.2.0
 owner: codex
 depends: []
@@ -28,6 +28,14 @@ Add a failing-before test for the roll branch in ui/src/board/dho/hw.rs. Move th
 path that currently continues before the add. Coordinate with the existing branch instead of duplicating work.
 
 ## Status
+
+- 2026-11-15: closed by task 0055 after confirming the forward-port `bb7dd9b` already
+  increments `acquired` in `ui/src/board/dho/roll.rs::publish_roll`. Existing regression
+  `ui::tests::roll::tests::roll_single_bounds_snapshots_holds_and_rearms` in
+  `ui/src/ui/tests/roll.rs` checks 927 publications, no acquisitions while held, and two
+  fresh acquisitions on resume/rearm. Focused debug execution on task 0055's unchanged roll
+  source passes in debug and release: 1 passed each, exit 0. No additional roll edits are needed or made. Closure was
+  explicitly assigned by the owner; task 0055 remains active for review and batch integration.
 
 - 2026-11-15: final dirty-tree full gate on `fae3382`, with offline Cargo and the target directory
   inside this worktree, exited 1. Exact summary:

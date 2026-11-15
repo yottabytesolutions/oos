@@ -20,8 +20,8 @@ fn select(ci: bool, env: Option<&str>, exists: impl Fn(&str) -> bool) -> Result<
         .ok_or_else(|| "no base branch: fetch overhaul (CI: fetch-depth 0)".to_string())
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let out = run::capture(root, "git", args)?;
+fn git(ctx: &crate::run::Context, root: &Path, args: &[&str]) -> Result<String, String> {
+    let out = run::capture(ctx, root, "git", args)?;
     if out.ok {
         Ok(out.stdout.trim().to_string())
     } else {
@@ -30,17 +30,17 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 /// The commit to compare with: the merge base of HEAD and `base`, or HEAD's first parent when HEAD is on the base.
-pub fn commit(root: &Path, base: &str) -> Result<String, String> {
-    let mb = git(root, &["merge-base", "HEAD", base])?;
-    if mb == git(root, &["rev-parse", "HEAD"])? {
-        return git(root, &["rev-parse", "HEAD^1"]);
+pub fn commit(ctx: &crate::run::Context, root: &Path, base: &str) -> Result<String, String> {
+    let mb = git(ctx, root, &["merge-base", "HEAD", base])?;
+    if mb == git(ctx, root, &["rev-parse", "HEAD"])? {
+        return git(ctx, root, &["rev-parse", "HEAD^1"]);
     }
     Ok(mb)
 }
 
 /// Whether `rel` exists at `commit`; an error for anything git cannot answer.
-fn exists_at(root: &Path, commit: &str, rel: &str) -> Result<bool, String> {
-    Ok(!git(root, &["ls-tree", "--name-only", commit, "--", rel])?.is_empty())
+fn exists_at(ctx: &crate::run::Context, root: &Path, commit: &str, rel: &str) -> Result<bool, String> {
+    Ok(!git(ctx, root, &["ls-tree", "--name-only", commit, "--", rel])?.is_empty())
 }
 
 /// A file at the base.
@@ -54,19 +54,19 @@ pub enum At {
 }
 
 /// `rel` at `commit`.
-pub fn at(root: &Path, commit: &str, rel: &str) -> Result<At, String> {
-    if exists_at(root, commit, rel)? {
-        return git(root, &["show", &format!("{}:{}", commit, rel)]).map(At::Present);
+pub fn at(ctx: &crate::run::Context, root: &Path, commit: &str, rel: &str) -> Result<At, String> {
+    if exists_at(ctx, root, commit, rel)? {
+        return git(ctx, root, &["show", &format!("{}:{}", commit, rel)]).map(At::Present);
     }
-    if exists_at(root, commit, "xtask/Cargo.toml")? {
+    if exists_at(ctx, root, commit, "xtask/Cargo.toml")? {
         return Ok(At::Absent);
     }
     Ok(At::NoGate)
 }
 
 /// The text of `rel` at `commit`. None only when the gate is absent there too; a file the gate lost fails.
-pub fn text_at(root: &Path, commit: &str, rel: &str) -> Result<Option<String>, String> {
-    match at(root, commit, rel)? {
+pub fn text_at(ctx: &crate::run::Context, root: &Path, commit: &str, rel: &str) -> Result<Option<String>, String> {
+    match at(ctx, root, commit, rel)? {
         At::Present(t) => Ok(Some(t)),
         At::NoGate => Ok(None),
         At::Absent => Err(format!("{}: missing at the base {} although the gate exists there", rel, commit)),
@@ -74,16 +74,16 @@ pub fn text_at(root: &Path, commit: &str, rel: &str) -> Result<Option<String>, S
 }
 
 /// The base commit of the repository at `root`.
-pub fn protected(root: &Path) -> Result<String, String> {
+pub fn protected(ctx: &crate::run::Context, root: &Path) -> Result<String, String> {
     let env = std::env::var("OOS_GATE_BASE").ok();
-    let exists = |r: &str| git(root, &["rev-parse", "--verify", "--quiet", r]).is_ok();
+    let exists = |r: &str| git(ctx, root, &["rev-parse", "--verify", "--quiet", r]).is_ok();
     let base = select(std::env::var_os("CI").is_some(), env.as_deref(), exists)?;
-    commit(root, &base)
+    commit(ctx, root, &base)
 }
 
 /// The text of `rel` at the protected base of the repository at `root`.
-pub fn text(root: &Path, rel: &str) -> Result<Option<String>, String> {
-    text_at(root, &protected(root)?, rel)
+pub fn text(ctx: &crate::run::Context, root: &Path, rel: &str) -> Result<Option<String>, String> {
+    text_at(ctx, root, &protected(ctx, root)?, rel)
 }
 
 /// Entries of `work` that the base does not allow: new keys and raised values.

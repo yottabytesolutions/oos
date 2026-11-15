@@ -102,11 +102,11 @@ fn registry_ids_are_unique_and_prerequisites_precede_consumers() {
 #[test]
 fn subprocess_status_is_independent_of_pass_text() {
     let root = crate::repo::root();
-    let fail = steps::host::command(&root, "sh", &["-c", "echo PASS; exit 7"]);
+    let fail = steps::host::command(&Default::default(), &root, "sh", &["-c", "echo PASS; exit 7"]);
     assert!(fail.is_err());
     assert!(fail.expect_err("failed subprocess")[0].contains("PASS"));
-    assert!(steps::host::command(&root, "oos-nonexistent-fixture-command", &[]).is_err());
-    assert!(steps::host::command(&root, "sh", &["-c", "echo FAIL; exit 0"]).is_ok());
+    assert!(steps::host::command(&Default::default(), &root, "oos-nonexistent-fixture-command", &[]).is_err());
+    assert!(steps::host::command(&Default::default(), &root, "sh", &["-c", "echo FAIL; exit 0"]).is_ok());
 }
 
 #[test]

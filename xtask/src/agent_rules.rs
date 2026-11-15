@@ -3,7 +3,6 @@
 use crate::steps::{outcome, Outcome};
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::process::Command;
 
 struct Pointer {
     path: &'static str,
@@ -23,7 +22,7 @@ const AIDER_PATH: &str = ".aider.conf.yml";
 const AIDER: &str = "read:\n  - AGENTS.md";
 
 /// Exact loader templates, a real root rules file and a closed inventory, with no allowances.
-pub fn check(root: &Path) -> Outcome {
+pub fn check(ctx: &crate::run::Context, root: &Path) -> Outcome {
     let mut bad = Vec::new();
     if let Err(e) = read(root, "AGENTS.md").and_then(|t| {
         if t.trim().is_empty() {
@@ -42,7 +41,7 @@ pub fn check(root: &Path) -> Outcome {
     if let Err(e) = read(root, AIDER_PATH).and_then(|t| compare_template(AIDER_PATH, &normalize(&t), AIDER)) {
         bad.push(e);
     }
-    match inventory(root) {
+    match inventory(ctx, root) {
         Ok(paths) => bad.extend(
             paths
                 .into_iter()
@@ -74,12 +73,15 @@ fn recognized(path: &str) -> bool {
 }
 
 /// Git supplies tracked and nonignored new paths as bytes separated by NUL, never quoted lines.
-fn inventory(root: &Path) -> Result<BTreeSet<String>, String> {
-    let out = Command::new("git")
-        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
-        .current_dir(root)
-        .output()
-        .map_err(|e| format!("git ls-files: {e}"))?;
+fn inventory(ctx: &crate::run::Context, root: &Path) -> Result<BTreeSet<String>, String> {
+    let out = crate::run::capture_raw(
+        ctx,
+        root,
+        "git",
+        &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        &[],
+    )
+    .map_err(|e| format!("git ls-files: {e}"))?;
     if !out.status.success() {
         return Err(format!("git ls-files failed: {}", String::from_utf8_lossy(&out.stderr)));
     }

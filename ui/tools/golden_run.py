@@ -160,6 +160,12 @@ def prune_runs(base, keep=2):
         shutil.rmtree(old)
 
 
+def run_base(root, profile):
+    # Instrumented builds can have debug assertions too; they must never prune debug runs.
+    name = f'coverage-{profile}' if 'LLVM_PROFILE_FILE' in os.environ else profile
+    return root / 'golden' / name
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--inventory', type=Path, required=True)
@@ -175,7 +181,7 @@ def main():
     if not unittest.TextTestRunner().run(suite).wasSuccessful():
         raise ValueError('PNG comparator self-tests failed')
     rows = load_inventory(args.inventory)
-    base = (args.output_root or output.target()) / 'golden' / args.profile
+    base = run_base(args.output_root or output.target(), args.profile)
     base.mkdir(parents=True, exist_ok=True)
     prune_runs(base, keep=1)
     out = Path(tempfile.mkdtemp(prefix='run-', dir=base))

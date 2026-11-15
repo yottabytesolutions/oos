@@ -61,7 +61,7 @@ fn dispatched(root: &Path, fast: bool, coverage: bool) -> Outcome {
     check::plan(check::Options { fast, coverage })
         .into_iter()
         .find(|(name, _)| *name == "agent rules")
-        .map_or_else(|| Ok(vec![]), |(_, run)| run(root))
+        .map_or_else(|| Ok(vec![]), |(_, run)| run(&Default::default(), root))
 }
 
 #[test]

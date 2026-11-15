@@ -2,7 +2,7 @@
 id: 1
 title: "Architecture docs in one folder, and a task and release tracker"
 kind: chore
-status: active
+status: done
 release: 0.2.0
 owner: codex-b
 depends: []
@@ -55,6 +55,8 @@ commits.
   - `owner`: agent or person, or `none`;
   - `depends`: list of task ids.
 - Body: `## Goal`, `## Plan` (before code), `## Status
+
+- 2026-11-15: done. Merged into overhaul (589ccb8, 0a4ba5a, integrated in 1dcb3d7); task commands and link check continue in task 0040. Reservations released.
 
 - 2026-11-14: review fixes (docsreview, Claude): restored the measured motivation and goals in the architecture
   README, fixed a stale link, wired the prerequisite tasks into M2 and M4, Cursor rule front matter. The moves,

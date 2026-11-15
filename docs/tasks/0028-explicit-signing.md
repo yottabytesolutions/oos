@@ -17,7 +17,7 @@ Keep ordinary builds from silently selecting a private signing identity.
 ## Plan
 
 Reserved paths: `boot/build-dev-image.sh`, `boot/sign-dev-image.sh`, `boot/build-gel.py`,
-`fpgad/src/bin/oos-update.rs`, `fpgad/tests/explicit_signing.rs`, `docs/update.md`,
+`fpgad/src/bin/oos-update.rs`, `fpgad/src/bin/oos_update/`, `fpgad/tests/explicit_signing.rs`, `docs/update.md`,
 `docs/tasks/0028-explicit-signing.md`, `README.md`, `docs/fork/unit-dho804.md`,
 `keys/update.pub`, `.github/workflows/image.yml`, `tools/gel-sim.sh`, `COMMIT_MSG.txt`.
 
@@ -35,7 +35,37 @@ Repair review findings in CI packaging and signing input validation. Reject trus
 Require explicit opt-in for untrusted signing identities. Restrict wrapper arguments and pack-only flags.
 Add host regressions, run the requested offline checks, and leave a proposed commit message without Git writes.
 
+Extract host signing and trusted-key helpers into `oos_update/sign.rs` without changing their bodies,
+CLI output or package format. Keep the legacy entry file within its shrink-only size allowance.
+Validate formatting, debug and release host tests and the fast gate with Cargo offline.
+
 ## Status
+
+- 2026-11-15: size follow-up left uncommitted for the owner on `integ-3`. Entry file: 1080 physical
+  lines; new signing module: 130, with every extracted function below 60 lines. Extracted bodies
+  match the original after visibility and fixture-path normalization. Argument command selection
+  retains the pack-only flag checks while bringing `main` back within its existing allowance.
+  `cargo fmt`, `cargo test --offline` and `cargo test --offline --release` in `fpgad` exit 0.
+  Both test profiles pass suites of 9, 3 and 14 tests with no failures or ignored tests.
+  `CARGO_NET_OFFLINE=true cargo xtask check --fast` exits 0, printing
+  `partial gate passed (not done): 5 steps in 10 s`. Size output:
+
+  ```text
+  ok   size limits (2.4 s)
+         hal: 39 entries, 11615 total
+         dsp: 48 entries, 13673 total
+         ui: 137 entries, 47727 total, 11 improved (cargo xtask ratchet)
+         fpgad: 13 entries, 4159 total, 1 improved (cargo xtask ratchet)
+         xtask: 0 entries, 0 total
+  ```
+
+  Earlier fast runs exited 1, reporting `main grew: 85 -> 90 (ratchet)` and then
+  `main grew: 85 -> 86 (ratchet)`; command selection extraction resolved both.
+  No ratchet files changed. Full gate and integration remain with the owner.
+
+- 2026-11-15: owner assigned codex the size-only follow-up on `integ-3`, base `4587220`.
+  Reserved the signing module directory above. No network, device access or commits; leave changes
+  and `COMMIT_MSG.txt` for the owner. Existing signing regressions cover the extraction.
 
 - 2026-11-14: review fixes applied and left uncommitted for the owner. `COMMIT_MSG.txt` has a proposed
   imperative subject (66 characters) and rationale. The task stays active pending integration checks.

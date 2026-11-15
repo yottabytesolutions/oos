@@ -2,7 +2,7 @@
 id: 45
 title: "Forward-port the self-heal hotfix (panic restart, watchdog, crash archive)"
 kind: fix
-status: active
+status: done
 release: 0.2.0
 owner: selfheal
 depends: []
@@ -38,6 +38,8 @@ Reserved paths: `rootfs/board/dho/etc/oos-board`, `rootfs/initramfs/etc/rcS`, `r
 - Full gate on the final commit.
 
 ## Status
+
+- 2026-11-15: done. Merged into overhaul with the 2026-11-15 batch (379cd84, Codex review confirmed); the counter and safe mode stay in M1b.
 
 - 2026-11-15: Codex confirm of 5a580c5: the build metadata copy is now compared with its source before the commit
   (as boot_id); test with a corrupting cp for boot_id and build, which fails when the comparison is removed.

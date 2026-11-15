@@ -48,9 +48,10 @@ def probe(role, image, profile):
         script = "aarch64-linux-gnu-gcc --version; make --version; dtc --version; cpio --version; xz --version"
     elif profile == "image":
         script = {"initramfs": "dtc --version; cpio --version; gzip --version",
-                  "rootfs": "gcc --version; pkgconf --version",
                   "sim-usb": "test -d /lib/modules; command -v mkfs.vfat; command -v sfdisk",
                   "sim-wlan": "test -d /lib/modules; gcc --version; command -v cpio"}.get(role, "true")
+    if role.startswith("rootfs-"):
+        script = "gcc --version"
     build_env.docker(*args, image, "sh", "-ec", script, input=source)
 
 
@@ -78,11 +79,16 @@ def inventory(profile):
         except (ValueError, OSError, KeyError, subprocess.TimeoutExpired):
             findings.append(f"{role}: missing/mismatched lock, image or probe; tools/build-env.sh prepare {role}")
     if profile == "image":
-        for name, check in [("kernel-source", kernel_source), ("qemu", qemu)]:
+        for name, check in [("kernel-source", kernel_source)]:
             try:
                 check()
             except (ValueError, OSError, subprocess.SubprocessError):
                 findings.append(name + ": unavailable; see kernel/README.md and docs/development.md")
+    if profile == "sim":
+        try:
+            qemu()
+        except (ValueError, OSError, subprocess.SubprocessError):
+            findings.append("qemu: unavailable; install qemu-system-aarch64; see docs/development.md")
     return findings
 
 

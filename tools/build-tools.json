@@ -30,7 +30,12 @@
       "alpine",
       "gpu-build",
       "kernel",
-      "rootfs",
+      "rootfs-fsck",
+      "rootfs-kexec",
+      "rootfs-wlan-tools",
+      "rootfs-nft",
+      "rootfs-dropbear",
+      "rootfs-sftp-server",
       "sim-usb",
       "sim-wlan",
       "sim-gel"

@@ -13,9 +13,9 @@ import build_profiles as profiles
 
 
 class Profiles(unittest.TestCase):
-    def test_only_gpu_runs_arm64_software_egl_probe(self):
+    def test_gpu_runs_daemon_platform_software_egl_probe(self):
         calls = []
-        fake = lambda *a, **k: calls.append((a, k)) or ''
+        fake = lambda *a, **k: calls.append((a, k)) or ('x86_64' if a[:2] == ('info', '--format') else '')
         with patch.object(profiles.build_env, 'resolve', return_value='sha256:' + '1' * 64) as resolve:
             with patch.object(profiles.build_env, 'docker', fake), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(profiles.inventory('gpu'), [])
@@ -23,7 +23,7 @@ class Profiles(unittest.TestCase):
         args, kwargs = calls[-1]
         self.assertIn('--pull=never', args)
         self.assertIn('--network=none', args)
-        self.assertEqual(args[args.index('--platform') + 1], 'linux/arm64')
+        self.assertEqual(args[args.index('--platform') + 1], 'linux/amd64')
         self.assertIn('LIBGL_ALWAYS_SOFTWARE=1', args)
         self.assertIn('eglMakeCurrent', kwargs['input'])
         self.assertFalse(any(a in ('build', 'pull', '--privileged') for args, _ in calls for a in args))
@@ -32,7 +32,7 @@ class Profiles(unittest.TestCase):
         def docker(*args, **kwargs):
             if args[0] == 'run':
                 raise ValueError('exec format error')
-            return ''
+            return 'aarch64' if args[:2] == ('info', '--format') else ''
         with patch.object(profiles.build_env, 'resolve', return_value='sha256:' + '1' * 64):
             with patch.object(profiles.build_env, 'docker', docker):
                 errors = profiles.inventory('gpu')
@@ -42,7 +42,7 @@ class Profiles(unittest.TestCase):
     def test_sim_checks_net_admin_nft_ipv6_and_ssh_utilities(self):
         calls = []
         with patch.object(profiles.build_env, 'docker', lambda *a, **k: calls.append(a) or ''):
-            with patch.object(profiles.build_env, 'resolve', return_value='sha256:' + '1' * 64), contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(profiles.build_env, 'resolve', return_value='sha256:' + '1' * 64), patch.object(profiles, 'qemu'), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(profiles.inventory('sim'), [])
         probes = [a for a in calls if '--cap-add' in a]
         self.assertEqual(len(probes), 2)
@@ -53,7 +53,7 @@ class Profiles(unittest.TestCase):
             self.assertIn('ip -6', args[-1])
         self.assertTrue(any('command -v sshpass' in a[-1] for a in probes))
 
-    def test_offline_daemon_missing_images_source_and_qemu_all_reported(self):
+    def test_offline_daemon_missing_images_and_source_all_reported(self):
         with patch.object(profiles.build_env, 'docker', side_effect=ValueError('offline')):
             with patch.object(profiles.build_env, 'resolve', side_effect=ValueError('missing')):
                 with patch.object(profiles, 'kernel_source', side_effect=ValueError('checksum')):
@@ -61,9 +61,20 @@ class Profiles(unittest.TestCase):
                         errors = profiles.inventory('image')
         self.assertTrue(any('docker:' in e for e in errors))
         self.assertTrue(any('kernel-source' in e for e in errors))
-        self.assertTrue(any('qemu' in e for e in errors))
-        for role in ('kernel', 'rootfs', 'sim-usb', 'sim-wlan', 'gpu-build', 'initramfs'):
+        self.assertFalse(any('qemu' in e for e in errors))
+        for role in ('kernel', 'rootfs-nft', 'sim-usb', 'sim-wlan', 'gpu-build', 'initramfs'):
             self.assertTrue(any(e.startswith(role + ':') for e in errors))
+
+    def test_qemu_is_required_only_by_sim_profile(self):
+        for profile in ('gpu', 'image', 'sim'):
+            with patch.object(profiles.build_env, 'docker', return_value='aarch64'), \
+                    patch.object(profiles.build_env, 'resolve', return_value='sha256:' + '1' * 64), \
+                    patch.object(profiles, 'kernel_source'), \
+                    patch.object(profiles, 'qemu', side_effect=OSError('missing')) as qemu, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                errors = profiles.inventory(profile)
+            self.assertEqual(qemu.call_count, int(profile == 'sim'))
+            self.assertEqual(any(e.startswith('qemu:') for e in errors), profile == 'sim')
 
 
 if __name__ == '__main__':

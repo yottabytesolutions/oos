@@ -25,7 +25,7 @@ dep_stamp_text() {
 	s=$2; shift 2
 	echo "script $(dep_sha256 "$s")"
 	deps_root=$(CDPATH= cd -- "$(dirname -- "$DEPS_LOCK")/.." && pwd)
-	deps_environment=$("$deps_root/tools/build-env.sh" identity rootfs) || return 1
+	deps_environment=$("$deps_root/tools/build-env.sh" identity "rootfs-$(basename "$s" .sh | sed 's/^build-//')") || return 1
 	echo "environment $deps_environment"
 	for n in "$@"; do dep_line "$n" | awk '{ print $1, $3, $4 }'; done
 }

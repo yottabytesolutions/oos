@@ -22,6 +22,8 @@ board="$root/rootfs/board/${OOS_BOARD:-dho}"
 [ -f "$board/etc/oos-board" ] || { echo "no board $board" >&2; exit 1; }
 . "$board/etc/oos-board"
 [ -f "$k/Image" ] || { echo "run kernel/build-base.sh first" >&2; exit 1; }
+# Check daemon availability before the kernel identity queries its architecture.
+docker info >/dev/null 2>&1 || { echo "Docker is not running (macOS: open -a Docker; Linux: systemctl start docker, and be in the docker group)" >&2; exit 1; }
 expected_kernel=$("$root/tools/build-env.sh" identity kernel)
 [ "$(cat "$k/build-environment" 2>/dev/null)" = "$expected_kernel" ] || {
     echo "kernel compiler environment changed or is unrecorded; run kernel/build-base.sh" >&2
@@ -41,8 +43,6 @@ if command -v rustup >/dev/null 2>&1; then
 else
 	echo "no rustup: a cargo from the distribution usually lacks aarch64-unknown-linux-musl and rust-lld; Rust from https://rustup.rs has them" >&2
 fi
-# the initramfs is built in Docker: fail now, not after the Rust builds (a failed late step kept the OLD image)
-docker info >/dev/null 2>&1 || { echo "Docker is not running (macOS: open -a Docker; Linux: systemctl start docker, and be in the docker group)" >&2; exit 1; }
 # the image's busybox, wpa_supplicant and e2fsck come from arm64 containers: on other hosts they need QEMU's binfmt
 probe_image=$("$root/tools/build-env.sh" prepare alpine)
 docker run --rm --pull=never --platform linux/arm64 "$probe_image" true >/dev/null 2>&1 || {

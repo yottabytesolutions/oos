@@ -8,8 +8,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 root=$(cd "$here/.." && pwd)
-image=$("$root/tools/build-env.sh" prepare rootfs)
-before=$(python3 "$root/tools/output.py" revision)
+image=$("$root/tools/build-env.sh" prepare rootfs-wlan-tools)
+before=$(python3 "$root/tools/output.py" identity "$out/wpa_supplicant")
 ver=2.11
 sum=912ea06f74e30a8e36fbb68064d6cdff218d8d591db0fc5d75dee6c81ac7fc0a
 mkdir -p "$out"
@@ -42,7 +42,7 @@ CFG
 '
 ls -la "$out/wpa_supplicant" "$out/wpa_cli"
 
-"$root/tools/build-env.sh" provenance rootfs --image "$image" --output "$out/wlan-tools.packages.txt"
+"$root/tools/build-env.sh" provenance rootfs-wlan-tools --image "$image" --output "$out/wlan-tools.packages.txt"
 
 python3 "$root/tools/output.py" stamp "$out/wpa_supplicant" "$before"
 python3 "$root/tools/output.py" stamp "$out/wpa_cli" "$before"

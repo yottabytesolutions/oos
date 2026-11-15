@@ -133,20 +133,6 @@
         "alpine-baselayout"
       ]
     },
-    "rootfs": {
-      "base": "alpine",
-      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
-      "requested": [
-        "build-base",
-        "linux-headers",
-        "pkgconf",
-        "libnl3-dev",
-        "libnl3-static",
-        "bison",
-        "flex",
-        "xz"
-      ]
-    },
     "sim-ssh": {
       "base": "alpine",
       "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
@@ -160,7 +146,7 @@
     },
     "sim-usb": {
       "base": "alpine",
-      "recipe_sha256": "feb070e6af187c5ed8dbb5e0ebaab0a7a7076bd84a8389299963106b0efcf5f2",
+      "recipe_sha256": "3ec0a3dc6b96edd854b591b368cfe482d4365b3780d4648249bdb56318299967",
       "requested": [
         "linux-firmware-none",
         "cpio",
@@ -168,13 +154,12 @@
         "zstd",
         "dosfstools",
         "exfatprogs",
-        "sfdisk",
-        "linux-lts"
+        "sfdisk"
       ]
     },
     "sim-wlan": {
       "base": "alpine",
-      "recipe_sha256": "feb070e6af187c5ed8dbb5e0ebaab0a7a7076bd84a8389299963106b0efcf5f2",
+      "recipe_sha256": "3ec0a3dc6b96edd854b591b368cfe482d4365b3780d4648249bdb56318299967",
       "requested": [
         "build-base",
         "linux-headers",
@@ -185,8 +170,63 @@
         "cpio",
         "curl",
         "xz",
-        "zstd",
-        "linux-lts"
+        "zstd"
+      ]
+    },
+    "rootfs-fsck": {
+      "base": "alpine",
+      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "requested": [
+        "build-base",
+        "linux-headers",
+        "pkgconf"
+      ]
+    },
+    "rootfs-kexec": {
+      "base": "alpine",
+      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "requested": [
+        "build-base",
+        "linux-headers"
+      ]
+    },
+    "rootfs-wlan-tools": {
+      "base": "alpine",
+      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "requested": [
+        "build-base",
+        "linux-headers",
+        "pkgconf",
+        "libnl3-dev",
+        "libnl3-static"
+      ]
+    },
+    "rootfs-nft": {
+      "base": "alpine",
+      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "requested": [
+        "build-base",
+        "linux-headers",
+        "pkgconf",
+        "bison",
+        "flex",
+        "xz"
+      ]
+    },
+    "rootfs-dropbear": {
+      "base": "alpine",
+      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "requested": [
+        "build-base",
+        "linux-headers"
+      ]
+    },
+    "rootfs-sftp-server": {
+      "base": "alpine",
+      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "requested": [
+        "build-base",
+        "linux-headers"
       ]
     }
   }

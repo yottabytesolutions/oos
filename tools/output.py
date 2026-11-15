@@ -60,6 +60,31 @@ def revision(root=None):
     return h.hexdigest()
 
 
+def source_identity(path):
+    """Native rootfs tools depend only on their builder, dependencies and environment."""
+    tools = {"e2fsck": ("fsck", []), "kexec": ("kexec", []),
+             "wpa_supplicant": ("wlan-tools", []), "wpa_cli": ("wlan-tools", []),
+             "nft": ("nft", ["libmnl", "libnftnl", "nftables"]),
+             "dropbearmulti": ("dropbear", ["dropbear"]), "sftp-server": ("sftp-server", ["openssh"])}
+    if path.resolve().parent != (ROOT / "rootfs/out").resolve() or path.name not in tools:
+        return revision()
+    tool, dependencies = tools[path.name]
+    inputs = {"builder": digest(ROOT / f"rootfs/build-{tool}.sh")}
+    if dependencies:
+        inputs["helper"] = digest(ROOT / "rootfs/deps.sh")
+        lines = [line.split() for line in (ROOT / "rootfs/deps.lock").read_text().splitlines()
+                 if line.strip() and not line.startswith("#")]
+        for name in dependencies:
+            selected = [line for line in lines if line[0] == name]
+            if len(selected) != 1 or len(selected[0]) < 5:
+                raise ValueError("rootfs dependency input missing or duplicated")
+            inputs[name] = selected[0][2:5]
+    inputs["environment"] = subprocess.check_output(
+        [sys.executable, "-I", str(ROOT / "tools/build_env.py"), "identity", "rootfs-" + tool],
+        cwd=ROOT, text=True).strip()
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+
+
 def receipt(path):
     return path.with_name(path.name + ".oos-build.json")
 
@@ -67,7 +92,7 @@ def receipt(path):
 def compiler_identity():
     identity = hashlib.sha256()
     for program, args in (("rustc", ["-vV"]), ("cargo", ["--version"])):
-        result = subprocess.run([program, *args], capture_output=True, check=True, timeout=15)
+        result = subprocess.run([program, *args], cwd=ROOT, capture_output=True, check=True, timeout=15)
         identity.update(result.stdout)
         identity.update(b"\0")
     return identity.hexdigest()
@@ -81,7 +106,7 @@ def metadata(path, tree):
 
 
 def stamp(path, before, compiler=None):
-    if revision() != before:
+    if source_identity(path) != before:
         raise ValueError("source changed during build; rebuild before consumption")
     pending = receipt(path).with_suffix(f".{os.getpid()}.pending")
     record = metadata(path, before)
@@ -97,7 +122,7 @@ def verify(path):
     except FileNotFoundError as exc:
         raise ValueError(f"missing build receipt for {path.name}; rebuild with its builder "
                          "(Rust binaries: tools/output.py build)") from exc
-    if record != metadata(path, revision()):
+    if record != metadata(path, source_identity(path)):
         raise ValueError(f"stale or replaced artifact: {path.name}; rebuild using tools/output.py")
     return record
 
@@ -110,6 +135,8 @@ def main():
         print(out)
     elif command == "revision":
         print(revision())
+    elif command == "identity":
+        print(source_identity(Path(args[0])))
     elif command == "verify":
         for name in args:
             verify(Path(name))
@@ -135,7 +162,7 @@ def main():
         for binary in binaries:
             stamp(binary, before, compiler)
     else:
-        raise ValueError("expected target, revision, build, verify or stamp")
+        raise ValueError("expected target, revision, identity, build, verify or stamp")
 
 
 if __name__ == "__main__":

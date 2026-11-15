@@ -13,9 +13,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version-file: .python-version
       - name: Incoming additions and commit messages
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}

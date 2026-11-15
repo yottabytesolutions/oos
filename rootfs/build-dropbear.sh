@@ -10,8 +10,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 root=$(cd "$here/.." && pwd)
-image=$("$root/tools/build-env.sh" prepare rootfs)
-before=$(python3 "$root/tools/output.py" revision)
+image=$("$root/tools/build-env.sh" prepare rootfs-dropbear)
+before=$(python3 "$root/tools/output.py" identity "$out/dropbearmulti")
 . "$here/deps.sh"
 ver=$(dep_ver dropbear)
 dep_fetch dropbear "$out" >/dev/null
@@ -39,6 +39,6 @@ dep_stamp "$out/dropbearmulti" "$0" dropbear
 file "$out/dropbearmulti" 2>/dev/null || true
 ls -la "$out/dropbearmulti"
 
-"$root/tools/build-env.sh" provenance rootfs --image "$image" --output "$out/dropbearmulti.packages.txt"
+"$root/tools/build-env.sh" provenance rootfs-dropbear --image "$image" --output "$out/dropbearmulti.packages.txt"
 
 python3 "$root/tools/output.py" stamp "$out/dropbearmulti" "$before"

@@ -60,11 +60,10 @@ pub(super) fn load(root: &Path) -> Result<Pins, String> {
     if tools.schema != 1
         || !python_minimum(&tools.python)
         || !version(&tools.coverage)
-        || read(root, ".python-version")?.trim() != tools.python
         || tools.stdlib.is_empty()
         || tools.profiles.keys().map(String::as_str).collect::<Vec<_>>() != ["gpu", "image", "sim"]
     {
-        return Err("tools/build-tools.json: invalid versions/profiles or Python minimum disagreement".into());
+        return Err("tools/build-tools.json: invalid versions/profiles".into());
     }
     Ok(Pins { rust, tools })
 }

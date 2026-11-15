@@ -9,8 +9,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 root=$(cd "$here/.." && pwd)
-image=$("$root/tools/build-env.sh" prepare rootfs)
-before=$(python3 "$root/tools/output.py" revision)
+image=$("$root/tools/build-env.sh" prepare rootfs-nft)
+before=$(python3 "$root/tools/output.py" identity "$out/nft")
 . "$here/deps.sh"
 for d in libmnl libnftnl nftables; do dep_fetch $d "$out" >/dev/null; done
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
@@ -32,6 +32,6 @@ dep_stamp "$out/nft" "$0" libmnl libnftnl nftables
 file "$out/nft" 2>/dev/null || true
 ls -la "$out/nft"
 
-"$root/tools/build-env.sh" provenance rootfs --image "$image" --output "$out/nft.packages.txt"
+"$root/tools/build-env.sh" provenance rootfs-nft --image "$image" --output "$out/nft.packages.txt"
 
 python3 "$root/tools/output.py" stamp "$out/nft" "$before"

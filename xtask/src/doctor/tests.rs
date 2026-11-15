@@ -178,7 +178,7 @@ fn floating_duplicate_and_malformed_rust_pins_fail() {
 fn missing_repository_prerequisites_are_all_visible() {
     let root = crate::testrepo::repo("doctor-missing", &[]);
     std::fs::create_dir(root.join("tools")).expect("tools");
-    for name in ["rust-toolchain.toml", ".python-version", "tools/build-tools.json"] {
+    for name in ["rust-toolchain.toml", "tools/build-tools.json"] {
         std::fs::copy(crate::repo::root().join(name), root.join(name)).expect("pin fixture");
     }
     let lines = super::inventory(&root, &[]).expect_err("missing prerequisites");
@@ -190,10 +190,10 @@ fn missing_repository_prerequisites_are_all_visible() {
 }
 
 #[test]
-fn floating_toolchain_and_mismatched_python_pin_are_rejected() {
+fn floating_toolchain_and_malformed_python_minimum_are_rejected() {
     let root = crate::testrepo::repo("doctor-pins", &[]);
     std::fs::create_dir(root.join("tools")).expect("tools");
-    for name in ["rust-toolchain.toml", ".python-version", "tools/build-tools.json"] {
+    for name in ["rust-toolchain.toml", "tools/build-tools.json"] {
         std::fs::copy(crate::repo::root().join(name), root.join(name)).expect("pin fixture");
     }
     let path = root.join("rust-toolchain.toml");
@@ -201,7 +201,9 @@ fn floating_toolchain_and_mismatched_python_pin_are_rejected() {
     std::fs::write(&path, original.replace("1.99.1", "stable")).expect("floating pin");
     assert!(pins::load(&root).is_err());
     std::fs::write(&path, original).expect("restore pin");
-    std::fs::write(root.join(".python-version"), "3.14.9").expect("mismatched pin");
+    let path = root.join("tools/build-tools.json");
+    let original = std::fs::read_to_string(&path).expect("tool requirements");
+    std::fs::write(&path, original.replace("3.12", "3.bad")).expect("malformed minimum");
     assert!(pins::load(&root).is_err());
     std::fs::remove_dir_all(root).expect("remove private fixture");
 }

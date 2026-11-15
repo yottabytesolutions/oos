@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-# test-host.sh: the GPU picture against the CPU picture, without a scope. In an arm64 container with Mesa's software
+# test-host.sh: the GPU picture against the CPU picture, without a scope. In a host-platform container with Mesa's software
 # renderer (llvmpipe), the scope's oos-ui binary renders every script of ui/tests twice: on the CPU, and in layers put
 # together by oos-gpu (OOS_GPU_SOFT=1). gpu/compare.py then names the pictures that differ more than rounding. Then
 # gpu/bench.txt with a monitor in each mode: a monitor frame must not cost more per pixel than a panel frame.
@@ -18,8 +18,9 @@ out=$(mktemp -d "$CARGO_TARGET_DIR/gpu-check.XXXXXX")
 # emptied inside the container: a directory removed and made again on the host just before `docker run` was at times
 # not yet visible through the bind mount, and the first shot failed ("write shot: No such file or directory")
 mkdir -p "$out"
-image=$("$root/tools/build-env.sh" prepare gpu-test)
-docker run --rm --pull=never --platform linux/arm64 --network=none -v "$PWD:/o:ro" -v "$ui:/ui:ro" -v "$out:/out" $image sh -euc '
+platform=$("$root/tools/build-env.sh" platform gpu-test)
+image=$("$root/tools/build-env.sh" prepare gpu-test --platform "$platform")
+docker run --rm --pull=never --platform "$platform" --network=none -v "$PWD:/o:ro" -v "$ui:/ui:ro" -v "$out:/out" $image sh -euc '
 	rm -rf /out/cpu /out/gpu /out/times-*.txt
 	mkdir -p /out/cpu /out/gpu
 	gcc -std=gnu11 -O2 -Wall -o /tmp/oos-gpu /o/gpu/oos-gpu.c -lEGL -lGLESv2
@@ -43,7 +44,7 @@ docker run --rm --pull=never --platform linux/arm64 --network=none -v "$PWD:/o:r
 			$ui --script "$w/script.txt" --store-dir "$w/store" --gpu /tmp/oos-gpu > /dev/null 2>&1 || { echo "bench $m failed"; exit 1; }
 	done
 '
-"$root/tools/build-env.sh" provenance gpu-test --image "$image" --output "$out/build-packages.txt"
+"$root/tools/build-env.sh" provenance gpu-test --platform "$platform" --image "$image" --output "$out/build-packages.txt"
 python3 "$(dirname "$0")/compare.py" "$out/cpu" "$out/gpu" "$root/ui/tests"
 # A monitor frame may cost per pixel at most what a panel frame costs (the panel's time calibrates the computer).
 # In Mesa's software renderer the gap is small (before 0.1.12: 0.86 to 1.14, since: 0.52 to 0.76); on the Mali it was

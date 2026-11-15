@@ -9,8 +9,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 root=$(cd "$here/.." && pwd)
-image=$("$root/tools/build-env.sh" prepare rootfs)
-before=$(python3 "$root/tools/output.py" revision)
+image=$("$root/tools/build-env.sh" prepare rootfs-kexec)
+before=$(python3 "$root/tools/output.py" identity "$out/kexec")
 ver=2.0.32
 # kernel.org, pub/linux/utils/kernel/kexec/sha256sums.asc
 sum=8f81422a5fd2362cf6cb001b511e535565ed0f32c2f4451fb5eb68fed6710a5d
@@ -30,6 +30,6 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id 
 '
 ls -la "$out/kexec"
 
-"$root/tools/build-env.sh" provenance rootfs --image "$image" --output "$out/kexec.packages.txt"
+"$root/tools/build-env.sh" provenance rootfs-kexec --image "$image" --output "$out/kexec.packages.txt"
 
 python3 "$root/tools/output.py" stamp "$out/kexec" "$before"

@@ -7,8 +7,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 root=$(cd "$here/.." && pwd)
-image=$("$root/tools/build-env.sh" prepare rootfs)
-before=$(python3 "$root/tools/output.py" revision)
+image=$("$root/tools/build-env.sh" prepare rootfs-fsck)
+before=$(python3 "$root/tools/output.py" identity "$out/e2fsck")
 ver=1.47.2
 sum=08242e64ca0e8194d9c1caad49762b19209a06318199b63ce74ae4ef2d74e63c
 mkdir -p "$out"
@@ -28,6 +28,6 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id 
 '
 ls -la "$out/e2fsck"
 
-"$root/tools/build-env.sh" provenance rootfs --image "$image" --output "$out/e2fsck.packages.txt"
+"$root/tools/build-env.sh" provenance rootfs-fsck --image "$image" --output "$out/e2fsck.packages.txt"
 
 python3 "$root/tools/output.py" stamp "$out/e2fsck" "$before"

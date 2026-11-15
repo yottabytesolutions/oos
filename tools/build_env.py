@@ -53,11 +53,11 @@ def load():
 def platform_for(role, platform=None):
     if platform:
         return platform
-    if role == "kernel":
+    if role in ("kernel", "gpu-test"):
         # Docker daemon architecture, which may differ from the CLI host architecture.
         arch = docker("info", "--format", "{{.Architecture}}")
         if arch not in ("aarch64", "arm64", "x86_64", "amd64"):
-            raise Prerequisite("kernel: unsupported Docker daemon architecture")
+            raise Prerequisite(f"{role}: unsupported Docker daemon architecture")
         return "linux/arm64" if arch in ("aarch64", "arm64") else "linux/amd64"
     return "linux/arm64"
 
@@ -129,6 +129,7 @@ def prepare(role, platform=None):
     recipe = (ROOT / "tools/build-env" / (role + ".Dockerfile")).read_text()
     recipe = recipe.replace("@BASE@", contract["base"]).replace("@PACKAGES@", packages)
     recipe += f'\nLABEL {LABEL}="{key}"\n'
+    docker("pull", "--platform", contract["platform"], contract["base"])
     docker("build", "--platform", contract["platform"], "--pull", "-t", tag, "-", input=recipe)
     return resolve(role, contract["platform"])
 

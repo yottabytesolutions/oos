@@ -10,8 +10,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 root=$(cd "$here/.." && pwd)
-image=$("$root/tools/build-env.sh" prepare rootfs)
-before=$(python3 "$root/tools/output.py" revision)
+image=$("$root/tools/build-env.sh" prepare rootfs-sftp-server)
+before=$(python3 "$root/tools/output.py" identity "$out/sftp-server")
 . "$here/deps.sh"
 ver=$(dep_ver openssh)
 dep_fetch openssh "$out" >/dev/null
@@ -30,6 +30,6 @@ dep_stamp "$out/sftp-server" "$0" openssh
 file "$out/sftp-server" 2>/dev/null || true
 ls -la "$out/sftp-server"
 
-"$root/tools/build-env.sh" provenance rootfs --image "$image" --output "$out/sftp-server.packages.txt"
+"$root/tools/build-env.sh" provenance rootfs-sftp-server --image "$image" --output "$out/sftp-server.packages.txt"
 
 python3 "$root/tools/output.py" stamp "$out/sftp-server" "$before"

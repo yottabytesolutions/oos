@@ -25,6 +25,14 @@ The image workflow reads and uploads from the same selected directory.
 Consumers with explicit image arguments must use the selected directory. Kernel and rootfs prerequisite caches keep their
 existing worktree-local locations; their builders record the selected environment and installed package inventory.
 
+Rootfs tool receipts use the specific builder script and its `rootfs-<tool>` environment identity.
+For builders using `deps.sh`, they also cover that helper and their selected dependency versions, checksums
+and URLs from `deps.lock`. Inline source versions/checksums are covered by the builder script itself.
+A Rust edit leaves e2fsck, kexec, WLAN, nft, Dropbear and SFTP receipts valid; changing their actual inputs
+or replacing their payloads invalidates them. Builders capture `tools/output.py identity ARTIFACT` before
+building and pass it to `stamp`, which checks for input changes during the build. Rust compiler probes run
+from the repository root so the selected toolchain is independent of the caller's working directory.
+
 Build consumable Rust binaries through `tools/output.py build`. It runs locked,
 offline Cargo and writes adjacent `.oos-build.json` receipts only on success and
 when build inputs did not change during the build. The source hash covers the sorted,

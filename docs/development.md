@@ -23,6 +23,7 @@ or `gate passed (image)`. Hooks use the same command. Missing Docker cannot fail
 ## Setup
 
 Install Git, rustup and Python >=3.12 as `python3` on macOS arm64 or Linux x86-64.
+Doctor accepts newer Python versions and reports the interpreter actually used.
 The default gate needs the scripts' declared shells (including `mksh` for Android GEL syntax),
 coverage tools and the pinned Rust host/ARM toolchain. Syntax checking does not run the scripts.
 Only the explicit `--image` tier needs Docker with arm64 execution, QEMU, kernel source and the
@@ -56,9 +57,11 @@ coverage and sysroot LLVM tools, the sysroot host `rust-lld` (no PATH lld requir
 Git/base ref, hooks, lockfile and writable isolated output. A missing or mismatched
 `core.hooksPath` reports a warning without failing doctor (task 0025). Linker presence does not
 prove release linking (0027).
-`--gpu` adds Docker, locked arm64 software EGL/GLES execution; `--sim` adds initramfs and SSH/firewall images,
-NET_ADMIN/nftables/IPv6; `--image` includes both plus all delegated compiler/rootfs/simulation roles, checked kernel
-source and host `qemu-system-aarch64`. Unselected profiles are reported as not checked. Temporary probes remove
+`--gpu` adds Docker and locked software EGL/GLES execution on the Docker host platform;
+`--sim` adds initramfs and SSH/firewall images, NET_ADMIN/nftables/IPv6 and host
+`qemu-system-aarch64`. QEMU is checked only in the sim profile. `--image` selects all profiles
+plus the compiler/rootfs/simulation roles and checked kernel source. Unselected profiles are
+reported as not checked. Temporary probes remove
 their containers with `--rm`, use no network and keep output scratch private. Missing selected prerequisites fail.
 
 The default gate runs `doctor-base` without Docker, in addition to committed pin/lock syntax
@@ -66,8 +69,7 @@ alongside formatting. The image tier adds the GPU/simulation doctor profiles bef
 Fast checks preserve G1 and task 0020 dispatch and need Python with `tomllib`.
 
 Install Docker and QEMU separately, without using bootstrap as an OS package installer. On x86-64, configure arm64
-emulation manually using the distribution's QEMU/binfmt setup. The unchanged Image workflow retains
-`docker/setup-qemu-action@v3` for when CI resumes.
+emulation manually using the distribution's QEMU/binfmt setup.
 Pinning the binfmt installer identity belongs to task 0033 (0.3.0). Neither doctor nor bootstrap executes
 registration, sudo or a privileged container.
 
@@ -78,7 +80,9 @@ and linux/amd64, resolved by the coordinator using `docker buildx imagetools ins
 retain the resolution evidence; builds use the platform manifest digest. Each role also has a recipe SHA-256
 and a package request list. Kernel amd64 additionally requests the cross compiler packages.
 
-`tools/build-env.sh prepare ROLE` explicitly builds from that base digest and the requested packages.
+`tools/build-env.sh prepare ROLE` explicitly pulls the platform-specific base into the local Docker store,
+then builds from that digest and the requested packages. Each `rootfs-<tool>` role requests only that builder's
+packages. Simulation package scripts run normally; only the linux-lts installation skips scripts.
 `resolve ROLE` checks local base digest/layer ancestry, platform and recipe/request contract label, returning
 an immutable local image ID. Local tags are aliases only. Missing package version locks never reject setup:
 apt/apk resolve the requested packages from their repositories. A cached role keeps its installed packages
@@ -99,7 +103,7 @@ macOS arm64 host remain untested in the sandbox; Linux x86-64 validation is also
 - Hooks, once per clone: `git config core.hooksPath .githooks`. pre-commit runs `check --fast`, pre-push the full
   gate.
 - The ratchet files are compared with the base branch `overhaul` (or `origin/overhaul`): the clone needs it
-  (`git fetch origin overhaul`; CI checks out with full history).
+  (`git fetch origin overhaul`).
 - Every cargo call that resolves dependencies uses `--locked` (the `cargo xtask` alias, clippy, tests, metadata,
   coverage and `tools/perf-guard.sh`): a change of a dependency comes with its `Cargo.lock` change.
 
@@ -181,7 +185,8 @@ timings and exit codes with coordinator evidence.
 
 Before committing, run `python3 tools/privacy/scan.py --staged` and
 `python3 tools/privacy/scan.py --message target/COMMIT_MSG.txt`. The stdlib scanner checks the index and commit message;
-the Privacy workflow, when enabled, checks every incoming commit's additions and message. Findings redact values.
+the incoming-commit scanner can check additions and messages locally while Actions are disabled.
+The Privacy workflow, when enabled, checks every incoming commit. Findings redact values.
 Use documentation addresses and placeholders in examples, and configure device tools explicitly with `--host`
 or `OOS_SCOPE` where supported. Never infer a real unit address from a checked-in example.
 

@@ -129,7 +129,8 @@ every test passed. Two checks since:
 
 
 Build environments use `tools/build-env.sh` and per-platform base digests, recipe hashes and package requests in
-`tools/container-images.json`. Both build and llvmpipe test containers explicitly run as `linux/arm64`.
+`tools/container-images.json`. Build containers run as `linux/arm64`. The llvmpipe test container uses the Docker host platform so
+its timing measures native execution of the GPU helper.
 Run `tools/bootstrap.sh --gpu`, then `cargo xtask doctor --gpu` for the test prerequisites. Image preparation
 (`--image`) also prepares the GPU compiler role. Builders record informational sorted installed-package lists
 as `build-packages.txt` beside the bundle and in the comparison output directory. Missing package locks do not

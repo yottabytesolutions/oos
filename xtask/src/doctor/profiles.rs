@@ -12,7 +12,10 @@ pub(super) fn check(report: &mut Inventory<'_>, profile: &str, roles: &[String])
     let mut names = vec!["docker".to_string()];
     names.extend_from_slice(roles);
     if profile == "image" {
-        names.extend(["kernel-source".into(), "qemu".into()]);
+        names.push("kernel-source".into());
+    }
+    if profile == "sim" {
+        names.push("qemu".into());
     }
     let output = (report.exec)("python3", &["-I", "tools/build_profiles.py", profile, "--json"]);
     let parsed = output.as_ref().ok().and_then(|o| serde_json::from_str::<Findings>(&o.stdout).ok());

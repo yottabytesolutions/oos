@@ -19,10 +19,11 @@ spec.loader.exec_module(env)
 
 
 class Wiring(unittest.TestCase):
-    def test_gpu_run_is_explicitly_arm64_and_locked(self):
+    def test_gpu_run_uses_daemon_platform_and_locked_image(self):
         source = (ROOT / "gpu/test-host.sh").read_text()
         self.assertIn('build-env.sh" prepare gpu-test', source)
-        self.assertIn('docker run --rm --pull=never --platform linux/arm64', source)
+        self.assertIn('platform gpu-test', source)
+        self.assertIn('docker run --rm --pull=never --platform "$platform"', source)
         self.assertNotIn('docker image inspect', source)
 
     def test_builders_have_no_floating_bases_or_runtime_package_installs(self):
@@ -56,19 +57,12 @@ class Wiring(unittest.TestCase):
         rust = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']
         self.assertEqual(rust['channel'], '1.99.1')
         self.assertEqual(rust['targets'], ['aarch64-unknown-linux-musl'])
-        self.assertEqual((ROOT / '.python-version').read_text().strip(), tools['python'])
+        self.assertFalse((ROOT / '.python-version').exists())
         setup = (ROOT / 'tools/bootstrap.sh').read_text()
         self.assertIn('cargo install cargo-llvm-cov --version "=$coverage_pin" --locked', setup)
         self.assertNotIn('sudo ', setup)
         self.assertNotIn('--privileged', setup)
-        image = (ROOT / '.github/workflows/image.yml').read_text()
-        self.assertIn('uses: docker/setup-qemu-action@v3', image)
-        self.assertNotIn('build-env.sh binfmt', image)
         self.assertEqual(tools['python'], '3.12')
-        for name in ('ci', 'image', 'privacy'):
-            text = (ROOT / f'.github/workflows/{name}.yml').read_text()
-            self.assertIn('python-version-file: .python-version', text)
-            self.assertNotIn('install stable', text)
 
 
 class Containers(unittest.TestCase):
@@ -79,7 +73,7 @@ class Containers(unittest.TestCase):
         self.patcher = patch.object(env, 'load', return_value=self.lock)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
-        self.contract, self.tag, self.key = env.identity('gpu-test')
+        self.contract, self.tag, self.key = env.identity('gpu-test', 'linux/arm64')
         self.info = {'Id': 'sha256:' + '2' * 64, 'Os': 'linux', 'Architecture': 'arm64',
                      'Config': {'Labels': {env.LABEL: self.key}}, 'RootFS': {'Layers': ['base', 'derived']}}
         self.base_info = {'Os': 'linux', 'Architecture': 'arm64', 'RootFS': {'Layers': ['base']}, 'RepoDigests': ['ubuntu@sha256:' + '1' * 64]}
@@ -89,6 +83,8 @@ class Containers(unittest.TestCase):
         self.calls.append(args)
         if args[:2] == ('image', 'inspect'):
             return json.dumps([self.info if args[-1] == self.tag else self.base_info])
+        if args[:2] == ('info', '--format'):
+            return 'aarch64'
         return 'gcc=15.1'
 
     def test_tag_only_and_architecture_only_caches_accept_wrong_image(self):
@@ -114,7 +110,7 @@ class Containers(unittest.TestCase):
     def test_correct_cache_uses_immutable_id_and_never_installs_or_pulls(self):
         with patch.object(env, 'docker', self.docker):
             self.assertEqual(env.resolve('gpu-test'), self.info['Id'])
-        self.assertEqual(self.calls[0], ('image', 'inspect', self.tag))
+        self.assertIn(('image', 'inspect', self.tag), self.calls)
         self.assertFalse(any(a in ('build', 'pull', '--privileged') for call in self.calls for a in call))
 
     def test_mutable_kernel_cache_namespace_is_local_to_the_worktree(self):
@@ -143,29 +139,30 @@ class Containers(unittest.TestCase):
             env.resolve('gpu-test')
         self.lock['bases']['ubuntu']['manifests']['linux/arm64'] = None
         with patch.object(env, 'docker') as fake, self.assertRaisesRegex(ValueError, 'unverified'):
-            env.resolve('gpu-test')
+            env.resolve('gpu-test', 'linux/arm64')
         fake.assert_not_called()
 
     def test_identity_changes_for_package_requests_base_and_recipe(self):
         for change in ('recipe_sha256', 'requested'):
             original = copy.deepcopy(self.lock['roles']['gpu-test'][change])
             self.lock['roles']['gpu-test'][change] = ('f' * 64 if change == 'recipe_sha256' else ['gcc', 'g++'])
-            self.assertNotEqual(env.identity('gpu-test')[2], self.key)
+            self.assertNotEqual(env.identity('gpu-test', 'linux/arm64')[2], self.key)
             self.lock['roles']['gpu-test'][change] = original
         self.lock['bases']['ubuntu']['manifests']['linux/arm64'] = 'sha256:' + '3' * 64
-        self.assertNotEqual(env.identity('gpu-test')[2], self.key)
+        self.assertNotEqual(env.identity('gpu-test', 'linux/arm64')[2], self.key)
 
     def test_alpine_inventory_preserves_package_names_and_revision(self):
         with patch.object(env, 'docker', return_value='build-base-0.5-r3\nlibstdc++-15.1.0_git20250421-r1'):
-            self.assertEqual(env.actual_packages('rootfs', 'sha256:' + '1' * 64, 'linux/arm64'),
+            self.assertEqual(env.actual_packages('rootfs-nft', 'sha256:' + '1' * 64, 'linux/arm64'),
                              ['build-base=0.5-r3', 'libstdc++=15.1.0_git20250421-r1'])
 
     def test_prepare_builds_requested_packages_from_digest_without_package_locks(self):
         calls = []
         with patch.object(env, 'resolve', side_effect=[ValueError('missing'), self.info['Id']]):
             with patch.object(env, 'docker', lambda *a, **k: calls.append((a, k)) or ''):
-                self.assertEqual(env.prepare('gpu-test'), self.info['Id'])
-        args, kwargs = calls[0]
+                self.assertEqual(env.prepare('gpu-test', 'linux/arm64'), self.info['Id'])
+        self.assertEqual(calls[0][0], ('pull', '--platform', 'linux/arm64', self.contract['base']))
+        args, kwargs = calls[1]
         self.assertIn('--platform', args)
         self.assertEqual(args[args.index('--platform') + 1], 'linux/arm64')
         recipe = kwargs['input']

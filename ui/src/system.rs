@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Process lifecycle policy and bounded waits for owned workers.
 
+#[cfg(test)]
+pub mod perfguard;
+
 pub mod memory;
 pub mod shutdown;
 

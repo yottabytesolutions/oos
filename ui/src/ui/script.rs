@@ -17,6 +17,11 @@ impl Ui {
         host::soak::run(mode, steps, sample)
     }
 
+    /// Expose warmed host kernels to a test executable's counting allocator without installing one here.
+    pub fn hot_path_probe(sample: impl FnMut(&str, &mut dyn FnMut())) {
+        host::hot_paths::run(sample);
+    }
+
     pub fn start_headless_script(args: &[String]) {
         host::headless(args);
     }

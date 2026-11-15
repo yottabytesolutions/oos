@@ -1,0 +1,55 @@
+"""The host budget contract fails closed on missing and regressed observations."""
+import importlib.util
+from pathlib import Path
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[2]
+SPEC = importlib.util.spec_from_file_location('perf_budgets', ROOT / 'tools/perf-budgets.py')
+BUDGET = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(BUDGET)
+
+
+class PerfBudgets(unittest.TestCase):
+    def setUp(self):
+        self.rows = BUDGET.budgets((ROOT / 'docs/architecture/README.md').read_text())
+        self.lines = [f'PERF_BUDGET {name} 1000 100 10000 1000' for name in self.rows]
+        self.lines += [f'ALLOC_BUDGET {name} 64 0' for name in BUDGET.ALLOCATIONS]
+
+    def test_real_table_and_samplers(self):
+        self.assertEqual(len(self.rows), 10)
+        BUDGET.sampler_copies_match(ROOT)
+        self.assertIn('10 timing budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
+
+    def test_missing_unknown_and_nonpositive_fail(self):
+        for lines in [[], self.lines[1:], self.lines + ['PERF_BUDGET unknown 1 1 1 1'],
+                      self.lines + [f'PERF_BUDGET {next(iter(self.rows))} 0 1 1 1']]:
+            with self.assertRaises(ValueError):
+                BUDGET.check(self.rows, '\n'.join(lines))
+
+    def test_best_or_tail_regression_cannot_hide_in_other_cases(self):
+        name = next(iter(self.rows))
+        for values in ['100 1000 10000 1000', '1000 100 1000 10000']:
+            with self.assertRaises(ValueError):
+                BUDGET.check(self.rows, '\n'.join(self.lines + [f'PERF_BUDGET {name} {values}']))
+
+    def test_freed_allocations_and_missing_paths_fail(self):
+        for lines in [self.lines[:-1], self.lines + ['ALLOC_BUDGET deposit_spans 64 1'],
+                      self.lines + ['ALLOC_BUDGET deposit_dots 0 0']]:
+            with self.assertRaises(ValueError):
+                BUDGET.check(self.rows, '\n'.join(lines))
+
+    def test_malformed_and_duplicate_tables_fail(self):
+        for text in ['', '### Host budget rows\n', '### Host budget rows\n| x | nan | 2 | a | b |',
+                     '### Host budget rows\n| x | 1 | 2 | a | b |\n| x | 1 | 2 | a | b |']:
+            with self.assertRaises((ValueError, IndexError)):
+                BUDGET.budgets(text)
+
+    def test_divergent_samplers_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for path in ['ui/src/system/perfguard.rs', 'hal/tests/perf_support/samples.rs']:
+                (root / path).parent.mkdir(parents=True)
+                (root / path).write_text(path)
+            with self.assertRaises(ValueError):
+                BUDGET.sampler_copies_match(root)

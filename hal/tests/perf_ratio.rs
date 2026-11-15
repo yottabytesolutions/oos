@@ -114,33 +114,21 @@ fn noise(n: usize, seed: u32) -> Vec<u8> {
         .collect()
 }
 
-/// ms per call of `old` and of `new`: `rounds` rounds of `runs` calls each, the two sides alternating (and which one
-/// starts), the fastest round of each. Other load on the host hits both sides alike, and the fastest round is the
-/// least disturbed (timing each side in one block gave ratios from 1.1 to 1.9 on an unchanged tree under load).
-fn best_pair_ms(rounds: usize, runs: usize, mut old: impl FnMut(), mut new: impl FnMut()) -> (f64, f64) {
-    let time = |f: &mut dyn FnMut()| {
-        let t = std::time::Instant::now();
-        for _ in 0..runs {
-            f();
-        }
-        t.elapsed().as_secs_f64() * 1e3 / runs as f64
-    };
-    let (mut a, mut b) = (f64::INFINITY, f64::INFINITY);
-    for r in 0..rounds {
-        if r % 2 == 0 {
-            a = a.min(time(&mut old));
-            b = b.min(time(&mut new));
-        } else {
-            b = b.min(time(&mut new));
-            a = a.min(time(&mut old));
-        }
-    }
-    (a, b)
-}
+mod perf_support;
+use perf_support::samples;
 
-/// Rounds and calls per round of every comparison (as many calls as the earlier 5 x 10, in more, shorter rounds).
-const ROUNDS: usize = 10;
+const ROUNDS: usize = samples::ROUNDS;
 const RUNS: usize = 5;
+
+/// Tail ratios allow 50 % contention headroom over the existing throughput budget.
+fn guarded_pair_ms(id: &str, limit: f64, reference: impl FnMut(), candidate: impl FnMut()) -> (f64, f64) {
+    let pair = samples::measure(ROUNDS, RUNS, reference, candidate);
+    pair.check_tail(limit * 1.5);
+    if limit.is_finite() {
+        pair.report(id);
+    }
+    (pair.best.0.as_secs_f64() * 1e3, pair.best.1.as_secs_f64() * 1e3)
+}
 
 const CAL: [(f64, f64); 4] = [(1.0, 0.0), (0.5, 0.1), (2.0, -0.3), (1.0, 0.0)];
 
@@ -158,9 +146,9 @@ fn bench_batch_decode() {
     for (mask, frame, frames) in CASES {
         let data = noise(frames * frame, 1);
         let mut dma = DmaBuf::new();
-        let (read_old, read_new) = best_pair_ms(
-            ROUNDS,
-            RUNS,
+        let (read_old, read_new) = guarded_pair_ms(
+            "batch_read",
+            1.0,
             || {
                 let mut v = reference::read_dma(&mut Mem(&data, 0), data.len()).unwrap();
                 reference::unpad(&mut v, frame);
@@ -173,9 +161,9 @@ fn bench_batch_decode() {
                 std::hint::black_box(dma.data());
             },
         );
-        let (dec_old, dec_new) = best_pair_ms(
-            ROUNDS,
-            RUNS,
+        let (dec_old, dec_new) = guarded_pair_ms(
+            "batch_decode",
+            0.5,
             || {
                 for f in data.chunks_exact(frame) {
                     std::hint::black_box(reference::two_pass(f, mask, CAL));
@@ -206,9 +194,9 @@ fn bench_decode_f32_vs_f64() {
     assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
     for (mask, frame, frames) in CASES {
         let data = noise(frames * frame, 2);
-        let (f64_ms, f32_ms) = best_pair_ms(
-            ROUNDS,
-            RUNS,
+        let (f64_ms, f32_ms) = guarded_pair_ms(
+            "decode_f32",
+            0.8,
             || {
                 for f in data.chunks_exact(frame) {
                     std::hint::black_box(reference::fused_f64(f, mask, CAL));
@@ -222,9 +210,9 @@ fn bench_decode_f32_vs_f64() {
         );
         let mut out: [Vec<f32>; 4] = Default::default();
         // reported only: the same comparison partner keeps its timing honest under load
-        let (_, into_ms) = best_pair_ms(
-            ROUNDS,
-            RUNS,
+        let (_, into_ms) = guarded_pair_ms(
+            "decode_into_report",
+            f64::INFINITY,
             || {
                 for f in data.chunks_exact(frame) {
                     std::hint::black_box(decode_volts(f, mask, CAL));

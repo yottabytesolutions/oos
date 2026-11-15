@@ -1128,6 +1128,45 @@ after each step may tighten them, never loosen them without a doc change.
 | allocations | 0 per frame after warm-up on every hot path ([Allocations](#allocations)) | `alloc` | counting-allocator tests | each step that touches a hot path; harness in G2 |
 | memory | RSS <= 120 MB + `memplan` total, flat over a 2 h soak ([Memory and queues](#memory-and-queues)) | `rss` | host soak, unitlab | M5b |
 
+### Host budget rows
+
+`tools/perf-budgets.py` reads this table and checks every observation emitted by `tools/perf-guard.sh`.
+Ratios are candidate / reference, measured in the same process. Both paths alternate in 101 rounds,
+reversing the starting side each round. The exact nearest-rank p99 is computed separately for each path;
+the tail ratio is p99(candidate) / p99(reference). It is never a tail divided by a minimum, nor a
+percentile of per-pair ratios. Each sample is the mean call time of a fixed run (1 to 330 calls), so these
+are host run distributions, not runtime frame-event quantiles. The best ratio keeps its existing limit;
+the tail limit adds 50 % contention headroom. Best ratios use elapsed time; host tails use POSIX
+process CPU (including worker threads), excluding time lost to other host processes. The worker observer
+blocks while waiting, so its spin is excluded. Unit event counters retain their elapsed/CPU definitions
+below. No host absolute-time threshold is used.
+
+| Guard ID | Best ratio <= | p99 CPU ratio <= | Workload / reference | Budget covered |
+|---|---|---|---|---|
+| batch_read | 1.0 | 1.5 | five approximately 4 MB batches; retained DMA buffer / allocating read | acquisition read primitive |
+| batch_decode | 0.5 | 0.75 | five channel/depth cases; fused decode / two-pass decode | acquisition decode primitive |
+| decode_f32 | 0.8 | 1.2 | same batches; f32 / f64 fused decode | acquisition decode primitive |
+| perf_guard_deposit_spans | 1.25 | 1.875 | nine signals, 100 k and 12.5 k points; spans / pixel writes | deposit kernel |
+| perf_guard_dots | 1.25 | 1.875 | nine signals, 100 k points; runs / per-sample adds | deposit kernel |
+| perf_guard_fast_interpolation | 1.1 | 1.65 | seven sparse timebase/channel cases; fast / exact | deposit kernel |
+| perf_guard_compressed_frame | 0.5 | 0.75 | 100 k point square, k=15; compressed / raw decode and draw | deposit kernel |
+| perf_guard_codes_per_frame | 0.9 | 1.35 | five channel/trigger cases; codes / decode and draw | deposit kernel |
+| perf_guard_deposit_worker_per_frame | 1.5 | 2.25 | three depths, measurements off; one worker / frames mode | worker orchestration |
+| perf_guard_framestats | 0.7 | 1.05 | 125 k points, cheap set; fused / reference statistics | measure primitive |
+
+The same checker requires 64 allocation-free post-warm-up frames for each UI probe (`deposit_spans`,
+`deposit_dots`, `deposit_codes`, `cheap_measurements`). The process-wide counting allocator includes
+allocations, zeroed allocations, reallocations and freed transients; each probe warms up eight frames in
+an isolated child with no workers. HAL additionally guards retained DMA reads, read steps and kept-vector
+decode in `hal/tests/alloc_batch.rs`. The existing soak guards retained memory, not zero allocations.
+
+These rows gate existing host primitives. They do not stand in for complete future stages. Intake/change,
+light steps and acquisition wake tests land with M2.3/M3c/M3d; records, reductions, accumulator and full
+measurement jobs extend the harness in M6/M9/M10. Compose/present, GPU submission and remote encode remain
+with their owning steps. Unit-only rows in the table above, including absolute CPU, latency, FPS and RSS,
+remain for the next applicable unit round. No unitlab runner is present in this tree; its future adapter
+can read these tables without treating a host ratio as unit evidence.
+
 ### How each budget is measured
 
 Two kinds of distribution are kept apart:

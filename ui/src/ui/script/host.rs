@@ -2,6 +2,7 @@
 
 //! The off-screen script runner, shared by ordinary scripts and deterministic host captures.
 
+pub mod hot_paths;
 pub mod soak;
 
 use super::batch::BatchScript;

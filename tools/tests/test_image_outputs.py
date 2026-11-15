@@ -136,6 +136,8 @@ class ImageOutputs(unittest.TestCase):
         cargo = self.root / "bin/cargo"
         cargo.write_text('#!/bin/sh\nprintf "%s\\n" "$CARGO_TARGET_DIR" >> "$OOS_TEST_LOG"\n')
         cargo.chmod(0o700)
+        # perf-guard.sh ends with the budget reader (G2); this test only checks the target directory.
+        (self.root / "tools/perf-budgets.py").write_text("raise SystemExit(0)\n")
         log = self.root / "cargo-targets"
         self.env.update(HOME=str(self.root / "home"), CARGO_TARGET_DIR="selected target", OOS_TEST_LOG=str(log))
         result = subprocess.run(["sh", str(self.root / "tools/perf-guard.sh")], cwd=self.root.parent,

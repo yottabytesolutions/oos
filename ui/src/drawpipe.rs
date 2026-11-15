@@ -1542,7 +1542,8 @@ mod tests {
             let (mut pa, mut pb) = (Phosphor::new(w, h), Phosphor::new(w, h));
             let (mut fa, mut fbm) = (Frame::default(), Frame::default());
             // one round: every frame once (each round's time divided by the frames below)
-            let (old, new) = crate::perfguard::best_pair(
+            let (old, new) = crate::perfguard::guard_pair(
+                0.9,
                 crate::perfguard::ROUNDS,
                 1,
                 || {
@@ -1575,7 +1576,19 @@ mod tests {
         let t0 = std::time::Instant::now();
         while p.live.load(Ordering::Acquire) > 0 {
             assert!(t0.elapsed() < std::time::Duration::from_secs(20), "batches still open");
-            std::thread::yield_now();
+            std::thread::sleep(std::time::Duration::from_micros(50));
+        }
+    }
+
+    /// Wait for the lease return too: the live count falls just before the buffer reaches the pool.
+    fn recycled(p: &Pipe) -> Box<Bytes> {
+        let start = std::time::Instant::now();
+        loop {
+            if let Some(raw) = p.take_buffer() {
+                return raw.downcast::<Bytes>().expect("the benchmark feeds Bytes buffers");
+            }
+            assert!(start.elapsed() < std::time::Duration::from_secs(20), "buffer still leased");
+            std::thread::sleep(std::time::Duration::from_micros(50));
         }
     }
 
@@ -1821,9 +1834,10 @@ mod tests {
             let mut ph = Phosphor::new(w, h);
             let one = Pipe::start(1, 0, fresh());
             one.set_view(Some(&m), w, h, Interp::Exact);
-            // the buffers fed are copied before, outside the timing (the copy is not the pipeline's work)
-            let mut copies: Vec<Bytes> = (0..crate::perfguard::ROUNDS).map(|_| Bytes(bytes.clone())).collect();
-            let (old, one_t) = crate::perfguard::best_pair(
+            // Copy once outside timing, then recycle through the real pool: 101 rounds still use one buffer.
+            let mut buffer = Some(Box::new(Bytes(bytes.clone())));
+            let (old, one_t) = crate::perfguard::guard_pair(
+                if meas { f64::INFINITY } else { 1.5 },
                 crate::perfguard::ROUNDS,
                 1,
                 || {
@@ -1838,8 +1852,15 @@ mod tests {
                     }
                 },
                 || {
-                    one.feed(Box::new(copies.pop().expect("a copy per round")), fb, frames, 0, dec(&s, &p));
+                    one.feed(
+                        buffer.take().expect("the previous round returned its buffer"),
+                        fb,
+                        frames,
+                        0,
+                        dec(&s, &p),
+                    );
                     settle(&one);
+                    buffer = Some(recycled(&one));
                 },
             );
             let (old, mut per) = (old / frames as u32, vec![one_t / frames as u32]);

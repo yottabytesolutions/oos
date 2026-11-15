@@ -497,7 +497,8 @@ mod tests {
         let (mut m, p, (raw_bytes, raw_s), (comp_bytes, comp_s)) = square_10us(2.0);
         m.dots = DotsMode::Off;
         let (mut pa, mut pb) = (crate::wave::Phosphor::new(970, 448), crate::wave::Phosphor::new(970, 448));
-        let (raw, comp) = crate::perfguard::best_pair(
+        let (raw, comp) = crate::perfguard::guard_pair(
+            0.5,
             crate::perfguard::ROUNDS,
             25,
             || {

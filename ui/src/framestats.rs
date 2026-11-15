@@ -348,7 +348,8 @@ mod tests {
         let p = oos_dsp::sim::PulseTrain::square(3e5, -0.7, 0.9, 2e-8);
         let mut v = oos_dsp::sim::sample(|t| p.v(t), -(len as f64 / 2.0) * dt, dt, len);
         oos_dsp::sim::add_noise(&mut v, 0.04, 3);
-        let (old, new) = crate::perfguard::best_pair(
+        let (old, new) = crate::perfguard::guard_pair(
+            0.7,
             crate::perfguard::ROUNDS,
             33,
             || {

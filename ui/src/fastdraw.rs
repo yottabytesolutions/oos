@@ -693,7 +693,8 @@ mod tests {
                     y0: 224.0,
                 };
                 let (mut ma, mut mb) = (vec![0u16; w * h], vec![0u16; w * h]);
-                let (old, new) = crate::perfguard::best_pair(
+                let (old, new) = crate::perfguard::guard_pair(
+                    1.25,
                     crate::perfguard::ROUNDS,
                     33,
                     || deposit_reference(&mut ma, w, h, &v, &m, 1),
@@ -755,7 +756,8 @@ mod tests {
                 y0: 224.0,
             };
             let (mut ma, mut mb) = (vec![0u16; w * h], vec![0u16; w * h]);
-            let (old, new) = crate::perfguard::best_pair(
+            let (old, new) = crate::perfguard::guard_pair(
+                1.25,
                 crate::perfguard::ROUNDS,
                 22,
                 || deposit_dots_reference(&mut ma, w, h, &v, &m, 1),

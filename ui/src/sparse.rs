@@ -592,7 +592,8 @@ mod tests {
             let mut ph = Phosphor::new(w, h);
             assert_eq!(draw_with(&mut ph, &m, &f, 24, Interp::Fast), Some(true), "{} s/div", tdiv);
             let mut pf = Phosphor::new(w, h);
-            let (e, fa) = crate::perfguard::best_pair(
+            let (e, fa) = crate::perfguard::guard_pair(
+                1.1,
                 crate::perfguard::ROUNDS,
                 330,
                 || {

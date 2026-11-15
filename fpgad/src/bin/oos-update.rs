@@ -427,7 +427,7 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
     tell(&format!("build {} loaded; restarting into it by kexec, where it installs itself", short));
     // under the update lock: a write of the start-up watcher (a rollback, the persist arm) finishes first, then the
     // watcher is stopped, so no card write runs into the restart
-    let lock = update::lock(sp).unwrap_or_else(|e| undo(&e, None));
+    let lock = kexec::lock_for_start(sp).unwrap_or_else(|e| undo(&e, None));
     stop_watcher();
     stop_ui();
     let q = quiesce();

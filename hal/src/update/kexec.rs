@@ -26,11 +26,27 @@ use super::card::check_image;
 #[cfg(any(target_os = "linux", test))]
 mod arguments;
 #[cfg(any(target_os = "linux", test))]
+mod budget;
+#[cfg(any(target_os = "linux", test))]
 mod evidence;
 #[cfg(target_os = "linux")]
 mod legacy;
+#[cfg(any(target_os = "linux", test))]
+mod watchdog;
 #[cfg(target_os = "linux")]
 pub use legacy::prepare_jump;
+#[cfg(target_os = "linux")]
+/// Validate watchdog handoff before stopping services; recover only requests whose recorded requester is dead.
+pub fn preflight_watchdog() -> Result<(), String> {
+    watchdog::preflight()
+}
+#[cfg(target_os = "linux")]
+/// Take the update lock for a kexec start and check the watchdog handoff under it; on failure the lock is released.
+pub fn lock_for_start(state_path: &std::path::Path) -> Result<super::Lock, String> {
+    let lock = super::lock(state_path)?;
+    preflight_watchdog()?;
+    Ok(lock)
+}
 
 /// The signed package line of an image that finishes its own install after a kexec start.
 pub const LINE: (&str, &str) = ("trial", "kexec");
@@ -218,6 +234,7 @@ mod sys {
 
     /// Load kernel and initramfs for the next `start` (kexec_file_load; the kernel keeps its own device tree).
     pub fn load(kernel: &[u8], initrd: &[u8], cmdline: &str) -> Result<(), String> {
+        super::budget::check(kernel.len(), initrd.len(), 0)?;
         use std::os::fd::AsRawFd;
         let k = memfd("oos-kexec-kernel", kernel)?;
         let i = memfd("oos-kexec-initrd", initrd)?;
@@ -271,9 +288,7 @@ mod sys {
 
     /// Start the loaded kernel. Returns only on failure. The caller has synced and unmounted (the kernel does not).
     pub fn start() -> String {
-        unsafe { libc::sync() };
-        let r = unsafe { libc::reboot(libc::LINUX_REBOOT_CMD_KEXEC) };
-        format!("reboot(KEXEC) returned {}: {}", r, std::io::Error::last_os_error())
+        super::watchdog::start(|| {})
     }
 }
 

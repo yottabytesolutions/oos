@@ -18,20 +18,25 @@ Updates that bring another device tree start through kexec like same-tree update
 
 Reserved paths: `docs/tasks/0054-kexec-dt-change-hang.md`, `hal/src/update/kexec.rs`,
 `hal/src/update/kexec/`, `fpgad/src/bin/oos-update.rs`, `boot/build-dev-image.sh`,
-`tools/image_suite.py`. Branch: `t0054-kexec-dt`.
-Review tier: unit. Step 2 is host implementation only, without commits, hardware access or publication.
-Scratch checks, logs and proposed commit message belong in this worktree's ignored `target/`.
+`tools/image_suite.py`, `rootfs/initramfs/bin/oos-watchdog`, `hal/tests/rootfs_watchdog.rs`,
+`docs/update.md`, `tools/tests/test_watchdog_dt.py`. Branch: `t0054-kexec-dt`. Review tier: unit.
+Scratch checks, logs and the single proposed commit message belong in ignored `target/`.
 
-1. Preserve the host analysis below and add the owner's LCD evidence.
-2. On the tree-aware legacy load only, keep bounded debug stdout/stderr, exact staged lengths and the final Rust
-   merged DTB on persistent `/oos` storage. Flush files and directory before shutdown; overwrite the previous attempt.
-3. Remove the ineffective watchdog set/readback/ping experiment and its tests. Keep durable preparation and immediate
-   jump timestamps. Add `OOS_KEXEC_NO_CHECKS=1` as a build-time-only diagnostic switch, default off: only the legacy
-   argv gains exactly `-i`. Record the switch in persistent evidence. Keep normal argv and the same-tree path intact.
-4. Test both argv variants, build-time selection, same-tree isolation and bounded evidence in debug and release;
-   run `cargo xtask check --fast`, without the full gate (sandbox sockets are blocked). Update the one-diagnostic-build
-   unit procedure and replace the single proposed commit message. Full gate and cross-vendor unit review remain
-   coordinator work. No commits or unit access.
+1. Treat the owner's successful 23:14 D-to-T diagnostic as the production-fix basis. Always pass `-i` for
+   legacy load; remove the build switch and retain bounded evidence and both jump timestamps.
+2. Inspect the pinned watchdog core, dw_wdt, BusyBox and kexec shutdown. Add a supervisor handoff that kills
+   and reaps its own kicker without magic close, pauses while the updater owns the device, and resumes without
+   backoff on every failure. Share the final ping immediately before reboot(KEXEC) between both load paths.
+3. Bound payload growth and document the measured 21.5 s period, +6.9 s kernel entry and +12.1 s watchdog open,
+   signature verification, kernel segment ownership and watchdog/trial rollback rationale in `docs/update.md`.
+4. Run focused debug/release tests and `cargo xtask check --fast`; skip the full gate as assigned (sandbox).
+   Update Status and replace `target/COMMIT_MSG.txt` with one section. No commits or unit access. Coordinator owns
+   independent cross-vendor unit review, full gate and one fixed changed-tree plus one same-tree unit install.
+5. Address review round 1: correct restart-notifier semantics and guard the no-reset DT invariant; validate the
+   supervisor and stale requests before teardown, explicitly allow an absent watchdog, retain a final sync before
+   the ping, report restore errors to kmsg, and exercise device handoff failures through a host-test seam.
+
+The analysis and diagnostic procedure below are historical, superseded by the permanent-fix Status entry.
 
 Unit evidence (2026-11-15, private RE notes docs/logs/oos_pcie_gen1_20261115/ and oos_unit_round0_20261115.md): twice the kexec_load path (kexec-tools with --dtb, taken when the image's tree differs) hung after the old kernel printed "Bye!", before any new ramoops registration; the hardware watchdog reset the SoC about 20 s later and the previous build came back. The same-tree path (kexec_file_load) works. Capture UART2 (115200) during a kexec start on the unit (needs the owner to attach the serial adapter), compare the loader-change merge of the tree (hal/src/update/fdt.rs with_loader_changes) with the running tree, and check memory placement of the dtb/initrd in kexec_load. Until fixed, DT-changing updates install with --no-kexec and a reboot.
 
@@ -276,6 +281,88 @@ Build them with `rustc --edition 2021 --test` (and `-O` for the optimized runs),
 both model layouts. Its simplified allocation model is deliberately not a complete emulation of the arm64 tool.
 
 ## Status
+
+- 2026-11-15: Unit-tier review round 1 fixes implemented on dirty `7eab373`, Codex author; renewed independent
+  cross-vendor review remains required. P2-1: verified the archive SHA-256 against `kernel/base.sha256`, then
+  inspected `include/linux/reboot.h:12-13`, `kernel/reboot.c:94`, `kernel/kexec_core.c:1089`,
+  `watchdog_core.c:164-168`, `dw_wdt.c:296-298,661` and the inherited RK3399 watchdog node. SYS_RESTART equals
+  SYS_DOWN; stop-on-reboot calls dw_wdt_stop. No `resets` on that node is load-bearing: stop only sets
+  WDOG_HW_RUNNING. Corrected docs and the earlier Status claim. The new Python DTS check rejects reset
+  properties in board/unit overrides; injected UHS reset-property regression is rejected. Source evidence:
+  `target/t0054/review1-kernel-source.log`; Python tests **3 passed**, exit **0**, `review1-dts.log` in that directory.
+  P2-2: before teardown, under the update lock, recover only handoff requests with a recorded dead requester,
+  then perform a read-only pid/cmdline/no-request check. Release the update lock before failure undo, which
+  reacquires it. Empty/malformed/live/unknown leftovers get a specific refusal and remain untouched. New requests
+  record the updater pid. Repeat validation at takeover; an absent device explicitly proceeds without a ping,
+  logged to stderr/kmsg. P3-1/2: final sync in the reboot closure precedes the ping, with no IO between ping
+  and syscall. Documented the conservative same-tree 85 MiB guard, about 2 MB effective image headroom (the
+  initrd embeds the package), and --no-kexec's loss of the trial start and card-removal recovery risk.
+  P3-3/4: restore failures also go to kmsg. Device IO is behind a host-test port; tests cover pid/identity,
+  read-only preflight, absent-device handling, stale-request recovery, EBUSY success/deadline, cleanup after
+  signal/open failure, close-before-resume, repeated restore/Drop and removal-error reporting/retry.
+  Focused `cargo test -p oos-hal [--release] --lib update::kexec`: **19 passed** in each profile, exits **0**.
+  `--test rootfs_watchdog`: **1 passed** in each; existing `--test rootfs_selfheal
+  the_watchdog_wrapper_restarts_an_exiting_kicker_with_growing_delays`: **1 passed** in each, all exits **0**.
+  Complete logs: `target/t0054/review1-{debug,release,supervisor-debug,supervisor-release,backoff-debug,backoff-release}.log`.
+  `cargo check -p oos-fpgad --target aarch64-unknown-linux-musl` exit **0**, `target/t0054/review1-arm.log`.
+  `cargo xtask check --fast` exit **0**, printed **`partial gate passed (not done): 8 steps in 21 s`**.
+  Passed: fmt, size, architecture, mutable-statics, unsafe, method-exceptions, known-failures, agent-rules.
+  All remaining inventory steps printed not-selected. Complete log: `target/t0054/review1-fast-gate.log`;
+  per-step logs: `target/check-logs/99730-1794783093525475000/`. `git diff --check` passed.
+  Full gate skipped as assigned. `target/COMMIT_MSG.txt` contains one proposed message section. No commits,
+  unit access or image builds; task stays active. Hardware behavior remains unverified for these fixes.
+  Coordinator next: renewed cross-vendor unit review and full/image/extended gates, then run the supervisor
+  under BusyBox ash on the fixed updater and confirm one changed-tree and one same-tree signed-package install
+  under owner go/lease, retaining ping/shutdown and watchdog takeover timing, install/trial confirmation and logs.
+
+- 2026-11-15: Owner assigned unit-tier review round 1 fixes on `7eab373`, branch `t0054-kexec-dt`, Codex author.
+  Existing claim retained; added `tools/tests/test_watchdog_dt.py` (no overlapping claim). Plan updated before code.
+  Focused debug/release tests and fast gate only; full gate skipped as assigned. No commits or unit access.
+  Unit acceptance must also run the supervisor under BusyBox ash on the fixed build, then confirm changed-tree
+  and same-tree installs, final ping/shutdown timing and watchdog takeover under the coordinator's owner go.
+
+- 2026-11-15: Permanent fix implemented locally on `9dba339`, review tier unit. Legacy argv always has exactly
+  one `-i`; removed build-switch selection/export/warning and image-suite scrub plumbing. Bounded evidence remains,
+  with `purgatory_no_checks=true`; preparation and immediate jump markers remain. Both start paths share the
+  watchdog handoff: signal the validated supervisor, kill/reap its own kicker without magic close, acquire the
+  single-open device within 2 s, finish diagnostics, ping synchronously, then call reboot(KEXEC) without intervening
+  IO. On every error/return close without magic close and remove the request; the supervisor resumes without
+  backoff while ordinary updater undo proceeds. A dead updater leaves an active watchdog deadline, not indefinite feeding.
+  Pinned 6.12.115 core/dw_wdt/kexec source inspected under `target/t0054/watchdog-source/`; NOWAYOUT is off,
+  magic close feeds indefinitely without a reset line and nonmagic close stays active. Correction from review:
+  SYS_RESTART equals SYS_DOWN, so kexec's reboot notifier calls dw_wdt_stop. With no `resets` on the watchdog DT
+  node it only sets WDOG_HW_RUNNING and cannot stop the counter. This DT invariant is load-bearing.
+  BusyBox's signal close writes V, so takeover deliberately uses SIGKILL on the supervised child.
+  `docs/update.md` records root-cause evidence, signature/segment ownership rationale, time budget, no-magic-close
+  reasoning and source references. Both loaders reject staged payloads above 85 MiB, with boundary/overflow tests;
+  kernel/padding/boot-path changes still require unit timing and at least 5 s remaining margin. A synchronous final
+  userspace ping is established by code; the kernel shutdown-to-jump delay is not host-measured or guaranteed.
+  Focused `cargo test -p oos-hal [--release] --lib update::kexec`: **12 passed** in each profile, exits **0**.
+  `cargo test -p oos-hal [--release] --test rootfs_watchdog`: **1 passed** in each, exits **0**; the real supervisor
+  is tested with a fake kicker for kill/reap without magic close, exclusive pause, repeated return/resume and
+  cancellation racing the trap. Existing `--test rootfs_selfheal
+  the_watchdog_wrapper_restarts_an_exiting_kicker_with_growing_delays`: **1 passed** in each profile, exits **0**.
+  Logs: `target/t0054/permanent-{debug,release,supervisor-debug,supervisor-release,backoff-debug,backoff-release}.log`.
+  `cargo check -p oos-fpgad --target aarch64-unknown-linux-musl` exit **0** (`target/t0054/permanent-arm.log`).
+  Shell/Python syntax, executable-source switch-removal search and `git diff --check` passed.
+  `cargo xtask check --fast` exit **0**, printed **`partial gate passed (not done): 8 steps in 21 s`**.
+  Passed: fmt, size, architecture, mutable-statics, unsafe, method-exceptions, known-failures, agent-rules.
+  Remaining inventory steps printed not-selected. Complete log: `target/t0054/permanent-fast-gate.log`;
+  per-step logs: `target/check-logs/68540-1794781817172523000/`. Full gate skipped as assigned (sandbox).
+  `target/COMMIT_MSG.txt` contains one proposed message. Task stays active; no commits, unit access or image builds.
+  Coordinator next: full/image/extended gates and independent cross-vendor unit-tier review, then install and boot
+  the fixed updater first through the signed-package route with separate owner go. Confirm one changed-tree and
+  one same-tree install on that running updater, including final ping/shutdown timing, watchdog registration/open,
+  install and trial confirmation, with retained logs. These fixed-build unit results remain unverified.
+
+- 2026-11-15: Owner assigned the permanent fix on accepted task 0054, base `9dba339` (includes diagnostic
+  `b719458`). Claim expanded above; no overlapping executable/doc paths in active claims. Read the new unit log
+  read-only. D-to-T with a single harmless tree property and `-i` succeeded: kernel +6.88 s, /init +11.77 s,
+  watchdog open +12.09 s, online about +32 s after the jump. Four checks-on attempts reset about +26 s; failures
+  followed kicker supervision `abd00ca`. Working root cause: uncached SHA-256 over about 85 MB plus relocation
+  exhausted the 21.5 s hardware watchdog. Timing supports exhaustion; a checksum mismatch is excluded indirectly,
+  not by a measured checks-on purgatory trace. Plan written before code. Host implementation only, no commits
+  or unit access; fixed-build changed-tree and same-tree confirmation remain outstanding.
 
 - 2026-11-15: Step 2 revision implemented on uncommitted job-88 work, parent
   `0d173bbf5f77adc8c09d8d100362a150fdfc6a6f`. Removed the watchdog ioctl/open/ping module and tests; retained bounded

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Instrumentation confined to kexec_load. The file-load syscall and start sequence are unchanged.
+//! Bounded evidence for kexec_load, with the common watchdog handoff at the jump.
 
 use super::{arguments, evidence};
 use std::io::Write;
@@ -28,18 +28,19 @@ fn report(message: &str) {
 }
 
 pub(super) fn load(kernel: &[u8], initrd: &[u8], tree: &[u8], cmdline: &str, log: &str) -> Result<(), String> {
+    super::budget::check(kernel.len(), initrd.len(), tree.len())?;
     let dir = Path::new("/tmp/oos-kexec");
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
     let r = (|| {
         let from = super::segments_from(log);
         let saved = Path::new(evidence::DIR);
-        warn(evidence::begin(saved, kernel.len(), initrd.len(), tree, from, arguments::NO_CHECKS));
+        warn(evidence::begin(saved, kernel.len(), initrd.len(), tree, from));
         for (n, d) in [("Image", kernel), ("initrd", initrd), ("tree.dtb", tree)] {
             std::fs::write(dir.join(n), d).map_err(|e| format!("{}: {}", n, e))?;
         }
         let (status, stdout, stderr) =
-            evidence::run(Command::new(super::TOOL).args(arguments::legacy(dir, from, cmdline, arguments::NO_CHECKS)))?;
+            evidence::run(Command::new(super::TOOL).args(arguments::legacy(dir, from, cmdline)))?;
         warn(evidence::write(saved, "stdout", &stdout, evidence::TEXT_LIMIT));
         warn(evidence::write(saved, "stderr", &stderr, evidence::TEXT_LIMIT));
         warn(evidence::write(saved, "load.log", status.to_string().as_bytes(), evidence::TEXT_LIMIT));
@@ -89,9 +90,6 @@ pub fn prepare_jump() -> Jump {
 impl Jump {
     /// The caller has synced and attempted the read-only remount. Mark the jump immediately before the syscall.
     pub fn start(self) -> String {
-        report(&timestamp("jump"));
-        // SAFETY: this is the explicitly requested kexec start after load, quiesce and sync.
-        let r = unsafe { libc::reboot(libc::LINUX_REBOOT_CMD_KEXEC) };
-        format!("reboot(KEXEC) returned {}: {}", r, std::io::Error::last_os_error())
+        super::watchdog::start(|| report(&timestamp("jump")))
     }
 }

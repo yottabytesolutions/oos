@@ -48,21 +48,14 @@ pub(super) fn write(dir: &Path, name: &str, bytes: &[u8], limit: usize) -> io::R
     std::fs::File::open(dir)?.sync_all()
 }
 
-pub(super) fn begin(
-    dir: &Path,
-    kernel: usize,
-    initrd: usize,
-    tree: &[u8],
-    from: u64,
-    no_checks: bool,
-) -> io::Result<()> {
+pub(super) fn begin(dir: &Path, kernel: usize, initrd: usize, tree: &[u8], from: u64) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     // Invalidate previous jump/output evidence before saving the new attempt, including on a load failure.
     for name in ["jump.log", "stdout", "stderr", "merged.dtb", "staged.log", "load.log"] {
         write(dir, name, b"", TEXT_LIMIT)?;
     }
     std::fs::File::open(dir.parent().ok_or_else(|| io::Error::other("evidence has no parent"))?)?.sync_all()?;
-    let lengths = format!("kernel_bytes={kernel}\ninitrd_bytes={initrd}\nmerged_dtb_bytes={}\nmem_min=0x{from:x}\npurgatory_no_checks={no_checks}\nstdout_stderr_limit={TEXT_LIMIT} (tail; may be truncated)\n", tree.len());
+    let lengths = format!("kernel_bytes={kernel}\ninitrd_bytes={initrd}\nmerged_dtb_bytes={}\nmem_min=0x{from:x}\npurgatory_no_checks=true\nstdout_stderr_limit={TEXT_LIMIT} (tail; may be truncated)\n", tree.len());
     write(dir, "staged.log", lengths.as_bytes(), TEXT_LIMIT)?;
     if tree.len() > TREE_LIMIT {
         return Err(io::Error::other("merged DTB exceeds 2 MiB evidence budget; not saved"));
@@ -90,19 +83,19 @@ mod tests {
     fn attempt_overwrites_old_files_and_preserves_complete_tree() {
         let dir = std::env::temp_dir().join(format!("oos-kexec-evidence-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        begin(&dir, 10, 20, b"first tree", 0x40000000, false).unwrap();
-        assert!(std::fs::read_to_string(dir.join("staged.log")).unwrap().contains("purgatory_no_checks=false\n"));
+        begin(&dir, 10, 20, b"first tree", 0x40000000).unwrap();
+        assert!(std::fs::read_to_string(dir.join("staged.log")).unwrap().contains("purgatory_no_checks=true\n"));
         write(&dir, "stderr", &vec![b'x'; TEXT_LIMIT * 2], TEXT_LIMIT).unwrap();
         assert_eq!(std::fs::metadata(dir.join("stderr")).unwrap().len(), TEXT_LIMIT as u64);
         write(&dir, "jump.log", b"old jump", TEXT_LIMIT).unwrap();
-        begin(&dir, 30, 40, b"new", 0x80000000, true).unwrap();
+        begin(&dir, 30, 40, b"new", 0x80000000).unwrap();
         assert_eq!(std::fs::read(dir.join("merged.dtb")).unwrap(), b"new");
         assert_eq!(std::fs::read(dir.join("jump.log")).unwrap(), b"");
         assert_eq!(std::fs::read(dir.join("stderr")).unwrap(), b"");
         let lengths = std::fs::read_to_string(dir.join("staged.log")).unwrap();
         assert!(lengths.contains("kernel_bytes=30\ninitrd_bytes=40\nmerged_dtb_bytes=3\nmem_min=0x80000000"));
         assert!(lengths.contains("purgatory_no_checks=true\n"));
-        assert!(begin(&dir, 1, 2, &vec![0; TREE_LIMIT + 1], 0, false).is_err());
+        assert!(begin(&dir, 1, 2, &vec![0; TREE_LIMIT + 1], 0).is_err());
         assert!(std::fs::read(dir.join("merged.dtb")).unwrap().is_empty());
         assert!(write(&dir.join("missing"), "stderr", b"x", TEXT_LIMIT).is_err());
         std::fs::remove_dir_all(dir).unwrap();

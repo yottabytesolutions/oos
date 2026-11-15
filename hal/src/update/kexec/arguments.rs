@@ -1,20 +1,12 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Build-time diagnostic for legacy purgatory only. No runtime environment or same-tree load uses it.
+//! Legacy load skips uncached purgatory hashing to stay inside the hardware watchdog period.
 
 use std::path::Path;
 
-pub(super) const NO_CHECKS: bool = match option_env!("OOS_KEXEC_NO_CHECKS") {
-    Some(value) => matches!(value.as_bytes(), [b'1']),
-    None => false,
-};
-
-pub(super) fn legacy(dir: &Path, from: u64, cmdline: &str, no_checks: bool) -> Vec<String> {
-    let mut args = vec!["-d".into(), "-c".into()];
-    if no_checks {
-        args.push("-i".into());
-    }
+pub(super) fn legacy(dir: &Path, from: u64, cmdline: &str) -> Vec<String> {
+    let mut args = vec!["-d".into(), "-c".into(), "-i".into()];
     args.extend([
         format!("--mem-min=0x{from:x}"),
         "-l".into(),
@@ -31,12 +23,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_arguments_match_the_existing_legacy_load() {
+    fn legacy_always_skips_the_uncached_digest() {
         assert_eq!(
-            legacy(Path::new("/path/to/staged"), 0x40000000, "console=tty0 quiet", false),
+            legacy(Path::new("/path/to/staged"), 0x40000000, "console=tty0 quiet"),
             [
                 "-d",
                 "-c",
+                "-i",
                 "--mem-min=0x40000000",
                 "-l",
                 "/path/to/staged/Image",
@@ -45,23 +38,5 @@ mod tests {
                 "--command-line=console=tty0 quiet",
             ]
         );
-    }
-
-    #[test]
-    fn diagnostic_adds_only_the_no_checks_option() {
-        let dir = Path::new("/path/to/staged");
-        let normal = legacy(dir, 0x80000000, "console=tty0", false);
-        let mut diagnostic = legacy(dir, 0x80000000, "console=tty0", true);
-        assert_eq!(diagnostic.remove(2), "-i");
-        assert_eq!(diagnostic, normal);
-    }
-
-    #[test]
-    fn build_switch_selects_the_legacy_arguments() {
-        // The test driver supplies an independent expectation when compiling a diagnostic image's code.
-        let expected = std::env::var("OOS_KEXEC_EXPECT_NO_CHECKS").is_ok_and(|value| value == "1");
-        assert_eq!(NO_CHECKS, expected);
-        let args = legacy(Path::new("/path/to/staged"), 0, "", NO_CHECKS);
-        assert_eq!(args.iter().filter(|s| s.as_str() == "-i").count(), usize::from(expected));
     }
 }

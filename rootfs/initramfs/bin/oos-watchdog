@@ -22,6 +22,9 @@
 #   cover that. If it does not, the SoC resets and the boot simply starts again. The `before open` line measures it.
 # Unit facts (dho804, 2026-11-15): the hardware maximum is 21.5 s (the driver logs `No valid TOPs array specified`
 # and uses the fixed TOPs); a warm reboot clears the counter; a killed kicker reset the unit 41 s later.
+# A kexec handoff request sends USR1 to this supervisor. Kill/reap only our kicker (no magic close), then pause
+# until the updater closes its watchdog handle and removes the request. Resume immediately, without backoff.
+# If the updater dies while holding the request, the active watchdog expires; the kernel never feeds it forever.
 # Log: /tmp/oos-watchdog.log.
 dev=${OOS_WATCHDOG_DEV:-/dev/watchdog}
 kmsg=${OOS_KMSG:-/dev/kmsg}
@@ -59,11 +62,36 @@ echo -1000 > /proc/self/oom_score_adj || echo "oos-watchdog: oom_score_adj not s
 renice -n -20 -p $$ > /dev/null || echo "oos-watchdog: priority not raised"
 echo "oos-watchdog: $dev, timeout 30 s, ping every 5 s" | tee -a "$kmsg"
 up() { cut -d. -f1 /proc/uptime 2>/dev/null || echo 0; }
+control=${OOS_WATCHDOG_CONTROL:-/tmp/oos-watchdog}
+handoff=0
+kicker=
+request() {
+	handoff=1
+	[ -z "$kicker" ] || kill -KILL "$kicker" 2>/dev/null
+}
+trap request USR1
+echo $$ > "$control.pid" || exit 1
 delay=1
 while :; do
 	t0=$(up)
-	watchdog -F -T 30 -t 5 "$dev"
+	watchdog -F -T 30 -t 5 "$dev" &
+	kicker=$!
+	# A request can arrive between launching the child and recording its pid.
+	[ "$handoff" = 0 ] || request
+	wait "$kicker"
 	rc=$?
+	if [ "$handoff" = 1 ]; then
+		# wait may have returned for USR1 before the killed child exited. Reap before publishing readiness.
+		wait "$kicker" 2>/dev/null
+		kicker=
+		echo "oos-watchdog: kexec handoff, kicker reaped" | tee -a "$kmsg"
+		while [ -e "$control.handoff" ]; do sleep 0.1; done
+		handoff=0
+		delay=1
+		echo "oos-watchdog: kexec returned, resuming kicker" | tee -a "$kmsg"
+		continue
+	fi
+	kicker=
 	ran=$(($(up) - t0))
 	[ $ran -ge 600 ] && delay=1
 	echo "oos-watchdog: busybox watchdog exited ($rc) after $ran s, starting it again in $delay s" | tee -a "$kmsg"

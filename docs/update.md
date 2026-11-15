@@ -46,7 +46,7 @@ OOS has no loader of its own, so nothing counts the starts before rcS. An image 
 2. The state names the build (`kexec <build>`). The boot selection stays as it is: `recovery` still holds the running
    build.
 3. Its kernel and initramfs are loaded with `kexec_file_load`, or, when the image brings another device tree, with
-   `kexec_load` through kexec-tools (`/bin/kexec -c --dtb`, see "Another device tree" below). A second, uncompressed
+   `kexec_load` through kexec-tools (`/bin/kexec -c -i --dtb`, see "Another device tree" below). A second, uncompressed
    archive in the initramfs carries the package (`/oos-kexec.oosupd`), the key that verified it (`/oos-kexec.key`:
    the new build may trust other keys) and the device tree section the start runs with (`/oos-kexec.dt`); the command line gets `oos.kexec=install` and `initramfs_async=0`
    (the archive is unpacked before any driver probes). Under the update lock the start-up watcher and oos-ui are
@@ -103,6 +103,97 @@ GICv3 keeps its LPI and ITS tables across kexec (it cannot be given new ones); t
 writes to them, and `/proc/iomem` does not show them. On the unit they lie at 0x2400000 and 0xa320000..0xa400000,
 where kexec-tools put the 55 MB initramfs at first: the new kernel found it damaged ("rootfs image is not initramfs
 (uncompression error)", read from pstore after a start with `panic=5`), with every other bus master stopped as well.
+
+### Purgatory and the watchdog budget
+
+The `kexec_load` path always passes `-i` (`--no-checks`) to kexec-tools. The signed package and its image hash
+are verified before load; Linux copies the supplied segments into kernel-owned memory. Uncached SHA-256 in
+purgatory after relocation adds no signature verification. `kexec_file_load` already starts without a post-copy
+purgatory digest. A corrupt start that hangs is caught by the watchdog while the installed image is untouched,
+and the later trial/rollback start checks the installed build. This is the fallback the four failed starts
+exercised: the watchdog reset the SoC and the previous build returned. This does not prove arbitrary memory
+corruption will always hang or be detected. Signature, image-hash and read-back checks remain required.
+
+Owner-observed unit evidence, 2026-11-15 (task 0054): four changed-tree starts with digest checks reset about
+26 s after the jump; these failures followed watchdog kicker supervision (`abd00ca`). D-to-T with a single
+harmless tree property difference and `-i` succeeded, with the same kernel. The measured timeline from the jump:
+
+| Event | Time |
+|---|---:|
+| Hardware watchdog period (maximum, fixed TOPs) | 21.5 s |
+| New kernel first boot message, after uncached relocation | +6.88 s |
+| `/init` starts | +11.77 s |
+| Watchdog about to open, hardware running, timeleft 20 | +12.09 s |
+| Back online, after install and warm trial restart | about +32 s |
+
+Payload: kernel 27,159,040 bytes, staged initrd 57,611,256 bytes, merged DTB 94,618 bytes (about 85 MB total).
+Kernel, initrd, DTB and purgatory segments were at `0x40000000`, `0x41aa0000`, `0x45192000` and `0x451aa000`.
+The working root cause is watchdog exhaustion during uncached hashing plus relocation, with MMU/D-cache off.
+The successful bypass and the pre-supervision history support this; purgatory's checks-on duration was not
+measured and a digest mismatch was excluded only indirectly.
+
+Before stopping the watcher or UI, quiescing devices or remounting, both start paths check the supervisor pid file,
+its exact `/bin/oos-watchdog` cmdline argument and the absence of a handoff request. Under the update lock, a
+leftover `/tmp/oos-watchdog.handoff` is removed only if its recorded requester pid is dead (`kill(pid, 0)` reports
+ESRCH); live, unknown or malformed requesters are refused with a specific message and left for inspection. Older
+empty request files cannot be recovered automatically. The subsequent preflight is read only. If `/dev/watchdog`
+is absent, the supervisor need not have published a pid: proceed without a watchdog ping and log that decision.
+Counter survival is then unverified. The checks repeat at takeover to catch changes during teardown.
+
+Both start paths transfer the single-open watchdog from `oos-watchdog` after the read-only remount attempt.
+The supervisor publishes its pid; an exclusive handoff request recording the updater pid plus USR1 makes it kill
+and reap only its own BusyBox kicker with SIGKILL, avoiding magic close, then pause until the request is removed.
+The updater waits at most 2 s for the device, keeps its handle open, writes the immediate jump timestamp for a changed tree,
+performs a final `sync()` and writes a non-`V` byte to ping hardware immediately before `reboot(KEXEC)`.
+No sync, remount, logging or process launch comes between that ping and the syscall. This makes the final
+userspace ping less than about 1 s before the syscall in normal scheduling. The syscall's shutdown-to-jump delay still needs unit measurement;
+userspace cannot give a hard deadline across a stalled kernel. The normal kicker covers the earlier sync/remount;
+the updater holds the device during the final sync, so a stuck flush remains bounded by the active watchdog.
+On any acquisition/ping error or returned syscall, close the handle without magic close, remove the request,
+and restart the supervised kicker immediately with backoff reset. The ordinary updater undo then restores the UI
+and links. If the updater dies holding the request, no new userspace keepalive occurs and the active watchdog
+expires; it is never deliberately handed to an indefinitely feeding kernel worker.
+
+Source inspection of the pinned 6.12.115 base and `kernel/config` establishes why this matters:
+
+- `CONFIG_WATCHDOG_NOWAYOUT` is off (dw_wdt's `nowayout` parameter defaults to it). With no reset line,
+  `dw_wdt_stop` marks hardware running and returns success. Magic close clears the core's active bit and lets
+  its worker feed indefinitely (`CONFIG_WATCHDOG_OPEN_TIMEOUT=0`). It gives neither a final immediate ping
+  nor a watched failure path, so the handoff uses no magic close.
+- A non-`V` write calls `watchdog_ping`; dw_wdt has no minimum hardware heartbeat interval, so the core calls
+  its register ping synchronously. A nonmagic close leaves it active; worker pings stop at the userspace deadline.
+- Ordinary kexec calls `kernel_restart_prepare`, which invokes the reboot notifier chain with `SYS_RESTART`.
+  **`SYS_RESTART == SYS_DOWN`** (`include/linux/reboot.h`), so the stop-on-reboot notifier registered by dw_wdt
+  does call `dw_wdt_stop`. The counter survives only because there is **no `resets` on the watchdog DT node**:
+  without a reset line, `dw_wdt_stop` only sets `WDOG_HW_RUNNING` and returns success. This is load-bearing;
+  adding a reset line would stop the watchdog across kexec. The DTS regression test guards board/unit overrides.
+  Once registered in the new kernel, boot-enabled handling feeds it until userspace opens it. Nothing can feed
+  it during relocation and the unregistered part of boot.
+
+See the upstream [watchdog core](https://github.com/torvalds/linux/blob/v6.12/drivers/watchdog/watchdog_dev.c),
+[reboot notifier](https://github.com/torvalds/linux/blob/v6.12/drivers/watchdog/watchdog_core.c),
+[dw_wdt](https://github.com/torvalds/linux/blob/v6.12/drivers/watchdog/dw_wdt.c),
+[restart codes](https://github.com/torvalds/linux/blob/v6.12/include/linux/reboot.h),
+[kexec shutdown](https://github.com/torvalds/linux/blob/v6.12/kernel/kexec_core.c) and
+[BusyBox kicker](https://github.com/mirror/busybox/blob/1_35_stable/miscutils/watchdog.c).
+The local pinned kernel sources were checked, rather than assuming the upstream files are identical.
+
+Margin rule: keep at least 5 s between new-kernel watchdog takeover and hardware expiry. Allowing 1 s for the
+last ping's age gives `1 + 12.1 + 5 = 18.1 s < 21.5 s` for the measured payload; the registration ping actually
+precedes the observed userspace open, so using open is conservative. Both loaders refuse staged payloads above
+**85 MiB (89,128,960 bytes)** before loading: kernel file plus staged initrd plus the supplied DTB, if any.
+The staged initrd includes the trial package, so image growth also grows that embedded copy: the effective image
+headroom at the measured payload is only about **2 MB**. Boundary/overflow tests pin this ceiling. Applying it to
+the same-tree file-load path is a conservative guard; the measurement above used the changed-tree path.
+It limits growth, but is not a timing proof: any kernel, initramfs, DTB, segment memory-size/padding, CPU-clock
+or shutdown-path change requires checking the 5 s margin on the unit before release, even below the ceiling. Do not raise the ceiling
+without a new measurement. The explicit `--no-kexec` route skips the trial start: a hanging kernel restarts at
+every power-on until the card is pulled. It must not be treated as an equivalent safe fallback for a larger image.
+
+Acceptance still needs the fixed updater running first, the supervisor exercised under BusyBox ash, then one
+changed-tree and one same-tree signed-package install under the coordinator's unit procedure and owner go.
+Record the final ping-to-jump bound and watchdog registration/open times, successful install/trial confirmation and retained evidence. No such fixed-build unit
+confirmation is claimed yet. Bounded legacy evidence and both preparation/jump timestamps remain in place.
 
 `oos-update kexec-check FILE` loads a package's kernel and initramfs and unloads them again, nothing written, no
 restart: it shows that the running kernel takes the image for a kexec start.

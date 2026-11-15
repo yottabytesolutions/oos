@@ -1,4 +1,5 @@
-# M2.1 item moves. The integrator applies these with cargo xtask ratchet --move.
+# Planned moves of this branch: <old key or file> -> <new key or file> (docs/development.md).
+# The integrator applies them with `cargo xtask ratchet --move` at merge, which empties this file.
 struct ui/src/model.rs Model -> struct core/src/model/mod.rs Model
 struct ui/src/model.rs DecCfg -> struct core/src/model/decoder.rs DecCfg
 struct ui/src/model.rs SerialTrig -> struct core/src/model/trigger.rs SerialTrig
@@ -10,6 +11,4 @@ ui ui/src/model.rs clippy::clone_on_copy -> core core/src/model/settings.rs clip
 ui ui/src/model.rs clippy::manual_range_contains -> core core/src/model/tables.rs clippy::manual_range_contains
 ui ui/src/model.rs clippy::needless_range_loop -> core core/src/model/signal.rs clippy::needless_range_loop
 ui ui/src/model.rs clippy::too_many_lines -> core core/src/model/defaults.rs clippy::too_many_lines
-
-# M2.2: measure the existing command parser including its early returns, without growing its body.
 fn ui/src/cmd.rs run -> fn ui/src/cmd.rs execute

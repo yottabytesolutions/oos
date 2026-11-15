@@ -1,8 +1,8 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-1008 file fpgad/src/bin/oos-update.rs
+973 file fpgad/src/bin/oos-update.rs
 1618 file fpgad/src/main.rs
-64 fn fpgad/src/bin/oos-update.rs finish_kexec
+63 fn fpgad/src/bin/oos-update.rs finish_kexec
 84 fn fpgad/src/bin/oos-update.rs main
 77 fn fpgad/src/bin/oos-update.rs status
 103 fn fpgad/src/bin/oos-update.rs watch

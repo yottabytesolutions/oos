@@ -12,7 +12,7 @@
 1027 file hal/src/dho/tpu.rs
 586 file hal/src/model.rs
 410 file hal/src/update/ed25519.rs
-726 file hal/src/update/mod.rs
+723 file hal/src/update/mod.rs
 66 fn hal/src/dho/acq.rs configure_la
 65 fn hal/src/dho/afg.rs Wave::table
 250 fn hal/src/dho/boot/mod.rs Ctx::run
@@ -28,7 +28,7 @@
 64 fn hal/src/update/fdt.rs Fdt::to_bytes
 117 fn hal/src/update/first.rs first_install
 66 fn hal/src/update/inflate.rs inflate
-131 fn hal/src/update/mod.rs install
+123 fn hal/src/update/mod.rs install
 74 fn hal/src/update/mod.rs kexec_stage
 65 fn hal/src/update/pkg.rs verify_header
 16 struct hal/src/dho/boot/sim.rs Unit

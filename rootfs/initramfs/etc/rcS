@@ -17,10 +17,8 @@ st ok Linux "$(uname -r)"
 #     in anything below still counts; one that already started once without being confirmed is rolled back (log
 #     /tmp/oos-update.log)
 /bin/oos-mount-data > /tmp/oos-data.log 2>&1
-# 0b2) a kernel oops/panic of the last start (pstore, kept across the warm reset) to /oos/crash/<n> (oos-crash-save),
-#      in the background: a slow or blocked write never delays oos-ui. It adds a `Crash record` warning to $ST itself
-(setsid sh -c "/bin/oos-crash-save $ST >> /tmp/oos-crash.log 2>&1" < /dev/null > /dev/null 2>&1 &)
 [ -x /bin/oos-update ] && /bin/oos-update boot >> /tmp/oos-update.log 2>&1
+# Crash archiving/counting runs in oos-ui-loop after trial bookkeeping, before any setup is applied.
 # 0c) the stock partition, read only: oos-ui reads the model and the serial number from it when it starts
 /bin/oos-mount-rigol >> /tmp/oos-data.log 2>&1
 # 0d) experimental ADC clock (limits.conf adc.clock_hz): a start that did not reach the end leaves its mark, and the next
@@ -94,7 +92,7 @@ ip link set eth0 up 2>/dev/null
 # /tmp/oos-ui.args. With the acquisition hardware it starts on it at once: the start-up screen shows the progress
 # from $ST and the hardware source waits for its `end` line (no demo signals, no restart)
 /bin/oos-board ui-args $ST > /tmp/oos-ui.args
-[ -x /bin/oos-ui ] && (setsid sh -c 'while [ ! -e /tmp/oos-ui.off ]; do /bin/oos-ui $(cat /tmp/oos-ui.args) >> /tmp/oos-ui.log 2>&1; sleep 2; done' < /dev/null > /dev/null 2>&1 &)
+[ -x /bin/oos-ui ] && (setsid sh -c "/bin/oos-ui-loop $ST >> /tmp/oos-ui-loop.log 2>&1" < /dev/null > /dev/null 2>&1 &)
 # 5b) start-up watcher: confirms an image on trial once oos-ui ran 20 s and the start-up finished (persist mode: arms
 #     OOS again for the next power-on); a crash loop or no end in 180 s writes the previous image back at once
 [ -x /bin/oos-update ] && (setsid sh -c '/bin/oos-update watch --status /tmp/oos-boot.status >> /tmp/oos-update.log 2>&1' < /dev/null > /dev/null 2>&1 &)

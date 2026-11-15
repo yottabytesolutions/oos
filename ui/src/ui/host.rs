@@ -17,11 +17,15 @@ pub struct Host {
     time_budgets: bool,
     usb_root: PathBuf,
     switches: crate::sysconf::Switches,
+    runtime: super::lifecycle::Runtime,
 }
 
 impl Host {
     pub fn system(switches: crate::sysconf::Switches) -> Self {
+        let mut runtime = super::lifecycle::Runtime::new(switches.memory);
+        runtime.crash = crate::store::startup::crash::latest(Path::new("/oos/crash")).ok().flatten();
         Self {
+            runtime,
             text: |p| std::fs::read_to_string(p).ok(),
             space: super::sysinfo::disk,
             temperatures: || board().thermal_zones(),
@@ -32,6 +36,13 @@ impl Host {
             usb_root: crate::usbtmc::SYSFS.into(),
             switches,
         }
+    }
+
+    pub(super) fn runtime(&self) -> &super::lifecycle::Runtime {
+        &self.runtime
+    }
+    pub(super) fn runtime_mut(&mut self) -> &mut super::lifecycle::Runtime {
+        &mut self.runtime
     }
 
     pub fn text(&self, path: &str) -> Option<String> {
@@ -62,6 +73,7 @@ impl Host {
     /// Hermetic off-screen execution, including the ordinary binary built without test configuration.
     pub fn headless() -> Self {
         Self {
+            runtime: super::lifecycle::Runtime::new(crate::system::memory::Limits::parse("")),
             text: |_| None,
             space: |_| None,
             temperatures: Vec::new,
@@ -98,6 +110,51 @@ mod tests {
     use crate::ui::Item;
     use crate::ui::{sysinfo::Row, Ui};
     use crate::wave::Source;
+
+    #[test]
+    fn memory_stop_still_polls_update_ntp_ssh_and_usb() {
+        let mut host = Host::fixture();
+        host.services = true;
+        host.text = |path| (path == "/tmp/oos-update.notice").then(|| "Update completed".into());
+        let mut ui = Ui::new(Source::Demo { t: 0.0 }, host);
+        ui.host.runtime_mut().memory = crate::system::memory::Watchdog::new(crate::system::memory::Limits::parse(
+            "mem.soft_mb = 1\nmem.hard_mb = 2\n",
+        ));
+        ui.host.runtime_mut().memory.sample(std::time::Duration::ZERO, Some(3 << 20));
+        ui.m.run = crate::model::RunState::Stop;
+        ui.ntp.st.due = Some(0.0);
+        ui.sys.ntp = false;
+        ui.ssh.state = "not polled".into();
+        // An empty directory keeps the SSH poll hermetic; there are no keys to import.
+        let root = std::env::temp_dir().join(format!("oos-stop-polls-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        ui.set_ssh_dir(root.clone());
+        ui.open_menu(crate::ui::MenuId::Ssh);
+        ui.step(0.5);
+        assert!(ui.memory_stopped() && ui.last[0].is_none());
+        assert!(ui.dialog.as_ref().unwrap().iter().any(|line| line == "Update completed"));
+        assert!(ui.ntp.st.due.is_none(), "NTP off poll clears scheduled work");
+        assert_ne!(ui.ssh.state, "not polled");
+        assert_eq!(ui.usb_check, ui.now + 2.0, "USB poll schedules its next check");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archived_crash_reaches_state_query_and_system_page() {
+        let root = std::env::temp_dir().join(format!("oos-crash-presentation-{}", std::process::id()));
+        let archive = root.join("1-20260101T000000Z-abcdef012345");
+        std::fs::create_dir_all(&archive).unwrap();
+        std::fs::write(archive.join("dmesg-ramoops-0"), "Panic#1 Part1\nfull kernel body").unwrap();
+        let mut host = Host::fixture();
+        host.runtime.crash = crate::store::startup::crash::latest(&root).unwrap();
+        let ui = Ui::new(Source::Demo { t: 0.0 }, host);
+        let text = crate::cmd::stat_text(&ui);
+        assert!(text.contains("last_crash 20260101T000000Z Panic#1 Part1"));
+        assert!(!text.contains("full kernel body"));
+        assert!(ui.sysinfo_rows()[0].iter().any(|row| matches!(row,
+            Row::Note(text, _) if text == "Last crash: 20260101T000000Z Panic#1 Part1")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn headless_host_supplies_config_without_services_or_time_budgets() {
@@ -202,6 +259,217 @@ mod tests {
         assert!(crate::clock::unix_now() > 1e9, "the system clock does not read OOS_FIXED_TIME");
         for (k, _) in vars {
             std::env::remove_var(k);
+        }
+    }
+}
+
+#[cfg(test)]
+mod auto_timeout {
+    use super::Host;
+    use crate::board::scripted::{self, Batch, BatchKind, BatchSource};
+    use crate::board::{Frame, HwShared};
+    use crate::drawpipe::{self, DecodeInto, Mode, Pipe};
+    use crate::model::{RunState, TrigMode, TrigStatus};
+    use crate::ui::Ui;
+    use crate::wave::{Phosphor, Source};
+    use oos_hal::sync::lock;
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Duration;
+
+    const HANG_LIMIT: Duration = Duration::from_secs(30);
+
+    fn hardware() -> (Ui, HwShared) {
+        let shared: HwShared = Default::default();
+        let mut host = Host::fixture();
+        host.time_budgets = false;
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 }, host);
+        ui.m.persist = 0;
+        ui.m.trig_level = 0.5;
+        ui.step(0.0);
+        assert!(ui.fast_ok());
+        (ui, shared)
+    }
+
+    fn deliver(shared: &HwShared, frame: Frame, tpu: bool) {
+        let mut g = lock(shared);
+        g.trig_fired = Some((frame.seq, Some(tpu)));
+        g.frame = frame.clone();
+        g.queue.push_back(frame);
+    }
+
+    fn crossing(ui: &Ui, seq: u64) -> Frame {
+        let n = 4000;
+        Frame {
+            seq,
+            dt: ui.m.time_per_div() as f64 * crate::model::HDIV as f64 * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [
+                (0..n).map(|k| if (k / 200) % 2 == 1 { 1.0 } else { 0.0 }).collect(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ],
+            ..Default::default()
+        }
+    }
+
+    // Empty screen steps advance the UI clock and WAIT deadline without inventing records or clearing the trace.
+    #[test]
+    fn auto_records_do_not_clock_ui() {
+        let (mut ui, shared) = hardware();
+        for _ in 0..2 {
+            ui.step(0.125);
+            assert_eq!((ui.records, ui.wfm_total), (0, 0));
+        }
+        let frame = crossing(&ui, 1);
+        assert!(crate::wave::hw_record(&ui.m, frame.clone()).triggered, "software sees an edge");
+        deliver(&shared, frame, false);
+        ui.step(0.03125);
+        assert_eq!((ui.records, ui.wfm_total, ui.m.status), (1, 1, TrigStatus::Auto));
+        let (map, zoom) = (ui.ph.map.clone(), ui.phz.map.clone());
+        assert!(map[0].iter().any(|&v| v > 0));
+        for _ in 0..2 {
+            ui.step(0.25);
+            assert_eq!((ui.records, ui.wfm_total, ui.m.status), (1, 1, TrigStatus::Auto));
+            assert_eq!((&ui.ph.map, &ui.phz.map), (&map, &zoom));
+        }
+        assert_eq!(ui.now - ui.last_rec_t, 0.5, "WAIT starts strictly after the deadline");
+        ui.step(1.0 / 1024.0);
+        assert_eq!((ui.records, ui.wfm_total, ui.m.status), (1, 1, TrigStatus::Wait));
+        assert_eq!((&ui.ph.map, &ui.phz.map), (&map, &zoom));
+        assert_eq!(ui.now, 0.7822265625);
+        deliver(&shared, crossing(&ui, 2), true);
+        ui.step(0.03125);
+        assert_eq!((ui.records, ui.wfm_total, ui.m.status), (2, 2, TrigStatus::Triggered));
+        ui.step(0.03125);
+        assert_eq!((ui.records, ui.wfm_total, ui.m.status), (2, 2, TrigStatus::Triggered));
+    }
+
+    // Demo's immediate AUTO fallback characterizes its generator, not the hardware's SCU timers.
+    #[test]
+    fn demo_auto_is_immediate_but_normal_and_single_wait() {
+        for mode in [TrigMode::Auto, TrigMode::Normal, TrigMode::Single] {
+            let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+            ui.m.trig_mode = mode;
+            ui.m.trig_level = 1e6;
+            ui.step(1.0 / 1024.0);
+            let count = if mode == TrigMode::Auto { 6 } else { 0 };
+            assert_eq!((ui.records, ui.wfm_total), (count, count), "{:?}", mode);
+            assert_eq!(ui.m.run, RunState::Run);
+            if mode == TrigMode::Auto {
+                assert_eq!(ui.m.status, TrigStatus::Auto);
+                assert!(ui.history.iter().all(|r| !r.triggered));
+                assert!(!ui.last[0].as_ref().unwrap().triggered);
+            } else {
+                assert_eq!(ui.m.status, TrigStatus::Wait);
+                assert!(ui.last[0].is_none());
+            }
+            // CH1's demo square is 0..2.5 V; use a level inside that range.
+            ui.m.trig_level = 1.25;
+            ui.step(1.0 / 30.0);
+            assert!(ui.records > count, "{:?}: a matching edge still delivers", mode);
+            assert!(ui.last[0].as_ref().unwrap().triggered);
+            assert_eq!(ui.m.status, if mode == TrigMode::Single { TrigStatus::Stop } else { TrigStatus::Triggered });
+            assert_eq!(ui.m.run, if mode == TrigMode::Single { RunState::Stop } else { RunState::Run });
+        }
+    }
+
+    fn held_decode(inner: DecodeInto) -> (DecodeInto, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let gate = Mutex::new(Some((entered_tx, released)));
+        let decode = Arc::new(move |bytes: &[u8], frame: &mut Frame| {
+            if let Some((entered, released)) = lock(&gate).take() {
+                entered.send(()).unwrap();
+                released.recv_timeout(HANG_LIMIT).expect("test releases the held worker");
+            }
+            inner(bytes, frame);
+        });
+        (decode, entered, release)
+    }
+
+    fn assert_backlog(
+        pipe: &Pipe,
+        ui: &mut Ui,
+        shared: &HwShared,
+        map: &mut Phosphor,
+        delivered: &mpsc::Receiver<u64>,
+    ) {
+        for _ in 0..3 {
+            ui.step(0.03125);
+            assert_eq!((ui.records, ui.wfm_total), (0, 0));
+            assert!(lock(shared).queue.is_empty());
+            assert_eq!(pipe.merge(map, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
+            assert!(matches!(delivered.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        }
+    }
+
+    fn assert_picture(worker_map: &Phosphor, ui: &Ui, reference: &Ui, frames: usize) {
+        for c in 0..crate::model::NCH {
+            let combined: Vec<_> = worker_map.map[c].iter().zip(&ui.ph.map[c]).map(|(a, b)| a + b).collect();
+            assert_eq!(combined, reference.ph.map[c], "{} frames: CH{}", frames, c + 1);
+        }
+    }
+
+    // M1 has no Ui pipe injection yet. Merge the fixture-owned pipe explicitly, then consume its newest frame in
+    // frames mode. Compare the sum of worker and newest-frame maps with the ordinary all-frames route.
+    fn backlog_batch(frames: usize) {
+        let (mut ui, shared) = hardware();
+        let (mut reference, reference_shared) = hardware();
+        let mut sw = *ui.switches();
+        sw.pipeline = Mode::Batch;
+        let mut source = scripted::source(BatchKind::Raw, 123);
+        let batch = source.next_batch(&ui.m, &sw, frames, None).unwrap();
+        for i in 0..frames {
+            deliver(&reference_shared, batch.frame(i, ui.m.hw_stamp), false);
+        }
+        reference.step(0.03125);
+        assert_eq!(reference.wfm_total, frames as u64);
+        let newest = batch.newest(ui.m.hw_stamp);
+        let (fb, decode) = (batch.frame_bytes(), batch.decode());
+        let (decode, entered, release) = held_decode(decode);
+        let counters: &'static drawpipe::Counters = Box::leak(Box::default());
+        let pipe = Pipe::start(1, 0, counters);
+        pipe.set_view(Some(&ui.m), ui.ph.w, ui.ph.h, sw.interp);
+        let mut worker_map = Phosphor::new(ui.ph.w, ui.ph.h);
+        let (delivered_tx, delivered) = mpsc::channel();
+        let destination = shared.clone();
+        pipe.feed_with(
+            Box::new(batch.into_bytes()),
+            fb,
+            frames - 1,
+            ui.m.hw_stamp,
+            decode,
+            None,
+            Box::new(move || {
+                let seq = newest.seq;
+                deliver(&destination, newest, false);
+                delivered_tx.send(seq).unwrap();
+            }),
+        );
+        entered.recv_timeout(HANG_LIMIT).expect("worker reached its first decode");
+        assert_backlog(&pipe, &mut ui, &shared, &mut worker_map, &delivered);
+        release.send(()).unwrap();
+        let _returned = drawpipe::host::finish_batch(&pipe, 1).unwrap();
+        assert!(delivered.try_recv().is_err(), "buffer return alone does not deliver the newest frame");
+        let merged = pipe.merge(&mut worker_map, &mut true, &mut [0; 4], &mut (0.0, 0.0));
+        assert_eq!(delivered.recv_timeout(HANG_LIMIT).unwrap(), frames as u64);
+        ui.step(0.03125);
+        assert_eq!((merged.frames, ui.records, ui.wfm_total), ((frames - 1) as u64, 1, 1));
+        assert_eq!(ui.m.status, TrigStatus::Auto);
+        assert!(lock(&shared).queue.is_empty());
+        assert!(matches!(ui.src, Source::Hw { seen, .. } if seen == frames as u64));
+        assert_picture(&worker_map, &ui, &reference, frames);
+        assert_eq!(pipe.merge(&mut worker_map, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
+        ui.step(0.03125);
+        assert_eq!((ui.records, ui.wfm_total, counters.read().2), (1, 1, 0));
+        assert!(delivered.try_recv().is_err(), "delivered exactly once");
+    }
+
+    #[test]
+    fn auto_delivery_survives_worker_backlog() {
+        for frames in [3, 13, 27] {
+            backlog_batch(frames);
         }
     }
 }

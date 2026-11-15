@@ -310,10 +310,10 @@ fn install(a: &Args) {
     }
 }
 
-/// The oos-ui loop of rcS, started again after a kexec start that failed.
-#[cfg(target_os = "linux")]
-const UI_LOOP: &str =
-    "while [ ! -e /tmp/oos-ui.off ]; do /bin/oos-ui $(cat /tmp/oos-ui.args) >> /tmp/oos-ui.log 2>&1; sleep 2; done";
+/// Resume the image supervisor after kexec undo only if its original loop has already exited.
+/// A probe error is not evidence that DRM has no owner.
+#[cfg(any(target_os = "linux", test))]
+const UI_LOOP: &str = "pgrep -x oos-ui-loop >/dev/null; rc=$?; [ \"$rc\" -ne 1 ] || exec /bin/oos-ui-loop";
 
 /// What was stopped for the kexec start, to put back after a failure.
 #[cfg(target_os = "linux")]
@@ -972,6 +972,32 @@ fn watch(_: &Args) {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn kexec_undo_uses_supervisor_only_when_no_loop_remains() {
+        let root = std::env::temp_dir().join(format!("oos-undo-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let probe = root.join("pgrep");
+        std::fs::write(&probe, "#!/bin/sh\n[ \"$*\" = '-x oos-ui-loop' ] || exit 2\nexit \"$PROBE_STATUS\"\n").unwrap();
+        std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let script = UI_LOOP
+            .replace("while [ ! -e /tmp/oos-ui.off ]; do", "for attempt in 1; do")
+            .replace("/bin/oos-ui-loop", "echo supervisor")
+            .replace("/bin/oos-ui", "echo legacy")
+            .replace("$(cat /tmp/oos-ui.args)", "")
+            .replace("/tmp/oos-ui.log", "/dev/null");
+        for (status, wanted) in [(0, ""), (1, "supervisor"), (2, "")] {
+            let out = std::process::Command::new("sh")
+                .args(["-c", &script])
+                .env("PATH", format!("{}:{}", root.display(), std::env::var("PATH").unwrap()))
+                .env("PROBE_STATUS", status.to_string())
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), wanted, "probe {}", status);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     // Break it catches: a restart with KRNL armed (the trial start would be stock), of a build that is not on trial,
     // or a second restart from a kexec start that came back.

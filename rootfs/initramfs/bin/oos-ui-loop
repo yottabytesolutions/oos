@@ -1,0 +1,68 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# rcS child: archive/count before applying any setup, then supervise UI exits (ADR 0015).
+# Trial bookkeeping is done by rcS before this script. During a trial the update watcher owns recovery.
+mnt=${OOS_UI_DATA:-/oos}
+tmp=${OOS_UI_TMP:-/tmp}
+ui=${OOS_UI_BIN:-/bin/oos-ui}
+exits=${OOS_UI_EXITS:-/bin/oos-ui-exits}
+crash_save=${OOS_CRASH_SAVE:-/bin/oos-crash-save}
+boot=$(cat "${OOS_BOOT_ID:-/proc/sys/kernel/random/boot_id}") || exit 1
+up() { cut -d. -f1 "${OOS_UPTIME:-/proc/uptime}"; }
+marker() {
+    for mark in "$mnt/oos-ui.running" "$mnt/oos-ui.stable"; do
+        if [ -s "$mark" ]; then head -n 1 "$mark"; return; fi
+    done
+    echo -
+}
+# The archive commits its count before clearing pstore. A timed-out archive may leave its counter
+# alive: oos-ui-exits serializes all writers. The rest of rcS continues independently.
+ledger_failed=false
+ledger() { timeout -s KILL 5 "$exits" "$@"; }
+failed() {
+    status=$?
+    echo 'oos-ui-loop: recovery ledger failed; selecting safe once' >&2
+    ledger_failed=true
+    [ "$status" -ne 3 ] || ledger recover || echo 'oos-ui-loop: fresh ledger unavailable' >&2
+}
+OOS_UI_LEDGER_FAILED="$tmp/oos-ui.ledger-failed" timeout -s KILL 20 "$crash_save" "${1:-}" >> "$tmp/oos-crash.log" 2>&1 || failed
+if [ -e "$tmp/oos-ui.ledger-failed" ]; then
+    rm -f "$tmp/oos-ui.ledger-failed"
+    failed
+fi
+if [ -s "$mnt/oos-ui.running" ]; then
+    key=$(marker)
+    # Same-boot staleness is an abort. Across boots crash-save counts archived panic/oops
+    # with the same run receipt. A positive WDIOF_CARDRESET is optional platform evidence.
+    reset=$(cat "${OOS_WATCHDOG_BOOTSTATUS:-/sys/class/watchdog/watchdog0/bootstatus}" 2>/dev/null)
+    case "$reset" in ''|*[!0-9]*) reset=0 ;; esac
+    case "$key" in
+        "$boot":*) ledger count "$key" 1 "$key" || failed ;;
+        *) if [ $((reset & 32)) -ne 0 ]; then ledger count "$key" 1 "$key" || failed; fi ;;
+    esac
+fi
+seq=0
+while [ ! -e "$tmp/oos-ui.off" ]; do
+    mode=$(ledger mode) || failed
+    [ "$ledger_failed" = false ] || mode=safe
+    ledger_failed=false
+    # trial is a plain line in the existing update State format; re-read after each exit (confirmation
+    # removes it). Never override the update watcher's judgement with defaults during a trial.
+    if grep -q '^trial [0-9]' "$mnt/update/state" 2>/dev/null; then mode=normal; fi
+    seq=$((seq + 1))
+    t0=$(up)
+    set -- $(cat "$tmp/oos-ui.args")
+    [ "$mode" != safe ] || set -- "$@" --safe
+    run=$boot:$$:$seq
+    OOS_UI_RUN_ID=$run "$ui" "$@" >> "$tmp/oos-ui.log" 2>&1
+    rc=$?
+    # A full hour alive clears previous exits even if the RTC changed during the run.
+    t1=$(up)
+    if [ $((t1 - t0)) -ge 3600 ]; then ledger clear || failed; fi
+    if [ "$rc" -ne 0 ]; then
+        ledger count "$run" "$rc" "$run" || failed
+        echo "oos-ui-loop: abnormal exit $rc; next start rechecks safe mode"
+    fi
+    sleep "${OOS_UI_DELAY:-2}"
+done

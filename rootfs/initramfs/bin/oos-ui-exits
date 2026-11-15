@@ -1,0 +1,133 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Durable restart ledger. Writers share a mkdir lock, including an archive child orphaned by timeout.
+# count ID RC RUN [panic], mode, clear. Keep the newest three times (enough to decide safe), plus the
+# last run and panic receipts even after the hour expires. Markers contain one whitespace-free run ID.
+# A failed write is an error to the caller: never clear pstore or start a saved setup after it.
+mnt=${OOS_UI_DATA:-/oos}
+file=$mnt/oos-ui.exits
+op=${1:-mode}
+id=${2:--}
+rc=${3:-1}
+run=${4:--}
+kind=${5:--}
+now=$(date +%s)
+if [ -n "${OOS_TEST:-}" ] && [ -n "${OOS_NOW_FILE:-}" ]; then now=$(cat "$OOS_NOW_FILE"); fi
+case "$now" in ''|*[!0-9]*) echo 'oos-ui-exits: no clock' >&2; exit 1 ;; esac
+[ -n "${OOS_TEST:-}" ] || grep -q " $mnt " /proc/mounts || exit 1
+case "$op" in count|mode|clear|recover) ;; *) exit 2 ;; esac
+# mode reads the atomically renamed ledger without locking. Every writer, including recover's
+# validation, holds the same lock until directory sync finishes. /tmp clears orphan locks at boot.
+lock=${OOS_UI_TMP:-/tmp}/oos-ui-exits.lock
+unlock() { rmdir "$lock/$$" "$lock" 2>/dev/null || :; }
+acquire() {
+    while :; do
+        if mkdir "$lock" 2>/dev/null && mkdir "$lock/$$" 2>/dev/null; then
+            # Publish a PID-named claim before checking for an initializer whose empty directory
+            # was reaped. Both cannot pass: a later publication must see the earlier live claim.
+            alone=true
+            for claim in "$lock"/*; do
+                [ "$claim" = "$lock/$$" ] || [ ! -e "$claim" ] || alone=false
+            done
+            if [ "$alone" = true ]; then
+                trap unlock EXIT
+                trap 'exit 1' HUP INT TERM
+                return 0
+            fi
+            rmdir "$lock/$$" 2>/dev/null
+        fi
+        # Remove only the specific dead PID's empty claim. Concurrent reapers cannot unlink a
+        # new owner's different claim, and rmdir never removes an occupied lock directory.
+        for claim in "$lock"/*; do
+            owner=${claim##*/}
+            case "$owner" in ''|*[!0-9]*) continue ;; esac
+            kill -0 "$owner" 2>/dev/null || rmdir "$claim" 2>/dev/null
+        done
+        rmdir "$lock" 2>/dev/null
+        sleep 1
+    done
+}
+[ "$op" = mode ] || acquire || exit 1
+# Explicit clear keeps retry receipts without depending on awk. Recovery first validates below.
+commit() {
+    sync "$file.new" && mv "$file.new" "$file" && sync "$mnt" || {
+        echo 'oos-ui-exits: ledger commit failed' >&2; return 1
+    }
+}
+if [ "$op" = clear ]; then
+    last=-; panic=-; previous=-
+    if [ -r "$file" ]; then
+        while read -r key value extra; do
+            [ -n "$value" ] && [ -z "$extra" ] || continue
+            case "$key" in last) last=$value ;; panic) panic=$value ;; run) previous=$value ;; esac
+        done < "$file"
+    fi
+    printf 'last %s\npanic %s\nrun %s\n' "$last" "$panic" "$previous" > "$file.new" && commit
+    exit $?
+fi
+old=/dev/null
+[ ! -e "$file" ] || old=$file
+render() {
+awk -v now="$now" -v op="$op" -v id="$id" -v rc="$rc" -v run="$run" -v kind="$kind" '
+    BEGIN { last="-"; panic="-"; previous="-" }
+    $1 == "last" && NF == 2 && !seenlast++ { last=$2; next }
+    $1 == "panic" && NF == 2 && !seenpanic++ { panic=$2; next }
+    $1 == "run" && NF == 2 && !seenrun++ { previous=$2; next }
+    $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && NF == 4 {
+        entries++
+        if (now - $1 <= 3600 && op != "clear") {
+            times[++n]=$1; codes[n]=$2; ids[n]=$3; runs[n]=$4
+        }
+        next
+    }
+    { bad=1 }
+    END {
+        if (bad || entries > 3 || (NR && (!seenlast || !seenpanic || !seenrun))) exit 3
+        if (op == "count") {
+            seen=(id == last || (kind == "panic" && id == panic) || (run != "-" && run == previous))
+            # A first successful panic count can follow newer UI exits if its earlier commit failed.
+            for (i=1; i<=n; i++) if (id == ids[i] || (run != "-" && run == runs[i])) seen=1
+            if (!seen) {
+                if (rc != 0) { times[++n]=now; codes[n]=rc; ids[n]=id; runs[n]=run }
+                last=id
+                if (run != "-") previous=run
+            }
+            # An old panic retry must not rewind the receipt for a newer UI run.
+            if (kind == "panic") panic=id
+        }
+        if (op == "mode") {
+            for (i=1; i<=n; i++) if (codes[i] == 75) memory=1
+            print (n >= 3 || memory ? "safe" : "normal")
+            exit
+        }
+        print "last", last; print "panic", panic; print "run", previous
+        for (i=(n > 3 ? n-2 : 1); i<=n; i++) print times[i], codes[i], ids[i], runs[i]
+    }
+' "$old"
+}
+if [ "$op" = recover ]; then
+    op=mode
+    render >/dev/null
+    status=$?
+    # Only a positive parse failure permits discarding history. An IO/tool error is not corruption.
+    [ "$status" -ne 0 ] || exit 0
+    [ "$status" -eq 3 ] || exit "$status"
+    # Prune before archive so interruption also leaves at most two damaged copies. Sort seconds
+    # numerically (the RTC can start in 1970), then PID to disambiguate same-second recoveries.
+    for archive in "$file".bad.*; do
+        [ ! -e "$archive" ] || printf '%s\n' "${archive#"$file".bad.}"
+    done | sort -t . -k 1,1n -k 2,2n | {
+        previous=
+        while read -r suffix; do
+            [ -z "$previous" ] || rm -f "$file.bad.$previous" || exit 1
+            previous=$suffix
+        done
+    } || exit 1
+    mv "$file" "$file.bad.$now.$$" && sync "$mnt" || exit 1
+    printf 'last -\npanic -\nrun -\n' > "$file.new" && commit
+    exit $?
+fi
+if [ "$op" = mode ]; then render; exit $?; fi
+render > "$file.new" || { status=$?; echo 'oos-ui-exits: ledger write failed' >&2; exit "$status"; }
+commit

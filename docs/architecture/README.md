@@ -776,6 +776,12 @@ loop survives a power cycle because the setup is on `/oos`. The design breaks th
 - On an image in its trial start, safe start is off. The update watcher's crash-loop rule writes the previous image
   back instead (`../update.md`), because there the image, not the setup, is the suspect.
 
+The image supervisor also owns kexec undo: the updater starts `/bin/oos-ui-loop` only when an exact-name
+process probe reports no loop. Ledger `mode` remains read-only. Only a parse failure permits recovery;
+timeouts select safe once without clearing healthy history. Recovery retains at most two damaged ledgers.
+Writers share a BusyBox-compatible mkdir lock with PID claims; a timed-out archive's surviving counter
+must finish before another writer can commit. Dead PID claims and empty interrupted locks are reclaimed.
+
 ### Kernel panics
 
 - **Reboot instead of halt.** The OOS kernel command line carries `panic=10`, so a panic reboots after 10 s instead
@@ -803,14 +809,22 @@ loop survives a power cycle because the setup is on `/oos`. The design breaks th
 
 ### Shutdown order
 
-On a clean exit (SIGTERM, an update, the stop request) `oos-ui` shuts down in this order. Each step has a bound; a step
-that overruns is logged and skipped, and the exit continues:
-1. remote listeners stop accepting and close their connections (1 s);
-2. the acquisition is cancelled (below), then joined: disarm, DMA released (2 s);
-3. the pipe closes; the deposit workers and the measure thread finish their item and are joined (1 s);
-4. the setup is persisted if it is stable;
-5. the GPU helper is told to exit and waited for (1 s), then killed;
-6. DRM is released; exit 0.
+On a clean exit (SIGTERM, an update, the stop request), the current M1b implementation stops main intake,
+then uses deadlines measured from shutdown entry:
+
+1. remote listeners stop accepting and close connections, through 500 ms;
+2. the pipe closes and deposit/measurement workers join, through 1000 ms;
+3. the eligible setup is persisted;
+4. the GPU helper receives EOF and waits through 2100 ms, then is killed with at most 100 ms to reap;
+5. DRM is released after helper termination; otherwise process exit releases its buffers.
+
+These waits share a 2.2 s budget, below the updater's 3 s SIGKILL threshold and the 2.5 s healthy-exit
+limit. Storage/kernel IO can still block beyond a process deadline. A timed-out worker keeps its own
+buffers until it finishes. Acquisition cancellation remains M3.0/M5 and follows the target contract below.
+
+Memory STOP skips acquisition work while the UI clock, toast expiry and update/NTP/USB/SSH polls continue.
+A helper restart restores its retry budget only after acknowledged pictures span ten seconds; shorter
+runs retain the 1/5/30 s backoff and exhaust after three restart attempts.
 
 ### Cancellation
 

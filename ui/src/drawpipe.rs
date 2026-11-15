@@ -17,6 +17,7 @@
 //! path, kept for comparison until the unit has verified the new one.
 
 pub mod host;
+pub mod shutdown;
 use crate::board::Frame;
 use crate::framecost::{self as cost, Part};
 use crate::model::*;
@@ -587,7 +588,7 @@ struct ViewState {
 pub struct Pipe {
     view: Arc<Mutex<ViewState>>,
     counters: &'static Counters,
-    workers: Vec<SyncSender<Arc<Batch>>>,
+    workers: Mutex<shutdown::Workers>,
     /// the workers' mailboxes and, last, the helper's
     mails: Vec<Arc<Mutex<Mail>>>,
     /// batches the helper may take frames of, oldest first
@@ -621,45 +622,6 @@ pub struct Merged {
 }
 
 impl Pipe {
-    /// A pipe with `n` workers counting into `counters`; the workers go to the cores of `little` (`Cores::little`).
-    pub fn start(n: usize, little: u64, counters: &'static Counters) -> Pipe {
-        let view: Arc<Mutex<ViewState>> = Default::default();
-        let mut mails = Vec::new();
-        let mut workers = Vec::new();
-        for k in 0..n {
-            // batches are bounded by the read-out buffers (`hw::POOL`), a few at most
-            let (tx, rx) = sync_channel::<Arc<Batch>>(16);
-            let mail: Arc<Mutex<Mail>> = Default::default();
-            let (v, m) = (view.clone(), mail.clone());
-            match std::thread::Builder::new().name(format!("deposit{}", k)).spawn(move || {
-                crate::http::to_little_cores(little);
-                work(rx, &v, &m)
-            }) {
-                Ok(_) => {
-                    workers.push(tx);
-                    mails.push(mail);
-                }
-                Err(e) => eprintln!("oos-ui: deposit worker: {}", e),
-            }
-        }
-        mails.push(Default::default());
-        let (home, pool) = channel();
-        Pipe {
-            view,
-            counters,
-            workers,
-            mails,
-            open: Default::default(),
-            live: Default::default(),
-            ready: Default::default(),
-            home,
-            pool: Mutex::new(pool),
-            merges: AtomicU64::new(0),
-            seen: Default::default(),
-            partial: AtomicU64::new(0),
-        }
-    }
-
     /// The UI's mapping for the frames to come (None: the fast path does not apply).
     pub fn set_view(&self, m: Option<&Model>, w: usize, h: usize, interp: Interp) {
         let mut v = self.view.lock().unwrap();
@@ -681,7 +643,7 @@ impl Pipe {
 
     /// The fast path applies: the workers take frames.
     pub fn accepting(&self) -> bool {
-        self.view.lock().unwrap().view.is_some()
+        !oos_hal::sync::lock(&self.workers).closed && self.view.lock().unwrap().view.is_some()
     }
 
     /// A buffer back from the workers, to read the next batch into (None: all are still out).
@@ -764,7 +726,7 @@ impl Pipe {
             open.retain(|w| w.strong_count() > 0);
             open.push_back(Arc::downgrade(&b));
         }
-        for w in &self.workers {
+        for w in &oos_hal::sync::lock(&self.workers).senders {
             // full only if the workers are far behind: the others take its frames
             if let Err(TrySendError::Disconnected(_)) = w.try_send(b.clone()) {
                 eprintln!("oos-ui: deposit worker gone");
@@ -1011,8 +973,19 @@ fn add(dst: &mut Phosphor, src: &Phosphor, used: [bool; NCH]) {
 const WORKERS: usize = 2;
 
 /// The pipe in `batch` mode (started on first use, one per process), else None.
-pub fn pipe(sw: &crate::sysconf::Switches) -> Option<&'static Pipe> {
+pub enum Access<'a> {
+    Existing,
+    Start(&'a crate::sysconf::Switches),
+}
+impl<'a> From<&'a crate::sysconf::Switches> for Access<'a> {
+    fn from(sw: &'a crate::sysconf::Switches) -> Self {
+        Self::Start(sw)
+    }
+}
+
+pub fn pipe<'a>(access: impl Into<Access<'a>>) -> Option<&'static Pipe> {
     static P: OnceLock<Pipe> = OnceLock::new();
+    let Access::Start(sw) = access.into() else { return P.get() };
     (sw.pipeline == Mode::Batch)
         .then(|| P.get_or_init(|| Pipe::start(sw.cores.little_count().unwrap_or(WORKERS), sw.cores.little, counters())))
 }
@@ -1472,6 +1445,22 @@ mod tests {
             std::thread::yield_now();
         }
         gate
+    }
+
+    #[test]
+    fn shutdown_leaves_a_busy_deposit_workers_buffers_owned() {
+        let pipe = Pipe::start(2, 0, fresh());
+        pipe.set_view(Some(&model(1e-6, false, false)), 970, 448, Interp::Exact);
+        let gate = one_worker_held(&pipe);
+        let now = std::time::Instant::now();
+        assert!(shutdown::close(&pipe, now + std::time::Duration::from_millis(20)) >= 1);
+        assert!(now.elapsed() < std::time::Duration::from_millis(250));
+        assert!(!pipe.accepting());
+        // The detached worker still owns its Batch, view and mailbox after the
+        // UI's pipe is gone. Releasing the gate lets that owner finish safely.
+        drop(pipe);
+        *oos_hal::sync::lock(&gate.0) = true;
+        gate.1.notify_all();
     }
 
     // Break it catches (step 0 counters, docs/architecture/drawing.md): a batch whose frames reach the picture in two

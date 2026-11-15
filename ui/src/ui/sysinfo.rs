@@ -98,6 +98,20 @@ fn temp_col(t: f32, warn: f32, limit: f32) -> Rgb {
     }
 }
 
+fn software(ui: &Ui) -> Vec<Row> {
+    let mut a = Vec::new();
+    a.push(Row::Head("Software".into()));
+    a.push(kv("OOS", format!("oos-ui {}", env!("CARGO_PKG_VERSION"))));
+    if !ui.host.runtime().persistence {
+        a.push(Row::Note("Persistence off: storage unavailable".into(), AMBER));
+    }
+    if let Some(crash) = &ui.host.runtime().crash {
+        a.push(Row::Note(format!("Last crash: {}", crash.text()), AMBER));
+    }
+    a.push(kv("Kernel", if ui.info.is_empty() { "-".to_string() } else { ui.info.clone() }));
+    a
+}
+
 impl Ui {
     /// cpufreq's current clock text of CPU `n` (kHz).
     fn cpu_freq(&self, n: usize) -> Option<String> {
@@ -147,9 +161,7 @@ impl Ui {
             // capabilities of this unit from the image (/etc/oos/limits.conf), not experimental
             a.push(kv("Unit defaults", p.unit.join(", ")));
         }
-        a.push(Row::Head("Software".into()));
-        a.push(kv("OOS", format!("oos-ui {}", env!("CARGO_PKG_VERSION"))));
-        a.push(kv("Kernel", if self.info.is_empty() { "-".to_string() } else { self.info.clone() }));
+        a.extend(software(self));
         a.push(match readings {
             Some((0, _)) => kvc("FPGA", "not reached", AMBER),
             Some((v, _)) if v == board().fpga_version() => kv("FPGA", format!("{:#010x}", v)),

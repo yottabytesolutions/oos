@@ -254,14 +254,6 @@ impl Server {
         Ok(s)
     }
 
-    pub fn ports(&self) -> Option<(u16, u16, u16)> {
-        Some((
-            self.pm_tcp.as_ref()?.local_addr().ok()?.port(),
-            self.pm_udp.as_ref()?.local_addr().ok()?.port(),
-            self.core_tcp.as_ref()?.local_addr().ok()?.port(),
-        ))
-    }
-
     pub fn open(v6: bool) -> Server {
         let mut s = Self::empty();
         s.set_open(true, v6);
@@ -285,7 +277,11 @@ impl Server {
             if self.pm_tcp.take().is_some() | self.core_tcp.take().is_some() | self.pm_udp.take().is_some() {
                 eprintln!("oos-ui: VXI-11 off");
             }
+            for conn in &self.conns {
+                let _ = conn.s.shutdown(std::net::Shutdown::Both);
+            }
             self.conns.clear();
+            self.links.clear();
             return;
         }
         if self.pm_tcp.is_some() || self.core_tcp.is_some() {
@@ -506,3 +502,5 @@ mod tests {
         assert_eq!(take_record(&mut b), None);
     }
 }
+
+mod ports;

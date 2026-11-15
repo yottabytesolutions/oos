@@ -269,6 +269,9 @@ impl Scpi {
                 if self.l.take().is_some() {
                     eprintln!("oos-ui: SCPI off");
                 }
+                for client in &self.clients {
+                    let _ = client.s.shutdown(std::net::Shutdown::Both);
+                }
                 self.clients.clear();
             }
         }

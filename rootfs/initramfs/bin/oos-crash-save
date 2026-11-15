@@ -12,16 +12,15 @@
 #   fit the reserve is skipped, nothing is pruned.
 # - Name: <n>-<time>-<checksum>, from the dmesg records' time and content.
 # - Order, durable: copy into .tmp (every copy checked), fsync each file and .tmp, read every file back and compare;
-#   rename to its name, fsync /oos/crash; then clear the copied pstore entries; then prune the oldest archives beyond
-#   the budget, never the new one. M1b puts the abnormal-exit count (ADR 0015, durable and idempotent by the archive
-#   name) between the archive and the clear. Any failure stops there and leaves pstore as it was.
+#   rename to its name, fsync /oos/crash; then count the abnormal exit durably; then clear the copied pstore entries; then prune the oldest archives beyond
+#   the budget, never the new one. The counter keeps retry receipts by archive name and run marker. Any failure stops there and leaves pstore as it was.
 # - A start that finds an archive of the same records (interrupted after the rename) checks it against pstore and
 #   fsyncs it and /oos/crash again before it clears pstore. One that does not match is set aside as a partial and
 #   archived again.
 # - A .tmp left by an interrupted save, or an archive that did not match, is kept as .partial-<n>: one at most (it
 #   replaces an older one), counted in the budget. So /oos/crash exceeds 1 MiB by at most one archive and one partial.
 # The boot is named by its boot_id (uptime is no boot identity: after a watchdog reset it keeps counting from
-# power-on). rcS runs it in the background. With STATUS_FILE, a `Crash record` warning goes there for the start-up
+# power-on). oos-ui-loop runs it synchronously under a 20 s timeout. With STATUS_FILE, a `Crash record` warning goes there for the start-up
 # screen. The last line says `reason panic|oops` for the counter. Always exits 0.
 ps=${OOS_PSTORE:-/sys/fs/pstore}
 mnt=${OOS_CRASH_MNT:-/oos}
@@ -80,7 +79,7 @@ matches() {
 			*) cmp -s "$f" "$1/$b" ;;
 		esac || return 1
 	done
-	[ -s "$1/saved-by-boot" ] && [ -s "$1/saved-by-build" ]
+	[ -s "$1/saved-by-boot" ] && [ -s "$1/saved-by-build" ] && [ -s "$1/ui-run" ]
 }
 # fsync every file of $1, $1 and /oos/crash
 durable() { sync "$1"/* "$1" && sync "$dir"; }
@@ -102,7 +101,7 @@ if [ -z "$name" ]; then
 		case "$f" in */console-ramoops*) [ "$b" -gt $console_bytes ] && b=$console_bytes ;; esac
 		new_kb=$((new_kb + (b + 4095) / 4096 * 4))
 	done
-	new_kb=$((new_kb + 8))
+	new_kb=$((new_kb + 12))
 	[ $new_kb -le $budget_kb ] || fail "$new_kb KiB is over the $budget_kb KiB budget"
 	free=$(df -k "$mnt" | tail -n 1 | awk '{print $4}')
 	[ $((${free:-0} - new_kb)) -ge $reserve_kb ] 2>/dev/null || fail "${free:-?} KiB free on $mnt, $new_kb KiB needed and $reserve_kb KiB kept free"
@@ -122,13 +121,27 @@ if [ -z "$name" ]; then
 	else
 		echo unknown > "$tmp/saved-by-build" || fail "build not recorded"
 	fi
+	# Freeze the related run identity in the archive. A retry in a later boot must not alias a
+	# different stale marker to these old records if an earlier clear failed.
+	run=-
+	for mark in "$mnt/oos-ui.running" "$mnt/oos-ui.stable"; do
+		if [ -s "$mark" ]; then run=$(head -n 1 "$mark"); break; fi
+	done
+	printf '%s\n' "$run" > "$tmp/ui-run" || fail "UI run not recorded"
 	sync "$tmp"/* "$tmp" || fail "fsync in $tmp failed"
 	if [ -e "$build" ]; then built() { cmp -s "$build" "$tmp/saved-by-build"; }; else built() { [ "$(cat "$tmp/saved-by-build")" = unknown ]; }; fi
-	matches "$tmp" && cmp -s "$boot_id" "$tmp/saved-by-boot" && built || fail "read-back of $tmp differs"
+	matches "$tmp" && cmp -s "$boot_id" "$tmp/saved-by-boot" && built && [ "$(cat "$tmp/ui-run")" = "$run" ] || fail "read-back of $tmp differs"
 	name=$(next)-$key
 	mv "$tmp" "$dir/$name" || fail "rename to $dir/$name failed"
 	sync "$dir" || fail "fsync of $dir failed"
 fi
+# The archive and its count form a retryable transaction. A stale UI marker is an alias of this
+# event, never a second abnormal exit. oos-ui-loop is the only caller during image startup.
+run=$(cat "$dir/$name/ui-run")
+OOS_UI_DATA="$mnt" timeout -s KILL 5 "${OOS_UI_EXITS:-/bin/oos-ui-exits}" count "panic-$key" 1 "$run" panic || {
+    [ -z "${OOS_UI_LEDGER_FAILED:-}" ] || : > "$OOS_UI_LEDGER_FAILED"
+    fail "abnormal-exit counter not committed"
+}
 for f in $copied; do rm -f "$f"; done
 keep=${name%%-*}
 for d in $(nums); do

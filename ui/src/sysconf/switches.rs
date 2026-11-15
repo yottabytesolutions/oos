@@ -38,6 +38,7 @@ pub struct Switches {
     pub autoset_unit_levels: bool,
     /// the board's own switches
     pub board: crate::board::BoardSwitches,
+    pub memory: crate::system::memory::Limits,
 }
 
 /// The value of an `OOS_*` variable: None when it is not set or not text.
@@ -67,6 +68,7 @@ impl Switches {
             ipv6: crate::net6::enabled_from(flag(env, "OOS_IPV6"), conf),
             autoset_unit_levels: levels.as_deref() != Some("records"),
             board: crate::board::BoardSwitches::parse(env, conf, settings),
+            memory: crate::system::memory::Limits::parse(conf),
         }
     }
 

@@ -4,6 +4,8 @@
 //! Storage: setup files (`key = value` text of the Model), waveform CSV, PNG screenshots (own encoder: one fixed-Huffman
 //! deflate block with matches against the pixel to the left and above, CRC32, Adler32), file names in the storage directory.
 
+pub(crate) mod durable;
+pub(crate) mod startup;
 use crate::gfx::Canvas;
 use crate::math::{MATH_OPS, WINDOWS};
 use crate::model::*;
@@ -80,8 +82,6 @@ pub fn write(path: &Path, data: &[u8]) -> std::io::Result<()> {
     }
     std::fs::write(path, data)
 }
-
-// ---------------------------------------------------------------------------------------------- setup files
 
 const COUPLINGS: [Coupling; 4] = [Coupling::Dc, Coupling::Ac, Coupling::Gnd, Coupling::Dc50];
 const SLOPES: [Slope; 3] = [Slope::Rise, Slope::Fall, Slope::Either];

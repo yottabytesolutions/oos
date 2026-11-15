@@ -1549,16 +1549,6 @@ impl Mdns {
             let _ = tx.send(Ctl::Set(cfg));
         }
     }
-
-    /// Goodbyes and the end of the thread (at the end of oos-ui).
-    pub fn stop(&mut self) {
-        if let Some(tx) = self.tx.take() {
-            let _ = tx.send(Ctl::Stop);
-        }
-        if let Some(h) = self.th.take() {
-            let _ = h.join();
-        }
-    }
 }
 
 /// The thread: sockets while on, a blocking wait between packets and timers.
@@ -2291,7 +2281,9 @@ mod tests {
             println!("{}.local for {} s", name, hold);
             std::thread::sleep(std::time::Duration::from_secs(hold));
         }
-        m.stop();
+        m.shutdown(std::time::Instant::now() + std::time::Duration::from_secs(1));
         assert_eq!(status().state, State::Off);
     }
 }
+
+mod lifecycle;

@@ -158,11 +158,12 @@ pub fn stat_text(ui: &Ui) -> String {
         format!(" gpu panel {:.1}{} ms", p, m.map_or(String::new(), |m| format!(" monitor {:.1}", m)))
     });
     let gpu = format!(
-        "{}{}{}{} graphics {}{}",
+        "{}{}{}{} {} graphics {}{}",
         gpu,
         screens,
         crate::pacing::summary(),
         crate::framecost::summary(),
+        ui.lifecycle_text(),
         if ui.sys.gpu { "gpu" } else { "cpu" },
         hdmi
     );

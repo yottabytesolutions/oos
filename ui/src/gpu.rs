@@ -12,6 +12,8 @@
 //! The protocol is a few fixed C structs (`#[repr(C)]` here, the same in oos-gpu.c, sizes checked by a test), each
 //! message answered by a `Done`. Every failure ends the helper: oos-ui then draws on the CPU again.
 
+mod process;
+pub mod recovery;
 use crate::gfx::{Canvas, Rect};
 use crate::ui::TraceJob;
 use crate::wave::Phosphor;
@@ -219,6 +221,7 @@ mod imp {
 
     pub struct Gpu {
         child: std::process::Child,
+        stopped: Option<bool>,
         sock: UnixStream,
         arena: *mut u8,
         /// targets known to the helper: (w, h, in its own memory)
@@ -279,20 +282,18 @@ mod imp {
             if unsafe { libc::ftruncate(fd, ARENA as libc::off_t) } != 0 {
                 return Err(format!("arena: {}", std::io::Error::last_os_error()));
             }
+            let (mut child, ours) = lifecycle::spawn(helper)?;
             let arena = unsafe {
                 libc::mmap(std::ptr::null_mut(), ARENA, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0)
             };
             if arena == libc::MAP_FAILED {
-                return Err(format!("arena map: {}", std::io::Error::last_os_error()));
+                let error = std::io::Error::last_os_error();
+                process::stop(&mut child, std::time::Instant::now());
+                return Err(format!("arena map: {}", error));
             }
-            let (ours, theirs) = UnixStream::pair().map_err(|e| format!("socket: {}", e))?;
-            let child = std::process::Command::new(helper)
-                .stdin(std::process::Stdio::from(OwnedFd::from(theirs)))
-                .stdout(std::process::Stdio::null())
-                .spawn()
-                .map_err(|e| format!("{}: {}", helper, e))?;
             let mut g = Gpu {
                 child,
+                stopped: None,
                 sock: ours,
                 arena: arena as *mut u8,
                 targets: [None; 8],
@@ -309,14 +310,6 @@ mod imp {
             // the helper opens Mesa and the GPU first
             g.wait(Duration::from_secs(10)).map_err(|e| format!("start: {}", e))?;
             Ok(g)
-        }
-
-        /// Targets from `n` on are the monitor's (2 unless set: the script's memory targets). The panel has three
-        /// scan-out buffers: with the old fixed 2, a panel frame into its third buffer took the monitor's half of the
-        /// arena, and the monitor's frame sent right after it overwrote its layers while the GPU still drew them (black
-        /// flashes on the panel with HDMI and Graphics = GPU, mostly with a menu open).
-        pub fn monitor_targets_from(&mut self, n: usize) {
-            self.monitor_from = n;
         }
 
         fn wait(&mut self, t: Duration) -> Result<DoneMsg, String> {
@@ -693,11 +686,12 @@ mod imp {
         }
     }
 
+    mod lifecycle;
     impl Drop for Gpu {
         fn drop(&mut self) {
             clock_floor(false);
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            self.shutdown();
+            // SAFETY: this process owns this ARENA-byte mapping; helper mappings are separate.
             unsafe { libc::munmap(self.arena as *mut libc::c_void, ARENA) };
         }
     }

@@ -38,7 +38,14 @@ impl Fake {
     /// `plan` says.
     fn shim(&self, cmd: &str) {
         let real = Command::new("sh").arg("-c").arg(format!("command -v {}", cmd)).output().expect("sh runs");
-        let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+        let mut real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+        if cmd == "sync" {
+            // macOS sync flushes the entire host. Match the image's per-path operation so
+            // unrelated builds do not consume the counter's five-second process deadline.
+            let helper = self.p("bin/host-sync");
+            write_exec(&helper, "#!/bin/sh\nexec python3 - \"$@\" <<'PY_SYNC'\nimport os, sys\nfor path in sys.argv[1:]:\n    fd = os.open(path, os.O_RDONLY)\n    try: os.fsync(fd)\n    finally: os.close(fd)\nPY_SYNC\n");
+            real = helper.to_string_lossy().into_owned();
+        }
         assert!(real.starts_with('/'), "no {} on the host", cmd);
         let (count, plan) = (self.p(&format!("count-{}", cmd)), self.p(&format!("plan-{}", cmd)));
         let body = format!(
@@ -83,11 +90,13 @@ impl Fake {
         let path = format!("{}:{}", self.p("bin").display(), std::env::var("PATH").unwrap_or_default());
         c.env("PATH", path)
             .env("OOS_TEST", "1")
+            .env("OOS_UI_TMP", &self.root)
             .env("OOS_PSTORE", self.p("pstore"))
             .env("OOS_CRASH_MNT", self.p("oos"))
             .env("OOS_KMSG", self.p("kmsg"))
             .env("OOS_BOOT_ID", self.p("boot_id"))
-            .env("OOS_BUILD_FILE", self.p("oos-build"));
+            .env("OOS_BUILD_FILE", self.p("oos-build"))
+            .env("OOS_UI_EXITS", script("oos-ui-exits"));
     }
     fn save(&self) -> String {
         let mut c = Command::new("sh");
@@ -176,6 +185,7 @@ fn console_records_alone_archive_nothing() {
     assert!(out.contains("no crash record"), "{}", out);
     assert!(f.archives().is_empty());
     assert_eq!(f.pstore(), 2, "console and pmsg stay");
+    assert_eq!(exits(&f), 0);
 }
 
 #[test]
@@ -371,4 +381,112 @@ fn the_watchdog_wrapper_restarts_an_exiting_kicker_with_growing_delays() {
     assert!(at("again in 1 s") < at("again in 2 s") && at("again in 2 s") < at("again in 4 s"), "{}", text);
     // timed from the first restart's line, which comes before its 1 s pause: the third one waited 1 s + 2 s
     assert!(third >= Duration::from_millis(2900), "first {:?}, third {:?} later\n{}", first, third, text);
+}
+
+fn exits(f: &Fake) -> usize {
+    std::fs::read_to_string(f.p("oos/oos-ui.exits"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.as_bytes().first().is_some_and(u8::is_ascii_digit))
+        .count()
+}
+
+#[test]
+fn a_panic_is_counted_once() {
+    let f = Fake::new("count-panic");
+    f.panic("one");
+    f.save();
+    assert_eq!(exits(&f), 1);
+    f.panic("one");
+    f.save();
+    assert_eq!(exits(&f), 1);
+}
+
+#[test]
+fn panic_and_running_marker_are_one_exit() {
+    let f = Fake::new("marker-panic");
+    std::fs::write(f.p("oos/oos-ui.running"), "boot:run1\n").unwrap();
+    f.panic("one");
+    f.save();
+    let mut c = Command::new("sh");
+    c.arg(script("oos-ui-exits")).args(["count", "boot:run1", "1", "boot:run1"]);
+    f.env(&mut c);
+    assert!(c.env("OOS_UI_DATA", f.p("oos")).status().unwrap().success());
+    assert_eq!(exits(&f), 1);
+}
+
+#[test]
+fn counter_failure_keeps_pstore() {
+    let f = Fake::new("count-fail");
+    f.panic("one");
+    std::fs::create_dir(f.p("oos/oos-ui.exits.new")).unwrap();
+    assert!(f.save().contains("counter not committed"));
+    assert_eq!((f.pstore(), f.committed().len(), exits(&f)), (2, 1, 0));
+    std::fs::remove_dir(f.p("oos/oos-ui.exits.new")).unwrap();
+    f.save();
+    assert_eq!((f.pstore(), f.committed().len(), exits(&f)), (0, 1, 1));
+}
+
+#[test]
+fn clear_retry_does_not_count_twice() {
+    let f = Fake::new("count-clear");
+    f.panic("one");
+    f.plan("rm", "fail 1");
+    f.save();
+    assert_eq!((f.pstore(), exits(&f)), (1, 1));
+    f.plan("rm", "");
+    f.save();
+    assert_eq!((f.pstore(), exits(&f)), (0, 1));
+}
+
+#[test]
+fn an_old_archive_retry_does_not_consume_a_new_runs_marker() {
+    let f = Fake::new("new-run");
+    std::fs::write(f.p("oos/oos-ui.running"), "boot:old\n").unwrap();
+    f.panic("one");
+    f.plan("rm", "fail 1");
+    f.save();
+    assert_eq!(exits(&f), 1);
+    std::fs::write(f.p("oos/oos-ui.running"), "boot:new\n").unwrap();
+    f.plan("rm", "");
+    f.save();
+    let mut c = Command::new("sh");
+    c.arg(script("oos-ui-exits")).args(["count", "boot:new", "1", "boot:new"]);
+    f.env(&mut c);
+    assert!(c.env("OOS_UI_DATA", f.p("oos")).status().unwrap().success());
+    assert_eq!(exits(&f), 2);
+}
+
+#[test]
+fn rearchiving_damaged_records_keeps_the_original_counter_identity() {
+    let f = Fake::new("count-damaged");
+    f.panic("one");
+    f.plan("rm", "fail 1");
+    f.save();
+    assert_eq!((f.pstore(), exits(&f)), (1, 1));
+    let old = f.committed()[0].clone();
+    std::fs::write(f.p("oos/crash").join(old).join("dmesg-ramoops-0"), b"damaged").unwrap();
+    f.plan("rm", "");
+    f.save();
+    assert_eq!((f.pstore(), exits(&f)), (0, 1));
+}
+
+#[test]
+fn an_old_panic_retry_preserves_the_newer_run_receipt() {
+    let f = Fake::new("count-receipt");
+    std::fs::write(f.p("oos/oos-ui.running"), "boot:old\n").unwrap();
+    f.panic("one");
+    f.plan("rm", "fail 1");
+    f.save();
+    let count = || {
+        let mut c = Command::new("sh");
+        c.arg(script("oos-ui-exits")).args(["count", "boot:new", "1", "boot:new"]);
+        f.env(&mut c);
+        assert!(c.env("OOS_UI_DATA", f.p("oos")).status().unwrap().success());
+    };
+    count();
+    f.plan("rm", "");
+    f.save();
+    count();
+    assert_eq!(exits(&f), 2);
 }

@@ -21,7 +21,9 @@ mod graphics;
 pub mod host;
 mod hwmask;
 mod hwzone;
+mod lifecycle;
 mod logger;
+use lifecycle::MeasWorker;
 mod measlabels;
 mod overclock;
 mod panes;
@@ -878,46 +880,6 @@ fn measure_channels(
         let hs: Vec<_> = work.iter().map(|w| s.spawn(move || one(w))).collect();
         hs.into_iter().map(|h| h.join().expect("measurement thread")).collect()
     })
-}
-
-/// The measurements in the background, on the unit (`Ui::measure_in_background`): a thread on the slower cores
-/// measures the newest record while the frame loop goes on, and its results are taken a frame or two later. A record
-/// that comes while one is measured waits; a newer one replaces it. Without it (tests, scripts, the host) the
-/// measurements are made in the frame they belong to.
-struct MeasWorker {
-    tx: std::sync::mpsc::Sender<MeasJob>,
-    rx: std::sync::mpsc::Receiver<MeasDone>,
-    /// a job is out
-    busy: bool,
-}
-
-impl MeasWorker {
-    fn start(little: u64) -> Option<MeasWorker> {
-        let (tx, jobs) = std::sync::mpsc::channel::<MeasJob>();
-        let (done, rx) = std::sync::mpsc::channel::<MeasDone>();
-        std::thread::Builder::new()
-            .name("measure".into())
-            .spawn(move || {
-                crate::http::to_little_cores(little);
-                while let Ok((n, cheap, work)) = jobs.recv() {
-                    let w: Vec<(usize, &[f32], f64, f64)> =
-                        work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
-                    let t0 = std::time::Instant::now();
-                    let r = measure_channels(&w, cheap);
-                    // deep raw records (millions of samples): their cost on the state line (deepmeas::cost)
-                    let pts: usize = w.iter().map(|x| x.1.len()).sum();
-                    if pts > crate::compress::MAX_DEPTH as usize {
-                        crate::deepmeas::cost::set(&crate::deepmeas::cost::MEASURE_US, t0.elapsed());
-                        crate::deepmeas::cost::MEASURE_N.store(pts as u64, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    if done.send((n, r)).is_err() {
-                        break;
-                    }
-                }
-            })
-            .ok()?;
-        Some(MeasWorker { tx, rx, busy: false })
-    }
 }
 
 pub struct Ui {
@@ -1861,20 +1823,9 @@ impl Ui {
     // ------------------------------------------------------------------ acquisition per frame
 
     pub fn step(&mut self, dt_wall: f64) {
-        self.relayout();
-        self.now += dt_wall;
-        self.update_poll();
-        self.wlan_poll();
-        self.ntp_poll();
-        self.ssh_poll();
-        self.usb_poll();
-        self.ch_hold_poll();
-        self.counter_poll();
-        self.dvm_poll();
-        self.mask_hw_poll();
-        self.zone_hw_poll();
-        self.la_probe_poll();
-        self.log_tick();
+        if !lifecycle::begin_step(self, dt_wall) {
+            return;
+        }
         self.m.clamp_offsets();
         self.src.publish_afg(&self.m);
         // SINGLE armed: from here on only what comes after the press counts
@@ -2319,11 +2270,6 @@ impl Ui {
             self.phz.halve();
             self.vmaxz.iter_mut().for_each(|v| *v = (*v / 2).max(1));
             self.vmaxz_cg = (self.vmaxz_cg / 2).max(1);
-        }
-        if let Some((_, t)) = &self.toast {
-            if self.now > *t {
-                self.toast = None;
-            }
         }
     }
 
@@ -3690,6 +3636,10 @@ impl Ui {
         let f = self.fonts();
         let g = self.grid;
         let y = g.y + 14;
+        if !self.host.runtime().persistence {
+            backed_text(cv, &f.sb, g.x + 8, y, "Persistence off: storage unavailable", AMBER);
+            return;
+        }
         // only what makes the picture something else than a live measurement; the rates are on System info
         let src = match self.src.name() {
             "DEMO" => "Demo signals",
@@ -4933,6 +4883,30 @@ impl Ui {
     }
 
     /// From now on the measurements of new records are made in the background (the frame loop on the unit).
+    pub fn stop_workers(&mut self, deadline: std::time::Instant) {
+        lifecycle::stop_workers(self, deadline);
+    }
+
+    pub fn gpu_recovery_status(&mut self, status: String) {
+        self.host.runtime_mut().gpu = status;
+    }
+
+    pub fn persistence_status(&mut self, enabled: bool) {
+        self.host.runtime_mut().persistence = enabled;
+    }
+
+    pub fn lifecycle_text(&self) -> String {
+        self.host.runtime().text()
+    }
+
+    pub fn memory_stopped(&self) -> bool {
+        self.host.runtime().memory.stopped()
+    }
+
+    pub fn exit_code(&self) -> i32 {
+        self.host.runtime().memory.exit_code()
+    }
+
     pub fn measure_in_background(&mut self) {
         self.meas_bg = MeasWorker::start(self.host.switches().cores.little);
     }

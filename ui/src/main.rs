@@ -52,6 +52,7 @@ mod sparse;
 mod ssh;
 mod store;
 mod sysconf;
+mod system;
 mod trig;
 mod trignear;
 mod ui;
@@ -123,7 +124,6 @@ fn main() {
         return;
     }
     // the unit: model from /rigol/data/vendor.bin, standard limits plus /oos/limits.conf (docs/models.md);
-    // before the source starts, the acquisition thread reads it
     let limits = arg(&args, "--limits").unwrap_or_else(|| oos_hal::model::LIMITS_CONF.into());
     let p = oos_hal::model::Platform::detect(
         &arg(&args, "--cal").unwrap_or_else(|| "/rigol/data".into()),
@@ -148,6 +148,7 @@ fn main() {
         Some(_) => args.iter().filter(|a| !matches!(a.as_str(), "--hw" | "--fpga-live" | "--afe")).cloned().collect(),
         None => args,
     };
+    let startup = store::startup::Startup::device(&args);
     let switches = sysconf::Switches::read();
     let mut ui = Ui::new(source(&args, &switches), ui::host::Host::system(switches));
     if let Some(m) = &foreign {
@@ -172,11 +173,11 @@ fn main() {
     }
     #[cfg(target_os = "linux")]
     {
-        device_main(ui, &args, switches);
+        system::device::run(ui, &args, switches, startup);
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = ui;
+        let _ = (ui, startup);
         eprintln!("oos-ui: no display backend on this OS; use --script FILE");
     }
 }
@@ -199,6 +200,7 @@ fn serve(mut ui: Ui, sw: &sysconf::Switches) {
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+    system::stop_server(&mut ui, &mut web, &mut scpi, &mut vxi);
 }
 
 /// The layers of a GPU picture (System > Graphics = GPU): under and over the traces, and the traces as jobs. The
@@ -388,9 +390,6 @@ fn save_shot(ui: &mut Ui, cv: &Canvas, p: String, n: &mut u32) {
     }
 }
 
-/// Settings of the running oos-ui (key = value text, store.rs), kept in RAM for restarts within one boot.
-#[cfg(target_os = "linux")]
-const SETUP_FILE: &str = "/tmp/oos-ui.setup";
 /// Power-on pictures, first found wins: a picture copied by rcS from removable media, then the image's own.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const SPLASH: [&str; 2] = ["/tmp/oos-splash.ppm", "/etc/oos/splash.ppm"];
@@ -412,444 +411,6 @@ fn power(inp: &mut input::Inputs, a: ui::PowerAction) {
         }
         ui::PowerAction::Restart => inp.send(&board::board().panel_cmd(board::PanelCmd::Restart)),
     }
-}
-
-#[cfg(target_os = "linux")]
-fn device_main(mut ui: Ui, args: &[String], sw: sysconf::Switches) {
-    use board::Board;
-    use std::time::Instant;
-    ui.measure_in_background();
-    let mut disp = match drm::Display::open("/dev/dri/card0") {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("oos-ui: display: {}", e);
-            std::process::exit(1);
-        }
-    };
-    eprintln!("oos-ui: display {}x{}", disp.width, disp.height);
-    // the layout follows the panel of the unit (the DHO800/DHO900: 1024 x 600); a smaller one keeps the panel layout
-    if let Some(s) = ui::Screen::of_size(disp.width, disp.height) {
-        ui.scr = s;
-    }
-    let mut inp = input::Inputs::open(args);
-    // "app UI loaded", sent once at the end of the start-up (board.md section 4)
-    inp.send(&board::board().panel_cmd(board::PanelCmd::UiLoaded));
-    // start-up screen (ui/startup.rs) while the acquisition hardware starts; the own picture is its background
-    let start_up = arg(args, "--start-up");
-    if start_up.is_some() {
-        let mut cv = Canvas::new(ui::PANEL_W, ui::PANEL_H);
-        let splash =
-            SPLASH.iter().find_map(|p| std::fs::read(p).ok()).and_then(|b| store::ppm_into(&b, &mut cv)).map(|_| cv.px);
-        ui.start_up_begin(splash);
-    }
-    // own picture at power-on: without the start-up screen, the first start of a boot shows a binary
-    // PPM for 2 s
-    if start_up.is_none() && !std::path::Path::new("/tmp/oos-splash.done").exists() {
-        let _ = std::fs::write("/tmp/oos-splash.done", b"");
-        let mut cv = Canvas::new(ui::PANEL_W, ui::PANEL_H);
-        if let Some(p) = SPLASH.iter().find_map(|p| std::fs::read(p).ok()).and_then(|b| store::ppm_into(&b, &mut cv)) {
-            disp.present(&cv);
-            eprintln!("oos-ui: power-on picture {}x{}", p.0, p.1);
-            std::thread::sleep(std::time::Duration::from_secs(2));
-        }
-    }
-    // settings survive a restart of oos-ui within one boot (rcS restarts it on the hardware after the cold boot)
-    let setup_path = std::path::Path::new(SETUP_FILE);
-    if let Ok(t) = std::fs::read_to_string(setup_path) {
-        match store::parse_setup(&t) {
-            Ok(m) => {
-                ui.m = m;
-                eprintln!("oos-ui: settings restored from {}", SETUP_FILE);
-            }
-            Err(e) => eprintln!("oos-ui: {}: {}", SETUP_FILE, e),
-        }
-    }
-    // settings of the scope itself: NTP, time zone, Ethernet (/oos/system.conf)
-    ui.load_system(sysconf::default_path());
-    ui.set_ssh_dir(ssh::dir());
-    let mut setup_last = store::setup_text(&ui.m);
-    let mut setup_t = Instant::now();
-    ui.info = std::fs::read_to_string("/proc/sys/kernel/osrelease")
-        .map(|s| format!("Linux {}", s.trim()))
-        .unwrap_or_default();
-    let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
-    let mut last = Instant::now();
-    let mut fps_t = Instant::now();
-    let mut fps_n = 0;
-    let mut shot_n = 0;
-    let mut led_mask = u32::MAX;
-    let mut led_t = Instant::now();
-    let mut net_t: Option<Instant> = None;
-    let eth_t0 = Instant::now();
-    let mut eth_t: Option<Instant> = None;
-    input::install_signal_handlers();
-    let web_port = arg(args, "--web-port").and_then(|p| p.parse().ok()).unwrap_or(8080);
-    let scpi_port = arg(args, "--scpi-port").and_then(|p| p.parse().ok()).unwrap_or(5555);
-    let mut web = http::Http::open(web_port, &sw);
-    let mut scpi = scpi::Scpi::open(scpi_port, sw.ipv6);
-    let mut vxi = vxi11::Server::open(sw.ipv6);
-    // who may update or control the scope over the network: net.allow (docs/network.md 6); read once per start
-    let acl = netacl::Acl::load(&sysconf::default_path());
-    web.acl = acl.clone();
-    scpi.acl = acl.clone();
-    vxi.acl = acl;
-    // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login (None: not yet,
-    // at the start)
-    let mut remote_now: Option<[bool; 5]> = None;
-    // the name on the network and the mDNS responder (mdns.rs), as applied; looked at once a second
-    let mut mdns = mdns::Mdns::new(None);
-    let mut mdns_now: Option<mdns::Config> = None;
-    let mut mdns_t: Option<Instant> = None;
-    // HDMI mirror: a monitor is looked for every 3 s and gets the panel picture at 15 frames/s (`--no-hdmi`: off)
-    let hdmi_on = !args.iter().any(|a| a == "--no-hdmi");
-    let mut hdmi: Option<drm::Display> = None;
-    // the monitor's own picture (Display > HDMI = Waveform or Layout)
-    let mut hdmi_cv: Option<Canvas> = None;
-    let mut hdmi_t: Option<Instant> = None;
-    let mut frame_n = 0u64;
-    // System > Graphics = GPU: the helper, the layers of the panel and of the monitor's own layout, the monitor's
-    // settings line; `gpu_failed`: the GPU did not start or failed, the CPU draws until the setting changes
-    let mut gpu: Option<gpu::Gpu> = None;
-    let (mut gpu_want, mut gpu_failed) = (false, false);
-    // the GPU's start is told on screen only when the setting was changed, not at every power-on (GPU is the default)
-    let mut gpu_changed = false;
-    let mut gl = GpuLayers::new(ui.scr.w, ui.scr.h);
-    let mut gl_view = GpuLayers::new(1, 1);
-    let mut gl_head: Option<Canvas> = None;
-    // the monitor's buffers are the targets after the panel's (`start_gpu`: one per panel buffer, three). They were
-    // 2 to 4 while the panel had two: the monitor's first buffer took the place of the panel's third, the GPU drew the
-    // panel's picture into it, and the panel showed an old picture in its turn (both screens flickered with HDMI and
-    // Graphics = GPU). None not yet, Some(false) they could not be taken
-    let hdmi_base = disp.buffers();
-    let mut hdmi_gpu: Option<bool> = None;
-    // the frame in the GPU's work: its ticket, the panel buffer it fills, and the monitor's frame with its buffer
-    let mut gpu_pending: Option<(gpu::Ticket, usize, Option<(gpu::Ticket, usize)>)> = None;
-    // the first read at once (a complete start-up shows no screen at all)
-    let mut start_up_t = Instant::now().checked_sub(std::time::Duration::from_millis(300)).unwrap_or_else(Instant::now);
-    while !ui.quit && !input::stop_requested() {
-        // the start-up file, every 250 ms while the screen is up
-        if let Some(p) = start_up.as_deref().filter(|_| ui.start_up_active() && start_up_t.elapsed().as_millis() >= 250)
-        {
-            start_up_t = Instant::now();
-            let up = std::fs::read_to_string("/proc/uptime")
-                .ok()
-                .and_then(|s| s.split_whitespace().next().and_then(|t| t.parse().ok()))
-                .unwrap_or(0.0);
-            ui.start_up_update(&std::fs::read_to_string(p).unwrap_or_default(), up);
-        }
-        // inputs (waits up to the next frame)
-        let elapsed = last.elapsed().as_secs_f64();
-        let wait_ms = ((1.0 / 30.0 - elapsed) * 1000.0).max(0.0) as i32;
-        for line_or_ev in inp.poll(wait_ms) {
-            match line_or_ev {
-                input::In::Ev(ev) => ui.handle(ev),
-                input::In::Cmd(line) => match cmd::run(&mut ui, &line) {
-                    cmd::Out::Shot(p) => ui.shot_request = Some(p),
-                    _ => {}
-                },
-            }
-        }
-        // the services follow their switches: the ports were opened above, SSH is started by rcS (oos-ssh)
-        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_ssh, ui.sys.ssh_password];
-        if remote_now != Some(want) {
-            let was = remote_now.unwrap_or([true, true, true, want[3], want[4]]);
-            if want[0] != was[0] {
-                web.set_open(want[0].then_some(web_port), sw.ipv6);
-            }
-            if want[1] != was[1] {
-                scpi.set_open(want[1].then_some(scpi_port), sw.ipv6);
-            }
-            if want[2] != was[2] {
-                vxi.set_open(want[2], sw.ipv6);
-            }
-            if want[3] != was[3] || want[4] != was[4] {
-                ssh::apply(want[3]);
-            }
-            remote_now = Some(want);
-        }
-        if mdns_t.map_or(true, |t| t.elapsed().as_secs() >= 1) {
-            mdns_t = Some(Instant::now());
-            let c = ui.mdns_config(web_port, scpi_port);
-            if mdns_now.as_ref() != Some(&c) {
-                if mdns_now.as_ref().map_or(true, |o| o.name != c.name) {
-                    hostname::set(&c.name);
-                }
-                mdns.set(c.clone());
-                mdns_now = Some(c);
-            }
-        }
-        scpi.poll(&mut ui, &cv);
-        vxi.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
-        for c in web.poll(&mut ui, &cv, &mut scpi) {
-            if let cmd::Out::Shot(p) = cmd::run(&mut ui, &c) {
-                ui.shot_request = Some(p);
-            }
-        }
-        if last.elapsed().as_secs_f64() < 1.0 / 30.0 {
-            continue;
-        }
-        let dt = last.elapsed().as_secs_f64().min(0.2);
-        last = Instant::now();
-        let t0 = Instant::now();
-        ui.step(dt);
-        let t1 = Instant::now();
-        let hdmi_frame = hdmi.is_some() && (frame_n + 1) % 2 == 0;
-        ui.hdmi_snap_want = hdmi_frame && ui.m.hdmi == model::HdmiMode::Waveform;
-        // System > Graphics: the helper follows the setting
-        if ui.sys.gpu != gpu_want {
-            gpu_changed = frame_n > 0;
-            (gpu_want, gpu_failed) = (ui.sys.gpu, false);
-            if gpu.take().is_some() {
-                eprintln!("oos-ui: GPU off");
-            }
-            (hdmi_gpu, gpu_pending) = (None, None);
-        }
-        if gpu_want && gpu.is_none() && !gpu_failed {
-            match start_gpu(&disp, &sw) {
-                Ok(g) => {
-                    eprintln!("oos-ui: GPU on");
-                    if gpu_changed {
-                        ui.toast("Graphics: GPU");
-                    }
-                    gpu = Some(g);
-                }
-                Err(e) => {
-                    gpu_failed = true;
-                    eprintln!("oos-ui: GPU: {}", e);
-                    if gpu_changed {
-                        ui.toast(&format!("No GPU ({}): drawing on the CPU", e));
-                    }
-                }
-            }
-            hdmi_gpu = None;
-        }
-        // the web page's picture: the screen the CPU draws next swaps out the shown one; with the GPU, `cv` changes only
-        // when a picture comes back, and each one goes to the web page from there
-        if gpu.is_some() {
-            web.before_gpu_frame();
-        } else {
-            web.before_render(&mut cv, !ui.start_up_active());
-        }
-        let mut drawn = false;
-        let mut hdmi_done = false;
-        if let Some(g) = gpu.as_mut() {
-            let r: Result<(), String> = (|| {
-                // the picture comes back only for someone who wants it: the web page, a screenshot, and twice a
-                // second for SCPI and the rest
-                let shot = ui.shot_request.is_some();
-                // and every frame for a monitor that gets the panel's picture from the CPU (its buffers could not be
-                // given to the GPU), else it would show a picture up to half a second old
-                let hdmi_cpu = hdmi.is_some() && hdmi_gpu == Some(false);
-                let read = shot || web.picture_wanted() || frame_n % 15 == 0 || hdmi_cpu;
-                // 1. this frame's layers, while the GPU still puts the last one together
-                let tl = Instant::now();
-                gl.draw(&mut ui, cv.w, cv.h, false);
-                let layers = tl.elapsed().as_secs_f32() * 1e3;
-                // 2. the last frame: shown once it is done (its picture into `cv` when it was asked for)
-                let mut wait = 0.0;
-                if let Some((tp, bp, th)) = gpu_pending.take() {
-                    let back = tp.reads();
-                    g.collect(tp, Some(&mut cv))?;
-                    if back {
-                        web.picture_read_back(&cv);
-                    }
-                    wait += g.times.wait;
-                    disp.flip(bp);
-                    if let Some((t2, b2)) = th {
-                        g.collect(t2, None)?;
-                        if let Some(h) = hdmi.as_mut() {
-                            h.flip_scaled(b2);
-                        }
-                    }
-                }
-                // the monitor's buffers for the GPU, once per monitor (a message that is answered at once: only
-                // with no frame in work)
-                if let (Some(h), None) = (hdmi.as_ref(), hdmi_gpu) {
-                    let mut ok = true;
-                    for i in 0..h.buffers() {
-                        let (fd, pitch) = h.export(i).map_err(|e| format!("HDMI export: {}", e))?;
-                        ok &= g
-                            .target_dmabuf(hdmi_base + i, h.width, h.height, pitch, fd)
-                            .map_err(|e| eprintln!("oos-ui: GPU HDMI: {}", e))
-                            .is_ok();
-                    }
-                    hdmi_gpu = Some(ok);
-                }
-                // 3. this frame to the GPU (into the buffer neither shown nor waiting to be); a screenshot waits for
-                // it, so it is of this frame
-                let b = disp.free();
-                let full = gfx::Rect::new(0, 0, cv.w, cv.h);
-                let tp = g.submit(b, None, &[gl.quad(&ui, full, full, false, false)], read)?;
-                let copy = g.times.copy;
-                let th = match (hdmi.as_ref(), hdmi_gpu, hdmi_frame) {
-                    (Some(h), Some(true), true) => {
-                        let b2 = h.free();
-                        Some((
-                            hdmi_gpu_frame(
-                                &mut ui,
-                                g,
-                                &gl,
-                                &mut gl_view,
-                                &mut gl_head,
-                                h.width,
-                                h.height,
-                                hdmi_base + b2,
-                                false,
-                            )?,
-                            b2,
-                        ))
-                    }
-                    _ => None,
-                };
-                hdmi_done = th.is_some() || (hdmi_gpu == Some(true) && hdmi_frame);
-                if shot {
-                    g.collect(tp, Some(&mut cv))?;
-                    web.picture_read_back(&cv);
-                    disp.flip(b);
-                    if let Some((t2, b2)) = th {
-                        g.collect(t2, None)?;
-                        if let Some(h) = hdmi.as_mut() {
-                            h.flip_scaled(b2);
-                        }
-                    }
-                } else {
-                    gpu_pending = Some((tp, b, th));
-                }
-                let t = g.times;
-                ui.t_gpu = Some([layers, copy, wait, t.upload, t.draw, t.read]);
-                ui.t_gpu_screens = Some((t.panel, (hdmi.is_some() && hdmi_gpu == Some(true)).then_some(t.monitor)));
-                Ok(())
-            })();
-            match r {
-                Ok(()) => drawn = true,
-                Err(e) => {
-                    (gpu, gpu_failed, hdmi_gpu, gpu_pending, hdmi_done) = (None, true, None, None, false);
-                    eprintln!("oos-ui: GPU frame: {}", e);
-                    ui.toast("GPU failed: drawing on the CPU");
-                }
-            }
-        }
-        if !drawn {
-            (ui.t_gpu, ui.t_gpu_screens) = (None, None);
-            ui.render(&mut cv);
-        }
-        let t2 = Instant::now();
-        if !drawn {
-            disp.present(&cv);
-        }
-        frame_n += 1;
-        if let Some(h) = hdmi.as_mut().filter(|_| hdmi_frame && !hdmi_done) {
-            // the monitor's picture: its own layout, the workspace, or the panel's
-            let size = match ui.m.hdmi {
-                model::HdmiMode::Layout => ui::Screen::for_monitor(h.width, h.height),
-                model::HdmiMode::Waveform if !ui.hdmi_snap.is_empty() => Some(ui::Screen { w: h.width, h: h.height }),
-                _ => None,
-            };
-            match size {
-                Some(s) => {
-                    if hdmi_cv.as_ref().is_none_or(|c| (c.w, c.h) != (s.w, s.h)) {
-                        hdmi_cv = Some(Canvas::new(s.w, s.h));
-                    }
-                    let hc = hdmi_cv.as_mut().unwrap();
-                    if ui.m.hdmi == model::HdmiMode::Layout {
-                        ui.render_view(hc);
-                    } else {
-                        hdmi_workspace(&ui, hc);
-                    }
-                    h.present_scaled(hc);
-                }
-                None => h.present_scaled(&cv),
-            }
-        }
-        let t3 = Instant::now();
-        if hdmi_on && hdmi_t.is_none_or(|t| t.elapsed().as_secs() >= 3) {
-            hdmi_t = Some(Instant::now());
-            match hdmi.take() {
-                Some(h) if !h.connected() => {
-                    eprintln!("oos-ui: HDMI disconnected");
-                    h.close();
-                    hdmi_cv = None;
-                    // a frame of it still in work is collected, not shown
-                    hdmi_gpu = None;
-                }
-                Some(h) => hdmi = Some(h),
-                None => match disp.hdmi() {
-                    Ok(h) => {
-                        eprintln!("oos-ui: HDMI {}x{}", h.width, h.height);
-                        hdmi = Some(h);
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => {
-                        // e.g. a mode the second VOP refuses: try again in 30 s, not every 3 s
-                        eprintln!("oos-ui: HDMI: {}", e);
-                        hdmi_t = Some(Instant::now() + std::time::Duration::from_secs(27));
-                    }
-                },
-            }
-        }
-        ui.hdmi_out = hdmi.as_ref().map(|h| (h.width as u32, h.height as u32));
-        pacing::pass(t0, t1, t2, t3);
-        let a = 0.05;
-        ui.t_step += a * ((t1 - t0).as_secs_f32() * 1000.0 - ui.t_step);
-        ui.t_render += a * ((t2 - t1).as_secs_f32() * 1000.0 - ui.t_render);
-        ui.t_present += a * ((t3 - t2).as_secs_f32() * 1000.0 - ui.t_present);
-        // LEDs: on change, and refreshed every 2 s (the MCU may have been reset)
-        let lm = ui.leds();
-        if lm != led_mask || led_t.elapsed().as_secs() >= 2 {
-            inp.set_leds(lm);
-            led_mask = lm;
-            led_t = Instant::now();
-        }
-        if let Some(p) = ui.shot_request.take() {
-            save_shot(&mut ui, &cv, p, &mut shot_n);
-        }
-        for c in ui.panel_tx.drain(..) {
-            inp.send(&board::board().panel_cmd(c));
-        }
-        if let Some(a) = ui.power_action.take() {
-            power(&mut inp, a);
-        }
-        if setup_t.elapsed().as_secs() >= 2 {
-            setup_t = Instant::now();
-            let t = store::setup_text(ui.setup_model());
-            if t != setup_last {
-                let tmp = format!("{}.new", SETUP_FILE);
-                if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {
-                    // and across power cycles on OOS's own data partition (rcS copies it back to /tmp at boot)
-                    if std::path::Path::new("/oos/setups").is_dir() {
-                        let _ = std::fs::write("/oos/oos-ui.setup.new", &t)
-                            .and_then(|_| std::fs::rename("/oos/oos-ui.setup.new", "/oos/oos-ui.setup"));
-                    }
-                    setup_last = t;
-                }
-            }
-        }
-        if net_t.map_or(true, |t| t.elapsed().as_secs() >= 5) {
-            let (first, all) = ipv4_addresses();
-            (ui.net_if, ui.net) = first;
-            ui.net_ifs = all;
-            ui.net_fixed = std::path::Path::new("/tmp/oos-net.fallback").exists();
-            ui.eth_link = std::fs::read_to_string("/sys/class/net/eth0/carrier").is_ok_and(|c| c.trim() == "1");
-            net_t = Some(Instant::now());
-        }
-        if eth_t.map_or(true, |t| t.elapsed().as_secs() >= 1) {
-            eth_t = Some(Instant::now());
-            eth_watch(&mut ui, eth_t0.elapsed().as_secs_f64());
-        }
-        fps_n += 1;
-        if fps_t.elapsed().as_secs_f64() >= 1.0 {
-            ui.fps = fps_n as f32 / fps_t.elapsed().as_secs_f32();
-            fps_n = 0;
-            fps_t = Instant::now();
-        }
-    }
-    // goodbyes on the network (SIGTERM, quit)
-    mdns.stop();
-    inp.set_leds(0);
-    if let Some(h) = hdmi {
-        h.close();
-    }
-    disp.restore();
 }
 
 /// Once a second: a link at 10 Mbit/s gets one more autonegotiation (System > Network > 10 Mbit retry, ethlink.rs).

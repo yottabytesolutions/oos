@@ -54,30 +54,11 @@ const LIMITS: Limits =
 const SEND_INLINE: usize = 48 << 10;
 /// At most this many at once; more are answered 503, and the page tries again.
 const MAX_SENDERS: usize = 2;
+mod shutdown;
 const SEND_TIMEOUT_S: u64 = 30;
 static SENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// A large answer in the background. False when too many run already, or no thread could be started.
-fn send_in_background(s: &TcpStream, head: String, body: impl AsRef<[u8]> + Send + 'static, little: u64) -> bool {
-    use std::sync::atomic::Ordering::SeqCst;
-    let Ok(mut c) = s.try_clone() else { return false };
-    if SENDERS.fetch_add(1, SeqCst) >= MAX_SENDERS {
-        SENDERS.fetch_sub(1, SeqCst);
-        return false;
-    }
-    let t = std::thread::Builder::new().name("web-send".into()).spawn(move || {
-        lower_priority(little);
-        let _ = c.set_write_timeout(Some(Duration::from_secs(SEND_TIMEOUT_S)));
-        let _ = c.write_all(head.as_bytes());
-        let _ = c.write_all(body.as_ref());
-        SENDERS.fetch_sub(1, SeqCst);
-    });
-    if t.is_err() {
-        SENDERS.fetch_sub(1, SeqCst);
-        return false;
-    }
-    true
-}
+use shutdown::send_in_background;
 
 fn busy_answer(s: &TcpStream) {
     let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
@@ -191,6 +172,7 @@ pub struct Shots {
     wake: Condvar,
     /// the little cores the encoder and the senders run on (`Cores::little`)
     little: u64,
+    tasks: Arc<shutdown::Tasks>,
 }
 
 #[derive(Default)]
@@ -231,7 +213,7 @@ struct ShotState {
 
 impl Shots {
     fn new(little: u64) -> Arc<Shots> {
-        Arc::new(Shots { st: Default::default(), wake: Default::default(), little })
+        Arc::new(Shots { st: Default::default(), wake: Default::default(), little, tasks: Default::default() })
     }
 
     fn lock(&self) -> MutexGuard<'_, ShotState> {
@@ -257,7 +239,7 @@ impl Shots {
         {
             let tag = st.tag.clone();
             drop(st);
-            return answer_shot(s, have.as_deref(), png, &tag, self.little);
+            return answer_shot(s, have.as_deref(), png, &tag, self.little, &self.tasks);
         }
         if st.waiting.len() >= SHOT_WAITING {
             drop(st);
@@ -265,10 +247,10 @@ impl Shots {
         }
         if !st.thread {
             let me = self.clone();
-            if std::thread::Builder::new().name("web-png".into()).spawn(move || me.encoder()).is_err() {
+            if self.tasks.spawn("web-png", None, move || me.encoder()).is_err() {
                 // no thread: the old way, in the frame loop
                 drop(st);
-                return answer_shot(s, None, crate::store::png_of(cv).into(), "", self.little);
+                return answer_shot(s, None, crate::store::png_of(cv).into(), "", self.little, &self.tasks);
             }
             st.thread = true;
         }
@@ -299,7 +281,7 @@ impl Shots {
             for ((c, have, _, _), ok) in old.into_iter().zip(fits) {
                 // the last picture in the format asked for, else "busy" (the page asks again)
                 if ok {
-                    answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little);
+                    answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little, &self.tasks);
                 } else {
                     busy_answer(&c);
                 }
@@ -423,7 +405,7 @@ impl Shots {
                 let png = st.png.clone().unwrap_or_else(|| Arc::from(&[][..]));
                 drop(st);
                 for (c, have, _, _) in lack {
-                    answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little);
+                    answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little, &self.tasks);
                 }
                 continue;
             };
@@ -443,7 +425,7 @@ impl Shots {
             let tag = st.tag.clone();
             drop(st);
             for (c, have, _, _) in waiting {
-                answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little);
+                answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little, &self.tasks);
             }
         }
     }
@@ -462,7 +444,7 @@ pub fn same_pixels(a: &[u32], b: &[u32]) -> bool {
 }
 
 /// 304 when the viewer has this picture, else the PNG through a sender thread (503 when all are busy).
-fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str, little: u64) {
+fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str, little: u64, tasks: &shutdown::Tasks) {
     let etag = if tag.is_empty() { String::new() } else { format!("ETag: {}\r\n", tag) };
     if !tag.is_empty() && have == Some(tag) {
         let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
@@ -474,7 +456,7 @@ fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str, lit
     }
     let ctype = if png.starts_with(&[0xff, 0xd8]) { "image/jpeg" } else { "image/png" };
     let head = format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", ctype, png.len(), etag);
-    if !send_in_background(s, head, png, little) {
+    if !send_in_background(s, head, png, little, tasks) {
         busy_answer(s);
     }
 }
@@ -516,6 +498,8 @@ struct Inbox {
     q: Mutex<std::collections::VecDeque<Req>>,
     taken: Condvar,
     next: std::sync::atomic::AtomicU64,
+    /// Permanent process shutdown also wakes readers waiting for main intake.
+    quit: std::sync::atomic::AtomicBool,
     /// reader threads running
     active: std::sync::atomic::AtomicUsize,
 }
@@ -656,20 +640,7 @@ fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Acl>, lim: Lim
     }
     req.truncate(need);
     let body = req.split_off(end);
-    let id = inbox.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let Ok(sc) = s.try_clone() else { return };
-    let mut q = inbox.lock();
-    q.push_back(Req { id, s: sc, head: text, body });
-    let until = Instant::now() + lim.take;
-    while q.iter().any(|r| r.id == id) {
-        let now = Instant::now();
-        if now >= until {
-            q.retain(|r| r.id != id);
-            drop(q);
-            return answer(&s, "503 Service Unavailable", "busy, try again");
-        }
-        q = inbox.taken.wait_timeout(q, until - now).map(|x| x.0).unwrap_or_else(|e| e.into_inner().0);
-    }
+    shutdown::queue_request(s, inbox, text, body, lim);
 }
 
 /// The accept thread of an open port: a reader thread per connection, at most `MAX_PENDING` (503 beyond). Polls the
@@ -680,6 +651,7 @@ fn acceptor(
     acl: Arc<Mutex<crate::netacl::Acl>>,
     stop: Arc<std::sync::atomic::AtomicBool>,
     lim: Limits,
+    tasks: Arc<shutdown::Tasks>,
 ) {
     use std::sync::atomic::Ordering::SeqCst;
     let _ = l.set_nonblocking(true);
@@ -693,7 +665,8 @@ fn acceptor(
                     continue;
                 }
                 let (ib, acl) = (inbox.clone(), acl.clone());
-                let spawned = std::thread::Builder::new().name("web-read".into()).spawn(move || {
+                let tracked = s.try_clone().ok();
+                let spawned = tasks.spawn("web-read", tracked.as_ref(), move || {
                     reader(s, &ib, &acl, lim);
                     ib.active.fetch_sub(1, SeqCst);
                 });
@@ -829,11 +802,8 @@ impl Http {
         let Ok(addr) = l.local_addr() else { return };
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (inbox, acl, st, lim) = (self.inbox.clone(), self.acl_shared.clone(), stop.clone(), self.limits);
-        if std::thread::Builder::new()
-            .name("web-accept".into())
-            .spawn(move || acceptor(l, inbox, acl, st, lim))
-            .is_err()
-        {
+        let tasks = self.shots.tasks.clone();
+        if self.shots.tasks.spawn("web-accept", None, move || acceptor(l, inbox, acl, st, lim, tasks)).is_err() {
             eprintln!("oos-ui: web remote: no accept thread");
             return;
         }
@@ -986,7 +956,7 @@ impl Http {
                 };
                 let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, ctype, body.len());
                 if body.len() > SEND_INLINE {
-                    if !send_in_background(s, head, body, self.shots.little) {
+                    if !send_in_background(s, head, body, self.shots.little, &self.shots.tasks) {
                         busy_answer(s);
                     }
                 } else {

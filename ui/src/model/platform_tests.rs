@@ -45,7 +45,7 @@ fn four_channel_unit_keeps_everything() {
     let mut m = Model::default();
     m.ch[3].on = true;
     m.dec_src = 3;
-    assert!(!m.fit_platform());
+    assert!(!oos_core::change::normalize(&mut m, &config()));
     assert!(m.ch[3].on && m.dec_src == 3);
     assert_eq!(ch_names().len(), 4);
 }
@@ -73,10 +73,10 @@ fn every_generator_keeps_its_settings() {
 #[test]
 fn a_setup_of_another_board_fits_this_one() {
     let mut m = Model::default();
-    assert!(!m.fit_platform());
+    assert!(!oos_core::change::normalize(&mut m, &config()));
     if !board().couplings().contains(&Coupling::Dc50) {
         m.ch[1].coupling = Coupling::Dc50;
-        assert!(m.fit_platform());
+        assert!(oos_core::change::normalize(&mut m, &config()));
         assert_eq!(m.ch[1].coupling, Coupling::Dc);
     }
 }
@@ -87,6 +87,6 @@ fn the_boards_lists_are_usable() {
     assert_eq!(d[0].1, 0, "Auto first");
     assert!(d.windows(2).all(|w| w[0].1 < w[1].1), "ascending");
     assert_eq!(d[d.len() - 1].1, oos_hal::model::Limits::standard().max_mem[0], "the list ends at the largest depth");
-    assert!(board().couplings().contains(&Coupling::Dc), "the fallback of fit_platform");
+    assert!(board().couplings().contains(&Coupling::Dc), "the fallback of normalize");
     assert!(n_ch() <= NCH && gen_count() <= NGEN);
 }

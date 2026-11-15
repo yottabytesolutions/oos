@@ -4,14 +4,11 @@
 
 use super::super::*;
 use super::oracle::Row;
-use super::{event, request};
-use oos_core::change::{Classes as C, Request};
+use super::request;
+use oos_core::change::Request;
 
 pub(super) fn settings(ui: &mut Ui) {
-    if ui.m.ch.iter().any(|ch| ch.offset.abs() > ch.offset_max()) {
-        event(ui, Row::Offset, C::NONE);
-    }
-    ui.m.clamp_offsets();
+    super::normalize::apply(ui);
     ui.src.publish_afg(&ui.m);
     // SINGLE armed: from here on only what comes after the press counts.
     let single = ui.m.trig_mode == TrigMode::Single && ui.m.run == RunState::Run;
@@ -23,10 +20,6 @@ pub(super) fn settings(ui: &mut Ui) {
         ui.hw_avg_restart();
     }
     ui.single_armed = single;
-    if ui.m.fit_platform() {
-        ui.mark_changed();
-        event(ui, Row::Platform, C::NONE);
-    }
     if ui.meas_src >= n_ch() || ui.ref_src >= n_ch() {
         (ui.meas_src, ui.ref_src) = (ui.meas_src.min(n_ch() - 1), ui.ref_src.min(n_ch() - 1));
     }

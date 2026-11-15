@@ -41,6 +41,7 @@ fn unrelated_fields_snapshot() {
             "cur_b",
             "cur_c",
             "cur_d",
+            "cursor",
             "dec_ascii",
             "dec_sel",
             "decs",
@@ -86,7 +87,7 @@ fn normalize_is_idempotent() {
         m.zdelay = 1e3;
         normalize(&mut m, &config(n));
         let first = m.clone();
-        normalize(&mut m, &config(n));
+        assert!(!normalize(&mut m, &config(n)));
         assert_eq!(m, first);
         assert_eq!(m.ch[0].coupling, Coupling::Dc);
         assert!(m.active < n && m.trig_src < n);
@@ -134,6 +135,7 @@ fn change_values_stay_bounded() {
 
 mod contracts;
 mod nested;
+mod normalization;
 mod requests;
 
 mod fields;

@@ -57,7 +57,7 @@ pub(super) const CASES: &[Case] = &[
         |m| {
             m.spec_margin += 1.0;
         },
-        C::STATS.union(C::VIEW),
+        C::MATH.union(C::VIEW),
     ),
     (
         "math_offset",

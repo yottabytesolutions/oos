@@ -137,13 +137,13 @@ pub(super) const CASES: &[Case] = &[
         |m| {
             m.spec_src += 1;
         },
-        C::STATS.union(C::VIEW),
+        C::MATH.union(C::VIEW),
     ),
     (
         "spec_center",
         |m| {
             m.spec_center += 1.0;
         },
-        C::STATS.union(C::VIEW),
+        C::MATH.union(C::VIEW),
     ),
 ];

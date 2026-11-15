@@ -13,7 +13,7 @@ pub(super) fn measure_0(a: &Model, b: &Model, emit: &mut impl FnMut(FieldDiff)) 
     emit(FieldDiff::new(56, "cnt_src", a.cnt_src != b.cnt_src, C::ACQ | C::STATS));
     emit(FieldDiff::new(57, "cnt_mode", a.cnt_mode != b.cnt_mode, C::ACQ | C::STATS));
     emit(FieldDiff::new(58, "cnt_digits", a.cnt_digits != b.cnt_digits, C::ACQ | C::STATS));
-    emit(FieldDiff::new(60, "cursor", a.cursor != b.cursor, C::VIEW));
+    emit(FieldDiff::new(60, "cursor", a.cursor != b.cursor, C::NONE));
     emit(FieldDiff::new(61, "cur_a", a.cur_a != b.cur_a, C::NONE));
     emit(FieldDiff::new(62, "cur_b", a.cur_b != b.cur_b, C::NONE));
     emit(FieldDiff::new(63, "cur_c", a.cur_c != b.cur_c, C::NONE));

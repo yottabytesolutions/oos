@@ -7,7 +7,7 @@ use super::*;
 #[derive(Default)]
 pub(super) struct Census {
     count: Option<fn() -> usize>,
-    rows: [[usize; 2]; 4],
+    rows: [[usize; 2]; 5],
 }
 pub(super) struct Sample {
     count: Option<fn() -> usize>,
@@ -27,7 +27,7 @@ impl Sample {
     }
 }
 
-pub(in crate::ui) fn run(steps: usize, count: fn() -> usize) -> [[usize; 2]; 4] {
+pub(in crate::ui) fn run(steps: usize, count: fn() -> usize) -> [[usize; 2]; 5] {
     // Fake Shared has no producer or worker threads, so a process census measures only this UI.
     let mut ui = Ui::new(Source::Hw { shared: Default::default(), seen: 0 }, host::Host::headless());
     ui.m.meas.clear();
@@ -37,6 +37,7 @@ pub(in crate::ui) fn run(steps: usize, count: fn() -> usize) -> [[usize; 2]; 4] 
         if step == 100 {
             ui.host.runtime_mut().change.census.count = Some(count);
         }
+        ui.m.ch[0].offset = if step % 2 == 0 { 1e6 } else { -1e6 };
         ui.step(0.04);
         // Exercise real stage capture with bounded scalar proposals and a fresh token each time.
         ui.m.trig_level = if step % 2 == 0 { 0.125 } else { 0.25 };

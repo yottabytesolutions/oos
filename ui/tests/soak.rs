@@ -248,7 +248,9 @@ fn warmed_ui_observer_allocation_census() {
         return;
     }
     let rows = oos_ui::Ui::scripted_change_census(256, || HEAP.allocations());
-    for (name, [calls, allocations]) in ["prepare_keys", "compare", "finish_capture", "stage"].into_iter().zip(rows) {
+    for (name, [calls, allocations]) in
+        ["prepare_keys", "compare", "finish_capture", "stage", "live_normalize_bridge"].into_iter().zip(rows)
+    {
         println!("UI observer census {name}: calls={calls} allocations={allocations}");
         assert_eq!(calls, 256);
     }
@@ -256,4 +258,5 @@ fn warmed_ui_observer_allocation_census() {
     assert_eq!(rows[1][1], 0, "warmed compare must not allocate");
     assert_eq!(rows[2][1], 0, "warmed finish capture and proposals_agree must not allocate");
     assert_eq!(rows[3][1], 0, "warmed stage capture and proposals_agree must not allocate");
+    assert_eq!(rows[4][1], 0, "warmed live normalize and its legacy bridge must not allocate");
 }

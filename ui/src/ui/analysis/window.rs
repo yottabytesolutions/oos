@@ -169,13 +169,6 @@ pub(in crate::ui) fn poll(ui: &mut Ui) {
 }
 
 pub(super) fn update(ui: &mut Ui) {
-    if let Some(on) = (0..NCH).find(|&c| ui.m.ch[c].on) {
-        for src in [&mut ui.m.spec_src, &mut ui.m.eye_src] {
-            if !ui.m.ch[*src].on {
-                *src = on;
-            }
-        }
-    }
     let pane = ui.m.view == AView::Scope
         && ui.pane_h() > 0
         && matches!(ui.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);

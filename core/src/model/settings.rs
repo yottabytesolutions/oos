@@ -65,14 +65,6 @@ impl Model {
         TIME_SCALES[self.tscale]
     }
 
-    /// Keeps every offset within what the AFE of its scale can do.
-    pub fn clamp_offsets(&mut self) {
-        for ch in &mut self.ch {
-            let m = ch.offset_max();
-            ch.offset = ch.offset.clamp(-m, m);
-        }
-    }
-
     /// Unit of channel `c`.
     pub fn unit(&self, c: usize) -> &'static str {
         self.ch[c.min(NCH - 1)].unit.name()

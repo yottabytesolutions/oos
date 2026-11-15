@@ -70,7 +70,7 @@ pub(super) const CASES: &[Case] = &[
         |m| {
             m.cursor = if m.cursor == CursorMode::Off { CursorMode::Time } else { CursorMode::Off };
         },
-        C::VIEW,
+        C::NONE,
     ),
     (
         "cur_a",

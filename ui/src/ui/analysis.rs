@@ -267,10 +267,7 @@ impl Ui {
             _ => return false,
         }
         // the averaging/waterfall/eye restart on any analyser change
-        self.azr.spec_avg = None;
-        if let Some(w) = &mut self.azr.wf {
-            w.clear();
-        }
+        change::observations::analyzer_reset(self);
         self.analyzer_update();
         true
     }

@@ -196,7 +196,6 @@ impl Ui {
         }
         if self.m.zoom {
             self.m.zdelay = t as f32;
-            self.clamp_zoom();
         } else {
             self.m.delay = t as f32;
         }

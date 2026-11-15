@@ -13,7 +13,7 @@ pub(super) fn analysis_0(a: &Model, b: &Model, emit: &mut impl FnMut(FieldDiff))
     emit(FieldDiff::new(76, "math_fc", a.math_fc != b.math_fc, C::MATH | C::STATS));
     emit(FieldDiff::new(77, "math_lin", a.math_lin != b.math_lin, C::MATH | C::STATS));
     emit(FieldDiff::new(78, "math_expr", a.math_expr != b.math_expr, C::MATH | C::STATS));
-    emit(FieldDiff::new(80, "spec_margin", a.spec_margin != b.spec_margin, C::STATS | C::VIEW));
+    emit(FieldDiff::new(80, "spec_margin", a.spec_margin != b.spec_margin, C::MATH | C::VIEW));
     emit(FieldDiff::new(81, "math_offset", a.math_offset != b.math_offset, C::MATH | C::STATS));
     emit(FieldDiff::new(82, "fft_win", a.fft_win != b.fft_win, C::MATH | C::STATS));
     emit(FieldDiff::new(83, "math_bw", a.math_bw != b.math_bw, C::MATH | C::STATS));

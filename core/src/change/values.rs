@@ -34,14 +34,19 @@ impl Layout {
 pub struct UiAcq {
     raw: bool,
     route: bool,
-    mask_reference: bool,
+    read_format: u32,
     autoset: bool,
     bode: bool,
     layout: Layout,
 }
 impl UiAcq {
-    pub fn of(raw: bool, route: bool, mask_reference: bool, autoset: bool, bode: bool, layout: Layout) -> Self {
-        Self { raw, route, mask_reference, autoset, bode, layout }
+    pub fn of(raw: bool, route: bool, autoset: bool, bode: bool, layout: Layout) -> Self {
+        Self { raw, route, read_format: 0, autoset, bode, layout }
+    }
+    /// Effective raw/pair read format supplied by the acquisition adapter, not a settings hint.
+    pub fn with_read_format(mut self, format: u32) -> Self {
+        self.read_format = format;
+        self
     }
     pub fn layout(self) -> Layout {
         self.layout
@@ -52,8 +57,9 @@ impl UiAcq {
     pub fn raw(self) -> bool {
         self.raw
     }
-    pub(super) fn acquisition(self) -> (bool, bool, bool, bool, bool) {
-        (self.raw, self.route, self.mask_reference, self.autoset, self.bode)
+    pub(super) fn acquisition(self) -> (bool, bool, u32, bool, bool) {
+        // Mask publication alone does not change acquisition; its effective worker route does.
+        (self.raw, self.route, self.read_format, self.autoset, self.bode)
     }
 }
 

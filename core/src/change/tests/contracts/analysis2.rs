@@ -7,14 +7,14 @@ pub(super) const CASES: &[Case] = &[
         |m| {
             m.spec_span += 1.0;
         },
-        C::STATS.union(C::VIEW),
+        C::MATH.union(C::VIEW),
     ),
     (
         "spec_rbw",
         |m| {
             m.spec_rbw += 1.0;
         },
-        C::STATS.union(C::VIEW),
+        C::MATH.union(C::VIEW),
     ),
     (
         "spec_win",
@@ -25,7 +25,7 @@ pub(super) const CASES: &[Case] = &[
                 crate::math::Window::Rect
             };
         },
-        C::STATS.union(C::VIEW),
+        C::MATH.union(C::VIEW),
     ),
     (
         "spec_sort",
@@ -46,63 +46,63 @@ pub(super) const CASES: &[Case] = &[
         |m| {
             m.spec_trace += 1;
         },
-        C::STATS.union(C::VIEW),
+        C::MATH.union(C::VIEW),
     ),
     (
         "spec_ref",
         |m| {
             m.spec_ref += 1.0;
         },
-        C::STATS.union(C::VIEW),
+        C::MATH.union(C::VIEW),
     ),
     (
         "spec_wf",
         |m| {
             m.spec_wf = !m.spec_wf;
         },
-        C::STATS.union(C::VIEW),
+        C::MATH.union(C::VIEW),
     ),
     (
         "spec_dist",
         |m| {
             m.spec_dist = !m.spec_dist;
         },
-        C::STATS.union(C::VIEW),
+        C::MATH.union(C::VIEW),
     ),
     (
         "eye_src",
         |m| {
             m.eye_src += 1;
         },
-        C::STATS.union(C::VIEW),
+        C::VIEW,
     ),
     (
         "eye_rate",
         |m| {
             m.eye_rate += 1.0;
         },
-        C::STATS.union(C::VIEW),
+        C::VIEW,
     ),
     (
         "pw_v",
         |m| {
             m.pw_v += 1;
         },
-        C::STATS.union(C::VIEW),
+        C::VIEW,
     ),
     (
         "pw_i",
         |m| {
             m.pw_i += 1;
         },
-        C::STATS.union(C::VIEW),
+        C::VIEW,
     ),
     (
         "pw_mode",
         |m| {
             m.pw_mode = if m.pw_mode == PowerMode::Quality { PowerMode::Harmonics } else { PowerMode::Quality };
         },
-        C::STATS.union(C::VIEW),
+        C::VIEW,
     ),
     (
         "bode_start",

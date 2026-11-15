@@ -12,7 +12,7 @@ pub(in crate::ui) struct Diagnostics {
     pub(super) unreviewed: u64,
     error_counts: [u64; 5],
     first: [bool; FIELD_COUNT],
-    event_first: [u16; 16],
+    event_first: [u16; oracle::ROW_COUNT],
 }
 impl Default for Diagnostics {
     fn default() -> Self {
@@ -24,7 +24,7 @@ impl Default for Diagnostics {
             unreviewed: 0,
             error_counts: [0; 5],
             first: [false; FIELD_COUNT],
-            event_first: [0; 16],
+            event_first: [0; oracle::ROW_COUNT],
         }
     }
 }
@@ -46,9 +46,10 @@ impl Diagnostics {
         new: Classes,
         old: Classes,
         rows: u32,
-        by_row: &[Classes; 16],
+        by_row: &[Classes; oracle::ROW_COUNT],
         stopped: bool,
-    ) -> u8 {
+        repaired: Classes,
+    ) -> u16 {
         let mut differences = 0;
         for (i, c) in Classes::ALL.into_iter().enumerate() {
             if new.contains(c) == old.contains(c) {
@@ -58,20 +59,14 @@ impl Diagnostics {
             let found = Row::ALL
                 .into_iter()
                 .filter(|r| rows & (1 << *r as usize) != 0 && (!old.contains(c) || by_row[*r as usize].contains(c)))
-                .find_map(|r| oracle::difference(r, c, old.contains(c), stopped).map(|d| (r, d)));
-            let (row, difference) = found.unwrap_or((Row::Drawing, "unreviewed"));
-            if found.is_none() {
-                self.unreviewed += 1;
-                differences |= 128;
+                .find_map(|r| oracle::difference(r, c, old.contains(c), stopped, repaired).map(|d| (r, d)));
+            let row = found.map_or(Row::Drawing, |(row, _)| row);
+            let difference = found.map_or("unreviewed", |(_, d)| d.name());
+            if let Some((_, difference)) = found {
+                differences |= difference.mask();
             } else {
-                differences |= match difference {
-                    "D1" => 1,
-                    "D2" => 2,
-                    "D3" => 4,
-                    "D4" => 8,
-                    "D5" => 16,
-                    _ => 32,
-                };
+                self.unreviewed += 1;
+                differences |= 1 << 15;
             }
             if self.event_first[row as usize] & (1 << i) == 0 {
                 eprintln!(
@@ -87,12 +82,12 @@ impl Diagnostics {
         }
         differences
     }
-    pub(super) fn field(&mut self, f: FieldDiff, row: Row, differences: u8) {
+    pub(super) fn field(&mut self, f: FieldDiff, row: Row, differences: u16) {
         if f.changed() && !self.first[f.index()] {
             self.first[f.index()] = true;
-            // The fixed mask is D1..D6 in bits 0..5; bit 7 is unreviewed. Class logs spell out each id.
+            // The fixed mask is D1..D9 in bits 0..8; bit 15 is unreviewed. Class logs spell out each id.
             eprintln!(
-                "oos-ui shadow: first field={} row={} classes={:?} difference_ids=0x{:02x}",
+                "oos-ui shadow: first field={} row={} classes={:?} difference_ids=0x{:04x}",
                 f.name(),
                 row.name(),
                 f.classes(),
@@ -150,5 +145,61 @@ mod tests {
         ] {
             assert!(text.contains(expected), "{text}");
         }
+    }
+}
+
+#[cfg(test)]
+mod normalization_tests {
+    use super::*;
+
+    #[test]
+    fn d3_allows_only_classes_of_effectively_repaired_fields() {
+        let mut d = Diagnostics::default();
+        let mask = d.compare(
+            Classes::MAPPING | Classes::VIEW,
+            Classes::NONE,
+            1 << Row::Normalize as usize,
+            &[Classes::NONE; oracle::ROW_COUNT],
+            false,
+            Classes::MAPPING,
+        );
+        assert_eq!(mask, oracle::Difference::D3.mask() | (1 << 15));
+        assert_eq!(d.unreviewed, 1, "unrelated VIEW must not receive a D3 allowance");
+        assert_eq!(d.raw, [0, 1, 0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn d9_requires_a_mask_source_change_and_only_allows_new_acq_and_mask() {
+        for row in [Row::MaskSource, Row::Mask, Row::Reset] {
+            let mut d = Diagnostics::default();
+            let mask = d.compare(
+                Classes::ACQ | Classes::MASK | Classes::VIEW,
+                Classes::NONE,
+                1 << row as usize,
+                &[Classes::NONE; oracle::ROW_COUNT],
+                false,
+                Classes::NONE,
+            );
+            let source = row == Row::MaskSource;
+            assert_eq!(mask, (1 << 15) | if source { oracle::Difference::D9.mask() } else { 0 });
+            assert_eq!(d.unreviewed, if source { 1 } else { 3 });
+            assert_eq!(d.raw, [1, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+        }
+        let mut d = Diagnostics::default();
+        let mut old = [Classes::NONE; oracle::ROW_COUNT];
+        old[Row::MaskSource as usize] = Classes::ACQ | Classes::MASK;
+        assert_eq!(
+            d.compare(
+                Classes::NONE,
+                old[Row::MaskSource as usize],
+                1 << Row::MaskSource as usize,
+                &old,
+                false,
+                Classes::NONE
+            ),
+            1 << 15,
+            "D9 cannot excuse missing new acquisition or mask resets"
+        );
+        assert_eq!(d.unreviewed, 2);
     }
 }

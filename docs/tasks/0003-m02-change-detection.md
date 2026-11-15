@@ -16,6 +16,49 @@ Complete [migration M2](../architecture/migration.md#m2-one-change-detection-poi
 
 ## Plan
 
+M2.3a mask-source decision at `b3999bb`: retain ACQ|STATS|MASK, add D9 for the
+deliberate generation boundary missing from legacy, and observe effective mask-source
+changes independently of mask requests. Reserve `ui/src/ui/change/{oracle,legacy_keys,diagnostics}.rs`,
+`ui/src/ui/tests/change.rs`, `docs/architecture/README.md`, this task and
+`target/COMMIT_MSG.txt`. Pin one generation/statistics advance and MASK reset classification,
+idempotence and source-specific oracle bounds. Keep acting record/reset consumers on their
+scheduled M2.3b/e cutovers. Run focused debug/release tests, the three demo-mask cases
+twice per profile with unchanged goldens and zero unreviewed differences, and the fast gate.
+No staging, commits, full gate or hardware access; keep one commit-message section.
+
+M2.3a review round 1 at `3908fbc`: apply the coordinator decisions P2-1/P2-2 and
+P3-3 through P3-9. Reserve the existing M2.3a paths plus `core/src/model/{settings,acquisition}.rs`,
+`core/tests/values.rs`, `ui/src/model/{bridge,platform_tests}.rs`,
+`ui/src/ui/analysis/window/tests.rs` and the normalization comment in
+`ui/src/board/dho/hw.rs`. Restore the intake analyzer source snap ahead of job submission,
+remove analyzer STATS classifications, restrict D3 to actual repaired classes, type difference ids,
+and reuse the legacy key compression value. Remove unused compatibility APIs and migrate their
+tests to normalize. Add analyzer, RUN D7, hardware-mask source and accepted zoom readback regressions.
+Run focused debug/release tests, soak/census, timing, unchanged goldens and the fast gate.
+No full gate, commit, staging or hardware access; keep one commit-message section.
+
+M2.3a implementation claim: owner `codex-d` (Codex), status active, branch `t0003-m2`,
+base `8f47241`, review tier unit, under the coordinator's assignment. Round 1 below supersedes the analyzer snap deletion. Activate only normalization:
+replace both per-step clamps together, migrate zoom/capability/analyzer-source repairs into the
+fixed-order pure point, and bridge each effective normalization pass once to `mark_changed`.
+Retain this bridge through M2.3d. Keep generation/publication, outbox and reset-consumer cutovers
+for b-e. Record and test the decided DEFAULT, cursor and mask contracts; add acquisition/math
+oracle observations and eliminate batch-harness unobserved statistics clears.
+Also reserve `ui/src/ui/tables.rs` for the final event-navigation zoom clamp caller,
+`ui/src/ui/script.rs` and `ui/tests/soak.rs` for the live-normalization census row.
+Reserved paths: `core/src/change/`, `ui/src/ui/change.rs`, `ui/src/ui/change/`,
+`ui/src/ui.rs` (normalization, DEFAULT and observation seams), `ui/src/ui/views.rs`
+(zoom repair only), `ui/src/ui/script/batch.rs`, `ui/src/ui/tests/{change,mapping,shadow}.rs`,
+`docs/architecture/README.md`, this task and `target/COMMIT_MSG.txt`.
+Task 0052 is merged on this base. Additionally reserve only
+`ui/src/ui/analysis/window.rs::update` to delete its relocated source-repair block,
+and `ui/src/ui/analysis.rs::ana_adjust` only for its existing held-analyzer reset observation;
+its worker scheduling/DSP code and other analyzer paths remain untouched.
+Use existing host harnesses and unchanged golden references.
+Run parent-compatible regressions first, focused debug/release tests, standard soak and allocation
+census, debug/release captures and oracle inventory, explicit timing, and `cargo xtask check --fast`.
+No full gate, commit, staging or hardware access.
+
 Integration-gate repair at `131af5d` on `t0003-m2`, assigned to the existing M2 author.
 Reserved paths: `ui/src/model/bridge.rs`, `ui/tests/support/counting.rs`,
 `ui/src/ui/change/{diagnostics,oracle}.rs`, `ui/tests/host_script.rs`,
@@ -260,7 +303,7 @@ from the classifier under test. A bare `dirty_map` or `mstat.clear` cannot suppl
 | `clamp_offsets`, `model.rs:1865` / `ui.rs:1878`, changes an offset without marking | `{acq, mapping, stats}` for an effective AFE-offset change, including mapping preview; `{}` if already in range | Compare pre/post effective values and normalized copies; missing old notification is D3. M2.3a-d retain the bridge; e removes it, as stated per commit below. |
 | `fit_platform`, `model.rs:2020` / `ui.rs:1888`, marks on any repair | Unavailable channel/coupling repair: `{acq, mapping, stats}`; missing trigger source: `{acq, stats}`; active-channel-only repair: `{}`. Other repairs use their exact field union. | Pin each capability/repair case, including LA, decoder, generator and analysis sources; no blanket all-class repair. Extra old marks/clears are D1. |
 | `clamp_zoom`, `ui.rs:1675`, called by zoom edits/recall/timebase changes | `{mapping}` for effective zoom geometry, plus any classes of the initiating timebase change | Compare effective zscale/zdelay after clamps and both plot sizes; earlier normalization is D3. |
-| Analyzer source repair in `ui/analysis.rs:528` | `{stats, view}` for spec_src/eye_src repair, plus the triggering channel diff's classes | Compare after the corresponding repair, not before the old view stage; moving repair before classify is D3. |
+| Analyzer source repair in `ui/analysis.rs:528` | `{math, view}` for spec_src repair, `{view}` for eye_src repair, plus the triggering channel diff's classes | Compare after the corresponding repair, not before the old view stage; moving repair before classify is D3. |
 | Relayout `dirty_map`, `ui.rs:1631`; dots/Z-input marks `ui.rs:6527,6544` | `{mapping}` for effective dimensions/dots; Z-input additionally `{acq, stats}` when raw needs or measured channel set change | Observe actual dimensions and raw-policy changes; add phosphor/view only where their field fixtures require it. Old broad clears use D1/D2. |
 | Trigger/demo marks `ui.rs:5227,5413,5495`; autoset/Bode marks `ui/autoset.rs:504,596`, `ui/bode.rs:548,666` | Trigger-only changes: `{acq, stats}` and worker-view refresh; accompanying channel/timebase changes add `{mapping}` and their declared classes | Keep all old Key::of worker dependencies; dirty-map marks do not make every trigger field a mapping field. Stage timing is D5. |
 | Recall/default/auto marks `ui.rs:7122,7896,7913`; history-navigation mark `ui/marks.rs:40` | Recall/default/auto: exact union of changed fields and derived UiAcq. Replay navigation: `{mapping}` preview event, without inventing `acq` for navigation alone | Same-value recall has no diff-driven classes; explicit requests still act. Seed every affected consumer; D1/D2/D5 as applicable. |
@@ -272,6 +315,8 @@ from the classifier under test. A bare `dirty_map` or `mstat.clear` cannot suppl
 | Create mask `ui.rs:2898-2905`, mask count reset / explicit MaskReset `ui.rs:7011` | `{mask}` request at equal settings; mask-source/enable diff adds its declared acquisition classes | Compare count reset separately from mask construction and STOP requests; do not infer all ten classes. |
 | Zone clear-id/drop reset, hardware average clear-id, math/FFT and temporal view resets | `{zone}`, `{hw_average}`, `{math}` or `{view}` respectively, unioned with applicable field/request classes | Audit each old writer and each view's RESETS_ON; output-id writes do not themselves re-enter classify. |
 | Direct mstat clears for measurement removal/clear (`ui.rs:6863,6902`), recall (`ui.rs:7123`), clear (`ui.rs:1827`) | `{stats}` for measurement-list changes or explicit reset; recall is its effective field union | Distinguish intentional measurement reset from old unconditional clearing; D1. |
+| Acquisition mode/average configuration, observed from the independent legacy `(acq, avg_count, avg_hw)` key | `{acq, stats, phosphor, hw_average}` for an effective mode/average diff | Row `acquisition` observes the real configuration change. Missing legacy average restart and STOP persistence invalidation are D7. No acting reset is switched in a. |
+| Math operation, observed from all eight legacy MathCh operations | `{math, stats}` for an effective operation change | Row `math` observes the stateless recomputation boundary. Current math/FFT output is recomputed from the retained record without a held buffer; the extra reset class is inert here (D8). No fake old reset is reported. |
 | `meas_n` and late job/fold acceptance (`ui.rs:4900,4945,4979`, `mstat_fold:4906`) | `{stats}` advances stats_gen; `{acq}` changes gen; epoch request changes epoch independently | All three identities gate results/folds; identity rejection is not itself a new class. D6. |
 | `Pipe::set_view` key change (`drawpipe.rs:664-679`) and worker Model clone | Mapping changes refresh the mapping key; all old worker-key fields refresh the worker view, even for trigger-only `{acq, stats}` | Test batch-path worker behavior, not just key equality; preserve refresh coverage until M4. |
 | Min-persistence clear, decay, STOP redraw and fresh-record replacement (`ui.rs:1930,1970,2057,2235`) | `{}` when driven only by acquisition/time; mapping preview when an effective mapping change requests it | Keep drawing operations outside settings resets. Do not count a normal Min clear as a phosphor-class disagreement. |
@@ -284,13 +329,15 @@ the reviewed list**, including throughout M2.3.
 
 - **D1, narrower invalidation:** old marks clear statistics for unrelated display/input changes and dirty maps
   broadly in RUN; classes reset only their declared consumers. Same-value writes/recall can cause old clears
-  without a new diff. Exact extra-old-clear counts are scenario-specific, not suppressed.
+  without a new diff. Existing broad analyzer average/waterfall resets likewise give exact extra-old
+  math/view deltas, including at equal settings. Counts are scenario-specific, not suppressed.
 - **D2, STOP mapping:** settings_changed has no STOP dirty mark, while STOP redraw happens separately every step.
   The new mapping class requests preview even in STOP. Compare the stored record and visible trace, not dirty_map
   bit equality, and retain the legacy redraw weight in M2.
 - **D3, normalization:** old offset clamps can be unmarked and zoom/analyzer repairs happen at other seams.
   The new point classifies effective repairs together before consumers; compare equivalent post-repair values
-  and separately review any changed outcome caused by the fixed normalization order.
+  and separately review any changed outcome caused by the fixed normalization order. Allow D3 only
+  for classes of the fields actually repaired in that pass, never for every class on the row.
 - **D4, request boundaries:** CLEAR and STOP-to-RUN gain an epoch even with equal settings; SINGLE and stage
   retries resolve requests rather than equating stamp changes with acq. Several requests may share an epoch.
   Epoch-only boundaries reject prearmed/queued old work without reconfiguration.
@@ -299,6 +346,22 @@ the reviewed list**, including throughout M2.3.
   and pending SINGLE STOP consumes no extra record.
 - **D6, stale work:** pair/stats_gen rejection prevents late old records, results or folds from refilling
   current state. Pin deliberately delayed work and its exact drop counts; do not attribute drops to all classes.
+
+- **D7, acquisition-mode reset gap:** an effective legacy mode/average configuration change
+  has no explicit hardware-average restart, and in STOP no persistence reset from the RUN-only
+  dirty mark. Preserve those old effects until the respective d/e consumers switch. The oracle
+  permits only new hw_average, or new phosphor while stopped, at the observed acquisition row.
+- **D8, stateless math recomputation:** a changed operation invalidates no retained legacy
+  math/FFT buffer because current drawing recomputes its output from the retained record.
+  The math class therefore has no additional acting reset here. The oracle permits only new
+  math at the observed all-channel operation seam; source/scale/other classes are not exempted.
+- **D9, mask-source acquisition boundary (decided):** mask_src selects the hardware mask
+  channel through mask_hw_poll and hw_merge, outside the legacy generation key. Changing it
+  advances gen once and resets mask statistics: in-flight records were mask-tested against
+  the old channel and must be dropped. Retain ACQ|STATS|MASK for hardware and demo sources.
+  Only extra new ACQ and MASK at an independently observed effective mask-source change
+  receive D9; mask requests alone and other classes do not. Raw disagreements stay counted.
+  Acting generation/filter and reset consumers remain scheduled for M2.3b/e.
 
 ### Commit and merge order
 
@@ -315,7 +378,7 @@ New or moved code meets ADR 0010; G1 permits only listed, non-growing legacy mov
 | 2, M2.1 | Move flat Model and required pure types; adapt callers to explicit values | UI-owned definitions of the moved model/types/tables and their domain-to-UI/Board/platform lookups. Keep only necessary compatibility exports. No invalidation mechanism removed. |
 | 3, M2.2 | Add exhaustive classifiers, normalize, requests, tokens and reusable shadow state | Nothing in the acting path. Implement capacity-reusing clone_from or update-on-change and the counting-allocator regression here; legacy normalization/mark path is unchanged. |
 | 4, M2.2 | Wire observe-only oracle comparisons/counters, host storm, timing and unit-round evidence | Nothing in the acting path; old clamps, marks and stamp writers still act. Require counting-allocator and p99 evidence, coordinator review of the oracle/difference list, then shadow round 0 before activation. |
-| 5, M2.3a | Activate normalize before classify, retaining legacy notifications | Both external per-step clamp calls and migrated cross-group rewrites, together. Every effective normalize diff still feeds mark_changed for the acting legacy consumers until M2.3e; test RUN/STOP map/stat behavior. |
+| 5, M2.3a | Activate normalize before classify, retaining legacy notifications | Both external per-step clamp calls and migrated cross-group rewrites, together. Every effective normalize diff still feeds mark_changed for the acting legacy consumers until M2.3e; intake analyzer source snaps precede job submission and do not reach that bridge; test RUN/STOP map/stat behavior. |
 | 6, M2.3b | Switch acq generation/epoch writers, publication and record/measure filters | hw_stamp bumps in UI/autoset/Bode; publication in Source::acquire and independent request writers; old stamp/generation decisions where replaced. Update scripted runner identities. Tokens and settings reach one change step. Retain normalize-to-mark_changed bridge. Run producer unit smoke before c. |
 | 7, M2.3c | Switch remaining internal commands and run-transition consumers to outbox | Direct completion-to-STOP, autoset/Bode/auto_step settings writes and scattered run-edge reset effects. Retain normalize-to-mark_changed bridge, with one owner per switched effect. |
 | 8, M2.3d | Switch mapping/phosphor writers and picture consumers | All 16 dirty_map assignments and dirty-map decision state; scattered settings-triggered map clears. Retain the complete old Key::of dependency coverage through the transitional worker-view key until M4. Retain normalize-to-mark_changed bridge for remaining statistics effects; disable its old picture side. Keep Min/decay drawing operations. |
@@ -341,7 +404,7 @@ characterization and report that limit; do not fabricate a failure or remove use
 | SCPI/HTTP equal knob, M2.3; FB | `ui/src/ui/tests/change.rs::scpi_and_knob_share_change_point`; `ui/src/http.rs::tests::http_store_set_matches_knob` | Same normalized Model, ChangeSet, publication and consumer effects after one step. HTTP exercises the existing MCP/SCPI `store::set` path and web knob path; no imaginary HTTP setter. Include setup load as an extra input route. |
 | Mapping in STOP, M2.3d; FB | `ui/src/ui/tests/mapping.rs::stopped_mapping_redraws_last_without_blank` | Hold a populated last[0], change scale/offset/zoom/layout, step with no new frame, capture each step: same stored record, new mapping, nonempty trace. Running-preview acceptance remains M4. |
 | Autoset/Bode epochs, M2.3b-c; FB | `ui/src/ui/tests/epochs.rs::{autoset_accepts_only_resolved_epoch,bode_accepts_only_resolved_epoch}` | Unresolved accepts nothing; reject older and different newer epochs and previous runs' tokens; accept exactly the resolved one. Settings and token resolve in one change step; same-settings retry still gets an epoch. |
-| Normalize, M2.3a; FB | `core/src/change/tests.rs::{normalize_is_idempotent,missing_channel_is_acq,clamped_offset_is_mapping}`; `ui/src/ui/tests/mapping.rs::clamped_offset_previews_last` | Second normalize changes nothing; 2-channel caps turn unavailable channels off with acq; offset clamp gives mapping/key change and preview. Sweep supported capabilities and cross-group clamp cases. |
+| Normalize, M2.3a; FB | `core/src/change/tests.rs::{normalize_is_idempotent,missing_channel_is_acq,clamped_offset_is_mapping}`, `core/src/change/tests/normalization.rs::{capability_and_cross_group_repairs_report_effective_changes_once,analyzer_sources_follow_an_enabled_channel_before_classification,live_normalization_reports_only_effective_repair_classes}`; `ui/src/ui/tests/mapping.rs::clamped_offset_previews_last` | Second normalize changes nothing; 2-channel caps turn unavailable channels off with acq; offset clamp gives mapping/key change and preview. Sweep supported capabilities and cross-group clamp cases. |
 | SINGLE done, M2.3c; FB | `ui/src/ui/tests/outbox.rs::single_done_stops_in_next_change_set` | Completion emits STOP without writing live settings; no extra record is consumed; next ChangeSet has the transition. Add `segments_done_stops_in_next_change_set` and `internal_writes_apply_before_external_inputs`. |
 | Every view declaration, M2.3e; FB | `ui/src/ui/tests/views.rs::declared_reset_classes_match_every_view` | Table-drive every existing view over all ten classes, checking reset iff declared, plus unrelated changes. Explicit trend, eye, XY/stateless and cursor-timebase cases. Cover held spectrum/math state, not only visible panes. |
 | Mapping key iff mapping, M2.2/3d; FB | `core/src/change/tests.rs::mapping_key_matches_mapping_fields`; `ui/src/ui/tests/mapping.rs::relayout_changes_mapping_key` | Mutate every mapping and nonmapping field, nested channels included; vary main/zoom dimensions, panes, menu width and HDMI. Check normalized effective changes, including fine timebase. |
@@ -506,6 +569,220 @@ M4/M5/M9/M10 retain their specified conversion, channels, whole-batch ownership 
 Every candidate and conflict resolution needs independent cross-vendor review; the author never merges or pushes.
 
 ## Status
+
+- 2026-11-16: D9 implemented and worker checks pass on `b3999bb` plus unstaged changes.
+  Observe mask_src independently in the new bounded `mask_source` row (18 rows total),
+  without inventing a legacy ACQ publication. Permit only extra new ACQ and MASK at that
+  effective source edit; raw disagreements remain counted. The MASK allowance covers
+  an isolated edit before any explicit create/reset request. Negative controls reject
+  unrelated VIEW, mask requests alone and missing new ACQ/MASK behavior.
+  `mask_source_advances_generation_once_and_requests_statistics_resets_as_d9` covers
+  RUN/STOP and demo/fake HW: exact ACQ|STATS|MASK, gen/stats_gen advancing once with
+  unchanged epoch, existing measurement-statistics clear and two idempotent observations.
+  This pins the MASK reset contract; acting mask-count reset and stale-record filtering
+  remain for M2.3e/b, rather than activating those consumers in a.
+  Before the oracle fix the new regression failed (exit 101, two unreviewed ACQ/MASK
+  differences); afterwards focused change/shadow/diagnostics/hwmask suites pass in debug
+  and release: 34 passed, one existing explicit timing guard ignored per profile.
+  All three `demo/{normal,large,larger}/mask` cases pass in both profiles, twice in fresh
+  processes each: six ACQ diagnostics now D9, zero unreviewed event/field masks, and all
+  24 decoded RGB captures per profile exactly match unchanged baseline hashes.
+  `cargo xtask check --fast` exits 0: `partial gate passed (not done): 8 steps in 22 s`;
+  all selected steps pass, no failed step. Commands/exits: `target/m23a-mask-checks.json`;
+  regression/focused logs: `target/m23a-mask-{before,focused-debug,focused-release}.log`;
+  picture evidence: `target/m23a-mask-evidence.json`; gate: `target/m23a-mask-fast.log`.
+  `target/COMMIT_MSG.txt` has one section. No golden references, tolerances, ratchets or
+  limits changed. No staging, commits, push, full gate or hardware access. Independent
+  cross-vendor review and the coordinator's full integration gate remain pending.
+
+- 2026-11-16: decided by the owner: changing mask_src is an acquisition-input change,
+  retaining ACQ|STATS|MASK. In-flight records were mask-tested against the old channel
+  and must be dropped at the generation boundary; mask statistics reset. Assign D9,
+  the next difference id, to the deliberate new ACQ boundary absent from legacy.
+  This resolves the six demo-mask diagnostics reported below; retain their raw counts
+  and require zero unreviewed differences. Implement under the existing active claim on
+  `t0003-m2` at `b3999bb`; generation/publication/filter and reset activation remain b/e.
+
+- 2026-11-16: review round 1 worker handoff at `3908fbc` plus unstaged fixes, still active.
+  Requested verification passes: core 23 unit + 3 integration tests per profile; focused UI
+  170 passed, 8 ignored per profile, retaining the previously documented single Bode TCP-listener
+  skip. Host-script 14, soak 11 and golden 5 passed per profile (one explicit update test ignored).
+  Debug's composed plateau retains its existing skip policy; release runs all five modes for
+  1,000 steps, warmup 500, with zero failed cycles, no retained growth and acquired/used/dropped
+  13,648/13,618/30 each. Snapshot census: 2,000 observations, zero reused allocations versus
+  210 naive-clone calls, 5,104 bytes per snapshot. All five UI census rows: 256 calls and zero
+  allocations in both profiles, including the live repair/bridge and D3 evidence capture.
+  Timing passes on aarch64 release: 256 samples; intake p99 59,084 ns, legacy change 9,041 ns,
+  paired intake/change 63,458 ns against 500,000 ns; shadow p99 22,958 ns reported separately.
+  Final fast gate exits 0: `partial gate passed (not done): 8 steps in 22 s`; every selected
+  step passed. Initial fast gate exited 1, `gate FAILED in 25 s: size`, reporting
+  `ui: file ui/src/ui/analysis.rs grew: 590 -> 595 (ratchet)`. Moving the source snap into
+  the existing reset helper fixed that growth; no ratchet or limit was edited.
+  Exact commands, environments, exits and full logs: `target/m23a-r1-checks.json`; final
+  focused logs have `-final` suffix, and the gate log is `target/m23a-r1-fast-final.log`.
+  P3-6's accepted readback is pinned by
+  `ui::tests::change::zoom_knob_clamps_once_per_step_and_readback_follows_main_with_zoom_off`.
+  The one-section draft remains `target/COMMIT_MSG.txt`. No staging, commit, push, full gate,
+  image/coverage/10,000-step acceptance or hardware access. Independent cross-vendor review
+  and the coordinator's full integration gate remain pending.
+
+- 2026-11-16: round 1 picture/oracle evidence: debug 20 cases/40 processes/88 repeat captures,
+  release 263 cases/526 processes/1,242 repeat captures. All 44 debug and 621 release baseline
+  decoded RGB hashes match exactly; no reference, tolerance or per-case picture exception changed.
+  Complete artifact locations, hash checks and soak summaries: `target/m23a-r1-evidence.{json,log}`.
+  Restoring mask_src ACQ exposes six raw unreviewed ACQ events: `demo/{normal,large,larger}/mask`,
+  each in both fresh processes (12 first-field traces carry the associated unreviewed bit).
+  Debug has zero unreviewed events, and release has no other unreviewed event class/case.
+  The old oracle's Want/raw/worker-route projection misses this independent hardware-mask
+  configuration route; demo sources also have no hardware mask to reconfigure. Keep the
+  required ACQ|STATS|MASK field contract and these raw diagnostics visible. No new difference
+  allowance was invented; coordinator disposition of this oracle gap remains an acceptance limit.
+
+- 2026-11-16: review round 1 implementation: P2-1 reports analyzer resets as MATH|VIEW
+  (held FFT averaging is math; waterfall is view), classifies spectrum settings MATH|VIEW
+  and eye/power settings VIEW, with no measurement STATS. P2-2 retains the intake source snap
+  before analyzer job submission through M2.3e, while normalize still repairs sources when no
+  setter caused the repair. Parent-compatible regressions fail on `3908fbc` (exit 101,
+  `target/m23a-r1-before-ui.log`) for both the submitted off-source key and false STATS;
+  both pass after the fixes. The RUN source-step regression seeds statistics, the picture
+  and dirty_map; RUN/STOP cases pin all edited analyzer field contracts.
+  P3-3 derives D3 allowances from actual pre/post-normalize field classes using the existing
+  bounded scratch, with no new retained snapshot. The negative control leaves unrelated VIEW
+  unreviewed beside a zoom repair. P3-5 uses a typed difference id and exhaustive names, preserving
+  diagnostic bits. P3-8 now tests D7 in RUN as well as STOP and lists the real normalization tests.
+  P3-4 deletes `Model::clamp_offsets`, `fit_platform`/`fit_platform_in` and `UiAcq::mask_reference`;
+  all remaining callers were tests and now call normalize, including `core/tests/values.rs`.
+  No deletion is deferred to M2.3e. The hardware normalization comment is corrected.
+  The keys' compression value is reused by UiAcq instead of a second Board::want call.
+  The mask_src extension is reversed: `mask_hw_poll` publishes `MaskWant.ch = mask_src`,
+  `hw_merge` installs `hw_mask(w)`, and that sets `HwMask.ch = w.ch`. Thus mask_src retains
+  ACQ|STATS|MASK even when the worker route/compression stays equal. This is source inspection,
+  not hardware verification, and supersedes the earlier Status rationale removing ACQ.
+
+- 2026-11-16: M2.3a review round 1 received against committed `3908fbc`
+  (`Activate normalization with the legacy notification bridge`), no P1. Coordinator decisions
+  accepted for implementation: analyzer source/settings edits preserve measurement statistics;
+  keep intake source snap until M2.3e; bound D3 by repaired fields; remove unused compatibility
+  helpers; use an enum for difference ids; add RUN D7 and real plan test names.
+  Accepted behavior changes P3-6: zoom knob values clamp once per step, and zoom delay follows
+  main delay with zoom off. P3-7 accepts the duplicate legacy mark after autoset writes.
+  These intermediate behavior decisions remain active through the planned consumer cutovers.
+
+- 2026-11-16: final M2.3a worker handoff, active and uncommitted on `t0003-m2` at
+  `8f472413a17da5d222dc8dd0faff3d0b6ec5094d`. All eight final command groups exit 0;
+  exact commands, exits and complete log paths: `target/m23a-final-checks.json`.
+  Core passes 25 tests per profile (22 change/value unit tests plus 3 integration tests).
+  Focused UI passes 165 with 8 ignored per profile, using only the explicit skip of the
+  sandbox-denied Bode TCP listener recorded below. The initial broader selections in both
+  profiles exited 101 for that one existing PermissionDenied failure; their logs remain
+  `target/m23a-focused-{debug,release}.log`. No annotations were changed to hide it.
+  Host-script passes 14, soak 11 and golden 5 (one explicit update command ignored) per
+  profile. Debug's composed plateau is skipped by its existing policy. Release runs all
+  five modes for 1,000 steps each, warmup 500: zero failed cycles, no retained growth,
+  later peaks equal warmed peaks, and acquired/used/dropped 13,648/13,618/30 in each mode.
+  Both allocation censuses pass in both profiles: 2,000 warmed snapshot/normalize observations
+  allocate zero times (naive clone control 210 calls; snapshots retain 5,104 bytes each),
+  and all five UI rows report 256 calls and zero successful alloc/alloc_zeroed/realloc,
+  including effective live normalization repairs and their legacy notification bridge.
+  Final release timing guard passes on aarch64: 256 samples, intake p99 100,666 ns,
+  legacy change p99 4,042 ns, paired intake/change p99 102,999 ns against 500,000 ns;
+  shadow overhead p99 129,458 ns is reported separately (`target/m23a-final-timing.log`).
+  Fast gate exits 0: `partial gate passed (not done): 8 steps in 38 s`, with every selected
+  step passing and full-gate steps not selected (`target/m23a-final-fast.log`).
+
+- 2026-11-16: final picture/oracle acceptance evidence: release 263 cases, 526 processes,
+  1,242 repeat captures; standard debug 20 cases, 40 processes, 88 repeat captures.
+  Added debug coverage of eye/mask/math at all three text sizes: 9 cases, 18 processes,
+  66 repeat captures (`target/m23a-debug-extra.log` and `.json`). This is supplemental
+  coverage, not a claim to the full debug inventory. All 621 release and 77 distinct debug
+  baseline RGB hashes match exactly. Every one of the 584 final child stderr logs has zero
+  unreviewed oracle events or unreviewed field masks. No reference, capture or tolerance
+  changed, so there are no per-case golden exceptions. Independent hash/oracle assertions,
+  exact run paths and all five soak summaries are in `target/m23a-final-evidence.{json,log}`;
+  standard hash checks also remain in `target/m23a-final-exact-goldens.log`.
+  Added-text and draft-message privacy checks each report zero findings; diff whitespace
+  checks pass. No ratchet, dependency or limit changed. The draft is one feature message in
+  `target/COMMIT_MSG.txt`. No staging, commit, push, full gate, image/coverage/10,000-step
+  acceptance or hardware access occurred. The mark_changed bridge stays through M2.3d;
+  generation/publication and remaining b-e cutovers are unimplemented. Independent Claude
+  unit-tier review and the coordinator's full integration gate remain required.
+
+- 2026-11-16: the first full release inventory passes pictures but exposes six affected
+  cases (18 repeated-process unreviewed event traces): mask source still has an unconditional
+  acq class in the three mask scripts, and the three newly merged eye scripts change/reset
+  analyzer state without an observation (two classes per process). Logs remain in
+  `target/m23a-integration-release.log` and its printed run directory. Corrected mask_src to
+  stats/mask: it selects data already acquired, not a new hardware channel. Its effective
+  mask availability/worker route still comes from fast_ok. Hardware masking can also keep
+  that route fast but disable live compression. UiAcq therefore carries the effective
+  Board::want compression factor (one u32), with raw UI reads forcing factor 1, and compares
+  that value as acquisition input. Tests pin equal raw factors with no generation change
+  and compressed-to-raw factors with exactly one generation change, even at equal worker route.
+  The existing analyzer reset is observed at ana_adjust's real spec_avg/waterfall clear.
+  The seeded test proves those stores clear while generic mstat survives until e. Class
+  observation represents analyzer results/temporal state, not a new mstat clear. Same-value
+  analyzer edits retain exact D1 extra stats/view deltas. Restoring this producer adds one
+  fixed row (17 total), without adding an oracle exemption for missing new resets.
+  Independent decoded RGB checks on the first candidate match all 621 release and 44 debug
+  current baseline hashes exactly (`target/m23a-initial-exact-goldens.log`); this merged base
+  includes task 0052's three eye cases, so the full inventory is 263 cases, not the older 260.
+  Final debug/release checks are rerunning after these capture-driven fixes.
+
+- 2026-11-16: recorded M2.3 decisions in the executable oracle: D7 is the acquisition-mode
+  reset gap, restricted to new hw_average and STOP phosphor at a real independent legacy
+  acquisition/average-key change. D8 documents current math/FFT's stateless recomputation:
+  the operation seam observes all eight channels and records the absence of a held-state
+  reset, rather than inventing one. Its fixture changes Add to Sub on one retained record
+  and verifies changed output with unchanged source samples and exact raw math deltas.
+  The math-seam interpretation was offered for clarification; implementation uses this
+  explicitly stated stateless contract. These remain unit-tier review inputs.
+  Legacy cursor/mask classification and the batch clear were restored individually as
+  executable controls, then put back automatically. All three parent-compatible tests fail
+  their intended assertions (exit 101, `target/m23a-classification-before.log` and `.json`).
+  The current mask fixture also queues a frame before toggling, consumes that record and
+  verifies unchanged legacy stamp. Only the effective worker-route difference raises shadow gen.
+  Initial broad debug selection passes 163 with 8 ignores, but exits 101 for the existing
+  Bode generator TCP listener (`PermissionDenied`/`Operation not permitted`). Rerunning with
+  only `--skip ui::tests::bode_sweep_drives_the_generator` exits 0: 163 passed, 8 ignored,
+  `target/m23a-focused-final-debug.log`. No test annotation or production transport changed.
+
+- 2026-11-16: M2.3a implementation: live normalization replaces both old per-step clamps
+  together. All cross-group zoom callers, the view-slot clamp and task 0052's relocated
+  analyzer-source rewrite in `analysis/window.rs::update` are removed. The latter is a narrow
+  deletion on the merged task 0052 base, not a worker/DSP change. `normalize` reports a bool
+  from effective scalar repairs, without a Model clone; a single bridge calls mark_changed.
+  Normalization comparison now checks every settings field at that same pre-stage point,
+  excluding only change-owned outputs. Later autoset/Bode writes are no longer mistaken for
+  failed normalization. Outbox and all b-e writer/consumer switches remain unchanged.
+  DEFAULT now explicitly requests/observes statistics reset; batch measurement removal uses
+  stats_clear. Cursor's exact field contract is empty. mask_on is stats/mask only, and mask
+  reference presence is removed from acquisition comparison. A software-mask toggle can still
+  change fast_ok from workers to records, so only that derived route change adds acq/stats;
+  with an already-slow route neither generation nor record acceptance changes in M2.3a.
+  The census adds a fifth live-normalize/bridge row, alternating effective offset repairs.
+  It retains the same snapshots and bounded mailboxes; the legacy key adds only an acquisition
+  tuple and eight MathOp values. Oracle storage remains 16 rows, replacing the retired
+  offset/platform/zoom seams with normalize/acquisition/math. Difference masks are now u16,
+  with unreviewed in bit 15, to keep additional reviewed ids separate.
+
+- 2026-11-16: regression evidence: the parent-compatible bridge and DEFAULT tests compile
+  and fail before UI activation (exit 101, two failed assertions, `target/m23a-before.log`).
+  Offset clamp retained old mstat and DEFAULT retained previous-setup statistics. They now
+  pass, including RUN/STOP and a second idempotent normalization pass. Cursor temporal-state,
+  mask route and math record-recomputation tests are additional independent contracts.
+  The offset retained-record preview is characterization of the existing STOP redraw path;
+  it does not claim the later running-preview or generation-filter changes.
+  Initial fast gate exits 0: `partial gate passed (not done): 8 steps in 24 s`
+  (`target/m23a-fast-initial.log`). Final-source checks follow after the census extension.
+
+- 2026-11-16: M2.3a claimed on the clean assigned base under the existing M2 owner.
+  Coordinator decisions are decided: DEFAULT invalidates previous-setup statistics (deliberate
+  behavior change); cursor mode is display-only and must not reset trend/eye temporal state;
+  mask_on itself is not acquisition. Only an effective raw/worker route change may add acq,
+  with its publication seam tested separately. Acquisition-mode differences get an explicit
+  D id and observed seam; math gets an observed recomputation/reset contract. Batch measurement
+  removal goes through stats_clear. Require zero unreviewed oracle differences in debug/release
+  captures before M2.3b. Plan and reservations above precede implementation.
 
 - 2026-11-15: final uncommitted integration-repair verification. `cargo xtask check --fast`
   exits 0: `partial gate passed (not done): 8 steps in 22 s`

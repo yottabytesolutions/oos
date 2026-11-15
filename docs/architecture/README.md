@@ -75,14 +75,14 @@ capacity growth is checked before refresh. Each outbox retains at most 64 comman
 than 64 KiB including payload capacity. Cached payloads survive changes in the active field set; overflow
 returns an error. Generations occupy 24 bytes, ChangeSet less than 4 KiB, and UiAcq/DepositView less than
 1 KiB each. The observer additionally retains fixed diagnostic tables for 243 classified field slots,
-16 oracle rows and ten counters, plus 256 paired intake/change/shadow timing samples. A prepared
+18 oracle rows and ten counters, plus 256 paired intake/change/shadow timing samples. A prepared
 comparison holds one ChangeSet and a fixed field table below 16 KiB. The shadow point precedes legacy
 auto_step; settings and tokens emitted later resolve together at the next point. Failed resolutions
 retain their queued requests. No unbounded log
 collection, new global state or production allocator is introduced.
 
 `stat` and `:SYSTem:STATe?` expose all ten raw shadow counters, normalization/outbox disagreements, errors,
-unreviewed differences and timing samples. Legacy intake/change budgets exclude separately reported shadow time. First-field/row traces go to stdout. The oracle distinguishes
+unreviewed differences and timing samples. Legacy intake/change budgets exclude separately reported shadow time. First-field/row traces go to stderr. The oracle distinguishes
 legacy dirty clears serving mapping and persistence consumers using the effective field contract; it
 never treats every broad mark as all class bits. Proposed D1-D6 differences remain review inputs, not
 suppression rules. Exact host fixtures and negative controls accompany the observer. The required shadow
@@ -92,6 +92,37 @@ The warmed host census covers 256 real UI steps on fake Shared without producer 
 comparison, finish capture/proposal comparison and stage capture separately. The existing
 core snapshot census additionally varies warmed heap payloads. Neither census establishes
 zero allocations for all legacy UI work or for every input storm.
+
+M2.3a intermediate state: the fixed-order pure normalizer now repairs the live Model before
+shadow classification. Both legacy per-step clamps and the cross-group zoom rewrites are
+removed from their old seams.
+Analyzer source snaps remain at intake ahead of job submission through M2.3e, so an edit
+that selects an off channel submits only the repaired source and does not reach the broad bridge.
+`normalize` reports an effective repair without a
+new retained snapshot or allocation; one `mark_changed` bridges that pass to the remaining legacy consumers.
+The existing shadow scratch captures pre-normalize values to restrict D3 diagnostics to the
+classes of fields actually repaired; a row alone grants no allowance.
+It marks the picture only in RUN and clears statistics in RUN and STOP. Idempotent passes do
+neither. Keep the bridge through M2.3d; its picture side stops acting in d and its statistics
+side remains until e. Classification, generations, publication, outboxes and the remaining reset
+consumers still use the M2.2 observation/legacy arrangement. Normalization equality is checked
+at the pre-stage change point, including zoom and analyzer sources, before later internal writes.
+DEFAULT deliberately clears previous-setup statistics, including repeated equal-value defaults.
+Cursor mode is display-only; it does not reset temporal views. Mask enable/reference publication
+alone does not change acquisition identity; mask source is an acquisition field because it
+selects the hardware mask channel. The owner decided D9: advance the generation once,
+drop in-flight records mask-tested against the old channel, and reset mask statistics.
+Legacy does not advance its generation on this edit. The observer permits only extra new
+ACQ and MASK at an independently observed mask-source change, including demo sources;
+acting generation/filter and reset consumers still switch in M2.3b/e. Effective worker-route
+or raw/pair read-format changes also change acquisition identity. A hardware mask can leave
+workers enabled while requiring raw input,
+so the adapter supplies the effective compression factor as a small value in UiAcq.
+The existing analyzer average/waterfall reset reports MATH|VIEW: held FFT averages belong
+to math and waterfall rows to view state. Spectrum state settings classify MATH|VIEW, eye and power
+settings VIEW; these analyzer edits neither classify STATS nor clear measurement statistics.
+The observer retains 18 fixed oracle rows.
+The allocation census includes the live normalizer and bridge as well as shadow work.
 
 ## Layers
 

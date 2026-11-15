@@ -4,12 +4,12 @@ use super::{Classes as C, FieldDiff};
 use crate::model::Model;
 
 pub(super) fn analysis_2(a: &Model, b: &Model, emit: &mut impl FnMut(FieldDiff)) {
-    emit(FieldDiff::new(140, "spec_dist", a.spec_dist != b.spec_dist, C::STATS | C::VIEW));
-    emit(FieldDiff::new(141, "eye_src", a.eye_src != b.eye_src, C::STATS | C::VIEW));
-    emit(FieldDiff::new(142, "eye_rate", a.eye_rate != b.eye_rate, C::STATS | C::VIEW));
-    emit(FieldDiff::new(143, "pw_v", a.pw_v != b.pw_v, C::STATS | C::VIEW));
-    emit(FieldDiff::new(144, "pw_i", a.pw_i != b.pw_i, C::STATS | C::VIEW));
-    emit(FieldDiff::new(145, "pw_mode", a.pw_mode != b.pw_mode, C::STATS | C::VIEW));
+    emit(FieldDiff::new(140, "spec_dist", a.spec_dist != b.spec_dist, C::MATH | C::VIEW));
+    emit(FieldDiff::new(141, "eye_src", a.eye_src != b.eye_src, C::VIEW));
+    emit(FieldDiff::new(142, "eye_rate", a.eye_rate != b.eye_rate, C::VIEW));
+    emit(FieldDiff::new(143, "pw_v", a.pw_v != b.pw_v, C::VIEW));
+    emit(FieldDiff::new(144, "pw_i", a.pw_i != b.pw_i, C::VIEW));
+    emit(FieldDiff::new(145, "pw_mode", a.pw_mode != b.pw_mode, C::VIEW));
     emit(FieldDiff::new(146, "bode_start", a.bode_start != b.bode_start, C::STATS | C::VIEW));
     emit(FieldDiff::new(147, "bode_stop", a.bode_stop != b.bode_stop, C::STATS | C::VIEW));
     emit(FieldDiff::new(148, "bode_points", a.bode_points != b.bode_points, C::STATS | C::VIEW));

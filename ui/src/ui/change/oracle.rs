@@ -4,12 +4,11 @@
 
 use oos_core::change::Classes as C;
 
+pub const ROW_COUNT: usize = 18;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Row {
     Mark,
-    Offset,
-    Platform,
-    Zoom,
     Layout,
     Trigger,
     Recall,
@@ -22,13 +21,15 @@ pub enum Row {
     Reset,
     Measurement,
     Drawing,
+    Normalize,
+    Acquisition,
+    Math,
+    Analyzer,
+    MaskSource,
 }
 impl Row {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; ROW_COUNT] = [
         Self::Mark,
-        Self::Offset,
-        Self::Platform,
-        Self::Zoom,
         Self::Layout,
         Self::Trigger,
         Self::Recall,
@@ -41,13 +42,15 @@ impl Row {
         Self::Reset,
         Self::Measurement,
         Self::Drawing,
+        Self::Normalize,
+        Self::Acquisition,
+        Self::Math,
+        Self::Analyzer,
+        Self::MaskSource,
     ];
     pub fn name(self) -> &'static str {
         [
             "mark",
-            "offset",
-            "platform",
-            "zoom",
             "layout",
             "trigger",
             "recall",
@@ -60,29 +63,72 @@ impl Row {
             "reset",
             "measurement",
             "drawing",
+            "normalize",
+            "acquisition",
+            "math",
+            "analyzer",
+            "mask_source",
         ][self as usize]
+    }
+}
+
+/// Reviewed difference ids retain their diagnostic bit positions. D6 has no current producer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Difference {
+    D1 = 0,
+    D2 = 1,
+    D3 = 2,
+    D4 = 3,
+    D5 = 4,
+    D7 = 6,
+    D8 = 7,
+    D9 = 8,
+}
+impl Difference {
+    pub fn mask(self) -> u16 {
+        1 << self as u8
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::D1 => "D1",
+            Self::D2 => "D2",
+            Self::D3 => "D3",
+            Self::D4 => "D4",
+            Self::D5 => "D5",
+            Self::D7 => "D7",
+            Self::D8 => "D8",
+            Self::D9 => "D9",
+        }
     }
 }
 
 /// A proposed difference id is evidence to review, not an exemption from a raw disagreement counter.
 /// Restrict broad legacy marks to their actual two consumers, and retain unknown cases separately.
-pub fn difference(row: Row, class: C, old: bool, stopped: bool) -> Option<&'static str> {
+pub fn difference(row: Row, class: C, old: bool, stopped: bool, repaired: C) -> Option<Difference> {
     match row {
-        Row::Mark | Row::Platform | Row::Recall | Row::Stage if old && (class == C::MAPPING || class == C::STATS) => {
-            Some("D1")
+        Row::Mark | Row::Recall | Row::Stage if old && (class == C::MAPPING || class == C::STATS) => {
+            Some(Difference::D1)
         }
-        Row::Layout | Row::Trigger if old && class == C::MAPPING => Some("D1"),
-        Row::Measurement if old && class == C::STATS => Some("D1"),
-        Row::Mark if !old && stopped && class == C::MAPPING => Some("D2"),
-        Row::Offset if class == C::ACQ || class == C::MAPPING || class == C::STATS => Some("D3"),
-        Row::Zoom if class == C::MAPPING => Some("D3"),
-        Row::Clear if RequestClasses::clear().contains(class) => Some("D4"),
-        Row::Single if (C::PHOSPHOR | C::STATS | C::HW_AVERAGE).contains(class) => Some("D4"),
+        Row::Layout | Row::Trigger if old && class == C::MAPPING => Some(Difference::D1),
+        Row::Measurement if old && class == C::STATS => Some(Difference::D1),
+        Row::Analyzer if old && (class == C::MATH || class == C::VIEW) => Some(Difference::D1),
+        Row::Mark if !old && stopped && class == C::MAPPING => Some(Difference::D2),
+        Row::Normalize if !old && repaired.contains(class) => Some(Difference::D3),
+        Row::Acquisition if !old && (class == C::HW_AVERAGE || (stopped && class == C::PHOSPHOR)) => {
+            Some(Difference::D7)
+        }
+        Row::Math if !old && class == C::MATH => Some(Difference::D8),
+        // The old mask channel was applied outside the generation key. Old-channel records
+        // must be dropped and mask counts reset, including for demo sources (D9).
+        Row::MaskSource if !old && (class == C::ACQ || class == C::MASK) => Some(Difference::D9),
+        Row::Clear if RequestClasses::clear().contains(class) => Some(Difference::D4),
+        Row::Single if (C::PHOSPHOR | C::STATS | C::HW_AVERAGE).contains(class) => Some(Difference::D4),
         // RUN requests declare HW_AVERAGE for every source; the old reset only acts on hardware.
         // Demo/scripted sources have no hardware average to reset, so this extra class is inert (D4).
-        Row::Run if class == C::HW_AVERAGE || class == C::HISTORY => Some("D4"),
-        Row::Publication if class == C::ACQ => Some("D4"),
-        Row::Stage if class == C::ACQ || class == C::MAPPING || class == C::STATS => Some("D5"),
+        Row::Run if class == C::HW_AVERAGE || class == C::HISTORY => Some(Difference::D4),
+        Row::Publication if class == C::ACQ => Some(Difference::D4),
+        Row::Stage if class == C::ACQ || class == C::MAPPING || class == C::STATS => Some(Difference::D5),
 
         _ => None,
     }

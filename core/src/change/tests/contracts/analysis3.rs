@@ -98,7 +98,7 @@ pub(super) const CASES: &[Case] = &[
         |m| {
             m.mask_on = !m.mask_on;
         },
-        C::ACQ.union(C::STATS).union(C::MASK),
+        C::STATS.union(C::MASK),
     ),
     (
         "zones",

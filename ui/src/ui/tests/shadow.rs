@@ -71,7 +71,7 @@ const ORACLE_CASES: &[OracleCase] = &[
         RunState::Stop,
         |u| u.m.ch[0].offset = 1e6,
         C::ACQ.union(C::MAPPING).union(C::STATS),
-        [0, 1, 0, 1, 0, 0, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
     ),
     (
         "CLEAR at equal settings, D4",
@@ -96,7 +96,7 @@ fn scripted_change_storm_matches_reviewed_oracle() {
         ui.step(0.04);
         assert_eq!(ui.host.runtime().change.last.as_ref().unwrap().classes(), *classes, "{name}");
         if unmarked {
-            assert_eq!(ui.mstat[0].n, 7, "shadow must leave the old unmarked statistics intact");
+            assert!(ui.mstat.is_empty(), "live normalization must notify legacy statistics");
         }
         let (actual, _, outbox, errors, unreviewed) = change::counters(&ui);
         assert_eq!(actual, *raw, "raw counters: {name}");
@@ -236,14 +236,14 @@ fn oracle_differences_do_not_exempt_unrelated_classes() {
     use change::oracle::{difference, Row};
     for (row, class) in [
         (Row::Mark, C::ACQ),
-        (Row::Offset, C::MASK),
-        (Row::Zoom, C::STATS),
+        (Row::Normalize, C::MASK),
+        (Row::Math, C::STATS),
         (Row::Clear, C::HISTORY),
         (Row::Single, C::VIEW),
         (Row::Run, C::PHOSPHOR),
     ] {
-        assert_eq!(difference(row, class, true, false), None);
-        assert_eq!(difference(row, class, false, false), None);
+        assert_eq!(difference(row, class, true, false, C::NONE), None);
+        assert_eq!(difference(row, class, false, false, C::NONE), None);
     }
 }
 
@@ -357,10 +357,9 @@ fn zoom_clamp_has_a_producing_oracle_row() {
     ui.step(0.04);
     change::reset(&mut ui);
     ui.m.zdelay = 1e3;
-    ui.clamp_zoom();
     ui.step(0.04);
     assert!(ui.host.runtime().change.last.as_ref().unwrap().classes().contains(C::MAPPING));
-    assert_eq!(change::counters(&ui), ([0, 1, 0, 0, 0, 0, 0, 0, 0, 0], 0, 0, 0, 0));
+    assert_eq!(change::counters(&ui), ([0, 1, 0, 1, 0, 0, 0, 0, 0, 0], 0, 0, 0, 0));
 }
 
 #[test]

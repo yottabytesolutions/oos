@@ -61,6 +61,17 @@ impl Shadow {
         self.needs = needs;
         Ok(changes)
     }
+    /// Normalize live settings, using the existing scratch to report only classes of effective repairs.
+    /// No shadow values are copied into the acting model. The temporary legacy oracle uses this evidence.
+    pub fn normalize_live(&mut self, model: &mut Model, config: &Config) -> Result<(bool, super::Classes), Error> {
+        if snapshot_bytes(model) >= 64 * 1024 || super::snapshot::projected_bytes(&self.scratch, model) >= 64 * 1024 {
+            return Err(Error::SnapshotTooLarge);
+        }
+        refresh(&mut self.scratch, model);
+        let changed = normalize(model, config);
+        let classes = classify(&self.scratch, model, self.needs, self.needs);
+        Ok((changed, classes))
+    }
     /// Compare a value outbox with the corresponding legacy writes, never changing the acting model.
     pub fn proposals_agree(&mut self, proposals: &super::Outbox, legacy: &Model) -> bool {
         if super::snapshot::projected_bytes(&self.scratch, legacy) >= 64 * 1024 {

@@ -1634,18 +1634,6 @@ impl Ui {
         Ok(crate::store::la_csv(la, &self.m.la.lines()))
     }
 
-    /// Keeps the zoom window inside the main window and not slower than the main time base.
-    fn clamp_zoom(&mut self) {
-        change::event(self, change::oracle::Row::Zoom, oos_core::change::Classes::NONE);
-        if self.m.zscale > self.m.tscale {
-            self.m.zscale = self.m.tscale;
-        }
-        let half_main = self.m.time_per_div() * HDIV / 2.0;
-        let half_zoom = tscales()[self.m.zscale] * HDIV / 2.0;
-        let lim = (half_main - half_zoom).max(0.0);
-        self.m.zdelay = self.m.zdelay.clamp(self.m.delay - lim, self.m.delay + lim);
-    }
-
     fn set_zoom(&mut self, on: bool) {
         self.m.zoom = on;
         if on {
@@ -6300,9 +6288,6 @@ impl Ui {
                     m.tscale = step(m.tscale, tscales().len(), d);
                     m.tfine = 1.0;
                 }
-                if m.zscale > m.tscale {
-                    m.zscale = m.tscale;
-                }
                 // the delay is the time in the middle of the screen: keep the expand point where it is
                 let new = m.time_per_div();
                 let half = HDIV / 2.0;
@@ -6625,11 +6610,9 @@ impl Ui {
             Item::AutoRoll => self.m.auto_roll = !self.m.auto_roll,
             Item::ZScale => {
                 self.m.zscale = step(self.m.zscale, tscales().len(), d);
-                self.clamp_zoom();
             }
             Item::ZDelay => {
                 self.m.zdelay += d as f32 * tscales()[self.m.zscale] / 25.0;
-                self.clamp_zoom();
             }
             Item::XyMode => self.xy = !self.xy,
             Item::BootMode => self.boot_mode_toggle(),
@@ -7063,7 +7046,6 @@ impl Ui {
                     self.m.mask_on = false;
                 }
                 self.build_mask();
-                self.clamp_zoom();
                 self.relayout();
                 change::recall(self);
                 self.toast(&format!("Recalled {}", crate::store::file_name(&p)));
@@ -7854,7 +7836,7 @@ impl Ui {
                 self.mask = None;
                 self.mask_ref = None;
                 self.close_menu();
-                change::dirty(self, change::oracle::Row::Recall);
+                change::normalize::default_setup(self);
                 self.toast("Default set-up");
             }
             key::SLOPE => self.adjust(Item::TrigSlope, 1),
@@ -8228,7 +8210,6 @@ impl Ui {
                         if self.m.zoom {
                             let zt = tscales()[self.m.zscale];
                             self.m.zdelay = t.start_delay - dx as f32 / ppx * zt;
-                            self.clamp_zoom();
                         } else {
                             self.m.delay = t.start_delay - dx as f32 / ppx * self.m.time_per_div();
                         }
@@ -8820,6 +8801,7 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    mod change;
     mod mapping;
     mod roll;
     mod shadow;

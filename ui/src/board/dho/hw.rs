@@ -129,7 +129,7 @@ pub fn settings(m: &Model, program_afe: bool, sw: &crate::sysconf::Switches) -> 
         bias: m.ch[c].bias as f64,
         skew: m.ch[c].skew as f64,
         couple: match m.ch[c].coupling {
-            // a board without it never gets it (`Model::fit_platform`)
+            // a board without it never gets it (`oos_core::change::normalize`)
             Coupling::Dc | Coupling::Dc50 => Couple::Dc,
             Coupling::Ac => Couple::Ac,
             Coupling::Gnd => Couple::Gnd,

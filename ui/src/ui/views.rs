@@ -105,9 +105,6 @@ impl Ui {
                 _ => {}
             }
         }
-        if self.m.zscale > self.m.tscale {
-            self.m.zscale = self.m.tscale;
-        }
         self.settings_changed();
     }
 

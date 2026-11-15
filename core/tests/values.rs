@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use oos_core::change::normalize;
 use oos_core::config::Config;
 use oos_core::model::*;
 use oos_core::protocols::{Context, ModuleInfo, ModuleValues, Opt};
@@ -28,12 +29,12 @@ fn capabilities_are_independent_values_in_one_process() {
     full.dec_src4 = Some(3);
     full.zones[0].src = 3;
     let mut small = full.clone();
-    assert!(!full.fit_platform_in(&four));
-    assert!(small.fit_platform_in(&two));
+    assert!(!normalize(&mut full, &four));
+    assert!(normalize(&mut small, &two));
     assert_eq!((small.ch[3].on, small.active, small.la.on), (false, 0, false));
     assert_eq!((small.math_a, small.maths[1].a, small.dec_src4, small.zones[0].src), (0, NCH, None, 0));
     assert_eq!((small.bode_sync, small.bode_sw_in), (1, 1));
-    assert!(!small.fit_platform_in(&two));
+    assert!(!normalize(&mut small, &two));
     assert!(full.la_on_in(&four));
     assert!(!full.la_on_in(&two));
     assert_eq!((two.generators(), four.generators()), (0, 1));
@@ -88,6 +89,6 @@ fn depth_and_la_values_preserve_the_existing_cap_rules() {
     assert_eq!(m.max_srate_in(&config), rate / 2.0);
     assert_eq!(m.max_mem_in(&config), 31_250_000);
     m.ch[0].coupling = Coupling::Dc50;
-    assert!(m.fit_platform_in(&config));
+    assert!(normalize(&mut m, &config));
     assert_eq!(m.ch[0].coupling, Coupling::Dc);
 }

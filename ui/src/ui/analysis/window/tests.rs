@@ -166,3 +166,33 @@ fn a_raw_record_of_an_old_acquisition_generation_is_not_submitted() {
 }
 
 mod review;
+
+#[test]
+fn running_analyzer_source_step_snaps_before_submitting_without_broad_resets() {
+    for (view, item) in [(AView::Eye, Item::EyeSrc), (AView::Spectrum, Item::SpecSrc)] {
+        let mut ui = fixture(view, 1024, 1e-6, |k| (k as f32 * 0.1).sin());
+        ui.m.run = RunState::Run;
+        ui.m.ch[0].on = true;
+        ui.m.ch[1].on = false;
+        ui.m.meas.clear();
+        ui.m.meas2.clear();
+        ui.m.spec_src = 0;
+        ui.m.eye_src = 0;
+        change::reset(&mut ui);
+        ui.dirty_map = false;
+        ui.mstat = vec![MStat { n: 7, ..Default::default() }];
+        ui.ph.map[0][3] = 19;
+        let picture = ui.ph.map.clone();
+        ui.adjust(item, 1);
+        let submitted = ui.azr.work.accepted_key.as_ref().expect("intake submits synchronous job");
+        assert_eq!((submitted.eye.0, submitted.spectrum.0), (0, 0), "job must use an enabled source");
+        assert_eq!((ui.m.eye_src, ui.m.spec_src), (0, 0));
+        assert_eq!(ui.mstat[0].n, 7);
+        assert!(!ui.dirty_map);
+        change::begin_step(&mut ui, 0.04).unwrap();
+        assert_eq!(ui.mstat[0].n, 7);
+        assert!(!ui.dirty_map);
+        assert_eq!(ui.ph.map, picture);
+        assert_eq!(change::counters(&ui).4, 0);
+    }
+}

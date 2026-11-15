@@ -46,6 +46,7 @@ impl BatchScript {
         // M1 batch captures exclude measurements until M10 refreshes the worker view independently.
         ui.m.meas.clear();
         ui.m.meas2.clear();
+        super::super::change::stats_clear(ui);
         Self {
             source: scripted::source(kind, 0x9e3779b97f4a7c15),
             record_only: matches!(kind, BatchKind::Roll | BatchKind::Scan | BatchKind::HardwareAverage),
@@ -180,7 +181,9 @@ mod tests {
             let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.m.meas.push((Meas::Vpp, 0));
             ui.m.meas2.push((0, 0, 1));
+            ui.mstat.push(crate::ui::MStat { n: 7, ..Default::default() });
             let mut batch = BatchScript::new(&mut ui, kind);
+            assert!(ui.mstat.is_empty(), "batch measurement removal must use the observed clear seam");
             assert!(ui.m.meas.is_empty());
             assert!(ui.m.meas2.is_empty());
             for run in [RunState::Run, RunState::Stop] {

@@ -5,7 +5,7 @@ use crate::model::Model;
 
 pub(super) fn analysis_3(a: &Model, b: &Model, emit: &mut impl FnMut(FieldDiff)) {
     emit(FieldDiff::new(167, "bw_bins", a.bw_bins != b.bw_bins, C::STATS | C::VIEW));
-    emit(FieldDiff::new(185, "mask_on", a.mask_on != b.mask_on, C::ACQ | C::STATS | C::MASK));
+    emit(FieldDiff::new(185, "mask_on", a.mask_on != b.mask_on, C::STATS | C::MASK));
     emit(FieldDiff::new(186, "zones", a.zones != b.zones, C::ACQ | C::STATS | C::ZONE));
     emit(FieldDiff::new(187, "mask_src", a.mask_src != b.mask_src, C::ACQ | C::STATS | C::MASK));
     emit(FieldDiff::new(188, "mask_x", a.mask_x != b.mask_x, C::MASK));

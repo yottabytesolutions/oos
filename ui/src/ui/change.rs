@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Observe-only bridge: diagnostics and shadow requests never drive an acting consumer.
+//! Live normalization bridge plus observe-only classification, diagnostics and requests.
 
 pub(super) mod census;
 mod diagnostics;
@@ -8,6 +8,8 @@ mod intake;
 pub(crate) use intake::intake;
 mod legacy;
 mod legacy_keys;
+pub(super) mod normalize;
+pub(super) mod observations;
 pub(super) mod oracle;
 mod proposals;
 
@@ -22,12 +24,20 @@ struct Signals {
     effects: C,
     row: Row,
     rows: u32,
-    effects_by_row: [C; 16],
+    effects_by_row: [C; oracle::ROW_COUNT],
     marked_in_stop: bool,
+    normalized: C,
 }
 impl Default for Signals {
     fn default() -> Self {
-        Self { effects: C::NONE, row: Row::Drawing, rows: 0, effects_by_row: [C::NONE; 16], marked_in_stop: false }
+        Self {
+            effects: C::NONE,
+            row: Row::Drawing,
+            rows: 0,
+            effects_by_row: [C::NONE; oracle::ROW_COUNT],
+            marked_in_stop: false,
+            normalized: C::NONE,
+        }
     }
 }
 struct Prepared {
@@ -53,11 +63,10 @@ pub(super) struct Observer {
     stages: proposals::Stages,
     legacy: Option<legacy_keys::Keys>,
     timing: crate::perfguard::StageTiming,
-    normalization_pending: bool,
     census: census::Census,
 }
 
-fn needs(ui: &Ui) -> UiAcq {
+fn needs(ui: &Ui, keys: &legacy_keys::Keys) -> UiAcq {
     let size = |p: &Phosphor| (p.w, p.h);
     let layout = Layout::new(
         size(&ui.ph),
@@ -67,14 +76,15 @@ fn needs(ui: &Ui) -> UiAcq {
         ui.pane_h() as usize,
         0,
     );
-    UiAcq::of(ui.needs_raw(), ui.fast_ok(), ui.mask_ref.is_some(), ui.auto.is_some(), ui.bode.running, layout)
+    let format = if ui.src.is_hw() && !ui.needs_raw() { keys.compress() } else { 1 };
+    UiAcq::of(ui.needs_raw(), ui.fast_ok(), ui.auto.is_some(), ui.bode.running, layout).with_read_format(format)
 }
 
 pub(super) fn initialize(ui: &mut Ui) {
     ui.relayout();
     let config = crate::model::config();
-    let shadow = Shadow::new(&ui.m, needs(ui), &config);
     let keys = legacy_keys::Keys::of(ui);
+    let shadow = Shadow::new(&ui.m, needs(ui, &keys), &config);
     let observer = &mut ui.host.runtime_mut().change;
     observer.legacy = Some(keys);
     observer.signals = Signals::default();
@@ -138,8 +148,8 @@ fn prepare_inner(ui: &mut Ui) {
         request(ui, Request::Run, Row::Run);
     }
     let config = crate::model::config();
-    let needs = needs(ui);
     let keys = legacy_keys::Keys::of(ui);
+    let needs = needs(ui, &keys);
     let stopped = ui.m.run == RunState::Stop;
     let observer = &mut ui.host.runtime_mut().change;
     let transition =
@@ -148,6 +158,9 @@ fn prepare_inner(ui: &mut Ui) {
         observer.signals.effects |= C::ACQ;
         observer.signals.effects_by_row[Row::Publication as usize] |= C::ACQ;
         observer.signals.rows |= 1 << Row::Publication as usize;
+    }
+    if let Some(old) = &observer.legacy {
+        keys.observe(old, &mut observer.signals);
     }
     observer.legacy = Some(keys);
     let Some(shadow) = &mut observer.shadow else { return };
@@ -198,14 +211,6 @@ pub(super) fn finish_step(ui: &mut Ui) {
     let started = Instant::now();
     let observer = &mut ui.host.runtime_mut().change;
     if let Some(shadow) = &mut observer.shadow {
-        let mut unequal = observer.normalization_pending;
-        oos_core::change::fields(shadow.normalized(), &ui.m, |f| {
-            if f.changed() && matches!(f.name(), "zscale" | "zdelay" | "spec_src" | "eye_src") {
-                unequal = true;
-            }
-        });
-        observer.diagnostics.normalized += u64::from(unequal);
-        observer.normalization_pending = false;
         observer.proposals.clear();
         if let Err(error) = observer.proposals.capture(shadow.normalized(), &ui.m) {
             observer.diagnostics.error(error);
@@ -305,8 +310,14 @@ fn compare(observer: &mut Observer, prepared: Prepared) {
     let persistence = fields.iter().flatten().any(|f| oracle::persistence_field(f.name())) || single;
     let old = oracle::dirty_contracts(signals.effects, geometry, persistence);
     let by_row = signals.effects_by_row.map(|old| oracle::dirty_contracts(old, geometry, persistence));
-    let difference =
-        observer.diagnostics.compare(changes.classes(), old, signals.rows, &by_row, stopped || signals.marked_in_stop);
+    let difference = observer.diagnostics.compare(
+        changes.classes(),
+        old,
+        signals.rows,
+        &by_row,
+        stopped || signals.marked_in_stop,
+        signals.normalized,
+    );
     if difference != 0 {
         for field in fields.into_iter().flatten() {
             observer.diagnostics.field(field, signals.row, difference);
@@ -323,18 +334,14 @@ pub(super) fn recall(ui: &mut Ui) {
 
 fn compare_normalized(observer: &mut Observer, live: &Model) {
     let Some(shadow) = &observer.shadow else { return };
-    observer.normalization_pending = false;
+    let mut unequal = false;
     oos_core::change::fields(shadow.normalized(), live, |f| {
-        if f.changed()
-            && !matches!(
-                f.name(),
-                "status" | "hw_stamp" | "hw_avg_clear" | "zscale" | "zdelay" | "spec_src" | "eye_src"
-            )
-        {
-            observer.normalization_pending = true;
-            observer.diagnostics.field(f, observer.signals.row, 4);
+        if f.changed() && !matches!(f.name(), "status" | "hw_stamp" | "hw_avg_clear") {
+            unequal = true;
+            observer.diagnostics.field(f, observer.signals.row, oracle::Difference::D3.mask());
         }
     });
+    observer.diagnostics.normalized += u64::from(unequal);
 }
 
 /// Preserve the old RUN reset at its old seam, associating it with this intake edge or the next internal edge.

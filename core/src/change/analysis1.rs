@@ -20,16 +20,16 @@ pub(super) fn analysis_1(a: &Model, b: &Model, emit: &mut impl FnMut(FieldDiff))
     emit(FieldDiff::new(114, "dec_bits", a.dec_bits != b.dec_bits, decoder));
     emit(FieldDiff::new(115, "dec_parity", a.dec_parity != b.dec_parity, decoder));
     emit(FieldDiff::new(116, "dec_opt", a.dec_opt != b.dec_opt, decoder));
-    emit(FieldDiff::new(130, "spec_src", a.spec_src != b.spec_src, C::STATS | C::VIEW));
-    emit(FieldDiff::new(131, "spec_center", a.spec_center != b.spec_center, C::STATS | C::VIEW));
-    emit(FieldDiff::new(132, "spec_span", a.spec_span != b.spec_span, C::STATS | C::VIEW));
-    emit(FieldDiff::new(133, "spec_rbw", a.spec_rbw != b.spec_rbw, C::STATS | C::VIEW));
-    emit(FieldDiff::new(134, "spec_win", a.spec_win != b.spec_win, C::STATS | C::VIEW));
+    emit(FieldDiff::new(130, "spec_src", a.spec_src != b.spec_src, C::MATH | C::VIEW));
+    emit(FieldDiff::new(131, "spec_center", a.spec_center != b.spec_center, C::MATH | C::VIEW));
+    emit(FieldDiff::new(132, "spec_span", a.spec_span != b.spec_span, C::MATH | C::VIEW));
+    emit(FieldDiff::new(133, "spec_rbw", a.spec_rbw != b.spec_rbw, C::MATH | C::VIEW));
+    emit(FieldDiff::new(134, "spec_win", a.spec_win != b.spec_win, C::MATH | C::VIEW));
     emit(FieldDiff::new(135, "spec_sort", a.spec_sort != b.spec_sort, C::NONE));
     emit(FieldDiff::new(136, "spec_harm", a.spec_harm != b.spec_harm, C::NONE));
-    emit(FieldDiff::new(137, "spec_trace", a.spec_trace != b.spec_trace, C::STATS | C::VIEW));
-    emit(FieldDiff::new(138, "spec_ref", a.spec_ref != b.spec_ref, C::STATS | C::VIEW));
-    emit(FieldDiff::new(139, "spec_wf", a.spec_wf != b.spec_wf, C::STATS | C::VIEW));
+    emit(FieldDiff::new(137, "spec_trace", a.spec_trace != b.spec_trace, C::MATH | C::VIEW));
+    emit(FieldDiff::new(138, "spec_ref", a.spec_ref != b.spec_ref, C::MATH | C::VIEW));
+    emit(FieldDiff::new(139, "spec_wf", a.spec_wf != b.spec_wf, C::MATH | C::VIEW));
 }
 
 pub(super) fn refresh_1(a: &mut Model, b: &Model) {

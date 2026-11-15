@@ -39,6 +39,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
   write partitions, run `dd` to block devices, or delete another contributor's
   worktrees or branches.
 - Follow [integration order and parallel claims](docs/process/integration.md) and the [review protocol](docs/process/review.md). Use the roles defined in [integration](docs/process/integration.md#roles).
+- Follow the pace in [delivery](docs/process/delivery.md): one job per task, review tier, fast gate for workers, batch integration.
 - Every agent-authored change needs review by an agent from another vendor. Codex authors use Claude reviewers, and Claude authors use Codex reviewers. Other vendors pair across vendors too.
 - Human-authored changes need review by any reviewer who did not write the change.
 - Merge reviewed branches. Rebase only private unreviewed work. Affected authors resolve conflicts and obtain renewed review. The author never merges the change.

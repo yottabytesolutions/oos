@@ -43,7 +43,7 @@ Validate formatting, debug and release host tests and the fast gate with Cargo o
 
 - 2026-11-15: done. merged into overhaul with the 2026-11-15 batch (cherry-picked onto the reformatted base; signing helpers moved to fpgad/src/bin/oos_update/ for the size ratchet).
 
-- 2026-11-15: size follow-up left uncommitted for the owner on `integ-3`. Entry file: 1080 physical
+- 2026-11-15: size follow-up committed as 508d786 for the owner on `integ-3`. Entry file: 1080 physical
   lines; new signing module: 130, with every extracted function below 60 lines. Extracted bodies
   match the original after visibility and fixture-path normalization. Argument command selection
   retains the pack-only flag checks while bringing `main` back within its existing allowance.
@@ -69,7 +69,7 @@ Validate formatting, debug and release host tests and the fast gate with Cargo o
   Reserved the signing module directory above. No network, device access or commits; leave changes
   and `COMMIT_MSG.txt` for the owner. Existing signing regressions cover the extraction.
 
-- 2026-11-14: review fixes applied and left uncommitted for the owner. `COMMIT_MSG.txt` has a proposed
+- 2026-11-14: review fixes applied and committed as 508d786 for the owner. `COMMIT_MSG.txt` has a proposed
   imperative subject (66 characters) and rationale. The task stays active pending integration checks.
   In `fpgad`, `cargo test --offline` and `cargo test --offline --release` each exit 0.
   Both print `9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`,

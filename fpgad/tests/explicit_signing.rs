@@ -8,10 +8,10 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new() -> Self {
-        let out = Command::new("mktemp").arg("-d").output().unwrap();
+        let out = Command::new("mktemp").arg("-d").output().expect("test setup");
         assert!(out.status.success());
-        let f = Self(PathBuf::from(String::from_utf8(out.stdout).unwrap().trim()));
-        std::fs::write(f.path("image"), image()).unwrap();
+        let f = Self(PathBuf::from(String::from_utf8(out.stdout).expect("test setup").trim()));
+        std::fs::write(f.path("image"), image()).expect("test setup");
         f
     }
 
@@ -33,21 +33,21 @@ impl Fixture {
     }
 
     fn keygen(&self, name: &str) -> [u8; 32] {
-        let out = self.command().args(["keygen", "--out"]).arg(self.path(name)).output().unwrap();
+        let out = self.command().args(["keygen", "--out"]).arg(self.path(name)).output().expect("test setup");
         success(&out);
-        let text = String::from_utf8(out.stdout).unwrap();
+        let text = String::from_utf8(out.stdout).expect("test setup");
         let keys = pkg::parse_keys(&text);
         assert_eq!(keys.len(), 1);
         keys[0]
     }
 
     fn verify(&self, key: [u8; 32]) {
-        let mut bytes = std::fs::read(self.path("package")).unwrap();
-        let (header, payload) = pkg::verify(&bytes, &[key]).unwrap();
+        let mut bytes = std::fs::read(self.path("package")).expect("test setup");
+        let (header, payload) = pkg::verify(&bytes, &[key]).expect("test setup");
         assert_eq!(payload, image());
         assert_eq!(header.manifest.build, "20261114-120000 kernel test");
         assert!(header.manifest.extra.contains(&(kexec::LINE.0.into(), kexec::LINE.1.into())));
-        card::check_image(payload).unwrap();
+        card::check_image(payload).expect("test setup");
         let last = bytes.len() - 1;
         bytes[last] ^= 1;
         assert!(pkg::verify(&bytes, &[key]).is_err(), "device verifier must reject damaged payloads");
@@ -59,7 +59,7 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).unwrap();
+        std::fs::remove_dir_all(&self.0).expect("test setup");
     }
 }
 
@@ -97,20 +97,28 @@ fn explicit_key_round_trips_through_device_verifier() {
     let f = Fixture::new();
     let key = f.keygen("private key");
     let wrong_key = f.keygen("other key");
-    let out = f.pack().arg("--untrusted-ok").arg("--key").arg(f.path("private key")).output().unwrap();
+    let out = f.pack().arg("--untrusted-ok").arg("--key").arg(f.path("private key")).output().expect("test setup");
     success(&out);
     f.verify(key);
-    let bytes = std::fs::read(f.path("package")).unwrap();
+    let bytes = std::fs::read(f.path("package")).expect("test setup");
     assert!(pkg::verify(&bytes, &[wrong_key]).is_err());
-    std::fs::write(f.path("public"), hash::hex(&key)).unwrap();
-    success(&f.command().arg("verify").arg(f.path("package")).arg("--keys").arg(f.path("public")).output().unwrap());
+    std::fs::write(f.path("public"), hash::hex(&key)).expect("test setup");
+    success(
+        &f.command()
+            .arg("verify")
+            .arg(f.path("package"))
+            .arg("--keys")
+            .arg(f.path("public"))
+            .output()
+            .expect("test setup"),
+    );
 }
 
 #[test]
 fn environment_selects_key_and_explicit_key_takes_precedence() {
     let f = Fixture::new();
     let key = f.keygen("private");
-    success(&f.pack().arg("--untrusted-ok").env("OOS_SIGNING_KEY", f.path("private")).output().unwrap());
+    success(&f.pack().arg("--untrusted-ok").env("OOS_SIGNING_KEY", f.path("private")).output().expect("test setup"));
     f.verify(key);
     success(
         &f.pack()
@@ -119,7 +127,7 @@ fn environment_selects_key_and_explicit_key_takes_precedence() {
             .arg("--key")
             .arg(f.path("private"))
             .output()
-            .unwrap(),
+            .expect("test setup"),
     );
     f.verify(key);
 }
@@ -129,10 +137,10 @@ fn no_selection_ignores_home_and_legacy_environment() {
     let f = Fixture::new();
     f.keygen(".config/oos/update-signing.key");
     refused(
-        &f.pack().env("OOS_UPDATE_KEY", f.path(".config/oos/update-signing.key")).output().unwrap(),
+        &f.pack().env("OOS_UPDATE_KEY", f.path(".config/oos/update-signing.key")).output().expect("test setup"),
         "signing requires --key",
     );
-    refused(&f.pack().env("OOS_SIGNING_KEY", "").output().unwrap(), "signing requires --key");
+    refused(&f.pack().env("OOS_SIGNING_KEY", "").output().expect("test setup"), "signing requires --key");
     assert!(!f.path("package").exists());
 }
 
@@ -140,13 +148,18 @@ fn no_selection_ignores_home_and_legacy_environment() {
 fn community_requires_opt_in_and_refuses_ambiguous_selection() {
     let f = Fixture::new();
     let text = include_str!("../../keys/community-signing.key");
-    let seed: [u8; 32] =
-        hash::unhex(text.lines().find(|s| !s.starts_with('#') && !s.is_empty()).unwrap()).unwrap().try_into().unwrap();
-    success(&f.pack().arg("--community").output().unwrap());
+    let seed: [u8; 32] = hash::unhex(text.lines().find(|s| !s.starts_with('#') && !s.is_empty()).expect("test setup"))
+        .expect("test setup")
+        .try_into()
+        .expect("test setup");
+    success(&f.pack().arg("--community").output().expect("test setup"));
     f.verify(oos_hal::update::ed25519::public_key(&seed));
-    refused(&f.pack().arg("--community").arg("--key").arg(f.path("missing")).output().unwrap(), "cannot be combined");
     refused(
-        &f.pack().arg("--community").env("OOS_SIGNING_KEY", f.path("missing")).output().unwrap(),
+        &f.pack().arg("--community").arg("--key").arg(f.path("missing")).output().expect("test setup"),
+        "cannot be combined",
+    );
+    refused(
+        &f.pack().arg("--community").env("OOS_SIGNING_KEY", f.path("missing")).output().expect("test setup"),
         "cannot be combined",
     );
 }
@@ -154,17 +167,17 @@ fn community_requires_opt_in_and_refuses_ambiguous_selection() {
 #[test]
 fn missing_or_invalid_selected_key_never_falls_back() {
     let f = Fixture::new();
-    refused(&f.pack().arg("--key").arg(f.path("missing")).output().unwrap(), "missing");
-    refused(&f.pack().env("OOS_SIGNING_KEY", f.path("missing")).output().unwrap(), "missing");
-    std::fs::write(f.path("invalid"), "invalid").unwrap();
-    refused(&f.pack().arg("--key").arg(f.path("invalid")).output().unwrap(), "no 64-digit hex secret key");
+    refused(&f.pack().arg("--key").arg(f.path("missing")).output().expect("test setup"), "missing");
+    refused(&f.pack().env("OOS_SIGNING_KEY", f.path("missing")).output().expect("test setup"), "missing");
+    std::fs::write(f.path("invalid"), "invalid").expect("test setup");
+    refused(&f.pack().arg("--key").arg(f.path("invalid")).output().expect("test setup"), "no 64-digit hex secret key");
     assert!(!f.path("package").exists());
 }
 
 #[test]
 fn keygen_requires_explicit_output() {
     let f = Fixture::new();
-    refused(&f.command().arg("keygen").output().unwrap(), "keygen needs --out");
+    refused(&f.command().arg("keygen").output().expect("test setup"), "keygen needs --out");
     assert!(!f.path(".config").exists());
 }
 
@@ -172,25 +185,27 @@ impl Fixture {
     fn script(&self) -> Command {
         use std::os::unix::fs::PermissionsExt;
         let out = self.path("boot/out");
-        std::fs::create_dir_all(&out).unwrap();
-        std::fs::write(out.join("oos-dev.img"), image()).unwrap();
-        std::fs::write(out.join("oos-dev.build"), "20261114-120000 kernel test\n").unwrap();
-        std::fs::write(self.path("boot/sign-dev-image.sh"), include_str!("../../boot/sign-dev-image.sh")).unwrap();
-        std::fs::create_dir(self.path("bin")).unwrap();
+        std::fs::create_dir_all(&out).expect("test setup");
+        std::fs::write(out.join("oos-dev.img"), image()).expect("test setup");
+        std::fs::write(out.join("oos-dev.build"), "20261114-120000 kernel test\n").expect("test setup");
+        std::fs::write(self.path("boot/sign-dev-image.sh"), include_str!("../../boot/sign-dev-image.sh"))
+            .expect("test setup");
+        std::fs::create_dir(self.path("bin")).expect("test setup");
         // Skip Cargo's rebuild. Run the signer binary built for this host check.
         let cargo = self.path("bin/cargo");
         std::fs::write(
             &cargo,
             "#!/bin/sh\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$OOS_TEST_SIGNER\" \"$@\"\n",
         )
-        .unwrap();
-        std::fs::set_permissions(cargo, std::fs::Permissions::from_mode(0o700)).unwrap();
+        .expect("test setup");
+        std::fs::set_permissions(cargo, std::fs::Permissions::from_mode(0o700)).expect("test setup");
         let mut cmd = Command::new("sh");
         cmd.arg(self.path("boot/sign-dev-image.sh"));
         let path = std::env::join_paths(
-            std::iter::once(self.path("bin")).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+            std::iter::once(self.path("bin"))
+                .chain(std::env::split_paths(&std::env::var_os("PATH").expect("test setup"))),
         )
-        .unwrap();
+        .expect("test setup");
         cmd.env("PATH", path).env("OOS_TEST_SIGNER", env!("CARGO_BIN_EXE_oos-update")).env_remove("OOS_SIGNING_KEY");
         cmd
     }
@@ -200,10 +215,10 @@ impl Fixture {
 fn image_signing_script_uses_saved_build_id_and_output_name() {
     let f = Fixture::new();
     let mut cmd = f.script();
-    std::fs::write(f.path("private key"), include_str!("../../keys/community-signing.key")).unwrap();
-    success(&cmd.arg("--key").arg(f.path("private key")).output().unwrap());
-    let bytes = std::fs::read(f.path("boot/out/oos-dev.oosupd")).unwrap();
-    let (header, payload) = pkg::verify(&bytes, &oos_hal::update::trusted_keys()).unwrap();
+    std::fs::write(f.path("private key"), include_str!("../../keys/community-signing.key")).expect("test setup");
+    success(&cmd.arg("--key").arg(f.path("private key")).output().expect("test setup"));
+    let bytes = std::fs::read(f.path("boot/out/oos-dev.oosupd")).expect("test setup");
+    let (header, payload) = pkg::verify(&bytes, &oos_hal::update::trusted_keys()).expect("test setup");
     assert_eq!(header.manifest.build, "20261114-120000 kernel test");
     assert_eq!(payload, image());
     assert!(!f.path("boot/out/DHO800_DHO900_OOS_Install.GEL").exists());
@@ -212,11 +227,14 @@ fn image_signing_script_uses_saved_build_id_and_output_name() {
 #[test]
 fn trusted_public_keys_are_never_signing_seeds() {
     let f = Fixture::new();
-    std::fs::write(f.path("public"), include_str!("../../keys/update.pub")).unwrap();
-    refused(&f.pack().arg("--key").arg(f.path("public")).output().unwrap(), "public key");
+    std::fs::write(f.path("public"), include_str!("../../keys/update.pub")).expect("test setup");
+    refused(&f.pack().arg("--key").arg(f.path("public")).output().expect("test setup"), "public key");
     for key in oos_hal::update::trusted_keys() {
-        std::fs::write(f.path("public"), hash::hex(&key)).unwrap();
-        refused(&f.pack().arg("--key").arg(f.path("public")).arg("--untrusted-ok").output().unwrap(), "public key");
+        std::fs::write(f.path("public"), hash::hex(&key)).expect("test setup");
+        refused(
+            &f.pack().arg("--key").arg(f.path("public")).arg("--untrusted-ok").output().expect("test setup"),
+            "public key",
+        );
         assert!(!f.path("package").exists());
     }
 }
@@ -226,10 +244,10 @@ fn untrusted_signing_keys_require_explicit_opt_in() {
     let f = Fixture::new();
     let key = f.keygen("private");
     assert!(!oos_hal::update::trusted_keys().contains(&key));
-    refused(&f.pack().arg("--key").arg(f.path("private")).output().unwrap(), "--untrusted-ok");
-    refused(&f.pack().env("OOS_SIGNING_KEY", f.path("private")).output().unwrap(), "--untrusted-ok");
+    refused(&f.pack().arg("--key").arg(f.path("private")).output().expect("test setup"), "--untrusted-ok");
+    refused(&f.pack().env("OOS_SIGNING_KEY", f.path("private")).output().expect("test setup"), "--untrusted-ok");
     assert!(!f.path("package").exists());
-    success(&f.pack().arg("--key").arg(f.path("private")).arg("--untrusted-ok").output().unwrap());
+    success(&f.pack().arg("--key").arg(f.path("private")).arg("--untrusted-ok").output().expect("test setup"));
     f.verify(key);
 }
 
@@ -238,9 +256,9 @@ fn signing_flags_are_pack_only() {
     let f = Fixture::new();
     for flag in ["--community", "--untrusted-ok"] {
         for command in ["verify", "keygen", "status"] {
-            refused(&f.command().args([command, flag]).output().unwrap(), "only valid for pack");
+            refused(&f.command().args([command, flag]).output().expect("test setup"), "only valid for pack");
         }
-        refused(&f.command().arg(flag).output().unwrap(), "only valid for pack");
+        refused(&f.command().arg(flag).output().expect("test setup"), "only valid for pack");
     }
 }
 
@@ -248,8 +266,8 @@ fn signing_flags_are_pack_only() {
 fn image_signing_script_requires_saved_build_id() {
     let f = Fixture::new();
     let mut cmd = f.script();
-    std::fs::remove_file(f.path("boot/out/oos-dev.build")).unwrap();
-    refused(&cmd.arg("--community").output().unwrap(), "run boot/build-dev-image.sh first");
+    std::fs::remove_file(f.path("boot/out/oos-dev.build")).expect("test setup");
+    refused(&cmd.arg("--community").output().expect("test setup"), "run boot/build-dev-image.sh first");
     assert!(!f.path("boot/out/oos-dev.oosupd").exists());
 }
 
@@ -257,23 +275,23 @@ fn image_signing_script_requires_saved_build_id() {
 fn image_signing_script_accepts_community_and_environment() {
     let f = Fixture::new();
     let mut cmd = f.script();
-    refused(&cmd.output().unwrap(), "signing requires --key");
+    refused(&cmd.output().expect("test setup"), "signing requires --key");
     assert!(!f.path("boot/out/oos-dev.oosupd").exists());
-    std::fs::write(f.path("private key"), include_str!("../../keys/community-signing.key")).unwrap();
-    success(&cmd.env("OOS_SIGNING_KEY", f.path("private key")).output().unwrap());
-    std::fs::remove_file(f.path("boot/out/oos-dev.oosupd")).unwrap();
-    success(&cmd.env_remove("OOS_SIGNING_KEY").arg("--community").output().unwrap());
-    let bytes = std::fs::read(f.path("boot/out/oos-dev.oosupd")).unwrap();
-    pkg::verify(&bytes, &oos_hal::update::trusted_keys()).unwrap();
+    std::fs::write(f.path("private key"), include_str!("../../keys/community-signing.key")).expect("test setup");
+    success(&cmd.env("OOS_SIGNING_KEY", f.path("private key")).output().expect("test setup"));
+    std::fs::remove_file(f.path("boot/out/oos-dev.oosupd")).expect("test setup");
+    success(&cmd.env_remove("OOS_SIGNING_KEY").arg("--community").output().expect("test setup"));
+    let bytes = std::fs::read(f.path("boot/out/oos-dev.oosupd")).expect("test setup");
+    pkg::verify(&bytes, &oos_hal::update::trusted_keys()).expect("test setup");
 }
 
 #[test]
 fn image_signing_script_refuses_extra_or_incomplete_arguments() {
     let f = Fixture::new();
     let cmd = f.script();
-    let path = cmd.get_envs().find(|(key, _)| *key == "PATH").unwrap().1.unwrap().to_owned();
+    let path = cmd.get_envs().find(|(key, _)| *key == "PATH").expect("test setup").1.expect("test setup").to_owned();
     // A successful stand-in makes any invocation of Cargo visible as an unexpected exit 0.
-    std::fs::write(f.path("bin/cargo"), "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::write(f.path("bin/cargo"), "#!/bin/sh\nexit 0\n").expect("test setup");
     for args in [
         vec!["--out", "elsewhere"],
         vec!["--image", "elsewhere"],
@@ -283,8 +301,12 @@ fn image_signing_script_refuses_extra_or_incomplete_arguments() {
         vec!["--community", "--untrusted-ok"],
         vec!["pack"],
     ] {
-        let out =
-            Command::new("sh").arg(f.path("boot/sign-dev-image.sh")).args(&args).env("PATH", &path).output().unwrap();
+        let out = Command::new("sh")
+            .arg(f.path("boot/sign-dev-image.sh"))
+            .args(&args)
+            .env("PATH", &path)
+            .output()
+            .expect("test setup");
         refused(&out, "Usage:");
     }
     assert!(!f.path("boot/out/oos-dev.oosupd").exists());
@@ -293,26 +315,27 @@ fn image_signing_script_refuses_extra_or_incomplete_arguments() {
 #[test]
 fn image_workflow_requires_signed_update_and_gel() {
     let workflow = include_str!("../../.github/workflows/image.yml");
-    let build = workflow.find("run: boot/build-dev-image.sh").unwrap();
-    let sign = workflow.find("run: boot/sign-dev-image.sh --community").unwrap();
-    let gel = workflow.find("run: python3 -I boot/build-gel.py").unwrap();
-    let check = workflow.find("      - name: Validate release artifacts\n        run: |\n").unwrap();
-    let upload = workflow[check..].find("      - uses: actions/upload-artifact@").unwrap() + check;
+    let build = workflow.find("run: boot/build-dev-image.sh").expect("test setup");
+    let sign = workflow.find("run: boot/sign-dev-image.sh --community").expect("test setup");
+    let gel = workflow.find("run: python3 -I boot/build-gel.py").expect("test setup");
+    let check = workflow.find("      - name: Validate release artifacts\n        run: |\n").expect("test setup");
+    let upload = workflow[check..].find("      - uses: actions/upload-artifact@").expect("test setup") + check;
     assert!(build < sign && sign < gel && gel < check && check < upload);
-    let script = workflow[check..upload].split_once("run: |\n").unwrap().1;
-    let script = script.lines().map(|line| line.strip_prefix("          ").unwrap()).collect::<Vec<_>>().join("\n");
+    let script = workflow[check..upload].split_once("run: |\n").expect("test setup").1;
+    let script =
+        script.lines().map(|line| line.strip_prefix("          ").expect("test setup")).collect::<Vec<_>>().join("\n");
     let f = Fixture::new();
-    std::fs::create_dir_all(f.path("boot/out")).unwrap();
+    std::fs::create_dir_all(f.path("boot/out")).expect("test setup");
     for (update, gel) in [(false, false), (true, false), (false, true), (true, true)] {
         for (name, present) in [("oos-dev.oosupd", update), ("DHO800_DHO900_OOS_Install.GEL", gel)] {
             let path = f.path("boot/out").join(name);
             if present {
-                std::fs::write(path, "artifact").unwrap();
+                std::fs::write(path, "artifact").expect("test setup");
             } else if path.exists() {
-                std::fs::remove_file(path).unwrap();
+                std::fs::remove_file(path).expect("test setup");
             }
         }
-        let out = Command::new("bash").args(["-e", "-c", &script]).current_dir(&f.0).output().unwrap();
+        let out = Command::new("bash").args(["-e", "-c", &script]).current_dir(&f.0).output().expect("test setup");
         assert_eq!(out.status.success(), update && gel, "{}", String::from_utf8_lossy(&out.stderr));
     }
 }

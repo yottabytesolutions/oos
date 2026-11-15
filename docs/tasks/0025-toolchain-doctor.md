@@ -2,9 +2,9 @@
 id: 25
 title: "Pin build tools and add a doctor command"
 kind: chore
-status: planned
+status: active
 release: 0.2.0
-owner: none
+owner: codex-c
 depends: []
 ---
 
@@ -130,3 +130,4 @@ Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
 ## Status
 
 - 2026-11-14: seeded from task 0001. Not yet claimed.
+- 2026-11-15: claimed for codex-c on branch t0025-toolchain (on top of task 0020 and G1) by the coordinator.

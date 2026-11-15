@@ -8,31 +8,40 @@ use std::time::Instant;
 /// What the gate runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
-    /// the seconds-long subset for pre-commit: formatting, size limits, architecture
+    /// the partial subset for pre-commit: formatting, syntax rules, architecture and agent rules
     pub fast: bool,
     pub coverage: bool,
+}
+
+type GateStep = (&'static str, fn(&Path) -> steps::Outcome);
+
+/// The ordered steps shared by fast and full dispatch.
+pub(crate) fn plan(o: Options) -> Vec<GateStep> {
+    let mut s: Vec<GateStep> = vec![
+        ("fmt", steps::fmt),
+        ("size limits", steps::size),
+        ("architecture", steps::arch),
+        ("mutable statics", steps::statics),
+        ("unsafe", steps::unsafety),
+        ("disallowed-method exceptions", steps::allows),
+        ("known failures", steps::known),
+        ("agent rules", crate::agent_rules::check),
+    ];
+    if !o.fast {
+        s.push(("clippy", steps::clippy));
+        s.push(("tests (debug)", |root| steps::tests(root, false)));
+        s.push(("tests (release)", |root| steps::tests(root, true)));
+        s.push(("perf guards", steps::perf));
+        if o.coverage {
+            s.push(("coverage", steps::coverage));
+        }
+    }
+    s
 }
 
 /// Runs the gate; true when every step passed.
 pub fn run(root: &Path, o: Options) -> bool {
     let t = Instant::now();
-    let mut s: Vec<Step> = vec![
-        report::step("fmt", || steps::fmt(root)),
-        report::step("size limits", || steps::size(root)),
-        report::step("architecture", || steps::arch(root)),
-        report::step("mutable statics", || steps::statics(root)),
-        report::step("unsafe", || steps::unsafety(root)),
-        report::step("disallowed-method exceptions", || steps::allows(root)),
-        report::step("known failures", || steps::known(root)),
-    ];
-    if !o.fast {
-        s.push(report::step("clippy", || steps::clippy(root)));
-        s.push(report::step("tests (debug)", || steps::tests(root, false)));
-        s.push(report::step("tests (release)", || steps::tests(root, true)));
-        s.push(report::step("perf guards", || steps::perf(root)));
-        if o.coverage {
-            s.push(report::step("coverage", || steps::coverage(root)));
-        }
-    }
+    let s: Vec<Step> = plan(o).into_iter().map(|(name, run)| report::step(name, || run(root))).collect();
     report::summary(&s, t.elapsed().as_secs_f64(), o.fast || !o.coverage)
 }

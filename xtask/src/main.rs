@@ -1,8 +1,9 @@
 //! The repository gate (docs/development.md).
 //!
-//!   cargo xtask check [--fast] [--no-coverage]   the gate; --fast: formatting, size limits, architecture
+//!   cargo xtask check [--fast] [--no-coverage]   the gate; --fast includes syntax, architecture and agent rules
 //!   cargo xtask ratchet [--coverage] [--move] [--init]   write the ratchet files back after an improvement
 
+mod agent_rules;
 mod arch;
 mod attrs;
 mod base;

@@ -23,3 +23,7 @@ device-test/
 kernel/src/
 # cargo xtask: the scope check and coverage builds (docs/development.md)
 /target/
+
+# Local agent files: never part of the repository (the agent rules check rejects them).
+.claude/settings.local.json
+CLAUDE.local.md

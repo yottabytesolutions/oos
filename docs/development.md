@@ -4,7 +4,7 @@ Every change passes one gate before it is committed, pushed or merged:
 
 ```sh
 cargo xtask check                  # the full gate
-cargo xtask check --fast           # partial, seconds: formatting, size limits, statics, unsafe, architecture
+cargo xtask check --fast           # partial: formatting, syntax rules, architecture, agent rules
 cargo xtask check --no-coverage    # partial: the full gate without the coverage run
 ```
 
@@ -38,6 +38,39 @@ exceptions key the exact path, rule and matched-value hash in `tools/privacy/all
 for commands, limitations, the policy format and the pending hook integration. The xtask hook point waits for
 G1/task 0043; this check does not replace the full gate.
 
+## Loading the shared agent rules
+
+Root `AGENTS.md` is the single source of repository rules. The `agent rules` step runs after `known failures`
+in both fast and full checks, including the hooks and CI. It checks these complete loader files:
+
+| Entry file | Permitted content |
+|---|---|
+| `CLAUDE.md` | the root rules pointer, optionally followed by the exact prose instruction to use the harness-provided `Claude-Session` trailer and session URL |
+| `GEMINI.md` | the root rules pointer |
+| `.github/copilot-instructions.md` | the root rules pointer through `../AGENTS.md` |
+| `.cursor/rules/oos.mdc` | the root rules pointer through `../../AGENTS.md`, with exactly `description: OOS repository rules` and `alwaysApply: true` loader metadata |
+| `.aider.conf.yml` | only `read:` followed by the single list item `  - AGENTS.md` |
+
+The check compares complete templates, normalizing only CRLF and the presence of one final newline. Extra rules,
+comments, loader keys and actual Claude session identifiers fail. Required files must be readable regular files;
+symlinks in their paths fail. The relative Markdown links must resolve to the existing, nonempty root `AGENTS.md`.
+Template mismatches report the first differing line without echoing file content. There is no allowance or ratchet
+for this check.
+
+Git supplies tracked and nonignored new paths with `ls-files -z --cached --others --exclude-standard`.
+Additional recognized entry points fail until a reviewed inventory change supports them: `AGENTS.md`, `CLAUDE.md`,
+`GEMINI.md`, `CLAUDE.local.md`, `.aider.conf.yml` and `.cursorrules` at any depth, files under any `.claude/`,
+`.gemini/`, `.cursor/rules/`, `.github/prompts/`, `.github/agents/` or `.github/chatmodes/`, and Copilot
+`copilot-instructions.md` files under `.github/` or `*.instructions.md` under `.github/instructions/`, including
+nested directory layouts. Discovery is case-insensitive; supported entries retain their canonical spellings so
+case aliases cannot introduce unchecked files on case-sensitive hosts. Tracked files remain checked when ignored
+or deleted. Ignored personal settings are outside this inventory; the checker does not recognize every client's
+present or future configuration.
+
+For a client without automatic discovery, explicitly attach or read root `AGENTS.md` at session start. Aider uses
+the checked `read` configuration; `/read AGENTS.md` also loads it explicitly. A passing entry-file check cannot
+prove that a client loaded or obeyed the rules.
+
 ## The crates
 
 One root workspace (`Cargo.toml`): `hal`, `dsp`, `ui`, `fpgad` and `xtask`, with one `Cargo.lock`, one `target/`
@@ -64,6 +97,7 @@ function; a file reached both as test and as production code is production code.
 | unsafe | syntax walk | `unsafe` blocks, functions, impls, traits, extern blocks and attributes (`#[unsafe(..)]`, `no_mangle`, `export_name`, `link_section`) only under the `unsafe` path prefixes of `architecture.txt`: oos-hal and the adapters of ui; `dsp` has `#![forbid(unsafe_code)]` | memory safety stays at the hardware edge (AGENTS.md) |
 | disallowed-method exceptions | syntax walk | `#[allow]`/`#[expect]` of `clippy::disallowed_methods` only as listed in `allow.txt` | an exception cannot spread unseen |
 | known failures | syntax walk | `#[ignore = "known: task NNNN"]` only as listed in `known.txt`, each naming an open task | a failing test does not hide |
+| agent rules | exact loader templates and Git path inventory | the five checked client entry files load root `AGENTS.md`; additional recognized entries fail | universal rules stay in one place |
 | architecture | `cargo metadata`, syntax walk | `xtask/data/architecture.txt`: allowed crate dependencies; module rules inside a crate | the layers cannot erode by accident |
 | clippy | `cargo clippy --all-targets`, for the host and for `aarch64-unknown-linux-musl` | the `[lints]` table of each crate and `clippy.toml`; the scope build compiles | correctness, idiom, size and complexity, also in Linux-only code |
 | tests (debug, release) | `cargo test`, `cargo test --release` | every test passes in both profiles, full counts | release-only bugs (overflow checks, timing) show |

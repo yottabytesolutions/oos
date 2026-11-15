@@ -4,7 +4,7 @@ title: "Enforce the shared agent rules"
 kind: chore
 status: active
 release: 0.2.0
-owner: codex-c
+owner: Codex
 depends: [1]
 ---
 
@@ -16,7 +16,10 @@ Keep universal rules in AGENTS.md and each agent entry file a thin pointer.
 
 ## Plan
 
-Reserved paths: none. Reserve paths when claimed.
+Reserved paths: `xtask/src/agent_rules.rs`, `xtask/src/agent_rules/`, `xtask/src/main.rs`,
+`xtask/src/check.rs`, `xtask/src/steps/mod.rs` (adapter if needed), `CLAUDE.md`, `GEMINI.md`,
+`.github/copilot-instructions.md`, `.cursor/rules/oos.mdc`, `.aider.conf.yml`, `docs/development.md`,
+`docs/tasks/0020-agent-rules.md`. Branch: `t0020-agent-rules`.
 
 Planning only on `plans-xtask`; implementation claims are still required. Implement in the serial order
 **0043 (G1) -> 0020 -> 0025 -> 0027 -> M2**. Start `t0020-agent-rules` from `overhaul` after G1 merges;
@@ -31,9 +34,10 @@ finish review and integration before 0025 claims `xtask/` and `docs/development.
    to root `AGENTS.md` and require that file to exist and be nonempty.
 2. Cover `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md` and `.cursor/rules/oos.mdc`. Permit only the
    existing pointer sentence, with the correct relative link. Cursor additionally needs its exact loader metadata
-   (`description: OOS repository rules`, `alwaysApply: true`). Claude alone may append the existing session-trailer
-   instruction and fenced `(the session trailer line the harness provides)` template. This exception permits no other policy or actual
-   session identifier. Keep the checker templates about loading, not copies of AGENTS rules.
+   (`description: OOS repository rules`, `alwaysApply: true`). Claude alone may append the exact prose instruction
+   to use the harness-provided `Claude-Session` trailer and session URL, per the round 1 coordinator decision.
+   This exception permits no other policy or actual session identifier. Keep the checker templates about loading,
+   not copies of AGENTS rules.
 3. Add `.aider.conf.yml` containing only a `read` list naming `AGENTS.md`. Check its complete restricted shape
    without adding a YAML dependency. Inventory tracked and nonignored new client rule files using Git's
    NUL-separated path list (`--cached --others --exclude-standard`). Reject additional recognized entry points
@@ -76,5 +80,14 @@ Audit item: 1. Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
 
 ## Status
 
+- 2026-11-15: round 1 fixes prepared over `f300c5c`, uncommitted. Debug and release xtask suites each pass
+- 2026-11-15: round 1 regression evidence: with new tests against the original checker, 10 passed and seven
+- 2026-11-15: review round 1 fixes assigned over `f300c5c`, uncommitted. Plan: replace the Claude trailer
+- 2026-11-15: follow-up for the gate owner: align working-tree checks with the staged index; gate-wide
+- 2026-11-15: final implementation working tree over parent `a90b3968e3d77f830064ec4cc6c23ea1f8d28f70`;
+- 2026-11-15: debug and release xtask suites each pass with 77 passed, zero failed, zero ignored (exit 0;
+- 2026-11-15: plan items 1-5 implemented for review. Exact loader templates, relative links, regular-file checks,
+- 2026-11-15: failing-before evidence: an isolated parent-revision fixture with added policy, a missing shim,
+- 2026-11-15: implementation assigned by the owner to Codex on `t0020-agent-rules`, parent
 - 2026-11-14: seeded from task 0001. Not yet claimed.
 - 2026-11-15: claimed for codex-c on branch t0020-agent-rules (based on G1 t0043-gate-g1 plus overhaul) by the coordinator.

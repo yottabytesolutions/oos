@@ -13,7 +13,7 @@
 531 file dsp/src/sim.rs
 831 file dsp/src/spectrum.rs
 507 file dsp/src/trigger.rs
-1088 file fpgad/src/bin/oos-update.rs
+1008 file fpgad/src/bin/oos-update.rs
 1618 file fpgad/src/main.rs
 890 file hal/src/dho/afe.rs
 722 file hal/src/dho/afg.rs
@@ -28,34 +28,34 @@
 586 file hal/src/model.rs
 410 file hal/src/update/ed25519.rs
 726 file hal/src/update/mod.rs
-2579 file ui/src/board/dho/hw.rs
+2511 file ui/src/board/dho/hw.rs
 454 file ui/src/board/mod.rs
-1020 file ui/src/drawpipe.rs
+1006 file ui/src/drawpipe.rs
 609 file ui/src/drm.rs
 555 file ui/src/fastdraw.rs
 672 file ui/src/gfx.rs
 731 file ui/src/gpu.rs
-1165 file ui/src/http.rs
-1046 file ui/src/main.rs
+1148 file ui/src/http.rs
+1043 file ui/src/main.rs
 1666 file ui/src/mdns.rs
 2279 file ui/src/model.rs
 452 file ui/src/pacing.rs
 1497 file ui/src/scpi.rs
 1279 file ui/src/store.rs
-8894 file ui/src/ui.rs
+8891 file ui/src/ui.rs
 722 file ui/src/ui/analysis.rs
-680 file ui/src/ui/autoset.rs
-930 file ui/src/ui/bode.rs
+670 file ui/src/ui/autoset.rs
+925 file ui/src/ui/bode.rs
 797 file ui/src/ui/eyepage.rs
 662 file ui/src/ui/la.rs
 980 file ui/src/ui/panes.rs
 460 file ui/src/ui/startup.rs
 620 file ui/src/ui/time.rs
 551 file ui/src/ui/tools.rs
-853 file ui/src/ui/wlan.rs
+852 file ui/src/ui/wlan.rs
 442 file ui/src/usbtmc.rs
 406 file ui/src/vpu.rs
-1517 file ui/src/wave.rs
+1516 file ui/src/wave.rs
 83 fn dsp/src/bandwidth.rs step_response
 105 fn dsp/src/dcc_yard.rs Yard::apply_loco
 93 fn dsp/src/decode.rs can_frame
@@ -140,7 +140,7 @@
 77 fn ui/src/json.rs value
 436 fn ui/src/main.rs device_main
 80 fn ui/src/main.rs hdmi_gpu_frame
-100 fn ui/src/main.rs main
+95 fn ui/src/main.rs main
 77 fn ui/src/main.rs run_script
 71 fn ui/src/mdns.rs Responder::answer
 61 fn ui/src/mdns.rs interfaces
@@ -159,7 +159,7 @@
 231 fn ui/src/store.rs setup_text
 103 fn ui/src/trig.rs decode_at
 290 fn ui/src/ui.rs Ui::activate
-460 fn ui/src/ui.rs Ui::adjust
+456 fn ui/src/ui.rs Ui::adjust
 61 fn ui/src/ui.rs Ui::draw_axes
 153 fn ui/src/ui.rs Ui::draw_bottom
 74 fn ui/src/ui.rs Ui::draw_decoder

@@ -2,9 +2,9 @@
 id: 27
 title: "Define and enforce the full check inventory"
 kind: chore
-status: planned
+status: active
 release: 0.2.0
-owner: none
+owner: codex-c
 depends: []
 ---
 
@@ -135,3 +135,4 @@ Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
 ## Status
 
 - 2026-11-14: seeded from task 0001. Not yet claimed.
+- 2026-11-15: claimed for codex-c on branch t0027-check-inventory (on top of tasks 0025, 0020 and G1) by the coordinator.

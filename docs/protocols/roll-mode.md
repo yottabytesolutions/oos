@@ -401,3 +401,54 @@ normal configuration, then A, B, C, D of section 6; parameters from `roll::param
 LA and analog chunks alternate and share the chunk counter, so analog chunk n carries the counter 2n (`roll::scan_column`).
 Counting them as analog columns writes the sweep with gaps. The LA words go to the place of the analog point beside them.
 Verified on the unit: 100,000 LA words per sweep at 200 and 500 ms/div, 50 Hz on D0 reads 50.0 Hz.
+
+## 10. Depth readback compatibility
+
+Decision for [task 0036](../tasks/0036-roll-depth-readback.md): preserve the acquired-record readback, in both roll
+and normal acquisition. This pins existing OOS behavior; it does not change drawing or acquisition settings.
+
+| Surface | Roll | Normal acquisition |
+|---|---|---|
+| `:ACQuire:MDEPth?` | Points per channel currently in the rolling buffer, growing during initial fill, then bounded by one screen | Acquisition depth from the latest frame's `acq` metadata, including points omitted from compressed display data |
+| `:ACQuire:SRATe?` | Reciprocal of the roll frame's point interval | Acquisition rate from that frame's `acq` metadata |
+| Top bar and System information `Record` | Same acquired-record values as SCPI | Same acquired-record values as SCPI |
+| Web MCP JSON `scpi` tool | Wraps the same numeric SCPI answer as text | Wraps the same numeric SCPI answer as text |
+| Acquire menu depth label and picker | Requested Auto/fixed setting, with the existing channel-cap annotation where applicable | Same setting label and annotation |
+
+`Source::rate_depth` is the shared readback. The frame's nonzero acquisition depth takes precedence. Roll frames
+publish `acq: (0, 0)`, so they use the longest populated analog channel and `1 / dt`, not the sum of channel lengths
+or the FPGA memory allocation. This is the streamed min/max record's point rate, not the ADC sampling clock.
+A partial roll buffer therefore legitimately reports fewer points than a full screen. STOP retains the latest
+record's values. Changing a setting alone does not relabel the retained frame; a new publication replaces its values.
+With no usable hardware frame (including an empty roll buffer), both queries fall back to `Model::srate_depth`.
+That fallback is a settings estimate, not evidence that a roll record has arrived. There is no independent web JSON
+depth field in this checkout; web screenshots also display the normal UI labels.
+
+### Evidence and reason
+
+- The matrix summary preserved in task 0036 when it was seeded on 2026-11-14 says the roll record was reported.
+  The raw matrix and stock Rigol roll query captures are not present in this checkout. That summary establishes
+  the recorded OOS baseline, not stock query parity.
+- [Stock behavior reconstructed here](#13-side-effects-of-entering-rollscan) keeps Auto or clamps fixed memory
+  settings on roll entry, and [the stock display stream](#24-how-points-are-appended) has its own bounded buffer.
+  Those are distinct quantities. Neither reconstruction records what stock `:ACQuire:MDEPth?` answers in roll.
+  The OOS stream and time axis were [verified on the unit](#8-unit-result-roll-streaming-works); stock SCPI depth
+  readback was not verified by those experiments. No programming-guide wording for this query was found in `docs/`.
+- The prior [normal SCPI rate/depth decision](../fork/zoomout.md#scpi-rate-and-depth) deliberately matches the live
+  hardware record, the top bar and waveform timing instead of the model's stock-system estimate. Keep that contract
+  in roll too: a menu depth would advertise points that the streamed record does not contain.
+- The repository's remote consumer `tools/device-test.py::depth_and_rate_matrix` parses numeric rate/depth, checks
+  positive values and uses depth to choose a wait. It does not require query equality with the requested setting;
+  its matrix covers normal time bases only. `deep_memory_stays_responsive` also reads numeric actual depth after
+  autoset. MCP forwards SCPI unchanged. These support retaining numeric acquired-record answers, but establish no
+  expectation for every external Rigol client. Clients needing waveform transfer length should use `:WAVeform:POINts?`
+  or the waveform preamble for the selected transfer mode, rather than assuming acquisition depth equals payload length.
+
+### Unit acceptance still required
+
+No hardware was accessed for task 0036. With the owner's release and the required lease, compare stock and OOS
+SCPI rate/depth, waveform point counts and UI labels for Auto and fixed depth in partial/full roll, STOP, RUN/rearm,
+and return to normal acquisition, with one, two and four channels. Capture stock responses explicitly, including
+whether its depth query follows the menu, allocation or populated record. Check OOS MCP JSON against the direct
+query and the top bar. Actual timing, fill limits, LA-only readback and stock command restrictions beyond the
+recorded evidence remain unverified; host fixtures assert the software contract, not those hardware behaviors.

@@ -1491,7 +1491,13 @@ pub fn bmp(cv: &Canvas) -> Vec<u8> {
 
 #[cfg(test)]
 mod vernier_tests {
+    mod depth_tests;
+
     use super::*;
+
+    fn panel_canvas() -> Canvas {
+        Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H)
+    }
 
     fn meas_setup() -> (Ui, Canvas, Scpi) {
         let ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });

@@ -1,0 +1,104 @@
+[
+  {
+    "path": "tools/privacy/fixtures/synthetic.txt",
+    "rule": "serial",
+    "sha256": "34e768b7e0e1340e26e59e7ad2461c5e19ba262349de9d82fcccd9ea384afc59",
+    "reason": "Invented zero-filled identifier used only to test the scanner."
+  },
+  {
+    "path": "docs/network.md",
+    "rule": "global-ipv6",
+    "sha256": "4254584272af1e4bb219d4af62e166752e6b303df8868ed21449672b5a5f706a",
+    "reason": "The IPv6 global allocation prefix is a deliberately rejected broad route, not a unit address."
+  },
+  {
+    "path": "tools/fw-sim.sh",
+    "rule": "global-ipv6",
+    "sha256": "4254584272af1e4bb219d4af62e166752e6b303df8868ed21449672b5a5f706a",
+    "reason": "The IPv6 global allocation prefix tests rejection of an overly broad on-link route."
+  },
+  {
+    "path": "tools/wlan-sim.sh",
+    "rule": "private-ipv4",
+    "sha256": "4f9da1283166a1e9f4e6bc7dd240c76aef85772177f717f92abb6e8e2bb8de90",
+    "reason": "Invented simulated-radio subnets, pinned by the existing UI live_radio test; no real device address."
+  },
+  {
+    "path": "tools/wlan-sim.sh",
+    "rule": "private-ipv4",
+    "sha256": "2fa2b20d6635abd200945e1d79e2699d611f685cfed5cb96ff14d70843dd1c65",
+    "reason": "Invented simulated-radio subnets, pinned by the existing UI live_radio test; no real device address."
+  },
+  {
+    "path": "tools/wlan-sim.sh",
+    "rule": "private-ipv4",
+    "sha256": "da8184c90926eb19159181e5f53863e001a8d23c800816183f34fe70f74e1307",
+    "reason": "Invented simulated-radio subnets, pinned by the existing UI live_radio test; no real device address."
+  },
+  {
+    "path": "tools/privacy/patterns.py",
+    "rule": "private-ipv4",
+    "sha256": "b0d56c1d28390f7e4ece0ae355b30ebe8c8618788c2d769736a939a7e0bb4dd4",
+    "reason": "Generic allocation prefixes define the scanner policy, not unit addresses."
+  },
+  {
+    "path": "tools/privacy/patterns.py",
+    "rule": "private-ipv4",
+    "sha256": "4b2228c26597aecab7d5894eb1ec83d915bc2e1a75d758b3b53471ce6aa2c91c",
+    "reason": "Generic allocation prefixes define the scanner policy, not unit addresses."
+  },
+  {
+    "path": "tools/privacy/patterns.py",
+    "rule": "private-ipv4",
+    "sha256": "4fb0798e0eb02d5310d95142b51ddadf3d03fcd929382309589f573c0f923264",
+    "reason": "Generic allocation prefixes define the scanner policy, not unit addresses."
+  },
+  {
+    "path": "tools/privacy/patterns.py",
+    "rule": "private-ipv4",
+    "sha256": "5da4236dba69f926f858153f06d49edc73f54ce8cd226d7239d1948e663610e0",
+    "reason": "Generic allocation prefixes define the scanner policy, not unit addresses."
+  },
+  {
+    "path": "tools/privacy/patterns.py",
+    "rule": "global-ipv6",
+    "sha256": "4254584272af1e4bb219d4af62e166752e6b303df8868ed21449672b5a5f706a",
+    "reason": "Generic allocation prefixes define the scanner policy, not unit addresses."
+  },
+  {
+    "path": "tools/privacy/patterns.py",
+    "rule": "private-ipv6",
+    "reason": "Generic unique-local allocation prefix defines scanner policy, not a unit address.",
+    "sha256": "ae58a01f45ef367861102f380deaeb28e79bb695d6db255d03024e9884f5954c"
+  },
+  {
+    "path": "tools/privacy/README.md",
+    "rule": "private-ipv4",
+    "sha256": "4b2228c26597aecab7d5894eb1ec83d915bc2e1a75d758b3b53471ce6aa2c91c",
+    "reason": "Generic allocation prefix documents the scanner policy, not a unit address."
+  },
+  {
+    "path": "tools/privacy/README.md",
+    "rule": "private-ipv6",
+    "sha256": "ae58a01f45ef367861102f380deaeb28e79bb695d6db255d03024e9884f5954c",
+    "reason": "Generic allocation prefix documents the scanner policy, not a unit address."
+  },
+  {
+    "path": "docs/network.md",
+    "rule": "private-ipv6",
+    "sha256": "e971921fa3150f24ddd7e4a5c04da3b5ff87e067c6618e3c19dab3016d475a64",
+    "reason": "Generic unique-local allocation prefix illustrates firewall ACL syntax, not a unit address."
+  },
+  {
+    "path": "tools/fw-sim.sh",
+    "rule": "private-ipv6",
+    "sha256": "bd7328ab82356b88ce9d05aa92a007a2ed58f5820416ce1b6b6c43d7011c78ff",
+    "reason": "Invented firewall simulator ULA prefix or member tests on-link filtering; not a unit address."
+  },
+  {
+    "path": "tools/fw-sim.sh",
+    "rule": "private-ipv6",
+    "sha256": "9441f6d0506af89a7660e9a4a50a0221553607988d90ccd0cd911882837bd9ce",
+    "reason": "Invented firewall simulator ULA prefix or member tests on-link filtering; not a unit address."
+  }
+]

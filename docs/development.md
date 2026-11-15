@@ -25,6 +25,19 @@ non-zero when a step failed. Humans and agents run the same command; the hooks a
 - Every cargo call that resolves dependencies uses `--locked` (the `cargo xtask` alias, clippy, tests, metadata,
   coverage and `tools/perf-guard.sh`): a change of a dependency comes with its `Cargo.lock` change.
 
+## Privacy checks
+
+Before committing, run `python3 tools/privacy/scan.py --staged` and
+`python3 tools/privacy/scan.py --message target/COMMIT_MSG.txt`. The stdlib scanner checks the index and commit message;
+the separate Privacy CI job checks every incoming commit's additions and message. Findings redact values.
+Use documentation addresses and placeholders in examples, and configure device tools explicitly with `--host`
+or `OOS_SCOPE` where supported. Never infer a real unit address from a checked-in example.
+
+Keep private strings only in the ignored `local/privacy-literals.txt`, one exact value per line. Reviewed synthetic
+exceptions key the exact path, rule and matched-value hash in `tools/privacy/allowlist.json`. See [the scanner instructions](../tools/privacy/README.md)
+for commands, limitations, the policy format and the pending hook integration. The xtask hook point waits for
+G1/task 0043; this check does not replace the full gate.
+
 ## The crates
 
 One root workspace (`Cargo.toml`): `hal`, `dsp`, `ui`, `fpgad` and `xtask`, with one `Cargo.lock`, one `target/`

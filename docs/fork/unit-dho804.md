@@ -5,10 +5,13 @@ this unit uses, how to build its image, and what is still unverified.
 
 ## The unit
 
+Network addresses, MAC addresses and host names below are documentation placeholders. Supply the actual unit
+values through local configuration; they are intentionally omitted from this page.
+
 - Physically a DHO804: 4 channels, no logic analyser connector, no generator board (an AWG board is planned).
 - `vendor.bin` names a DHO924S. OOS takes the identity from it, so it would start with generator and LA.
 - Boot card: 64 GB, runs SDR104 under the patched stock kernel.
-- LAN 192.0.2.0/24, fixed MAC `02:00:00:00:00:01`.
+- LAN 192.0.2.0/24, DHCP reservation for MAC `00:00:5e:00:53:04`, host name `scope.example.invalid`.
 
 ## Changes
 
@@ -22,7 +25,7 @@ this unit uses, how to build its image, and what is still unverified.
 | SSH, no telnet | Dropbear on port 22 replaces telnet: rcS starts `oos-ssh` instead of `telnetd`, the telnet switch and `crate::remote` are gone. Generated root password and host keys in `/oos/ssh`, trusted keys from a USB stick, password login off only with a key. Listens only with `net.allow` and the firewall loaded. Keys `remote.ssh` (default off, unit image on), `ssh.password` (docs/network.md 7) | `rootfs/initramfs/bin/oos-ssh`, `rootfs/build-dropbear.sh`, rcS, `ui/src/ssh.rs`, `ui/src/ui/ssh.rs`, `ui/src/ui/remote.rs`, `tools/ssh-sim.sh` |
 | MAC | `eth.mac = cid / vendor / <address>` | `rootfs/initramfs/bin/oos-mac`, `oos-board mac`, rcS |
 | Settings lookup | `/etc/oos/system.conf` (image default), then `/oos/system.conf`; last line wins | `rootfs/initramfs/bin/oos-conf`, `netacl::Acl::from_texts` |
-| Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (`net.allow = 192.0.2.0/24 169.254.0.0/16 fe80::/10 onlink6`, `net.ipv6 = on`, `remote.ssh = on`, `eth.mac = 02:00:00:00:00:01`, `ntp = on`, `tz = dhcp`, `tz.fallback = CET-1CEST,M3.5.0,M10.5.0/3`, acquisition keys), `build.env` (UHS DTB) | `rootfs/unit/dho804/` |
+| Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (network ACL, IPv6, SSH, MAC, time and acquisition keys), `build.env` (UHS DTB). The unit's `system.conf` deliberately keeps real values in the private tree; the owner's publish step scrubs them on publication. Examples on this page are placeholders, not that file's contents | `rootfs/unit/dho804/` |
 | Fine V/div | upstream's Fine scale already walks the 801 rows of `cal_vertical` (the AFE is set per row, `afe::scale_index`); the fork adds `:CHANnel<n>:VERNier ON\|OFF` (one switch for all channels, as the menu) and `:CHANnel<n>:SCALe` taking any value with vernier on: the first row at or above it | `ui/src/scpi.rs` (`fine_scale`) |
 | Image build | the fork's part of `boot/build-dev-image.sh` (unit dir, `build.env`, DTB check, `nft`, unit `*.conf`, `OOS_BOOTARGS_EXTRA`, the fixed `eth.mac` as the GMAC's `local-mac-address` in the DTB) lives in three sourced hooks; upstream's script carries three lines. The hook stages its container part in `rootfs/out/unit-hook/` (mounted as `/wlan`). A bad `OOS_UNIT` now fails after the Rust builds | `boot/unit-hook.sh`, `boot/unit-hook-image.sh`, docs/fork/sync-checklist.md |
 
@@ -86,7 +89,7 @@ calibrates the new board.
 4. oos-ui ACL: `POST /update` and `/mcp` from an allowed host work. For the refusal path the firewall has to let an
    outside host through: on the scope `nft delete table inet oos_fw`, then `POST /mcp` from another subnet gives 403
    and SCPI 5555 closes at once. Power-cycle afterwards to restore the firewall.
-5. MAC: `ip link show eth0` gives `02:00:00:00:00:01`, the DHCP server hands out the expected address.
+5. MAC: `ip link show eth0` gives `00:00:5e:00:53:04`, the DHCP server hands out the expected address.
 6. SSH: port 23 closed; port 22 open from 192.0.2.x only; `/tmp/oos-ssh.state` says `on: password and keys` after the
    first start; Show password gives a password that logs in; the host key fingerprint on the page matches the client's;
    the password and the host key are unchanged after a power cycle and after an update; a key imported from a stick
@@ -346,10 +349,11 @@ What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
 - Telnet: the fork's `telnet` key is dropped for upstream's `remote.telnet` (System > Network > Remote services). oos-ui
   now layers the image default `/etc/oos/system.conf` under `/oos/system.conf` (known keys only; `net.allow` and
   `eth.mac` are not copied into the settings file). Without that layering oos-ui would start telnetd at its start.
-- Network: upstream's link-local fallback (169.254.x.y/16, `arping -D`) replaces 192.168.177.64. It runs after the
-  firewall and the fixed MAC. With `net.allow = 192.0.2.0/24` a computer on a direct cable is dropped; add
+- Network: upstream's link-local fallback (169.254.x.y/16, `arping -D`) replaces a fixed fallback address. It runs after the
+  firewall and the fixed MAC. In the placeholder example `net.allow = 192.0.2.0/24`, a computer on a direct cable is dropped; add
   `169.254.0.0/16` for that case. Upstream's remote switches close web, SCPI and VXI-11 ports; the ACL still applies to
-  what stays open. The fork's network section is now docs/network.md 6.
+  what stays open. The private unit `system.conf` retains real values; the owner's publish step scrubs them on
+  publication. The fork's network section is now docs/network.md 6.
 - Acquisition: upstream's early end of a trigger wait (`seq::NEW_SETTINGS`) runs through the fork's generic
   `execute_bus_until`, so prearm, DmaBuf reuse and the host model keep working. Upstream's deep-memory screen window
   (`batch_plan` sets `window`, `decode` counts the trigger point from it) is part of the prearm key (`Settings` equality).

@@ -1,0 +1,77 @@
+name: Privacy
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  privacy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Incoming additions and commit messages
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          PUSH_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fetch upstream objects without adding or changing a configured remote.
+          git fetch --no-tags https://github.com/deckerjulian/oos.git '+refs/heads/*:refs/remotes/upstream/*'
+          base="$PR_BASE"
+          push_fallback=false
+          if [ -z "$base" ]; then
+            base="$PUSH_BASE"
+            if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]] ||
+               ! git cat-file -e "$base^{commit}" 2>/dev/null ||
+               ! git merge-base --is-ancestor "$base" HEAD; then
+              base=$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)
+              push_fallback=true
+            fi
+          fi
+          # An unavailable base is an input error, not a pre-adoption revision.
+          git cat-file -e "$base^{commit}"
+          scanner_revision="$base"
+          if ! git cat-file -e "$scanner_revision:tools/privacy/scan.py" 2>/dev/null; then
+            scanner_revision=""
+            if [ "$push_fallback" = true ]; then
+              # Trust only adoption already reachable from another origin ref, never this push alone.
+              pushed_only=$(git rev-list HEAD --not --exclude="origin/${PUSH_REF#refs/heads/}" --exclude=origin/HEAD --remotes=origin)
+              revisions=$(git rev-list --reverse --topo-order "$base..HEAD" --not --remotes='upstream/*')
+              while IFS= read -r revision; do
+                [ -n "$revision" ] || continue
+                if grep -Fxq -- "$revision" <<< "$pushed_only"; then continue; fi
+                if git cat-file -e "$revision:tools/privacy/scan.py" 2>/dev/null; then
+                  scanner_revision="$revision"
+                  break
+                fi
+              done <<< "$revisions"
+              if [ -z "$scanner_revision" ]; then
+                printf '::error::No scanner in the pushed range is reachable from another origin ref.\n'
+                exit 1
+              fi
+            fi
+          fi
+          if [ -z "$scanner_revision" ]; then
+            printf '::notice::Privacy scanner not adopted at base revision; skipping range scan.\n'
+            exit 0
+          fi
+          policy="$RUNNER_TEMP/privacy-allowlist.json"
+          if git cat-file -e "$base:tools/privacy/allowlist.json" 2>/dev/null; then
+            git show "$base:tools/privacy/allowlist.json" > "$policy"
+          else
+            # A missing base policy must never grant the head its own exceptions.
+            printf '[]\n' > "$policy"
+          fi
+          scanner_dir=$(mktemp -d "$RUNNER_TEMP/privacy-scanner.XXXXXX")
+          git archive "$scanner_revision" tools/privacy | tar -xf - -C "$scanner_dir"
+          python3 "$scanner_dir/tools/privacy/scan.py" --allowlist "$policy" --range "$base" HEAD --exclude-remotes 'upstream/*'
+      - name: Scanner regression tests
+        if: ${{ always() }}
+        run: python3 -m unittest discover -s tools/privacy -p 'test_*.py' -v

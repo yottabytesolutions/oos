@@ -1,0 +1,2 @@
+Invented scanner fixture, never copied from a unit.
+serial = DHO000000000001

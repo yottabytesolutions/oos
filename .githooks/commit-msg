@@ -1,0 +1,4 @@
+#!/bin/sh
+# Check the message Git will actually record, including generated merge messages.
+# Ignore # comments and the verbose diff below Git's scissors line.
+exec python3 tools/privacy/scan.py --message "$1" --git-message

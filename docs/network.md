@@ -16,7 +16,7 @@ change them.
 | MAC address | fixed per SD card: `02:` and 5 bytes of the MD5 of the card's CID (rcS, step 2, `oos-mac`); `eth.mac` (section 6) names another |
 | Address | none without a cable; with one DHCP (`udhcpc`, 5 tries), else a link-local address 169.254.x.y/16 (RFC 3927: from the MAC, checked with `arping -D`, another one if it is taken; the top bar says `LAN · local`). A computer on the same cable without DHCP takes such an address itself, so it reaches the scope without any set-up (with `net.allow` only if 169.254.0.0/16 is listed, section 6). A server that comes later still gives DHCP |
 
-System > Network shows the address of eth0 and the speed of the link (`192.168.1.20 · 100 Mbit/s`).
+System > Network shows the address of eth0 and the speed of the link (`192.0.2.20 · 100 Mbit/s`).
 
 ## 2. A link at 10 Mbit/s
 
@@ -95,7 +95,7 @@ System > Date and time sets it from an NTP server or by hand.
 | Now | | local date and time, and the zone; "(not set)" until NTP or a hand entry set the clock in this boot |
 | Time from NTP | **Off** | On: the clock is set from the server once a network link is up |
 | NTP server | **DHCP** | DHCP: the server the DHCP lease names (see below); the picker also lists a few public servers; Other takes a name or an address on the keyboard |
-| NTP state | | Off / Waiting for a network link / Asking the server / Synced at 14:30:05 (+0.03 s) / the last failure and the last sync. With DHCP: the server asked and where it came from, `Synced 14:30:05, 192.168.1.1 (DHCP)` or `no answer, pool.ntp.org (no DHCP)` |
+| NTP state | | Off / Waiting for a network link / Asking the server / Synced at 14:30:05 (+0.03 s) / the last failure and the last sync. With DHCP: the server asked and where it came from, `Synced 14:30:05, 192.0.2.1 (DHCP)` or `no answer, pool.ntp.org (no DHCP)` |
 | Sync now | | asks the server at once |
 | Time zone | UTC | DHCP: the zone the DHCP lease names (see below), shown with its source, `CET (DHCP)` or `CET (no DHCP)`; 22 common zones with their daylight saving rules; Other takes a POSIX time zone string |
 | Set the clock | | the local date and time on the keyboard, `2026-11-11 14:30` |
@@ -271,7 +271,7 @@ setting on the scope.
 |---|---|---|
 | `net.allow` | (none) | address prefixes, `192.0.2.0/24 fd00::/8`, and the word `onlink6` for the IPv6 prefixes on the link (section 8). Firewall: inbound only from them; oos-ui: `POST /update`, `/mcp`, SCPI and VXI-11 only from them |
 | `net.ipv6` | `off` | `on`: stable IPv6 addresses, the services and mDNS on IPv6 too (section 8) |
-| `eth.mac` | `cid` | `cid`: from the card's CID as before; `vendor`: the LAN MAC in vendor.bin, as the stock system uses it; or an address `02:00:00:00:00:01` |
+| `eth.mac` | `cid` | `cid`: from the card's CID as before; `vendor`: the LAN MAC in vendor.bin, as the stock system uses it; or an address `00:00:5e:00:53:04` |
 
 **Firewall** (`oos-firewall`, nftables, table `inet oos_fw`, before SSH and oos-ui start). Inbound passes: loopback,
 answers to what the scope sent (DHCP, DNS, NTP; connection tracking), IPv6 neighbour discovery, DHCP replies, and
@@ -337,14 +337,15 @@ opens:
 Changes to the keys apply to the next login; Dropbear reads the file at every one. Password login on or off restarts the
 listener: sessions stay. SSH off ends the listener and every session.
 
-**From a computer**, with the password from Show password:
+**From a computer**, with the password from Show password. Replace the documentation address below with the
+address shown on the scope:
 
 ```sh
-ssh root@192.0.2.10
-ssh-copy-id root@192.0.2.10            # adds ~/.ssh/id_*.pub to /oos/ssh/authorized_keys (through /root/.ssh)
-ssh root@192.0.2.10 sync               # ext2 without a journal: flush before the scope is switched off
-scp file root@192.0.2.10:/tmp/         # over SFTP (OpenSSH 9.0 and later); scp -O still works
-sftp root@192.0.2.10                     # interactive file transfer
+ssh root@192.0.2.240
+ssh-copy-id root@192.0.2.240            # adds ~/.ssh/id_*.pub to /oos/ssh/authorized_keys (through /root/.ssh)
+ssh root@192.0.2.240 sync               # ext2 without a journal: flush before the scope is switched off
+scp file root@192.0.2.240:/tmp/         # over SFTP (OpenSSH 9.0 and later); scp -O still works
+sftp root@192.0.2.240                     # interactive file transfer
 ```
 
 Then Password login > Off, if keys only is wanted.

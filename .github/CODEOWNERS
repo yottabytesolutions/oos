@@ -76,11 +76,13 @@
 # /xtask/ <guardrails-reviewers>
 # /.cargo/ <guardrails-reviewers>
 # /.githooks/ <guardrails-reviewers>
+# /.github/ <guardrails-reviewers>
 # /.github/workflows/ <guardrails-reviewers>
 # /.github/CODEOWNERS <guardrails-reviewers>
 # /rustfmt.toml <guardrails-reviewers>
 # /clippy.toml <guardrails-reviewers>
 # /tools/perf-guard.sh <guardrails-reviewers>
+# /tools/privacy/ <guardrails-reviewers>
 # /gpu/test-host.sh <guardrails-reviewers>
 
 # Architecture and the shared process.

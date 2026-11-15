@@ -70,7 +70,7 @@ member() { nft get element inet oos_fw onlink6 "{ $1 }" >/dev/null 2>&1; }
 member 2001:db8:5:7::abcd || fail "on-link address not in the set"
 member fd12:3456:0:9::1 || fail "ULA /48 not in the set"
 member 2001:db8:99::1 && fail "routed prefix in the set"
-member 2a00:1450:4001::1 && fail "internet address in the set"
+member 2001:db8:ffff::1 && fail "internet address in the set"
 [ "$(cat /tmp/oos-net6.prefixes)" = "$want" ] || fail "prefix file: $(cat /tmp/oos-net6.prefixes)"
 
 echo "== watch"
@@ -96,16 +96,16 @@ ip link add d0 type dummy && ip link set d0 up
 n=0; until ip -6 addr show dev d0 | grep -q 'inet6 fe80'; do sleep 1; n=$((n + 1)); [ $n -ge 5 ] && break; done
 ip -6 addr add 2001:db8:5:7::9/64 dev d0
 cp /etc/resolv.conf /c/resolv
-interface=d0 ip=10.9.9.9 mask=24 tzstr='CET-1CEST,M3.5.0,M10.5.0/3' ntpsrv=10.9.9.1 sh /etc/udhcpc.script bound
+interface=d0 ip=192.0.2.9 mask=24 tzstr='CET-1CEST,M3.5.0,M10.5.0/3' ntpsrv=192.0.2.1 sh /etc/udhcpc.script bound
 [ "$(cat /tmp/oos-dhcp-tz.d0)" = 'CET-1CEST,M3.5.0,M10.5.0/3' ] || fail "tz file"
-[ "$(cat /tmp/oos-dhcp-ntp.d0)" = 10.9.9.1 ] || fail "ntp file"
-ip -4 addr show dev d0 | grep -q 'inet 10.9.9.9/24' || fail "IPv4 address"
+[ "$(cat /tmp/oos-dhcp-ntp.d0)" = 192.0.2.1 ] || fail "ntp file"
+ip -4 addr show dev d0 | grep -q 'inet 192.0.2.9/24' || fail "IPv4 address"
 ip -6 addr show dev d0 | grep -q 'inet6 fe80' || fail "link-local address flushed"
 ip -6 addr show dev d0 | grep -q 'inet6 2001:db8:5:7::9' || fail "SLAAC address flushed"
 # a hostile string is stored as it came (oos-ui parses it) and runs nothing
-interface=d0 ip=10.9.9.8 mask=24 tzstr='$(touch /c/pwned);`touch /c/pwned`' sh /etc/udhcpc.script bound
+interface=d0 ip=192.0.2.8 mask=24 tzstr='$(touch /c/pwned);`touch /c/pwned`' sh /etc/udhcpc.script bound
 [ -e /c/pwned ] && fail "the lease ran a command"
-interface=d0 ip=10.9.9.8 mask=24 sh /etc/udhcpc.script renew
+interface=d0 ip=192.0.2.8 mask=24 sh /etc/udhcpc.script renew
 [ -e /tmp/oos-dhcp-tz.d0 ] && fail "tz file kept without option 100"
 interface=d0 sh /etc/udhcpc.script deconfig
 cp /c/resolv /etc/resolv.conf

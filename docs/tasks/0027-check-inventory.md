@@ -136,3 +136,22 @@ Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
 
 - 2026-11-14: seeded from task 0001. Not yet claimed.
 - 2026-11-15: claimed for codex-c on branch t0027-check-inventory (on top of tasks 0025, 0020 and G1) by the coordinator.
+- 2026-11-15: review round 1 fast gate exits 0, printing
+- 2026-11-15: review round 1 fixes implemented. Default `doctor-base` invokes
+- 2026-11-15: review regressions fail before the fixes: focused xtask suite exits
+- 2026-11-15: review round 1 on committed candidate `57096f6`, branch
+- 2026-11-15: follow-ups from tooling review, intentionally not implemented in this round:
+- 2026-11-15: tier-adjusted candidate checks pass: `cargo xtask check --fast` exits 0,
+- 2026-11-15: applied the coordinator's tier scope decision above. Earlier default-gate/CI
+- 2026-11-15: final full command `cargo xtask check` on the uncommitted candidate
+- 2026-11-15: final source identity is retained in `target/0027-final-source.txt`; the task
+- 2026-11-15: implemented Plan 1-5: executable registry/list/selection, preserved G1/0020/0025
+- 2026-11-15: failing-parent evidence: `cargo test --locked -p xtask host_failures_are_part_of_the_gate`
+- 2026-11-15: candidate focused checks: 95 xtask tests pass in debug and release; 22 new Python
+- 2026-11-15: full-tree privacy audit exits 1 with 151 pre-existing findings; this task's
+- 2026-11-15: independent Claude review attempted read-only through the installed CLI; it
+- 2026-11-15: reserved `xtask/src/coverage.rs` solely to route its environment-specific
+- 2026-11-15: reserved `fpgad/tests/explicit_signing.rs` after the full gate exposed its
+- 2026-11-15: reserved `tools/privacy/test_round2.py`: full Privacy discovery exposed a stale
+- 2026-11-15: reserved `xtask/src/testrepo.rs` after debug tests exposed inherited host
+- 2026-11-15: implementation authorized by owner in `t0027-check-inventory` on parent `18123ce`

@@ -1,0 +1,204 @@
+//! Ordered executable check registry. Listing and dispatch use these same records.
+use crate::{check, steps};
+use std::path::Path;
+
+#[cfg(test)]
+mod tests;
+
+pub(crate) type Runner = fn(&Path) -> steps::Outcome;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Selection {
+    Fast,
+    Rust,
+    Coverage,
+    Host,
+    Image,
+}
+
+#[derive(Debug)]
+pub(crate) struct Check {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub command: &'static str,
+    pub prerequisite: &'static str,
+    pub selection: Selection,
+    pub after: &'static [&'static str],
+    pub run: Runner,
+}
+
+macro_rules! entry {
+    ($id:literal, $name:literal, $command:literal, $prereq:literal, $selection:ident, [$($after:literal),*], $run:expr) => {
+        Check { id: $id, name: $name, command: $command, prerequisite: $prereq,
+            selection: Selection::$selection, after: &[$($after),*], run: $run }
+    };
+}
+
+pub(crate) const CHECKS: &[Check] = &[
+    entry!(
+        "fmt",
+        "fmt",
+        "cargo fmt --check per crate; static pins",
+        "pinned Rust/Python",
+        Fast,
+        [],
+        check::formatting_and_pins
+    ),
+    entry!("size", "size limits", "syntax and move-aware size ratchets", "workspace metadata", Fast, [], steps::size),
+    entry!(
+        "architecture",
+        "architecture",
+        "workspace completeness and architecture rules",
+        "Cargo.lock",
+        Fast,
+        [],
+        steps::arch
+    ),
+    entry!("mutable-statics", "mutable statics", "syntax and per-crate ratchets", "sources", Fast, [], steps::statics),
+    entry!("unsafe", "unsafe", "syntax and per-crate ratchets", "sources", Fast, [], steps::unsafety),
+    entry!(
+        "method-exceptions",
+        "disallowed-method exceptions",
+        "syntax and per-crate ratchets",
+        "sources",
+        Fast,
+        [],
+        steps::allows
+    ),
+    entry!("known-failures", "known failures", "syntax and open-task inventory", "sources", Fast, [], steps::known),
+    entry!(
+        "agent-rules",
+        "agent rules",
+        "exact loaders and Git inventory",
+        "AGENTS.md",
+        Fast,
+        [],
+        crate::agent_rules::check
+    ),
+    entry!("doctor-base", "doctor-base", "doctor", "tools/bootstrap.sh; no Docker", Host, [], crate::doctor::check),
+    entry!(
+        "doctor",
+        "doctor",
+        "doctor --gpu --sim",
+        "tools/bootstrap.sh --gpu --sim",
+        Image,
+        ["doctor-base"],
+        steps::host::doctor
+    ),
+    entry!("clippy", "clippy", "cargo clippy --all-targets, host and ARM", "pinned toolchain", Rust, [], steps::clippy),
+    entry!("tests-debug", "tests (debug)", "cargo test per crate", "pinned toolchain", Rust, [], |r| steps::tests(
+        r, false
+    )),
+    entry!("tests-release", "tests (release)", "cargo test --release per crate", "pinned toolchain", Rust, [], |r| {
+        steps::tests(r, true)
+    }),
+    entry!("perf", "perf guards", "sh tools/perf-guard.sh", "pinned toolchain", Rust, [], steps::perf),
+    entry!(
+        "coverage",
+        "coverage",
+        "cargo llvm-cov per crate",
+        "cargo-llvm-cov, llvm-tools",
+        Coverage,
+        [],
+        steps::coverage
+    ),
+    entry!(
+        "script-syntax",
+        "script-syntax",
+        "python3 -I tools/script_syntax.py",
+        "Git, Python, declared shells",
+        Host,
+        [],
+        steps::scripts::syntax
+    ),
+    entry!(
+        "python-tests",
+        "python-tests",
+        "python3 -I tools/check_inventory.py python-tests",
+        "receipted host UI; tools/tests and tools/privacy",
+        Host,
+        [],
+        steps::host::python
+    ),
+    entry!(
+        "arm64-release-link",
+        "arm64-release-link",
+        "python3 -I tools/check_inventory.py arm64-release-link",
+        "ARM musl std and rust-lld",
+        Image,
+        [],
+        steps::host::arm
+    ),
+    entry!(
+        "gpu-host",
+        "gpu-host",
+        "sh gpu/test-host.sh",
+        "pinned gpu-test image",
+        Image,
+        ["doctor", "arm64-release-link"],
+        steps::host::gpu
+    ),
+    entry!(
+        "ssh-sim",
+        "ssh-sim",
+        "sh tools/ssh-sim.sh",
+        "initramfs, nft, Dropbear, SFTP builders",
+        Image,
+        ["doctor"],
+        steps::host::ssh
+    ),
+    entry!(
+        "firewall-sim",
+        "firewall-sim",
+        "sh tools/fw-sim.sh",
+        "initramfs and nft builders",
+        Image,
+        ["doctor"],
+        steps::host::firewall
+    ),
+    entry!(
+        "image-required",
+        "image-required",
+        "python3 -I tools/image_required.py",
+        "authoritative base and Git paths",
+        Image,
+        [],
+        steps::image::required
+    ),
+    entry!(
+        "image-suite",
+        "image-suite",
+        "python3 -I tools/image_suite.py",
+        "kernel source; doctor --image; Docker; QEMU",
+        Image,
+        ["doctor", "arm64-release-link"],
+        steps::image::suite
+    ),
+];
+
+pub(crate) fn selected(c: &Check, options: check::Options, image: bool) -> bool {
+    match c.selection {
+        Selection::Fast => true,
+        Selection::Coverage => !options.fast && options.coverage,
+        Selection::Image => !options.fast && image,
+        _ => !options.fast,
+    }
+}
+
+pub(crate) fn list(options: check::Options, image: bool) {
+    println!("inventory only (not a passing gate): ID | selection | command | prerequisites");
+    for c in CHECKS {
+        println!(
+            "{} ({}) | {} ({:?}) | {} | {}",
+            c.id,
+            c.name,
+            if selected(c, options, image) { "required" } else { "not-selected" },
+            c.selection,
+            c.command,
+            c.prerequisite
+        );
+    }
+    println!(
+        "--image: default gate plus Docker/emulation/image checks; coordinator runs before unit rounds and releases"
+    );
+}

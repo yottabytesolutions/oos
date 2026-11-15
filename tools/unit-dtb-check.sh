@@ -20,18 +20,19 @@ resolve() {
 	printf 'eth.mac = %s\n' "$1" > "$w/system.conf"
 	OOS_CONF_FILES="$w/system.conf" OOS_CID_FILE=/nonexistent sh "$root/rootfs/initramfs/bin/oos-mac" 2>/dev/null || true
 }
-[ "$(resolve 02:11:22:33:44:5A)" = 02:11:22:33:44:5A ] || fail "a fixed address"
+[ "$(resolve 00:00:5e:00:53:5A)" = 00:00:5e:00:53:5A ] || fail "a fixed address"
 for v in cid vendor 01:11:22:33:44:55 00:00:00:00:00:00 02:11:22:33:44 junk; do
 	[ -z "$(resolve "$v")" ] || fail "eth.mac = $v gave $(resolve "$v")"
 done
-echo 02:11:22:33:44:5A > "$w/dtb.mac"
+echo 00:00:5e:00:53:5A > "$w/dtb.mac"
 cp "$kbase"/*.dtb "$w/"
-docker run --rm --platform linux/arm64 -v "$w:/w" -v "$root/boot:/b:ro" oos-initramfs:ubuntu sh -euc '
+initramfs_image=$("$root/tools/build-env.sh" resolve initramfs)
+docker run --rm --pull=never --network=none --platform linux/arm64 -v "$w:/w" -v "$root/boot:/b:ro" "$initramfs_image" sh -euc '
 	. /b/unit-hook-dtb.sh
 	for d in /w/*.dtb; do
 		cp $d $d.orig
 		unit_dtb_mac $d /w/dtb.mac
-		[ "$(fdtget -t bx $d /ethernet@fe300000 local-mac-address)" = "2 11 22 33 44 5a" ] || { echo "FAIL: $d read-back"; exit 1; }
+		[ "$(fdtget -t bx $d /ethernet@fe300000 local-mac-address)" = "0 0 5e 0 53 5a" ] || { echo "FAIL: $d read-back"; exit 1; }
 		# no MAC file: the DTB stays as it was
 		cp $d.orig $d.none
 		unit_dtb_mac $d.none /w/none.mac

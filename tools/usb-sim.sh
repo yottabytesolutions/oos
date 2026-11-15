@@ -7,11 +7,12 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+sim_image=$("$root/tools/build-env.sh" resolve sim-usb)
 w=$(mktemp -d "${TMPDIR:-/tmp}/oos-usb-sim.XXXXXX")
 trap 'rm -rf "$w"' EXIT
 trap 'exit 1' HUP INT TERM
-docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
-docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
+initramfs_image=$("$root/tools/build-env.sh" resolve initramfs)
+docker run --rm --pull=never --platform linux/arm64 "$initramfs_image" cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 
 cat > "$w/init" <<'INIT'
@@ -43,9 +44,7 @@ echo ---- log; cat /tmp/oos-usb.log
 poweroff -f
 INIT
 
-docker run --rm --platform linux/arm64 -v "$w:/w" -v "$root/rootfs:/rootfs:ro" alpine:3.22 sh -euc '
-	apk add --no-cache linux-firmware-none cpio xz zstd dosfstools exfatprogs sfdisk >/dev/null
-	apk add --no-cache --no-scripts linux-lts >/dev/null
+docker run --rm --pull=never --platform linux/arm64 -v "$w:/w" -v "$root/rootfs:/rootfs:ro" "$sim_image" sh -euc '
 	cd /w
 	truncate -s 64M fat.img
 	echo "2048,,c" | sfdisk -q fat.img
@@ -77,5 +76,6 @@ accel="-cpu max"
 disk() { printf -- '-drive if=none,id=%s,format=raw,file=%s -device scsi-hd,drive=%s,channel=0,scsi-id=0,lun=%s\n' "$1" "$2" "$1" "$3"; }
 qemu-system-aarch64 -M virt $accel -m 512 -smp 2 -nographic -no-reboot -kernel "$w/kernel" -initrd "$w/initramfs.gz" \
 	-append "console=ttyAMA0 rdinit=/init quiet panic=1" -device virtio-rng-pci -device virtio-scsi-pci \
-	$(disk a "$w/fat.img" 0) $(disk b "$w/exfat.img" 1) $(disk c "$w/empty.img" 2) | tee "$w/log"
+	$(disk a "$w/fat.img" 0) $(disk b "$w/exfat.img" 1) $(disk c "$w/empty.img" 2) > "$w/log" 2>&1 || { cat "$w/log"; exit 1; }
+cat "$w/log"
 grep -q 'USB TEST PASSED' "$w/log"

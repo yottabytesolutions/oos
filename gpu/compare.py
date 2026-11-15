@@ -4,6 +4,8 @@
 # compare.py CPU_DIR GPU_DIR: the pictures of two runs of the same scripts, pixel by pixel. The GPU blends in floating
 # point and the CPU in integers, so a few steps of difference are rounding; more is named with where it is.
 import os
+from pathlib import Path
+import re
 import sys
 
 # per colour channel, out of 255: a layer drawn from commands blends in floating point twice (into the layer, the
@@ -15,12 +17,29 @@ def load(p):
     data = open(p, 'rb').read()
     head = data.split(b'\n', 3)
     w, h = map(int, head[1].split())
+    if head[0] != b'P6' or head[2] != b'255' or w <= 0 or h <= 0 or len(head[3]) != w * h * 3:
+        raise ValueError('invalid or truncated P6 picture')
     return w, h, head[3]
 
 
 def main():
     a_dir, b_dir = sys.argv[1], sys.argv[2]
     names = sorted(n for n in os.listdir(a_dir) if n.endswith('.ppm'))
+    other = sorted(n for n in os.listdir(b_dir) if n.endswith('.ppm'))
+    if not names or names != other:
+        sys.exit('GPU comparison requires nonempty identical CPU/GPU picture sets')
+    if len(sys.argv) == 4:
+        expected = set()
+        scripts = sorted(Path(sys.argv[3]).glob('*.txt'))
+        if not scripts:
+            sys.exit('no GPU test scripts selected')
+        for script in scripts:
+            shots = re.findall(r'^shot \$S/([^\s]+\.ppm)\s*$', script.read_text(), re.MULTILINE)
+            if not shots or any(name in expected for name in shots) or len(set(shots)) != len(shots):
+                sys.exit(f'{script.name}: missing or duplicate expected pictures')
+            expected.update(shots)
+        if set(names) != expected:
+            sys.exit('GPU outputs differ from script shot inventory: ' + repr(sorted(set(names) ^ expected)))
     bad = 0
     worst_all = 0
     for n in names:
@@ -51,4 +70,8 @@ def main():
     sys.exit(1 if bad else 0)
 
 
-main()
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, OSError, IndexError) as exc:
+        sys.exit(f'GPU comparison failed: {exc}')

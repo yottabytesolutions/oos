@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "python": "3.12",
+  "cargo-llvm-cov": "0.9.1",
+  "stdlib": [
+    "argparse",
+    "hashlib",
+    "json",
+    "pathlib",
+    "socket",
+    "ssl",
+    "subprocess",
+    "tarfile",
+    "tempfile",
+    "tomllib",
+    "unittest",
+    "zlib"
+  ],
+  "profiles": {
+    "gpu": [
+      "gpu-test"
+    ],
+    "sim": [
+      "initramfs",
+      "sim-ssh",
+      "sim-fw"
+    ],
+    "image": [
+      "initramfs",
+      "alpine",
+      "gpu-build",
+      "kernel",
+      "rootfs",
+      "sim-usb",
+      "sim-wlan",
+      "sim-gel"
+    ]
+  }
+}

@@ -16,7 +16,11 @@ Area reviewers supply specialist review. They do not gain edit rights or merge a
 The author supplies the fields in the [PR template](../../.github/pull_request_template.md), task claim,
 exact candidate revision and relevant migration step. Evidence lives in the task file's Status lines
 and the merge commit body. Use the template in the PR when one exists.
-Include the parent revision, changed boundaries, tests and complete gate result.
+Include the parent revision, changed boundaries, all applicable inventory IDs/results and complete logs.
+Workers supply fast-gate and focused-test results. The coordinator supplies the default full-gate
+result for the integrated batch, and `--image` evidence before unit rounds and releases.
+Repository CI is off until 0.2.0. Do not combine evidence from separate revisions. Missing
+prerequisites and not-selected checks remain explicit. The coordinator arranges independent review.
 For refactors, name the existing tests and golden pictures that must stay unchanged.
 
 The reviewer reads the task, applicable [migration step](../architecture/migration.md#steps),

@@ -4,8 +4,10 @@ How a feature crosses the layers of the target architecture (`README.md`). Each 
 in order, and the tests that must exist before the change merges. Paths are the target layout. Each recipe starts with
 an "Until" line: what to do while the migration step it depends on has not landed.
 
-Every recipe ends with the overhaul gate (`../development.md`, pending the guardrails merge): `cargo xtask check` and the test runs (fmt, clippy, tests in release and debug, arm64 check, size
-limits, boundary rules, perf-guard, `gpu/test-host.sh`).
+Every recipe ends with the coordinator's default `cargo xtask check` on the integrated candidate
+([check inventory](../development.md#executable-inventory-and-completion-evidence)). Workers run
+`--fast` and focused tests. The coordinator adds `--image` before unit rounds and releases.
+Repository CI is off until 0.2.0; partial runs cannot establish completion.
 
 ## Add a setting
 

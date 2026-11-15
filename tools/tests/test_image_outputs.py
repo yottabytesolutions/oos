@@ -1,5 +1,6 @@
 """Image packaging contract, using private files without Docker, sockets or Git commits."""
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -94,6 +95,7 @@ class ImageOutputs(unittest.TestCase):
         cargo.write_text(
             '#!' + sys.executable + '\n'
             'import json, os, pathlib, sys\n'
+            'if "--version" in sys.argv: print("cargo 1.99.1 fixture"); sys.exit(0)\n'
             'p = pathlib.Path(os.environ["CARGO_TARGET_DIR"])\n'
             'if "--target" in sys.argv: p /= sys.argv[sys.argv.index("--target") + 1]\n'
             'p /= "release/oos-ui"\n'
@@ -101,6 +103,9 @@ class ImageOutputs(unittest.TestCase):
             'p.write_bytes(b"fixture executable")\n'
             'print(json.dumps({"reason": "compiler-artifact", "executable": str(p)}))\n')
         cargo.chmod(0o700)
+        rustc = self.root / "bin/rustc"
+        rustc.write_text('#!/bin/sh\nprintf "rustc 1.99.1 fixture\\n"\n')
+        rustc.chmod(0o700)
         # The build script prepends the user's Cargo directory; keep this test entirely in its fixture.
         self.env["HOME"] = str(self.root / "home")
         self.env["CARGO_TARGET_DIR"] = "selected target"
@@ -144,18 +149,34 @@ class ImageOutputs(unittest.TestCase):
         script = self.root / "gpu/build.sh"
         script.parent.mkdir()
         shutil.copyfile(REPO / "gpu/build.sh", script)
+        for name in ("build-env.sh", "build_env.py", "container-images.json"):
+            shutil.copyfile(REPO / "tools" / name, self.root / "tools" / name)
+        (self.root / "tools/build-env.sh").chmod(0o700)
+        shutil.copytree(REPO / "tools/build-env", self.root / "tools/build-env")
+        lock_path = self.root / "tools/container-images.json"
+        lock = json.loads(lock_path.read_text())
+        lock['bases']['ubuntu']['manifests']['linux/arm64'] = 'sha256:' + '1' * 64
+        lock_path.write_text(json.dumps(lock))
+        key = self.run_python("tools/build_env.py", "identity", "gpu-build").stdout.strip()
+        self.env['OOS_TEST_ENVIRONMENT'] = key
         docker = self.root / "bin/docker"
         docker.write_text(
             '#!' + sys.executable + '\n'
-            'import pathlib, sys\n'
-            'if sys.argv[1:3] == ["image", "inspect"]: print("arm64"); sys.exit(0)\n'
+            'import pathlib, sys, os, json\n'
+            'key = os.environ["OOS_TEST_ENVIRONMENT"]\n'
+            'if sys.argv[1:3] == ["image", "inspect"]:\n'
+            '    if "@sha256:" in sys.argv[-1]:\n'
+            '        print(json.dumps([{"Os": "linux", "Architecture": "arm64", "RootFS": {"Layers": ["base"]}, "RepoDigests": ["ubuntu@sha256:" + "1" * 64]}])); sys.exit(0)\n'
+            '    print(json.dumps([{"Id": "sha256:" + "2" * 64, "Os": "linux", "Architecture": "arm64", "RootFS": {"Layers": ["base", "derived"]}, "Config": {"Labels": {"org.oos.environment": key}}}])); sys.exit(0)\n'
+            'if "--network=none" in sys.argv:\n'
+            '    print("zlib=1.3\\ngcc=15.1"); sys.exit(0)\n'
             'mounts = dict(a.rsplit(":", 1)[::-1] for a in sys.argv if a.endswith((":/out", ":/cache")))\n'
             'cache = pathlib.Path(mounts["/cache"])\n'
             'if "/out" not in mounts:\n'
             '    (cache / "mesa_26.0.8.orig.tar.xz").write_bytes(b"tarball fixture")\n'
             'else:\n'
-            '    (cache / "mesa").mkdir(exist_ok=True)\n'
-            '    marker = cache / "mesa/built"\n'
+            '    (cache / "mesa" / key).mkdir(parents=True, exist_ok=True)\n'
+            '    marker = cache / "mesa" / key / "built"\n'
             '    if not marker.exists(): marker.write_bytes(b"compiled Mesa")\n'
             '    bundle = pathlib.Path(mounts["/out"]) / "gpu"\n'
             '    bundle.mkdir(exist_ok=True)\n'
@@ -168,7 +189,8 @@ class ImageOutputs(unittest.TestCase):
         self.env["CARGO_TARGET_DIR"] = str(target)
         result = subprocess.run(["sh", str(script)], env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        cache = self.root / "rootfs/out/mesa/built"
+        self.assertEqual((target / "gpu/build-packages.txt").read_text(), "gcc=15.1\nzlib=1.3\n")
+        cache = self.root / "rootfs/out/mesa" / key / "built"
         before = cache.stat().st_mtime_ns
         self.run_python("tools/output.py", "verify", target / "gpu/gpu")
         # Clean a private fixture target, never the contributor's own build outputs.
@@ -184,6 +206,18 @@ class ImageOutputs(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(cache.stat().st_mtime_ns, before)
         self.run_python("tools/output.py", "verify", target / "gpu/gpu")
+        # A changed package request selects a new cache without deleting the old one.
+        old_key = key
+        lock['roles']['gpu-build']['requested'].append('patch')
+        lock_path.write_text(json.dumps(lock))
+        key = self.run_python("tools/build_env.py", "identity", "gpu-build").stdout.strip()
+        self.assertNotEqual(key, old_key)
+        self.env['OOS_TEST_ENVIRONMENT'] = key
+        result = subprocess.run(["sh", str(script)], env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(cache.stat().st_mtime_ns, before)
+        self.assertTrue((self.root / "rootfs/out/mesa" / key / "built").exists())
+
 
 
 if __name__ == "__main__":

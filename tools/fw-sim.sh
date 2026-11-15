@@ -4,18 +4,19 @@
 # fw-sim.sh - tests oos-firewall's IPv6 part, udhcpc.script and oos-net6 (docs/network.md 6, 8) without a scope: an
 # arm64 container with the image's busybox, oos-conf, oos-firewall and nft. Checks which routes count as prefixes on
 # the link, the ruleset, the set `onlink6` loaded in the kernel and kept up to date by `watch`, the lease's time zone
-# and that a DHCP lease leaves the IPv6 addresses alone. Needs Docker, one finished image build (its busybox) and
+# and that a DHCP lease leaves the IPv6 addresses alone. Needs Docker, the prepared initramfs builder (its busybox) and
 # rootfs/out/nft (rootfs/build-nft.sh; OOS_OUT names another rootfs/out).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+sim_image=$("$root/tools/build-env.sh" resolve sim-fw)
 out="${OOS_OUT:-$root/rootfs/out}"
 w=$(mktemp -d "${TMPDIR:-/tmp}/oos-fw-sim.XXXXXX")
 trap 'rm -rf "$w"' EXIT
 trap 'exit 1' HUP INT TERM
-docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
-[ -x "$out/nft" ] || { echo "no $out/nft" >&2; exit 1; }
-docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
+initramfs_image=$("$root/tools/build-env.sh" resolve initramfs)
+python3 "$root/tools/output.py" verify "$out/nft"
+docker run --rm --pull=never --network=none --platform linux/arm64 "$initramfs_image" cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 
 cat > "$w/routes" <<'R'
@@ -128,9 +129,9 @@ echo "$s3" | grep -Eqx '([0-9a-f]{4}:){7}[0-9a-f]{4}' && [ "$(cat /c/net/ipv6.se
 [ $ok = 1 ] && echo "fw-sim: all passed" || { echo "fw-sim: FAILED"; exit 1; }
 TEST
 
-docker run --rm --platform linux/arm64 --cap-add NET_ADMIN --sysctl net.ipv6.conf.all.disable_ipv6=0 \
+docker run --rm --pull=never --network=none --platform linux/arm64 --cap-add NET_ADMIN --sysctl net.ipv6.conf.all.disable_ipv6=0 \
 	--sysctl net.ipv6.conf.default.disable_ipv6=0 \
-	-v "$w:/w:ro" -v "$root/rootfs/initramfs:/src:ro" -v "$out:/out:ro" alpine:3.22 sh -euc '
+	-v "$w:/w:ro" -v "$root/rootfs/initramfs:/src:ro" -v "$out:/out:ro" "$sim_image" sh -euc '
 	cp /w/busybox /bin/busybox
 	for a in sh ip awk sed grep sort cat od tr mv mkdir chmod dirname sleep timeout stat cp sync; do ln -sf busybox /bin/$a; done
 	for f in oos-conf oos-firewall oos-net6; do cp /src/bin/$f /bin/; done

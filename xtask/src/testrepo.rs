@@ -28,6 +28,8 @@ pub fn repo(name: &str, steps: &[(&[(&str, &str)], &str)]) -> PathBuf {
     }
     std::fs::create_dir_all(&d).expect("dir");
     git(&d, &["init", "-q", "-b", "overhaul"]);
+    // Disposable synthetic histories must not depend on the host signing agent.
+    git(&d, &["config", "commit.gpgsign", "false"]);
     for (files, msg) in steps {
         commit(&d, files, msg);
     }

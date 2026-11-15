@@ -9,12 +9,14 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
+root=$(cd "$here/.." && pwd)
+image=$("$root/tools/build-env.sh" prepare rootfs)
+before=$(python3 "$root/tools/output.py" revision)
 . "$here/deps.sh"
 ver=$(dep_ver dropbear)
 dep_fetch dropbear "$out" >/dev/null
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" alpine:3.22 sh -euc '
-	apk add --no-cache build-base linux-headers >/dev/null
+docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" "$image" sh -euc '
 	cd /tmp && tar -xjf /out/dropbear-$VER.tar.bz2 && cd dropbear-$VER
 	cat > localoptions.h <<-EOF
 	#define DROPBEAR_SFTPSERVER 1
@@ -36,3 +38,7 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="
 dep_stamp "$out/dropbearmulti" "$0" dropbear
 file "$out/dropbearmulti" 2>/dev/null || true
 ls -la "$out/dropbearmulti"
+
+"$root/tools/build-env.sh" provenance rootfs --image "$image" --output "$out/dropbearmulti.packages.txt"
+
+python3 "$root/tools/output.py" stamp "$out/dropbearmulti" "$before"

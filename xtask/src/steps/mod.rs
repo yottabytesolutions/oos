@@ -1,7 +1,10 @@
 //! The gate's steps over every crate. Each returns its summary lines, or the failures.
 
 mod code;
+pub(crate) mod host;
+pub(crate) mod image;
 mod ratchets;
+pub(crate) mod scripts;
 
 pub use code::{allows, known, measured, size, statics, unsafe_now, unsafety};
 pub use ratchets::load_moves;

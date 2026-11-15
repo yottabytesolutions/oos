@@ -13,6 +13,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+sim_image=$("$root/tools/build-env.sh" resolve sim-gel)
 . "$root/tools/output.sh"
 gel="$CARGO_TARGET_DIR/image/DHO800_DHO900_OOS_Install.GEL"
 [ -f "$gel" ] || { echo "run boot/build-dev-image.sh, boot/sign-dev-image.sh, then python3 -I boot/build-gel.py first" >&2; exit 1; }
@@ -38,8 +39,7 @@ with open(sys.argv[1], "wb") as f:
         f.seek(lba * S); f.write(b)
 PY
 
-docker run --rm --platform linux/arm64 -v "$w:/w" ubuntu:26.04 bash -euc '
-	apt-get update >/dev/null; DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends mksh >/dev/null
+docker run --rm --pull=never --network=none --platform linux/arm64 -v "$w:/w" "$sim_image" bash -euc '
 	mkdir -p /system/bin /rigol/shell /mnt/media_rw/ABCD-1234 /rigol
 	ln -s /usr/bin/mksh /system/bin/sh; ln -s /bin/bash /system/bin/bash
 	# the busybox of the stock system unpacks gzip by itself
@@ -65,21 +65,30 @@ UPD
 		printf KRNL | dd of=/w/card bs=512 seek=122880 conv=notrunc 2>/dev/null; cp /w/$G $S/
 	fi
 	echo "== dry run"; touch $S/oos-dry-run.txt; h0=$(sha256sum < /w/card); upd; echo "exit $?"; rm $S/oos-dry-run.txt
-	[ "$h0" = "$(sha256sum < /w/card)" ] && echo "card unchanged"
-	[ -f $S/OOS-rescue/SHA256SUMS ] && (cd $S/OOS-rescue && sha256sum -c SHA256SUMS)
+	[ "$h0" = "$(sha256sum < /w/card)" ] || { echo "FAIL: dry run changed card"; exit 1; }
+	echo "card unchanged"
+	[ -s $S/OOS-rescue/SHA256SUMS ] || { echo "FAIL: missing rescue checksums"; exit 1; }
+	(cd $S/OOS-rescue && sha256sum -c SHA256SUMS)
+	cmp /rigol/data/cal_example.hex $S/OOS-rescue/rigol-data/cal_example.hex
 	ls /rigol/data $S/OOS-rescue/rigol-data | head -8
 
 	echo "== install"; b=$(sums 122880 65536); upd; echo "exit $?"
 	echo "boot magic: $(magic 122880)"; echo "backup magic: $(magic 319488)"
-	[ "$b" = "$(sums 319488 65536)" ] && echo "backup = stock boot"
+	[ "$b" = "$(sums 319488 65536)" ] || { echo "FAIL: backup differs from stock boot"; exit 1; }
+	[ "$(magic 122880)" = OOSK ] && [ "$(magic 319488)" = KRNL ] || { echo "FAIL: boot/backup magic"; exit 1; }
+	echo "backup = stock boot"
 	echo "recovery: $(dd if=/w/card bs=512 skip=188416 count=1 2>/dev/null | head -c 8)"
+	[ "$(dd if=/w/card bs=512 skip=188416 count=1 2>/dev/null | head -c 8)" = "ANDROID!" ] || { echo "FAIL: recovery image magic"; exit 1; }
 	grep -E "newer|kept, only" $S/oos-install.log || true
 	ls /mnt/tmp
 
 	echo "== after a start of OOS (one-shot), the file selects it again"; printf KRNL | dd of=/w/card bs=512 seek=122880 conv=notrunc 2>/dev/null
-	upd; echo "exit $?"; echo "boot magic: $(magic 122880)"
+	upd; echo "exit $?"; [ "$(magic 122880)" = OOSK ] || { echo "FAIL: one-shot reselect"; exit 1; }
 
 	echo "== a card that is not stock"; dd if=/dev/zero of=/w/card bs=512 seek=8192 count=4 conv=notrunc 2>/dev/null
-	set +e; upd; echo "exit $?"; set -e
+	bad_before=$(sha256sum < /w/card)
+	if upd; then echo "FAIL: non-stock card accepted"; exit 1; fi
+	[ "$bad_before" = "$(sha256sum < /w/card)" ] || { echo "FAIL: non-stock card changed"; exit 1; }
+	echo "GEL TEST PASSED"
 	echo "== log"; tail -22 $S/oos-install.log
 '

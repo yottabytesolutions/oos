@@ -16,14 +16,14 @@ python3 tools/output.py build --release --target aarch64-unknown-linux-musl -p o
 Cargo host and ARM artifacts use their normal layout under the selected directory.
 Coverage uses its `xtask-cov/` child. GPU builds use `gpu/` (bundle `gpu/gpu/`);
 GPU comparisons use unique `gpu-check.*` directories. Mesa's installed build cache
-and checked source tarball stay in worktree-local `rootfs/out/mesa/` and
+and checked source tarball stay in worktree-local `rootfs/out/mesa/<environment>/` and
 `rootfs/out/mesa_*.orig.tar.xz`, outside the target, so `cargo clean` preserves them.
 The ARM hardware helper uses `hw/`. Image assembly and signing use `image/`, replacing the old `boot/out` default.
 GEL packaging verifies the signed package and ARM updater receipts and writes its
 own receipt for simulation. The build-id sidecar is verified before signing too.
 The image workflow reads and uploads from the same selected directory.
 Consumers with explicit image arguments must use the selected directory. Kernel and rootfs prerequisite caches keep their
-existing worktree-local locations; their builders are outside this task's claim.
+existing worktree-local locations; their builders record the selected environment and installed package inventory.
 
 Build consumable Rust binaries through `tools/output.py build`. It runs locked,
 offline Cargo and writes adjacent `.oos-build.json` receipts only on success and
@@ -75,3 +75,20 @@ python3 -I -m unittest discover -s tools/tests -p test_image_outputs.py
 python3 tools/output.py build -p oos-ui
 python3 -I -m unittest discover -s tools/tests -p test_host_sockets.py
 ```
+
+
+Rust receipts also hash the actual `rustc -vV` and Cargo identities. A changed compiler invalidates shipped Rust
+binary receipts even if source, pin files and executable bytes match. The build helper checks compiler identity
+before and after building. The digests contain no host paths or raw tool output. Existing Rust receipts without
+this identity require rebuilding. Container base/recipe/package-request changes are source inputs, so they invalidate
+receipts. The lock's environment digest selects independent Mesa caches and kernel build volumes instead of
+removing old caches. Rootfs dependency stamps include the locked environment digest too. A completed kernel build records its
+environment under `kernel/out/base/build-environment`; image assembly rejects a missing or different identity.
+This stamp covers the base/recipe/request contract; task 0033 retains responsibility for complete kernel input provenance.
+
+Prepare selected environments explicitly with `tools/bootstrap.sh --gpu`, `--sim` or `--image`; simulation scripts
+only resolve existing base/recipe-identified images. Doctor never pulls or installs them. Builders record sorted
+`name=version` package inventories next to their output; these files are informational, without version locks.
+The base/recipe/request identity does not freeze apt/apk resolution or detect package changes after a rebuild.
+Task 0033 owns complete package locks and the binfmt installer identity. See `docs/development.md` for output
+inventory names and setup commands. Linux x86-64 runner validation remains untested, without a hold here.

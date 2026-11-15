@@ -23,16 +23,16 @@ usually in `oos-dsp`. [docs/protocol-modules.md](docs/protocol-modules.md) walks
 
 ## Before a pull request
 
-```sh
-(cd hal && cargo test)
-(cd dsp && cargo test)
-(cd ui && cargo test)
-(cd fpgad && cargo test)
-(cd ui && cargo check --target aarch64-unknown-linux-musl)
-```
+Run `cargo xtask check --fast` and focused tests from the repository root. See the
+[check inventory](docs/development.md#executable-inventory-and-completion-evidence) for commands
+and prerequisites. The coordinator runs the Docker-free default `cargo xtask check` once per
+integration batch and `cargo xtask check --image` before unit rounds and releases. Repository CI
+is off until 0.2.0. Completion requires independent review and full-gate evidence for the same
+integrated candidate; partial and inventory-only runs cannot establish completion.
 
-Tests that need the calibration files of a real unit skip themselves without them. See the Development section of the
-[README](README.md). [docs/architecture/README.md](docs/architecture/README.md) is the place to start reading.
+Tests use synthetic inputs where possible. Tests that need private calibration files report their
+skips; no private calibration directory is required for the gate. [docs/architecture/README.md](docs/architecture/README.md)
+is the place to start reading.
 
 Text and code comments are in English. Changes to the hardware knowledge go into `docs/`, in the same pull request.
 

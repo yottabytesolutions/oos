@@ -6,19 +6,20 @@
 # password and with a key, copies a key with ssh-copy-id and files with scp -O, with scp over SFTP (OpenSSH's default
 # since 9.0) and with sftp, and checks the guards: no listener
 # without remote.ssh, net.allow or the loaded firewall; password login only off while a trusted key exists; password
-# and host key the same after a "power cycle". Needs Docker and one finished image build (its busybox), and
+# and host key the same after a "power cycle". Needs Docker and the prepared initramfs builder (its busybox), and
 # rootfs/out/nft, rootfs/out/dropbearmulti and rootfs/out/sftp-server (rootfs/build-nft.sh, rootfs/build-dropbear.sh,
 # rootfs/build-sftp-server.sh).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+sim_image=$("$root/tools/build-env.sh" resolve sim-ssh)
 out="$root/rootfs/out"
 w=$(mktemp -d "${TMPDIR:-/tmp}/oos-ssh-sim.XXXXXX")
 trap 'rm -rf "$w"' EXIT
 trap 'exit 1' HUP INT TERM
-docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
-for f in nft dropbearmulti sftp-server; do [ -x "$out/$f" ] || { echo "no $out/$f" >&2; exit 1; }; done
-docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
+initramfs_image=$("$root/tools/build-env.sh" resolve initramfs)
+python3 "$root/tools/output.py" verify "$out/nft" "$out/dropbearmulti" "$out/sftp-server"
+docker run --rm --pull=never --network=none --platform linux/arm64 "$initramfs_image" cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 
 cat > "$w/test" <<'TEST'
@@ -27,7 +28,7 @@ ok=1
 fail() { echo "FAIL: $*"; ok=0; }
 st() { cat /tmp/oos-ssh.state; }
 conf() { printf '%s\n' "$@" > /oos/system.conf; }
-run() { /bin/oos-ssh "$@" 2>> /tmp/oos-ssh.log; }
+run() { /bin/oos-ssh "$@" 2>> /tmp/oos-ssh.log || fail "oos-ssh $*"; }
 H="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/c/known_hosts -o BatchMode=no -o ConnectTimeout=5"
 pw_login() { sshpass -f /oos/ssh/password ssh $H -o PubkeyAuthentication=no -o PreferredAuthentications=password root@127.0.0.1 "$@"; }
 key_login() { ssh $H -o PasswordAuthentication=no -o PreferredAuthentications=publickey -i /c/id root@127.0.0.1 "$@"; }
@@ -135,9 +136,8 @@ grep -q "$(cat /oos/ssh/password)" /tmp/oos-ssh.log && fail "the password is in 
 [ $ok = 1 ] && echo "ssh-sim: all passed" || { echo "ssh-sim: FAILED"; exit 1; }
 TEST
 
-docker run --rm --platform linux/arm64 --cap-add NET_ADMIN \
-	-v "$w:/w:ro" -v "$root/rootfs/initramfs/bin:/src:ro" -v "$out:/out:ro" alpine:3.22 sh -euc '
-	apk add --no-cache openssh-client openssh-keygen sshpass >/dev/null
+docker run --rm --pull=never --network=none --platform linux/arm64 --cap-add NET_ADMIN \
+	-v "$w:/w:ro" -v "$root/rootfs/initramfs/bin:/src:ro" -v "$out:/out:ro" "$sim_image" sh -euc '
 	# the image busybox runs every applet from here on (the OpenSSH client and sshpass are the computer side)
 	cp /w/busybox /bin/busybox
 	for f in oos-ssh oos-conf oos-firewall; do cp /src/$f /bin/; done

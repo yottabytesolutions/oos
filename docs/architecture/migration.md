@@ -10,8 +10,10 @@ keeps running until the new path replaces it, one small step per merge. This fil
 - **Failing-before tests.** The step's tests fail on the parent commit and pass after. A refactor step names the
   existing tests and golden pictures that must stay unchanged instead.
 - **Deletions.** The step deletes what it lists. The reviewer checks with grep that the names are gone.
-- **Gate.** The overhaul gate passes (`../development.md`, pending the guardrails merge): `cargo xtask check` and the test runs, fmt, clippy, ui and hal tests in release and debug with full counts, arm64
-  check, size limits, boundary rules, perf-guard, `gpu/test-host.sh`.
+- **Gate.** Workers run `cargo xtask check --fast` and focused tests. The coordinator runs the
+  Docker-free default `cargo xtask check` on the integrated batch and `--image` before unit
+  rounds and releases ([inventory](../development.md#executable-inventory-and-completion-evidence)).
+  Repository CI is off until 0.2.0. Partial runs and separate revisions' passes do not establish completion.
 - **Ratchet.** The ratchet files shrink or stay. Module rules have no ratchet: a step adds the rules in
   `xtask/data/architecture.txt` that its modules now meet ([Enforcement](README.md#enforcement)).
 - **Moves.** The size check counts a moved or renamed item as new, which would reject the migration's own moves (M2.1,

@@ -5,7 +5,7 @@
 # trees, firmware, config, xdma. Inside Docker, results in kernel/out/base/.
 #
 # Why Docker: the kernel tree has file names that differ only in case; macOS' default file system is case-insensitive.
-# Everything happens in the Docker volume "oos-kbuild". The container has the host's architecture: on an arm64 host
+# Everything happens in the a worktree-local Docker volume. The container has the host's architecture: on an arm64 host
 # (Apple silicon, Linux arm64) the "cross" compiler is Ubuntu's native gcc under its triplet name, on any other host
 # (x86-64 Linux) Ubuntu's gcc-aarch64-linux-gnu, the same gcc version. No emulation is needed for the kernel.
 # The fixed time stamp and the names below make the build repeatable.
@@ -18,18 +18,11 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tarball="$here/src/linux-6.12.115-base.tar.xz"
 out="$here/out/base"
-image=oos-kbuild:ubuntu-gcc15-patch
-
-docker image inspect "$image" >/dev/null 2>&1 || docker build -t "$image" - >&2 <<'EOF'
-FROM ubuntu:26.04
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      make gcc g++ bc flex bison libssl-dev libelf-dev cpio xz-utils kmod python3 file ca-certificates \
-      device-tree-compiler u-boot-tools patch \
-    && if [ "$(dpkg --print-architecture)" != arm64 ]; then \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross; fi \
-    && rm -rf /var/lib/apt/lists/*
-EOF
+root=$(cd "$here/.." && pwd)
+image=$("$root/tools/build-env.sh" prepare kernel)
+platform=$("$root/tools/build-env.sh" platform kernel)
+environment=$("$root/tools/build-env.sh" identity kernel)
+workspace=$("$root/tools/build-env.sh" workspace)
 if [ "${1:-}" = image ]; then
 	echo "$image"
 	exit 0
@@ -38,13 +31,14 @@ fi
 [ -f "$tarball" ] || { echo "missing $tarball (kernel/README.md says where it comes from)" >&2; exit 1; }
 (cd "$here" && shasum -a 256 -c base.sha256 >/dev/null 2>&1 || sha256sum -c base.sha256 >/dev/null) || { echo "$tarball: wrong checksum" >&2; exit 1; }
 
-docker volume create oos-kbuild >/dev/null
+docker volume create "oos-kbuild-$workspace-$environment" >/dev/null
 mkdir -p "$out"
 if [ "${1:-}" = shell ]; then
-	exec docker run --rm -it -v oos-kbuild:/w -v "$here:/k:ro" -v "$out:/out" "$image" bash
+	exec docker run --rm --pull=never --platform "$platform" -it -v "oos-kbuild-$workspace-$environment:/w" -v "$here:/k:ro" -v "$out:/out" "$image" bash
 fi
+rm -f "$out/build-environment"
 # the results belong to whoever runs the build (on Linux, Docker writes as root)
-docker run --rm -e OUT_OWNER="$(id -u):$(id -g)" -v oos-kbuild:/w -v "$here:/k:ro" -v "$out:/out" "$image" sh -euc '
+docker run --rm --pull=never --platform "$platform" -e OUT_OWNER="$(id -u):$(id -g)" -v "oos-kbuild-$workspace-$environment:/w" -v "$here:/k:ro" -v "$out:/out" "$image" sh -euc '
 	aarch64-linux-gnu-gcc --version | head -1
 	W=/w/work; K=$W/kernel-6.12; O=$W/kbuild-6.12-dho900; X=$W/xdma-build
 	rm -rf "$K" "$O" "$X" "$W/modroot"; mkdir -p "$K" "$O"
@@ -85,3 +79,9 @@ docker run --rm -e OUT_OWNER="$(id -u):$(id -g)" -v oos-kbuild:/w -v "$here:/k:r
 	chown -R "$OUT_OWNER" /out
 	ls -la /out
 '
+
+"$root/tools/build-env.sh" provenance kernel --platform "$platform" --image "$image" --output "$out/build-packages.txt"
+
+# Only a completed build may identify the compiler environment of these cached outputs.
+printf '%s\n' "$environment" > "$out/build-environment.pending"
+mv "$out/build-environment.pending" "$out/build-environment"

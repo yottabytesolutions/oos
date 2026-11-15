@@ -8,24 +8,30 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
+sim_image=$("$root/tools/build-env.sh" resolve sim-wlan)
 . "$root/tools/output.sh"
 w=$(mktemp -d "${TMPDIR:-/tmp}/oos-wlan-sim.XXXXXX")
 trap 'rm -rf "$w"' EXIT
 trap 'exit 1' HUP INT TERM
-[ -x "$root/rootfs/out/wpa_supplicant" ] || "$root/rootfs/build-wlan-tools.sh"
+python3 "$root/tools/output.py" verify "$root/rootfs/out/wpa_supplicant" || "$root/rootfs/build-wlan-tools.sh"
 
-(cd "$root/ui" && PATH="$HOME/.cargo/bin:$PATH" cargo test --offline --locked --target aarch64-unknown-linux-musl --no-run --message-format=json 2>/dev/null) \
-	| python3 -c '
+(cd "$root/ui" && cargo test --offline --locked --target aarch64-unknown-linux-musl --no-run --message-format=json) > "$w/cargo.json"
+python3 - "$w/cargo.json" <<'PYTEST' > "$w/test-binary"
 import sys, json
-for l in sys.stdin:
-    m = json.loads(l)
-    if m.get("reason") == "compiler-artifact" and m.get("executable") and m["target"]["name"] == "oos-ui" and m["profile"]["test"]:
-        print(m["executable"])' > "$w/test-binary"
+paths = []
+for line in open(sys.argv[1]):
+    event = json.loads(line)
+    if event.get("reason") == "compiler-artifact" and event.get("executable") and event["target"]["name"] == "oos-ui" and event["profile"]["test"]:
+        paths.append(event["executable"])
+if len(paths) != 1:
+    sys.exit("expected exactly one UI test binary")
+print(paths[0])
+PYTEST
 cp "$(cat "$w/test-binary")" "$w/oos-ui-test"
 
 # the busybox of the image
-docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
-docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
+initramfs_image=$("$root/tools/build-env.sh" resolve initramfs)
+docker run --rm --pull=never --platform linux/arm64 "$initramfs_image" cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 
 cat > "$w/init" <<'INIT'
@@ -75,7 +81,9 @@ printf '1.0\tend\t\t\n' > /tmp/oos-boot.status
 sleep 2
 cd /tmp
 timeout 200 /bin/oos-ui-test --ignored --exact --nocapture --test-threads=1 ui::wlan::tests::live_radio 2>&1
-echo "exit code $?"
+status=$?
+echo "WLAN TEST EXIT $status"
+[ "$status" = 0 ] || { echo "WLAN TEST FAILED"; poweroff -f; }
 # the stick is pulled
 rmmod mac80211_hwsim
 sleep 4
@@ -86,9 +94,7 @@ echo ---- end
 poweroff -f
 INIT
 
-docker run --rm --platform linux/arm64 -v "$w:/w" -v "$root/rootfs:/rootfs:ro" alpine:3.22 sh -euc '
-	apk add --no-cache build-base linux-headers pkgconf libnl3-dev libnl3-static linux-firmware-none cpio curl xz zstd >/dev/null
-	apk add --no-cache --no-scripts linux-lts >/dev/null
+docker run --rm --pull=never --platform linux/arm64 -v "$w:/w" -v "$root/rootfs:/rootfs:ro" "$sim_image" sh -euc '
 	if [ ! -x /w/hostapd ]; then
 		cd /tmp && curl -fsSL https://w1.fi/releases/hostapd-2.11.tar.gz | tar -xz && cd hostapd-2.11/hostapd
 		printf "CONFIG_DRIVER_NL80211=y\nCONFIG_LIBNL32=y\nCONFIG_TLS=internal\nCONFIG_INTERNAL_LIBTOMMATH=y\nCONFIG_NO_RANDOM_POOL=y\nCONFIG_GETRANDOM=y\nCONFIG_IEEE80211N=y\n" > .config
@@ -123,5 +129,8 @@ accel="-cpu max"
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] && accel="-accel hvf -cpu host"
 qemu-system-aarch64 -M virt $accel -m 1024 -smp 2 -nographic -no-reboot \
 	-kernel "$w/kernel" -initrd "$w/initramfs.gz" -append "console=ttyAMA0 rdinit=/init quiet panic=1" -device virtio-rng-pci \
-	| tee "$w/log"
+    > "$w/log" 2>&1 || { cat "$w/log"; exit 1; }
+cat "$w/log"
+grep -q '^WLAN TEST EXIT 0' "$w/log"
+! grep -q 'WLAN TEST FAILED' "$w/log"
 grep -q 'LIVE RADIO TEST PASSED' "$w/log" && grep -q 'oos-wlan: stick gone' "$w/log"

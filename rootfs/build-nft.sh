@@ -8,12 +8,14 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
+root=$(cd "$here/.." && pwd)
+image=$("$root/tools/build-env.sh" prepare rootfs)
+before=$(python3 "$root/tools/output.py" revision)
 . "$here/deps.sh"
 for d in libmnl libnftnl nftables; do dep_fetch $d "$out" >/dev/null; done
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e MNL="$(dep_ver libmnl)" -e NFTNL="$(dep_ver libnftnl)" \
-	-e NFT="$(dep_ver nftables)" -v "$out:/out" alpine:3.22 sh -euc '
-	apk add --no-cache build-base linux-headers pkgconf bison flex xz >/dev/null
+docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e MNL="$(dep_ver libmnl)" -e NFTNL="$(dep_ver libnftnl)" \
+	-e NFT="$(dep_ver nftables)" -v "$out:/out" "$image" sh -euc '
 	p=/tmp/prefix; mkdir -p $p
 	export PKG_CONFIG_PATH=$p/lib/pkgconfig CFLAGS="-Os -ffunction-sections -fdata-sections"
 	cd /tmp
@@ -29,3 +31,7 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e MNL="
 dep_stamp "$out/nft" "$0" libmnl libnftnl nftables
 file "$out/nft" 2>/dev/null || true
 ls -la "$out/nft"
+
+"$root/tools/build-env.sh" provenance rootfs --image "$image" --output "$out/nft.packages.txt"
+
+python3 "$root/tools/output.py" stamp "$out/nft" "$before"

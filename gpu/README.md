@@ -81,9 +81,9 @@ The helper's GPU time per frame there: the panel 8 to 10 ms, the monitor 12 to 1
   Mesa 26.0.8 with only Panfrost (EGL, GLES 3, GBM; built in two stages, LLVM only at build time), libdrm, zlib, libstdc++ and glibc with its loader. About 26 MB, 8 MB of the
   compressed image.
 
-`gpu/build.sh` keeps Mesa's installed build cache in `rootfs/out/mesa/` and its checked
+`gpu/build.sh` keeps Mesa's installed build cache in `rootfs/out/mesa/<environment>/` and its checked
 source tarball beside it, separately from the selected Cargo target. `cargo clean`
-preserves that cache. Remove `rootfs/out/mesa/` explicitly to rebuild Mesa.
+preserves that cache. Remove `rootfs/out/mesa/<environment>/` explicitly to rebuild Mesa.
 
 ## Testing without a scope
 
@@ -126,3 +126,14 @@ every test passed. Two checks since:
 - With the logic analyser on and HDMI Layout, the LA columns are worked out again for every monitor frame.
 - The grid's dots are single pixels, about 2000 commands; the GPU draws them only when the layer under the traces
   changes.
+
+
+Build environments use `tools/build-env.sh` and per-platform base digests, recipe hashes and package requests in
+`tools/container-images.json`. Both build and llvmpipe test containers explicitly run as `linux/arm64`.
+Run `tools/bootstrap.sh --gpu`, then `cargo xtask doctor --gpu` for the test prerequisites. Image preparation
+(`--image`) also prepares the GPU compiler role. Builders record informational sorted installed-package lists
+as `build-packages.txt` beside the bundle and in the comparison output directory. Missing package locks do not
+block builds; complete package locks and the binfmt installer identity belong to task 0033 (0.3.0).
+Base/recipe/request changes select a new Mesa cache directory. Older caches remain available to active builds.
+Package resolution is not frozen by these identities. Real builders on macOS arm64 and Linux x86-64 runner
+validation are untested here; the latter is not a release hold. See `docs/development.md`.

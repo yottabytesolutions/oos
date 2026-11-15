@@ -24,12 +24,16 @@ dep_fetch() {
 dep_stamp_text() {
 	s=$2; shift 2
 	echo "script $(dep_sha256 "$s")"
+	deps_root=$(CDPATH= cd -- "$(dirname -- "$DEPS_LOCK")/.." && pwd)
+	deps_environment=$("$deps_root/tools/build-env.sh" identity rootfs) || return 1
+	echo "environment $deps_environment"
 	for n in "$@"; do dep_line "$n" | awk '{ print $1, $3, $4 }'; done
 }
 dep_stale() {
 	a=$1; shift
 	[ -e "$a" ] && [ -f "$a.stamp" ] || return 0
-	[ "$(cat "$a.stamp")" != "$(dep_stamp_text "$a" "$@")" ]
+	expected=$(dep_stamp_text "$a" "$@") || return 0
+	[ "$(cat "$a.stamp")" != "$expected" ]
 }
 dep_stamp() {
 	a=$1; shift

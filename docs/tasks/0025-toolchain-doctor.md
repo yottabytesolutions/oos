@@ -131,3 +131,16 @@ Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
 
 - 2026-11-14: seeded from task 0001. Not yet claimed.
 - 2026-11-15: claimed for codex-c on branch t0025-toolchain (on top of task 0020 and G1) by the coordinator.
+- 2026-11-15: Scope adjustment implemented without staging, commits, push, hardware access or held-path edits.
+- 2026-11-15: Final fast gate: `partial gate passed (not done): 8 steps in 68 s`, exit 0
+- 2026-11-15: Doctor reports `expected >=3.12; actual 3.14.10` and accepts that interpreter. It rejects only
+- 2026-11-15: Coordinator narrowed 0025 to release 0.2.0 tool/bootstrap/doctor and base/recipe identities.
+- 2026-11-15: Implementation handoff, still active and not merge-ready. Author: Codex (OpenAI). Parent
+- 2026-11-15: Pins plan items 1-2 implemented: exact Rust 1.99.1/minimal/components/musl target, Python 3.14.10,
+- 2026-11-15: Pins plan items 3-6 implemented as a fail-closed identity contract and script wiring. The container
+- 2026-11-15: Doctor/setup/G1 plan implemented in separate doctor modules and Python stdlib helpers. Default
+- 2026-11-15: Failing-before evidence: parent doctor exits 2 (target/t0025-before-doctor.log); CLI regression
+- 2026-11-15: Passing local evidence, all exit 0: xtask debug/release 89 tests each
+- 2026-11-15: Full gate attempt printed exactly: gate FAILED in 917 s: doctor, tests (debug), tests (release),
+- 2026-11-15: Changed-file privacy and draft message scans each report zero findings
+- 2026-11-15: Claimed implementation on the assigned stacked branch. Parent doctor command exits 2 (unknown

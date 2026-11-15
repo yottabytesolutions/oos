@@ -1,0 +1,193 @@
+{
+  "schema": 1,
+  "status": "base manifests resolved by coordinator on 2026-11-15; package locks deferred to task 0033",
+  "bases": {
+    "ubuntu": {
+      "name": "ubuntu:26.04",
+      "manifests": {
+        "linux/arm64": "sha256:7e7957462d7b6db141de67623f46135d82a6bc131bc2ff369aedfccfa91c0a1b",
+        "linux/amd64": "sha256:0d5255be560e2d2ddcfbfda88549e9e815ef29e7cd7fc62183d5709e6e2963c6"
+      },
+      "index": "sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96"
+    },
+    "alpine": {
+      "name": "alpine:3.22",
+      "manifests": {
+        "linux/arm64": "sha256:e233f2058b0628266762f745a2c17e623b418e0090f47d223909d1f9a7d4367e",
+        "linux/amd64": "sha256:9db2934886712d877c932e07249c75a59e6ca27adfbccc05261987a17bef2d63"
+      },
+      "index": "sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f"
+    }
+  },
+  "roles": {
+    "initramfs": {
+      "base": "ubuntu",
+      "recipe_sha256": "d5754696e8c0526579ac37a3abd62b42a93b6e5776a3497f52df3a3cc08eab91",
+      "requested": [
+        "busybox-static",
+        "cpio",
+        "gzip",
+        "device-tree-compiler"
+      ]
+    },
+    "gpu-build": {
+      "base": "ubuntu",
+      "recipe_sha256": "9f6a888450fa969603a1e7d2b918b7829d9d0eb9127ff1e2d472c20a83c55c04",
+      "requested": [
+        "ca-certificates",
+        "dpkg-dev",
+        "meson",
+        "ninja-build",
+        "gcc",
+        "g++",
+        "pkg-config",
+        "python3-mako",
+        "python3-yaml",
+        "python3-packaging",
+        "python3-ply",
+        "bison",
+        "flex",
+        "glslang-tools",
+        "libdrm-dev",
+        "libexpat1-dev",
+        "zlib1g-dev",
+        "file",
+        "xz-utils",
+        "libegl-dev",
+        "libgles-dev",
+        "llvm-21-dev",
+        "libclang-21-dev",
+        "clang-21",
+        "libclc-21-dev",
+        "llvm-spirv-21",
+        "libllvmspirvlib-21-dev",
+        "spirv-tools",
+        "spirv-tools-dev",
+        "spirv-headers",
+        "libclang-cpp21-dev"
+      ]
+    },
+    "gpu-test": {
+      "base": "ubuntu",
+      "recipe_sha256": "d5754696e8c0526579ac37a3abd62b42a93b6e5776a3497f52df3a3cc08eab91",
+      "requested": [
+        "gcc",
+        "libc6-dev",
+        "libegl-dev",
+        "libgles-dev",
+        "libegl-mesa0",
+        "libgles2",
+        "libegl1",
+        "mesa-libgallium"
+      ]
+    },
+    "kernel": {
+      "base": "ubuntu",
+      "recipe_sha256": "d5754696e8c0526579ac37a3abd62b42a93b6e5776a3497f52df3a3cc08eab91",
+      "requested": [
+        "make",
+        "gcc",
+        "g++",
+        "bc",
+        "flex",
+        "bison",
+        "libssl-dev",
+        "libelf-dev",
+        "cpio",
+        "xz-utils",
+        "kmod",
+        "python3",
+        "file",
+        "ca-certificates",
+        "device-tree-compiler",
+        "u-boot-tools",
+        "patch"
+      ],
+      "platform_requested": {
+        "linux/amd64": [
+          "gcc-aarch64-linux-gnu",
+          "g++-aarch64-linux-gnu",
+          "libc6-dev-arm64-cross"
+        ]
+      }
+    },
+    "sim-fw": {
+      "base": "alpine",
+      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "requested": [
+        "nftables",
+        "iproute2"
+      ]
+    },
+    "sim-gel": {
+      "base": "ubuntu",
+      "recipe_sha256": "d5754696e8c0526579ac37a3abd62b42a93b6e5776a3497f52df3a3cc08eab91",
+      "requested": [
+        "mksh"
+      ]
+    },
+    "alpine": {
+      "base": "alpine",
+      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "requested": [
+        "alpine-baselayout"
+      ]
+    },
+    "rootfs": {
+      "base": "alpine",
+      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "requested": [
+        "build-base",
+        "linux-headers",
+        "pkgconf",
+        "libnl3-dev",
+        "libnl3-static",
+        "bison",
+        "flex",
+        "xz"
+      ]
+    },
+    "sim-ssh": {
+      "base": "alpine",
+      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "requested": [
+        "openssh-client",
+        "openssh-keygen",
+        "sshpass",
+        "nftables",
+        "iproute2"
+      ]
+    },
+    "sim-usb": {
+      "base": "alpine",
+      "recipe_sha256": "feb070e6af187c5ed8dbb5e0ebaab0a7a7076bd84a8389299963106b0efcf5f2",
+      "requested": [
+        "linux-firmware-none",
+        "cpio",
+        "xz",
+        "zstd",
+        "dosfstools",
+        "exfatprogs",
+        "sfdisk",
+        "linux-lts"
+      ]
+    },
+    "sim-wlan": {
+      "base": "alpine",
+      "recipe_sha256": "feb070e6af187c5ed8dbb5e0ebaab0a7a7076bd84a8389299963106b0efcf5f2",
+      "requested": [
+        "build-base",
+        "linux-headers",
+        "pkgconf",
+        "libnl3-dev",
+        "libnl3-static",
+        "linux-firmware-none",
+        "cpio",
+        "curl",
+        "xz",
+        "zstd",
+        "linux-lts"
+      ]
+    }
+  }
+}

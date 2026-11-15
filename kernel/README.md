@@ -1,6 +1,6 @@
 # OOS kernel
 
-Everything the kernel of OOS is built from. `build-base.sh` needs nothing outside this directory.
+Everything the kernel of OOS is built from. `build-base.sh` uses the shared build-environment lock under `tools/`.
 
 | Part | What |
 |---|---|
@@ -12,7 +12,8 @@ Everything the kernel of OOS is built from. `build-base.sh` needs nothing outsid
 | `modules/xdma/` | Xilinx' XDMA driver, unchanged: [dma_ip_drivers](https://github.com/Xilinx/dma_ip_drivers) at `f09dce768433b2809e7aa6b9d41779265357a2b4`, `XDMA/linux-kernel` |
 | `tools/` | answers the `git log` queries of the Rockchip drivers, so the build needs no git tree |
 
-`build-base.sh` always gives the same bits for the same input: fixed time stamp, build names and paths. Compiler: gcc 15.2.0.
+`build-base.sh` fixes time stamps, build names and paths. The historical compiler was gcc 15.2.0;
+the selected environment is identified by base/recipe pins, with installed packages recorded beside the output.
 On an arm64 host it is Ubuntu's native gcc, on x86-64 Ubuntu's `gcc-aarch64-linux-gnu` of the same version; whether
 the two give the same bits is not checked yet (the summaries of `.github/workflows/image.yml` show both checksums).
 
@@ -21,3 +22,15 @@ Licences: kernel and patches GPL-2.0, device tree GPL-2.0+ OR MIT, `xdma` as in 
 The archive is too large for the repository: it is a file of each [release](https://github.com/deckerjulian/oos/releases).
 
 Whoever passes on an image must offer this source, the archive in `src/` included.
+
+
+Run `tools/bootstrap.sh --image` after installing Docker/QEMU and supplying the checked source archive.
+`cargo xtask doctor --image` verifies its checksum, QEMU and compiler/container prerequisites without building an
+image or accessing a unit. Kernel and oos-hw compilers resolve through the same native-platform `kernel` role;
+Linux x86-64 also requests the cross compiler packages. Build containers use a separate Docker volume
+`oos-kbuild-<worktree>-<environment>` when base/recipe/package requests change. Old volumes remain for active builds. A completed build records `out/base/build-environment`;
+image assembly rejects a missing/mismatched compiler environment instead of reusing a stale kernel.
+The builder records sorted installed packages in `out/base/build-packages.txt` as informational provenance.
+Missing package locks do not block builds; complete per-role locks and the binfmt installer identity move to
+0033 (0.3.0). Base/recipe pins do not freeze apt package resolution. Real builds on this macOS arm64 host and
+Linux x86-64 runner validation remain untested here; the latter does not block this scope. See `docs/development.md`.

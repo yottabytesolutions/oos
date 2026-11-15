@@ -40,3 +40,9 @@ Task files move to `done/` in the batch. Worktrees of merged branches are remove
 
 The coordinator publishes `overhaul` once per batch through the scrub. Unit rounds follow the migration plan's
 milestones; a change of the unit tier that the plan gives no round gets a short smoke round under a scope lease.
+
+Before a unit round or an M-step acceptance, the coordinator runs `cargo xtask check --image`
+plus the extended host suites of M1: `OOS_LONG_SOAK=1` for the 10,000-step soak per mode
+and `OOS_FULL_GOLDEN=1` for full debug goldens. Record the commands, results and complete logs
+in the owning task's Status on the candidate being accepted. These extended suites require
+explicit execution until the image tier includes them automatically.

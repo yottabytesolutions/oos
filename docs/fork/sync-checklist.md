@@ -18,22 +18,22 @@ sync". Nothing here touches the unit.
    itself (`ui/src/ui/ssh.rs`, `ui/src/ssh.rs`, `oos-ssh`) is fork-only. Check: `grep -rn telnetd rootfs ui/src` finds nothing.
 4. Conflicts in `hal/src/dho/seq.rs` Poll handling: upstream's Poll body lives in the fork's `plain_step`. Port any
    upstream change there; `execute_until` stays a thin wrapper.
-5. `cargo xtask check` (docs/development.md) must pass: formatting, size limits, architecture, clippy, the tests of
-   every crate in debug and release, the scope target check and the perf guards. Then `tools/ssh-sim.sh` and
-   `tools/fw-sim.sh`.
+5. The coordinator runs `cargo xtask check`
+   ([default inventory](../development.md#executable-inventory-and-completion-evidence)) on the
+   integrated batch, then `cargo xtask check --image` before unit rounds and releases. The default
+   gate includes script syntax and Python tests; the image tier adds the ARM release link, GPU
+   parity and all simulations. Repository CI is off until 0.2.0. Keep complete candidate logs.
    Downloaded sources: upstream's own build scripts (kexec, fsck, WLAN tools, Mesa) keep their pinned `ver=` and `sum=`
    untouched; `tools/deps-check.sh` reports where a script and `rootfs/deps.lock` differ after a sync, and the
    manifest line follows the script (docs/fork/deps.md).
-6. The `target_os = "linux"` paths: the scope target step of `cargo xtask check` checks every crate for
+6. The `target_os = "linux"` paths: the default gate's scope target clippy and the image tier's release link check the shipped crates for
    aarch64-unknown-linux-musl on the host, with the image build's flags. The earlier Docker check is no longer needed.
 7. `tools/perf-guard.sh` (also a step of the gate): allocation counts and the early trigger end (deterministic), then the timing ratios of the
    fork's fast paths against reference copies of the paths they replaced. A failing ratio means the merge brought an
    upstream path back into the fork's loop, or slowed the fork's one: find which before fast-forwarding.
-8. `gpu/test-host.sh` (since 0.1.12): the GPU picture against the CPU picture for every script in `ui/tests`, and the
-   monitor's cost per pixel. It covers the fork's trace paths (drawpipe, sparse, persistence) on the GPU. It needs an
-   aarch64 musl release `oos-ui` in `target/aarch64-unknown-linux-musl/release/`: `cargo build --release --target
-   aarch64-unknown-linux-musl -p oos-ui` on the host (rust-lld links it, as in the image build). Upstream's other
-   speed test (`tools/device-test.py`, frame rate by graphics and monitor) needs the unit.
+8. `gpu/test-host.sh` is the image tier's `gpu-host` step: expected CPU/GPU pictures for every
+   script and all three monitor cost checks. The preceding `arm64-release-link` builds and verifies
+   the selected output and receipts. Upstream's device frame-rate test still needs the unit.
 9. `tools/plan-matrix.sh` with the old and the new `oos-fpgad`, `diff`: the register sequences must not change unless
    the merge meant to.
 10. Record the sync in `docs/fork/unit-dho804.md` and private RE notes `docs/oos-fork.md`; fast-forward `dho804`.

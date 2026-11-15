@@ -7,6 +7,9 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
+root=$(cd "$here/.." && pwd)
+image=$("$root/tools/build-env.sh" prepare rootfs)
+before=$(python3 "$root/tools/output.py" revision)
 ver=2.11
 sum=912ea06f74e30a8e36fbb68064d6cdff218d8d591db0fc5d75dee6c81ac7fc0a
 mkdir -p "$out"
@@ -14,8 +17,7 @@ tarball="$out/wpa_supplicant-$ver.tar.gz"
 [ -f "$tarball" ] || curl -fsSL -o "$tarball" "https://w1.fi/releases/wpa_supplicant-$ver.tar.gz"
 echo "$sum  $tarball" | { shasum -a 256 -c - 2>/dev/null || sha256sum -c -; } >/dev/null || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" alpine:3.22 sh -euc '
-	apk add --no-cache build-base linux-headers pkgconf libnl3-dev libnl3-static >/dev/null
+docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" "$image" sh -euc '
 	cd /tmp && tar -xzf /out/wpa_supplicant-$VER.tar.gz && cd wpa_supplicant-$VER/wpa_supplicant
 	cat > .config <<CFG
 CONFIG_DRIVER_NL80211=y
@@ -39,3 +41,8 @@ CFG
 	chown "$OUT_OWNER" /out/*
 '
 ls -la "$out/wpa_supplicant" "$out/wpa_cli"
+
+"$root/tools/build-env.sh" provenance rootfs --image "$image" --output "$out/wlan-tools.packages.txt"
+
+python3 "$root/tools/output.py" stamp "$out/wpa_supplicant" "$before"
+python3 "$root/tools/output.py" stamp "$out/wpa_cli" "$before"

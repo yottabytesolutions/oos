@@ -144,8 +144,10 @@ class MessageTests(unittest.TestCase):
 class ExceptionTests(unittest.TestCase):
     def test_entire_candidate_files_scan_clean(self) -> None:
         # Audit full contents, including unchanged lines missed by an additions-only scan.
+        tasks = list((ROOT / "docs/tasks").glob("**/0024-privacy-checks.md"))
+        self.assertEqual(len(tasks), 1, "task 0024 must have exactly one lifecycle path")
         names = ["docs/development.md", "docs/fork/unit-dho804.md", "docs/fork/upstream-audit.md",
-                 "docs/network.md", "docs/tasks/0024-privacy-checks.md", "tools/fw-sim.sh", "tools/ssh-sim.sh",
+                 "docs/network.md", str(tasks[0].relative_to(ROOT)), "tools/fw-sim.sh", "tools/ssh-sim.sh",
                  ".github/workflows/privacy.yml"]
         names += [str(path.relative_to(ROOT)) for path in (ROOT / "tools/privacy").rglob("*")
                   if path.is_file() and "__pycache__" not in path.parts]

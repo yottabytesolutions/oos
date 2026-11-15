@@ -9,12 +9,14 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
+root=$(cd "$here/.." && pwd)
+image=$("$root/tools/build-env.sh" prepare rootfs)
+before=$(python3 "$root/tools/output.py" revision)
 . "$here/deps.sh"
 ver=$(dep_ver openssh)
 dep_fetch openssh "$out" >/dev/null
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" alpine:3.22 sh -euc '
-	apk add --no-cache build-base linux-headers >/dev/null
+docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" "$image" sh -euc '
 	cd /tmp && tar -xzf /out/openssh-$VER.tar.gz && cd openssh-$VER
 	./configure --without-openssl --without-zlib --without-pam --without-selinux --without-kerberos5 \
 		--without-libedit --without-security-key-builtin --disable-lastlog --disable-utmp --disable-utmpx \
@@ -27,3 +29,7 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="
 dep_stamp "$out/sftp-server" "$0" openssh
 file "$out/sftp-server" 2>/dev/null || true
 ls -la "$out/sftp-server"
+
+"$root/tools/build-env.sh" provenance rootfs --image "$image" --output "$out/sftp-server.packages.txt"
+
+python3 "$root/tools/output.py" stamp "$out/sftp-server" "$before"

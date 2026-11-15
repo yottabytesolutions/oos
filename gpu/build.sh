@@ -8,7 +8,7 @@
 #   lib/ld-linux-aarch64.so.1         glibc's loader (oos-ui itself stays static)
 #   etc/licenses/                     the licences of all of it
 # boot/build-dev-image.sh runs it when its bundle receipt is stale. Mesa's build (about 10 minutes) is kept in
-# rootfs/out/mesa; remove that directory to build it again. Cargo clean preserves this cache.
+# rootfs/out/mesa/<environment>; identities select separate caches. Cargo clean preserves this cache.
 #
 # Mesa's own compilers for its built-in GPU programs need LLVM at build time (two stages); the libraries do not.
 set -eu
@@ -22,34 +22,23 @@ before=$(python3 "$root/tools/output.py" revision)
 ver=26.0.8
 deb=26.0.8-1ubuntu0.3
 sum=caf1c0061a68e88dfa74967a7e780c0e85d65b6c4e334cd69095a5dc54ad78bc
-image=oos-gpu-build:ubuntu
-mkdir -p "$out" "$cache"
-# arm64 whatever the host is (on x86-64 through QEMU, as the rest of the image): the helper and the libraries run on
-# the scope. An image of another architecture under this name is built again.
-[ "$(docker image inspect -f '{{.Architecture}}' "$image" 2>/dev/null)" = arm64 ] || docker build --platform linux/arm64 -t $image - >&2 <<'EOF'
-FROM ubuntu:26.04
-RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources && apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates dpkg-dev \
-      meson ninja-build gcc g++ pkg-config python3-mako python3-yaml python3-packaging python3-ply bison flex glslang-tools \
-      libdrm-dev libexpat1-dev zlib1g-dev file xz-utils libegl-dev libgles-dev \
-      llvm-21-dev libclang-21-dev clang-21 libclc-21-dev llvm-spirv-21 libllvmspirvlib-21-dev \
-      spirv-tools spirv-tools-dev spirv-headers libclang-cpp21-dev \
-    && rm -rf /var/lib/apt/lists/*
-EOF
+image=$("$root/tools/build-env.sh" prepare gpu-build)
+environment=$("$root/tools/build-env.sh" identity gpu-build)
+mkdir -p "$out" "$cache/mesa/$environment"
 # the source: Ubuntu's copy of the Mesa release, checked
 tarball="$cache/mesa_$ver.orig.tar.xz"
 if [ ! -f "$tarball" ]; then
-	docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -v "$cache:/cache" $image sh -euc "
+	docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -v "$cache:/cache" $image sh -euc "
 		cd /tmp && apt-get update >/dev/null && apt-get source --download-only mesa=$deb >/dev/null
 		cp mesa_$ver.orig.tar.xz /cache/ && chown \"\$OUT_OWNER\" /cache/mesa_$ver.orig.tar.xz"
 fi
 echo "$sum  $tarball" | { shasum -a 256 -c - 2>/dev/null || sha256sum -c -; } >/dev/null || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
 rm -rf "$out/gpu"
 mkdir -p "$out/gpu"
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" -v "$cache:/cache" -v "$here:/g:ro" $image sh -euc '
+docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -e ENVIRONMENT="$environment" -v "$out:/out" -v "$cache:/cache" -v "$here:/g:ro" $image sh -euc '
 	W=/w; mkdir -p $W; cd $W
 	L=usr/lib/aarch64-linux-gnu
-	M=/cache/mesa
+	M=/cache/mesa/$ENVIRONMENT
 	if [ ! -f $M/$L/libEGL.so.1 ]; then
 	export PATH="/usr/lib/llvm-21/bin:$PATH"
 	tar -xJf /cache/mesa_$VER.orig.tar.xz
@@ -88,5 +77,7 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="
 	chown -R "$OUT_OWNER" $M
 	du -sh $R; ls $R/$L
 '
+
+"$root/tools/build-env.sh" provenance gpu-build --image "$image" --output "$out/build-packages.txt"
 
 python3 "$root/tools/output.py" stamp "$out/gpu" "$before"

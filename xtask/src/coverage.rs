@@ -45,16 +45,16 @@ pub fn measure(root: &Path, krate: &str) -> Result<u64, String> {
         return Err(target.stderr);
     }
     let dir = coverage_dir(Path::new(target.stdout.trim()));
-    let out = std::process::Command::new("cargo")
-        .args(["llvm-cov", "--locked", "--json", "--summary-only"])
-        .env("CARGO_TARGET_DIR", dir)
-        .current_dir(root.join(krate))
-        .output()
-        .map_err(|e| format!("cargo llvm-cov: {}", e))?;
-    if !out.status.success() {
-        return Err(run::tail(&String::from_utf8_lossy(&out.stderr), 20));
+    let out = run::capture_env(
+        &root.join(krate),
+        "cargo",
+        &["llvm-cov", "--locked", "--json", "--summary-only"],
+        &[("CARGO_TARGET_DIR", dir.as_os_str())],
+    )?;
+    if !out.ok {
+        return Err(run::tail(&out.stderr, 20));
     }
-    tenths(&String::from_utf8_lossy(&out.stdout))
+    tenths(&out.stdout)
 }
 
 fn coverage_dir(target: &Path) -> std::path::PathBuf {

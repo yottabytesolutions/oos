@@ -18,14 +18,8 @@ out=$(mktemp -d "$CARGO_TARGET_DIR/gpu-check.XXXXXX")
 # emptied inside the container: a directory removed and made again on the host just before `docker run` was at times
 # not yet visible through the bind mount, and the first shot failed ("write shot: No such file or directory")
 mkdir -p "$out"
-image=oos-gpu-host-test
-docker image inspect $image >/dev/null 2>&1 || docker build -t $image - >&2 <<'EOF'
-FROM ubuntu:26.04
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      gcc libc6-dev libegl-dev libgles-dev libegl-mesa0 libgles2 libegl1 mesa-libgallium \
-    && rm -rf /var/lib/apt/lists/*
-EOF
-docker run --rm -v "$PWD:/o:ro" -v "$ui:/ui:ro" -v "$out:/out" $image sh -euc '
+image=$("$root/tools/build-env.sh" prepare gpu-test)
+docker run --rm --pull=never --platform linux/arm64 --network=none -v "$PWD:/o:ro" -v "$ui:/ui:ro" -v "$out:/out" $image sh -euc '
 	rm -rf /out/cpu /out/gpu /out/times-*.txt
 	mkdir -p /out/cpu /out/gpu
 	gcc -std=gnu11 -O2 -Wall -o /tmp/oos-gpu /o/gpu/oos-gpu.c -lEGL -lGLESv2
@@ -49,15 +43,18 @@ docker run --rm -v "$PWD:/o:ro" -v "$ui:/ui:ro" -v "$out:/out" $image sh -euc '
 			$ui --script "$w/script.txt" --store-dir "$w/store" --gpu /tmp/oos-gpu > /dev/null 2>&1 || { echo "bench $m failed"; exit 1; }
 	done
 '
-python3 "$(dirname "$0")/compare.py" "$out/cpu" "$out/gpu"
+"$root/tools/build-env.sh" provenance gpu-test --image "$image" --output "$out/build-packages.txt"
+python3 "$(dirname "$0")/compare.py" "$out/cpu" "$out/gpu" "$root/ui/tests"
 # A monitor frame may cost per pixel at most what a panel frame costs (the panel's time calibrates the computer).
 # In Mesa's software renderer the gap is small (before 0.1.12: 0.86 to 1.14, since: 0.52 to 0.76); on the Mali it was
 # 4 to 6 times: this catches a gross regression only, the device test (frame_rate_by_graphics_and_monitor) the rest.
 python3 - "$out" <<'PY'
-import statistics, sys
+import statistics, sys, math
 bad = []
 for m in ("Mirror", "Waveform", "Layout"):
     r = [tuple(map(float, l.split())) for l in open(f"{sys.argv[1]}/times-{m}.txt")][2:]
+    if not r or any(len(row) != 2 or any(not math.isfinite(x) or x <= 0 for x in row) for row in r):
+        sys.exit(f'missing or invalid timing samples: {m}')
     p, q = statistics.median(x[0] for x in r), statistics.median(x[1] for x in r)
     k = (q / (1920 * 1080)) / (p / (1024 * 600))
     print(f"monitor {m}: panel {p:.1f} ms, monitor {q:.1f} ms, cost per pixel {k:.2f} of the panel's")

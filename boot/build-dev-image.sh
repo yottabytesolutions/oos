@@ -22,6 +22,11 @@ board="$root/rootfs/board/${OOS_BOARD:-dho}"
 [ -f "$board/etc/oos-board" ] || { echo "no board $board" >&2; exit 1; }
 . "$board/etc/oos-board"
 [ -f "$k/Image" ] || { echo "run kernel/build-base.sh first" >&2; exit 1; }
+expected_kernel=$("$root/tools/build-env.sh" identity kernel)
+[ "$(cat "$k/build-environment" 2>/dev/null)" = "$expected_kernel" ] || {
+    echo "kernel compiler environment changed or is unrecorded; run kernel/build-base.sh" >&2
+    exit 1
+}
 # Docker on Linux: be in the docker group, not root (under sudo, HOME and PATH are root's, rustup's cargo is gone, and
 # the results would belong to root)
 if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
@@ -39,8 +44,9 @@ fi
 # the initramfs is built in Docker: fail now, not after the Rust builds (a failed late step kept the OLD image)
 docker info >/dev/null 2>&1 || { echo "Docker is not running (macOS: open -a Docker; Linux: systemctl start docker, and be in the docker group)" >&2; exit 1; }
 # the image's busybox, wpa_supplicant and e2fsck come from arm64 containers: on other hosts they need QEMU's binfmt
-docker run --rm --platform linux/arm64 alpine:3.22 true >/dev/null 2>&1 || {
-	echo "Docker cannot run arm64 containers. On an x86-64 host, once: docker run --privileged --rm tonistiigi/binfmt --install arm64" >&2
+probe_image=$("$root/tools/build-env.sh" prepare alpine)
+docker run --rm --pull=never --platform linux/arm64 "$probe_image" true >/dev/null 2>&1 || {
+	echo "Docker cannot run arm64 containers; see manual QEMU setup in docs/development.md" >&2
 	echo "(or the distribution's qemu-user-static with binfmt-support)" >&2
 	exit 1
 }
@@ -56,25 +62,21 @@ hw="$CARGO_TARGET_DIR/hw/oos-hw"
 if ! python3 "$root/tools/output.py" verify "$hw"; then
     mkdir -p "$CARGO_TARGET_DIR/hw"
     kimage=$("$root/kernel/build-base.sh" image)
-    docker run --rm -e OUT_OWNER="$owner" -v "$root/tools/hw:/src:ro" -v "$CARGO_TARGET_DIR/hw:/out" "$kimage" sh -euc 'aarch64-linux-gnu-gcc -static -O2 -Wall -o /out/oos-hw /src/oos-hw.c && chown "$OUT_OWNER" /out/oos-hw'
+    docker run --rm --pull=never --platform "$("$root/tools/build-env.sh" platform kernel)" -e OUT_OWNER="$owner" -v "$root/tools/hw:/src:ro" -v "$CARGO_TARGET_DIR/hw:/out" "$kimage" sh -euc 'aarch64-linux-gnu-gcc -static -O2 -Wall -o /out/oos-hw /src/oos-hw.c && chown "$OUT_OWNER" /out/oos-hw'
+    "$root/tools/build-env.sh" provenance kernel --image "$kimage" --output "$CARGO_TARGET_DIR/hw/oos-hw.packages.txt"
     python3 "$root/tools/output.py" stamp "$hw" "$before"
 fi
 mkdir -p "$out"
 # arm64 whatever the host is: its busybox goes into the image. An image of another architecture under this name (left
 # by an older script on an x86-64 host) is built again.
-image=oos-initramfs:ubuntu
-[ "$(docker image inspect -f '{{.Architecture}}' "$image" 2>/dev/null)" = arm64 ] || docker build --platform linux/arm64 -t "$image" - <<'EOF'
-FROM ubuntu:26.04
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      busybox-static cpio gzip device-tree-compiler && rm -rf /var/lib/apt/lists/*
-EOF
+image=$("$root/tools/build-env.sh" prepare initramfs)
 
 # WLAN: wpa_supplicant and wpa_cli (docs/wlan.md)
-[ -x "$root/rootfs/out/wpa_supplicant" ] && [ -x "$root/rootfs/out/wpa_cli" ] || "$root/rootfs/build-wlan-tools.sh"
+python3 "$root/tools/output.py" verify "$root/rootfs/out/wpa_supplicant" "$root/rootfs/out/wpa_cli" || "$root/rootfs/build-wlan-tools.sh"
 # /oos is checked before it is mounted
-[ -x "$root/rootfs/out/e2fsck" ] || "$root/rootfs/build-fsck.sh"
+python3 "$root/tools/output.py" verify "$root/rootfs/out/e2fsck" || "$root/rootfs/build-fsck.sh"
 # an update with another device tree is tried by kexec_load with that tree (docs/update.md)
-[ -x "$root/rootfs/out/kexec" ] || "$root/rootfs/build-kexec.sh"
+python3 "$root/tools/output.py" verify "$root/rootfs/out/kexec" || "$root/rootfs/build-kexec.sh"
 # System > Graphics = GPU: the helper oos-gpu and Mesa (gpu/README.md)
 # Receipts reject stale helpers, including changes beyond the C file.
 python3 "$root/tools/output.py" verify "$CARGO_TARGET_DIR/gpu/gpu" || "$root/gpu/build.sh"
@@ -83,7 +85,7 @@ python3 "$root/tools/output.py" verify "$CARGO_TARGET_DIR/gpu/gpu" || "$root/gpu
 . "$here/unit-hook.sh"
 python3 "$root/tools/output.py" verify "$hw" "$ui/oos-ui" "$fpgad/oos-fpgad" "$fpgad/oos-update" "$CARGO_TARGET_DIR/gpu/gpu"
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
-docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$CARGO_TARGET_DIR/gpu/gpu:/gpu:ro" -v "$CARGO_TARGET_DIR/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
+docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$CARGO_TARGET_DIR/gpu/gpu:/gpu:ro" -v "$CARGO_TARGET_DIR/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
 	r=/tmp/root; rm -rf $r; mkdir -p $r
 	. /board/etc/oos-board
 	cp -a /src/. $r/
@@ -131,6 +133,7 @@ python3 -I "$here/oos-bootimg.py" build --kernel "$k/Image" --dtb "$out/$OOS_IMA
 	--ramdisk "$out/initramfs.cpio.gz" --name "$OOS_IMAGE_NAME" --out "$out/oos-dev.img"
 (cd "$out" && sha256 oos-dev.img > oos-dev.img.sha256 && cat oos-dev.img.sha256)
 printf '%s\n' "$build_id" > "$out/oos-dev.build"
+"$root/tools/build-env.sh" provenance initramfs --image "$image" --output "$out/initramfs.packages.txt"
 python3 "$root/tools/output.py" stamp "$out/oos-dev.img" "$before"
 python3 "$root/tools/output.py" stamp "$out/oos-dev.build" "$before"
 cp "$root/rootfs/out/unit-hook/unit" "$out/oos-dev.unit"

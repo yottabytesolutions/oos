@@ -1,47 +1,78 @@
-//! `cargo xtask check`: the gate.
-
+//! `cargo xtask check`: execute the inventory and preserve incomplete evidence.
+use crate::inventory;
+#[cfg(test)]
+use crate::inventory::Selection;
 use crate::report::{self, Step};
 use crate::steps;
 use std::path::Path;
 use std::time::Instant;
 
-/// What the gate runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
-    /// the partial subset for pre-commit: formatting, syntax rules, architecture and agent rules
     pub fast: bool,
     pub coverage: bool,
 }
 
-type GateStep = (&'static str, fn(&Path) -> steps::Outcome);
-
-/// The ordered steps shared by fast and full dispatch.
-pub(crate) fn plan(o: Options) -> Vec<GateStep> {
-    let mut s: Vec<GateStep> = vec![
-        ("fmt", steps::fmt),
-        ("size limits", steps::size),
-        ("architecture", steps::arch),
-        ("mutable statics", steps::statics),
-        ("unsafe", steps::unsafety),
-        ("disallowed-method exceptions", steps::allows),
-        ("known failures", steps::known),
-        ("agent rules", crate::agent_rules::check),
-    ];
-    if !o.fast {
-        s.push(("clippy", steps::clippy));
-        s.push(("tests (debug)", |root| steps::tests(root, false)));
-        s.push(("tests (release)", |root| steps::tests(root, true)));
-        s.push(("perf guards", steps::perf));
-        if o.coverage {
-            s.push(("coverage", steps::coverage));
-        }
-    }
-    s
+/// G1/0020's Rust subset, retained for their independent dispatch fixtures.
+#[cfg(test)]
+pub(crate) fn plan(o: Options) -> Vec<(&'static str, inventory::Runner)> {
+    inventory::CHECKS
+        .iter()
+        .filter(|c| matches!(c.selection, Selection::Fast | Selection::Rust | Selection::Coverage))
+        .filter(|c| inventory::selected(c, o, false))
+        .map(|c| (c.name, c.run))
+        .collect()
 }
 
-/// Runs the gate; true when every step passed.
-pub fn run(root: &Path, o: Options) -> bool {
+pub(crate) fn formatting_and_pins(root: &Path) -> steps::Outcome {
+    let pins = crate::doctor::syntax(root);
+    let fmt = steps::fmt(root);
+    match (pins, fmt) {
+        (Ok(mut a), Ok(b)) => {
+            a.extend(b);
+            Ok(a)
+        }
+        (Err(mut a), Err(b)) => {
+            a.extend(b);
+            Err(a)
+        }
+        (Err(e), _) | (_, Err(e)) => Err(e),
+    }
+}
+
+pub fn run(root: &Path, o: Options, image: bool, list: bool) -> bool {
+    if list {
+        inventory::list(o, image);
+        return true;
+    }
+    let log = match crate::run::start_logs(root) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("{}", e);
+            return false;
+        }
+    };
+    println!("complete logs: {}", log.display());
     let t = Instant::now();
-    let s: Vec<Step> = plan(o).into_iter().map(|(name, run)| report::step(name, || run(root))).collect();
-    report::summary(&s, t.elapsed().as_secs_f64(), o.fast || !o.coverage)
+    let mut results: Vec<Step> = Vec::new();
+    for c in inventory::CHECKS {
+        if !inventory::selected(c, o, image) {
+            println!("not-selected {} ({:?})", c.id, c.selection);
+            continue;
+        }
+        let missing: Vec<_> = c.after.iter().filter(|id| !results.iter().any(|s| s.name == **id && s.ok)).collect();
+        results.push(report::step(c.id, || {
+            if !missing.is_empty() {
+                return Err(vec![format!("missing prerequisite results: {:?}", missing)]);
+            }
+            (c.run)(root)
+        }));
+    }
+    let tier = if image { "image" } else { "default" };
+    let ok = report::summary(&results, t.elapsed().as_secs_f64(), o.fast || !o.coverage, tier);
+    if let Err(e) = std::fs::write(log.join("steps.log"), format!("{results:#?}\nexit={}\n", u8::from(!ok))) {
+        eprintln!("cannot retain step results: {}", e);
+        return false;
+    }
+    ok
 }

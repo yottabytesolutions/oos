@@ -32,6 +32,17 @@ class Outputs(unittest.TestCase):
         with patch.dict(os.environ, CARGO_TARGET_DIR="escape/out"), self.assertRaises(ValueError):
             output.target(self.root)
 
+    def test_compiler_changes_invalidate_shipped_binary_receipts(self):
+        binary = self.root / "oos-ui"
+        binary.write_bytes(b"same executable")
+        with patch.object(output, "revision", return_value="tree"):
+            with patch.object(output, "compiler_identity", create=True, return_value="first compiler"):
+                output.stamp(binary, "tree")
+                output.verify(binary)
+            with patch.object(output, "compiler_identity", create=True, return_value="second compiler"):
+                with self.assertRaisesRegex(ValueError, "stale"):
+                    output.verify(binary)
+
     def test_receipts_reject_replaced_payload_source_and_missing_stamp(self):
         binary = self.root / "program"
         binary.write_bytes(b"first build")

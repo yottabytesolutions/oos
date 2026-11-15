@@ -64,11 +64,30 @@ def receipt(path):
     return path.with_name(path.name + ".oos-build.json")
 
 
-def stamp(path, before):
+def compiler_identity():
+    identity = hashlib.sha256()
+    for program, args in (("rustc", ["-vV"]), ("cargo", ["--version"])):
+        result = subprocess.run([program, *args], capture_output=True, check=True, timeout=15)
+        identity.update(result.stdout)
+        identity.update(b"\0")
+    return identity.hexdigest()
+
+
+def metadata(path, tree):
+    record = {"tree": tree, "sha256": digest(path)}
+    if path.name in {"oos-ui", "oos-fpgad", "oos-update"}:
+        record["compiler"] = compiler_identity()
+    return record
+
+
+def stamp(path, before, compiler=None):
     if revision() != before:
         raise ValueError("source changed during build; rebuild before consumption")
     pending = receipt(path).with_suffix(f".{os.getpid()}.pending")
-    pending.write_text(json.dumps({"tree": before, "sha256": digest(path)}) + "\n")
+    record = metadata(path, before)
+    if compiler is not None and record.get("compiler") != compiler:
+        raise ValueError("compiler changed during build; rebuild before consumption")
+    pending.write_text(json.dumps(record) + "\n")
     pending.replace(receipt(path))
 
 
@@ -78,7 +97,7 @@ def verify(path):
     except FileNotFoundError as exc:
         raise ValueError(f"missing build receipt for {path.name}; rebuild with its builder "
                          "(Rust binaries: tools/output.py build)") from exc
-    if record != {"tree": revision(), "sha256": digest(path)}:
+    if record != metadata(path, revision()):
         raise ValueError(f"stale or replaced artifact: {path.name}; rebuild using tools/output.py")
     return record
 
@@ -100,6 +119,7 @@ def main():
         if any(a.startswith(("--target-dir", "--message-format", "--config")) for a in args):
             raise ValueError("select outputs with CARGO_TARGET_DIR; build output overrides are unsupported")
         before = revision()
+        compiler = compiler_identity()
         # Stream Cargo diagnostics while collecting only executable artifact paths.
         proc = subprocess.Popen(["cargo", "build", "--offline", "--locked", "--message-format=json", *args],
                                 cwd=ROOT, stdout=subprocess.PIPE, text=True)
@@ -113,7 +133,7 @@ def main():
         if proc.wait():
             raise ValueError("Cargo build failed; no receipts written")
         for binary in binaries:
-            stamp(binary, before)
+            stamp(binary, before, compiler)
     else:
         raise ValueError("expected target, revision, build, verify or stamp")
 

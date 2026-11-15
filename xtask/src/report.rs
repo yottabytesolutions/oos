@@ -35,15 +35,15 @@ fn print(s: &Step) {
 
 /// The closing line; true when every step passed. A subset (`partial`) never says the gate passed: the done rule is
 /// the full gate.
-pub fn summary(steps: &[Step], total: f64, partial: bool) -> bool {
-    println!("{}", closing(steps, total, partial));
+pub fn summary(steps: &[Step], total: f64, partial: bool, tier: &str) -> bool {
+    println!("{}", closing(steps, total, partial, tier));
     steps.iter().all(|s| s.ok)
 }
 
-fn closing(steps: &[Step], total: f64, partial: bool) -> String {
+fn closing(steps: &[Step], total: f64, partial: bool, tier: &str) -> String {
     let failed: Vec<&str> = steps.iter().filter(|s| !s.ok).map(|s| s.name.as_str()).collect();
     match (failed.is_empty(), partial) {
-        (true, false) => format!("gate passed: {} steps in {:.0} s", steps.len(), total),
+        (true, false) => format!("gate passed ({tier}): {} steps in {:.0} s", steps.len(), total),
         (true, true) => format!("partial gate passed (not done): {} steps in {:.0} s", steps.len(), total),
         (false, _) => format!("gate FAILED in {:.0} s: {}", total, failed.join(", ")),
     }
@@ -57,8 +57,11 @@ mod tests {
     #[test]
     fn a_partial_run_never_says_the_gate_passed() {
         let s = |ok| Step { name: "fmt".into(), secs: 0.0, ok, lines: vec![] };
-        assert_eq!(closing(&[s(true)], 3.0, false), "gate passed: 1 steps in 3 s");
-        assert_eq!(closing(&[s(true)], 3.0, true), "partial gate passed (not done): 1 steps in 3 s");
-        assert_eq!(closing(&[s(false)], 3.0, true), "gate FAILED in 3 s: fmt");
+        for tier in ["default", "image"] {
+            assert_eq!(closing(&[s(true)], 3.0, false, tier), format!("gate passed ({tier}): 1 steps in 3 s"));
+            assert_eq!(closing(&[s(true)], 3.0, true, tier), "partial gate passed (not done): 1 steps in 3 s");
+            assert_eq!(closing(&[s(false)], 3.0, true, tier), "gate FAILED in 3 s: fmt");
+            assert_eq!(closing(&[s(false)], 3.0, false, tier), "gate FAILED in 3 s: fmt");
+        }
     }
 }

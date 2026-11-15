@@ -1,23 +1,101 @@
 # Development: the gate
 
-Every change passes one gate before it is committed, pushed or merged:
+Workers run the fast gate and focused tests. The coordinator runs the default full gate once per integration batch:
 
 ```sh
-cargo xtask check                  # the full gate
+cargo xtask check                  # default full gate, Docker-free
 cargo xtask check --fast           # partial: formatting, syntax rules, architecture, agent rules
-cargo xtask check --no-coverage    # partial: the full gate without the coverage run
+cargo xtask check --no-coverage    # partial: the full host gate without coverage
+cargo xtask check --list           # inventory only, does not run or pass the gate
+cargo xtask check --image          # default steps plus Docker/emulation/image suites
 ```
 
-A change is done when the full gate passes on its final commit. `--fast` and `--no-coverage` are partial results.
+Until 0.2.0, repository CI is off and local evidence is authoritative. The coordinator runs
+`--image` before unit rounds and releases. Before unit rounds or M-step acceptance, the
+[delivery rule](process/delivery.md#publication-and-unit-rounds) also requires the M1 extended host
+suites and logs in the task Status. Completion requires independent review and the full
+gate on the final integrated candidate; `--fast`, `--no-coverage` and `--list` are partial feedback.
 
-Run it from the repository root. It prints one line per step with its time, the details of a failure, and exits
-non-zero when a step failed. Humans and agents run the same command; the hooks and CI run it too.
+Run from the repository root. Each executed step reports its time and failures, and a failed step
+makes the command exit nonzero. A successful full run names its tier: `gate passed (default)`
+or `gate passed (image)`. Hooks use the same command. Missing Docker cannot fail the default gate.
 
 ## Setup
 
-- Rust stable with `rustfmt` and `clippy`, and the scope's target: `rustup target add aarch64-unknown-linux-musl`.
-- Coverage: `cargo install cargo-llvm-cov` and `rustup component add llvm-tools-preview`. Without them the full gate
-  fails at the coverage step; `--no-coverage` skips it.
+Install Git, rustup and Python >=3.12 as `python3` on macOS arm64 or Linux x86-64.
+The default gate needs the scripts' declared shells (including `mksh` for Android GEL syntax),
+coverage tools and the pinned Rust host/ARM toolchain. Syntax checking does not run the scripts.
+Only the explicit `--image` tier needs Docker with arm64 execution, QEMU, kernel source and the
+locked GPU/simulation/image profiles. Prepare it with `tools/bootstrap.sh --image`.
+Missing prerequisites fail in the tier that requires them.
+Then run:
+
+```sh
+# Manual prerequisite if rustup cannot start xtask or bootstrap:
+rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy,llvm-tools-preview --target aarch64-unknown-linux-musl
+tools/bootstrap.sh
+# Explicit optional container preparation:
+tools/bootstrap.sh --gpu
+tools/bootstrap.sh --sim
+tools/bootstrap.sh --image
+cargo xtask doctor
+cargo xtask doctor --image
+```
+
+`rust-toolchain.toml` is authoritative for Rust 1.99.1, components and musl std. `tools/build-tools.json` requires
+Python >=3.12 and pins cargo-llvm-cov 0.9.1; bootstrap installs coverage with `--version =0.9.1 --locked` and fetches
+locked Cargo dependencies. The numbered distribution still needs a real setup run on this macOS arm64 host. Linux x86-64 runner
+validation is unavailable here and explicitly untested, without blocking this release scope.
+Do not replace a missing distribution/component with floating stable. An explicit override can defeat the file;
+doctor rejects it even if that compiler prints the same release number.
+
+Doctor installs nothing, pulls no images, changes no hooks, reads no keys and accesses no hardware. It reports
+all independent base failures, expected/actual values and setup commands without printing private paths or tool
+stderr. The default checks Rust/Cargo and override identity, components, musl std, matching rustfmt/clippy,
+coverage and sysroot LLVM tools, the sysroot host `rust-lld` (no PATH lld required), Python version/stdlib,
+Git/base ref, hooks, lockfile and writable isolated output. A missing or mismatched
+`core.hooksPath` reports a warning without failing doctor (task 0025). Linker presence does not
+prove release linking (0027).
+`--gpu` adds Docker, locked arm64 software EGL/GLES execution; `--sim` adds initramfs and SSH/firewall images,
+NET_ADMIN/nftables/IPv6; `--image` includes both plus all delegated compiler/rootfs/simulation roles, checked kernel
+source and host `qemu-system-aarch64`. Unselected profiles are reported as not checked. Temporary probes remove
+their containers with `--rm`, use no network and keep output scratch private. Missing selected prerequisites fail.
+
+The default gate runs `doctor-base` without Docker, in addition to committed pin/lock syntax
+alongside formatting. The image tier adds the GPU/simulation doctor profiles before their consumers.
+Fast checks preserve G1 and task 0020 dispatch and need Python with `tomllib`.
+
+Install Docker and QEMU separately, without using bootstrap as an OS package installer. On x86-64, configure arm64
+emulation manually using the distribution's QEMU/binfmt setup. The unchanged Image workflow retains
+`docker/setup-qemu-action@v3` for when CI resumes.
+Pinning the binfmt installer identity belongs to task 0033 (0.3.0). Neither doctor nor bootstrap executes
+registration, sudo or a privileged container.
+
+### Container bases, recipes and provenance
+
+`tools/container-images.json` records Ubuntu 26.04 and Alpine 3.22 per-platform manifest digests for linux/arm64
+and linux/amd64, resolved by the coordinator using `docker buildx imagetools inspect` on 2026-11-15. Index digests
+retain the resolution evidence; builds use the platform manifest digest. Each role also has a recipe SHA-256
+and a package request list. Kernel amd64 additionally requests the cross compiler packages.
+
+`tools/build-env.sh prepare ROLE` explicitly builds from that base digest and the requested packages.
+`resolve ROLE` checks local base digest/layer ancestry, platform and recipe/request contract label, returning
+an immutable local image ID. Local tags are aliases only. Missing package version locks never reject setup:
+apt/apk resolve the requested packages from their repositories. A cached role keeps its installed packages
+until explicitly rebuilt; pinning the base and recipe does not freeze package versions or reproduce a payload.
+
+Builders record the actual image's full installed package list, sorted as `name=version`, beside their outputs:
+`kernel/out/base/build-packages.txt`, the GPU bundle's sibling `build-packages.txt`, GPU comparison output's
+`build-packages.txt`, image output's `initramfs.packages.txt`, hardware helper's `oos-hw.packages.txt`, and
+`rootfs/out/<artifact>.packages.txt` (`wlan-tools.packages.txt` covers both WLAN binaries).
+The shared command is `tools/build-env.sh provenance ROLE --image sha256:ID --output FILE`.
+These lists are informational provenance, with no expected-version comparison. They describe the builder image,
+including transitive/base packages, rather than the packages in the assembled scope filesystem.
+
+Task 0033 (0.3.0) owns complete per-role package manifest locks and the binfmt installer identity, together with
+retained package sources, source timestamps and end-to-end payload reproducibility. Real builder runs on this
+macOS arm64 host remain untested in the sandbox; Linux x86-64 validation is also untested and is not a hold here.
+
 - Hooks, once per clone: `git config core.hooksPath .githooks`. pre-commit runs `check --fast`, pre-push the full
   gate.
 - The ratchet files are compared with the base branch `overhaul` (or `origin/overhaul`): the clone needs it
@@ -25,11 +103,85 @@ non-zero when a step failed. Humans and agents run the same command; the hooks a
 - Every cargo call that resolves dependencies uses `--locked` (the `cargo xtask` alias, clippy, tests, metadata,
   coverage and `tools/perf-guard.sh`): a change of a dependency comes with its `Cargo.lock` change.
 
+## Executable inventory and completion evidence
+
+`xtask/src/inventory.rs` is the ordered executable registry. `cargo xtask check --list` prints its
+stable IDs, commands, prerequisites and selection. The seven G1 fast steps retain their order,
+followed by task 0020's agent rules. Static tool/container pin checks remain part of `fmt`.
+The existing workspace registry must still cover every Cargo member. Ratchets, planned moves
+and the coverage margin of 0.5 percentage points are unchanged.
+
+| ID | Command or behavior | Prerequisite | Selection |
+|---|---|---|---|
+| `fmt` | format each crate and validate static pins | pinned tools | fast and full |
+| `size` | syntax and move-aware size ratchets | workspace metadata | fast and full |
+| `architecture` | workspace completeness and crate/module rules | Cargo.lock | fast and full |
+| `mutable-statics` | syntax and per-crate ratchets | sources | fast and full |
+| `unsafe` | syntax and per-crate ratchets | sources | fast and full |
+| `method-exceptions` | disallowed-method exceptions | sources | fast and full |
+| `known-failures` | known failures and open tasks | sources | fast and full |
+| `agent-rules` | exact loaders and Git inventory | root AGENTS.md | fast and full |
+| `doctor-base` | base doctor probes, including active toolchain identity | bootstrap; no Docker | full |
+| `doctor` | `--gpu --sim` doctor profiles | base doctor, bootstrap, Docker | `--image` |
+| `clippy` | host and ARM clippy per crate | musl std and clippy | full |
+| `tests-debug` | Rust tests per crate | pinned toolchain | full |
+| `tests-release` | release Rust tests per crate | pinned toolchain | full |
+| `perf` | `sh tools/perf-guard.sh` | toolchain | full |
+| `coverage` | `cargo llvm-cov` per crate | llvm-tools, cargo-llvm-cov | full; omitted only by partial mode |
+| `script-syntax` | `python3 -I tools/script_syntax.py` | Git, Python, declared shells | full |
+| `python-tests` | receipted UI build; isolated unittest discovery in tools/tests and tools/privacy | host toolchain, local sockets | full |
+| `arm64-release-link` | receipted release build with `--bins -p oos-ui -p oos-fpgad --target aarch64-unknown-linux-musl` | musl std, rust-lld | `--image` |
+| `gpu-host` | `sh gpu/test-host.sh` | ARM link and gpu-test profile | `--image` |
+| `ssh-sim` | prepare initramfs/rootfs and nft/Dropbear/SFTP; `sh tools/ssh-sim.sh` | simulation profile | `--image` |
+| `firewall-sim` | prepare initramfs/rootfs and nft; `sh tools/fw-sim.sh` | simulation profile | `--image` |
+| `image-required` | `python3 -I tools/image_required.py` | authoritative Git base | `--image` |
+| `image-suite` | `python3 -I tools/image_suite.py` | checksum-pinned kernel source, image profile, QEMU | `--image` |
+
+Script discovery uses Git's NUL-separated tracked and nonignored candidate paths, recursively,
+including extensionless shebangs, hooks and rootfs entry scripts. Python is compiled without
+execution, with bytecode under the selected target. Shell fragments have explicit interpreter
+mappings; executable C sources and the kernel's recorded Git answers are classified as data.
+Unknown executable scripts fail. Python selections must be nonzero, their executed counts must
+match discovery, and skipped counts are reported. Host socket cases use synthetic fixtures and
+the freshly receipted UI. No default-target fallback is accepted.
+
+The ARM link verifies all three Rust executables (`oos-ui`, `oos-fpgad`, `oos-update`), their receipts,
+and static AArch64 ELF headers. GPU comparisons require exactly the pictures named by every
+`ui/tests/*.txt` script on both renderers, preserve differences under the selected target, and
+check all three monitor modes. SSH/firewall use a prepared builder's BusyBox, without a kernel build.
+Missing tools, fixtures, receipts or outputs fail. Missing Docker fails the image tier; the default
+gate never probes Docker or the kernel source.
+
+Every check run retains complete captured command output and step results in a unique
+`check-logs/` directory under the selected `CARGO_TARGET_DIR`. The report shows failed, missing
+prerequisite and not-selected checks. Exit status decides success, including QEMU and fixture
+commands that print PASS before failing. Keep these logs with review evidence.
+
+The image suite checks the pinned kernel source, builds `kernel/build-base.sh`, assembles with
+`boot/build-dev-image.sh`, signs explicitly with `boot/sign-dev-image.sh --community`, and packages
+with `python3 -I boot/build-gel.py`. It validates boot sections/ID, DTB, cpio contents, checksums,
+receipts, update signature/payload and GEL contents, including the shipped `oos-hw` and GPU bundle.
+It runs unit-DTB, GEL, USB and WLAN simulations. It uses synthetic inputs and worktree-local
+builder caches; it performs no install, device access or private signing-key discovery.
+
+The `image-required` ID is retained in the image tier as advisory change classification. It compares
+with the protected overhaul merge base plus working-tree inputs and examines both rename paths
+and deletions. Missing bases and unclassified inputs fail closed in that tier. It never runs in
+the default gate or changes that gate's completion result. The coordinator runs `--image` before
+unit rounds and releases regardless of classification. Workflow files retain their base versions;
+no CI aggregate or matrix result is required while repository CI is off.
+
+Expected warm default-gate duration is roughly 5-10 minutes, dominated by Rust tests and coverage;
+cold builds take longer. This is an estimate from the earlier 506-second sandbox run, which had
+prerequisite/socket failures, not a successful timing measurement of this tier. The fast gate is
+roughly one minute. The image tier can take hours on cold builders or emulated hosts. Retain actual
+timings and exit codes with coordinator evidence.
+
 ## Privacy checks
 
 Before committing, run `python3 tools/privacy/scan.py --staged` and
 `python3 tools/privacy/scan.py --message target/COMMIT_MSG.txt`. The stdlib scanner checks the index and commit message;
-the separate Privacy CI job checks every incoming commit's additions and message. Findings redact values.
+the Privacy workflow, when enabled, checks every incoming commit's additions and message. Findings redact values.
 Use documentation addresses and placeholders in examples, and configure device tools explicitly with `--host`
 or `OOS_SCOPE` where supported. Never infer a real unit address from a checked-in example.
 
@@ -41,7 +193,7 @@ G1/task 0043; this check does not replace the full gate.
 ## Loading the shared agent rules
 
 Root `AGENTS.md` is the single source of repository rules. The `agent rules` step runs after `known failures`
-in both fast and full checks, including the hooks and CI. It checks these complete loader files:
+in both fast and full checks, including the hooks. It checks these complete loader files:
 
 | Entry file | Permitted content |
 |---|---|
@@ -192,8 +344,8 @@ removed or lowered coverage floor fails. Any git error fails. `--init` refuses a
 
 - A ratchet file absent at the base is legal only while the base has no `xtask`: the one merge that brings the gate
   in. After it, a missing ratchet file fails.
-- CI (GitHub Actions, the base of a pull request is its target branch) is the authority. Locally the gate trusts the
-  `overhaul` ref; setting `CI` or `OOS_GATE_BASE` by hand, or moving `overhaul` to pass a check, breaks the rules.
+- Until 0.2.0, the coordinator's local full gate is authoritative and trusts the `overhaul` ref.
+  Setting `CI` or `OOS_GATE_BASE` by hand, or moving `overhaul` to pass a check, breaks the rules.
 - On the integration branch, `HEAD^1` covers one commit. A push of several commits is not compared commit by commit:
   the integrator runs the full gate on the branch before the fast-forward.
 
@@ -257,6 +409,6 @@ Not enforced yet; each is a task.
   the same name merge.
 - Path dependencies are checked by package name only, not by source: a local fork of an allowed crate passes.
 - Types imported from another workspace crate, and associated types, are not followed by the statics check.
-- The base branch is the local `overhaul` ref; CI is the authority on it.
+- The base branch is the local `overhaul` ref; the coordinator validates it while repository CI is off.
 - pre-commit checks the working tree, not the staged index, and only the fast part. The done rule is the full gate
   on the final commit.

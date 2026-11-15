@@ -1,6 +1,7 @@
 """Discovery and artifact contracts, independent of Docker or private fixtures."""
 import importlib.util
 import io
+import json
 from contextlib import redirect_stdout
 import os
 from pathlib import Path
@@ -186,8 +187,27 @@ class Artifacts(unittest.TestCase):
         with patch.object(host, 'run', side_effect=run):
             with self.assertRaises(subprocess.CalledProcessError):
                 host.prepare_sim(True)
-        self.assertEqual([c[-1] for c in seen], ['initramfs', 'rootfs', 'rootfs/build-nft.sh',
+        self.assertEqual([c[-1] for c in seen], ['initramfs', 'rootfs-nft', 'rootfs-dropbear',
+                         'rootfs-sftp-server', 'rootfs/build-nft.sh',
                          'rootfs/build-dropbear.sh', 'rootfs/build-sftp-server.sh', 'tools/ssh-sim.sh'])
+
+    def test_simulations_prepare_only_required_existing_roles(self):
+        roles = json.loads((ROOT / 'tools/container-images.json').read_text())['roles']
+        for ssh, builders, script in ((True, ('nft', 'dropbear', 'sftp-server'), 'ssh-sim'),
+                                      (False, ('nft',), 'fw-sim')):
+            with self.subTest(ssh=ssh):
+                seen = []
+                def run(args):
+                    if args[:3] == ['sh', 'tools/build-env.sh', 'prepare']:
+                        self.assertIn(args[3], roles, 'simulation requests a removed environment role')
+                    seen.append(args)
+                with patch.object(host, 'run', side_effect=run):
+                    host.prepare_sim(ssh)
+                expected = [['sh', 'tools/build-env.sh', 'prepare', role]
+                            for role in ('initramfs', *(f'rootfs-{name}' for name in builders))]
+                expected += [['sh', f'rootfs/build-{name}.sh'] for name in builders]
+                expected += [['sh', f'tools/{script}.sh']]
+                self.assertEqual(seen, expected)
 
 
 class ImageTier(unittest.TestCase):

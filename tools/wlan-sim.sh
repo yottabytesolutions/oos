@@ -80,7 +80,7 @@ printf '1.0\tend\t\t\n' > /tmp/oos-boot.status
 /bin/oos-wlan > /tmp/oos-wlan.log 2>&1 &
 sleep 2
 cd /tmp
-timeout 200 /bin/oos-ui-test --ignored --exact --nocapture --test-threads=1 ui::wlan::tests::live_radio 2>&1
+OOS_WLAN_SIM=1 timeout 200 /bin/oos-ui-test --ignored --exact --nocapture --test-threads=1 ui::wlan::tests::live_radio 2>&1
 status=$?
 echo "WLAN TEST EXIT $status"
 [ "$status" = 0 ] || { echo "WLAN TEST FAILED"; poweroff -f; }

@@ -28,7 +28,13 @@ ok=1
 fail() { echo "FAIL: $*"; ok=0; }
 st() { cat /tmp/oos-ssh.state; }
 conf() { printf '%s\n' "$@" > /oos/system.conf; }
-run() { /bin/oos-ssh "$@" 2>> /tmp/oos-ssh.log || fail "oos-ssh $*"; }
+run_status() {
+	expected=$1; shift
+	actual=0
+	/bin/oos-ssh "$@" 2>> /tmp/oos-ssh.log || actual=$?
+	[ "$actual" = "$expected" ] || fail "oos-ssh $*: expected exit $expected, got $actual"
+}
+run() { run_status 0 "$@"; }
 H="-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/c/known_hosts -o BatchMode=no -o ConnectTimeout=5"
 pw_login() { sshpass -f /oos/ssh/password ssh $H -o PubkeyAuthentication=no -o PreferredAuthentications=password root@127.0.0.1 "$@"; }
 key_login() { ssh $H -o PasswordAuthentication=no -o PreferredAuthentications=publickey -i /c/id root@127.0.0.1 "$@"; }
@@ -48,7 +54,8 @@ run start; [ "$(st)" = "off: needs net.allow" ] || fail "no net.allow: $(st)"
 
 echo "== net.allow, but no firewall"
 echo "net.allow = 192.0.2.0/24" > /etc/oos/system.conf
-run start; [ "$(st)" = "off: firewall not loaded" ] || fail "no firewall: $(st)"
+# A configured service whose firewall failed must report startup failure (oos-ssh returns 1).
+run_status 1 start; [ "$(st)" = "off: firewall not loaded" ] || fail "no firewall: $(st)"
 listening && fail "listening without a firewall"
 
 echo "== firewall, first start"

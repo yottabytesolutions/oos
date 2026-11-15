@@ -110,9 +110,11 @@ def python_tests():
 
 
 def prepare_sim(ssh):
+    builders = ('nft', 'dropbear', 'sftp-server') if ssh else ('nft',)
     run(['sh', 'tools/build-env.sh', 'prepare', 'initramfs'])
-    run(['sh', 'tools/build-env.sh', 'prepare', 'rootfs'])
-    for builder in ('nft', 'dropbear', 'sftp-server') if ssh else ('nft',):
+    for builder in builders:
+        run(['sh', 'tools/build-env.sh', 'prepare', f'rootfs-{builder}'])
+    for builder in builders:
         run(['sh', f'rootfs/build-{builder}.sh'])
     run(['sh', 'tools/ssh-sim.sh' if ssh else 'tools/fw-sim.sh'])
 

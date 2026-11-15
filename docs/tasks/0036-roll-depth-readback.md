@@ -2,9 +2,9 @@
 id: 36
 title: "Decide memory depth readback in roll"
 kind: chore
-status: planned
+status: active
 release: 0.2.0
-owner: none
+owner: codex-c
 depends: []
 ---
 
@@ -24,3 +24,4 @@ Current matrix evidence reports the roll record. Hardware behavior beyond that i
 ## Status
 
 - 2026-11-14: seeded from task 0001. Not yet claimed.
+- 2026-11-15: claimed for codex-c on branch t0036-roll-depth by the coordinator, base overhaul.

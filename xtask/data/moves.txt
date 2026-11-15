@@ -1,0 +1,15 @@
+# M2.1 item moves. The integrator applies these with cargo xtask ratchet --move.
+struct ui/src/model.rs Model -> struct core/src/model/mod.rs Model
+struct ui/src/model.rs DecCfg -> struct core/src/model/decoder.rs DecCfg
+struct ui/src/model.rs SerialTrig -> struct core/src/model/trigger.rs SerialTrig
+struct ui/src/model.rs GenCh -> struct core/src/model/generator.rs GenCh
+fn ui/src/model.rs <Model as Default>::default -> fn core/src/model/defaults.rs <Model as Default>::default
+fn ui/src/model.rs Model::fit_platform -> fn core/src/model/acquisition.rs Model::fit_platform_in
+fn ui/src/model.rs Model::trigger -> fn core/src/model/signal.rs Model::trigger
+ui ui/src/model.rs clippy::clone_on_copy -> core core/src/model/settings.rs clippy::clone_on_copy
+ui ui/src/model.rs clippy::manual_range_contains -> core core/src/model/tables.rs clippy::manual_range_contains
+ui ui/src/model.rs clippy::needless_range_loop -> core core/src/model/signal.rs clippy::needless_range_loop
+ui ui/src/model.rs clippy::too_many_lines -> core core/src/model/defaults.rs clippy::too_many_lines
+
+# M2.2: measure the existing command parser including its early returns, without growing its body.
+fn ui/src/cmd.rs run -> fn ui/src/cmd.rs execute

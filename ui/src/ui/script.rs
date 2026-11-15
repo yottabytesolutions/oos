@@ -12,6 +12,11 @@ pub mod host;
 use super::*;
 
 impl Ui {
+    /// Count observer allocations over warmed UI steps using the caller's isolated allocator.
+    pub fn scripted_change_census(steps: usize, count: fn() -> usize) -> [[usize; 2]; 4] {
+        change::census::run(steps, count)
+    }
+
     /// Exercise today's UI and real host workers with a process-wide observer supplied by a test executable.
     pub fn scripted_soak(mode: &str, steps: usize, sample: impl FnMut(usize, [u64; 6])) -> Result<(), String> {
         host::soak::run(mode, steps, sample)

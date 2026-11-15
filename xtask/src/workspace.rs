@@ -116,12 +116,15 @@ mod tests {
 
     #[test]
     fn a_member_without_a_gate_entry_fails() {
-        let all = ["hal", "dsp", "ui", "fpgad", "xtask"];
+        let all = ["hal", "dsp", "core", "ui", "fpgad", "xtask"];
         assert!(meta(&all).unlisted().is_empty());
         let mut more = all.to_vec();
-        more.push("core");
-        assert_eq!(meta(&more).unlisted(), ["x-core: workspace member without an entry in CRATES (xtask/src/repo.rs)"]);
-        assert_eq!(meta(&all[..4]).unlisted(), ["xtask: in CRATES but no workspace member"]);
+        more.push("extra");
+        assert_eq!(
+            meta(&more).unlisted(),
+            ["x-extra: workspace member without an entry in CRATES (xtask/src/repo.rs)"]
+        );
+        assert_eq!(meta(&all[..5]).unlisted(), ["xtask: in CRATES but no workspace member"]);
     }
 
     #[test]

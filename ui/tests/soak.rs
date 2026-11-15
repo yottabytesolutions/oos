@@ -2,10 +2,44 @@
 
 //! Process-wide requested-live-byte characterisation, confined to this test executable.
 
-use std::sync::atomic::Ordering::SeqCst;
+use std::alloc::{GlobalAlloc, Layout, System};
+use support::counting::Counting;
 
 #[global_allocator]
-static HEAP: support::counting::Counting = support::counting::Counting::new();
+static HEAP: Counting = Counting::new();
+
+// SAFETY: every allocation and layout is delegated unchanged to System. Atomic counters never allocate.
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the caller supplies GlobalAlloc's valid layout; System owns the returned allocation.
+        let p = unsafe { System.alloc(layout) };
+        if !p.is_null() {
+            self.allocated(layout.size());
+        }
+        p
+    }
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the valid layout is passed unchanged to System, preserving its zero-initialization contract.
+        let p = unsafe { System.alloc_zeroed(layout) };
+        if !p.is_null() {
+            self.allocated(layout.size());
+        }
+        p
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: the caller provides the System allocation and its original layout.
+        unsafe { System.dealloc(ptr, layout) };
+        self.freed(layout.size());
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        // SAFETY: the caller provides the live System allocation, original layout and valid new size.
+        let p = unsafe { System.realloc(ptr, layout, size) };
+        if !p.is_null() {
+            self.resized(layout.size(), size);
+        }
+        p
+    }
+}
 
 fn limit(baseline: usize) -> usize {
     baseline + baseline.div_ceil(100)
@@ -23,26 +57,30 @@ fn retained_growth_and_freed_transients_are_distinguished() {
         assert!(support::run_command(&inputs, command, 120).status.success());
         return;
     }
-    let baseline = HEAP.live.load(SeqCst);
+    let baseline = HEAP.live();
     let buffer = vec![0u8; baseline / 50 + 4096];
     std::hint::black_box(&buffer);
-    assert!(HEAP.live.load(SeqCst) > limit(baseline));
+    assert!(HEAP.live() > limit(baseline));
     drop(buffer);
-    assert_eq!(HEAP.live.load(SeqCst), baseline);
+    assert_eq!(HEAP.live(), baseline);
     let mut buffer = vec![0u8; 4096];
-    let allocated = HEAP.live.load(SeqCst);
+    let allocated = HEAP.live();
     buffer.reserve_exact(8192);
-    assert_eq!(HEAP.live.load(SeqCst), allocated + buffer.capacity() - 4096);
-    let grown = HEAP.live.load(SeqCst);
+    assert_eq!(HEAP.live(), allocated + buffer.capacity() - 4096);
+    let grown = HEAP.live();
     let capacity = buffer.capacity();
     buffer.truncate(2048);
     buffer.shrink_to_fit();
-    assert_eq!(HEAP.live.load(SeqCst), grown - capacity + 2048);
+    assert_eq!(HEAP.live(), grown - capacity + 2048);
     drop(buffer);
-    assert_eq!(HEAP.live.load(SeqCst), baseline);
+    assert_eq!(HEAP.live(), baseline);
 }
 
-mod support;
+pub mod support;
+mod snapshots {
+    pub mod change_alloc;
+    pub mod hot_paths;
+}
 
 use std::fmt::Write as _;
 use std::io::Write;
@@ -113,7 +151,7 @@ fn plateau_child() {
     let start = Instant::now();
     let result = oos_ui::Ui::scripted_soak(&mode, requested, |step, counters| {
         steps = step;
-        let live = HEAP.live.load(SeqCst);
+        let live = HEAP.live();
         peak = peak.max(live);
         if step % 100 == 0 {
             if step == warmup {
@@ -166,9 +204,9 @@ fn cycle_row(
     writeln!(
         samples,
         "{step},{peak},{live},{},{},{},{},{},{},{},{},{},{}",
-        HEAP.peak.load(SeqCst),
-        HEAP.allocations.load(SeqCst),
-        HEAP.frees.load(SeqCst),
+        HEAP.peak(),
+        HEAP.allocations(),
+        HEAP.frees(),
         delta[0],
         delta[1],
         delta[2],
@@ -178,4 +216,44 @@ fn cycle_row(
         start.elapsed().as_millis()
     )
     .expect("cycle output was opened before warm-up and must remain writable");
+}
+
+#[test]
+fn change_snapshots_reuse_allocations_after_warmup() {
+    if std::env::var_os("OOS_CHANGE_ALLOC").is_none() {
+        let inputs = support::isolated_inputs();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "change_snapshots_reuse_allocations_after_warmup", "--nocapture"])
+            .env("OOS_CHANGE_ALLOC", "1");
+        let out = support::run_command(&inputs, command, 120);
+        print!("{}", String::from_utf8_lossy(&out.stdout));
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        return;
+    }
+    snapshots::change_alloc::check();
+}
+
+#[test]
+fn warmed_ui_observer_allocation_census() {
+    if std::env::var_os("OOS_UI_CHANGE_CENSUS").is_none() {
+        let inputs = support::isolated_inputs();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "warmed_ui_observer_allocation_census", "--nocapture"])
+            .env("OOS_UI_CHANGE_CENSUS", "1");
+        let out = support::run_command(&inputs, command, 120);
+        print!("{}", String::from_utf8_lossy(&out.stdout));
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        return;
+    }
+    let rows = oos_ui::Ui::scripted_change_census(256, || HEAP.allocations());
+    for (name, [calls, allocations]) in ["prepare_keys", "compare", "finish_capture", "stage"].into_iter().zip(rows) {
+        println!("UI observer census {name}: calls={calls} allocations={allocations}");
+        assert_eq!(calls, 256);
+    }
+    assert_eq!(rows[0][1], 0, "warmed UI keys, normalize and classify must not allocate");
+    assert_eq!(rows[1][1], 0, "warmed compare must not allocate");
+    assert_eq!(rows[2][1], 0, "warmed finish capture and proposals_agree must not allocate");
+    assert_eq!(rows[3][1], 0, "warmed stage capture and proposals_agree must not allocate");
 }

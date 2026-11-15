@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-mod support;
+pub mod support;
 
 use std::process::{Command, Output};
 use support::{isolated_inputs, Inputs};
@@ -13,8 +13,12 @@ fn success(output: &std::process::Output) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     let diagnostics = String::from_utf8_lossy(&output.stderr);
-    // Existing pacing diagnostics use elapsed host time and may appear under load.
-    assert!(diagnostics.lines().all(|line| line.starts_with("oos-ui pacing:")), "{}", diagnostics);
+    // Shadow events and elapsed-time pacing diagnostics share the application's stderr log.
+    assert!(
+        diagnostics.lines().all(|line| line.starts_with("oos-ui pacing:") || line.starts_with("oos-ui shadow:")),
+        "{}",
+        diagnostics
+    );
     String::from_utf8(output.stdout.clone()).expect("script diagnostics are UTF-8")
 }
 
@@ -31,6 +35,9 @@ fn child_preserves_steps_capture_names_and_quit() {
     let inputs = isolated_inputs();
     let output = run_host(&inputs, "frames 2\nshot one.ppm\nshot two.png\nstat state.txt\nquit\nshot late.ppm\n", &[]);
     assert_eq!(success(&output), "shot one.ppm\nshot two.png\n");
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .any(|line| line == "oos-ui shadow: row=run class=hw_average old=false new=true difference=D4"));
     rgb(&inputs, "one.ppm");
     assert!(std::fs::read(inputs.path("two.png")).unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
     assert!(!inputs.path("late.ppm").exists());
@@ -38,6 +45,29 @@ fn child_preserves_steps_capture_names_and_quit() {
     let stat = std::fs::read_to_string(inputs.path("state.txt")).unwrap();
     assert!(stat.contains("frames 5 records 30"), "{}", stat);
     assert!(stat.contains("t 0.2 "), "{}", stat);
+}
+
+#[test]
+fn repeated_shadow_events_stay_bounded_on_stderr() {
+    let inputs = isolated_inputs();
+    let script = format!(
+        "{}shot bounded.ppm\n",
+        "key runstop\nkey runstop\nmenu Display\nset Grid bright. = 10 %\nset Grid bright. = 20 %\n".repeat(8)
+    );
+    let output = run_host(&inputs, &script, &[]);
+    assert_eq!(success(&output), "shot bounded.ppm\n");
+    let diagnostics = String::from_utf8_lossy(&output.stderr);
+    let run_events: Vec<_> = diagnostics.lines().filter(|line| line.starts_with("oos-ui shadow: row=run ")).collect();
+    assert_eq!(
+        run_events,
+        ["oos-ui shadow: row=run class=hw_average old=false new=true difference=D4"],
+        "{diagnostics}"
+    );
+    assert_eq!(
+        diagnostics.lines().filter(|line| line.starts_with("oos-ui shadow: first field=grid_bright ")).count(),
+        1
+    );
+    rgb(&inputs, "bounded.ppm");
 }
 
 #[test]

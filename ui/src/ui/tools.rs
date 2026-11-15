@@ -129,7 +129,7 @@ impl Ui {
             MeasSel::One(k, c) => self.m.meas.push((k, c)),
             MeasSel::Pair(k, a, b) => self.m.meas2.push((k, a, b)),
         }
-        self.mstat.clear();
+        change::stats_clear(self);
     }
 
     /// `:MEASure:CLEar`: every row (`None`) or row `i` of the list in screen order; false when there is no such row.
@@ -147,7 +147,7 @@ impl Ui {
             }
             Some(_) => return false,
         }
-        self.mstat.clear();
+        change::stats_reset(self);
         true
     }
 
@@ -168,7 +168,7 @@ impl Ui {
 
     /// `:MEASure:STATistic:RESet`: the statistics start again.
     pub(crate) fn meas_stats_reset(&mut self) {
-        self.mstat.clear();
+        change::stats_reset(self);
     }
 
     /// `:MEASure:STATistic:ITEM?`: one statistic of a listed measurement; None when `sel` is not in the list or has no
@@ -206,7 +206,7 @@ impl Ui {
             } else {
                 self.m.meas.remove(0);
             }
-            self.mstat.clear();
+            change::stats_clear(self);
         }
     }
 
@@ -222,7 +222,7 @@ impl Ui {
             self.meas_make_room();
             self.m.meas2.push(e);
         }
-        self.mstat.clear();
+        change::stats_clear(self);
     }
 
     /// The hardware counter (on the unit): the set-up for the FPGA's counter, and a new reading into the statistics.

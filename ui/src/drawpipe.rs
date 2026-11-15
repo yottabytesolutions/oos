@@ -1614,6 +1614,46 @@ mod tests {
         (want, trig, edges, off, folds)
     }
 
+    #[test]
+    fn trigger_level_change_refreshes_batch_worker_view() {
+        let current = refreshed_batch(true);
+        let mapping_only = refreshed_batch(false);
+        assert_ne!(current, mapping_only, "negative control: mapping-only refresh must leave the old trigger view");
+    }
+
+    fn refreshed_batch(refresh: bool) -> Vec<u16> {
+        use oos_core::change::{Layout, MappingKey};
+        let (w, h) = (970, 448);
+        let mut m = model(1e-6, false, false);
+        let old_mapping = MappingKey::of(&m, Layout::default());
+        let (bytes, fb, s, p) = batch(13, 12_512, false);
+        let pipe = Pipe::start(2, 0, fresh());
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
+        pipe.feed(Box::new(Bytes(bytes.clone())), fb, 13, 0, dec(&s, &p));
+        settle(&pipe);
+        let mut warm = Phosphor::new(w, h);
+        pipe.merge(&mut warm, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        pipe.release();
+        m.trig_level = 0.6;
+        assert_eq!(MappingKey::of(&m, Layout::default()), old_mapping);
+        if refresh && std::env::var_os("OOS_MAPPING_ONLY_PROBE").is_none() {
+            pipe.set_view(Some(&m), w, h, Interp::Exact);
+        }
+        pipe.feed(Box::new(Bytes(bytes.clone())), fb, 13, 0, dec(&s, &p));
+        settle(&pipe);
+        let mut got = Phosphor::new(w, h);
+        let result = pipe.merge(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        let (want, trig, _, _, _) = reference(&bytes, fb, &s, &p, &m, w, h);
+        if refresh {
+            assert_eq!((result.frames, result.triggered), (13, trig));
+            assert!(got.map == want.map, "workers must match the new-level record path");
+        } else {
+            assert_ne!(got.map, want.map, "negative control must actually distinguish the levels");
+        }
+        pipe.release();
+        got.map[0].clone()
+    }
+
     // Break it catches: a batch picture that differs from the frames mode for the same frames (decode into kept
     // vectors, frames claimed by several workers and the helper, dense and sparse frames, dots, two channels),
     // trigger or measurement statistics that leave frames out, frames lost or counted twice, a merge that does not

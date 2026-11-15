@@ -8,6 +8,10 @@ use crate::{cmd, drawpipe, ui::Ui, wave::Source};
 use std::sync::atomic::Ordering;
 
 pub fn run(mode: &str, steps: usize, mut sample: impl FnMut(usize, [u64; 6])) -> Result<(), String> {
+    run_observed(mode, steps, |step, counters, _| sample(step, counters))
+}
+
+pub fn run_observed(mode: &str, steps: usize, mut sample: impl FnMut(usize, [u64; 6], &Ui)) -> Result<(), String> {
     let kind = BatchKind::parse(if mode == "average" { "raw" } else { mode })?;
     oos_hal::model::init(oos_hal::model::Platform::build(None, None, Some("DHO924S")));
     let mut ui = Ui::new(Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
@@ -30,7 +34,7 @@ pub fn run(mode: &str, steps: usize, mut sample: impl FnMut(usize, [u64; 6])) ->
     );
     let mut planned = 0;
     for step in 1..=steps {
-        storm(&mut ui, (step - 1) % 100)?;
+        super::super::super::change::intake(&mut ui, |ui| storm(ui, (step - 1) % 100))?;
         host.render_step(&mut ui)?;
         if step % 100 == 0 {
             old_stamp(&mut ui)?;
@@ -43,6 +47,7 @@ pub fn run(mode: &str, steps: usize, mut sample: impl FnMut(usize, [u64; 6])) ->
         sample(
             step,
             [acquired, used, dropped, drawpipe::counters().measured.load(Ordering::Relaxed), planned, ui.zone_drops],
+            &ui,
         );
     }
     Ok(())

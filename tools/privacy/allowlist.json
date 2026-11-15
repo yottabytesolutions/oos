@@ -112,5 +112,11 @@
     "rule": "email",
     "sha256": "ff729e5403c8e7cadb94ca107d4bc65b2b370d65313188ce5e85d5b24deab5dc",
     "reason": "Accidental email-shaped bytes inside zlib IDAT of a deterministic synthetic host PNG; not present in decoded RGB; the encoder writes no text metadata."
+  },
+  {
+    "path": "core/src/model/defaults.rs",
+    "rule": "private-ipv4",
+    "sha256": "2a39f1eedcd9f986327b5e4da842426f4f05b8f16f0ef385639dbec0db70eaae",
+    "reason": "Pre-existing generic default for the external Bode generator address, moved unchanged from ui/src/model.rs by M2.1; not a deployment address. Follow-up: make the default empty."
   }
 ]

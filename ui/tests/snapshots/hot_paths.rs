@@ -2,17 +2,16 @@
 
 //! Process isolation keeps unrelated test threads out of the allocation census.
 
-mod support;
-
-#[global_allocator]
-static HEAP: support::counting::Counting = support::counting::Counting::new();
+use crate::{support, HEAP};
 
 #[test]
 fn hot_paths_allocate_nothing_after_warmup() {
     if std::env::var_os("OOS_ALLOC_CHILD").is_none() {
         let inputs = support::isolated_inputs();
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        command.args(["--exact", "hot_paths_allocate_nothing_after_warmup", "--nocapture"]).env("OOS_ALLOC_CHILD", "1");
+        command
+            .args(["--exact", "snapshots::hot_paths::hot_paths_allocate_nothing_after_warmup", "--nocapture"])
+            .env("OOS_ALLOC_CHILD", "1");
         let output = support::run_command(&inputs, command, 120);
         assert!(
             output.status.success(),

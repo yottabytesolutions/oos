@@ -16,7 +16,50 @@ Complete [migration M2](../architecture/migration.md#m2-one-change-detection-poi
 
 ## Plan
 
-Reserved paths: `docs/tasks/0003-m02-change-detection.md`, `target/COMMIT_MSG.txt` (planning only).
+Integration-gate repair at `131af5d` on `t0003-m2`, assigned to the existing M2 author.
+Reserved paths: `ui/src/model/bridge.rs`, `ui/tests/support/counting.rs`,
+`ui/src/ui/change/{diagnostics,oracle}.rs`, `ui/tests/host_script.rs`,
+`ui/src/ui/tests/shadow.rs`, `xtask/src/arch/core_tests.rs`, this task and `target/COMMIT_MSG.txt`.
+Also reserve `ui/tools/golden_run.py` to recognize shadow stderr beside pacing logs;
+golden references and comparison thresholds stay unchanged.
+Move bounded shadow diagnostics to stderr using the standard log prefix, remove unused
+compatibility surface, add the counter Default, and pin the source-specific RUN oracle
+difference. Run the fast gate, gate-equivalent host/ARM clippy and UI debug/release tests
+including host scripts, soak and unchanged goldens. No full gate, commits or hardware access.
+
+Merge-conflict resolution against G2: keep the soak-only allocator adapter and shared
+counter bookkeeping; move the G2 hot-path census into the soak executable and retarget
+the perf script. Combine G2's ratio/tail helper with M2.2's stage timing and retain the
+intake Drop guard. Verify soak and core change tests in both profiles, G2 perf guards,
+shadow regressions and the fast gate. Leave staging and merge completion to the coordinator.
+Reserved paths (resolution): `ui/src/perfguard.rs`, `ui/tests/soak.rs`,
+`ui/tests/support/{counting,mod}.rs`, `ui/tests/hot_paths.rs`,
+`ui/tests/snapshots/hot_paths.rs`, `tools/perf-guard.sh`,
+`ui/tests/golden/README.md`, `xtask/data/architecture.txt`, this task.
+
+Also reserve `ui/src/ui/change/intake.rs` for the intake Drop guard.
+M2.2 review fixes: retain the accepted M2.2 reservations and observe-only boundary at
+`114b399`. Reserve `ui/src/ui/change/census.rs`, `ui/src/ui/script.rs` (host census entry),
+and `ui/tests/snapshots/change_alloc.rs` for the warmed UI observer census. Keep analyzer view
+paths held. Isolate the allocator static and unsafe implementation in the soak binary, prepare
+an independently tested extraction patch against `0df21cd`, repair reachable oracle rows,
+error counters, non-panicking shadow bounds and intake/timing accounting, then run focused
+checks in both profiles and the fast gate. No commit, full gate or hardware access.
+
+Reserved paths (M2.1): `docs/tasks/0003-m02-change-detection.md`, `target/COMMIT_MSG.txt`,
+`Cargo.toml`, `Cargo.lock`, `ui/Cargo.toml`, `core/`, `ui/src/model.rs`, `ui/src/model/`,
+`ui/src/{math,decode,zone}.rs`, `ui/src/ui/{la,views}.rs`, `ui/src/protocols/mod.rs`,
+`xtask/src/{repo,workspace}.rs`, `xtask/src/arch/mod.rs`, `xtask/src/arch/core_tests.rs`,
+`xtask/data/{moves,architecture}.txt`, `docs/architecture/README.md`.
+No further caller reservations remain; compatibility exports covered their existing imports.
+
+M2.1 implementation claim: owner `codex-d` (Codex), status active, branch `t0003-m2`,
+base `18ac5c72ba5e268905ccd583af4cb00f91a0ec80`. The owner's implementation assignment releases
+these narrow reservations after the predecessors. Implement numbered part 1 below only: pure domain move,
+value injection, compatibility exports, move manifest and tested boundary/purity rules. Keep the reviewed
+worker-view key, oracle, allocation and boundary contracts below for subsequent parts. Run the worker fast
+gate and focused debug/release model, setup, worker, STOP, compression and M1 picture tests. No commits,
+hardware access, or edits to the assignment's held paths.
 
 Implementation follows [migration M2](../architecture/migration.md#m2-one-change-detection-point-d1a),
 [change detection](../architecture/README.md#change-detection), and ADRs
@@ -27,7 +70,7 @@ Implementation follows [migration M2](../architecture/migration.md#m2-one-change
 [0011](../architecture/adr/0011-golden-pictures.md) and
 [0014](../architecture/adr/0014-domain-crate.md). Source locations below refer to planning base
 `6291e7080f8c91d2702d453052bccb75e0b1faf6`; proposed destinations and test names do not exist yet.
-Refresh locations and claims after integrating predecessors. This assignment changes no source and makes no commit.
+The original assignment was plan-only. Locations and claims are refreshed for M2.1 above; no commit is authorized.
 This revision incorporates the coordinator's decisions after Fable 5.2's architecture review (approve with changes).
 Those decisions refine M2's acceptance below; do not infer authority to edit the migration specification here.
 
@@ -38,7 +81,7 @@ The coordinator's accepted planning claim is on `overhaul` at
 0020, 0025 and 0027 in their documented serial order, and completed M1 references. M1b must pass before
 the shadow unit round. Keep this task's existing dependencies; these additional migration prerequisites still apply.
 Create a separate branch per numbered part from its integrated predecessor, retaining task 0003 as the owning record.
-The present `t0003-m2` branch is for the plan. The coordinator must accept implementation reservations first.
+The original `t0003-m2` planning branch is now assigned to M2.1 at the accepted base and reservations above.
 
 | Files needed later | Purpose and current holder / sequencing |
 |---|---|
@@ -463,6 +506,351 @@ M4/M5/M9/M10 retain their specified conversion, channels, whole-batch ownership 
 Every candidate and conflict resolution needs independent cross-vendor review; the author never merges or pushes.
 
 ## Status
+
+- 2026-11-15: final uncommitted integration-repair verification. `cargo xtask check --fast`
+  exits 0: `partial gate passed (not done): 8 steps in 22 s`
+  (`target/m2-integ-fast.log`). All 11 gate-equivalent clippy invocations exit 0:
+  from each of hal/dsp/core/ui/fpgad/xtask, `cargo clippy --locked --all-targets
+  --message-format=json --quiet`, plus `--target aarch64-unknown-linux-musl` for the
+  five scope crates. No new findings against the move-adjusted ratchets, including
+  bridge dead code and Counting Default; existing listed findings remain. Commands,
+  exits and raw JSON are in `target/m2-integ-clippy-exits.json` and
+  `target/m2-integ-clippy-*.jsonl`; comparison result in `target/m2-integ-clippy-summary.txt`.
+  `cargo test --locked -p oos-ui --test host_script --test soak --test golden`, repeated
+  with `--release`, exits 0 in both profiles: host_script 14, soak 11, golden 5 with
+  the explicit update command ignored. Debug uses the default 20-case smoke inventory
+  and skips composed plateau work as designed; release runs the full golden inventory
+  and the 1,000-step plateau for each of five modes. References are unchanged.
+  Logs: `target/m2-integ-integration-{debug,release}.log`; commands and exits:
+  `target/m2-integ-integration-exits.json`. Focused model/shadow/diagnostics tests pass
+  24 with one explicit timing guard ignored in each profile (`target/m2-integ-focused-*.log`
+  and `target/m2-integ-focused-exits.json`); the three M2 architecture tests pass
+  (`target/m2-integ-xtask-core.log`). Broader `cargo test --locked -p oos-ui`, repeated
+  with `--release`, exits 101 in both: `610 passed; 21 failed; 30 ignored`. These 21
+  failures involve TCP/UDP listeners denied in this sandbox, with explicit
+  `PermissionDenied` / `Operation not permitted` errors; they include HTTP, net/net6,
+  SCPI socket, SNTP, Bode generator socket and VXI-11. Complete logs and command exits:
+  `target/m2-integ-ui-{debug,release}.log`, `target/m2-integ-test-exits.json`.
+  Full gate and coverage were deliberately skipped per assignment. No ratchet changes,
+  golden updates, staging, commits or hardware access. `target/COMMIT_MSG.txt` contains
+  one section. Renewed cross-vendor review and the coordinator's batch gate remain pending.
+
+- 2026-11-15: integration-gate repair on `t0003-m2` at `131af5d`, under the existing
+  M2 author claim and the owner's no-commit assignment. Both bounded diagnostic sites
+  now use stderr with `oos-ui shadow:`; the existing first-field and row/class masks
+  still limit output. `rootfs/initramfs/bin/oos-ui-loop` already appends stdout and
+  stderr to the UI log. Host-script and golden runners recognize shadow diagnostics
+  alongside pacing messages. Golden references and comparison thresholds are unchanged.
+  The original host-script regression was reproduced (exit 101,
+  `target/m2-integ-host-before.log`); it now passes, including a child regression that
+  repeats RUN and grid-brightness changes and requires one event and one field log on
+  stderr while stdout contains only the requested shot response.
+  D4 review disposition: retain the reviewed RUN contract in the oracle table above.
+  `Request::Run.classes()` declares `HW_AVERAGE` for every source and resolves an epoch;
+  legacy `hw_avg_restart` only changes `hw_avg_clear` on hardware. P3's source guard
+  corrected the old-effect observation, exposing the intentional extra request class
+  on Demo/scripted sources. Such sources have no hardware average consumer to reset;
+  no false acquisition reconfiguration follows. The classifier and oracle therefore
+  remain unchanged. A new fake-Hardware/Demo test pins equal request classes, epoch 1,
+  unchanged acquisition generation, hardware-only clear-counter increments, exact raw
+  disagreement counts and zero unreviewed differences. Renewed independent review is
+  still required; this disposition does not claim that review has already occurred.
+  ARM production bridge dead code is removed: the unused `bus_bit` adapter is deleted,
+  and the three test-only adapters are compiled only for tests. The shared allocation
+  counter implements Default through its const constructor. Gate-equivalent clippy
+  also exposed two stale M2 architecture-test calls after the overhaul merge; both now
+  pass the execution context required by the merged APIs. Their three tests pass.
+
+- 2026-11-15: resolved the four M2.2/G2 source conflicts. G2's hot-path test moved from
+  `ui/tests/hot_paths.rs` to `ui/tests/snapshots/hot_paths.rs`, included by soak; the perf
+  script now selects it from `--test soak`. Safe counter bookkeeping is shared, while the
+  only allocator installation and unsafe System adapter remain in `ui/tests/soak.rs`.
+  Architecture authorization is restored to that exact file. G2's 101-round best/p99
+  guards and host budgets remain, alongside byte-identical M2.2 stage timing and intake
+  Drop guard. Golden and host-script executables keep their default allocator.
+  Focused checks exit 0: soak 11 in each profile (`target/merge-soak-{debug,release}.log`),
+  core change 18 in each (`target/merge-core-{debug,release}.log`), UI shadow/timing/sampler
+  21 in each with one explicit timing test ignored (`target/merge-ui-{debug,release}.log`),
+  HAL sampler 4 with two timing tests ignored (`target/merge-hal-sampler.log`), and six
+  Python budget tests (`target/merge-perf-budgets.log`). Commands: `cargo test --locked`
+  with `-p oos-ui --test soak`, `-p oos-core change`, or
+  `-p oos-ui --bin oos-ui -- ui::tests::shadow perfguard`, repeated with `--release`;
+  HAL uses `--profile perf -p oos-hal --test perf_ratio`; Python uses
+  `python3 -m unittest discover -s tools/tests -p test_perf_budgets.py`.
+  `sh tools/perf-guard.sh` (the xtask perf step) also exits 0:
+  `10 timing budgets and 4 zero-allocation budgets passed`;
+  `perf guards: all passed (55 s)` (`target/merge-perf.log`). Its eight UI timing guards
+  include M2.2's explicit storm: paired intake/change p99 72,168 ns against 500,000 ns,
+  with shadow p99 reported separately at 46,125 ns. All four relocated G2 allocation
+  probes emit 64 warmed frames with zero allocations.
+  `cargo xtask check --fast` exits 0: `partial gate passed (not done): 8 steps in 23 s`
+  (`target/merge-fast.log`). No ratchet edits, staging, commit, merge completion or unit
+  access. Renewed cross-vendor review and the coordinator's full batch gate remain required.
+
+- 2026-11-15: coordinator-assigned conflict resolution on `t0003-m2`, merging `overhaul`
+  `9dba339` into M2.2 `958a985`. Use the existing claim and the resolution reservations
+  above. No staging, commit, merge completion or hardware access is authorized.
+
+- 2026-11-15: M2.2 review-fix verification passed on the final uncommitted source.
+  Focused debug and release checks each pass: core 21 (18 change/value unit tests plus 3
+  integration tests), UI shadow 16 with the explicit timing guard ignored in ordinary runs,
+  timing 2, typed errors 1, mapping 2, soak 10. Commands and exit codes are in
+  `target/m22-review-checks.json`; all 12 entries exit 0. The separate 300-step release timing
+  storm also passes: intake p99 63,375 ns, legacy change p99 1,959 ns, paired intake+change
+  p99 64,583 ns, shadow p99 25,249 ns. The legacy budget excludes prepare/classify, comparison,
+  stage proposals and finish observation; rejected observations also retain separate accounting.
+  Nested intake is balanced by a Drop guard on errors and unwinds. Shadow clamps use
+  non-panicking min/max, and diagnostics count every error variant separately, including payload size.
+
+- 2026-11-15: the new allocation census passes in both profiles: 100 warm-up steps followed
+  by 256 actual `Ui::step` calls on fake Shared without producer threads, with 256 explicit
+  stage captures. Keys::of (including hw::settings), Keys::changed, normalize/classify, compare,
+  finish_step capture/proposals_agree and stage each report zero successful alloc/alloc_zeroed/realloc
+  calls. Logs: `target/m22-review-census-{debug,release}.log`. The existing 2,000-observation
+  warmed heap-payload snapshot census also passes. These results cover the measured observer
+  fixture, not every legacy UI operation or input storm; the README states that limit.
+
+- 2026-11-15: final picture checks pass unchanged: 20 debug cases, 40 processes, 88 repeat
+  captures; 260 release cases, 520 processes, 1,230 repeat captures. All 44 debug and 615 release
+  decoded RGB hashes exactly match the existing manifest (`target/m22-review-exact-goldens.log`).
+  No reference, manifest or held view file changed. `cargo xtask check --fast` exits 0 and prints
+  `partial gate passed (not done): 8 steps in 23 s`; log `target/m22-review-fast-final.log`.
+  The allocator-only patch was reapplied against `0df21cd`, then the exact requested
+  `cargo test --locked -p oos-ui --test soak` ran inside its scratch checkout and passed 8 tests
+  (exit 0, `target/split/move-test.log`). One earlier scratch invocation exited 101 because its
+  target directory was outside that checkout; moving the build output inside it resolved the
+  output-policy failure without source changes. Added-text and all draft-message privacy scans
+  report zero findings; diff whitespace checks pass. No commit, push, full gate or hardware access.
+  Independent review, full integration and the observe-only unit round remain coordinator work.
+
+- 2026-11-15: M2.2 unit-tier review fixes claimed by `codex-d` on `t0003-m2` at
+  `114b399`, under the coordinator's assignment. Observe-only holds remain in force; no P1
+  was reported. The allocator static and unsafe System adapter now live only in `ui/tests/soak.rs`;
+  support contains only safe reusable bookkeeping. The architecture unsafe allowance is scoped
+  to that binary. `target/split/move.patch` extracts only this bookkeeping from `0df21cd`.
+  It applies independently and the scratch checkout's soak target passes all 8 tests (exit 0).
+  `target/split/move.msg` and `target/split/feature.msg` describe the coordinator's required
+  base -> move -> feature reconstruction. `target/COMMIT_MSG.txt` is the same single feature message.
+
+- 2026-11-15: M2.3 decisions to resolve before activation, with acting behavior unchanged here:
+  DEFAULT setup: shadow classifies `stats`, while legacy keeps mstat. Cursor mode is classified
+  `view`, likely an over-classification. `mask_on` is classified `acq`, which would advance gen
+  on a mask toggle. Acquisition mode needs a reviewed D id; math op has no observed reset seam.
+  Inventory noise: about 144 of 171 cases are batch-harness direct writes in `script/batch.rs`;
+  route those through stats_clear or give them their own row before round 0. Outbox comparison
+  is circular and detects missing mappings only; the post-view check is wrong in autoset/Bode
+  stage steps. These remain review evidence, not accepted differences or new live behavior.
+  Analyzer source repair in `ui/src/ui/analysis.rs` is outside the reserved paths and remains held.
+  Its missing producer is an explicit gap for M2.3; the unreachable Analyzer arm/row is removed
+  until that seam is released. Worker and Identity rows also had no producer and are removed.
+  Zoom now emits its row from the actual clamp, with an exact-counter regression.
+
+- 2026-11-15: M2.2 final worker verification on the uncommitted candidate passed all 12 recorded
+  checks with exit 0. `cargo xtask check --fast` printed
+  `partial gate passed (not done): 8 steps in 21 s` (exit 0). Full logs and commands/exit codes:
+  `target/m22-fast-final.log`, `target/m22-checks.json`, and `target/m22-evidence.json`.
+  Final M1 release pictures: 260 cases, 520 fresh processes, 1,230 exact-repeat captures;
+  default debug pictures: 20 cases, 40 processes, 88 exact-repeat captures. Independent decoded-RGB
+  verification matched all 615 release and 44 debug hashes exactly against the unchanged M1 manifest.
+  `target/m22-exact-goldens.log` records both final runs. The layout oracle also passed its exact-class
+  and zero-disagreement assertions in both profiles. Clippy has no new/grown findings (46 inherited
+  core, 307 inherited UI; zero compile errors). Added-text/message privacy scans and diff whitespace
+  checks passed. Held paths, M1 references, dependencies and ratchet files are unchanged.
+  The final trace inventory retains 18 debug and 171 release cases with unreviewed first disagreements;
+  those counts are evidence for review, not accepted behavior or cumulative raw-counter totals.
+  Task 0003 stays active. No full-gate, extended-debug/10,000-step/image or hardware acceptance is claimed.
+
+- 2026-11-15: M2.2 implementation is present on `t0003-m2`, uncommitted at `0df21cd`.
+  New detector effects stay in shadow state: the live clamps, marks, stamp writers, acquisition publication, record acceptance
+  and drawing kernels remain legacy. Exhaustive bindings cover 194 Model fields and nested settings;
+  literal fixtures pin classes and the Unrelated list. The detector has 243 fixed field-log slots.
+  The active decoder settings carry bus-trigger classes; stored decoder banks remain keyed cache inputs.
+  Both previous/scratch snapshots reuse nested capacities, preflight retained growth, and stay below 64 KiB.
+  Value outboxes retain warmed payload slots, reject entry/byte overflow, and compare proposals with old writes.
+  All ten raw counters, normalized equality, proposal errors and unreviewed differences are visible through
+  `stat`/`:SYSTem:STATe?`; first-field traces include oracle rows and difference-id masks on stdout.
+  Normalize runs on the copy in the fixed eight-group order. Its full post-clamp comparison excludes only
+  change-owned outputs and the four zoom/analyzer fields compared at their corresponding post-view seam.
+  The prepared comparison is bounded below 16 KiB. The shadow point precedes legacy auto_step, and
+  late stage settings/tokens resolve together at the next point. A same-final-value STOP/RUN intake
+  sequence keeps its explicit epoch request; rejected resolutions retain their mailbox.
+  Oracle rows retain the initiating STOP state across a later RUN from another input source.
+  Every legacy dirty-map and measurement-clear seam records its actual effect and row before comparison.
+  The transitional worker key preserves every old dependency; the acting pipe key is unchanged.
+
+- 2026-11-15: host verification: core passed 20 tests in each profile (17 change tests plus 3 value tests).
+  The broad focused UI selection passed 101, ignored 8, failed 0 in debug and release; the new explicit timing
+  guard is one ignore and was run separately. All 110 xtask tests passed, including the compiled reachable
+  change-layer violation fixture and purity probes. The allocation regression passed in both profiles:
+  zero successful alloc/alloc_zeroed/realloc calls over 2,000 warmed snapshot/normalize updates plus typed
+  proposal capture/replay, including a varying active field set. Both snapshots retained 5,104 bytes.
+  A naive clone control made 210 calls for ten clones. The executable naive-per-step control exited 101 at
+  the zero-allocation assertion (21,000 versus 0); the mapping-only worker control exited 101 at the real
+  new-trigger-level record-path comparison. These are deliberate controls, not parent bug-fix claims.
+  Standard release soak passed all five modes, 1,000 steps each, warmup 500: zero failed plateau cycles,
+  later peaks equal warm peaks, and exactly acquired/used/dropped 13,648/13,618/30 in every mode.
+  No full gate, coverage, image tier, 10,000-step soak or device result is claimed.
+
+- 2026-11-15: the shared M1 storm supplied 300 steps for the intake/change timing guard on an aarch64 host,
+  release profile. Its 256 retained paired samples report intake p99 64,542 ns, change p99 27,667 ns,
+  combined p99 78,916 ns against 500,000 ns, and shadow p99 26,833 ns. Nested command/SCPI/panel timers
+  count intake once; snapshots, normalize/classify, oracle comparison and outbox overhead are included.
+  Log: `target/m22-timing-final.log`. Keep this guard through M2.3 and hand its fixed-ring helper to G2.
+  Unit timing still belongs to round 0. Seeded oracle fixtures, repeated requests, actual autoset/free-Bode
+  paths through a fake Shared producer, and shadow isolation pass. The broader M1 traces also expose
+  unreviewed first disagreements: the final release inventory has 171 affected cases: 147 stats, 18 view, 13 hardware-average,
+  3 math and 3 acq first row/class traces (cases can contain several classes). These are first-trace counts, not
+  cumulative raw-counter totals. `target/m22-unreviewed-traces.json` records the case-family inventory;
+  full stdout is retained beside each capture. Do not suppress these or treat them as accepted old-code bugs.
+  Coordinator review of the field contracts, exact storm deltas and proposed D1-D6 list remains a hold
+  before round 0 or activation. The tested seeded scenarios do not establish acceptance for all input storms.
+
+- 2026-11-15: earlier fast-gate failures were corrected without changing any ratchet or limit.
+  The first printed `gate FAILED in 14 s: size, architecture, mutable-statics, unsafe, method-exceptions, known-failures`:
+  the shared cause was a forbidden test-module `#[path]`. Default module layout replaced it.
+  The next printed `gate FAILED in 21 s: size`: added observation statements grew existing SCPI,
+  autoset/Bode, key and constructor units. Small bridge helpers and the explicit command-function move
+  removed that growth. The first picture attempt also rejected shadow stderr output; moving diagnostics
+  to stdout preserved the harness's unchanged stderr contract. Both deliberate negative controls remain
+  recorded separately from these corrected implementation failures.
+
+- 2026-11-15: propose two commits so the pure allocator move stays separate, as AGENTS.md requires.
+  Commit 1, `Extract the shared test counting allocator`: `ui/tests/support/counting.rs`,
+  `ui/tests/support/mod.rs`, `ui/tests/{golden,host_script}.rs` (support export only), the allocator-only extraction from `ui/tests/soak.rs`, and the relocated test
+  unsafe allowance in `xtask/data/architecture.txt`. `target/m22-counting-extraction.patch` passes
+  `git apply --check` against an isolated copy of the assigned base files.
+  `target/m22-implementation.patch` applies after that prefix; together they reproduce the complete diff.
+  Commit 2, `Observe centralized change detection without driving consumers`: `core/src/change/`,
+  `core/src/lib.rs`, `core/src/model/{settings,tables}.rs`, `ui/src/{cmd,drawpipe,main,model,perfguard,scpi}.rs`,
+  `ui/src/scpi/actions.rs`, `ui/src/ui.rs`, `ui/src/ui/change.rs`, `ui/src/ui/change/`,
+  `ui/src/ui/{autoset,bode,hwmask,lifecycle,marks,tools}.rs`, `ui/src/ui/script/host/soak.rs`,
+  `ui/src/ui/tests/{mapping,shadow}.rs`, the remaining `ui/tests/soak.rs` changes,
+  `ui/tests/snapshots/change_alloc.rs`, `xtask/src/arch/core_tests.rs`, `xtask/data/moves.txt`,
+  the new strict change layer in `xtask/data/architecture.txt`, `docs/architecture/README.md`, and this task.
+  The single job draft message is `target/COMMIT_MSG.txt`. No commit, push, merge or hardware access occurred.
+  Independent Claude unit-tier review, the coordinator's full integration gate and shadow round 0 remain open.
+
+- 2026-11-15: claimed M2.2 only on `t0003-m2` at `0df21cd` under the owner's assignment,
+  owner `codex-d`, status active, review tier unit. No commit or hardware access authorized.
+  Implement reviewed parts 2-8 in shadow only: exhaustive field contracts, normalize, bounded requests,
+  reusable snapshots, independent oracle observations/counters, storm, allocation and timing checks.
+  Reserved paths: `core/src/change/`, `core/src/lib.rs`, `ui/src/ui/change/`, `ui/src/ui/change.rs`,
+  `ui/src/ui/tests/{shadow,mapping}.rs`, `ui/src/ui.rs` (observation seams only),
+  `ui/src/ui/lifecycle.rs`, `ui/src/ui/{autoset,bode}.rs` (observation seams only),
+  `ui/src/cmd.rs`, `ui/src/drawpipe.rs` (worker contract tests only), `ui/tests/soak.rs`,
+  `ui/tests/support/{mod,counting}.rs`, `ui/src/perfguard.rs`, `xtask/src/arch/core_tests.rs`,
+  `xtask/data/architecture.txt` (new strict change layer), `docs/architecture/README.md`, this task,
+  and `target/COMMIT_MSG.txt`. Further paths only if strictly needed and recorded before edits.
+  The allocator currently lives inline in soak.rs; extract it to the requested support/counting.rs.
+  G2 shared quantile infrastructure is not present on this base; extend existing perfguard rather than
+  introduce a separate framework. Held paths in tasks 0052/0055/0056 and every M1 reference stay untouched.
+  Also reserve `core/src/model/settings.rs` (index the shared ladder with identical results),
+  `ui/src/scpi.rs` (observe repeated SINGLE intake), and `core/src/model/tables.rs`: share the legacy time-scale ladder as a constant so shadow
+  normalization can index it without allocating, with exact bit-equivalence coverage.
+  Reserve `ui/src/scpi/actions.rs` for unchanged RUN/STOP/SINGLE parsing extraction, keeping the
+  legacy hot file non-growing while observing repeated SINGLE requests.
+  Additional required seams reserved before edits: `ui/src/model.rs` (capability value reexport),
+  `ui/src/main.rs` (make existing perfguard timing module available to production observation),
+  `ui/src/ui/hwmask.rs` (mask reset observation), `core/src/change/tests/`,
+  `ui/tests/support/change_alloc.rs`. The test allocator unsafe allowance moves with its existing code;
+  no production unsafe allowance is added. The final two-commit split is recorded above.
+  Reserve `ui/src/ui/script/host/soak.rs` to expose an observer callback on the existing M1 storm,
+  preserving its schedule, barriers and accounting. Timing samples include the external command intake.
+  Reserve `ui/tests/{golden,host_script}.rs` for public common-support module exports needed by the
+  shared read-only allocator census API; no fixture, script, assertion or reference changes there.
+  Reserve `ui/src/ui/tools.rs` for observation of direct measurement-statistics clears and explicit
+  no-diff statistics-reset requests. This is outside the held analysis view paths.
+  Reserve `ui/src/ui/marks.rs` for the existing Dots dirty-map observation. All legacy dirty
+  setters keep their old effects and order through a shared observation helper.
+  Reserve `xtask/data/moves.txt` for the non-growing `cmd::run` to `execute` extraction: its public
+  wrapper measures every early-return path. SCPI, panel/touch and the shared storm use nested intake
+  timers so combined samples count nested command calls once. No ratchet baseline changes.
+  The isolated allocator helper uses the normal module path `ui/tests/snapshots/change_alloc.rs`.
+  Worker runs focused debug/release tests and fast gate only; full integration and independent review remain open.
+
+- 2026-11-15: final-source M2.1 worker handoff on `t0003-m2`, uncommitted at the recorded base.
+  Final standard debug pictures passed (exit 0): 20 cases, 40 processes, 88 repeat captures,
+  101.781 s excluding compilation. All 44 selected decoded RGB hashes exactly match M1. Full release
+  still matches all 615 M1 hashes exactly. Logs: `target/m2-golden-debug-final.log`,
+  `target/m2-exact-goldens-final.log`; final debug artifacts: `target/golden/debug/run-mb5awwjm/`.
+  The earlier complete debug characterization's separate source limit is recorded below.
+  Final fast gate exited 0 and printed `partial gate passed (not done): 8 steps in 21 s`;
+  all eight selected steps passed, all full/coverage/performance/image steps remain not-selected.
+  Complete gate log: `target/m2-fast-final.log` and its printed check-logs directory.
+  Final host clippy comparison found zero new/grown entries after moves (`target/m2-clippy-compare.log`);
+  core API documentation also built without core warnings (`target/m2-core-doc.log`). Core tests were
+  rerun after their lint fixes and passed 3 in each profile. `git diff --check` and the draft-message
+  privacy scan passed; the latter printed `privacy: 0 finding(s)`. The exact commands are in
+  `target/m2-commands.txt`. Verified every held path and M1 reference remains unchanged.
+  Single proposed commit message: `target/COMMIT_MSG.txt`; no commit, push or device access occurred.
+  Open: the owner decision on the inherited default-address/privacy conflict; 21 socket tests per
+  broad profile require a host that permits local listeners; independent Claude unit-tier review and
+  the coordinator's full integration gate remain required. M2.2 and all later M2 parts remain unimplemented.
+
+- 2026-11-15: the full debug M1 characterization also passed (exit 0): 260 cases, 520 processes,
+  1,230 repeat captures, 1,852.993 s excluding compilation; artifacts are
+  `target/golden/debug/run-40wtznxi/`, log `target/m2-golden-debug.log`. This long run used the adapter
+  construction before its final equivalent match-guard cleanup. Do not combine it with final-source
+  evidence: the full release, focused debug/release, core, xtask, clippy and ARM64 checks use the current
+  adapter. A final-source standard debug picture subset is now running in `target/m2-golden-debug-final.log`.
+  The reviewed design text, including the worker key, oracle, allocation/boundary rules and unit rounds,
+  is byte-for-byte unchanged. Exact worker commands are retained in `target/m2-commands.txt`.
+
+- 2026-11-15: complete release M1 pictures passed, exit 0: 260 cases, 520 fresh processes, 1,230
+  repeat captures, 129.670 s excluding compilation. Independent decoded-RGB SHA-256 verification matched
+  all 615 manifest hashes exactly (zero differing baseline images), not just within tolerance.
+  Logs: `target/m2-golden-release.log`, `target/m2-exact-goldens.log`; artifacts under
+  `target/golden/release/run-nz4zivaz/`. No reference or manifest was changed. Full debug remains running.
+  Host value sizes are Model 2,864 B (without its existing heap payloads), Config 112 B, Context 48 B,
+  ModuleInfo 120 B and ModuleValues 32 B (`target/m2-layout.log`). Config/Context own no heap; the UI's
+  immutable INFO vector has four production entries (480 B payload) for process lifetime. Core introduces
+  no global state, queue, cache or per-step snapshot. The bounded snapshot/allocation work stays M2.2.
+
+- 2026-11-15: M2.1 implementation is present, without commits. The 194 flat Model fields retain their
+  order and types; a whitespace-independent comparison confirms its default implementation is unchanged.
+  Pure settings, defaults, methods and LA record values are in `core/`; rendering, protocol objects and
+  board-only generator/hysteresis queries stay in UI. Config and Context contain values only. Seven actual
+  core modules have layer rules; the absent change module/rule remains M2.2. Move entries preserve original
+  allowances; oversized pure methods were extracted rather than grown. No ratchet baseline was edited.
+  No further caller edits were needed; provisional caller-import reservations listed below are released.
+  The assignment's held files, acquisition loop and every M1 reference are unchanged.
+- 2026-11-15: host checks so far: focused UI tests in debug and release each passed 86, ignored 7,
+  failed 0 (model/setup, batch-worker equality, compression/statistics, LA, trigger refinement, CLEAR in STOP,
+  segmented completion, hardware average, raw/deep consumer and STOP-final contracts). Core value tests
+  passed 3 in debug and release. Boundary/purity tests passed 3, including compiled violating/compliant
+  fixtures, actual module reachability and forbidden outside observations. All xtask tests passed 110 after
+  updating the member-list fixture. Host core/UI clippy compiled with no new/grown findings after applying
+  the move manifest; ARM64 core/UI check passed. Complete logs are `target/m2-*.log` and
+  `target/m2-*-clippy-final.jsonl`. Full M1 debug/release pictures are still running.
+- 2026-11-15: broad UI debug and release runs each exited 101: 582 passed, 21 failed, 29 ignored.
+  The 21 failures are existing socket-based HTTP/net6/net/SCPI/SNTP/Bode/VXI11 tests: local listeners
+  are unavailable or report Operation not permitted under this sandbox. Full output is retained in
+  `target/m2-ui-{debug,release}-tests.log`; no tests or known-failure annotations were changed to hide them.
+  The latest fast gate passed: `partial gate passed (not done): 8 steps in 27 s` (exit 0),
+  `target/m2-fast-final.log`. Full integration, coverage/performance/image suites and independent Claude
+  unit-tier review remain coordinator work. No hardware was used.
+- 2026-11-15: the tree privacy audit exited 1 with 151 findings, including the inherited default address
+  moved verbatim from Model::default. The owner has been asked to resolve the direct conflict between
+  unchanged defaults and AGENTS.md's no-LAN-literals rule. No exception, scrub bypass or default change
+  has been made. The audit's redacted findings are in `target/m2-privacy-tree.log`.
+
+- 2026-11-15: reserved `xtask/src/workspace.rs`'s existing member-list test before updating its
+  five-crate fixture for the new registered core member. Its deliberate unlisted member becomes `extra`;
+  production workspace parsing is unchanged. The initial full xtask suite had 109 passes and this one
+  stale-fixture failure; the M2.1 boundary/purity tests passed.
+
+- 2026-11-15: M2.1 additionally reserves `ui/src/ui/views.rs` to reexport its existing view-slot
+  constant from the domain, and caller import seams in `ui/src/{board/mod,board/record,board/dho/hw,
+  board/dho/mod,board/dho/scripted,cmd,compress,deepmeas,drawpipe,fastdraw,framestats,http,main,scpi,
+  sparse,store,trig,trignear,wave}.rs` only where compilation requires the compatibility traits.
+  These are strictly type-move support; the held pacing, roll, perf/allocator, doctor and GPU files stay untouched.
+  New `core/clippy.toml` owns the crate-wide purity lint list. No ratchet baselines will be edited.
+
+- 2026-11-15: codex-d (Codex) claimed M2.1 implementation on `t0003-m2` at
+  `18ac5c72ba5e268905ccd583af4cb00f91a0ec80` under the owner's assignment. Status active.
+  Recorded the implementation plan and narrow reservations before source edits. The working tree was clean.
+  M1 goldens, M1b, G1 and gate predecessors are merged per the assignment. Unit-tier cross-vendor review
+  and the coordinator's integration gate remain required; this worker makes no commit or hardware claim.
 
 - 2026-11-15: codex-d (Codex) prepared the plan on `t0003-m2`, source base `overhaul`
   `6291e7080f8c91d2702d453052bccb75e0b1faf6`. Applied the coordinator's accepted planning claim from

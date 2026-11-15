@@ -54,8 +54,10 @@ The ordinary `soak` integration target links the same application modules throug
 library unit tests, doctests and benchmarks disabled. The test's `GlobalAlloc` must share a process with
 the real UI and workers; launching the production binary cannot expose its live allocations. The library
 therefore remains despite Cargo's shared-main target warning and the extra library compilation. Golden
-comparisons continue to drive the normal binary. Its counting allocator is shared from
-`ui/tests/support/counting.rs` with the G2 hot-path tests; each executable installs its own allocator.
+comparisons continue to drive the normal binary. Its counter bookkeeping lives in
+`ui/tests/support/counting.rs`; only `ui/tests/soak.rs` installs the allocator and implements
+its unsafe System adapter. G2 hot-path tests and M2.2 allocation censuses run inside that
+same soak executable. Golden and host-script executables retain the default allocator.
 It counts successful Rust global-allocator alloc, alloc_zeroed, realloc size deltas and dealloc using atomics
 across the process,
 including worker allocations. It measures requested live heap bytes, not RSS or zero allocations per frame.
@@ -97,8 +99,8 @@ OOS_LONG_SOAK=1 cargo test --offline --locked --release -p oos-ui --test soak sc
 ```
 
 The long soak can also run in debug with the same environment switch; `OOS_SOAK_CASE=raw` selects one
-mode for focused diagnosis. The allocator authorization is `unsafe ui/tests/support/counting.rs` (nine constructs); G2 extracted it without changing
-M1 accounting.
+mode for focused diagnosis. The allocator authorization is `unsafe ui/tests/soak.rs` (nine constructs). Shared safe
+bookkeeping preserves M1 accounting.
 M1 leaves `xtask/` untouched. CPU references do not replace GPU parity. Task 0027 owns its gate hook. Independent Claude review and a
 full gate pass outside the restricted host sandbox remain required before integration.
 

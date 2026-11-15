@@ -41,8 +41,8 @@ static ui/src/drawpipe.rs counters::C
 # Every other unsafe is listed in unsafe.txt (shrink only); new ones fail. dsp forbids unsafe_code outright.
 unsafe hal
 unsafe ui/src/board/dho
-# G2 shared test-only allocation census (extracted from the M1 soak)
-unsafe ui/tests/support/counting.rs
+# M1, G2 and M2.2 allocation censuses share the soak-only GlobalAlloc adapter.
+unsafe ui/tests/soak.rs
 unsafe ui/src/display
 unsafe ui/src/input
 unsafe ui/src/remote
@@ -57,3 +57,13 @@ unsafe ui/src/picture/deposit
 # board::dho (board/mod.rs selects the port: `Active`). The same boundary as the board::boundary test it replaces.
 confine ui oos_hal::dho -> board::dho
 confine ui board::dho -> board
+
+# M2.1 pure domain modules. Change is registered with its implementation in M2.2.
+layer core change -> model config math decode zone la protocols
+layer core config ->
+layer core model -> config math decode zone la protocols
+layer core math ->
+layer core decode ->
+layer core zone ->
+layer core la ->
+layer core protocols ->

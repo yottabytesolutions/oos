@@ -34,3 +34,4 @@ bench = false
 libc = "0.2"
 oos-hal = { path = "../hal" }
 oos-dsp = { path = "../dsp" }
+oos-core = { path = "../core" }

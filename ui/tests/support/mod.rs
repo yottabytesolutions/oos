@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 pub mod cases;
-#[allow(dead_code)] // Only allocation-test executables install this shared allocator.
 pub mod counting;
 
 use std::path::{Path, PathBuf};

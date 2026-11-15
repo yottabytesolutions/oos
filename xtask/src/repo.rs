@@ -13,9 +13,10 @@ pub struct Crate {
 }
 
 /// Every crate the gate covers.
-pub const CRATES: [Crate; 5] = [
+pub const CRATES: [Crate; 6] = [
     Crate { dir: "hal", target: true },
     Crate { dir: "dsp", target: true },
+    Crate { dir: "core", target: true },
     Crate { dir: "ui", target: true },
     Crate { dir: "fpgad", target: true },
     Crate { dir: "xtask", target: false },

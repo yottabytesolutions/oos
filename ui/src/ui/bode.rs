@@ -481,12 +481,12 @@ impl Ui {
         self.m.tscale = ts.iter().position(|&t| t >= want * 0.999).unwrap_or(ts.len() - 1);
         self.bode.wait = 2;
         self.m.hw_stamp += 1;
-        self.bode.stamp = self.m.hw_stamp;
+        change::bode_stamp(self);
         self.settings_changed();
     }
 
     pub(super) fn bode_begin(&mut self) {
-        self.bode.no_phase = None;
+        change::bode_begin(self);
         if self.bode_gen() == FREE {
             return self.free_begin();
         }
@@ -545,7 +545,7 @@ impl Ui {
             (m.tscale, m.delay, m.trig_type, m.trig_src, m.trig_la, m.trig_level, m.slope) =
                 (s.tscale, s.delay, s.trig_type, s.trig_src, s.trig_la, s.trig_level, s.slope);
             (m.trig_mode, m.mdepth, m.auto_roll, m.acq, m.run) = (s.trig_mode, s.mdepth, s.auto_roll, s.acq, s.run);
-            self.dirty_map = true;
+            change::dirty(self, change::oracle::Row::Stage);
             self.settings_changed();
         }
         if let Some((on, f, a, o, w, md)) = self.bode.afg_saved.take() {
@@ -659,11 +659,11 @@ impl Ui {
             (TrigType::Edge, sync, None, m.bode_sync_level, slope);
         (m.trig_mode, m.run, m.view) = (TrigMode::Single, RunState::Run, AView::Bode);
         m.hw_stamp += 1;
-        self.bode.stamp = m.hw_stamp;
+        change::bode_stamp(self);
         self.bode.points.clear();
         self.bode.cursor = 0;
         (self.bode.running, self.bode.free, self.bode.capturing) = (true, true, false);
-        self.dirty_map = true;
+        change::dirty(self, change::oracle::Row::Stage);
         self.settings_changed();
         let slow = if plan.scan { " (slow time base: gain only)" } else { "" };
         self.toast(&format!("Waiting for the sync edge on CH{}: start the sweep{}", sync + 1, slow));

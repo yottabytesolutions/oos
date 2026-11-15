@@ -82,6 +82,7 @@ impl Ui {
 
     /// Clears the mask statistics, the hardware counters with them.
     pub(super) fn mask_counts_reset(&mut self) {
+        change::event(self, change::oracle::Row::Reset, oos_core::change::Classes::MASK);
         self.mask_pass = 0;
         self.mask_fail = 0;
         self.mask_hw_clear += 1;

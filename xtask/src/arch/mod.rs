@@ -1,5 +1,7 @@
 //! Architecture boundaries: crate dependency direction and module rules, both from `xtask/data/architecture.txt`.
 
+#[cfg(test)]
+mod core_tests;
 mod deps;
 mod modules;
 mod resolve;

@@ -1,0 +1,79 @@
+# Thresholds of the size and complexity lints that the crates' [lints] tables enable (docs/development.md).
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 25
+too-many-arguments-threshold = 7
+type-complexity-threshold = 250
+# tests may unwrap: a panic there is the failure report
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# Domain purity: all outside observations enter as values.
+disallowed-methods = [
+    "std::io::stdin",
+    "std::io::stdout",
+    "std::io::stderr",
+    "std::env::var",
+    "std::env::var_os",
+    "std::env::vars",
+    "std::env::vars_os",
+    "std::env::args",
+    "std::env::args_os",
+    "std::env::current_dir",
+    "std::env::current_exe",
+    "std::env::home_dir",
+    "std::env::temp_dir",
+    "std::env::set_var",
+    "std::env::remove_var",
+    "std::env::set_current_dir",
+    "std::fs::read",
+    "std::fs::read_to_string",
+    "std::fs::read_dir",
+    "std::fs::write",
+    "std::fs::copy",
+    "std::fs::rename",
+    "std::fs::remove_file",
+    "std::fs::remove_dir",
+    "std::fs::remove_dir_all",
+    "std::fs::create_dir",
+    "std::fs::create_dir_all",
+    "std::fs::metadata",
+    "std::fs::symlink_metadata",
+    "std::fs::canonicalize",
+    "std::fs::set_permissions",
+    "std::fs::hard_link",
+    "std::fs::read_link",
+    "std::fs::exists",
+    "std::time::Instant::now",
+    "std::time::SystemTime::now",
+    "std::thread::spawn",
+    "std::thread::sleep",
+    "std::thread::sleep_until",
+    "std::thread::scope",
+    "std::thread::park",
+    "std::thread::park_timeout",
+    "std::thread::yield_now",
+    "std::thread::current",
+    "std::thread::available_parallelism",
+    "std::process::id",
+    "std::process::exit",
+    "std::process::abort",
+]
+disallowed-types = [
+    "std::fs::File",
+    "std::fs::OpenOptions",
+    "std::fs::DirBuilder",
+    "std::fs::ReadDir",
+    "std::net::TcpStream",
+    "std::net::TcpListener",
+    "std::net::UdpSocket",
+    "std::net::ToSocketAddrs",
+    "std::thread::Builder",
+    "std::process::Command",
+    "std::io::Read",
+    "std::io::Write",
+    "std::io::Stdin",
+    "std::io::Stdout",
+    "std::io::Stderr",
+]
+
+disallowed-macros = ["std::print", "std::println", "std::eprint", "std::eprintln", "std::dbg"]

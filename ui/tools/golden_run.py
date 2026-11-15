@@ -41,7 +41,7 @@ def child(binary, script, kind, run):
         except subprocess.TimeoutExpired as exc:
             raise ValueError(f'child timeout; logs: {run}') from exc
     errors = (run / 'stderr.log').read_text()
-    if result.returncode or any(not s.startswith('oos-ui pacing:') for s in errors.splitlines()):
+    if result.returncode or any(not s.startswith(('oos-ui pacing:', 'oos-ui shadow:')) for s in errors.splitlines()):
         raise ValueError(f'child status {result.returncode}; diagnostics: {errors}; logs: {run}')
 
 

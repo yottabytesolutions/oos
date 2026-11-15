@@ -35,15 +35,7 @@ pub static MODULES: &[&dyn Protocol] = &[
     &example::Example,
 ];
 
-/// Option rows a module may have (bit rate, word size, variant ...).
-pub const OPTS: usize = 4;
-
-/// One option row of the Decode menu: a name and its choices; the setting is the index of the choice.
-pub struct Opt {
-    pub name: &'static str,
-    pub choices: &'static [&'static str],
-    pub default: usize,
-}
+pub use oos_core::protocols::{Opt, OPTS};
 
 /// The lines a decoder runs on, as voltages, in the order of [`Protocol::roles`]. `lines[0]` is always there (the main
 /// source; with "B line (A-B)" the difference of the pair); a role the protocol does not name, or an optional role
@@ -241,6 +233,7 @@ pub fn demo(i: u8) -> Option<&'static Demo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::ProtoExt;
 
     /// Keys are unique and safe for setup files; names are unique; option defaults are in range; every role a module
     /// names has a demo channel when the module has demo traffic.

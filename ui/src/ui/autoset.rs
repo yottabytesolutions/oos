@@ -194,7 +194,7 @@ impl Ui {
             full: [0.0; NCH],
             swing: [0.0; NCH],
         });
-        self.mark_changed();
+        change::autoset_begin(self);
         self.toast("Auto set-up...");
     }
 
@@ -338,7 +338,7 @@ impl Ui {
         self.m.hw_stamp += 1;
         a.stamp = self.m.hw_stamp;
         self.auto = Some(a);
-        self.mark_changed();
+        change::autoset_mark(self);
     }
 
     /// The measure-unit step (`a.unit`), levels in volts as the records show them (hal levels.rs).
@@ -375,7 +375,7 @@ impl Ui {
         if again {
             self.m.hw_stamp += 1;
             a.stamp = self.m.hw_stamp;
-            self.mark_changed();
+            change::autoset_mark(self);
             if u.tries >= UNIT_TRIES {
                 // the records look at the new scale
                 a.stage = Stage::Fit;
@@ -501,8 +501,8 @@ impl Ui {
                 self.toast("Auto set-up: no steady period");
             }
         }
-        self.dirty_map = true;
-        self.mark_changed();
+        change::dirty(self, change::oracle::Row::Stage);
+        change::autoset_mark(self);
     }
 }
 
@@ -593,9 +593,9 @@ impl Ui {
         if let Some(s) = slope {
             self.m.slope = s;
         }
-        self.dirty_map = true;
+        change::dirty(self, change::oracle::Row::Stage);
         self.settings_changed();
-        self.mark_changed();
+        change::autoset_mark(self);
     }
 
     pub(super) fn draw_auto_bar(&self, cv: &mut Canvas) {

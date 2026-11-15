@@ -34,6 +34,10 @@ pub fn remote_ok(line: &str) -> bool {
 }
 
 pub fn run(ui: &mut Ui, line: &str) -> Out {
+    crate::ui::change::intake(ui, |ui| execute(ui, line))
+}
+
+fn execute(ui: &mut Ui, line: &str) -> Out {
     let w: Vec<&str> = line.split_whitespace().collect();
     if w.is_empty() || w[0].starts_with('#') {
         return Out::None;
@@ -158,12 +162,13 @@ pub fn stat_text(ui: &Ui) -> String {
         format!(" gpu panel {:.1}{} ms", p, m.map_or(String::new(), |m| format!(" monitor {:.1}", m)))
     });
     let gpu = format!(
-        "{}{}{}{} {} graphics {}{}",
+        "{}{}{}{} {}{} graphics {}{}",
         gpu,
         screens,
         crate::pacing::summary(),
         crate::framecost::summary(),
         ui.lifecycle_text(),
+        crate::ui::change::text(ui),
         if ui.sys.gpu { "gpu" } else { "cpu" },
         hdmi
     );

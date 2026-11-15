@@ -5,6 +5,7 @@ use super::*;
 use std::time::Instant;
 
 pub(super) struct Runtime {
+    pub(super) change: super::change::Observer,
     pub(super) memory: crate::system::memory::Watchdog,
     pub(super) crash: Option<crate::store::startup::crash::Crash>,
     started: Instant,
@@ -16,6 +17,7 @@ pub(super) struct Runtime {
 impl Runtime {
     pub(super) fn new(limits: crate::system::memory::Limits) -> Self {
         Self {
+            change: Default::default(),
             memory: crate::system::memory::Watchdog::new(limits),
             crash: None,
             gpu: String::new(),

@@ -1,7 +1,7 @@
 # The Rust crates of OOS, built together: one Cargo.lock, one target/ (docs/development.md).
 # gpu/ is C (gpu/oos-gpu.c), built in its own container by gpu/build.sh and gpu/test-host.sh.
 [workspace]
-members = ["hal", "dsp", "ui", "fpgad", "xtask"]
+members = ["hal", "dsp", "core", "ui", "fpgad", "xtask"]
 resolver = "2"
 
 # The scope's binaries (oos-ui, oos-fpgad, oos-update): oos-ui's profile from before the workspace. oos-fpgad had

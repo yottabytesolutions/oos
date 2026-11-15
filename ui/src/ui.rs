@@ -16,6 +16,7 @@ mod autoset;
 mod backlight;
 pub mod bode;
 mod busview;
+pub(crate) mod change;
 mod eyepage;
 mod graphics;
 pub mod host;
@@ -1328,7 +1329,7 @@ impl Ui {
             shot_request: None,
             quit: false,
         };
-        ui.relayout();
+        change::initialize(&mut ui);
         ui
     }
 
@@ -1590,7 +1591,7 @@ impl Ui {
                 self.ph = Phosphor::new(w0.w as usize, w0.h as usize);
                 self.phz = Phosphor::new(1, 1);
             }
-            self.dirty_map = true;
+            change::dirty(self, change::oracle::Row::Layout);
         }
         self.wins = wins;
         self.cur_win = 0;
@@ -1635,6 +1636,7 @@ impl Ui {
 
     /// Keeps the zoom window inside the main window and not slower than the main time base.
     fn clamp_zoom(&mut self) {
+        change::event(self, change::oracle::Row::Zoom, oos_core::change::Classes::NONE);
         if self.m.zscale > self.m.tscale {
             self.m.zscale = self.m.tscale;
         }
@@ -1773,6 +1775,12 @@ impl Ui {
     /// waveforms, persistence / colour-grade maps, averaging, measurements and their statistics, mask counts and
     /// search marks start over; in STOP the screen stays empty until the next acquisition (RUN draws again at once).
     fn clear_display(&mut self) {
+        change::request(self, oos_core::change::Request::Clear, change::oracle::Row::Clear);
+        change::event(
+            self,
+            change::oracle::Row::Clear,
+            oos_core::change::Classes::PHOSPHOR | oos_core::change::Classes::STATS | oos_core::change::Classes::ZONE,
+        );
         self.wfm_total = 0;
         self.bus_views_clear();
         self.ph.clear();
@@ -1786,7 +1794,7 @@ impl Ui {
         // a measurement still out belongs to the record cleared away
         (self.meas_n, self.meas_want) = (self.meas_n + 1, false);
         self.ana = Default::default();
-        self.mstat.clear();
+        change::stats_clear(self);
         self.mask_counts_reset();
         (self.zone_drops, self.zone_hw_clear) = (0, self.zone_hw_clear + 1);
         self.hw_avg_restart();
@@ -1796,6 +1804,7 @@ impl Ui {
     /// The hardware average starts over (`Model::hw_avg_clear`); nothing changes for the other sources.
     fn hw_avg_restart(&mut self) {
         if self.src.is_hw() {
+            change::event(self, change::oracle::Row::Reset, oos_core::change::Classes::HW_AVERAGE);
             self.m.hw_avg_clear += 1;
         }
     }
@@ -1823,58 +1832,8 @@ impl Ui {
     // ------------------------------------------------------------------ acquisition per frame
 
     pub fn step(&mut self, dt_wall: f64) {
-        if !lifecycle::begin_step(self, dt_wall) {
-            return;
-        }
-        self.m.clamp_offsets();
-        self.src.publish_afg(&self.m);
-        // SINGLE armed: from here on only what comes after the press counts
-        let single = self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run;
-        if single && !self.single_armed {
-            self.m.hw_stamp += 1;
-            self.hw_avg_restart();
-        }
-        self.single_armed = single;
-        // 2-channel models: CH3/CH4 stay off whatever switched them on (setups, autoset, demos, SCPI)
-        if self.m.fit_platform() {
-            self.mark_changed();
-        }
-        if self.meas_src >= n_ch() || self.ref_src >= n_ch() {
-            (self.meas_src, self.ref_src) = (self.meas_src.min(n_ch() - 1), self.ref_src.min(n_ch() - 1));
-        }
-        self.auto_step();
-        self.sysinfo_poll();
-        self.cal_poll();
-        // segmented recording: a new RUN/SINGLE starts a new set of segments
-        let running = self.m.run == RunState::Run;
+        let Some(final_done) = change::begin_step(self, dt_wall) else { return };
         let hw_seg = self.seg_hw_on();
-        // RUN after STOP: the hardware average starts over (stock clears it on every state change)
-        if running && !self.was_running {
-            self.hw_avg_restart();
-        }
-        if running && !self.was_running && self.m.segments > 0 {
-            self.seg_n = 0;
-            self.history.clear();
-            self.hist_pos = None;
-            if hw_seg {
-                self.seg_run += 1;
-                (self.seg_pos, self.seg_view) = (None, None);
-                self.seg_times.clear();
-            }
-        }
-        // STOP of a deep record on pairs with raw deep measurements: the hardware reads the newest frame raw and
-        // stops arming; until it is here the records go on (docs/fork/stop-exact.md)
-        if !running && self.was_running && self.stop_wants_final() {
-            self.final_req += 1;
-            self.stop_final = Some(self.now + STOP_FINAL_WAIT);
-        }
-        let final_done = self.src.hw_hold(!running && self.last[0].is_some(), self.final_req);
-        // the protocol watch and XY read every record: no live compression for them (compress.rs)
-        self.src.hw_needs_raw(self.needs_raw());
-        self.was_running = running;
-        if hw_seg {
-            self.seg_poll(running);
-        }
         let persist = PERSIST[self.m.persist].1;
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared
         if self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared) {
@@ -2266,6 +2225,7 @@ impl Ui {
             self.vmax.iter_mut().for_each(|v| *v = (*v / 2).max(1));
             self.vmax_cg = (self.vmax_cg / 2).max(1);
         }
+        change::finish_step(self);
         if fullz {
             self.phz.halve();
             self.vmaxz.iter_mut().for_each(|v| *v = (*v / 2).max(1));
@@ -2845,6 +2805,7 @@ impl Ui {
         let Some(v) = self.last[0].as_ref().map(|r| r.ch[c].clone()).filter(|v| !v.is_empty()) else {
             return self.toast(&format!("CH{} has no data", c + 1));
         };
+        change::request(self, oos_core::change::Request::CreateMask, change::oracle::Row::Mask);
         self.mask_ref = Some(v);
         self.build_mask();
         self.m.mask_on = true;
@@ -5198,7 +5159,7 @@ impl Ui {
             }
             _ => {}
         }
-        self.dirty_map = true;
+        change::dirty(self, change::oracle::Row::Trigger);
     }
 
     /// Trigger menu rows for the selected type.
@@ -5384,7 +5345,7 @@ impl Ui {
                 _ => (BusWhat::Frame, 0x40),
             };
             (m.trig_bus, m.trig_bus_val, m.ser) = (what, val as u64, SerialTrig::default());
-            self.dirty_map = true;
+            change::dirty(self, change::oracle::Row::Trigger);
             return;
         }
         let m = &mut self.m;
@@ -5466,7 +5427,7 @@ impl Ui {
         if m.trig_type != TrigType::Runt && m.trig_when == WhenKind::Off {
             m.trig_when = WhenKind::Lt;
         }
-        self.dirty_map = true;
+        change::dirty(self, change::oracle::Row::Trigger);
     }
 
     fn menu_title(&self, menu: MenuId) -> String {
@@ -6498,7 +6459,7 @@ impl Ui {
             Item::Dots => {
                 let i = DOTS_MODES.iter().position(|&x| x == m.dots).unwrap_or(0);
                 m.dots = DOTS_MODES[cyc(i, DOTS_MODES.len(), d)];
-                self.dirty_map = true;
+                change::dirty(self, change::oracle::Row::Layout);
             }
             Item::Hdmi => {
                 let i = HDMI_MODES.iter().position(|&x| x == m.hdmi).unwrap_or(0);
@@ -6515,7 +6476,7 @@ impl Ui {
                 let i = m.z_src.map_or(0, |c| c + 1);
                 let i = opt_src_step(i, d);
                 m.z_src = if i == 0 { None } else { Some(i - 1) };
-                self.dirty_map = true;
+                change::dirty(self, change::oracle::Row::Layout);
             }
             Item::Histogram => {
                 let all = [Hist::Off, Hist::Vertical, Hist::Horizontal];
@@ -6708,10 +6669,20 @@ impl Ui {
     }
 
     fn settings_changed(&mut self) {
+        change::event(
+            self,
+            change::oracle::Row::Mark,
+            oos_core::change::Classes::STATS
+                | if self.m.run == RunState::Run {
+                    oos_core::change::Classes::MAPPING
+                } else {
+                    oos_core::change::Classes::NONE
+                },
+        );
         if self.m.run == RunState::Run {
-            self.dirty_map = true;
+            change::dirty(self, change::oracle::Row::Mark);
         }
-        self.mstat.clear();
+        change::stats_clear(self);
     }
 
     fn activate(&mut self, it: Item) {
@@ -6834,7 +6805,7 @@ impl Ui {
                     let e = (k, self.meas_src);
                     let what = if let Some(i) = self.m.meas.iter().position(|x| *x == e) {
                         self.m.meas.remove(i);
-                        self.mstat.clear();
+                        change::stats_clear(self);
                         "removed"
                     } else {
                         self.meas_make_room();
@@ -6873,7 +6844,7 @@ impl Ui {
                 Item::MeasClear => {
                     self.m.meas.clear();
                     self.m.meas2.clear();
-                    self.mstat.clear();
+                    change::stats_reset(self);
                 }
                 Item::RefSave => {
                     let c = self.ref_src;
@@ -6982,7 +6953,7 @@ impl Ui {
                     self.shot_request = Some(p.to_string_lossy().into_owned());
                 }
                 Item::MaskCreate => self.create_mask(),
-                Item::MaskReset => self.mask_counts_reset(),
+                Item::MaskReset => change::mask_reset(self),
                 Item::Stock => self.stock_tap(),
                 Item::Update => self.dialog = Some(self.update_lines()),
                 Item::AcqSegTable => self.table_toggle(tables::TableKind::Segments),
@@ -7093,8 +7064,7 @@ impl Ui {
                 self.build_mask();
                 self.clamp_zoom();
                 self.relayout();
-                self.dirty_map = true;
-                self.mstat.clear();
+                change::recall(self);
                 self.toast(&format!("Recalled {}", crate::store::file_name(&p)));
             }
             Err(e) => self.toast(&format!("Recall failed: {}", e)),
@@ -7715,10 +7685,10 @@ impl Ui {
         if self.start_up_input(&ev) {
             return;
         }
-        match ev {
-            Ev::Key(k) => self.panel_key(k),
-            Ev::Touch { id, phase, x, y } => self.multi_touch(id, phase, x, y),
-        }
+        change::intake(self, |ui| match ev {
+            Ev::Key(k) => ui.panel_key(k),
+            Ev::Touch { id, phase, x, y } => ui.multi_touch(id, phase, x, y),
+        });
     }
 
     fn knob_accel(&mut self, k: u8) -> i32 {
@@ -7856,18 +7826,17 @@ impl Ui {
                 if m.run == RunState::Run && m.trig_mode == TrigMode::Single {
                     m.trig_mode = TrigMode::Auto;
                 }
+                if m.run == RunState::Run {
+                    change::run_request(self);
+                }
             }
-            key::SINGLE => {
-                m.trig_mode = TrigMode::Single;
-                m.run = RunState::Run;
-                self.dirty_map = true;
-            }
+            key::SINGLE => change::single_key(self),
             key::AUTO => {
                 if self.src.is_hw() {
                     self.auto_start();
                 } else {
                     autoset(&mut self.m, &self.src);
-                    self.dirty_map = true;
+                    change::dirty(self, change::oracle::Row::Recall);
                     self.toast("Auto set-up");
                 }
             }
@@ -7884,7 +7853,7 @@ impl Ui {
                 self.mask = None;
                 self.mask_ref = None;
                 self.close_menu();
-                self.dirty_map = true;
+                change::dirty(self, change::oracle::Row::Recall);
                 self.toast("Default set-up");
             }
             key::SLOPE => self.adjust(Item::TrigSlope, 1),
@@ -8850,7 +8819,9 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    mod mapping;
     mod roll;
+    mod shadow;
 
     use super::axis_label;
 

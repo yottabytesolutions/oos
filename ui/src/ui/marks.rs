@@ -37,7 +37,7 @@ impl Ui {
     /// Display > Dots from SCPI (`:DISPlay:TYPE`) or elsewhere: the maps start again in the new style.
     pub fn set_dots(&mut self, d: DotsMode) {
         self.m.dots = d;
-        self.dirty_map = true;
+        change::dirty(self, change::oracle::Row::Layout);
     }
 
     /// Auto with samples at least `MARK_SPACING_PX` apart in `area` at `view` (s/div, delay): each sample of the newest

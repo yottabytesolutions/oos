@@ -23,6 +23,7 @@ use crate::gfx::Canvas;
 use crate::model::*;
 use crate::ui::Ui;
 
+mod actions;
 mod ser;
 use std::io::{ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
@@ -334,20 +335,22 @@ impl Scpi {
 
     /// One program message (commands separated by ';'): the responses joined by ';' (empty without a query).
     pub fn exec_line(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Vec<u8> {
-        let mut out: Vec<u8> = Vec::new();
-        for cmd in line.split(';') {
-            if out.len() >= RESP_MAX {
-                self.err.push("-363,\"Input buffer overrun\" rest of the line dropped".into());
-                break;
-            }
-            if let Some(r) = self.exec(ui, cv, cmd.trim()) {
-                if !out.is_empty() {
-                    out.push(b';');
+        crate::ui::change::intake(ui, |ui| {
+            let mut out: Vec<u8> = Vec::new();
+            for cmd in line.split(';') {
+                if out.len() >= RESP_MAX {
+                    self.err.push("-363,\"Input buffer overrun\" rest of the line dropped".into());
+                    break;
                 }
-                out.extend_from_slice(&r);
+                if let Some(r) = self.exec(ui, cv, cmd.trim()) {
+                    if !out.is_empty() {
+                        out.push(b';');
+                    }
+                    out.extend_from_slice(&r);
+                }
             }
-        }
-        out
+            out
+        })
     }
 
     fn exec(&mut self, ui: &mut Ui, cv: &Canvas, cmd: &str) -> Option<Vec<u8>> {
@@ -435,29 +438,14 @@ impl Scpi {
             ui.force_trigger();
             return None;
         }
+        if nodes.len() == 1 && actions::run(ui, nodes[0], query) {
+            return None;
+        }
         let m = &mut ui.m;
         let src = &ui.src;
         let r: Option<Option<Vec<u8>>> = (|| {
             let n0 = nodes.first().copied().unwrap_or("");
             let (k0, sfx) = suffix(n0);
-            if nodes.len() == 1 {
-                if kw(n0, "RUN") {
-                    m.run = RunState::Run;
-                    if m.trig_mode == TrigMode::Single {
-                        m.trig_mode = TrigMode::Auto;
-                    }
-                    return Some(None);
-                }
-                if kw(n0, "STOP") {
-                    m.run = RunState::Stop;
-                    return Some(None);
-                }
-                if kw(n0, "SINGle") {
-                    m.trig_mode = TrigMode::Single;
-                    m.run = RunState::Run;
-                    return Some(None);
-                }
-            }
             if kw(k0, "CHANnel") && nodes.len() == 2 {
                 let c = sfx?.checked_sub(1).filter(|&c| c < NCH)?;
                 let n1 = nodes[1];

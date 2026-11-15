@@ -50,6 +50,49 @@ The [task tracker](../tasks/README.md) carries guardrails, architecture review a
 
 What changes is the inside of `oos-ui`.
 
+M2.1 intermediate state: `oos-core` now holds the existing flat `model::Model`, its defaults and pure
+methods, plus math, decoder, zone, LA and protocol settings values. UI compatibility exports and extension
+traits keep existing consumers on the same behavior. The application constructs capability `Config`
+values and a read-only protocol `Context`; decoder objects, registry callbacks, palette/rendering and
+board access stay in `oos-ui`. Core has no callbacks into adapters, unsafe code or platform detection.
+Config and Context borrow constant tables and own no heap buffers; they live for a query. The UI owns an
+immutable metadata vector for the compiled protocol registry for the process lifetime (four production
+entries, below 1 KiB on the host); no queue or cache is introduced. Generator-limit and comparator-hysteresis
+queries remain UI adapter helpers. Its seven existing modules have layer rules and crate-wide purity lints. The `change` module and its
+rule arrive in M2.2. Flat public fields and legacy edge setters remain until their planned migration;
+this move does not activate normalize/classify, generations, outboxes or new reset consumers.
+
+M2.2 intermediate state: `core/src/change/` now classifies the flat model and derived `UiAcq`,
+normalizes a shadow scratch in the fixed group order, and resolves bounded value requests and stage tokens.
+`ui/src/ui/change.rs` observes the legacy pre-acquisition seams and internal proposals. Its generations,
+intents, mapping keys and proposed commands remain private observations; acting settings, publication,
+record acceptance, clamps, marks and resets retain the legacy path. `drawpipe::Key` still refreshes workers
+for trigger-only changes. The new worker key retains that complete coverage for the later switch.
+
+Each shadow owns one previous normalized Model and one normalization scratch, each strictly below 64 KiB
+including retained String/Vec capacities. Refresh uses explicit field copies and capacity-reusing clones;
+capacity growth is checked before refresh. Each outbox retains at most 64 command slots and strictly less
+than 64 KiB including payload capacity. Cached payloads survive changes in the active field set; overflow
+returns an error. Generations occupy 24 bytes, ChangeSet less than 4 KiB, and UiAcq/DepositView less than
+1 KiB each. The observer additionally retains fixed diagnostic tables for 243 classified field slots,
+16 oracle rows and ten counters, plus 256 paired intake/change/shadow timing samples. A prepared
+comparison holds one ChangeSet and a fixed field table below 16 KiB. The shadow point precedes legacy
+auto_step; settings and tokens emitted later resolve together at the next point. Failed resolutions
+retain their queued requests. No unbounded log
+collection, new global state or production allocator is introduced.
+
+`stat` and `:SYSTem:STATe?` expose all ten raw shadow counters, normalization/outbox disagreements, errors,
+unreviewed differences and timing samples. Legacy intake/change budgets exclude separately reported shadow time. First-field/row traces go to stdout. The oracle distinguishes
+legacy dirty clears serving mapping and persistence consumers using the effective field contract; it
+never treats every broad mark as all class bits. Proposed D1-D6 differences remain review inputs, not
+suppression rules. Exact host fixtures and negative controls accompany the observer. The required shadow
+unit round and oracle/difference acceptance still precede any activation in M2.3.
+The warmed host census covers 256 real UI steps on fake Shared without producer threads, plus
+256 explicit stage captures. It measures keys/settings, changed keys, normalize/classify,
+comparison, finish capture/proposal comparison and stage capture separately. The existing
+core snapshot census additionally varies warmed heap payloads. Neither census establishes
+zero allocations for all legacy UI work or for every input storm.
+
 ## Layers
 
 Hexagonal where it pays, plain modules where it does not. The domain is its own crate, so Cargo enforces the direction.

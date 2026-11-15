@@ -1,0 +1,24 @@
+[package]
+name = "oos-core"
+version = "0.1.12"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Pure OOS domain settings and values"
+
+[lints.rust]
+unused = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+too_many_lines = "warn"
+cognitive_complexity = "warn"
+too_many_arguments = "warn"
+type_complexity = "warn"
+large_enum_variant = "warn"
+unwrap_used = "warn"
+undocumented_unsafe_blocks = "warn"
+missing_safety_doc = "warn"
+
+
+[dependencies]
+oos-dsp = { path = "../dsp" }

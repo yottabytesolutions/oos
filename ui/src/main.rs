@@ -42,7 +42,6 @@ mod net;
 mod net6;
 mod netacl;
 mod pacing;
-#[cfg(test)]
 mod perfguard;
 mod placement;
 mod protocols;

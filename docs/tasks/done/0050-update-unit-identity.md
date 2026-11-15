@@ -2,7 +2,7 @@
 id: 50
 title: "Refuse updates built for another unit"
 kind: fix
-status: active
+status: done
 release: 0.2.0
 owner: codex-d
 depends: []
@@ -108,3 +108,4 @@ suites and the fast gate, and update target/COMMIT_MSG.txt. Same reservations an
 - 2026-11-15: failing-before evidence: `cargo test --offline --locked -p oos-hal update::tests::unit_tests -- --nocapture` exited 101; both foreign-unit direct install and kexec staging were accepted. Full output in `target/t0050-before.log`.
 
 - 2026-11-15: seeded and claimed for codex-d by the coordinator from the task 0049 finding.
+- 2026-11-15: done. Merged into overhaul.

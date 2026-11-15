@@ -2,7 +2,7 @@
 id: 24
 title: "Scan changes and commit messages for private data"
 kind: feature
-status: active
+status: done
 release: 0.2.0
 owner: codex-c
 depends: []
@@ -202,3 +202,4 @@ The G1/task 0043 follow-up will call the same scanner from xtask, without changi
   remain pending.
 - 2026-11-15: claimed for codex-c on branch t0024-privacy-checks by the coordinator, base overhaul.
 - 2026-11-14: seeded from task 0001. Not yet claimed.
+- 2026-11-15: done. Merged via integ-4 after cross-vendor review (Claude) and a passing full gate.

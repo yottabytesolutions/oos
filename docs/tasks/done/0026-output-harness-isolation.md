@@ -2,7 +2,7 @@
 id: 26
 title: "Isolate build outputs and host harness runs"
 kind: fix
-status: active
+status: done
 release: 0.2.0
 owner: codex-b
 depends: []
@@ -193,3 +193,4 @@ Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
   independent Claude review remains required before merge. Gate evidence is recorded above.
 - 2026-11-14: seeded from task 0001. Not yet claimed.
 - 2026-11-15: claimed for codex-b on branch t0026-harness-isolation by the coordinator, base overhaul.
+- 2026-11-15: done. Merged via integ-4 after cross-vendor review (Claude) and a passing full gate.

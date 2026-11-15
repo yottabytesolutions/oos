@@ -2,7 +2,7 @@
 id: 2
 title: "M1: golden pictures and the host harness"
 kind: feature
-status: active
+status: done
 release: 0.2.0
 owner: codex
 depends: [41, 42]
@@ -548,3 +548,4 @@ Total implementation estimate: 2.75 host days after prerequisites, plus coordina
   Planning validation: task structure, reserved paths, source entry points and local diff review.
   The full gate was not run for this documentation-only planning session.
 - 2026-11-14: seeded from task 0001. Not yet claimed.
+- 2026-11-15: done. Merged into overhaul (batches integ-5 to integ-7) after cross-vendor review and a passing full gate.

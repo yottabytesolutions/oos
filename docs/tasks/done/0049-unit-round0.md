@@ -2,7 +2,7 @@
 id: 49
 title: "Unit round 0 for overhaul"
 kind: chore
-status: active
+status: done
 release: 0.2.0
 owner: unitlab
 depends: []
@@ -28,3 +28,4 @@ private RE notes docs/logs/oos_unit_round0_20261115.md. M1b adds its own round 0
 
 - 2026-11-15: seeded and claimed for unitlab by the coordinator. Owner go: standing authorization for autonomous
   unit work with restarts and trial installs (2026-11-15).
+- 2026-11-15: done. Merged into overhaul (batches integ-5 to integ-7) after cross-vendor review and a passing full gate.

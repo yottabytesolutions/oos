@@ -2,7 +2,7 @@
 id: 27
 title: "Define and enforce the full check inventory"
 kind: chore
-status: active
+status: done
 release: 0.2.0
 owner: codex-c
 depends: []
@@ -155,3 +155,4 @@ Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
 - 2026-11-15: reserved `tools/privacy/test_round2.py`: full Privacy discovery exposed a stale
 - 2026-11-15: reserved `xtask/src/testrepo.rs` after debug tests exposed inherited host
 - 2026-11-15: implementation authorized by owner in `t0027-check-inventory` on parent `18123ce`
+- 2026-11-15: done. Merged into overhaul (batches integ-5 to integ-7) after cross-vendor review and a passing full gate.

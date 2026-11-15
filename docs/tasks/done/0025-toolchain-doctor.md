@@ -2,7 +2,7 @@
 id: 25
 title: "Pin build tools and add a doctor command"
 kind: chore
-status: active
+status: done
 release: 0.2.0
 owner: codex-c
 depends: []
@@ -144,3 +144,4 @@ Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
 - 2026-11-15: Full gate attempt printed exactly: gate FAILED in 917 s: doctor, tests (debug), tests (release),
 - 2026-11-15: Changed-file privacy and draft message scans each report zero findings
 - 2026-11-15: Claimed implementation on the assigned stacked branch. Parent doctor command exits 2 (unknown
+- 2026-11-15: done. Merged into overhaul (batches integ-5 to integ-7) after cross-vendor review and a passing full gate.

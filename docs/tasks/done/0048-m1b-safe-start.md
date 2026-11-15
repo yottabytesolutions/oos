@@ -2,7 +2,7 @@
 id: 48
 title: "M1b: safe start and exit"
 kind: feature
-status: active
+status: done
 release: 0.2.0
 owner: codex-b
 depends: [45]
@@ -307,3 +307,4 @@ Planned names below are acceptance targets, not evidence of tests already run.
 
 - 2026-11-15: seeded and claimed for codex-b by the coordinator; the M1b prerequisite (roll fix forward-port bb7dd9b)
   is merged.
+- 2026-11-15: done. Merged into overhaul (batches integ-5 to integ-7) after cross-vendor review and a passing full gate.

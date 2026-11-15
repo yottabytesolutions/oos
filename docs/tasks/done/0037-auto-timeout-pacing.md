@@ -2,7 +2,7 @@
 id: 37
 title: "Review auto-timeout pacing"
 kind: fix
-status: active
+status: done
 release: 0.2.0
 owner: codex-b
 depends: []
@@ -238,3 +238,4 @@ that measurement. Never infer install/reboot permission from this plan. M11 sepa
   No source edits, hardware access, commit or full gate run; plan awaits independent review before integration.
 - 2026-11-14: seeded from task 0001. Not yet claimed.
 - 2026-11-15: claimed for codex-c on branch t0037-auto-timeout by the coordinator, base overhaul. Plan first; implementation after M1 and the roll forward-port merge.
+- 2026-11-15: done. Merged into overhaul (batches integ-5 to integ-7) after cross-vendor review and a passing full gate.

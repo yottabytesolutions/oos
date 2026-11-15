@@ -12,6 +12,13 @@
 stage="$root/rootfs/out/unit-hook"
 rm -rf "$stage"
 mkdir -p "$stage/etc-oos"
+# Store the build profile even when no unit defaults were selected.
+unit_name=${OOS_UNIT:-none}
+case "$unit_name" in
+    [!a-zA-Z0-9]*|*[!a-zA-Z0-9_.-]*) echo "invalid OOS_UNIT" >&2; exit 1 ;;
+esac
+[ "${#unit_name}" -le 64 ] || { echo "OOS_UNIT is too long" >&2; exit 1; }
+printf '%s\n' "$unit_name" > "$stage/unit"
 # defaults of one unit (docs/models.md 4.2, docs/network.md 6): rootfs/unit/<OOS_UNIT>/ becomes /etc/oos/ in the image
 if [ -n "${OOS_UNIT:-}" ]; then
 	unit="$root/rootfs/unit/$OOS_UNIT"

@@ -188,6 +188,7 @@ impl Fixture {
         std::fs::create_dir_all(&out).expect("test setup");
         std::fs::write(out.join("oos-dev.img"), image()).expect("test setup");
         std::fs::write(out.join("oos-dev.build"), "20261114-120000 kernel test\n").expect("test setup");
+        std::fs::write(out.join("oos-dev.unit"), "none\n").expect("test setup");
         std::fs::create_dir(self.path("boot")).expect("test setup");
         std::fs::write(self.path("boot/sign-dev-image.sh"), include_str!("../../boot/sign-dev-image.sh"))
             .expect("test setup");
@@ -238,7 +239,7 @@ impl Fixture {
             .expect("test setup");
         success(&revision);
         let revision = String::from_utf8(revision.stdout).expect("test setup");
-        for name in ["oos-dev.img", "oos-dev.build"] {
+        for name in ["oos-dev.img", "oos-dev.build", "oos-dev.unit"] {
             success(
                 &Command::new("python3")
                     .arg(&tool)
@@ -392,7 +393,7 @@ fn image_workflow_requires_signed_update_and_gel() {
 
 #[test]
 fn image_signing_script_rejects_unverified_inputs() {
-    for name in ["oos-dev.img", "oos-dev.build"] {
+    for name in ["oos-dev.img", "oos-dev.build", "oos-dev.unit"] {
         for replace in [false, true] {
             let f = Fixture::new();
             let mut cmd = f.script();
@@ -411,7 +412,7 @@ fn image_signing_script_rejects_unverified_inputs() {
 
 #[test]
 fn image_signing_script_rechecks_inputs_after_pack() {
-    for name in ["oos-dev.img", "oos-dev.build"] {
+    for name in ["oos-dev.img", "oos-dev.build", "oos-dev.unit"] {
         let f = Fixture::new();
         let mut cmd = f.script();
         // Simulate an input replaced while the pack command is consuming it.
@@ -426,3 +427,5 @@ fn image_signing_script_rechecks_inputs_after_pack() {
         assert!(!f.path("selected target/image/oos-dev.oosupd.oos-build.json").exists());
     }
 }
+
+mod unit_identity;

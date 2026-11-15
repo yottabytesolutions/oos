@@ -6,7 +6,7 @@
 //! On the unit:
 //!   oos-update status [--quick]            what recovery and the rollback slot hold, trial state, boot mode
 //!                                          (--quick: headers only, no SHA-256 over the images)
-//!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force] [--no-kexec | --new-dt]
+//!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force] [--any-unit] [--no-kexec | --new-dt]
 //!                                          check the signature and the image (dry run without --execute), then start
 //!                                          the new image by kexec with nothing written; that start
 //!                                          installs it (rollback slot, recovery, read back, OOS armed) and is its
@@ -36,57 +36,19 @@
 //!   oos-update verify FILE.oosupd [--keys FILE]   signature and image check, no card access
 //!   oos-update keygen --out FILE          new signing key outside the repository (mode 0600),
 //!                                          prints the public key line for oos/keys/update.pub
-//!   oos-update pack --image IMG --build ID [--kernel REL] [--key FILE | --community] --out FILE.oosupd
+//!   oos-update pack --image IMG --build ID [--kernel REL] [--unit NAME] [--key FILE | --community] --out FILE.oosupd
 //!                                          or select a key with OOS_SIGNING_KEY; no automatic key discovery
 //!                                          --untrusted-ok permits a key not trusted by this build
 //!
 //! Common options: --card /dev/mmcblk0, --state /oos/update/state, --keys FILE (extra trusted keys: verify, and
 //! install on a card file for tests; refused for the unit's card).
 
-use oos_hal::update::{self, card, hash::hex, kexec, pkg, Card, InstallOpt, State};
+use oos_hal::update::{self, card, hash::hex, kexec, pkg, Card, State};
 use std::path::{Path, PathBuf};
 
 const NOTICE: &str = "/tmp/oos-update.notice";
 
-struct Args {
-    rest: Vec<String>,
-    flags: Vec<String>,
-    vals: Vec<(String, String)>,
-}
-
-impl Args {
-    fn parse() -> Args {
-        let mut a = Args { rest: Vec::new(), flags: Vec::new(), vals: Vec::new() };
-        let mut it = std::env::args().skip(1);
-        while let Some(s) = it.next() {
-            match s.as_str() {
-                "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec"
-                | "--new-dt" | "--community" | "--untrusted-ok" => a.flags.push(s),
-                _ if s.starts_with("--") => {
-                    let v = it.next().unwrap_or_else(|| die(&format!("{} needs a value", s)));
-                    a.vals.push((s, v));
-                }
-                _ => a.rest.push(s),
-            }
-        }
-        a
-    }
-    fn command(&self) -> &str {
-        let cmd = self.rest.first().map(String::as_str).unwrap_or("status");
-        for flag in ["--community", "--untrusted-ok"] {
-            if self.flag(flag) && cmd != "pack" {
-                die(&format!("{} is only valid for pack", flag));
-            }
-        }
-        cmd
-    }
-    fn flag(&self, f: &str) -> bool {
-        self.flags.iter().any(|x| x == f)
-    }
-    fn val(&self, k: &str) -> Option<&str> {
-        self.vals.iter().rev().find(|(x, _)| x == k).map(|(_, v)| v.as_str())
-    }
-}
+use oos_update::args::Args;
 
 /// `println!` for this tool's output. A failed write to stdout never ends or panics the process: a write sequence
 /// (install, rollback, mode) must not stop between two steps because the reader went away (`oos-update status |
@@ -115,6 +77,7 @@ fn put(w: &mut dyn std::io::Write, closed: &std::sync::atomic::AtomicBool, a: st
 }
 
 mod oos_update {
+    pub(crate) mod args;
     pub(crate) mod sign;
 }
 
@@ -306,7 +269,8 @@ fn install(a: &Args) {
     let f = a.rest.get(1).unwrap_or_else(|| die("install FILE.oosupd [--execute] [--no-kexec | --new-dt]"));
     need_data(a);
     let p = read_file(f);
-    let opt = InstallOpt { execute: a.flag("--execute"), downgrade: a.flag("--downgrade"), force: a.flag("--force") };
+    let running_unit = a.running_unit();
+    let opt = a.install_opt(&running_unit);
     let mut c = open_card(a, opt.execute);
     let test_card = a.val("--card").is_some_and(|c| c != "/dev/mmcblk0");
     let keys = keys(a, test_card);
@@ -341,7 +305,7 @@ fn install(a: &Args) {
         Ok((r, Some(s))) => {
             r.lines.iter().for_each(|l| out!("{}", l));
             drop(p);
-            start_kexec(&sp, s, kexec::Flags { downgrade: opt.downgrade, force: opt.force });
+            start_kexec(&sp, s, kexec::Flags { downgrade: opt.downgrade, force: opt.force, any_unit: opt.any_unit });
         }
     }
 }
@@ -591,9 +555,8 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
     {
         keys.push(k);
     }
-    let opt = InstallOpt { execute: true, downgrade: f.downgrade, force: f.force };
     let mut c = open_card(a, true);
-    let done = match update::install(&mut c, p, &pk, &keys, &opt) {
+    let done = match update::install(&mut c, p, &pk, &keys, &Args::kexec_opt(f, &a.running_unit())) {
         Ok(r) => {
             r.lines.iter().for_each(|l| out!("{}", l));
             if r.written {

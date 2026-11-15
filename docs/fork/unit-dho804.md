@@ -39,17 +39,36 @@ release, `kernel/README.md`).
 
 ```sh
 kernel/build-base.sh                                   # kernel + rk3399-rigol-dho900{,-uhs}.dtb into kernel/out/base
-OOS_UNIT=dho804 boot/build-dev-image.sh        # boot/out/oos-dev.img
-boot/sign-dev-image.sh --key /path/to/signing.key        # boot/out/oos-dev.oosupd
+OOS_UNIT=dho804 boot/build-dev-image.sh        # target/image/oos-dev.img
+boot/sign-dev-image.sh --key /path/to/signing.key        # target/image/oos-dev.oosupd
 boot/build-gel.py                                      # GEL package
 ```
 
 Check the result before it goes anywhere near the scope:
 
-- `boot/out/initramfs.cpio.gz` contains `etc/oos/limits.conf`, `etc/oos/system.conf`, `bin/nft`, `bin/oos-firewall`,
+- `target/image/initramfs.cpio.gz` contains `etc/oos-unit`, `etc/oos/limits.conf`, `etc/oos/system.conf`, `bin/nft`, `bin/oos-firewall`,
   `bin/oos-conf`, `bin/oos-mac`, `bin/oos-ssh`, `bin/dropbearmulti` with its `dropbear`, `dropbearkey`, `scp` links
   (`gzip -dc ... | cpio -t`).
-- The DTB in the image is the UHS one: `fdtget -p boot/out/oos-dho900.dtb /mmc@fe320000` lists `sd-uhs-sdr104`.
+- The DTB in the image is the UHS one: `fdtget -p target/image/oos-dho900.dtb /mmc@fe320000` lists `sd-uhs-sdr104`.
+
+The build records `dho804` in `/etc/oos-unit` and the receipted `target/image/oos-dev.unit` sidecar.
+The signing step uses the sidecar even in a fresh shell; it does not infer the unit from the current environment.
+The signed package must match the running image's unit before installation or a kexec start. Packages built without
+`OOS_UNIT`, including older packages without a unit line, mean `none` and are refused on this unit image. A planned
+change of unit profile needs the explicit logged `--any-unit` override (see [updates](../update.md)).
+
+The check belongs to the running image's `oos-update`. A pre-0050 image has no check, so the first install is
+unguarded and needs no `--any-unit`. Before uploading, manually verify that `target/image/oos-dev.unit` or the
+package manifest's `unit` line is `dho804`. Do not give `--any-unit` to the old parser: before `--execute`
+it silently turns the install into a dry run; at the end it errors. After the new image boots, `/etc/oos-unit`
+exists and mismatches are refused.
+
+The identity follows the last installed image. Overriding to a `none` build makes later `none` packages pass.
+Recover by rebuilding and signing with `OOS_UNIT=dho804`, manually checking the sidecar or signed
+manifest, and installing with the explicit logged `--any-unit` override. Verify `/etc/oos-unit` after boot before
+normal updates. For a pre-0050 running build, use the first-install procedure without the unsupported flag.
+The usual scope release, lease and install/reboot authorization still apply.
+Host tests cover these checks; this identity guard has not yet been verified on hardware.
 
 The GEL install accepts the model vendor.bin names (DHO924S), so the unit passes the model check. Install on the second SD card only
 (private RE notes `docs/oos-review.md`, "If we try it").

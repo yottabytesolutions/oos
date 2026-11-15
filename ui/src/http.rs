@@ -949,10 +949,11 @@ impl Http {
                             ("text/plain", e.into_bytes())
                         }
                     },
-                    "/update" if post => match ui.update_upload(std::mem::take(&mut req_body)) {
-                        Ok(m) => ("text/plain", m.into_bytes()),
-                        Err(e) => ("text/plain", format!("REFUSED: {}", e).into_bytes()),
-                    },
+                    "/update" if post => {
+                        let (refused, kind, body) = ui.update_upload_reply(std::mem::take(&mut req_body), query);
+                        failed = refused;
+                        (kind, body)
+                    }
                     "/update" => ("text/html; charset=utf-8", ui.update_page().into_bytes()),
                     "/lxi/identification" => ("text/xml", lxi_identification().into_bytes()),
                     "/mcp" => match mcp(&String::from_utf8_lossy(&req_body), ui, cv, scpi) {
@@ -976,16 +977,12 @@ impl Http {
                     }
                     _ => ("text/plain", b"not found".to_vec()),
                 };
-                let status = if failed {
-                    "409 Conflict"
-                } else if body == b"not found" {
-                    "404 Not Found"
-                } else if body == b"refused" {
-                    "403 Forbidden"
-                } else if ctype.is_empty() {
-                    "202 Accepted"
-                } else {
-                    "200 OK"
+                let status = match (failed, body.as_slice(), ctype.is_empty()) {
+                    (true, _, _) => "409 Conflict",
+                    (_, b"not found", _) => "404 Not Found",
+                    (_, b"refused", _) => "403 Forbidden",
+                    (_, _, true) => "202 Accepted",
+                    _ => "200 OK",
                 };
                 let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, ctype, body.len());
                 if body.len() > SEND_INLINE {
@@ -1278,7 +1275,7 @@ mod tests {
         }
         let (first, rest) = t.join().unwrap();
         assert_eq!(first, "HTTP/1.1 100 Continue\r\n\r\n");
-        assert!(rest.starts_with("HTTP/1.1 200") && rest.contains("REFUSED"), "{}", rest);
+        assert!(rest.starts_with("HTTP/1.1 409") && rest.contains("REFUSED"), "{}", rest);
         // too large or from a refused address: the answer at once, no 100, no body read
         let r = talk(
             port,
@@ -1830,7 +1827,7 @@ setTimeout(() => {
         let big = vec![0xffu8; 5 << 20];
         let r = request(&mut h, &mut ui, &cv, &mut scpi, post("/update", &big));
         assert!(
-            r.starts_with("HTTP/1.1 200") && r.contains("REFUSED: not an OOS update package"),
+            r.starts_with("HTTP/1.1 409") && r.contains("REFUSED: not an OOS update package"),
             "{}",
             &r[..r.len().min(300)]
         );

@@ -124,7 +124,8 @@ impl Drop for Fake {
     }
 }
 
-const RUN: InstallOpt = InstallOpt { execute: true, downgrade: false, force: false };
+const RUN: InstallOpt<'static> =
+    InstallOpt { running_unit: "none", execute: true, downgrade: false, force: false, any_unit: false };
 
 #[test]
 fn image_check_matches_the_python_packer() {
@@ -998,3 +999,5 @@ fn kexec_stage_tries_another_device_tree_with_the_loaders_changes() {
     assert!(e.contains("device tree"), "{}", e);
     assert_eq!(f.st().kexec, None);
 }
+
+mod unit;

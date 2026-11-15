@@ -126,11 +126,13 @@ docker run --rm --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="
 	ls -la /out
 '
 # Invalidate metadata and install files before replacing the image. A failed build must not leave them usable.
-rm -f "$out/oos-dev.build" "$out/oos-dev.oosupd" "$out/${OOS_GEL_STEM}_Install.GEL"
+rm -f "$out/oos-dev.unit" "$out/oos-dev.build" "$out/oos-dev.oosupd" "$out/${OOS_GEL_STEM}_Install.GEL"
 python3 -I "$here/oos-bootimg.py" build --kernel "$k/Image" --dtb "$out/$OOS_IMAGE_NAME.dtb" \
 	--ramdisk "$out/initramfs.cpio.gz" --name "$OOS_IMAGE_NAME" --out "$out/oos-dev.img"
 (cd "$out" && sha256 oos-dev.img > oos-dev.img.sha256 && cat oos-dev.img.sha256)
 printf '%s\n' "$build_id" > "$out/oos-dev.build"
 python3 "$root/tools/output.py" stamp "$out/oos-dev.img" "$before"
 python3 "$root/tools/output.py" stamp "$out/oos-dev.build" "$before"
+cp "$root/rootfs/out/unit-hook/unit" "$out/oos-dev.unit"
+python3 "$root/tools/output.py" stamp "$out/oos-dev.unit" "$before"
 echo "image built. Sign explicitly with boot/sign-dev-image.sh, then package with boot/build-gel.py (docs/update.md)."

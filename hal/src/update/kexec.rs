@@ -141,6 +141,7 @@ pub fn initrd(ramdisk: &[u8], package: &[u8], key: &[u8; 32], dt: &[u8]) -> Vec<
 pub struct Flags {
     pub downgrade: bool,
     pub force: bool,
+    pub any_unit: bool,
 }
 
 /// The command line of the kexec start: the running one (the loader built it from the same device tree) with the word
@@ -158,6 +159,9 @@ pub fn cmdline(running: &str, f: Flags) -> String {
     if f.force {
         v.push_str(",force");
     }
+    if f.any_unit {
+        v.push_str(",any-unit");
+    }
     w.push(&v);
     w.join(" ")
 }
@@ -172,6 +176,7 @@ pub fn flags(cmdline: &str) -> Option<Flags> {
             "install" => install = true,
             "downgrade" => f.downgrade = true,
             "force" => f.force = true,
+            "any-unit" => f.any_unit = true,
             _ => {}
         }
     }
@@ -371,9 +376,12 @@ mod tests {
     #[test]
     fn command_line_round_trip() {
         let run = "storagemedia=sd console=ttyFIQ0 oos.kexec=install,force initramfs_async=1 root=/dev/ram";
-        let c = cmdline(run, Flags { downgrade: true, force: false });
-        assert_eq!(c, "storagemedia=sd console=ttyFIQ0 root=/dev/ram initramfs_async=0 oos.kexec=install,downgrade");
-        assert_eq!(flags(&c), Some(Flags { downgrade: true, force: false }));
+        let c = cmdline(run, Flags { downgrade: true, force: false, any_unit: true });
+        assert_eq!(
+            c,
+            "storagemedia=sd console=ttyFIQ0 root=/dev/ram initramfs_async=0 oos.kexec=install,downgrade,any-unit"
+        );
+        assert_eq!(flags(&c), Some(Flags { downgrade: true, force: false, any_unit: true }));
         assert_eq!(flags("console=ttyFIQ0"), None);
         assert_eq!(flags("oos.kexec=other"), None);
     }

@@ -17,11 +17,22 @@ const NOTICE: &str = "/tmp/oos-update.notice";
 const UPLOAD: &str = "/tmp/oos-update.upload";
 const JOB_LOG: &str = "/tmp/oos-update.job";
 
+mod upload;
+use upload::{page, upload_header, upload_store};
+
+struct PendingUpload {
+    thread: std::thread::JoinHandle<Result<(), String>>,
+    build: String,
+    any_unit: bool,
+}
+
 #[derive(Default)]
 pub(super) struct UpdateUi {
     job: Option<(std::process::Child, String)>,
+    /// Immutable image identity, resolved once and injectable by host tests, including read errors.
+    running_unit: Option<Result<String, String>>,
     /// an uploaded package being checked and stored (`upload_store`) before the install job starts; its build
-    upload: Option<(std::thread::JoinHandle<Result<(), String>>, String)>,
+    upload: Option<PendingUpload>,
     /// first tap on Roll back: the second must come before this time
     arm_until: f64,
     next_check: f64,
@@ -132,25 +143,37 @@ impl Ui {
 
     /// A package from the web page (http.rs, after its whole body arrived). The frame loop checks only its header
     /// (`upload_header`) and answers at once; the image hash and the copy to /tmp run in a thread (`upload_store`,
-    /// ~31 MB), and `update_poll` starts the install job from there. Err: refused, nothing kept.
-    pub fn update_upload(&mut self, body: Vec<u8>) -> Result<String, String> {
+    /// ~31 MB), and `update_poll` starts the install job from there. Mismatch without override: ask for confirmation,
+    /// nothing kept. Err: refused, nothing kept.
+    pub fn update_upload_reply(&mut self, body: Vec<u8>, query: &str) -> (bool, &'static str, Vec<u8>) {
+        let result = upload::any_unit(query).and_then(|any| self.update_upload(body, any));
+        upload::reply(result)
+    }
+
+    fn update_upload(&mut self, body: Vec<u8>, any_unit: bool) -> Result<upload::Reply, String> {
         if self.update_busy() {
             return Err("an update job is running".into());
         }
         let keys = update::trusted_keys();
         let h = upload_header(&body, &keys)?;
+        let running = self.upd.running_unit.get_or_insert_with(update::unit::running).clone()?;
+        if let Some(confirmation) = upload::confirmation(&h.manifest, &running, any_unit)? {
+            return Ok(confirmation);
+        }
+        let warning = update::unit::check(&h.manifest, &running, any_unit)?;
         let b = update::short(&h.manifest.build).to_string();
         let t = std::thread::Builder::new()
             .name("update-check".into())
             .spawn(move || upload_store(&body, &keys, Path::new(UPLOAD)))
             .map_err(|e| format!("no thread for the check ({}), nothing installed", e))?;
-        self.upd.upload = Some((t, b.clone()));
+        self.upd.upload = Some(PendingUpload { thread: t, build: b.clone(), any_unit });
         self.upd.last = format!("package of build {} received, checking it", b);
-        Ok(if update::kexec::announced(&h.manifest) {
+        let accepted = if update::kexec::announced(&h.manifest) {
             format!("accepted, build {}: header signature ok; the image is checked now, then the scope restarts into it by kexec and installs it from there (about a minute; System > Update and this page show the result). Then power-cycle the scope: that start is its trial", b)
         } else {
             format!("accepted, build {}: header signature ok; the image is checked now, then installed (System > Update and this page show the result)", b)
-        })
+        };
+        Ok(upload::Reply::Accepted(warning.map_or(accepted.clone(), |w| format!("{}\n{}", w, accepted))))
     }
 
     /// A job of ours is running, or another process (the start-up watcher) holds the update lock: the card is being
@@ -193,11 +216,11 @@ impl Ui {
             return;
         }
         self.upd.next_check = self.now + 0.5;
-        if self.upd.upload.as_ref().is_some_and(|u| u.0.is_finished()) {
-            let (t, b) = self.upd.upload.take().unwrap();
+        if self.upd.upload.as_ref().is_some_and(|u| u.thread.is_finished()) {
+            let Some(PendingUpload { thread: t, build: b, any_unit }) = self.upd.upload.take() else { return };
             match t.join().unwrap_or_else(|_| Err("the package check stopped".into())) {
                 Ok(()) => {
-                    if !self.update_spawn(&["install", UPLOAD, "--execute"], "Install") {
+                    if !self.update_spawn(&upload::install_args(any_unit), "Install") {
                         let _ = std::fs::remove_file(UPLOAD);
                         self.upd.last = format!("build {}: {} could not be started, nothing installed", b, BIN);
                     }
@@ -237,28 +260,6 @@ impl Ui {
     }
 }
 
-/// The checks of an uploaded package that the frame loop can afford: header signature against `keys`, target and the
-/// image length the header names (a truncated upload fails here). The image hash is `upload_store`'s.
-fn upload_header(body: &[u8], keys: &[[u8; 32]]) -> Result<pkg::Header, String> {
-    let h = pkg::verify_header(body, keys)?;
-    let m = &h.manifest;
-    if m.target != pkg::TARGET {
-        return Err(format!("package is for '{}', this unit takes '{}'", m.target, pkg::TARGET));
-    }
-    let img = body.len().saturating_sub(h.data_offset) as u64;
-    if img != m.size {
-        return Err(format!("image is {} bytes, the header says {} (truncated upload?)", img, m.size));
-    }
-    Ok(h)
-}
-
-/// The whole check (`pkg::verify`: also the image hash), then the package to `path` for `oos-update install`. Off the
-/// frame loop. Err: nothing written.
-fn upload_store(body: &[u8], keys: &[[u8; 32]], path: &Path) -> Result<(), String> {
-    pkg::verify(body, keys)?;
-    std::fs::write(path, body).map_err(|e| format!("{}: {}", path.display(), e))
-}
-
 /// Text wrapped at word boundaries to `w` characters.
 fn wrap_lines(t: &str, w: usize) -> Vec<String> {
     let mut out = Vec::new();
@@ -278,35 +279,6 @@ fn wrap_lines(t: &str, w: usize) -> Vec<String> {
         }
     }
     out
-}
-
-/// The web page /update: state and an upload form.
-fn page(last: &str) -> String {
-    let status = std::process::Command::new(BIN)
-        .args(["status", "--quick"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr))
-        .unwrap_or_else(|e| format!("{}: {}", BIN, e));
-    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;");
-    format!(
-        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OOS update</title>
-<style>{}</style></head>
-<body><header><b>OOS update</b><nav><a href="/">Remote</a></nav></header>
-<pre>{}</pre>
-<p>Package (<code>.oosupd</code>, signed): <input type="file" id="f" accept=".oosupd"> <button onclick="up()">Install</button></p>
-<pre id="r">{}</pre>
-<p>The new build starts on trial at the next power-on; a failed start writes the previous build back.
-Command line: <code>curl --max-time 300 --data-binary @oos-dev.oosupd http://&lt;scope&gt;:8080/update</code>
-(the answer comes once the package has arrived and its header is checked; the image check and the install follow, their result shows here).</p>
-<script>
-function up(){{const f=document.getElementById('f').files[0];if(!f)return;const r=document.getElementById('r');
-r.textContent='uploading '+f.size+' bytes ...';
-fetch('/update',{{method:'POST',body:f}}).then(x=>x.text()).then(t=>{{r.textContent=t;setTimeout(()=>location.reload(),15000)}})}}
-</script></body></html>"#,
-        crate::http::STYLE,
-        esc(&status),
-        esc(last)
-    )
 }
 
 #[cfg(test)]
@@ -333,9 +305,45 @@ mod tests {
     }
 
     #[test]
+    fn foreign_unit_upload_needs_confirmation_before_spawning_a_job() {
+        let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
+        let seed_text = include_str!("../../../keys/community-signing.key");
+        let seed_line = seed_text.lines().find(|l| !l.trim().is_empty() && !l.starts_with('#')).unwrap();
+        let seed: [u8; 32] = update::hash::unhex(seed_line.trim()).unwrap().try_into().unwrap();
+        let body = pkg::build_with(&seed, "20261115-120000", "k", b"image", &[("unit", "other-unit")]).unwrap();
+        u.upd.running_unit = Some(Ok("fake-unit".into()));
+        let (refused, kind, reply) = u.update_upload_reply(body, "");
+        assert!(refused);
+        assert_eq!(kind, "application/json");
+        let reply = String::from_utf8(reply).unwrap();
+        let reply = crate::json::parse(&reply).unwrap();
+        assert_eq!(reply.get("package_unit").and_then(|v| v.str()), Some("other-unit"));
+        assert_eq!(reply.get("running_unit").and_then(|v| v.str()), Some("fake-unit"));
+        assert_eq!(reply.get("refused"), Some(&crate::json::J::Bool(true)));
+        assert!(u.upd.upload.is_none() && u.upd.job.is_none());
+    }
+
+    #[test]
+    fn unreadable_running_identity_refuses_even_an_overridden_upload() {
+        let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
+        u.upd.running_unit = Some(Err("identity read failed".into()));
+        let text = include_str!("../../../keys/community-signing.key");
+        let seed: [u8; 32] = update::hash::unhex(text.lines().find(|l| !l.is_empty() && !l.starts_with('#')).unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let body = pkg::build(&seed, "b", "k", b"image").unwrap();
+        let (refused, kind, reply) = u.update_upload_reply(body, "any-unit=1");
+        assert!(refused);
+        assert_eq!(kind, "text/plain");
+        assert!(String::from_utf8(reply).unwrap().contains("identity read failed"));
+        assert!(u.upd.upload.is_none() && u.upd.job.is_none());
+    }
+
+    #[test]
     fn upload_refuses_unsigned_packages() {
         let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
-        let e = u.update_upload(b"OOS-UPDATE 1\ntarget dho900-recovery\n\nxx".to_vec()).unwrap_err();
+        let e = u.update_upload(b"OOS-UPDATE 1\ntarget dho900-recovery\n\nxx".to_vec(), false).unwrap_err();
         assert!(e.contains("signature") || e.contains("header"), "{}", e);
         assert!(u.upd.job.is_none() && u.upd.upload.is_none());
     }

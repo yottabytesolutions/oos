@@ -26,6 +26,7 @@ Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/s
 | Failure | What happens |
 |---|---|
 | package damaged in transfer, or not signed by a trusted key (the community key is public, so this stops mistakes, not an attacker: see "Keys") | refused before anything is written |
+| package unit differs from the running image, including `unit -> none` | refused before card writes or a kexec start unless explicitly overridden with `--any-unit` |
 | image the stock loader would refuse (wrong SHA-1 id, section length not a multiple of 4) | refused before anything is written |
 | power lost while `recovery` is written | the boot magic is set to `KRNL` before the write and back to `OOSK` only after the read-back, so the next power-on starts the intact stock image in `boot`; the previous OOS image is still in the rollback slot. The stock copy in `backup` is not needed for this |
 | new kernel or initramfs hangs **before** rcS (panics, cannot find the card) | the new image is first started by kexec, with `recovery` untouched (below): power-cycle, and the previous OOS build starts again (stock in one-shot mode). The next OOS start reports it. A new device tree is tried too, from 0.1.7 on (below). Not covered for `--new-dt`, packages without `trial kexec` (older builds) and `--no-kexec` |
@@ -133,14 +134,21 @@ build 20260101-120000 kernel 6.12.115+
 kernel 6.12.115+
 size 31141888
 sha256 <image>
+unit none
 key <key id, 16 hex digits>
 sig <Ed25519 over every byte above this line>
 
 <image>
 ```
 
-`head -9 file.oosupd` shows it. The signature covers the header, the header names the image's SHA-256. The `build`
+The header is readable text. The signature covers the header, the header names the image's SHA-256. The `build`
 starts with the UTC build time; an older build than the installed one is refused unless `--downgrade`.
+
+The optional signed `unit` line names the build profile selected by `OOS_UNIT`; an older package without that
+line means `none`. The signature and canonical header checks are unchanged. A 0050 or later updater compares this
+value with `/etc/oos-unit` in the running image before direct installation or kexec staging. With this updater, a
+missing identity means `none`; unreadable or invalid identity refuses installation. A different device tree for
+the same unit is still accepted by the existing kexec tree checks.
 
 ## Keys
 
@@ -174,16 +182,23 @@ Build, sign and package are separate host steps. The paths below use the default
 ([output contract](../tools/OUTPUTS.md)). Receipts reject stale or replaced inputs.
 
 ```sh
-boot/build-dev-image.sh                         # image, checksum and matching build id; never signs
+OOS_UNIT=dho804 boot/build-dev-image.sh # image, checksum, build id and unit; never signs
 boot/sign-dev-image.sh --key /path/to/signing.key # target/image/oos-dev.oosupd
 boot/build-gel.py                               # target/image/DHO800_DHO900_OOS_Install.GEL
 ```
 
+Select `OOS_UNIT` when building the image, or leave it unset for `none`. The build embeds `/etc/oos-unit` and saves
+`target/image/oos-dev.unit` with its own output receipt. Signing uses that saved value, so running the signer in a
+new shell without `OOS_UNIT` preserves the image's unit. Missing, stale or replaced unit sidecars refuse signing;
+rebuild the image to create them. Setting `OOS_UNIT` only for signing does not change an existing image's identity.
+
 For signing, `OOS_SIGNING_KEY=/path/to/signing.key boot/sign-dev-image.sh` also works.
 Use `boot/sign-dev-image.sh --community` only for the public development fixture.
 The signer uses `target/image/oos-dev.build`, saved with the image. It builds the host tool offline.
-`oos-update pack --image IMG --build ID [--key FILE | --community] --out FILE.oosupd` is the direct signing step.
-It also accepts `OOS_SIGNING_KEY`. The package format and output names are unchanged.
+`oos-update pack --image IMG --build ID [--unit NAME] [--key FILE | --community] --out FILE.oosupd` is the direct signing step.
+It also accepts `OOS_SIGNING_KEY`. Direct `pack` reads `etc/oos-unit` from the image's initramfs and uses it when
+`--unit` is absent; a missing identity means `none`. An explicit `--unit` must match that embedded identity or
+signing is refused. The package version and output names are unchanged.
 
 Install on a running OOS:
 
@@ -210,6 +225,36 @@ In a script, do not put a plain `nc` SCPI query (port 5555) before the curl: the
 open, and macOS `nc -w` does not exit on it, so the curl never runs (`nc -G 3 -w 3` or a script with a timeout does).
 - shell: upload the file to /tmp, `oos-update install /tmp/oos-dev.oosupd` (dry run), then `--execute`
 
+On `/update`, a mismatched upload first asks for separate confirmation naming the package and running unit profiles.
+The first reply is HTTP 409 with JSON containing `"refused": true`, `package_unit` and `running_unit`.
+Cancel leaves nothing staged or installed. Confirming uploads that same file again with the explicit override.
+For scripts, append `?any-unit=1` to the upload URL. The upload reply and `/tmp/oos-update.job` log the override and
+both unit profiles; the CLI also rechecks the package before installation. This is an explicit choice for each upload.
+
+A deliberate change of unit profile needs `oos-update install FILE --any-unit` (dry run), then the same command
+with `--execute`. A warning names the package and running profiles in the command's output. The override carries
+through the kexec handoff. It does not bypass the trusted key, signature, image hash, target, downgrade or loader
+checks.
+
+The check runs in the **running image's** `oos-update`. A pre-0050 running image has no unit check: its first install
+of a 0050 image is unguarded and needs **no `--any-unit`**. Before uploading, manually verify that
+`target/image/oos-dev.unit` (or the package manifest's `unit` line) equals the intended unit profile, for example
+`dho804`. Do not pass the new flag to the old parser: `install FILE --any-unit --execute` silently becomes
+a dry run, while `install FILE --execute --any-unit` errors. After the new image boots, `/etc/oos-unit` exists and
+the running updater refuses mismatched packages. A running updater that has the check but no identity file treats
+its identity as `none` and needs the override to accept a named profile.
+
+This identity comes from whichever image is running after the last install, rather than detecting the physical
+unit. If an override installs a `none` build, that build's `/etc/oos-unit` is `none`, so later `none` packages pass.
+To recover the guard, rebuild and sign for the correct `OOS_UNIT`, manually verify the sidecar or signed manifest,
+then use the explicit `--any-unit` override to install it. Once it boots, check `/etc/oos-unit` contains the correct
+profile before resuming normal updates. If the installed build predates 0050, follow the unguarded first-install
+procedure above, without `--any-unit`. Scope release, lease and install/reboot authorization still apply.
+
+For host card-file tests, `install --card FILE --unit NAME` supplies the simulated running identity; without
+`--unit` it is `none`, independent of the host's `/etc/oos-unit`. Hardware installs always read the running image's
+identity and refuse this simulated-identity option.
+
 The scope restarts into the new build by kexec, which installs itself (about a minute), then restarts once more into
 the trial start; System > Update shows the result. Do not restart by hand within the next minute: the trial start
 re-arms `OOSK` only after its confirmation, and a restart before that starts stock. If the screen stays dark after the
@@ -219,7 +264,7 @@ write the image directly: then power-cycle to start it on trial.
 | command | |
 |---|---|
 | `oos-update status` | boot magic, recovery and slot (build, SHA-256, loader id), trial, mode, last event |
-| `oos-update install FILE [--execute] [--downgrade] [--force] [--no-kexec \| --new-dt]` | see above |
+| `oos-update install FILE [--execute] [--downgrade] [--force] [--any-unit] [--no-kexec \| --new-dt]` | see above |
 | `oos-update kexec-check FILE` | load and unload the package's kernel for a kexec start; nothing written |
 | `oos-update rollback [--execute]` | slot -> recovery (checked against its SHA-256 first), arm OOS |
 | `oos-update confirm` | end a trial by hand (after stopping oos-ui for development, `/tmp/oos-ui.off`) |

@@ -5,7 +5,7 @@ This was a static, read-only audit. No files changed, no builds or tests ran, an
 - **O**: `overhaul` at `50d48c0`
 - **A**: `overhaul-agents` at `b6c7683`
 - **G**: `overhaul-guardrails` at `fcb0074`
-- **P**: the planned [0001-docs-and-tasks.md](../0001-docs-and-tasks.md)
+- **P**: the planned [0001-docs-and-tasks.md](../done/0001-docs-and-tasks.md)
 
 “Already covered” describes verified repository content. Problems are inferred failure scenarios; proposals are additions. Actual branch protection, credentials, external coordination and hardware state were not inspected. Effort: **S** small, **M** moderate, **L** substantial.
 

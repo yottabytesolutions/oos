@@ -11,6 +11,16 @@
 # wpa_supplicant, oos-hw and the scope screen oos-ui (started by etc/rcS).
 # The image only exists as a file; installing it is a separate, explicit step.
 set -eu
+# Diagnostic image only: skip purgatory checks on kexec_load, never the same-tree syscall path.
+OOS_KEXEC_NO_CHECKS=${OOS_KEXEC_NO_CHECKS:-0}
+case "$OOS_KEXEC_NO_CHECKS" in
+    0|1) ;;
+    *) echo "OOS_KEXEC_NO_CHECKS must be 0 or 1" >&2; exit 1 ;;
+esac
+export OOS_KEXEC_NO_CHECKS
+if [ "$OOS_KEXEC_NO_CHECKS" = 1 ]; then
+    echo "DIAGNOSTIC IMAGE: legacy kexec purgatory checks disabled" >&2
+fi
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 k="$root/kernel/out/base"

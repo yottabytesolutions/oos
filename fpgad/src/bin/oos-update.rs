@@ -422,6 +422,7 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
     if let Err(e) = loaded {
         undo(&e, None);
     }
+    let changed_tree = s.tree.is_some();
     drop(s);
     tell(&format!("build {} loaded; restarting into it by kexec, where it installs itself", short));
     // under the update lock: a write of the start-up watcher (a rollback, the persist arm) finishes first, then the
@@ -432,12 +433,13 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
     let q = quiesce();
     // the lock file is open for writing: /oos can only go read only without it
     drop(lock);
-    unsafe { libc::sync() };
+    let jump = changed_tree.then(kexec::prepare_jump);
     // the kernel does not sync or unmount on kexec
+    unsafe { libc::sync() };
     if !std::process::Command::new("mount").args(["-o", "remount,ro", "/oos"]).status().is_ok_and(|x| x.success()) {
         out!("warning: /oos stays writable (busy); synced");
     }
-    let e = kexec::start();
+    let e = jump.map_or_else(kexec::start, |j| j.start());
     undo(&e, Some(&q));
 }
 

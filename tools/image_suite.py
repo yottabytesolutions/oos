@@ -29,7 +29,8 @@ def kernel_source():
 def main():
     os.environ['CARGO_TARGET_DIR'] = str(output.target())
     # Validation must use public synthetic inputs even if an interactive shell has unit defaults set.
-    for name in ('OOS_CAL_DIR', 'OOS_UNIT', 'OOS_GEL_OLD', 'OOS_SIGNING_KEY', 'OOS_BOARD', 'OOS_KBASE', 'OOS_OUT', 'OOS_NO_AUTOACQ'):
+    for name in ('OOS_CAL_DIR', 'OOS_UNIT', 'OOS_GEL_OLD', 'OOS_SIGNING_KEY', 'OOS_BOARD', 'OOS_KBASE', 'OOS_OUT',
+                 'OOS_NO_AUTOACQ', 'OOS_KEXEC_NO_CHECKS'):
         os.environ.pop(name, None)
     kernel_source()
     run(['cargo', 'xtask', 'doctor', '--image'])

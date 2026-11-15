@@ -23,6 +23,15 @@
 
 use super::card::check_image;
 
+#[cfg(any(target_os = "linux", test))]
+mod arguments;
+#[cfg(any(target_os = "linux", test))]
+mod evidence;
+#[cfg(target_os = "linux")]
+mod legacy;
+#[cfg(target_os = "linux")]
+pub use legacy::prepare_jump;
+
 /// The signed package line of an image that finishes its own install after a kexec start.
 pub const LINE: (&str, &str) = ("trial", "kexec");
 /// Where the package is in the initramfs of the kexec start.
@@ -242,36 +251,7 @@ mod sys {
     }
 
     pub fn load_with_tree(kernel: &[u8], initrd: &[u8], tree: &[u8], cmdline: &str) -> Result<(), String> {
-        let dir = std::path::Path::new("/tmp/oos-kexec");
-        let _ = std::fs::remove_dir_all(dir);
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {}", dir.display(), e))?;
-        let r = (|| {
-            for (n, d) in [("Image", kernel), ("initrd", initrd), ("tree.dtb", tree)] {
-                std::fs::write(dir.join(n), d).map_err(|e| format!("{}: {}", n, e))?;
-            }
-            let p = |n: &str| dir.join(n).display().to_string();
-            let from = super::segments_from(&kernel_log());
-            let o = std::process::Command::new(super::TOOL)
-                .args([
-                    "-c",
-                    &format!("--mem-min=0x{:x}", from),
-                    "-l",
-                    &p("Image"),
-                    &format!("--initrd={}", p("initrd")),
-                    &format!("--dtb={}", p("tree.dtb")),
-                    &format!("--command-line={}", cmdline),
-                ])
-                .output()
-                .map_err(|e| format!("{}: {}", super::TOOL, e))?;
-            if !o.status.success() {
-                let err = String::from_utf8_lossy(&o.stderr);
-                return Err(format!("kexec -l: {}", err.lines().last().unwrap_or("failed")));
-            }
-            Ok(())
-        })();
-        // the kernel has its own copy now
-        let _ = std::fs::remove_dir_all(dir);
-        r
+        super::legacy::load(kernel, initrd, tree, cmdline, &kernel_log())
     }
 
     /// Forget a loaded kernel (either way it was loaded: both fill the same slot).

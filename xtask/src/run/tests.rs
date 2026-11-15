@@ -28,8 +28,26 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).unwrap();
+        if let Err(error) = fs::remove_dir_all(&self.0) {
+            if std::thread::panicking() {
+                eprintln!("fixture cleanup failed: {error}");
+            } else {
+                panic!("fixture cleanup failed: {error}");
+            }
+        }
     }
+}
+
+#[test]
+fn cleanup_errors_preserve_the_original_panic() {
+    let fixture = Fixture::new();
+    fs::remove_dir_all(&fixture.0).unwrap();
+    let panic = std::panic::catch_unwind(move || {
+        let _fixture = fixture;
+        panic!("original fixture failure");
+    })
+    .unwrap_err();
+    assert_eq!(panic.downcast_ref::<&str>(), Some(&"original fixture failure"));
 }
 
 fn environment() -> [Option<OsString>; 2] {
@@ -154,17 +172,69 @@ fn selector_failure_does_not_create_a_session_or_change_the_environment() {
 #[test]
 fn formatting_metadata_and_git_helpers_retain_logs_in_the_explicit_session() {
     let fixture = Fixture::new();
+    let root = &fixture.0;
+    crate::testrepo::git(root, &["init", "-q", "-b", "overhaul"]);
+    crate::testrepo::git(root, &["config", "commit.gpgsign", "false"]);
+    crate::testrepo::commit(root, &[("README", "fixture")], "before the gate");
+    crate::testrepo::commit(
+        root,
+        &[
+            ("Cargo.toml", "[workspace]\nmembers = [\"xtask\"]\nresolver = \"2\"\n"),
+            ("Cargo.lock", "version = 4\n\n[[package]]\nname = \"fixture\"\nversion = \"0.1.0\"\n"),
+            ("xtask/Cargo.toml", "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            ("xtask/src/lib.rs", "pub fn fixture() {}\n"),
+        ],
+        "gate fixture",
+    );
     let ctx = fixture.start();
-    let root = crate::repo::root();
-    assert_eq!(crate::fmt::diff_lines(&ctx, &root, "xtask").unwrap(), 0);
-    assert!(!crate::workspace::load(&ctx, &root).unwrap().packages.is_empty());
-    assert!(crate::base::protected(&ctx, &root).is_ok());
+    assert_eq!(crate::fmt::diff_lines(&ctx, root, "xtask").unwrap(), 0);
+    assert!(!crate::workspace::load(&ctx, root).unwrap().packages.is_empty());
+    assert!(crate::base::protected(&ctx, root).is_ok());
     let retained = logs(&ctx);
     assert!(retained.iter().any(|text| text.starts_with("cargo [\"fmt\"")));
     assert!(retained.iter().any(|text| {
         text.starts_with("cargo [\"metadata\"") && text.contains(ctx.target.as_ref().unwrap().to_str().unwrap())
     }));
     assert!(retained.iter().any(|text| text.starts_with("git [\"merge-base\"")));
+}
+
+#[test]
+fn coverage_selector_is_isolated_and_retains_logs_in_the_fixture_session() {
+    let fixture = Fixture::new();
+    let ctx = fixture.start();
+    // Stop at the selector so this test never launches an instrumented Cargo build.
+    fs::write(
+        fixture.0.join("tools/output.py"),
+        "import os, sys\nassert sys.flags.isolated\nprint(os.environ['CARGO_TARGET_DIR'])\nprint(os.environ['OOS_CHECK_LOG_DIR'])\nprint('fixture selector stop', file=sys.stderr)\nsys.exit(7)\n",
+    )
+    .unwrap();
+    assert_eq!(crate::coverage::measure(&ctx, &fixture.0, "xtask").unwrap_err(), "fixture selector stop\n");
+    let retained = logs(&ctx);
+    assert_eq!(retained.len(), 1);
+    assert!(retained[0].starts_with("python3 [\"-I\", \"tools/output.py\", \"target\"]"));
+    assert!(retained[0].contains(&expected(&ctx, ctx.target.as_ref().unwrap())));
+    assert!(retained[0].contains("fixture selector stop"));
+}
+
+#[test]
+fn toolchain_probes_use_the_explicit_repository_root() {
+    let fixture = Fixture::new();
+    let ctx = fixture.start();
+    fs::write(fixture.0.join("probe.sh"), ECHO_ENV).unwrap();
+    assert!(available(&ctx, &fixture.0, "sh", &["probe.sh"]));
+    // A missing directory tests forwarding without depending on installed tools or toolchain overrides.
+    let missing = fixture.0.join("missing-repository");
+    assert!(!crate::target::installed(&ctx, &missing));
+    assert!(!crate::coverage::installed(&ctx, &missing));
+    let retained = logs(&ctx);
+    assert_eq!(retained.len(), 3);
+    for program in ["rustup", "cargo"] {
+        let text = retained.iter().find(|text| text.starts_with(program)).unwrap();
+        assert!(text.contains("failed to start:"), "{text}");
+    }
+    assert!(retained.iter().any(|text| text.contains(&expected(&ctx, ctx.target.as_ref().unwrap()))));
+    assert!(retained.iter().any(|text| text.starts_with("rustup [\"target\", \"list\", \"--installed\"]")));
+    assert!(retained.iter().any(|text| text.starts_with("cargo [\"llvm-cov\", \"--version\"]")));
 }
 
 #[test]

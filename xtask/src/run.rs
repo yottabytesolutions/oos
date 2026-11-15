@@ -91,8 +91,8 @@ pub(crate) fn start_logs(root: &Path) -> Result<(Context, PathBuf), String> {
 }
 
 /// Whether `program` can be started (a `--version` call succeeds).
-pub fn available(ctx: &Context, program: &str, args: &[&str]) -> bool {
-    capture(ctx, Path::new("."), program, args).is_ok_and(|o| o.ok)
+pub fn available(ctx: &Context, root: &Path, program: &str, args: &[&str]) -> bool {
+    capture(ctx, root, program, args).is_ok_and(|o| o.ok)
 }
 
 /// The last `n` lines of `text`, for a failure report.

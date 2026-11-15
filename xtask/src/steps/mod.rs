@@ -47,7 +47,7 @@ pub fn fmt(ctx: &crate::run::Context, root: &Path) -> Outcome {
 /// Clippy for the host and, for the scope's crates, for aarch64-unknown-linux-musl: this also checks that the scope
 /// build compiles, with the image build's target flags.
 pub fn clippy(ctx: &crate::run::Context, root: &Path) -> Outcome {
-    if !target::installed(ctx) {
+    if !target::installed(ctx, root) {
         return Err(vec![format!("rustup target add {}", repo::TARGET)]);
     }
     let mut now = Vec::new();
@@ -117,7 +117,7 @@ fn below(n: u64, f: u64) -> bool {
 }
 
 pub fn coverage(ctx: &crate::run::Context, root: &Path) -> Outcome {
-    if !coverage::installed(ctx) {
+    if !coverage::installed(ctx, root) {
         return Err(vec!["cargo install cargo-llvm-cov (or run with --no-coverage)".into()]);
     }
     let floor = Ratchet::load(&ratchet_path(root, "coverage.txt")).map_err(|e| vec![e])?;

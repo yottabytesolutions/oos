@@ -26,6 +26,16 @@ FPGA:                cold boot by OOS (default); the warm hand-over from the sto
 Kernel: a 6.12 GPL kernel rebuilt in Docker (`kernel/`; sources and licences in `kernel/README.md`), with the DHO900 DTS (fan hog, pwm-gpio beeper,
 AFE/PLL GPIO line names). PCIe host and XDMA are modules, loaded only when the FPGA is up.
 
+### Restart after a panic or a hang
+
+`panic=10`, the hardware watchdog and the crash archive (`../boot.md`, "Restart after a panic or a hang"). Facts from
+the unit (dho804, 2026-11-15, verified on the unit):
+- **The watchdog's hardware maximum is 21.5 s.** The driver logs `dw_wdt: No valid TOPs array specified` and uses the
+  fixed TOPs: 2^31 cycles of `pclk_wdt`. The kernel pings in between to reach the 30 s that `oos-watchdog` asks for;
+  a kexec start has at most 21.5 s minus the time since the last ping until the new kernel registers the driver.
+- **`/proc/uptime` is no boot identity.** After a watchdog reset it keeps counting from power-on instead of starting
+  at 0. Code that has to tell a new boot from the same one uses `/proc/sys/kernel/random/boot_id`, not uptime.
+
 ## Rust crates
 
 ```

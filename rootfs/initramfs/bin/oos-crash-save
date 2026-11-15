@@ -1,0 +1,141 @@
+#!/bin/sh
+# Copyright (C) 2026 Julian Decker
+# SPDX-License-Identifier: GPL-2.0-or-later
+# oos-crash-save [STATUS_FILE] - archive the kernel's crash records of the last start (ADR 0015, "Kernel panics" in
+# docs/architecture/README.md). ramoops (DTB reserved-memory, 0x110000) keeps the oops/panic record (dmesg) and the
+# console of the previous start across a warm reset (`panic=10`, the hardware watchdog), not across a power cut.
+# Console and pmsg records are there after every warm reboot, clean ones too. Only a dmesg record whose header says
+# Panic or Oops starts an archive; with none, pstore is left as it is.
+#
+# - Budget: /oos/crash holds at most 1 MiB, and at least 4 MiB of /oos stay free. Each archive holds the dmesg records
+#   whole, the console's last 64 KiB, the boot_id of the boot that saved it and the build. An archive that does not
+#   fit the reserve is skipped, nothing is pruned.
+# - Name: <n>-<time>-<checksum>, from the dmesg records' time and content.
+# - Order, durable: copy into .tmp (every copy checked), fsync each file and .tmp, read every file back and compare;
+#   rename to its name, fsync /oos/crash; then clear the copied pstore entries; then prune the oldest archives beyond
+#   the budget, never the new one. M1b puts the abnormal-exit count (ADR 0015, durable and idempotent by the archive
+#   name) between the archive and the clear. Any failure stops there and leaves pstore as it was.
+# - A start that finds an archive of the same records (interrupted after the rename) checks it against pstore and
+#   fsyncs it and /oos/crash again before it clears pstore. One that does not match is set aside as a partial and
+#   archived again.
+# - A .tmp left by an interrupted save, or an archive that did not match, is kept as .partial-<n>: one at most (it
+#   replaces an older one), counted in the budget. So /oos/crash exceeds 1 MiB by at most one archive and one partial.
+# The boot is named by its boot_id (uptime is no boot identity: after a watchdog reset it keeps counting from
+# power-on). rcS runs it in the background. With STATUS_FILE, a `Crash record` warning goes there for the start-up
+# screen. The last line says `reason panic|oops` for the counter. Always exits 0.
+ps=${OOS_PSTORE:-/sys/fs/pstore}
+mnt=${OOS_CRASH_MNT:-/oos}
+kmsg=${OOS_KMSG:-/dev/kmsg}
+boot_id=${OOS_BOOT_ID:-/proc/sys/kernel/random/boot_id}
+build=${OOS_BUILD_FILE:-/etc/oos-build}
+st_file=${1:-}
+dir=$mnt/crash
+budget_kb=1024
+reserve_kb=4096
+console_bytes=65536
+say() {
+	echo "oos-crash-save: $1"
+	echo "oos-crash-save: $1" > "$kmsg" 2>/dev/null
+	[ -n "$st_file" ] && printf '%s\t%s\t%s\t%s\n' "$(cut -d' ' -f1 /proc/uptime 2>/dev/null)" warn "Crash record" "$1" >> "$st_file"
+}
+fail() { say "the last start logged a kernel oops or panic, not archived: $1; records kept in pstore"; exit 0; }
+if [ "$ps" = /sys/fs/pstore ] && ! grep -q " $ps pstore " /proc/mounts 2>/dev/null; then
+	mount -t pstore pstore "$ps" 2>/dev/null
+fi
+set -- "$ps"/dmesg-ramoops-*
+[ -e "$1" ] || { echo "oos-crash-save: no crash record"; exit 0; }
+reason=""
+for f in "$@"; do
+	case "$(head -n 1 "$f")" in
+		Panic*) reason=panic ;;
+		Oops*) [ "$reason" = panic ] || reason=oops ;;
+	esac
+done
+[ -n "$reason" ] || { echo "oos-crash-save: dmesg records without a panic or oops, pstore left as it is"; exit 0; }
+[ -n "${OOS_TEST:-}" ] || grep -q " $mnt " /proc/mounts || fail "$mnt not mounted"
+t=$(date -u -r "$1" +%Y%m%dT%H%M%SZ)
+sum=$(cat "$@" | md5sum | cut -c1-12)
+# without both parts the name could match another crash's archive and skip this one
+case "$t-$sum" in [0-9]*T*Z-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) fail "no record time or checksum" ;; esac
+key=$t-$sum
+mkdir -p "$dir" || fail "cannot create $dir"
+copied=""
+for f in "$@" "$ps"/console-ramoops*; do [ -e "$f" ] && copied="$copied $f"; done
+# the numbers in use, from <n>-<key> and .partial-<n>
+nums() { ls -a "$dir" | sed -n 's/^\(\.partial-\)\{0,1\}\([0-9][0-9]*\)\(-.*\)\{0,1\}$/\2/p' | sort -n; }
+next() { last=$(nums | tail -n 1); echo $((${last:-0} + 1)); }
+# keep $1 as the only partial
+set_aside() {
+	p=$dir/.partial-$(next)
+	for old in "$dir"/.partial-*; do [ -e "$old" ] && { rm -rf "$old" || fail "cannot remove $old"; }; done
+	mv "$1" "$p" || fail "cannot set aside $1"
+	echo "oos-crash-save: $1 kept as $p"
+}
+# every pstore record matches its copy in $1, and the metadata is there
+matches() {
+	for f in $copied; do
+		b=$(basename "$f")
+		case "$b" in
+			console-ramoops*) tail -c $console_bytes "$f" | cmp -s - "$1/$b" ;;
+			*) cmp -s "$f" "$1/$b" ;;
+		esac || return 1
+	done
+	[ -s "$1/saved-by-boot" ] && [ -s "$1/saved-by-build" ]
+}
+# fsync every file of $1, $1 and /oos/crash
+durable() { sync "$1"/* "$1" && sync "$dir"; }
+name=$(ls "$dir" | grep -E "^[0-9]+-$key\$" | head -n 1)
+if [ -n "$name" ]; then
+	if matches "$dir/$name"; then
+		durable "$dir/$name" || fail "fsync of $dir/$name failed"
+		echo "oos-crash-save: $dir/$name already holds these records"
+	else
+		set_aside "$dir/$name"
+		name=""
+	fi
+fi
+if [ -z "$name" ]; then
+	# size in KiB blocks as the file system counts them: 4 KiB per file and for the directory
+	new_kb=4
+	for f in $copied; do
+		b=$(wc -c < "$f")
+		case "$f" in */console-ramoops*) [ "$b" -gt $console_bytes ] && b=$console_bytes ;; esac
+		new_kb=$((new_kb + (b + 4095) / 4096 * 4))
+	done
+	new_kb=$((new_kb + 8))
+	[ $new_kb -le $budget_kb ] || fail "$new_kb KiB is over the $budget_kb KiB budget"
+	free=$(df -k "$mnt" | tail -n 1 | awk '{print $4}')
+	[ $((${free:-0} - new_kb)) -ge $reserve_kb ] 2>/dev/null || fail "${free:-?} KiB free on $mnt, $new_kb KiB needed and $reserve_kb KiB kept free"
+	tmp=$dir/.tmp
+	[ -e "$tmp" ] && set_aside "$tmp"
+	mkdir "$tmp" || fail "cannot create $tmp"
+	for f in $copied; do
+		b=$(basename "$f")
+		case "$b" in
+			console-ramoops*) tail -c $console_bytes "$f" > "$tmp/$b" ;;
+			*) cp "$f" "$tmp/$b" ;;
+		esac || fail "copy of $b failed"
+	done
+	cp "$boot_id" "$tmp/saved-by-boot" || fail "boot_id not recorded"
+	if [ -e "$build" ]; then
+		cp "$build" "$tmp/saved-by-build" || fail "build not recorded"
+	else
+		echo unknown > "$tmp/saved-by-build" || fail "build not recorded"
+	fi
+	sync "$tmp"/* "$tmp" || fail "fsync in $tmp failed"
+	if [ -e "$build" ]; then built() { cmp -s "$build" "$tmp/saved-by-build"; }; else built() { [ "$(cat "$tmp/saved-by-build")" = unknown ]; }; fi
+	matches "$tmp" && cmp -s "$boot_id" "$tmp/saved-by-boot" && built || fail "read-back of $tmp differs"
+	name=$(next)-$key
+	mv "$tmp" "$dir/$name" || fail "rename to $dir/$name failed"
+	sync "$dir" || fail "fsync of $dir failed"
+fi
+for f in $copied; do rm -f "$f"; done
+keep=${name%%-*}
+for d in $(nums); do
+	[ "$(du -sk "$dir" | cut -f1)" -le $budget_kb ] && break
+	[ "$d" = "$keep" ] && break
+	rm -rf "$dir/.partial-$d" "$dir/$d"-*
+done
+say "the last start logged a kernel oops or panic: /oos/crash/$name"
+echo "oos-crash-save: reason $reason"
+exit 0

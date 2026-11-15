@@ -123,7 +123,9 @@ from `/etc/oos-board` ([porting.md](porting.md)):
 
 1. `Linux` (uptime at the start of rcS).
 2. `oos-oneshot` (boot magic back to `KRNL`), as the very first program, so a hanging new build on trial is followed
-   by stock at the next power-on (`update.md`), then the start count of 4c. Then **`oos-fpgad fpga-boot`**: only the
+   by stock at the next power-on (`update.md`), then the hardware watchdog (`oos-watchdog`, see below), then `/oos`,
+   the crash records of the last start in the background (`oos-crash-save`, below) and the start count of 4c.
+   Then **`oos-fpgad fpga-boot`**: only the
    BOOT command (spidev1.0, slot 0x400000), its uptime to `/tmp/oos-fpga-booted`. The bitstream loads while the rest of
    rcS runs; the fixed 3 s FPGA wait is counted from this command.
 3. Network in the background (`udhcpc -t 5` would block the start-up up to 15 s without a DHCP answer), telnetd, banner,
@@ -152,3 +154,54 @@ The FPGA self-checks (0x1008 bit 29, 0x1210) are part of the cold boot; the ADC 
 Time until acquisition, measured with the status file on a DHO924S: 8.1 s from the kernel's clock (Linux 3 s, calibration
 files 0.9 s, sample clock 0.4 s, AFEs 2.7 s, the rest 1.1 s). Sample clock and AFEs run during the 3 s FPGA wait; `/oos/fpga-wait`
 overrides it for trials.
+
+## Restart after a panic or a hang
+
+The scope runs unattended, so a kernel that stops must restart by itself. Verified on the unit with the `dho804`
+implementation (abd00ca, 2026-11-15): a warm reboot clears the watchdog; a sysrq panic came back in 39 s with its
+record saved; a killed kicker reset the unit after 41 s, and it was back after 56 s. That covers `panic=10` and
+`oos-watchdog`, which are the same here. `oos-crash-save` on this branch is a rewrite (budget, naming, retry checks)
+and is tested on the host only, not yet on the unit. The kexec path is not yet verified.
+
+- `panic=10 softlockup_panic=1` in `OOS_BOOTARGS` (`rootfs/board/dho/etc/oos-board`). A panic restarts after 10 s
+  instead of halting. A soft lockup now panics; hard lockups and tasks hung for 120 s already did (kernel config).
+- Hardware watchdog: `dw_wdt` at `ff848000` (enabled in `rk3399-base.dtsi`). rcS starts `oos-watchdog` right after
+  `oos-oneshot`: busybox `watchdog -F -T 30 -t 5`, nice -20, `oom_score_adj` -1000. If it exits it is started
+  again for as long as the system runs: after 1 s, doubling up to 60 s, back to 1 s after 10 min of running; each
+  restart is logged to the kernel log. It does not depend on oos-ui. A hang that never reaches a panic resets the SoC
+  after 30 s (the kernel stretches the 21.5 s hardware maximum to the 30 s asked for). Log:
+  `/tmp/oos-watchdog.log`. Before it opens the device it logs one `before open:` line (also in the kernel log): whether
+  the hardware counter already runs (control register from the driver's debugfs), its period, the hardware maximum
+  (2^31 cycles of `pclk_wdt`; 21.5 s on the unit), sysfs `state`/`timeout`/`timeleft`/`bootstatus` and whether
+  this is a kexec start.
+  `hw running` after a warm reboot that was not a kexec start means the system reset did not clear the watchdog.
+- The device tree gives the watchdog no reset line, so the kernel cannot stop it once started. A reboot or panic
+  restart (PSCI system reset) resets it with the SoC (verified on the unit), so a stock Android start after it sees
+  it off. A kexec start
+  keeps it running. Nothing services it between the last ping before the jump and the registration of `dw_wdt` in the
+  new kernel, which comes after the initramfs is unpacked; from then on the kernel pings it
+  (`CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED`) until `oos-watchdog` opens it again. If the rest of the hardware period does
+  not cover that gap, the SoC resets and the boot simply starts again. The `before open:` line measures the period.
+- Which system comes back follows the boot magic: OOS when it was armed again (persist mode, about 20 s after oos-ui
+  ran stable), else stock Android. A build on trial that panics is rolled back at its next start (`update.md`).
+- A panic before `oos-oneshot` (kernel, initramfs, the first lines of rcS) of an image selected with `OOSK` now
+  restarts the same image every 10 s, where it used to halt. Neither the trial count nor the rollback runs that early.
+  Both cases need the card out and a card reader (`boot/switch.py stock`); the same limitation as a direct install
+  under "Not covered" in `update.md`.
+- Crash records (ADR 0015, "Kernel panics" in `architecture/README.md`): ramoops keeps the oops/panic record and the
+  console across a warm reset, not across a power cut. rcS starts `oos-crash-save` in the background, so a slow write
+  never delays oos-ui. Only a dmesg record whose header says Panic or Oops starts an archive; other dmesg records,
+  console and pmsg records (there after every warm reboot) leave pstore as it is. `/oos/crash` holds at most 1 MiB,
+  and 4 MiB of `/oos` stay free: an archive that does not fit the reserve is skipped and nothing is pruned. An archive
+  holds the dmesg records whole, the console's last 64 KiB, the saving boot's `boot_id` and the build, and is named
+  `<n>-<record time>-<checksum>`. Order: copy into `.tmp` (every copy and the metadata checked), fsync each file and
+  the directory, read everything back; rename, fsync `/oos/crash`; then clear the copied pstore entries; then prune
+  the oldest archives beyond 1 MiB, never the new one. Any failure leaves pstore as it was. A start that finds an
+  archive of the same records checks it against pstore and fsyncs it again before clearing; one that does not match
+  is set aside and archived again. A `.tmp` from an interrupted save, or an archive that did not match, is kept as
+  the one `.partial-<n>` (it replaces an older one). So `/oos/crash` exceeds 1 MiB by at most one archive and one
+  partial. The start-up screen shows a `Crash record` warning; log `/tmp/oos-crash.log`; the last line names the
+  reason (`panic` or `oops`). A watchdog reset leaves no dmesg record, so nothing is archived for it.
+- Still to come with M1b (ADR 0015): the abnormal-exit counter, which counts a panic or oops archive once (durably,
+  between the archive and the pstore clear, idempotent by the archive name), the `oos-ui.running` markers and safe
+  start in oos-ui.

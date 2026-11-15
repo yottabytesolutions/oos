@@ -2,9 +2,9 @@
 id: 46
 title: "Decide the PCIe link speed before the next 6.12 stable merge"
 kind: chore
-status: planned
+status: active
 release: 0.2.0
-owner: none
+owner: unitlab
 depends: []
 ---
 
@@ -34,3 +34,4 @@ Rockchip develop-6.12 plus stable until Rockchip publishes a newer develop branc
 ## Status
 
 - 2026-11-15: seeded by the coordinator from the kernel upgrade research. Blocks merging 6.12.116 or later.
+- 2026-11-15: owner decision: accept the Gen1 cap now, do not risk the hardware. DTS max-link-speed = <1> on dho804 (fix/pcie-gen1) and overhaul. The unit measurement (Gen2 before, Gen1 after) is a record of the cost, not a gate.

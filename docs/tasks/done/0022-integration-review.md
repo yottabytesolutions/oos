@@ -2,7 +2,7 @@
 id: 22
 title: "Define migration integration and independent review"
 kind: chore
-status: active
+status: done
 release: 0.2.0
 owner: codex-c
 depends: []
@@ -29,9 +29,11 @@ failing-before evidence, golden changes and hardware evidence. Require an indepe
 by an agent from another vendor before merge. Keep the owner accountable for acceptance.
 Audit items: 5, 6, 20.
 
-Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
+Input: [multi-agent audit](../notes/audit-multiagent-20261114.md).
 
 ## Status
+
+- 2026-11-15: done. merged into overhaul with the 2026-11-15 batch; AGENTS.md patch applied by the coordinator.
 
 - 2026-11-15: applied the follow-up. Local links, anchors, roles, style, patch lines and single-source checks passed.
   `git diff --check` passed. AGENTS.md is unchanged. No network, hardware access, commits or pushes.

@@ -2,7 +2,7 @@
 id: 28
 title: "Make package signing explicit"
 kind: fix
-status: active
+status: done
 release: 0.2.0
 owner: codex
 depends: []
@@ -29,7 +29,7 @@ Keep image assembly in the build step. Save its build id for a separate signing 
 Package the signed update as GEL only on request. Require explicit selection in the host CLI too.
 Generate temporary test keys and verify signed packages with HAL's device verifier, offline.
 
-Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
+Input: [multi-agent audit](../notes/audit-multiagent-20261114.md).
 
 Repair review findings in CI packaging and signing input validation. Reject trusted public keys used as seeds.
 Require explicit opt-in for untrusted signing identities. Restrict wrapper arguments and pack-only flags.
@@ -40,6 +40,8 @@ CLI output or package format. Keep the legacy entry file within its shrink-only 
 Validate formatting, debug and release host tests and the fast gate with Cargo offline.
 
 ## Status
+
+- 2026-11-15: done. merged into overhaul with the 2026-11-15 batch (cherry-picked onto the reformatted base; signing helpers moved to fpgad/src/bin/oos_update/ for the size ratchet).
 
 - 2026-11-15: size follow-up left uncommitted for the owner on `integ-3`. Entry file: 1080 physical
   lines; new signing module: 130, with every extracted function below 60 lines. Extracted bodies

@@ -32,12 +32,19 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Report the gate's result as printed, including failed steps. Read the command's exit code, not its tail.
   Never pipe the gate or `tools/perf-guard.sh` through `tail` or `grep` inside an `&&` chain. That hides failures.
 - Take commit hashes from `git log -1`. Never quote a hash from memory.
-- Never change a remote or its push URL. Never push. The owner pushes.
+- Only the coordinator pushes, and only with the owner's go, through the documented publish path. Other agents never push. Never change a remote or its push URL.
 - Never merge your own branch. The coordinator merges after review.
 - On the scope, stop at the first unexpected state. Report it. Do not repair it by hand.
 - No `rm -rf` outside your own worktree and scratch directories. Never force push,
   write partitions, run `dd` to block devices, or delete another contributor's
   worktrees or branches.
+- Follow [integration order and parallel claims](docs/process/integration.md) and the [review protocol](docs/process/review.md). Use the roles defined in [integration](docs/process/integration.md#roles).
+- Every agent-authored change needs review by an agent from another vendor. Codex authors use Claude reviewers, and Claude authors use Codex reviewers. Other vendors pair across vendors too.
+- Human-authored changes need review by any reviewer who did not write the change.
+- Merge reviewed branches. Rebase only private unreviewed work. Affected authors resolve conflicts and obtain renewed review. The author never merges the change.
+- Follow the merge, acceptance and publication order in [integration](docs/process/integration.md#review-and-merge).
+- Record evidence in the task file's Status lines and the merge commit body. The PR template is the field list. Use it in the PR when one exists.
+- Fix unit regressions on the unit branch, then forward-port the failing regression test plus fix through review and the full gate.
 
 ## The gate
 
@@ -117,7 +124,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Never rebase or amend commits that someone else has reviewed or merged.
 - A fix the unit needs now branches from `dho804` as `fix/<name>` and is forward-ported to `overhaul` as a test plus
   the fix in its target place ([Migration](docs/architecture/migration.md), Hotfix lane).
-- Never push. The owner pushes. There is a public remote; never push to it.
+- Only the coordinator pushes, and only with the owner's go, through the documented publish path. Other agents never push. Never change a remote or its push URL.
 
 ## Docs
 

@@ -2,7 +2,7 @@
 id: 30
 title: "Make mandatory tests hermetic"
 kind: fix
-status: active
+status: done
 release: 0.2.0
 owner: codex
 depends: []
@@ -33,9 +33,11 @@ With the migration, use synthetic calibration fixtures. Keep private-calibration
 Normalize configuration, clock and storage inputs. Use locked dependency resolution and report skipped scenarios
 and zero-test selections. Audit item: 21.
 
-Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
+Input: [multi-agent audit](../notes/audit-multiagent-20261114.md).
 
 ## Status
+
+- 2026-11-15: done. merged into overhaul with the 2026-11-15 batch (integ-2 44a82d9, full gate passed).
 
 - 2026-11-15: integrated on integ-2. The comparator mapping under test (`hw::mask_map_cell`) stays one
   process-wide cell: `Map::default()` until `Dho::spawn` sets it from `BoardSwitches::mask_map`; tests that change
@@ -46,7 +48,7 @@ Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
   runs completed. HAL: 340 passed, 1 socket failure, 10 ignored per profile. UI: 500 passed,
   19 socket failures, 29 ignored per profile. DSP: 168 passed, 1 ignored. Fpgad: 12 passed.
   Cargo exits are 101 for HAL/UI and 0 for DSP/fpgad. Per-target summaries and the exact
-  socket failure list are in [the report](notes/hermetic-tests.md). Production UI check,
+  socket failure list are in [the report](../notes/hermetic-tests.md). Production UI check,
   fixture reproducibility, 18 explicit-input checks and the 13 manual PNG outputs pass.
   Strict missing-input checks fail as intended. Changes and COMMIT_MSG.txt remain at
   the worktree root for the coordinator. No commit or push. Status stays active because
@@ -67,7 +69,7 @@ Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
   offline, locked debug/release runs completed. DSP and fpgad pass. HAL has one sandbox Unix-socket failure
   and UI has 19 sandbox socket failures in each profile, unchanged for that restriction. Exact counts,
   ignored/zero-test outcomes, audit inventory and deviations are in
-  [the report](notes/hermetic-tests.md) and [structured results](notes/hermetic-tests-results.json).
+  [the report](../notes/hermetic-tests.md) and [structured results](../notes/hermetic-tests-results.json).
   Generator reproducibility and hostile-environment checks pass. The private opt-in fails visibly when
   unconfigured. Per owner instruction, changes remain uncommitted, with `COMMIT_MSG.txt` at the root;
   the coordinator retains integration/review and task archival. The xtask gate is absent from this snapshot.

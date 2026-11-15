@@ -1855,6 +1855,29 @@ setTimeout(() => {
     }
 
     #[test]
+    fn mcp_idn_preserves_the_build_field() {
+        use crate::json::{parse, J};
+        let host = crate::ui::host::Host::fixture_with_text(|path| {
+            (path == "/etc/oos-build").then(|| "20261115-143335 kernel fixture\n".into())
+        });
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, host);
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"scpi","arguments":{"command":"*IDN?"}}}"#;
+        let reply = parse(&mcp(body, &mut ui, &cv, &mut scpi).unwrap()).unwrap();
+        let Some(J::Arr(content)) = reply.get("result").and_then(|r| r.get("content")) else {
+            panic!("MCP text result missing: {:?}", reply);
+        };
+        let text = content[0].get("text").and_then(J::str).unwrap();
+        assert_eq!(text.split(',').count(), 4);
+        assert_eq!(
+            text.split(',').next_back().unwrap(),
+            format!("oos-ui {} build 20261115-143335", env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(text.as_bytes(), scpi.exec_line(&mut ui, &cv, "*IDN?"));
+    }
+
+    #[test]
     fn mcp_session() {
         use crate::json::{parse, J};
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });

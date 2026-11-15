@@ -18,6 +18,7 @@ pub struct Host {
     usb_root: PathBuf,
     switches: crate::sysconf::Switches,
     runtime: super::lifecycle::Runtime,
+    firmware: String,
 }
 
 impl Host {
@@ -26,6 +27,7 @@ impl Host {
         runtime.crash = crate::store::startup::crash::latest(Path::new("/oos/crash")).ok().flatten();
         Self {
             runtime,
+            firmware: String::new(),
             text: |p| std::fs::read_to_string(p).ok(),
             space: super::sysinfo::disk,
             temperatures: || board().thermal_zones(),
@@ -36,6 +38,19 @@ impl Host {
             usb_root: crate::usbtmc::SYSFS.into(),
             switches,
         }
+        .cache_firmware()
+    }
+
+    fn cache_firmware(mut self) -> Self {
+        self.firmware = format!("oos-ui {}", env!("CARGO_PKG_VERSION"));
+        if let Some(build) = self.text("/etc/oos-build") {
+            // Bound retained identity metadata and preserve the SCPI field/message separators.
+            if let Some(id) = build.split_whitespace().next().filter(|id| id.len() <= 128 && !id.contains([',', ';'])) {
+                self.firmware.push_str(" build ");
+                self.firmware.push_str(id);
+            }
+        }
+        self
     }
 
     pub(super) fn runtime(&self) -> &super::lifecycle::Runtime {
@@ -43,6 +58,10 @@ impl Host {
     }
     pub(super) fn runtime_mut(&mut self) -> &mut super::lifecycle::Runtime {
         &mut self.runtime
+    }
+
+    pub(super) fn firmware_version(&self) -> &str {
+        &self.firmware
     }
 
     pub fn text(&self, path: &str) -> Option<String> {
@@ -74,6 +93,7 @@ impl Host {
     pub fn headless() -> Self {
         Self {
             runtime: super::lifecycle::Runtime::new(crate::system::memory::Limits::parse("")),
+            firmware: format!("oos-ui {}", env!("CARGO_PKG_VERSION")),
             text: |_| None,
             space: |_| None,
             temperatures: Vec::new,
@@ -95,6 +115,11 @@ impl Host {
     pub fn fixture() -> Self {
         Self { unix: || 946_684_800.0, time_budgets: true, switches: Default::default(), ..Self::headless() }
     }
+
+    #[cfg(test)]
+    pub fn fixture_with_text(text: fn(&str) -> Option<String>) -> Self {
+        Self { text, ..Self::fixture() }.cache_firmware()
+    }
 }
 
 #[cfg(test)]
@@ -110,6 +135,67 @@ mod tests {
     use crate::ui::Item;
     use crate::ui::{sysinfo::Row, Ui};
     use crate::wave::Source;
+
+    fn idn(host: Host) -> String {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 }, host);
+        let cv = crate::gfx::Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
+        String::from_utf8(scpi.exec_line(&mut ui, &cv, "*IDN?")).unwrap()
+    }
+
+    #[test]
+    fn idn_reports_build_in_the_fourth_field() {
+        let mut host = Host::fixture_with_text(|path| {
+            assert_eq!(path, "/etc/oos-build");
+            Some(" 20261115-143335 kernel fixture\n".into())
+        });
+        host.text = |_| panic!("IDN must use the identity captured at start");
+        let reply = idn(host);
+        let p = oos_hal::model::platform();
+        assert_eq!(
+            reply.split(',').collect::<Vec<_>>(),
+            [
+                "OOS",
+                p.caps.name.as_str(),
+                p.serial.as_deref().unwrap_or("0"),
+                &format!("oos-ui {} build 20261115-143335", env!("CARGO_PKG_VERSION"))
+            ]
+        );
+    }
+
+    #[test]
+    fn idn_keeps_existing_reply_without_build_file() {
+        // Missing and unreadable files both become None at the Host text seam.
+        for host in [
+            Host::fixture(),
+            Host::fixture_with_text(|_| None),
+            Host::fixture_with_text(|_| Some(String::new())),
+            Host::fixture_with_text(|_| Some(" \n\t".into())),
+        ] {
+            let reply = idn(host);
+            let p = oos_hal::model::platform();
+            assert_eq!(
+                reply,
+                format!(
+                    "OOS,{},{},oos-ui {}",
+                    p.caps.name,
+                    p.serial.as_deref().unwrap_or("0"),
+                    env!("CARGO_PKG_VERSION")
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn idn_ignores_build_ids_outside_response_bounds() {
+        for host in [
+            Host::fixture_with_text(|_| Some("20261115,143335".into())),
+            Host::fixture_with_text(|_| Some("20261115;143335".into())),
+            Host::fixture_with_text(|_| Some("x".repeat(129))),
+        ] {
+            assert_eq!(idn(host), idn(Host::fixture()));
+        }
+    }
 
     #[test]
     fn memory_stop_still_polls_update_ntp_ssh_and_usb() {

@@ -394,10 +394,10 @@ impl Scpi {
             "*IDN" => {
                 let p = oos_hal::model::platform();
                 return t(&format!(
-                    "OOS,{},{},oos-ui {}",
+                    "OOS,{},{},{}",
                     p.caps.name,
                     p.serial.as_deref().unwrap_or("0"),
-                    env!("CARGO_PKG_VERSION")
+                    ui.firmware_version()
                 ));
             }
             "*OPC" => return if query { t("1") } else { None },

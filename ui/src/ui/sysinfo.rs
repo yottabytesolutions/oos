@@ -113,6 +113,11 @@ fn software(ui: &Ui) -> Vec<Row> {
 }
 
 impl Ui {
+    /// Firmware identity captured through the Host at start; remote queries do no file IO.
+    pub fn firmware_version(&self) -> &str {
+        self.host.firmware_version()
+    }
+
     /// cpufreq's current clock text of CPU `n` (kHz).
     fn cpu_freq(&self, n: usize) -> Option<String> {
         self.host.text(&format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", n))

@@ -2,9 +2,9 @@
 id: 20
 title: "Enforce the shared agent rules"
 kind: chore
-status: planned
+status: active
 release: 0.2.0
-owner: none
+owner: codex-c
 depends: [1]
 ---
 
@@ -77,3 +77,4 @@ Audit item: 1. Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
 ## Status
 
 - 2026-11-14: seeded from task 0001. Not yet claimed.
+- 2026-11-15: claimed for codex-c on branch t0020-agent-rules (based on G1 t0043-gate-g1 plus overhaul) by the coordinator.

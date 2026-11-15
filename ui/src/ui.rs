@@ -4874,6 +4874,7 @@ impl Ui {
 
     /// The background's side, every frame: takes a finished result, and gives it the record shown when it wants one.
     fn meas_poll(&mut self) {
+        analysis::window::poll(self);
         let Some(w) = self.meas_bg.as_mut() else { return };
         if let Ok((n, done)) = w.rx.try_recv() {
             w.busy = false;
@@ -4911,7 +4912,7 @@ impl Ui {
             .collect();
         let cheap = self.meas_cheap(rec);
         let w = self.meas_bg.as_mut().expect("worker");
-        if w.tx.send((self.meas_n, cheap, job)).is_ok() {
+        if w.tx.send(lifecycle::WorkerJob::Measure((self.meas_n, cheap, job))).is_ok() {
             w.busy = true;
             self.meas_env_sent = env;
         } else {

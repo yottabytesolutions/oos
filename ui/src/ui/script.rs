@@ -8,6 +8,8 @@
 mod batch;
 mod capture;
 pub mod host;
+#[cfg(test)]
+mod roll;
 
 use super::*;
 

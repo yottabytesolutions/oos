@@ -1,0 +1,15 @@
+# Eye analysis uses full data; source and raster changes still refresh the page.
+key ch2
+menu Horizontal
+set Time/div = 2 ms
+menu Eye / jitter
+set View = On
+set Source = CH2
+menu close
+frames 30
+shot $S/eye-window.ppm
+menu Eye / jitter
+set Source = CH1
+menu close
+frames 12
+shot $S/eye-source.ppm

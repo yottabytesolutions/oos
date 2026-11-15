@@ -93,47 +93,6 @@ impl Ui {
         true
     }
 
-    /// Per record (analyzer_update), at most twice a second: fold the whole record of the source, step response.
-    pub(super) fn bw_update(&mut self, rec: &Record) {
-        if self.now - self.azr.bw_t < 0.5 && self.azr.bw.is_some() {
-            return;
-        }
-        self.azr.bw_t = self.now;
-        let c = self.m.bw_src.min(NCH - 1);
-        // the whole hardware frame when there is one (the longer, the finer the folding), else the record
-        let (v, dt) = match &rec.raw {
-            Some(r) if !r.frame.ch[c].is_empty() && r.frame.dt > 0.0 => (r.frame.ch[c].clone(), r.frame.dt),
-            _ => self.meas_wave(rec, c),
-        };
-        if v.len() < 1000 {
-            self.azr.bw = None;
-            self.azr.bw_info = format!("CH{}: record too short ({} points)", c + 1, v.len());
-            return;
-        }
-        let fs = 1.0 / dt;
-        let res = bandwidth::tone(&v, dt).and_then(|fa| {
-            let f = if self.m.bw_hint > 0.0 { bandwidth::unalias(fa, fs, self.m.bw_hint) } else { fa };
-            let (w, step) = bandwidth::fold(&v, dt, 1.0 / f, self.m.bw_bins)?;
-            Some((f, step, bandwidth::step_response(&w, step)?))
-        });
-        match res {
-            Some((f, step, r)) => {
-                self.azr.bw_info = format!(
-                    "{} at {}, {} points, picture step {}",
-                    si(f, "Hz"),
-                    si_short(fs, "Sa/s"),
-                    fmt_count(v.len() as f64),
-                    si(step, "s")
-                );
-                self.azr.bw = Some(r);
-            }
-            None => {
-                self.azr.bw = None;
-                self.azr.bw_info = format!("CH{}: no periodic edge found (square wave from a pulse generator?)", c + 1);
-            }
-        }
-    }
-
     pub(super) fn draw_bw(&self, cv: &mut Canvas) {
         let a = self.area;
         let f = self.fonts();
@@ -216,6 +175,52 @@ impl Ui {
         cv.round(pr, 5, BAR, 230);
         for (i, s) in lines.iter().enumerate() {
             cv.text(&f.s, pr.x + 8, pr.y + 18 + i as i32 * 18, s, if i == 0 { ACCENT } else { TEXT });
+        }
+    }
+}
+
+impl analysis::window::Context {
+    /// Full hardware frame: equivalent-time folding needs every sample, including outside the screen window.
+    pub(super) fn bw_update(&mut self, rec: &Record) {
+        if self.now - self.azr.bw_t < 0.5 && self.azr.bw.is_some() {
+            return;
+        }
+        self.azr.bw_t = self.now;
+        let c = self.m.bw_src.min(NCH - 1);
+        // Keep the full raw frame: trimming or striding loses phase coverage in equivalent-time bins.
+        let (v, dt) = match &rec.raw {
+            Some(r) if !r.frame.ch[c].is_empty() && r.frame.dt > 0.0 => {
+                self.azr.work.copied(r.frame.ch[c].len());
+                (r.frame.ch[c].clone(), r.frame.dt)
+            }
+            _ => self.meas_wave(rec, c),
+        };
+        if v.len() < 1000 {
+            self.azr.bw = None;
+            self.azr.bw_info = format!("CH{}: record too short ({} points)", c + 1, v.len());
+            return;
+        }
+        let fs = 1.0 / dt;
+        let res = bandwidth::tone(&v, dt).and_then(|fa| {
+            let f = if self.m.bw_hint > 0.0 { bandwidth::unalias(fa, fs, self.m.bw_hint) } else { fa };
+            let (w, step) = bandwidth::fold(&v, dt, 1.0 / f, self.m.bw_bins)?;
+            Some((f, step, bandwidth::step_response(&w, step)?))
+        });
+        match res {
+            Some((f, step, r)) => {
+                self.azr.bw_info = format!(
+                    "{} at {}, {} points, picture step {}",
+                    si(f, "Hz"),
+                    si_short(fs, "Sa/s"),
+                    fmt_count(v.len() as f64),
+                    si(step, "s")
+                );
+                self.azr.bw = Some(r);
+            }
+            None => {
+                self.azr.bw = None;
+                self.azr.bw_info = format!("CH{}: no periodic edge found (square wave from a pulse generator?)", c + 1);
+            }
         }
     }
 }

@@ -91,6 +91,47 @@ one helper per channel) -> result -> UI: accepted if gen, epoch and stats_gen ar
   (`framestats::cheap_results`, NEON min/max).
 - **Cost on the state line:** `deepmeas::cost` (reads, DMA, decode, record, measure) stays as instrumentation.
 
+## Display analysis jobs
+
+Spectrum, Eye, Power and Bandwidth run on the persistent measurement worker, using the full input at its original
+sample interval. Spectrum retains its DSP antialias filter. Eye and Power keep the full measurement window, following
+the existing HiRes policy. Bandwidth uses the entire raw frame: equivalent-time folding needs phase coverage outside
+the screen window too. There is no input cap or unfiltered stride in the UI analysis path.
+
+Main submits a bounded screen-record copy (at most 3600 points per channel) and shares the raw frame through its
+`Arc`; raw-sample copies, scans, DSP, Eye refresh and result cloning happen on the worker. One analysis job/result
+can be outstanding alongside one ordinary measurement job/result. Busy updates coalesce to a pending flag; the next
+job uses the newest available record. No record-sized pending analysis queue is kept. Each job retains at most one
+raw frame within the existing acquisition memory plan. At most three retained analysis states exist including main.
+Their bounds are the panel/HDMI raster, 16384 TIE values, 120 waterfall rows, Spectrum's fixed `MAX_WINDOW` cache,
+and 5000 Bandwidth bins: conservatively `3 * (8 * W * H + 640 * W + 3 MiB)` bytes, where W/H are the viewport
+width/height. Job screen vectors add at most 28800 bytes (two selected sources). Worker-only input copies and DSP
+scratch retain the existing full-input DSP bounds, including Spectrum's `MAX_SAMPLES` and `MAX_FFT`. Changing the
+selected analyser settings, selected channels' data settings, acquisition mode, layout or local clear revision
+replaces the worker history. Unselected channels, acquisition stamps and measurement reset tokens do not reset
+pooling: max-hold, averaging, waterfall, limit counts and Eye hits continue across SINGLE arms. Channel units are
+labels and do not enter history identity. The full acceptance key remains independent of this narrower history key.
+Bandwidth alone also restarts its history and half-second throttle on acquisition stamp, time scale, delay or memory
+depth changes, so a new SINGLE capture receives its own result after STOP. Spectrum reference and margin belong to
+both the full acceptance key and Spectrum history identity, restarting averaging and waterfall on either change.
+
+Jobs and results carry the current acquisition stamp, measurement reset counter, local clear revision, view/source
+configuration and raw record sequence/stamp. Main accepts a completion only while its generation and configuration
+still match; SINGLE changes the acquisition stamp, and CLEAR changes the measurement reset counter. These are the
+pre-M16 tokens; the explicit record `gen`/`epoch`/`stats_gen` migration above still applies. A result of an older
+record in the same generation can be displayed while a newer job runs. Polling continues after STOP even without new
+records. The last accepted full key stays with the display state (one fixed-size key, less than 1 KiB). The last result
+remains visible with an immediate `updating` marker when that key differs from current settings, including while a
+stale completion is dropped. The marker also appears when no result exists or its input is over 0.5 s old. Explicit
+Spectrum span labels use the model's requested band clipped to the current record's measurement Nyquist, without
+waiting for a worker result. Main never waits for DSP. A disconnected worker logs a diagnostic and falls back to the
+existing synchronous mode. Existing SCPI queries keep their latest-result and bounded-wait paths; no analyser query
+adds a main-thread wait.
+
+Offline tests/scripts retain the existing synchronous measurement mode for deterministic captures. Host regressions
+with the real background worker assert zero main-thread analysis samples for roll and deep records. Absolute step
+and remote latency budgets still need unit verification.
+
 ## Statistics
 
 Two feeds go into the Measure statistics (`mstat`):

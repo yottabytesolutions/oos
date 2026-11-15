@@ -310,6 +310,46 @@
     {
       "decode_route": "Demo records",
       "height": 600,
+      "path": "demo/normal/eye/eye-window.png",
+      "provenance": "script=eye.txt;text=normal;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "68c8502e507c96a70d6443310dd73dc204375ec4f0949d85b4db0d8c2ff8b290",
+      "script_sha256": "2eb7a1eae9f52ab1cba89ce9d323b116468bff04fc4b32a1f9454f90a7703d8e",
+      "settings": "settings dots=Auto channels=2 tdiv=0.002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=32 records=192 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/normal/eye/eye-source.png",
+      "provenance": "script=eye.txt;text=normal;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "f32d504bd1bc80f32aa179bceeef5b9c6bcd718212e105edda06f83f3c92ed4f",
+      "script_sha256": "2eb7a1eae9f52ab1cba89ce9d323b116468bff04fc4b32a1f9454f90a7703d8e",
+      "settings": "settings dots=Auto channels=2 tdiv=0.002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=45 records=270 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
       "path": "demo/normal/mask/c0-mask-menu.png",
       "provenance": "script=mask.txt;text=normal;acq.pipeline=batch;measurements=script",
       "regions": [
@@ -2171,6 +2211,46 @@
     {
       "decode_route": "Demo records",
       "height": 600,
+      "path": "demo/large/eye/eye-window.png",
+      "provenance": "script=eye.txt;text=large;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "e6226d6ecc7df42be2b46a461b43fe16381a88bda1408fdfdbd50aee3d610b9f",
+      "script_sha256": "01938d6d0849265721b0621035f9f4a850a67c5419fbed72988abb9a0a38afb2",
+      "settings": "settings dots=Auto channels=2 tdiv=0.002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=32 records=192 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/large/eye/eye-source.png",
+      "provenance": "script=eye.txt;text=large;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "520ed72d8c2bcc9be48c173c032423d2fd20ecf8c154460148ffdc201ff403ee",
+      "script_sha256": "01938d6d0849265721b0621035f9f4a850a67c5419fbed72988abb9a0a38afb2",
+      "settings": "settings dots=Auto channels=2 tdiv=0.002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=45 records=270 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
       "path": "demo/large/mask/c0-mask-menu.png",
       "provenance": "script=mask.txt;text=large;acq.pipeline=batch;measurements=script",
       "regions": [
@@ -4026,6 +4106,46 @@
       "rgb_sha256": "a6b119076be40d5d1de50d2aa8ecb15666ca139a355ad82ff6fc34b082094270",
       "script_sha256": "c08c3f274deedc97611fc8243bf7e0bf14ff88605463ae123ea8cf73c86e796f",
       "settings": "settings dots=Auto channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=70 records=420 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/larger/eye/eye-window.png",
+      "provenance": "script=eye.txt;text=larger;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "08cda628dc79eae09546562c12000acb43e5115b3f3938ad6a4218c1226d93e8",
+      "script_sha256": "2e41b442707d4a605ae5455a3d3d52975e14c6b5a346dc4d091bf5feb30f877b",
+      "settings": "settings dots=Auto channels=2 tdiv=0.002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=32 records=192 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/larger/eye/eye-source.png",
+      "provenance": "script=eye.txt;text=larger;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "13039676caa952e1bea5e4b300590528f3ca268cbe17d170f78e6df33a471f9f",
+      "script_sha256": "2e41b442707d4a605ae5455a3d3d52975e14c6b5a346dc4d091bf5feb30f877b",
+      "settings": "settings dots=Auto channels=2 tdiv=0.002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=45 records=270 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },

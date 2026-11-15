@@ -5,10 +5,17 @@ Goal: the real analog bandwidth of the DHO924S under OOS with the AFE filter ope
 Analysers > Spectrum (average trace), Analysers > Bandwidth (step response, `ui/src/ui/bwtest.rs`,
 `oos_dsp::bandwidth`), Analysers > Bode (external generator over LAN).
 
+Spectrum and Bandwidth analyse full-rate data on the background measurement worker. Spectrum uses its DSP
+antialias filter when narrowing the band; its displayed span is clamped to the actual Nyquist limit. Bandwidth
+folds the entire raw frame, including samples outside the screen window, to retain equivalent-time phase coverage.
+The UI displays the latest finished result and marks a lagging view `updating`; a slow analysis never blocks the
+main step. These paths are host-verified; RF accuracy has not been reverified on the unit.
+
 ## Common set-up
 
 - Only CH1 on (1.25 GSa/s). Bandwidth limit **Full**, DC coupling, a V/div that fills about 6 divisions.
-- Memory depth at least 1 M (better 10 M): the longer the record, the finer the folding and the lower the noise.
+- For full raw analysis, memory depth at least 1 M (better 10 M) improves folding and noise. The live display
+  uses the full record in the background; check the sample-rate readout as described above.
 - Note V/div for every result. The bandwidth can depend on the range (different attenuator and gain paths).
   Measure at least 10 mV, 100 mV and 1 V/div.
 

@@ -145,8 +145,15 @@ fn reset(ui: &mut Ui) {
 /// measures the newest record while the frame loop goes on, and its results are taken a frame or two later. A record
 /// that comes while one is measured waits; a newer one replaces it. Without it (tests, scripts, the host) the
 /// measurements are made in the frame they belong to.
+pub(super) enum WorkerJob {
+    Measure(MeasJob),
+    Analyze(Box<analysis::window::Job>),
+}
+
 pub(super) struct MeasWorker {
-    pub(super) tx: std::sync::mpsc::Sender<MeasJob>,
+    pub(super) tx: std::sync::mpsc::Sender<WorkerJob>,
+    pub(super) analysis_rx: std::sync::mpsc::Receiver<analysis::window::Done>,
+    pub(super) analysis_busy: bool,
     pub(super) rx: std::sync::mpsc::Receiver<MeasDone>,
     /// a job is out
     pub(super) busy: bool,
@@ -155,13 +162,24 @@ pub(super) struct MeasWorker {
 
 impl MeasWorker {
     pub(super) fn start(little: u64) -> Option<MeasWorker> {
-        let (tx, jobs) = std::sync::mpsc::channel::<MeasJob>();
+        let (tx, jobs) = std::sync::mpsc::channel::<WorkerJob>();
+        let (analysis_done, analysis_rx) = std::sync::mpsc::channel();
         let (done, rx) = std::sync::mpsc::channel::<MeasDone>();
         let join = std::thread::Builder::new()
             .name("measure".into())
             .spawn(move || {
                 crate::http::to_little_cores(little);
-                while let Ok((n, cheap, work)) = jobs.recv() {
+                let mut previous = None;
+                while let Ok(job) = jobs.recv() {
+                    let (n, cheap, work) = match job {
+                        WorkerJob::Measure(work) => work,
+                        WorkerJob::Analyze(job) => {
+                            if analysis_done.send(analysis::window::run(*job, &mut previous)).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
                     let w: Vec<(usize, &[f32], f64, f64)> =
                         work.iter().map(|(c, v, dt, min)| (*c, v.samples(), *dt, *min)).collect();
                     let t0 = std::time::Instant::now();
@@ -178,7 +196,7 @@ impl MeasWorker {
                 }
             })
             .ok()?;
-        Some(MeasWorker { tx, rx, busy: false, join })
+        Some(MeasWorker { tx, rx, analysis_rx, analysis_busy: false, busy: false, join })
     }
 }
 

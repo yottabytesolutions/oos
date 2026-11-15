@@ -4,13 +4,16 @@
 //! The analysers in the plot area: spectrum analyser (RBW, trace modes, peak markers, waterfall,
 //! THD/SNR/SFDR), eye diagram with jitter (eyepage.rs), power analysis, and Identify (names the signals and applies a
 //! trigger and decoder). The maths is in oos-dsp (`spectrum`, `eye`, `power`, `identify`); this file holds the menus,
-//! the per-record update on every captured sample (`Ui::meas_wave`) and the drawing.
+//! full-record background analysis (`window`) and the drawing.
+
+mod compute;
+pub(super) mod window;
 
 use super::*;
 use oos_dsp::{eye, identify, power, spectrum};
 
 /// Analyser state kept between records.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct State {
     pub spec: Option<spectrum::Spectrum>,
     pub spec_avg: Option<spectrum::Avg>,
@@ -20,7 +23,7 @@ pub struct State {
     pub peaks: Vec<spectrum::Marker>,
     /// top of the band the pane follows (0 = none yet), and when the Results pane last had a spectrum
     pub spec_stop: f64,
-    pub spec_t: f64,
+    pub work: window::Work,
     /// the limit line, and of the traces since it was set: how many, how many went over, the worst bin
     pub limit: Option<spectrum::Limit>,
     pub limit_n: u64,
@@ -155,9 +158,12 @@ impl Ui {
             Item::PowV => format!("CH{}", m.pw_v + 1),
             Item::PowI => format!("CH{}", m.pw_i + 1),
             Item::SpecCenter => si_short(m.spec_center, "Hz"),
-            Item::SpecSpan if m.spec_span > 0.0 => si_short(m.spec_span, "Hz"),
-            Item::SpecSpan if self.spec_follows() && self.azr.spec_stop > 0.0 => {
-                format!("Auto {}", si_short(self.azr.spec_stop, "Hz"))
+            Item::SpecSpan if m.spec_span > 0.0 => {
+                let span = window::span(self, m.spec_center, m.spec_span);
+                si_short(span, "Hz")
+            }
+            Item::SpecSpan if window::follows(self) && self.azr.spec_stop > 0.0 => {
+                format!("Auto {}", si_short(window::span(self, self.azr.spec_stop / 2.0, self.azr.spec_stop), "Hz"))
             }
             Item::SpecSpan => "Full".into(),
             Item::SpecHarm => panes::harm_names()[m.spec_harm.min(PANE_HARMS.len() - 1)].clone(),
@@ -273,6 +279,7 @@ impl Ui {
     pub(super) fn ana_activate(&mut self, it: Item) -> bool {
         match it {
             Item::SpecLimitSet => {
+                self.azr.work.invalidate();
                 let Some(sp) = &self.azr.spec else {
                     self.toast("Spectrum: no data on the source");
                     return true;
@@ -282,6 +289,7 @@ impl Ui {
                 return true;
             }
             Item::SpecLimitClear => {
+                self.azr.work.invalidate();
                 self.azr.limit = None;
                 return true;
             }
@@ -295,6 +303,7 @@ impl Ui {
                 }
             }
             Item::EyeClear => {
+                self.azr.work.invalidate();
                 self.azr.eye = None;
                 self.azr.eye_res = None;
                 self.azr.page = Default::default();
@@ -313,13 +322,6 @@ impl Ui {
         self.azr.peaks.iter().copied().max_by(|a, b| a.dbv.total_cmp(&b.dbv))
     }
 
-    /// The spectrum is on the screen and its span is left to the signal.
-    fn spec_follows(&self) -> bool {
-        let shown = self.m.view == AView::Spectrum
-            || self.m.view == AView::Scope && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
-        shown && self.m.spec_span == 0.0 && PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)] > 0
-    }
-
     /// Puts the lines into the order of the table: by frequency or by level.
     pub(super) fn peaks_sort(&mut self) {
         if self.m.spec_sort == 0 {
@@ -327,61 +329,6 @@ impl Ui {
         } else {
             self.azr.peaks.sort_by(|a, b| b.dbv.total_cmp(&a.dbv));
         }
-    }
-
-    /// The spectrum of the source from the record: the view, or `pane` beside the waveform.
-    fn spectrum_update(&mut self, rec: &Record, pane: bool) {
-        let c = self.m.spec_src;
-        if rec.ch[c].is_empty() {
-            self.azr.spec = None;
-            self.azr.peaks.clear();
-            return;
-        }
-        let (v, dt) = self.meas_wave(rec, c);
-        let f1 = self.ana[c].get(Meas::Freq);
-        let (mut center, mut span) = (self.m.spec_center, self.m.spec_span);
-        if self.spec_follows() {
-            // no frequency this record: the span stays
-            self.azr.spec_stop =
-                spectrum::auto_stop(f1, PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)], self.azr.spec_stop);
-            (center, span) = (self.azr.spec_stop / 2.0, self.azr.spec_stop);
-        }
-        let area = if pane { self.pane_rect() } else { self.area };
-        // Auto RBW: the finest the record allows (window ENBW / record time)
-        let finest = spectrum::enbw(self.m.spec_win) / (v.len().max(1) as f64 * dt);
-        let s = spectrum::Settings {
-            center,
-            span,
-            rbw: if self.m.spec_rbw > 0.0 { self.m.spec_rbw } else { finest },
-            window: self.m.spec_win,
-            averaging: 16,
-            trace: [
-                spectrum::Trace::Normal,
-                spectrum::Trace::Average,
-                spectrum::Trace::MaxHold,
-                spectrum::Trace::MinHold,
-            ][self.m.spec_trace.min(3)],
-            detector: spectrum::Detector::Peak,
-            points: self.spec_box(area, pane).plot.w.max(100) as usize,
-            ref_level_dbv: self.m.spec_ref as f64,
-        };
-        let sp = spectrum::analyze(&v, dt, &s, &mut self.azr.spec_avg);
-        self.azr.peaks = spectrum::rank_lines(&sp, Some(f1), panes::PEAKS_MAX);
-        self.peaks_sort();
-        if self.m.spec_wf && !pane {
-            self.azr.wf.get_or_insert_with(|| spectrum::Waterfall::new(120)).push(&sp);
-        }
-        self.azr.dist = if self.m.spec_dist && !pane { spectrum::distortion(&v, dt, None, 10) } else { None };
-        if let Some(l) = &self.azr.limit {
-            self.azr.limit_n += 1;
-            if let Some(w) = spectrum::limit_check(&sp, l) {
-                self.azr.limit_over += 1;
-                if self.azr.limit_worst.is_none_or(|x| w.1 > x.1) {
-                    self.azr.limit_worst = Some(w);
-                }
-            }
-        }
-        self.azr.spec = Some(sp);
     }
 
     pub(super) fn identify_items(&self) -> Vec<Item> {
@@ -524,98 +471,9 @@ impl Ui {
         }
     }
 
-    /// Recomputes the active analyser from the last record (every captured sample of the window).
+    /// Queue full-record DSP; offline scripts use the synchronous measurement mode.
     pub(super) fn analyzer_update(&mut self) {
-        // a source that is off shows nothing: the first channel that is on takes over
-        if let Some(on) = (0..NCH).find(|&c| self.m.ch[c].on) {
-            for src in [&mut self.m.spec_src, &mut self.m.eye_src] {
-                if !self.m.ch[*src].on {
-                    *src = on;
-                }
-            }
-        }
-        // the second pane runs the spectrum beside the scope; the peak list of the Results pane needs it less often
-        let beside = self.m.view == AView::Scope
-            && self.pane_h() > 0
-            && matches!(self.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
-        if beside && self.m.pane == tables::PANE_RESULTS {
-            if self.azr.spec.is_some() && (self.now - self.azr.spec_t).abs() < 0.5 {
-                return;
-            }
-            self.azr.spec_t = self.now;
-        }
-        let view = if beside { AView::Spectrum } else { self.m.view };
-        if view == AView::Scope {
-            return;
-        }
-        let Some(rec) = self.last[0].clone() else { return };
-        match view {
-            AView::Spectrum => self.spectrum_update(&rec, beside),
-            AView::Eye => self.eye_update(&rec),
-            AView::Power => {
-                let (cv, ci) = (self.m.pw_v, self.m.pw_i);
-                if rec.ch[cv].is_empty() || (rec.ch[ci].is_empty() && self.m.pw_mode != PowerMode::Ripple) {
-                    self.azr.power = vec!["Voltage / current channel off: Switch on source in the menu".into()];
-                    return;
-                }
-                let (v, dt) = self.meas_wave(&rec, cv);
-                let i = if rec.ch[ci].is_empty() { Vec::new() } else { self.meas_wave(&rec, ci).0 };
-                self.azr.power = match self.m.pw_mode {
-                    PowerMode::Quality => {
-                        let q = power::quality(&v, &i, dt, None);
-                        vec![
-                            format!("Vrms {}   Irms {}", si(q.vrms, "V"), si(q.irms, "A")),
-                            format!(
-                                "P {}   S {}   Q {}",
-                                si(q.p_real, "W"),
-                                si(q.s_apparent, "VA"),
-                                si(q.q_reactive, "var")
-                            ),
-                            format!("PF {:.3}   phase {:.1}\u{b0}   f {}", q.pf, q.phase_deg, si(q.freq, "Hz")),
-                            format!("crest V {:.2}   crest I {:.2}   {} cycles", q.crest_v, q.crest_i, q.cycles),
-                        ]
-                    }
-                    PowerMode::Harmonics => {
-                        let h = power::harmonics(&i, dt, None, 15);
-                        let mut out = vec!["Current harmonics vs. IEC 61000-3-2 class A".to_string()];
-                        out.extend(h.iter().map(|(n, a, lim, pass)| {
-                            format!(
-                                "H{:<2} {:>10}  limit {:>10}  {}",
-                                n,
-                                si(*a, "A"),
-                                if lim.is_finite() { si(*lim, "A") } else { "-".into() },
-                                if *pass { "pass" } else { "FAIL" }
-                            )
-                        }));
-                        out
-                    }
-                    PowerMode::Switching => {
-                        let s = power::switching(&v, &i, dt, 10.0);
-                        vec![
-                            format!("E on {}   E off {}", si(s.e_on, "J"), si(s.e_off, "J")),
-                            format!("E cond {}   P avg {}", si(s.e_cond, "J"), si(s.p_avg, "W")),
-                            format!("{} transitions", s.transitions.len()),
-                        ]
-                    }
-                    PowerMode::Ripple => {
-                        let (pp, ac) = power::ripple(&v);
-                        let (pk, tpk, i2t) =
-                            if i.is_empty() { (f64::NAN, f64::NAN, f64::NAN) } else { power::inrush(&i, dt) };
-                        vec![
-                            format!("Ripple {} pp   {} rms AC", si(pp, "V"), si(ac, "V")),
-                            format!(
-                                "Inrush peak {} at {}   I\u{b2}t {}",
-                                si(pk, "A"),
-                                si(tpk, "s"),
-                                si(i2t, "A\u{b2}s")
-                            ),
-                        ]
-                    }
-                };
-            }
-            AView::Step => self.bw_update(&rec),
-            AView::Scope | AView::Bode => {}
-        }
+        window::update(self);
     }
 
     /// The active analyser in the plot area.
@@ -627,6 +485,10 @@ impl Ui {
             AView::Bode => self.draw_bode(cv),
             AView::Step => self.draw_bw(cv),
             AView::Scope => {}
+        }
+        if matches!(self.m.view, AView::Eye | AView::Power | AView::Step) && window::updating(self) {
+            let f = self.fonts();
+            cv.text(&f.s, self.area.x + 8, self.area.y + self.area.h - 4, "updating", DIM);
         }
     }
 
@@ -692,10 +554,16 @@ impl Ui {
         cv.no_clip();
         self.draw_spec_marks(cv, &b, sp, top);
         self.draw_peaks(cv, &b, sp, pane);
-        if let (true, Some(w)) = (wf_h > 0, &self.azr.wf) {
-            let wr = Rect::new(g.x, a.y + a.h - wf_h, g.w, wf_h);
+        self.draw_waterfall(cv, Rect::new(g.x, a.y + a.h - wf_h, g.w, wf_h), top);
+        if window::updating(self) {
+            cv.text(&f.s, a.x + 8, a.y + a.h - 4, "updating", DIM);
+        }
+    }
+
+    fn draw_waterfall(&self, cv: &mut Canvas, wr: Rect, top: f32) {
+        if let (true, Some(w)) = (wr.h > 0, &self.azr.wf) {
             let rows = w.rows.len().max(1);
-            let rh = (wf_h as usize / rows.max(wf_h as usize / 3)).max(1) as i32;
+            let rh = (wr.h as usize / rows.max(wr.h as usize / 3)).max(1) as i32;
             for (k, row) in w.rows.iter().rev().enumerate() {
                 let y = wr.y + k as i32 * rh;
                 if y >= wr.y + wr.h {

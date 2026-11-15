@@ -1,11 +1,8 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The eye and jitter page. `eye_update` runs per record: the eye and the cheap sums there, everything else (fits,
-//! charts, the coloured eye, all text) at most every `REFRESH` seconds into `Page`, so drawing only copies and plots.
-//!
-//! TIE is pooled over records: each record is timed against its own clock, so its TIE stands alone, and a window with
-//! few edges still adds up to a usable distribution. What drifts slower than one record is taken out by the fit.
+//! Eye and jitter calculation runs on the measurement worker; drawing reads the finished page.
+//! TIE is pooled per record, with each record fitted to its own clock; refresh is at most every `REFRESH`.
 
 use super::*;
 use oos_dsp::eye::{self, Bathtub, EdgeMeans, Jitter, JitterFit};
@@ -167,6 +164,7 @@ pub(super) struct Chart {
 }
 
 /// All the page draws, and the sums behind it.
+#[derive(Clone)]
 pub struct Page {
     pool: Vec<f64>,
     head: usize,
@@ -491,8 +489,8 @@ impl Page {
     }
 }
 
-impl Ui {
-    /// Eye page, per record.
+impl analysis::window::Context {
+    /// Eye page from the full measurement window on the measurement worker.
     pub(super) fn eye_update(&mut self, rec: &Record) {
         let c = self.m.eye_src;
         if rec.ch[c].is_empty() {
@@ -505,12 +503,12 @@ impl Ui {
         let lay = layout(self.area);
         let (pw, ph) = (lay.plot.w.max(64), lay.plot.h.max(64));
         let key = (c, vpd.to_bits(), ch.offset.to_bits(), self.m.eye_rate.to_bits(), pw, ph);
-        let st = self.stats[c];
+        let st = stats(&v, dt);
         let thr = if st.valid { 0.5 * (st.top + st.base) } else { 0.5 * (st.vmax + st.vmin) };
         let rate = (self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
         // a record without edges changes nothing: an idle bus must not cost the eye its range or its hits
         let Some(clk) = eye::recover_clock(&v, dt, thr, 0.1 * vpd, rate) else {
-            self.azr.page.status[1] = format!("Under 3 edges on CH{} in the last record", c + 1);
+            self.azr.page.status[1] = format!("Under 3 edges on CH{} in the analysis window", c + 1);
             return;
         };
         let left = self.azr.eye.as_ref().is_some_and(|e| {
@@ -569,7 +567,9 @@ impl Ui {
         p.title = format!("CH{} \u{b7} {} \u{b7} {}", self.m.eye_src + 1, si(1.0 / clk.period, "b/s"), clock);
         self.azr.eye_res = Some((meas, j, clk.period));
     }
+}
 
+impl Ui {
     pub(super) fn draw_eye(&self, cv: &mut Canvas) {
         let a = self.area;
         let p = &self.azr.page;

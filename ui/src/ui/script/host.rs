@@ -2,12 +2,14 @@
 
 //! The off-screen script runner, shared by ordinary scripts and deterministic host captures.
 
+pub mod soak;
+
 use super::batch::BatchScript;
 use crate::board::scripted::BatchKind;
 use crate::{cmd, gfx::Canvas, gpu, model, ui::Ui, GpuLayers};
 
 pub fn start(ui: &mut Ui, path: &str, args: &[String]) {
-    if let Err(e) = configure(ui, path, args).and_then(|gpu| run_script(ui, path, gpu, None)) {
+    if let Err(e) = configure(ui, path, args).and_then(|gpu| run_script(ui, path, gpu, None, false)) {
         eprintln!("oos-ui: script: {}", e);
         std::process::exit(2);
     }
@@ -50,7 +52,7 @@ fn run_headless(args: &[String]) -> Result<(), String> {
     oos_hal::model::init(oos_hal::model::Platform::build(None, None, Some("DHO924S")));
     let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
     configure(&mut ui, &path, args)?;
-    run_script(&mut ui, &path, None, kind)
+    run_script(&mut ui, &path, None, kind, true)
 }
 
 fn configure(ui: &mut Ui, path: &str, args: &[String]) -> Result<Option<gpu::Gpu>, String> {
@@ -85,10 +87,11 @@ pub struct HostScript {
     hdmi: Option<Canvas>,
     shot_n: u32,
     batch: Option<BatchScript>,
+    metadata: bool,
 }
 
 impl HostScript {
-    fn new(ui: &mut Ui, mut gpu: Option<gpu::Gpu>, kind: Option<BatchKind>) -> Result<Self, String> {
+    fn new(ui: &mut Ui, mut gpu: Option<gpu::Gpu>, kind: Option<BatchKind>, metadata: bool) -> Result<Self, String> {
         let hdmi =
             std::env::var("OOS_GPU_HDMI").ok().and_then(|s| crate::ui::Screen::parse(&s)).filter(|_| gpu.is_some());
         if let Some(m) = gpu
@@ -111,6 +114,7 @@ impl HostScript {
             hdmi: hdmi.map(|s| Canvas::new(s.w, s.h)),
             shot_n: 0,
             batch: kind.map(|k| BatchScript::new(ui, k)),
+            metadata,
         })
     }
 
@@ -145,6 +149,9 @@ impl HostScript {
             cmd::write_ppm(&self.cv, path)
         }
         .map_err(|e| format!("write shot {}: {}", path, e))?;
+        if self.metadata && path.ends_with(".png") {
+            super::capture::metadata(ui, path)?;
+        }
         println!("shot {}", path);
         self.capture_hdmi(ui, path)
     }
@@ -180,9 +187,15 @@ fn gpu_failure(area: &str, error: &str) -> ! {
     std::process::exit(3);
 }
 
-pub fn run_script(ui: &mut Ui, path: &str, gpu: Option<gpu::Gpu>, kind: Option<BatchKind>) -> Result<(), String> {
+pub fn run_script(
+    ui: &mut Ui,
+    path: &str,
+    gpu: Option<gpu::Gpu>,
+    kind: Option<BatchKind>,
+    metadata: bool,
+) -> Result<(), String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("read script {}: {}", path, e))?;
-    let mut host = HostScript::new(ui, gpu, kind)?;
+    let mut host = HostScript::new(ui, gpu, kind, metadata)?;
     host.render_step(ui)?;
     for line in text.lines() {
         match cmd::run(ui, line) {
@@ -244,12 +257,13 @@ mod tests {
         )
         .unwrap();
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
-        run_script(&mut ui, script.to_str().unwrap(), None, None).unwrap();
+        run_script(&mut ui, script.to_str().unwrap(), None, None, false).unwrap();
         assert!((ui.now - 5.0 / 30.0).abs() < 1e-12, "initial step + frames + each shot");
         assert!(std::fs::read(ppm).unwrap().starts_with(b"P6\n1024 600\n255\n"));
         assert!(std::fs::read(png).unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
         assert!(!late.exists());
-        assert!(run_script(&mut ui, root.join("missing").to_str().unwrap(), None, None).is_err());
+        assert!(!root.join("two.png.meta").exists(), "ordinary scripts keep their capture outputs unchanged");
+        assert!(run_script(&mut ui, root.join("missing").to_str().unwrap(), None, None, false).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

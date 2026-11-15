@@ -2,7 +2,8 @@
 
 mod support;
 
-use support::{isolated_inputs, run_host, Inputs};
+use std::process::{Command, Output};
+use support::{isolated_inputs, Inputs};
 
 fn success(output: &std::process::Output) -> String {
     assert!(
@@ -33,6 +34,7 @@ fn child_preserves_steps_capture_names_and_quit() {
     rgb(&inputs, "one.ppm");
     assert!(std::fs::read(inputs.path("two.png")).unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
     assert!(!inputs.path("late.ppm").exists());
+    assert!(inputs.path("two.png.meta").exists());
     let stat = std::fs::read_to_string(inputs.path("state.txt")).unwrap();
     assert!(stat.contains("frames 5 records 30"), "{}", stat);
     assert!(stat.contains("t 0.2 "), "{}", stat);
@@ -108,7 +110,9 @@ fn average_zoom_and_slow_timebases_drain_records_without_a_time_cutoff() {
 
 #[test]
 fn codes_keep_four_channel_and_dots_decode_fallbacks_repeatable() {
-    for commands in ["key ch2\nkey ch3\nkey ch4\n", "menu Display\nset Dots = On\n"] {
+    for commands in
+        ["key ch2\nkey ch3\nkey ch4\n", "menu Display\nset Dots = On\n", "menu Horizontal\nset Time/div = 200 ns\n"]
+    {
         let a = isolated_inputs();
         let b = isolated_inputs();
         let script = format!("{}frames 2\nshot fallback.ppm\n", commands);
@@ -120,6 +124,7 @@ fn codes_keep_four_channel_and_dots_decode_fallbacks_repeatable() {
             "{}",
             log
         );
+        assert!(log.contains("newest 46 route workers decode decoded"), "{}", log);
         assert_eq!(rgb(&a, "fallback.ppm"), rgb(&b, "fallback.ppm"));
     }
 }
@@ -134,4 +139,44 @@ fn scripted_batches_reject_measurements_enabled_by_commands() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("scripted batches require measurements off until M10"));
         assert!(!inputs.path("forbidden.ppm").exists());
     }
+}
+
+#[test]
+fn single_captures_one_post_arm_record_and_stops() {
+    let inputs = isolated_inputs();
+    let log = success(&run_host(
+        &inputs,
+        "key single\nframes 3\nshot single.ppm\nstat state.txt\n",
+        &["--scripted-batch", "raw"],
+    ));
+    assert!(log.contains("batch 2 submitted 28 deposited 26 delivered 1 dropped 0 newest 28 route records"), "{}", log);
+    let state = std::fs::read_to_string(inputs.path("state.txt")).unwrap();
+    assert!(state.contains("run Stop"), "{}", state);
+    rgb(&inputs, "single.ppm");
+}
+
+pub fn run_host(inputs: &Inputs, script: &str, extra: &[&str]) -> Output {
+    std::fs::write(inputs.path("script.txt"), script).expect("isolated script must be writable");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_oos-ui"));
+    command
+        .env_clear()
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC")
+        .env("HOME", inputs.path("home"))
+        .current_dir(inputs.path(""))
+        .arg("--headless-script")
+        .arg("--script")
+        .arg(inputs.path("script.txt"))
+        .arg("--store-dir")
+        .arg(inputs.path("store"))
+        .args(extra);
+    support::run_command(inputs, command, 120)
+}
+
+#[test]
+fn direct_codes_report_the_observed_worker_route() {
+    let inputs = isolated_inputs();
+    let script = "menu Horizontal\nset Time/div = 5 µs\nframes 2\nshot direct.ppm\n";
+    let log = success(&run_host(&inputs, script, &["--scripted-batch", "codes"]));
+    assert!(log.contains("newest 46 route workers decode codes"), "{}", log);
 }

@@ -9,25 +9,50 @@
 # Each script runs with an empty storage directory and a fixed clock (OOS_FIXED_TIME), so two runs of the same source
 # give the same pictures. Run `record` before a change and `check` after it: a pure refactoring must report nothing.
 set -e
-cd "$(dirname "$0")/.."
+root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
+. "$root/tools/output.sh"
+case ${1:-check} in
+    golden-check|golden-update)
+        cd "$root"
+        python3 tools/output.py build --release -p oos-ui
+        unset OOS_GOLDEN_UPDATE
+        if [ "$1" = golden-check ]; then
+            exec cargo test --offline --locked --release -p oos-ui --test golden compare_scripted_pictures -- --nocapture
+        fi
+        inventory=$CARGO_TARGET_DIR/golden-update-inventory
+        OOS_GOLDEN_INVENTORY="$inventory" cargo test --offline --locked --release -p oos-ui --test golden export_update_inventory -- --ignored --exact
+        exec python3 ui/tools/golden_run.py --inventory "$inventory/inventory.tsv" --binary "$CARGO_TARGET_DIR/release/oos-ui" --profile release --update
+        ;;
+esac
+cd "$root/ui"
 export PATH="$HOME/.cargo/bin:$PATH"
 mode=${1:-check}
-base=${2:-target/layout-base}
+base=${2:-$CARGO_TARGET_DIR/layout-base}
 case $mode in record | check) ;; *) echo "usage: $0 record|check [dir]" >&2; exit 2 ;; esac
-cargo build --release --quiet
-bin=$PWD/../target/release/oos-ui
-if [ "$mode" = record ]; then out=$base; else out=target/layout-new; fi
-rm -rf "$out" target/layout-work
-mkdir -p "$out" target/layout-work
+python3 "$root/tools/output.py" build --release -p oos-ui
+bin=$CARGO_TARGET_DIR/release/oos-ui
+if [ "$mode" = record ]; then out=$base; else out=$CARGO_TARGET_DIR/layout-new; fi
+out=$(python3 - "$out" "$CARGO_TARGET_DIR" <<'PYOUT'
+from pathlib import Path
+import sys
+path, target = (Path(x).resolve() for x in sys.argv[1:])
+if path == target or not path.is_relative_to(target):
+    sys.exit('layout output must be strictly inside the selected worktree target')
+print(path)
+PYOUT
+)
+workroot=$CARGO_TARGET_DIR/layout-work
+rm -rf "$out" "$workroot"
+mkdir -p "$out" "$workroot"
 size_arg=
 [ -n "$SIZE" ] && size_arg="--size $SIZE"
 for ts in normal large larger; do
 	mkdir -p "$out/$ts"
 	for t in tests/*.txt; do
 		name=$(basename "$t" .txt)
-		work=$PWD/target/layout-work/$ts-$name
+		work=$workroot/$ts-$name
 		mkdir -p "$work/store"
-		{ echo "textsize $ts"; sed "s#\$S#$PWD/$out/$ts#g" "$t"; } > "$work/script.txt"
+		{ echo "textsize $ts"; sed "s#\$S#$out/$ts#g" "$t"; } > "$work/script.txt"
 		# shellcheck disable=SC2086
 		OOS_FIXED_TIME=1762862400 "$bin" --script "$work/script.txt" --store-dir "$work/store" $size_arg > /dev/null 2> "$work/err.txt" || {
 			echo "$ts $name: oos-ui failed, see $work/err.txt" >&2

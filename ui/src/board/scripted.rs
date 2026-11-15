@@ -12,6 +12,9 @@ pub enum BatchKind {
     Codes,
     LivePairs,
     DeepPairs,
+    Roll,
+    Scan,
+    HardwareAverage,
 }
 
 impl BatchKind {
@@ -21,6 +24,9 @@ impl BatchKind {
             "codes" => Ok(Self::Codes),
             "pairs" => Ok(Self::LivePairs),
             "deep-pairs" => Ok(Self::DeepPairs),
+            "roll" => Ok(Self::Roll),
+            "scan" => Ok(Self::Scan),
+            "hw-average" => Ok(Self::HardwareAverage),
             _ => Err(format!("unknown scripted batch kind {}", value)),
         }
     }

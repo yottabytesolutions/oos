@@ -20,12 +20,23 @@ Reserved paths: existing `docs/tasks/0002-m01-golden-pictures.md`, `ui/src/main.
 `ui/src/ui/script.rs`, `ui/src/ui/host.rs`, `ui/src/ui.rs`, `ui/src/board/mod.rs`,
 `ui/tests/host_script.rs`, `ui/src/drawpipe.rs`, `ui/src/board/dho/mod.rs`,
 `ui/tools/layout-check.sh`; new `ui/src/ui/script/host.rs`, `ui/src/ui/script/batch.rs`,
-`ui/src/board/dho/scripted.rs`, `ui/src/drawpipe/host.rs`, `ui/src/system.rs`,
-`ui/src/system/host_heap.rs`, `ui/tests/golden.rs`, `ui/tests/soak.rs`,
-`ui/tests/support/mod.rs`, `ui/tests/support/cases.rs`, `ui/tests/m1-modes.txt`, `ui/tests/golden/`,
-`ui/tools/golden.py`, `ui/tools/test_golden.py`, `target/COMMIT_MSG.txt`.
+`ui/src/board/dho/scripted.rs`, `ui/src/drawpipe/host.rs`, `ui/tests/golden.rs`, `ui/tests/soak.rs`,
+`ui/tests/support/mod.rs`, `ui/tests/support/cases.rs`, `ui/tests/m1-modes.recipes`, `ui/tests/golden/`,
+`ui/tools/golden.py`, `ui/tools/test_golden.py`, `ui/tools/golden_run.py`,
+`ui/src/ui/script/capture.rs`, `ui/src/ui/script/host/soak.rs`,
+`ui/src/board/dho/scripted/records.rs`, `ui/Cargo.toml`, `target/COMMIT_MSG.txt`.
 Review round 1 extension, authorized by the coordinator: `ui/src/board/scripted.rs`,
 `docs/tasks/0011-m10-grading-records.md`, `gpu/README.md`.
+
+Steps 3-6 review round 1 plan (2026-11-15): select about twenty representative golden cases for
+debug and coverage, retain all release comparisons and opt in to the full debug matrix and 10 000-step
+soak. Run a 1000-step release soak by default with a cycle-end no-growth regression. Trace and fix the
+reported allocation growth, retaining the fixed storm and documenting any production change separately.
+Rename the recipe catalogue, add persistence/grade matrix rows and record references; derive decode routes
+from observed adapter callbacks. Limit full reports to failures and retain two runs. Clear child environments,
+require an explicit update command and explain the library linkage cost. Fast gate and focused tests only;
+no commits, hardware, held paths or xtask edits. Additional required reservations: `ui/src/pacing.rs`
+(bounded diagnostic history allocation and regression), `ui/tests/m1-modes.recipes`, `ui/tests/golden/README.md`.
 
 Review round 1 plan: replace the adapter re-export with a board-owned scripted source/batch contract;
 constrain every scripted batch capture to measurements off, test attempted re-enablement and record the M10
@@ -34,7 +45,7 @@ as batch pipeline mode and move the size diagnostic beside its caller. Keep the 
 removed. Extract small modules for any size growth; leave `xtask/data` untouched. No commits or hardware access.
 
 The coordinator accepted these implementation reservations and released task 0001's overlaps.
-The current assignment is implementation steps 1 and 2 only. The coordinator accepted the four-path extension
+The current assignment is implementation steps 3 to 6 on integrated steps 1 and 2. The coordinator accepted the four-path extension
 for the explicit Host constructor, record-budget condition, scripted Board port and child integration tests.
 Keep `ui/src/ui.rs` to the required seam, with no refactors; all other content stays read-only.
 Keep `ui/src/board/mod.rs` to a few port lines, with no cross-boundary imports. The coordinator rebases this
@@ -134,7 +145,7 @@ Touched legacy size entries must shrink or stay. Do not edit ratchet files, lint
    Run twice from fresh processes and require identical decoded captures before accepting the initial set.
 
 4. **Record the M1 mode matrix. Estimate: 0.5 day.**
-   Add named cases in `ui/tests/support/cases.rs` and named-menu scripts in `ui/tests/m1-modes.txt`.
+   Add named cases in `ui/tests/support/cases.rs` and named-menu scripts in `ui/tests/m1-modes.recipes`.
    Use the following explicit matrix in addition to the existing screen scripts.
    Lines means `DotsMode::Off`, dots means `On`, Auto means `Auto`, not trigger Auto.
 
@@ -171,17 +182,13 @@ Touched legacy size entries must shrink or stay. Do not edit ratchet files, lint
    Change mappings only after the prior batch completes. Add explicit old-stamp drops with exact expected counts.
    Record all available drop counters per mode and assert submitted-frame accounting after each drain.
    Expect zero unplanned drops. Do not assert M9's zero partial merges on today's asynchronous implementation.
-   `HostScript::sample_heap` records process-wide live heap bytes after each quiescent step.
-   Default measurement: `system::host_heap::live_bytes` in new `ui/src/system/host_heap.rs`.
-   Register the system adapter in `ui/src/system.rs` and `main.rs`.
-   On macOS use malloc zone statistics; on GNU Linux use allocator live bytes including mmap allocations.
-   Keep FFI and its safety invariants inside this allowed system adapter. An unsupported host fails explicitly.
-   Measure live requested/used bytes, not cumulative allocations or RSS. Report the backend and scope.
-   At step 1 000 set plateau B to the maximum sampled live bytes over the final complete storm cycle.
-   Every later cycle peak must stay at most ceil(1.01 * B). Also report cycle-end live bytes and high-water bytes.
-   Include worker allocations, queues, history, maps and the source pool. Preallocate fixed output/report buffers
-   before warm-up and include them in B. Stream samples without retaining an expanding log in the child.
-   If G2's process-wide counting allocator is available cheaply, reuse it in a dedicated test executable instead.
+   The standalone integration soak links the existing `main.rs` as a library target, with library unit tests and
+   doctests disabled. Re-export the existing `Ui` type at the crate root and use its narrow scripted-soak facade.
+   The process-wide counting `GlobalAlloc` lives in `ui/tests/soak.rs` only. No production allocator or native
+   heap introspection is used. G1 must authorize this exact test-only unsafe path while holding `xtask/`.
+   At step 1 000 set plateau B to the maximum sampled live bytes over the final complete 100-step storm cycle.
+   Every later cycle peak must stay at most ceil(1.01 * B). Record cycle-end live and allocator high-water bytes.
+   Include workers, queues, history, maps and source pool. Open fixed output buffers before warm-up; stream rows.
    It must track successful alloc, alloc_zeroed, realloc deltas and dealloc across workers, without recursion.
    Do not add an allocator to the production binary or duplicate G2's zero-allocation hot-path guards.
    Test the measurement with a deliberately retained buffer that grows beyond 1 %, plus a freed transient buffer.
@@ -213,8 +220,8 @@ Total implementation estimate: 2.75 host days after prerequisites, plus coordina
    after releasing task 0001's overlapping paths. No initial references should be recorded on the old inputs.
 2. Does the initial RGB tolerance of 1 with a 0.1 % outlier budget per region preserve the intended sensitivity?
    Review the first gallery and repeated-run results. Do not widen it to conceal a visible change.
-3. Can G2 supply a process-wide live-byte counter without expanding M1? Otherwise accept the native heap observer
-   and macOS/GNU Linux host scope. Native allocator caching may affect the strict 1 % characterisation.
+3. Resolved by the coordinator: the Rust counting allocator is confined to the soak executable. Native heap
+   introspection is not used. G1 owns the precise test-only unsafe authorization; the 1 % bound is unchanged.
 4. Can the current record budget and worker handoff produce repeatable complete captures under host load?
    Use bounded completion and small record batches. If wall time still changes content, coordinate the deterministic
    seam with the hermetic-tests owner before recording, rather than changing drawing policy here.
@@ -222,6 +229,173 @@ Total implementation estimate: 2.75 host days after prerequisites, plus coordina
    until that hook lands. Roll/scan producer and bounded-memory claims remain owned by M3.0 and M5b.
 
 ## Status
+
+- 2026-11-15: final-source soak confirmation for review round 1: release 8 passed in 44.24 s,
+  including all five 1000-step modes and their cycle-end checks; debug 8 passed in 0.25 s, including
+  allocator probes/trend tests and the documented release-only composed-soak selection. Logs:
+  `target/m1-r1-soak-{release,debug}-final.log`. Completed all owned validation processes. The earlier
+  34.33 s short run remains useful timing evidence; final source and its report changes were reconfirmed.
+  `target/COMMIT_MSG.txt` has five proposed sections with file lists, including the separate production
+  pacing fix. No commits. Pending coordinator/G1 allowance and independent Claude verification remain.
+
+- 2026-11-15: steps 3-6 review round 1 fixes, intentionally uncommitted for the standard-tier Claude
+  verification round. Read `delivery.md` from `overhaul`; fast gate and focused tests only. P1 runtime:
+  ordinary release compares all 260 cases/615 PNGs; debug and coverage compare an explicit 20-case/44-PNG
+  subset including every route and pre-averaged records. Full debug uses `OOS_FULL_GOLDEN=1`.
+  Default composed soak is release-only, five modes x 1000 steps, baseline cycle 401-500; the explicit
+  `OOS_LONG_SOAK=1` variant retains 10 000 steps and the original cycle 901-1000 baseline. README records
+  these temporary image-tier commands pending task 0027. No `xtask/` change.
+  P2 allocation source: bounded `pacing::State::settled` retention, with 56-byte `Settle` entries and
+  VecDeque capacity jumps accounting for 3584/7168/14336 bytes. Reserve each diagnostic history's existing
+  300-entry bound on first use, leaving samples and eviction unchanged. The capacity regression failed before
+  (exit 101, one test failed), then passed in debug and release (exit 0, one test each):
+  `target/m1-r1-history-{before,after,release}.log`. This production fix has its own message/file-list section
+  in `target/COMMIT_MSG.txt`. The soak adds a fixed six-cycle end-live window: maximum of the last three ends
+  must not exceed the prior three, independently of the 1 % cycle-peak allowance. The regression rejects
+  a one-byte retained rise. Initial short release suite passed 8 tests in 34.33 s; the extended raw-only
+  10 000-step test passed in 63.59 s with 300 planned drops and no unplanned or zone drops. Evidence:
+  `target/m1-r1-soak-{release-short,release-long-raw}.log` and `target/m1-r1-soak-audit.json`.
+  P2 matrix/recipes: renamed the catalogue to `m1-modes.recipes`; 32 additional cases cross codes/live pairs/
+  deep pairs with 500 ms and grade Off/On, lines/dots and 1/4 channels, plus Demo/raw 200 ns persistence rows.
+  Recorded 64 new references after two exact fresh-process captures each. All 551 existing PNGs remain
+  byte-for-byte unchanged (`target/m1-r1-reference-audit.json`). No shot/metadata output is present in `ui/`.
+  P2 artifacts: full image/HTML reports are failure-only, successful runs retain compact timings and child logs;
+  prune to two `run-*` directories per profile. Seven Python regressions pass, including failure-only reporting
+  and retention. Cleared the completed update's duplicate candidate tree. P2 library target: retained because
+  the integration allocator must observe the UI and workers in its own process. Disabled library unit tests,
+  doctests and benchmarks; the ordinary binary still drives goldens. README and Cargo comment explain the
+  extra compilation and shared-main warning. No new application target or startup change.
+  P3: record actual worker decode callback use (`codes`, `decoded`, `mixed`, or `records-decoded`) instead
+  of parsing provenance, covering the 200 ns codes fallback with child/runner tests. The Python runner clears
+  its environment except PATH and explicit coverage instrumentation. Removed the unrelated quit child from
+  the allocation probe. Cargo tests never honor `OOS_GOLDEN_UPDATE`; only the wrapper's explicit Python
+  `--update` can replace references. The read-only debug test passed with inherited `OOS_GOLDEN_UPDATE=1`
+  and `OOS_PIPELINE=frames`; old reference hashes are unchanged.
+  Measured comparison times (focused runs, not a full gate): release full 96.873 s (260 cases, 520 processes,
+  1230 exact-repeat captures); debug smoke 112.773 s; coverage smoke 124.472 s (20 cases, 40 processes,
+  88 exact-repeat captures each). Cargo suite times are 99.02/113.12/125.85 s respectively; compilation is
+  separate. Logs: `target/m1-r1-golden-{release,debug,coverage}.log`. Focused host tests pass in both profiles:
+  13 tests, debug 11.18 s, release 0.67 s. Final host clippy exits 0 with no new warning counts in touched paths;
+  pacing retains its existing ratcheted findings. Changed-file privacy audit: 1255 files, zero findings;
+  message scan: zero. The broad tree audit still finds 153 pre-existing findings outside these changed files.
+  Final fast gate exits 1 exactly as printed: `gate FAILED in 14 s: unsafe`. Formatting, sizes, architecture
+  and mutable statics pass; the sole failure is nine constructs in `ui/tests/soak.rs`, whose exact-path
+  authorization remains with the coordinator/G1. No ratchet, held-path, hardware, hook or credential changes;
+  no commit, push or full-gate acceptance claimed. All current source/reference changes are intentional.
+  Coordinator owns the pending independent verification and full integration gate.
+
+
+- 2026-11-15: steps 3-6 author handoff ready, intentionally uncommitted on `t0002-golden-pictures`, parent
+  `2b5d170fd59d487bbf8851eab84820b9bd07a24c`. Final candidate source fingerprint:
+  `a4a77c733be740cb051592f3feca8e489cee43fb13cdc63eff8e42f7730b369b` (`target/m1-candidate.json`).
+  Golden references: 228 cases, 551 PNGs; two fresh runs per profile, all 551 decoded RGB hashes exactly equal
+  across debug and release. Both final corpus runs pass. Explicit updates remain
+  `sh ui/tools/layout-check.sh golden-update`; normal checks and coverage do not update references.
+  PNG/comparison/environment regressions: 5 Python tests pass. Headless child integration: 11 pass in each profile.
+  Ordinary-script metadata compatibility: 1 unit test passes in each profile; post-change Demo/raw reference
+  sanity checks match exactly in two fresh processes per profile. Existing worker tests: 11 pass, 2 opt-in timing
+  tests ignored per profile; source/record fixtures: 5 pass per profile. No kernel-equivalence references changed.
+  Allocation soak: all five modes complete 10 000 composed steps in each profile. Debug target reports
+  5 passed, 0 failed, 0 ignored; release reports 6 passed, 0 failed, 0 ignored. Each mode accounts for 136468
+  acquired, 136168 used and exactly 300 planned old-stamp drops, with no unplanned/zone drops. Maximum later-cycle
+  growth is 0.108 % in each profile, below the unchanged 1 % bound. The independent CSV audit verifies cycle
+  901-1000 baselines, every later peak, complete step counts and counter sums (`target/m1-soak-audit.json`).
+  Full gate remains exit 1: `gate FAILED in 611 s: unsafe, tests (debug), tests (release), coverage`.
+  Final fast gate fails only the nine unsafe constructs of the approved soak-only allocator. All formatting,
+  size, architecture, mutable-static, host/ARM clippy and perf checks pass; no ratchet, hook or xtask files changed.
+  The full gate's socket and temporary-Git permission failures and HAL-stopped coverage require an unrestricted
+  coordinator run. Focused instrumented child runs prove host/batch/PNG metadata coverage; no coverage floor
+  pass is claimed. G1 owns the exact test-only allocator authorization; no new test-discovery step is needed.
+  Privacy message scan and diff check pass. Changed files contain only the two independently verified synthetic
+  IDAT false positives; the proposed exact policy and regression proof are in `target/m1-privacy-exceptions.json`,
+  `target/m1-privacy-proof.json` and `target/m1-privacy-changed-files.json`. The policy is unchanged. Adopt reviewed
+  exceptions before the reference fixture commit, as the privacy instructions require.
+  Final galleries: `target/golden/debug/run-6px18b5q/index.html` and
+  `target/golden/release/run-a4zcpn7p/index.html`. Final soak evidence uses invocation
+  `40167-1794740275834307000-0` in debug and `5882-1794742030030821000-0` in release.
+  Four proposed commit messages, reasons and per-step file lists are in `target/COMMIT_MSG.txt`; shared files
+  require step-specific hunks. All source/reference changes are intentional. Build receipts verify through
+  `tools/output.py`. Completed/superseded galleries and scratch files were cleaned, with final evidence and
+  active build caches retained. The superseded finite soak exited normally; all known task processes are gone
+  and its abandoned inputs were removed (`target/m1-active-processes.json`).
+  Remaining coordinator actions: G1 authorization/integration, reviewed privacy-policy adoption, independent
+  Claude review and the full gate/coverage on the final commits. GPU gate wiring stays with task 0027.
+  The coordinator closes/moves this task at integration. No commit, push, hardware access or unit verification.
+
+
+- 2026-11-15: late compatibility check confines PNG metadata sidecars to explicit headless execution. Ordinary
+  script capture behavior stays intact; its unit regression passes in debug and release, and the full 11 child
+  tests pass in each profile. Demo/basic and raw baseline reference sanity checks use two fresh processes per
+  profile and match the recorded RGB hashes exactly (`target/m1-metadata-sanity.json`). Full corpus proof remains
+  551/551 exact debug/release matches. All source checks are complete apart from G1's owned unsafe authorization.
+  Debug live pairs has completed 10 000 steps within 1 %; raw, codes and pairs are now complete in both profiles.
+  Deep-pairs and average debug validation remains running. The independent CSV audit agrees with every completed
+  mode's 136468 acquired, 136168 used and 300 planned drops, with no unplanned or zone drops.
+
+
+- 2026-11-15: reference validation checkpoint for steps 3-6. Final release and debug golden runs both pass:
+  228 cases, 551 references, 456 fresh processes and 1102 exact-repeat captures per profile. Independent decoded
+  SHA-256 comparison finds zero debug/release differences across all 551 captures
+  (`target/m1-debug-release-equality.json`). Galleries are `target/golden/release/run-a4zcpn7p/` and
+  `target/golden/debug/run-6px18b5q/`. New Python self-tests: 5 passed; child integration: 11 passed per profile;
+  synthetic source/record tests: 5 passed per profile; worker tests: 11 passed, 2 opt-in timing tests ignored,
+  per profile. The named existing kernel equivalence tests remain unchanged and pass.
+  Final release allocation suite passes all 6 tests, including five modes x 10 000 composed steps, all within
+  1 %, exactly 300 planned drops per mode and no unplanned/zone drops. The report buffer is preallocated before
+  warm-up. Raw/average use 200 ns/div; codes use 5 us/div for direct-code eligibility; pairs/deep pairs retain their
+  100 k/10 M acquisition metadata. Independent CSV audit is `target/m1-soak-audit.json`. Debug raw and codes have
+  completed 10 000 steps; live pairs is running. Both test targets are ordinary Cargo targets, with library unit
+  tests disabled to avoid duplication. Child environments preserve only instrumentation's `LLVM_PROFILE_FILE`
+  alongside hermetic inputs; focused coverage proves execution in host, batch and PNG metadata modules
+  (`target/m1-coverage-child-proof.json`). This is not a full coverage-floor result.
+  Renewed full gate exits 1: `gate FAILED in 611 s: unsafe, tests (debug), tests (release), coverage`.
+  Formatting, sizes, architecture, mutable statics, host/ARM clippy and perf guards pass. UI debug/release each
+  report 529 passed, 21 socket-restricted failures, 29 ignored. HAL reports 329 passed, 1 permission failure,
+  8 ignored; xtask reports 40 passed, 1 temporary-Git-commit permission failure. Coverage stops at that HAL failure.
+  G1 owns authorization of the accepted test-only allocator path (nine unsafe constructs); M1 edits no `xtask/`.
+  Privacy finds two accidental email-shaped byte sequences inside PNG IDAT payloads, absent from decoded RGB.
+  No real addresses are present. Exact candidate exceptions and regression evidence are in
+  `target/m1-privacy-exceptions.json` and `target/m1-privacy-proof.json`. Policy is unchanged. Under
+  `tools/privacy/README.md`, independent review and policy adoption precede the fixture commit; the coordinator
+  owns that ordering. Changed-file audit finds zero other findings; the message scan has zero findings.
+  Final full gate/coverage outside the sandbox and independent Claude review remain required. Source fingerprint
+  and evidence index are in `target/m1-candidate.json`; four proposed messages and per-step file lists are in
+  `target/COMMIT_MSG.txt`. All source/reference edits remain intentional and uncommitted by instruction.
+  Superseded galleries and scratch drafts were removed; active debug/soak evidence and build caches are retained.
+
+
+- 2026-11-15: steps 3-6 resumed on `t0002-golden-pictures`, integrated base
+  `2b5d170fd59d487bbf8851eab84820b9bd07a24c`; intentionally uncommitted. Step 3 adds strict stdlib RGB PNG
+  decoding, per-plot and remaining-screen RGB-1/floor(N/1000) comparison, complete capture inventory checks,
+  expected/actual/nonzero-diff galleries and explicit atomic reference replacement through
+  `sh ui/tools/layout-check.sh golden-update`. Four comparator regression tests pass. Output directories use
+  `tools/output.py`; headless children open no listener. The existing server harness is not duplicated.
+  Step 4 records 228 cases and 551 initial PNGs plus a manifest. Final release recording passed:
+  456 fresh processes, 1102 exact-repeat decoded captures, including exact Auto/lines equality. Reference base,
+  hermetic-input revision, settings, acquisition metadata and regions are recorded. Worker cases keep both
+  measurement lists off; Demo is batch mode. Synthetic roll/scan and pre-averaged records characterise consumers.
+  Visual QA found an obscured zoom capture; the new tested `menu close` command and menu-state check prevent it.
+  SINGLE exposed a pre-arm fixture batch: it now supplies one post-arm record. The regression fails with the
+  old plan (exit 101) and passes with the fix (exit 0), in `target/m1-single-{before,after}.log`.
+  Child integration tests pass in both profiles: 11 passed, none failed or ignored. Synthetic record/source
+  tests pass in debug: 5 passed. Final reference gallery: `target/golden/release/run-a4zcpn7p/index.html`.
+  Step 5 links the unchanged application module graph as a library target with library tests disabled; the
+  sole allocator is in `ui/tests/soak.rs`. The retained-growth/free/realloc probe passes. Five release modes
+  completed 10 000 composed steps each within the 1 % bound, with exactly 300 planned old-stamp drops per mode,
+  no unplanned or zone drops. Debug remains running. Raw/average use 200 ns/div, pairs 200 us/div, deep pairs
+  1 ms/div; the final codes selection uses 5 us/div to exceed the direct-code byte threshold and is being rerun.
+  Fixed 100-step changes start at step one; baseline remains cycle 901-1000. No warm-up extension or bound change.
+  Current evidence: `target/m1-soak-{debug,release}-final.log`, `target/golden/soak/`.
+  Step 6 validation is in progress. First full gate exited 1: `gate FAILED in 745 s: unsafe, clippy,
+  tests (debug), tests (release), coverage`. Formatting, size, architecture, mutable statics and perf guards passed.
+  Fixed the new slow-vector-initialization lint; renewed gate and ARM clippy are running. G1 must authorize the
+  exact test-only `unsafe ui/tests/soak.rs` path (nine constructs) for the accepted allocator; no `xtask/` edits.
+  Socket/Git-fixture/coverage restrictions remain. Final debug reference comparison is running. An interrupted
+  superseded dense-debug child could not be terminated under the sandbox; its private process handoff is in
+  `target/m1-active-processes.json`, owner codex, next action coordinator cleanup outside the sandbox.
+  No full-gate pass, independent acceptance, GPU parity or hardware verification claimed. GPU gate wiring stays
+  with task 0027 per coordinator answers. No commit, push, ratchet, hook, credential or device changes.
+
 
 - 2026-11-15: review round 1 resumed on `t0002-golden-pictures`, base `d12539c`, uncommitted by instruction.
   Coordinator rejected both blank-line restorations; removed them. `board/mod.rs` remains 454 measured lines,

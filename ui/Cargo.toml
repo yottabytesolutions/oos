@@ -22,6 +22,14 @@ unwrap_used = "warn"
 undocumented_unsafe_blocks = "warn"
 missing_safety_doc = "warn"
 
+# GlobalAlloc must observe the UI and workers in the same process. A separate binary cannot expose
+# its allocations to the integration test. Reuse the module graph; disable duplicate test/bench suites.
+[lib]
+path = "src/main.rs"
+test = false
+doctest = false
+bench = false
+
 [dependencies]
 libc = "0.2"
 oos-hal = { path = "../hal" }

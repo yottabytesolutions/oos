@@ -41,6 +41,8 @@ static ui/src/drawpipe.rs counters::C
 # Every other unsafe is listed in unsafe.txt (shrink only); new ones fail. dsp forbids unsafe_code outright.
 unsafe hal
 unsafe ui/src/board/dho
+# the counting GlobalAlloc of the host soak test (M1, task 0002): test-only allocation census
+unsafe ui/tests/soak.rs
 unsafe ui/src/display
 unsafe ui/src/input
 unsafe ui/src/remote

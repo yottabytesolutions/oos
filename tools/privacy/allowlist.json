@@ -100,5 +100,17 @@
     "rule": "private-ipv6",
     "sha256": "9441f6d0506af89a7660e9a4a50a0221553607988d90ccd0cd911882837bd9ce",
     "reason": "Invented firewall simulator ULA prefix or member tests on-link filtering; not a unit address."
+  },
+  {
+    "path": "ui/tests/golden/demo/large/math/40-math-sub.png",
+    "rule": "email",
+    "sha256": "6a62a20485a26f573853628ce4b79a4e2ee6e6c86e84dae568c349e22a6db36b",
+    "reason": "Accidental email-shaped bytes inside zlib IDAT of a deterministic synthetic host PNG; not present in decoded RGB; the encoder writes no text metadata."
+  },
+  {
+    "path": "ui/tests/golden/demo/normal/storage/b3-storage-png-saved.png",
+    "rule": "email",
+    "sha256": "ff729e5403c8e7cadb94ca107d4bc65b2b370d65313188ce5e85d5b24deab5dc",
+    "reason": "Accidental email-shaped bytes inside zlib IDAT of a deterministic synthetic host PNG; not present in decoded RGB; the encoder writes no text metadata."
   }
 ]

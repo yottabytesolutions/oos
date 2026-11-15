@@ -31,10 +31,12 @@ struct Pending {
 
 pub struct BatchScript {
     source: ScriptedBatchSource,
+    record_only: bool,
     spare: Option<ScriptBytes>,
     id: usize,
     delivered: Arc<AtomicU64>,
     pending: Option<Pending>,
+    decoded: Arc<AtomicU64>,
     counts: Counts,
 }
 
@@ -46,10 +48,12 @@ impl BatchScript {
         ui.m.meas2.clear();
         Self {
             source: scripted::source(kind, 0x9e3779b97f4a7c15),
+            record_only: matches!(kind, BatchKind::Roll | BatchKind::Scan | BatchKind::HardwareAverage),
             spare: None,
             id: 0,
             delivered: Arc::new(AtomicU64::new(0)),
             pending: None,
+            decoded: Arc::default(),
             counts: Counts::default(),
         }
     }
@@ -70,22 +74,28 @@ impl BatchScript {
             return Err(format!("batch {} left queued frames", self.id));
         }
         let pipe = drawpipe::pipe(ui.switches()).ok_or("scripted source needs batch pipeline")?;
-        pipe.set_view(ui.fast_ok().then_some(&ui.m), ui.ph.w, ui.ph.h, ui.switches().interp);
-        let frames = SCHEDULE[self.id % SCHEDULE.len()];
+        pipe.set_view((ui.fast_ok() && !self.record_only).then_some(&ui.m), ui.ph.w, ui.ph.h, ui.switches().interp);
+        let (frames, stamp) = capture_plan(ui, self.id);
         let batch = self.source.next_batch(&ui.m, ui.switches(), frames, self.spare.take())?;
         self.id += 1;
         let before = drawpipe::counters().read();
         Counters::add(&drawpipe::counters().acquired, frames as u64);
-        let newest = batch.newest(ui.m.hw_stamp);
+        let newest = batch.newest(stamp);
         self.pending = Some(Pending { before, frames: frames as u64, newest: newest.seq, workers: pipe.accepting() });
         if pipe.accepting() {
             let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
+            self.decoded.store(0, Ordering::Relaxed);
+            let decoded = self.decoded.clone();
+            let decode = Arc::new(move |bytes: &[u8], frame: &mut crate::board::Frame| {
+                decoded.fetch_add(1, Ordering::Relaxed);
+                decode(bytes, frame);
+            });
             let (shared, delivered) = (shared.clone(), self.delivered.clone());
             pipe.feed_with(
                 Box::new(batch.into_bytes()),
                 fb,
                 frames - 1,
-                ui.m.hw_stamp,
+                stamp,
                 decode,
                 codes,
                 Box::new(move || {
@@ -100,7 +110,7 @@ impl BatchScript {
         } else {
             let mut g = lock(shared);
             for i in 0..frames {
-                g.queue.push_back(batch.frame(i, ui.m.hw_stamp));
+                g.queue.push_back(batch.frame(i, stamp));
             }
             g.frame = newest;
             self.spare = Some(batch.into_bytes());
@@ -127,18 +137,36 @@ impl BatchScript {
         self.counts.submitted += p.frames;
         self.counts.deposited += if p.workers { p.frames - 1 } else { 0 };
         self.counts.delivered = delivered;
+        let decoded = self.decoded.load(Ordering::Relaxed);
+        let route = if !p.workers {
+            "records-decoded"
+        } else if decoded == 0 {
+            "codes"
+        } else if decoded == p.frames - 1 {
+            "decoded"
+        } else {
+            "mixed"
+        };
         println!(
-            "batch {} submitted {} deposited {} delivered {} dropped {} newest {} route {}",
+            "batch {} submitted {} deposited {} delivered {} dropped {} newest {} route {} decode {}",
             self.id,
             self.counts.submitted,
             self.counts.deposited,
             delivered,
             after.2,
             p.newest,
-            if p.workers { "workers" } else { "records" }
+            if p.workers { "workers" } else { "records" },
+            route
         );
         Ok(())
     }
+}
+
+fn capture_plan(ui: &Ui, id: usize) -> (usize, u64) {
+    let single = ui.m.trig_mode == crate::model::TrigMode::Single;
+    // Ui::step arms SINGLE before reading the queue. Supply one post-arm acquisition, as the board would.
+    let stamp = ui.m.hw_stamp + u64::from(single && !ui.single_armed);
+    (if single { 1 } else { SCHEDULE[id % SCHEDULE.len()] }, stamp)
 }
 
 #[cfg(test)]

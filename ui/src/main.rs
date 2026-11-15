@@ -63,7 +63,7 @@ mod wave;
 mod zone;
 
 use gfx::Canvas;
-use ui::Ui;
+pub use ui::Ui;
 use wave::Source;
 
 fn arg(args: &[String], name: &str) -> Option<String> {
@@ -108,7 +108,7 @@ fn source(args: &[String], switches: &sysconf::Switches) -> Source {
     Source::Demo { t: 0.0 }
 }
 
-fn main() {
+pub fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--headless-script") {
         return Ui::start_headless_script(&args);

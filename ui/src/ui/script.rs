@@ -6,11 +6,17 @@
 //! a top-bar button that no longer exists and tested the Display menu instead, unnoticed.
 
 mod batch;
+mod capture;
 pub mod host;
 
 use super::*;
 
 impl Ui {
+    /// Exercise today's UI and real host workers with a process-wide observer supplied by a test executable.
+    pub fn scripted_soak(mode: &str, steps: usize, sample: impl FnMut(usize, [u64; 6])) -> Result<(), String> {
+        host::soak::run(mode, steps, sample)
+    }
+
     pub fn start_headless_script(args: &[String]) {
         host::headless(args);
     }
@@ -46,6 +52,10 @@ impl Ui {
     /// Opens the menu named `name` (its title, or the label of the entry that opens it; case does not matter).
     pub fn script_menu(&mut self, name: &str) -> Result<(), String> {
         let name = name.trim();
+        if name.eq_ignore_ascii_case("close") {
+            self.close_menu();
+            return Ok(());
+        }
         let id = self
             .script_menus()
             .into_iter()
@@ -139,5 +149,7 @@ mod tests {
         u.script_set("Tolerance X", "0.04 div").unwrap();
         u.script_set("Tolerance X", "0.36 div").unwrap();
         assert!((u.m.mask_x - 0.36).abs() < 1e-6);
+        u.script_menu("close").unwrap();
+        assert!(!u.menu_open);
     }
 }

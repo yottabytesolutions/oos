@@ -69,14 +69,14 @@ fn state() -> &'static Mutex<State> {
     static S: std::sync::OnceLock<Mutex<State>> = std::sync::OnceLock::new();
     S.get_or_init(Default::default)
 }
-
 fn push<T>(q: &mut VecDeque<T>, x: T) {
+    // Reserve the bounded history on first use, including infrequent settings-change samples.
+    q.reserve_exact(KEEP.saturating_sub(q.len()));
     if q.len() >= KEEP {
         q.pop_front();
     }
     q.push_back(x);
 }
-
 /// A screen picture took `frames` new frames (records and fast-path frames, `Ui::step`).
 pub fn picture(frames: usize) {
     let mut s = state().lock().unwrap();
@@ -451,6 +451,19 @@ pub fn summary() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn diagnostic_history_reserves_its_bound_on_first_sample() {
+        let mut history = std::collections::VecDeque::new();
+        super::push(&mut history, [0u8; 56]);
+        let capacity = history.capacity();
+        assert!(capacity >= super::KEEP);
+        for _ in 0..super::KEEP * 3 {
+            super::push(&mut history, [0u8; 56]);
+            assert_eq!(history.capacity(), capacity);
+        }
+        assert_eq!(history.len(), super::KEEP);
+    }
+
     use super::*;
     use std::time::Duration;
 

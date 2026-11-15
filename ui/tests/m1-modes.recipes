@@ -1,0 +1,33 @@
+# Named-menu recipes expanded by support/cases.rs, not a standalone screen script.
+# Dots: Off=lines, On=dots, Auto=current lines outside XY.
+# [baseline]
+frames 4
+shot settled.png
+# [later]
+frames 1
+shot first.png
+frames 18
+shot settled.png
+# [frozen]
+frames 4
+shot run.png
+key runstop
+frames 2
+shot stop.png
+key runstop
+frames 2
+shot resumed.png
+key single
+frames 2
+shot single.png
+key navigate
+frames 1
+shot history.png
+# [sweeps]
+frames 4
+shot sweep-one.png
+frames 6
+shot sweep-two.png
+key runstop
+frames 2
+shot stop.png

@@ -2,6 +2,8 @@
 
 //! Synthetic read-outs with the DHO layout and captured decode metadata. No device or calibration files.
 
+mod records;
+
 use super::hw;
 use crate::board::scripted::{Batch, BatchKind, BatchSource, ScriptedBoard};
 use crate::board::Frame;
@@ -36,6 +38,8 @@ pub struct ScriptBatch {
     params: hz::Params,
     first: u64,
     codes: bool,
+    kind: BatchKind,
+    tdiv: f64,
 }
 
 impl ScriptedBatchSource {
@@ -72,6 +76,7 @@ impl BatchSource for ScriptedBatchSource {
         s.compress = 1;
         match self.kind {
             BatchKind::LivePairs => s.depth = 100_000,
+            BatchKind::Roll | BatchKind::Scan => s.depth = 12_500,
             BatchKind::DeepPairs => s.depth = 10_000_000,
             // Slow Auto normally streams. This source supplies bounded records on the existing queue instead.
             _ if s.depth == 0 => s.depth = 100_000,
@@ -92,7 +97,17 @@ impl BatchSource for ScriptedBatchSource {
         fill(&mut bytes.0, frames, &s, &p, &mut self.seed);
         let first = self.seq + 1;
         self.seq += frames as u64;
-        Ok(ScriptBatch { bytes, fb, frames, settings: s, params: p, first, codes: self.kind == BatchKind::Codes })
+        Ok(ScriptBatch {
+            bytes,
+            fb,
+            frames,
+            settings: s,
+            params: p,
+            first,
+            codes: self.kind == BatchKind::Codes,
+            kind: self.kind,
+            tdiv: m.time_per_div() as f64,
+        })
     }
 }
 
@@ -148,6 +163,7 @@ impl Batch for ScriptBatch {
             false,
         );
         f.stamp = stamp;
+        records::characterise(&mut f, self.kind, self.tdiv);
         f
     }
     fn decode(&self) -> DecodeInto {

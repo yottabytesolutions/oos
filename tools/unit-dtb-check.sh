@@ -9,8 +9,9 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 kbase="${OOS_KBASE:-$root/kernel/out/base}"
-w="${TMPDIR:-/tmp}/oos-unit-dtb"
-rm -rf "$w"; mkdir -p "$w"
+w=$(mktemp -d "${TMPDIR:-/tmp}/oos-unit-dtb.XXXXXX")
+trap 'rm -rf "$w"' EXIT
+trap 'exit 1' HUP INT TERM
 ls "$kbase"/*.dtb >/dev/null 2>&1 || { echo "no DTB in $kbase (kernel/build-base.sh)" >&2; exit 1; }
 ok=1
 fail() { echo "FAIL: $*"; ok=0; }

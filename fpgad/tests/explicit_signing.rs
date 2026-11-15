@@ -184,13 +184,25 @@ fn keygen_requires_explicit_output() {
 impl Fixture {
     fn script(&self) -> Command {
         use std::os::unix::fs::PermissionsExt;
-        let out = self.path("boot/out");
+        let out = self.path("selected target/image");
         std::fs::create_dir_all(&out).expect("test setup");
         std::fs::write(out.join("oos-dev.img"), image()).expect("test setup");
         std::fs::write(out.join("oos-dev.build"), "20261114-120000 kernel test\n").expect("test setup");
+        std::fs::create_dir(self.path("boot")).expect("test setup");
         std::fs::write(self.path("boot/sign-dev-image.sh"), include_str!("../../boot/sign-dev-image.sh"))
             .expect("test setup");
         std::fs::create_dir(self.path("bin")).expect("test setup");
+        std::fs::create_dir(self.path("tools")).expect("test setup");
+        for (name, text) in
+            [("output.sh", include_str!("../../tools/output.sh")), ("output.py", include_str!("../../tools/output.py"))]
+        {
+            std::fs::write(self.path("tools").join(name), text).expect("test setup");
+        }
+        // This isolated fixture has no Git checkout; keep its revision fixed, without a temporary commit.
+        let git = self.path("bin/git");
+        std::fs::write(&git, "#!/bin/sh\ncase \"$*\" in *rev-parse*) echo fixture;; *ls-files*) ;; *) exit 1;; esac\n")
+            .expect("test setup");
+        std::fs::set_permissions(git, std::fs::Permissions::from_mode(0o700)).expect("test setup");
         // Skip Cargo's rebuild. Run the signer binary built for this host check.
         let cargo = self.path("bin/cargo");
         std::fs::write(
@@ -206,8 +218,39 @@ impl Fixture {
                 .chain(std::env::split_paths(&std::env::var_os("PATH").expect("test setup"))),
         )
         .expect("test setup");
-        cmd.env("PATH", path).env("OOS_TEST_SIGNER", env!("CARGO_BIN_EXE_oos-update")).env_remove("OOS_SIGNING_KEY");
+        cmd.env("PATH", &path)
+            .env("CARGO_TARGET_DIR", self.path("selected target"))
+            .env("OOS_TEST_SIGNER", env!("CARGO_BIN_EXE_oos-update"))
+            .env_remove("OOS_SIGNING_KEY");
+        self.stamp_image(&path);
         cmd
+    }
+
+    fn stamp_image(&self, path: &std::ffi::OsStr) {
+        let out = self.path("selected target/image");
+        let tool = self.path("tools/output.py");
+        let revision = Command::new("python3")
+            .arg(&tool)
+            .arg("revision")
+            .env("PATH", path)
+            .env("CARGO_TARGET_DIR", self.path("selected target"))
+            .output()
+            .expect("test setup");
+        success(&revision);
+        let revision = String::from_utf8(revision.stdout).expect("test setup");
+        for name in ["oos-dev.img", "oos-dev.build"] {
+            success(
+                &Command::new("python3")
+                    .arg(&tool)
+                    .arg("stamp")
+                    .arg(out.join(name))
+                    .arg(revision.trim())
+                    .env("PATH", path)
+                    .env("CARGO_TARGET_DIR", self.path("selected target"))
+                    .output()
+                    .expect("test setup"),
+            );
+        }
     }
 }
 
@@ -217,11 +260,13 @@ fn image_signing_script_uses_saved_build_id_and_output_name() {
     let mut cmd = f.script();
     std::fs::write(f.path("private key"), include_str!("../../keys/community-signing.key")).expect("test setup");
     success(&cmd.arg("--key").arg(f.path("private key")).output().expect("test setup"));
-    let bytes = std::fs::read(f.path("boot/out/oos-dev.oosupd")).expect("test setup");
+    let bytes = std::fs::read(f.path("selected target/image/oos-dev.oosupd")).expect("test setup");
     let (header, payload) = pkg::verify(&bytes, &oos_hal::update::trusted_keys()).expect("test setup");
     assert_eq!(header.manifest.build, "20261114-120000 kernel test");
     assert_eq!(payload, image());
-    assert!(!f.path("boot/out/DHO800_DHO900_OOS_Install.GEL").exists());
+    assert!(f.path("selected target/image/oos-dev.oosupd.oos-build.json").exists());
+    assert!(!f.path("selected target/image/DHO800_DHO900_OOS_Install.GEL").exists());
+    assert!(!f.path("boot/out").exists());
 }
 
 #[test]
@@ -266,9 +311,9 @@ fn signing_flags_are_pack_only() {
 fn image_signing_script_requires_saved_build_id() {
     let f = Fixture::new();
     let mut cmd = f.script();
-    std::fs::remove_file(f.path("boot/out/oos-dev.build")).expect("test setup");
+    std::fs::remove_file(f.path("selected target/image/oos-dev.build")).expect("test setup");
     refused(&cmd.arg("--community").output().expect("test setup"), "run boot/build-dev-image.sh first");
-    assert!(!f.path("boot/out/oos-dev.oosupd").exists());
+    assert!(!f.path("selected target/image/oos-dev.oosupd").exists());
 }
 
 #[test]
@@ -276,12 +321,12 @@ fn image_signing_script_accepts_community_and_environment() {
     let f = Fixture::new();
     let mut cmd = f.script();
     refused(&cmd.output().expect("test setup"), "signing requires --key");
-    assert!(!f.path("boot/out/oos-dev.oosupd").exists());
+    assert!(!f.path("selected target/image/oos-dev.oosupd").exists());
     std::fs::write(f.path("private key"), include_str!("../../keys/community-signing.key")).expect("test setup");
     success(&cmd.env("OOS_SIGNING_KEY", f.path("private key")).output().expect("test setup"));
-    std::fs::remove_file(f.path("boot/out/oos-dev.oosupd")).expect("test setup");
+    std::fs::remove_file(f.path("selected target/image/oos-dev.oosupd")).expect("test setup");
     success(&cmd.env_remove("OOS_SIGNING_KEY").arg("--community").output().expect("test setup"));
-    let bytes = std::fs::read(f.path("boot/out/oos-dev.oosupd")).expect("test setup");
+    let bytes = std::fs::read(f.path("selected target/image/oos-dev.oosupd")).expect("test setup");
     pkg::verify(&bytes, &oos_hal::update::trusted_keys()).expect("test setup");
 }
 
@@ -309,7 +354,7 @@ fn image_signing_script_refuses_extra_or_incomplete_arguments() {
             .expect("test setup");
         refused(&out, "Usage:");
     }
-    assert!(!f.path("boot/out/oos-dev.oosupd").exists());
+    assert!(!f.path("selected target/image/oos-dev.oosupd").exists());
 }
 
 #[test]
@@ -325,17 +370,59 @@ fn image_workflow_requires_signed_update_and_gel() {
     let script =
         script.lines().map(|line| line.strip_prefix("          ").expect("test setup")).collect::<Vec<_>>().join("\n");
     let f = Fixture::new();
-    std::fs::create_dir_all(f.path("boot/out")).expect("test setup");
+    std::fs::create_dir_all(f.path("selected target/image")).expect("test setup");
     for (update, gel) in [(false, false), (true, false), (false, true), (true, true)] {
         for (name, present) in [("oos-dev.oosupd", update), ("DHO800_DHO900_OOS_Install.GEL", gel)] {
-            let path = f.path("boot/out").join(name);
+            let path = f.path("selected target/image").join(name);
             if present {
                 std::fs::write(path, "artifact").expect("test setup");
             } else if path.exists() {
                 std::fs::remove_file(path).expect("test setup");
             }
         }
-        let out = Command::new("bash").args(["-e", "-c", &script]).current_dir(&f.0).output().expect("test setup");
+        let out = Command::new("bash")
+            .args(["-e", "-c", &script])
+            .current_dir(&f.0)
+            .env("CARGO_TARGET_DIR", f.path("selected target"))
+            .output()
+            .expect("test setup");
         assert_eq!(out.status.success(), update && gel, "{}", String::from_utf8_lossy(&out.stderr));
+    }
+}
+
+#[test]
+fn image_signing_script_rejects_unverified_inputs() {
+    for name in ["oos-dev.img", "oos-dev.build"] {
+        for replace in [false, true] {
+            let f = Fixture::new();
+            let mut cmd = f.script();
+            let input = f.path("selected target/image").join(name);
+            if replace {
+                std::fs::write(input, "replaced").expect("test setup");
+            } else {
+                std::fs::remove_file(input.with_file_name(format!("{name}.oos-build.json"))).expect("test setup");
+            }
+            let out = cmd.arg("--community").output().expect("test setup");
+            refused(&out, if replace { "stale or replaced artifact" } else { "missing build receipt" });
+            assert!(!f.path("selected target/image/oos-dev.oosupd").exists());
+        }
+    }
+}
+
+#[test]
+fn image_signing_script_rechecks_inputs_after_pack() {
+    for name in ["oos-dev.img", "oos-dev.build"] {
+        let f = Fixture::new();
+        let mut cmd = f.script();
+        // Simulate an input replaced while the pack command is consuming it.
+        std::fs::write(
+            f.path("bin/cargo"),
+            format!(
+                "#!/bin/sh\nprintf replaced > \"$CARGO_TARGET_DIR/image/{name}\"\nprintf package > \"$CARGO_TARGET_DIR/image/oos-dev.oosupd\"\n"
+            ),
+        )
+        .expect("test setup");
+        refused(&cmd.arg("--community").output().expect("test setup"), "stale or replaced artifact");
+        assert!(!f.path("selected target/image/oos-dev.oosupd.oos-build.json").exists());
     }
 }

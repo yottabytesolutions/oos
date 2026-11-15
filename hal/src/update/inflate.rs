@@ -310,7 +310,7 @@ pub mod tests {
         assert_eq!(cpio_file(&a, "etc/other"), None);
     }
 
-    /// An image's build: OOS_IMG set to a boot image (boot/out/oos-dev.img).
+    /// An image's build: OOS_IMG set to a boot image (target/image/oos-dev.img).
     #[test]
     #[ignore = "private image: set OOS_IMG"]
     fn the_build_of_an_image() {

@@ -26,7 +26,8 @@ This is why only models with the hardware of a model OOS has run on are accepted
 ## 1. Steps
 
 1. Download `DHO800_DHO900_OOS_Install.GEL` from the [release](https://github.com/deckerjulian/oos/releases/latest) and check it
-   against `SHA256SUMS`, or build it (`README.md`, Installation, steps 3 to 5): it is in `boot/out/`.
+   against `SHA256SUMS`, or build it (`README.md`, Installation, steps 3 to 5): it is in `target/image/`
+   (or `image/` under the selected `CARGO_TARGET_DIR`).
 2. A FAT32 USB stick with at least 200 MiB free. Copy the file to its top folder. The name has to end in `.GEL` and
    contain `DHO800_DHO900`, or the update ignores it. Keep the name.
 3. **Recommended, first a dry run:** an empty file `oos-dry-run.txt` on the stick runs all checks and saves the rescue set, without

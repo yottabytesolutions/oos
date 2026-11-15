@@ -169,24 +169,26 @@ starts with the UTC build time; an older build than the installed one is refused
 
 ## Use
 
-Build, sign and package are separate host steps:
+Build, sign and package are separate host steps. The paths below use the default
+`target` directory; an overridden `CARGO_TARGET_DIR` selects its own `image/` directory
+([output contract](../tools/OUTPUTS.md)). Receipts reject stale or replaced inputs.
 
 ```sh
 boot/build-dev-image.sh                         # image, checksum and matching build id; never signs
-boot/sign-dev-image.sh --key /path/to/signing.key # boot/out/oos-dev.oosupd
-boot/build-gel.py                               # boot/out/DHO800_DHO900_OOS_Install.GEL
+boot/sign-dev-image.sh --key /path/to/signing.key # target/image/oos-dev.oosupd
+boot/build-gel.py                               # target/image/DHO800_DHO900_OOS_Install.GEL
 ```
 
 For signing, `OOS_SIGNING_KEY=/path/to/signing.key boot/sign-dev-image.sh` also works.
 Use `boot/sign-dev-image.sh --community` only for the public development fixture.
-The signer uses `boot/out/oos-dev.build`, saved with the image. It builds the host tool offline.
+The signer uses `target/image/oos-dev.build`, saved with the image. It builds the host tool offline.
 `oos-update pack --image IMG --build ID [--key FILE | --community] --out FILE.oosupd` is the direct signing step.
 It also accepts `OOS_SIGNING_KEY`. The package format and output names are unchanged.
 
 Install on a running OOS:
 
 - browser: `http://<scope>:8080/update`, choose the file, Install; or
-  `curl --max-time 300 --data-binary @boot/out/oos-dev.oosupd http://<scope>:8080/update`
+  `curl --max-time 300 --data-binary @target/image/oos-dev.oosupd http://<scope>:8080/update`
 
 The web server answers the upload once the whole package has arrived and its header (signature, target, length)
 checked out: `accepted, build ...`, or `REFUSED: ...`. The image hash and the copy for the install job run after
@@ -234,7 +236,7 @@ Logs: `/tmp/oos-update.log` (start count, watcher), `/tmp/oos-update.job` (GUI /
 - bad: oos-ui restarted 3 times, or no oos-ui that ran 20 s stable by 180 s. The oos-ui process is followed by pid, so a
   forked child does not count as a restart.
 - The trial is about the running image: the watcher only judges when `/etc/oos-build` equals the build on trial
-  (`pack --build` must get the image's own build id, passed by sign-dev-image.sh via `boot/out/oos-dev.build`),
+  (`pack --build` must get the image's own build id, passed by sign-dev-image.sh via `target/image/oos-dev.build`),
   and applies its verdict only if the state still names the same image (an install from the web page during the
   watch stays on trial).
 - Powering off before "confirmed" (about 20 s after the start-up) counts as an unconfirmed start: the next OOS start
@@ -286,7 +288,7 @@ At most 8 connections; bodies up to 70 MiB only for `POST /update` (1 MiB elsewh
 
 ## To check on the unit
 
-1. Install `boot/out/oos-dev.img` once by hand (it brings `oos-update`), power-cycle.
+1. Install `target/image/oos-dev.img` once by hand (it brings `oos-update`), power-cycle.
 2. `oos-update status`: layout ok, recovery untracked, slot empty, trusted key listed.
 3. Build again, install the `.oosupd` from the web page, power-cycle: trial, then "confirmed" in
    `/tmp/oos-update.log` after ~20 s past the start-up.

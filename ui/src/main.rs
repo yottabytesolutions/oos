@@ -190,7 +190,7 @@ fn main() {
         ui.store_dir = d.into();
     }
     if args.iter().any(|a| a == "--serve") {
-        return serve(ui, &args, &switches);
+        return serve(ui, &switches);
     }
     #[cfg(target_os = "linux")]
     {
@@ -205,11 +205,11 @@ fn main() {
 
 /// No display and no hardware: the demo source behind SCPI, the web server and VXI-11, for tools/device-test.py on a
 /// host. `OOS_DEMO_LOOP=<mask>` puts the generator on those channels, as a cable from the output would.
-fn serve(mut ui: Ui, args: &[String], sw: &sysconf::Switches) {
-    let port = |name: &str, d: u16| arg(args, name).and_then(|p| p.parse().ok()).unwrap_or(d);
-    let mut web = http::Http::open(port("--web-port", 8080), sw);
-    let mut scpi = scpi::Scpi::open(port("--scpi-port", 5555), sw.ipv6);
-    let mut vxi = vxi11::Server::open(sw.ipv6);
+fn serve(mut ui: Ui, sw: &sysconf::Switches) {
+    let mut web = http::Http::open(net6::Port::Host, sw);
+    let mut scpi = scpi::Scpi::open(net6::Port::Host, false);
+    let mut vxi = net6::host_or_exit(vxi11::Server::host());
+    net6::host_or_exit(net6::host_ready(web.port(), scpi.port(), vxi.ports()));
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     while !ui.quit {
         ui.step(0.04);

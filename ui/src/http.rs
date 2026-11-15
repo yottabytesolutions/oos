@@ -803,11 +803,15 @@ fn unescape(s: &str) -> String {
 
 impl Http {
     /// The web remote on `port`, with the switches' IPv6 and little cores.
-    pub fn open(port: u16, sw: &crate::sysconf::Switches) -> Http {
+    pub fn open(port: impl Into<crate::net6::Port>, sw: &crate::sysconf::Switches) -> Http {
         Self::open_with(port, LIMITS, sw)
     }
 
-    fn open_with(port: u16, limits: Limits, sw: &crate::sysconf::Switches) -> Http {
+    pub fn port(&self) -> Option<u16> {
+        self.open.as_ref().map(|(addr, _)| addr.port())
+    }
+
+    fn open_with(port: impl Into<crate::net6::Port>, limits: Limits, sw: &crate::sysconf::Switches) -> Http {
         let mut h = Http {
             open: None,
             inbox: Arc::new(Inbox::default()),
@@ -820,12 +824,8 @@ impl Http {
         h
     }
 
-    /// Binds the port and starts its accept thread.
-    fn start(&mut self, port: u16, v6: bool) {
-        let Some(l) = crate::net6::tcp(port, v6) else {
-            eprintln!("oos-ui: web port {} not available", port);
-            return;
-        };
+    fn start(&mut self, port: impl Into<crate::net6::Port>, v6: bool) {
+        let Some(l) = crate::net6::tcp(port, v6) else { return };
         let Ok(addr) = l.local_addr() else { return };
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (inbox, acl, st, lim) = (self.inbox.clone(), self.acl_shared.clone(), stop.clone(), self.limits);
@@ -837,7 +837,7 @@ impl Http {
             eprintln!("oos-ui: web remote: no accept thread");
             return;
         }
-        eprintln!("oos-ui: web remote on port {}{}", port, if addr.is_ipv6() { " (IPv4 and IPv6)" } else { "" });
+        eprintln!("oos-ui: web remote on {}", addr);
         self.open = Some((addr, stop));
     }
 

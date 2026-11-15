@@ -83,7 +83,7 @@ fn reply(xid: u32, accept: u32) -> Vec<u8> {
 }
 
 /// Portmapper: GETPORT (3) of the core channel over TCP (6) -> `CORE_PORT`; NULL (0); anything else 0.
-pub fn portmap(c: &Call) -> Vec<u8> {
+pub fn portmap(c: &Call, core_port: u16) -> Vec<u8> {
     if c.prog != PMAP_PROG {
         return reply(c.xid, 1);
     }
@@ -93,7 +93,7 @@ pub fn portmap(c: &Call) -> Vec<u8> {
         3 => {
             let mut x = Xdr::new(c.args);
             let (prog, _vers, prot) = (x.u32().unwrap_or(0), x.u32().unwrap_or(0), x.u32().unwrap_or(0));
-            put(&mut o, if prog == CORE_PROG && prot == 6 { CORE_PORT as u32 } else { 0 });
+            put(&mut o, if prog == CORE_PROG && prot == 6 { core_port as u32 } else { 0 });
         }
         _ => return reply(c.xid, 3),
     }
@@ -239,17 +239,44 @@ pub struct Server {
 }
 
 impl Server {
+    pub fn host() -> std::io::Result<Server> {
+        let mut s = Self::empty();
+        let tcp = || -> std::io::Result<TcpListener> {
+            let l = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+            l.set_nonblocking(true)?;
+            Ok(l)
+        };
+        s.pm_tcp = Some(tcp()?);
+        s.core_tcp = Some(tcp()?);
+        let u = UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        u.set_nonblocking(true)?;
+        s.pm_udp = Some(u);
+        Ok(s)
+    }
+
+    pub fn ports(&self) -> Option<(u16, u16, u16)> {
+        Some((
+            self.pm_tcp.as_ref()?.local_addr().ok()?.port(),
+            self.pm_udp.as_ref()?.local_addr().ok()?.port(),
+            self.core_tcp.as_ref()?.local_addr().ok()?.port(),
+        ))
+    }
+
     pub fn open(v6: bool) -> Server {
-        let mut s = Server {
+        let mut s = Self::empty();
+        s.set_open(true, v6);
+        s
+    }
+
+    fn empty() -> Server {
+        Server {
             pm_tcp: None,
             pm_udp: None,
             core_tcp: None,
             conns: Vec::new(),
             links: Vec::new(),
             acl: crate::netacl::Acl::default(),
-        };
-        s.set_open(true, v6);
-        s
+        }
     }
 
     /// System > Network > Remote services: portmapper and core port open, or closed with their connections.
@@ -274,6 +301,11 @@ impl Server {
         );
     }
 
+    fn portmap(&self, c: &Call) -> Vec<u8> {
+        let port = self.core_tcp.as_ref().and_then(|l| l.local_addr().ok()).map_or(0, |a| a.port());
+        portmap(c, port)
+    }
+
     pub fn poll(&mut self, exec: &mut dyn FnMut(&str) -> Vec<u8>) {
         if let Some(u) = &self.pm_udp {
             let mut b = [0u8; 1500];
@@ -282,7 +314,7 @@ impl Server {
                     continue;
                 }
                 if let Some(c) = parse_call(&b[..n]) {
-                    let _ = u.send_to(&portmap(&c), from);
+                    let _ = u.send_to(&self.portmap(&c), from);
                 }
             }
         }
@@ -322,7 +354,7 @@ impl Server {
             while let Some(msg) = take_record(&mut self.conns[i].buf) {
                 let r = match parse_call(&msg) {
                     Some(c) if self.conns[i].core => core(&c, &mut self.links, exec),
-                    Some(c) => portmap(&c),
+                    Some(c) => self.portmap(&c),
                     None => continue,
                 };
                 let mut out = ((r.len() as u32) | 1 << 31).to_be_bytes().to_vec();
@@ -369,6 +401,32 @@ pub fn take_record(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn host_vxi_listeners_use_loopback_and_advertise_the_selected_core() {
+        let s = Server::host().unwrap();
+        assert_eq!(s.pm_tcp.as_ref().unwrap().local_addr().unwrap().ip(), std::net::Ipv4Addr::LOCALHOST);
+        assert_eq!(s.pm_udp.as_ref().unwrap().local_addr().unwrap().ip(), std::net::Ipv4Addr::LOCALHOST);
+        assert_eq!(s.core_tcp.as_ref().unwrap().local_addr().unwrap().ip(), std::net::Ipv4Addr::LOCALHOST);
+        let mut args = Vec::new();
+        for v in [CORE_PROG, 1, 6, 0] {
+            put(&mut args, v);
+        }
+        let msg = call(1, PMAP_PROG, 3, &args);
+        let reply = s.portmap(&parse_call(&msg).unwrap());
+        assert_eq!(Xdr::new(&reply[24..]).u32(), Some(u32::from(s.ports().unwrap().2)));
+    }
+
+    #[test]
+    fn getport_uses_the_supplied_port_instead_of_the_device_default() {
+        let mut args = Vec::new();
+        for v in [CORE_PROG, 1, 6, 0] {
+            put(&mut args, v);
+        }
+        let msg = call(1, PMAP_PROG, 3, &args);
+        let reply = portmap(&parse_call(&msg).unwrap(), 43210);
+        assert_eq!(Xdr::new(&reply[24..]).u32(), Some(43210));
+    }
+
     fn call(xid: u32, prog: u32, proc_: u32, args: &[u8]) -> Vec<u8> {
         let mut m = Vec::new();
         for v in [xid, 0, 2, prog, 1, proc_, 0, 0, 0, 0] {
@@ -386,7 +444,7 @@ mod tests {
             put(&mut a, v);
         }
         let m = call(7, PMAP_PROG, 3, &a);
-        let r = portmap(&parse_call(&m).unwrap());
+        let r = portmap(&parse_call(&m).unwrap(), CORE_PORT);
         let mut x = Xdr::new(&r);
         assert_eq!(
             [x.u32(), x.u32(), x.u32(), x.u32(), x.u32(), x.u32(), x.u32()],

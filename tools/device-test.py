@@ -34,6 +34,7 @@ import argparse, base64, json, math, os, random, re, signal, socket, statistics,
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scope_lease
+import host_harness
 
 CH = (1, 2, 3, 4)
 VSCALES = [1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0]
@@ -2383,28 +2384,26 @@ def main():
     ap.add_argument("--baseline", help="fingerprint.json of an earlier run")
     ap.add_argument("--soak-min", type=float, default=0)
     ap.add_argument("--quick", action="store_true")
-    ap.add_argument("--sim", action="store_true", help="start oos-ui --serve from target/debug, generator on CH1 and CH2")
+    ap.add_argument("--sim", action="store_true", help="start a verified loopback server on dynamic ports, generator on CH1 and CH2")
     ap.add_argument("--out")
     o = ap.parse_args()
     try:
         if not o.sim:
             o.host = scope_lease.host_value(o.host)
         with nullcontext(None) if o.sim else scope_lease.held(o.host, cap="test") as lease:
-            result = run_tests(o, lease)
+            with host_harness.Host() if o.sim else nullcontext(None) as sim:
+                result = run_tests(o, lease, sim)
         sys.exit(result)
-    except scope_lease.LeaseError as exc:
+    except (scope_lease.LeaseError, host_harness.HostError) as exc:
         ap.exit(1, f"device-test: {exc}\n")
 
 
-def run_tests(o, lease):
+def run_tests(o, lease, sim=None):
+    if sim:
+        o.out = o.out or sim.results_dir()
+        o.host, o.scpi_port, o.web_port = "127.0.0.1", sim.ready["scpi"], sim.ready["web"]
     o.out = o.out or os.path.join("device-test", time.strftime("%Y%m%d-%H%M%S"))
     os.makedirs(o.out, exist_ok=True)
-    proc = None
-    if o.sim:
-        here = os.path.dirname(os.path.abspath(__file__))
-        proc = subprocess.Popen([os.path.join(here, "../target/debug/oos-ui"), "--serve", "--scpi-port", "15555", "--web-port", "18080"], env={**os.environ, "OOS_DEMO_LOOP": "3"}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        o.host, o.scpi_port, o.web_port = "127.0.0.1", 15555, 18080
-        time.sleep(1.5)
 
     def log(t):
         line = f"{time.strftime('%H:%M:%S')} {t}"
@@ -2480,9 +2479,6 @@ def run_tests(o, lease):
         log("stopped: back to the waveform view")
         if s:
             s.base()
-    finally:
-        if proc:
-            proc.terminate()
     count = {k: sum(1 for r in results if r["result"] == k) for k in ("PASS", "FAIL", "ERROR", "INFO", "SKIP", "GONE")}
     with open(os.path.join(o.out, "report.md"), "w") as f:
         f.write(f"# OOS device test {os.path.basename(o.out)}\n\n{count}\n\n| Result | Tier | Test | s | Detail |\n|---|---|---|---|---|\n")

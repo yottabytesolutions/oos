@@ -14,6 +14,7 @@
 set -eu
 export OOS_PERF_TESTS=1
 root=$(cd "$(dirname "$0")/.." && pwd)
+. "$root/tools/output.sh"
 export PATH="$HOME/.cargo/bin:$PATH"
 
 echo "== hal: deterministic guards"

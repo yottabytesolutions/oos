@@ -237,7 +237,11 @@ fn e(v: f64) -> String {
 }
 
 impl Scpi {
-    pub fn open(port: u16, v6: bool) -> Scpi {
+    pub fn port(&self) -> Option<u16> {
+        self.l.as_ref()?.local_addr().ok().map(|a| a.port())
+    }
+
+    pub fn open(port: impl Into<crate::net6::Port>, v6: bool) -> Scpi {
         Scpi {
             l: Self::bind(port, v6),
             clients: Vec::new(),
@@ -249,19 +253,11 @@ impl Scpi {
         }
     }
 
-    fn bind(port: u16, v6: bool) -> Option<TcpListener> {
-        let l = crate::net6::tcp(port, v6);
-        if let Some(l) = &l {
-            let _ = l.set_nonblocking(true);
-            eprintln!(
-                "oos-ui: SCPI on port {}{}",
-                port,
-                if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" }
-            );
-        } else {
-            eprintln!("oos-ui: SCPI port {} not available", port);
-        }
-        l
+    fn bind(port: impl Into<crate::net6::Port>, v6: bool) -> Option<TcpListener> {
+        let l = crate::net6::tcp(port, v6)?;
+        l.set_nonblocking(true).ok()?;
+        eprintln!("oos-ui: SCPI on {}", l.local_addr().ok()?);
+        Some(l)
     }
 
     /// System > Network > Remote services: the port open (`Some`), or closed with its connections.

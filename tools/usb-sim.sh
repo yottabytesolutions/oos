@@ -7,8 +7,9 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
-w="${TMPDIR:-/tmp}/oos-usb-sim"
-mkdir -p "$w"
+w=$(mktemp -d "${TMPDIR:-/tmp}/oos-usb-sim.XXXXXX")
+trap 'rm -rf "$w"' EXIT
+trap 'exit 1' HUP INT TERM
 docker image inspect oos-initramfs:ubuntu >/dev/null 2>&1 || { echo "build the image once first (boot/build-dev-image.sh)" >&2; exit 1; }
 docker run --rm --platform linux/arm64 oos-initramfs:ubuntu cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"

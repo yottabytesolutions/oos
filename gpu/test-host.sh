@@ -9,7 +9,12 @@
 #   gpu/test-host.sh            needs: ui built for aarch64-unknown-linux-musl, Docker (arm64 host or QEMU)
 set -eu
 cd "$(dirname "$0")/.."
-out=$PWD/target/gpu-check
+root=$PWD
+. "$root/tools/output.sh"
+ui="$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/oos-ui"
+python3 "$root/tools/output.py" verify "$ui"
+mkdir -p "$CARGO_TARGET_DIR"
+out=$(mktemp -d "$CARGO_TARGET_DIR/gpu-check.XXXXXX")
 # emptied inside the container: a directory removed and made again on the host just before `docker run` was at times
 # not yet visible through the bind mount, and the first shot failed ("write shot: No such file or directory")
 mkdir -p "$out"
@@ -20,11 +25,11 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
       gcc libc6-dev libegl-dev libgles-dev libegl-mesa0 libgles2 libegl1 mesa-libgallium \
     && rm -rf /var/lib/apt/lists/*
 EOF
-docker run --rm -v "$PWD:/o" -v "$out:/out" $image sh -euc '
+docker run --rm -v "$PWD:/o:ro" -v "$ui:/ui:ro" -v "$out:/out" $image sh -euc '
 	rm -rf /out/cpu /out/gpu /out/times-*.txt
 	mkdir -p /out/cpu /out/gpu
 	gcc -std=gnu11 -O2 -Wall -o /tmp/oos-gpu /o/gpu/oos-gpu.c -lEGL -lGLESv2
-	ui=/o/target/aarch64-unknown-linux-musl/release/oos-ui
+	ui=/ui
 	for t in /o/ui/tests/*.txt; do
 		n=$(basename "$t" .txt)
 		for mode in cpu gpu; do

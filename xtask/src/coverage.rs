@@ -40,7 +40,11 @@ pub fn installed() -> bool {
 
 /// Line coverage of the crate in `root/krate`, in tenths of a percent. Runs the tests once more, instrumented.
 pub fn measure(root: &Path, krate: &str) -> Result<u64, String> {
-    let dir = root.join("target").join("xtask-cov");
+    let target = run::capture(root, "python3", &["tools/output.py", "target"])?;
+    if !target.ok {
+        return Err(target.stderr);
+    }
+    let dir = coverage_dir(Path::new(target.stdout.trim()));
     let out = std::process::Command::new("cargo")
         .args(["llvm-cov", "--locked", "--json", "--summary-only"])
         .env("CARGO_TARGET_DIR", dir)
@@ -53,6 +57,10 @@ pub fn measure(root: &Path, krate: &str) -> Result<u64, String> {
     tenths(&String::from_utf8_lossy(&out.stdout))
 }
 
+fn coverage_dir(target: &Path) -> std::path::PathBuf {
+    target.join("xtask-cov")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,5 +71,11 @@ mod tests {
         assert_eq!(tenths(j).unwrap(), 949);
         assert_eq!(tenths(r#"{"data":[{"totals":{"lines":{"count":0,"covered":0}}}]}"#).unwrap(), 0);
         assert!(tenths("{}").is_err());
+    }
+
+    #[test]
+    fn coverage_follows_the_selected_target() {
+        let target = Path::new("/path/to/worktree/build");
+        assert_eq!(coverage_dir(target), target.join("xtask-cov"));
     }
 }

@@ -3,19 +3,25 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build.sh: oos-ui for the scope (static aarch64 musl) and for the host (off-screen test runner).
 #   ./build.sh            both
-#   ./build.sh test       host build + render the test scripts in tests/ to target/test-shots/*.png (needs Pillow)
-set -e
+#   ./build.sh test       render tests/ to unique test-shots.* directories under the selected target (needs Pillow)
+set -eu
 cd "$(dirname "$0")"
+root=$(cd .. && pwd)
+. "$root/tools/output.sh"
 export PATH="$HOME/.cargo/bin:$PATH"
 [ -f assets/font.bin ] || python3 tools/mkfont.py assets/font.bin normal
 [ -f assets/font-large.bin ] || python3 tools/mkfont.py assets/font-large.bin large
 [ -f assets/font-larger.bin ] || python3 tools/mkfont.py assets/font-larger.bin larger
-cargo build --release --target aarch64-unknown-linux-musl
-cargo build --release
-ls -l ../target/aarch64-unknown-linux-musl/release/oos-ui
-if [ "$1" = test ]; then
-	out=target/test-shots; mkdir -p $out
-	for t in tests/*.txt; do sed "s#\$S#$out#g" "$t" > $out/script.txt; ../target/release/oos-ui --script $out/script.txt; done
-	python3 -c "import glob; from PIL import Image; [Image.open(f).save(f[:-4]+'.png') for f in glob.glob('$out/*.ppm')]"
-	ls $out/*.png
+python3 "$root/tools/output.py" build -p oos-ui --release --target aarch64-unknown-linux-musl
+python3 "$root/tools/output.py" build -p oos-ui --release
+ls -l "$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/oos-ui"
+if [ "${1:-}" = test ]; then
+	out=$(mktemp -d "$CARGO_TARGET_DIR/test-shots.XXXXXX")
+	mkdir -p "$out/store"
+	for t in tests/*.txt; do
+		python3 -I -c 'from pathlib import Path; import sys; p=Path(sys.argv[2]); (p/"script.txt").write_bytes(Path(sys.argv[1]).read_bytes().replace(b"$S", bytes(p)))' "$t" "$out"
+		"$CARGO_TARGET_DIR/release/oos-ui" --store-dir "$out/store" --script "$out/script.txt"
+	done
+	python3 -I -c 'import glob, sys; from PIL import Image; [Image.open(f).save(f[:-4]+".png") for f in glob.glob(sys.argv[1]+"/*.ppm")]' "$out"
+	ls "$out"/*.png
 fi

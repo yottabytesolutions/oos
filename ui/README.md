@@ -113,7 +113,7 @@ Before the 16-bit counts saturate (long / infinite persistence) the maps are hal
   column per enabled channel, empty fields where there is no data), save a screenshot as PNG (`shot-NNN.png`, taken
   without the dialog). NNN is the first free number; a toast shows the file name. Directory: `/tmp/oos` on the unit
   (created when missing), `--store-dir DIR` or the command `storedir DIR`; host script runs use the script's
-  directory (`target/test-shots`). The setup file has one `key = value` line per Model field (enums by name, ladder
+  directory (`test-shots.*` under the selected target). The setup file has one `key = value` line per Model field (enums by name, ladder
   positions as indices, floats exact; e.g. `ch2.vscale = 9`, `trig_type = Edge`, `meas = Freq:1 Vpp:1`); recall starts
   from the default set-up, ignores unknown keys, rejects bad values with the line number and keeps run/stop.
   The PNG encoder is our own (`src/store.rs`: zlib stored blocks, CRC32, Adler32).
@@ -202,16 +202,17 @@ Like telnet and SCPI it is unauthenticated: bench network only.
 
 ## Build and test
 
-```
-./build.sh          # scope binary target/aarch64-unknown-linux-musl/release/oos-ui + host binary
-./build.sh test     # renders tests/*.txt off-screen to target/test-shots/*.png
+```sh
+export CARGO_TARGET_DIR="$(python3 ../tools/output.py target)"
+./build.sh          # scope and host binaries under CARGO_TARGET_DIR (default: worktree target/)
+./build.sh test     # renders tests/*.txt off-screen in unique test-shots.* directories under the selected target
 cargo test --release   # unit tests: setup round trip (incl. quick key), CSV, PNG (structure, CRCs, Pillow when installed),
                        # mask, colour grade, layout / touch targets, pickers, every option selectable, Clear, Quick key
-target/release/oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>" --script tests/replay.txt
+"$CARGO_TARGET_DIR/release/oos-ui" --replay FRAME.bin --pre "<:WAV:PRE? string>" --script tests/replay.txt
 ```
 
 `tests/colorgrade.txt` (a0-a2: menu, CH2 + CH4 graded, PWM with sweeping duty triggered on CH4), `tests/storage.txt`
-(b0-b5: menu, setup / CSV / PNG saved, default, recalled; files in `target/test-shots/storage/`) and
+(b0-b5: menu, setup / CSV / PNG saved, default, recalled; files in `test-shots.*/storage/` under the selected target) and
 `tests/mask.txt` (c0-c3: menu, CH1 passing, CH4 failing, stop on fail) exercise these features.
 `tests/picker.txt` (d0-d5: trigger type picker, Runt set, math operation picker, FFT set, Quick key picker, Clear
 set), `tests/clear.txt` (e0-e2: stopped, cleared in STOP, SINGLE draws again), `tests/results.txt` (f0-f1: results

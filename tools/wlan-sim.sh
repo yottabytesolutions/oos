@@ -8,11 +8,13 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
-w="${TMPDIR:-/tmp}/oos-wlan-sim"
-mkdir -p "$w"
+. "$root/tools/output.sh"
+w=$(mktemp -d "${TMPDIR:-/tmp}/oos-wlan-sim.XXXXXX")
+trap 'rm -rf "$w"' EXIT
+trap 'exit 1' HUP INT TERM
 [ -x "$root/rootfs/out/wpa_supplicant" ] || "$root/rootfs/build-wlan-tools.sh"
 
-(cd "$root/ui" && PATH="$HOME/.cargo/bin:$PATH" cargo test --target aarch64-unknown-linux-musl --no-run --message-format=json 2>/dev/null) \
+(cd "$root/ui" && PATH="$HOME/.cargo/bin:$PATH" cargo test --offline --locked --target aarch64-unknown-linux-musl --no-run --message-format=json 2>/dev/null) \
 	| python3 -c '
 import sys, json
 for l in sys.stdin:

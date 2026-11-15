@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
 # gel-sim.sh - the install without opening the scope, on a file laid out like a stock card: a Linux container with the
-# paths of the stock system, a USB stick folder and mksh as /system/bin/sh, running boot/out/DHO800_DHO900_OOS_Install.GEL
+# paths of the stock system, a USB stick folder and mksh as /system/bin/sh, running the selected image/DHO800_DHO900_OOS_Install.GEL
 # through the steps of the stock update. Needs Docker and the three completed host steps:
 # boot/build-dev-image.sh, boot/sign-dev-image.sh, then python3 -I boot/build-gel.py.
 #
@@ -13,10 +13,14 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
-gel="$root/boot/out/DHO800_DHO900_OOS_Install.GEL"
+. "$root/tools/output.sh"
+gel="$CARGO_TARGET_DIR/image/DHO800_DHO900_OOS_Install.GEL"
 [ -f "$gel" ] || { echo "run boot/build-dev-image.sh, boot/sign-dev-image.sh, then python3 -I boot/build-gel.py first" >&2; exit 1; }
-w="${TMPDIR:-/tmp}/oos-gel-sim"
-rm -rf "$w"; mkdir -p "$w/rigol-data"
+python3 "$root/tools/output.py" verify "$gel"
+w=$(mktemp -d "${TMPDIR:-/tmp}/oos-gel-sim.XXXXXX")
+trap 'rm -rf "$w"' EXIT
+trap 'exit 1' HUP INT TERM
+mkdir -p "$w/rigol-data"
 [ -z "${1:-}" ] || cp "$1" "$w/do_update.sh"
 [ -n "${OOS_CAL_DIR:-}" ] && cp "$OOS_CAL_DIR/vendor.bin" "$w/rigol-data/" 2>/dev/null || true
 echo calibration > "$w/rigol-data/cal_example.hex"

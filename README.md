@@ -428,15 +428,19 @@ Replace all keys in `keys/update.pub` with the line it prints. Keep the secret k
 
 ### 5. Build the image
 
+These paths use the default `target` directory. Set `CARGO_TARGET_DIR` to select
+another directory inside this worktree, and use its `image/` directory below.
+See [the output contract](tools/OUTPUTS.md).
+
 ```sh
 boot/build-dev-image.sh
 boot/sign-dev-image.sh --key /path/to/signing.key # or --community for development
 boot/build-gel.py
 ```
 
-These separate steps produce `boot/out/oos-dev.img` for the card, `boot/out/oos-dev.oosupd`, the signed update package, and
-`boot/out/DHO800_DHO900_OOS_Install.GEL` for the USB stick. If the script fails, the previous image stays in place, so
-check the file's time.
+These separate steps produce `target/image/oos-dev.img` for the card, `target/image/oos-dev.oosupd`, the signed
+update package, and `target/image/DHO800_DHO900_OOS_Install.GEL` for the USB stick. Signing and packaging verify
+build receipts before consuming these local artifacts.
 
 #### Building on Linux
 
@@ -479,13 +483,13 @@ file from a release, write `--image oos-<version>.img` instead:
 
 ```sh
 diskutil unmountDisk /dev/diskM
-sudo python3 boot/card-install.py install /dev/rdiskM --image boot/out/oos-dev.img --fallback-stock
+sudo python3 boot/card-install.py install /dev/rdiskM --image target/image/oos-dev.img --fallback-stock
 ```
 
 The tool refuses cards that do not have the stock layout. If the plan looks right, write it:
 
 ```sh
-sudo python3 boot/card-install.py install /dev/rdiskM --image boot/out/oos-dev.img --fallback-stock --execute
+sudo python3 boot/card-install.py install /dev/rdiskM --image target/image/oos-dev.img --fallback-stock --execute
 ```
 
 This saves the current `recovery` partition to `backups/`, writes OOS into `recovery`, reads it back, and copies the
@@ -547,7 +551,7 @@ again finishes the job. No stock update step runs, and the FPGA flash and `/rigo
 
 You need a FAT32 USB stick with at least 200 MiB free, and `DHO800_DHO900_OOS_Install.GEL`: download it from the
 [latest release](https://github.com/deckerjulian/oos/releases/latest) and check it against `SHA256SUMS`, or take it from
-`boot/out/` of your own build.
+`target/image/` of your own build.
 
 1. Copy the file to the top folder of the stick. Keep the name: the scope ignores a file
    whose name does not end in `.GEL` and contain `DHO800_DHO900`.
@@ -582,7 +586,7 @@ adb pull /rigol/data rigol-data
 
 # the tool for the scope, not the one in target/release
 adb push target/aarch64-unknown-linux-musl/release/oos-update /data/local/tmp/
-adb push boot/out/oos-dev.oosupd /data/local/tmp/
+adb push target/image/oos-dev.oosupd /data/local/tmp/
 adb shell chmod 755 /data/local/tmp/oos-update
 
 # dry run: all checks, the rescue set, the card is not written
@@ -723,7 +727,7 @@ about 5 minutes per channel and pass, with 4 passes. Results go to `/oos/cal` an
 which are never changed.
 
 **Updates.** Take `oos-<version>.oosupd` from the [latest release](https://github.com/deckerjulian/oos/releases/latest), or
-build a package yourself (`boot/out/oos-dev.oosupd`), then install it on the running scope:
+build a package yourself (`target/image/oos-dev.oosupd`), then install it on the running scope:
 
 ```sh
 curl --max-time 300 --data-binary @oos-<version>.oosupd http://<scope>:8080/update

@@ -17,7 +17,14 @@ case "$#:${1:-}" in
 	2:--key) [ -n "$2" ] || { echo "Usage: boot/sign-dev-image.sh [--key PATH | --community]" >&2; exit 1; } ;;
 	*) echo "Usage: boot/sign-dev-image.sh [--key PATH | --community]" >&2; exit 1 ;;
 esac
-[ -f "$here/out/oos-dev.build" ] || { echo "run boot/build-dev-image.sh first" >&2; exit 1; }
-exec cargo run --offline --release --manifest-path "$root/fpgad/Cargo.toml" --bin oos-update -- pack \
-	--image "$here/out/oos-dev.img" --build "$(cat "$here/out/oos-dev.build")" \
-	--out "$here/out/oos-dev.oosupd" "$@"
+. "$root/tools/output.sh"
+out="$CARGO_TARGET_DIR/image"
+before=$(python3 "$root/tools/output.py" revision)
+python3 "$root/tools/output.py" verify "$out/oos-dev.img"
+[ -f "$out/oos-dev.build" ] || { echo "run boot/build-dev-image.sh first" >&2; exit 1; }
+python3 "$root/tools/output.py" verify "$out/oos-dev.build"
+cargo run --offline --locked --release --manifest-path "$root/fpgad/Cargo.toml" --bin oos-update -- pack \
+	--image "$out/oos-dev.img" --build "$(cat "$out/oos-dev.build")" \
+	--out "$out/oos-dev.oosupd" "$@"
+python3 "$root/tools/output.py" verify "$out/oos-dev.img" "$out/oos-dev.build"
+python3 "$root/tools/output.py" stamp "$out/oos-dev.oosupd" "$before"

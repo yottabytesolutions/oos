@@ -30,13 +30,75 @@ pub fn bind_any<T>(v6: bool, port: u16, bind: impl Fn(SocketAddr) -> std::io::Re
     bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port))).ok()
 }
 
-/// A listening TCP socket for a service on all addresses of the families in use.
-pub fn tcp(port: u16, v6: bool) -> Option<TcpListener> {
-    bind_any(v6, port, TcpListener::bind)
+/// Device service ports retain their family policy; host harnesses always use IPv4 loopback and port 0.
+#[derive(Clone, Copy, Debug)]
+pub enum Port {
+    Service(u16),
+    Host,
+}
+
+impl From<u16> for Port {
+    fn from(port: u16) -> Self {
+        Self::Service(port)
+    }
+}
+
+pub fn tcp(port: impl Into<Port>, v6: bool) -> Option<TcpListener> {
+    let port = port.into();
+    let l = match port {
+        Port::Host => TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).ok(),
+        Port::Service(p) => bind_any(v6, p, TcpListener::bind),
+    };
+    if l.is_none() {
+        eprintln!("oos-ui: TCP listener {:?} unavailable", port);
+    }
+    l
 }
 
 pub fn udp(port: u16, v6: bool) -> Option<UdpSocket> {
     bind_any(v6, port, UdpSocket::bind)
+}
+
+/// Host startup errors must reach the launcher through stderr and a failing exit status.
+pub fn host_or_exit<T>(result: std::io::Result<T>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(e) => {
+            eprintln!("oos-ui: host startup failed: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Publish only after every host listener is bound. The launcher owns the private run directory.
+pub fn host_ready(web: Option<u16>, scpi: Option<u16>, vxi: Option<(u16, u16, u16)>) -> std::io::Result<()> {
+    let (Some(web), Some(scpi), Some((tcp, udp, core))) = (web, scpi, vxi) else {
+        return Err(std::io::Error::other("a host listener is unavailable; readiness was not published"));
+    };
+    let build = std::env::var("OOS_HARNESS_BUILD").unwrap_or_default();
+    if build.is_empty() || !build.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "OOS_HARNESS_BUILD must be non-empty hexadecimal; launch with tools/host_harness.py",
+        ));
+    }
+    let record = format!(
+        "{{\"pid\":{},\"build\":\"{}\",\"web\":{},\"scpi\":{},\"vxi_tcp\":{},\"vxi_udp\":{},\"vxi_core\":{}}}\n",
+        std::process::id(),
+        build,
+        web,
+        scpi,
+        tcp,
+        udp,
+        core
+    );
+    let Some(path) = std::env::var_os("OOS_HARNESS_READY") else {
+        println!("{}", record.trim());
+        return Ok(());
+    };
+    let path = std::path::PathBuf::from(path);
+    let pending = path.with_extension("pending");
+    std::fs::write(&pending, record).and_then(|()| std::fs::rename(pending, path))
 }
 
 /// The prefixes of a `PREFIX_FILE` text; what does not parse, is IPv4 or shorter than `PREFIX_MIN` is left out.
@@ -58,6 +120,73 @@ pub fn onlink() -> Vec<(Ipv6Addr, u8)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_startup_failure_reports_cause_and_fails() {
+        if std::env::var_os("OOS_TEST_STARTUP_CHILD").is_some() {
+            host_or_exit::<()>(Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test startup cause")));
+            return;
+        }
+        assert_eq!(host_or_exit(Ok(7)), 7);
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "net6::tests::host_startup_failure_reports_cause_and_fails", "--nocapture"])
+            .env("OOS_TEST_STARTUP_CHILD", "1")
+            .output()
+            .unwrap();
+        assert_eq!(child.status.code(), Some(1));
+        let stderr = String::from_utf8(child.stderr).unwrap();
+        assert!(stderr.contains("host startup failed"));
+        assert!(stderr.contains("test startup cause"));
+    }
+
+    #[test]
+    fn host_ready_record() {
+        // Give each child its own environment; parallel tests never mutate process-wide variables.
+        if std::env::var_os("OOS_TEST_READY_CHILD").is_some() {
+            let build = std::env::var("OOS_HARNESS_BUILD").unwrap();
+            let result = host_ready(Some(1001), Some(1002), Some((1003, 1004, 1005)));
+            assert_eq!(result.is_ok(), !build.is_empty() && build.bytes().all(|b| b.is_ascii_hexdigit()));
+            return;
+        }
+        let run = std::env::temp_dir().join(format!("oos-ready-{}", std::process::id()));
+        std::fs::create_dir(&run).unwrap();
+        let path = run.join("ready.json");
+        for build in ["0123456789abcdefABCDEF", "not-hex", ""] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "net6::tests::host_ready_record", "--nocapture"])
+                .env("OOS_TEST_READY_CHILD", "1")
+                .env("OOS_HARNESS_BUILD", build)
+                .env("OOS_HARNESS_READY", &path)
+                .spawn()
+                .unwrap();
+            let pid = child.id();
+            assert!(child.wait().unwrap().success());
+            if build == "0123456789abcdefABCDEF" {
+                assert_eq!(
+                    std::fs::read_to_string(&path).unwrap(),
+                    format!(
+                        "{{\"pid\":{pid},\"build\":\"{build}\",\"web\":1001,\"scpi\":1002,\"vxi_tcp\":1003,\"vxi_udp\":1004,\"vxi_core\":1005}}\n"
+                    )
+                );
+                std::fs::remove_file(&path).unwrap();
+            } else {
+                assert!(!path.exists(), "invalid builds must not publish readiness");
+            }
+            assert!(!path.with_extension("pending").exists());
+        }
+        std::fs::remove_dir(run).unwrap();
+    }
+
+    #[test]
+    fn host_listeners_are_private_and_independent() {
+        let a = tcp(Port::Host, true).unwrap();
+        let b = tcp(Port::Host, false).unwrap();
+        let (a, b) = (a.local_addr().unwrap(), b.local_addr().unwrap());
+        assert_eq!(a.ip(), Ipv4Addr::LOCALHOST);
+        assert_eq!(b.ip(), Ipv4Addr::LOCALHOST);
+        assert_ne!(a.port(), 0);
+        assert_ne!(a.port(), b.port());
+    }
 
     #[test]
     fn switch_and_prefixes() {

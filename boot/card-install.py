@@ -4,7 +4,7 @@
 """card-install.py: put an OOS boot image into the `recovery` partition of a DHO800/DHO900 boot card
 (card in the Mac's reader as /dev/rdiskN, or a card image file), and optionally arm the boot command.
 
-    card-install.py install TARGET --image boot/out/oos-dev.img [--arm]    dry run: checks and prints the plan
+    card-install.py install TARGET --image target/image/oos-dev.img [--arm]    dry run: checks and prints the plan
     card-install.py restore TARGET --backup FILE                            dry run: puts a saved recovery back
     add --execute to write. Before the first write the current `recovery` partition is saved to
     backups/recovery-<date>.bin in this repository (refuses to continue if that fails).

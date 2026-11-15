@@ -12,9 +12,11 @@
 #     upload oos-ui, oos-fpgad and plan-matrix.sh, switch to the new oos-ui
 #   tools/device-deploy.sh --host scope.example --restore   back to the installed oos-ui
 #
-# Build first: (cd ui && cargo build --release --target aarch64-unknown-linux-musl), same for fpgad.
+# Build first: python3 tools/output.py build --release --target aarch64-unknown-linux-musl -p oos-ui -p oos-fpgad.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
+root=$here
+. "$root/tools/output.sh"
 host=${OOS_SCOPE:-}
 restore=0
 while [ "$#" -gt 0 ]; do
@@ -27,8 +29,8 @@ done
 [ -n "$host" ] || { echo "specify --host or set OOS_SCOPE; no default scope" >&2; exit 1; }
 "$here/tools/scope-lease" status --host "$host" --cap install
 port=${OOS_TELNET_PORT:-23}
-ui=${OOS_DEPLOY_UI:-$here/target/aarch64-unknown-linux-musl/release/oos-ui}
-fpgad=${OOS_DEPLOY_FPGAD:-$here/target/aarch64-unknown-linux-musl/release/oos-fpgad}
+ui=${OOS_DEPLOY_UI:-$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/oos-ui}
+fpgad=${OOS_DEPLOY_FPGAD:-$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/oos-fpgad}
 
 # one command on the telnet shell; the pauses keep nc from dropping what comes back
 tel() {
@@ -59,6 +61,7 @@ if [ "$restore" -eq 1 ]; then
 	exit 0
 fi
 
+python3 "$root/tools/output.py" verify "$ui" "$fpgad"
 [ -x "$ui" ] && [ -x "$fpgad" ] || { echo "error: build first (see the top of this script)" >&2; exit 1; }
 tel "cat /proc/version; ls -l /bin/oos-ui; pidof oos-ui oos-ui.new; df -k /tmp | tail -1" 2
 # a build from an earlier deploy still runs from /tmp: "text file busy" for the upload otherwise

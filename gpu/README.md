@@ -77,14 +77,19 @@ The helper's GPU time per frame there: the panel 8 to 10 ms, the monitor 12 to 1
 
 - the kernel with Panfrost (`kernel/config`) and the GPU node of the device tree enabled for it
   (`kernel/dts/rk3399-rigol-dho900.dts`: `arm,mali-t860`, `mali-supply`, steps up to 600 MHz);
-- `rootfs/out/gpu/`, built by `gpu/build.sh`: the helper, Mesa 26.0.8 with only Panfrost (EGL, GLES 3, GBM; built in
-  two stages, LLVM only at build time), libdrm, zlib, libstdc++ and glibc with its loader. About 26 MB, 8 MB of the
+- `gpu/gpu/` under the selected target (default `target/gpu/gpu/`), built by `gpu/build.sh`: the helper,
+  Mesa 26.0.8 with only Panfrost (EGL, GLES 3, GBM; built in two stages, LLVM only at build time), libdrm, zlib, libstdc++ and glibc with its loader. About 26 MB, 8 MB of the
   compressed image.
+
+`gpu/build.sh` keeps Mesa's installed build cache in `rootfs/out/mesa/` and its checked
+source tarball beside it, separately from the selected Cargo target. `cargo clean`
+preserves that cache. Remove `rootfs/out/mesa/` explicitly to rebuild Mesa.
 
 ## Testing without a scope
 
-`gpu/test-host.sh` runs every script of `ui/tests` in an arm64 container twice, on the CPU and through the helper on
-Mesa's software renderer, and `gpu/compare.py` compares the pictures: all 92 agree to within 4 of 255 (the GPU blends
+Build the UI first with `python3 tools/output.py build -p oos-ui --release --target aarch64-unknown-linux-musl`
+from the worktree root. `gpu/test-host.sh` verifies its receipt and runs every script of `ui/tests` in an
+arm64 container twice, on the CPU and through the helper on Mesa's software renderer, and `gpu/compare.py` compares the pictures: all 92 agree to within 4 of 255 (the GPU blends
 in floating point; two single pixels of a corner over colour-graded traces are 4 off, all else within 3). With
 `OOS_GPU_HDMI=1920x1080 OOS_GPU_HDMI_MODE=Mirror|Waveform|Layout` the script runner also writes the monitor's picture
 of every shot; commands and pixel layers (`OOS_GPU_PIXELS=1`) give the same monitor pictures to within 2.

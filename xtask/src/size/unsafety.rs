@@ -12,7 +12,7 @@ impl<'a> Visit<'a> for Count {
     }
 
     fn visit_signature(&mut self, s: &'a syn::Signature) {
-        self.0 += s.unsafety.is_some() as u64;
+        self.0 += matches!(s.safety, syn::Safety::Unsafe(_)) as u64;
         visit::visit_signature(self, s);
     }
 

@@ -117,7 +117,7 @@ impl<'a> Visit<'a> for Walk {
         }
         let ty = type_name(&i.self_ty);
         let owner = match &i.trait_ {
-            Some((_, path, _)) => {
+            Some((path, _)) => {
                 let tr = path.segments.last().map_or_else(|| "?".into(), |s| s.ident.to_string());
                 format!("<{} as {}>", ty, tr)
             }

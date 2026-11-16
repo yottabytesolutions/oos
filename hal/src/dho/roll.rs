@@ -149,6 +149,8 @@ pub fn config_scan(sh: &mut Shadows, rp: &Params, memsel: u32, trig_pos: u32) ->
 /// 0x4058 of scan mode: `pos | en << 31`, pos = (delay - 5 time/div) / point period in samples. Enabled only when the
 /// trigger point is left of the screen start by at least one column (time/div / 10); else 0.
 /// `delay_fs` is the horizontal position of the trigger relative to the screen centre (positive = trigger left).
+// Unit check pending (task 0073, scan-threshold hold): compare tdiv/10 with the reported stock
+// tdiv/100 rule for 0x4058 before changing its value or direction.
 pub fn scan_trig_pos(delay_fs: i128, tdiv_fs: i128, dot_fs: u64) -> u32 {
     let start = delay_fs - 5 * tdiv_fs; // screen start relative to the trigger point
     let column = (tdiv_fs / 10).max(1);

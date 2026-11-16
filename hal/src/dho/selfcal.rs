@@ -19,7 +19,7 @@ pub trait CalHw {
     fn apply(&mut self, ops: &[Op]);
     /// AFE register read (reg 0 holds the comparator bits).
     fn afe_read(&mut self, ch: usize, reg: u8) -> u16;
-    /// Mean ADC code of channel `ch` (65536 samples per core, the channel's two cores averaged).
+    /// Mean ADC code of channel `ch` (e=15, 32768 samples, all eight measure slots averaged).
     fn adc_mean(&mut self, ch: usize) -> Option<f64>;
     fn sleep_ms(&mut self, ms: u32);
     /// The user pressed Cancel.
@@ -146,35 +146,8 @@ pub fn run_all_with(
     Ok(r)
 }
 
-/// Writes the results to OOS's own files (the current OOS file, else the factory file, as the base for the rows and
-/// channels not calibrated). Returns the files written.
-pub fn save(r: &Results, rigol_dir: &str) -> Result<Vec<String>, String> {
-    use crate::dho::calfile::{self, OOS_CAL_DIR};
-    let base = |n: &str| -> Result<Vec<u8>, String> {
-        let (b, _) = calfile::load_first(n, &[OOS_CAL_DIR, rigol_dir]).ok_or(format!("no valid {}", n))?;
-        Ok(calfile::parse(&b).map_err(|e| format!("{}: {:?}", n, e))?.to_vec())
-    };
-    let mut out = Vec::new();
-    let stamp = calfile::now();
-    if !r.blocks.is_empty() {
-        let p = vertical_payload(&base("cal_vertical.hex")?, &r.blocks);
-        calfile::save(OOS_CAL_DIR, "cal_vertical.hex", &p, stamp).map_err(|e| e.to_string())?;
-        out.push(format!("{}/cal_vertical.hex", OOS_CAL_DIR));
-    }
-    if let Some(adc) = &r.adc {
-        calfile::save(OOS_CAL_DIR, "cal_adc.hex", adc.payload(), stamp).map_err(|e| e.to_string())?;
-        out.push(format!("{}/cal_adc.hex", OOS_CAL_DIR));
-    }
-    if !r.zero.is_empty() {
-        let mut p = base("cal_afe_zero.hex")?;
-        for (ch, z) in &r.zero {
-            p = zero_payload(&p, *ch, z);
-        }
-        calfile::save(OOS_CAL_DIR, "cal_afe_zero.hex", &p, stamp).map_err(|e| e.to_string())?;
-        out.push(format!("{}/cal_afe_zero.hex", OOS_CAL_DIR));
-    }
-    Ok(out)
-}
+mod files;
+pub use files::{save, vertical_payload, zero_payload};
 
 // ---- ADC core gain & offset (self-cal.md 14) -------------------------------------------------------------------
 
@@ -375,6 +348,8 @@ pub fn adc_cores(
                 let on = o[n];
                 hw.adc_op(&mut |a| a.core_offset(n, on));
             }
+            // Unit check pending (task 0073, core-offset hold): reported slope about 0.6 LSB per step
+            // versus the assumed 16 codes. Verify slope and the missing settle wait before changing either.
             let mean = hw.adc_slots().ok_or("ADC measure unit not answering")?;
             let mut corrected = 0;
             for n in 0..8 {
@@ -823,28 +798,6 @@ pub fn rec_bytes(r: &Rec) -> [u8; 56] {
     b
 }
 
-/// cal_vertical payload with some blocks replaced: `base` = the current payload (16 blocks x 801 x 56 bytes).
-pub fn vertical_payload(base: &[u8], blocks: &[(usize, usize, Vec<Rec>)]) -> Vec<u8> {
-    let mut p = base.to_vec();
-    for (var, ch, recs) in blocks {
-        for (i, r) in recs.iter().enumerate().take(801) {
-            let o = ((var * 4 + ch) * 801 + i) * 56;
-            p[o..o + 56].copy_from_slice(&rec_bytes(r));
-        }
-    }
-    p
-}
-
-/// cal_afe_zero payload (4 x 20 s32) with channel `ch` replaced.
-pub fn zero_payload(base: &[u8], ch: usize, z: &[i32; 20]) -> Vec<u8> {
-    let mut p = base.to_vec();
-    for (k, v) in z.iter().enumerate() {
-        let o = (ch * 20 + k) * 4;
-        p[o..o + 4].copy_from_slice(&v.to_le_bytes());
-    }
-    p
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1121,7 +1074,7 @@ mod tests {
         let (cal, v) = synthetic_cal();
         let base = crate::dho::calfile::parse(&v).unwrap();
         let b = cal.block(1, 2);
-        assert_eq!(vertical_payload(base, &[(1, 2, b)]), base);
+        assert_eq!(vertical_payload(base, &[(1, 2, b)]).unwrap(), base);
         let z = cal.zero_trims(3);
         let zb = crate::dho::fixtures::ZERO;
         let zp = crate::dho::calfile::parse(zb).unwrap();

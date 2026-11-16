@@ -154,7 +154,7 @@ pub fn points(m: &Model, packets: &[Packet]) -> Vec<f64> {
                     }
                     continue;
                 }
-                if m.trig_bus != BusWhat::Data || addr.is_none() {
+                if m.trig_bus != BusWhat::Data || addr.is_none() || !dir_ok(s.dir, read) {
                     continue;
                 }
                 // any data byte of the frame
@@ -183,12 +183,15 @@ pub fn points(m: &Model, packets: &[Packet]) -> Vec<f64> {
 /// The I2C address condition: relation against the value and `addr_max`, and the direction.
 fn addr_ok(m: &Model, a: u32, read: bool) -> bool {
     let s = &m.ser;
-    let dir = match s.dir {
+    dir_ok(s.dir, read) && s.addr_rel.test(a as u64, m.trig_bus_val, s.addr_max as u64, 0x3ff)
+}
+
+fn dir_ok(dir: I2cDir, read: bool) -> bool {
+    match dir {
         I2cDir::Either => true,
         I2cDir::Read => read,
         I2cDir::Write => !read,
-    };
-    dir && s.addr_rel.test(a as u64, m.trig_bus_val, s.addr_max as u64, 0x3ff)
+    }
 }
 
 /// All trigger points of `m`'s condition in `inp` (fractional sample indices).
@@ -210,6 +213,43 @@ mod serial_tests {
 
     fn pk(t: f64, kind: Kind, value: u32) -> Packet {
         Packet { t0: t, t1: t, kind, value, value2: None, ok: true }
+    }
+
+    #[test]
+    fn audit0073_i2c_data_direction_for_any_and_one_to_five_bytes() {
+        for ten_bit in [false, true] {
+            for bytes in 0..=5 {
+                let mut m =
+                    Model { dec_proto: Proto::I2C, trig_bus: BusWhat::Data, trig_bus_val: 0, ..Model::default() };
+                (m.ser.bytes, m.ser.ten_bit) = (bytes, ten_bit);
+                let mut packets = vec![pk(0.0, Kind::Start, 0)];
+                let mut ends = [Vec::new(), Vec::new()];
+                for (frame, read) in [false, true].into_iter().enumerate() {
+                    let t = frame as f64 * 10.0;
+                    packets.push(pk(t, Kind::RepStart, 0));
+                    packets.push(pk(t + 1.0, Kind::Addr { read }, if ten_bit { 0x7a } else { 0x50 }));
+                    if ten_bit {
+                        packets.push(pk(t + 1.5, Kind::Data, 0xa5));
+                    }
+                    for n in 1..=5 {
+                        let end = t + 1.0 + n as f64;
+                        packets.push(pk(end, Kind::Data, 0));
+                        if bytes == 0 || n == bytes {
+                            ends[frame].push(end);
+                        }
+                    }
+                }
+                for dir in [I2cDir::Either, I2cDir::Read, I2cDir::Write] {
+                    m.ser.dir = dir;
+                    let want = match dir {
+                        I2cDir::Either => [ends[0].clone(), ends[1].clone()].concat(),
+                        I2cDir::Read => ends[1].clone(),
+                        I2cDir::Write => ends[0].clone(),
+                    };
+                    assert_eq!(points(&m, &packets), want, "{dir:?}, bytes={bytes}, ten_bit={ten_bit}");
+                }
+            }
+        }
     }
 
     #[test]

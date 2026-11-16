@@ -87,8 +87,149 @@ fn stamp_at(secs: u64) -> Stamp {
     (y as u32, m as u32, d as u32, (rem / 3600) as u32, (rem / 60 % 60) as u32, (rem % 60) as u32)
 }
 
-/// Writes `name` in `dir` atomically: `name.new`, fsync, the old file to `name.bak`, rename. Never under /rigol.
-pub fn save(dir: &str, name: &str, payload: &[u8], s: Stamp) -> std::io::Result<()> {
+/// A failed save, distinguishing files already live from an unsuccessful publication.
+#[derive(Debug)]
+pub enum SaveError {
+    Failed(std::io::Error),
+    PublishedDirectorySync(std::io::Error),
+}
+
+impl From<std::io::Error> for SaveError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl std::fmt::Display for SaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Failed(error) => error.fmt(f),
+            Self::PublishedDirectorySync(error) => {
+                write!(f, "calibration files published; directory fsync failed: {}", error)
+            }
+        }
+    }
+}
+
+impl std::error::Error for SaveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Failed(error) | Self::PublishedDirectorySync(error) => Some(error),
+        }
+    }
+}
+
+/// Writes one calibration file with the same staging, backup and durability as `save_all`.
+pub fn save(dir: &str, name: &str, payload: &[u8], s: Stamp) -> Result<(), SaveError> {
+    save_all(dir, &[(name, payload)], s)
+}
+
+/// Stage and fsync every container before replacing any file. Each previous file is kept as `.bak`.
+/// Restore current good files on a publish error, but not the previous `.bak` generation.
+/// Separate renames are not atomic across power loss. `PublishedDirectorySync` means all new files are live,
+/// but the final directory fsync failed; callers must reload the live files even for that error.
+pub fn save_all(dir: &str, files: &[(&str, &[u8])], s: Stamp) -> Result<(), SaveError> {
+    save_all_with_sync(dir, files, s, |dir| std::fs::File::open(dir)?.sync_all())
+}
+
+fn save_all_with_sync(
+    dir: &str,
+    files: &[(&str, &[u8])],
+    s: Stamp,
+    sync: impl FnOnce(&str) -> std::io::Result<()>,
+) -> Result<(), SaveError> {
+    let mut paths = Vec::new();
+    for (name, payload) in files {
+        match stage(dir, name, payload, s) {
+            Ok(path) => paths.push(path),
+            Err(e) => {
+                cleanup(&paths);
+                return Err(e.into());
+            }
+        }
+    }
+    let result = publish(&paths);
+    cleanup(&paths);
+    match (result, sync(dir)) {
+        (Err(e), Err(sync)) => Err(std::io::Error::other(format!("{}; directory fsync: {}", e, sync)).into()),
+        (Err(e), _) => Err(e.into()),
+        (Ok(()), result) => result.map_err(SaveError::PublishedDirectorySync),
+    }
+}
+
+fn cleanup(paths: &[String]) {
+    for path in paths {
+        remove_temporary(&format!("{}.new", path));
+    }
+}
+
+fn publish(paths: &[String]) -> std::io::Result<()> {
+    publish_with(paths, |from, to| std::fs::rename(from, to))
+}
+
+fn publish_with(paths: &[String], mut rename: impl FnMut(&str, &str) -> std::io::Result<()>) -> std::io::Result<()> {
+    let mut replaced = Vec::new();
+    for path in paths {
+        let mut old = false;
+        let result = (|| {
+            old = std::path::Path::new(path).try_exists()?;
+            if old {
+                backup_with(path, |from, to| std::fs::hard_link(from, to))?;
+            }
+            rename(&format!("{}.new", path), path)
+        })();
+        if let Err(e) = result {
+            return Err(restore(&replaced, e, &mut rename));
+        }
+        replaced.push((path, old));
+    }
+    Ok(())
+}
+
+fn backup_with(path: &str, link: impl FnOnce(&str, &str) -> std::io::Result<()>) -> std::io::Result<()> {
+    let backup = format!("{}.bak", path);
+    let temporary = format!("{}.new", backup);
+    link(path, &temporary)?;
+    let result = (|| {
+        let dir =
+            std::path::Path::new(path).parent().ok_or_else(|| std::io::Error::other("no calibration directory"))?;
+        std::fs::File::open(dir)?.sync_all()?;
+        std::fs::rename(&temporary, &backup)
+    })();
+    if result.is_err() {
+        remove_temporary(&temporary);
+    }
+    result
+}
+
+fn restore(
+    replaced: &[(&String, bool)],
+    error: std::io::Error,
+    rename: &mut impl FnMut(&str, &str) -> std::io::Result<()>,
+) -> std::io::Error {
+    let mut errors = Vec::new();
+    for &(path, old) in replaced.iter().rev() {
+        let result = if old { rename(&format!("{}.bak", path), path) } else { std::fs::remove_file(path) };
+        if let Err(e) = result {
+            errors.push(format!("restore {}: {}", path, e));
+        }
+    }
+    if errors.is_empty() {
+        error
+    } else {
+        std::io::Error::other(format!("{}; {}", error, errors.join("; ")))
+    }
+}
+
+fn remove_temporary(path: &str) {
+    if let Err(e) = std::fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            eprintln!("calibration cleanup {}: {}", path, e);
+        }
+    }
+}
+
+fn stage(dir: &str, name: &str, payload: &[u8], s: Stamp) -> std::io::Result<String> {
     use std::io::Write;
     let refuse = |m: &str| std::io::Error::new(std::io::ErrorKind::PermissionDenied, m.to_string());
     let canon = std::path::Path::new(dir).components().collect::<std::path::PathBuf>();
@@ -109,17 +250,13 @@ pub fn save(dir: &str, name: &str, payload: &[u8], s: Stamp) -> std::io::Result<
     let path = format!("{}/{}", dir.trim_end_matches('/'), name);
     let tmp = format!("{}.new", path);
     let mut f = std::fs::File::create(&tmp)?;
-    f.write_all(&build(payload, s))?;
-    f.sync_all()?;
+    let result = f.write_all(&build(payload, s)).and_then(|()| f.sync_all());
     drop(f);
-    if std::path::Path::new(&path).exists() {
-        std::fs::rename(&path, format!("{}.bak", path))?;
+    if let Err(e) = result {
+        remove_temporary(&tmp);
+        return Err(e);
     }
-    std::fs::rename(&tmp, &path)?;
-    if let Ok(d) = std::fs::File::open(dir) {
-        let _ = d.sync_all();
-    }
-    Ok(())
+    Ok(path)
 }
 
 /// The data partition is mounted at /oos, by the text of /proc/mounts.
@@ -138,73 +275,4 @@ pub fn load_first(name: &str, dirs: &[&str]) -> Option<(Vec<u8>, String)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn utc_stamps_use_explicit_seconds() {
-        for (secs, want) in [
-            (0, (1970, 1, 1, 0, 0, 0)),
-            (951_827_696, (2000, 2, 29, 12, 34, 56)),
-            (1_762_862_400, (2025, 11, 11, 12, 0, 0)),
-        ] {
-            assert_eq!(stamp_at(secs), want);
-        }
-    }
-
-    #[test]
-    fn data_partition_mounted() {
-        assert!(oos_mounted("rootfs / rootfs rw 0 0\n/dev/mmcblk0p1 /oos ext4 rw,noatime 0 0\n"));
-        assert!(!oos_mounted(
-            "rootfs / rootfs rw 0 0\n/dev/sda1 /oos/usb vfat rw 0 0\n/dev/mmcblk0p9 /rigol ext4 ro 0 0\n"
-        ));
-    }
-
-    #[test]
-    fn synthetic_files_parse_and_rebuild_byte_for_byte() {
-        for (name, bytes) in crate::dho::fixtures::files() {
-            let payload = parse(&bytes).unwrap_or_else(|e| panic!("{}: {:?}", name, e));
-            assert_eq!(build(payload, stamp(&bytes).unwrap()), bytes, "{}", name);
-            assert_eq!(stamp(&bytes), Some((2000, 1, 1, 0, 0, 0)));
-        }
-    }
-
-    #[test]
-    #[ignore = "private calibration: set OOS_CAL_DIR"]
-    fn private_files_parse_and_rebuild_byte_for_byte() {
-        for name in crate::dho::fixtures::NAMES {
-            // Explicit opt-in requires every file, so a missing scenario fails.
-            let bytes = crate::dho::fixtures::private(name);
-            let payload = parse(&bytes).unwrap_or_else(|e| panic!("{}: {:?}", name, e));
-            assert_eq!(build(payload, stamp(&bytes).unwrap()), bytes, "{}", name);
-        }
-    }
-
-    #[test]
-    fn errors_and_save_refuses_rigol() {
-        let b = build(&[1, 2, 3, 4], (2026, 11, 3, 21, 5, 9));
-        assert_eq!(parse(&b), Ok(&[1u8, 2, 3, 4][..]));
-        assert_eq!(stamp(&b), Some((2026, 11, 3, 21, 5, 9)));
-        let mut bad = b.clone();
-        bad[30] ^= 1;
-        assert_eq!(parse(&bad), Err(Error::PayloadCrc));
-        bad = b.clone();
-        bad[12] ^= 1;
-        assert_eq!(parse(&bad), Err(Error::HeaderCrc));
-        assert_eq!(parse(&b[..20]), Err(Error::Short));
-        assert!(save("/rigol/data", "cal_vertical.hex", &[0], (2000, 1, 1, 0, 0, 0)).is_err());
-        assert!(save("/rigol//data/", "x", &[0], (2000, 1, 1, 0, 0, 0)).is_err());
-        assert!(save("/tmp/../rigol/data", "x", &[0], (2000, 1, 1, 0, 0, 0)).is_err());
-        // atomic save with .bak
-        let d = std::env::temp_dir().join(format!("oos-calfile-{}", std::process::id()));
-        let ds = d.to_str().unwrap();
-        save(ds, "c.hex", &[7; 10], (2000, 1, 1, 0, 0, 0)).unwrap();
-        save(ds, "c.hex", &[8; 10], (2000, 1, 1, 0, 0, 0)).unwrap();
-        assert_eq!(parse(&std::fs::read(d.join("c.hex")).unwrap()), Ok(&[8u8; 10][..]));
-        assert_eq!(parse(&std::fs::read(d.join("c.hex.bak")).unwrap()), Ok(&[7u8; 10][..]));
-        let missing = d.join("missing");
-        let (_, from) = load_first("c.hex", &[missing.to_str().unwrap(), ds]).unwrap();
-        assert_eq!(from, ds);
-        std::fs::remove_dir_all(&d).unwrap();
-    }
-}
+mod tests;

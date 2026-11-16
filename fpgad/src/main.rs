@@ -13,8 +13,8 @@
 //!   oos-fpgad fpga-boot [--slot 0x400000] [--progress FILE]   only the BOOT command (start of rcS: the bitstream loads
 //!                                          while Linux starts the rest); its uptime goes to /tmp/oos-fpga-booted
 //!   oos-fpgad cold-boot [--execute] [--power-on [--slot 0x400000] [--booted]] [--ignore-clock] [--progress FILE]
-//!                                          (refused while XDMA is loaded: power cycle); --booted: the BOOT command
-//!                                          was sent by `fpga-boot`, only the rest of the wait; --progress: start-up
+//!                                          (refused while XDMA or the PCIe host is loaded: power cycle); --booted:
+//!                                          BOOT was sent by `fpga-boot`, only the rest of the wait; --progress: start-up
 //!                                          screen lines (oos_hal::bootstatus), then the temperature check
 //!                                          without --execute: dry run against the unit model (runs anywhere);
 //!                                          --execute: cold boot with the FPGA already on PCIe; --power-on: first the
@@ -53,6 +53,8 @@
 //!                                          over-temperature guard (SoC > 90 C or FPGA > 75 C): warning + beep after
 //!                                          3 periods, power off via the panel MCU after 11 (only with --power-off)
 //!
+//! `fpga-boot` and `cold-boot`: --force bypasses both loaded-module guards; a retry can hang the SoC.
+//!
 //! Options (defaults = the warm hand-over of 2026-11-02: CH1, 200 us/div, Auto depth, 1 V/div):
 //!   --mask 1           channel mask (bit0 = CH1)          --app-mask 1   channel mask the stock system left behind
 //!   --tdiv 200e-6      time/div in s                       --depth 0      memory depth (0 = Auto)
@@ -83,6 +85,8 @@
 
 mod board;
 mod compcheck;
+
+mod boot_guard;
 
 #[cfg(target_os = "linux")]
 use oos_hal::bootstatus;
@@ -830,7 +834,7 @@ fn check_temps(bar: &mut Option<oos_hal::dho::bus::Bar1>, say: &dyn Fn(&str, &st
 }
 
 /// `pll --freq <Hz> --dry`: the table `oos_hal::dho::lmx2582::table_for` makes and its decode, nothing written. Without
-/// --dry a --freq other than 1.25 GHz is refused (no other table has run on a unit); None = go on with the stock table.
+/// --dry this command refuses other clocks; unit results are in docs/models.md 4.1. None = use the stock table.
 fn pll_dry(a: &[String]) -> Result<Option<String>, String> {
     use oos_hal::dho::lmx2582;
     let freq = a
@@ -841,7 +845,7 @@ fn pll_dry(a: &[String]) -> Result<Option<String>, String> {
     if !a.iter().any(|x| x == "--dry") {
         return match freq {
             Some(f) if f != 1.25e9 => Err(format!(
-                "pll --freq {}: only 1.25 GHz is tested on the unit; other clocks only with --dry for now",
+                "pll --freq {}: this command writes only 1.25 GHz; use --dry for other clocks (unit results: docs/models.md 4.1)",
                 f
             )),
             _ => Ok(None),
@@ -886,14 +890,7 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
             return Ok(());
         }
     }
-    // unit 2026-11-03: a second cold boot while PCIe/XDMA from the first one are loaded hung the whole SoC (no ping);
-    // a failed cold boot needs a power cycle, never a retry in the same boot
-    if (cmd == "cold-boot" || cmd == "fpga-boot")
-        && std::path::Path::new("/sys/module/xdma").exists()
-        && !has("--force")
-    {
-        return Err("XDMA is already loaded (an earlier cold boot or hand-over in this boot): power cycle the scope instead of retrying".into());
-    }
+    boot_guard::check(cmd, has("--force"), |name| std::path::Path::new("/sys/module").join(name).exists())?;
     #[cfg(target_os = "linux")]
     {
         use oos_hal::dho::bus::{Bar1, Bus};
@@ -1470,7 +1467,7 @@ fn selfcal(a: &[String]) -> Result<(), String> {
             })?;
             println!("  {} configurations, largest change {:.2} %", r.measured, r.worst * 100.0);
             if has("--save") {
-                for f in sc::save(&r, &rigol)? {
+                for f in sc::save(&r, &rigol).map_err(|e| e.to_string())? {
                     println!("  saved {}", f);
                 }
             }
@@ -1547,7 +1544,7 @@ fn selfcal(a: &[String]) -> Result<(), String> {
                     sc::rebuild_scales(&mut nb, &keys, &got);
                     let (b, from) = calfile::load_first("cal_vertical.hex", &[calfile::OOS_CAL_DIR, &rigol])
                         .ok_or("no cal_vertical.hex")?;
-                    let p = sc::vertical_payload(calfile::parse(&b).map_err(|e| format!("{:?}", e))?, &[(var, ch, nb)]);
+                    let p = sc::vertical_payload(calfile::parse(&b).map_err(|e| format!("{e:?}"))?, &[(var, ch, nb)])?;
                     calfile::save(calfile::OOS_CAL_DIR, "cal_vertical.hex", &p, calfile::now())
                         .map_err(|e| e.to_string())?;
                     println!(

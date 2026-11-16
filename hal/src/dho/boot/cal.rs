@@ -91,14 +91,8 @@ impl CalFiles {
 
     fn load_from(own: Option<&str>, dir: &str) -> CalFiles {
         let mut notes = Vec::new();
-        let adc = read_first(
-            own,
-            dir,
-            "cal_adc.hex",
-            |d| payload(d).is_some() && CalAdc::from_file_bytes(d).is_some(),
-            &mut notes,
-        )
-        .and_then(|d| CalAdc::from_file_bytes(&d));
+        let adc = read_first(own, dir, "cal_adc.hex", |d| CalAdc::from_file_bytes(d).is_some(), &mut notes)
+            .and_then(|d| CalAdc::from_file_bytes(&d));
         let ddr = read_first(None, dir, "cal_ddr.hex", |d| DdrCal::from_file_bytes(d).is_some(), &mut notes)
             .and_then(|d| DdrCal::from_file_bytes(&d));
         CalFiles { adc, ddr, notes }
@@ -117,6 +111,24 @@ mod tests {
         }
         d.extend(p);
         d
+    }
+
+    #[test]
+    fn audit0073_adc_boot_and_runtime_share_acceptance() {
+        let dir = std::env::temp_dir().join(format!("oos-adc-acceptance-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ds = dir.to_str().unwrap();
+        let good = crate::dho::calfile::build(&vec![7; 0x738], (2000, 1, 1, 0, 0, 0));
+        let mut header = good.clone();
+        header[0] ^= 1;
+        let mut payload = good.clone();
+        payload[28] ^= 1;
+        for (d, valid) in [(&good, true), (&header, false), (&payload, false)] {
+            std::fs::write(dir.join("cal_adc.hex"), d).unwrap();
+            assert_eq!(CalFiles::load_from(None, ds).adc.is_some(), valid, "cold boot");
+            assert_eq!(CalAdc::load(ds).is_ok(), valid, "runtime");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

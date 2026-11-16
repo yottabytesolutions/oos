@@ -320,6 +320,12 @@ edit the ratchet and coverage files: the integrator runs `cargo xtask ratchet` a
 conflict on them ([migration rules](architecture/migration.md#rules-for-every-step), Shared ratchet files).
 `cargo xtask ratchet --init` writes the files from the current state; it only works where the base has no gate.
 
+Upstream intake is the one exception ([adr/0018](architecture/adr/0018-upstream-rebaseline.md),
+`xtask/src/rebaseline.rs`): a commit that touches only `xtask/data/**` and carries the trailer
+`Ratchet-Rebaseline: upstream <sha>` may add or raise entries of code that an upstream merge before it in the same
+integration changed, including keys a move in the base's `moves.txt` carried out of such a file. Until that commit
+exists, `check --fast` reports those findings as pending rebaseline; the full gate admits nothing without it.
+
 ### Moves
 
 A branch that moves code lists its moves in `xtask/data/moves.txt`, one `<old> -> <new>` per line:

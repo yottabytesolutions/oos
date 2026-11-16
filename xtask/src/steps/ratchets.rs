@@ -5,6 +5,7 @@ use super::{outcome, Outcome};
 use crate::base::{self, At};
 use crate::moves::{self, Move};
 use crate::ratchet::Ratchet;
+use crate::rebaseline;
 use crate::store::{self, Kind};
 use std::path::Path;
 
@@ -28,21 +29,25 @@ pub fn load_moves(root: &Path) -> Result<Vec<Move>, String> {
     }
 }
 
-/// The allowed entries of every ratcheted crate for `kind`, moves applied; their base, moves applied, when there is
-/// one.
+/// The allowed entries of every ratcheted crate for `kind`, moves applied; their base, moves applied and widened by
+/// the rebaseline commits of upstream intake (adr/0018), when there is one.
 fn allowed(
     ctx: &crate::run::Context,
     root: &Path,
     kind: Kind,
     crates: &[&str],
+    commit: &str,
 ) -> Result<(Ratchet, Option<Ratchet>), String> {
-    let commit = base::protected(ctx, root)?;
-    let moves = all_moves(ctx, root, Some(&commit))?;
+    let moves = all_moves(ctx, root, Some(commit))?;
+    let admitted = rebaseline::admitted(ctx, root, commit)?;
     let (mut work, mut base) = (Ratchet::default(), Some(Ratchet::default()));
     for k in crates {
         work.0.extend(store::load(root, k, kind)?.0);
-        base = match (base, store::at_base(ctx, root, &commit, k, kind)?) {
-            (Some(mut b), Some(at)) => {
+        base = match (base, store::at_base(ctx, root, commit, k, kind)?) {
+            (Some(mut b), Some(mut at)) => {
+                if let Some(more) = admitted.get(&store::rel(k, kind)) {
+                    rebaseline::widen(&mut at, more);
+                }
                 b.0.extend(at.0);
                 Some(b)
             }
@@ -52,28 +57,46 @@ fn allowed(
     Ok((moves::apply(&work, &moves)?, base.map(|b| moves::apply(&b, &moves)).transpose()?))
 }
 
+/// The fast gate's pending entries (adr/0018): the failures of `v` that upstream code not yet rebaselined explains.
+fn split_pending(v: &crate::ratchet::Verdict, pending: &rebaseline::Changed) -> (Vec<String>, usize) {
+    let kept = crate::ratchet::Verdict {
+        grown: v.grown.iter().filter(|g| !pending.covers(&g.0)).cloned().collect(),
+        new: v.new.iter().filter(|n| !pending.covers(&n.0)).cloned().collect(),
+        shrunk: Vec::new(),
+    };
+    let n = v.grown.len() + v.new.len() - kept.grown.len() - kept.new.len();
+    (kept.failures(), n)
+}
+
 /// Compares `now` of every crate (`(crate, entries)`) with the ratchet files of `kind`, moves applied. A crate allows
 /// what its files list and what the moves bring into it; a new crate without files starts clean.
 pub fn ratcheted(ctx: &crate::run::Context, root: &Path, kind: Kind, now: &[(&'static str, Ratchet)]) -> Outcome {
     let crates: Vec<&str> = now.iter().map(|n| n.0).collect();
-    let (work, base) = allowed(ctx, root, kind, &crates).map_err(|e| vec![e])?;
+    let commit = base::protected(ctx, root).map_err(|e| vec![e])?;
+    let (work, base) = allowed(ctx, root, kind, &crates, &commit).map_err(|e| vec![e])?;
     if let Some(b) = &base {
         let widened = base::widened(b, &work);
         if !widened.is_empty() {
             return Err(widened.into_iter().map(|w| format!("{} ratchet: {}", kind.name(), w)).collect());
         }
     }
+    let pending = match ctx.is_fast() {
+        true => rebaseline::pending(ctx, root, &commit).map_err(|e| vec![e])?,
+        false => rebaseline::Changed::default(),
+    };
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for (krate, n) in now {
         let v = store::of_crate(&work, krate).compare(n);
-        bad.extend(v.failures().into_iter().map(|f| format!("{}: {}", krate, f)));
+        let (failures, held) = split_pending(&v, &pending);
+        bad.extend(failures.into_iter().map(|f| format!("{}: {}", krate, f)));
         let total: u64 = n.0.values().sum();
         let shrunk = if v.shrunk.is_empty() {
             String::new()
         } else {
             format!(", {} improved (cargo xtask ratchet)", v.shrunk.len())
         };
-        ok.push(format!("{}: {} entries, {} total{}", krate, n.0.len(), total, shrunk));
+        let held = if held == 0 { String::new() } else { format!(", {} pending rebaseline (adr/0018)", held) };
+        ok.push(format!("{}: {} entries, {} total{}{}", krate, n.0.len(), total, shrunk, held));
     }
     outcome(ok, bad)
 }

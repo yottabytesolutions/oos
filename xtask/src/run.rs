@@ -8,6 +8,20 @@ use std::process::Command;
 pub(crate) struct Context {
     target: Option<PathBuf>,
     logs: Option<PathBuf>,
+    /// `check --fast`: findings of upstream code not yet rebaselined are reported as pending (adr/0018)
+    fast: bool,
+}
+
+impl Context {
+    /// The same context for `check --fast`.
+    pub(crate) fn fast(self, fast: bool) -> Self {
+        Context { fast, ..self }
+    }
+
+    /// Whether this run is `check --fast`.
+    pub(crate) fn is_fast(&self) -> bool {
+        self.fast
+    }
 }
 
 /// The output of a finished command.
@@ -102,7 +116,7 @@ pub(crate) fn start_logs(root: &Path) -> Result<(Context, PathBuf), String> {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
     let logs = selected.join("check-logs").join(format!("{}-{}", std::process::id(), stamp));
     std::fs::create_dir_all(&logs).map_err(|e| e.to_string())?;
-    Ok((Context { target: Some(selected), logs: Some(logs.clone()) }, logs))
+    Ok((Context { target: Some(selected), logs: Some(logs.clone()), fast: false }, logs))
 }
 
 /// Whether `program` can be started (a `--version` call succeeds).

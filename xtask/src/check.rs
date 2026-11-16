@@ -52,6 +52,7 @@ pub fn run(root: &Path, o: Options, image: bool, list: bool) -> bool {
             return false;
         }
     };
+    let ctx = ctx.fast(o.fast);
     println!("complete logs: {}", log.display());
     let t = Instant::now();
     let mut results: Vec<Step> = Vec::new();

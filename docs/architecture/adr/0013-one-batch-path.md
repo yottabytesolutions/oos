@@ -1,6 +1,7 @@
 # 0013: Frames mode becomes the batch path
 
-Status: accepted. 2026-11-14 (team-lead decision).
+Status: accepted. 2026-11-14 (team-lead decision). Amended 2026-11-16: removal of the frames path superseded, see
+Amendment.
 
 ## Context
 
@@ -33,3 +34,11 @@ anyway, and two composition paths are what the overhaul removes.
 - The M9 gate has pass/fail perf-guard ratios against today's `draw_frame`, on the host and in frames mode: a
   one-frame unit with full `BatchMeta`, and a 48-frame step.
 - Merging back to upstream gets harder in this area. Accepted in [Why](../README.md#why).
+
+## Amendment (2026-11-16, owner decision in task 0066)
+
+The upstream merge brought upstream's Standard draw path: the frames path on several cores (`fast_draw_all`, row
+bands, upstream e52cd60c and 11067c59), upstream's default, chosen with Acquire > Draw path. Both paths stay. The
+removal of route D's composition in M9 and of the old paths in M12 is superseded: M12 measures both paths on the
+unit (picture, perf-guard ratios, unit round 5) and the owner decides which stays, or keeps both behind the
+setting. Until then the frames path is not deleted, and M9 builds `BatchUnit` alongside it.

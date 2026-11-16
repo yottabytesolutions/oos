@@ -457,6 +457,8 @@ final module, `picture/acc.rs`, with its target signature (`merge(&mut self, uni
 output `&Picture`), so M10 and M16 do not move it again. Gate: the perf-guard ratios of adr/0013 (one-frame unit and
 48-frame step against `draw_frame`). Deletes: the `Acc` lists, `Tally` (if fix/batch-newest was merged), `Deliver`, `MERGE_WAIT_MAX`, the
 early `help_done`, the `fast_ok` frame branch in `Ui::step`, route D's `draw_frame` composition.
+Amended by adr/0013 (2026-11-16): upstream's Standard draw path (the frames path on several cores) stays beside the
+batch path; M9 does not delete route D. M12 measures both and the owner decides.
 
 Data path in M9 ([Maps: workers pre-sum](README.md#maps-workers-pre-sum)): at 3 and 4 channels each worker owns one
 channel; at 1 and 2 channels the workers reduce the shares by row bands; each share records its touched rows; main
@@ -505,6 +507,8 @@ Unit check inside round 5: setup B at 5.1 V, empty pictures <= 1 %.
 ### M12: acceptance and removal (D9)
 
 Remove `draw.model` and the old kernels and grade. Tests: full suites, golden references from M10 unchanged.
+Draw paths (adr/0013 amendment): measure upstream's Standard path and the batch path on the unit (pictures, the
+perf-guard ratios, unit round 5); the owner decides whether one is removed or both stay behind Acquire > Draw path.
 
 **Unit round 5:** full acceptance set, plus memory: roll at 0.5 s/div and 50 s/div in RUN and after SINGLE for
 10 min each, scan, and 4 channels at maximum depth, each with RSS flat within 10 MB and all drop counters as expected;

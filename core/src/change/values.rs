@@ -40,18 +40,27 @@ pub struct UiAcq {
     raw: bool,
     route: bool,
     read_format: u32,
+    mixed_bus: bool,
     autoset: bool,
     bode: bool,
     layout: Layout,
 }
 impl UiAcq {
     pub fn of(raw: bool, route: bool, autoset: bool, bode: bool, layout: Layout) -> Self {
-        Self { raw, route, read_format: 0, autoset, bode, layout }
+        Self { raw, route, read_format: 0, mixed_bus: false, autoset, bode, layout }
     }
     /// Effective raw/pair read format supplied by the acquisition adapter, not a settings hint.
     pub fn with_read_format(mut self, format: u32) -> Self {
         self.read_format = format;
         self
+    }
+    /// Mixed live/reference Bus triggers acquire Edge/Auto candidates for UI qualification.
+    pub fn with_mixed_bus(mut self, mixed: bool) -> Self {
+        self.mixed_bus = mixed;
+        self
+    }
+    pub fn mixed_bus(self) -> bool {
+        self.mixed_bus
     }
     pub fn layout(self) -> Layout {
         self.layout
@@ -62,9 +71,9 @@ impl UiAcq {
     pub fn raw(self) -> bool {
         self.raw
     }
-    pub(super) fn acquisition(self) -> (bool, bool, u32, bool, bool) {
+    pub(super) fn acquisition(self) -> (bool, bool, u32, bool, bool, bool) {
         // Mask publication alone does not change acquisition; its effective worker route does.
-        (self.raw, self.route, self.read_format, self.autoset, self.bode)
+        (self.raw, self.route, self.read_format, self.autoset, self.bode, self.mixed_bus)
     }
 }
 

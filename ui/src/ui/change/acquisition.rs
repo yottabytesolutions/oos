@@ -45,7 +45,7 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
     if g.acquisition.identity().gen() != id.gen() {
         crate::pacing::changed();
     }
-    g.want = Some(board().want(model, sw));
+    g.want = Some(want(model, sw, needs.mixed_bus()));
     g.slow = board().slow_mode(model);
     g.deep_raw = crate::deepmeas::want(model, sw);
     g.mask_want = ui.mask_hw_want();
@@ -67,6 +67,21 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
     g.queue.retain(|f| current(f, id));
     crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.ui_publish, (before - g.queue.len()) as u64);
     crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, (before - g.queue.len()) as u64);
+}
+
+/// Project the accepted Bus setup into the hardware candidate request without changing visible settings.
+pub(super) fn want(model: &Model, sw: &crate::sysconf::Switches, mixed: bool) -> crate::board::Want {
+    if !mixed {
+        return board().want(model, sw);
+    }
+    let mut candidate = model.clone();
+    candidate.trig_type = TrigType::Edge;
+    candidate.trig_mode = TrigMode::Auto;
+    candidate.trig_src = candidate.dec_src;
+    candidate.trig_ref = None;
+    candidate.trig_level = candidate.dec_thr;
+    candidate.slope = Slope::Rise;
+    board().want(&candidate, sw)
 }
 
 /// The start switches with the draw path in force: on the hardware Acquire > Draw path (`Model::draw_batch`) decides

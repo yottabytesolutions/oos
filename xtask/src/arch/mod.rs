@@ -6,6 +6,7 @@ mod deps;
 mod modules;
 mod resolve;
 pub mod rules;
+mod shared_want;
 mod spelled;
 
 use crate::repo::{self, CRATES};
@@ -39,5 +40,6 @@ pub fn check(root: &Path, meta: &Metadata) -> Result<Vec<String>, String> {
             out.extend(modules::check(&sources::of_dir(meta, c.dir)?, &cr));
         }
     }
+    out.extend(shared_want::check(&sources::of_dir(meta, "ui")?));
     Ok(out)
 }

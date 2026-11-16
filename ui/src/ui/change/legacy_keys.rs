@@ -18,7 +18,7 @@ pub(super) struct Keys {
 impl Keys {
     pub(super) fn of(ui: &Ui) -> Self {
         Self {
-            want: board().want(&ui.m, ui.switches()),
+            want: acquisition::want(&ui.m, &acquisition::draw_switches(ui, &ui.m), ui.mixed_bus_mode()),
             slow: board().slow_mode(&ui.m),
             generator: board().gen(&ui.m.gen_read()),
             raw: ui.needs_raw(),

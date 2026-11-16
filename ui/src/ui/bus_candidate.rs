@@ -17,6 +17,8 @@ pub(super) struct State {
 
 #[cfg(test)]
 mod tests {
+    mod change_point;
+
     use super::*;
     use std::{
         sync::{Arc, Mutex},
@@ -448,22 +450,17 @@ impl Ui {
         true
     }
     fn acquire_mixed_bus_record(&mut self, elapsed: f64) -> Option<Record> {
+        let id = change::acquisition::identity(self);
         if let Source::Hw { shared, seen } = &mut self.src {
-            let sw = *self.host.switches();
-            let mut candidate_model = self.m.clone();
-            candidate_model.trig_type = TrigType::Edge;
-            candidate_model.trig_mode = TrigMode::Auto;
-            candidate_model.trig_src = candidate_model.dec_src;
-            candidate_model.trig_ref = None;
-            candidate_model.trig_level = candidate_model.dec_thr;
-            candidate_model.slope = Slope::Rise;
-            let mut state = shared.lock().unwrap();
-            state.want = Some(board().want(&candidate_model, &sw));
-            state.slow = crate::board::Slow::Off;
+            let mut state = oos_hal::sync::lock(shared);
             let frame = state.queue.pop_front()?;
             *seen = frame.seq;
             drop(state);
-            if frame.stamp < self.bus_candidate.minimum_stamp || !frame.dt.is_finite() || frame.dt <= 0.0 {
+            if !change::acquisition::current(&frame, id)
+                || frame.stamp < self.bus_candidate.minimum_stamp
+                || !frame.dt.is_finite()
+                || frame.dt <= 0.0
+            {
                 return None;
             }
             let window = self.m.time_per_div() as f64 * HDIV as f64;

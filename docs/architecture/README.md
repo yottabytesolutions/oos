@@ -128,8 +128,13 @@ The allocation census includes the live normalizer and bridge as well as shadow 
 M2.3b intermediate state: the change point now publishes normalized acquisition settings,
 generator, raw/read policy, worker route and the resolved identity under one Shared lock.
 The accepted detector snapshot supplies those settings even if a later internal stage has already
-proposed changes. Publication follows the retained run/average transition effects, so their restart
-counter is included in the same handoff. The matching worker view is ready before that publication
+proposed changes. Mixed live/reference Bus triggers derive their Edge/Auto hardware candidate
+request from that accepted snapshot at the same publication point. The visible Bus setup remains intact;
+its effective candidate policy is an ACQ|STATS input. Candidate intake only consumes current-pair frames
+and never rewrites Shared settings. The architecture syntax check fences direct `Shared.want` mutations,
+mutable borrows and mutating Option calls to the publication module (test fixtures are exempt).
+These mixed-bus contracts are host tested; real acquisition timing is not yet verified on the unit.
+Publication follows the retained run/average transition effects, so their restart counter is included in the same handoff. The matching worker view is ready before that publication
 becomes available. Lifecycle polls precede preparation in both live and scripted paths; mask/zone
 wants are published with the same step's pair, never by those polls. Failed resolutions drop their
 queued requests, keep the last publication and continue the step loop. The first error of each

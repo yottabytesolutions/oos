@@ -87,7 +87,9 @@ fn needs(ui: &Ui, keys: &legacy_keys::Keys) -> UiAcq {
     )
     .with_vertical_zoom(ui.zoom_vfactor, ui.zoom_vcenter);
     let format = if ui.src.is_hw() && !ui.needs_raw() { keys.compress() } else { 1 };
-    UiAcq::of(ui.needs_raw(), ui.fast_ok(), ui.auto.is_some(), ui.bode.running, layout).with_read_format(format)
+    UiAcq::of(ui.needs_raw(), ui.fast_ok(), ui.auto.is_some(), ui.bode.running, layout)
+        .with_read_format(format)
+        .with_mixed_bus(ui.mixed_bus_mode())
 }
 
 pub(super) fn initialize(ui: &mut Ui) {

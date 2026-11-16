@@ -83,10 +83,10 @@ class ImageOutputs(unittest.TestCase):
         self.assertFalse((target / "image" / GEL).exists())
 
     def test_ui_builder_uses_receipted_selected_outputs(self):
-        for name in ("ui/build.sh", "tools/output.sh"):
+        for name in ("ui/build.sh", "ui/Cargo.toml", "tools/output.sh", "ui/tools/decoder-features.sh"):
             dest = self.root / name
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(REPO / name, dest)
+            shutil.copy2(REPO / name, dest)
         assets = self.root / "ui/assets"
         assets.mkdir()
         for name in ("font.bin", "font-large.bin", "font-larger.bin"):

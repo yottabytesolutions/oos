@@ -31,6 +31,8 @@ def public(byte=1, comment="offline test"):
 
 class HostKeys(unittest.TestCase):
     def setUp(self):
+        # local/ is the ignored scratch directory of the tree; a fresh checkout does not have it
+        (ROOT / "local").mkdir(exist_ok=True)
         self.tmp = tempfile.TemporaryDirectory(dir=ROOT / "local")
         self.root = Path(self.tmp.name)
         self.file = self.root / "public.pub"
@@ -89,6 +91,8 @@ class HostKeys(unittest.TestCase):
     def test_device_shell_uses_key_auth_and_strict_identity_without_network(self):
         scope = object.__new__(device_test.Scope)
         scope.host, scope.sim = "example.invalid", False
+        # our device tool checks its scope lease before every command; a held fake lease stands in for it
+        scope.lease = mock.Mock()
         result = subprocess.CompletedProcess([], 0, "read-only result\n", "")
         with mock.patch.dict(os.environ, {"OOS_SHELL": "ssh", "OOS_SSH_IDENTITY": "local/test identity", "OOS_SSH_PORT": "2222"}):
             with mock.patch.object(subprocess, "run", return_value=result) as run:

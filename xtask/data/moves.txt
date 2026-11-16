@@ -23,3 +23,10 @@ struct ui/src/drawpipe.rs Losses -> struct ui/src/drawpipe/losses.rs Losses
 fn ui/src/drawpipe.rs Losses::text -> fn ui/src/drawpipe/losses.rs Losses::text
 fn hal/src/update/kexec/legacy.rs report -> fn hal/src/update/kexec/undo.rs report
 fn xtask/src/run.rs capture_raw -> fn xtask/src/run.rs execute
+ui/src/ui/frozen41_helpers_tests.rs -> ui/src/ui/tools/frozen41_helpers_tests.rs
+ui/src/ui/scpi_helpers_tests.rs -> ui/src/ui/tools/scpi_helpers_tests.rs
+ui/src/ui/channel_measurement_tests.rs -> ui/src/ui/analysis/channel_measurement_tests.rs
+ui/src/ui/measure_own.rs -> ui/src/ui/analysis/own.rs
+ui/src/ui/sim_bus_candidate.rs -> ui/src/ui/sim/sim_bus_candidate.rs
+ui/src/ui/sim_bus_tests.rs -> ui/src/ui/sim/sim_bus_tests.rs
+ui/src/ui/meascatalog_backend.rs -> ui/src/ui/meascatalog/backend.rs

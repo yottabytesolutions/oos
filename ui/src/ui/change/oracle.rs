@@ -176,5 +176,10 @@ pub fn geometry_field(name: &str) -> bool {
             | "ch_win"
             | "math_win"
             | "la_win"
+            | "ref_win"
+            | "density"
+            | "strip_dock"
+            | "split_pane"
+            | "deskew_ch"
     ) || (name.starts_with("ch") && name.contains('.') && !name.ends_with(".unit"))
 }

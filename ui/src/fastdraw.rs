@@ -1191,6 +1191,9 @@ pub mod whole {
 pub use whole::{deposit, deposit_codes, deposit_dots, min_max, min_max_scalar, Codes, Samples};
 
 #[cfg(test)]
+mod validation;
+
+#[cfg(test)]
 mod tests {
     /// Spans of random heights in random columns (some saturating), folded by rows in bands: the same map as the
     /// first fold column by column, for several row ranges, band widths and widths that are no multiple of them.

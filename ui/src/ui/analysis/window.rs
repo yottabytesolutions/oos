@@ -5,7 +5,7 @@ mod history;
 
 use super::super::*;
 
-type SpectrumKey = (usize, f64, f64, f64, Window, usize, usize, bool, bool, usize, (f32, f32));
+type SpectrumKey = (WaveId, f64, f64, f64, Window, usize, usize, bool, bool, usize, (f32, f32));
 
 #[derive(Clone, Default)]
 pub(in crate::ui) struct Work {
@@ -61,8 +61,8 @@ pub(in crate::ui) struct Key {
     channels: [Channel; NCH],
     view: (AView, usize),
     spectrum: SpectrumKey,
-    eye: (usize, f64),
-    power: (usize, usize, PowerMode),
+    eye: (WaveId, f64),
+    power: (WaveId, WaveId, PowerMode),
     bandwidth: (usize, f64, usize),
     area: (i32, i32, i32, i32),
 }
@@ -105,9 +105,12 @@ pub(in crate::ui) struct Context {
     pub(in crate::ui) m: Model,
     pub(in crate::ui) azr: super::State,
     pub(in crate::ui) now: f64,
-    pub(in crate::ui) area: Rect,
     pub(super) points: usize,
     pub(super) follow: bool,
+    /// where the eye page is drawn, whether it fills the panel, and the chart it enlarged
+    pub(in crate::ui) eye_rect: Rect,
+    pub(in crate::ui) eye_fill: bool,
+    pub(in crate::ui) eye_big: Option<u8>,
 }
 
 pub(in crate::ui) struct Job {
@@ -151,6 +154,7 @@ fn accept(ui: &mut Ui, done: Done) -> bool {
     let mut state = done.state;
     // These controls belong to main; a worker result contains only analyser display state.
     state.work = std::mem::take(&mut ui.azr.work);
+    state.keep_main(&mut ui.azr);
     state.work.finished = Some(done.at);
     state.work.accepted_key = Some(done.key);
     state.findings = std::mem::take(&mut ui.azr.findings);
@@ -203,18 +207,21 @@ fn prepare(ui: &Ui, view: AView, pane: bool) -> Option<Job> {
         m: ui.m.clone(),
         azr: super::State::default(),
         now: ui.now,
-        area: ui.area,
         points: ui.spec_box(area, pane).plot.w.max(100) as usize,
         follow: follows(ui),
+        eye_rect: ui.eye_page_rect(),
+        eye_fill: ui.full_on(),
+        eye_big: ui.eye_big,
     };
     // Screen vectors are bounded by record conversion. Never clone the optional deep LA buffer.
     let record = Record {
         ch: std::array::from_fn(|c| {
+            let id = WaveId::Ch(c);
             let selected = match view {
-                AView::Eye => c == ui.m.eye_src,
-                AView::Spectrum => c == ui.m.spec_src,
+                AView::Eye => id == ui.m.eye_src,
+                AView::Spectrum => id == ui.m.spec_src,
                 AView::Step => c == ui.m.bw_src.min(NCH - 1),
-                AView::Power => c == ui.m.pw_v || c == ui.m.pw_i,
+                AView::Power => id == ui.m.pw_v || id == ui.m.pw_i,
                 _ => false,
             };
             if selected {
@@ -274,8 +281,8 @@ pub(in crate::ui) fn updating(ui: &Ui) -> bool {
 
 /// The requested band clipped exactly as DSP clips it, using the current record's measurement interval.
 pub(super) fn span(ui: &Ui, center: f64, requested: f64) -> f64 {
-    let Some(rec) = &ui.last[0] else { return requested };
-    let dt = ui.meas_slice(rec, ui.m.spec_src).1;
+    let (Some(rec), Some(c)) = (&ui.last[0], ui.m.spec_src.ch()) else { return requested };
+    let dt = ui.meas_slice(rec, c).1;
     if !(dt > 0.0 && dt.is_finite()) {
         return requested;
     }

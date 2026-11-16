@@ -29,8 +29,8 @@ pub(in crate::ui) struct Key {
     channels: [Option<Source>; NCH],
     view: (AView, usize),
     spectrum: Option<SpectrumKey>,
-    eye: Option<(usize, f64)>,
-    power: Option<(usize, usize, PowerMode)>,
+    eye: Option<(WaveId, f64)>,
+    power: Option<(WaveId, WaveId, PowerMode)>,
     bandwidth: Option<(usize, f64, usize)>,
     /// A new capture must compute Bandwidth even within the previous capture's throttle period.
     bandwidth_record: Option<(u64, usize, u32, usize)>,
@@ -41,9 +41,9 @@ impl Key {
     pub(super) fn of(k: &super::Key, view: AView) -> Self {
         let channels = std::array::from_fn(|c| {
             let selected = match view {
-                AView::Spectrum => c == k.spectrum.0,
-                AView::Eye => c == k.eye.0,
-                AView::Power => c == k.power.0 || c == k.power.1,
+                AView::Spectrum => WaveId::Ch(c) == k.spectrum.0,
+                AView::Eye => WaveId::Ch(c) == k.eye.0,
+                AView::Power => WaveId::Ch(c) == k.power.0 || WaveId::Ch(c) == k.power.1,
                 AView::Step => c == k.bandwidth.0.min(NCH - 1),
                 _ => false,
             };

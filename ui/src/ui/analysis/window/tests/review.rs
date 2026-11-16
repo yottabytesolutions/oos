@@ -13,8 +13,8 @@ fn settings_changes_mark_the_accepted_result_stale_immediately() {
         assert!(!updating(&ui));
         let old = run(prepare(&ui, view, false).unwrap(), &mut None);
         match change {
-            0 => ui.m.eye_src = 1,
-            1 => ui.m.spec_src = 1,
+            0 => ui.m.eye_src = WaveId::Ch(1),
+            1 => ui.m.spec_src = WaveId::Ch(1),
             2 => ui.m.spec_center = 1e6,
             _ => ui.m.spec_span = 1e6,
         }

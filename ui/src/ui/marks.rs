@@ -172,7 +172,7 @@ mod tests {
                 ch: Default::default(),
                 triggered: true,
                 partial: false,
-                raw: Some(Raw { frame: f, i0: 0, i1: n, t0 }),
+                raw: Some(Raw { frame: f, i0: 0, i1: n, t0, conditioned: false }),
                 la: None,
                 pairs: false,
             }

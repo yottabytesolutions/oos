@@ -25,8 +25,8 @@ fn normalize_diff_notifies_remaining_legacy_consumers() {
                 _ => {
                     ui.m.ch[1].on = true;
                     ui.m.ch[0].on = false;
-                    ui.m.spec_src = 0;
-                    ui.m.eye_src = 0;
+                    ui.m.spec_src = WaveId::Ch(0);
+                    ui.m.eye_src = WaveId::Ch(0);
                 }
             }
             ui.mstat = vec![MStat { n: 7, ..Default::default() }];

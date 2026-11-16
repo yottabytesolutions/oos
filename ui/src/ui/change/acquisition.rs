@@ -63,8 +63,10 @@ pub(crate) fn current(f: &crate::board::Frame, id: Identity) -> bool {
     (f.cfg, f.stamp) == (id.gen(), id.epoch())
 }
 
+/// The record belongs to the current acquisition generation. A replay record is made synchronously on the step that
+/// shows it, so it carries no generation tag.
 pub(crate) fn record(ui: &Ui, rec: &Record) -> bool {
-    rec.raw.as_ref().is_none_or(|r| current(&r.frame, identity(ui)))
+    matches!(ui.src, Source::Replay { .. }) || rec.raw.as_ref().is_none_or(|r| current(&r.frame, identity(ui)))
 }
 
 pub(in crate::ui) fn stage_record(ui: &Ui, requester: Requester, rec: &Record) -> bool {

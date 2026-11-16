@@ -326,7 +326,7 @@ fn explicit_measurement_reset_is_a_request_at_equal_settings() {
     let mut ui = base(RunState::Stop);
     for _ in 0..2 {
         ui.mstat = vec![MStat { n: 7, ..Default::default() }];
-        ui.meas_stats_reset();
+        change::stats_reset(&mut ui);
         ui.step(0.04);
         assert_eq!(ui.host.runtime().change.last.as_ref().unwrap().classes(), C::STATS);
         assert!(ui.mstat.is_empty());

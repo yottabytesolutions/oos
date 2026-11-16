@@ -21,16 +21,16 @@ impl Context {
     pub(super) fn calculate(&mut self, rec: &Record, view: AView, pane: bool) {
         match view {
             AView::Spectrum => self.spectrum_update(rec, pane),
-            AView::Eye => self.eye_update(rec),
             AView::Power => self.power_update(rec),
             AView::Step => self.bw_update(rec),
-            AView::Scope | AView::Bode => {}
+            AView::Eye => self.eye_update(rec),
+            AView::Scope | AView::Bode | AView::Magnetic | AView::Inverter | AView::Dpt => {}
         }
     }
 
     /// The spectrum of the source from the record: the view, or `pane` beside the waveform.
     fn spectrum_update(&mut self, rec: &Record, pane: bool) {
-        let c = self.m.spec_src;
+        let Some(c) = self.m.spec_src.ch().filter(|&c| c < NCH) else { return };
         if rec.ch[c].is_empty() {
             self.azr.spec = None;
             self.azr.peaks.clear();
@@ -87,53 +87,87 @@ impl Context {
     }
 
     fn power_update(&mut self, rec: &Record) {
-        let (cv, ci) = (self.m.pw_v, self.m.pw_i);
+        let (Some(cv), Some(ci)) = (self.m.pw_v.ch().filter(|&c| c < NCH), self.m.pw_i.ch().filter(|&c| c < NCH))
+        else {
+            return;
+        };
         if rec.ch[cv].is_empty() || (rec.ch[ci].is_empty() && self.m.pw_mode != PowerMode::Ripple) {
             self.azr.power = vec!["Voltage / current channel off: Switch on source in the menu".into()];
             return;
         }
         let (v, dt) = self.meas_wave(rec, cv);
         let i = if rec.ch[ci].is_empty() { Vec::new() } else { self.meas_wave(rec, ci).0 };
-        self.azr.power = match self.m.pw_mode {
-            PowerMode::Quality => {
-                let q = power::quality(&v, &i, dt, None);
-                vec![
-                    format!("Vrms {}   Irms {}", si(q.vrms, "V"), si(q.irms, "A")),
-                    format!("P {}   S {}   Q {}", si(q.p_real, "W"), si(q.s_apparent, "VA"), si(q.q_reactive, "var")),
-                    format!("PF {:.3}   phase {:.1}\u{b0}   f {}", q.pf, q.phase_deg, si(q.freq, "Hz")),
-                    format!("crest V {:.2}   crest I {:.2}   {} cycles", q.crest_v, q.crest_i, q.cycles),
-                ]
-            }
-            PowerMode::Harmonics => {
-                let h = power::harmonics(&i, dt, None, 15);
-                let mut out = vec!["Current harmonics vs. IEC 61000-3-2 class A".to_string()];
-                out.extend(h.iter().map(|(n, a, lim, pass)| {
-                    format!(
-                        "H{:<2} {:>10}  limit {:>10}  {}",
-                        n,
-                        si(*a, "A"),
-                        if lim.is_finite() { si(*lim, "A") } else { "-".into() },
-                        if *pass { "pass" } else { "FAIL" }
-                    )
-                }));
-                out
-            }
-            PowerMode::Switching => {
-                let s = power::switching(&v, &i, dt, 10.0);
-                vec![
-                    format!("E on {}   E off {}", si(s.e_on, "J"), si(s.e_off, "J")),
-                    format!("E cond {}   P avg {}", si(s.e_cond, "J"), si(s.p_avg, "W")),
-                    format!("{} transitions", s.transitions.len()),
-                ]
-            }
-            PowerMode::Ripple => {
-                let (pp, ac) = power::ripple(&v);
-                let (pk, tpk, i2t) = if i.is_empty() { (f64::NAN, f64::NAN, f64::NAN) } else { power::inrush(&i, dt) };
-                vec![
-                    format!("Ripple {} pp   {} rms AC", si(pp, "V"), si(ac, "V")),
-                    format!("Inrush peak {} at {}   I\u{b2}t {}", si(pk, "A"), si(tpk, "s"), si(i2t, "A\u{b2}s")),
-                ]
-            }
-        };
+        self.azr.power = power_rows(&self.m, &v, &i, dt);
     }
+}
+
+/// The rows of the Power page for voltage `v` and current `i` (empty when off) at sample interval `dt`.
+fn power_rows(m: &Model, v: &[f32], i: &[f32], dt: f64) -> Vec<String> {
+    match m.pw_mode {
+        PowerMode::Quality => {
+            let q = power::quality(v, i, dt, None);
+            vec![
+                format!("Vrms {}   Irms {}", si(q.vrms, "V"), si(q.irms, "A")),
+                format!("P {}   S {}   Q {}", si(q.p_real, "W"), si(q.s_apparent, "VA"), si(q.q_reactive, "var")),
+                format!("PF {:.3}   phase {:.1}\u{b0}   f {}", q.pf, q.phase_deg, si(q.freq, "Hz")),
+                format!("crest V {:.2}   crest I {:.2}   {} cycles", q.crest_v, q.crest_i, q.cycles),
+            ]
+        }
+        PowerMode::Harmonics => harmonic_rows(i, dt),
+        PowerMode::Switching => {
+            let s = power::switching(v, i, dt, 10.0);
+            vec![
+                format!("E on {}   E off {}", si(s.e_on, "J"), si(s.e_off, "J")),
+                format!("E cond {}   P avg {}", si(s.e_cond, "J"), si(s.p_avg, "W")),
+                format!("dv/dt {} / {}", si(s.dvdt_rise, "V/s"), si(s.dvdt_fall, "V/s")),
+                format!("di/dt {} / {}", si(s.didt_rise, "A/s"), si(s.didt_fall, "A/s")),
+                format!("RDS(on) {}", si(s.rds_on, "\u{3a9}")),
+                format!("{} transitions", s.transitions.len()),
+            ]
+        }
+        PowerMode::Ripple => ripple_rows(m, v, i, dt),
+        PowerMode::Capacitance => {
+            vec![format!("C {}", si(power::input_capacitance(v, i, dt), "F")), "The record is the turn-on event".into()]
+        }
+        PowerMode::Rail => {
+            let r = power::rail(v, dt, m.pw_ref, None, None);
+            let refn = m.pw_ref.map(|v| si(v, "V")).unwrap_or_else(|| "top".into());
+            vec![
+                format!("Overshoot {}   undershoot {}", si(r.overshoot, "V"), si(r.undershoot, "V")),
+                format!("DC {}   turn-on max {}", si(r.dc, "V"), si(r.turn_on, "V")),
+                format!("Reference {}", refn),
+            ]
+        }
+    }
+}
+
+fn harmonic_rows(i: &[f32], dt: f64) -> Vec<String> {
+    let h = power::harmonics(i, dt, None, 15);
+    let mut out = vec!["Current harmonics vs. IEC 61000-3-2 class A".to_string()];
+    out.extend(h.iter().map(|(n, a, lim, pass)| {
+        format!(
+            "H{:<2} {:>10}  limit {:>10}  {}",
+            n,
+            si(*a, "A"),
+            if lim.is_finite() { si(*lim, "A") } else { "-".into() },
+            if *pass { "pass" } else { "FAIL" }
+        )
+    }));
+    out
+}
+
+/// Ripple, its line and switching tones (set frequencies, else measured) and the inrush of the current.
+fn ripple_rows(m: &Model, v: &[f32], i: &[f32], dt: f64) -> Vec<String> {
+    let (pp, ac) = power::ripple(v);
+    let (pk, tpk, i2t) = if i.is_empty() { (f64::NAN, f64::NAN, f64::NAN) } else { power::inrush(i, dt) };
+    let fl = if m.pw_fline > 0.0 { m.pw_fline } else { power::line_hz(v, dt) };
+    let fs = if m.pw_fsw > 0.0 { m.pw_fsw } else { power::switch_hz(v, dt) };
+    let line = power::tone_ripple(v, dt, fl);
+    let sw = power::switching_ripple(v, dt, fs);
+    vec![
+        format!("Ripple {} pp   {} rms AC", si(pp, "V"), si(ac, "V")),
+        format!("Line {}  {} pp  {} rms", si(fl, "Hz"), si(line.pp, "V"), si(line.rms, "V")),
+        format!("Switch {}  {} pp  {} rms", si(fs, "Hz"), si(sw.pp, "V"), si(sw.rms, "V")),
+        format!("Inrush peak {} at {}   I\u{b2}t {}", si(pk, "A"), si(tpk, "s"), si(i2t, "A\u{b2}s")),
+    ]
 }

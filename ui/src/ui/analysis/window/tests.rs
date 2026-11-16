@@ -10,7 +10,7 @@ fn fixture(view: AView, n: usize, dt: f64, signal: impl Fn(usize) -> f32) -> Ui 
     ui.m.view = view;
     ui.m.spec_harm = 0;
     ui.m.eye_rate = 115200.0;
-    ui.m.pw_i = 1;
+    ui.m.pw_i = WaveId::Ch(1);
     let v: Vec<f32> = (0..n).map(signal).collect();
     let mut frame = crate::board::Frame { dt, stamp: ui.m.hw_stamp, seq: 37, ..Default::default() };
     frame.ch[0] = v.clone();
@@ -22,7 +22,7 @@ fn fixture(view: AView, n: usize, dt: f64, signal: impl Fn(usize) -> f32) -> Ui 
         t0: 0.0,
         triggered: true,
         partial: false,
-        raw: Some(crate::wave::Raw { frame: Arc::new(frame), i0: 0, i1: n, t0: 0.0 }),
+        raw: Some(crate::wave::Raw { frame: Arc::new(frame), i0: 0, i1: n, t0: 0.0, conditioned: false }),
         la: None,
         pairs: false,
     });
@@ -80,7 +80,8 @@ fn deep_power_keeps_whole_line_cycles_and_early_inrush() {
     Arc::make_mut(&mut r.frame).ch[1][1000] = 10.0;
     ui.m.pw_mode = PowerMode::Ripple;
     calculate(&mut ui);
-    assert!(ui.azr.power[1].contains("10.0 A"), "{:?}", ui.azr.power);
+    // upstream PR 8 put the line and switching ripple rows before the inrush row
+    assert!(ui.azr.power[3].contains("Inrush peak 10.0 A"), "{:?}", ui.azr.power);
 }
 
 #[test]
@@ -114,7 +115,7 @@ fn stale_results_are_dropped_after_each_invalidation() {
             2 => {
                 ui.ana_activate(Item::EyeClear);
             }
-            3 => ui.m.eye_src = 1,
+            3 => ui.m.eye_src = WaveId::Ch(1),
             4 => ui.area.h -= 10,
             _ => ui.m.acq = AcqMode::HiRes,
         }
@@ -184,8 +185,8 @@ fn running_analyzer_source_step_snaps_before_submitting_without_broad_resets() {
         ui.m.ch[1].on = false;
         ui.m.meas.clear();
         ui.m.meas2.clear();
-        ui.m.spec_src = 0;
-        ui.m.eye_src = 0;
+        ui.m.spec_src = WaveId::Ch(0);
+        ui.m.eye_src = WaveId::Ch(0);
         change::reset(&mut ui);
         ui.dirty_map = false;
         ui.mstat = vec![MStat { n: 7, ..Default::default() }];
@@ -193,8 +194,12 @@ fn running_analyzer_source_step_snaps_before_submitting_without_broad_resets() {
         let picture = ui.ph.map.clone();
         ui.adjust(item, 1);
         let submitted = ui.azr.work.accepted_key.as_ref().expect("intake submits synchronous job");
-        assert_eq!((submitted.eye.0, submitted.spectrum.0), (0, 0), "job must use an enabled source");
-        assert_eq!((ui.m.eye_src, ui.m.spec_src), (0, 0));
+        assert_eq!(
+            (submitted.eye.0, submitted.spectrum.0),
+            (WaveId::Ch(0), WaveId::Ch(0)),
+            "job must use an enabled source"
+        );
+        assert_eq!((ui.m.eye_src, ui.m.spec_src), (WaveId::Ch(0), WaveId::Ch(0)));
         assert_eq!(ui.mstat[0].n, 7);
         assert!(!ui.dirty_map);
         change::begin_step(&mut ui, 0.04).unwrap();

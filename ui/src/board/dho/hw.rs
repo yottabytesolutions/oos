@@ -1220,6 +1220,7 @@ fn set_meta(s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
         pre_exact,
         cfg: 0,
         fixed_ti: None,
+        basic: Default::default(),
     };
 }
 
@@ -1576,7 +1577,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         let mut xadc_at: Option<std::time::Instant> = None;
         let mut la_fails = 0u32;
         // STOP: the last batch (its read settings, parameters, newest frame in the ring) and the view last read for
-        let mut last_batch: Option<(Settings, hz::Params, u32)> = None;
+        let mut last_batch: Option<super::replay::Batch> = None;
         let mut replayed: Option<(f64, f64)> = None;
         // the learnt offsets of the ADC cores (`cores`)
         let mut cores = super::cores::Cores::default();
@@ -1744,18 +1745,19 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             match stop_view {
                 Some(v) if mode == Slow::Off && want_mode == Slow::Off => {
                     match &last_batch {
-                        Some((lb, lp, idx)) if replayed != Some(v) => {
+                        Some(batch) if replayed != Some(v) => {
                             replayed = Some(v);
-                            let (rb, ti) = stop_plan(lb, lp, v.0, v.1);
-                            let steps = state.reread_steps(&rb, lp, *idx);
+                            let lp = &batch.params;
+                            let (rb, ti) = stop_plan(&batch.settings, lp, v.0, v.1);
+                            let steps = state.reread_steps(&rb, lp, batch.index);
                             match seq::execute(&steps, &mut bar, None, &mut c2h, |_| {}) {
                                 Ok(bytes) => {
                                     let fb = seq::frame_bytes(&rb, lp);
                                     n += 1;
                                     let m = out.lock().unwrap().cores.then_some(&mut cores);
                                     let f = decode_with(&bytes[..fb.min(bytes.len())], &rb, lp, n, switches.board.header_probe, m);
-                                    // tagged with the publication of this view: the change point published it
-                                    let f = tag(Frame { fixed_ti: Some(ti), ..f }, identity);
+                                    // the samples stay those of the captured batch: its identity, not the view's (M2.3b)
+                                    let f = batch.view(f, ti);
                                     out.lock().unwrap().replay = Some(f);
                                 }
                                 Err(e) => status(format!("STOP read: {}", e)),
@@ -2019,7 +2021,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         }
                         // word 0 at the left edge like analog point 0; only what the sweeps have written so far
                         let la = la_t.map(|_| crate::ui::la::LaRec { words: Arc::new(sweep_la.iter().take_while(|x| !x.is_nan()).map(|&x| x as u16).collect()), t0: 0.0, dt: la_dt });
-                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen, fixed_ti: None }
+                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen, fixed_ti: None, basic: Default::default() }
                     } else {
                         let len = ring.iter().map(|r| r.len()).max().unwrap_or(0);
                         // the newest point at the right edge: index len - 1 sits half a screen right of `pre`
@@ -2030,7 +2032,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             words: Arc::new(ring_la.iter().copied().collect()),
                             dt: la_dt,
                         });
-                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen, fixed_ti: None }
+                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen, fixed_ti: None, basic: Default::default() }
                     };
                     let mut g = out.lock().unwrap();
                     if super::publication::current(&g, &f) { super::roll::publish(&mut g, f, scan.is_some()); }
@@ -2403,8 +2405,13 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     if let (Some(w), Some(f)) = (la_words, frames.last_mut()) {
                         f.la = Some(la_record(w, &b, &p));
                     }
+                    // the newest frame becomes the record: its six full-frame readings (PR #8, `BasicStats`) here, off
+                    // the frame loop; the fast path folds the other frames itself
+                    if let Some(f) = frames.last_mut() {
+                        f.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&f.ch[c]));
+                    }
                     if count > 0 {
-                        last_batch = Some((b.clone(), p, count - 1));
+                        last_batch = Some(super::replay::Batch::new(b.clone(), p, count - 1, identity));
                     }
                     {
                         let mut g = out.lock().unwrap();
@@ -2417,12 +2424,12 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 // of the ring with pre-trigger samples (it stops only before the first trigger): a stored record
                 // there is gone, later frames of the last batch are untouched
                 Err(e) if e == seq::NEW_SETTINGS => {
-                    if last_batch.as_ref().is_some_and(|l| l.2 == 0) {
+                    if last_batch.as_ref().is_some_and(|l| l.index == 0) {
                         last_batch = None;
                     }
                 }
                 Err(e) => {
-                    if last_batch.as_ref().is_some_and(|l| l.2 == 0) {
+                    if last_batch.as_ref().is_some_and(|l| l.index == 0) {
                         last_batch = None;
                     }
                     let unit = state.mask_ctrl().is_some() || state.zone_ctrl().is_some();
@@ -3387,6 +3394,7 @@ mod tests {
             hw_avg: false,
             pre_exact: false,
             cfg: 0,
+            basic: Default::default(),
         };
         let r = to_record(&Arc::new(f), &m, 100, 1.0, -0.5);
         assert!(r.partial && !r.triggered);
@@ -3414,8 +3422,8 @@ mod tests {
         // the smallest records get at least 64 more points
         assert_eq!(screen_margin(62), 128);
         // 1 ns/div: 12 points per screen, read 80 at the full rate (more than stock's smallest record, 62 at 5 ns)
-        m.tscale = 0;
-        assert_eq!(tscales()[0], 1e-9);
+        m.tscale = tscales().iter().position(|&t| (t - 1e-9).abs() < 1e-12).unwrap();
+        assert!((tscales()[m.tscale] - 1e-9).abs() < 1e-12);
         let s = settings(&m, false, &Default::default());
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(1e-9), s.depth, 0);
         assert_eq!((p.rate, p.memsel, p.pre), (1_250_000_000, 80, 40), "depth {}", s.depth);
@@ -3439,7 +3447,7 @@ mod tests {
         for c in 0..NCH {
             m.ch[c].on = c == 1;
         }
-        m.meas = vec![(Meas::Vavg, 1)];
+        m.meas = vec![(Meas::Vavg, WaveId::Ch(1))];
         let s = settings(&ui.m, false, &Default::default());
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
         let b = batch_plan(&s, &p, 1);

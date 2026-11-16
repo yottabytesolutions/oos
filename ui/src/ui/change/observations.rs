@@ -7,8 +7,8 @@ pub(in crate::ui) fn analyzer_reset(ui: &mut Ui) {
     // Keep the intake source snap before job submission until M2.3e removes the broad legacy bridge.
     if let Some(on) = (0..NCH).find(|&c| ui.m.ch[c].on) {
         for src in [&mut ui.m.spec_src, &mut ui.m.eye_src] {
-            if !ui.m.ch[*src].on {
-                *src = on;
+            if matches!(*src, WaveId::Ch(c) if !ui.m.ch[c].on) {
+                *src = WaveId::Ch(on);
             }
         }
     }

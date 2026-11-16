@@ -84,7 +84,7 @@ Installing OOS means that you accept in particular the following risks:
   the mains and all probes before you open it, and close it again before you connect mains. Only open it if you know
   how to do this safely.
 - **Network security.** Apart from SSH (password or key, [docs/network.md](docs/network.md) 7) OOS has no
-  authentication: SCPI, VXI-11, the web remote and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
+  authentication: telnet (on by default, a shell without password), SCPI, VXI-11, HiSLIP (on a computer), the web remote and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
   network can also install an update. This holds for WLAN as well. **Connect the scope to a trusted bench network only,
   never directly to the internet.**
 - **Experimental settings.** System > Overclock and `/oos/limits.conf` can change the sample clock, `limits.conf` can
@@ -114,7 +114,7 @@ Details and limits: [docs/models.md](docs/models.md).
 Each row is one hardware variant: its models differ only in the licensed bandwidth ([docs/models.md](docs/models.md)
 2.1), so a model whose row runs OOS counts as verified, and the USB install takes it without being told
 ([docs/install-usb.md](docs/install-usb.md) 4). The other models are prepared from the known model table and have
-never run OOS. The feature columns follow Rigol's model line-up; whether the EDU variants have the LA port is not
+never run OOS. The feature columns follow the model line-up; whether the EDU variants have the LA port is not
 confirmed. DHO1000,
 HDO1000/2000/4000 and MHO models are different boards and are not supported; [docs/porting.md](docs/porting.md) says
 what would carry over and how an owner can describe one.
@@ -188,9 +188,9 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
   found as numbered peaks, RBW, trace modes, waterfall, THD, SNR, SFDR, limit line from a trace
 - Eye diagram with voltage and UI axes, density colours, TIE trend, histogram and spectrum, bathtub curve. Jitter split into TJ, RJ and DJ (dual-Dirac model) and measured DCD, DDJ and PJ, pooled over records
 - Power analysis: quality, harmonics, switching, ripple
-- Bode plot with the built-in generator or an external one on the LAN or the USB-A port (Rigol DG, Siglent SDG, UNI-T
-  UTG900, generic SCPI), or from one record of a generator that sweeps on its own and marks the sweep start on a sync
-  output
+- Bode plot with the built-in generator or an external one on the LAN or the USB-A port (APPL or BSWV command sets, a
+  UTG900 preset, generic SCPI), or from one record of a generator that sweeps on its own and marks the sweep start on a
+  sync output
 - Identify: names a signal and sets up a trigger and decoder for it
 - Bandwidth test: rise time, overshoot and magnitude response from a fast edge
 
@@ -204,10 +204,12 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 
 | Interface | Port | Purpose |
 |---|---|---|
-| SCPI over TCP | 5555 | Rigol-style command subset, see [ui/src/scpi.rs](ui/src/scpi.rs); `:WAVeform:MODE RAW` reads every sample of the record in the screen window |
-| VXI-11 | 111, 9009 | VISA `TCPIP::<ip>::INSTR` |
+| SCPI over TCP | 5555 | [SCPI manual](docs/scpi.md): DHO800/DHO900 subset and OOS extensions; RAW reads retained native CH memory, and references retain their own native timing |
+| VXI-11 | 111, 9009 | on the scope, where port 111 is free: `TCPIP::<ip>::INSTR` |
+| HiSLIP | 4880 | on a computer: the payload is the same SCPI interpreter; `TCPIP::<ip>::hislip0::INSTR` |
 | Web remote | 8080 | live screen, keys, knobs, touch in the browser; saves screenshots and CSV to your computer |
 | LXI identification | 8080 | `/lxi/identification` |
+| LAN announcement | 5353 | mDNS of the SCPI socket, VXI-11 and HiSLIP; the HTTP record's path is `/lxi/identification` |
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
 | SSH | 22 | root shell with the scope's own password or a trusted key, off by default ([docs/network.md](docs/network.md) 7) |
 | mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-xxxxxx.local:8080`, and its services for browsing ([docs/network.md](docs/network.md)) |
@@ -278,6 +280,62 @@ Known limits:
 - WLAN: joining a network has not been tried on the unit.
 
 ## Try it without a scope
+
+On Windows, with Rust installed, build and open the desktop window from PowerShell:
+
+```powershell
+.\build-windows.ps1 -Run
+```
+
+The app is `ui\target\release\oos-ui.exe`. Mouse clicks and drags act as touch; Space toggles Run/Stop.
+Plain mouse wheel pans horizontally, and Ctrl+wheel zooms the time scale around the pointer.
+F12 saves a PNG in `Documents\OOS`. Use `--offline` to start
+with the analog channels off for stored waveforms. Keyboard controls are listed in [ui/src/desktop.rs](ui/src/desktop.rs).
+
+For development, run the checkout and automatically restart after saving source changes:
+
+```powershell
+.\run-windows.ps1 -Watch -Offline -WebPort 18080 -ScpiPort 5555 -HislipPort 14880
+```
+
+Rust compiles changed code automatically. The window includes front-panel buttons and knob controls.
+Use **Load file** or **Ctrl+O** to open CSV, OOS BIN, or WFM files; the web remote at `http://localhost:18080`
+also accepts file selection and drag-and-drop. Loaded sources appear as **R1–R10** cards.
+**SIM** starts a simulated reference; **Run/Stop**, **Single**, and trigger settings control its acquisitions.
+**Live** restores the live session. Measurements follow each captured window and recompute when a stopped
+reference is panned. **Measure** opens categorized choices with Source, Settings, and Selected; large readout
+lists have page controls. The Windows app announces its actual SCPI and HiSLIP listeners over mDNS.
+
+**SIM > Advanced** adds SSC profile, deviation and modulation frequency, duty-cycle distortion, and
+correlated random jitter with its corner frequency. PRBS-13 is available alongside the other patterns.
+With SSC enabled, the stored record covers a complete modulation cycle at eight samples per bit.
+Long records generate in the background; cancel or return to Live to keep the previous session.
+Configurations exceeding the generation budget report an error without replacing the current waveform.
+The HSS down-spread profile removes its DC term; centered spread uses plus/minus the configured deviation.
+Choose **Auto Eye/Jitter** in the analysis menu/settings to analyze the selected live or reference
+source. Automatic setup recovers an NRZ clock/rate, chooses voltage thresholds from the signal and opens the eye
+with its TIE trend, histogram, spectrum and bathtub. The source/rate header keeps manual rate and explicit-clock
+settings accessible. Flat, insufficient or sparsely sampled data shows its limit; model estimates are labeled.
+The Eye analyzes a full stored reference once per changed record or setting, including while the trace is zoomed;
+large files show Computing without blocking navigation. Live captures accumulate; stopped panning does not add
+observations. Ordinary trace measurements use the selected Screen or Full record gate.
+
+The same advanced settings are available through OOS SCPI. Values use seconds, hertz and fractional
+deviation (0.005 means 0.5%). Configure them together, then start generation and poll `:SIM:BUSY?`:
+
+```text
+:SIM:PRESET "PCIe 3.0"
+:SIM:SSC:MODE CENTER
+:SIM:SSC:DEVIATION 0.005
+:SIM:SSC:FREQUENCY 33000
+:SIM:JITTER:DCD 4e-12
+:SIM:JITTER:CORRELATED 2e-12
+:SIM:JITTER:CORNER 2e6
+:SIM:PATTERN PRBS13
+:SIM:PLAY ON
+:SIM:BUSY?
+:SYSTEM:ERROR?
+```
 
 OOS builds on macOS and Linux and can run scripted without hardware, with its simulated demo signals. It writes a
 screenshot in PPM format next to the script:
@@ -631,7 +689,8 @@ periods, many periods, the rising edge or the falling edge of the trigger channe
 same page puts each channel, math channel and the LA into a window; a new split spreads the channels that are on. All
 windows share the time base, and a drag in a window moves a channel of that window. Zoom, XY and the analysers use one
 window. The button with four corners at the top right of the plot gives the plot the whole screen; it shows inward
-corners then and brings the top bar and the cards back.
+corners then and brings the top bar and the cards back. The box button under it arms one drag: the next drag on the
+plot draws a box, and that box is the zoom window. A tap does not zoom.
 
 **Views.** Instead of one screen with everything on it, Display > Views (2, 3 or 4) gives screens to switch between.
 Each view keeps what is shown and where: the windows, the second pane, the measurements and their bar, DVM and
@@ -658,8 +717,9 @@ move the insertion point, a tap into the entry puts it there; typing and Delete 
 **Generator.** Tap the frequency in the generator window for a keypad with units; the limits apply by themselves. The - and
 + buttons step it. Changes inside one amplitude range take effect at once and keep the output running.
 
-**Analysers.** Menu > Analysers holds Spectrum, Eye / jitter, Power analysis, Bode and the bandwidth test. They replace the
-waveform; the button with three dots at the top right of the plot leads to Exit, Settings and, for the eye, Clear eye.
+**Analysers.** Menu > Analysers holds Spectrum, Eye / jitter, Power analysis, Bode and the bandwidth test. Eye/Jitter
+opens as a full analysis page with optional side or lower panes and has source/rate settings and Close in its pane header. Other analyser views
+use the button with three dots at the top right for Exit and Settings.
 
 **Bode with an external generator.** In Analysers > Bode pick the Generator preset (Rigol DG, Siglent SDG, UNI-T
 UTG900 for the UTG932 and UTG962, or SCPI for one that takes `FREQ` and `VOLT`), then Connection: LAN with Gen address
@@ -700,9 +760,9 @@ shows the gain over frequency, the settings come back afterwards.
 and peaks, decoder Events, or Trend with two charts. Tap the pane's title for its settings, a trend chart to change its
 measurement, the peak list's button to sort it. The x closes the pane.
 
-**Measurements.** A default set-up shows six in the strip above the cards. In Measure > Add item a tap adds a
-measurement of the source channel and a second tap removes it. Measure > Labels on trace draws level lines and
-arrows with their values on the waveform.
+**Measurements.** A default set-up shows six in the strip under the plot. Measure > Dock moves that strip to the left, the
+right, or above the trace. In Measure > Add item a tap adds a measurement of the source channel and a second tap removes
+it. Measure > Labels on trace draws level lines and arrows with their values on the waveform.
 
 **Overclocking.** System > Overclock sets the sample clock from the next power-on. Above 1.25 GHz the noise rises, and 2 GHz
 gives wrong samples: it is for tests only. See [docs/models.md](docs/models.md).
@@ -794,7 +854,7 @@ OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and `par
 |---|---|
 | `hal/` | Hardware layer: FPGA register sequences, front ends, ADC, PLL, cold boot, models, updates |
 | `dsp/` | Signal processing: triggers, measurements, maths, decoders, analysers |
-| `ui/` | `oos-ui`: scope screen, SCPI, VXI-11, web remote |
+| `ui/` | `oos-ui`: scope screen, SCPI, VXI-11, HiSLIP, web remote, LAN announcement |
 | `fpgad/` | `oos-fpgad` bring-up tool and `oos-update` |
 | `boot/` | Boot image packer, image build, card installer, USB installer, stock/OOS switch |
 | `rootfs/initramfs/` | Init scripts and firmware of the image |

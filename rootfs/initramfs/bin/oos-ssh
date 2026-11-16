@@ -60,7 +60,11 @@ prepare() {
 		fi
 		[ -s "$k.pub" ] || "$bin/dropbearkey" -y -f "$k" 2>/dev/null | grep -E '^(ssh-|ecdsa-)' > "$k.pub"
 	done
-	[ -f "$dir/authorized_keys" ] || : > "$dir/authorized_keys"
+	# a new folder takes the keys built into the image (OOS_SSH_AUTHORIZED_KEYS, tools/ssh-keys.py validate); an image
+	# update never replaces the keys there, and a key deleted from the folder does not come back
+	if [ ! -f "$dir/authorized_keys" ]; then
+		if [ -s /etc/oos-ssh/authorized_keys ]; then cp /etc/oos-ssh/authorized_keys "$dir/authorized_keys"; else : > "$dir/authorized_keys"; fi
+	fi
 	chmod 600 "$dir/authorized_keys"
 	sync
 	# root only, in RAM: the image has no user database of its own. The serial console's shell asks for nothing.

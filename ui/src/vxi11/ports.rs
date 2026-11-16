@@ -24,7 +24,7 @@ mod tests {
     #[test]
     fn memory_reset_releases_replies_and_shutdown_releases_links() {
         let mut server = Server::empty();
-        server.links.push(Some(Link { out: vec![42; 4096] }));
+        server.links.push(Some(Link { out: vec![42; 4096], ..Default::default() }));
         server.release_buffers();
         assert_eq!(server.links.len(), 1);
         assert_eq!(server.links[0].as_ref().unwrap().out.capacity(), 0);

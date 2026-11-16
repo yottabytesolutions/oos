@@ -23,11 +23,17 @@ impl Fixture {
             scpi: Scpi {
                 l: None,
                 clients: Vec::new(),
-                wav_src: 0,
+                wav_src: WaveId::Ch(0),
                 wav_fmt: 0,
-                wav_raw: false,
+                wav_mode: 0,
+                wav_start: 1,
+                wav_stop: 0,
                 err: Vec::new(),
                 acl: crate::netacl::Acl::default(),
+                event_status: 0,
+                error_serial: 0,
+                last_error: None,
+                opc_events: Vec::new(),
             },
         }
     }

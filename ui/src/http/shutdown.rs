@@ -192,6 +192,7 @@ mod tests {
             shots: Shots::new(0),
             acl: Default::default(),
             acl_shared: Default::default(),
+            offer: Default::default(),
         };
         {
             let mut state = http.shots.lock();

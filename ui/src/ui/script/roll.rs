@@ -77,8 +77,8 @@ fn budget_fixture(roll: bool) -> (Ui, Frame) {
     ui.m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
     ui.m.meas.clear();
     ui.m.meas2.clear();
-    ui.m.eye_src = 1;
-    ui.m.spec_src = 1;
+    ui.m.eye_src = WaveId::Ch(1);
+    ui.m.spec_src = WaveId::Ch(1);
     ui.m.bw_src = 1;
     ui.m.ch.iter_mut().enumerate().for_each(|(c, ch)| ch.on = !roll || c == 1);
     // Keep the real measurement handoff busy without scheduling work or relying on thread timing.

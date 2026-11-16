@@ -105,6 +105,7 @@ impl Device {
             return;
         }
         let t1 = Instant::now();
+        self.ui.set_hdmi_present(self.outputs.hdmi.is_some());
         let hdmi_frame = self.outputs.hdmi.is_some() && (self.outputs.frame_n + 1).is_multiple_of(2);
         self.ui.hdmi_snap_want = hdmi_frame && self.ui.m.hdmi == model::HdmiMode::Waveform;
         let drawn = self.graphics.frame(&mut self.ui, &mut self.cv, &mut self.outputs, &mut self.remote.web, &self.sw);

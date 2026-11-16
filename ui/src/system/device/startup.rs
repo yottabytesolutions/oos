@@ -19,6 +19,7 @@ pub(super) fn prepare(
     splash(ui, disp, args);
     if let Some(m) = startup.as_ref().and_then(store::startup::Startup::restored_model) {
         ui.m = m;
+        ui.sync_full();
     }
     if args.iter().any(|a| a == "--safe") {
         ui.toast("Safe start: default settings");

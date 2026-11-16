@@ -4,6 +4,8 @@
 //! oos-ui: the OOS oscilloscope screen.
 //!
 //!   oos-ui                         on the scope: DRM/KMS display, touch, front panel, control FIFO
+//!   oos-ui                         on Windows: the screen in a desktop window, demo signal (src/desktop.rs)
+//!   oos-ui --offline               start in offline mode: analog off, no demo on CH1-CH4
 //!   oos-ui --script FILE           anywhere: run a command script off-screen and write screenshots (tests)
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
 //!   --store-dir DIR                storage directory for setups, CSV and PNG (default /tmp/oos; scripts: the script's dir)
@@ -13,12 +15,17 @@
 // SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
+// the announcer runs in the Windows desktop build (desktop/lan.rs); the scope announces itself through mdns.rs
+#[cfg_attr(not(windows), allow(dead_code))]
+mod announce;
 mod board;
 mod clock;
 mod cmd;
 mod compress;
 mod decode;
 mod deepmeas;
+#[cfg(windows)]
+mod desktop;
 mod drawpipe;
 #[cfg(target_os = "linux")]
 mod drm;
@@ -29,6 +36,7 @@ mod framecost;
 mod framestats;
 mod gfx;
 mod gpu;
+mod hislip;
 mod hostname;
 mod http;
 #[cfg(target_os = "linux")]
@@ -151,6 +159,9 @@ pub fn main() {
     let startup = store::startup::Startup::device(&args);
     let switches = sysconf::Switches::read();
     let mut ui = Ui::new(source(&args, &switches), ui::host::Host::system(switches));
+    if args.iter().any(|a| a == "--offline") {
+        ui.set_offline(true);
+    }
     if let Some(m) = &foreign {
         ui.toast(&format!(
             "This is a {}: OOS drives DHO800/DHO900 hardware only. Demo signal shown (docs/porting.md)",
@@ -167,6 +178,11 @@ pub fn main() {
     }
     if let Some(d) = arg(&args, "--store-dir") {
         ui.store_dir = d.into();
+    } else if cfg!(windows) {
+        // no /tmp on Windows: setups, CSV and screenshots go to Documents\OOS
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            ui.store_dir = std::path::Path::new(&home).join("Documents").join("OOS");
+        }
     }
     if args.iter().any(|a| a == "--serve") {
         return serve(ui, &switches);
@@ -175,26 +191,35 @@ pub fn main() {
     {
         system::device::run(ui, &args, switches, startup);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        desktop::run(ui, &args);
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = (ui, startup);
         eprintln!("oos-ui: no display backend on this OS; use --script FILE");
     }
 }
 
-/// No display and no hardware: the demo source behind SCPI, the web server and VXI-11, for tools/device-test.py on a
-/// host. `OOS_DEMO_LOOP=<mask>` puts the generator on those channels, as a cable from the output would.
+/// No display and no hardware: the demo source behind SCPI, the web server, VXI-11 and HiSLIP, for
+/// tools/device-test.py on a host. Every listener is private (loopback, a free port, `net6::Port::Host`); the
+/// harness learns the ports from the readiness record. `OOS_DEMO_LOOP=<mask>` puts the generator on those channels,
+/// as a cable from the output would.
 fn serve(mut ui: Ui, sw: &sysconf::Switches) {
     let mut web = http::Http::open(net6::Port::Host, sw);
     let mut scpi = scpi::Scpi::open(net6::Port::Host, false);
     let mut vxi = net6::host_or_exit(vxi11::Server::host());
+    let mut hislip = hislip::Server::open(net6::Port::Host);
+    web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
     net6::host_or_exit(net6::host_ready(web.port(), scpi.port(), vxi.ports()));
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     while !ui.quit {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
-        vxi.poll(&mut |c| scpi.exec_line(&mut ui, &cv, c));
+        vxi.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
+        hislip.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
         for c in web.poll(&mut ui, &cv, &mut scpi) {
             cmd::run(&mut ui, &c);
         }

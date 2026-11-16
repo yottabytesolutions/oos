@@ -118,5 +118,11 @@
     "rule": "private-ipv4",
     "sha256": "2a39f1eedcd9f986327b5e4da842426f4f05b8f16f0ef385639dbec0db70eaae",
     "reason": "Pre-existing generic default for the external Bode generator address, moved unchanged from ui/src/model.rs by M2.1; not a deployment address. Follow-up: make the default empty."
+  },
+  {
+    "path": "tools/tests/test_ssh_keys.py",
+    "rule": "private-key",
+    "sha256": "03d104c669e3c7b6be7f989db8b12c8b910d3be8c1e2a73c9369d3cc0ba803b5",
+    "reason": "Upstream test input: a bare PEM header the key tool must reject; no key material."
   }
 ]

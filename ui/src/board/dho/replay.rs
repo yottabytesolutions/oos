@@ -29,6 +29,28 @@ impl Read {
     }
 }
 
+/// The newest batch left in the ring, for the STOP rereads of each new view (`Shared::stop_view`), with the identity
+/// its samples were captured under.
+pub(super) struct Batch {
+    pub(super) settings: Settings,
+    pub(super) params: hz::Params,
+    /// the frame of the batch read again
+    pub(super) index: u32,
+    identity: Identity,
+}
+
+impl Batch {
+    pub(super) fn new(settings: Settings, params: hz::Params, index: u32, identity: Identity) -> Self {
+        Self { settings, params, index, identity }
+    }
+
+    /// A reread for a view: the trigger stays where the capture had it, and the frame keeps the capture's identity
+    /// whatever was published since (a view change or CLEAR in STOP does not relabel old samples).
+    pub(super) fn view(&self, frame: Frame, ti: f64) -> Frame {
+        super::publication::tag(Frame { fixed_ti: Some(ti), ..frame }, self.identity)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,5 +91,28 @@ mod tests {
         let fresh = Read::new(last_read.settings.clone(), params, 3, false, current);
         super::super::publication::push_frames(&shared, vec![fresh.tag(Frame { seq: 5, ..Default::default() })]);
         assert_eq!(lock(&shared).queue.back().unwrap().seq, 5, "current replay remains publishable");
+    }
+
+    #[test]
+    fn a_stop_view_reread_keeps_the_identity_of_the_captured_batch() {
+        let model = crate::model::Model::default();
+        let config = crate::model::config();
+        let mut shadow = Shadow::new(&model, UiAcq::default(), &config).unwrap();
+        let captured = shadow.identity();
+        let settings = super::super::hw::settings(&model, false, &Default::default());
+        let params = hz::prep(settings.mask, oos_hal::dho::seq::tdiv_fs(settings.tdiv), 100_000, 0);
+        let batch = Batch::new(settings, params, 2, captured);
+        let current = shadow.observe(&model, UiAcq::default(), &[Request::Clear], &config).unwrap().identity();
+        assert_ne!((current.gen(), current.epoch()), (captured.gen(), captured.epoch()));
+        // the thread reads the view after the new publication: the decoded frame carries no identity of its own
+        let reread =
+            batch.view(Frame { seq: 9, cfg: current.gen(), stamp: current.epoch(), ..Default::default() }, 12.5);
+        assert_eq!(
+            (reread.cfg, reread.stamp),
+            (captured.gen(), captured.epoch()),
+            "a view must not relabel old samples"
+        );
+        assert_eq!(reread.fixed_ti, Some(12.5));
+        assert_eq!(batch.index, 2);
     }
 }

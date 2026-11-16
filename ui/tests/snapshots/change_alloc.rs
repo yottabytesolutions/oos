@@ -4,7 +4,7 @@ use crate::HEAP;
 use oos_core::{
     change::{Outbox, Shadow, UiAcq},
     config::Config,
-    model::{Meas, Model},
+    model::{Meas, Model, WaveId},
 };
 
 pub fn check() {
@@ -63,8 +63,8 @@ fn warm(model: &mut Model) {
     {
         *s = "w".repeat(64);
     }
-    model.meas = vec![(Meas::Vavg, 0); 16];
-    model.meas2 = vec![(0, 0, 1); 16];
+    model.meas = vec![(Meas::Vavg, WaveId::Ch(0)); 16];
+    model.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1)); 16];
     for z in &mut model.zones {
         z.pts = vec![(0.0, 1.0); 16];
     }
@@ -81,9 +81,9 @@ fn change(model: &mut Model, step: usize) {
         }
     }
     model.meas.truncate(8);
-    model.meas.resize(if step.is_multiple_of(2) { 16 } else { 12 }, (Meas::Vavg, 0));
+    model.meas.resize(if step.is_multiple_of(2) { 16 } else { 12 }, (Meas::Vavg, WaveId::Ch(0)));
     model.meas2.truncate(8);
-    model.meas2.resize(if step.is_multiple_of(2) { 16 } else { 12 }, (0, 0, 1));
+    model.meas2.resize(if step.is_multiple_of(2) { 16 } else { 12 }, (0, WaveId::Ch(0), WaveId::Ch(1)));
     for z in &mut model.zones {
         z.pts.truncate(8);
         z.pts.resize(if step.is_multiple_of(2) { 16 } else { 12 }, (0.0, 1.0));

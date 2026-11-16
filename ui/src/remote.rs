@@ -32,7 +32,13 @@ pub fn telnet(on: bool) {
     } else if !on && !pids.is_empty() {
         for p in pids {
             // SAFETY: a signal to a process id, no memory involved
-            unsafe { libc::kill(p, libc::SIGTERM) };
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(p, libc::SIGTERM)
+            };
+            // no /proc on Windows, so no pids reach here; nothing to signal
+            #[cfg(not(unix))]
+            let _ = p;
         }
         eprintln!("oos-ui: telnet off");
     }

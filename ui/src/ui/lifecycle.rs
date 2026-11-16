@@ -215,6 +215,8 @@ pub(super) fn begin_step(ui: &mut Ui, dt_wall: f64) -> bool {
 pub(in crate::ui) fn polls(ui: &mut Ui) -> bool {
     let stopped = memory_step(ui);
     ui.relayout();
+    ui.meas_hold_tick();
+    ui.workspace_hold_tick();
     ui.update_poll();
     ui.wlan_poll();
     ui.ntp_poll();

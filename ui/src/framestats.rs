@@ -83,7 +83,10 @@ pub type Folds = Vec<((Meas, usize), Fold)>;
 
 /// Empty statistics for the measurements of `m` made per frame.
 pub fn folds_for(m: &Model) -> Folds {
-    m.meas.iter().filter(|(k, c)| CHEAP.contains(k) && m.ch[*c].on).map(|&e| (e, Fold::default())).collect()
+    m.meas
+        .iter()
+        .filter_map(|&(k, s)| s.ch().filter(|&c| CHEAP.contains(&k) && m.ch[c].on).map(|c| ((k, c), Fold::default())))
+        .collect()
 }
 
 /// Adds `b` to `a` (the same measurements: merged by key).
@@ -119,9 +122,35 @@ pub fn cheap_results(v: &[f32]) -> Option<(crate::wave::Stats, oos_dsp::measure:
         falls: Vec::new(),
         rise_time: nan,
         fall_time: nan,
+        rise_count: 0,
+        fall_count: 0,
         cyc_avg: nan,
         cyc_rms: nan,
         cyc_area: nan,
+        high_time: nan,
+        low_time: nan,
+        hi_rises: Vec::new(),
+        hi_falls: Vec::new(),
+        lo_rises: Vec::new(),
+        lo_falls: Vec::new(),
+        cyc_top: nan,
+        cyc_base: nan,
+        cyc_amp: nan,
+        cyc_pp: nan,
+        cyc_max: nan,
+        cyc_min: nan,
+        lpct: 0.1,
+        hpct: 0.9,
+        est_ui: nan,
+        median: nan,
+        mode: nan,
+        lin_slope: nan,
+        lin_int: nan,
+        pam: [nan; 4],
+        bits: nan,
+        pll_ui: nan,
+        ui_wtd: nan,
+        fold_rms: nan,
     };
     // the level keys take (top + base) / 2, or the middle of the extremes where top is not above base
     let st = crate::wave::Stats {
@@ -258,7 +287,8 @@ pub fn fold_frame(f: &Frame, m: &Model, folds: &mut Folds) -> bool {
         if v.len() < 2 || i1 > v.len() {
             continue;
         }
-        let std = m.meas.iter().any(|(x, y)| y == c && matches!(x, Meas::StdDev | Meas::VrmsAc));
+        let std =
+            m.meas.iter().any(|(x, y)| *y == crate::model::WaveId::Ch(*c) && matches!(x, Meas::StdDev | Meas::VrmsAc));
         let vals = cache[*c].get_or_insert_with(|| Values::of(&v[i0..i1], std));
         if let Some(x) = vals.as_ref().map(|s| s.get(*k)).filter(|x| x.is_finite()) {
             fold.push(x);
@@ -410,7 +440,10 @@ mod tests {
             for c in 0..NCH {
                 (m.ch[c].on, m.ch[c].offset) = (c == 0 || c == 1 && two, 0.0);
             }
-            m.meas = CHEAP.iter().flat_map(|&k| [(k, 0), (k, 1)]).collect();
+            m.meas = CHEAP
+                .iter()
+                .flat_map(|&k| [(k, crate::model::WaveId::Ch(0)), (k, crate::model::WaveId::Ch(1))])
+                .collect();
             let r = if two { 2.0 } else { 1.0 };
             let dt = r / 1.25e9;
             let (mut got, mut want) = (folds_for(&m), folds_for(&m));
@@ -466,7 +499,7 @@ mod tests {
         for c in 0..NCH {
             m.ch[c].on = c == 0;
         }
-        m.meas = CHEAP.iter().map(|&k| (k, 0)).collect();
+        m.meas = CHEAP.iter().map(|&k| (k, crate::model::WaveId::Ch(0))).collect();
         // min/max pairs of a -1/+1 square with 20 % duty: every pair holds both levels around the edges, only one
         // level elsewhere
         let len = 12_512usize;

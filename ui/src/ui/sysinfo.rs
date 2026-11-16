@@ -54,7 +54,14 @@ fn memory(text: Option<String>) -> Option<(u64, u64)> {
     Some((get("MemAvailable:")?, get("MemTotal:")?))
 }
 
+/// (free, total) bytes of the file system holding `path` (none without `statvfs`, on Windows).
+#[cfg(not(unix))]
+pub(super) fn disk(_path: &str) -> Option<(u64, u64)> {
+    None
+}
+
 /// (free, total) bytes of the file system holding `path`.
+#[cfg(unix)]
 pub(super) fn disk(path: &str) -> Option<(u64, u64)> {
     let c = std::ffi::CString::new(path).ok()?;
     // SAFETY: statvfs is a C output record and the pointer remains live for the call.

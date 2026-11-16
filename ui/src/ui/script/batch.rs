@@ -60,7 +60,7 @@ impl BatchScript {
     }
 
     pub fn feed_step(&mut self, ui: &mut Ui) -> Result<(), String> {
-        if !ui.m.meas.is_empty() || !ui.m.meas2.is_empty() {
+        if !ui.m.meas.is_empty() || !ui.m.meas2.is_empty() || !ui.m.cat.is_empty() {
             return Err("scripted batches require measurements off until M10".into());
         }
         if self.pending.is_some() {
@@ -175,14 +175,15 @@ fn queue_frames(batch: &impl Batch, shared: &mut crate::board::Shared, frames: u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::WaveId;
     use oos_dsp::measure::Meas;
 
     #[test]
     fn all_batch_kinds_clear_measurements_and_reject_reenabling_them() {
         for kind in [BatchKind::Raw, BatchKind::Codes, BatchKind::LivePairs, BatchKind::DeepPairs] {
             let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-            ui.m.meas.push((Meas::Vpp, 0));
-            ui.m.meas2.push((0, 0, 1));
+            ui.m.meas.push((Meas::Vpp, WaveId::Ch(0)));
+            ui.m.meas2.push((0, WaveId::Ch(0), WaveId::Ch(1)));
             ui.mstat.push(crate::ui::MStat { n: 7, ..Default::default() });
             let mut batch = BatchScript::new(&mut ui, kind);
             assert!(ui.mstat.is_empty(), "batch measurement removal must use the observed clear seam");
@@ -190,13 +191,13 @@ mod tests {
             assert!(ui.m.meas2.is_empty());
             for run in [RunState::Run, RunState::Stop] {
                 ui.m.run = run;
-                ui.m.meas.push((Meas::Vpp, 0));
+                ui.m.meas.push((Meas::Vpp, WaveId::Ch(0)));
                 assert_eq!(
                     batch.feed_step(&mut ui).unwrap_err(),
                     "scripted batches require measurements off until M10"
                 );
                 ui.m.meas.clear();
-                ui.m.meas2.push((0, 0, 1));
+                ui.m.meas2.push((0, WaveId::Ch(0), WaveId::Ch(1)));
                 assert_eq!(
                     batch.feed_step(&mut ui).unwrap_err(),
                     "scripted batches require measurements off until M10"

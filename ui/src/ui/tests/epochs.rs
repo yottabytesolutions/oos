@@ -12,15 +12,10 @@ fn hardware() -> (Ui, crate::board::HwShared) {
 
 fn frame(ui: &Ui, seq: u64) -> crate::board::Frame {
     let id = ui.host.runtime().change.last.as_ref().unwrap().identity();
-    crate::board::Frame {
-        seq,
-        cfg: id.gen(),
-        stamp: id.epoch(),
-        dt: 1e-6,
-        pre: 32,
-        ch: std::array::from_fn(|c| if c == 0 { vec![1.0; 64] } else { Vec::new() }),
-        ..Default::default()
-    }
+    let ch: [Vec<f32>; NCH] = std::array::from_fn(|c| if c == 0 { vec![1.0; 64] } else { Vec::new() });
+    // the acquisition thread fills the six full-frame readings of every frame (PR #8, `BasicStats`)
+    let basic = std::array::from_fn(|c| crate::board::BasicStats::of(&ch[c]));
+    crate::board::Frame { seq, cfg: id.gen(), stamp: id.epoch(), dt: 1e-6, pre: 32, ch, basic, ..Default::default() }
 }
 
 #[test]
@@ -196,8 +191,8 @@ fn foreign_clear_or_generation_cannot_stall_a_stepped_bode_stage() {
         let (mut ui, shared) = hardware();
         ui.bode.running = true;
         ui.bode.freqs = vec![1000.0];
-        ui.m.bode_in = 0;
-        ui.m.bode_out = 1;
+        ui.m.bode_in = WaveId::Ch(0);
+        ui.m.bode_out = WaveId::Ch(1);
         change::bode_begin(&mut ui);
         change::bode_epoch(&mut ui);
         ui.step(0.04);

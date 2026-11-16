@@ -19,7 +19,7 @@ pub(super) fn apply(ui: &mut Ui) {
     };
     observer.signals.normalized |= classes;
     if changed {
-        ui.mark_changed();
+        ui.settings_marked();
         event(ui, Row::Normalize, C::NONE);
     }
     sample.finish(&mut ui.host.runtime_mut().change.census, 4);

@@ -176,7 +176,6 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
 /// Turns the latest frame into a screen record: software trigger (oos-dsp) closest to the hardware trigger point,
 /// then the screen window (`n` points over `window` s from `t_first` relative to the trigger) by linear interpolation.
 pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64) -> crate::wave::Record {
-    let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
     let found = trigger_point(f, m, n, window, t_first);
     // roll: right-aligned like a chart recorder, the start of the stream may be left of the buffer (blank)
     let ti = if f.roll {
@@ -188,7 +187,22 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
     } else {
         found.unwrap_or(f.pre as f64)
     };
-    let dt = window / n as f64;
+    resample(f, m, n, window, t_first, ti, found.is_some())
+}
+
+/// Rebuild a display window from the retained acquisition without retriggering.
+/// `ti` is the original accepted trigger's fractional sample index.
+pub fn resample(
+    f: &Arc<Frame>,
+    m: &Model,
+    n: usize,
+    window: f64,
+    t_first: f64,
+    ti: f64,
+    triggered: bool,
+) -> crate::wave::Record {
+    let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
+    let dt = window / n.max(1) as f64;
     // several samples per point and no averaging: the points become min/max pairs (the peak-detect branch below)
     let pairs = dt / f.dt >= 2.0 && m.acq != AcqMode::HiRes;
     let mut ch: [Vec<f32>; NCH] = Default::default();
@@ -269,12 +283,19 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
             .collect();
     }
     // the frame's samples inside the screen window
-    let i0 = (ti + t_first / f.dt).floor().max(0.0) as usize;
+    let i0 = ((ti + t_first / f.dt).floor().max(0.0) as usize).min(len);
     let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(len);
-    let raw = (i1 > i0 + 1).then(|| crate::wave::Raw { frame: f.clone(), i0, i1, t0: (i0 as f64 - ti) * f.dt });
+    // Keep the acquisition even for a window outside it: navigation can return.
+    let raw = (len > 1).then(|| crate::wave::Raw {
+        frame: f.clone(),
+        i0,
+        i1: i1.max(i0),
+        t0: (i0 as f64 - ti) * f.dt,
+        conditioned: true,
+    });
     // LA: the same shift as the analog record (software trigger at `ti` instead of the hardware point `pre`)
     let la = f.la.as_ref().map(|l| crate::ui::la::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
-    crate::wave::Record { t0: t_first, dt, ch, triggered: found.is_some(), partial: f.partial, raw, la, pairs }
+    crate::wave::Record { t0: t_first, dt, ch, triggered, partial: f.partial, raw, la, pairs }
 }
 
 #[cfg(test)]
@@ -366,6 +387,7 @@ mod tests {
             hw_avg: false,
             pre_exact: false,
             cfg: 0,
+            basic: Default::default(),
         });
         let rms = |v: &[f32]| (v.iter().map(|y| (y - 1.0) * (y - 1.0)).sum::<f32>() / v.len() as f32).sqrt();
         let mut m = Model::default();
@@ -409,6 +431,7 @@ mod tests {
             hw_avg: false,
             pre_exact: false,
             cfg: 0,
+            basic: Default::default(),
         };
         let r = to_record(&Arc::new(f), &m, 3600, window, -window / 2.0);
         assert!(r.triggered);
@@ -441,6 +464,7 @@ mod peak_detect {
             hw_avg: false,
             pre_exact: false,
             cfg: 0,
+            basic: Default::default(),
         });
         let window = m.time_per_div() as f64 * 10.0; // 2 ms > record: whole record on screen
         let t = std::time::Instant::now();
@@ -572,6 +596,7 @@ mod bench {
                 hw_avg: false,
                 pre_exact: false,
                 cfg: 0,
+                basic: Default::default(),
             });
             let window = tdiv * 10.0;
             let mut ph = crate::wave::Phosphor::new(970, 448);

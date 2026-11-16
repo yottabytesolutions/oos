@@ -163,8 +163,11 @@ fn codes_keep_four_channel_and_dots_decode_fallbacks_repeatable() {
 fn scripted_batches_reject_measurements_enabled_by_commands() {
     for kind in ["raw", "codes", "pairs", "deep-pairs"] {
         let inputs = isolated_inputs();
-        let output =
-            run_host(&inputs, "menu Measure\ndo Add item\ndo Pk-pk\nshot forbidden.ppm\n", &["--scripted-batch", kind]);
+        let output = run_host(
+            &inputs,
+            "menu Measure\ndo Channel pair\ndo Delay rise-rise\nshot forbidden.ppm\n",
+            &["--scripted-batch", kind],
+        );
         assert_eq!(output.status.code(), Some(2), "{}: {:?}", kind, output);
         assert!(String::from_utf8_lossy(&output.stderr).contains("scripted batches require measurements off until M10"));
         assert!(!inputs.path("forbidden.ppm").exists());

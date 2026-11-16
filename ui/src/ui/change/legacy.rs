@@ -35,8 +35,14 @@ pub(super) fn intake_settings(ui: &mut Ui) {
         ui.hw_avg_restart();
     }
     ui.single_armed = single;
-    if ui.meas_src >= n_ch() || ui.ref_src >= n_ch() {
-        (ui.meas_src, ui.ref_src) = (ui.meas_src.min(n_ch() - 1), ui.ref_src.min(n_ch() - 1));
+    ui.bus_candidate_guard_tick();
+    for source in [&mut ui.meas_src, &mut ui.meas_src_b] {
+        if matches!(*source, WaveId::Ch(c) if c >= n_ch()) {
+            *source = WaveId::Ch(0);
+        }
+    }
+    if ui.ref_src >= n_ch() {
+        ui.ref_src = n_ch() - 1;
     }
     super::prepare(ui);
 }
@@ -66,6 +72,9 @@ pub(super) fn transitions(ui: &mut Ui) -> bool {
     ui.was_running = running;
     if hw_seg {
         ui.seg_poll(running);
+    }
+    if !running {
+        ui.cancel_demo_acquisition();
     }
     final_done
 }

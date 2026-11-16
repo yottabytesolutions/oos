@@ -427,7 +427,7 @@ pub(super) fn pending_count(ui: &Ui) -> usize {
 }
 
 pub(super) fn stats_clear(ui: &mut Ui) {
-    ui.mstat.clear();
+    ui.clear_measurement_statistics();
     event(ui, Row::Measurement, C::STATS);
 }
 pub(super) fn stats_reset(ui: &mut Ui) {

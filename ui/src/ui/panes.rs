@@ -145,7 +145,11 @@ impl Ui {
         let f = self.fonts();
         let g = b.plot;
         let src = self.m.spec_src;
-        let x = cv.text(&f.sb, b.title.x, b.title.y + 14, &self.ch_name(src), CH_COLORS[src]);
+        let name = match src {
+            WaveId::Ch(c) => self.ch_name(c),
+            WaveId::Ref(i) => format!("R{}", i + 1),
+        };
+        let x = cv.text(&f.sb, b.title.x, b.title.y + 14, &name, self.wave_color(src));
         let mut t = format!(
             "{:.0} dB/div  \u{b7}  Ref {:.0} dBV  \u{b7}  RBW {}",
             DB_PER_DIV,
@@ -222,6 +226,11 @@ impl Ui {
             v.push(("SFDR".to_string(), db(d.sfdr_dbc, "dBc")));
             v.push(("ENOB".to_string(), format!("{:.2} bit", d.enob)));
         }
+        let ac = spectrum::acpr(sp, self.m.spec_acpr_w, self.m.spec_acpr_s);
+        let dbn = |x: f64| if x.is_finite() { format!("{:.1} dB", x) } else { "-".into() };
+        v.push(("ACPR".to_string(), if ac.ratio.is_finite() { format!("{:.3}", ac.ratio) } else { "-".into() }));
+        v.push(("ACPR lo".to_string(), dbn(ac.lower_db)));
+        v.push(("ACPR hi".to_string(), dbn(ac.upper_db)));
         v.push(("Noise floor".to_string(), db(sp.floor_dbv, "dBV")));
         let stop = sp.freq(sp.dbv.len().saturating_sub(1));
         v.push(("Band".to_string(), format!("{} to {}", si_short(sp.f0, "Hz"), si_short(stop, "Hz"))));
@@ -327,7 +336,7 @@ pub(super) fn tests_result_cols(w: i32) -> Vec<i32> {
 
 /// The cells of a results row.
 struct ResultRow {
-    ch: usize,
+    ch: WaveId,
     cells: [String; 8],
     now: f64,
     lo: f64,
@@ -342,7 +351,7 @@ impl Ui {
             CursorMode::Time | CursorMode::Volt => 3,
             _ => 4,
         };
-        cur + if self.m.ch[self.m.spec_src].on { 5 } else { 0 }
+        cur + if self.wave_ready(self.m.spec_src) { 5 } else { 0 }
     }
 
     /// Height the current pane wants.
@@ -361,7 +370,7 @@ impl Ui {
             tables::PANE_BUS if self.pn.views.is_empty() => HINT_H,
             tables::PANE_BUS => self.bus_view_h(),
             tables::PANE_TREND if n == 0 => HINT_H,
-            tables::PANE_SPECTRUM if !self.m.ch[self.m.spec_src].on => HINT_H,
+            tables::PANE_SPECTRUM if !self.wave_ready(self.m.spec_src) => HINT_H,
             _ => i32::MAX / 2,
         }
     }
@@ -402,9 +411,9 @@ impl Ui {
                     .m
                     .meas2
                     .get(i.wrapping_sub(self.m.meas.len()))
-                    .map_or(format!("CH{}", r.ch + 1), |p| format!("CH{}-{}", p.1 + 1, p.2 + 1));
+                    .map_or(self.wave_name(r.src), |p| format!("{}-{}", self.wave_name(p.1), self.wave_name(p.2)));
                 ResultRow {
-                    ch: r.ch,
+                    ch: r.src,
                     cells: [
                         src,
                         r.name.clone(),
@@ -458,7 +467,7 @@ impl Ui {
         let rows = self.result_rows();
         let (t, side) = self.results_box(r);
         if rows.is_empty() {
-            cv.text(&f.sb, t.x + 12, t.y + (r.h + 9) / 2, "No measurements: Measure > Add item", DIM);
+            cv.text(&f.sb, t.x + 12, t.y + (r.h + 9) / 2, "No measurements: tap Measure", DIM);
         } else {
             self.draw_result_table(cv, r, t, &rows);
         }
@@ -508,7 +517,7 @@ impl Ui {
             if i % 2 == 1 {
                 cv.fill(row, ROW_ALT);
             }
-            let col = CH_COLORS[w.ch];
+            let col = self.wave_color(w.ch);
             cv.fill(Rect::new(t.x + 2, y + 1, 3, pitch - 2), col);
             let ty = y + (pitch + vf.size * 3 / 4) / 2;
             cv.text(&f.sb, x0 + x[0], ty, &w.cells[0], col);
@@ -570,7 +579,11 @@ impl Ui {
                 &f.sb,
                 s.x,
                 line(0),
-                &format!("Cursors  \u{b7}  {}  \u{b7}  {}", mode, self.ch_name(self.m.active)),
+                &format!(
+                    "Cursors  \u{b7}  {}  \u{b7}  {}",
+                    mode,
+                    self.cursor_badge().map_or("No source".into(), |(label, _)| label)
+                ),
                 TEXT,
             );
             for (i, (l, v)) in cur.iter().enumerate() {
@@ -581,7 +594,11 @@ impl Ui {
         }
         let Some(p) = peaks else { return };
         let y0 = cur_rows;
-        cv.text(&f.sb, s.x, line(y0), &format!("Peaks  \u{b7}  {}  \u{b7}  dBV", self.ch_name(self.m.spec_src)), TEXT);
+        let spec = match self.m.spec_src {
+            WaveId::Ch(c) => self.ch_name(c),
+            WaveId::Ref(i) => format!("R{}", i + 1),
+        };
+        cv.text(&f.sb, s.x, line(y0), &format!("Peaks  \u{b7}  {}  \u{b7}  dBV", spec), TEXT);
         if p.is_empty() {
             cv.text(&f.s, s.x, line(y0 + 1), "No lines above the noise", DIM);
         }
@@ -763,7 +780,7 @@ impl Ui {
         let single = self.m.meas.len();
         v.extend(self.meas_rows().iter().enumerate().map(|(i, r)| {
             if i < single {
-                format!("CH{} {}", r.ch + 1, r.name)
+                format!("{} {}", self.wave_name(r.src), r.name)
             } else {
                 r.name.clone()
             }
@@ -795,7 +812,7 @@ impl Ui {
         let charts = self.trend_charts();
         if rows.is_empty() || charts.is_empty() {
             let s = if rows.is_empty() {
-                "No measurements: Measure > Add item"
+                "No measurements: tap Measure"
             } else {
                 "Both charts off: Display > Trend chart 1, 2"
             };
@@ -810,8 +827,8 @@ impl Ui {
     /// One chart: title and plot on the left, a card with the value on the right.
     fn draw_chart(&self, cv: &mut Canvas, c: Rect, row: &tools::MeasRow, t: Option<&Trend>) {
         let f = self.fonts();
-        let col = CH_COLORS[row.ch];
-        let x = cv.text(&f.sb, c.x + 8, c.y + 15, &format!("CH{}", row.ch + 1), col);
+        let col = self.wave_color(row.src);
+        let x = cv.text(&f.sb, c.x + 8, c.y + 15, &self.wave_name(row.src), col);
         cv.text(&f.sb, x + 8, c.y + 15, &row.name, TEXT);
         let g = Rect::new(c.x + YLABEL_W, c.y + TITLE_H, c.w - YLABEL_W - CARD_W - 8, c.h - TITLE_H - XLABEL_H);
         let card = Rect::new(c.x + c.w - CARD_W - 2, c.y + 2, CARD_W, c.h - 4);
@@ -870,7 +887,7 @@ impl Ui {
         let now = row.fmt4(row.v);
         let font = fit_font(&[&f.xl, &f.lb, &f.mb], r.w - 12, std::iter::once(now.as_str()));
         let body = r.h - 40;
-        let col = CH_COLORS[row.ch];
+        let col = self.wave_color(row.src);
         cv.text(font, r.x + r.w - 6 - font.width(&now), r.y + 40 + body / 3 - 4, &now, col);
         let (lo, hi) = t
             .and_then(|t| t.range)
@@ -944,6 +961,12 @@ impl Ui {
         let r = self.pane_rect();
         if Self::pane_close(r).contains(x, y) {
             self.m.pane = 0;
+            self.m.split_pane = 0;
+            // Split with no number pane is the two stacked traces
+            if self.m.density == Density::Split && self.m.win_layout == WinLayout::One {
+                self.m.win_layout = WinLayout::Rows;
+                self.spread_wins();
+            }
             return true;
         }
         if !r.contains(x, y) {

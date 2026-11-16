@@ -269,3 +269,15 @@ fn publication_and_queue_pop_report_stale_frames_at_their_own_sites() {
         assert!(text.contains(name), "state query missing {name}");
     }
 }
+
+#[test]
+fn state_query_reports_acquisition_counters_beside_stale_counts() {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let (mut ui, _) = hardware();
+    let mut remote = crate::scpi::Scpi::open(0u16, false);
+    let reply = remote.exec_line(&mut ui, &crate::gfx::Canvas::new(1, 1), ":SYSTem:STATe?");
+    let text = String::from_utf8(reply).unwrap();
+    let fields = " acq_seg_start=0 acq_seg_abort=0 acq_roll_stop=0 acq_roll_start=0 acq_batch_prearm=0 acq_batch_disarm=0 acq_configure=0 acq_single_arm=0";
+    assert!(text.contains(&format!("{}{}", crate::drawpipe::counters().losses.text(), fields)));
+    assert_eq!(text.matches("acq_single_arm=").count(), 1);
+}

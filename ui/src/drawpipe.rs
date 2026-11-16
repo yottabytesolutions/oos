@@ -326,6 +326,7 @@ pub struct Counters {
     /// frames whose cheap measurements went into the statistics (framestats.rs)
     pub measured: AtomicU64,
     pub losses: Losses,
+    pub acquisition: crate::board::AcquisitionCounters,
 }
 
 /// The process's counters (the acquisition thread, the workers and the UI add to them).

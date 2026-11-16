@@ -6,7 +6,7 @@
 //! real data; the hardware itself triggers with an edge on the source at the level, in AUTO or NORMAL).
 
 #[cfg(target_os = "linux")]
-use super::publication::tag;
+use super::{lifecycle, publication::tag};
 use crate::board::{Frame, Slow};
 #[cfg(target_os = "linux")]
 use crate::board::{HwShared, SegPhase, Shared};
@@ -1079,7 +1079,7 @@ fn disarm(
     c2h: &mut std::fs::File,
 ) {
     if armed.take().is_some() {
-        if let Err(e) = oos_hal::dho::seq::disarm(state, bar, c2h, |_| {}) {
+        if let Err(e) = lifecycle::disarm(|| oos_hal::dho::seq::disarm(state, bar, c2h, |_| {})) {
             eprintln!("oos-ui hw: disarm: {}", e);
         }
     }
@@ -1569,7 +1569,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
                 if rolling.take().is_some() {
-                    bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
+                    bar.apply(&lifecycle::roll_stop(&mut state.sh));
                 }
                 let res = match (afe_bus.as_mut(), cal.as_ref()) {
                     (Some(afe), Some(c)) => {
@@ -1665,9 +1665,9 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 last_read = None;
                 mode = want_mode;
                 if rolling.take().is_some() {
-                    bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
+                    bar.apply(&lifecycle::roll_stop(&mut state.sh));
                 }
-                match state.configure(&want, cal.as_ref(), cal_adc.as_ref()) {
+                match lifecycle::configure(&mut state, &want, cal.as_ref(), cal_adc.as_ref()) {
                     Ok((steps, p)) => {
                         if let Err(e) = seq::execute(&steps, &mut bar, afe_bus.as_mut(), &mut c2h, |_| {}) {
                             status(format!("configure: {}", e));
@@ -1786,7 +1786,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     if let Some(t) = &la_t {
                         bar.apply(&oos_hal::dho::roll::la_config(rp, t));
                     }
-                    bar.apply(&oos_hal::dho::roll::start(&mut state.sh, s.mask));
+                    bar.apply(&lifecycle::roll_start(&mut state.sh, s.mask));
                 };
                 let rp = match rolling {
                     Some(rp) => rp,
@@ -1935,7 +1935,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 continue;
             }
             if rolling.take().is_some() {
-                bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
+                bar.apply(&lifecycle::roll_stop(&mut state.sh));
             }
             if s.segments.is_some() {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -2014,7 +2014,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             // shadow with bit 5 and then the shadow again, so the trigger type and the serial mux bits stay. Not in the
             // hardware average (its batches count triggers).
             if std::mem::take(&mut out.lock().unwrap().force) && avg.is_none() {
-                let armed_now = ahead || seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}).map_err(|e| status(format!("force: arm: {}", e))).is_ok();
+                let armed_now = ahead || lifecycle::prearm(b.single, || seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {})).map_err(|e| status(format!("force: arm: {}", e))).is_ok();
                 if armed_now {
                     bar.apply(&oos_hal::dho::tpu::force(&state.ts));
                     ahead = true;
@@ -2054,7 +2054,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     fill_end = Some(std::time::Instant::now());
                 }
             };
-            let got = seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, fill_ms, log, changed, idle);
+            let got = lifecycle::batch(b.single, ahead, || seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, fill_ms, log, changed, idle));
             let batch_ms = t_batch.elapsed().as_secs_f32() * 1e3;
             if let Ok(c) = &got {
                 let asked = seq::frames(&b, &p);
@@ -2208,7 +2208,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         single_done = Some(stamp);
                     }
                     if switches.board.prearm && avg.is_none() && !b.single && prearm_keeps_replay(&b, &p, deep_want) {
-                        match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
+                        match lifecycle::prearm(b.single, || seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {})) {
                             Ok(()) => armed = Some((b.clone(), pair)),
                             Err(e) => status(format!("prearm: {}", e)),
                         }
@@ -2336,7 +2336,7 @@ fn seg_abort(
 ) {
     let Some(r) = run.take() else { return };
     if r.recording {
-        if let Err(e) = oos_hal::dho::seg::stop(state, bar, c2h) {
+        if let Err(e) = lifecycle::seg_stop(state, bar, c2h, true) {
             eprintln!("oos-ui hw: segments stop: {}", e);
         }
     }
@@ -2370,9 +2370,9 @@ fn seg_step(
     };
     if running && run.as_ref().map_or(0, |r| r.run) != cmd {
         if run.as_ref().is_some_and(|r| r.recording) {
-            seg::stop(state, bar, c2h)?;
+            lifecycle::seg_stop(state, bar, c2h, true)?;
         }
-        let total = seg::start(state, s, p, bar, c2h)?;
+        let total = lifecycle::seg_start(state, s, p, bar, c2h)?;
         *run = Some(SegRun {
             run: cmd,
             n: total,
@@ -2405,7 +2405,7 @@ fn seg_step(
             return Ok(());
         }
         let tag = seg::first_trigger(bar);
-        seg::stop(state, bar, c2h)?;
+        lifecycle::seg_stop(state, bar, c2h, !x.complete(r.n))?;
         (r.recording, r.count, r.next, r.deliver, r.tl) = (false, x.recorded, 0, running, seg::Timeline::new(tag));
         eprintln!(
             "oos-ui hw: segments: {} of {} recorded, 0x4034 {:#x}, first-trigger stamp {:?}",

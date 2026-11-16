@@ -8,6 +8,8 @@
 pub mod fpga;
 pub mod hw;
 #[cfg(any(target_os = "linux", test))]
+mod lifecycle;
+#[cfg(any(target_os = "linux", test))]
 mod publication;
 #[cfg(any(target_os = "linux", test))]
 mod replay;

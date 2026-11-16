@@ -52,18 +52,15 @@ fn epoch_only_boundary_rejects_old_work() {
 #[test]
 fn segmented_and_roll_restart_counts_follow_hardware_changes_only() {
     use crate::board::{Slow, Want};
-    use oos_hal::dho::{bus::Bus, roll, seg, seq};
+    use oos_hal::dho::{bus::Bus, seg, seq};
+    let _scope = crate::drawpipe::test_scope::Scope::new();
     let mut model = Model { segments: 4, ..Default::default() };
     let mut want = crate::board::board().want(&model, &Default::default());
     let mut state = seq::State::handover(1, None);
-    let p = state.configure(&want, None, None).unwrap().1;
+    let p = lifecycle::configure(&mut state, &want, None, None).unwrap().1;
     let (_, mut bus, mut c2h) = seg::sim::engine(seg::sim::Engine::new(0, 1_000_000_000_000, 1, p.ratio));
-    let mut starts = 0;
-    let mut roll_counts = (0, 0);
-    seg::start(&mut state, &want, &p, &mut bus, &mut c2h).unwrap();
-    starts += 1;
-    bus.apply(&roll::start(&mut state.sh, want.mask));
-    roll_counts.1 += 1;
+    lifecycle::seg_start(&mut state, &want, &p, &mut bus, &mut c2h).unwrap();
+    bus.apply(&lifecycle::roll_start(&mut state.sh, want.mask));
     let config = crate::model::config();
     let mut shadow = Shadow::new(&model, UiAcq::default(), &config).unwrap();
     for boundary in 0..10 {
@@ -76,27 +73,24 @@ fn segmented_and_roll_restart_counts_follow_hardware_changes_only() {
         let mode = if boundary == 9 { Slow::Roll } else { Slow::Off };
         let reconfigure = publication::reconfigure(Some((&want, Slow::Off)), &next, mode);
         if reconfigure {
-            seg::stop(&mut state, &mut bus, &mut c2h).unwrap();
-            bus.apply(&roll::stop(&mut state.sh));
-            roll_counts.0 += 1;
-            let p = state.configure(&next, None, None).unwrap().1;
-            seg::start(&mut state, &next, &p, &mut bus, &mut c2h).unwrap();
-            starts += 1;
-            bus.apply(&roll::start(&mut state.sh, next.mask));
-            roll_counts.1 += 1;
+            lifecycle::seg_stop(&mut state, &mut bus, &mut c2h, true).unwrap();
+            bus.apply(&lifecycle::roll_stop(&mut state.sh));
+            let p = lifecycle::configure(&mut state, &next, None, None).unwrap().1;
+            lifecycle::seg_start(&mut state, &next, &p, &mut bus, &mut c2h).unwrap();
+            bus.apply(&lifecycle::roll_start(&mut state.sh, next.mask));
         }
         assert_eq!(reconfigure, boundary == 7 || boundary == 9, "boundary {boundary}");
         if boundary < 7 {
             assert!(publication::boundary(Some((old.gen(), old.epoch())), id));
             assert_eq!(
-                (starts, roll_counts),
-                (1, (0, 1)),
+                crate::drawpipe::counters().acquisition.text(),
+                " acq_seg_start=1 acq_seg_abort=0 acq_roll_stop=0 acq_roll_start=1 acq_batch_prearm=0 acq_batch_disarm=0 acq_configure=1 acq_single_arm=0",
                 "boundary {boundary} must preserve recording and STOP browse"
             );
         }
         want = next;
     }
-    assert_eq!((starts, roll_counts), (3, (2, 3)));
+    assert_eq!(crate::drawpipe::counters().acquisition.text(), " acq_seg_start=3 acq_seg_abort=2 acq_roll_stop=2 acq_roll_start=3 acq_batch_prearm=0 acq_batch_disarm=0 acq_configure=3 acq_single_arm=0");
     let _: Want = want;
 }
 

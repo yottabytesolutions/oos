@@ -1,6 +1,5 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
-
 //! The boundary between the scope application and the hardware of one board family (docs/porting.md).
 //!
 //! Everything the UI asks of the hardware goes through `Board`: the acquisition thread and what it is to apply, the
@@ -12,13 +11,14 @@
 //! The board is chosen when OOS is built (`Active`): an image is built for one board family anyway (kernel, device
 //! tree). A port adds a module next to `dho`, implements `Board` for it and points `Active` at it.
 
+mod counters;
+pub use counters::AcquisitionCounters;
 pub mod dho;
 pub(crate) mod identity;
 mod record;
 pub mod scripted;
-pub use record::{sw_trig_level, sw_trig_level_of, to_record, trigger_point};
-
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
+pub use record::{sw_trig_level, sw_trig_level_of, to_record, trigger_point};
 use std::sync::{Arc, Mutex};
 
 /// The board this build drives, and its part of the switches (`sysconf::Switches`).

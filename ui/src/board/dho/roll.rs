@@ -71,7 +71,7 @@ pub(crate) fn publish(g: &mut Shared, f: Frame, scan: bool) {
 }
 
 /// Apply STOP/rearm before reading another roll chunk, releasing Shared before bus IO.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn poll(
     mode: crate::board::Slow,
     out: &crate::board::HwShared,
@@ -87,7 +87,7 @@ pub(super) fn poll(
     let was_rolling = rolling.is_some();
     let run = roll_run(&mut oos_hal::sync::lock(out), rolling, ring, ring_la);
     if was_rolling && rolling.is_none() {
-        bar.apply(&oos_hal::dho::roll::stop(sh));
+        bar.apply(&super::lifecycle::roll_stop(sh));
     }
     run
 }

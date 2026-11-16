@@ -461,3 +461,6 @@ mod tests {
         let _ = t;
     }
 }
+
+#[cfg(test)]
+mod behavior;

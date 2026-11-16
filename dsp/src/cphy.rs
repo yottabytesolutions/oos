@@ -289,3 +289,6 @@ mod tests {
         assert!(!mid.iter().any(|p| p.kind == Kind::Word { cmd: false }), "no invented word alignment");
     }
 }
+
+#[cfg(test)]
+mod behavior;

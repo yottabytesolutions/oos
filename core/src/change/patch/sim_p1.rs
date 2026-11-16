@@ -3,6 +3,10 @@
 use crate::model::Model;
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "one variant per Model field, named after the field and its shared prefix"
+)]
 pub enum SimP1 {
     SimSscDeviation(f64),
     SimSscHz(f64),

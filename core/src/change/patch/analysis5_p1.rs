@@ -3,6 +3,10 @@
 use crate::model::{InvAngle, Model, WaveId};
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "one variant per Model field, named after the field and its shared prefix"
+)]
 pub enum Analysis5P1 {
     InvAng(InvAngle),
     InvPoles(u32),

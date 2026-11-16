@@ -38,6 +38,15 @@ Reserved paths: whole tree on branch `integ-27-upstream` (integration merge), th
 
 ## Status
 
+- 2026-11-16: ports committed: 1 trigger-level order 81e6cef3; 2 frame 0/1 072d8c98 (with 85fccdc2, an aarch64 build fix
+  of the merge); 3 lock e39ab33e; 4 STOP/statistics tests 603a6b6c; 7 dsp tests d21d7002; 8 RemAllow 847190a0; doc
+  privacy af0988b5. Port 5 (net.allow as a Command plus system adapter) left as follow-up: commands cover the Model
+  only and every `remote.*` setting is written by the UI; it needs the system-settings migration. The merge keeps
+  upstream's behaviour (shared list, firewall and SSH on a thread off the frame loop). Port 6 (session restore) is in
+  the merge resolution itself (`leave_session` on `change::replay`). b19a56ad's two Ui fields stay for M2.3e.
+- 2026-11-16: merge committed d5dc0fa4 after ffcd48bd (adr/0018: an upstream merge is one whose merge base is off the
+  base's first-parent line; the second intake was not recognised). Privacy: upstream example addresses became
+  documentation addresses, the allowlist admits the wireless-regdb licence emails and one ULA test prefix.
 - 2026-11-16: paused, disk full (925 MiB free). Merge of 15b819e2 resolved in the working tree, not committed
   (MERGE_HEAD set; formatted method: base 7f7adc95, upstream 82cff324 fetched from scratchpad/fmtclone). 29 paths
   conflicted; all resolved; `cargo check --workspace --all-targets` clean, `cargo fmt` applied. Fast gate before the

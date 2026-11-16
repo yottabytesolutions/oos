@@ -717,11 +717,8 @@ fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Shared>, lim: 
     let need = end + h.len.unwrap_or(0);
     // the whole request in one allocation, not a doubling past it
     req.reserve_exact(need.saturating_sub(req.len()));
-    if h.expect_continue && req.len() < need {
-        let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-        if (&s).write_all(b"HTTP/1.1 100 Continue\r\n\r\n").is_err() {
-            return;
-        }
+    if h.expect_continue && req.len() < need && !send_continue(&s) {
+        return;
     }
     while req.len() < need {
         if read_some(&mut req, &mut buf).is_err() {
@@ -731,6 +728,13 @@ fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Shared>, lim: 
     req.truncate(need);
     let body = req.split_off(end);
     shutdown::queue_request(s, inbox, text, body, lim);
+}
+
+/// `100 Continue` for a client that waits for it before its body; false when the connection is gone.
+fn send_continue(s: &TcpStream) -> bool {
+    let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
+    let mut w = s;
+    w.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").is_ok()
 }
 
 /// The accept thread of an open port: a reader thread per connection, at most `MAX_PENDING` (503 beyond). Polls the

@@ -93,7 +93,7 @@ impl BatchScript {
             pipe.feed_with(
                 Box::new(batch.into_bytes()),
                 fb,
-                frames - 1,
+                0..frames - 1,
                 identity,
                 decode,
                 codes,

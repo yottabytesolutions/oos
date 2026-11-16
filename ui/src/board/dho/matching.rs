@@ -99,13 +99,25 @@ impl BatchMatch {
     }
 
     #[cfg(any(target_os = "linux", test))]
-    pub(super) fn newest(&self, bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, probe: bool) -> Frame {
+    pub(super) fn newest(
+        &self,
+        bytes: &[u8],
+        s: &Settings,
+        p: &hz::Params,
+        seq: u64,
+        probe: super::switches::HeaderProbe,
+    ) -> Frame {
         let mut frame = Frame::default();
         super::hw::decode_into_matched(bytes, s, p, seq, &mut frame, probe, self.frames.last());
         frame
     }
 
-    pub(super) fn decoder(self, s: Settings, p: hz::Params, probe: bool) -> crate::drawpipe::IndexedDecodeInto {
+    pub(super) fn decoder(
+        self,
+        s: Settings,
+        p: hz::Params,
+        probe: super::switches::HeaderProbe,
+    ) -> crate::drawpipe::IndexedDecodeInto {
         Arc::new(move |i, bytes, frame| {
             super::hw::decode_into_matched(bytes, &s, &p, 0, frame, probe, Some(&self.frames[i]));
         })
@@ -126,11 +138,19 @@ pub(crate) fn allocation_probe(mut sample: impl FnMut(&str, &mut dyn FnMut())) {
     let mut frame = Frame::default();
     sample("core matching learn and decode", &mut || {
         let correction = FrameMatch::learn(&bytes, &s, &p, &mut cores);
-        super::hw::decode_into_matched(&bytes, &s, &p, 0, &mut frame, false, Some(&correction));
+        super::hw::decode_into_matched(
+            &bytes,
+            &s,
+            &p,
+            0,
+            &mut frame,
+            super::switches::HeaderProbe::Off,
+            Some(&correction),
+        );
         std::hint::black_box(&frame);
     });
     let batch = BatchMatch::learn(&bytes, bytes.len(), 0..1, &s, &p, &mut cores);
-    let decode = batch.decoder(s, p, false);
+    let decode = batch.decoder(s, p, super::switches::HeaderProbe::Off);
     sample("core matching worker decode", &mut || {
         decode(0, &bytes, &mut frame);
         std::hint::black_box(&frame);
@@ -141,16 +161,17 @@ pub(crate) fn allocation_probe(mut sample: impl FnMut(&str, &mut dyn FnMut())) {
 #[cfg(any(target_os = "linux", test))]
 pub(super) fn prepare(
     bytes: &[u8],
-    geometry: (usize, usize, bool),
+    geometry: (usize, usize, usize),
     s: &Settings,
     p: &hz::Params,
-    newest: (u64, bool, Option<Frame>),
+    newest: (u64, super::switches::HeaderProbe, Option<Frame>),
     cores: Option<&mut Cores>,
 ) -> (Option<BatchMatch>, Frame) {
-    let (fb, frames, frame0_drop) = geometry;
+    // `skip`: the frames left out of the batch (frame 0, a frame 1 without its edge) teach nothing
+    let (fb, frames, skip) = geometry;
     let (seq, probe, raw) = newest;
     let matched =
-        cores.filter(|_| eligible(s)).map(|c| BatchMatch::learn(bytes, fb, usize::from(frame0_drop)..frames, s, p, c));
+        cores.filter(|_| eligible(s)).map(|c| BatchMatch::learn(bytes, fb, skip.min(frames)..frames, s, p, c));
     let bytes = &bytes[(frames - 1) * fb..frames * fb];
     let frame = raw.unwrap_or_else(|| match &matched {
         Some(matched) => matched.newest(bytes, s, p, seq, probe),
@@ -163,9 +184,9 @@ pub(super) fn prepare(
 #[cfg(any(target_os = "linux", test))]
 pub(super) fn feed(
     pipe: &crate::drawpipe::Pipe,
-    raw: (Box<dyn crate::drawpipe::RawBatch>, usize, usize),
+    raw: (Box<dyn crate::drawpipe::RawBatch>, usize, std::ops::Range<usize>),
     identity: oos_core::change::Identity,
-    settings: (Settings, hz::Params, bool),
+    settings: (Settings, hz::Params, super::switches::HeaderProbe),
     matched: Option<BatchMatch>,
     deliver: crate::drawpipe::Deliver,
 ) {

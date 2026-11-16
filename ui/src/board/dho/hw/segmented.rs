@@ -3,6 +3,7 @@
 //! Hardware segment phases shared with the host HAL engine fixture.
 
 use super::{decode_probed, seg_read_plan};
+use crate::board::dho::switches::HeaderProbe as Probe;
 use crate::board::dho::{
     lifecycle,
     publication::{self, tag},
@@ -183,7 +184,7 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
                 .take(cnt as usize)
                 .map(|chunk| {
                     *self.seq += 1;
-                    tag(decode_probed(chunk, rs, p, *self.seq, s.header), r.identity)
+                    tag(decode_probed(chunk, rs, p, *self.seq, Probe::of_header(s.header)), r.identity)
                 })
                 .collect();
         }
@@ -230,7 +231,13 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
                 *self.seq += 1;
                 let fb = oos_hal::dho::seq::frame_bytes(rs, p);
                 let f = tag(
-                    decode_probed(&self.dma.data()[..fb.min(self.dma.data().len())], &one, p, *self.seq, s.header),
+                    decode_probed(
+                        &self.dma.data()[..fb.min(self.dma.data().len())],
+                        &one,
+                        p,
+                        *self.seq,
+                        Probe::of_header(s.header),
+                    ),
                     // Completed segments survive pair changes without a hardware reconfigure.
                     // This new browse read belongs to the snapshot at its request, not the recording arm.
                     id,

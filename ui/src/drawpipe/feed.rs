@@ -32,7 +32,7 @@ impl Pipe {
     /// `feed_codes` without the board's view of the read-out words (tests).
     #[cfg(test)]
     pub fn feed(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto) {
-        self.feed_batch(raw, fb, frames, (stamp, None), decode, None);
+        self.feed_batch(raw, fb, 0..frames, (stamp, None), decode, None);
     }
 
     /// From the acquisition thread: the first `frames` frames of `fb` bytes in `raw`, recorded under settings stamp
@@ -49,18 +49,20 @@ impl Pipe {
         decode: DecodeInto,
         codes: Option<CodesInto>,
     ) {
-        self.feed_batch(raw, fb, frames, (stamp, None), decode, codes);
+        self.feed_batch(raw, fb, 0..frames, (stamp, None), decode, codes);
     }
 
-    /// `feed_codes`, and `deliver` run by the UI right after the merge that brings the batch's frames: the newest
-    /// frame of the batch reaches the screen in the same picture as the others (docs/fork/stutter.md).
+    /// `feed_codes` for frames `frames` (those before its start stay out: frame 0 of a batch, and a frame 1 without
+    /// its edge, docs/protocols/acquisition-start.md), and `deliver` run by the UI right after the merge that brings the batch's
+    /// frames: the newest frame of the batch reaches the screen in the same picture as the others
+    /// (docs/fork/stutter.md).
     // Buffer geometry, identity, decoder and one delivery form a single batch submission.
     #[allow(clippy::too_many_arguments)]
     pub fn feed_with(
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
-        frames: usize,
+        frames: std::ops::Range<usize>,
         identity: oos_core::change::Identity,
         decode: DecodeInto,
         codes: Option<CodesInto>,
@@ -76,7 +78,7 @@ impl Pipe {
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
-        frames: usize,
+        frames: std::ops::Range<usize>,
         identity: oos_core::change::Identity,
         decode: IndexedDecodeInto,
         deliver: Deliver,
@@ -97,13 +99,14 @@ impl Pipe {
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
-        frames: usize,
+        frames: std::ops::Range<usize>,
         header: (u64, Option<oos_core::change::Identity>),
         decode: impl Into<decoder::Decoder>,
         codes: Option<CodesInto>,
     ) -> Arc<Batch> {
         let (stamp, identity) = header;
-        let frames = frames.min(raw.bytes().len().checked_div(fb).unwrap_or(0));
+        let first = frames.start;
+        let frames = frames.end.min(raw.bytes().len().checked_div(fb).unwrap_or(0));
         static IDS: AtomicU64 = AtomicU64::new(0);
         let id = IDS.fetch_add(1, Ordering::Relaxed) + 1;
         let b = Arc::new(Batch {
@@ -113,7 +116,7 @@ impl Pipe {
             decode: decode.into(),
             codes,
             header: Header::new(stamp, identity),
-            next: AtomicUsize::new(0),
+            next: AtomicUsize::new(first.min(frames)),
             counters: self.counters,
             live: self.live.clone(),
             deliver: Mutex::new(None),

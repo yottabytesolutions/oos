@@ -164,7 +164,7 @@ impl Batch for ScriptBatch {
             &self.params,
             self.first + index as u64,
             &mut f,
-            false,
+            super::switches::HeaderProbe::Off,
         );
         f.stamp = stamp;
         records::characterise(&mut f, self.kind, self.tdiv);
@@ -172,7 +172,7 @@ impl Batch for ScriptBatch {
     }
     fn decode(&self) -> DecodeInto {
         let (s, p) = (self.settings.clone(), self.params);
-        Arc::new(move |bytes, f| hw::decode_into_probed(bytes, &s, &p, 0, f, false))
+        Arc::new(move |bytes, f| hw::decode_into_probed(bytes, &s, &p, 0, f, super::switches::HeaderProbe::Off))
     }
     fn codes(&self) -> Option<CodesInto> {
         let (s, p) = (self.settings.clone(), self.params);

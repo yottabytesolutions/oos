@@ -42,7 +42,7 @@ mod tests {
         pipe.feed_with(
             Box::new(batch.into_bytes()),
             fb,
-            26,
+            0..26,
             Default::default(),
             decode,
             None,

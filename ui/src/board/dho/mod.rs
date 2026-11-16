@@ -7,6 +7,8 @@
 
 pub mod cores;
 pub mod fpga;
+#[cfg(any(target_os = "linux", test))]
+mod frame1;
 pub mod hw;
 #[cfg(any(target_os = "linux", test))]
 mod lifecycle;

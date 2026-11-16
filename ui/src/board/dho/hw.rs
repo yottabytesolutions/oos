@@ -213,7 +213,7 @@ pub fn settings(m: &Model, program_afe: bool, sw: &crate::sysconf::Switches) -> 
         single: single_takes_first(m),
         play4: true,
         blocks: 7,
-        header: sw.board.header_probe,
+        header: sw.board.header_probe.on(),
         noise_reject: m.trig_nrej,
         trig_couple: match m.trig_coupling() {
             TrigCoup::Dc => tpu::Coupling::Dc,
@@ -1081,42 +1081,33 @@ fn disarm(
 }
 
 /// One line of the header log: the 8 header words, `pre`, and the offsets (samples) of the nearest rising and falling
-/// crossing of the trigger level from `pre` on the trigger channel. With OOS_FRAME_HEADER=off only the frames whose
-/// edge (of the trigger slope) is not within 20 samples of `pre`, and a count of all frames every 10,000: a long run
-/// for rare frames such as issue #5's.
-fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
-    use std::io::Write;
-    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+/// crossing of the trigger level from `pre` on the trigger channel. `only_off` (OOS_FRAME_HEADER=off): only the frames
+/// whose edge (of the trigger slope) is not within 20 samples of `pre`, and a count of all frames every 10,000 (the
+/// `probed` counter): a long run for rare frames such as issue #5's.
+fn log_header(h: &[u8], v: &[f32], s: &Settings, (pre, k): (usize, usize), only_off: bool) {
+    use std::sync::atomic::{AtomicU32, Ordering};
     static LINES: AtomicU32 = AtomicU32::new(0);
-    static FRAMES: AtomicU64 = AtomicU64::new(0);
-    let words: Vec<String> = h.chunks_exact(2).map(|b| format!("{:04x}", u16::from_le_bytes([b[0], b[1]]))).collect();
     let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
     let hyst = (0.3 * s.ch[tc].scale) as f32;
-    let span = v.len();
     let near = |rising: bool| {
-        crate::fastdraw::edge_near(v, pre, s.level as f32, hyst, rising, false, span).map(|t| t - pre as f64)
+        crate::fastdraw::edge_near(v, pre, s.level as f32, hyst, rising, false, v.len()).map(|t| t - pre as f64)
     };
-    let off = |rising: bool| near(rising).map_or("-".to_string(), |t| format!("{:.1}", t));
-    let only_off = std::env::var_os("OOS_FRAME_HEADER").is_some_and(|x| x == "off");
     let mut line = String::new();
     if only_off {
-        let n = FRAMES.fetch_add(1, Ordering::Relaxed) + 1;
+        let n = crate::drawpipe::counters().probed.fetch_add(1, Ordering::Relaxed) + 1;
         if n % 10_000 == 0 {
             line = format!("frames {}\n", n);
         }
         let rising = !matches!(s.slope, oos_hal::dho::tpu::Slope::Falling);
         if near(rising).is_some_and(|t| t.abs() <= 20.0) {
-            if !line.is_empty() {
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/oos-hdr.log") {
-                    let _ = f.write_all(line.as_bytes());
-                }
-            }
-            return;
+            return append_header_log(&line);
         }
     }
     if LINES.fetch_add(1, Ordering::Relaxed) >= 20_000 {
         return;
     }
+    let words: Vec<String> = h.chunks_exact(2).map(|b| format!("{:04x}", u16::from_le_bytes([b[0], b[1]]))).collect();
+    let off = |rising: bool| near(rising).map_or("-".to_string(), |t| format!("{:.1}", t));
     line += &format!(
         "{} pre {} k {} n {} rise {} fall {} scale {} tdiv {:e}\n",
         words.join(" "),
@@ -1128,6 +1119,14 @@ fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
         s.ch[tc].scale,
         s.tdiv
     );
+    append_header_log(&line);
+}
+
+fn append_header_log(line: &str) {
+    use std::io::Write;
+    if line.is_empty() {
+        return;
+    }
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/oos-hdr.log") {
         let _ = f.write_all(line.as_bytes());
     }
@@ -1136,18 +1135,24 @@ fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
 /// Decodes a read-out of the whole record into a frame (tests: no header probe).
 #[cfg(test)]
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
-    decode_probed(bytes, s, p, seq, false)
+    decode_probed(bytes, s, p, seq, super::switches::HeaderProbe::Off)
 }
 
 /// `decode_into` without the header probe (tests).
 #[cfg(test)]
 pub fn decode_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
-    decode_into_probed(bytes, s, p, seq, f, false)
+    decode_into_probed(bytes, s, p, seq, f, super::switches::HeaderProbe::Off)
 }
 
 /// Decodes a read-out of the whole record into a frame; with `probe` (`BoardSwitches::header_probe`, trigger.md 8)
 /// a frame read with its header has the header logged next to where the edge actually is.
-pub fn decode_probed(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, probe: bool) -> Frame {
+pub fn decode_probed(
+    bytes: &[u8],
+    s: &Settings,
+    p: &hz::Params,
+    seq: u64,
+    probe: super::switches::HeaderProbe,
+) -> Frame {
     decode_with(bytes, s, p, seq, probe, None)
 }
 
@@ -1158,7 +1163,7 @@ pub fn decode_with(
     s: &Settings,
     p: &hz::Params,
     seq: u64,
-    probe: bool,
+    probe: super::switches::HeaderProbe,
     cores: Option<&mut super::cores::Cores>,
 ) -> Frame {
     let mut f = Frame::default();
@@ -1168,7 +1173,14 @@ pub fn decode_with(
 
 /// `decode_probed` into a kept frame: its channel vectors are refilled (no allocation once they have room), every
 /// other field is set as `decode_probed` sets it.
-pub fn decode_into_probed(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame, probe: bool) {
+pub fn decode_into_probed(
+    bytes: &[u8],
+    s: &Settings,
+    p: &hz::Params,
+    seq: u64,
+    f: &mut Frame,
+    probe: super::switches::HeaderProbe,
+) {
     decode_into_with(bytes, s, p, seq, f, probe, None)
 }
 
@@ -1180,7 +1192,7 @@ pub fn decode_into_with(
     p: &hz::Params,
     seq: u64,
     f: &mut Frame,
-    probe: bool,
+    probe: super::switches::HeaderProbe,
     cores: Option<&mut super::cores::Cores>,
 ) {
     let correction = cores
@@ -1195,7 +1207,7 @@ pub(super) fn decode_into_matched(
     p: &hz::Params,
     seq: u64,
     f: &mut Frame,
-    probe: bool,
+    probe: super::switches::HeaderProbe,
     correction: Option<&super::matching::FrameMatch>,
 ) {
     let (hdr, bytes) = if s.header && bytes.len() >= 16 { bytes.split_at(16) } else { (&bytes[..0], bytes) };
@@ -1205,9 +1217,9 @@ pub(super) fn decode_into_matched(
     }
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
     let k = oos_hal::dho::seq::compress_k(s, p) as usize;
-    if !hdr.is_empty() && probe {
+    if !hdr.is_empty() && probe.on() {
         let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
-        log_header(hdr, &f.ch[tc], s, p.pre as usize / k, k);
+        log_header(hdr, &f.ch[tc], s, (p.pre as usize / k, k), probe == super::switches::HeaderProbe::OffTrigger);
     }
     set_meta(s, p, seq, f);
 }
@@ -2428,6 +2440,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                                 Frame { stamp, cfg: want_gen, hw_avg: after.is_some(), ..decode_with(chunk, &b, &p, n, switches.board.header_probe, match_cores.then_some(&mut cores)) }
                             })
                             .collect();
+                        skip += super::frame1::drop_frame1(&mut all, skip, switches.board.frame0_drop, &b);
                         if let (Some(r), Some(last)) = (raw_frame, all.last_mut()) {
                             *last = Frame { stamp, cfg: want_gen, seq: last.seq, ..r };
                         }

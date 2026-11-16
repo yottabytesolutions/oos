@@ -128,7 +128,7 @@ mod tests {
             _ => None,
         };
         let s = Switches::parse(&env, "", "", crate::placement::Cores::default());
-        assert!(s.board.header_probe && s.board.prearm, "presence only");
+        assert!(s.board.header_probe.on() && s.board.prearm, "presence only");
         assert!(!s.compress, "a value switch takes text only, as std::env::var did");
     }
 }

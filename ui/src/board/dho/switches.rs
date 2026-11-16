@@ -7,6 +7,41 @@ use super::hw;
 use crate::drawpipe::conf_value;
 use crate::sysconf::switches::{flag, text, Env};
 
+/// The frame-header log (`OOS_FRAME_HEADER`, trigger.md 8): unset, set (every frame), or `off` (only the frames
+/// whose edge is off the trigger point, and a count of all frames every 10,000; docs/protocols/acquisition-start.md,
+/// "Frames 0 and 1 of a batch").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HeaderProbe {
+    #[default]
+    Off,
+    All,
+    OffTrigger,
+}
+
+impl HeaderProbe {
+    fn of(v: Option<std::ffi::OsString>) -> Self {
+        match v {
+            None => Self::Off,
+            Some(v) if v == "off" => Self::OffTrigger,
+            Some(_) => Self::All,
+        }
+    }
+
+    /// The log of a read that carries headers on its own (segments): every frame.
+    pub fn of_header(header: bool) -> Self {
+        if header {
+            Self::All
+        } else {
+            Self::Off
+        }
+    }
+
+    /// Frames are read with their header.
+    pub fn on(self) -> bool {
+        self != Self::Off
+    }
+}
+
 /// The board's part of `sysconf::Switches`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Switches {
@@ -16,9 +51,9 @@ pub struct Switches {
     /// `cal.core_offset = tight` (docs/fork/core-offset.md): the core offsets of every ADC mode used are matched to
     /// each other at its first configuration, and kept in OOS's own cal_adc.hex
     pub core_offset_tight: bool,
-    /// OOS_FRAME_HEADER set (trigger.md 8): frames are read with the 16-byte header of the stock live loop and every
-    /// frame's header is logged to /tmp/oos-hdr.log next to where the edge actually is
-    pub header_probe: bool,
+    /// OOS_FRAME_HEADER set (trigger.md 8): frames are read with the 16-byte header of the stock live loop and their
+    /// headers are logged to /tmp/oos-hdr.log next to where the edge actually is
+    pub header_probe: HeaderProbe,
     /// the trigger status from the SCU status bits (docs/fork/trigger-lockin.md); `trig.hw_status = off` or
     /// OOS_TRIG_HW_STATUS=0 takes it from the software refinement instead
     pub trig_hw_status: bool,
@@ -51,7 +86,7 @@ impl Switches {
         Switches {
             avg_hold: text(env, "OOS_HWAVG").is_some_and(|v| v == "hold"),
             core_offset_tight: hw::core_offset_from(conf),
-            header_probe: env("OOS_FRAME_HEADER").is_some(),
+            header_probe: HeaderProbe::of(env("OOS_FRAME_HEADER")),
             trig_hw_status: conf_value(status, conf, "trig.hw_status").as_deref() != Some("off"),
             dvm: hw::dvm_hw_from(conf),
             mask: hw::mask_hw_from(conf),
@@ -77,6 +112,16 @@ impl Switches {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Break it catches: OOS_FRAME_HEADER=off read as "log every frame", or read again in the decode loop (1dc4009c).
+    #[test]
+    fn the_header_log_has_its_mode_from_the_switch() {
+        let mode = |v: Option<&str>| HeaderProbe::of(v.map(std::ffi::OsString::from));
+        assert_eq!(mode(None), HeaderProbe::Off);
+        assert_eq!(mode(Some("1")), HeaderProbe::All);
+        assert_eq!(mode(Some("off")), HeaderProbe::OffTrigger);
+        assert!(!HeaderProbe::Off.on() && HeaderProbe::All.on() && HeaderProbe::OffTrigger.on());
+    }
 
     // Break it catches: the mapping under test taken from the build machine's settings file instead of the switches.
     #[test]

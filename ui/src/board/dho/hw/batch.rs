@@ -3,7 +3,7 @@
 //! Batch dispatch in the acquisition loop. Buffer acceptance precedes matcher learning.
 
 use crate::board::{
-    dho::{cores::Cores, matching},
+    dho::{cores::Cores, frame1, matching, switches::HeaderProbe},
     Frame,
 };
 use crate::drawpipe::{Deliver, Pipe, RawBatch};
@@ -18,7 +18,7 @@ pub(super) struct Readout<'a> {
     settings: &'a Settings,
     params: &'a hz::Params,
     geometry: (usize, usize, bool),
-    newest: (u64, bool, Option<Frame>),
+    newest: (u64, HeaderProbe, Option<Frame>),
     identity: Identity,
 }
 
@@ -27,7 +27,7 @@ impl<'a> Readout<'a> {
         pipe: &'a Pipe,
         settings: (&'a Settings, &'a hz::Params),
         geometry: (usize, usize, bool),
-        newest: (u64, bool, Option<Frame>),
+        newest: (u64, HeaderProbe, Option<Frame>),
         identity: Identity,
     ) -> Self {
         Self { pipe, settings: settings.0, params: settings.1, geometry, newest, identity }
@@ -42,17 +42,21 @@ impl<'a> Readout<'a> {
         deliver: impl FnOnce(Frame) -> Deliver,
     ) -> Vec<Frame> {
         let (fb, avail, frame0_drop) = self.geometry;
+        // frame 0, and a frame 1 without its edge at the trigger point, reach neither the workers nor the matcher
+        let start = frame1::first_kept(dma.bytes(), fb, avail, frame0_drop, (self.settings, self.params));
         // Without a replacement buffer the neighbours cannot draw, so only the newest may teach.
         let first = if next.is_some() { 0 } else { avail - 1 };
         let probe = self.newest.1;
         let (matched, newest) = matching::prepare(
             &dma.bytes()[first * fb..avail * fb],
-            (fb, avail - first, frame0_drop && first == 0),
+            (fb, avail - first, start.saturating_sub(first)),
             self.settings,
             self.params,
             self.newest,
             cores,
         );
+        // with two frames the newest is frame 1
+        let keep = frame1::newest_kept(&newest, avail, frame0_drop, self.settings);
         let newest = tag(newest);
         match next {
             Some(next) => {
@@ -60,17 +64,21 @@ impl<'a> Readout<'a> {
                 // Publish the newest after its neighbours, so the screen receives one complete batch picture.
                 matching::feed(
                     self.pipe,
-                    (Box::new(full), fb, avail - 1),
+                    (Box::new(full), fb, start..avail - 1),
                     self.identity,
                     (self.settings.clone(), *self.params, probe),
                     matched,
-                    deliver(newest),
+                    if keep { deliver(newest) } else { Box::new(|| {}) },
                 );
                 Vec::new()
             }
             None => {
                 crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1);
-                vec![newest]
+                if keep {
+                    vec![newest]
+                } else {
+                    Vec::new()
+                }
             }
         }
     }

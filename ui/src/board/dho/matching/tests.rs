@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::board::dho::switches::HeaderProbe;
 
 fn setup(mask: u32, header: bool, n: u32) -> (Settings, hz::Params) {
     let mut s = Settings { mask, header, compress: 1, ..Settings::default() };
@@ -52,15 +53,17 @@ fn batch_core_matching_equals_standard_in_record_order() {
                 let fb = records[0].len();
                 let expected: Vec<_> = records.iter().map(|r| standard(r, &s, &p, &mut standard_cores)).collect();
                 for (i, r) in records.iter().enumerate() {
-                    let f = super::super::hw::decode_with(r, &s, &p, 0, false, Some(&mut live_cores));
+                    let f = super::super::hw::decode_with(r, &s, &p, 0, HeaderProbe::Off, Some(&mut live_cores));
                     assert_eq!(f.ch, expected[i].ch, "Standard changed: {mask} {header} {n} {i}");
                 }
                 let batch = BatchMatch::learn(&bytes, fb, 0..records.len(), &s, &p, &mut batch_cores);
                 assert_eq!(
-                    batch.newest(records.last().expect("the fixture has eight records"), &s, &p, 7, false).ch,
+                    batch
+                        .newest(records.last().expect("the fixture has eight records"), &s, &p, 7, HeaderProbe::Off)
+                        .ch,
                     expected[7].ch
                 );
-                let decode = batch.decoder(s.clone(), p, false);
+                let decode = batch.decoder(s.clone(), p, HeaderProbe::Off);
                 // Workers may complete in any order; each frame keeps the correction learned for it.
                 std::thread::scope(|scope| {
                     for (i, r) in records.iter().enumerate().rev() {
@@ -87,13 +90,13 @@ fn batch_core_matching_corrects_neighbours_and_freezes_snapshots() {
     for i in 20..40 {
         FrameMatch::learn(&record(&s, &p, i), &s, &p, &mut cores);
     }
-    let decode = batch.decoder(s.clone(), p, false);
+    let decode = batch.decoder(s.clone(), p, HeaderProbe::Off);
     let mut oracle = Cores::default();
     for (i, r) in records.iter().enumerate() {
         let mut frame = Frame::default();
         decode(i, r, &mut frame);
         assert_eq!(frame.ch, standard(r, &s, &p, &mut oracle).ch);
-        let raw = super::super::hw::decode_probed(r, &s, &p, 0, false);
+        let raw = super::super::hw::decode_probed(r, &s, &p, 0, HeaderProbe::Off);
         assert_ne!(frame.ch[0], raw.ch[0], "uncorrected neighbour {i}");
     }
 }
@@ -105,8 +108,8 @@ fn batch_core_matching_excludes_pairs_and_peak() {
         assert!(!eligible(&s));
         let r = record(&s, &p, 0);
         let mut cores = Cores::default();
-        let f = super::super::hw::decode_with(&r, &s, &p, 0, false, Some(&mut cores));
-        assert_eq!(f.ch, super::super::hw::decode_probed(&r, &s, &p, 0, false).ch);
+        let f = super::super::hw::decode_with(&r, &s, &p, 0, HeaderProbe::Off, Some(&mut cores));
+        assert_eq!(f.ch, super::super::hw::decode_probed(&r, &s, &p, 0, HeaderProbe::Off).ch);
         assert!(cores.pattern((s.mask, 0, p.rate)).is_none());
     }
 }
@@ -149,7 +152,7 @@ fn batch_core_matching_workers_draw_the_standard_picture() {
     let mut want = Phosphor::new(128, 64);
     let mut last = Frame::default();
     for (i, r) in records.iter().enumerate() {
-        let f = super::super::hw::decode_with(r, &s, &p, 0, false, Some(&mut oracle));
+        let f = super::super::hw::decode_with(r, &s, &p, 0, HeaderProbe::Off, Some(&mut oracle));
         if i < records.len() - 1 {
             drawpipe::draw_frame(&mut want, &m, &f, Interp::Exact, None);
         } else {
@@ -161,15 +164,15 @@ fn batch_core_matching_workers_draw_the_standard_picture() {
         pipe.publish_view(&m, 128, 64, Interp::Exact, Default::default());
         let mut cores = Cores::default();
         let (matched, newest) =
-            prepare(&bytes, (fb, records.len(), false), &s, &p, (10, false, None), Some(&mut cores));
+            prepare(&bytes, (fb, records.len(), 0), &s, &p, (10, HeaderProbe::Off, None), Some(&mut cores));
         assert_eq!(newest.ch, last.ch);
         let delivered = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let done = delivered.clone();
         feed(
             &pipe,
-            (Box::new(Bytes(bytes.clone())), fb, 9),
+            (Box::new(Bytes(bytes.clone())), fb, 0..9),
             Default::default(),
-            (s.clone(), p, false),
+            (s.clone(), p, HeaderProbe::Off),
             matched,
             Box::new(move || done.store(true, std::sync::atomic::Ordering::Release)),
         );
@@ -199,7 +202,7 @@ fn batch_core_matching_keeps_rejected_frames_and_clamps_codes() {
     }
     let mut cores = Cores::default();
     let batch = BatchMatch::learn(&records.concat(), records[0].len(), 0..records.len(), &s, &p, &mut cores);
-    let decode = batch.decoder(s.clone(), p, false);
+    let decode = batch.decoder(s.clone(), p, HeaderProbe::Off);
     let mut oracle = Cores::default();
     for (i, r) in records.iter().enumerate() {
         let mut f = Frame::default();

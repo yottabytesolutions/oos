@@ -335,7 +335,8 @@ and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal
 
 - **Frame 0** is a frame the FPGA recorded before the arm (issue #5, mj1911's runs R1 to R5). oos-ui leaves it out of
   every batch of more than one frame; `acq.frame0 = keep` in system.conf keeps it.
-  - The batch path (`acq.pipeline = batch`) used to hand it to the deposit workers.
+  - The batch path (`acq.pipeline = batch`) used to hand it to the deposit workers. The workers and the ADC core
+    matcher now start at frame 1, or at frame 2 when frame 1 is left out (`batch::Readout`, `frame1::first_kept`).
   - With batches on, 1 of 7,075 logged frames was off the trigger, and that one was frame 0.
 - **Frame 1**, the first trigger after the arm, now and then holds a piece of older memory.
   - Without frame 0, every frame found off the trigger was frame 1: 27 of 330,000 frames (about 12,700 batches). With
@@ -345,7 +346,7 @@ and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal
   - The cause is not known. It is not the pre-trigger fill: a shorter pre gave more of them, not fewer.
 - oos-ui checks frame 1 when the trigger is an edge on a channel with DC or HF reject coupling: frame 1 is left out
   when it has no crossing of the level in the trigger's direction within 32 samples of `pre`, with a hysteresis of
-  0.2 div (`hw::frame1_off_trigger`).
+  0.2 div (`board::dho::frame1::off_trigger`).
   - In batch mode frame 1 is decoded once more for this check, for records up to 100 k points.
   - Other trigger types keep their frame 1, since they cannot be checked this way.
   - The log line `frame 1 of a batch without its edge at the trigger point, left out` counts these (logged at 1, 2,

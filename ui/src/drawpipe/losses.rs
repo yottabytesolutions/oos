@@ -11,6 +11,8 @@ pub struct Losses {
     pub pipe: AtomicU64,
     pub overflow: AtomicU64,
     pub folds: AtomicU64,
+    /// frame 1 of a batch left out without its edge at the trigger point (`board::dho::frame1`)
+    pub frame1: AtomicU64,
 }
 
 impl Losses {

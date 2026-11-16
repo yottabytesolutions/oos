@@ -327,6 +327,8 @@ pub struct Counters {
     pub dropped: AtomicU64,
     /// frames whose cheap measurements went into the statistics (framestats.rs)
     pub measured: AtomicU64,
+    /// frames logged by the header probe in its `off` mode (`board::dho::switches::HeaderProbe`)
+    pub probed: AtomicU64,
     pub losses: Losses,
     pub acquisition: crate::board::AcquisitionCounters,
 }
@@ -1690,7 +1692,7 @@ mod tests {
             pipe.feed_with(
                 Box::new(Bytes(bytes.clone())),
                 fb,
-                30,
+                0..30,
                 Default::default(),
                 dec(&s, &p),
                 None,
@@ -1712,7 +1714,7 @@ mod tests {
         pipe.feed_with(
             Box::new(Bytes(bytes.clone())),
             fb,
-            30,
+            0..30,
             Default::default(),
             dec(&s, &p),
             None,
@@ -1733,7 +1735,7 @@ mod tests {
             let (bytes, fb, s, p) = batch(20, memsel, false);
             let pipe = Pipe::start(0, 0, fresh());
             pipe.set_view(Some(&m), w, h, Interp::Exact);
-            let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 20, (0, None), dec(&s, &p), None);
+            let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 0..20, (0, None), dec(&s, &p), None);
             let mut hp = Helper::default();
             let mut k = 0;
             while pipe.help(&mut hp) {

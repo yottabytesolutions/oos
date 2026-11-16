@@ -113,12 +113,26 @@ fn a_rebaseline_without_an_upstream_merge_fails() {
 }
 
 #[test]
-fn crate_keys_need_an_upstream_change_in_the_crate() {
-    let changed = Changed { files: ["ui/src/up.rs".to_string()].into(), moved: Vec::new() };
+fn crate_keys_need_an_impl_upstream_added_in_the_crate() {
+    let changed =
+        Changed { files: ["ui/src/up.rs".to_string()].into(), impls: ["ui Ui".to_string()].into(), moved: Vec::new() };
     assert!(changed.covers("impls ui Ui"));
-    assert!(!changed.covers("impls hal Dev"));
+    assert!(!changed.covers("impls ui Other"));
+    assert!(!changed.covers("impls hal Ui"));
+    assert!(!changed.covers("lines ui Ui"));
     assert!(changed.covers("ui ui/src/up.rs clippy::x"));
     assert!(!changed.covers("ui ui/src/ours.rs clippy::x"));
+}
+
+#[test]
+fn impl_headers_name_their_type() {
+    assert_eq!(impl_type("impl Ui {"), Some("Ui"));
+    assert_eq!(impl_type("    impl<'a> Foo<'a> {"), Some("Foo"));
+    assert_eq!(impl_type("impl crate::ui::Ui {"), Some("Ui"));
+    assert_eq!(impl_type("impl std::fmt::Display for Ui {"), None);
+    assert_eq!(impl_type("implement(x)"), None);
+    let diff = "+++ b/ui/src/ui/new.rs\n+impl Ui {\n+    fn f() {}\n+++ b/hal/src/a.rs\n+impl Dev {\n";
+    assert_eq!(added_impls(diff), ["hal Dev".to_string(), "ui Ui".to_string()].into());
 }
 
 /// The base of `integration` with a moves file that carried `Model` out of the upstream file into core.
@@ -163,4 +177,30 @@ fn a_task_branch_merge_is_not_upstream() {
     git(&d, &["checkout", "-q", "-b", "integ", "overhaul"]);
     git(&d, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-ff", "-m", "merge task", "t0001"]);
     assert!(pending(&Default::default(), &d, &base_of(&d)).expect("pending").files.is_empty());
+}
+
+#[test]
+fn a_new_file_move_of_an_upstream_file_is_admitted_but_not_onto_our_code() {
+    let (d, up) = integration("rebaseline-file-move");
+    let moved = "ui/src/up.rs -> ui/src/up/inner.rs\nui/src/up.rs -> ui/src/ours.rs\n";
+    commit(&d, &[("xtask/data/moves.txt", moved)], "relocate the upstream module");
+    let m = moves(&Default::default(), &d, &base_of(&d), Some("HEAD")).expect("moves");
+    assert!(m.iter().any(|m| m.new == "ui/src/up/inner.rs"));
+    assert!(!m.iter().any(|m| m.new == "ui/src/ours.rs"), "an existing file of ours is no destination");
+    rebaseline(&d, &[(SIZE, "400 file ui/src/ours.rs\n70 fn ui/src/up/inner.rs f\n")], Some(&up));
+    let a = admitted(&Default::default(), &d, &base_of(&d)).expect("admitted");
+    assert_eq!(a[SIZE].0.get("fn ui/src/up/inner.rs f"), Some(&70));
+}
+
+#[test]
+fn a_carried_key_may_move_on_but_an_unrelated_key_move_carries_nothing() {
+    let (d, up) = integration_with_move("rebaseline-key-chain");
+    let moved = "struct core/src/model.rs Model -> struct core/src/model/state.rs Model\n\
+                 struct ui/src/ours.rs Big -> struct ui/src/big.rs Big\n";
+    commit(&d, &[("xtask/data/moves.txt", moved)], "move the model on");
+    let m = moves(&Default::default(), &d, &base_of(&d), Some("HEAD")).expect("moves");
+    let changed = Changed { files: ["ui/src/up.rs".to_string()].into(), impls: BTreeSet::new(), moved: m };
+    assert!(changed.covers("struct core/src/model/state.rs Model"));
+    assert!(!changed.covers("struct ui/src/big.rs Big"));
+    let _ = up;
 }

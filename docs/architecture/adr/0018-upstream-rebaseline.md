@@ -21,10 +21,12 @@ Ratchet entries may be added or raised only in a dedicated rebaseline commit tha
 3. has a merge of that upstream commit (or of an ancestor of it) as an ancestor inside the same integration, after
    the protected base; a bridge merge that keeps our tree (strategy ours) does not count;
 4. adds or raises only keys whose file was changed by those upstream merges (the diff between each merge's base and
-   its upstream parent). Crate keys without a file (`impls ui Ui`) count when those merges changed a file of that
-   crate. A key in our code counts only when a move recorded in the base's `xtask/data/moves.txt` carried it out of
-   such a file (M2.1 moved `Model` from `ui/src/model.rs` to `core/src/model/`); a destination no recorded move
-   names fails.
+   its upstream parent). The one crate key without a file, `impls <crate> <Type>` (impl blocks of a type in more files than
+   allowed), counts only when those merges added an `impl` block of that type in that crate. A key in our code counts only when a move recorded in the base's `xtask/data/moves.txt` carried it out of
+   such a file (M2.1 moved `Model` from `ui/src/model.rs` to `core/src/model/`), or a later move in the
+   integration's `moves.txt` carried on: a file move of an upstream file to a new file (a `#[path]` module to its
+   default module file) or a key move that continues a listed move. A destination no such move names fails, and so
+   does a file move onto a file the base already has.
 
 An upstream merge is a merge after the base that changes the tree and whose own merge base is not in the base: a
 task branch starts from the base, upstream does not.
@@ -44,7 +46,8 @@ allowance this way; existing entries for our code may only shrink. `cargo xtask 
   sees the debt that came in.
 - A file that both sides change (`ui/src/ui.rs`) can grow in a rebaseline. That is the price of merging upstream; the
   rebaseline commit's summary names these files.
-- Crate keys are attributed by crate, not by file: an upstream change anywhere in `ui` admits a larger `impls ui Ui`.
+- Crate keys are attributed by what upstream added: a new `impl Ui` block in an upstream file admits a larger
+  `impls ui Ui`. The rebaseline commit lists admitted crate keys separately.
 - The merge commits and the commits between them and the rebaseline pass the pre-commit hook without `--no-verify`;
   the pre-push and completion gate still require the rebaseline commit.
 - The exception is mechanical and checked; it does not loosen a limit or a lint.

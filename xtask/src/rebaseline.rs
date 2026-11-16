@@ -5,8 +5,8 @@
 //! - carries the trailer `Ratchet-Rebaseline: upstream <sha>`,
 //! - has a merge of that upstream commit (or an ancestor of it) as an ancestor inside the integration, and
 //! - adds or raises only keys of code upstream changed: a key whose file one of those merges changed, a key that a
-//!   move in the base's `xtask/data/moves.txt` carried out of such a file, or a crate key (`impls ui Ui`) of a crate
-//!   those merges changed.
+//!   move in the base's `xtask/data/moves.txt` carried out of such a file, or the crate key `impls <crate> <Type>`
+//!   when those merges added an `impl` block of that type in that crate.
 //!
 //! Anything else in such a commit fails the gate. A commit without the trailer admits nothing. Until the rebaseline
 //! commit exists, the fast gate reports the findings such keys would cover as pending (`pending`); the full gate
@@ -31,6 +31,8 @@ pub type Admitted = BTreeMap<String, Ratchet>;
 #[derive(Debug, Default)]
 pub struct Changed {
     pub files: BTreeSet<String>,
+    /// `<crate> <Type>` for every `impl` block of `Type` upstream added in the crate
+    impls: BTreeSet<String>,
     moved: Vec<Move>,
 }
 
@@ -38,16 +40,57 @@ impl Changed {
     /// Whether ratchet key `k` belongs to code upstream changed.
     pub fn covers(&self, k: &str) -> bool {
         let words: Vec<&str> = k.split(' ').collect();
-        let carried = |m: &Move| {
+        // keys a move carried out of an upstream file, and further moves of those keys (in order)
+        let mut keys: BTreeSet<&str> = BTreeSet::new();
+        for m in &self.moved {
             let from_changed = m.old.split(' ').find(|w| w.contains('/')).is_some_and(|f| self.files.contains(f));
-            from_changed && (m.new == k || (!m.new.contains(' ') && words.contains(&m.new.as_str())))
+            if from_changed || keys.contains(m.old.as_str()) {
+                keys.insert(m.new.as_str());
+            }
+        }
+        let carried = |new: &&str| *new == k || (!new.contains(' ') && words.contains(new));
+        let direct = match (words.iter().find(|w| w.contains('/')), words.as_slice()) {
+            (Some(f), _) => self.files.contains(*f),
+            (None, ["impls", krate, ty]) => self.impls.contains(&format!("{} {}", krate, ty)),
+            (None, _) => false,
         };
-        let direct = match words.iter().find(|w| w.contains('/')) {
-            Some(f) => self.files.contains(*f),
-            None => words.get(1).is_some_and(|c| self.files.iter().any(|f| f.starts_with(&format!("{}/", c)))),
-        };
-        direct || self.moved.iter().any(carried)
+        direct || keys.iter().any(carried)
     }
+
+    fn absorb(&mut self, other: Changed) {
+        self.files.extend(other.files);
+        self.impls.extend(other.impls);
+    }
+}
+
+/// The type of an inherent `impl` header line (`impl<T> a::Foo<T> {`): `Foo`. None for a trait impl: the size
+/// check counts inherent impls only.
+pub fn impl_type(line: &str) -> Option<&str> {
+    let rest = line.trim_start().strip_prefix("impl")?;
+    let rest = if rest.starts_with('<') { &rest[rest.find('>')? + 1..] } else { rest };
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    if rest.contains(" for ") {
+        return None;
+    }
+    let rest = rest.trim_start();
+    let path = rest.split(|c: char| c == '<' || c == '{' || c.is_whitespace()).next()?;
+    path.rsplit("::").next().filter(|t| !t.is_empty())
+}
+
+/// `<crate> <Type>` of the `impl` blocks a unified diff without context adds, by the crate of each file.
+fn added_impls(diff: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut krate = "";
+    for line in diff.lines() {
+        if let Some(f) = line.strip_prefix("+++ b/") {
+            krate = f.split('/').next().unwrap_or("");
+        } else if let Some(t) = line.strip_prefix('+').and_then(impl_type) {
+            out.insert(format!("{} {}", krate, t));
+        }
+    }
+    out
 }
 
 fn git(ctx: &run::Context, root: &Path, args: &[&str]) -> Result<String, String> {
@@ -67,12 +110,40 @@ fn short(c: &str) -> &str {
     c.get(..8).unwrap_or(c)
 }
 
-/// The moves of the base's moves file: only moves made and reviewed before the integration count.
-fn base_moves(ctx: &run::Context, root: &Path, base: &str) -> Result<Vec<Move>, String> {
-    match crate::base::at(ctx, root, base, "xtask/data/moves.txt")? {
-        crate::base::At::Present(t) => crate::moves::parse(&t),
-        _ => Ok(Vec::new()),
+/// The moves that carry attribution: every move of the base's moves file (made and reviewed before the integration),
+/// plus from the integration's moves file (`at`, or the working tree for None) the file moves whose destination is a
+/// new file, one the base does not have, and the key moves that continue a listed move: the integration may relocate
+/// an upstream file (a `#[path]` module to its default file) or move a carried key on, but never point an upstream
+/// file at our existing code.
+fn moves(ctx: &run::Context, root: &Path, base: &str, at: Option<&str>) -> Result<Vec<Move>, String> {
+    const MOVES: &str = "xtask/data/moves.txt";
+    let mut out = match crate::base::at(ctx, root, base, MOVES)? {
+        crate::base::At::Present(t) => crate::moves::parse(&t)?,
+        _ => Vec::new(),
+    };
+    let now = match at {
+        Some(c) => match crate::base::at(ctx, root, c, MOVES)? {
+            crate::base::At::Present(t) => crate::moves::parse(&t)?,
+            _ => Vec::new(),
+        },
+        None => match std::fs::read_to_string(root.join(MOVES)) {
+            Ok(t) => crate::moves::parse(&t)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(format!("{}: {}", MOVES, e)),
+        },
+    };
+    for m in now.into_iter().filter(|m| !out.contains(m)).collect::<Vec<_>>() {
+        let accepted = if m.old.contains(' ') {
+            // a key move continues a move already listed (our own later move of a carried key)
+            out.iter().any(|o| o.new == m.old)
+        } else {
+            !run::capture(ctx, root, "git", &["cat-file", "-e", &format!("{}:{}", base, m.new)])?.ok
+        };
+        if accepted {
+            out.push(m);
+        }
     }
+    Ok(out)
 }
 
 /// An upstream merge: a merge after `base` that changed the tree (a bridge with strategy ours does not) and whose
@@ -84,16 +155,18 @@ fn upstream_merge(
     base: &str,
     ours: &str,
     theirs: &str,
-) -> Result<Option<BTreeSet<String>>, String> {
+) -> Result<Option<Changed>, String> {
     let mb = git(ctx, root, &["merge-base", ours, theirs])?;
     if is_ancestor(ctx, root, theirs, base)? || is_ancestor(ctx, root, &mb, base)? {
         return Ok(None);
     }
-    Ok(Some(git(ctx, root, &["diff", "--name-only", &mb, theirs])?.lines().map(str::to_string).collect()))
+    let files = git(ctx, root, &["diff", "--name-only", &mb, theirs])?.lines().map(str::to_string).collect();
+    let impls = added_impls(&git(ctx, root, &["diff", "-U0", "--no-renames", &mb, theirs, "--", "*.rs"])?);
+    Ok(Some(Changed { files, impls, moved: Vec::new() }))
 }
 
-/// The upstream merges in `base..c`: (upstream parent, files).
-fn merges(ctx: &run::Context, root: &Path, base: &str, c: &str) -> Result<Vec<(String, BTreeSet<String>)>, String> {
+/// The upstream merges in `base..c`: (upstream parent, what it brought).
+fn merges(ctx: &run::Context, root: &Path, base: &str, c: &str) -> Result<Vec<(String, Changed)>, String> {
     let mut out = Vec::new();
     for m in git(ctx, root, &["rev-list", "--merges", &format!("{}..{}", base, c)])?.lines() {
         let tree = |r: &str| git(ctx, root, &["rev-parse", &format!("{}^{{tree}}", r)]);
@@ -132,13 +205,12 @@ fn rebaselines(ctx: &run::Context, root: &Path, base: &str) -> Result<Vec<(Strin
 
 /// What the rebaseline commits between `base` and HEAD admit; an error for a rebaseline commit that breaks a rule.
 pub fn admitted(ctx: &run::Context, root: &Path, base: &str) -> Result<Admitted, String> {
-    let moved = base_moves(ctx, root, base)?;
     let mut all = Admitted::new();
     for (c, up) in rebaselines(ctx, root, base)? {
-        let mut changed = Changed { files: BTreeSet::new(), moved: moved.clone() };
-        for (p2, files) in merges(ctx, root, base, &c)? {
+        let mut changed = Changed { moved: moves(ctx, root, base, Some(&format!("{}^1", c)))?, ..Changed::default() };
+        for (p2, brought) in merges(ctx, root, base, &c)? {
             if is_ancestor(ctx, root, &p2, &up)? {
-                changed.files.extend(files);
+                changed.absorb(brought);
             }
         }
         if changed.files.is_empty() {
@@ -201,19 +273,19 @@ pub fn widen(base: &mut Ratchet, more: &Ratchet) {
 /// progress (`MERGE_HEAD`). Empty once every upstream merge has its rebaseline.
 pub fn pending(ctx: &run::Context, root: &Path, base: &str) -> Result<Changed, String> {
     let covered = rebaselines(ctx, root, base)?;
-    let mut changed = Changed { files: BTreeSet::new(), moved: base_moves(ctx, root, base)? };
-    for (p2, files) in merges(ctx, root, base, "HEAD")? {
+    let mut changed = Changed { moved: moves(ctx, root, base, None)?, ..Changed::default() };
+    for (p2, brought) in merges(ctx, root, base, "HEAD")? {
         let mut done = false;
         for (_, up) in &covered {
             done |= is_ancestor(ctx, root, &p2, up)?;
         }
         if !done {
-            changed.files.extend(files);
+            changed.absorb(brought);
         }
     }
     if let Ok(mh) = git(ctx, root, &["rev-parse", "--verify", "--quiet", "MERGE_HEAD"]) {
         if !is_ancestor(ctx, root, &mh, "HEAD")? {
-            changed.files.extend(upstream_merge(ctx, root, base, "HEAD", &mh)?.unwrap_or_default());
+            changed.absorb(upstream_merge(ctx, root, base, "HEAD", &mh)?.unwrap_or_default());
         }
     }
     Ok(changed)

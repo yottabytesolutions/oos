@@ -44,4 +44,71 @@ Owner decisions applied:
 
 ## Status
 
+- 2026-11-16: goldens re-blessed in b33a5ebf: 621 captures in 263 cases, causes per region in the commit
+  (upstream bars and corner button, zoom from the full record bf869f9b, Lanczos8 82d98eae, menus, measurement names,
+  trigger level line). Batch trace drawing unchanged outside zoom.
+
+Decisions (coordinator, 2026-11-16):
+
+- Windows-only dependencies of upstream's desktop window (`minifb`, `windows-sys`) stay out; `ui/src/desktop.rs`
+  builds only with `cfg(windows)`. A new dependency needs the owner's agreement.
+- Ratchets: adr/0018 admits upstream findings in one rebaseline commit; crate keys (`impls ui Ui`) only where
+  upstream added an inherent impl of that type in that crate.
+- While a STOP view is shown, settings changes no longer reconfigure the acquisition until RUN (upstream behaviour,
+  accepted).
+- The STOP replay frame carries the identity it was captured with (our M2.3b rule), on top of upstream's re-read.
+- `Model::cores` classes: ACQ, STATS, PHOSPHOR (a toggle reconfigures the acquisition).
+- Software ADC core matching must apply on the batch path too (correctness fix); in the merge if small, else task
+  0068.
+- Golden `demo/normal/basic/02-auto` is re-blessed for upstream 9e7ad1d8 (trigger level line after a level change).
+- Two eye implementations stay for this merge (our worker eye, upstream's eye on main with clock, rail, automatic
+  mode and the SIM fingerprint). Follow-up task 0069: one eye with upstream's features on the measurement worker.
+- `sim_*` fields regenerate the SIM record: class ACQ and STATS (VIEW only where they change presentation only).
+- Upstream's measurement path in `measure_last` runs only for references and SIM or offline sources; live channels
+  keep our generation-checked `measure_rec` alone (deep-record cost, task 0062). Not done in the merge: upstream's
+  full-record gate, deskew, extremum timing and native HiRes features run on its channel jobs (12 tests). Follow-up
+  task 0070 ports them into `measure_rec`; until then live channels are measured twice (ours first, generation
+  checked; upstream's after it).
+- Software ADC core matching on the batch path: not in the merge (the matcher learns per frame; the batch path
+  decodes on parallel workers). Follow-up task 0068.
+- Open: two upstream SIM tests are ignored (our SINGLE resets statistics at the change point, upstream keeps them
+  until the commit); the mixed-bus hardware path writes `Shared.want` directly, past our publication; upstream's
+  `:MEASure` drops `:MEAS:CLE ITEMn` and the drop-oldest rule; the host harness sends no mDNS announcement.
+- Socket tests on macOS loopback (`compatibility_hislip_*`, `compatibility_raw_tcp_pending_opc_*`, `raw_tcp_*`,
+  `real_scpi_queries_*`) fail the same way on unmerged upstream 7c853752 on this host (6 of 18 selected): an
+  upstream test race (one immediate non-blocking read), not the merge. Fixed in the merge if the harness read gets a
+  bounded wait; otherwise follow-up task "socket test poll race". Never ignored to pass the gate.
+- `Model` grows to 293 fields with upstream's fields (moved to `core/src/model/state.rs`); rebaselined, not
+  regrouped. Follow-up task: regroup `Model` into sub-structs (ratchet back below 200).
+- Open (owner): upstream's frame-0 and first-record drop (issue 5) runs beside our generation filter; they overlap
+  on the first record after a change, unit check needed. `tools/device-deploy-ssh.sh` (upstream) duplicates our SSH
+  `device-deploy.sh`; upstream's deploy defaults to telnet, ours stays SSH with the lease.
+- Overhaul is merged into this branch at its tip before the full gate (integ-19 to integ-23).
+- Follow-up tasks (ids to be allocated on the integration branch): 0068 software ADC core matching on the batch path;
+  0069 one eye implementation with upstream's features on the measurement worker; 0070 one measurement path for live
+  channels (port upstream's full-record gate, deskew, extremum timing and native HiRes into `measure_rec`); regroup
+  `Model` into sub-structs (ratchet back below 200).
+
+- 2026-11-16: ratchets rebaselined in 8259be01 (trailer `Ratchet-Rebaseline: upstream 2bd51214`): core size
+  1/2 (added/raised), dsp clippy 49/5, dsp size 23/7, hal size 0/1, ui clippy 123/17, ui size 117/63, ui unsafe 6/1;
+  crate keys `impls ui Ui` 33 -> 61, `impls ui Job` 4, `impls ui State` 5, `impls ui Worker` 7. Our own findings
+  were fixed instead (core patch enums, a test cast). `cargo xtask ratchet` refuses while moves are listed: the
+  integrator runs `cargo xtask ratchet --move` at the fast-forward.
+- 2026-11-16: adr/0018 refined: crate keys only for inherent impls upstream added; moves of the integration carry
+  attribution for upstream files relocated to new files and for continued key moves; the pre-commit gate accepts the
+  rebaseline commit itself; admitted entries join the base after its moves.
+- 2026-11-16: overhaul merged three times to its tip: 71f50eb8 (integ-19, integ-21), 0a09b4cf (integ-22, docs), 856f5f74
+  (integ-23). M2.3d branches from d7418b0d. Upstream main had deleted the private `docs/fork/specs` 04 and 06 to 10
+  without conflict; restored.
+- 2026-11-16: step 3 (upstream main 2bd51214) committed as merge plus model port; 111 files conflicted raw, 47
+  against the formatted base. Draw path: both paths, runtime choice through the change point, no drawpipe statics.
+- 2026-11-16: step 2 (PR 8, 7c853752) committed as merge plus model port; 71 files conflicted raw, 28 against the
+  formatted base. `docs/architecture.md` and per-crate `Cargo.lock` stay deleted (overhaul side). Upstream test
+  literals (private addresses, a MAC, home paths) got documentation placeholders; `#[path]` modules moved to their
+  default files (listed in `moves.txt`).
+- 2026-11-16: step 1 (PR 7 merge 32be6a01) committed as merge plus `Model::cores` port; 12 files with real
+  conflicts (38 hunks), 47 more formatting only. Upstream points are merged through copies formatted with our
+  `rustfmt.toml`; each merge commit's second parent is the unformatted upstream commit.
+- 2026-11-16: adr/0018 and its gate exception committed before the first upstream merge.
+- 2026-11-16: bridge `-s ours` with upstream's PR 7 head bba435bc (scrubbed copy of b3539a34, already in overhaul).
 - 2026-11-16: claimed on `integ-20-upstream` from `overhaul` c6f1f98.

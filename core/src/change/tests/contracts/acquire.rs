@@ -24,6 +24,13 @@ pub(super) const CASES: &[Case] = &[
         C::ACQ.union(C::STATS).union(C::PHOSPHOR).union(C::HW_AVERAGE),
     ),
     (
+        "cores",
+        |m| {
+            m.cores = !m.cores;
+        },
+        C::ACQ.union(C::STATS).union(C::PHOSPHOR),
+    ),
+    (
         "avg_count",
         |m| {
             m.avg_count += 1;

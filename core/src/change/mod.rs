@@ -34,7 +34,10 @@ pub use shadow::Shadow;
 pub use snapshot::snapshot_bytes;
 pub use values::{AcqIntent, Layout, UiAcq};
 
-pub const FIELD_COUNT: usize = 243;
+pub const FIELD_COUNT: usize = 244;
+/// Indexes of the derived member fields (channel and LA members, `mapping`, `logic`); every other index is a whole
+/// `Model` field.
+pub(crate) const MEMBER_FIELDS: std::ops::Range<usize> = 194..243;
 
 #[derive(Clone, Copy, Debug)]
 pub struct FieldDiff {

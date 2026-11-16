@@ -55,7 +55,7 @@ impl Patch {
             4..=15 => trigger0::Trigger0::capture(index, m).map(Self::Trigger0),
             16..=27 => trigger1::Trigger1::capture(index, m).map(Self::Trigger1),
             28 | 29 | 30 | 31 | 105 | 106 | 107 | 164 => trigger2::Trigger2::capture(index, m).map(Self::Trigger2),
-            32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 40 | 162 | 163 | 193 => {
+            32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 40 | 162 | 163 | 193 | 243 => {
                 acquire0::Acquire0::capture(index, m).map(Self::Acquire0)
             }
             41 | 42 | 43 | 44 | 45 | 46 | 47 | 48 | 49 | 88 | 65 | 121 => {

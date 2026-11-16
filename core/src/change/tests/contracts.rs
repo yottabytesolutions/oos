@@ -85,5 +85,5 @@ fn every_field_contract_and_mapping_key_matches_mapping_fields() {
             tested += 1;
         }
     }
-    assert_eq!(tested, 194);
+    assert_eq!(tested, 195);
 }

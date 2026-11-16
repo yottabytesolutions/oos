@@ -16,6 +16,7 @@ pub enum Acquire0 {
     HwStamp(u64),
     HwAvgClear(u64),
     La(crate::la::LaSet),
+    Cores(bool),
 }
 
 impl Acquire0 {
@@ -33,6 +34,7 @@ impl Acquire0 {
             162 => Self::HwStamp(m.hw_stamp),
             163 => Self::HwAvgClear(m.hw_avg_clear),
             193 => Self::La(m.la.clone()),
+            243 => Self::Cores(m.cores),
             _ => return None,
         })
     }
@@ -50,6 +52,7 @@ impl Acquire0 {
             Self::HwStamp(_) => 162,
             Self::HwAvgClear(_) => 163,
             Self::La(_) => 193,
+            Self::Cores(_) => 243,
         }
     }
     pub(super) fn apply(&self, m: &mut Model) {
@@ -66,6 +69,7 @@ impl Acquire0 {
             Self::HwStamp(value) => m.hw_stamp.clone_from(value),
             Self::HwAvgClear(value) => m.hw_avg_clear.clone_from(value),
             Self::La(value) => m.la.clone_from(value),
+            Self::Cores(value) => m.cores.clone_from(value),
         }
     }
     pub(super) fn reuse(&mut self, m: &Model) {
@@ -82,6 +86,7 @@ impl Acquire0 {
             Self::HwStamp(value) => value.clone_from(&m.hw_stamp),
             Self::HwAvgClear(value) => value.clone_from(&m.hw_avg_clear),
             Self::La(value) => value.clone_from(&m.la),
+            Self::Cores(value) => value.clone_from(&m.cores),
         }
     }
     pub(super) fn bytes(&self) -> usize {

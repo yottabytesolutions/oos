@@ -76,6 +76,8 @@ pub struct Model {
     pub run: RunState,
     pub status: TrigStatus,
     pub acq: AcqMode,
+    /// the offsets of the interleaved ADC cores taken off in software (`board::dho::cores`; Acquire > ADC cores)
+    pub cores: bool,
     pub avg_count: u32,
     /// Average mode: the FPGA averages (docs/fork/specs/01-hw-averaging.md) where the board can (`Board::avg_hw`), else
     /// the software average; experimental, not verified on the unit

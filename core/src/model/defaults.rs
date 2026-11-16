@@ -56,6 +56,7 @@ impl Default for Model {
             run: RunState::Run,
             status: TrigStatus::Wait,
             acq: AcqMode::Normal,
+            cores: true,
             avg_count: 16,
             avg_hw: false,
             segments: 0,

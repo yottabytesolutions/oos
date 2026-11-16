@@ -16,6 +16,7 @@ pub(super) fn acquire_0(a: &Model, b: &Model, emit: &mut impl FnMut(FieldDiff)) 
     emit(FieldDiff::new(162, "hw_stamp", a.hw_stamp != b.hw_stamp, C::NONE));
     emit(FieldDiff::new(163, "hw_avg_clear", a.hw_avg_clear != b.hw_avg_clear, C::NONE));
     emit(FieldDiff::new(193, "la", a.la != b.la, C::NONE));
+    emit(FieldDiff::new(243, "cores", a.cores != b.cores, C::ACQ | C::STATS | C::PHOSPHOR));
 }
 
 pub(super) fn refresh_0(a: &mut Model, b: &Model) {
@@ -31,4 +32,5 @@ pub(super) fn refresh_0(a: &mut Model, b: &Model) {
     a.hw_stamp.clone_from(&b.hw_stamp);
     a.hw_avg_clear.clone_from(&b.hw_avg_clear);
     a.la.clone_from(&b.la);
+    a.cores.clone_from(&b.cores);
 }

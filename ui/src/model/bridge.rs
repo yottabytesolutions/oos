@@ -20,7 +20,6 @@ pub fn config() -> Config {
 /// Transitional adapter methods. Core receives only capability and registry values.
 pub trait ModelExt {
     fn n_on(&self) -> usize;
-    #[cfg(test)]
     fn max_srate(&self) -> f64;
     fn trig_coupling(&self) -> TrigCoup;
     fn la_on(&self) -> bool;
@@ -48,7 +47,6 @@ impl ModelExt for Model {
     fn n_on(&self) -> usize {
         self.n_on_in(&config())
     }
-    #[cfg(test)]
     fn max_srate(&self) -> f64 {
         self.max_srate_in(&config())
     }

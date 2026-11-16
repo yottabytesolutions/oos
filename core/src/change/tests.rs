@@ -21,12 +21,12 @@ fn every_field_has_a_group() {
     fields::FIELD_GROUPS(&m);
     let mut indexes = Vec::new();
     fields(&m, &m, |f| {
-        if f.index() < 194 {
+        if !MEMBER_FIELDS.contains(&f.index()) {
             indexes.push(f.index());
         }
     });
     indexes.sort_unstable();
-    assert_eq!(indexes, (0..194).collect::<Vec<_>>());
+    assert_eq!(indexes, (0..MEMBER_FIELDS.start).chain(MEMBER_FIELDS.end..FIELD_COUNT).collect::<Vec<_>>());
 }
 
 #[test]

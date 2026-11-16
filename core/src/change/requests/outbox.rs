@@ -64,7 +64,7 @@ impl Outbox {
         crate::change::fields(before, after, |f| {
             if result.is_ok()
                 && f.changed()
-                && f.index() < 194
+                && !crate::change::MEMBER_FIELDS.contains(&f.index())
                 && !matches!(f.name(), "status" | "hw_stamp" | "hw_avg_clear")
             {
                 result = self.capture_field(f.index(), after);

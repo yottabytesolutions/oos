@@ -38,6 +38,7 @@ pub(super) const FIELD_GROUPS: fn(&Model) = |Model {
                                                  run: _acquire_run,
                                                  status: _acquire_status,
                                                  acq: _acquire_acq,
+                                                 cores: _acquire_cores,
                                                  avg_count: _acquire_avg_count,
                                                  avg_hw: _acquire_avg_hw,
                                                  segments: _acquire_segments,

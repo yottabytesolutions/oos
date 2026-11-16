@@ -6,14 +6,14 @@
 1526 file dsp/src/decode_ext.rs
 1687 file dsp/src/decode_ext2.rs
 1180 file dsp/src/decode_ext3.rs
-555 file dsp/src/dpt.rs
-1504 file dsp/src/eye.rs
+579 file dsp/src/dpt.rs
+1522 file dsp/src/eye.rs
 582 file dsp/src/hss.rs
 1138 file dsp/src/identify.rs
 409 file dsp/src/magnetic.rs
-956 file dsp/src/measure.rs
-613 file dsp/src/motor.rs
-706 file dsp/src/power.rs
+967 file dsp/src/measure.rs
+630 file dsp/src/motor.rs
+721 file dsp/src/power.rs
 403 file dsp/src/serial.rs
 531 file dsp/src/sim.rs
 868 file dsp/src/spectrum.rs
@@ -40,7 +40,7 @@
 67 fn dsp/src/decode_ext3.rs usb_bus
 103 fn dsp/src/decode_ext3.rs usb_packet
 80 fn dsp/src/dpt.rs diode
-128 fn dsp/src/dpt.rs measure
+129 fn dsp/src/dpt.rs measure
 88 fn dsp/src/eye.rs psij
 69 fn dsp/src/hss.rs apply_jitter
 66 fn dsp/src/identify.rs analog
@@ -50,8 +50,8 @@
 115 fn dsp/src/magnetic.rs measure
 91 fn dsp/src/measure.rs Analysis::get
 64 fn dsp/src/measure.rs Meas::name
-136 fn dsp/src/measure.rs analyze_refs
-65 fn dsp/src/motor.rs shaft_hall
+137 fn dsp/src/measure.rs analyze_refs
+79 fn dsp/src/motor.rs shaft_hall
 64 fn dsp/src/motor.rs shaft_quad
 77 fn dsp/src/power.rs rail
 77 fn dsp/src/power.rs switching

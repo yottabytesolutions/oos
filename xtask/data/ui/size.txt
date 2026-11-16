@@ -8,24 +8,24 @@
 894 file ui/src/fastdraw.rs
 708 file ui/src/gfx.rs
 725 file ui/src/gpu.rs
-416 file ui/src/hislip.rs
-1264 file ui/src/http.rs
-531 file ui/src/main.rs
-1641 file ui/src/mdns.rs
-468 file ui/src/measures/jitter.rs
+438 file ui/src/hislip.rs
+1280 file ui/src/http.rs
+533 file ui/src/main.rs
+1686 file ui/src/mdns.rs
+471 file ui/src/measures/jitter.rs
 549 file ui/src/measures/power.rs
 524 file ui/src/measures/standard.rs
 452 file ui/src/pacing.rs
 462 file ui/src/protocols/mod.rs
-5038 file ui/src/scpi.rs
-3137 file ui/src/store.rs
-12465 file ui/src/ui.rs
+5055 file ui/src/scpi.rs
+3203 file ui/src/store.rs
+12552 file ui/src/ui.rs
 1910 file ui/src/ui/analysis.rs
 804 file ui/src/ui/autoset.rs
 1076 file ui/src/ui/bode.rs
-516 file ui/src/ui/bus.rs
+518 file ui/src/ui/bus.rs
 2000 file ui/src/ui/eyepage.rs
-663 file ui/src/ui/eyepage/automatic.rs
+665 file ui/src/ui/eyepage/automatic.rs
 457 file ui/src/ui/facts.rs
 566 file ui/src/ui/la.rs
 571 file ui/src/ui/magnetic.rs
@@ -33,23 +33,24 @@
 497 file ui/src/ui/meascatalog/backend.rs
 717 file ui/src/ui/motor.rs
 996 file ui/src/ui/panes.rs
-441 file ui/src/ui/reference_decode.rs
-730 file ui/src/ui/reflook.rs
+447 file ui/src/ui/reference_decode.rs
+736 file ui/src/ui/reflook.rs
+467 file ui/src/ui/remote.rs
 972 file ui/src/ui/sim.rs
 461 file ui/src/ui/startup.rs
-620 file ui/src/ui/time.rs
-1423 file ui/src/ui/tools.rs
-891 file ui/src/ui/wlan.rs
-789 file ui/src/ui/workflow.rs
-842 file ui/src/ui/workspace.rs
+626 file ui/src/ui/time.rs
+1430 file ui/src/ui/tools.rs
+900 file ui/src/ui/wlan.rs
+802 file ui/src/ui/workflow.rs
+850 file ui/src/ui/workspace.rs
 489 file ui/src/usbtmc.rs
 406 file ui/src/vpu.rs
 474 file ui/src/vxi11.rs
-1403 file ui/src/wave.rs
+1409 file ui/src/wave.rs
 138 fn ui/src/board/dho/fpga.rs spawn
 72 fn ui/src/board/dho/hw.rs hw_trigger
 125 fn ui/src/board/dho/hw.rs settings
-856 fn ui/src/board/dho/hw.rs spawn
+860 fn ui/src/board/dho/hw.rs spawn
 91 fn ui/src/board/record.rs resample
 103 fn ui/src/board/record.rs trigger_point
 91 fn ui/src/cmd.rs execute
@@ -59,7 +60,7 @@
 105 fn ui/src/drm.rs Display::on_fd
 64 fn ui/src/framestats.rs cheap_results
 237 fn ui/src/gpu.rs Gpu::submit
-119 fn ui/src/hislip.rs Server::poll_async
+125 fn ui/src/hislip.rs Server::poll_async
 94 fn ui/src/hislip.rs on_program_message
 130 fn ui/src/http.rs Http::poll
 88 fn ui/src/http.rs Shots::encoder
@@ -80,13 +81,13 @@
 141 fn ui/src/scpi.rs Scpi::decode_cmd
 112 fn ui/src/scpi.rs Scpi::display_cmd
 68 fn ui/src/scpi.rs Scpi::dvm_cmd
-1460 fn ui/src/scpi.rs Scpi::exec_cmd
+1467 fn ui/src/scpi.rs Scpi::exec_cmd
 78 fn ui/src/scpi.rs Scpi::hist_cmd
 71 fn ui/src/scpi.rs Scpi::la_cmd
 104 fn ui/src/scpi.rs Scpi::mask_cmd
 241 fn ui/src/scpi.rs Scpi::math_cmd
 84 fn ui/src/scpi.rs Scpi::meas_stat_cmd
-77 fn ui/src/scpi.rs Scpi::poll
+81 fn ui/src/scpi.rs Scpi::poll
 187 fn ui/src/scpi.rs Scpi::ref_cmd
 146 fn ui/src/scpi.rs Scpi::sim_cmd
 171 fn ui/src/scpi.rs Scpi::timebase_more
@@ -97,8 +98,8 @@
 652 fn ui/src/store.rs set
 394 fn ui/src/store.rs setup_text
 67 fn ui/src/sysconf.rs SysConf::parse_over
-353 fn ui/src/ui.rs Ui::activate
-587 fn ui/src/ui.rs Ui::adjust
+355 fn ui/src/ui.rs Ui::activate
+594 fn ui/src/ui.rs Ui::adjust
 62 fn ui/src/ui.rs Ui::cursor_values
 73 fn ui/src/ui.rs Ui::dlg_layout
 73 fn ui/src/ui.rs Ui::draw_axes
@@ -111,24 +112,24 @@
 75 fn ui/src/ui.rs Ui::draw_refs_at
 66 fn ui/src/ui.rs Ui::draw_strip_band
 73 fn ui/src/ui.rs Ui::draw_top
-81 fn ui/src/ui.rs Ui::fast_draw_all
-160 fn ui/src/ui.rs Ui::key
+84 fn ui/src/ui.rs Ui::fast_draw_all
+166 fn ui/src/ui.rs Ui::key
 128 fn ui/src/ui.rs Ui::kind
 117 fn ui/src/ui.rs Ui::knob
 294 fn ui/src/ui.rs Ui::label
 331 fn ui/src/ui.rs Ui::menu_items
 76 fn ui/src/ui.rs Ui::menu_title
 107 fn ui/src/ui.rs Ui::multi_touch
-256 fn ui/src/ui.rs Ui::new
+260 fn ui/src/ui.rs Ui::new
 180 fn ui/src/ui.rs Ui::options
 77 fn ui/src/ui.rs Ui::pointer_wheel_motion
-137 fn ui/src/ui.rs Ui::render_layers
+138 fn ui/src/ui.rs Ui::render_layers
 121 fn ui/src/ui.rs Ui::set_dec_proto
 134 fn ui/src/ui.rs Ui::set_trig_type
-409 fn ui/src/ui.rs Ui::step
-211 fn ui/src/ui.rs Ui::tap
+411 fn ui/src/ui.rs Ui::step
+217 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
-408 fn ui/src/ui.rs Ui::touch_in
+409 fn ui/src/ui.rs Ui::touch_in
 89 fn ui/src/ui.rs Ui::trigger_items
 334 fn ui/src/ui.rs Ui::value
 62 fn ui/src/ui.rs fast_plan
@@ -183,12 +184,13 @@
 155 fn ui/src/ui/sysinfo.rs Ui::sysinfo_rows
 74 fn ui/src/ui/tables.rs Ui::draw_table
 75 fn ui/src/ui/tools.rs Ui::hist_stat
+64 fn ui/src/ui/wlan.rs Ui::osk_done
 93 fn ui/src/ui/workflow.rs Ui::commit_waveform_traces_to
 64 fn ui/src/ui/workflow.rs Ui::record_key
 75 fn ui/src/ui/workflow.rs Ui::replay_acquire
-95 fn ui/src/ui/workspace.rs Ui::workspace_action
+102 fn ui/src/ui/workspace.rs Ui::workspace_action
 116 fn ui/src/ui/workspace.rs Ui::workspace_touch
-106 fn ui/src/vxi11.rs Server::poll_async
+107 fn ui/src/vxi11.rs Server::poll_async
 105 fn ui/src/vxi11.rs core_async
 241 fn ui/src/wave.rs Source::acquire_impl
 85 fn ui/src/wave.rs demo_signal
@@ -207,13 +209,13 @@
 14 struct ui/src/gpu.rs FrameMsg
 13 struct ui/src/gpu.rs JobMsg
 24 struct ui/src/gpu.rs QuadMsg
-19 struct ui/src/http.rs ShotState
+20 struct ui/src/http.rs ShotState
 26 struct ui/src/measures/jitter.rs EyeSnap
 14 struct ui/src/pacing.rs State
-13 struct ui/src/scpi.rs Scpi
-18 struct ui/src/sysconf.rs SysConf
+14 struct ui/src/scpi.rs Scpi
+19 struct ui/src/sysconf.rs SysConf
 13 struct ui/src/ui.rs TouchState
-218 struct ui/src/ui.rs Ui
+222 struct ui/src/ui.rs Ui
 19 struct ui/src/ui/analysis.rs RefMeasureKey
 49 struct ui/src/ui/analysis.rs State
 17 struct ui/src/ui/autoset.rs AutoRun

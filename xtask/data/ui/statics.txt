@@ -9,3 +9,4 @@
 1 static ui/src/input.rs STOP
 1 static ui/src/mdns.rs STATUS
 1 static ui/src/pacing.rs state::S
+1 static ui/src/ui/remote.rs ALLOW_RUN

@@ -3,8 +3,12 @@
 """Local framing regression tests; no network or running application."""
 import io
 import json
+import sys
 import unittest
-from scpi_validate import OOS, Results
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scpi_validate import OOS, Results  # noqa: E402
 
 class Socket:
     def sendall(self, data):

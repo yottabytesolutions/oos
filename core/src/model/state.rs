@@ -194,18 +194,17 @@ pub struct Model {
     pub zoom: bool,
     /// slow time bases on the hardware: roll from 50 ms/div (on), scan from 200 ms/div (off), like stock "Auto Roll"
     pub auto_roll: bool,
-    pub zscale: usize, // index into tscales(), <= tscale
-    pub zdelay: f32,   // centre of the zoom window relative to the trigger
-    /// colour-graded persistence: trace pixels coloured by hit density (temperature map)
-    pub color_grade: bool,
-    /// Display > Dots: lines, dots, or Auto (`trace_style`)
-    pub dots: DotsMode,
-    /// what an HDMI monitor shows (Display > HDMI)
-    pub hdmi: HdmiMode,
+    pub zscale: usize,     // index into tscales(), <= tscale
+    pub zdelay: f32,       // centre of the zoom window relative to the trigger
+    pub color_grade: bool, // colour-graded persistence: trace pixels coloured by hit density (temperature map)
+    pub dots: DotsMode,    // Display > Dots: lines, dots, or Auto (`trace_style`)
+    pub hdmi: HdmiMode,    // what an HDMI monitor shows (Display > HDMI)
+    pub draw_batch: bool,  // Acquire > Draw path: Batch (drawpipe workers on the hardware) instead of Standard
+    pub bar_compact: bool, // Display > Bottom bar: the compact bar instead of the cards
+    pub hdmi_view: usize,  // Display > Monitor view: the view (1-based) an HDMI monitor in Layout shows; 0: the panel's
     /// Display > Views: how many screen arrangements there are to switch between (1: off; ui/views.rs)
     pub views: usize,
-    /// the one shown (0-based)
-    pub view_cur: usize,
+    pub view_cur: usize, // the one shown (0-based)
     /// what each view keeps while another one is shown (ui/views.rs, `Ui::view_snapshot`); empty: not set up yet
     pub view_slots: [String; VIEWS_MAX],
     /// Z input: this channel sets the brightness of the other traces (low edge of the screen = dark)

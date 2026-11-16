@@ -12,6 +12,7 @@ mod analysis5;
 mod channels;
 mod classes;
 mod display;
+mod display2;
 mod interfaces;
 mod logic;
 mod mapping;
@@ -39,7 +40,7 @@ pub use shadow::Shadow;
 pub use snapshot::snapshot_bytes;
 pub use values::{AcqIntent, Layout, UiAcq};
 
-pub const FIELD_COUNT: usize = 342;
+pub const FIELD_COUNT: usize = 345;
 /// Indexes of the derived member fields (channel and LA members, `mapping`, `logic`); every other index is a whole
 /// `Model` field.
 pub(crate) const MEMBER_FIELDS: std::ops::Range<usize> = 194..243;
@@ -87,6 +88,7 @@ pub fn fields(a: &Model, b: &Model, mut emit: impl FnMut(FieldDiff)) {
     measure1::measure1(a, b, &mut emit);
     analysis5::analysis5(a, b, &mut emit);
     sim::sim(a, b, &mut emit);
+    display2::display2(a, b, &mut emit);
     mapping::channel_fields(a, b, &mut emit);
     logic::fields(a, b, &mut emit);
 }
@@ -109,6 +111,7 @@ pub fn refresh(a: &mut Model, b: &Model) {
     measure1::refresh_measure1(a, b);
     analysis5::refresh_analysis5(a, b);
     sim::refresh_sim(a, b);
+    display2::refresh_display2(a, b);
 }
 
 pub fn classify(a: &Model, b: &Model, old: UiAcq, new: UiAcq) -> Classes {

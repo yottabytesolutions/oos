@@ -89,7 +89,7 @@ impl Model {
     }
     /// The decoder reads logic analyser lines (the choice only counts while the LA is on).
     pub fn dec_on_la_in(&self, config: &Config) -> bool {
-        self.dec_la_in && self.la_on_in(config) && self.dec_proto != Proto::Cphy
+        self.dec_la_in && self.la_on_in(config) && self.dec_proto != Proto::CPHY
     }
     pub fn max_mem_in(&self, config: &Config) -> u64 {
         // limits 125 / 62.5 / 31.25 M (stock: 50 / 25 / 10 M); above 78.6 M only with the larger segment cap

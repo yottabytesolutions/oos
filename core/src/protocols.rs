@@ -58,147 +58,54 @@ impl<'a> Context<'a> {
             .expect("the adapter supplies evaluated values for the selected module")
             .frame_span
     }
+    /// Every protocol of the Decode menu, in the order of the registry.
     pub fn protocols(&self) -> impl Iterator<Item = Proto> + '_ {
-        BUILTIN_PROTOS.iter().copied().chain((0..self.modules.len()).map(|i| Proto::Module(i as u8)))
+        (0..self.modules.len()).map(|i| Proto::Module(i as u8))
+    }
+    /// The default option settings of module `id`.
+    pub fn opt_default(&self, id: u8) -> [u8; OPTS] {
+        let o = self.module(id).options;
+        std::array::from_fn(|k| o.get(k).map_or(0, |x| x.default as u8))
     }
 }
 
-/// Serial protocol of the decoder.
+/// Protocol of the decoder: a protocol module of the registry (`Context`). The core decoders stand first at fixed
+/// places (`Proto::UART` ...); the code that knows them by name uses those.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Proto {
-    Uart,
-    I2c,
-    Spi,
-    Can,
-    Lin,
-    I2s,
-    Mil1553,
-    Parallel,
-    CanFd,
-    FlexRay,
-    ModbusRtu,
-    ModbusAscii,
-    OneWire,
-    Ds2482,
-    Uart9,
-    Swd,
-    Jtag,
-    Qspi,
-    I3c,
-    Arinc429,
-    Sent,
-    /// USB 1.x / 2.0 low / full speed
-    Usb,
-    Manchester,
-    Mlt3,
-    /// MIPI C-PHY: A/B/C electrical states and synchronized 16-bit words.
-    Cphy,
-    /// a protocol module (`protocols::MODULES[i]`)
     Module(u8),
 }
 
-/// The protocols wired by hand; the modules come after them in [`Context::protocols`].
-pub const BUILTIN_PROTOS: [Proto; 25] = [
-    Proto::Uart,
-    Proto::I2c,
-    Proto::Spi,
-    Proto::Can,
-    Proto::Lin,
-    Proto::I2s,
-    Proto::Mil1553,
-    Proto::Parallel,
-    Proto::CanFd,
-    Proto::FlexRay,
-    Proto::ModbusRtu,
-    Proto::ModbusAscii,
-    Proto::OneWire,
-    Proto::Ds2482,
-    Proto::Uart9,
-    Proto::Swd,
-    Proto::Jtag,
-    Proto::Qspi,
-    Proto::I3c,
-    Proto::Arinc429,
-    Proto::Sent,
-    Proto::Usb,
-    Proto::Manchester,
-    Proto::Mlt3,
-    Proto::Cphy,
-];
-
 impl Proto {
+    pub const UART: Proto = Proto::Module(0);
+    pub const I2C: Proto = Proto::Module(1);
+    pub const SPI: Proto = Proto::Module(2);
+    pub const CAN: Proto = Proto::Module(3);
+    pub const LIN: Proto = Proto::Module(4);
+    pub const PARALLEL: Proto = Proto::Module(5);
+    pub const CPHY: Proto = Proto::Module(6);
+
+    /// The module index in the registry.
+    pub fn id(self) -> u8 {
+        let Proto::Module(i) = self;
+        i
+    }
+    /// Name in saved setups: the module's key.
     pub fn key_in(self, ctx: &Context<'_>) -> String {
-        match self {
-            Proto::Module(i) => ctx.module(i).key.to_string(),
-            _ => format!("{:?}", self),
-        }
+        ctx.module(self.id()).key.to_string()
     }
     pub fn from_key_in(key: &str, ctx: &Context<'_>) -> Option<Proto> {
         ctx.protocols().find(|p| p.key_in(ctx) == key)
     }
     pub fn name_in(self, ctx: &Context<'_>) -> &'static str {
-        match self {
-            Proto::Module(i) => ctx.module(i).name,
-            Proto::Uart => "UART",
-            Proto::I2c => "I2C",
-            Proto::Spi => "SPI",
-            Proto::Can => "CAN",
-            Proto::Lin => "LIN",
-            Proto::I2s => "I2S",
-            Proto::Mil1553 => "1553",
-            Proto::Parallel => "Parallel",
-            Proto::CanFd => "CAN-FD",
-            Proto::FlexRay => "FlexRay",
-            Proto::ModbusRtu => "Modbus RTU",
-            Proto::ModbusAscii => "Modbus ASCII",
-            Proto::OneWire => "1-Wire",
-            Proto::Ds2482 => "DS2482",
-            Proto::Uart9 => "UART 9-bit",
-            Proto::Swd => "SWD",
-            Proto::Jtag => "JTAG",
-            Proto::Qspi => "Quad-SPI",
-            Proto::I3c => "I3C",
-            Proto::Arinc429 => "ARINC 429",
-            Proto::Sent => "SENT",
-            Proto::Usb => "USB",
-            Proto::Manchester => "Manchester",
-            Proto::Mlt3 => "MLT-3",
-            Proto::Cphy => "C-PHY",
-        }
+        ctx.module(self.id()).name
     }
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
     pub fn roles_in(self, ctx: &Context<'_>) -> [Option<&'static str>; 4] {
-        match self {
-            Proto::Module(i) => ctx.module(i).roles,
-            Proto::Cphy => [Some("A"), Some("B"), Some("C"), None],
-            Proto::I2c | Proto::I3c | Proto::Ds2482 => [Some("SDA"), Some("SCL"), None, None],
-            Proto::Spi => [Some("MOSI"), Some("Clock"), Some("CS"), None],
-            Proto::I2s => [Some("SD"), Some("SCK"), Some("WS"), None],
-            Proto::Parallel => [Some("D0"), None, Some("Clock"), None],
-            Proto::Swd => [Some("SWDIO"), Some("SWCLK"), None, None],
-            Proto::Jtag => [Some("TMS"), Some("TCK"), Some("TDI"), Some("TDO")],
-            Proto::Qspi => [Some("IO0"), Some("SCK"), Some("CS#"), Some("IO1")],
-            // D- optional: D+ alone decodes without SE0
-            Proto::Usb => [Some("D+"), None, Some("D-"), None],
-            _ => [Some("Source"), None, None, None],
-        }
+        ctx.module(self.id()).roles
     }
     /// Serial protocols on one line that can also be decoded from a differential pair (RS-485: A - B).
     pub fn diff_ok_in(self, ctx: &Context<'_>) -> bool {
-        if let Proto::Module(i) = self {
-            return ctx.module(i).diff_ok;
-        }
-        matches!(
-            self,
-            Proto::Uart
-                | Proto::Uart9
-                | Proto::ModbusRtu
-                | Proto::ModbusAscii
-                | Proto::Can
-                | Proto::CanFd
-                | Proto::FlexRay
-                | Proto::Lin
-                | Proto::Arinc429
-        )
+        ctx.module(self.id()).diff_ok
     }
 }

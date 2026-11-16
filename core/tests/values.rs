@@ -45,13 +45,22 @@ fn capabilities_are_independent_values_in_one_process() {
 
 #[test]
 fn injected_metadata_and_evaluated_settings_drive_module_queries() {
-    let info = [ModuleInfo {
-        key: "Fixture",
-        name: "Fixture protocol",
-        roles: [Some("Data"), Some("Clock"), None, None],
-        diff_ok: true,
-        options: &[Opt { name: "Rate", choices: &["Slow", "Fast"], default: 0 }],
-    }];
+    let info = [
+        ModuleInfo {
+            key: "Fixture",
+            name: "Fixture protocol",
+            roles: [Some("Data"), Some("Clock"), None, None],
+            diff_ok: true,
+            options: &[Opt { name: "Rate", choices: &["Slow", "Fast"], default: 0 }],
+        },
+        ModuleInfo {
+            key: "Other",
+            name: "Other protocol",
+            roles: [Some("Data"), None, None, None],
+            diff_ok: false,
+            options: &[Opt { name: "Mode", choices: &["A", "B", "C"], default: 2 }],
+        },
+    ];
     let ctx = Context::new(&info, Some(ModuleValues { id: 0, bit_time: 2e-6, frame_span: Some(80e-6) }));
     let other = Context::new(&info, Some(ModuleValues { id: 0, bit_time: 4e-6, frame_span: None }));
     let mut m = Model {
@@ -72,9 +81,12 @@ fn injected_metadata_and_evaluated_settings_drive_module_queries() {
     assert_eq!(m.trig_span_in(&ctx), 80e-6);
     assert_eq!(m.trig_span_in(&other), 200.0 * 4e-6);
     assert_eq!(m.trig_channels_in(&config(4, 1, true), &ctx), [true, false, true, false]);
-    m.dec_proto = Proto::Uart;
-    assert_eq!(m.dec_opts_in(&ctx), [0; 4]);
-    assert_eq!(m.trig_span_in(&ctx), 200.0 / oos_core::decode::BAUDS[m.dec_baud]);
+    // the core decoders are the first modules; choosing the same one keeps its options, another starts at its defaults
+    assert_eq!(m.dec_proto, Proto::UART);
+    m.set_dec_proto_only_in(Proto::UART, &ctx);
+    assert_eq!(m.dec_opt, [255; 4]);
+    m.set_dec_proto_only_in(Proto::Module(1), &ctx);
+    assert_eq!((m.dec_proto, m.dec_opt), (Proto::Module(1), [2, 0, 0, 0]));
 }
 
 #[test]

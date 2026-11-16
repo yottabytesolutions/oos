@@ -6,7 +6,7 @@
 use crate::board::{board, Active, Board};
 use crate::gfx::{rgb, Rgb};
 pub(crate) use bridge::config;
-pub use bridge::ModelExt;
+pub use bridge::{catalog_id_valid, ModelExt};
 pub use oos_core::model::*;
 pub use protocols::{ProtoExt, PROTOS};
 

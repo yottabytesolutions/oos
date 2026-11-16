@@ -36,6 +36,7 @@ fn unrelated_fields_snapshot() {
         &[
             "active",
             "auto_nrej",
+            "bar_compact",
             "bus",
             "ch_label",
             "cur_a",
@@ -47,6 +48,7 @@ fn unrelated_fields_snapshot() {
             "dec_ascii",
             "dec_sel",
             "decs",
+            "draw_batch",
             "fine_t",
             "fine_v",
             "grid",
@@ -54,6 +56,7 @@ fn unrelated_fields_snapshot() {
             "grid_frame",
             "h_expand",
             "hdmi",
+            "hdmi_view",
             "hist",
             "intensity",
             "log_ivl",

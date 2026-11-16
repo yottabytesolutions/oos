@@ -296,4 +296,7 @@ pub(super) const FIELD_GROUPS: fn(&Model) = |Model {
                                                  sim_dcd_pp: _sim_sim_dcd_pp,
                                                  sim_corr_rj: _sim_sim_corr_rj,
                                                  sim_corr_hz: _sim_sim_corr_hz,
+                                                 draw_batch: _display2_draw_batch,
+                                                 bar_compact: _display2_bar_compact,
+                                                 hdmi_view: _display2_hdmi_view,
                                              }| {};

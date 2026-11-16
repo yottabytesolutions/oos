@@ -3,9 +3,9 @@
 use super::*;
 use oos_core::protocols::{Context, ModuleInfo, ModuleValues};
 
-pub static PROTOS: std::sync::LazyLock<Vec<Proto>> = std::sync::LazyLock::new(|| {
-    BUILTIN_PROTOS.iter().copied().chain((0..crate::protocols::MODULES.len()).map(|i| Proto::Module(i as u8))).collect()
-});
+/// Every protocol of the Decode menu, in the order of `protocols::MODULES`.
+pub static PROTOS: std::sync::LazyLock<Vec<Proto>> =
+    std::sync::LazyLock::new(|| (0..crate::protocols::MODULES.len()).map(|i| Proto::Module(i as u8)).collect());
 
 static INFO: std::sync::LazyLock<Vec<ModuleInfo>> = std::sync::LazyLock::new(|| {
     crate::protocols::MODULES
@@ -24,16 +24,17 @@ fn metadata() -> Context<'static> {
     Context::new(&INFO, None)
 }
 
+/// The registry with the bit time and frame span of the decoder's module, evaluated with its options and the shared
+/// rows of the model.
 pub fn context(m: &Model) -> Context<'static> {
-    let values = match m.dec_proto {
-        Proto::Module(id) => {
-            let p = crate::protocols::get(id);
-            let opt = metadata().opt_fit(id, m.dec_opt);
-            Some(ModuleValues { id, bit_time: p.bit_time(&opt), frame_span: p.frame_span(&opt) })
-        }
-        _ => None,
-    };
-    Context::new(&INFO, values)
+    let id = m.dec_proto.id();
+    let p = crate::protocols::get(id);
+    let opt = metadata().opt_fit(id, m.dec_opt);
+    let sh = crate::protocols::Shared::of(m);
+    Context::new(
+        &INFO,
+        Some(ModuleValues { id, bit_time: p.bit_time_sh(&opt, &sh), frame_span: p.frame_span_sh(&opt, &sh) }),
+    )
 }
 
 pub trait ProtoExt {
@@ -47,10 +48,7 @@ pub trait ProtoExt {
 
 impl ProtoExt for Proto {
     fn module(self) -> Option<&'static dyn crate::protocols::Protocol> {
-        match self {
-            Proto::Module(i) => Some(crate::protocols::get(i)),
-            _ => None,
-        }
+        Some(crate::protocols::get(self.id()))
     }
     fn key(self) -> String {
         self.key_in(&metadata())

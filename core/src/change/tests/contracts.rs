@@ -11,6 +11,7 @@ mod analysis4;
 mod analysis5;
 mod channels;
 mod display;
+mod display2;
 mod interfaces;
 mod measure;
 mod measure1;
@@ -38,6 +39,7 @@ fn all() -> impl Iterator<Item = &'static Case> {
         measure1::CASES,
         analysis5::CASES,
         sim::CASES,
+        display2::CASES,
     ]
     .into_iter()
     .flatten()
@@ -72,6 +74,7 @@ fn every_field_contract_and_mapping_key_matches_mapping_fields() {
         measure1::CASES,
         analysis5::CASES,
         sim::CASES,
+        display2::CASES,
     ] {
         for (name, mutate, expected) in cases {
             let a = Model { trig_type: TrigType::Bus, ..Model::default() };
@@ -100,5 +103,5 @@ fn every_field_contract_and_mapping_key_matches_mapping_fields() {
             tested += 1;
         }
     }
-    assert_eq!(tested, 293);
+    assert_eq!(tested, 296);
 }

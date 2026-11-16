@@ -16,6 +16,21 @@ pub enum AView {
     Dpt,
 }
 
+impl AView {
+    /// Every view (the tests check each analyser page against it).
+    pub const ALL: [AView; 9] = [
+        AView::Scope,
+        AView::Spectrum,
+        AView::Eye,
+        AView::Power,
+        AView::Bode,
+        AView::Step,
+        AView::Magnetic,
+        AView::Inverter,
+        AView::Dpt,
+    ];
+}
+
 /// Power analysis page.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PowerMode {

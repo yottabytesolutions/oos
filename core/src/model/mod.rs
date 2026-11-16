@@ -21,7 +21,7 @@ mod wave;
 use crate::config::Config;
 use crate::math::{MathOp, Window};
 use crate::protocols::Context;
-pub use crate::protocols::{Proto, BUILTIN_PROTOS};
+pub use crate::protocols::Proto;
 pub use analysers::*;
 pub use bus::*;
 pub use channel::*;

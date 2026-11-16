@@ -11,6 +11,25 @@ pub struct Config {
     depths: &'static [(&'static str, u64)],
     rates: [f64; 3],
     memory: [[u64; 3]; 2],
+    catalog: Catalog,
+}
+
+/// Persisted catalog IDs are only the extra Wave rows; ordinary Meas/pairs retain their existing formats. The list of
+/// `Config::new`; the application supplies its measurement registry (`Config::with_catalog`).
+fn built_in_catalog(id: u16) -> bool {
+    matches!(id, 15..=16 | 40..=51 | 60..=66 | 70..=76 | 80..=82 | 90..=93
+        | 100..=118 | 130..=137 | 150..=153 | 170..=186)
+}
+
+/// The catalog measurement IDs setups may keep: those of the application's measurement registry.
+#[derive(Clone, Copy, Debug)]
+pub struct Catalog(pub fn(u16) -> bool);
+
+impl PartialEq for Catalog {
+    /// Registries compare by what they accept, which a function cannot tell: every catalog counts as equal.
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
 }
 
 impl Config {
@@ -32,7 +51,18 @@ impl Config {
             depths,
             rates,
             memory,
+            catalog: Catalog(built_in_catalog),
         }
+    }
+
+    /// The measurement registry's catalog IDs instead of the built-in list.
+    pub fn with_catalog(self, catalog: fn(u16) -> bool) -> Self {
+        Self { catalog: Catalog(catalog), ..self }
+    }
+
+    /// Whether a setup may keep catalog measurement `id`.
+    pub fn catalog_ok(&self, id: u16) -> bool {
+        (self.catalog.0)(id)
     }
 
     pub fn channels(&self) -> usize {

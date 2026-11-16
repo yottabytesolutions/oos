@@ -169,69 +169,30 @@ impl Model {
             },
             TrigType::Timeout | TrigType::Duration => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 6e-3,
             TrigType::NthEdge => 4.0 * t(self.nth_idle) + 2e-3,
-            // room for a whole frame of the protocol before the trigger point (ARINC 429 auto rate: a low-speed word;
-            // USB auto: low-speed packets)
-            TrigType::Bus if self.dec_proto == Proto::Arinc429 && self.dec_arate == 0 => {
-                200.0 / crate::decode::ARINC_RATES[1]
-            }
-            TrigType::Bus if self.dec_proto == Proto::Usb && self.dec_uspeed == 0 => {
-                200.0 / oos_dsp::decode_ext3::USB_LOW
-            }
-            TrigType::Bus => match self.dec_proto {
-                Proto::Module(i) => ctx.frame_span(i).unwrap_or(200.0 * self.bus_bit_in(ctx)),
-                _ => 200.0 * self.bus_bit_in(ctx),
-            },
+            // room for a whole frame of the protocol before the trigger point (a module may say: USB auto, low-speed
+            // packets)
+            TrigType::Bus => ctx.frame_span(self.dec_proto.id()).unwrap_or(200.0 * self.bus_bit_in(ctx)),
             TrigType::Edge | TrigType::Pattern => 0.0,
             _ => 3.0 * t(self.trig_t1.max(self.trig_t2)) + 3e-3,
         }
     }
 
-    /// The option settings of the decoder's protocol module, in range (zeros for a built-in protocol).
-    pub fn dec_opts_in(&self, ctx: &Context<'_>) -> [usize; crate::protocols::OPTS] {
-        match self.dec_proto {
-            Proto::Module(i) => ctx.opt_fit(i, self.dec_opt),
-            _ => [0; crate::protocols::OPTS],
+    /// Switches the decoder's protocol and nothing else (SCPI configures an instrument, not the demo's sources); a
+    /// module that is newly chosen starts from its default options.
+    pub fn set_dec_proto_only_in(&mut self, p: Proto, ctx: &Context<'_>) {
+        if self.dec_proto != p {
+            self.dec_opt = ctx.opt_default(p.id());
         }
+        self.dec_proto = p;
+    }
+
+    /// The option settings of the decoder's protocol module, in range.
+    pub fn dec_opts_in(&self, ctx: &Context<'_>) -> [usize; crate::protocols::OPTS] {
+        ctx.opt_fit(self.dec_proto.id(), self.dec_opt)
     }
 
     /// Bit time of the decoder's protocol (s), for the protocol trigger's sampling and search window.
     pub fn bus_bit_in(&self, ctx: &Context<'_>) -> f64 {
-        match self.dec_proto {
-            Proto::Uart | Proto::Lin | Proto::Uart9 | Proto::ModbusRtu | Proto::ModbusAscii => {
-                1.0 / crate::decode::BAUDS[self.dec_baud]
-            }
-            Proto::Can | Proto::CanFd => 1.0 / crate::decode::CAN_RATES[self.dec_canrate],
-            Proto::I2c | Proto::Ds2482 => 2.5e-6,
-            Proto::I3c => 0.1e-6,
-            Proto::Spi | Proto::Qspi | Proto::Swd | Proto::Jtag | Proto::Parallel => 0.5e-6,
-            Proto::I2s => 0.6e-6,
-            Proto::Mil1553 => 1e-6,
-            Proto::FlexRay => 0.1e-6,
-            Proto::OneWire => 15e-6,
-            Proto::Module(i) => ctx.bit_time(i),
-            // auto: high speed (the finer sampling)
-            Proto::Arinc429 => {
-                let r = crate::decode::ARINC_RATES[self.dec_arate];
-                1.0 / if r > 0.0 { r } else { crate::decode::ARINC_RATES[2] }
-            }
-            // about 4 ticks per data bit; auto: the shortest tick
-            Proto::Sent => {
-                let t = crate::decode::SENT_TICKS[self.dec_tick];
-                4.0 * if t > 0.0 { t } else { crate::decode::SENT_TICKS[0] }
-            }
-            // auto: full speed
-            Proto::Usb => {
-                use oos_dsp::decode_ext3::{UsbSpeed, USB_FULL, USB_LOW};
-                1.0 / if crate::decode::USB_SPEEDS[self.dec_uspeed] == UsbSpeed::Low { USB_LOW } else { USB_FULL }
-            }
-            Proto::Manchester | Proto::Mlt3 => 1.0 / crate::decode::BAUDS[self.dec_baud],
-            Proto::Cphy => {
-                if self.dec_cphy_rate > 0.0 {
-                    1.0 / self.dec_cphy_rate
-                } else {
-                    1e-9
-                }
-            }
-        }
+        ctx.bit_time(self.dec_proto.id())
     }
 }

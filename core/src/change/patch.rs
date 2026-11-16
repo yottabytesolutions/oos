@@ -19,6 +19,7 @@ mod analysis6;
 mod channels0;
 mod display0;
 mod display1;
+mod display2_p0;
 mod interfaces0;
 mod interfaces1;
 mod measure0;
@@ -65,6 +66,7 @@ pub enum Patch {
     Analysis5P3(analysis5_p3::Analysis5P3),
     SimP0(sim_p0::SimP0),
     SimP1(sim_p1::SimP1),
+    Display2P0(display2_p0::Display2P0),
 }
 
 impl Patch {
@@ -124,6 +126,7 @@ impl Patch {
             320..=321 => analysis5_p3::Analysis5P3::capture(index, m).map(Self::Analysis5P3),
             322..=333 => sim_p0::SimP0::capture(index, m).map(Self::SimP0),
             334..=341 => sim_p1::SimP1::capture(index, m).map(Self::SimP1),
+            342..=344 => display2_p0::Display2P0::capture(index, m).map(Self::Display2P0),
             _ => None,
         }
     }
@@ -159,6 +162,7 @@ impl Patch {
             Self::Analysis5P3(p) => p.index(),
             Self::SimP0(p) => p.index(),
             Self::SimP1(p) => p.index(),
+            Self::Display2P0(p) => p.index(),
         }
     }
     pub(super) fn apply(&self, m: &mut Model) {
@@ -193,6 +197,7 @@ impl Patch {
             Self::Analysis5P3(p) => p.apply(m),
             Self::SimP0(p) => p.apply(m),
             Self::SimP1(p) => p.apply(m),
+            Self::Display2P0(p) => p.apply(m),
         }
     }
     pub(super) fn reuse(&mut self, m: &Model) {
@@ -227,6 +232,7 @@ impl Patch {
             Self::Analysis5P3(p) => p.reuse(m),
             Self::SimP0(p) => p.reuse(m),
             Self::SimP1(p) => p.reuse(m),
+            Self::Display2P0(p) => p.reuse(m),
         }
     }
     pub(super) fn bytes(&self) -> usize {
@@ -261,6 +267,7 @@ impl Patch {
             Self::Analysis5P3(p) => p.bytes(),
             Self::SimP0(p) => p.bytes(),
             Self::SimP1(p) => p.bytes(),
+            Self::Display2P0(p) => p.bytes(),
         }
     }
 }

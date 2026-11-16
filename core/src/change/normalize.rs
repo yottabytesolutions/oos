@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::config::Config;
-use crate::model::{
-    catalog_id_valid, decode_wave, Coupling, Model, WaveId, HDIV, MEAS_SELECTION_MAX, NCH, NREF, TIME_SCALES,
-};
+use crate::model::{decode_wave, Coupling, Model, WaveId, HDIV, MEAS_SELECTION_MAX, NCH, NREF, TIME_SCALES};
 
 /// Fixed group order. Returns whether any effective value was repaired, for the legacy notification bridge.
 pub fn normalize(m: &mut Model, config: &Config) -> bool {
@@ -67,7 +65,7 @@ fn measure(m: &mut Model, config: &Config) -> bool {
         changed |= wave(&mut row.2, config);
     }
     let rows = m.cat.len();
-    m.cat.retain(|row| catalog_id_valid(row.0));
+    m.cat.retain(|row| config.catalog_ok(row.0));
     m.cat.truncate(MEAS_SELECTION_MAX.saturating_sub(m.meas.len() + m.meas2.len()));
     changed |= rows != m.cat.len();
     for row in &mut m.cat {

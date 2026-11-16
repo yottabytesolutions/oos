@@ -15,6 +15,12 @@ pub fn config() -> Config {
         p.limits.max_srate,
         [p.limits.max_mem, p.limits.max_mem_la],
     )
+    .with_catalog(crate::measures::persisted)
+}
+
+/// Whether a setup may keep catalog measurement `id`: a measurement module's own measurement.
+pub fn catalog_id_valid(id: u16) -> bool {
+    config().catalog_ok(id)
 }
 
 /// Transitional adapter methods. Core receives only capability and registry values.
@@ -33,6 +39,7 @@ pub trait ModelExt {
     fn max_mem(&self) -> u64;
     fn srate_depth(&self) -> (f64, u64);
     fn dec_opts(&self) -> [usize; crate::protocols::OPTS];
+    fn set_dec_proto_only(&mut self, p: Proto);
     fn trig_feature(&self) -> f64;
     fn trig_span(&self) -> f64;
     fn trig_channels(&self) -> [bool; NCH];
@@ -85,6 +92,10 @@ impl ModelExt for Model {
     }
     fn dec_opts(&self) -> [usize; crate::protocols::OPTS] {
         self.dec_opts_in(&protocols::context(self))
+    }
+    fn set_dec_proto_only(&mut self, p: Proto) {
+        let ctx = protocols::context(self);
+        self.set_dec_proto_only_in(p, &ctx)
     }
     fn trig_feature(&self) -> f64 {
         self.trig_feature_in(&protocols::context(self))

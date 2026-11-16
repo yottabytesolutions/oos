@@ -82,7 +82,7 @@ pub(super) const CASES: &[Case] = &[
     (
         "dec_proto",
         |m| {
-            m.dec_proto = if m.dec_proto == Proto::Uart { Proto::I2c } else { Proto::Uart };
+            m.dec_proto = if m.dec_proto == Proto::UART { Proto::I2C } else { Proto::UART };
         },
         C::ACQ.union(C::STATS),
     ),

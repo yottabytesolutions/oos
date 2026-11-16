@@ -37,6 +37,12 @@ pub struct Changed {
 }
 
 impl Changed {
+    /// What changed files alone explain (no added impls, no moves).
+    #[cfg(test)]
+    pub fn of_files(files: BTreeSet<String>) -> Changed {
+        Changed { files, ..Changed::default() }
+    }
+
     /// Whether ratchet key `k` belongs to code upstream changed.
     pub fn covers(&self, k: &str) -> bool {
         let words: Vec<&str> = k.split(' ').collect();

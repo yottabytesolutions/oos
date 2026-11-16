@@ -57,6 +57,12 @@ fn allowed(
     Ok((moves::apply(&work, &moves)?, base.map(|b| moves::apply(&b, &moves)).transpose()?))
 }
 
+/// The entries of `work` wider than `base` that pending upstream code explains (fast gate only; adr/0018).
+fn held_widening(base: Ratchet, work: &Ratchet, pending: &rebaseline::Changed) -> Ratchet {
+    let grown = rebaseline::widened_keys(&base, work);
+    Ratchet(grown.0.into_iter().filter(|(k, _)| pending.covers(k)).collect())
+}
+
 /// The fast gate's pending entries (adr/0018): the failures of `v` that upstream code not yet rebaselined explains.
 fn split_pending(v: &crate::ratchet::Verdict, pending: &rebaseline::Changed) -> (Vec<String>, usize) {
     let kept = crate::ratchet::Verdict {
@@ -74,16 +80,20 @@ pub fn ratcheted(ctx: &crate::run::Context, root: &Path, kind: Kind, now: &[(&'s
     let crates: Vec<&str> = now.iter().map(|n| n.0).collect();
     let commit = base::protected(ctx, root).map_err(|e| vec![e])?;
     let (work, base) = allowed(ctx, root, kind, &crates, &commit).map_err(|e| vec![e])?;
-    if let Some(b) = &base {
-        let widened = base::widened(b, &work);
-        if !widened.is_empty() {
-            return Err(widened.into_iter().map(|w| format!("{} ratchet: {}", kind.name(), w)).collect());
-        }
-    }
     let pending = match ctx.is_fast() {
         true => rebaseline::pending(ctx, root, &commit).map_err(|e| vec![e])?,
         false => rebaseline::Changed::default(),
     };
+    if let Some(b) = &base {
+        // the fast gate also holds a rebaseline being committed: the entries it widens for pending upstream code
+        let held = held_widening(b.clone(), &work, &pending);
+        let mut b = b.clone();
+        rebaseline::widen(&mut b, &held);
+        let widened = base::widened(&b, &work);
+        if !widened.is_empty() {
+            return Err(widened.into_iter().map(|w| format!("{} ratchet: {}", kind.name(), w)).collect());
+        }
+    }
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for (krate, n) in now {
         let v = store::of_crate(&work, krate).compare(n);
@@ -104,6 +114,16 @@ pub fn ratcheted(ctx: &crate::run::Context, root: &Path, kind: Kind, now: &[(&'s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The fast gate holds a rebaseline being committed only for upstream code: our own file stays widened.
+    #[test]
+    fn the_fast_gate_holds_only_upstream_widening() {
+        let pending = rebaseline::Changed::of_files(["ui/src/up.rs".to_string()].into());
+        let base = Ratchet::parse("400 file ui/src/ours.rs\n").expect("r");
+        let work = Ratchet::parse("450 file ui/src/ours.rs\n70 fn ui/src/up.rs f\n").expect("r");
+        let held = held_widening(base, &work, &pending);
+        assert_eq!(held.0.keys().collect::<Vec<_>>(), ["fn ui/src/up.rs f"]);
+    }
     use crate::testrepo::{commit, git, repo};
 
     fn r(t: &str) -> Ratchet {

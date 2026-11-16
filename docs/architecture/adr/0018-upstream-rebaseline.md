@@ -32,7 +32,9 @@ An upstream merge is a merge after the base that changes the tree and whose own 
 task branch starts from the base, upstream does not.
 
 Between an upstream merge and its rebaseline commit, the fast gate (`check --fast`, the pre-commit hook) reports
-the findings rule 4 would cover as pending rebaseline, with a count per crate and ratchet, instead of failing. Once
+the findings rule 4 would cover as pending rebaseline, with a count per crate and ratchet, instead of failing. It
+also accepts the rebaseline commit while it is being committed: ratchet entries that rule 4 covers may widen in the
+working tree. The full gate checks the committed rebaseline. Once
 a rebaseline commit names that upstream commit or a later one, nothing is pending. The full gate never holds
 findings as pending.
 

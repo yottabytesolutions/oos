@@ -183,9 +183,11 @@ fn analyzer_edits_observe_the_actual_held_reset() {
 #[test]
 fn hardware_mask_keeps_the_worker_route_but_can_change_the_read_format() {
     for tdiv in [200e-9, 10e-6] {
-        let mut model = Model::default();
-        model.dots = DotsMode::Off;
-        model.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < 1e-10).unwrap();
+        let mut model = Model {
+            dots: DotsMode::Off,
+            tscale: tscales().iter().position(|&t| (t as f64 - tdiv).abs() < 1e-10).expect("listed time scale"),
+            ..Model::default()
+        };
         let config = crate::model::config();
         oos_core::change::normalize(&mut model, &config);
         let switches = crate::sysconf::Switches { compress: true, ..Default::default() };

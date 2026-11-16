@@ -650,8 +650,7 @@ fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Shared>, lim: 
     let t0 = Instant::now();
     let _ = s.set_nonblocking(false);
     let _ = s.set_nodelay(true);
-    let mut req: Vec<u8> = Vec::new();
-    let mut buf = [0u8; 65536];
+    let (mut req, mut buf): (Vec<u8>, _) = (Vec::new(), [0u8; 65536]);
     // one read, within the idle time and what is left of the deadline; Err: answered or gone
     let read_some = |req: &mut Vec<u8>, buf: &mut [u8]| -> Result<(), ()> {
         let left = lim.deadline.saturating_sub(t0.elapsed());

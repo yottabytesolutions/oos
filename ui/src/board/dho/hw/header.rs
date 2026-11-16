@@ -30,7 +30,7 @@ pub(super) fn log(h: &[u8], v: &[f32], s: &Settings, (pre, k): (usize, usize), o
     if LINES.fetch_add(1, Ordering::Relaxed) >= 20_000 {
         return;
     }
-    let words: Vec<String> = h.chunks_exact(2).map(|b| format!("{:04x}", u16::from_le_bytes([b[0], b[1]]))).collect();
+    let words: Vec<String> = h.as_chunks::<2>().0.iter().map(|b| format!("{:04x}", u16::from_le_bytes(*b))).collect();
     let off = |rising: bool| near(rising).map_or("-".to_string(), |t| format!("{:.1}", t));
     line += &format!(
         "{} pre {} k {} n {} rise {} fall {} scale {} tdiv {:e}\n",

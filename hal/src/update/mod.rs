@@ -30,8 +30,8 @@ pub mod hash;
 pub mod inflate;
 pub mod kexec;
 pub mod pkg;
+pub mod text;
 pub mod unit;
-
 pub use card::Card;
 use card::{check_image, Region};
 use hash::{hex, unhex};
@@ -361,7 +361,7 @@ pub fn install(
     st.save(state_path).map_err(io("writing the update state"))?;
     r.say("recovery written and read back");
     match card.arm_oos() {
-        Ok(_) => r.say(format!("power-cycle the scope to start build {} (on trial)", short(&new.build))),
+        Ok(_) => r.say(text::installed(&new.build)),
         Err(e) => r.say(format!("WARNING: {}; start OOS with oos-boot-oos-again", e)),
     }
     Ok(r)
@@ -553,7 +553,7 @@ pub fn rollback(
     st.save(state_path).map_err(io("writing the update state"))?;
     r.say("recovery written and read back");
     match card.arm_oos() {
-        Ok(_) => r.say(format!("power-cycle the scope to start build {}", short(&prev.build))),
+        Ok(_) => r.say(text::restored(&prev.build)),
         Err(e) => r.say(format!("WARNING: {}", e)),
     }
     Ok(r)

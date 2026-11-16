@@ -68,6 +68,13 @@ impl Ui {
                 };
                 d.push(format!("Recovery {}{}", b(&st.current), if st.trial.is_some() { " (on trial)" } else { "" }));
                 d.push(format!("Rollback image {}", b(&st.previous)));
+                if st.trial.is_some() {
+                    d.extend(upload::trial_lines(
+                        &st,
+                        self.host.text("/etc/oos-build").as_deref(),
+                        self.host.text("/proc/cmdline").as_deref(),
+                    ));
+                }
                 d.push(format!("Boot mode {}", if st.persist { "persist" } else { "one-shot" }));
                 if !st.event.is_empty() {
                     // the event may quote a build name from a package: any characters
@@ -168,11 +175,7 @@ impl Ui {
             .map_err(|e| format!("no thread for the check ({}), nothing installed", e))?;
         self.upd.upload = Some(PendingUpload { thread: t, build: b.clone(), any_unit });
         self.upd.last = format!("package of build {} received, checking it", b);
-        let accepted = if update::kexec::announced(&h.manifest) {
-            format!("accepted, build {}: header signature ok; the image is checked now, then the scope restarts into it by kexec and installs it from there (about a minute; System > Update and this page show the result). Then power-cycle the scope: that start is its trial", b)
-        } else {
-            format!("accepted, build {}: header signature ok; the image is checked now, then installed (System > Update and this page show the result)", b)
-        };
+        let accepted = upload::accepted(&h.manifest);
         Ok(upload::Reply::Accepted(warning.map_or(accepted.clone(), |w| format!("{}\n{}", w, accepted))))
     }
 
@@ -280,6 +283,9 @@ fn wrap_lines(t: &str, w: usize) -> Vec<String> {
     }
     out
 }
+
+#[cfg(test)]
+mod text_tests;
 
 #[cfg(test)]
 mod tests {

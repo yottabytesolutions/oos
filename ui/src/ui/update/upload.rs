@@ -70,6 +70,30 @@ pub(super) fn install_args(any_unit: bool) -> Vec<&'static str> {
     args
 }
 
+/// Header acceptance precedes image verification and installation on both paths.
+pub(super) fn accepted(m: &pkg::Manifest) -> String {
+    let (start, next) = if update::kexec::announced(m) {
+        (update::text::KEXEC_START, "restart")
+    } else {
+        (update::text::DIRECT_START, "power cycle")
+    };
+    format!("accepted, build {}: header signature ok; checking the image before installation. {} {} System > Update and this page show the state; check again after the {}.", update::short(&m.build), start, update::text::trial(), next)
+}
+
+/// Compact panel guidance; an installed but not yet running trial still needs its first ordinary start.
+pub(super) fn trial_lines(st: &update::State, running: Option<&str>, cmdline: Option<&str>) -> Vec<String> {
+    let started = st.trial.is_some_and(|n| n > 0)
+        && st.current.as_ref().is_some_and(|c| running.is_some_and(|r| r.trim() == c.build.trim()));
+    let start = if cmdline.is_some_and(|c| update::kexec::flags(c).is_some()) {
+        "Restart refused or pending; power-cycle"
+    } else if started {
+        "Trial running; confirms automatically"
+    } else {
+        "Trial pending; power-cycle to start"
+    };
+    vec![start.into(), "After 20 s stable UI and startup done".into(), "Stable UI with startup stuck: 180 s".into()]
+}
+
 /// The web page /update: state and an upload form.
 pub(super) fn page(last: &str) -> String {
     let status = std::process::Command::new(BIN)
@@ -85,7 +109,8 @@ pub(super) fn page(last: &str) -> String {
 <pre>{}</pre>
 <p>Package (<code>.oosupd</code>, signed): <input type="file" id="f" accept=".oosupd"> <button onclick="up()">Install</button></p>
 <pre id="r">{}</pre>
-<p>The new build starts on trial at the next power-on; a failed start writes the previous build back.
+<p>{}<br>Without kexec: {}<br>{}<br>A failed trial restores the previous image when available; it does not restart. Follow the restore notice before power-cycling.</p>
+<p>
 Command line: <code>curl --max-time 300 --data-binary @oos-dev.oosupd http://&lt;scope&gt;:8080/update</code>
 (the answer comes once the package has arrived and its header is checked; the image check and the install follow, their result shows here).</p>
 <script>
@@ -107,7 +132,10 @@ r.textContent=await response.text();if(!response.ok)return;setTimeout(()=>locati
 </script></body></html>"#,
         crate::http::STYLE,
         esc(&status),
-        esc(last)
+        esc(last),
+        update::text::KEXEC_START,
+        update::text::DIRECT_START,
+        update::text::trial()
     )
 }
 

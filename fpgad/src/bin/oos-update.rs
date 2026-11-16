@@ -9,9 +9,9 @@
 //!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force] [--any-unit] [--no-kexec | --new-dt]
 //!                                          check the signature and the image (dry run without --execute), then start
 //!                                          the new image by kexec with nothing written; that start
-//!                                          installs it (rollback slot, recovery, read back, OOS armed) and is its
-//!                                          first trial start. --no-kexec (also: a package without 'trial kexec') and
-//!                                          --new-dt (another device tree, which kexec cannot try) write it directly;
+//!                                          installs it (rollback slot, recovery, read back, OOS armed),
+//!                                          then restarts automatically for the trial. --no-kexec, --new-dt and
+//!                                          packages without 'trial kexec' write it directly;
 //!                                          it starts on trial at the next power-on
 //!   oos-update kexec-check FILE.oosupd     load the package's kernel and initramfs for a kexec start and unload them
 //!                                          again: nothing written, no restart
@@ -78,10 +78,14 @@ fn put(w: &mut dyn std::io::Write, closed: &std::sync::atomic::AtomicBool, a: st
 
 mod oos_update {
     pub(crate) mod args;
+    pub(crate) mod messages;
     pub(crate) mod sign;
 }
 
-use oos_update::sign::{keygen, keys, pack};
+use oos_update::{
+    messages,
+    sign::{keygen, keys, pack},
+};
 
 fn die(msg: &str) -> ! {
     eprintln!("oos-update: {}", msg);
@@ -278,7 +282,12 @@ fn install(a: &Args) {
             out!("--new-dt: written directly; a kernel or device tree that hangs before rcS starts again at every power-on");
         }
         match update::install(&mut c, &sp, &p, &keys, &opt) {
-            Ok(r) => r.lines.iter().for_each(|l| out!("{}", l)),
+            Ok(r) => {
+                r.lines.iter().for_each(|l| out!("{}", l));
+                if r.written && c.boot_magic().ok() == Some(*b"OOSK") {
+                    out!("{}", update::text::DIRECT_START);
+                }
+            }
             Err(e) => die(&e),
         }
         return;
@@ -396,10 +405,7 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
             kexec::undo::remove_marker("/tmp/oos-ui.off");
             kexec::undo::resume_ui(UI_LOOP);
         }
-        notice(&format!(
-            "Update {}: the kexec start failed ({}); nothing installed, this build keeps running",
-            short, why
-        ));
+        notice(&messages::failed_before_start(&short, why));
         std::process::exit(1)
     };
     let cmd = kexec::cmdline(&kexec::running_cmdline(), f);
@@ -517,7 +523,7 @@ fn stop_watcher() {
 
 /// rcS, in the start by kexec: this kernel reached rcS and found the card and /oos. Now the package is installed for
 /// real. The kexec start is no trial start (its device tree and loader path are the old build's, the display comes up
-/// from another state): the next power-on is the first one. False when nothing was installed.
+/// from another state): an ordinary restart begins the trial. False when nothing was installed.
 fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
     let pk = read_file(kexec::PACKAGE);
     let build = update::running_build().unwrap_or_default();
@@ -550,10 +556,7 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
         Ok(r) => {
             r.lines.iter().for_each(|l| out!("{}", l));
             if r.written {
-                notice(&format!(
-                    "Update {} installed after its kexec start. The scope restarts for the trial start, which confirms itself about 20 s after the start-up",
-                    short
-                ));
+                notice(&messages::installed(&short));
             } else {
                 let _ = update::kexec_clear(p, &format!("started build {} by kexec: nothing to install", short));
             }
@@ -566,13 +569,11 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
             let began = st.trial.is_some() && st.current.as_ref().is_some_and(|c| c.build.trim() == build.trim());
             let back = if began && st.previous.is_some() {
                 match update::rollback(&mut c, p, "its install after the kexec start failed", true, None) {
-                    Ok(_) => "the previous build was written back, it starts at the next power-on".to_string(),
-                    Err(r) => {
-                        format!("writing the previous build back FAILED too ({}): the next power-on starts stock", r)
-                    }
+                    Ok(r) => messages::restore_result("previous image restored", &r),
+                    Err(r) => messages::restore_failed(&r),
                 }
             } else {
-                "the next power-on starts the previous build (or stock in one-shot mode)".to_string()
+                messages::no_restore(began).to_string()
             };
             let m = format!("Update {} ran when started by kexec, but its install failed: {}; {}", short, e, back);
             let _ = update::kexec_clear(p, &m);
@@ -618,19 +619,15 @@ fn restart_for_trial(a: &Args, p: &Path) {
     let on_trial = st.trial.is_some() && st.current.as_ref().is_some_and(|c| c.build.trim() == build.trim());
     let mark = std::fs::read_to_string(restart_mark(p)).ok();
     if let Err(e) = may_restart(magic, on_trial, mark.as_deref(), &build) {
-        notice(&format!(
-            "Update {} installed; no automatic restart ({}). Power-cycle the scope for the trial start",
-            update::short(&build),
-            e
-        ));
+        notice(&messages::no_restart(&build, &e, magic == Some(*b"OOSK") && on_trial));
         return;
     }
     if let Err(e) = std::fs::write(restart_mark(p), format!("{}\n", build.trim())) {
-        notice(&format!("Update {} installed; no automatic restart (mark not written: {}). Power-cycle the scope for the trial start", update::short(&build), e));
+        notice(&messages::no_restart(&build, &format!("mark not written: {}", e), true));
         return;
     }
     tell(&format!(
-        "build {} installed and armed (OOSK, on trial): restarting for the trial start",
+        "build {} installed and armed (OOSK, on trial): restarting automatically for the trial start",
         update::short(&build)
     ));
     let _ = std::fs::write("/dev/tty1", "\nUpdate installed: restarting for the trial start.\n");
@@ -647,11 +644,8 @@ fn restart() {
     }
     unsafe { libc::sync() };
     let r = unsafe { libc::reboot(libc::LINUX_REBOOT_CMD_RESTART) };
-    notice(&format!(
-        "restart for the trial start failed (reboot returned {}: {}). Power-cycle the scope",
-        r,
-        std::io::Error::last_os_error()
-    ));
+    let why = format!("reboot returned {}: {}", r, std::io::Error::last_os_error());
+    notice(&messages::no_restart(&update::running_build().unwrap_or_default(), &why, true));
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -771,7 +765,7 @@ fn boot(a: &Args) {
     keep_booted_tree(a, word.is_some());
     if !p.parent().is_some_and(|d| d.exists()) {
         if kx.is_some() {
-            notice("Update started by kexec, but /oos is not there: not installed. The next power-on starts the previous build");
+            notice(&messages::not_installed("/oos is not there"));
         }
         return; // no update state yet
     }
@@ -784,9 +778,9 @@ fn boot(a: &Args) {
             return;
         }
         None if word.is_some() => {
-            let m = "Update started by kexec, but its package did not arrive: not installed";
-            let _ = update::kexec_clear(&p, m);
-            notice(m);
+            let m = messages::not_installed("its package did not arrive");
+            let _ = update::kexec_clear(&p, &m);
+            notice(&m);
             return;
         }
         None => {
@@ -817,9 +811,9 @@ fn boot(a: &Args) {
                 Ok(r) => {
                     r.lines.iter().for_each(|l| out!("{}", l));
                     let st = State::load(&p).unwrap_or_default();
-                    notice(&format!("Update {}. Power-cycle the scope to start the restored build.", st.event));
+                    notice(&messages::restore_result(&format!("Update {}", st.event), &r));
                 }
-                Err(e) => notice(&format!("Update on trial did not confirm, rollback FAILED: {}", e)),
+                Err(e) => notice(&format!("Update on trial did not confirm, {}", messages::restore_failed(&e))),
             }
         }
         Err(e) => tell(&e),
@@ -856,7 +850,9 @@ fn watch(a: &Args) {
     // The next power-on is the trial start (the install armed OOS for it). Without an install, persist mode arms OOS
     // again (oos-oneshot disarmed it at rcS).
     if kexec::flags(&kexec::running_cmdline()).is_some() {
-        tell("kexec start: not judged, the next power-on is the trial start");
+        tell(
+            "kexec start: not judged; an installed trial needs an ordinary restart. Follow the install/restart notice",
+        );
         if st0.persist && st0.trial.is_none() {
             let mut c = open_card(a, true);
             match update::arm_checked(&mut c, &p) {
@@ -935,15 +931,13 @@ fn watch(a: &Args) {
                 match update::rollback(&mut c, &p, &why, true, trial_sha) {
                     Ok(r) => {
                         r.lines.iter().for_each(|l| out!("{}", l));
-                        let prev = st.previous.as_ref().map_or("?", |e| update::short(&e.build));
-                        notice(&format!(
-                            "Update {} failed its first start ({}). Build {} restored: power-cycle the scope.",
-                            st.current.as_ref().map_or("?", |c| update::short(&c.build)),
-                            why,
-                            prev
+                        notice(&messages::failed_trial(
+                            st.current.as_ref().map_or("?", |c| c.build.as_str()),
+                            &why,
+                            &r,
                         ));
                     }
-                    Err(e) => notice(&format!("Update failed its first start ({}), rollback FAILED: {}", why, e)),
+                    Err(e) => notice(&messages::trial_restore_failed(&why, &e)),
                 }
             } else {
                 tell(&format!("start not clean ({}); OOS not armed again, the next power-on boots stock", why));

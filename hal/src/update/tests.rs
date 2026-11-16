@@ -1003,3 +1003,31 @@ fn kexec_stage_tries_another_device_tree_with_the_loaders_changes() {
 }
 
 mod unit;
+
+// Break it catches: a shared install report asking for a power cycle even inside kexec,
+// or a restore report implying that rollback restarts the running kernel.
+#[test]
+fn install_and_restore_reports_describe_their_actual_start_paths() {
+    let f = Fake::new("reply-text", Some(1));
+    let r = install(&mut f.card(), &f.state(), &package(2, "20261105-170000"), &[pk()], &RUN).unwrap();
+    let last = r.lines.last().unwrap();
+    assert!(
+        last.starts_with("build 20261105-170000 installed and armed (OOSK); its next ordinary start is the trial."),
+        "{}",
+        last
+    );
+    assert!(last.contains("confirms automatically") && last.contains("20 s") && last.contains("180 s"));
+    assert!(!last.contains("power-cycle"), "{}", last);
+    let prev = f.st().previous.unwrap().build;
+    let r = rollback(&mut f.card(), &f.state(), "test", true, None).unwrap();
+    assert_eq!(
+        r.lines.last().unwrap(),
+        &format!(
+            "build {} restored and armed (OOSK). No automatic restart: power-cycle the scope to start it.",
+            short(&prev)
+        )
+    );
+    let r = rollback(&mut f.card(), &f.state(), "test again", true, None).unwrap();
+    assert!(!r.written);
+    assert_eq!(r.lines, [format!("recovery already holds build {}", short(&prev))]);
+}

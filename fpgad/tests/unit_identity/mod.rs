@@ -233,3 +233,33 @@ fn regular_card_file_aliases_keep_simulation_and_unit_checks() {
         success(&install().args(["--unit", "fake-unit"]).output().expect("CLI runs"));
     }
 }
+
+#[test]
+fn direct_cli_text_distinguishes_dry_run_installed_and_unchanged() {
+    let f = Fixture::new();
+    simulated_card(&f);
+    success(&f.pack().arg("--community").output().expect("test setup"));
+    let install = || {
+        let mut c = f.command();
+        c.arg("install").arg(f.path("package")).arg("--card").arg(f.path("card")).arg("--state").arg(f.path("state"));
+        c
+    };
+    let dry = install().output().expect("dry run");
+    success(&dry);
+    let dry = String::from_utf8(dry.stdout).unwrap();
+    assert!(dry.contains("dry run: nothing written"));
+    assert!(!dry.contains("No automatic restart"));
+    let installed = install().arg("--execute").output().expect("install");
+    success(&installed);
+    let installed = String::from_utf8(installed.stdout).unwrap();
+    assert!(installed.contains("installed and armed (OOSK); its next ordinary start is the trial."));
+    assert!(
+        installed.contains("The trial confirms automatically after the UI runs 20 s continuously and startup finishes")
+    );
+    assert!(installed.contains("No automatic restart: power-cycle the scope to start the installed build on trial."));
+    let unchanged = install().arg("--execute").output().expect("unchanged");
+    success(&unchanged);
+    let unchanged = String::from_utf8(unchanged.stdout).unwrap();
+    assert!(unchanged.contains("nothing to do"));
+    assert!(!unchanged.contains("No automatic restart"));
+}

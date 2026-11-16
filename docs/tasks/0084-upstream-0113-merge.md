@@ -38,6 +38,9 @@ Reserved paths: whole tree on branch `integ-27-upstream` (integration merge), th
 
 ## Status
 
+- 2026-11-16: full gate run 3 on 4db44ad7 (host load 6 at the start, 26 to 29 during coverage): all steps ok except
+  coverage, 7 load-sensitive ui tests timed out under instrumentation (SIM generation, background measurement and
+  pair-measurement waits); all pass in tests-debug and tests-release. `--image` and the ratchet tightening not run.
 - 2026-11-16: rebaseline 9052357e (trailer `Ratchet-Rebaseline: upstream 15b819e2`); our code moved or fixed first
   (55e6a5fc, e125767c, 0ebc0441); goldens 83051e4c (Touch row gone). Full gate twice on e125767c..9052357e: every step
   ok except coverage, where load-sensitive tests timed out under instrumentation (run 1: SIM generation 30 s guard;

@@ -44,17 +44,23 @@ fn allowed(
     for k in crates {
         work.0.extend(store::load(root, k, kind)?.0);
         base = match (base, store::at_base(ctx, root, commit, k, kind)?) {
-            (Some(mut b), Some(mut at)) => {
-                if let Some(more) = admitted.get(&store::rel(k, kind)) {
-                    rebaseline::widen(&mut at, more);
-                }
+            (Some(mut b), Some(at)) => {
                 b.0.extend(at.0);
                 Some(b)
             }
             _ => None,
         };
     }
-    Ok((moves::apply(&work, &moves)?, base.map(|b| moves::apply(&b, &moves)).transpose()?))
+    // the admitted entries carry their current keys: they join the base after its moves
+    let base = base.map(|b| moves::apply(&b, &moves)).transpose()?.map(|mut b| {
+        for k in crates {
+            if let Some(more) = admitted.get(&store::rel(k, kind)) {
+                rebaseline::widen(&mut b, more);
+            }
+        }
+        b
+    });
+    Ok((moves::apply(&work, &moves)?, base))
 }
 
 /// The entries of `work` wider than `base` that pending upstream code explains (fast gate only; adr/0018).

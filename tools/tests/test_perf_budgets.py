@@ -17,9 +17,9 @@ class PerfBudgets(unittest.TestCase):
         self.lines += [f'ALLOC_BUDGET {name} 64 0' for name in BUDGET.ALLOCATIONS]
 
     def test_real_table_and_samplers(self):
-        self.assertEqual(len(self.rows), 10)
+        self.assertEqual(len(self.rows), 11)
         BUDGET.sampler_copies_match(ROOT)
-        self.assertIn('10 timing budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
+        self.assertIn('11 timing budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
 
     def test_missing_unknown_and_nonpositive_fail(self):
         for lines in [[], self.lines[1:], self.lines + ['PERF_BUDGET unknown 1 1 1 1'],
@@ -33,11 +33,26 @@ class PerfBudgets(unittest.TestCase):
             with self.assertRaises(ValueError):
                 BUDGET.check(self.rows, '\n'.join(self.lines + [f'PERF_BUDGET {name} {values}']))
 
+    def test_full_batch_learning_timing_is_required(self):
+        name = 'perf_guard_batch_core_learning'
+        self.assertIn(name, self.rows)
+        lines = [line for line in self.lines if not line.startswith(f'PERF_BUDGET {name} ')]
+        with self.assertRaises(ValueError):
+            BUDGET.check(self.rows, '\n'.join(lines))
+
     def test_freed_allocations_and_missing_paths_fail(self):
         for lines in [self.lines[:-1], self.lines + ['ALLOC_BUDGET deposit_spans 64 1'],
                       self.lines + ['ALLOC_BUDGET deposit_dots 0 0']]:
             with self.assertRaises(ValueError):
                 BUDGET.check(self.rows, '\n'.join(lines))
+
+    def test_both_core_matching_probes_are_required(self):
+        for name in ['core_matching_learn_and_decode', 'core_matching_worker_decode']:
+            with self.subTest(probe=name):
+                self.assertIn(name, BUDGET.ALLOCATIONS)
+                lines = [line for line in self.lines if not line.startswith(f'ALLOC_BUDGET {name} ')]
+                with self.assertRaises(ValueError):
+                    BUDGET.check(self.rows, '\n'.join(lines))
 
     def test_malformed_and_duplicate_tables_fail(self):
         for text in ['', '### Host budget rows\n', '### Host budget rows\n| x | nan | 2 | a | b |',

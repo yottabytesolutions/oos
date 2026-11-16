@@ -19,6 +19,8 @@ use std::sync::Mutex;
 
 mod overlay;
 #[cfg(any(target_os = "linux", test))]
+mod batch;
+#[cfg(any(target_os = "linux", test))]
 mod segmented;
 mod single;
 #[cfg(target_os = "linux")]
@@ -1160,23 +1162,24 @@ pub fn decode_into_with(
     probe: bool,
     cores: Option<&mut super::cores::Cores>,
 ) {
+    let correction = cores
+        .filter(|_| super::matching::eligible(s))
+        .map(|cores| super::matching::FrameMatch::learn(bytes, s, p, cores));
+    decode_into_matched(bytes, s, p, seq, f, probe, correction.as_ref());
+}
+
+pub(super) fn decode_into_matched(
+    bytes: &[u8],
+    s: &Settings,
+    p: &hz::Params,
+    seq: u64,
+    f: &mut Frame,
+    probe: bool,
+    correction: Option<&super::matching::FrameMatch>,
+) {
     let (hdr, bytes) = if s.header && bytes.len() >= 16 { bytes.split_at(16) } else { (&bytes[..0], bytes) };
-    match cores.filter(|_| s.mode == oos_hal::dho::acq::Mode::Normal && s.compress <= 1) {
-        Some(cores) => {
-            let mut w = oos_hal::dho::seq::deinterleave(bytes, s.mask);
-            for (c, w) in w.iter_mut().enumerate() {
-                if !w.is_empty() {
-                    cores.apply((s.mask, c, p.rate), w);
-                }
-            }
-            f.ch = std::array::from_fn(|c| {
-                if w[c].is_empty() {
-                    Vec::new()
-                } else {
-                    oos_hal::dho::seq::volts(&w[c], s.ch[c].scale, s.ch[c].offset)
-                }
-            });
-        }
+    match correction {
+        Some(correction) => correction.decode(bytes, s, f),
         None => oos_hal::dho::seq::decode_volts_into(bytes, s.mask, s.ch.map(|k| (k.scale, k.offset)), &mut f.ch),
     }
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
@@ -2356,37 +2359,22 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     let mut la_words = la_words;
                     let mut skip = 0usize;
                     let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
+                        let match_cores = out.lock().unwrap().cores;
                         n += avail as u64;
-                        let mut newest = match raw_frame {
-                            Some(f) => Frame { stamp, cfg: want_gen, seq: n, ..f },
-                            None => Frame { stamp, cfg: want_gen, ..decode_probed(&dma.data()[(avail - 1) * fb..avail * fb], &b, &p, n, switches.board.header_probe) },
-                        };
-                        if let Some(w) = la_words.take() {
-                            newest.la = Some(la_record(w, &b, &p));
-                        }
                         let next = pipe.take_buffer().and_then(|x| x.downcast::<oos_hal::dho::bus::DmaBuf>().ok()).map(|x| *x);
                         let next = next.or_else(|| (pool_made < POOL).then(|| {
                             pool_made += 1;
                             oos_hal::dho::bus::DmaBuf::new()
                         }));
-                        match next {
-                            Some(next) => {
-                                let full = std::mem::replace(&mut dma, next);
-                                let (bs, ps) = (b.clone(), p);
-                                let (cs, cp) = (b.clone(), p);
-                                let codes: crate::drawpipe::CodesInto = Arc::new(move |c: &[u8], f: &mut Frame| codes_into(c, &cs, &cp, 0, f));
-                                // the newest frame goes to the queue when the others are drawn: the screen gets the
-                                // batch in one picture, not the newest alone and the rest a picture later
-                                let o = out.clone();
-                                let deliver: crate::drawpipe::Deliver = Box::new(move || super::publication::push_frames(&o, vec![newest]));
-                                pipe.feed_with(Box::new(full), fb, avail - 1, identity, Arc::new(move |c: &[u8], f: &mut Frame| decode_into_probed(c, &bs, &ps, 0, f, switches.board.header_probe)), Some(codes), deliver);
-                                Vec::new()
+                        let readout = batch::Readout::new(pipe, (&b, &p), (fb, avail, switches.board.frame0_drop), (n, switches.board.header_probe, raw_frame), identity);
+                        let o = out.clone();
+                        readout.dispatch(&mut dma, next, match_cores.then_some(&mut cores), |newest| {
+                            let mut newest = Frame { stamp, cfg: want_gen, ..newest };
+                            if let Some(w) = la_words.take() {
+                                newest.la = Some(la_record(w, &b, &p));
                             }
-                            None => {
-                                crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1);
-                                vec![newest]
-                            }
-                        }
+                            newest
+                        }, move |newest| Box::new(move || super::publication::push_frames(&o, vec![newest])))
                     } else {
                         // only the newest frames the screen takes are decoded (`Shared::take`; on the fast cores,
                         // which the frame loop needs), in average mode the newest one

@@ -70,14 +70,36 @@ impl Pipe {
         *oos_hal::sync::lock(&b.deliver) = Some(deliver);
     }
 
-    /// `feed`, returning the batch (tests hold it to let the helper alone draw it).
+    /// Submit immutable preparation in record order; decoding always runs before drawing.
+    #[cfg(any(target_os = "linux", test))]
+    pub fn feed_prepared(
+        &self,
+        raw: Box<dyn RawBatch>,
+        fb: usize,
+        frames: usize,
+        identity: oos_core::change::Identity,
+        decode: IndexedDecodeInto,
+        deliver: Deliver,
+    ) {
+        let batch = self.feed_batch(
+            raw,
+            fb,
+            frames,
+            (identity.epoch(), Some(identity)),
+            decoder::Decoder::Prepared(decode),
+            None,
+        );
+        *oos_hal::sync::lock(&batch.deliver) = Some(deliver);
+    }
+
+    /// Submit the raw buffer once and share its lease across indexed worker jobs.
     pub(super) fn feed_batch(
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
         frames: usize,
         header: (u64, Option<oos_core::change::Identity>),
-        decode: DecodeInto,
+        decode: impl Into<decoder::Decoder>,
         codes: Option<CodesInto>,
     ) -> Arc<Batch> {
         let (stamp, identity) = header;
@@ -88,7 +110,7 @@ impl Pipe {
             lease: Lease { raw: Some(raw), home: self.home.clone() },
             fb,
             frames,
-            decode,
+            decode: decode.into(),
             codes,
             header: Header::new(stamp, identity),
             next: AtomicUsize::new(0),

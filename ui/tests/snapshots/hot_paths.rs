@@ -43,5 +43,5 @@ fn hot_paths_allocate_nothing_after_warmup() {
         paths += 1;
         println!("ALLOC_BUDGET {} 64 0", name.replace(' ', "_"));
     });
-    assert_eq!(paths, 4, "all currently guarded UI hot kernels were exercised");
+    assert_eq!(paths, 6, "all currently guarded UI hot kernels were exercised");
 }

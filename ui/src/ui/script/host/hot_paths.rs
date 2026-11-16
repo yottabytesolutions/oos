@@ -30,6 +30,7 @@ pub fn run(mut sample: impl FnMut(&str, &mut dyn FnMut())) {
         volt: |x, (a, b)| x as f32 * a - b,
     };
     sample("deposit codes", &mut || fastdraw::deposit_codes(&mut pixels, w, h, black_box(&codes), &map, 1));
+    crate::board::scripted::core_matching_probe(&mut sample);
     sample("cheap measurements", &mut || {
         black_box(crate::framestats::cheap_results(black_box(&samples)));
     });

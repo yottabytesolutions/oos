@@ -12,6 +12,10 @@ use crate::model::Model;
 use oos_hal::dho::{hz, seq};
 use std::sync::Arc;
 
+pub(crate) fn core_matching_probe(sample: impl FnMut(&str, &mut dyn FnMut())) {
+    super::matching::allocation_probe(sample);
+}
+
 #[derive(Default)]
 pub struct ScriptBytes(Vec<u8>);
 

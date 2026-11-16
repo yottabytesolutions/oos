@@ -58,7 +58,10 @@ impl Window {
     fn of(&mut self, n: usize) -> &Window {
         if self.h.len() != n {
             let d = 2.0 * std::f64::consts::PI / (n - 1) as f64;
-            self.h = (0..n).map(|k| (0.5 - 0.5 * (d * k as f64).cos()) as f32).collect();
+            self.h.resize(n, 0.0);
+            for (k, h) in self.h.iter_mut().enumerate() {
+                *h = (0.5 - 0.5 * (d * k as f64).cos()) as f32;
+            }
             self.wt = [0.0; P];
             for (k, &h) in self.h.iter().enumerate() {
                 self.wt[k % P] += h as f64;
@@ -73,24 +76,24 @@ impl Cores {
     /// Takes the core offsets off the words `w` of channel `key.1`. Returns the turn applied (word k had the offset
     /// of phase (k + turn) % 8 of the learnt pattern), None when the frame was left as it is.
     pub fn apply(&mut self, key: Key, w: &mut [u16]) -> Option<usize> {
-        let (c, n) = estimate_with(w, &mut self.win)?;
+        let correction = self.learn(key, w.len(), |i| w[i])?;
+        for (i, x) in w.iter_mut().enumerate() {
+            *x = correction.word(i, *x);
+        }
+        Some(correction.turn)
+    }
+
+    /// Learn on the acquisition thread; the returned value belongs to this frame alone.
+    /// `sample` reads de-interleaved words without allocating a temporary channel vector.
+    pub(super) fn learn(&mut self, key: Key, len: usize, sample: impl Fn(usize) -> u16) -> Option<Correction> {
+        let (c, n) = estimate_at(len, sample, &mut self.win)?;
         let e = self.learnt.entry(key).or_default();
         if e.n == 0.0 || e.misfit >= MISFITS {
             // the first frame is the pattern
             *e = Learnt { l: c, n, misfit: 0 };
-            take_off(w, &c, 0);
-            return Some(0);
+            return Some(Correction::new(&c, 0));
         }
-        let score = |s: usize| (0..P).map(|p| c[p] * e.l[(p + s) % P]).sum::<f64>();
-        let s = (0..P).max_by(|&a, &b| score(a).total_cmp(&score(b))).unwrap_or(0);
-        // how well the turned pattern explains the frame's own estimate: what is left of it, against the smaller of
-        // pattern and estimate. Left less than half of that: the frame is corrected and the pattern learns from it;
-        // less than all of it: corrected only (a short, noisy frame); more: left as it is (a signal on the core
-        // frequencies, or a pattern learnt from one)
-        let ll: f64 = e.l.iter().map(|x| x * x).sum();
-        let cc: f64 = c.iter().map(|x| x * x).sum();
-        let rest: f64 = (0..P).map(|p| (c[p] - e.l[(p + s) % P]).powi(2)).sum();
-        let ref_ = ll.min(cc);
+        let (s, rest, ref_) = e.fit(&c);
         if rest >= ref_ {
             e.misfit += 1;
             return None;
@@ -104,9 +107,15 @@ impl Cores {
             }
             e.n = (e.n + n).min(MEMORY);
         }
-        let l = e.l;
-        take_off(w, &l, s);
-        Some(s)
+        Some(Correction::new(&e.l, s))
+    }
+
+    /// Match with the pattern valid before this frame, without changing learning or misfit counts.
+    pub(super) fn snapshot(&mut self, key: Key, len: usize, sample: impl Fn(usize) -> u16) -> Option<Correction> {
+        let e = self.learnt.get(&key)?;
+        let (c, _) = estimate_at(len, sample, &mut self.win)?;
+        let (turn, rest, reference) = e.fit(&c);
+        (rest < reference).then(|| Correction::new(&e.l, turn))
     }
 
     /// The learnt pattern of `key` (codes, phase 0 first) and the samples it stands for.
@@ -116,17 +125,33 @@ impl Cores {
     }
 }
 
-/// Word k less the offset of phase (k + turn) % 8, rounded to whole codes.
-fn take_off(w: &mut [u16], l: &[f64; P], turn: usize) {
-    let off: [i32; P] = std::array::from_fn(|k| l[(k + turn) % P].round() as i32);
-    let (blocks, rest) = w.as_chunks_mut::<P>();
-    for x in blocks {
-        for p in 0..P {
-            x[p] = (x[p] as i32 - off[p]).clamp(0, 65535) as u16;
-        }
+impl Learnt {
+    fn fit(&self, c: &[f64; P]) -> (usize, f64, f64) {
+        let score = |s: usize| (0..P).map(|p| c[p] * self.l[(p + s) % P]).sum::<f64>();
+        let turn = (0..P).max_by(|&a, &b| score(a).total_cmp(&score(b))).unwrap_or(0);
+        // Compare unexplained energy with the smaller of pattern and estimate. Below half learns;
+        // below all corrects only; above all leaves the frame unchanged (for example, core-frequency signals).
+        let ll: f64 = self.l.iter().map(|x| x * x).sum();
+        let cc: f64 = c.iter().map(|x| x * x).sum();
+        let rest = (0..P).map(|p| (c[p] - self.l[(p + turn) % P]).powi(2)).sum();
+        (turn, rest, ll.min(cc))
     }
-    for (p, x) in rest.iter_mut().enumerate() {
-        *x = (*x as i32 - off[p]).clamp(0, 65535) as u16;
+}
+
+/// Rounded offsets in sample order, copied into a batch job after ordered learning.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Correction {
+    offsets: [i32; P],
+    turn: usize,
+}
+
+impl Correction {
+    fn new(pattern: &[f64; P], turn: usize) -> Self {
+        Self { offsets: std::array::from_fn(|k| pattern[(k + turn) % P].round() as i32), turn }
+    }
+
+    pub(super) fn word(&self, i: usize, word: u16) -> u16 {
+        (word as i32 - self.offsets[i % P]).clamp(0, 65535) as u16
     }
 }
 
@@ -140,17 +165,21 @@ pub fn estimate(w: &[u16]) -> Option<([f64; P], f64)> {
 
 /// `estimate` with a window kept from frame to frame: 8 words at a time, in f32 over blocks of 256 x 8 words.
 fn estimate_with(w: &[u16], win: &mut Window) -> Option<([f64; P], f64)> {
-    let n = w.len().min(LOOK);
+    estimate_at(w.len(), |i| w[i], win)
+}
+
+fn estimate_at(len: usize, sample: impl Fn(usize) -> u16, win: &mut Window) -> Option<([f64; P], f64)> {
+    let n = len.min(LOOK);
     if n < MIN {
         return None;
     }
     let win = win.of(n);
     let mut sum = [0.0f64; P];
-    let ((x8, xt), (h8, ht)) = (w[..n].as_chunks::<P>(), win.h.as_chunks::<P>());
+    let (h8, ht) = win.h.as_chunks::<P>();
     let mut block = [0.0f32; P];
-    for (i, (x, h)) in x8.iter().zip(h8).enumerate() {
+    for (i, h) in h8.iter().enumerate() {
         for p in 0..P {
-            block[p] += h[p] * (x[p] as f32 - 32768.0);
+            block[p] += h[p] * (sample(i * P + p) as f32 - 32768.0);
         }
         if i % 256 == 255 {
             for p in 0..P {
@@ -162,8 +191,8 @@ fn estimate_with(w: &[u16], win: &mut Window) -> Option<([f64; P], f64)> {
     for p in 0..P {
         sum[p] += block[p] as f64;
     }
-    for (p, (&x, &h)) in xt.iter().zip(ht).enumerate() {
-        sum[p] += h as f64 * (x as f64 - 32768.0);
+    for (p, &h) in ht.iter().enumerate() {
+        sum[p] += h as f64 * (sample(h8.len() * P + p) as f64 - 32768.0);
     }
     let mut c: [f64; P] = std::array::from_fn(|p| if win.wt[p] > 0.0 { sum[p] / win.wt[p] } else { 0.0 });
     let m = c.iter().sum::<f64>() / P as f64;

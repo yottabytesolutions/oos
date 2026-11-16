@@ -9,6 +9,10 @@ pub(crate) use super::dho::scripted::deep_intake_frame;
 use crate::drawpipe::{CodesInto, DecodeInto, RawBatch};
 use crate::model::Model;
 
+pub(crate) fn core_matching_probe(sample: impl FnMut(&str, &mut dyn FnMut())) {
+    super::dho::scripted::core_matching_probe(sample);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BatchKind {
     Raw,

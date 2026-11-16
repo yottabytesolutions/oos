@@ -375,6 +375,7 @@ merge ([Memory and queues](#memory-and-queues)).
 | `AcqIntent` with `gen` and `epoch` | the change stage | `app/acq_client` | one step | < 4 kB |
 | `AcqWant` (board-specific) | `app/acq_client`, through `Board::want` | acquisition thread, latest value | until the next change | < 4 kB |
 | hardware, batch buffers, `AcqLoop` state | acquisition thread (`board/dho`) | nobody; results leave as `Batch`, `Frame`, `MeasRead`, `Readings` | process | `memplan` classes `dma`, `raw`, `ring`, `segments` |
+| software ADC core corrections (current DHO Batch path) | acquisition thread, learning from accepted draw frames in record order; stale frame 0 uses the prior pattern without learning | deposit workers read immutable per-frame values by batch index; newest record uses its own value | batch DMA lease | at most 1000 x 192 B per batch; three-buffer pool, at most 576 kB in flight |
 | `DepositView { mapping }` | the change stage, through `app/acq_client` | deposit workers, at first claim of a batch | until the next mapping change | < 1 kB |
 | `Readings` (status, counters, acknowledged ids, the read plan, `k`, the applied `(gen, epoch)`) | acquisition thread | UI, latest value | process | < 4 kB |
 | the deposit pipe | `Session` (created and owned) | workers by claim, main by `BatchUnit` and `RecordBatch` | process | its buffers are the `dma` class; queue count = pool size |
@@ -1392,13 +1393,16 @@ are host run distributions, not runtime frame-event quantiles. The best ratio ke
 the tail limit adds 50 % contention headroom. Best ratios use elapsed time; host tails use POSIX
 process CPU (including worker threads), excluding time lost to other host processes. The worker observer
 blocks while waiting, so its spin is excluded. Unit event counters retain their elapsed/CPU definitions
-below. No host absolute-time threshold is used.
+below. The Batch learning row additionally bounds projected A72 CPU at 9 ms per 4 MB: measured host
+p99 1.415 ms x the perf plan's provisional 4x A72 factor x 1.5 headroom, rounded up. This projection is
+unverified on hardware; other rows use ratios only.
 
 | Guard ID | Best ratio <= | p99 CPU ratio <= | Workload / reference | Budget covered |
 |---|---|---|---|---|
 | batch_read | 1.0 | 1.5 | five approximately 4 MB batches; retained DMA buffer / allocating read | acquisition read primitive |
 | batch_decode | 0.5 | 0.75 | five channel/depth cases; fused decode / two-pass decode | acquisition decode primitive |
 | decode_f32 | 0.8 | 1.2 | same batches; f32 / f64 fused decode | acquisition decode primitive |
+| perf_guard_batch_core_learning | 1.0 | 1.5 | full 4 MB, 1/2/4 channels; BatchMatch::learn / Standard deinterleave, learn and correct | ordered ADC learning; projected A72 p99 CPU <= 9 ms/4 MB at 4x host CPU ([basis](../fork/perf-plan.md#host-measurements)), unverified |
 | perf_guard_deposit_spans | 1.25 | 1.875 | nine signals, 100 k and 12.5 k points; spans / pixel writes | deposit kernel |
 | perf_guard_dots | 1.25 | 1.875 | nine signals, 100 k points; runs / per-sample adds | deposit kernel |
 | perf_guard_fast_interpolation | 1.1 | 1.65 | seven sparse timebase/channel cases; fast / exact | deposit kernel |
@@ -1408,7 +1412,8 @@ below. No host absolute-time threshold is used.
 | perf_guard_framestats | 0.7 | 1.05 | 125 k points, cheap set; fused / reference statistics | measure primitive |
 
 The same checker requires 64 allocation-free post-warm-up frames for each UI probe (`deposit_spans`,
-`deposit_dots`, `deposit_codes`, `cheap_measurements`). The process-wide counting allocator includes
+`deposit_dots`, `deposit_codes`, `cheap_measurements`, `core_matching_learn_and_decode`,
+`core_matching_worker_decode`). The process-wide counting allocator includes
 allocations, zeroed allocations, reallocations and freed transients; each probe warms up eight frames in
 an isolated child with no workers. HAL additionally guards retained DMA reads, read steps and kept-vector
 decode in `hal/tests/alloc_batch.rs`. The existing soak guards retained memory, not zero allocations.

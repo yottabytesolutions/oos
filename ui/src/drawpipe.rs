@@ -16,7 +16,9 @@
 //! `frames` mode. Mode: `acq.pipeline = batch` in system.conf or OOS_PIPELINE=batch; `frames` (default) is the old
 //! path, kept for comparison until the unit has verified the new one.
 
+mod decoder;
 mod feed;
+pub use decoder::IndexedDecodeInto;
 mod losses;
 pub use losses::Losses;
 #[cfg(test)]
@@ -404,7 +406,7 @@ struct Batch {
     lease: Lease,
     fb: usize,
     frames: usize,
-    decode: DecodeInto,
+    decode: decoder::Decoder,
     /// the board's view without decoding (`draw_frame_codes`), where it has one
     codes: Option<CodesInto>,
     header: Header,
@@ -815,7 +817,7 @@ fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, 
             }
         }
         let t = std::time::Instant::now();
-        (b.decode)(chunk, f);
+        b.decode.decode(i, chunk, f);
         b.header.tag(f);
         cost::add(Part::Decode, t);
         let st = Stats { edges: &mut a.edges, off: &mut a.off };

@@ -6,7 +6,8 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-ALLOCATIONS = {'deposit_spans', 'deposit_dots', 'deposit_codes', 'cheap_measurements'}
+ALLOCATIONS = {'deposit_spans', 'deposit_dots', 'deposit_codes', 'cheap_measurements',
+               'core_matching_learn_and_decode', 'core_matching_worker_decode'}
 
 
 def budgets(text):

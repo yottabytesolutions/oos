@@ -50,7 +50,7 @@ impl Key {
             selected.then(|| Source::from(&k.channels[c]))
         });
         Self {
-            revision: k.generation.2,
+            revision: k.generation.1,
             acquisition: k.acquisition.0,
             channels,
             view: k.view,
@@ -59,7 +59,7 @@ impl Key {
             power: (view == AView::Power).then_some(k.power),
             bandwidth: (view == AView::Step).then_some(k.bandwidth),
             bandwidth_record: (view == AView::Step).then_some((
-                k.generation.0,
+                k.generation.0.epoch(),
                 k.acquisition.1,
                 k.acquisition.2,
                 k.acquisition.3,

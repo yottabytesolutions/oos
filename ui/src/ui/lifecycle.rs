@@ -104,7 +104,7 @@ fn release_board(ui: &mut Ui) {
     }
 }
 
-fn reset(ui: &mut Ui) {
+pub(super) fn reset(ui: &mut Ui) {
     ui.m.run = RunState::Stop;
     ui.was_running = false;
     ui.stop_final = None;
@@ -117,9 +117,12 @@ fn reset(ui: &mut Ui) {
     ui.hist_pos = None;
     ui.meas_pending = None;
     ui.meas_want = false;
-    ui.meas_n += 1;
+    super::change::acquisition::cancel_measurement(ui);
     ui.ana = Default::default();
+    let mut work = std::mem::take(&mut ui.azr.work);
+    work.reset();
     ui.azr = Default::default();
+    ui.azr.work = work;
     ui.seg_view = None;
     ui.refs = Default::default();
     ui.trend = Default::default();
@@ -157,6 +160,7 @@ pub(super) struct MeasWorker {
     pub(super) rx: std::sync::mpsc::Receiver<MeasDone>,
     /// a job is out
     pub(super) busy: bool,
+    pub(super) accept: bool,
     pub(super) join: std::thread::JoinHandle<()>,
 }
 
@@ -196,17 +200,21 @@ impl MeasWorker {
                 }
             })
             .ok()?;
-        Some(MeasWorker { tx, rx, analysis_rx, analysis_busy: false, busy: false, join })
+        Some(MeasWorker { tx, rx, analysis_rx, analysis_busy: false, busy: false, accept: false, join })
     }
 }
 
 pub(super) fn begin_step(ui: &mut Ui, dt_wall: f64) -> bool {
-    let stopped = memory_step(ui);
-    ui.relayout();
     ui.now += dt_wall;
     if ui.toast.as_ref().is_some_and(|(_, until)| ui.now > *until) {
         ui.toast = None;
     }
+    change::is_prepared(ui) || polls(ui)
+}
+
+pub(in crate::ui) fn polls(ui: &mut Ui) -> bool {
+    let stopped = memory_step(ui);
+    ui.relayout();
     ui.update_poll();
     ui.wlan_poll();
     ui.ntp_poll();

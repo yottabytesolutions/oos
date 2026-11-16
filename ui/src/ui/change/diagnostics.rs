@@ -40,6 +40,9 @@ impl Diagnostics {
         };
         self.errors += 1;
         self.error_counts[i] += 1;
+        if self.error_counts[i] == 1 {
+            eprintln!("oos-ui shadow: error={error:?}; requests quarantined, keeping last publication");
+        }
     }
     pub(super) fn compare(
         &mut self,

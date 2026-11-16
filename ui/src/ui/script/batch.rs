@@ -70,18 +70,21 @@ impl BatchScript {
             return Ok(());
         }
         ui.relayout();
+        let identity = super::super::change::acquisition::script_prepare(ui);
         let Source::Hw { shared, .. } = &ui.src else { return Err("scripted source replaced".into()) };
         if !lock(shared).queue.is_empty() {
             return Err(format!("batch {} left queued frames", self.id));
         }
         let pipe = drawpipe::pipe(ui.switches()).ok_or("scripted source needs batch pipeline")?;
         pipe.set_view((ui.fast_ok() && !self.record_only).then_some(&ui.m), ui.ph.w, ui.ph.h, ui.switches().interp);
-        let (frames, stamp) = capture_plan(ui, self.id);
+        let frames =
+            if ui.m.trig_mode == crate::model::TrigMode::Single { 1 } else { SCHEDULE[self.id % SCHEDULE.len()] };
         let batch = self.source.next_batch(&ui.m, ui.switches(), frames, self.spare.take())?;
         self.id += 1;
         let before = drawpipe::counters().read();
         Counters::add(&drawpipe::counters().acquired, frames as u64);
-        let newest = batch.newest(stamp);
+        let mut newest = batch.newest(identity.epoch());
+        newest.cfg = identity.gen();
         self.pending = Some(Pending { before, frames: frames as u64, newest: newest.seq, workers: pipe.accepting() });
         if pipe.accepting() {
             let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
@@ -96,7 +99,7 @@ impl BatchScript {
                 Box::new(batch.into_bytes()),
                 fb,
                 frames - 1,
-                stamp,
+                identity,
                 decode,
                 codes,
                 Box::new(move || {
@@ -110,9 +113,7 @@ impl BatchScript {
             self.spare = Some(*returned.into_any().downcast::<ScriptBytes>().map_err(|_| "wrong scripted buffer")?);
         } else {
             let mut g = lock(shared);
-            for i in 0..frames {
-                g.queue.push_back(batch.frame(i, stamp));
-            }
+            queue_frames(&batch, &mut g, frames, identity);
             g.frame = newest;
             self.spare = Some(batch.into_bytes());
         }
@@ -163,11 +164,12 @@ impl BatchScript {
     }
 }
 
-fn capture_plan(ui: &Ui, id: usize) -> (usize, u64) {
-    let single = ui.m.trig_mode == crate::model::TrigMode::Single;
-    // Ui::step arms SINGLE before reading the queue. Supply one post-arm acquisition, as the board would.
-    let stamp = ui.m.hw_stamp + u64::from(single && !ui.single_armed);
-    (if single { 1 } else { SCHEDULE[id % SCHEDULE.len()] }, stamp)
+fn queue_frames(batch: &impl Batch, shared: &mut crate::board::Shared, frames: usize, id: oos_core::change::Identity) {
+    for i in 0..frames {
+        let mut frame = batch.frame(i, id.epoch());
+        frame.cfg = id.gen();
+        shared.queue.push_back(frame);
+    }
 }
 
 #[cfg(test)]
@@ -201,6 +203,33 @@ mod tests {
                 );
                 ui.m.meas2.clear();
                 assert_eq!(batch.id, 0, "reject before producing or depositing any frame");
+            }
+        }
+    }
+
+    #[test]
+    fn batches_newest_and_queued_frames_use_the_resolved_pair() {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
+        for kind in [BatchKind::Raw, BatchKind::DeepPairs, BatchKind::Roll, BatchKind::Scan, BatchKind::HardwareAverage]
+        {
+            let mut ui = Ui::new(Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
+            let mut script = BatchScript::new(&mut ui, kind);
+            for epoch_only in [false, true] {
+                if epoch_only {
+                    ui.clear_display();
+                } else {
+                    ui.m.tscale += 1;
+                }
+                script.feed_step(&mut ui).unwrap();
+                let id = super::super::super::change::acquisition::identity(&ui);
+                let Source::Hw { shared, .. } = &ui.src else { unreachable!() };
+                assert!(lock(shared).queue.iter().all(|f| (f.cfg, f.stamp) == (id.gen(), id.epoch())));
+                ui.step(0.04);
+                script.finish_step(&ui).unwrap();
+                let Source::Hw { shared, .. } = &ui.src else { unreachable!() };
+                let g = lock(shared);
+                assert_eq!((g.frame.cfg, g.frame.stamp), (id.gen(), id.epoch()), "{kind:?}");
+                assert!(g.queue.is_empty());
             }
         }
     }

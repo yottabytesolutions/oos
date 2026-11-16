@@ -16,6 +16,63 @@ Complete [migration M2](../architecture/migration.md#m2-one-change-detection-poi
 
 ## Plan
 
+M2.3b clippy follow-up: owner `codex-d`, active on `t0003-m2`, under the
+owner's approved M2.3b assignment after the overhaul merge. Preserve behaviour
+while extracting named test helpers, using struct update syntax and checked
+division, and routing locks through the existing HAL helper. Verify the merged
+change-test fix, run gate-equivalent clippy with zero new/grown findings,
+focused debug/release tests and `cargo xtask check --fast`. No commits.
+Run clippy separately before handoff: the fast gate does not select it.
+Reserved paths: `ui/src/board/dho/{roll,tests}.rs`, `ui/src/drawpipe/feed.rs`,
+this task and `target/COMMIT_MSG.txt`.
+
+M2.3b verification round 2 at `d4f6b92`: owner `codex-d`, active on `t0003-m2`,
+unit tier under the owner's assignment. Clear retained roll/scan analog and LA samples
+and cursor on identity boundaries while retaining running hardware. Carry each retained
+batch identity into STOP raw replay. Give counter-delta regressions isolated counters
+and a matching isolated pipeline without serializing the suite. Check the batch regression
+on `2c0bd5c`; run the default-parallel library suite five times per profile, focused tests,
+soak/census, release timing, unchanged goldens and the fast gate. Expand the pending hardware
+smoke with CLEAR and STOP-to-RUN in roll and scan. No full gate, staging, commits or hardware
+access; one section in `target/COMMIT_MSG.txt`.
+Reserved paths: `ui/src/board/dho/{hw,roll,publication,tests,replay}.rs`,
+`ui/src/board/dho/mod.rs`, `ui/src/drawpipe.rs`, `ui/src/drawpipe/{test_scope,losses}.rs`,
+`xtask/data/moves.txt` (loss counter extraction only),
+`ui/src/ui/tests/{epochs,roll}.rs`, `ui/src/ui/script/batch.rs`,
+`docs/architecture/README.md`, this task and `target/COMMIT_MSG.txt`.
+
+M2.3b review round 1 claim at `2c0bd5c`: owner `codex-d`, active on `t0003-m2`,
+unit tier under the coordinator assignment. Apply P2-1 through P2-4 and P3-1 through P3-7.
+Keep D4 epoch rejection without hardware reconfiguration; no D10. Quarantine failed
+requests, retain the last publication and continue steps with bounded per-variant error logs.
+Publish mask/zone wants atomically with the accepted pair after lifecycle polls; distinguish
+stale drops by site from queue overflow and fold loss. Preserve SINGLE completion on
+identity-only boundaries, report actual synchronous measurements, invalidate reset analyzer
+work, and restart orphaned stage tokens with a bounded logged fallback. Record the
+M2.3d worker-view bridge, parent timing and all nine hardware smoke additions in Status.
+Reuse the M2.3b reservations and additionally reserve `ui/src/board/dho/publication.rs`,
+`ui/src/ui/{hwmask,hwzone}.rs`, `ui/src/drawpipe/identity_tests.rs`,
+`ui/src/ui/analysis/window.rs` (reset revision visibility only),
+`ui/src/ui/analysis/window/tests/review.rs` and narrowly required regression modules.
+Run focused debug/release, soak/census, release timing, unchanged goldens and the fast gate.
+No full gate, staging, commits or hardware access; one section in `target/COMMIT_MSG.txt`.
+
+M2.3b implementation claim: owner `codex-d`, branch `t0003-m2`, base `2279778`,
+review tier unit, under the owner's assignment. Activate the resolved acquisition identities:
+publish one consistent settings/route/gen/epoch snapshot before acquisition, reject old-pair
+records before conversion and measurement, and gate asynchronous results and deposit folds
+on stats_gen too. Replace independent stamp writers with stage tokens, resolving their
+associated settings together at the next change point. Keep the normalize-to-mark_changed
+bridge and all c-e reset/run-transition consumers at their current seams.
+Reserved paths: `ui/src/ui.rs`, `ui/src/ui/change.rs`, `ui/src/ui/change/`,
+`ui/src/ui/{autoset,bode,lifecycle}.rs`, `ui/src/ui/tests/{change,shadow,epochs}.rs`,
+`ui/src/ui/script/batch.rs`, `ui/src/{wave,drawpipe}.rs`, `ui/src/board/mod.rs`,
+`ui/src/board/dho/{hw,tests}.rs`, `docs/architecture/README.md`, this task,
+`target/COMMIT_MSG.txt`. Add narrowly required helper/test modules within these areas
+before editing and record any further seam here. Run parent-compatible failing regressions,
+focused debug/release, soak/census/timing, justified per-case golden comparisons and the
+fast gate. No full gate, staging, commits or hardware access.
+
 M2.3a mask-source decision at `b3999bb`: retain ACQ|STATS|MASK, add D9 for the
 deliberate generation boundary missing from legacy, and observe effective mask-source
 changes independently of mask requests. Reserve `ui/src/ui/change/{oracle,legacy_keys,diagnostics}.rs`,
@@ -508,7 +565,12 @@ task 0049's coordinated unit access, use a known input and the normal acquisitio
 routes, with shallow/raw and compressed/deep cases. Seed a batch armed ahead and queued old frames, then run
 same-settings epoch requests (CLEAR, STOP-to-RUN, repeated SINGLE, autoset retry and Bode stage) and separate
 acq/gen and route changes. Exercise roll/scan and segmented RUN/SINGLE/STOP as smoke cases too; their exhaustive
-producer coverage remains M3.0. Do not use scripted injection as evidence of hardware-loop correctness.
+producer coverage remains M3.0. In both roll and scan, explicitly test CLEAR and STOP-to-RUN:
+seed recognizable pre-boundary analog and LA samples, then verify that neither the empty
+publication tick nor subsequent new-pair frames refill the cleared screen with those samples.
+Require no roll stop/start or hardware reconfiguration for CLEAR's epoch-only boundary.
+Also place CLEAR in the final-batch-to-STOP window and verify that a raw reread retains its
+captured pair and is rejected if stale. Do not use scripted injection as hardware-loop evidence.
 
 Record requested/applied/output `(gen, epoch, route)`, prearm/disarm and stale/queued-drop counts, configure
 counts, accepted record/measurement/fold identities, acquired/published frames, errors and change-to-first-current
@@ -569,6 +631,353 @@ M4/M5/M9/M10 retain their specified conversion, channels, whole-batch ownership 
 Every candidate and conflict resolution needs independent cross-vendor review; the author never merges or pushes.
 
 ## Status
+
+- 2026-11-16: M2.3b clippy follow-up validation on the same unstaged code passes.
+  `cargo test --locked -p oos-ui --bin oos-ui FILTER`, with filters
+  `board::dho::`, `drawpipe::` and `ui::tests::change::`, and again with
+  `--release`, exits 0 for all six runs. Each profile reports DHO 55 passed / 1
+  ignored, drawpipe 17 passed / 2 ignored and change 11 passed / 0 ignored;
+  zero failures. Existing tests retain all boundary, restart and snapshot assertions.
+  Logs: `target/m23b-tests-{dho,drawpipe,change}-{debug,release}.log`.
+  `cargo xtask check --fast` exits 0 and prints
+  `partial gate passed (not done): 8 steps in 22 s`; all selected steps pass,
+  none fail. Log: `target/m23b-fast.log`, with complete command logs under
+  `target/check-logs/16968-1794799404520833000/`.
+  Clippy, full tests, perf, coverage and image steps are not selected by the
+  fast gate; separate clippy/focused evidence is recorded here. Full integration
+  gate and independent review remain with the coordinator. One section in
+  `target/COMMIT_MSG.txt`; no commits, ratchet changes or hardware access.
+
+- 2026-11-16: M2.3b clippy follow-up on `t0003-m2`, owner `codex-d`, base
+  `2f492ad` plus unstaged changes. All 11 gate-equivalent clippy invocations
+  from `xtask/src/clippy.rs` exit 0: host for hal/dsp/core/ui/fpgad/xtask and
+  ARM for hal/dsp/core/ui/fpgad, with the manifest lint sets unchanged.
+  Deduplicated counts compared against the existing ratchets with planned
+  moves applied show zero new/grown entries. All four named files have zero
+  findings, including the merged change-test fix from `d977abc`.
+  Commands: per crate, `cargo clippy --locked --all-targets --message-format=json
+  --quiet`, additionally `--target aarch64-unknown-linux-musl` for ARM.
+  Logs: `target/m23b-clippy-*.jsonl`, `target/m23b-clippy-*.stderr`,
+  `target/m23b-clippy-exits.json`, `target/m23b-clippy-summary.txt`.
+  Focused debug/release tests and fast-gate results are recorded above.
+  No ratchet edits, commits or hardware access.
+
+- 2026-11-16: final M2.3b verification-round fixes are ready for independent review at
+  unchanged `d4f6b92` plus the unstaged diff; task remains active. Five final default-thread
+  debug library runs and five release library runs each report 674 passed, 21 failed,
+  31 ignored, exit 101. All eight relevant regressions pass in every run: roll/scan
+  boundary samples, captured STOP replay identity, nested/cross-thread counter isolation,
+  batch identities, publication/queue-pop loss sites, roll STOP/rearm accounting,
+  worker identity/overflow accounting and the legacy partial-merge pacing fixture.
+  The same 21 socket-dependent fixtures fail in all ten runs because this sandbox denies
+  socket binding, including the existing Bode generator fixture. No other failure remains
+  in these final runs. The requested all-green unfiltered suites are therefore not claimed;
+  rerun them in a socket-enabled environment. No `--test-threads` flag or suite-wide lock
+  was used; RUST_TEST_THREADS was removed from the command environment.
+  Complete commands, exits, failure names and source hashes: `target/m23b-r2-verification.json`;
+  summary: `target/m23b-r2-verification.log`. Final logs are
+  `target/m23b-r2-final-parallel-debug-{1,2,3,4,5}.log` and
+  `target/m23b-r2-parallel-release-{1,2,3,4,5}.log`. Preliminary debug runs 3 and 5 exposed
+  the separately corrected global pacing fixture race and remain recorded below.
+
+- 2026-11-16: final focused library suites pass 247 per profile with 8 existing ignores
+  and the explicit socket-dependent Bode fixture exclusion, default parallelism.
+  Host-script passes 14 and soak passes 11 per profile. Each of the five warmed UI census
+  rows reports 256 calls, zero allocations in both profiles; reused snapshots allocate zero
+  versus 210 naive-clone allocations and retain 5,104 bytes per snapshot.
+  Release raw/codes/pairs/deep-pairs/average each complete 1,000 steps, warmup 500, with
+  no retained growth, zero failed cycles and later peaks equal to the warmed peak.
+  Acquired/used/dropped are exactly 13,648/13,618/30 in every mode, all drops deliberately
+  seeded. Debug retains the existing release-only composed-soak policy. Complete results:
+  `target/m23b-r2-checks.json`, `target/m23b-r2-soak-evidence.json` and their referenced logs.
+
+- 2026-11-16: unchanged goldens pass: debug 20 cases / 40 fresh processes / 88 repeat
+  captures; release 263 / 526 / 1,242. Independent decoded RGB and settings metadata
+  comparisons exactly match all 44 debug and 621 release baseline captures. All 566
+  child stderr logs have zero unreviewed oracle events or field masks. No reference,
+  tolerance, manifest or per-case exception changed. Evidence:
+  `target/m23b-r2-golden-evidence.{json,log}`. ARM compilation passes. The isolated release
+  timing guard passes, exit 0, 256 aarch64 samples: intake p99 67,084 ns, change 5,875 ns,
+  paired intake/change 67,875 ns against 500,000 ns; shadow 22,833 ns separately.
+  Logs: `target/m23b-r2-{arm,release-timing}.log`.
+
+- 2026-11-16: final fast gate exits 0 and prints
+  `partial gate passed (not done): 8 steps in 22 s` (`target/m23b-r2-fast.log`).
+  The earlier size-only failure and its correction remain below. Added-text and the
+  single-message draft privacy checks report zero findings; diff whitespace passes.
+  `target/COMMIT_MSG.txt` contains one message section. No staging, commits, push,
+  full gate, image/coverage/10,000-step acceptance or hardware access occurred. No ratchet,
+  allowance, dependency, remote or hook changed; only the loss-counter move manifest was
+  extended. The corrected legacy pacing fixture is byte-identical on `2c0bd5c` and
+  `d4f6b92` before isolation (`target/m23b-r2-pacing-provenance.json`). Independent
+  cross-vendor unit-tier verification, socket-enabled library runs and the expanded real
+  producer hardware smoke remain required; M2.3c remains held for that smoke.
+
+- 2026-11-16: the third complete default-thread debug run exposed an additional
+  legacy pacing race in `partial_merges_and_picture_age_are_counted`: stale count 0
+  instead of 20. Concurrent UI publication can replace WANTED while its workers classify samples.
+  Isolate only this existing pacing fixture in an exact-test child process; the suite
+  and the new scoped-counter tests remain parallel. No production pacing behavior changed.
+  Original failure: `target/m23b-r2-parallel-debug-3.log`. Repeat final debug runs after
+  this test-only correction; retain the preliminary runs as evidence.
+
+- 2026-11-16: M2.3b verification round 2 claimed at `d4f6b92`, owner `codex-d`,
+  active on `t0003-m2`, unit tier. All three P2 fixes are present, uncommitted.
+  Roll/scan clears all retained analog/LA samples and cursor on pair boundaries without
+  changing rolling hardware state; STOP replay retains a Read with the batch identity.
+  Four counter-delta tests use scoped counters and their own injected worker pipeline;
+  concurrent tests continue normally. A nested/cross-thread isolation test also passes.
+  Loss counters moved to `drawpipe/losses.rs` with move entries to keep the file ratchet;
+  no ratchet or allowance changed. The first fast gate failed only size (`drawpipe.rs`
+  979 to 985); the extracted layout passes, exit 0, printing
+  `partial gate passed (not done): 8 steps in 22 s`.
+  Logs: `target/m23b-r2-fast-{initial,layout}.log`.
+  Focused initial regressions pass 70 with one existing ignore, default parallelism.
+  Physical mutations disabling the sample discard and retaining the ambient frame tag
+  each fail their new regression, exit 101 (`target/m23b-r2-red-{roll,replay}.log`).
+  Hardware smoke now explicitly requires CLEAR and
+  STOP-to-RUN in roll and scan plus CLEAR in the final-batch STOP replay window.
+
+- 2026-11-16: unmodified `2c0bd5c` archive, isolated source/build target, reproduces
+  the batch identity test failure under the default library runner: before counters
+  `(0, 7199, 4)`, after `(27, 7397, 4)`, exit 101. Its full library suite reports
+  658 passed, 22 failed, 31 ignored; the other 21 failures are socket permission errors
+  from this sandbox, including the existing Bode generator socket fixture.
+  The pre-fix `d4f6b92` run reports 669 passed, 23 failed, 31 ignored: the same 21
+  socket failures plus both reported counter tests. Evidence:
+  `target/m23b-r2-{parent,before}-parallel.log` and `target/m23b-r2-baseline.json`.
+  This proves the batch race predates P2-1; it does not claim either suite green.
+
+- 2026-11-16: final M2.3b round 1 worker handoff at unchanged `2c0bd5c` plus unstaged
+  review fixes, task still active. Focused debug/release each pass 237, with 8 existing
+  ignores and the inherited explicit `bode_sweep_drives_the_generator` sandbox skip.
+  Additional diagnostics/hardware-mask/zone suites pass 7 per profile, including every
+  error variant. Host-script passes 14 and soak passes 11 per profile. The final exact
+  commands, exits and complete logs are `target/m23b-r1-final-checks.json` and
+  `target/m23b-r1-final-diagnostics.json`. An earlier fixture incorrectly counted the valid
+  first RUN request after initialization failure as an offending request; pinning the prior
+  RUN state corrects that regression without suppressing legitimate later requests.
+
+- 2026-11-16: final release soak runs raw/codes/pairs/deep-pairs/average for 1,000 steps each,
+  warmup 500: all five report no retained growth, zero failed cycles and later peaks equal
+  warmed peaks. Acquired/used/dropped are exactly 13,648/13,618/30 each, all 30 deliberately
+  seeded. Debug retains the existing release-only composed-plateau policy. Reused snapshot
+  observations allocate zero versus 210 naive-clone calls, retaining 5,104 bytes per snapshot.
+  All five warmed UI census rows report 256 calls and zero allocations in both profiles.
+  Summaries and artifact locations: `target/m23b-r1-final-soak-evidence.json`.
+
+- 2026-11-16: final goldens pass unchanged: standard debug 20 cases / 40 fresh processes /
+  88 exact-repeat captures; full release 263 / 526 / 1,242. Independent decoding verifies
+  all 44 debug and 621 release captures exactly match baseline RGB and settings metadata.
+  All 566 child stderr logs have zero unreviewed oracle events or field masks. No reference,
+  tolerance, manifest or per-case exception changed. Evidence and run locations:
+  `target/m23b-r1-final-golden-evidence.{json,log}`. ARM compilation passes. Final release
+  timing passes, exit 0, 256 samples on aarch64: intake p99 61,999 ns, change 5,333 ns,
+  paired intake/change 63,751 ns against 500,000 ns, shadow 26,418 ns reported separately
+  (`target/m23b-r1-final-release-timing.log`). Publication costs remain included.
+
+- 2026-11-16: P3-7 debug timing comparison on the same aarch64 host, 256 samples each.
+  The parent is an untouched source archive with its own isolated build target. Both runs
+  manually exercise the existing release-only guard in debug and exit 101; neither is a
+  debug timing pass, and the 500,000 ns budget is unchanged.
+
+  | Source | Intake p99 ns | Change p99 ns | Paired p99 ns | Shadow p99 ns |
+  | --- | ---: | ---: | ---: | ---: |
+  | Parent `2279778`, isolated comparison | 3,942,500 | 54,375 | 3,970,875 | 120,333 |
+  | Reviewed M2.3b, existing debug observation | 4,008,458 | 47,125 | 4,030,625 | 128,249 |
+
+  Logs: `target/m23b-r1-final-parent-debug-timing.log` and
+  `target/m23b-timing-debug-alone.log`. The first parent run also failed at 4,104,833 ns;
+  it overlapped evidence inspection, so the table uses the isolated rerun.
+
+- 2026-11-16: final handoff fast gate exits 0 and prints
+  `partial gate passed (not done): 8 steps in 24 s`
+  (`target/m23b-r1-final-fast-handoff.log`), all selected steps passing. Added-text and one-section
+  draft privacy checks report zero findings (`target/m23b-r1-final-privacy.json`);
+  diff whitespace passes. `target/COMMIT_MSG.txt` contains one message section.
+  No staging, commits, push, full gate, image/coverage/10,000-step acceptance or hardware
+  access occurred. No ratchet, limit, dependency, remote or hook changed. Independent
+  cross-vendor unit-tier verification, coordinator integration and the expanded producer
+  hardware smoke remain required; M2.3c stays held for that smoke.
+
+- 2026-11-16: round 1 implementation applies all P2/P3 decisions below. The duplicate-token
+  regression fails on `2c0bd5c` with two retained requests (exit 101,
+  `target/m23b-r1-before.log`); it now quarantines them and recovers on the following step.
+  New host regressions cover heap capacity beyond 64 KiB and shadow-init recovery, 20 mask
+  creations plus 20 existing-mask enables with atomic publication, read-only zone polls,
+  live/scripted poll ordering, synchronous measurement rejection, lifecycle analyzer revision,
+  foreign CLEAR/gen recovery and separate loss counters. Bode consumes its two fresh settling
+  records and completes the restarted stage within 0.13 s of simulated UI time. Autoset's
+  measure-unit request resolves to a fresh epoch after the foreign CLEAR.
+  HAL bus simulation counts segment starts and roll stop/start calls at the shared pure
+  reconfiguration decision for CLEAR, RUN, SINGLE, autoset/Bode stages, D9 mask_src, fast_ok,
+  actual settings, steady state and mode changes. This tests the host policy, not the live
+  worker. The unchanged SINGLE completion epoch is exercised across 20 generation changes.
+  These tests do not substitute for the expanded hardware smoke.
+
+- 2026-11-16: size checks initially rejected autoset growth (`670 -> 683`, then `670 -> 671`),
+  followed by `change.rs` at 411 and prepare_inner at 68. The final layout moves the existing
+  scale helper with its move entry and isolates change rejection/initialization in
+  `ui/src/ui/change/recovery.rs`; no ratchet, limit, dependency or architecture allowance
+  changes. The corrected layout passes the fast gate, exit 0:
+  `partial gate passed (not done): 8 steps in 22 s` (`target/m23b-r1-fast-layout.log`).
+  Earlier failed gate logs remain `target/m23b-r1-fast-{initial,second}.log` and
+  `target/m23b-r1-fast.log`; each prints `gate FAILED in 22 s: size`.
+  Final verification is rerunning on this layout and the strengthened mask-enable regression.
+
+- 2026-11-16: M2.3b review round 1 at `2c0bd5c` received with no P1; coordinator
+  decisions accepted. P2-1: no D10; retain D4. Only effective want/mode changes tear down
+  segments/roll and clear last_read. Epoch-only rejection does not reconfigure hardware.
+  P2-2: failed shadow initialization/resolution must keep the step loop running on the
+  last publication; drop/quarantine offending requests, bound stderr logs and count every
+  error variant. This supersedes the earlier retained-mailbox regression and architecture text.
+  P2-3: publish mask_want/zone_want inside acquisition::publish with the same step's pair;
+  polls only read results. P2-4: separate worker-push/UI-publication/queue-pop/pipe stale
+  identity counters from QUEUE_MAX overflow and lost folds, exposed in :SYSTem:STATe?.
+  P3-1/P3-2/P3-3: preserve single_done on gen-only boundaries, notify measurements only
+  when measured, and advance the analyzer revision on lifecycle reset. P3-4: lifecycle
+  polls precede prepare on both live and scripted paths. P3-6: a foreign CLEAR/gen boundary
+  restarts the active autoset/Bode stage with a fresh token and settling state; never broaden
+  exact-pair acceptance. Recovery is one queued token and one following resolution step per
+  boundary; the first four restarts per requester are logged and every restart is counted.
+  P3-7: record a parent `2279778` debug timing next to the existing M2.3b debug observation.
+  Reuse the accepted reservation, adding the narrowly required autoset recovery helper and
+  host publication regressions under `ui/src/ui/{autoset/recovery,host/tests/publication}.rs`,
+  and the helper move manifest. Hardware remains unverified and unreleased for this worker.
+
+- 2026-11-16: P3-5 bridge item for M2.3d: two worker-view writers remain, the accepted
+  acquisition::publish view and the legacy post-publication per-step Pipe::set_view seam
+  (plus the scripted runner's matching seam). Consolidate them in d while retaining all
+  trigger/acquisition dependencies of the worker key until M4. This review does not switch
+  the mapping/phosphor consumers or remove the normalize-to-mark_changed bridge.
+
+- 2026-11-16: add the reviewer's nine producer-smoke requirements to the existing M2.3b
+  unit smoke under task 0049. These are required hardware evidence, not host acceptance:
+  (1) record seg::start and roll stop/start counts for every boundary kind;
+  (2) browse STOP segments through CLEAR, mask_src and autoset;
+  (3) run each route steadily for 10 minutes with constant gen/epoch/stats_gen and zero stale drops;
+  (4) change settings within 50 ms of SINGLE, 20 times, with exactly one hardware arm per press;
+  (5) create/enable hardware mask 20 times, with counters starting at the new epoch;
+  (6) CLEAR during autoset's unit stage and stepped Bode, recording bounded stall time;
+  (7) change timebase in STOP with deep raw retained;
+  (8) inspect diagnostic error counts and recall the largest setup;
+  (9) inspect stale drops separately at worker push, UI publish, queue pop and pipe.
+  Retain the existing requested/applied/output identity, route, lease/build provenance,
+  raw/compressed/deep, prearm, valid-record, fold, final-read and unresolved-token checks.
+
+- 2026-11-16: M2.3b worker handoff, uncommitted on the unchanged `2279778`, review tier unit.
+  Final focused UI selection passes 221 tests, with 8 existing ignores, in debug and release.
+  The existing Bode TCP-listener case is explicitly skipped under the inherited sandbox restriction.
+  Core passes 23 unit plus 3 integration tests per profile. Host-script integration passes
+  all 14 tests per profile (`target/m23b-host-script-{debug,release}-current.log`). Logs: `target/m23b-core-{debug,release}.log`,
+  `target/m23b-focused-debug-current.log`, `target/m23b-focused-release-current.log`.
+  M2.3b includes the rejected-resolution regression: duplicate queued tokens retain their mailbox,
+  previous pair and settings publication, and consume no records. No failed resolution can publish
+  new settings under an old pair. The final late-stage census also executes command capture and
+  accepted-snapshot restoration, rather than only the old observation path.
+
+- 2026-11-16: final standard soak passes all 11 tests per profile. Debug retains the existing
+  release-only composed-plateau policy; release runs raw, codes, pairs, deep-pairs and average
+  for 1,000 steps each, with warmup 500. All five report zero failed cycles and no end-cycle growth;
+  each acquires/uses/drops exactly 13,648/13,618/30, with all 30 drops deliberately seeded.
+  Later peaks equal warmed peaks in every mode. Both snapshot and hot-path allocation probes pass.
+  Snapshots retain 5,104 bytes each; reused updates allocate zero versus 210 calls for naive clones.
+  The five UI census rows each run 256 times with zero allocations in both profiles, including
+  late-stage command capture and restoration. Logs: `target/m23b-soak-{debug,release}-current.log`,
+  `target/m23b-live-stage-census-{debug,release}.log`; summary: `target/m23b-soak-evidence.json`.
+
+- 2026-11-16: unchanged goldens pass: standard debug 20 cases / 40 fresh processes /
+  88 exact-repeat captures (102.718 s); full release 263 / 526 / 1,242 (83.375 s), excluding builds.
+  Independent decoded RGB hashes match all 44 debug and 621 release baseline captures exactly.
+  Every compared capture also retains its baseline settings metadata; zero unreviewed oracle
+  lines occur in either profile. There is no changed golden case to justify: no reference image,
+  metadata, manifest or tolerance was edited. Logs: `target/m23b-golden-{debug,release}-current.log`;
+  per-capture exactness, metadata and oracle evidence: `target/m23b-golden-evidence.json`.
+
+- 2026-11-16: final isolated release timing passes, exit 0: 256 retained samples on aarch64,
+  intake p99 72,542 ns, change p99 5,125 ns, combined p99 73,501 ns against 500,000 ns,
+  shadow p99 23,875 ns (`target/m23b-timing-release-alone.log`). Publication and retained
+  transition/bridge costs remain included in total intake/change accounting.
+  An additional debug run of this explicitly release-only guard fails, exit 101: combined p99
+  4,030,625 ns, intake 4,008,458 ns, change 47,125 ns, shadow 128,249 ns. The earlier debug
+  attempt likewise failed at 3,966,542 ns. Logs: `target/m23b-timing-{debug,debug-alone}.log`.
+  These failures remain visible; no debug timing pass or hardware timing acceptance is claimed,
+  and neither the 0.5 ms budget nor the test's existing release-only contract was changed.
+
+- 2026-11-16: final fast gate exits 0 and prints
+  `partial gate passed (not done): 8 steps in 23 s` (`target/m23b-fast-handoff.log`),
+  with no failed selected step. ARM64 check also exits 0 (`target/m23b-arm-final.log`).
+  Earlier fast attempts printed `gate FAILED in 22 s: fmt, size` and
+  `gate FAILED in 22 s: size`; an intermediate attempt also rejected the relocated IDS static.
+  Formatting, narrow helper extraction and the actual function/static move entries fix these
+  findings without ratchet, architecture allowance, dependency or limit changes.
+  Commands/exits are in `target/m23b-checks.json` and `target/m23b-final-checks.json`;
+  final supplemental focused/census logs are listed above. `target/COMMIT_MSG.txt` has one
+  section. Added-text and draft-message privacy scans each report zero findings; diff whitespace
+  checks pass. No staging, commits, push, full gate or hardware access occurred.
+  Task 0003 stays active. Independent cross-vendor unit-tier review, coordinator integration
+  and the explicitly listed producer smoke remain required; M2.3c is held for that smoke.
+
+- 2026-11-16: M2.3b implementation is present, uncommitted. The change point publishes
+  settings/generator/raw policy/route and one resolved identity; worker view publication precedes
+  the Shared handoff. The producer snapshots that publication once and stamps batch/newest,
+  queued, raw/final, roll/scan and segmented outputs from that applied pair. Epoch/gen changes
+  invalidate prearm and old replay eligibility; an epoch alone does not force configure.
+  Both queued record routes and segment display reject different pairs before conversion.
+  Measurement/analyzer jobs and results and worker/helper folds gate on gen/epoch/stats_gen.
+  Stats-only boundaries retain valid picture contributions and reject old folds, including
+  mailbox coalescing in either order. Stage settings use a bounded reusable outbox and the
+  existing accepted snapshot, with pending stage commands applied before external intake.
+  Only token-associated stage writes switch here; remaining internal/run/reset consumers stay c-e.
+  The normalize-to-mark_changed bridge is unchanged and its intermediate regressions remain.
+  `Shared::stamp`, acting Model stamp bumps, Source::acquire publication and `meas_n` are gone.
+  Compatibility names: Frame::cfg is gen and Frame::stamp is epoch, assigned from one applied
+  identity; AutoRun::stamp is only the resolved epoch mirror, zero while unresolved. The flat
+  Model::hw_stamp field remains dormant for the exhaustive 194-field contract; the legacy pipe
+  stamp comparison and APPLIED-derived test headers are compiled only in test feed wrappers.
+  M4 must rerun `ui::tests::epochs::old_pair_records_are_not_measured` through its new conversion
+  path; it must not add a second generation-filter implementation.
+
+- 2026-11-16: failing-before evidence on the approved source: the parent-compatible
+  `old_pair_records_are_not_measured` compiled and exited 101 at its behavioral assertion:
+  records advanced 0 to 1 after an old-generation frame was queued. The log is
+  `target/m23b-before-record.log`. Final tests also cover epoch-only rejection, valid current
+  records, unresolved/older/different-newer tokens and previous runs, delayed measurement
+  results for all three identities, late folds and consistent scripted batch/newest/queue pairs.
+  Existing consumer fixtures now explicitly publish/tag freshly acquired frames; the stale
+  regressions call Ui::step directly and retain their deliberately old headers. No parent
+  failure is claimed for new APIs or for already-passing characterization cases.
+
+- 2026-11-16: claimed M2.3b only at `2279778`, retaining the approved M2.3a prefix
+  (`3908fbc`, `b3999bb`, `2279778`) and all D1-D9 decisions. Working tree initially clean.
+  The required module-registration seam is `ui/src/board/dho/mod.rs`.
+  Also reserve `ui/src/ui/tests/producer.rs` for explicit current-frame identities in
+  existing consumer fixtures; stale-frame tests keep calling Ui::step directly.
+  Also reserve `ui/src/board/identity.rs`, `ui/src/board/dho/publication.rs`,
+  `ui/src/drawpipe/{feed,identity_tests}.rs` and `xtask/data/moves.txt` for narrow publication helpers
+  and non-growing legacy extraction; no ratchet or limit changes.
+  Also reserve `core/src/change/shadow.rs` for read-only access to the accepted snapshot
+  when staging only token-associated settings without a third Model copy.
+  Also reserve `ui/src/drawpipe/host.rs`, `ui/src/ui/host.rs`,
+  `ui/src/ui/script/{roll,host/soak}.rs`, `ui/src/ui/tests/roll.rs` and
+  `ui/src/ui/analysis/{window.rs,window/history.rs,window/tests.rs,window/tests/review.rs,
+  window/tests/review/verification.rs}` for existing producer/measurement fixture identity seams.
+  The producer smoke holds M2.3c and is not yet verified on hardware. Under task 0049's
+  coordinated lease and owner release, check the generation filter on real hardware in
+  batch and frames routes, shallow/raw and compressed/deep, with armed-ahead batches and
+  queued old frames. Exercise at least 20 boundaries each for CLEAR, STOP-to-RUN,
+  repeated SINGLE, autoset retry, Bode stage, acquisition/gen and route changes. Require
+  consistent requested/applied/output (gen, epoch, route), exact stale/drop accounting,
+  no dropped valid records, no old-pair output after application or old-pair measurement
+  or statistics fold, no reconfigure for epoch-only changes, and no acceptance by unresolved
+  tokens. Check roll/scan, segmented RUN/SINGLE/STOP, STOP final read, one completion per
+  SINGLE arm, hardware/software average restarts and mask-source generation filtering and
+  mask behavior. Compare screenshots/statistics, frame/acquisition rate, settling latency,
+  step timing and intake/change p99 against the same mode in the 20261115 baseline;
+  intake+change p99 must remain <=0.5 ms. Record installed build/lease provenance, requested,
+  applied and output identities, route, configure/prearm/disarm counts, acquired/published/
+  accepted/dropped counts, errors and latency. Review every performance regression before c,
+  without inventing a tolerance. Unexpected producer state stops the round without repair.
 
 - 2026-11-16: D9 implemented and worker checks pass on `b3999bb` plus unstaged changes.
   Observe mask_src independently in the new bounded `mask_source` row (18 rows total),

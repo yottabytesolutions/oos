@@ -8,8 +8,11 @@
 //! scale and level, at the time base that showed most of its height; one without a signal keeps its settings, one that
 //! is off stays off. With no signal on any channel the set-up stays as it was.
 
+pub(super) mod recovery;
+
 use super::*;
 use crate::wave::{flat_noise, mid_level, periodic, place, Stats};
+use recovery::scale_for;
 
 /// Time bases of the search: one window of 12 divisions each covers about two decades of period.
 const TBASES: [f32; 5] = [20e-9, 2e-6, 200e-6, 2e-3, 20e-3];
@@ -88,18 +91,13 @@ pub struct AutoRun {
     swing: [f32; NCH],
     /// per channel: the height and time base (index) of the search window that showed most of it
     best: [Option<(f32, usize)>; NCH],
-    /// `Model::hw_stamp` of the current stage: hardware records with an older one are from before it
-    stamp: u64,
+    /// Resolved epoch of the current stage; zero until its token resolves.
+    pub(super) stamp: u64,
     /// the time bases of the search and their memory depths (points, 0 = Auto); `deep` = the hardware plan
     plan: Vec<(f32, u64)>,
     deep: bool,
     /// the levels come from the measure unit (hardware source) until it answers, fails or takes too long
     unit: Option<Unit>,
-}
-
-/// The smallest scale of `ch` with at least `vdiv` volts per division.
-fn scale_for(ch: &Channel, vdiv: f32) -> usize {
-    VSCALES.iter().position(|&x| x * ch.probe >= vdiv).unwrap_or(VSCALES.len() - 1)
 }
 
 fn tscale_for(t: f32) -> usize {
@@ -169,13 +167,14 @@ impl Ui {
         m.tfine = 1.0;
         m.delay = 0.0;
         m.run = RunState::Run;
-        m.hw_stamp += 1;
-        let stamp = m.hw_stamp;
+        let stamp = 0;
         // any channel set: the slots per channel follow libscope's core table (`levels::slots`); a channel whose slots
         // disagree falls back to the records (`auto_unit`)
-        let unit = (self.host.switches().autoset_unit_levels
-            && self.src.hw_levels(Some((stamp, stamp, UNIT_RUNS))).is_some())
-        .then_some(Unit { id: stamp, tries: 1, since: self.now });
+        let unit = (self.host.switches().autoset_unit_levels && self.src.hw_levels(None).is_some()).then_some(Unit {
+            id: stamp,
+            tries: 1,
+            since: self.now,
+        });
         self.auto = Some(AutoRun {
             back,
             stamp,
@@ -214,7 +213,7 @@ impl Ui {
     }
 
     pub(super) fn auto_step(&mut self) {
-        let Some(mut a) = self.auto.take() else { return };
+        let Some(mut a) = change::proposals::take_autoset(self) else { return };
         if a.unit.is_some() {
             match self.auto_unit(&mut a) {
                 UnitStep::Wait => {
@@ -234,7 +233,7 @@ impl Ui {
         }
         // hardware records carry the settings stamp they were taken under: the first one of this stage's settings is
         // enough. Records without one (demo, replay) settle on a count and a time
-        let fresh = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.stamp >= a.stamp);
+        let fresh = change::acquisition::autoset_fresh(self);
         let ready = match fresh {
             Some(f) => f && self.auto_record_fits(),
             None => a.fits && self.records >= a.records + SETTLE_RECORDS && self.now >= a.since + SETTLE_S,
@@ -335,15 +334,19 @@ impl Ui {
     /// A new stage: records taken from here on carry a new stamp.
     fn auto_next(&mut self, mut a: AutoRun) {
         (a.records, a.since, a.fits) = (self.records, self.now, false);
-        self.m.hw_stamp += 1;
-        a.stamp = self.m.hw_stamp;
+        a.stamp = 0;
         self.auto = Some(a);
-        change::autoset_mark(self);
+        change::autoset_stage(self);
     }
 
     /// The measure-unit step (`a.unit`), levels in volts as the records show them (hal levels.rs).
     fn auto_unit(&mut self, a: &mut AutoRun) -> UnitStep {
-        let Some(u) = a.unit else { return UnitStep::Records };
+        let Some(mut u) = a.unit else { return UnitStep::Records };
+        let Some(id) = change::proposals::resolved(self, oos_core::change::Requester::Autoset) else {
+            return UnitStep::Wait;
+        };
+        u.id = id.epoch();
+        a.unit = Some(u);
         let ans = self.src.hw_levels(Some((u.id, a.stamp, UNIT_RUNS))).flatten().filter(|r| r.0 == u.id);
         let Some((_, lv)) = ans else {
             if self.now < u.since + UNIT_GIVE_UP_S {
@@ -373,16 +376,14 @@ impl Ui {
             }
         }
         if again {
-            self.m.hw_stamp += 1;
-            a.stamp = self.m.hw_stamp;
-            change::autoset_mark(self);
+            a.stamp = 0;
+            change::autoset_stage(self);
             if u.tries >= UNIT_TRIES {
                 // the records look at the new scale
                 a.stage = Stage::Fit;
                 return self.auto_unit_off(a);
             }
             a.unit = Some(Unit { id: a.stamp, tries: u.tries + 1, since: self.now });
-            let _ = self.src.hw_levels(Some((a.stamp, a.stamp, UNIT_RUNS)));
             return UnitStep::Wait;
         }
         let levels: [(f32, f32); NCH] =
@@ -471,10 +472,7 @@ impl Ui {
         let timed = !found.is_empty();
         found.extend((0..n_ch()).filter(|&c| a.want[c] && a.period[c].is_none()).map(|c| (c, stats(c), f64::NAN)));
         if found.is_empty() {
-            // the stamp only counts up: records of the run must not pass as taken with the set-up restored
-            let stamp = self.m.hw_stamp;
             self.m = *a.back;
-            self.m.hw_stamp = stamp;
             self.toast("Auto set-up: no signal found");
         } else {
             // the others as they were: on, with their scale
@@ -796,6 +794,9 @@ mod tests {
         let mut seen_search = false;
         for _ in 0..4000 {
             ui.step(0.02);
+            if change::proposals::resolved(&ui, oos_core::change::Requester::Autoset).is_none() {
+                continue;
+            }
             match ui.auto.as_ref().map(|a| matches!(a.stage, Stage::Search(_))) {
                 Some(true) => {
                     seen_search = true;
@@ -817,6 +818,11 @@ mod tests {
 
     /// A hardware-like record of CH1 under settings stamp `stamp`: the signal `sig` of the time (s) over the window of
     /// the time base set now, 8000 samples, the hardware point in the middle.
+    fn resolve(ui: &mut Ui) {
+        change::begin_step(ui, 0.0).unwrap();
+        change::finish_step(ui);
+    }
+
     fn hw_record_of(ui: &Ui, stamp: u64, sig: &dyn Fn(f64) -> f32) -> crate::wave::Record {
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
         let n = 8000usize;
@@ -828,6 +834,7 @@ mod tests {
             pre: n / 2,
             ch: [v, Vec::new(), Vec::new(), Vec::new()],
             stamp,
+            cfg: change::acquisition::identity(ui).gen(),
             ..Default::default()
         });
         crate::board::to_record(&f, &ui.m, 3600, window, ui.m.delay as f64 - window / 2.0)
@@ -845,6 +852,7 @@ mod tests {
         ui.auto_start();
         let mut stages = Vec::new();
         for _ in 0..20 {
+            resolve(ui);
             let Some(a) = ui.auto.as_ref() else { return stages };
             let stamp = a.stamp;
             stages.push(match a.stage {
@@ -962,7 +970,8 @@ mod tests {
     }
 
     /// The thread's answer to the request in `shared`: CH1 from `lo` to `hi` V (None: no usable reading).
-    fn answer(shared: &crate::board::HwShared, ui: &Ui, ch1: Option<(f32, f32, bool)>) {
+    fn answer(shared: &crate::board::HwShared, ui: &mut Ui, ch1: Option<(f32, f32, bool)>) {
+        resolve(ui);
         let mut g = shared.lock().unwrap();
         let (id, need, runs) = g.levels_want.expect("a request");
         assert_eq!((need, runs), (ui.auto.as_ref().unwrap().stamp, UNIT_RUNS));
@@ -985,11 +994,11 @@ mod tests {
         ui.auto_step();
         assert!(ui.auto.as_ref().unwrap().unit.is_some());
         // the probe-comp output at 1 V/div: under 0.4 div, asked again at 0.1 V/div
-        answer(&shared, &ui, Some((0.0, 0.3, false)));
+        answer(&shared, &mut ui, Some((0.0, 0.3, false)));
         ui.auto_step();
         assert_eq!(ui.m.ch[0].volts_per_div(), 0.1);
         assert_eq!(ui.auto.as_ref().unwrap().unit.map(|u| u.tries), Some(2));
-        answer(&shared, &ui, Some((0.0, 0.3, false)));
+        answer(&shared, &mut ui, Some((0.0, 0.3, false)));
         ui.auto_step();
         let a = ui.auto.as_ref().unwrap();
         assert!(matches!(a.stage, Stage::Search(0)) && a.unit.is_none(), "no record was needed");
@@ -1000,13 +1009,14 @@ mod tests {
         // no usable reading for CH1: the records take over in the Wide stage
         let (mut ui, shared) = hw_ui();
         ui.auto_start();
-        answer(&shared, &ui, None);
+        answer(&shared, &mut ui, None);
         ui.auto_step();
         let a = ui.auto.as_ref().unwrap();
         assert!(a.unit.is_none() && matches!(a.stage, Stage::Wide));
         // no answer in time: the same
         let (mut ui, _shared) = hw_ui();
         ui.auto_start();
+        resolve(&mut ui);
         ui.now += UNIT_GIVE_UP_S + 0.01;
         ui.auto_step();
         assert!(ui.auto.as_ref().unwrap().unit.is_none());
@@ -1014,7 +1024,7 @@ mod tests {
         let (mut ui, shared) = hw_ui();
         ui.auto_start();
         for _ in 0..UNIT_TRIES {
-            answer(&shared, &ui, Some((-1.0, 30.0, true)));
+            answer(&shared, &mut ui, Some((-1.0, 30.0, true)));
             ui.auto_step();
         }
         let a = ui.auto.as_ref().unwrap();
@@ -1032,13 +1042,14 @@ mod tests {
         {
             let (mut ui, shared) = hw_ui();
             ui.auto_start();
-            answer(&shared, &ui, Some((0.0, 3.0, false)));
+            answer(&shared, &mut ui, Some((0.0, 3.0, false)));
             ui.auto_step();
             assert!(matches!(ui.auto.as_ref().unwrap().stage, Stage::Search(0)));
             assert_eq!(tscales()[ui.m.tscale], tscales()[tscale_for(FAST_TBASE)], "the full rate first");
             let sig = square(f);
             let mut seen = Vec::new();
             for _ in 0..6 {
+                resolve(&mut ui);
                 let Some(a) = ui.auto.as_ref() else { break };
                 seen.push(tscales()[ui.m.tscale]);
                 // the samples of the record at the rate of the time base (deep: 1 M points over 12 div)
@@ -1052,6 +1063,7 @@ mod tests {
                     pre: n / 2,
                     ch: [v, Vec::new(), Vec::new(), Vec::new()],
                     stamp: a.stamp,
+                    cfg: change::acquisition::identity(&ui).gen(),
                     ..Default::default()
                 });
                 ui.last[0] = Some(crate::board::to_record(&fr, &ui.m, 3600, window, -window / 2.0));
@@ -1078,6 +1090,7 @@ mod tests {
             ui.m.ch[c].on = c < 3;
         }
         ui.auto_start();
+        resolve(&mut ui);
         let id = ui.auto.as_ref().unwrap().unit.expect("the measure unit with three channels").id;
         assert!(shared.lock().unwrap().levels_want.is_some());
         // CH2's slots disagreed (`levels::channel_levels` refused it): the records take over
@@ -1093,6 +1106,7 @@ mod tests {
         // one channel: the deep record and the measure unit
         let (mut ui, shared) = hw_ui();
         ui.auto_start();
+        resolve(&mut ui);
         assert!(ui.auto.as_ref().unwrap().unit.is_some() && shared.lock().unwrap().levels_want.is_some());
         let mut a = ui.auto.take().unwrap();
         assert!(ui.auto_fit(&mut a, Some(levels)));

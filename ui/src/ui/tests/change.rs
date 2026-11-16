@@ -91,7 +91,9 @@ fn mask_toggle_only_advances_generation_for_an_effective_worker_route_change() {
         frame.seq = 1;
         frame.dt = 1e-6;
         frame.pre = 32;
-        frame.stamp = ui.m.hw_stamp;
+        let id = change::acquisition::identity(&ui);
+        frame.stamp = id.epoch();
+        frame.cfg = id.gen();
         frame.ch[0] = (0..64).map(|i| (i as f32 - 32.0) * 0.01).collect();
         oos_hal::sync::lock(&shared).queue.push_back(frame);
         let stamp = ui.m.hw_stamp;
@@ -107,8 +109,8 @@ fn mask_toggle_only_advances_generation_for_an_effective_worker_route_change() {
         assert!(c.classes().contains(C::STATS | C::MASK));
         assert_eq!(ui.m.hw_stamp, stamp);
         assert!(oos_hal::sync::lock(&shared).queue.is_empty());
-        assert_eq!(ui.wfm_total, 1, "the in-flight record is consumed across the mask toggle");
-        assert!(ui.last[0].is_some());
+        assert_eq!(ui.wfm_total, u64::from(already_slow), "D6 rejects old work only at an effective route boundary");
+        assert_eq!(ui.last[0].is_some(), already_slow);
     }
 }
 

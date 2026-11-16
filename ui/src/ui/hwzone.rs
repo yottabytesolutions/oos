@@ -27,14 +27,18 @@ impl Ui {
         src.all(|c| c == first).then_some(first)
     }
 
-    /// Hands the zones to the acquisition thread and takes its latest reading.
-    pub(super) fn zone_hw_poll(&mut self) {
-        let want = self.zone_hw_active().then(|| ZoneWant {
+    /// The zone request derived at acquisition publication.
+    pub(super) fn zone_hw_want(&self) -> Option<ZoneWant> {
+        self.zone_hw_active().then(|| ZoneWant {
             ch: self.zone_hw_src().unwrap_or(0),
             zones: self.m.zones.iter().filter(|z| z.usable()).map(|z| (z.polygon(), z.inside)).collect(),
             clear: self.zone_hw_clear,
-        });
-        if let Some(r) = self.src.hw_zone(want) {
+        })
+    }
+
+    /// Read the latest zone-unit result.
+    pub(super) fn zone_hw_poll(&mut self) {
+        if let Some(r) = self.src.hw_zone() {
             self.zone_hw = r;
         }
     }

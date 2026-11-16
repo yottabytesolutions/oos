@@ -88,15 +88,14 @@ fn commands(ui: &mut Ui, text: &str) -> Result<(), String> {
 
 fn old_stamp(ui: &mut Ui) -> Result<(), String> {
     let pipe = drawpipe::pipe(ui.switches()).ok_or("soak needs workers")?;
-    let mut view = ui.m.clone();
-    view.hw_stamp += 1;
-    pipe.set_view(Some(&view), ui.ph.w, ui.ph.h, ui.switches().interp);
+    pipe.set_identity(super::super::super::change::acquisition::identity(ui));
+    pipe.set_view(Some(&ui.m), ui.ph.w, ui.ph.h, ui.switches().interp);
     let mut source = scripted::source(BatchKind::Raw, 123);
     let batch = source.next_batch(&ui.m, ui.switches(), 3, None)?;
     let (fb, decode) = (batch.frame_bytes(), batch.decode());
     let before = drawpipe::counters().read();
     drawpipe::Counters::add(&drawpipe::counters().acquired, 3);
-    pipe.feed_with(Box::new(batch.into_bytes()), fb, 3, ui.m.hw_stamp, decode, None, Box::new(|| {}));
+    pipe.feed_with(Box::new(batch.into_bytes()), fb, 3, Default::default(), decode, None, Box::new(|| {}));
     drop(drawpipe::host::finish_batch(pipe, 0)?);
     pipe.release();
     let after = drawpipe::counters().read();

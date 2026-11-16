@@ -131,6 +131,7 @@ impl super::Ui {
 
 #[cfg(test)]
 mod tests {
+    mod publication;
     use super::*;
     use crate::ui::Item;
     use crate::ui::{sysinfo::Row, Ui};
@@ -376,8 +377,10 @@ mod auto_timeout {
         (ui, shared)
     }
 
-    fn deliver(shared: &HwShared, frame: Frame, tpu: bool) {
+    fn deliver(shared: &HwShared, mut frame: Frame, tpu: bool) {
         let mut g = lock(shared);
+        let id = g.acquisition.identity();
+        (frame.cfg, frame.stamp) = (id.gen(), id.epoch());
         g.trig_fired = Some((frame.seq, Some(tpu)));
         g.frame = frame.clone();
         g.queue.push_back(frame);
@@ -520,11 +523,12 @@ mod auto_timeout {
         let mut worker_map = Phosphor::new(ui.ph.w, ui.ph.h);
         let (delivered_tx, delivered) = mpsc::channel();
         let destination = shared.clone();
+        pipe.set_identity(crate::ui::change::acquisition::identity(&ui));
         pipe.feed_with(
             Box::new(batch.into_bytes()),
             fb,
             frames - 1,
-            ui.m.hw_stamp,
+            crate::ui::change::acquisition::identity(&ui),
             decode,
             None,
             Box::new(move || {

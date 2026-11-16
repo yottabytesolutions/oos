@@ -7,6 +7,10 @@
 
 pub mod fpga;
 pub mod hw;
+#[cfg(any(target_os = "linux", test))]
+mod publication;
+#[cfg(any(target_os = "linux", test))]
+mod replay;
 pub(crate) mod roll;
 pub(crate) mod scripted;
 pub mod switches;

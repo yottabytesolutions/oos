@@ -860,8 +860,8 @@ impl MeasSrc {
 
 /// One record's measurements: (channel, samples, dt, the smallest swing that counts as a signal).
 /// (number, only the cheap measurements (`Ui::meas_cheap`), channels)
-type MeasJob = (u64, bool, Vec<(usize, MeasSrc, f64, f64)>);
-type MeasDone = (u64, Vec<(usize, Stats, oos_dsp::measure::Analysis)>);
+type MeasJob = (oos_core::change::Identity, bool, Vec<(usize, MeasSrc, f64, f64)>);
+type MeasDone = (oos_core::change::Identity, Vec<(usize, Stats, oos_dsp::measure::Analysis)>);
 
 /// The measurements of a record, each channel on its own thread (the four channels of 100 kpts took 27 ms in a row
 /// on the unit).
@@ -920,12 +920,10 @@ pub struct Ui {
     /// measurements per channel (oos-dsp) of the last record
     ana: [oos_dsp::measure::Analysis; NCH],
     /// the measurements in the background (`measure_in_background`); `meas_want`: the record shown is still to be
-    /// measured; `meas_n`: counts what makes a result still out wrong (a clear, a measurement made here at once), a
-    /// result sent before is dropped; a new record does not count (in Run one comes nearly every frame, and every
-    /// result would be dropped); `meas_new`: new results for the statistics, the trend and the counter
+    /// measured. Jobs and results carry gen/epoch/stats_gen; a synchronous measurement cancels the pending result.
+    /// A newer record with the same identity does not cancel useful work. `meas_new` feeds statistics/trend/counter.
     meas_bg: Option<MeasWorker>,
     meas_want: bool,
-    meas_n: u64,
     meas_new: bool,
     /// per channel: the measurement sent (`meas_env_sent`) and the one shown (`meas_env`) ran on min/max pairs
     /// (`framestats::needs_samples` are then not available)
@@ -1185,7 +1183,6 @@ impl Ui {
             ana: Default::default(),
             meas_bg: None,
             meas_want: false,
-            meas_n: 0,
             meas_env_sent: [false; NCH],
             meas_env: [false; NCH],
             meas_pending: None,
@@ -1780,7 +1777,8 @@ impl Ui {
         self.cleared = true;
         self.stats = [Stats::default(); NCH];
         // a measurement still out belongs to the record cleared away
-        (self.meas_n, self.meas_want) = (self.meas_n + 1, false);
+        change::acquisition::cancel_measurement(self);
+        self.meas_want = false;
         self.ana = Default::default();
         change::stats_clear(self);
         self.mask_counts_reset();
@@ -2104,13 +2102,11 @@ impl Ui {
                             self.meas_want = true;
                             self.meas_pending = Some(r);
                         } else {
-                            self.measure_rec(&r);
-                            self.meas_new = true;
+                            self.meas_new |= self.measure_rec(&r);
                         }
                     }
                 } else if self.meas_bg.is_some() {
-                    // the result for the last record is still good when it comes after this one: `meas_n` only
-                    // changes where a result out becomes wrong (a clear, measuring here at once)
+                    // A previous record's result remains useful within the same acquisition/statistics identity.
                     self.meas_want = true;
                     // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
                     // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
@@ -2118,8 +2114,7 @@ impl Ui {
                         self.meas_pending = self.last[0].clone();
                     }
                 } else {
-                    self.measure_last();
-                    self.meas_new = true;
+                    self.meas_new |= self.measure_last();
                 }
                 let p1 = std::time::Instant::now();
                 self.analyzer_update();
@@ -4778,14 +4773,15 @@ impl Ui {
 
     /// Recomputes the measurements of the record shown, at once (a result from the background for an older record
     /// is dropped). The samples are read where they are, not copied.
-    fn measure_last(&mut self) {
-        if let Some(rec) = self.last[0].clone() {
-            self.measure_rec(&rec);
-        }
+    fn measure_last(&mut self) -> bool {
+        self.last[0].clone().is_some_and(|rec| self.measure_rec(&rec))
     }
 
     /// The measurements of `rec` now, on this thread.
-    fn measure_rec(&mut self, rec: &Record) {
+    fn measure_rec(&mut self, rec: &Record) -> bool {
+        if !change::acquisition::record(self, rec) {
+            return false;
+        }
         let work: Vec<(usize, &[f32], f64, f64)> = (0..NCH)
             .filter(|&c| self.m.ch[c].on)
             .map(|c| {
@@ -4796,8 +4792,9 @@ impl Ui {
         let done = measure_channels(&work, self.meas_cheap(rec));
         self.meas_env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         self.meas_set(done);
-        self.meas_n += 1;
+        change::acquisition::cancel_measurement(self);
         self.meas_want = false;
+        true
     }
 
     /// Statistics of measurements made on every frame by the deposit workers (framestats.rs) into the Measure page's
@@ -4866,7 +4863,8 @@ impl Ui {
         let Some(w) = self.meas_bg.as_mut() else { return };
         if let Ok((n, done)) = w.rx.try_recv() {
             w.busy = false;
-            if n == self.meas_n {
+            let accept = std::mem::take(&mut w.accept);
+            if accept && n == change::acquisition::identity(self) {
                 // of the record shown when it was sent: in Run a few frames old, the newest result there is
                 self.meas_set(done);
                 self.meas_new = true;
@@ -4879,6 +4877,9 @@ impl Ui {
         self.meas_want = false;
         let pending = self.meas_pending.take();
         let Some(rec) = pending.as_ref().or(self.last[0].as_ref()) else { return };
+        if !change::acquisition::record(self, rec) {
+            return;
+        }
         // a held pair record (deepmeas.rs) is never measured: the measurement stays that of the last raw one
         let sw = self.switches();
         if crate::deepmeas::hold(&self.m, sw, rec.raw.as_ref().map(|r| &*r.frame), self.src.hw_deep_ok()) {
@@ -4899,8 +4900,10 @@ impl Ui {
             })
             .collect();
         let cheap = self.meas_cheap(rec);
+        let identity = change::acquisition::identity(self);
         let w = self.meas_bg.as_mut().expect("worker");
-        if w.tx.send(lifecycle::WorkerJob::Measure((self.meas_n, cheap, job))).is_ok() {
+        if w.tx.send(lifecycle::WorkerJob::Measure((identity, cheap, job))).is_ok() {
+            w.accept = true;
             w.busy = true;
             self.meas_env_sent = env;
         } else {
@@ -8802,7 +8805,10 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     mod change;
+    mod epochs;
     mod mapping;
+    mod producer;
+    use producer::Producer as _;
     mod roll;
     mod shadow;
 
@@ -8859,15 +8865,15 @@ mod tests {
                 seq += 1;
                 shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
             }
-            ui.step(0.02);
+            ui.producer_step(0.02);
             for _ in 0..3 {
                 seq += 1;
                 shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
-                ui.step(0.02);
+                ui.producer_step(0.02);
             }
             ui.meas_bg.as_mut().unwrap().busy = false;
             for _ in 0..50 {
-                ui.step(0.02);
+                ui.producer_step(0.02);
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
             let avg = ui.meas(0, Meas::Vavg);
@@ -8912,7 +8918,7 @@ mod tests {
                 ..Default::default()
             });
             for _ in 0..3 {
-                ui.step(0.02);
+                ui.producer_step(0.02);
             }
             let (avg, rms, max, pp) =
                 (ui.meas(0, Meas::Vavg), ui.meas(0, Meas::Vrms), ui.meas(0, Meas::Vmax), ui.meas(0, Meas::Vpp));
@@ -8958,7 +8964,7 @@ mod tests {
         let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.5 }).collect();
         let steps = |ui: &mut Ui, k: usize| {
             for _ in 0..k {
-                ui.step(0.02);
+                ui.producer_step(0.02);
             }
         };
         shared.lock().unwrap().queue.push_back(frame(1, false, raw.clone()));
@@ -8997,16 +9003,16 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert!(!shared.lock().unwrap().needs_raw);
         ui.azr.watch = true;
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert!(shared.lock().unwrap().needs_raw);
         (ui.azr.watch, ui.xy) = (false, true);
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert!(shared.lock().unwrap().needs_raw);
         ui.xy = false;
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert!(!shared.lock().unwrap().needs_raw);
     }
 
@@ -9040,7 +9046,7 @@ mod tests {
         let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
         let steps = |ui: &mut Ui, k: usize| {
             for _ in 0..k {
-                ui.step(0.02);
+                ui.producer_step(0.02);
             }
         };
         shared.lock().unwrap().queue.push_back(frame(1, true, 10_000_000, pairs.clone()));
@@ -9182,7 +9188,7 @@ mod tests {
         };
         let step = |ui: &mut Ui| {
             for _ in 0..3 {
-                ui.step(0.02);
+                ui.producer_step(0.02);
             }
         };
         // before the first raw record: nothing measured on pairs
@@ -9251,7 +9257,7 @@ mod tests {
                     g.queue.push_back(frame(seq));
                 }
             }
-            ui.step(0.033);
+            ui.producer_step(0.033);
             let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
             ui.ph.map[0].iter().map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] }).collect()
         };
@@ -9329,7 +9335,7 @@ mod tests {
                     g.queue.push_back(frame(seq, !(with_raw && i == 2)));
                 }
             }
-            ui.step(0.033);
+            ui.producer_step(0.033);
             let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
             ui.ph.map[0].iter().map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] }).collect()
         };
@@ -9435,7 +9441,7 @@ mod tests {
                 }
                 g.trig_fired = fired;
             }
-            ui.step(0.02);
+            ui.producer_step(0.02);
             ui.m.status
         };
         // off (no reading): the software finds the edge at the hardware point
@@ -9543,7 +9549,7 @@ mod tests {
             ui.set_dec_proto(proto);
             ui.m.tscale = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
             for _ in 0..20 {
-                ui.step(1.0 / 30.0);
+                ui.producer_step(1.0 / 30.0);
             }
             let p = ui.decode_packets().unwrap();
             let ids: Vec<u32> = p.iter().filter(|x| matches!(x.kind, Kind::Id { .. })).map(|x| x.value).collect();
@@ -9575,7 +9581,7 @@ mod tests {
         for k in 0..4 {
             // waiting, no crossing
             for _ in 0..100 {
-                ui.step(0.02);
+                ui.producer_step(0.02);
             }
             assert_eq!(ui.m.status, TrigStatus::Wait, "before force {}", k);
             ui.force_trigger();
@@ -9590,11 +9596,11 @@ mod tests {
                 ..Default::default()
             };
             shared.lock().unwrap().queue.push_back(f);
-            ui.step(0.02);
+            ui.producer_step(0.02);
             assert_ne!(ui.m.status, TrigStatus::Wait, "the forced frame came (force {})", k);
             // the scope waits again: WAIT within the plain 0.5 s, as read 2 s after a force on the unit and sooner
             for _ in 0..30 {
-                ui.step(0.02);
+                ui.producer_step(0.02);
             }
             assert_eq!(ui.m.status, TrigStatus::Wait, "0.6 s after force {}", k);
         }
@@ -9671,7 +9677,7 @@ mod tests {
             ui.m.trig_bus_val = id as u64;
             ui.m.tscale = tscales().iter().position(|&t| (t - 50e-6).abs() < 1e-9).unwrap();
             for _ in 0..10 {
-                ui.step(1.0 / 30.0);
+                ui.producer_step(1.0 / 30.0);
             }
             assert!(ui.last[0].as_ref().unwrap().triggered, "id {:x} not triggered", id);
             let p = ui.decode_packets().unwrap();
@@ -9697,7 +9703,7 @@ mod tests {
         ui.m.trig_mode = TrigMode::Normal;
         ui.m.tscale = tscales().iter().position(|&t| (t - 50e-6).abs() < 1e-9).unwrap();
         for _ in 0..10 {
-            ui.step(1.0 / 30.0);
+            ui.producer_step(1.0 / 30.0);
         }
         assert!(ui.last[0].is_none(), "Error trigger fired on clean traffic");
     }
@@ -9730,7 +9736,7 @@ mod tests {
                 ui.m.trig_mode = TrigMode::Normal;
                 ui.m.tscale = tsc;
                 for _ in 0..6 {
-                    ui.step(1.0 / 30.0);
+                    ui.producer_step(1.0 / 30.0);
                 }
                 if what == BusWhat::Error {
                     assert!(ui.last[0].is_none(), "{:?}: Error trigger fired on clean traffic", proto);
@@ -9795,7 +9801,7 @@ mod tests {
             ui.m.trig_mode = TrigMode::Normal;
             ui.m.tscale = tsc;
             for _ in 0..6 {
-                ui.step(1.0 / 30.0);
+                ui.producer_step(1.0 / 30.0);
             }
             if what == BusWhat::Error {
                 assert!(ui.last[0].is_none(), "USB: Error trigger fired on clean traffic");
@@ -9847,7 +9853,7 @@ mod tests {
         use super::*;
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.ch[1].on = true;
-        ui.step(0.02);
+        ui.producer_step(0.02);
         // M1 = CH1 + CH2, M2 = Abs(M1); M1 offers only the channels, M2 also M1
         ui.m.math = MathOp::Add;
         assert_eq!(ui.options(Item::MathA).len(), NCH);
@@ -9888,12 +9894,12 @@ mod tests {
         // "must intersect" an empty region: every record is dropped
         ui.last[0] = None;
         for _ in 0..5 {
-            ui.step(0.02);
+            ui.producer_step(0.02);
         }
         assert!(ui.zone_drops > 0 && ui.last[0].is_none());
         // "must not intersect": records pass again
         ui.m.zones[0].inside = false;
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert!(ui.last[0].is_some());
     }
 
@@ -9928,7 +9934,7 @@ mod tests {
             ui.m.trig_mode = TrigMode::Auto;
             let mut found = String::new();
             for _ in 0..6 {
-                ui.step(0.05);
+                ui.producer_step(0.05);
                 let pk = ui.decode_packets().unwrap_or_default();
                 found = format!("{:?}", pk);
                 if found.contains(want) {
@@ -9945,12 +9951,12 @@ mod tests {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.segments = 10;
         for _ in 0..20 {
-            ui.step(0.02);
+            ui.producer_step(0.02);
         }
         assert_eq!((ui.m.run, ui.seg_n, ui.history.len()), (RunState::Stop, 10, 10));
         // RUN again: a new set
         ui.key(key::RUNSTOP);
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert!(ui.seg_n <= 6 && ui.history.len() == ui.seg_n);
     }
 
@@ -9959,12 +9965,12 @@ mod tests {
         use super::*;
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap();
-        ui.step(0.05);
+        ui.producer_step(0.05);
         // spectrum: the strongest line of the 1 kHz square is its fundamental
         ui.open_menu(MenuId::Spectrum);
         ui.adjust(Item::SpecOn, 1);
         assert_eq!(ui.m.view, AView::Spectrum);
-        ui.step(0.05);
+        ui.producer_step(0.05);
         let p = spectrum_peak(&ui).expect("a peak");
         // within a display column (the spectrum has one point per plot column)
         assert!((p - 1e3).abs() < 40.0, "peak at {} Hz", p);
@@ -9973,14 +9979,14 @@ mod tests {
         // eye: the recovered unit interval is half a period (0.5 ms)
         ui.adjust(Item::EyeOn, 1);
         for _ in 0..3 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
         }
         let (_, _, period) = ui.azr.eye_res.clone().expect("eye result");
         assert!((period - 0.5e-3).abs() < 0.02e-3, "UI {}", period);
         ui.render(&mut cv);
         // power and identify do not panic; identify names CH1 and applies an edge trigger on it
         ui.adjust(Item::PowOn, 1);
-        ui.step(0.05);
+        ui.producer_step(0.05);
         assert!(!ui.azr.power.is_empty());
         ui.render(&mut cv);
         ui.activate(Item::IdentifyAct);
@@ -10005,21 +10011,21 @@ mod tests {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-3).abs() < 1e-6).unwrap();
         ui.m.ch[1].on = true;
-        ui.step(0.05);
+        ui.producer_step(0.05);
         ui.m.spec_wf = true;
         ui.m.spec_dist = true;
         ui.adjust(Item::SpecOn, 1);
         for _ in 0..30 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
         }
         shot(&mut ui, "spectrum");
         ui.adjust(Item::EyeOn, 1);
         for _ in 0..10 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
         }
         shot(&mut ui, "eye");
         ui.adjust(Item::PowOn, 1);
-        ui.step(0.05);
+        ui.producer_step(0.05);
         shot(&mut ui, "power");
         ui.m.view = AView::Scope;
         ui.m.math = MathOp::Add;
@@ -10029,7 +10035,7 @@ mod tests {
         ui.m.hist = Hist::Vertical;
         ui.m.zones[0] = crate::zone::Zone { on: true, src: 0, inside: true, pts: vec![(-2e-3, 2.0), (-1.5e-3, 3.0)] };
         for _ in 0..10 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
         }
         shot(&mut ui, "scope_math_zone_hist");
         ui.activate(Item::IdentifyAct);
@@ -10044,7 +10050,7 @@ mod tests {
         ui.m.hist = Hist::Off;
         ui.m.tscale = tscales().iter().position(|&x| (x - 20e-6).abs() < 1e-9).unwrap();
         for _ in 0..5 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
         }
         shot(&mut ui, "canfd");
         ui.open_menu(MenuId::Main);
@@ -10085,7 +10091,7 @@ mod tests {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.ch[1].on = true;
         for _ in 0..5 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
         }
         same(&mut ui, "scope");
         ui.open_menu(MenuId::Main);
@@ -10096,25 +10102,25 @@ mod tests {
         ui.close_menu();
         ui.m.zoom = true;
         ui.m.color_grade = true;
-        ui.step(0.05);
+        ui.producer_step(0.05);
         same(&mut ui, "zoom, colour grade");
         ui.m.zoom = false;
         ui.m.color_grade = false;
         ui.adjust(Item::SpecOn, 1);
         for _ in 0..10 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
         }
         same(&mut ui, "spectrum");
         ui.adjust(Item::EyeOn, 1);
         for _ in 0..10 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
         }
         same(&mut ui, "eye");
         ui.m.view = AView::Scope;
         ui.set_dec_proto(Proto::CanFd);
         ui.m.dec_on = true;
         for _ in 0..5 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
         }
         same(&mut ui, "decode");
     }
@@ -10134,7 +10140,7 @@ mod tests {
         ui.adjust(Item::ProtoWatch, 1);
         let mut named = String::new();
         for _ in 0..80 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
             if let Some((t, _)) = &ui.toast {
                 if t.starts_with("Protocol watch") {
                     named = t.clone();
@@ -10173,7 +10179,7 @@ mod tests {
         ui.activate(Item::BodeRun);
         assert!(ui.bode.running);
         for _ in 0..200 {
-            ui.step(0.05);
+            ui.producer_step(0.05);
             if !ui.bode.running {
                 break;
             }
@@ -10209,7 +10215,7 @@ mod tests {
                 break;
             }
             seen.push(ui.m.afg_freq);
-            ui.step(0.05);
+            ui.producer_step(0.05);
         }
         assert!(!ui.bode.running);
         assert!(seen.iter().any(|f| (f / 1e4 - 1.0).abs() < 1e-9) && seen.contains(&1e5), "{:?}", seen);
@@ -10226,7 +10232,7 @@ mod tests {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         assert!(ui.web_wave_csv().is_err());
         for _ in 0..30 {
-            ui.step(0.02);
+            ui.producer_step(0.02);
         }
         assert!(ui.web_wave_csv().unwrap().starts_with("Time (s)"));
         ui.last[0].as_mut().unwrap().ch[0] = vec![0.0; WEB_CSV_MAX + 1];
@@ -10277,7 +10283,7 @@ mod tests {
             ui.set_dec_proto(proto);
             ui.m.tscale = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
             for _ in 0..20 {
-                ui.step(1.0 / 30.0);
+                ui.producer_step(1.0 / 30.0);
             }
             let p = ui.decode_packets().unwrap();
             match proto {
@@ -10348,7 +10354,7 @@ mod tests {
             ui.m.trig_mode = TrigMode::Normal;
             let mut hits = 0;
             for _ in 0..20 {
-                ui.step(0.033);
+                ui.producer_step(0.033);
                 if ui.m.status == TrigStatus::Triggered {
                     hits += 1;
                 }
@@ -10380,7 +10386,7 @@ mod tests {
         for zoom in [false, true] {
             ui.set_zoom(zoom);
             for _ in 0..5 {
-                ui.step(0.033);
+                ui.producer_step(0.033);
             }
             ui.render(&mut cv);
             let pal = heat_palette();
@@ -10398,22 +10404,22 @@ mod tests {
     fn mask_test_counts_and_stops() {
         use super::*;
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        ui.step(0.033);
+        ui.producer_step(0.033);
         ui.create_mask();
         assert!(ui.m.mask_on && ui.mask.is_some());
         for _ in 0..10 {
-            ui.step(0.033);
+            ui.producer_step(0.033);
         }
         assert!(ui.mask_pass >= 30 && ui.mask_fail == 0, "pass {} fail {}", ui.mask_pass, ui.mask_fail);
         ui.m.ch[3].on = true;
         ui.adjust(Item::MaskSrc, 3);
         assert!(ui.mask.is_none() && !ui.m.mask_on);
-        ui.step(0.033);
+        ui.producer_step(0.033);
         ui.m.mask_x = 0.04;
         ui.create_mask();
         ui.m.mask_stop = true;
         for _ in 0..100 {
-            ui.step(0.033);
+            ui.producer_step(0.033);
             if ui.m.run == RunState::Stop {
                 break;
             }
@@ -10432,7 +10438,7 @@ mod tests {
         ui.m.ch[2].on = true;
         ui.m.tscale -= 2;
         ui.m.color_grade = true;
-        ui.step(0.033);
+        ui.producer_step(0.033);
         let saved = ui.m.clone();
         ui.activate(Item::StoreSaveSetup);
         ui.activate(Item::StoreCsv);
@@ -10464,7 +10470,7 @@ mod tests {
         ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
         (ui.m.segments, ui.m.seg_hw, ui.m.seg_ivl) = (100, true, 1e-3);
         ui.m.run = RunState::Run;
-        ui.step(0.02);
+        ui.producer_step(0.02);
         {
             let g = shared.lock().unwrap();
             assert_eq!((g.seg.run, g.seg.running), (1, true));
@@ -10477,7 +10483,7 @@ mod tests {
             (g.seg.done_run, g.seg.phase, g.seg.total, g.seg.recorded) = (1, SegPhase::Recording, 100, 40);
         }
         for _ in 0..30 {
-            ui.step(0.02);
+            ui.producer_step(0.02);
         }
         assert_eq!(ui.m.run, RunState::Run);
         assert_eq!(ui.seg_view.unwrap().recorded, 40);
@@ -10487,7 +10493,7 @@ mod tests {
             (g.seg.phase, g.seg.recorded, g.seg.read) = (SegPhase::Done, 100, 100);
             g.seg.times = (0..100).map(|k| Some(k as f64 * 10e-6)).collect();
         }
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.toast.as_ref().unwrap().0, "100 segments recorded");
         // browse: back from the newest asks the thread for segment 99, then 98
@@ -10504,7 +10510,7 @@ mod tests {
             ..Default::default()
         };
         shared.lock().unwrap().seg.shown = Some((98, f));
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert_eq!(ui.seg_pos, Some(98));
         assert!(ui.last[0].is_some());
         assert!(shared.lock().unwrap().seg.shown.is_none());
@@ -10516,7 +10522,7 @@ mod tests {
         assert!(ui.seg_times_text().starts_with("0e0,1e-5,2e-5"));
         // RUN again: a new recording number
         ui.m.run = RunState::Run;
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert_eq!(shared.lock().unwrap().seg.run, 2);
         assert!(ui.seg_times.is_empty());
     }
@@ -10616,7 +10622,7 @@ mod tests {
         ui.m.trig_level = 0.0;
         ui.m.ch[0].offset = 0.0;
         assert!(ui.fast_ok());
-        ui.step(0.05);
+        ui.producer_step(0.05);
         assert_eq!(ui.wfm_total, 10);
         assert!(shared.lock().unwrap().queue.is_empty());
         assert_eq!(ui.m.status, TrigStatus::Triggered);
@@ -10655,7 +10661,7 @@ mod tests {
             let c = &ui.last[0].as_ref().unwrap().ch[0];
             c[c.len() / 2]
         };
-        ui.step(0.02);
+        ui.producer_step(0.02);
         let c0 = {
             let g = shared.lock().unwrap();
             assert_eq!(g.want.as_ref().unwrap().mode, Mode::Average { count: 16 });
@@ -10665,26 +10671,26 @@ mod tests {
         assert!(ui.items(MenuId::Acquire).contains(&Item::AcqAvgHw));
         for (k, v) in [1.0, 0.0].into_iter().enumerate() {
             shared.lock().unwrap().queue.push_back(flat(k as u64 + 1, v, true));
-            ui.step(0.02);
+            ui.producer_step(0.02);
         }
         assert_eq!(mid(&ui), 0.0);
         // a frame the FPGA did not average is blended: 0 + (1 - 0) / 16
         shared.lock().unwrap().queue.push_back(flat(3, 1.0, false));
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert!((mid(&ui) - 1.0 / 16.0).abs() < 1e-6, "{}", mid(&ui));
         // CLEAR, then STOP and RUN, then SINGLE: each a new clear request
         ui.clear_display();
-        ui.step(0.02);
+        ui.producer_step(0.02);
         let c1 = shared.lock().unwrap().avg_clear;
         assert!(c1 > c0);
         ui.m.run = RunState::Stop;
-        ui.step(0.02);
+        ui.producer_step(0.02);
         ui.m.run = RunState::Run;
-        ui.step(0.02);
+        ui.producer_step(0.02);
         let c2 = shared.lock().unwrap().avg_clear;
         assert!(c2 > c1);
         ui.m.trig_mode = TrigMode::Single;
-        ui.step(0.02);
+        ui.producer_step(0.02);
         assert!(shared.lock().unwrap().avg_clear > c2);
         ui.m.trig_mode = TrigMode::Auto;
         // fall-backs to the software average
@@ -10922,17 +10928,17 @@ mod tests {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let lit = |ui: &Ui| ui.ph.map.iter().map(|m| m.iter().filter(|&&v| v > 0).count()).sum::<usize>();
         for _ in 0..5 {
-            ui.step(0.033);
+            ui.producer_step(0.033);
         }
         ui.create_mask();
-        ui.step(0.033);
+        ui.producer_step(0.033);
         ui.key(key::RUNSTOP);
-        ui.step(0.033);
+        ui.producer_step(0.033);
         assert!(lit(&ui) > 500 && ui.mask_pass > 0 && !ui.mstat.is_empty());
         ui.key(key::CLEAR);
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         for _ in 0..5 {
-            ui.step(0.033);
+            ui.producer_step(0.033);
             ui.render(&mut cv);
         }
         assert_eq!(lit(&ui), 0);
@@ -10949,10 +10955,10 @@ mod tests {
         assert_eq!(yellow, 0);
         // Display > Clear does the same; SINGLE acquires and draws again
         ui.key(key::SINGLE);
-        ui.step(0.033);
+        ui.producer_step(0.033);
         assert!(lit(&ui) > 500 && ui.last[0].is_some());
         ui.activate(Item::ClearDisp);
-        ui.step(0.033);
+        ui.producer_step(0.033);
         assert_eq!(lit(&ui), 0);
     }
 
@@ -10963,7 +10969,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("oos-ui-quick-{}", std::process::id()));
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.store_dir = dir.clone();
-        ui.step(0.033);
+        ui.producer_step(0.033);
         // default: screenshot as before
         ui.key(key::QUICK);
         assert_eq!(ui.shot_request.take(), Some(String::new()));
@@ -11029,23 +11035,23 @@ mod tests {
     fn a_long_press_of_a_channel_key_switches_ac_dc() {
         use super::*;
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        ui.step(0.033);
+        ui.producer_step(0.033);
         assert!(ui.m.ch[0].on && ui.m.ch[0].coupling == Coupling::Dc && !ui.menu_open);
         // short: the menu opens when the key is let go
         ui.panel_key(key::CH1);
         assert!(!ui.menu_open, "not yet");
-        ui.step(0.1);
+        ui.producer_step(0.1);
         ui.panel_key(0);
         assert!(ui.menu_open && ui.menu == MenuId::Channel(0));
         // long: AC while still held, the menu stays, the channel on
         ui.panel_key(key::CH1);
-        ui.step(LONG_PRESS);
+        ui.producer_step(LONG_PRESS);
         assert!(ui.m.ch[0].on && ui.m.ch[0].coupling == Coupling::Ac);
-        ui.step(0.5);
+        ui.producer_step(0.5);
         ui.panel_key(0);
         assert!(ui.m.ch[0].on && ui.m.ch[0].coupling == Coupling::Ac && ui.menu_open, "letting go does nothing more");
         ui.panel_key(key::CH1);
-        ui.step(1.0);
+        ui.producer_step(1.0);
         ui.panel_key(0);
         assert_eq!(ui.m.ch[0].coupling, Coupling::Dc, "and back");
         // a short press with the menu open: off
@@ -11059,13 +11065,13 @@ mod tests {
         ui.close_menu();
         let (x, y) = mid(ui.cards().0[0]);
         ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
-        ui.step(LONG_PRESS + 0.05);
+        ui.producer_step(LONG_PRESS + 0.05);
         assert_eq!(ui.m.ch[0].coupling, Coupling::Ac);
         ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
         assert!(!ui.menu_open, "no tap after a long touch");
         // a short one is a tap
         ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
-        ui.step(0.1);
+        ui.producer_step(0.1);
         ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
         assert!(ui.menu_open && ui.menu == MenuId::Channel(0) && ui.m.ch[0].coupling == Coupling::Ac);
     }
@@ -11076,7 +11082,7 @@ mod tests {
         use super::*;
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         for _ in 0..3 {
-            ui.step(0.033);
+            ui.producer_step(0.033);
         }
         // the menu keys
         for (k, m) in [

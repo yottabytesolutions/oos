@@ -77,8 +77,8 @@ returns an error. Generations occupy 24 bytes, ChangeSet less than 4 KiB, and Ui
 1 KiB each. The observer additionally retains fixed diagnostic tables for 243 classified field slots,
 18 oracle rows and ten counters, plus 256 paired intake/change/shadow timing samples. A prepared
 comparison holds one ChangeSet and a fixed field table below 16 KiB. The shadow point precedes legacy
-auto_step; settings and tokens emitted later resolve together at the next point. Failed resolutions
-retain their queued requests. No unbounded log
+auto_step; settings and tokens emitted later resolve together at the next point. In M2.3b, failed
+resolutions quarantine queued requests and keep stepping on the last publication. No unbounded log
 collection, new global state or production allocator is introduced.
 
 `stat` and `:SYSTem:STATe?` expose all ten raw shadow counters, normalization/outbox disagreements, errors,
@@ -104,8 +104,8 @@ The existing shadow scratch captures pre-normalize values to restrict D3 diagnos
 classes of fields actually repaired; a row alone grants no allowance.
 It marks the picture only in RUN and clears statistics in RUN and STOP. Idempotent passes do
 neither. Keep the bridge through M2.3d; its picture side stops acting in d and its statistics
-side remains until e. Classification, generations, publication, outboxes and the remaining reset
-consumers still use the M2.2 observation/legacy arrangement. Normalization equality is checked
+side remains until e. The later b paragraph describes the acquisition cutover; mapping, picture
+and remaining reset consumers retain their legacy owners. Normalization equality is checked
 at the pre-stage change point, including zoom and analyzer sources, before later internal writes.
 DEFAULT deliberately clears previous-setup statistics, including repeated equal-value defaults.
 Cursor mode is display-only; it does not reset temporal views. Mask enable/reference publication
@@ -114,7 +114,7 @@ selects the hardware mask channel. The owner decided D9: advance the generation 
 drop in-flight records mask-tested against the old channel, and reset mask statistics.
 Legacy does not advance its generation on this edit. The observer permits only extra new
 ACQ and MASK at an independently observed mask-source change, including demo sources;
-acting generation/filter and reset consumers still switch in M2.3b/e. Effective worker-route
+the generation/filter consumer switches in M2.3b and mask-count reset remains for e. Effective worker-route
 or raw/pair read-format changes also change acquisition identity. A hardware mask can leave
 workers enabled while requiring raw input,
 so the adapter supplies the effective compression factor as a small value in UiAcq.
@@ -123,6 +123,45 @@ to math and waterfall rows to view state. Spectrum state settings classify MATH|
 settings VIEW; these analyzer edits neither classify STATS nor clear measurement statistics.
 The observer retains 18 fixed oracle rows.
 The allocation census includes the live normalizer and bridge as well as shadow work.
+
+
+M2.3b intermediate state: the change point now publishes normalized acquisition settings,
+generator, raw/read policy, worker route and the resolved identity under one Shared lock.
+The accepted detector snapshot supplies those settings even if a later internal stage has already
+proposed changes. Publication follows the retained run/average transition effects, so their restart
+counter is included in the same handoff. The matching worker view is ready before that publication
+becomes available. Lifecycle polls precede preparation in both live and scripted paths; mask/zone
+wants are published with the same step's pair, never by those polls. Failed resolutions drop their
+queued requests, keep the last publication and continue the step loop. The first error of each
+variant is logged to stderr, with every occurrence counted in diagnostics. Output frames
+retain `cfg` as gen and `stamp` as epoch; both come from the same applied snapshot, including
+raw rereads, roll/scan and segments. WANTED/APPLIED remain pacing mirrors, never header sources.
+Identity boundaries discard prearmed work without reconfiguring hardware. Segmented recording,
+roll hardware and retained raw-replay eligibility survive until effective hardware settings or mode change.
+Every identity boundary clears retained roll/scan analog and LA buffers and the scan cursor;
+new-pair snapshots cannot contain pre-boundary buffered samples. STOP raw rereads carry the
+captured batch identity and stale rereads are rejected at publication.
+SINGLE completion survives generation-only boundaries. Producer deliveries and both
+record routes reject every different pair before conversion; valid current records remain eligible.
+Background measurements and analyzer results additionally require stats_gen. Deposit folds keep
+their identity through worker/helper accumulation and mailbox coalescing; statistics-only changes
+reject old folds while retaining valid picture contributions. `:SYSTem:STATe?` reports separate
+stale frame losses at worker output, UI publication, queue pop and pipe, plus queue overflow and
+lost measurement-fold sample counts. Synchronous measurement notification requires an actual
+measurement; lifecycle reset advances the local analyzer revision to reject pre-reset results.
+
+Autoset/Bode stages use unique run/stage tokens and accept only their resolved pair. A foreign
+generation/epoch boundary reissues the active stage token once at the next preparation and resets
+its settling state; resolution takes one further step. Restart counts are exposed and the first
+four restarts per requester are logged. This bounds recovery without relaxing exact acceptance. A late
+stage captures its associated settings into a bounded, capacity-reusing command outbox, restoring
+the accepted live snapshot until the next intake. Pending stage settings apply before external
+intake and before normalization/resolution. The existing two Model snapshots are reused; no third
+snapshot is retained. Other internal commands and run-transition consumers remain M2.3c work.
+`meas_n` and independent stamp bumps are removed. The flat Model's dormant `hw_stamp` slot remains
+for the exhaustive 194-field compatibility model; only test feed wrappers retain its old comparison.
+The normalize-to-mark_changed bridge remains intact through d. These producer changes are host
+verified only; the coordinated producer smoke against the 20261115 unit baseline holds M2.3c.
 
 ## Layers
 

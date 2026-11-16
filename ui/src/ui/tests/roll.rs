@@ -70,7 +70,8 @@ mod tests {
             }
             self.seq += 1;
             let len = self.ring[0].len();
-            let stamp = g.stamp;
+            let stamp = g.acquisition.identity().epoch();
+            let cfg = g.acquisition.identity().gen();
             publish(
                 &mut g,
                 crate::board::Frame {
@@ -82,6 +83,7 @@ mod tests {
                     envelope: true,
                     partial: len < KEEP,
                     stamp,
+                    cfg,
                     la: Some(la::LaRec {
                         words: Arc::new(self.ring_la.iter().copied().collect()),
                         t0: 0.0,
@@ -140,6 +142,7 @@ mod tests {
     // STOP bypassed by the roll loop, old samples on rearm, and roll missing from the acquired counter.
     #[test]
     fn roll_single_bounds_snapshots_holds_and_rearms() {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
         let mut f = RollFixture::new();
         let before = acquired();
         f.fill_and_stop();

@@ -54,15 +54,10 @@ fn unrelated_channel_changes_and_single_arms_preserve_spectrum_history() {
             let mut history = None;
             let done = run(prepare(&ui, AView::Spectrum, false).unwrap(), &mut history);
             assert!(accept(&mut ui, done));
-            if single {
-                // Each SINGLE arm raises this acquisition token, without changing the analyser.
-                ui.m.hw_stamp += 1;
-            } else {
+            if !single {
                 ui.m.ch[2].offset += 1.0;
-                ui.m.hw_stamp += 1;
             }
-            let rec = ui.last[0].as_mut().unwrap().raw.as_mut().unwrap();
-            Arc::make_mut(&mut rec.frame).stamp = ui.m.hw_stamp;
+            advance_record(&mut ui, single);
             let done = run(prepare(&ui, AView::Spectrum, false).unwrap(), &mut history);
             assert!(accept(&mut ui, done));
             assert_eq!(ui.azr.spec_avg.as_ref().unwrap().count(), 2, "trace {trace}, SINGLE {single}");
@@ -84,8 +79,7 @@ fn eye_hits_pool_across_single_stamps_but_clear_restarts_them() {
     let done = run(prepare(&ui, AView::Eye, false).unwrap(), &mut history);
     assert!(accept(&mut ui, done));
     let hits = ui.azr.eye.as_ref().unwrap().hits.clone();
-    ui.m.hw_stamp += 1;
-    Arc::make_mut(&mut ui.last[0].as_mut().unwrap().raw.as_mut().unwrap().frame).stamp = ui.m.hw_stamp;
+    advance_record(&mut ui, true);
     let done = run(prepare(&ui, AView::Eye, false).unwrap(), &mut history);
     assert!(accept(&mut ui, done));
     assert_eq!(ui.azr.eye.as_ref().unwrap().hits, hits.iter().map(|n| n * 2).collect::<Vec<_>>());
@@ -119,3 +113,19 @@ fn disconnected_analysis_worker_falls_back_to_synchronous_results() {
 
 mod equivalence;
 mod verification;
+
+#[test]
+fn lifecycle_reset_rejects_pre_reset_analyzer_results_at_the_same_pair() {
+    let mut ui = fixture(AView::Eye, 10_000, 2e-7, |k| if k % 86 < 43 { -1.0 } else { 1.0 });
+    ui.m.run = RunState::Stop;
+    let before = key(&ui).generation;
+    let record = ui.last[0].clone();
+    let done = run(prepare(&ui, AView::Eye, false).unwrap(), &mut None);
+    // A direct reset pins the revision independently of acquisition identity or configuration changes.
+    crate::ui::lifecycle::reset(&mut ui);
+    ui.last[0] = record;
+    assert_eq!(key(&ui).generation.0, before.0);
+    assert_eq!(key(&ui).generation.1, before.1 + 1);
+    assert!(!accept(&mut ui, done));
+    assert!(ui.azr.eye.is_none());
+}

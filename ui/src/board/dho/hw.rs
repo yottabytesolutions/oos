@@ -5,9 +5,11 @@
 //! decoded into volts per channel. The UI aligns each frame with the software trigger engine (all 12 trigger types on
 //! real data; the hardware itself triggers with an edge on the source at the level, in AUTO or NORMAL).
 
+#[cfg(target_os = "linux")]
+use super::publication::tag;
 use crate::board::{Frame, Slow};
 #[cfg(target_os = "linux")]
-use crate::board::{HwShared, Shared, QUEUE_MAX};
+use crate::board::{HwShared, SegPhase, Shared};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Couple, Segments, Settings, Trig};
 use oos_hal::dho::{afe, auxout, hz, serialtrig, tpu, uarttrig};
@@ -1071,7 +1073,7 @@ pub(super) fn prearm_from(env_set: bool, conf: &str) -> bool {
 /// Stops the acquisition armed ahead, if one is, before anything else writes the FPGA.
 #[cfg(target_os = "linux")]
 fn disarm(
-    armed: &mut Option<(Settings, u64)>,
+    armed: &mut Option<(Settings, (u64, u64))>,
     state: &mut oos_hal::dho::seq::State,
     bar: &mut oos_hal::dho::bus::Bar1,
     c2h: &mut std::fs::File,
@@ -1172,7 +1174,7 @@ fn set_meta(s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
         la: None,
         hw_avg: false,
         pre_exact,
-        cfg: crate::pacing::APPLIED.load(std::sync::atomic::Ordering::Relaxed),
+        cfg: 0,
     };
 }
 
@@ -1326,7 +1328,7 @@ fn prearm_keeps_replay(b: &Settings, p: &hz::Params, deep: Option<crate::deepmea
 /// being written again): the whole frame for the live compression, the screen window for a deep record when the deep
 /// measurements want samples.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn final_replay(
+pub(super) fn final_replay(
     b: &Settings,
     p: &hz::Params,
     count: u32,
@@ -1496,7 +1498,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         let afg_cal = oos_hal::dho::afg::Cal::load(&o.cal_dir);
         let mut afg_io: Option<oos_hal::dho::afg::Io> = None;
         let mut afg_done: Option<(bool, f64, f64, f64, oos_hal::dho::afg::Wave, oos_hal::dho::afg::Mod)> = None;
-        let mut stamp;
+        let mut applied_pair = None;
         let mut xadc_at: Option<std::time::Instant> = None;
         let mut la_fails = 0u32;
         // the read buffer of the batches, kept (bus::DmaBuf)
@@ -1508,8 +1510,8 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         // the last raw read of the newest frame of a live-compressed batch (compress.rs, at most one per RAW_PERIOD)
         let mut comp_last: Option<std::time::Instant> = None;
         // the batch read by the previous pass and nothing since (settings, parameters, frames, newest frame read
-        // raw), and whether arming is paused for a STOP (`Shared::hold`, docs/fork/stop-exact.md)
-        let mut fresh: Option<(Settings, hz::Params, u32, bool)> = None;
+        // raw, captured identity), and whether arming is paused for a STOP (`Shared::hold`, docs/fork/stop-exact.md)
+        let mut fresh: Option<super::replay::Read> = None;
         let mut paused = false;
         // read-out buffers made so far: this one, and up to `POOL` in all lent to the deposit workers in batch mode
         let mut pool_made = 1usize;
@@ -1522,7 +1524,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         // time this thread takes to draw one frame as a helper (smoothed)
         let mut help_cost = std::time::Duration::from_micros(500);
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
-        let mut armed: Option<(Settings, u64)> = None;
+        let mut armed: Option<(Settings, (u64, u64))> = None;
         // the SINGLE stamp whose batch brought its frame (`single_wants_more`)
         let mut single_done: Option<u64> = None;
         // the hardware segmented recording in progress or read back
@@ -1546,7 +1548,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         let mut trim_pending: Option<TrimPending> = None;
         let mut slots_done: Option<u64> = None;
         loop {
-            let last_read = fresh.take();
+            let mut last_read = fresh.take();
             counter_tick(&mut bar, &out, &mut counting, &mut count_n);
             // FPGA die temperature and VCCINT for the System info page (one register read, about once a second)
             if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
@@ -1604,10 +1606,9 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             }
             // built-in generator (afg.rs): apply a changed request; the GPIO lines stay open from the first request on,
             // which is "off" at start: an output left running (oos-fpgad afg, an earlier oos-ui) goes off as at power-on
-            let (afg_want, stamp_now) = {
-                let g = out.lock().unwrap();
-                (g.afg[0], g.stamp)
-            };
+            let (afg_want, want, want_mode, avg_clear, mask_want, zone_want, needs_raw, identity, route) = super::publication::snapshot(&out);
+            let (stamp, want_gen) = (identity.epoch(), identity.gen());
+            let pair = (want_gen, stamp);
             if afg_want != afg_done {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
@@ -1626,18 +1627,15 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 }
                 afg_done = afg_want;
             }
-            // read with the generator request; the settings read below are as new or newer
-            stamp = stamp_now;
-            // the settings generation of this `want` (`pacing::WANTED`, raised by the UI under the same lock)
-            let (want, want_mode, avg_clear, mask_want, zone_want, needs_raw, want_gen) = {
-                let g = out.lock().unwrap();
-                (g.want.clone(), g.slow, g.avg_clear, g.mask_want.clone(), g.zone_want.clone(), g.needs_raw, crate::pacing::WANTED.load(std::sync::atomic::Ordering::Relaxed))
-            };
             let Some(mut want) = want else {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;
             };
+            if super::roll::boundary(applied_pair, identity, &mut ring, &mut sweep, &mut ring_la, &mut sweep_la, &mut cursor) {
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                // D4: discard old work and stream samples without restarting recording or roll.
+            }
             // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
             let asked = (Some(want.clone()), want_mode);
             want.afe = o.program_afe;
@@ -1661,9 +1659,10 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
             }
-            if current.as_ref().map_or(true, |c| c.0 != want) || mode != want_mode {
+            if super::publication::reconfigure(current.as_ref().map(|c| (&c.0, mode)), &want, want_mode) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
+                last_read = None;
                 mode = want_mode;
                 if rolling.take().is_some() {
                     bar.apply(&oos_hal::dho::roll::stop(&mut state.sh));
@@ -1699,6 +1698,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 }
             }
             // what is acquired from here on is acquired under `want` (configured now or already)
+            applied_pair = Some(pair);
             crate::pacing::APPLIED.store(want_gen, std::sync::atomic::Ordering::Relaxed);
             let (s, p) = current.clone().unwrap();
             // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
@@ -1733,7 +1733,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             // levels for the auto set-up from the measure unit, once the settings they ask for are applied; the unit
             // is set up while nothing is armed (configuration crosses into the ADC clock without synchronisers)
             let lw = out.lock().unwrap().levels_want;
-            if let Some((id, _, runs)) = lw.filter(|w| mode == Slow::Off && stamp >= w.1 && levels_done != Some(w.0)) {
+            if let Some((id, _, runs)) = lw.filter(|w| mode == Slow::Off && stamp == w.1 && levels_done != Some(w.0)) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 let v = levels_measure(&mut bar, &s, &state.gain, runs);
                 out.lock().unwrap().levels = Some((id, v));
@@ -1910,7 +1910,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         }
                         // word 0 at the left edge like analog point 0; only what the sweeps have written so far
                         let la = la_t.map(|_| crate::ui::la::LaRec { words: Arc::new(sweep_la.iter().take_while(|x| !x.is_nan()).map(|&x| x as u16).collect()), t0: 0.0, dt: la_dt });
-                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: crate::pacing::APPLIED.load(std::sync::atomic::Ordering::Relaxed) }
+                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen }
                     } else {
                         let len = ring.iter().map(|r| r.len()).max().unwrap_or(0);
                         // the newest point at the right edge: index len - 1 sits half a screen right of `pre`
@@ -1921,10 +1921,10 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             words: Arc::new(ring_la.iter().copied().collect()),
                             dt: la_dt,
                         });
-                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: crate::pacing::APPLIED.load(std::sync::atomic::Ordering::Relaxed) }
+                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen }
                     };
                     let mut g = out.lock().unwrap();
-                    super::roll::publish(&mut g, f, scan.is_some());
+                    if super::publication::current(&g, &f) { super::roll::publish(&mut g, f, scan.is_some()); }
                     g.halted = halted;
                 }
                 if done && !halted {
@@ -1939,7 +1939,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             }
             if s.segments.is_some() {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                if let Err(e) = seg_step(&mut segrun, &s, &p, &mut state, &mut bar, &mut c2h, &mut dma, &out, &mut n, stamp) {
+                if let Err(e) = seg_step(&mut segrun, &s, &p, &mut state, &mut bar, &mut c2h, &mut dma, &out, &mut n, identity) {
                     status(format!("segments: {}", e));
                     seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
                     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -1955,11 +1955,11 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             if hold {
                 let ahead = armed.is_some();
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                let replay = last_read.as_ref().and_then(|(lb, lp, count, raw)| final_replay(lb, lp, *count, *raw, ahead, deep_want).map(|ds| (ds, *lp, *count)));
-                let last = replay.and_then(|(ds, lp, count)| match seq::read_raw_again(&mut state, &ds, &lp, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
+                let replay = last_read.as_ref().and_then(|read| read.plan(ahead, deep_want).map(|(ds, lp, count)| (read, ds, lp, count)));
+                let last = replay.and_then(|(read, ds, lp, count)| match seq::read_raw_again(&mut state, &ds, &lp, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
                     Ok(()) => {
                         n += 1;
-                        Some(Frame { stamp, ..decode_probed(raw_dma.data(), &ds, &lp, n, switches.board.header_probe) })
+                        Some(read.tag(decode_probed(raw_dma.data(), &ds, &lp, n, switches.board.header_probe)))
                     }
                     Err(e) => {
                         status(format!("raw read of the deep window at STOP: {}", e));
@@ -1967,7 +1967,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     }
                 });
                 let mut g = out.lock().unwrap();
-                if let Some(f) = last {
+                if let Some(f) = last.filter(|f| super::publication::current(&g, f)) {
                     g.frame = f.clone();
                     g.queue.push_back(f);
                 }
@@ -1988,7 +1988,6 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             if !matches!(b.mode, oos_hal::dho::acq::Mode::Average { .. }) {
                 b.frames = cap.apply(b.frames);
             }
-            let b = b;
             if !single_wants_more(&b, single_done, stamp) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 std::thread::sleep(std::time::Duration::from_millis(2));
@@ -2005,7 +2004,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             }
             // one batch: arm, let the ring fill for up to 25 ms after the first frame, one play, one read
             // armed ahead with these settings and since the last SINGLE press: only the wait is left
-            let mut ahead = armed.as_ref().is_some_and(|(a, st)| *a == b && *st == stamp);
+            let mut ahead = armed.as_ref().is_some_and(|(a, st)| *a == b && *st == pair);
             if !ahead {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
             }
@@ -2024,7 +2023,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             // a wait for a trigger also ends for a force request: the next pass arms and pulses (above)
             let changed = || {
                 let g = out.lock().unwrap();
-                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || g.force
+                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || (g.acquisition.identity().gen(), g.acquisition.identity().epoch()) != pair || g.acquisition.route() != route || g.force
             };
             let pipe = crate::drawpipe::pipe(&switches);
             let t_batch = std::time::Instant::now();
@@ -2137,7 +2136,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         }
                         _ => raw_frame,
                     };
-                    fresh = Some((b.clone(), p, count, raw_frame.is_some()));
+                    fresh = Some(super::replay::Read::new(b.clone(), p, count, raw_frame.is_some(), identity));
                     // trigger status of this batch from the SCU's sticky bits, then the stock status clear, before the next
                     // arm (prearm below) can record anything
                     if switches.board.trig_hw_status {
@@ -2210,7 +2209,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     }
                     if switches.board.prearm && avg.is_none() && !b.single && prearm_keeps_replay(&b, &p, deep_want) {
                         match seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {}) {
-                            Ok(()) => armed = Some((b.clone(), stamp)),
+                            Ok(()) => armed = Some((b.clone(), pair)),
                             Err(e) => status(format!("prearm: {}", e)),
                         }
                     }
@@ -2225,15 +2224,15 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
                     // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
                     // deposit workers, the next batch read into a buffer they gave back
-                    let pipe = crate::drawpipe::pipe(&switches).filter(|x| after.is_none() && avail > 1 && x.accepting());
+                    let pipe = crate::drawpipe::pipe(&switches).filter(|x| route && after.is_none() && avail > 1 && x.accepting());
                     // the raw newest frame stands for the newest compressed one (same record)
                     let raw_frame = raw_frame.filter(|_| avail as u32 == count);
                     let mut la_words = la_words;
                     let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
                         n += avail as u64;
                         let mut newest = match raw_frame {
-                            Some(f) => Frame { stamp, seq: n, ..f },
-                            None => Frame { stamp, ..decode_probed(&dma.data()[(avail - 1) * fb..avail * fb], &b, &p, n, switches.board.header_probe) },
+                            Some(f) => Frame { stamp, cfg: want_gen, seq: n, ..f },
+                            None => Frame { stamp, cfg: want_gen, ..decode_probed(&dma.data()[(avail - 1) * fb..avail * fb], &b, &p, n, switches.board.header_probe) },
                         };
                         if let Some(w) = la_words.take() {
                             newest.la = Some(la_record(w, &b, &p));
@@ -2252,8 +2251,8 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                                 // the newest frame goes to the queue when the others are drawn: the screen gets the
                                 // batch in one picture, not the newest alone and the rest a picture later
                                 let o = out.clone();
-                                let deliver: crate::drawpipe::Deliver = Box::new(move || push_frames(&o, vec![newest]));
-                                pipe.feed_with(Box::new(full), fb, avail - 1, stamp, Arc::new(move |c: &[u8], f: &mut Frame| decode_into_probed(c, &bs, &ps, 0, f, switches.board.header_probe)), Some(codes), deliver);
+                                let deliver: crate::drawpipe::Deliver = Box::new(move || super::publication::push_frames(&o, vec![newest]));
+                                pipe.feed_with(Box::new(full), fb, avail - 1, identity, Arc::new(move |c: &[u8], f: &mut Frame| decode_into_probed(c, &bs, &ps, 0, f, switches.board.header_probe)), Some(codes), deliver);
                                 Vec::new()
                             }
                             None => {
@@ -2269,11 +2268,11 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             .skip(if after.is_some() { avail.saturating_sub(1) } else { 0 })
                             .map(|chunk| {
                                 n += 1;
-                                Frame { stamp, hw_avg: after.is_some(), ..decode_probed(chunk, &b, &p, n, switches.board.header_probe) }
+                                Frame { stamp, cfg: want_gen, hw_avg: after.is_some(), ..decode_probed(chunk, &b, &p, n, switches.board.header_probe) }
                             })
                             .collect();
                         if let (Some(r), Some(last)) = (raw_frame, all.last_mut()) {
-                            *last = Frame { stamp, seq: last.seq, ..r };
+                            *last = Frame { stamp, cfg: want_gen, seq: last.seq, ..r };
                         }
                         all
                     };
@@ -2285,7 +2284,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     if let (Some(w), Some(f)) = (la_words, frames.last_mut()) {
                         f.la = Some(la_record(w, &b, &p));
                     }
-                    push_frames(&out, frames);
+                    super::publication::push_frames(&out, frames);
                 }
                 // new settings while it waited for a trigger: at once to them
                 Err(e) if e == seq::NEW_SETTINGS => {}
@@ -2308,22 +2307,6 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         eprintln!("oos-ui hw: no acquisition thread: {}", e);
     }
     shared
-}
-
-/// Frames of a batch into the UI queue, the oldest dropped beyond `QUEUE_MAX`.
-#[cfg(target_os = "linux")]
-fn push_frames(out: &HwShared, frames: Vec<Frame>) {
-    if frames.is_empty() {
-        return;
-    }
-    let mut g = out.lock().unwrap();
-    g.queue.extend(frames);
-    let over = g.queue.len().saturating_sub(QUEUE_MAX);
-    g.queue.drain(..over);
-    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, over as u64);
-    if let Some(f) = g.queue.back() {
-        g.frame = f.clone();
-    }
 }
 
 /// A hardware segmented recording (docs/fork/specs/03-segmented-timestamps.md 3.2).
@@ -2378,9 +2361,8 @@ fn seg_step(
     dma: &mut oos_hal::dho::bus::DmaBuf,
     out: &HwShared,
     n: &mut u64,
-    stamp: u64,
+    identity: oos_core::change::Identity,
 ) -> Result<(), String> {
-    use crate::board::SegPhase;
     use oos_hal::dho::seg;
     let (cmd, running, want) = {
         let g = out.lock().unwrap();
@@ -2459,7 +2441,7 @@ fn seg_step(
                 .take(cnt as usize)
                 .map(|chunk| {
                     *n += 1;
-                    Frame { stamp, ..decode_probed(chunk, &rs, p, *n, s.header) }
+                    tag(decode_probed(chunk, &rs, p, *n, s.header), identity)
                 })
                 .collect();
         }
@@ -2467,6 +2449,7 @@ fn seg_step(
         let mut g = out.lock().unwrap();
         g.seg.times.extend(times);
         g.seg.read = r.next;
+        frames.retain(|f| super::publication::current(&g, f));
         if let Some(f) = frames.last() {
             g.frame = f.clone();
         }
@@ -2483,7 +2466,7 @@ fn seg_step(
             let one = oos_hal::dho::seg::read_settings(&rs, 1);
             seg::read(state, &one, p, bar, c2h, dma, k, 1)?;
             *n += 1;
-            let f = Frame { stamp, ..decode_probed(&dma.data()[..fb.min(dma.data().len())], &one, p, *n, s.header) };
+            let f = tag(decode_probed(&dma.data()[..fb.min(dma.data().len())], &one, p, *n, s.header), identity);
             out.lock().unwrap().seg.shown = Some((k, f));
         }
         Some(_) => out.lock().unwrap().seg.want = None,
@@ -2548,6 +2531,19 @@ mod tests {
         assert!(b.single);
         assert!(single_wants_more(&b, None, 4), "the first batch after the press");
         assert!(!single_wants_more(&b, Some(4), 4), "its frame came: no more for this press");
+        let mut model = m.clone();
+        let config = crate::model::config();
+        let mut changes = oos_core::change::Shadow::new(&model, Default::default(), &config).unwrap();
+        let mut arms = 1;
+        let done = Some(changes.identity().epoch());
+        for _ in 0..20 {
+            model.mask_src = 1 - model.mask_src;
+            let id = changes.observe(&model, Default::default(), &[], &config).unwrap().identity();
+            assert!(id.gen() > 0);
+            arms += usize::from(single_wants_more(&b, done, id.epoch()));
+        }
+        assert_eq!(arms, 1, "generation-only boundaries cannot arm SINGLE again");
+
         assert!(single_wants_more(&b, Some(4), 5), "the next press");
         m.trig_mode = TrigMode::Normal;
         assert!(single_wants_more(&settings(&m, false, &Default::default()), Some(4), 4), "RUN is not limited");
@@ -3268,8 +3264,12 @@ mod tests {
         let raw = decode(&vec![0x5au8; oos_hal::dho::seq::frame_bytes(&d, &p)], &d, &p, 2);
         assert!(crate::deepmeas::deep_pairs(&pairs) && crate::deepmeas::deep_raw_frame(&raw));
         let level = raw.ch[1][raw.pre] as f64;
-        let step = |ui: &mut crate::ui::Ui, f: Frame| {
-            shared.lock().unwrap().queue.push_back(f);
+        ui.step(0.02);
+        let step = |ui: &mut crate::ui::Ui, mut f: Frame| {
+            let mut g = oos_hal::sync::lock(&shared);
+            (f.cfg, f.stamp) = (g.acquisition.identity().gen(), g.acquisition.identity().epoch());
+            g.queue.push_back(f);
+            drop(g);
             for _ in 0..3 {
                 ui.step(0.02);
             }

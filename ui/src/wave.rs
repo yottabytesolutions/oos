@@ -569,15 +569,6 @@ impl Source {
         }
     }
 
-    pub fn publish_afg(&self, m: &Model) {
-        if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
-            for i in 0..gen_count() {
-                g.afg[i] = Some(board().gen(&m.gen_ch(i)));
-            }
-        }
-    }
-
     pub fn name(&self) -> &'static str {
         match self {
             Source::Demo { .. } => "DEMO",
@@ -646,28 +637,18 @@ impl Source {
         None
     }
 
-    /// Hardware source: hands the zone trigger the UI wants to the acquisition thread (None: off) and returns the latest
-    /// reading; None off the hardware.
-    pub fn hw_zone(&self, want: Option<crate::board::ZoneWant>) -> Option<Option<crate::board::ZoneRead>> {
+    /// Latest zone trigger reading; acquisition publication owns its request.
+    pub fn hw_zone(&self) -> Option<Option<crate::board::ZoneRead>> {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
-            if g.zone_want != want {
-                g.zone_want = want;
-            }
-            return Some(g.zone);
+            return Some(oos_hal::sync::lock(shared).zone);
         }
         None
     }
 
-    /// Hardware source: hands the mask test the UI wants to the acquisition thread (None: off) and returns the latest
-    /// counter reading; None off the hardware.
-    pub fn hw_mask(&self, want: Option<crate::board::MaskWant>) -> Option<Option<crate::board::MaskRead>> {
+    /// Latest hardware mask counters; acquisition publication owns its request.
+    pub fn hw_mask(&self) -> Option<Option<crate::board::MaskRead>> {
         if let Source::Hw { shared, .. } = self {
-            let mut g = shared.lock().unwrap();
-            if g.mask_want != want {
-                g.mask_want = want;
-            }
-            return Some(g.mask);
+            return Some(oos_hal::sync::lock(shared).mask);
         }
         None
     }
@@ -782,7 +763,15 @@ impl Source {
     /// Hardware segments: the segment asked for with `seg_request`, as a record for the screen.
     pub fn seg_shown(&self, m: &Model) -> Option<(u32, Record)> {
         let Source::Hw { shared, .. } = self else { return None };
-        let (k, f) = shared.lock().unwrap().seg.shown.take()?;
+        let mut g = oos_hal::sync::lock(shared);
+        let (k, f) = g.seg.shown.take()?;
+        let id = g.acquisition.identity();
+        if (f.cfg, f.stamp) != (id.gen(), id.epoch()) {
+            crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.queue_pop, 1);
+            crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, 1);
+            return None;
+        }
+        drop(g);
         let window = m.time_per_div() as f64 * HDIV as f64;
         Some((k, crate::board::to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)))
     }
@@ -792,6 +781,14 @@ impl Source {
     pub fn drain_but_last(&mut self) -> Vec<crate::board::Frame> {
         if let Source::Hw { shared, .. } = self {
             let mut g = shared.lock().unwrap();
+            let id = g.acquisition.identity();
+            let before = g.queue.len();
+            g.queue.retain(|f| (f.cfg, f.stamp) == (id.gen(), id.epoch()));
+            crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, (before - g.queue.len()) as u64);
+            crate::drawpipe::Counters::add(
+                &crate::drawpipe::counters().losses.queue_pop,
+                (before - g.queue.len()) as u64,
+            );
             let n = g.queue.len().saturating_sub(1);
             return g.queue.drain(..n).collect();
         }
@@ -808,19 +805,15 @@ impl Source {
         let level = m.trig_level as f64;
         if let Source::Hw { shared, seen } = self {
             let mut g = shared.lock().unwrap();
-            let want = board().want(m, sw);
-            if g.want.as_ref() != Some(&want) {
-                crate::pacing::changed();
-            }
-            g.want = Some(want);
-            g.deep_raw = crate::deepmeas::want(m, sw);
-            g.slow = board().slow_mode(m);
-            g.stamp = m.hw_stamp;
-            g.avg_clear = m.hw_avg_clear;
-            // SINGLE takes nothing from before the key press
+            // Publication belongs to the change point, including requests at equal settings.
             let fresh = loop {
                 match g.queue.pop_front() {
-                    Some(f) if m.trig_mode == TrigMode::Single && f.stamp < m.hw_stamp => continue,
+                    Some(f)
+                        if (f.cfg, f.stamp) != (g.acquisition.identity().gen(), g.acquisition.identity().epoch()) =>
+                    {
+                        crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.queue_pop, 1);
+                        crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, 1);
+                    }
                     f => break f,
                 }
             };

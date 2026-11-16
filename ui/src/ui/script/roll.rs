@@ -124,7 +124,9 @@ fn assert_bounded_analysis_steps(roll: bool) {
         ui.m.pane = pane;
         for step in 0..3 {
             frame.seq += 1;
-            frame.stamp = ui.m.hw_stamp;
+            let id = super::super::change::acquisition::script_prepare(&mut ui);
+            frame.stamp = id.epoch();
+            frame.cfg = id.gen();
             if let Source::Hw { shared, .. } = &ui.src {
                 let mut g = oos_hal::sync::lock(shared);
                 let mut snapshot = frame.clone();

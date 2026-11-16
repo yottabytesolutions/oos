@@ -103,8 +103,14 @@ fn stale_results_are_dropped_after_each_invalidation() {
         let mut ui = fixture(AView::Eye, 100_000, 2e-7, |k| if k % 86 < 43 { -1.0 } else { 1.0 });
         let done = run(prepare(&ui, AView::Eye, false).unwrap(), &mut None);
         match change {
-            0 => ui.m.hw_stamp += 1,
-            1 => ui.meas_n += 1,
+            0 => {
+                change::request(&mut ui, oos_core::change::Request::Clear, change::oracle::Row::Clear);
+                change::begin_step(&mut ui, 0.04);
+            }
+            1 => {
+                change::stats_reset(&mut ui);
+                change::begin_step(&mut ui, 0.04);
+            }
             2 => {
                 ui.ana_activate(Item::EyeClear);
             }
@@ -147,7 +153,7 @@ fn busy_updates_coalesce_to_the_newest_record_and_preserve_record_identity() {
     poll(&mut ui);
     assert!(!ui.azr.work.pending);
     let done = ui.meas_bg.as_ref().unwrap().analysis_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
-    assert_eq!(done.record, Some((41, ui.m.hw_stamp)));
+    assert_eq!(done.record, Some((41, (0, 0))));
     assert!(accept(&mut ui, done));
     ui.now += 0.6;
     assert!(updating(&ui), "an older finished result must indicate lag");
@@ -158,7 +164,9 @@ fn busy_updates_coalesce_to_the_newest_record_and_preserve_record_identity() {
 fn a_raw_record_of_an_old_acquisition_generation_is_not_submitted() {
     let mut ui = fixture(AView::Spectrum, 1000, 1e-7, |k| (k as f32).sin());
     ui.measure_in_background();
-    ui.m.hw_stamp += 1;
+    change::request(&mut ui, oos_core::change::Request::Clear, change::oracle::Row::Clear);
+    change::begin_step(&mut ui, 0.0);
+    change::finish_step(&mut ui);
     ui.analyzer_update();
     assert!(!ui.meas_bg.as_ref().unwrap().analysis_busy);
     assert!(ui.azr.work.pending);
@@ -195,4 +203,15 @@ fn running_analyzer_source_step_snaps_before_submitting_without_broad_resets() {
         assert_eq!(ui.ph.map, picture);
         assert_eq!(change::counters(&ui).4, 0);
     }
+}
+
+fn advance_record(ui: &mut Ui, single: bool) {
+    if single {
+        change::single(ui);
+    }
+    change::begin_step(ui, 0.0).unwrap();
+    change::finish_step(ui);
+    let id = change::acquisition::identity(ui);
+    let frame = Arc::make_mut(&mut ui.last[0].as_mut().unwrap().raw.as_mut().unwrap().frame);
+    (frame.cfg, frame.stamp) = (id.gen(), id.epoch());
 }

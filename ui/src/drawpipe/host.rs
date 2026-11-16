@@ -38,11 +38,12 @@ mod tests {
         let (fb, decode) = (batch.frame_bytes(), batch.decode());
         let delivered = Arc::new(AtomicUsize::new(0));
         let d = delivered.clone();
+        pipe.set_identity(Default::default());
         pipe.feed_with(
             Box::new(batch.into_bytes()),
             fb,
             26,
-            0,
+            Default::default(),
             decode,
             None,
             Box::new(move || {

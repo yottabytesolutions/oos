@@ -89,6 +89,9 @@ impl Shadow {
     pub fn needs(&self) -> UiAcq {
         self.needs
     }
+    pub fn accepted(&self) -> &Model {
+        &self.previous
+    }
     pub fn normalized(&self) -> &Model {
         &self.scratch
     }

@@ -152,12 +152,10 @@ fn shadow_is_observe_only() {
 #[test]
 fn same_settings_stage_retry_resolves_tokens_in_the_next_shadow_step() {
     let mut ui = base(RunState::Stop);
-    ui.m.hw_stamp += 1;
     change::stage(&mut ui, Requester::Autoset);
     assert!(ui.host.runtime().change.last.is_none());
     ui.step(0.04);
     let first = ui.host.runtime().change.last.as_ref().unwrap().identity();
-    ui.m.hw_stamp += 1;
     change::stage(&mut ui, Requester::Autoset);
     ui.step(0.04);
     let second = ui.host.runtime().change.last.as_ref().unwrap().identity();
@@ -311,16 +309,16 @@ fn same_final_run_value_keeps_the_intake_epoch_request() {
 }
 
 #[test]
-fn rejected_shadow_requests_are_not_lost() {
+fn rejected_shadow_requests_are_quarantined() {
     let mut ui = base(RunState::Stop);
     assert_eq!(change::duplicate_requests(&mut ui), 2);
     ui.step(0.04);
-    assert_eq!(change::pending_count(&ui), 2);
+    assert_eq!(change::pending_count(&ui), 0);
     assert_eq!(change::counters(&ui).3, 1);
     ui.step(0.04);
-    assert_eq!(change::pending_count(&ui), 2);
-    assert_eq!(change::counters(&ui).3, 2);
-    assert!(change::text(&ui).contains("DuplicateToken=2"));
+    assert_eq!(change::pending_count(&ui), 0);
+    assert_eq!(change::counters(&ui).3, 1);
+    assert!(change::text(&ui).contains("DuplicateToken=1"));
 }
 
 #[test]

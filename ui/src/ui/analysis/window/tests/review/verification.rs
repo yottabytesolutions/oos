@@ -26,8 +26,7 @@ fn bandwidth_capture_change(change: usize) {
     match change {
         0 => {
             // SINGLE arms a new acquisition stamp without changing analyser settings.
-            ui.m.hw_stamp += 1;
-            Arc::make_mut(&mut ui.last[0].as_mut().unwrap().raw.as_mut().unwrap().frame).stamp = ui.m.hw_stamp;
+            advance_record(&mut ui, true);
         }
         1 => ui.m.tscale += 1,
         2 => ui.m.delay += 0.001,

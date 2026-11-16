@@ -24,9 +24,13 @@ impl Work {
         self.samples += n as u64;
     }
 
-    pub(super) fn invalidate(&mut self) {
+    pub(in crate::ui) fn invalidate(&mut self) {
         self.revision += 1;
         self.pending = true;
+    }
+
+    pub(in crate::ui) fn reset(&mut self) {
+        *self = Self { revision: self.revision + 1, ..Default::default() };
     }
 
     fn results_due(&mut self, now: f64, has_spectrum: bool) -> bool {
@@ -52,7 +56,7 @@ impl Work {
 /// Configuration and the local clear revision also guard results after menu changes.
 #[derive(Clone, PartialEq)]
 pub(in crate::ui) struct Key {
-    generation: (u64, u64, u64),
+    generation: (oos_core::change::Identity, u64),
     acquisition: (AcqMode, usize, u32, usize),
     channels: [Channel; NCH],
     view: (AView, usize),
@@ -66,7 +70,7 @@ pub(in crate::ui) struct Key {
 fn key(ui: &Ui) -> Key {
     let m = &ui.m;
     Key {
-        generation: (m.hw_stamp, ui.meas_n, ui.azr.work.revision),
+        generation: (change::acquisition::identity(ui), ui.azr.work.revision),
         acquisition: (m.acq, m.tscale, m.delay.to_bits(), m.mdepth),
         channels: m.ch.clone(),
         view: (m.view, m.pane),
@@ -117,7 +121,7 @@ pub(in crate::ui) struct Job {
 pub(in crate::ui) struct Done {
     key: Key,
     /// Raw acquisition identity is retained independently of the current settings.
-    record: Option<(u64, u64)>,
+    record: Option<(u64, (u64, u64))>,
     at: f64,
     state: super::State,
 }
@@ -131,7 +135,7 @@ pub(in crate::ui) fn run(job: Job, previous: &mut Option<(history::Key, super::S
             context.azr = state;
         }
     }
-    let identity = record.raw.as_ref().map(|r| (r.frame.seq, r.frame.stamp));
+    let identity = record.raw.as_ref().map(|r| (r.frame.seq, (r.frame.cfg, r.frame.stamp)));
     context.calculate(&record, view, pane);
     let state = context.azr.clone();
     *previous = Some((history_key, context.azr));
@@ -139,7 +143,9 @@ pub(in crate::ui) fn run(job: Job, previous: &mut Option<(history::Key, super::S
 }
 
 fn accept(ui: &mut Ui, done: Done) -> bool {
-    if done.key != key(ui) || done.record.is_some_and(|(_, stamp)| stamp != ui.m.hw_stamp) {
+    if done.key != key(ui)
+        || done.record.is_some_and(|(_, pair)| pair != (done.key.generation.0.gen(), done.key.generation.0.epoch()))
+    {
         return false;
     }
     let mut state = done.state;
@@ -189,7 +195,7 @@ pub(super) fn update(ui: &mut Ui) {
 
 fn prepare(ui: &Ui, view: AView, pane: bool) -> Option<Job> {
     let rec = ui.last[0].as_ref()?;
-    if ui.meas_bg.is_some() && rec.raw.as_ref().is_some_and(|r| r.frame.stamp != ui.m.hw_stamp) {
+    if !change::acquisition::record(ui, rec) {
         return None;
     }
     let area = if pane { ui.pane_rect() } else { ui.area };

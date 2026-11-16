@@ -74,8 +74,6 @@ pub struct State {
     /// records to skip after a frequency step (generator and time base settle), counted from the first record of
     /// the step (`stamp`) on
     pub wait: u32,
-    /// `Model::hw_stamp` of the current step: hardware records with an older stamp are from before it
-    pub stamp: u64,
     pub tx: Option<mpsc::Sender<String>>,
     pub err: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// what the generator thread has to say without stopping the sweep (the `*IDN?` answer of a USB generator)
@@ -480,8 +478,7 @@ impl Ui {
         let ts = tscales();
         self.m.tscale = ts.iter().position(|&t| t >= want * 0.999).unwrap_or(ts.len() - 1);
         self.bode.wait = 2;
-        self.m.hw_stamp += 1;
-        change::bode_stamp(self);
+        change::bode_epoch(self);
         self.settings_changed();
     }
 
@@ -577,7 +574,7 @@ impl Ui {
             self.toast(&n);
         }
         let Some(rec) = self.last[0].clone() else { return };
-        if rec.raw.as_ref().is_some_and(|r| r.frame.stamp < self.bode.stamp) {
+        if !change::acquisition::stage_record(self, oos_core::change::Requester::Bode, &rec) {
             return;
         }
         if self.bode.wait > 0 {
@@ -658,8 +655,7 @@ impl Ui {
         (m.trig_type, m.trig_src, m.trig_la, m.trig_level, m.slope) =
             (TrigType::Edge, sync, None, m.bode_sync_level, slope);
         (m.trig_mode, m.run, m.view) = (TrigMode::Single, RunState::Run, AView::Bode);
-        m.hw_stamp += 1;
-        change::bode_stamp(self);
+        change::bode_epoch(self);
         self.bode.points.clear();
         self.bode.cursor = 0;
         (self.bode.running, self.bode.free, self.bode.capturing) = (true, true, false);
@@ -672,7 +668,7 @@ impl Ui {
     /// Free sweep: the SINGLE record of the sweep, once it is complete.
     fn free_update(&mut self) {
         let Some(rec) = self.last[0].clone() else { return };
-        if rec.raw.as_ref().is_some_and(|r| r.frame.stamp < self.bode.stamp) {
+        if !change::acquisition::stage_record(self, oos_core::change::Requester::Bode, &rec) {
             return;
         }
         if rec.partial {
@@ -969,6 +965,8 @@ mod tests {
             .collect();
         let sync: Vec<f32> =
             (0..n).map(|k| if (0.0..1e-3).contains(&(t0 + k as f64 * dt)) { 3.3 } else { 0.0 }).collect();
+        change::begin_step(&mut ui, 0.0).unwrap();
+        change::finish_step(&mut ui);
         ui.last[0] = Some(Record {
             t0,
             dt,
@@ -1010,6 +1008,8 @@ mod tests {
         (ui.m.bode_sw_in, ui.m.bode_ref) = (0, -3.0);
         assert!(ui.items(MenuId::Bode).contains(&Item::BodeRef));
         ui.activate(Item::BodeRun);
+        change::begin_step(&mut ui, 0.0).unwrap();
+        change::finish_step(&mut ui);
         ui.m.run = RunState::Stop;
         ui.bode_update();
         assert!(ui.bode.points.len() >= 30 && ui.bode.points.iter().all(|p| p.2.is_nan()));

@@ -48,11 +48,9 @@ impl Ui {
         self.mask_cols = self.mask.as_ref().map(|m| m.columns(crate::board::MASK_COLUMNS));
     }
 
-    /// Hands the mask test to the acquisition thread and takes its latest counters; a new failure stops the
-    /// acquisition when "stop on fail" is set.
-    pub(super) fn mask_hw_poll(&mut self) {
-        self.unit_blocked_poll();
-        let want = if self.mask_hw_active() {
+    /// The mask request derived at acquisition publication.
+    pub(super) fn mask_hw_want(&self) -> Option<MaskWant> {
+        if self.mask_hw_active() {
             self.mask_cols.as_ref().map(|(lo, hi)| MaskWant {
                 ch: self.m.mask_src,
                 lo: lo.clone(),
@@ -62,8 +60,13 @@ impl Ui {
             })
         } else {
             None
-        };
-        let Some(r) = self.src.hw_mask(want) else { return };
+        }
+    }
+
+    /// Read the latest counters; stop acquisition on a new failure when requested.
+    pub(super) fn mask_hw_poll(&mut self) {
+        self.unit_blocked_poll();
+        let Some(r) = self.src.hw_mask() else { return };
         if mask_stops(self.mask_hw, r, self.m.mask_src) && self.m.mask_stop && self.m.run == RunState::Run {
             self.m.run = RunState::Stop;
             self.toast("Mask failed: stopped");

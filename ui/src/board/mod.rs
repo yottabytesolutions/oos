@@ -13,6 +13,7 @@
 //! tree). A port adds a module next to `dho`, implements `Board` for it and points `Active` at it.
 
 pub mod dho;
+pub(crate) mod identity;
 mod record;
 pub mod scripted;
 pub use record::{sw_trig_level, sw_trig_level_of, to_record, trigger_point};
@@ -190,7 +191,7 @@ pub struct Frame {
     pub partial: bool,
     /// sample rate and points per channel of the acquisition behind a compressed frame (top bar), else 0
     pub acq: (f64, usize),
-    /// `Shared::stamp` in force when the generator and the settings behind this frame were applied
+    /// Resolved epoch applied with this frame's generation (`cfg`).
     pub stamp: u64,
     /// logic analyser words of the acquisition, times relative to the hardware trigger point (la.md 4.2; the last
     /// frame of a batch only, roll/scan: none yet)
@@ -200,7 +201,7 @@ pub struct Frame {
     /// `pre` is the sample the trigger fired on (with FPGA compression: its pair): read at the full rate of the channel
     /// set (trigger.md 7: the point is off the edge only with decimation). False where not known.
     pub pre_exact: bool,
-    /// the settings generation it was acquired under (`pacing::APPLIED`; 0: not from the hardware thread)
+    /// Resolved acquisition generation applied with this frame's epoch (`stamp`).
     pub cfg: u64,
 }
 
@@ -341,9 +342,8 @@ pub struct Shared {
     pub cal_cancel: bool,
     /// generators wanted (`Board::gen`); applied by the thread when they change
     pub afg: [Option<Gen>; NGEN],
-    /// counter set by the UI with the settings; frames acquired after applying them carry it (`Frame::stamp`), so a
-    /// sweep can tell frames of the new step from queued ones
-    pub stamp: u64,
+    /// The resolved identity published with settings, generator and route under this lock.
+    pub(crate) acquisition: identity::Publication,
     /// one force trigger asked for (key, `:TFORce`): the acquisition thread arms, pulses the FPGA's force bit and reads
     /// the frame (`hw.rs`); a wait for a trigger ends for it
     pub force: bool,

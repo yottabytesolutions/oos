@@ -11,6 +11,7 @@ impl Drop for Intake<'_> {
 
 pub(crate) fn intake<T>(ui: &mut Ui, f: impl FnOnce(&mut Ui) -> T) -> T {
     ui.host.runtime_mut().change.timing.intake_begin();
+    super::proposals::apply(ui);
     let guard = Intake(ui);
     f(guard.0)
 }

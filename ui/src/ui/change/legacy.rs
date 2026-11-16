@@ -8,15 +8,23 @@ use super::request;
 use oos_core::change::Request;
 
 pub(super) fn settings(ui: &mut Ui) {
+    if ui.host.runtime().change.prepared.is_none() {
+        intake_settings(ui);
+    }
+    ui.auto_step();
+    ui.sysinfo_poll();
+    ui.cal_poll();
+}
+
+pub(super) fn intake_settings(ui: &mut Ui) {
+    super::proposals::apply(ui);
     super::normalize::apply(ui);
-    ui.src.publish_afg(&ui.m);
     // SINGLE armed: from here on only what comes after the press counts.
     let single = ui.m.trig_mode == TrigMode::Single && ui.m.run == RunState::Run;
     if single && !ui.single_armed {
         if !ui.host.runtime().change.pending.entries().contains(&oos_core::change::Command::Request(Request::Single)) {
             request(ui, Request::Single, Row::Single);
         }
-        ui.m.hw_stamp += 1;
         ui.hw_avg_restart();
     }
     ui.single_armed = single;
@@ -24,9 +32,6 @@ pub(super) fn settings(ui: &mut Ui) {
         (ui.meas_src, ui.ref_src) = (ui.meas_src.min(n_ch() - 1), ui.ref_src.min(n_ch() - 1));
     }
     super::prepare(ui);
-    ui.auto_step();
-    ui.sysinfo_poll();
-    ui.cal_poll();
 }
 
 pub(super) fn transitions(ui: &mut Ui) -> bool {
@@ -51,7 +56,6 @@ pub(super) fn transitions(ui: &mut Ui) -> bool {
         ui.stop_final = Some(ui.now + STOP_FINAL_WAIT);
     }
     let final_done = ui.src.hw_hold(!running && ui.last[0].is_some(), ui.final_req);
-    ui.src.hw_needs_raw(ui.needs_raw());
     ui.was_running = running;
     if hw_seg {
         ui.seg_poll(running);

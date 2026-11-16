@@ -12,3 +12,12 @@ ui ui/src/model.rs clippy::manual_range_contains -> core core/src/model/tables.r
 ui ui/src/model.rs clippy::needless_range_loop -> core core/src/model/signal.rs clippy::needless_range_loop
 ui ui/src/model.rs clippy::too_many_lines -> core core/src/model/defaults.rs clippy::too_many_lines
 fn ui/src/cmd.rs run -> fn ui/src/cmd.rs execute
+fn ui/src/board/dho/hw.rs push_frames -> fn ui/src/board/dho/publication.rs push_frames
+fn ui/src/drawpipe.rs Pipe::feed -> fn ui/src/drawpipe/feed.rs Pipe::feed
+fn ui/src/drawpipe.rs Pipe::feed_codes -> fn ui/src/drawpipe/feed.rs Pipe::feed_codes
+fn ui/src/drawpipe.rs Pipe::feed_with -> fn ui/src/drawpipe/feed.rs Pipe::feed_with
+fn ui/src/drawpipe.rs Pipe::feed_batch -> fn ui/src/drawpipe/feed.rs Pipe::feed_batch
+static ui/src/drawpipe.rs Pipe::feed_batch::IDS -> static ui/src/drawpipe/feed.rs Pipe::feed_batch::IDS
+fn ui/src/ui/autoset.rs scale_for -> fn ui/src/ui/autoset/recovery.rs scale_for
+struct ui/src/drawpipe.rs Losses -> struct ui/src/drawpipe/losses.rs Losses
+fn ui/src/drawpipe.rs Losses::text -> fn ui/src/drawpipe/losses.rs Losses::text

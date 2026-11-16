@@ -39,10 +39,11 @@ pub(in crate::ui) fn run(steps: usize, count: fn() -> usize) -> [[usize; 2]; 5] 
         }
         ui.m.ch[0].offset = if step % 2 == 0 { 1e6 } else { -1e6 };
         ui.step(0.04);
-        // Exercise real stage capture with bounded scalar proposals and a fresh token each time.
+        // Exercise late stage commands, snapshot restoration and token capture after warming their retained slots.
+        ui.host.runtime_mut().change.executing = true;
         ui.m.trig_level = if step % 2 == 0 { 0.125 } else { 0.25 };
-        ui.m.hw_stamp += 1;
         stage(&mut ui, oos_core::change::Requester::Autoset);
+        ui.host.runtime_mut().change.executing = false;
     }
     ui.host.runtime().change.census.rows
 }

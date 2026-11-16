@@ -16,6 +16,12 @@
 //! `frames` mode. Mode: `acq.pipeline = batch` in system.conf or OOS_PIPELINE=batch; `frames` (default) is the old
 //! path, kept for comparison until the unit has verified the new one.
 
+mod feed;
+mod losses;
+pub use losses::Losses;
+#[cfg(test)]
+mod identity_tests;
+use feed::{accepts, same_pair, Header};
 pub mod host;
 pub mod shutdown;
 use crate::board::Frame;
@@ -319,10 +325,15 @@ pub struct Counters {
     pub dropped: AtomicU64,
     /// frames whose cheap measurements went into the statistics (framestats.rs)
     pub measured: AtomicU64,
+    pub losses: Losses,
 }
 
 /// The process's counters (the acquisition thread, the workers and the UI add to them).
 pub fn counters() -> &'static Counters {
+    #[cfg(test)]
+    if let Some(state) = test_scope::state() {
+        return state.counters;
+    }
     static C: OnceLock<Counters> = OnceLock::new();
     C.get_or_init(Counters::default)
 }
@@ -395,7 +406,7 @@ struct Batch {
     decode: DecodeInto,
     /// the board's view without decoding (`draw_frame_codes`), where it has one
     codes: Option<CodesInto>,
-    stamp: u64,
+    header: Header,
     next: AtomicUsize,
     counters: &'static Counters,
     /// batches not done yet (`Pipe::live`)
@@ -407,7 +418,6 @@ struct Batch {
     /// a number of its own (`Acc::batches`, partial merges), its settings generation (`pacing::APPLIED` when fed:
     /// stale frames) and when it was fed, right after its read (picture age)
     id: u64,
-    cfg: u64,
     fed: std::time::Instant,
 }
 
@@ -485,6 +495,7 @@ impl Key {
 /// What a worker drew and the UI has not merged yet.
 struct Acc {
     gen: u64,
+    identity: Option<oos_core::change::Identity>,
     ph: Phosphor,
     /// statistics of the cheap measurements over the frames (framestats.rs)
     folds: crate::framestats::Folds,
@@ -506,6 +517,7 @@ impl Acc {
     fn new(gen: u64, w: usize, h: usize) -> Acc {
         Acc {
             gen,
+            identity: None,
             ph: Phosphor::new(w, h),
             folds: Vec::new(),
             frames: 0,
@@ -531,12 +543,20 @@ impl Acc {
         self.stale = 0;
         (self.gen, self.frames, self.triggered, self.edges, self.off) = (gen, 0, 0, [0; 4], (0.0, 0.0));
     }
-    fn add(&mut self, o: &Acc) {
+    fn add(&mut self, o: &Acc, counters: &Counters) {
         add(&mut self.ph, &o.ph, o.used);
         for (a, b) in self.used.iter_mut().zip(o.used) {
             *a |= b;
         }
-        crate::framestats::add_folds(&mut self.folds, &o.folds);
+        if self.identity == o.identity {
+            crate::framestats::add_folds(&mut self.folds, &o.folds);
+        } else if o.identity.map(|id| id.stats_gen()) > self.identity.map(|id| id.stats_gen()) {
+            count_folds(counters, &self.folds);
+            self.folds.clone_from(&o.folds);
+            self.identity = o.identity;
+        } else {
+            count_folds(counters, &o.folds);
+        }
         self.frames += o.frames;
         self.triggered += o.triggered;
         for (a, b) in self.edges.iter_mut().zip(o.edges) {
@@ -580,7 +600,9 @@ pub struct Helper {
 #[derive(Default)]
 struct ViewState {
     view: Option<Arc<View>>,
+    #[cfg(test)]
     stamp: u64,
+    identity: Option<oos_core::change::Identity>,
     key: Option<Key>,
     gen: u64,
 }
@@ -624,21 +646,15 @@ pub struct Merged {
 impl Pipe {
     /// The UI's mapping for the frames to come (None: the fast path does not apply).
     pub fn set_view(&self, m: Option<&Model>, w: usize, h: usize, interp: Interp) {
-        let mut v = self.view.lock().unwrap();
-        let Some(m) = m else {
-            (v.view, v.key) = (None, None);
-            drop(v);
-            self.release();
-            return;
-        };
-        let key = Key::of(m, w, h);
-        if v.key.as_ref() != Some(&key) {
-            crate::pacing::VIEWS.fetch_add(1, Ordering::Relaxed);
-            v.gen += 1;
-            v.view = Some(Arc::new(View { gen: v.gen, m: m.clone(), interp, w, h }));
-            v.key = Some(key);
-        }
-        v.stamp = m.hw_stamp;
+        feed::set_view(self, m, w, h, interp, None);
+    }
+
+    pub fn publish_view(&self, m: &Model, w: usize, h: usize, interp: Interp, identity: oos_core::change::Identity) {
+        feed::set_view(self, Some(m), w, h, interp, Some(identity));
+    }
+
+    pub fn set_identity(&self, identity: oos_core::change::Identity) {
+        self.view.lock().unwrap().identity = Some(identity);
     }
 
     /// The fast path applies: the workers take frames.
@@ -649,90 +665,6 @@ impl Pipe {
     /// A buffer back from the workers, to read the next batch into (None: all are still out).
     pub fn take_buffer(&self) -> Option<Box<dyn Any + Send>> {
         self.pool.lock().unwrap().try_recv().ok().map(|r| r.into_any())
-    }
-
-    /// `feed_codes` without the board's view of the read-out words (tests).
-    #[cfg(test)]
-    pub fn feed(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto) {
-        self.feed_batch(raw, fb, frames, stamp, decode, None);
-    }
-
-    /// From the acquisition thread: the first `frames` frames of `fb` bytes in `raw`, recorded under settings stamp
-    /// `stamp`, for the workers (and the helper) to claim, decoded with `decode` or, without per-frame measurements,
-    /// drawn from their words with `codes` (`draw_frame_codes`). The buffer comes back through `take_buffer` when the
-    /// batch is done. Frames nobody claims are counted as dropped. The unit feeds with `feed_with`.
-    #[cfg(test)]
-    pub fn feed_codes(
-        &self,
-        raw: Box<dyn RawBatch>,
-        fb: usize,
-        frames: usize,
-        stamp: u64,
-        decode: DecodeInto,
-        codes: Option<CodesInto>,
-    ) {
-        self.feed_batch(raw, fb, frames, stamp, decode, codes);
-    }
-
-    /// `feed_codes`, and `deliver` run by the UI right after the merge that brings the batch's frames: the newest
-    /// frame of the batch reaches the screen in the same picture as the others (docs/fork/stutter.md).
-    #[allow(clippy::too_many_arguments)]
-    pub fn feed_with(
-        &self,
-        raw: Box<dyn RawBatch>,
-        fb: usize,
-        frames: usize,
-        stamp: u64,
-        decode: DecodeInto,
-        codes: Option<CodesInto>,
-        deliver: Deliver,
-    ) {
-        let b = self.feed_batch(raw, fb, frames, stamp, decode, codes);
-        *b.deliver.lock().unwrap() = Some(deliver);
-    }
-
-    /// `feed`, returning the batch (tests hold it to let the helper alone draw it).
-    fn feed_batch(
-        &self,
-        raw: Box<dyn RawBatch>,
-        fb: usize,
-        frames: usize,
-        stamp: u64,
-        decode: DecodeInto,
-        codes: Option<CodesInto>,
-    ) -> Arc<Batch> {
-        let frames = if fb == 0 { 0 } else { frames.min(raw.bytes().len() / fb) };
-        static IDS: AtomicU64 = AtomicU64::new(0);
-        let (id, cfg) = (IDS.fetch_add(1, Ordering::Relaxed) + 1, crate::pacing::APPLIED.load(Ordering::Relaxed));
-        let b = Arc::new(Batch {
-            lease: Lease { raw: Some(raw), home: self.home.clone() },
-            fb,
-            frames,
-            decode,
-            codes,
-            stamp,
-            next: AtomicUsize::new(0),
-            counters: self.counters,
-            live: self.live.clone(),
-            deliver: Mutex::new(None),
-            ready: self.ready.clone(),
-            id,
-            cfg,
-            fed: std::time::Instant::now(),
-        });
-        self.live.fetch_add(1, Ordering::Acquire);
-        {
-            let mut open = self.open.lock().unwrap();
-            open.retain(|w| w.strong_count() > 0);
-            open.push_back(Arc::downgrade(&b));
-        }
-        for w in &oos_hal::sync::lock(&self.workers).senders {
-            // full only if the workers are far behind: the others take its frames
-            if let Err(TrySendError::Disconnected(_)) = w.try_send(b.clone()) {
-                eprintln!("oos-ui: deposit worker gone");
-            }
-        }
-        b
     }
 
     /// From the acquisition thread while the ring fills (`seq::acquire_batch_idle`): draws one frame of the oldest open batch into the
@@ -755,12 +687,17 @@ impl Pipe {
             return false;
         };
         let Some(r) = b.claim(1) else { return true };
-        let (v, stamp) = self.view_now();
+        let (v, stamp, identity) = self.view_now();
         let mails = self.mails.last().expect("helper mailbox");
-        match v.filter(|_| b.stamp >= stamp) {
-            None => Counters::add(&self.counters.dropped, r.len() as u64),
+        match v.filter(|_| accepts(&b, stamp, identity)) {
+            None => {
+                if !same_pair(b.header.identity(), identity) {
+                    Counters::add(&self.counters.losses.pipe, r.len() as u64);
+                }
+                Counters::add(&self.counters.dropped, r.len() as u64);
+            }
             Some(v) => {
-                if h.acc.as_ref().is_some_and(|a| a.gen != v.gen) {
+                if h.acc.as_ref().is_some_and(|a| a.gen != v.gen || a.identity != b.header.identity()) {
                     self.help_done(h);
                 }
                 if h.acc.is_none() {
@@ -768,6 +705,7 @@ impl Pipe {
                     h.acc = Some(fresh_acc(spare, &v));
                 }
                 let a = h.acc.as_mut().expect("helper maps");
+                a.identity = b.header.identity();
                 draw_range(&b, r, &v, a, &mut h.f, self.counters);
             }
         }
@@ -783,22 +721,28 @@ impl Pipe {
         }
     }
 
-    fn view_now(&self) -> (Option<Arc<View>>, u64) {
+    fn view_now(&self) -> (Option<Arc<View>>, u64, Option<oos_core::change::Identity>) {
         let s = self.view.lock().unwrap();
-        (s.view.clone(), s.stamp)
+        (s.view.clone(), feed::legacy_stamp(&s), s.identity)
     }
 
     /// Adds what the workers drew under the current mapping to `ph` and the trigger statistics to `edges`, `off`.
     /// `clear`: minimum persistence, the picture is replaced: cleared first if anything is merged.
     pub fn merge(&self, ph: &mut Phosphor, clear: &mut bool, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Merged {
         self.merges.fetch_add(1, Ordering::Relaxed);
-        let gen = self.view.lock().unwrap().view.as_ref().map(|v| v.gen);
+        let state = self.view.lock().unwrap();
+        let (gen, identity) = (state.view.as_ref().map(|v| v.gen), state.identity);
+        drop(state);
         let mut got = Merged::default();
         for mail in &self.mails {
             let full = std::mem::take(&mut mail.lock().unwrap().full);
             let mut back = Vec::with_capacity(full.len());
             for a in full {
-                if Some(a.gen) == gen && (a.ph.w, a.ph.h) == (ph.w, ph.h) && a.frames > 0 {
+                if Some(a.gen) == gen
+                    && same_pair(a.identity, identity)
+                    && (a.ph.w, a.ph.h) == (ph.w, ph.h)
+                    && a.frames > 0
+                {
                     if *clear {
                         ph.clear();
                         *clear = false;
@@ -813,8 +757,16 @@ impl Pipe {
                     got.newest = got.newest.max(a.newest);
                     got.stale += a.stale;
                     self.note_merged(&a.batches);
-                    crate::framestats::add_folds(&mut got.folds, &a.folds);
+                    if a.identity == identity {
+                        crate::framestats::add_folds(&mut got.folds, &a.folds);
+                    } else {
+                        count_folds(self.counters, &a.folds);
+                    }
                 } else {
+                    if !same_pair(a.identity, identity) {
+                        Counters::add(&self.counters.losses.pipe, a.frames);
+                    }
+                    count_folds(self.counters, &a.folds);
                     Counters::add(&self.counters.dropped, a.frames);
                 }
                 back.push(a);
@@ -876,8 +828,9 @@ fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
 /// Frames `r` of batch `b` decoded into `f` and drawn into `a`.
 fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, counters: &Counters) {
     let Some(bytes) = b.lease.raw.as_ref().map(|x| x.bytes()) else { return };
+    a.identity = b.header.identity();
     a.note(b.id, Some(b.fed));
-    if crate::pacing::is_stale(b.cfg) {
+    if crate::pacing::is_stale(b.header.cfg()) {
         a.stale += r.len() as u64;
     }
     for i in r {
@@ -886,6 +839,7 @@ fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, 
         // without per-frame measurements a large frame is drawn from its read-out words where the board has a view of them
         if a.folds.is_empty() && chunk.len() >= CODES_MIN_BYTES {
             let lay = b.codes.as_ref().and_then(|c| c(chunk, f)).filter(|l| l.stride <= CODES_MAX_STRIDE);
+            b.header.tag(f);
             let st = Stats { edges: &mut a.edges, off: &mut a.off };
             if let Some(t) = lay.and_then(|l| draw_frame_codes(&mut a.ph, &v.m, f, chunk, &l, Some(st))) {
                 a.triggered += t as u64;
@@ -896,6 +850,7 @@ fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, 
         }
         let t = std::time::Instant::now();
         (b.decode)(chunk, f);
+        b.header.tag(f);
         cost::add(Part::Decode, t);
         let st = Stats { edges: &mut a.edges, off: &mut a.off };
         a.triggered += draw_frame(&mut a.ph, &v.m, f, v.interp, Some(st)) as u64;
@@ -911,10 +866,15 @@ fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, 
 fn publish(mail: &Mutex<Mail>, a: Acc, counters: &Counters) -> Option<Acc> {
     let mut mb = mail.lock().unwrap();
     // maps of an older mapping: the UI would drop them
-    let (keep, old): (Vec<Acc>, Vec<Acc>) =
-        std::mem::take(&mut mb.full).into_iter().partition(|f| f.gen == a.gen && (f.ph.w, f.ph.h) == (a.ph.w, a.ph.h));
+    let (keep, old): (Vec<Acc>, Vec<Acc>) = std::mem::take(&mut mb.full)
+        .into_iter()
+        .partition(|f| f.gen == a.gen && same_pair(f.identity, a.identity) && (f.ph.w, f.ph.h) == (a.ph.w, a.ph.h));
     mb.full = keep;
     for o in old {
+        if !same_pair(o.identity, a.identity) {
+            Counters::add(&counters.losses.pipe, o.frames);
+        }
+        count_folds(counters, &o.folds);
         Counters::add(&counters.dropped, o.frames);
         mb.spare.push(o);
     }
@@ -924,7 +884,7 @@ fn publish(mail: &Mutex<Mail>, a: Acc, counters: &Counters) -> Option<Acc> {
     }
     // the UI is far behind: added under the lock, rare
     if let Some(last) = mb.full.last_mut() {
-        last.add(&a);
+        last.add(&a, counters);
     }
     Some(a)
 }
@@ -934,18 +894,22 @@ fn work(rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>) {
     let mut f = Frame::default();
     let mut spare: Option<Acc> = None;
     while let Ok(b) = rx.recv() {
-        let (v, stamp) = {
+        let (v, stamp, identity) = {
             let s = view.lock().unwrap();
-            (s.view.clone(), s.stamp)
+            (s.view.clone(), feed::legacy_stamp(&s), s.identity)
         };
-        let Some(v) = v.filter(|_| b.stamp >= stamp) else {
+        let Some(v) = v.filter(|_| accepts(&b, stamp, identity)) else {
             // older settings or no fast path: the frames are dropped (counted when the batch goes)
             while let Some(r) = b.claim(b.frames.max(1)) {
+                if !same_pair(b.header.identity(), identity) {
+                    Counters::add(&b.counters.losses.pipe, r.len() as u64);
+                }
                 Counters::add(&b.counters.dropped, r.len() as u64);
             }
             continue;
         };
         let mut a = fresh_acc(spare.take().or_else(|| mail.lock().unwrap().spare.pop()), &v);
+        a.identity = b.header.identity();
         while let Some(r) = b.claim(CLAIM) {
             draw_range(&b, r, &v, &mut a, &mut f, b.counters);
         }
@@ -984,6 +948,10 @@ impl<'a> From<&'a crate::sysconf::Switches> for Access<'a> {
 }
 
 pub fn pipe<'a>(access: impl Into<Access<'a>>) -> Option<&'static Pipe> {
+    #[cfg(test)]
+    if let Some(state) = test_scope::state() {
+        return state.pipe(access.into());
+    }
     static P: OnceLock<Pipe> = OnceLock::new();
     let Access::Start(sw) = access.into() else { return P.get() };
     (sw.pipeline == Mode::Batch)
@@ -1467,6 +1435,23 @@ mod tests {
     // merges not counted as partial, a whole batch counted, or the picture age of a merge not reported.
     #[test]
     fn partial_merges_and_picture_age_are_counted() {
+        // This legacy pacing fixture writes process-global mirrors. Give only this test
+        // a child process so concurrent UI publication cannot replace its WANTED value.
+        const CHILD: &str = "OOS_PARTIAL_MERGE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "drawpipe::tests::partial_merges_and_picture_age_are_counted", "--nocapture"])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let m = model(1e-6, false, false);
         let pipe = Pipe::start(2, 0, fresh());
         pipe.set_view(Some(&m), 970, 448, Interp::Exact);
@@ -1728,11 +1713,12 @@ mod tests {
         let got = Arc::new(Mutex::new(Vec::new()));
         for k in 0..3u32 {
             let g = got.clone();
+            pipe.set_identity(Default::default());
             pipe.feed_with(
                 Box::new(Bytes(bytes.clone())),
                 fb,
                 30,
-                0,
+                Default::default(),
                 dec(&s, &p),
                 None,
                 Box::new(move || g.lock().unwrap().push(k)),
@@ -1749,11 +1735,12 @@ mod tests {
         assert_eq!(d, [0, 1, 2]);
         // no view any more: what is done is delivered too
         let g = got.clone();
+        pipe.set_identity(Default::default());
         pipe.feed_with(
             Box::new(Bytes(bytes.clone())),
             fb,
             30,
-            0,
+            Default::default(),
             dec(&s, &p),
             None,
             Box::new(move || g.lock().unwrap().push(9)),
@@ -1773,7 +1760,7 @@ mod tests {
             let (bytes, fb, s, p) = batch(20, memsel, false);
             let pipe = Pipe::start(0, 0, fresh());
             pipe.set_view(Some(&m), w, h, Interp::Exact);
-            let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 20, 0, dec(&s, &p), None);
+            let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 20, (0, None), dec(&s, &p), None);
             let mut hp = Helper::default();
             let mut k = 0;
             while pipe.help(&mut hp) {
@@ -1920,3 +1907,10 @@ mod tests {
         }
     }
 }
+
+fn count_folds(counters: &Counters, folds: &crate::framestats::Folds) {
+    Counters::add(&counters.losses.folds, folds.iter().map(|(_, f)| f.n).sum());
+}
+
+#[cfg(test)]
+pub(crate) mod test_scope;

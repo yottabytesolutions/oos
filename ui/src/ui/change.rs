@@ -2,6 +2,7 @@
 
 //! Live normalization bridge plus observe-only classification, diagnostics and requests.
 
+pub(crate) mod acquisition;
 pub(super) mod census;
 mod diagnostics;
 mod intake;
@@ -11,7 +12,8 @@ mod legacy_keys;
 pub(super) mod normalize;
 pub(super) mod observations;
 pub(super) mod oracle;
-mod proposals;
+pub(super) mod proposals;
+mod recovery;
 
 use super::*;
 use diagnostics::Diagnostics;
@@ -54,6 +56,7 @@ const _: () = assert!(std::mem::size_of::<Prepared>() < 16 * 1024);
 #[derive(Default)]
 pub(super) struct Observer {
     shadow: Option<Shadow>,
+    executing: bool,
     pending: Outbox,
     proposals: Outbox,
     signals: Signals,
@@ -116,8 +119,10 @@ pub(super) fn request(ui: &mut Ui, request: Request, row: Row) {
 }
 
 pub(super) fn begin_step(ui: &mut Ui, dt: f64) -> Option<bool> {
+    ui.host.runtime_mut().change.executing = true;
     let t = Instant::now();
     if !lifecycle::begin_step(ui, dt) {
+        ui.host.runtime_mut().change.executing = false;
         return None;
     }
     let intake = t.elapsed();
@@ -125,6 +130,7 @@ pub(super) fn begin_step(ui: &mut Ui, dt: f64) -> Option<bool> {
     let t = Instant::now();
     legacy::settings(ui);
     let final_done = legacy::transitions(ui);
+    acquisition::publish(ui);
     observe(ui);
     let timing = &mut ui.host.runtime_mut().change.timing;
     let shadow = timing.end_change();
@@ -137,6 +143,7 @@ pub(super) fn prepare(ui: &mut Ui) {
     let sample = ui.host.runtime().change.census.begin();
     let started = Instant::now();
     prepare_inner(ui);
+    proposals::resolve(ui);
     let observer = &mut ui.host.runtime_mut().change;
     observer.timing.record_shadow(started.elapsed());
     sample.finish(&mut observer.census, 0);
@@ -163,6 +170,9 @@ fn prepare_inner(ui: &mut Ui) {
         keys.observe(old, &mut observer.signals);
     }
     observer.legacy = Some(keys);
+    if !recovery::initialize(observer, &ui.m, needs, &config) {
+        return;
+    }
     let Some(shadow) = &mut observer.shadow else { return };
     if shadow.needs().layout() != needs.layout() {
         observer.signals.effects |= C::MAPPING;
@@ -190,7 +200,7 @@ fn prepare_inner(ui: &mut Ui) {
                 single: requests[..n].contains(&Request::Single),
             })
         }
-        Err(error) => observer.diagnostics.error(error),
+        Err(error) => recovery::reject(observer, error),
     }
     // New legacy internal writers run after this point. Their tokens and observations stay queued until next step.
 }
@@ -207,6 +217,7 @@ fn observe(ui: &mut Ui) {
 }
 
 pub(super) fn finish_step(ui: &mut Ui) {
+    ui.host.runtime_mut().change.executing = false;
     let sample = ui.host.runtime().change.census.begin();
     let started = Instant::now();
     let observer = &mut ui.host.runtime_mut().change;
@@ -236,6 +247,9 @@ pub(crate) fn text(ui: &Ui) -> String {
         }
     }
     text.push_str(&observer.timing.text());
+    text.push_str(&crate::drawpipe::counters().losses.text());
+    let [autoset, bode] = proposals::restart_counts(ui);
+    let _ = write!(text, " stage_restart_autoset={autoset} stage_restart_bode={bode}");
     text
 }
 
@@ -255,11 +269,13 @@ pub(super) fn single_key(ui: &mut Ui) {
     ui.dirty_map = true;
 }
 pub(super) fn autoset_mark(ui: &mut Ui) {
-    stage(ui, oos_core::change::Requester::Autoset);
     ui.mark_changed();
 }
-pub(super) fn bode_stamp(ui: &mut Ui) {
-    ui.bode.stamp = ui.m.hw_stamp;
+pub(super) fn autoset_stage(ui: &mut Ui) {
+    stage(ui, oos_core::change::Requester::Autoset);
+    autoset_mark(ui);
+}
+pub(super) fn bode_epoch(ui: &mut Ui) {
     event(ui, Row::Stage, C::VIEW);
     stage(ui, oos_core::change::Requester::Bode);
 }
@@ -291,7 +307,7 @@ pub(super) fn timing(ui: &Ui) -> crate::perfguard::StageTiming {
 
 pub(super) fn autoset_begin(ui: &mut Ui) {
     proposals::begin(ui, oos_core::change::Requester::Autoset);
-    autoset_mark(ui);
+    autoset_stage(ui);
 }
 pub(super) fn bode_begin(ui: &mut Ui) {
     ui.bode.no_phase = None;
@@ -381,7 +397,6 @@ pub(crate) fn run_request(ui: &mut Ui) {
 pub(super) fn late_stage(ui: &mut Ui) -> oos_core::change::Token {
     prepare(ui);
     ui.m.tscale += 1;
-    ui.m.hw_stamp += 1;
     stage(ui, oos_core::change::Requester::Autoset);
     let token = ui
         .host
@@ -422,4 +437,8 @@ pub(super) fn stats_reset(ui: &mut Ui) {
 pub(super) fn dirty(ui: &mut Ui, row: Row) {
     ui.dirty_map = true;
     event(ui, row, C::MAPPING);
+}
+
+pub(super) fn is_prepared(ui: &Ui) -> bool {
+    ui.host.runtime().change.prepared.is_some()
 }

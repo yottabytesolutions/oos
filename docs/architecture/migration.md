@@ -203,6 +203,12 @@ together, because switching one side alone acts twice or not at all:
 The old mechanisms are deleted in the last part, when the shadow counters have been 0 since M2.2's round. Estimate:
 2.5 days.
 
+**Deep-memory step regression.** The M2.3b producer smoke on the unit (evidence kept with task 0062)
+measured the main step at 4 ch 10M at 14.1 ms against 4.4 ms in the 2026-11-15 baseline. In the same run: intake p99
+12.04 ms (setup B 0.231 ms), change p99 0.06 ms, shadow 0.2 ms, GPU upload 13.8 ms; reads faster (p50 236 ms
+against 282 ms, 3.7 against 3.0 acquisitions/s); fps 28.7 to 28.8 against 29.5 to 29.9. Task 0062 diagnoses the
+cause before M2.3c merges and records whether M2.3c to M2.3e or a later step fixes it.
+
 Design: [Change detection](README.md#change-detection), adr/0003. It includes compress's four review changes and
 upstreamarch's review:
 1. Requests next to the diff, returned by stages as values.
@@ -338,8 +344,8 @@ statistics); probe comp and setup B smoke for M3.
 Design: [Threads and messages](README.md#threads-and-messages), adr/0007. This supersedes "split `Shared` only if
 races show" in [the change-detection design](drawing.md#one-change-detection-point): the overhaul splits it as part of the structure.
 
-- `AcqIntent` (board-neutral, from the change point) and `Board::want`, which maps it to the board's `AcqWant` with
-  `gen` and `epoch` from M2; `AcqCmd` with ids and `Readings` replace the remaining `Shared` fields,
+- An owned, board-neutral `AcqRequest` in `oos-core` replaces the borrowing `AcqIntent` (adr/0017), so `Board` no
+  longer takes `&Model`. `Board::want` maps it to the board's `AcqWant` with `gen` and `epoch` from M2; `AcqCmd` with ids and `Readings` replace the remaining `Shared` fields,
   one group per part (M5.1 requests with ids: levels, slots, final; M5.2 the unit readings). Follows
   `acquisition.md`, Migration 2 and 3. `MeasRead` as its own type comes with M6.
 - Atomics for metrics, one writer each, on the statics allowlist.
@@ -537,6 +543,9 @@ enforce.
 Transports generic over `Read + Write`, tested with in-memory streams; `RemoteRequest` to main; SCPI, HTTP, MCP, VXI-11 and the control FIFO parse
 into `Command` and `Query`; answers come from the `reply` stage.
 
+Proposed (adr/0017): the SCPI parser is rebuilt from the SCPI reference table, with the legacy parser as a
+differential oracle on the host.
+
 Tests, failing before: a query answered from one step's state (no mixed values across a change); `:SINGLE;
 :WAV:DATA?` waits for a record of the SINGLE's epoch (`After { gen, epoch }`); a slow client does not block the step. Deletes: listener-thread access to UI state other than the request channel and the picture
 snapshot.
@@ -553,6 +562,9 @@ unchanged. Deletes: `Ui::step`.
 
 Each view (spectrum, eye, Bode, power, LA, XY, bus) and the menus own their state. Parts: one view per sub-step.
 Tests: per view, its inputs and its picture. Deletes: the `Ui` struct.
+
+Proposed (adr/0017): views migrate as moves; menus are rebuilt from the menu spec as a data-driven model with the
+active-choice highlight and the overview page.
 
 ### M18: target layout
 

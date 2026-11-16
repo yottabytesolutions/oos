@@ -46,3 +46,14 @@ plus the extended host suites of M1: `OOS_LONG_SOAK=1` for the 10,000-step soak 
 and `OOS_FULL_GOLDEN=1` for full debug goldens. Record the commands, results and complete logs
 in the owning task's Status on the candidate being accepted. These extended suites require
 explicit execution until the image tier includes them automatically.
+
+## Soft freeze
+
+Code that a planned step replaces gets no features and no cosmetic fixes ([adr/0017](../architecture/adr/0017-hybrid-after-m12.md)):
+the drawing kernels in `drawpipe`, `wave` and `fastdraw` until M7 to M10 replace them, the menu tables in `ui.rs`
+until the menu rebuild, and the SCPI parser until the M15 rebuild. Feature requests for these areas go into the
+specification or the replacing step.
+
+Safety fixes and fixes of bugs that block daily use continue. Each comes with a failing-before test written against
+the target contract (the replacing step's design or the specification), not against the legacy internals, so the
+test carries over to the replacement.

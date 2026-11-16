@@ -7,7 +7,7 @@
 594 file hal/src/dho/lmx2582.rs
 459 file hal/src/dho/mask.rs
 432 file hal/src/dho/seg.rs
-848 file hal/src/dho/selfcal.rs
+801 file hal/src/dho/selfcal.rs
 1501 file hal/src/dho/seq.rs
 1027 file hal/src/dho/tpu.rs
 586 file hal/src/model.rs

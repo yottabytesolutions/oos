@@ -16,9 +16,7 @@
 1 unsafe ui/src/placement.rs
 2 unsafe ui/src/sntp.rs
 1 unsafe ui/src/store.rs
-1 unsafe ui/src/ui.rs
 1 unsafe ui/src/ui/analysis.rs
 2 unsafe ui/src/ui/sysinfo.rs
-1 unsafe ui/src/ui/wlan.rs
 1 unsafe ui/src/usbtmc.rs
 11 unsafe ui/src/vpu.rs

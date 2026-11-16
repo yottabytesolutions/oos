@@ -1,9 +1,9 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
 645 file ui/src/announce.rs
-2548 file ui/src/board/dho/hw.rs
+2508 file ui/src/board/dho/hw.rs
 530 file ui/src/board/mod.rs
-979 file ui/src/drawpipe.rs
+934 file ui/src/drawpipe.rs
 609 file ui/src/drm.rs
 894 file ui/src/fastdraw.rs
 708 file ui/src/gfx.rs
@@ -11,17 +11,17 @@
 416 file ui/src/hislip.rs
 1264 file ui/src/http.rs
 531 file ui/src/main.rs
-1666 file ui/src/mdns.rs
+1641 file ui/src/mdns.rs
 468 file ui/src/measures/jitter.rs
 549 file ui/src/measures/power.rs
 524 file ui/src/measures/standard.rs
 452 file ui/src/pacing.rs
 462 file ui/src/protocols/mod.rs
-5048 file ui/src/scpi.rs
+5038 file ui/src/scpi.rs
 3137 file ui/src/store.rs
-12508 file ui/src/ui.rs
+12465 file ui/src/ui.rs
 1910 file ui/src/ui/analysis.rs
-806 file ui/src/ui/autoset.rs
+804 file ui/src/ui/autoset.rs
 1076 file ui/src/ui/bode.rs
 516 file ui/src/ui/bus.rs
 2000 file ui/src/ui/eyepage.rs
@@ -35,25 +35,22 @@
 996 file ui/src/ui/panes.rs
 441 file ui/src/ui/reference_decode.rs
 730 file ui/src/ui/reflook.rs
-973 file ui/src/ui/sim.rs
+972 file ui/src/ui/sim.rs
 461 file ui/src/ui/startup.rs
 620 file ui/src/ui/time.rs
 1423 file ui/src/ui/tools.rs
 891 file ui/src/ui/wlan.rs
-790 file ui/src/ui/workflow.rs
+789 file ui/src/ui/workflow.rs
 842 file ui/src/ui/workspace.rs
 489 file ui/src/usbtmc.rs
 406 file ui/src/vpu.rs
 474 file ui/src/vxi11.rs
-1546 file ui/src/wave.rs
+1403 file ui/src/wave.rs
 138 fn ui/src/board/dho/fpga.rs spawn
-63 fn ui/src/board/dho/hw.rs core_trim
 72 fn ui/src/board/dho/hw.rs hw_trigger
-129 fn ui/src/board/dho/hw.rs settings
-877 fn ui/src/board/dho/hw.rs spawn
-120 fn ui/src/board/dho/hw/segmented.rs SegmentIo::step
+125 fn ui/src/board/dho/hw.rs settings
+856 fn ui/src/board/dho/hw.rs spawn
 91 fn ui/src/board/record.rs resample
-80 fn ui/src/board/record.rs to_record
 103 fn ui/src/board/record.rs trigger_point
 91 fn ui/src/cmd.rs execute
 61 fn ui/src/desktop.rs PointerState::apply
@@ -72,7 +69,7 @@
 77 fn ui/src/main.rs hdmi_gpu_frame
 81 fn ui/src/main.rs main
 68 fn ui/src/mdns.rs Responder::answer
-94 fn ui/src/mdns.rs run
+92 fn ui/src/mdns.rs run
 69 fn ui/src/measures/jitter.rs eye_of
 76 fn ui/src/pacing.rs summary
 162 fn ui/src/scpi.rs Scpi::bus_cmd
@@ -88,36 +85,30 @@
 71 fn ui/src/scpi.rs Scpi::la_cmd
 104 fn ui/src/scpi.rs Scpi::mask_cmd
 241 fn ui/src/scpi.rs Scpi::math_cmd
-71 fn ui/src/scpi.rs Scpi::meas_cmd
 84 fn ui/src/scpi.rs Scpi::meas_stat_cmd
 77 fn ui/src/scpi.rs Scpi::poll
 187 fn ui/src/scpi.rs Scpi::ref_cmd
 146 fn ui/src/scpi.rs Scpi::sim_cmd
 171 fn ui/src/scpi.rs Scpi::timebase_more
-64 fn ui/src/scpi.rs meas_item
 223 fn ui/src/scpi/ser.rs trig
-66 fn ui/src/sparse.rs lanczos_many
 62 fn ui/src/store.rs parse_ag
 149 fn ui/src/store.rs parse_isf
 131 fn ui/src/store.rs parse_wfm
 652 fn ui/src/store.rs set
 394 fn ui/src/store.rs setup_text
 67 fn ui/src/sysconf.rs SysConf::parse_over
-97 fn ui/src/trig.rs decode_at
 353 fn ui/src/ui.rs Ui::activate
-588 fn ui/src/ui.rs Ui::adjust
+587 fn ui/src/ui.rs Ui::adjust
 62 fn ui/src/ui.rs Ui::cursor_values
 73 fn ui/src/ui.rs Ui::dlg_layout
 73 fn ui/src/ui.rs Ui::draw_axes
-143 fn ui/src/ui.rs Ui::draw_bottom
 143 fn ui/src/ui.rs Ui::draw_bottom_cards
 82 fn ui/src/ui.rs Ui::draw_decoder
 69 fn ui/src/ui.rs Ui::draw_info
 114 fn ui/src/ui.rs Ui::draw_markers
 95 fn ui/src/ui.rs Ui::draw_math_ch
-133 fn ui/src/ui.rs Ui::draw_menu
+118 fn ui/src/ui.rs Ui::draw_menu
 75 fn ui/src/ui.rs Ui::draw_refs_at
-65 fn ui/src/ui.rs Ui::draw_strip
 66 fn ui/src/ui.rs Ui::draw_strip_band
 73 fn ui/src/ui.rs Ui::draw_top
 81 fn ui/src/ui.rs Ui::fast_draw_all
@@ -128,13 +119,13 @@
 331 fn ui/src/ui.rs Ui::menu_items
 76 fn ui/src/ui.rs Ui::menu_title
 107 fn ui/src/ui.rs Ui::multi_touch
-257 fn ui/src/ui.rs Ui::new
+256 fn ui/src/ui.rs Ui::new
 180 fn ui/src/ui.rs Ui::options
 77 fn ui/src/ui.rs Ui::pointer_wheel_motion
 137 fn ui/src/ui.rs Ui::render_layers
-122 fn ui/src/ui.rs Ui::set_dec_proto
+121 fn ui/src/ui.rs Ui::set_dec_proto
 134 fn ui/src/ui.rs Ui::set_trig_type
-421 fn ui/src/ui.rs Ui::step
+409 fn ui/src/ui.rs Ui::step
 211 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 408 fn ui/src/ui.rs Ui::touch_in
@@ -159,7 +150,6 @@
 77 fn ui/src/ui/dpt.rs Ui::dpt_update
 76 fn ui/src/ui/dpt.rs Ui::draw_dpt
 69 fn ui/src/ui/eyepage.rs Page::text_eye
-63 fn ui/src/ui/eyepage.rs Ui::eye_plot
 152 fn ui/src/ui/eyepage.rs Ui::eye_update
 61 fn ui/src/ui/eyepage.rs layout
 115 fn ui/src/ui/eyepage.rs populate_eye_facts
@@ -185,11 +175,11 @@
 73 fn ui/src/ui/reference_decode.rs Ui::reference_decode_packets_at
 68 fn ui/src/ui/reference_decode.rs decode_borrowed
 74 fn ui/src/ui/reference_search.rs Ui::reference_trigger_hits
-134 fn ui/src/ui/sim.rs Ui::sim_finish
+133 fn ui/src/ui/sim.rs Ui::sim_finish
 66 fn ui/src/ui/sim.rs Ui::sim_finish_capture
 63 fn ui/src/ui/sim/sim_bus_candidate.rs Ui::sim_bus_guard
 117 fn ui/src/ui/startup.rs Ui::draw_start_up
-67 fn ui/src/ui/sysinfo.rs Ui::draw_sysinfo
+66 fn ui/src/ui/sysinfo.rs Ui::draw_sysinfo
 155 fn ui/src/ui/sysinfo.rs Ui::sysinfo_rows
 74 fn ui/src/ui/tables.rs Ui::draw_table
 75 fn ui/src/ui/tools.rs Ui::hist_stat
@@ -198,15 +188,10 @@
 75 fn ui/src/ui/workflow.rs Ui::replay_acquire
 95 fn ui/src/ui/workspace.rs Ui::workspace_action
 116 fn ui/src/ui/workspace.rs Ui::workspace_touch
-68 fn ui/src/vxi11.rs Server::poll
 106 fn ui/src/vxi11.rs Server::poll_async
-103 fn ui/src/vxi11.rs core
 105 fn ui/src/vxi11.rs core_async
-97 fn ui/src/wave.rs Phosphor::draw_ex
-210 fn ui/src/wave.rs Source::acquire
 241 fn ui/src/wave.rs Source::acquire_impl
-107 fn ui/src/wave.rs demo_signal
-100 fn ui/src/wave.rs ext_demo
+85 fn ui/src/wave.rs demo_signal
 132 fn ui/src/wave.rs stats
 99 fn ui/src/wave.rs trace_columns
 4 impls ui Job
@@ -215,7 +200,7 @@
 7 impls ui Worker
 16 struct ui/src/board/mod.rs Frame
 47 struct ui/src/board/mod.rs Shared
-14 struct ui/src/drawpipe.rs Batch
+13 struct ui/src/drawpipe.rs Batch
 14 struct ui/src/drm.rs Display
 16 struct ui/src/drm.rs GetConnector
 15 struct ui/src/drm.rs ModeInfo
@@ -228,11 +213,11 @@
 13 struct ui/src/scpi.rs Scpi
 18 struct ui/src/sysconf.rs SysConf
 13 struct ui/src/ui.rs TouchState
-219 struct ui/src/ui.rs Ui
+218 struct ui/src/ui.rs Ui
 19 struct ui/src/ui/analysis.rs RefMeasureKey
 49 struct ui/src/ui/analysis.rs State
 17 struct ui/src/ui/autoset.rs AutoRun
-16 struct ui/src/ui/bode.rs State
+15 struct ui/src/ui/bode.rs State
 28 struct ui/src/ui/eyepage.rs Page
 15 struct ui/src/ui/meascatalog.rs Lay
 14 struct ui/src/ui/workflow.rs Replay

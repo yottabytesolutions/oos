@@ -21,3 +21,5 @@ static ui/src/drawpipe.rs Pipe::feed_batch::IDS -> static ui/src/drawpipe/feed.r
 fn ui/src/ui/autoset.rs scale_for -> fn ui/src/ui/autoset/recovery.rs scale_for
 struct ui/src/drawpipe.rs Losses -> struct ui/src/drawpipe/losses.rs Losses
 fn ui/src/drawpipe.rs Losses::text -> fn ui/src/drawpipe/losses.rs Losses::text
+fn hal/src/update/kexec/legacy.rs report -> fn hal/src/update/kexec/undo.rs report
+fn xtask/src/run.rs capture_raw -> fn xtask/src/run.rs execute

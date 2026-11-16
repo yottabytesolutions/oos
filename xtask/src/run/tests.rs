@@ -1,12 +1,16 @@
 use super::*;
 use std::{ffi::OsString, fs};
 
+mod probe_tests;
+
 struct Fixture(PathBuf);
 
 impl Fixture {
     fn new() -> Self {
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("oos-context-{}-{stamp}", std::process::id()));
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("unnamed").replace(':', "_");
+        let root = std::env::temp_dir().join(format!("oos-context-{}-{stamp}-{name}", std::process::id()));
         fs::create_dir_all(root.join("tools")).unwrap();
         // The selector is a fixture; real worktree selection remains tools/output.py's responsibility.
         fs::write(

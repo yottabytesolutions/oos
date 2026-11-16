@@ -32,6 +32,8 @@ mod evidence;
 #[cfg(target_os = "linux")]
 mod legacy;
 #[cfg(any(target_os = "linux", test))]
+pub mod undo;
+#[cfg(any(target_os = "linux", test))]
 mod watchdog;
 #[cfg(target_os = "linux")]
 pub use legacy::prepare_jump;

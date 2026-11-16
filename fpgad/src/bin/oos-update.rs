@@ -374,16 +374,16 @@ fn quiesce() -> Quiet {
 #[cfg(target_os = "linux")]
 fn restore(q: &Quiet) {
     if q.display {
-        let _ = std::fs::write(format!("{}/bind", DRM), "display-subsystem");
+        kexec::undo::warn("bind display", std::fs::write(format!("{}/bind", DRM), "display-subsystem"));
     }
     for n in &q.links {
-        let _ = std::process::Command::new("ip").args(["link", "set", "dev", n, "up"]).status();
+        kexec::undo::ip("set link up", &["link", "set", "dev", n, "up"]);
     }
     // a link that went down took its routes along
     for r in &q.routes {
         let mut a = vec!["route", "replace"];
         a.extend(r.split_whitespace());
-        let _ = std::process::Command::new("ip").args(&a).status();
+        kexec::undo::ip("restore route", &a);
     }
 }
 
@@ -393,20 +393,16 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
     let short = update::short(&s.build).to_string();
     // stopped: None before oos-ui and the devices were stopped
     let undo = |why: &str, stopped: Option<&Quiet>| -> ! {
-        let _ = kexec::unload();
+        kexec::undo::warn("unload kexec image", kexec::unload());
         if stopped.is_some() {
-            let _ = std::process::Command::new("mount").args(["-o", "remount,rw", "/oos"]).status();
+            kexec::undo::remount_writable();
         }
-        let _ = update::kexec_clear(sp, &format!("kexec start of build {} failed ({}): nothing installed", short, why));
+        let event = format!("kexec start of build {} failed ({}): nothing installed", short, why);
+        kexec::undo::warn("clear kexec state", update::kexec_clear(sp, &event));
         if let Some(q) = stopped {
             restore(q);
-            let _ = std::fs::remove_file("/tmp/oos-ui.off");
-            let _ = std::process::Command::new("setsid")
-                .args(["sh", "-c", UI_LOOP])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
+            kexec::undo::remove_marker("/tmp/oos-ui.off");
+            kexec::undo::resume_ui(UI_LOOP);
         }
         notice(&format!(
             "Update {}: the kexec start failed ({}); nothing installed, this build keeps running",

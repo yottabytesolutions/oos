@@ -47,7 +47,22 @@ pub(crate) fn capture_raw(
     args: &[&str],
     env: &[(&str, &std::ffi::OsStr)],
 ) -> Result<std::process::Output, String> {
-    let mut command = Command::new(program);
+    execute(ctx, dir, program, args, env, &mut Command::new(program))
+}
+
+/// Probe the repository's pinned toolchain instead of Cargo's inherited proxy override.
+pub(crate) fn probe(ctx: &Context, root: &Path, program: &str, args: &[&str]) -> Result<std::process::Output, String> {
+    execute(ctx, root, program, args, &[], Command::new(program).env_remove("RUSTUP_TOOLCHAIN"))
+}
+
+fn execute(
+    ctx: &Context,
+    dir: &Path,
+    program: &str,
+    args: &[&str],
+    env: &[(&str, &std::ffi::OsStr)],
+    command: &mut Command,
+) -> Result<std::process::Output, String> {
     command.args(args).current_dir(dir);
     if let Some(target) = &ctx.target {
         command.env("CARGO_TARGET_DIR", target);
@@ -92,7 +107,7 @@ pub(crate) fn start_logs(root: &Path) -> Result<(Context, PathBuf), String> {
 
 /// Whether `program` can be started (a `--version` call succeeds).
 pub fn available(ctx: &Context, root: &Path, program: &str, args: &[&str]) -> bool {
-    capture(ctx, root, program, args).is_ok_and(|o| o.ok)
+    probe(ctx, root, program, args).is_ok_and(|o| o.status.success())
 }
 
 /// The last `n` lines of `text`, for a failure report.

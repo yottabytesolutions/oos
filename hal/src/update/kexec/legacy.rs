@@ -3,27 +3,13 @@
 
 //! Bounded evidence for kexec_load, with the common watchdog handoff at the jump.
 
-use super::{arguments, evidence};
-use std::io::Write;
+use super::{arguments, evidence, undo::report};
 use std::path::Path;
 use std::process::Command;
 
 fn warn(result: std::io::Result<()>) {
     if let Err(e) = result {
         report(&format!("evidence failed: {e}; continuing"));
-    }
-}
-
-fn report(message: &str) {
-    eprintln!("oos-kexec: {message}");
-    let line = format!("oos-kexec: {message}\n");
-    // pmsg is ramoops-backed (CONFIG_PSTORE_PMSG), including after /oos becomes read only.
-    for name in ["/dev/kmsg", "/dev/pmsg0"] {
-        if let Err(e) =
-            std::fs::OpenOptions::new().write(true).open(name).and_then(|mut f| f.write_all(line.as_bytes()))
-        {
-            eprintln!("oos-kexec: {name} diagnostic write failed: {e}");
-        }
     }
 }
 

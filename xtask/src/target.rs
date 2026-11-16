@@ -8,6 +8,6 @@ use std::path::Path;
 
 /// Whether the target's standard library is installed.
 pub fn installed(ctx: &crate::run::Context, root: &Path) -> bool {
-    run::capture(ctx, root, "rustup", &["target", "list", "--installed"])
-        .is_ok_and(|o| o.stdout.lines().any(|l| l.trim() == TARGET))
+    run::probe(ctx, root, "rustup", &["target", "list", "--installed"])
+        .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == TARGET))
 }

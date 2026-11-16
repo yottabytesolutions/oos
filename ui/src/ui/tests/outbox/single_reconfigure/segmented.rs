@@ -229,7 +229,10 @@ fn check_segment_boundary(phase: crate::board::SegPhase, boundary: &str) {
     assert!(lock(&shared).seg.times.is_empty());
     assert_eq!(event("acq_seg_start="), 2);
     assert_eq!(event("acq_configure="), if boundary == "configure" { 2 } else { 1 });
-    for _ in 0..120 {
+    // until the SINGLE ends, bounded by time: the frames a step takes follow its measured time (`fast_take_next`), so a
+    // slow build (coverage, tests in parallel) needs more steps for the same segments
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
         worker.tick(&shared);
         let g = lock(&shared);
         assert!(g.queue.iter().all(|f| (f.cfg, f.stamp) == (id.gen(), id.epoch())));

@@ -3,7 +3,6 @@
 
 //! Power analysis: power quality from a voltage and a current channel, current harmonics against IEC 61000-3-2
 //! class A, switching loss, ripple, inrush, efficiency, safe operating area and the PWM duty trend.
-
 use crate::edges::edges;
 use crate::measure::analyze;
 use std::f64::consts::PI;
@@ -704,6 +703,5 @@ pub fn rail(v: &[f32], dt: f64, reference: Option<f64>, vin: Option<&[f32]>, clo
     }
     r
 }
-
 #[cfg(test)]
 mod tests;

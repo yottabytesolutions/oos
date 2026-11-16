@@ -19,10 +19,15 @@ use std::sync::Mutex;
 
 #[cfg(any(target_os = "linux", test))]
 mod batch;
+mod header;
 mod overlay;
+#[cfg(target_os = "linux")]
+mod raw;
 #[cfg(any(target_os = "linux", test))]
 mod segmented;
 mod single;
+#[cfg(target_os = "linux")]
+use raw::decode_raw;
 #[cfg(target_os = "linux")]
 use segmented::{seg_abort, SegRun, SegmentIo};
 
@@ -1080,73 +1085,6 @@ fn disarm(
     }
 }
 
-/// One line of the header log: the 8 header words, `pre`, and the offsets (samples) of the nearest rising and falling
-/// crossing of the trigger level from `pre` on the trigger channel. `only_off` (OOS_FRAME_HEADER=off): only the frames
-/// whose edge (of the trigger slope) is not within 20 samples of `pre`, and a count of all frames every 10,000 (the
-/// `probed` counter): a long run for rare frames such as issue #5's.
-fn log_header(h: &[u8], v: &[f32], s: &Settings, (pre, k): (usize, usize), only_off: bool) {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static LINES: AtomicU32 = AtomicU32::new(0);
-    let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
-    let hyst = (0.3 * s.ch[tc].scale) as f32;
-    let near = |rising: bool| {
-        crate::fastdraw::edge_near(v, pre, s.level as f32, hyst, rising, false, v.len()).map(|t| t - pre as f64)
-    };
-    let mut line = String::new();
-    if only_off {
-        let n = crate::drawpipe::counters().probed.fetch_add(1, Ordering::Relaxed) + 1;
-        if n % 10_000 == 0 {
-            line = format!("frames {}\n", n);
-        }
-        let rising = !matches!(s.slope, oos_hal::dho::tpu::Slope::Falling);
-        if near(rising).is_some_and(|t| t.abs() <= 20.0) {
-            return append_header_log(&line);
-        }
-    }
-    if LINES.fetch_add(1, Ordering::Relaxed) >= 20_000 {
-        return;
-    }
-    let words: Vec<String> = h.chunks_exact(2).map(|b| format!("{:04x}", u16::from_le_bytes([b[0], b[1]]))).collect();
-    let off = |rising: bool| near(rising).map_or("-".to_string(), |t| format!("{:.1}", t));
-    line += &format!(
-        "{} pre {} k {} n {} rise {} fall {} scale {} tdiv {:e}\n",
-        words.join(" "),
-        pre,
-        k,
-        v.len(),
-        off(true),
-        off(false),
-        s.ch[tc].scale,
-        s.tdiv
-    );
-    append_header_log(&line);
-}
-
-fn append_header_log(line: &str) {
-    use std::io::Write;
-    if line.is_empty() {
-        return;
-    }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/oos-hdr.log") {
-        let _ = f.write_all(line.as_bytes());
-    }
-}
-
-/// A raw read (the live-compression newest frame, the deep window: up to ~24 MB) decoded with the ADC cores matched
-/// when the UI asks for it. The flag is read first: a guard taken in the argument would hold `Shared` through the
-/// whole decode, and the UI waits on it (upstream 3930159f).
-#[cfg(target_os = "linux")]
-fn decode_raw(
-    bytes: &[u8],
-    (s, p): (&Settings, &hz::Params),
-    probe: super::switches::HeaderProbe,
-    out: &HwShared,
-    cores: &mut super::cores::Cores,
-) -> Frame {
-    let matched = crate::perfguard::deep::acq_lock(out).cores;
-    decode_with(bytes, s, p, 0, probe, matched.then_some(cores))
-}
-
 /// Decodes a read-out of the whole record into a frame (tests: no header probe).
 #[cfg(test)]
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
@@ -1234,7 +1172,7 @@ pub(super) fn decode_into_matched(
     let k = oos_hal::dho::seq::compress_k(s, p) as usize;
     if !hdr.is_empty() && probe.on() {
         let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
-        log_header(hdr, &f.ch[tc], s, (p.pre as usize / k, k), probe == super::switches::HeaderProbe::OffTrigger);
+        header::log(hdr, &f.ch[tc], s, (p.pre as usize / k, k), probe == super::switches::HeaderProbe::OffTrigger);
     }
     set_meta(s, p, seq, f);
 }
@@ -2456,9 +2394,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             })
                             .collect();
                         skip += super::frame1::drop_frame1(&mut all, skip, switches.board.frame0_drop, &b);
-                        if let (Some(r), Some(last)) = (raw_frame, all.last_mut()) {
-                            *last = Frame { stamp, cfg: want_gen, seq: last.seq, ..r };
-                        }
+                        super::frame1::raw_newest(&mut all, raw_frame, (stamp, want_gen));
                         all
                     };
                     // the first batch with new settings, of one frame (a deep record): that frame is frame 0, which the
@@ -2581,7 +2517,7 @@ mod tests {
     // FPGA, so this checks its source. Break it catches: a lock taken in a decode's arguments.
     #[test]
     fn no_decode_holds_the_shared_lock() {
-        let src = include_str!("hw.rs");
+        let src = [include_str!("hw.rs"), include_str!("hw/raw.rs")].concat();
         let call = |l: &&str| !l.trim_start().starts_with("//") && !l.contains("contains(");
         let held =
             src.lines().filter(call).filter(|l| l.contains("decode_with(") && l.contains("lock(")).collect::<Vec<_>>();

@@ -3,3 +3,4 @@
 static ui/src/drawpipe.rs Pipe::feed_batch::IDS -> static ui/src/drawpipe/feed.rs Pipe::feed_batch::IDS
 struct core/src/model/mod.rs Model -> struct core/src/model/state.rs Model
 fn ui/src/board/dho/hw.rs seg_step -> fn ui/src/board/dho/hw/segmented.rs SegmentIo::step
+static ui/src/board/dho/hw.rs log_header::LINES -> static ui/src/board/dho/hw/header.rs log::LINES

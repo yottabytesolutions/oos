@@ -95,5 +95,12 @@ pub(super) fn drop_frame1(all: &mut Vec<Frame>, skip: usize, frame0_drop: bool, 
     1
 }
 
+/// The raw newest frame (live compression) stands for the newest record of the batch, under its sequence number.
+pub(super) fn raw_newest(all: &mut [Frame], raw: Option<Frame>, (stamp, cfg): (u64, u64)) {
+    if let (Some(r), Some(last)) = (raw, all.last_mut()) {
+        *last = Frame { stamp, cfg, seq: last.seq, ..r };
+    }
+}
+
 #[cfg(test)]
 mod tests;

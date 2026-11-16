@@ -61,6 +61,7 @@ const LARGE_BODY: usize = MAX_OTHER;
 const SEND_INLINE: usize = 48 << 10;
 /// At most this many at once; more are answered 503, and the page tries again.
 const MAX_SENDERS: usize = 2;
+mod limits;
 mod shutdown;
 const SEND_TIMEOUT_S: u64 = 30;
 static SENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -563,28 +564,6 @@ struct Inbox {
     large: std::sync::atomic::AtomicBool,
 }
 
-/// The large-body place of a reader, given back when the reader ends.
-struct LargeSlot<'a>(Option<&'a std::sync::atomic::AtomicBool>);
-
-impl<'a> LargeSlot<'a> {
-    /// One large body at a time: a second is answered at its head, so the readers hold at most one. None: taken.
-    fn take(h: &Head, taken: &'a std::sync::atomic::AtomicBool) -> Option<Self> {
-        let large = h.len.is_some_and(|n| n > LARGE_BODY);
-        if large && taken.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            return None;
-        }
-        Some(Self(large.then_some(taken)))
-    }
-}
-
-impl Drop for LargeSlot<'_> {
-    fn drop(&mut self) {
-        if let Some(b) = self.0 {
-            b.store(false, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
-}
-
 impl Inbox {
     fn lock(&self) -> MutexGuard<'_, std::collections::VecDeque<Req>> {
         self.q.lock().unwrap_or_else(|e| e.into_inner())
@@ -711,13 +690,12 @@ fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Shared>, lim: 
     if let Some((status, msg)) = refuse_early(&h, &text, peer_ok) {
         return answer(&s, status, msg);
     }
-    let Some(_slot) = LargeSlot::take(&h, &inbox.large) else {
+    let Some(_slot) = limits::LargeSlot::take(&h, &inbox.large) else {
         return answer(&s, "503 Service Unavailable", "busy, try again");
     };
     let need = end + h.len.unwrap_or(0);
-    // the whole request in one allocation, not a doubling past it
-    req.reserve_exact(need.saturating_sub(req.len()));
-    if h.expect_continue && req.len() < need && !send_continue(&s) {
+    req.reserve_exact(need.saturating_sub(req.len())); // one allocation, not a doubling past it
+    if h.expect_continue && req.len() < need && !limits::send_continue(&s) {
         return;
     }
     while req.len() < need {
@@ -728,13 +706,6 @@ fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Shared>, lim: 
     req.truncate(need);
     let body = req.split_off(end);
     shutdown::queue_request(s, inbox, text, body, lim);
-}
-
-/// `100 Continue` for a client that waits for it before its body; false when the connection is gone.
-fn send_continue(s: &TcpStream) -> bool {
-    let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-    let mut w = s;
-    w.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").is_ok()
 }
 
 /// The accept thread of an open port: a reader thread per connection, at most `MAX_PENDING` (503 beyond). Polls the

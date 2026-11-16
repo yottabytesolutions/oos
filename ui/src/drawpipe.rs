@@ -327,8 +327,6 @@ pub struct Counters {
     pub dropped: AtomicU64,
     /// frames whose cheap measurements went into the statistics (framestats.rs)
     pub measured: AtomicU64,
-    /// frames logged by the header probe in its `off` mode (`board::dho::switches::HeaderProbe`)
-    pub probed: AtomicU64,
     pub losses: Losses,
     pub acquisition: crate::board::AcquisitionCounters,
 }

@@ -55,3 +55,15 @@ fn the_record_path_leaves_out_frame1_only_after_frame0() {
     assert!(newest_kept(&frame(410), 3, true, &s), "with three frames the newest is not frame 1");
     assert_eq!(crate::drawpipe::counters().losses.frame1.load(std::sync::atomic::Ordering::Relaxed), 2);
 }
+
+// Break it catches: the raw newest frame put in place of the record without the batch's identity and sequence.
+#[test]
+fn the_raw_newest_frame_takes_the_place_of_the_last() {
+    let mut all = vec![Frame { seq: 4, ..frame(506) }, Frame { seq: 5, ..frame(506) }];
+    raw_newest(&mut all, Some(Frame { seq: 99, pre: 7, ..Frame::default() }), (11, 12));
+    let last = &all[1];
+    assert_eq!((last.seq, last.stamp, last.cfg, last.pre), (5, 11, 12, 7));
+    let mut none: Vec<Frame> = Vec::new();
+    raw_newest(&mut none, Some(Frame::default()), (1, 1));
+    assert!(none.is_empty());
+}

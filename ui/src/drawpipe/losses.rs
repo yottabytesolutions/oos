@@ -13,6 +13,8 @@ pub struct Losses {
     pub folds: AtomicU64,
     /// frame 1 of a batch left out without its edge at the trigger point (`board::dho::frame1`)
     pub frame1: AtomicU64,
+    /// frames looked at by the header log in its `off` mode (`board::dho::switches::HeaderProbe`), not a loss
+    pub probed: AtomicU64,
 }
 
 impl Losses {

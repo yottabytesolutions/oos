@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use crate::model::{Model, PowerMode};
+use crate::model::{Model, PowerMode, WaveId};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Analysis4 {
     SpecDist(bool),
-    EyeSrc(usize),
+    EyeSrc(WaveId),
     EyeRate(f64),
-    PwV(usize),
-    PwI(usize),
+    PwV(WaveId),
+    PwI(WaveId),
     PwMode(PowerMode),
     BodeStart(f64),
     BodeStop(f64),
     BodePoints(usize),
     BodeAmp(f64),
-    BodeIn(usize),
-    BodeOut(usize),
+    BodeIn(WaveId),
+    BodeOut(WaveId),
 }
 
 impl Analysis4 {

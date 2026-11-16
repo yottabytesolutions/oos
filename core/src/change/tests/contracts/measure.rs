@@ -5,14 +5,14 @@ pub(super) const CASES: &[Case] = &[
     (
         "meas",
         |m| {
-            m.meas.push((Meas::Vavg, 0));
+            m.meas.push((Meas::Vavg, WaveId::Ch(0)));
         },
         C::STATS,
     ),
     (
         "meas2",
         |m| {
-            m.meas2.push((0, 0, 1));
+            m.meas2.push((0, WaveId::Ch(0), WaveId::Ch(1)));
         },
         C::STATS,
     ),

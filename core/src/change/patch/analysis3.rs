@@ -7,7 +7,7 @@ use crate::model::Model;
 pub enum Analysis3 {
     DecParity(oos_dsp::decode::Parity),
     DecOpt([u8; crate::protocols::OPTS]),
-    SpecSrc(usize),
+    SpecSrc(crate::model::WaveId),
     SpecCenter(f64),
     SpecSpan(f64),
     SpecRbw(f64),

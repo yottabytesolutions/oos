@@ -16,6 +16,7 @@ pub struct DecCfg {
     pub tick: usize,
     pub nibbles: u32,
     pub uspeed: usize,
+    pub cphy_rate: f64,
     pub src4: Option<usize>,
     pub la_in: bool,
     pub la: [Option<u8>; 4],

@@ -111,19 +111,25 @@ impl Model {
                 u[self.trig_src2] = true;
             }
             TrigType::Bus => {
+                // decoder sources past the channels are refs (`decode_wave`): no channel to switch on
                 let r = self.dec_proto.roles_in(ctx);
-                u[self.dec_src] = true;
+                let mut use_source = |c: usize| {
+                    if let Some(v) = u.get_mut(c) {
+                        *v = true;
+                    }
+                };
+                use_source(self.dec_src);
                 if r[1].is_some() {
-                    u[self.dec_src2] = true;
+                    use_source(self.dec_src2);
                 }
                 if let (Some(_), Some(c)) = (r[2], self.dec_cs) {
-                    u[c] = true;
+                    use_source(c);
                 }
                 if let (Some(_), Some(c)) = (r[3], self.dec_src4) {
-                    u[c] = true;
+                    use_source(c);
                 }
                 if let (true, Some(c)) = (self.dec_proto.diff_ok_in(ctx), self.dec_diff) {
-                    u[c] = true;
+                    use_source(c);
                 }
             }
             _ => u[self.trig_src] = true,
@@ -217,6 +223,14 @@ impl Model {
             Proto::Usb => {
                 use oos_dsp::decode_ext3::{UsbSpeed, USB_FULL, USB_LOW};
                 1.0 / if crate::decode::USB_SPEEDS[self.dec_uspeed] == UsbSpeed::Low { USB_LOW } else { USB_FULL }
+            }
+            Proto::Manchester | Proto::Mlt3 => 1.0 / crate::decode::BAUDS[self.dec_baud],
+            Proto::Cphy => {
+                if self.dec_cphy_rate > 0.0 {
+                    1.0 / self.dec_cphy_rate
+                } else {
+                    1e-9
+                }
             }
         }
     }

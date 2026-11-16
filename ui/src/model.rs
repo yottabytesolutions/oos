@@ -43,11 +43,6 @@ pub fn opt_ch_names(none: &str) -> Vec<String> {
     std::iter::once(none.to_string()).chain(ch_names()).collect()
 }
 
-/// Whether source index `s` exists on this unit: channels 0..n_ch(), and every index from NCH on (math channels).
-pub fn src_ok(s: usize) -> bool {
-    s < n_ch() || s >= NCH
-}
-
 /// `d` steps from source index `i` among `0..n`, cycling and skipping the channels the unit lacks (2-channel models:
 /// CH3/CH4). The steps match the option lists (`ch_names`), so picking an option by its index distance works.
 pub fn src_step(i: usize, n: usize, d: i32) -> usize {

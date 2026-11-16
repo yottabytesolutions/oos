@@ -8,7 +8,13 @@ mod analysis1;
 mod analysis2;
 mod analysis3;
 mod analysis4;
+mod analysis4_p0;
+mod analysis4_p1;
 mod analysis5;
+mod analysis5_p0;
+mod analysis5_p1;
+mod analysis5_p2;
+mod analysis5_p3;
 mod analysis6;
 mod channels0;
 mod display0;
@@ -17,6 +23,11 @@ mod interfaces0;
 mod interfaces1;
 mod measure0;
 mod measure1;
+mod measure1_p0;
+mod references_p0;
+mod references_p1;
+mod sim_p0;
+mod sim_p1;
 mod timebase0;
 mod trigger0;
 mod trigger1;
@@ -43,6 +54,17 @@ pub enum Patch {
     Analysis6(analysis6::Analysis6),
     Interfaces0(interfaces0::Interfaces0),
     Interfaces1(interfaces1::Interfaces1),
+    ReferencesP0(references_p0::ReferencesP0),
+    ReferencesP1(references_p1::ReferencesP1),
+    Analysis4P0(analysis4_p0::Analysis4P0),
+    Analysis4P1(analysis4_p1::Analysis4P1),
+    Measure1P0(measure1_p0::Measure1P0),
+    Analysis5P0(analysis5_p0::Analysis5P0),
+    Analysis5P1(analysis5_p1::Analysis5P1),
+    Analysis5P2(analysis5_p2::Analysis5P2),
+    Analysis5P3(analysis5_p3::Analysis5P3),
+    SimP0(sim_p0::SimP0),
+    SimP1(sim_p1::SimP1),
 }
 
 impl Patch {
@@ -91,6 +113,17 @@ impl Patch {
             179 | 180 | 181 | 182 | 183 | 184 | 191 => {
                 interfaces1::Interfaces1::capture(index, m).map(Self::Interfaces1)
             }
+            244..=255 => references_p0::ReferencesP0::capture(index, m).map(Self::ReferencesP0),
+            256..=256 => references_p1::ReferencesP1::capture(index, m).map(Self::ReferencesP1),
+            257..=268 => analysis4_p0::Analysis4P0::capture(index, m).map(Self::Analysis4P0),
+            269..=274 => analysis4_p1::Analysis4P1::capture(index, m).map(Self::Analysis4P1),
+            275..=283 => measure1_p0::Measure1P0::capture(index, m).map(Self::Measure1P0),
+            284..=295 => analysis5_p0::Analysis5P0::capture(index, m).map(Self::Analysis5P0),
+            296..=307 => analysis5_p1::Analysis5P1::capture(index, m).map(Self::Analysis5P1),
+            308..=319 => analysis5_p2::Analysis5P2::capture(index, m).map(Self::Analysis5P2),
+            320..=321 => analysis5_p3::Analysis5P3::capture(index, m).map(Self::Analysis5P3),
+            322..=333 => sim_p0::SimP0::capture(index, m).map(Self::SimP0),
+            334..=341 => sim_p1::SimP1::capture(index, m).map(Self::SimP1),
             _ => None,
         }
     }
@@ -115,6 +148,17 @@ impl Patch {
             Self::Analysis6(p) => p.index(),
             Self::Interfaces0(p) => p.index(),
             Self::Interfaces1(p) => p.index(),
+            Self::ReferencesP0(p) => p.index(),
+            Self::ReferencesP1(p) => p.index(),
+            Self::Analysis4P0(p) => p.index(),
+            Self::Analysis4P1(p) => p.index(),
+            Self::Measure1P0(p) => p.index(),
+            Self::Analysis5P0(p) => p.index(),
+            Self::Analysis5P1(p) => p.index(),
+            Self::Analysis5P2(p) => p.index(),
+            Self::Analysis5P3(p) => p.index(),
+            Self::SimP0(p) => p.index(),
+            Self::SimP1(p) => p.index(),
         }
     }
     pub(super) fn apply(&self, m: &mut Model) {
@@ -138,6 +182,17 @@ impl Patch {
             Self::Analysis6(p) => p.apply(m),
             Self::Interfaces0(p) => p.apply(m),
             Self::Interfaces1(p) => p.apply(m),
+            Self::ReferencesP0(p) => p.apply(m),
+            Self::ReferencesP1(p) => p.apply(m),
+            Self::Analysis4P0(p) => p.apply(m),
+            Self::Analysis4P1(p) => p.apply(m),
+            Self::Measure1P0(p) => p.apply(m),
+            Self::Analysis5P0(p) => p.apply(m),
+            Self::Analysis5P1(p) => p.apply(m),
+            Self::Analysis5P2(p) => p.apply(m),
+            Self::Analysis5P3(p) => p.apply(m),
+            Self::SimP0(p) => p.apply(m),
+            Self::SimP1(p) => p.apply(m),
         }
     }
     pub(super) fn reuse(&mut self, m: &Model) {
@@ -161,6 +216,17 @@ impl Patch {
             Self::Analysis6(p) => p.reuse(m),
             Self::Interfaces0(p) => p.reuse(m),
             Self::Interfaces1(p) => p.reuse(m),
+            Self::ReferencesP0(p) => p.reuse(m),
+            Self::ReferencesP1(p) => p.reuse(m),
+            Self::Analysis4P0(p) => p.reuse(m),
+            Self::Analysis4P1(p) => p.reuse(m),
+            Self::Measure1P0(p) => p.reuse(m),
+            Self::Analysis5P0(p) => p.reuse(m),
+            Self::Analysis5P1(p) => p.reuse(m),
+            Self::Analysis5P2(p) => p.reuse(m),
+            Self::Analysis5P3(p) => p.reuse(m),
+            Self::SimP0(p) => p.reuse(m),
+            Self::SimP1(p) => p.reuse(m),
         }
     }
     pub(super) fn bytes(&self) -> usize {
@@ -184,6 +250,17 @@ impl Patch {
             Self::Analysis6(p) => p.bytes(),
             Self::Interfaces0(p) => p.bytes(),
             Self::Interfaces1(p) => p.bytes(),
+            Self::ReferencesP0(p) => p.bytes(),
+            Self::ReferencesP1(p) => p.bytes(),
+            Self::Analysis4P0(p) => p.bytes(),
+            Self::Analysis4P1(p) => p.bytes(),
+            Self::Measure1P0(p) => p.bytes(),
+            Self::Analysis5P0(p) => p.bytes(),
+            Self::Analysis5P1(p) => p.bytes(),
+            Self::Analysis5P2(p) => p.bytes(),
+            Self::Analysis5P3(p) => p.bytes(),
+            Self::SimP0(p) => p.bytes(),
+            Self::SimP1(p) => p.bytes(),
         }
     }
 }

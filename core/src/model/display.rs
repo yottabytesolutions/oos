@@ -11,6 +11,9 @@ pub enum AView {
     Bode,
     /// bandwidth test: step response of the front end (ui/bwtest.rs)
     Step,
+    Magnetic,
+    Inverter,
+    Dpt,
 }
 
 /// Power analysis page.
@@ -20,6 +23,10 @@ pub enum PowerMode {
     Harmonics,
     Switching,
     Ripple,
+    /// C = q / v over the turn-on record
+    Capacitance,
+    /// rail overshoot, undershoot, DC and turn-on maximum
+    Rail,
 }
 
 /// Waveform histogram: off, vertical (voltage distribution of the whole screen), horizontal (time distribution in a
@@ -241,4 +248,54 @@ pub enum Grid {
     Full,
     Light,
     None,
+}
+
+/// How much of the 1024×600 picture the plot takes. The same four apply to the panel and to a scaled window of it,
+/// and to the waveform on the external display.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Density {
+    /// top bar, plot, measurement strip, cards
+    #[default]
+    Scope,
+    /// plot and measurement strip
+    Full,
+    /// plot, and under it a pane of numbers or two stacked traces
+    Split,
+    /// four equal panes
+    Four,
+}
+
+impl Density {
+    pub const ALL: [Density; 4] = [Density::Scope, Density::Full, Density::Split, Density::Four];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Density::Scope => "Scope",
+            Density::Full => "Full",
+            Density::Split => "Split",
+            Density::Four => "Four",
+        }
+    }
+}
+
+/// Where the measurement strip is drawn. Under is below the graticule.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StripDock {
+    Under,
+    Left,
+    Right,
+    Above,
+}
+
+impl StripDock {
+    pub const ALL: [StripDock; 4] = [StripDock::Under, StripDock::Left, StripDock::Right, StripDock::Above];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StripDock::Under => "Under",
+            StripDock::Left => "Left",
+            StripDock::Right => "Right",
+            StripDock::Above => "Above",
+        }
+    }
 }

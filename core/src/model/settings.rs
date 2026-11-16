@@ -60,9 +60,18 @@ impl Model {
         TIME_SCALES[self.tscale] * self.tfine
     }
 
-    /// The time base the acquisition runs at: the step, which covers at least the screen.
+    /// The time base the acquisition runs at: the step, which covers at least the screen. Display scales below
+    /// 1 ns/div stay on the plot; the ADC still takes a 1 ns/div window.
     pub fn hw_time_per_div(&self) -> f32 {
-        TIME_SCALES[self.tscale]
+        TIME_SCALES[self.tscale].max(HW_MIN_TDIV)
+    }
+
+    /// Live analog / LA cannot display below 1 ns/div; the ADC window is that floor.
+    pub fn floor_live_tdiv(&mut self) {
+        if TIME_SCALES[self.tscale] < HW_MIN_TDIV {
+            self.tscale = TIME_SCALES.iter().position(|&t| t >= HW_MIN_TDIV).unwrap_or(0);
+            self.tfine = 1.0;
+        }
     }
 
     /// Unit of channel `c`.
@@ -102,6 +111,7 @@ impl Model {
             tick: self.dec_tick.clone(),
             nibbles: self.dec_nibbles.clone(),
             uspeed: self.dec_uspeed.clone(),
+            cphy_rate: self.dec_cphy_rate,
             src4: self.dec_src4.clone(),
             la_in: self.dec_la_in.clone(),
             la: self.dec_la.clone(),
@@ -129,6 +139,7 @@ impl Model {
         self.dec_tick = c.tick.clone();
         self.dec_nibbles = c.nibbles.clone();
         self.dec_uspeed = c.uspeed.clone();
+        self.dec_cphy_rate = c.cphy_rate;
         self.dec_src4 = c.src4.clone();
         self.dec_la_in = c.la_in.clone();
         self.dec_la = c.la.clone();
@@ -206,5 +217,56 @@ impl Model {
             self.math_offset,
             self.fft_win,
         ) = (c.op, c.a, c.b, c.scale, c.fc, c.bw, c.offset, c.win);
+    }
+
+    /// Copies the selected SIM preset into the knobs. Play then uses the knobs, not the table row itself.
+    pub fn apply_sim_preset(&mut self) {
+        let l = oos_dsp::serial::LANES[self.sim_preset.min(oos_dsp::serial::LANES.len() - 1)];
+        self.sim_rate = l.bits_per_s;
+        self.sim_prbs = l.prbs;
+        self.sim_vhigh = l.v_high;
+        self.sim_vlow = l.v_low;
+        self.sim_rise = l.rise;
+        self.sim_noise = l.noise_rms;
+        self.sim_bw = l.bw;
+        self.sim_deemph = l.deemph_db;
+        self.sim_ssc = l.ssc;
+        self.sim_ssc_center = l.ssc_center;
+        self.sim_ssc_deviation = l.ssc_deviation;
+        self.sim_ssc_hz = l.ssc_hz;
+        self.sim_rj = l.rj_rms;
+        self.sim_pj = l.pj_peak;
+        self.sim_pjhz = l.pj_hz;
+        self.sim_dcd_pp = l.dcd_pp;
+        self.sim_corr_rj = l.corr_rj_rms;
+        self.sim_corr_hz = l.corr_rj_hz;
+    }
+
+    pub fn trigger_wave(&self) -> WaveId {
+        self.trig_ref.map_or(WaveId::Ch(self.trig_src), WaveId::Ref)
+    }
+
+    pub fn trigger_wave2(&self) -> WaveId {
+        self.trig_ref2.map_or(WaveId::Ch(self.trig_src2), WaveId::Ref)
+    }
+
+    pub fn set_trigger_wave(&mut self, source: WaveId, secondary: bool) {
+        let (channel, reference) = if secondary {
+            (&mut self.trig_src2, &mut self.trig_ref2)
+        } else {
+            (&mut self.trig_src, &mut self.trig_ref)
+        };
+        match source {
+            WaveId::Ch(c) => {
+                *channel = c.min(NCH - 1);
+                *reference = None;
+            }
+            WaveId::Ref(i) => {
+                *reference = Some(i.min(NREF - 1));
+            }
+        }
+        if !secondary {
+            self.trig_la = None;
+        }
     }
 }

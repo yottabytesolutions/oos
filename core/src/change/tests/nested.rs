@@ -69,6 +69,7 @@ fn nested_trigger_fields_are_exhaustive() {
         tick: _,
         nibbles: _,
         uspeed: _,
+        cphy_rate: _,
         src4: _,
         la_in: _,
         la: _,

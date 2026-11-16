@@ -135,7 +135,7 @@ pub(super) const CASES: &[Case] = &[
     (
         "spec_src",
         |m| {
-            m.spec_src += 1;
+            m.spec_src = WaveId::Ch(1);
         },
         C::MATH.union(C::VIEW),
     ),

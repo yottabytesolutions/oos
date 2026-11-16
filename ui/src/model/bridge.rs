@@ -41,6 +41,8 @@ pub trait ModelExt {
     fn depth_label(&self) -> String;
     fn gen_max_hz(&self) -> f64;
     fn trig_hyst_div(&self) -> f32;
+    #[cfg(test)]
+    fn bus_bit(&self) -> f64;
 }
 
 impl ModelExt for Model {
@@ -99,6 +101,10 @@ impl ModelExt for Model {
     }
     fn depth_label(&self) -> String {
         self.depth_label_in(&config(), &protocols::context(self))
+    }
+    #[cfg(test)]
+    fn bus_bit(&self) -> f64 {
+        self.bus_bit_in(&protocols::context(self))
     }
     fn gen_max_hz(&self) -> f64 {
         board().gen_max_hz(&self.gen_read())

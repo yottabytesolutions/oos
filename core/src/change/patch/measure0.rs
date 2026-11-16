@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use crate::model::{CursorMode, Meas, Model};
+use crate::model::{CursorMode, Meas, Model, WaveId};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Measure0 {
-    Meas(Vec<(Meas, usize)>),
-    Meas2(Vec<(usize, usize, usize)>),
+    Meas(Vec<(Meas, WaveId)>),
+    Meas2(Vec<(usize, WaveId, WaveId)>),
     DvmOn(bool),
     DvmSrc(usize),
     DvmMode(usize),
@@ -86,8 +86,8 @@ impl Measure0 {
     }
     pub(super) fn bytes(&self) -> usize {
         match self {
-            Self::Meas(value) => value.capacity() * std::mem::size_of_val(value.first().unwrap_or(&(Meas::Vavg, 0))),
-            Self::Meas2(value) => value.capacity() * std::mem::size_of_val(value.first().unwrap_or(&(0, 0, 0))),
+            Self::Meas(value) => value.capacity() * std::mem::size_of::<(Meas, WaveId)>(),
+            Self::Meas2(value) => value.capacity() * std::mem::size_of::<(usize, WaveId, WaveId)>(),
             _ => 0,
         }
     }

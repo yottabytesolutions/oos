@@ -89,12 +89,16 @@ pub enum Proto {
     Sent,
     /// USB 1.x / 2.0 low / full speed
     Usb,
+    Manchester,
+    Mlt3,
+    /// MIPI C-PHY: A/B/C electrical states and synchronized 16-bit words.
+    Cphy,
     /// a protocol module (`protocols::MODULES[i]`)
     Module(u8),
 }
 
 /// The protocols wired by hand; the modules come after them in [`Context::protocols`].
-pub const BUILTIN_PROTOS: [Proto; 22] = [
+pub const BUILTIN_PROTOS: [Proto; 25] = [
     Proto::Uart,
     Proto::I2c,
     Proto::Spi,
@@ -117,6 +121,9 @@ pub const BUILTIN_PROTOS: [Proto; 22] = [
     Proto::Arinc429,
     Proto::Sent,
     Proto::Usb,
+    Proto::Manchester,
+    Proto::Mlt3,
+    Proto::Cphy,
 ];
 
 impl Proto {
@@ -154,12 +161,16 @@ impl Proto {
             Proto::Arinc429 => "ARINC 429",
             Proto::Sent => "SENT",
             Proto::Usb => "USB",
+            Proto::Manchester => "Manchester",
+            Proto::Mlt3 => "MLT-3",
+            Proto::Cphy => "C-PHY",
         }
     }
     /// Role names of the sources (main, second, third optional, fourth optional); None = not used.
     pub fn roles_in(self, ctx: &Context<'_>) -> [Option<&'static str>; 4] {
         match self {
             Proto::Module(i) => ctx.module(i).roles,
+            Proto::Cphy => [Some("A"), Some("B"), Some("C"), None],
             Proto::I2c | Proto::I3c | Proto::Ds2482 => [Some("SDA"), Some("SCL"), None, None],
             Proto::Spi => [Some("MOSI"), Some("Clock"), Some("CS"), None],
             Proto::I2s => [Some("SD"), Some("SCK"), Some("WS"), None],

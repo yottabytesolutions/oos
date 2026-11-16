@@ -7,10 +7,15 @@ mod analysis0;
 mod analysis1;
 mod analysis2;
 mod analysis3;
+mod analysis4;
+mod analysis5;
 mod channels;
 mod display;
 mod interfaces;
 mod measure;
+mod measure1;
+mod references;
+mod sim;
 mod timebase;
 mod trigger;
 type Case = (&'static str, fn(&mut Model), C);
@@ -28,6 +33,11 @@ fn all() -> impl Iterator<Item = &'static Case> {
         measure::CASES,
         timebase::CASES,
         trigger::CASES,
+        references::CASES,
+        analysis4::CASES,
+        measure1::CASES,
+        analysis5::CASES,
+        sim::CASES,
     ]
     .into_iter()
     .flatten()
@@ -57,6 +67,11 @@ fn every_field_contract_and_mapping_key_matches_mapping_fields() {
         measure::CASES,
         timebase::CASES,
         trigger::CASES,
+        references::CASES,
+        analysis4::CASES,
+        measure1::CASES,
+        analysis5::CASES,
+        sim::CASES,
     ] {
         for (name, mutate, expected) in cases {
             let a = Model { trig_type: TrigType::Bus, ..Model::default() };
@@ -85,5 +100,5 @@ fn every_field_contract_and_mapping_key_matches_mapping_fields() {
             tested += 1;
         }
     }
-    assert_eq!(tested, 195);
+    assert_eq!(tested, 293);
 }

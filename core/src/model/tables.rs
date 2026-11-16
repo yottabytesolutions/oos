@@ -5,21 +5,29 @@
 /// scales digitally (cal_vertical digital gain 2.15 / 5.38 / 10.76 at 500 / 200 / 100 uV, no forced 20 MHz).
 pub const VSCALES: [f32; 16] =
     [100e-6, 200e-6, 500e-6, 1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0];
-/// s/div: 5 ns .. 1000 s.
+/// Fastest time/div the ADC acquisition uses. Stored refs (SIM) may display faster than this.
+pub const HW_MIN_TDIV: f32 = 1e-9;
+
+/// s/div: 50 ps .. 1000 s. Below 1 ns/div is a display scale for stored records; the live ADC still runs at
+/// `HW_MIN_TDIV` (`hw_time_per_div`).
 pub fn tscales() -> Vec<f32> {
     TIME_SCALES.to_vec()
 }
 
-/// The same 1-2-5 ladder, available to allocation-free domain stages.
-pub const TIME_SCALES: [f32; 37] = time_scales();
-const fn time_scales() -> [f32; 37] {
-    let mut values = [0.0; 37];
-    let mut d = 1e-9_f64;
-    let mut i = 0;
+/// The same 1-2-5 ladder, available to allocation-free domain stages, built as `tscales` builds it upstream.
+pub const TIME_SCALES: [f32; 41] = time_scales();
+const fn time_scales() -> [f32; 41] {
+    let mut values = [0.0; 41];
+    let mut d = 1e-11_f64;
+    let (mut i, mut k) = (0, 0);
     while i < values.len() {
-        values[i] = (d * [1.0, 2.0, 5.0][i % 3]) as f32;
-        i += 1;
-        if i % 3 == 0 {
+        let value = d * [1.0, 2.0, 5.0][k % 3];
+        if value >= 0.49e-10 {
+            values[i] = value as f32;
+            i += 1;
+        }
+        k += 1;
+        if k % 3 == 0 {
             d *= 10.0;
         }
     }

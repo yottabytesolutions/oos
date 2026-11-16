@@ -36,9 +36,11 @@ fn unrelated_fields_snapshot() {
         &[
             "active",
             "auto_nrej",
+            "bus",
             "ch_label",
             "cur_a",
             "cur_b",
+            "cur_b_source",
             "cur_c",
             "cur_d",
             "cursor",
@@ -55,6 +57,7 @@ fn unrelated_fields_snapshot() {
             "hist",
             "intensity",
             "log_ivl",
+            "mag_cur",
             "mask_stop",
             "math_sel",
             "meas_labels",
@@ -81,8 +84,8 @@ fn normalize_is_idempotent() {
         m.trig_src = 3;
         m.math_a = 3;
         m.dec_src4 = Some(3);
-        m.spec_src = 3;
-        m.eye_src = 3;
+        m.spec_src = WaveId::Ch(3);
+        m.eye_src = WaveId::Ch(3);
         m.zscale = m.tscale + 1;
         m.zdelay = 1e3;
         normalize(&mut m, &config(n));
@@ -102,6 +105,8 @@ fn missing_channel_is_acq() {
     m.dec_src = 0;
     m.dec_src2 = 0;
     m.bode_sync = 0;
+    // the analyser defaults that name CH3/CH4 stay out of this case: their repair is VIEW
+    (m.inv_c, m.inv_an, m.dpt_g, m.dpt_4ch) = (WaveId::Ch(0), WaveId::Ch(0), WaveId::Ch(0), WaveId::Ch(0));
     let mut s = Shadow::new(&m, UiAcq::default(), &config(4)).unwrap();
     let c = s.observe(&m, UiAcq::default(), &[], &config(2)).unwrap();
     assert_eq!(c.classes(), Classes::ACQ | Classes::MAPPING | Classes::STATS);
@@ -143,11 +148,11 @@ mod fields;
 #[test]
 fn allocation_free_time_ladder_is_bit_identical_to_the_legacy_ladder() {
     let mut legacy = Vec::new();
-    let mut decade = 1e-9_f64;
+    let mut decade = 1e-11_f64;
     while decade < 2000.0 {
         for multiplier in [1.0, 2.0, 5.0] {
             let value = decade * multiplier;
-            if (0.99e-9..=1000.1).contains(&value) {
+            if (0.49e-10..=1000.1).contains(&value) {
                 legacy.push(value as f32);
             }
         }

@@ -30,3 +30,4 @@ ui/src/ui/measure_own.rs -> ui/src/ui/analysis/own.rs
 ui/src/ui/sim_bus_candidate.rs -> ui/src/ui/sim/sim_bus_candidate.rs
 ui/src/ui/sim_bus_tests.rs -> ui/src/ui/sim/sim_bus_tests.rs
 ui/src/ui/meascatalog_backend.rs -> ui/src/ui/meascatalog/backend.rs
+struct core/src/model/mod.rs Model -> struct core/src/model/state.rs Model

@@ -15,7 +15,14 @@ fn capability_and_cross_group_repairs_report_effective_changes_once() {
                 [1e9; 3],
                 [[1_000_000; 3]; 2],
             );
-            let mut m = Model { active: 3, trig_src: 3, trig_src2: 3, spec_src: 3, eye_src: 3, ..Model::default() };
+            let mut m = Model {
+                active: 3,
+                trig_src: 3,
+                trig_src2: 3,
+                spec_src: WaveId::Ch(3),
+                eye_src: WaveId::Ch(3),
+                ..Model::default()
+            };
             for ch in &mut m.ch {
                 ch.on = true;
                 ch.coupling = Coupling::Dc50;
@@ -31,7 +38,7 @@ fn capability_and_cross_group_repairs_report_effective_changes_once() {
             assert!(m.ch[..n].iter().all(|ch| ch.on && ch.coupling == Coupling::Dc && ch.offset == ch.offset_max()));
             assert!(m.ch[n..].iter().all(|ch| !ch.on));
             assert!(m.active < n && m.trig_src < n && m.trig_src2 < n);
-            assert!(m.spec_src < n && m.eye_src < n);
+            assert!(matches!((m.spec_src, m.eye_src), (WaveId::Ch(s), WaveId::Ch(e)) if s < n && e < n));
             assert_eq!(m.math_b, NCH, "math sources remain available");
             assert_eq!(m.la.on, la);
             assert!(m.zscale <= m.tscale);
@@ -48,7 +55,7 @@ fn analyzer_sources_follow_an_enabled_channel_before_classification() {
     m.ch[0].on = false;
     m.ch[2].on = true;
     assert!(normalize(&mut m, &config(4)));
-    assert_eq!((m.spec_src, m.eye_src), (2, 2));
+    assert_eq!((m.spec_src, m.eye_src), (WaveId::Ch(2), WaveId::Ch(2)));
     let c = shadow.observe(&m, UiAcq::default(), &[], &config(4)).unwrap();
     assert_eq!(c.classes(), Classes::ACQ | Classes::MAPPING | Classes::STATS | Classes::MATH | Classes::VIEW);
     assert!(!normalize(&mut m, &config(4)));

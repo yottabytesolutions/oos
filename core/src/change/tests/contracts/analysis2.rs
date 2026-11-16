@@ -72,7 +72,7 @@ pub(super) const CASES: &[Case] = &[
     (
         "eye_src",
         |m| {
-            m.eye_src += 1;
+            m.eye_src = WaveId::Ch(1);
         },
         C::VIEW,
     ),
@@ -86,14 +86,14 @@ pub(super) const CASES: &[Case] = &[
     (
         "pw_v",
         |m| {
-            m.pw_v += 1;
+            m.pw_v = WaveId::Ch(1);
         },
         C::VIEW,
     ),
     (
         "pw_i",
         |m| {
-            m.pw_i += 1;
+            m.pw_i = WaveId::Ch(2);
         },
         C::VIEW,
     ),
@@ -135,14 +135,14 @@ pub(super) const CASES: &[Case] = &[
     (
         "bode_in",
         |m| {
-            m.bode_in += 1;
+            m.bode_in = WaveId::Ch(1);
         },
         C::STATS.union(C::VIEW),
     ),
     (
         "bode_out",
         |m| {
-            m.bode_out += 1;
+            m.bode_out = WaveId::Ch(2);
         },
         C::STATS.union(C::VIEW),
     ),

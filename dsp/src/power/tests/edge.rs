@@ -13,7 +13,8 @@ fn partial_switching_swings_do_not_invent_complete_loss_windows() {
     let s = switching(&v, &i, 1.0, 10.0);
     assert_eq!(s.transitions.len(), 1);
     assert!(!s.transitions[0].on);
-    assert!(s.transitions[0].t0 >= 19.0 && s.transitions[0].t1 <= 20.0);
+    close(s.transitions[0].t0, 19.1);
+    close(s.transitions[0].t1, 19.9);
     assert!(s.e_on.is_nan() && s.e_cond.is_nan() && s.rds_on.is_nan());
 }
 

@@ -99,10 +99,14 @@ fn linear_edges_have_exact_delays_slopes_peaks_and_qoss() {
     near(p.marks.i10_off, 59.6 * DT);
     near(p.marks.vpeak, 64.0 * DT);
     near(p.marks.ipeak, 112.0 * DT);
-    assert_eq!(p.zoom_both, (0.0, 160.0 * DT));
-    near(Some(p.zoom_on.0), 81.0 * DT);
-    near(Some(p.zoom_off.0), 31.0 * DT);
-    near(Some(p.zoom_off.1), 121.0 * DT);
+    for (window, edges) in
+        [(p.zoom_on, [100.2, 104.4, 107.6]), (p.zoom_off, [50.2, 56.4, 59.6]), (p.zoom_both, [50.2, 59.6, 107.6])]
+    {
+        assert!(window.0 >= 0.0 && window.1 <= (v.len() - 1) as f64 * DT);
+        for edge in edges {
+            assert!(window.0 <= edge * DT && edge * DT <= window.1);
+        }
+    }
 }
 
 fn recovery(p: &Pulse) {

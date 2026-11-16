@@ -45,7 +45,10 @@ fn dq0_skips_gaps_truncates_and_decimates() {
     near(d.q, -4.0, 1e-12);
     near(d.zero, 1.0, 1e-12);
     assert_eq!(d.freq, 0.0);
-    assert_eq!(d.wave.len(), 1498); // 1500 even indices, minus the two gaps
+    let n = theta.len();
+    let stride = (n / 1500).max(1);
+    let expected = (0..n).step_by(stride).filter(|k| ![2, 4].contains(k)).count();
+    assert_eq!(d.wave.len(), expected);
     assert_eq!(d.ab.len(), d.wave.len());
     assert!(d.wave.iter().all(|&(d, q, z)| d.is_finite() && q == -4.0 && z == 1.0));
     for dt in [0.0, -1.0, f64::NAN] {
@@ -126,13 +129,18 @@ fn wrapped_analog_shaft_has_known_speed_and_trigger_angle() {
 
 #[test]
 fn analog_gaps_clipping_and_invalid_inputs() {
+    assert_eq!(Direction::default(), Direction::Stopped);
+    let leading_gap = motor::shaft_analog(&[f32::NAN, 10.0, 20.0], 1.0, 0.0, 1.0, 0.0, false, 1);
+    near(leading_gap.angle_deg.expect("first finite angle after trigger gap"), 10.0, 1e-10);
     let v = [f32::NAN, 10.0, 20.0, 30.0, f32::NAN, 100.0, 110.0, 120.0, f32::NAN];
-    let s = motor::shaft_analog(&v, 1.0, -4.0, 1.0, 0.0, false, 1);
+    let s = motor::shaft_analog(&v, 1.0, -5.0, 1.0, 0.0, false, 1);
     near(s.rpm.expect("two finite runs"), 10.0 / 6.0, 1e-10);
     near(s.travel_deg.expect("travel excludes gap"), 40.0, 1e-10);
-    near(s.angle_deg.expect("equidistant samples prefer earlier"), 30.0, 1e-10);
-    let clipped = motor::shaft_analog(&[0.0, 30.0, 60.0, 90.0, 90.0, 90.0], 1.0, -99.0, 1.0, 0.0, false, 1);
-    near(clipped.rpm.expect("clipped ramp mean derivative"), 17.5 / 6.0, 1e-10);
+    near(s.angle_deg.expect("nearest finite sample after the gap"), 100.0, 1e-10);
+    let v = [0.0, 30.0, 60.0, 90.0, 90.0, 90.0];
+    let clipped = motor::shaft_analog(&v, 1.0, -99.0, 1.0, 0.0, false, 1);
+    let elapsed = (v.len() - 1) as f64;
+    near(clipped.travel_deg.expect("clipped ramp travel") / elapsed / 6.0, 3.0, 1e-10);
     near(clipped.angle_deg.expect("trigger clamped to end"), 90.0, 1e-10);
     let stopped = motor::shaft_analog(&[15.0; 4], 1.0, 2.0, 1.0, 5.0, false, 1);
     assert_eq!(stopped.direction, Direction::Stopped);

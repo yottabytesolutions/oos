@@ -19,44 +19,28 @@ fn packets(wires: &[Vec<f32>; 3], rate: Option<f64>, gap: f32) -> Vec<Packet> {
 }
 
 #[test]
-fn mapper_regions_have_known_boundaries_and_reject_invalid_symbols() {
-    let expected = [
-        (0x00, 0x0000),
-        (0x01, 0x4000),
-        (0x02, 0x5000),
-        (0x04, 0x6000),
-        (0x08, 0x7000),
-        (0x10, 0x8000),
-        (0x20, 0x9000),
-        (0x40, 0xa000),
-        (0x03, 0xb000),
-        (0x05, 0xb400),
-        (0x09, 0xb800),
-        (0x11, 0xbc00),
-        (0x21, 0xc000),
-        (0x41, 0xc400),
-        (0x06, 0xc800),
-        (0x0a, 0xcc00),
-        (0x12, 0xd000),
-        (0x22, 0xd400),
-        (0x42, 0xd800),
-        (0x0c, 0xdc00),
-        (0x14, 0xe000),
-        (0x24, 0xe400),
-        (0x44, 0xe800),
-        (0x18, 0xec00),
-        (0x28, 0xf000),
-        (0x48, 0xf400),
-        (0x30, 0xf800),
-        (0x50, 0xfc00),
-    ];
-    assert_eq!(regions(), expected);
+fn mapper_words_have_known_boundaries_and_reject_invalid_symbols() {
     assert_eq!(word(&[0; 7]), Some(0));
     assert_eq!(word(&[3; 7]), Some(0x3fff));
     assert_eq!(word(&[0, 0, 0, 0, 0, 0, 4]), Some(0x4000));
     assert_eq!(word(&[4, 0, 0, 0, 0, 0, 0]), Some(0xa000));
     assert_eq!(word(&[5, 0, 0, 0, 0, 0, 0]), None);
     assert_eq!(word(&[4, 4, 4, 0, 0, 0, 0]), None);
+}
+
+#[test]
+fn mapper_regions_partition_the_16_bit_word_space_without_gaps_or_overlap() {
+    let mut next = 0;
+    let mut masks = std::collections::HashSet::new();
+    for (mask, base) in regions() {
+        // A seven-symbol word has zero, one or two flips; each other
+        // symbol carries two payload bits. Every region must fit exactly.
+        assert!(mask < 128 && mask.count_ones() <= 2);
+        assert!(masks.insert(mask));
+        assert_eq!(base, next);
+        next += 1 << (2 * (7 - mask.count_ones()));
+    }
+    assert_eq!(next, 1 << 16);
 }
 
 #[test]

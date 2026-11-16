@@ -44,6 +44,14 @@ Owner decisions applied:
 
 ## Status
 
+- 2026-11-16: full gate on 633acfff: all steps pass except coverage (dsp 91.5 % against the floor 94.9 %, margin
+  0.5) and python-tests (fixed in 3e316143). The floor stays (coordinator). 821 of 1118 uncovered dsp lines are in
+  upstream files (motor, eye, measure, power, dpt, linecode, cphy, magnetic). Task 0078 (two jobs) adds behavioural
+  tests for motor, dpt, linecode, cphy and power; the final full gate runs after they merge here.
+- 2026-11-16: merge-caused inline measurement fixed (633acfff): raw windows above upstream's background threshold go
+  to the worker, SCPI `:MEASure` queries wait up to 3 s and never answer a stale value; host-only hold path stays
+  inline. Tests that counted steps or shared one deadline wait on their condition with a bounded deadline.
+
 - 2026-11-16: goldens re-blessed in b33a5ebf: 621 captures in 263 cases, causes per region in the commit
   (upstream bars and corner button, zoom from the full record bf869f9b, Lanczos8 82d98eae, menus, measurement names,
   trigger level line). Batch trace drawing unchanged outside zoom.
@@ -71,9 +79,13 @@ Decisions (coordinator, 2026-11-16):
   checked; upstream's after it).
 - Software ADC core matching on the batch path: not in the merge (the matcher learns per frame; the batch path
   decodes on parallel workers). Follow-up task 0068.
-- Open: two upstream SIM tests are ignored (our SINGLE resets statistics at the change point, upstream keeps them
-  until the commit); the mixed-bus hardware path writes `Shared.want` directly, past our publication; upstream's
-  `:MEASure` drops `:MEAS:CLE ITEMn` and the drop-oldest rule; the host harness sends no mDNS announcement.
+- Open owner questions (upstream behaviour kept until decided):
+  1. SINGLE and statistics: our SINGLE resets statistics at the change point, upstream keeps them until the commit;
+     two upstream SIM tests are ignored with this reason.
+  2. The mixed-bus hardware path writes `Shared.want` directly, past our change point and publication.
+  3. Upstream's `:MEASure` has no `:MEAS:CLE ITEMn` and no drop-oldest rule for a full item list.
+- Also open: the host harness sends no mDNS announcement; worker-path Power for live channels lacks upstream's "why
+  no numbers" rows.
 - Socket tests on macOS loopback (`compatibility_hislip_*`, `compatibility_raw_tcp_pending_opc_*`, `raw_tcp_*`,
   `real_scpi_queries_*`) fail the same way on unmerged upstream 7c853752 on this host (6 of 18 selected): an
   upstream test race (one immediate non-blocking read), not the merge. Fixed in the merge if the harness read gets a

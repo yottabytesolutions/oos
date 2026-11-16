@@ -1881,7 +1881,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             // a hardware segment recording in the FPGA: the measure unit (DVM, levels, slots) and the ADC core offsets
             // wait until it has ended. `disarm` does not stop it, and a write in between would change the segments
             // still to come (H4 of the 0.1.13 review)
-            let seg_recording = segrun.as_ref().is_some_and(|r| r.recording);
+            let seg_recording = segrun.as_ref().is_some_and(SegRun::recording);
             // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
             if !seg_recording {
                 use oos_hal::dho::dvm;

@@ -28,6 +28,13 @@ pub(super) struct SegRun {
     tl: seg::Timeline,
 }
 
+impl SegRun {
+    /// A recording runs in the FPGA (upstream 85e20164: the measure unit and the core trim wait for its end).
+    pub(super) fn recording(&self) -> bool {
+        self.recording
+    }
+}
+
 /// End the hardware recording and discard its readback state before replacing its pair.
 pub(super) fn seg_abort(
     run: &mut Option<SegRun>,

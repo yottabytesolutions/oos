@@ -4,7 +4,9 @@
 //! helper and the acquisition thread share both A72 of the RK3399 (`http::pin_to_big_cores`). With `perf.place = on`:
 //! the frame loop (and the GPU helper it starts) on the first big core, the acquisition thread on the second. Workers
 //! already go to the little cores (`http::to_little_cores`). Opt-in until measured on the unit; Linux only, a no-op elsewhere and on SoCs whose cores are
-//! all alike. The xdma interrupt goes to a little core from the rootfs (`/proc/irq/<n>/smp_affinity`), not from here.
+//! all alike. IRQ policy and procfs application live in `irq`.
+
+pub mod irq;
 
 use std::path::Path;
 
@@ -90,10 +92,10 @@ pub fn cpus(mask: u64) -> Vec<usize> {
 }
 
 /// The calling thread (and the threads and processes it starts after this) onto the CPUs of `r`, when placement is on
-/// (`Switches::place`: `perf.place = on` in system.conf, which also moves the xdma interrupts: rootfs
-/// `oos-irq-place`; or OOS_PLACE set to any value but empty or 0).
+/// (`Switches::perf`: `perf.place = on` in system.conf, or OOS_PLACE set to any value but empty or 0).
+/// Device startup also applies the explicit IRQ plan from `irq`.
 pub fn place(r: Role, sw: &crate::sysconf::Switches) {
-    if !sw.place {
+    if !sw.perf.place() {
         return;
     }
     #[cfg(target_os = "linux")]

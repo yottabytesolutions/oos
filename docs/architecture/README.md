@@ -650,8 +650,8 @@ its trigger. It ends on the first of:
 | deposit workers | A53, one per little core | SCHED_OTHER | their share maps; the route per batch from its `BatchMeta` tag, the mapping from `DepositView` at first claim | `BatchUnit` (fast path) or `RecordBatch` (records, off it) to main (`picture.md`) |
 | measure | A53, persistent, one helper per channel | SCHED_OTHER | one measurement job | job and result channels (`records.md`) |
 | input | A53 | SCHED_OTHER, blocked on read | the panel UART, the touch device | `InputEvent` channel to main |
-| remote listeners | A53 | SCHED_OTHER, in `epoll_wait` | sockets of SCPI, HTTP, MCP, VXI-11, the control FIFO; encoding of large answers | `RemoteRequest { command or query, wait, reply sender }` to main |
-| web PNG / send | A53 | SCHED_IDLE (nice 10 where refused) | encoding and sending pictures | the composed-picture snapshot |
+| remote listeners | A53 | SCHED_OTHER, in `epoll_wait` | sockets of SCPI, MCP, VXI-11, the control FIFO; encoding of large answers | `RemoteRequest { command or query, wait, reply sender }` to main |
+| web accept / PNG / send | A53 | SCHED_IDLE (nice 10 where refused) | encoding and sending pictures | the composed-picture snapshot |
 | ntp, ssh, mdns, wlan | A53 | SCHED_OTHER | their service | status values the menus read; settings by command |
 
 ### Waiting
@@ -709,10 +709,11 @@ Four different things, with different bounds:
 | cold boot | MSI (`poll_mode=0`, today's unit config) | on an A53: IRQ 78 on cpu1, measured | `xdma=msi cpu1` |
 | kexec start | `poll_mode=1`, unless M5c finds a working alternative | the completion threads, bound by the driver to cpu0 and cpu1 (A53s) | `xdma=poll cpu0,1` |
 
-- **IRQ placement is explicit.** GICv3 routes a wired device IRQ to cpu0 by default, so rcS writes
-  `/proc/irq/<n>/smp_affinity_list` for the DRM, GPU, network and USB IRQs and checks the xdma MSI ([Platform
-  tuning](system.md#platform-tuning)). Measured 2026-11-15: the xdma MSI is IRQ 78 on cpu1, at 31 interrupts/s at setup
-  B and 8/s at 4 channels 10 M.
+- **IRQ placement is explicit.** With `perf.place = on`, device startup applies the data plan in
+  `placement::irq` through `/proc/irq/<n>/smp_affinity_list`: XDMA MSI to cpu3 and eth0 to cpu2 on RK3399.
+  These choices avoid the crowded cpu0 baseline; the busiest deposit core must be confirmed in the unit round.
+  VOP, panfrost and MMC remain unchanged. Measured 2026-11-15 before this policy: XDMA MSI was IRQ 78
+  on cpu1, at 31 interrupts/s at setup B and 8/s at 4 channels 10 M. New affinities are not yet unit verified.
 - **Why not MSI after kexec.** The GIC-500 cannot disable LPIs once enabled, and without an EFI boot the next kernel
   cannot reuse the old LPI tables, so MSIs never arrive after kexec (inferred; the symptom is verified).
 - **Why not INTx.** INTx (`poll_mode=0 interrupt_mode=2`) failed on the unit on 2026-11-15: the legacy line came up as
@@ -816,9 +817,14 @@ show in `:SYSTem:STATe?` (`lock <name> waits=N p99=us`).
 
 ### Placement
 
-Placement comes from `system/placement` (`perf.place`), with the cores read from `cpu_capacity`. The xdma interrupt
-goes to a little core from the rootfs. No thread runs a real-time policy: a stuck real-time thread on this SoC stalls
+Placement currently comes from `placement` (`perf.place`), with cores read from `cpu_capacity`. Startup
+refines the rootfs XDMA affinity with the explicit IRQ plan above. Web accept uses the same A53
+SCHED_IDLE helper as PNG and send; reader threads inherit it. No thread runs a real-time policy: a stuck real-time thread on this SoC stalls
 the panel, and the budgets hold without it.
+
+Accepted hardware RUN also requests reversible CPU/GPU minimum clocks through the platform port
+([RUN clock floors](system.md#run-clock-floors)); STOP, teardown and the thermal guard restore
+saved minima. A tmpfs receipt also recovers minima after an unclean process death.
 
 Large answers are encoded off main: a deep `:WAVeform:DATA?` gets an `Arc` snapshot of the record in its reply, and
 the listener thread encodes and sends it. Main never writes to a socket: every reply goes into the connection's output

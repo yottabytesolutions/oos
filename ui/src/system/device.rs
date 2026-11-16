@@ -32,6 +32,7 @@ pub fn run(mut ui: Ui, args: &[String], sw: sysconf::Switches, state: Option<sto
         }
     };
     eprintln!("oos-ui: display {}x{}", disp.width, disp.height);
+    placement::irq::startup(&sw);
     let inp = startup::prepare(&mut ui, &mut disp, args, &state);
     let started = Instant::now();
     let cv = Canvas::new(ui.scr.w, ui.scr.h);

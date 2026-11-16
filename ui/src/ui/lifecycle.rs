@@ -13,6 +13,7 @@ pub(super) struct Runtime {
     pub(super) change: super::change::Observer,
     pub(super) memory: crate::system::memory::Watchdog,
     pub(super) crash: Option<crate::store::startup::crash::Crash>,
+    pub(super) clocks: Option<crate::system::clocks::Handle>,
     started: Instant,
     pub(in crate::ui) query_time: query_time::QueryTime,
     pub(super) gpu: String,
@@ -26,6 +27,7 @@ impl Runtime {
             change: Default::default(),
             memory: crate::system::memory::Watchdog::new(limits),
             crash: None,
+            clocks: None,
             gpu: String::new(),
             persistence: true,
             retired: Vec::new(),
@@ -46,6 +48,9 @@ impl Runtime {
 }
 
 pub(super) fn stop_workers(ui: &mut Ui, deadline: Instant) {
+    if let Some(clocks) = &ui.host.runtime().clocks {
+        clocks.restore();
+    }
     let mut joins = std::mem::take(&mut ui.host.runtime_mut().retired);
     if let Some(worker) = ui.meas_bg.take() {
         drop(worker.tx);
@@ -59,6 +64,10 @@ pub(super) fn stop_workers(ui: &mut Ui, deadline: Instant) {
 
 pub(super) fn memory_step(ui: &mut Ui) -> bool {
     use crate::system::memory;
+    // Thermal protection continues even when a prepared settings change is rejected.
+    if let Some(clocks) = &ui.host.runtime().clocks {
+        clocks.poll();
+    }
     let now = ui.host.runtime().started.elapsed();
     let rss = if ui.host.runtime().memory.due(now) {
         ui.host.text("/proc/self/status").and_then(|s| memory::rss(&s))
@@ -101,6 +110,9 @@ fn apply_sample(ui: &mut Ui, now: std::time::Duration, rss: Option<u64>) -> bool
 }
 
 fn release_board(ui: &mut Ui) {
+    if let Some(clocks) = &ui.host.runtime().clocks {
+        clocks.update(false);
+    }
     ui.src.hw_hold(true, ui.final_req);
     if let Source::Hw { shared, .. } = &ui.src {
         let mut shared = crate::perfguard::deep::ui_lock(shared);

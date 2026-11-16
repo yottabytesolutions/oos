@@ -4,6 +4,7 @@
 #[cfg(test)]
 pub mod perfguard;
 
+pub mod clocks;
 pub mod memory;
 pub mod shutdown;
 

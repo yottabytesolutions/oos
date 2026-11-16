@@ -24,6 +24,10 @@ pub struct Host {
 impl Host {
     pub fn system(switches: crate::sysconf::Switches) -> Self {
         let mut runtime = super::lifecycle::Runtime::new(switches.memory);
+        #[cfg(target_os = "linux")]
+        {
+            runtime.clocks = Some(crate::system::clocks::Handle::system(switches.perf.floors()));
+        }
         runtime.crash = crate::store::startup::crash::latest(Path::new("/oos/crash")).ok().flatten();
         Self {
             runtime,
@@ -119,6 +123,13 @@ impl Host {
     }
 
     #[cfg(test)]
+    pub(crate) fn fixture_with_clocks(clocks: crate::system::clocks::Handle) -> Self {
+        let mut host = Self::fixture();
+        host.runtime.clocks = Some(clocks);
+        host
+    }
+
+    #[cfg(test)]
     pub fn fixture_with_text(text: fn(&str) -> Option<String>) -> Self {
         Self { text, ..Self::fixture() }.cache_firmware()
     }
@@ -142,6 +153,7 @@ impl super::Ui {
 
 #[cfg(test)]
 mod tests {
+    mod clocks;
     mod publication;
     use super::*;
     use crate::ui::Item;
@@ -258,7 +270,8 @@ mod tests {
     fn headless_host_supplies_config_without_services_or_time_budgets() {
         let host = Host::headless();
         assert!(!host.services() && !host.time_budgets());
-        assert!(Host::system(Default::default()).time_budgets());
+        assert!(Host::fixture().time_budgets());
+        assert!(host.runtime().clocks.is_none());
         assert_eq!(host.unix_now(), 1_762_862_400.0);
         assert_eq!(host.switches().pipeline, crate::drawpipe::Mode::Batch);
         assert_eq!(host.switches().cores, Default::default());

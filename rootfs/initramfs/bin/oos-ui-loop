@@ -42,6 +42,40 @@ if [ -s "$mnt/oos-ui.running" ]; then
         *) if [ $((reset & 32)) -ne 0 ]; then ledger count "$key" 1 "$key" || failed; fi ;;
     esac
 fi
+# The receipt is committed by oos-ui before its first floor write. Keep it on any
+# failed write/read-back so startup can retry, including a later manual launch.
+restore_clocks() (
+    receipt=$tmp/oos-clock-floors
+    [ -e "$receipt" ] || exit 0
+    sys=${OOS_CLOCK_SYSFS:-/sys}
+    seen=
+    while read -r device value extra || [ -n "$device$value$extra" ]; do
+        case "$value" in ''|*[!0-9]*) exit 1 ;; esac
+        [ -z "$extra" ] || exit 1
+        case " $seen " in *" $device "*) exit 1 ;; esac
+        seen="$seen $device"
+        case "$device" in
+            cpu) dir=$sys/devices/system/cpu/cpufreq/policy4
+                 minimum=$dir/scaling_min_freq; available=$dir/scaling_available_frequencies ;;
+            gpu) dir=
+                 for node in "$sys"/class/devfreq/*.gpu; do
+                     [ -d "$node" ] || continue
+                     dir=$node; break
+                 done
+                 [ -n "$dir" ] || exit 1
+                 minimum=$dir/min_freq; available=$dir/available_frequencies ;;
+            *) exit 1 ;;
+        esac
+        frequencies=$(cat "$available") || exit 1
+        case " $frequencies " in *" $value "*) ;; *) exit 1 ;; esac
+        echo "$value" > "$minimum" || exit 1
+        restored=$(cat "$minimum") || exit 1
+        [ "$restored" = "$value" ] || exit 1
+        echo "oos-ui-loop: clock_floor recovery device=$device restored=$value"
+    done < "$receipt"
+    [ -n "$seen" ] || exit 1
+    rm -f "$receipt"
+)
 seq=0
 while [ ! -e "$tmp/oos-ui.off" ]; do
     mode=$(ledger mode) || failed
@@ -57,6 +91,8 @@ while [ ! -e "$tmp/oos-ui.off" ]; do
     run=$boot:$$:$seq
     OOS_UI_RUN_ID=$run "$ui" "$@" >> "$tmp/oos-ui.log" 2>&1
     rc=$?
+    restore_clocks >> "$tmp/oos-ui.log" 2>&1 ||
+        echo 'oos-ui-loop: clock_floor recovery failed; receipt retained' >> "$tmp/oos-ui.log"
     # A full hour alive clears previous exits even if the RTC changed during the run.
     t1=$(up)
     if [ $((t1 - t0)) -ge 3600 ]; then ledger clear || failed; fi

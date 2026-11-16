@@ -65,6 +65,7 @@ const SEND_INLINE: usize = 48 << 10;
 /// At most this many at once; more are answered 503, and the page tries again.
 const MAX_SENDERS: usize = 2;
 mod limits;
+mod listener;
 mod shutdown;
 const SEND_TIMEOUT_S: u64 = 30;
 static SENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -859,20 +860,6 @@ impl Http {
         };
         h.start(port, sw.ipv6);
         h
-    }
-
-    fn start(&mut self, port: impl Into<crate::net6::Port>, v6: bool) {
-        let Some(l) = crate::net6::tcp(port, v6) else { return };
-        let Ok(addr) = l.local_addr() else { return };
-        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (inbox, acl, st, lim) = (self.inbox.clone(), self.acl_shared.clone(), stop.clone(), self.limits);
-        let tasks = self.shots.tasks.clone();
-        if self.shots.tasks.spawn("web-accept", None, move || acceptor(l, inbox, acl, st, lim, tasks)).is_err() {
-            eprintln!("oos-ui: web remote: no accept thread");
-            return;
-        }
-        eprintln!("oos-ui: web remote on {}", addr);
-        self.open = Some((addr, stop));
     }
 
     /// The address the port is open on (tests).

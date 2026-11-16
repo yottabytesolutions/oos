@@ -111,7 +111,7 @@ Threads:
 | hw (`--hw`) | the board's acquisition thread (`Board::spawn`; on the DHO800/DHO900 `board/dho/hw.rs`: `hal::dho::seq` plan/execute in a loop); hands frames over through `board::HwShared` |
 | live (`--fpga-live`) | experimental, DHO800/DHO900: repeats the verified read-out (no arming) |
 | scpi, http | SCPI server on 5555, web remote on 8080 (polled by the main thread) |
-| web-png, web-send | the web remote's PNG of the screen (made only of a changed screen, at most 20 a second and half a core) and the large answers; SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
+| web-accept, web-png, web-send | the web remote's PNG of the screen (made only of a changed screen, at most 20 a second and half a core) and the large answers; SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
 | ntp | SNTP exchange and clock step when Time from NTP is on (`sntp`, `ui/time.rs`; `../network.md`) |
 
@@ -172,13 +172,13 @@ budgets](README.md#performance-budgets)) are provisional until the open rows are
 - **XDMA on normal boots runs on MSI already:** IRQ 78 on cpu1, 31 interrupts/s at setup B and 8/s at 4 channels
   10 M; no poll threads. Poll mode runs only in kexec sessions.
 - **PCIe:** MPS is already 256, MRRS 512, ASPM off.
-- **Thread placement today:** `oos-ui` main and `web-accept` on cpu4, `acq` on cpu5, `deposit0` to `deposit3` and
+- **Thread placement measured before task 0086:** `oos-ui` main and `web-accept` on cpu4, `acq` on cpu5, `deposit0` to `deposit3` and
   `measure` on cpu0 to cpu3.
 - **Kernel:** timer slack is the 50 us default on every thread; `PREEMPT_VOLUNTARY`, HZ 250; THP off.
 - **Governor A/B:** `performance` on the A72s held 1.8 GHz (baseline mostly 816 MHz), cut the A72 load by about a
   quarter (32 to 24 %) and the `acq` thread from 29 to 19 %, at +2 C. Picture rate, acquired/s, C2H read time and
-  latency stayed within the baseline spread. Kept: schedutil; `uclamp_min` on the two hot threads is the candidate
-  (row 4).
+  latency stayed within the baseline spread. Kept: schedutil; task 0086 adds reversible RUN minima
+  ([RUN clock floors](#run-clock-floors)), not yet verified on the unit.
 - **`pm_qos_resume_latency_us = 100`:** no measurable effect. Dropped (row 5).
 - **Deep 4-channel reads:** at 4 channels, 1 ms/div, 10 M, a C2H read takes about 282 ms per acquisition (3.1
   acquired/s) in every state tested. There the DMA read time, not the CPU, is the limit (row 9).
@@ -244,3 +244,50 @@ from stock: the thermal trips as the limit when raising clocks. Stock's INTx mod
 The read-only checks for each unit round (governor, idle states, `pm_qos`, thermal zones, xdma threads and
 parameters, IRQ affinity, PCIe link, printk level, timer slack per thread) are in the study's check list, kept with
 unitlab's scripts.
+
+### RUN clock floors
+
+Task 0086 implements plan P5 while keeping schedutil and the GPU governor.
+`perf.cpu_floor = on` and `perf.gpu_floor = on` are independent, default-on
+startup switches in system.conf. Set either to `off` and restart oos-ui to
+disable that device's floor. Only `on` and `off` are accepted; unrecognised
+values are logged and treated as `off`. They do not depend on `perf.place`, and saved
+measurement setups do not change them.
+
+Accepted hardware RUN requests policy4 `scaling_min_freq = 1416000` (kHz) and
+the GPU devfreq `min_freq = 600000000` (Hz). Higher prior minima are preserved.
+The system clock adapter discovers the `.gpu` devfreq node, reads each previous
+minimum first, and writes only values listed in that node's available frequencies.
+Missing nodes, unavailable frequencies and IO failures are reported without
+changing the other device's policy. Successful applied values are logged once
+per device per process as structured `clock_floor` fields.
+
+Before every floor write, saved minima are atomically renamed into the tmpfs
+receipt `/tmp/oos-clock-floors`. STOP, the memory watchdog's hold, worker teardown
+and guard drop restore the saved minima, verify read-back, then remove the receipt.
+The Linux panic hook tries the controller lock without waiting before invoking the
+previous hook; SIGINT/SIGTERM use orderly exit. `oos-ui-loop` restores and logs
+the receipt after every exit, including unclean deaths (SIGKILL, SIGSEGV and
+allocator abort) and clean exits with pending recovery, even without a restart. Startup independently restores it
+before reading new previous minima, including when switches are now off. Failed
+or invalid recovery keeps the receipt and disables new floors for that process.
+Failed STOP/thermal restores retry at most once per second; teardown still
+tries immediately. Only the first restore failure and eventual success are
+logged per device. A reboot discards tmpfs and resets the kernel's clock policy.
+
+While RUN requests floors, the adapter samples `cpu-thermal` and `gpu-thermal`
+by type name at most once a second. Each drop limit is the lowest passive trip
+exported by the running DT through sysfs, minus 5000 millidegrees C. For a 70 C
+passive trip this means dropping at 65 C and re-arming below 60 C (5000
+millidegrees hysteresis); these margins are task 0086 policy. Each thermal drop
+and re-arm logs the zone type and temperature, or the read error, once per
+transition. Re-arm reports both zones. Both minima drop if either zone reaches
+its limit or its temperature cannot be read. Missing named zones or passive trips
+disable floors at construction. Linux still owns cooling, governors and maximum
+frequencies. The exact live trips and GPU cooling-map bindings are not yet
+verified for this change; task 0086 records the required unit capture.
+
+Host fake-filesystem tests cover recovery, thermal inhibition and lifecycle
+contracts. Actual read-backs, web/upload latency and a 10-minute RUN thermal
+check remain pending in task 0086. The earlier measured 1.8 GHz governor
+experiment is evidence for a candidate, not verification of these lower floors.

@@ -30,8 +30,8 @@ pub struct Switches {
     pub interp: Interp,
     /// raw deep-record measurements (`deepmeas::enabled_from`)
     pub deep_raw: bool,
-    /// thread placement on the CPUs (`placement::place`)
-    pub place: bool,
+    /// Thread/IRQ placement and reversible RUN clock floors.
+    pub perf: Performance,
     /// IPv6 (`net6::enabled_from`)
     pub ipv6: bool,
     /// the auto set-up reads levels with the measure unit, only with `autoset.levels = unit`: on the unit (DHO924S,
@@ -40,6 +40,21 @@ pub struct Switches {
     /// the board's own switches
     pub board: crate::board::BoardSwitches,
     pub memory: crate::system::memory::Limits,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Performance {
+    place: bool,
+    floors: crate::system::clocks::Config,
+}
+
+impl Performance {
+    pub fn place(&self) -> bool {
+        self.place
+    }
+    pub fn floors(&self) -> crate::system::clocks::Config {
+        self.floors
+    }
 }
 
 /// The value of an `OOS_*` variable: None when it is not set or not text.
@@ -65,7 +80,10 @@ impl Switches {
             fixed_time: text(env, "OOS_FIXED_TIME").and_then(|v| v.parse().ok()),
             interp: crate::sparse::interp_from(text(env, "OOS_INTERP").as_deref(), conf),
             deep_raw: crate::deepmeas::enabled_from(flag(env, "OOS_DEEP_RAW"), conf),
-            place: conf_value(flag(env, "OOS_PLACE"), conf, "perf.place").as_deref() == Some("on"),
+            perf: Performance {
+                place: conf_value(flag(env, "OOS_PLACE"), conf, "perf.place").as_deref() == Some("on"),
+                floors: crate::system::clocks::Config::parse(conf),
+            },
             ipv6: crate::net6::enabled_from(flag(env, "OOS_IPV6"), conf),
             autoset_unit_levels: levels.as_deref() == Some("unit"),
             board: crate::board::BoardSwitches::parse(env, conf, settings),
@@ -96,7 +114,7 @@ mod tests {
     fn empty_configuration_is_the_default() {
         let s = Switches::default();
         assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (0, false, Mode::Frames, Interp::Exact));
-        assert!(s.deep_raw && !s.place && !s.ipv6 && !s.autoset_unit_levels);
+        assert!(s.deep_raw && !s.perf.place() && !s.ipv6 && !s.autoset_unit_levels);
         assert_eq!(s.board, crate::board::BoardSwitches::parse(&|_| None, "", ""));
     }
 
@@ -114,7 +132,7 @@ mod tests {
         let cores = crate::placement::Cores { big: 0b11_0000, little: 0b1111 };
         let s = Switches::parse(&env, conf, "", cores);
         assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (15, true, Mode::Batch, Interp::Fast));
-        assert!(!s.deep_raw && s.place && s.ipv6 && !s.autoset_unit_levels);
+        assert!(!s.deep_raw && s.perf.place() && s.ipv6 && !s.autoset_unit_levels);
         assert_eq!((s.cores, s.fixed_time), (cores, Some(946_684_800.0)));
     }
 

@@ -155,3 +155,34 @@ fn delayed_panic_matches_an_older_counted_run() {
     assert!(out.status.success(), "{:?}", out);
     assert_eq!(f.mode(), "normal", "two runs, even if the first panic count was delayed");
 }
+
+#[test]
+fn every_exit_restores_clock_receipt_even_when_no_restart_is_requested() {
+    for (tag, available, restored, rc) in [
+        ("restore", "408000 1416000", true, 137),
+        ("retain", "1416000", false, 137),
+        ("clean-restore", "408000 1416000", true, 0),
+        ("clean-retain", "1416000", false, 0),
+    ] {
+        let f = Fake::new(&format!("clock-{tag}"));
+        let dir = "sys/devices/system/cpu/cpufreq/policy4";
+        std::fs::create_dir_all(f.p(dir)).unwrap();
+        f.write(&format!("{dir}/scaling_available_frequencies"), available);
+        f.write(&format!("{dir}/scaling_min_freq"), "1416000");
+        let gpu = "sys/class/devfreq/ff9a0000.gpu";
+        std::fs::create_dir_all(f.p(gpu)).unwrap();
+        f.write(&format!("{gpu}/available_frequencies"), "400000000 600000000");
+        f.write(&format!("{gpu}/min_freq"), "600000000");
+        f.write("tmp/oos-clock-floors", "cpu 408000\ngpu 400000000");
+        f.exec("bin/ui", &format!("#!/bin/sh\ntouch \"$OOS_UI_TMP/oos-ui.off\"\nexit {rc}\n"));
+        let out = f.command("oos-ui-loop").env("OOS_CLOCK_SYSFS", f.p("sys")).output().unwrap();
+        assert!(out.status.success(), "{:?}", out);
+        assert_eq!(f.p("tmp/oos-clock-floors").exists(), !restored);
+        let cpu = std::fs::read_to_string(f.p(&format!("{dir}/scaling_min_freq"))).unwrap();
+        let gpu = std::fs::read_to_string(f.p(&format!("{gpu}/min_freq"))).unwrap();
+        assert_eq!(cpu.trim(), if restored { "408000" } else { "1416000" });
+        assert_eq!(gpu.trim(), if restored { "400000000" } else { "600000000" });
+        let log = std::fs::read_to_string(f.p("tmp/oos-ui.log")).unwrap();
+        assert!(log.contains(if restored { "device=cpu restored=408000" } else { "recovery failed" }));
+    }
+}

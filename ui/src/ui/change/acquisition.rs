@@ -20,6 +20,9 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
     let Some(id) = ui.host.runtime().change.prepared.as_ref().map(|p| p.changes.identity()) else { return };
     let Some(shadow) = &ui.host.runtime().change.shadow else { return };
     let (model, needs) = (shadow.accepted(), shadow.needs());
+    if let Some(clocks) = &ui.host.runtime().clocks {
+        clocks.update(ui.src.is_hw() && model.run == RunState::Run);
+    }
     let sw = &draw_switches(ui, model);
     let batch = sw.pipeline == crate::drawpipe::Mode::Batch;
     let access = if ui.src.is_hw() && model.run == RunState::Run && batch {

@@ -45,8 +45,9 @@ Reading:
 - The core's register index n is not known: the model's core numbers are not mapped to RT8847 registers
   (rt8847.md open item 8). The step procedure below finds it.
 - The offsets OOS writes for CH3 alone are the stored mode-2 offsets of the Rigol file (`seq::State::configure`
-  writes them on the change to mode 2). In the unit's file (scope_dump 20261113): 32, 66, 33, 73, 53, 85, -32, 62
-  steps. The August file had 13, 70, -20, 21, 64, 52, 57, 69, so the cores were recalibrated since. No other
+  writes them on the change to mode 2): one signed value per core, eight in all, in ADC steps. A copy of the unit's
+  file from November and one from August differ in most of the eight values, so the cores were recalibrated since.
+  No other
   stored mode written in its place gives one core about 12 steps off with the rest within 1.5 steps; so the stored
   values arrive, and one core has moved by about 12 steps since its calibration, or the measure unit the calibration
   uses sees it differently from the acquisition.

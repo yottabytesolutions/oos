@@ -5,7 +5,7 @@ as references), what OOS does today (file:line), the proposed change, a host tes
 confidence with open questions.
 
 Sources: static analysis of the stock driver library `libscope-auklet.so` (firmware 00.01.05.00.01) in the private
-analysis repo, the OOS sources and protocol docs of this
+analysis repo (`/path/to/analysis-repo/docs/re/libscope/`), the OOS sources and protocol docs of this
 fork, and `lspci -vvv` of the unit. Nothing in these specs ran on hardware. No stock code or coefficient table is copied
 here; tables are referenced by their location in the analysis repo.
 

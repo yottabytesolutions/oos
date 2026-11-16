@@ -66,7 +66,7 @@ Conclusion: in this firmware the FIR is dormant. It is not tied to high resoluti
 
 Do not copy these into the fork. Locations in the analysis repo:
 
-- `filterCoef.csv`: 12 sets x 16 taps, keyed 0..11,
+- `/path/to/analysis-repo/docs/re/libscope/tables/filterCoef.csv`: 12 sets x 16 taps, keyed 0..11,
   symmetric, DC gain 2^22. Measured -3 dB points (fraction of the input rate): 0.035 to 0.455. Likely bandwidth
   limiters per channel mode. The selection key is the dormant `index` field.
 - `.../tables/spu_12bit_fir_coef.csv` .. `spu_16bit_fir_coef.csv`: 5 sets x 32 taps, symmetric, DC gain 2^22,

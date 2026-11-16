@@ -23,7 +23,7 @@ and increments modulo f (unit 3: starts at 0). Coefficient index = row x f + pha
 symmetric response (index i >= 8f reads 16f - 1 - i).
 
 Reference table (do not copy into the fork):
-`SinCoef.csv`.
+`/path/to/analysis-repo/docs/re/libscope/tables/SinCoef.csv`.
 
 When:
 

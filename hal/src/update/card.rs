@@ -21,6 +21,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+mod path;
+pub use path::open_checked;
+
 pub const SECTOR: u64 = 512;
 pub const PARM_LBA: u64 = ACTIVE.layout.parm_lba;
 pub const BOOT_LBA: u64 = ACTIVE.layout.boot_lba;

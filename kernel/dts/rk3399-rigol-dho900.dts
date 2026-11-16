@@ -52,7 +52,7 @@
 	};
 
 	chosen {
-		bootargs = "earlycon=uart8250,mmio32,0xff1a0000 console=ttyS2,115200n8 panic=10 rootwait";
+		bootargs = "earlycon=uart8250,mmio32,0xff1a0000 console=ttyS2,115200n8 panic=0 rootwait";
 		stdout-path = "serial2:115200n8";
 	};
 

@@ -175,9 +175,11 @@ pub struct Flags {
 /// for the install.
 pub fn cmdline(running: &str, f: Flags) -> String {
     // initramfs_async=0: the package is unpacked before any driver probes, not alongside them
-    let mut w: Vec<&str> =
-        running.split_whitespace().filter(|w| !w.starts_with(KEY) && !w.starts_with("initramfs_async=")).collect();
-    w.push("initramfs_async=0");
+    let mut w: Vec<&str> = running
+        .split_whitespace()
+        .filter(|w| !w.starts_with(KEY) && !w.starts_with("initramfs_async=") && !w.starts_with("panic="))
+        .collect();
+    w.extend(["initramfs_async=0", "panic=0"]);
     let mut v = String::from(KEY);
     v.push_str("install");
     if f.downgrade {
@@ -372,11 +374,12 @@ mod tests {
 
     #[test]
     fn command_line_round_trip() {
-        let run = "storagemedia=sd console=ttyFIQ0 oos.kexec=install,force initramfs_async=1 root=/dev/ram";
+        let run =
+            "storagemedia=sd console=ttyFIQ0 oos.kexec=install,force initramfs_async=1 panic=10 panic=-1 root=/dev/ram";
         let c = cmdline(run, Flags { downgrade: true, force: false, any_unit: true });
         assert_eq!(
             c,
-            "storagemedia=sd console=ttyFIQ0 root=/dev/ram initramfs_async=0 oos.kexec=install,downgrade,any-unit"
+            "storagemedia=sd console=ttyFIQ0 root=/dev/ram initramfs_async=0 panic=0 oos.kexec=install,downgrade,any-unit"
         );
         assert_eq!(flags(&c), Some(Flags { downgrade: true, force: false, any_unit: true }));
         assert_eq!(flags("console=ttyFIQ0"), None);

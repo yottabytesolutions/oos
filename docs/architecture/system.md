@@ -28,7 +28,7 @@ AFE/PLL GPIO line names). PCIe host and XDMA are modules, loaded only when the F
 
 ### Restart after a panic or a hang
 
-`panic=10`, the hardware watchdog and the crash archive (`../boot.md`, "Restart after a panic or a hang"). Facts from
+A 10 s panic restart enabled by rcS after confirmed stock selection (`panic=0` before that), the hardware watchdog and the crash archive (`../boot.md`, "Restart after a panic or a hang"). Facts from
 the unit (dho804, 2026-11-15, verified on the unit):
 - **The watchdog's hardware maximum is 21.5 s.** The driver logs `dw_wdt: No valid TOPs array specified` and uses the
   fixed TOPs: 2^31 cycles of `pclk_wdt`. The kernel pings in between to reach the 30 s that `oos-watchdog` asks for;
@@ -214,7 +214,7 @@ the boot reaches OOS's rcS before a power cut.
 | # | Candidate | Where | Measurement | Pass criterion |
 |---|---|---|---|---|
 | 1 | Timer slack 1 ns: `prctl(PR_SET_TIMERSLACK, 1)` early in `main`, inherited by later threads. Today each 10 us BAR-write gap lasts 60 to 70 us (50 us default slack), a configure of about 230 writes 15 ms instead of 2.3 ms | `oos-ui` (M3c) | configure time and the poll period, before and after | configure <= 4 ms; poll period within 10 % of nominal |
-| 2 | XDMA by INTx on normal boots (`poll_mode=0 interrupt_mode=2`, as stock). **Failed 2026-11-15:** the legacy line came up as IRQ 76 on chip `dummy` at about 230,000 interrupts/s on cpu0, 10 C2H time-outs in 2 min, 3.8 fps; after the revert reboot the unit stayed dark and is still unreachable; recovery by a power cycle is not yet verified, and the cause is not known. The RK3399 PCIe legacy interrupt routing in this kernel gives no usable line; needs a fix first. Normal boots keep MSI | kernel command line | as measured | rejected as configured |
+| 2 | XDMA by INTx on normal boots (`poll_mode=0 interrupt_mode=2`, as stock). **Failed 2026-11-15:** the legacy line came up as IRQ 76 on chip `dummy` at about 230,000 interrupts/s on cpu0, 10 C2H time-outs in 2 min, 3.8 fps; after the revert reboot the unit stayed dark with a kernel panic on screen; a power cycle recovered it (verified on the unit), and the cause is not known. The RK3399 PCIe legacy interrupt routing in this kernel gives no usable line; needs a fix first. Normal boots keep MSI | kernel command line | as measured | rejected as configured |
 | 3 | XDMA by INTx after kexec instead of poll mode. **Not tested: blocked by the normal-boot failure of row 2**; kexec keeps `poll_mode=1` unless M5c finds a working alternative | `oos-fpga-up`, `oos-fpgad` (M5c) | a kexec start with acquisition for 10 min | no C2H time-out, no busy A53 |
 | 4 | Big cluster clock. **Measured:** the `performance` governor lowered A72 load (32 to 24 %) and `acq` (29 to 19 %) at +2 C, but picture rate, acquired/s, read time and latency stayed within the spread; schedutil stays. Candidate: `uclamp_min` 1024 on main and the acquisition thread only (`sched_setattr`, `UCLAMP_TASK=y` is built) | `oos-ui` (P1) | `scaling_cur_freq`, step time p99, wake latency, thermal zone after 30 min | step p99 or wake latency improves; temperature below the 70 C passive trip |
 | 5 | Shallow idle on the A72s: `pm_qos_resume_latency_us = 100` on cpu4 and cpu5. **Dropped 2026-11-15:** no measurable effect | none | as measured | dropped |

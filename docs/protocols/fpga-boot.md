@@ -41,6 +41,9 @@ Recovery when PCIe is gone: stop the application, `rmmod xdma pcie_rockchip`, `s
 
 ## Confirmed under OOS
 
+Since 2026-11-15 the OOS device tree caps the link at 2.5 GT/s (`max-link-speed = <1>`, `../hardware/fpga.md` PCIe). The
+bring-up below ran before that cap.
+
 Verified on the unit with Linux 6.12.115+, from the OOS development initramfs:
 `oos-hw fpga-boot 0x400000` (spidev1.0, mode 0, 8 bit, 10 MHz), 10 s, `insmod pcierockchiphost.ko`: link at first try,
 `10ee:7022` endpoint, 5.0 GT/s x2, BAR0 0xfa000000 (64 KiB), BAR1 0xfa010000 (32 KiB), same as stock;
@@ -62,7 +65,10 @@ main image never loads.
   0x0000C080`) that loads the main image. PCIe then came up on the factory image's endpoint (the same 10ee:7022) and
   register 0x4000 read `0xe1060816` instead of 0xe2072115, so the cold boot stopped at "FPGA image" with nothing
   written. Starts where BOOT arrived after the hand-over (0.03 s and 7.3 s after it) loaded the main image.
-- **Assumed:** that `0xe1060816` is the version of the factory image (it is what 0x4000 reads when no BOOT was heard).
+- **Assumed:** that `0xe1060816` is the version of the factory image of that unit (it is what 0x4000 reads when no
+  BOOT was heard). Whether the factory image is the same build on every unit is not known: on a DHO804 its version has
+  not been read through 0x4000. OOS therefore tests only for the expected main-image version and treats any other value
+  as "BOOT not heard".
 - **OOS repeats BOOT** when the version register shows another value after the PCIe bring-up
   (`hal::dho::boot::io::up_with_boot_retries`, `oos-fpgad cold-boot --power-on`): it unloads xdma and the PCIe host
   driver (the BAR is unmapped first, and BOOT is not sent while a module stays loaded: reconfiguring the FPGA behind a
@@ -86,5 +92,6 @@ main image never loads.
 1. open `/dev/spidev1.0`, send `\rBOOT\r` + 00 40 00 00 (slot from a config file, default 0x400000)
 2. poll instead of sleeping: `modprobe pcie_rockchip_host`; if no link, `rmmod` and retry every 500 ms up to 15 s
    (the RK3399 host driver cannot retrain after one failed attempt without a reload)
-3. `modprobe xdma poll_mode=1`, check BAR1 0x4000 == expected version, else fall back to slot 0x000000 once
+3. load xdma (`xdma.params`; MSI with `poll_mode=0` on normal boots, `poll_mode=1` forced in a kexec session,
+   `../hardware/fpga.md` PCIe), check BAR1 0x4000 == expected version, else fall back to slot 0x000000 once
 4. never touch the flash commands

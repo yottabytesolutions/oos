@@ -3,6 +3,9 @@
 //! Board-owned port for deterministic host read-outs. Layout and decoding stay in the adapter.
 
 use super::{Active, Frame};
+
+#[cfg(test)]
+pub(crate) use super::dho::scripted::deep_intake_frame;
 use crate::drawpipe::{CodesInto, DecodeInto, RawBatch};
 use crate::model::Model;
 
@@ -69,6 +72,9 @@ pub trait Batch {
     fn codes(&self) -> Option<CodesInto>;
     fn into_bytes(self) -> Self::Bytes;
 }
+
+#[cfg(test)]
+pub(crate) use super::dho::hw::single_fake::{SegmentWorker, SingleWorker};
 
 #[cfg(test)]
 mod tests {

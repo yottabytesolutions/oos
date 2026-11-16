@@ -30,12 +30,15 @@ case "$magic" in
 	OOSK)
 		dd if=$dev bs=512 skip=$BOOT_LBA count=1 of=/tmp/bootsec 2>/dev/null
 		{ printf 'KRNL'; tail -c 508 /tmp/bootsec; } > /tmp/bootsec.new
-		dd if=/tmp/bootsec.new of=$dev bs=512 seek=$BOOT_LBA count=1 conv=notrunc,fsync 2>/dev/null; sync
-		now=$(dd if=$dev bs=512 skip=$BOOT_LBA count=1 2>/dev/null | head -c 4)
-		[ "$now" = KRNL ] && echo "oos-oneshot: boot magic restored, next power-on boots stock" > $log \
-		                  || echo "oos-oneshot: RESTORE FAILED ($now)" > $log;;
+		dd if=/tmp/bootsec.new of=$dev bs=512 seek=$BOOT_LBA count=1 conv=notrunc,fsync 2>/dev/null \
+			|| { echo "oos-oneshot: RESTORE write or fsync FAILED" > $log; exit 1; }
+		sync || { echo "oos-oneshot: RESTORE sync FAILED" > $log; exit 1; }
+		# The initramfs busybox-static enables FEATURE_DD_IBS_OBS, including iflag=direct.
+		now=$(dd if=$dev bs=512 skip=$BOOT_LBA count=1 iflag=direct 2>/dev/null | head -c 4)
+		[ "$now" = KRNL ] || { echo "oos-oneshot: RESTORE FAILED ($now)" > $log; exit 1; }
+		echo "oos-oneshot: boot magic restored, next power-on boots stock" > $log;;
 	KRNL) echo "oos-oneshot: boot already valid (stock boots next time)" > $log;;
-	*) echo "oos-oneshot: unexpected boot magic '$magic', left alone" > $log;;
+	*) echo "oos-oneshot: unexpected boot magic '$magic', left alone" > $log; exit 1;;
 esac
 cmd=$(dd if=$dev bs=512 skip=$BCB_LBA count=1 2>/dev/null | head -c 13)
 if [ "$cmd" = "boot-recovery" ]; then
@@ -43,3 +46,6 @@ if [ "$cmd" = "boot-recovery" ]; then
 	{ head -c 32 /dev/zero; tail -c 480 /tmp/bcb; } > /tmp/bcb.new
 	dd if=/tmp/bcb.new of=$dev bs=512 seek=$BCB_LBA count=1 conv=notrunc,fsync 2>/dev/null; sync
 fi
+
+# A misc cleanup failure cannot invalidate the confirmed KRNL selection.
+exit 0

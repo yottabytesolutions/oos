@@ -17,10 +17,12 @@ runs no own image, so everything else here has not been verified on hardware.
      bitstreams over SPI (or later PCIe) and load them through PCAP from DDR/OCM. After that, no more flash writes. Slot
      0x000000 (golden) and 0x400000 (stock) stay untouched. A power cycle always comes back to the golden image (assumed).
      This is an FPGA flash write: OOS itself never does it (`cold-boot.md`, never-do list).
-2. **PS side of an own design:** PS_CLK 33.333 MHz (as configured), CPU 500 MHz, DDR3 32 bit at 533 MHz (DDR3-1066, 512 MiB
-   geometry), QSPI quad on MIO1-6, **SPI0 slave on MIO16/17/18/21** (the RK3399 link), UART1 115200 on MIO28/29 (debug
-   console), nothing else on MIO (section 3). The FSBL sets up the PS DDR, but the monitor runs in OCM and does not use it,
-   so it is free for an own design (assumed).
+2. **PS side of an own design:** PS_CLK 33.333 MHz (as configured), CPU 500 MHz, DDR3 32 bit at 533 MHz (DDR3-1066,
+   512 MiB geometry), QSPI quad on MIO1-6, **SPI0 slave on MIO16/17/18/21** (the RK3399 link), UART1 115200 on MIO28/29
+   (debug console), nothing else on MIO (section 3). The FSBL sets up the PS DDR, but the monitor runs in OCM and does
+   not use it. Whether PS DDR chips are fitted at all is open: the two DDR3 footprints next to the Zynq are empty on the
+   DHO800 boards in community board photos and reports (assumed to be the PS DDR, not checked against the board traces).
+   Plan an own design for OCM only until a board check shows memory on bank 502.
 3. **Fabric clocks (FCLK) from the PS:** FCLK0 125 MHz, FCLK1 200 MHz, FCLK2 222.22 MHz, FCLK3 250 MHz (IO PLL 2000 MHz, /16,
    /10, /9, /8) (section 3.2). Level shifters are enabled, FCLK resets released. The ADC data clocks come in from the LMX2582 on
    PL pins (`pll.md`).
@@ -94,8 +96,10 @@ below 0x400000.
 
 ### 2.5 Consequences
 
-- Flash slots: 0x000000 golden (answers `VER?`, assumed), 0x400000 stock image, 0x800000 (content not known; the factory DDR
-  calibration of the stock OS programs a self-test image there, `cold-boot.md` 3.2). Boot image size 3.46 MiB, slot pitch 4 MiB.
+- Flash slots: 0x000000 golden (answers `VER?`, assumed), 0x400000 stock image, 0x800000 self-test image (the factory DDR
+  calibration of the stock OS programs it there, `cold-boot.md` 3.2; on a DHO804 the slot was read with an external flash
+  reader and matched the stock self-test boot image byte for byte, verified 2026-11-12). Whether the golden image is the
+  same build on every unit is not known (`fpga-boot.md`). Boot image size 3.46 MiB, slot pitch 4 MiB.
   OOS boots only slots 0x000000 and 0x400000.
 - The monitor stays alive while the PL runs. An image can therefore be re-commanded at any time. A stray `\rPROG\r` from the host
   would wait forever for 8 more bytes and then erase; a size of exactly 16 MiB erases the chip. OOS must never send `PROG`
@@ -161,7 +165,8 @@ MIO GPIO. **SPI0 (MIO16-21) is the slave link to the RK3399 SPI1.**
   DDRIOB DATA0/DATA1 (0xF8000B48/4C) = 0x672, DIFF0/1 = 0x674, external VREF (DDR_CTRL 0xF8000B6C = 0x260).
 - MR0 0xb30 (DLL reset, BL8), EMR 0x4 (0xF8006030 = 0x40b30): **DDR3** (assumed: DDR3 mode-register layout).
 - Address map 0xF800603C/40/44 = 0x777 / 0xfff00000 / 0x0ff66666: 14 row, 10 column, 8 banks. Together with 32 bit this gives
-  **512 MiB** (2 x 16-bit 2 Gbit). The register set equals the ZedBoard DDR3 preset except for timings (assumed).
+  **512 MiB** (2 x 16-bit 2 Gbit). The register set equals the ZedBoard DDR3 preset except for timings (assumed). This is
+  what the FSBL configures, not proof that memory is fitted (short answer, item 2).
 - Clock 533.3 MHz (DDR3-1066). Last steps: poll DCI done (0xF8000B74 bit 13), start DDRC, poll operating mode (0xF8006054).
 - Another project reports "DDR3 at 600 MHz with timings generated for 533 MHz". That does not fit this PS memory (533.3 MHz
   from the PLL above) and may concern the acquisition memory behind the MIG in the PL (`cold-boot.md` step 10), whose
@@ -204,8 +209,9 @@ All of this is assumed, nothing has been run.
 
 - An own `BOOT.bin` = Vivado FSBL with the same PS7 preset (all values above) + own bitstream + own monitor. The monitor must keep
   the `\rBOOT\r` + BE32 address frame. It may add a RAM-load command (SPI at 10 MHz is about 1.2 MB/s, so ~3 s per full 3.5 MB
-  bitstream; PCAP takes chunks from OCM or DDR, 512 MiB DDR3 is available).
+  bitstream; PCAP takes chunks from OCM, or from PS DDR if a board turns out to have it fitted, item 2 of the short answer).
 - The own PL must at least provide the PCIe endpoint (hard PCIE_2_1 + GTP, Gen2 x2, BAR layout as in `fpga-boot.md`), or OOS loses
-  its only data path. FCLK0..3 (125/200/222/250 MHz) are available as fabric clocks; the acquisition clocks come from the board PLL.
+  its only data path. The OOS device tree caps the link at 2.5 GT/s, and the measured read rate stays below that
+  (`../hardware/fpga.md`, PCIe). FCLK0..3 (125/200/222/250 MHz) are available as fabric clocks; the acquisition clocks come from the board PLL.
 - The PL pin and IO-standard assignment is not documented here.
 - Never use `PROG` with size 0x1000000 and never write below 0x400000. Keep the golden slot as the recovery path.

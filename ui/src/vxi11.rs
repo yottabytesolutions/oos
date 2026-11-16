@@ -5,7 +5,7 @@
 //! `TCPIP::<ip>::INSTR`. ONC RPC (RFC 5531) with XDR (RFC 4506): a portmapper (program 100000 v2, TCP and UDP port
 //! 111) that answers GETPORT for the core channel, and the core channel (program 0x0607AF v1, TCP `CORE_PORT`) with
 //! create_link, device_write, device_read, device_readstb, device_clear, remote/local/lock/unlock, destroy_link.
-//! The commands go through the SCPI interpreter (`Scpi::exec`); everything runs non-blocking from the main loop.
+//! The commands go through the SCPI interpreter (`Scpi::poll_program`); everything runs non-blocking from the main loop.
 //! Unauthenticated like SCPI and the web remote: bench LAN only.
 
 use std::net::{TcpListener, TcpStream, UdpSocket};
@@ -618,4 +618,6 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod empty_tests;
 mod ports;

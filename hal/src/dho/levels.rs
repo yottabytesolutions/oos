@@ -3,18 +3,17 @@
 //! Signal levels from the FPGA's ADC measure unit (fork, docs/fork/trigger-lockin.md "(a)"): the lowest, highest and
 //! mean value of every channel without an acquisition, for the auto set-up's vertical step.
 //!
-//! The unit (private RE notes docs/fpga.md, "Measure unit"; self-cal.md 2.4): 0x1040 bit 31 starts a run of 2^e samples
-//! per ADC core (e = 0x1040[4:0]) at 156.25 MHz, bit 30 reports it done. 0x1040[10:8] selects the core (slot) the read
+//! The unit (docs/hardware/fpga.md "Measure unit"; self-cal.md 2.4): 0x1040 bit 31 starts a run of 2^e samples
+//! per ADC core (e = 0x1040[4:0]) at 156.25 MHz, bit 30 reports it done. 0x1040[11:8] selects the core (slot) the read
 //! registers show: 0x1048 = its 12-bit maximum [27:16] and minimum [11:0], 0x1044 = its mean on the 16-bit scale. The
 //! values are taken after the ADC x2 of 0x105c and before the Q10 read-path gain and offset (wpu.rs), so a code c on
 //! the 16-bit scale is the read-out word 32768 + (c - 32768) * dg, dg = the channel's digital gain without the x2.
 //!
-//! The slots of a channel (private RE notes docs/fpga.md "Channel to core/slot mapping", from libscope's
-//! `DrvAuto_GetMaxMin`, which reads core k into slot k): 1 channel all eight; 2 channels the lower-numbered channel
-//! 0-3, the higher 4-7; 4 channels (also three) CH1 0/2, CH2 1/3, CH3 4/6, CH4 5/7. The DDR word order (CH1 = 6/7 ...)
-//! assumed before was wrong: on the unit (2026-11-13) a signal on CH1 and CH2 in 4-channel mode showed in slots 2/3,
-//! which this table gives to CH1 and CH2. `channel_levels` refuses a channel whose slots disagree, and the auto set-up
-//! then takes the records.
+//! The slots of a channel (docs/hardware/fpga.md "Channel to core and slot mapping"; slot k shows core k): 1 channel
+//! all eight; 2 channels the lower-numbered channel 0-3, the higher 4-7; 4 channels (also three) CH1 0/2, CH2 1/3, CH3
+//! 4/6, CH4 5/7. The DDR word order (CH1 = 6/7 ...) assumed before was wrong: on the unit (2026-11-13) a signal on CH1
+//! and CH2 in 4-channel mode showed in slots 2/3, which this table gives to CH1 and CH2. `channel_levels` refuses a
+//! channel whose slots disagree, and the auto set-up then takes the records.
 
 use crate::dho::bus::Bus;
 

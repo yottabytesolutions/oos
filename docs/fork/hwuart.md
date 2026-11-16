@@ -2,8 +2,8 @@
 
 The UART protocol trigger in the TPU's receiver. Opt-in: `trig.serial_hw = on` in system.conf, read once at start,
 off by default. Code: `hal/src/dho/uarttrig.rs` (words, timing), `tpu::uart` (the write sequence),
-`seq::Trig::Uart`, `ui/src/board/dho/hw.rs` (`hw_uart`, `uart_debug`). Register facts: private RE notes `docs/fpga.md`
-"Serial trigger" (netlist simulation).
+`seq::Trig::Uart`, `ui/src/board/dho/hw.rs` (`hw_uart`, `uart_debug`). Register facts: below, indexed from
+[../hardware/fpga.md](../hardware/fpga.md) (not yet verified on hardware).
 
 ## Hardware
 

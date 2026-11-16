@@ -14,6 +14,7 @@ pub(super) mod observations;
 pub(super) mod oracle;
 pub(super) mod proposals;
 mod recovery;
+pub(super) mod transitions;
 
 use super::*;
 use diagnostics::Diagnostics;
@@ -129,7 +130,7 @@ pub(super) fn begin_step(ui: &mut Ui, dt: f64) -> Option<bool> {
     ui.host.runtime_mut().change.timing.begin_change();
     let t = Instant::now();
     legacy::settings(ui);
-    let final_done = legacy::transitions(ui);
+    let final_done = transitions::apply(ui);
     acquisition::publish(ui);
     observe(ui);
     let timing = &mut ui.host.runtime_mut().change.timing;
@@ -143,6 +144,7 @@ pub(super) fn prepare(ui: &mut Ui) {
     let sample = ui.host.runtime().change.census.begin();
     let started = Instant::now();
     prepare_inner(ui);
+    proposals::prepared(ui);
     proposals::resolve(ui);
     let observer = &mut ui.host.runtime_mut().change;
     observer.timing.record_shadow(started.elapsed());
@@ -150,10 +152,7 @@ pub(super) fn prepare(ui: &mut Ui) {
 }
 
 fn prepare_inner(ui: &mut Ui) {
-    let run_edge = ui.m.run == RunState::Run && !ui.was_running;
-    if run_edge {
-        request(ui, Request::Run, Row::Run);
-    }
+    let run_edge = transitions::prepare(ui);
     let config = crate::model::config();
     let keys = legacy_keys::Keys::of(ui);
     let needs = needs(ui, &keys);
@@ -361,35 +360,6 @@ fn compare_normalized(observer: &mut Observer, live: &Model) {
     observer.diagnostics.normalized += u64::from(unequal);
 }
 
-/// Preserve the old RUN reset at its old seam, associating it with this intake edge or the next internal edge.
-pub(super) fn run_restart(ui: &mut Ui) {
-    let current = ui.host.runtime().change.prepared.as_ref().is_some_and(|p| p.run_edge);
-    let before = ui.host.runtime().change.signals;
-    ui.hw_avg_restart();
-    if current {
-        let observer = &mut ui.host.runtime_mut().change;
-        observer.signals = before;
-        if let Some(p) = &mut observer.prepared {
-            if ui.src.is_hw() {
-                p.signals.effects |= C::HW_AVERAGE;
-                p.signals.effects_by_row[Row::Run as usize] |= C::HW_AVERAGE;
-            }
-        }
-    } else {
-        request(ui, Request::Run, Row::Run);
-    }
-}
-pub(super) fn run_history(ui: &mut Ui) {
-    let observer = &mut ui.host.runtime_mut().change;
-    if let Some(p) = &mut observer.prepared {
-        if p.run_edge {
-            p.signals.effects |= C::HISTORY;
-            p.signals.effects_by_row[Row::Run as usize] |= C::HISTORY;
-            return;
-        }
-    }
-    event(ui, Row::Run, C::HISTORY);
-}
 pub(crate) fn run_request(ui: &mut Ui) {
     request(ui, Request::Run, Row::Run);
 }

@@ -141,7 +141,9 @@ roll hardware and retained raw-replay eligibility survive until effective hardwa
 Every identity boundary clears retained roll/scan analog and LA buffers and the scan cursor;
 new-pair snapshots cannot contain pre-boundary buffered samples. STOP raw rereads carry the
 captured batch identity and stale rereads are rejected at publication.
-SINGLE completion survives generation-only boundaries. Producer deliveries and both
+Accepted SINGLE completion survives generation-only boundaries through its deferred STOP.
+The worker's returned-batch latch is bound to the captured pair, so an obsolete batch
+cannot leave an incomplete SINGLE waiting indefinitely. Producer deliveries and both
 record routes reject every different pair before conversion; valid current records remain eligible.
 Background measurements and analyzer results additionally require stats_gen. Deposit folds keep
 their identity through worker/helper accumulation and mailbox coalescing; statistics-only changes
@@ -162,6 +164,85 @@ snapshot is retained. Other internal commands and run-transition consumers remai
 for the exhaustive 194-field compatibility model; only test feed wrappers retain its old comparison.
 The normalize-to-mark_changed bridge remains intact through d. These producer changes are host
 verified only; the coordinated producer smoke against the 20261115 unit baseline holds M2.3c.
+
+M2.3c intermediate state: remaining late autoset and Bode writes, including terminal
+restoration without another stage token, use the same bounded command outbox. Legacy
+algorithms calculate against the accepted snapshot; their typed field patches wait for
+the next intake before external inputs. The accepted snapshot is restored before later
+consumers run, preserving status and average-clear outputs. No additional Model snapshot
+is retained. Rejected command payloads quarantine the proposal and restore a bounded
+snapshot, releasing oversized live capacity so subsequent steps can recover.
+Idle autoset/Bode skip capture. Debug builds assert accepted settings at writer entry,
+excluding status and hardware counter outputs. Autoset runs after record drawing and
+measurement folding so its terminal clear cannot admit more pre-final records or folds;
+the dirty mark and terminal settings take effect together at the following step.
+
+SINGLE, software/hardware segments and software/hardware mask completion queue STOP.
+A one-byte pending-completion flag deduplicates STOP, guards the remaining record loop
+and survives quarantine until intake applies it. External commands then retain their
+existing priority over that internal completion. Free Bode analyzes its retained SINGLE
+record after STOP is accepted and queues its restoration for the following intake.
+Accepted run/SINGLE boundaries restart averaging once before publication; accepted RUN
+requests restart segmented history once. STOP retains the picture and the existing
+plain-STOP final-read contract. Rejected preparations still service the accepted hold,
+outstanding final-read request and segment completion; new run effects and final-read
+requests wait for acceptance. Re-pressing armed SINGLE restarts hardware averaging,
+and two RUN/STOP presses within one frame retain a RUN boundary. Completion leaves one
+frame of RUN status before next-step STOP under D5. Only a requested Single-to-Auto
+sweep companion is excluded from field-driven acquisition changes even when external RUN
+overrides pending completion and the accepted run value stays RUN; other effective field and derived acquisition-policy changes retain
+their classes. The oracle records actual deferred command application as a stage event
+under D5, without inventing reset effects.
+
+SINGLE retries belong to worker eligibility, not the UI's stale-record drop path.
+The worker suppresses another batch only for the last published `(gen, epoch)` while
+SINGLE remains active. After a reconfigure, or an identity-only boundary such as
+CLEAR, an unaccepted old-pair batch therefore permits one batch of the current pair.
+This also recovers when a producer or deposit worker rejects the obsolete record
+before the UI can see it. The existing worker-owned latch grows from an optional
+epoch to an optional pair (24 bytes on the 64-bit targets); it adds no queue or buffer.
+M2.3b's epoch-only latch incorrectly treated a returned stale batch as completed.
+M2.3c's outbox still completes only after the UI accepts a current complete record:
+next-step STOP is applied and its hardware hold is set before changed settings are
+published. STOP remains held when CLEAR removes the last record, using the existing
+`cleared` state. The shared stream poll honors hold/rearm in both roll and scan, so
+a completed scan cannot start another sweep on reconfigure. Explicit RUN or SINGLE
+releases the hold. The independent legacy acquisition key includes slow mode while
+preserving the RUN/SINGLE sweep-companion exception. These are host-tested contracts;
+stream chunk IO and timing still require the recorded unit smoke.
+
+The pure SINGLE progress decision is shared by the worker and its host fixture:
+hold precedes same-pair waiting and changed-pair retry; only an available published
+frame sets the latch. A hidden hardware-average batch keeps acquiring. Segmented
+recording captures its pair at the arm, tags recording readbacks with that pair,
+and aborts Recording/Reading on either generation or epoch change. Completed STOP
+segments survive CLEAR and pair changes without hardware reconfiguration. A fresh
+browse read uses its current snapshot's pair, rejects a boundary during DMA and
+retries with the next snapshot.
+A hardware reconfigure discards the recording, cancels its pending browse and clears
+the UI's segment times and position when Idle is observed. Incomplete scan SINGLE restarts
+the hardware sweep at a pair boundary, so its completed record has no blank prefix
+from an older sweep. RUN roll and scan retain hardware across identity-only changes.
+Statistics-only changes do not restart acquisition.
+
+Hardware-segment UI status starts a fresh run number for SINGLE during RUN and
+for accepted running pair changes, before polling old completion. Segment settings
+that invalidate history also clear that recording's history. This avoids an idle
+zero run number after enabling segments during RUN and prevents an old Done phase
+from completing a new SINGLE. Segment times reflect the latest readback snapshot;
+SCPI replies immediately, including a newline for an empty list. The message encoder
+distinguishes an empty query result from a command without a response. TCP SCPI and
+VXI-11 carry optional terminated messages, including a newline for an empty query;
+MCP preserves an empty query's text and reserves its `ok` reply for commands.
+STOP after CLEAR in RUN holds acquisition even before its first record, matching
+`acquiring()`. STOP also stops scan RUN through the shared stream hold poll.
+These changes are host verified; setup B and real DMA/stream timing need unit smoke.
+
+Only these run-transition effects switch in c. The normalization notification bridge,
+legacy marks, picture resets and the remaining d/e consumers stay active. Epoch-only
+boundaries still reject old work without hardware reconfiguration, and rejected changes
+keep the step loop alive. This implementation is host-verified; independent unit-tier
+review, the coordinator's full gate and the parallel M2.3b producer smoke hold integration.
 
 ## Layers
 
@@ -897,15 +978,15 @@ must finish before another writer can commit. Dead PID claims and empty interrup
 
 ### Kernel panics
 
-- **Reboot instead of halt.** The OOS kernel command line carries `panic=10`, so a panic reboots after 10 s instead
-  of halting until someone pulls the power cable. It is set in `OOS_BOOTARGS` (`rootfs/board/dho/etc/oos-board`) and
-  the image's own boot config, never in p4, p5 or U-Boot. `panic_on_oops` stays 0.
-- **Trial starts.** A panic after rcS's first commands (`oos-oneshot` and the start count) reboots into the fallback
-  that those commands set up, as a hang there does today (`../update.md`). A panic before rcS leaves `OOSK` armed, so
-  `panic=10` restarts the same image in a loop. That is the documented limitation of `../update.md` ("nothing counts
-  the starts before rcS"), now automatic instead of at each power-on; recovery is the card in a reader. The trial
-  fallback is covered by tests for panics after rcS's first commands. In rcS, `oos-oneshot` and the trial bookkeeping
-  run before the crash archive below.
+- **Restart after safe selection.** Boot arguments carry `panic=0`; rcS enables a 10 s panic restart through
+  `/proc/sys/kernel/panic` only after `oos-oneshot` confirms stock selection (`KRNL`). A failed restoration leaves
+  panic restart and userspace watchdog startup disabled. Task 0067 corrects the early restart loop described in
+  ADR 0015; the boot configs remain in OOS, never p4, p5 or U-Boot. `panic_on_oops` stays 0.
+- **Trial starts.** The loader does not consume `OOSK`, so an early panic before restoration must halt instead of
+  resetting into the same image forever. Manual power-cycles can still repeat it; recovery needs a card reader.
+  After stock selection is restored, later panics restart into the selection then armed by the update/persist
+  flow (`../update.md`). In rcS, `oos-oneshot` and trial bookkeeping run before the crash archive below.
+  Timing and failed-restoration cases are host-tested; this change is not yet verified on the unit.
 - **Keep the text.** ramoops (at 0x110000, 896 kB: console 512 kB, dmesg 128 kB for oops and panic, pmsg 256 kB)
   survives a warm reset but not a power cut. At the next boot rcS archives the pstore records to `/oos/crash/`:
   - **Byte budget.** `/oos` is 16 MiB and holds the counters, the setup quarantine and the update state, so the crash

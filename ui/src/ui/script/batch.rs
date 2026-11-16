@@ -66,11 +66,7 @@ impl BatchScript {
         if self.pending.is_some() {
             return Err(format!("batch {} still in flight", self.id));
         }
-        if ui.m.run != RunState::Run {
-            return Ok(());
-        }
-        ui.relayout();
-        let identity = super::super::change::acquisition::script_prepare(ui);
+        let Some(identity) = running_identity(ui) else { return Ok(()) };
         let Source::Hw { shared, .. } = &ui.src else { return Err("scripted source replaced".into()) };
         if !lock(shared).queue.is_empty() {
             return Err(format!("batch {} left queued frames", self.id));
@@ -162,6 +158,16 @@ impl BatchScript {
         );
         Ok(())
     }
+}
+
+fn running_identity(ui: &mut Ui) -> Option<oos_core::change::Identity> {
+    if ui.m.run != RunState::Run {
+        return None;
+    }
+    ui.relayout();
+    let identity = super::super::change::acquisition::script_prepare(ui);
+    // Preparation can apply an internal STOP; never feed an extra batch under that completion.
+    (ui.m.run == RunState::Run).then_some(identity)
 }
 
 fn queue_frames(batch: &impl Batch, shared: &mut crate::board::Shared, frames: usize, id: oos_core::change::Identity) {

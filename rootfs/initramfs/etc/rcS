@@ -7,11 +7,21 @@ st() { printf '%s\t%s\t%s\t%s\n' "$(cut -d' ' -f1 /proc/uptime)" "$1" "$2" "$3" 
 st ok Linux "$(uname -r)"
 # 0) one-shot first, before any other OOS program runs: put the stock boot magic back, so a start that hangs from
 #    here on (also a new build on trial, docs/update.md) is followed by stock Android at the next power-on
-/bin/oos-oneshot
+# Early panics must halt while OOSK can still select the same failing image.
+# Enable automatic panic restart only after read-back confirms stock boots next.
+boot_safe=0
+if /bin/oos-oneshot; then
+	boot_safe=1
+	echo 10 > /proc/sys/kernel/panic
+	# a kexec start keeps the old build's command line, which may lack softlockup_panic=1
+	echo 1 > /proc/sys/kernel/softlockup_panic
+else
+	st warn boot "stock boot selection unconfirmed; watchdog and panic restart are off"
+fi
 # 0a) hardware watchdog (oos-watchdog: 30 s, pinged every 5 s, log /tmp/oos-watchdog.log): a kernel that hangs without a
-#     panic resets the SoC; a panic restarts after 10 s (panic=10 in the bootargs). Before anything that may take long,
-#     and independent of oos-ui
-(setsid sh -c '/bin/oos-watchdog >> /tmp/oos-watchdog.log 2>&1' < /dev/null > /dev/null 2>&1 &)
+#     panic resets the SoC; a panic restarts after 10 s (enabled above after stock selection is safe).
+#     Before anything that may take long, and independent of oos-ui
+[ "$boot_safe" = 0 ] || (setsid sh -c '/bin/oos-watchdog >> /tmp/oos-watchdog.log 2>&1' < /dev/null > /dev/null 2>&1 &)
 # 0b) OOS's own data partition at /oos (own calibration, setups, power-on picture; log in /tmp/oos-data.log) and the
 #     signed updates (oos-update, docs/update.md): count this start of an image on trial right here, so that a hang
 #     in anything below still counts; one that already started once without being confirmed is rolled back (log

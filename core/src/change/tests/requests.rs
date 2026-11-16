@@ -92,3 +92,31 @@ fn a_segmented_run_request_adds_history_without_a_settings_diff() {
     assert_eq!(changes.identity().gen(), 0);
     assert_eq!(changes.identity().epoch(), 1);
 }
+
+#[test]
+fn requested_sweep_changes_are_companions_even_when_accepted_run_is_equal() {
+    let initial = Model { trig_mode: TrigMode::Single, ..Model::default() };
+    let mut shadow = Shadow::new(&initial, UiAcq::default(), &config(4)).unwrap();
+    let mut current = initial.clone();
+    current.trig_mode = TrigMode::Auto;
+    let changes = shadow.observe(&current, UiAcq::default(), &[Request::Run], &config(4)).unwrap();
+    assert_eq!(changes.classes(), Classes::HW_AVERAGE);
+    assert_eq!((changes.identity().gen(), changes.identity().epoch()), (0, 1));
+    current.trig_mode = TrigMode::Normal;
+    current.trig_level += 1.0;
+    let changes = shadow.observe(&current, UiAcq::default(), &[Request::Run], &config(4)).unwrap();
+    assert_eq!(changes.classes(), Classes::ACQ | Classes::STATS | Classes::HW_AVERAGE);
+    assert_eq!((changes.identity().gen(), changes.identity().epoch()), (1, 2));
+    current.trig_mode = TrigMode::Auto;
+    let changes = shadow.observe(&current, UiAcq::default(), &[], &config(4)).unwrap();
+    assert_eq!(changes.classes(), Classes::ACQ | Classes::STATS, "ordinary sweep changes retain their classes");
+}
+
+#[test]
+fn requested_normal_sweep_is_not_a_run_companion() {
+    let initial = Model::default();
+    let mut shadow = Shadow::new(&initial, UiAcq::default(), &config(4)).unwrap();
+    let current = Model { trig_mode: TrigMode::Normal, ..initial };
+    let changes = shadow.observe(&current, UiAcq::default(), &[Request::Run], &config(4)).unwrap();
+    assert_eq!(changes.classes(), Classes::ACQ | Classes::STATS | Classes::HW_AVERAGE);
+}

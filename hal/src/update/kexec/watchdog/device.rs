@@ -12,7 +12,8 @@ pub(super) trait Port {
     fn pid(&self) -> io::Result<String>;
     fn cmdline(&self, pid: libc::pid_t) -> io::Result<Vec<u8>>;
     fn requester(&self) -> io::Result<Option<String>>;
-    fn request(&self) -> io::Result<()>;
+    fn acknowledgement(&self) -> io::Result<Option<String>>;
+    fn request(&self) -> io::Result<String>;
     fn remove_request(&self) -> io::Result<()>;
     fn signal(&self, pid: libc::pid_t, signal: libc::c_int) -> io::Result<()>;
     fn open(&self) -> io::Result<Self::Handle>;
@@ -60,6 +61,9 @@ impl<P: Port> Device<P> {
         if self.port.requester().map_err(|e| e.to_string())?.is_some() {
             return Err("leftover /tmp/oos-watchdog.handoff; watchdog handoff already requested".into());
         }
+        if self.port.acknowledgement().map_err(|e| e.to_string())?.is_some() {
+            return Err("watchdog supervisor has not cleared its previous acknowledgement".into());
+        }
         if !self.port.present().map_err(|e| format!("watchdog device check: {e}"))? {
             return Ok(None);
         }
@@ -79,10 +83,18 @@ impl<P: Port> Handoff for Device<P> {
             self.port.report("/dev/watchdog absent; proceeding with kexec without a watchdog ping");
             return Ok(());
         };
-        self.port.request().map_err(|e| format!("watchdog handoff request: {e}"))?;
+        let request = self.port.request().map_err(|e| format!("watchdog handoff request: {e}"))?;
         self.requested = true;
         self.port.signal(supervisor, libc::SIGUSR1).map_err(|e| format!("watchdog supervisor signal: {e}"))?;
         let deadline = self.port.now() + Duration::from_secs(2);
+        while self.port.acknowledgement().map_err(|e| format!("watchdog acknowledgement: {e}"))?.as_ref()
+            != Some(&request)
+        {
+            if self.port.now() >= deadline {
+                return Err("watchdog supervisor acknowledgement timed out".into());
+            }
+            self.port.pause();
+        }
         loop {
             match self.port.open() {
                 Ok(file) => {

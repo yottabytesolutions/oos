@@ -530,6 +530,8 @@ mod tests {
                 assert!(std::time::Instant::now() < deadline);
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
+            // the completed SINGLE stops through the outbox: accepted on the next step (M2.3c)
+            ui.step(0.02);
             let epoch = change::acquisition::identity(&ui).epoch();
             assert_eq!((ui.records, ui.m.run), (captures, RunState::Stop));
             assert_ne!(epoch, previous, "every SINGLE arms a new epoch");

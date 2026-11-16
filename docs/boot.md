@@ -159,14 +159,19 @@ overrides it for trials.
 
 The scope runs unattended, so a kernel that stops must restart by itself. Verified on the unit with the `dho804`
 implementation (abd00ca, 2026-11-15): a warm reboot clears the watchdog; a sysrq panic came back in 39 s with its
-record saved; a killed kicker reset the unit after 41 s, and it was back after 56 s. That covers `panic=10` and
-`oos-watchdog`, which are the same here. `oos-crash-save` on this branch is a rewrite (budget, naming, retry checks)
+record saved; a killed kicker reset the unit after 41 s, and it was back after 56 s. That verifies the previous command-line `panic=10` behavior and the watchdog restart mechanism.
+Task 0067 changes when panic restart and watchdog supervision are enabled, as described below. `oos-crash-save` on this branch is a rewrite (budget, naming, retry checks)
 and is tested on the host only, not yet on the unit. The kexec path is not yet verified.
 
-- `panic=10 softlockup_panic=1` in `OOS_BOOTARGS` (`rootfs/board/dho/etc/oos-board`). A panic restarts after 10 s
-  instead of halting. A soft lockup now panics; hard lockups and tasks hung for 120 s already did (kernel config).
+- `panic=0 softlockup_panic=1` in `OOS_BOOTARGS` (`rootfs/board/dho/etc/oos-board`) and the base DTS.
+  Early panics halt while the selected recovery image may still be armed. After `oos-oneshot` confirms `KRNL`
+  by read-back using `dd iflag=direct` (or finds it already set), rcS writes 10 to `/proc/sys/kernel/panic`: later panics restart after
+  10 s. It also writes 1 to `kernel.softlockup_panic`, because a kexec start keeps the old build's command line. An unexpected card, layout, magic or failed restoration leaves automatic panic restart disabled.
+  rcS records a warning in `/tmp/oos-boot.status` that watchdog and panic restart are off when restoration fails.
+  A soft lockup panics; hard lockups and tasks hung for 120 s already did (kernel config).
+  Task 0067 covers this timing change with host simulations only; it is not yet verified on the unit.
 - Hardware watchdog: `dw_wdt` at `ff848000` (enabled in `rk3399-base.dtsi`). rcS starts `oos-watchdog` right after
-  `oos-oneshot`: busybox `watchdog -F -T 30 -t 5`, nice -20, `oom_score_adj` -1000. If it exits it is started
+  successful `oos-oneshot`: busybox `watchdog -F -T 30 -t 5`, nice -20, `oom_score_adj` -1000. If it exits it is started
   again for as long as the system runs: after 1 s, doubling up to 60 s, back to 1 s after 10 min of running; each
   restart is logged to the kernel log. It does not depend on oos-ui. A hang that never reaches a panic resets the SoC
   after 30 s (the kernel stretches the 21.5 s hardware maximum to the 30 s asked for). Log:
@@ -184,10 +189,12 @@ and is tested on the host only, not yet on the unit. The kexec path is not yet v
   not cover that gap, the SoC resets and the boot simply starts again. The `before open:` line measures the period.
 - Which system comes back follows the boot magic: OOS when it was armed again (persist mode, about 20 s after oos-ui
   ran stable), else stock Android. A build on trial that panics is rolled back at its next start (`update.md`).
-- A panic before `oos-oneshot` (kernel, initramfs, the first lines of rcS) of an image selected with `OOSK` now
-  restarts the same image every 10 s, where it used to halt. Neither the trial count nor the rollback runs that early.
-  Both cases need the card out and a card reader (`boot/switch.py stock`); the same limitation as a direct install
-  under "Not covered" in `update.md`.
+- The loader does not consume `OOSK`: it retries `recovery` on every reset until userspace restores `KRNL`.
+  Previously `panic=10` could therefore loop an early kernel/initramfs panic forever, before either the trial
+  count or rollback. With `panic=0`, a cold-start panic before restoration halts instead. Neither a halt nor
+  a hang restores the selection: power-cycling can still retry the bad image, requiring a card reader
+  (`boot/switch.py stock`). A kexec start carries an already-running hardware watchdog, which can still reset
+  it before rcS; the installed image remains the fallback, as described in `update.md`.
 - Crash records (ADR 0015, "Kernel panics" in `architecture/README.md`): ramoops keeps the oops/panic record and the
   console across a warm reset, not across a power cut. rcS starts `oos-crash-save` in the background, so a slow write
   never delays oos-ui. Only a dmesg record whose header says Panic or Oops starts an archive; other dmesg records,

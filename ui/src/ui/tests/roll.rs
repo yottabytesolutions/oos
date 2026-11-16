@@ -117,8 +117,12 @@ mod tests {
                 assert_eq!(g.queue.back().unwrap().seq, g.frame.seq);
             }
             self.ui.step(0.02);
-            assert_eq!(self.ui.m.run, RunState::Stop, "complete SINGLE stops");
+            assert_eq!(self.ui.m.run, RunState::Run, "completion queues STOP");
+            let records = self.ui.records;
+            self.tick(1, 3.0);
             self.ui.step(0.02);
+            assert_eq!(self.ui.m.run, RunState::Stop, "next change point stops SINGLE");
+            assert_eq!(self.ui.records, records, "pending STOP consumes no more snapshots");
             assert!(self.shared.lock().unwrap().hold);
         }
 
@@ -158,8 +162,8 @@ mod tests {
         assert_eq!(g.frame.seq, stopped, "held roll produced another snapshot");
         drop(g);
         let held_count = acquired();
-        assert_eq!(f.ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(stopped));
-        assert_eq!(counted - before, 927, "every roll publication is acquired");
+        assert_eq!(f.ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(stopped - 1));
+        assert_eq!(counted - before, 928, "every roll publication is acquired");
         assert_eq!(held_count, counted, "held ticks acquire nothing");
         // RUN and a rearm each start with only newly arriving analog and LA samples.
         f.ui.m.run = RunState::Run;

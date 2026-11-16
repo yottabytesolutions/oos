@@ -180,6 +180,32 @@ impl Batch for ScriptBatch {
     }
 }
 
+/// Unit-shaped deep pairs using the production read plan, rather than the small M1 golden fixture.
+#[cfg(test)]
+pub(crate) fn deep_intake_frame(m: &Model, sw: &crate::sysconf::Switches) -> Frame {
+    let mut s = hw::settings(m, false, sw);
+    s.header = false;
+    let p = hz::prep(s.mask, seq::tdiv_fs(s.tdiv), s.depth, seq::tdiv_fs(s.delay));
+    let b = hw::batch_plan(&s, &p, sw.board.zone_batch);
+    let mut bytes = Vec::new();
+    fill(&mut bytes, 1, &b, &p, &mut 123);
+    let f = hw::decode(&bytes, &b, &p, 1);
+    assert_eq!(f.acq.1, 10_000_000);
+    assert_eq!((b.compress, b.frames), (16, 1));
+    assert_eq!(f.ch.each_ref().map(Vec::len), [625_000; 4]);
+    assert!(f.envelope);
+    println!(
+        "deep fixture: depth={} k={} bytes={} rate={} dt={} pre={}",
+        p.memsel,
+        b.compress,
+        bytes.len(),
+        p.rate,
+        f.dt,
+        f.pre
+    );
+    f
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

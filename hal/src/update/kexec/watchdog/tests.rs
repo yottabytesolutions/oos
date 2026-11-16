@@ -22,6 +22,15 @@ struct State {
     remove_error: Option<i32>,
     calls: Vec<String>,
     elapsed: Duration,
+    ack: Ack,
+}
+
+#[derive(Default)]
+struct Ack {
+    value: Option<String>,
+    after: Option<Duration>,
+    reply: String,
+    error: Option<i32>,
 }
 
 struct Fake {
@@ -73,14 +82,25 @@ impl Port for Fake {
         Ok(self.state.borrow().request.clone())
     }
 
-    fn request(&self) -> io::Result<()> {
+    fn acknowledgement(&self) -> io::Result<Option<String>> {
+        let mut s = self.state.borrow_mut();
+        if s.calls.iter().any(|c| c == "signal") {
+            result(s.ack.error)?;
+            if s.ack.after.is_some_and(|t| s.elapsed >= t) {
+                s.ack.value = Some(s.ack.reply.clone());
+            }
+        }
+        Ok(s.ack.value.clone())
+    }
+
+    fn request(&self) -> io::Result<String> {
         let mut s = self.state.borrow_mut();
         if s.request.is_some() {
             return Err(io::ErrorKind::AlreadyExists.into());
         }
         s.calls.push("request".into());
         s.request = Some("99\n".into());
-        Ok(())
+        Ok("99\n".into())
     }
 
     fn remove_request(&self) -> io::Result<()> {
@@ -141,6 +161,7 @@ fn device() -> (Device<Fake>, Rc<RefCell<State>>) {
         remove_error: None,
         calls: vec![],
         elapsed: Duration::ZERO,
+        ack: Ack { value: None, after: Some(Duration::ZERO), reply: "99\n".into(), error: None },
     }));
     (Device::new(Fake { state: state.clone(), start: Instant::now() }), state)
 }
@@ -252,4 +273,50 @@ fn drop_alone_restores_and_a_failed_removal_is_reported_and_retried() {
     assert!(s.borrow().request.is_none());
     assert_eq!(s.borrow().calls.iter().filter(|&c| c == "close").count(), 1);
     assert_eq!(s.borrow().calls.last().unwrap(), "remove");
+}
+
+#[test]
+fn takeover_waits_for_matching_ack_even_when_the_device_is_already_closed() {
+    for after in [Some(Duration::from_millis(30)), None] {
+        let (mut d, s) = device();
+        s.borrow_mut().ack.after = after;
+        let result = d.take();
+        assert_eq!(result.is_ok(), after.is_some());
+        if after.is_none() {
+            assert!(result.expect_err("must time out").contains("acknowledgement timed out"));
+            assert!(!s.borrow().calls.iter().any(|c| c == "open"));
+        }
+        assert_eq!(s.borrow().elapsed, after.unwrap_or(Duration::from_secs(2)));
+        drop(d);
+        assert!(s.borrow().request.is_none());
+    }
+}
+
+#[test]
+fn stale_acknowledgement_refuses_takeover_before_signalling() {
+    let (mut d, s) = device();
+    s.borrow_mut().ack.value = Some("99\n".into());
+    assert!(d.take().expect_err("stale ack").contains("previous acknowledgement"));
+    assert!(s.borrow().calls.is_empty());
+}
+
+#[test]
+fn wrong_or_unreadable_ack_never_opens_and_open_retries_share_its_deadline() {
+    for mode in ["wrong", "unreadable", "busy"] {
+        let (mut d, s) = device();
+        match mode {
+            "wrong" => s.borrow_mut().ack.reply = "88\n".into(),
+            "unreadable" => s.borrow_mut().ack.error = Some(libc::EIO),
+            _ => {
+                s.borrow_mut().ack.after = Some(Duration::from_millis(1990));
+                s.borrow_mut().busy = 500;
+            }
+        }
+        assert!(d.take().is_err());
+        drop(d);
+        let s = s.borrow();
+        assert!(s.request.is_none());
+        assert_eq!(s.calls.iter().any(|c| c == "open"), mode == "busy");
+        assert_eq!(s.elapsed, Duration::from_secs(if mode == "unreadable" { 0 } else { 2 }));
+    }
 }

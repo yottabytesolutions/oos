@@ -33,16 +33,25 @@ impl Port for Native {
         }
     }
 
-    fn request(&self) -> io::Result<()> {
+    fn acknowledgement(&self) -> io::Result<Option<String>> {
+        match std::fs::read_to_string("/tmp/oos-watchdog.ack") {
+            Ok(request) => Ok(Some(request)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn request(&self) -> io::Result<String> {
+        let request = format!("{}\n", std::process::id());
         let mut file = OpenOptions::new().write(true).create_new(true).open(REQUEST)?;
-        if let Err(e) = writeln!(file, "{}", std::process::id()) {
+        if let Err(e) = file.write_all(request.as_bytes()) {
             // We created it, but cannot safely hand off without a recorded requester.
             if let Err(cleanup) = std::fs::remove_file(REQUEST) {
                 self.report(&format!("cannot remove incomplete watchdog handoff: {cleanup}"));
             }
             return Err(e);
         }
-        Ok(())
+        Ok(request)
     }
 
     fn remove_request(&self) -> io::Result<()> {

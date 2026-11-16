@@ -2,8 +2,8 @@
 
 The SPI and I2C protocol triggers in the TPU's receivers, next to the UART (`hwuart.md`). Opt-in with the same switch,
 `trig.serial_hw = on` in system.conf. Code: `hal/src/dho/serialtrig.rs` (words), `tpu::spi`, `tpu::i2c`,
-`seq::Trig::Spi`/`I2c`, `ui/src/board/dho/hw.rs` (`spi_of`, `i2c_of`, `serial_debug`). Register facts: private RE notes
-`docs/fpga.md` "Serial trigger", SPI and I2C (netlist simulation).
+`seq::Trig::Spi`/`I2c`, `ui/src/board/dho/hw.rs` (`spi_of`, `i2c_of`, `serial_debug`). Register facts: below, indexed from
+[../hardware/fpga.md](../hardware/fpga.md) (not yet verified on hardware).
 
 ## Hardware
 

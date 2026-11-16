@@ -159,13 +159,16 @@ mod tests {
         until(&mut ui, |ui| ui.records > before.0);
         assert_eq!(ui.records, before.0 + 1);
         assert_eq!(ui.wfm_total, before.1 + 1);
+        // the completed SINGLE stops through the outbox: accepted on the next step (M2.3c)
+        ui.step(0.001);
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.m.status, TrigStatus::Stop);
         assert!(ui.last[0].as_ref().unwrap().triggered, "accepted record must carry the real Bus trigger decision");
         let raw = ui.last[0].as_ref().unwrap().raw.as_ref().unwrap();
         assert_eq!(raw.frame.seq, 2);
         assert!((raw.t0 - raw.i0 as f64 * raw.frame.dt - ui.refs[0].as_ref().unwrap().t0).abs() < 1e-15);
-        assert_eq!(shared.lock().unwrap().queue.len(), 1);
+        // the accepted STOP publishes a new pair: the other candidate, never decoded, leaves the FIFO unused
+        assert_eq!(shared.lock().unwrap().queue.len(), 0);
         assert_eq!(ui.decoder_worker_state_for_test(), (1, 1), "one worker and no accepted-frame rescan");
         let hit = ui.bus_candidate.last_hit.unwrap();
         assert!(ui.search_events().iter().any(|time| (*time - hit).abs() < 1e-15));
@@ -174,7 +177,7 @@ mod tests {
         // after it, wait for that actual snapshot before testing stopped repaint.
         until(&mut ui, |ui| ui.azr.eye.is_some());
         assert_eq!((ui.records, ui.wfm_total), (before.0 + 1, before.1 + 1));
-        assert_eq!(shared.lock().unwrap().queue.len(), 1);
+        assert_eq!(shared.lock().unwrap().queue.len(), 0);
         // a live channel eye runs on the measurement worker, without upstream's capture caption (task 0069)
         assert!(ui.azr.eye.as_ref().is_some_and(|eye| eye.records > 0));
         let stopped = (ui.records, ui.wfm_total, ui.azr.eye.as_ref().unwrap().records);
@@ -207,6 +210,8 @@ mod tests {
         ui.key(key::FORCE);
         ui.step(0.001);
         assert_eq!(ui.records, before + 1);
+        // the completed SINGLE stops through the outbox: accepted on the next step (M2.3c)
+        ui.step(0.001);
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.m.status, TrigStatus::Stop);
         assert_eq!(ui.m.trig_bus_val, 0x5a);
@@ -250,6 +255,8 @@ mod tests {
         ui.step(0.001);
         until(&mut ui, |ui| ui.records > before);
         assert_eq!(ui.records, before + 1);
+        // the completed SINGLE stops through the outbox: accepted on the next step (M2.3c)
+        ui.step(0.001);
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.seq, 6);
         assert_eq!(ui.decoder_worker_state_for_test().0, 1);
@@ -289,6 +296,8 @@ mod tests {
         crate::scpi::test_io::line(&mut socket, || scpi.poll(&mut ui, &Canvas::new(W, H)));
         ui.step(0.001);
         assert_eq!(ui.records, before + 1);
+        // the completed SINGLE stops through the outbox: accepted on the next step (M2.3c)
+        ui.step(0.001);
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.m.status, TrigStatus::Stop);
         assert!(!ui.last[0].as_ref().unwrap().triggered);

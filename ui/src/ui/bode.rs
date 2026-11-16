@@ -1132,9 +1132,13 @@ mod tests {
             la: None,
             pairs: false,
         });
-        ui.m.run = RunState::Stop;
-        ui.bode_update();
+        let sweep_record = ui.last[0].clone();
+        change::proposals::stop(&mut ui);
+        ui.step(0.04);
+        assert_eq!(ui.m.run, RunState::Stop, "SINGLE STOP applies before free-sweep analysis");
         assert!(!ui.bode.running && !ui.bode.free);
+        // Apply the analysed sweep's restoration commands.
+        ui.step(0.04);
         // 0.5 s over three decades passes the lowest frequencies in less than a period each
         let t = ui.toast.as_ref().unwrap().0.clone();
         assert!(t.starts_with("Sweep captured") && t.contains("too fast for the low end"), "{}", t);
@@ -1165,8 +1169,9 @@ mod tests {
         ui.activate(Item::BodeRun);
         change::begin_step(&mut ui, 0.0).unwrap();
         change::finish_step(&mut ui);
-        ui.m.run = RunState::Stop;
-        ui.bode_update();
+        ui.last[0] = sweep_record;
+        change::proposals::stop(&mut ui);
+        ui.step(0.04);
         assert!(ui.bode.points.len() >= 30 && ui.bode.points.iter().all(|p| p.2.is_nan()));
         assert!(ui.bode.points.iter().all(|&(f, g, _)| (g - truth(f).0).abs() < 0.5));
         assert_eq!(ui.bode.no_phase, Some("No phase without an input channel"));
@@ -1290,7 +1295,9 @@ mod tests {
                 break;
             }
         }
-        assert!(!ui.bode.running && ui.m.tscale == ts0);
+        assert!(!ui.bode.running);
+        ui.step(0.05); // Restoration is an internal command for the next change point.
+        assert_eq!(ui.m.tscale, ts0);
         let t = ui.toast.as_ref().unwrap().0.clone();
         assert!(t.starts_with("generator USB: no USB device found"), "{}", t);
         ui.adjust(Item::BodeLink, -1);

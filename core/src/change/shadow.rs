@@ -49,7 +49,10 @@ impl Shadow {
             return Err(Error::SnapshotTooLarge);
         }
         super::fields(&self.previous, &self.scratch, &mut emit);
-        let mut classes = classify(&self.previous, &self.scratch, self.needs, needs);
+        // An external RUN can override queued completion before STOP becomes the accepted model.
+        // Only its Single-to-Auto sweep companion belongs to that request, even when run values are equal.
+        let boundary = requests.iter().any(|r| matches!(r, Request::Run | Request::Single));
+        let mut classes = super::classify_boundary(&self.previous, &self.scratch, self.needs, needs, boundary);
         if super::snapshot::projected_bytes(&self.previous, &self.scratch) >= 64 * 1024 {
             return Err(Error::SnapshotTooLarge);
         }

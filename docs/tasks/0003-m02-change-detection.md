@@ -16,6 +16,105 @@ Complete [migration M2](../architecture/migration.md#m2-one-change-detection-poi
 
 ## Plan
 
+Integration coverage failure repair: owner `codex-d`, branch `t0003-m2`, base
+`0137955`, under the owner's assignment for batch integ-19. Trace partial SINGLE
+completion and prove whether the 15 ms record budget changes completion or only
+the step in which it happens. Reproduce the boundary before correcting the fixture;
+pin same-step and separate-step delivery without relaxing completion/queue checks.
+Run the regression 200 times in debug, release and the xtask coverage runner with
+parallel CPU load, the complete UI library coverage suite, exact gate clippy and
+`cargo xtask check --fast`. No commits or hardware access.
+Reserved paths: `ui/src/ui/tests/outbox.rs`, this task, `target/COMMIT_MSG.txt`;
+`ui/src/ui.rs` explicitly for a temporary zero-budget diagnostic only, restored
+before final verification. Production changes require evidence of a completion race.
+
+SINGLE/segment verification round: owner `codex-d`, branch `t0003-m2`, base `b53aee1`,
+unit tier under the owner's assignment. Preserve completed STOP segment browsing across
+CLEAR and pair changes without hardware reconfiguration; cancel discarded browse requests
+and clear UI segment state after a real reconfigure. Pin both cases before fixes.
+Carry optional terminated SCPI responses through VXI-11 and audit other remote callers,
+with per-transport regressions. Run focused default-thread debug/release tests, the exact
+gate clippy step and `cargo xtask check --fast`. No commits or hardware access.
+Reserved paths: existing SINGLE reservations plus `ui/src/vxi11.rs`, `ui/src/vxi11/`,
+`ui/src/main.rs` (host VXI response callback only), `ui/src/system/device/remote.rs`
+(device VXI response callback only), `ui/src/http.rs` (MCP SCPI response distinction only),
+`ui/src/http/tests/empty_tests.rs`, and the segment browse regression submodule.
+Keep one section in `target/COMMIT_MSG.txt`.
+
+SINGLE fix review round: owner `codex-d`, branch `t0003-m2`, base `36c2173`,
+unit tier under the owner's assignment. Bind segmented runs to their start identity,
+abort on every pair boundary, restart incomplete scan SINGLE sweeps, and share the
+pure hold/eligibility/latch decisions with the host fixture. Reproduce the setup-change
+segmented WAIT and empty segment-times SCPI reply on the fake path before fixing.
+Exercise Recording/Reading boundaries, current-pair segment counts and hidden hardware
+averages. Record accepted STOP-after-CLEAR and scan-RUN hold semantics plus unit smoke.
+Run focused default-thread debug/release tests, soak/census, isolated release timing,
+unchanged goldens, exact gate clippy and `cargo xtask check --fast`. No commits or
+hardware access; keep one section in `target/COMMIT_MSG.txt`.
+Reserved paths: `ui/src/board/dho/hw.rs` explicitly, `ui/src/board/dho/hw/`,
+`ui/src/board/dho/roll.rs`, `ui/src/board/dho/publication.rs`,
+`ui/src/ui.rs` explicitly, `ui/src/ui/change/transitions.rs`,
+`ui/src/ui/change/acquisition.rs`, `ui/src/ui/tests/outbox/single_reconfigure.rs`,
+`ui/src/ui/tests/outbox/single_reconfigure/`, `ui/src/board/scripted.rs`,
+`ui/src/scpi.rs`, `ui/src/scpi/`, `ui/src/wave.rs`,
+`docs/architecture/README.md`, `xtask/data/moves.txt`, this task and
+`target/COMMIT_MSG.txt`. Extract only the existing segment worker into a generic
+bus/reader seam so fake tests execute its real Recording/Reading states.
+
+M2.3c unit-smoke finding: owner `codex-d`, branch `t0003-m2`, base `fbe6211`,
+unit tier under the owner's assignment. The coordinator already merged task 0061
+from `overhaul` (first parent `fcf8ead`); clean start, no merge needed here.
+Keep worker SINGLE eligibility bound to the acquired pair, so an incomplete SINGLE
+can replace an obsolete batch without a UI-drop-triggered arm. Preserve deferred
+completion STOP and its publication ordering. Add failing-first scripted/fake
+producer regressions for late old records, completed records, CLEAR, and roll/scan/deep
+reconfiguration. Use `acq_single_arm` and stream lifecycle counters, add the unit
+scenario, then run focused default-thread debug/release tests, soak/census, release
+timing, unchanged goldens, the exact gate clippy step and the fast gate. No commits,
+merges or hardware access; one section in `target/COMMIT_MSG.txt`.
+Reserved paths: `ui/src/board/dho/hw.rs` explicitly,
+`ui/src/board/dho/hw/single_fake.rs`, `ui/src/board/scripted.rs`,
+`ui/src/ui/tests/outbox.rs`, `ui/src/ui/tests/outbox/single_reconfigure.rs`, `docs/architecture/README.md`, this task,
+and `target/COMMIT_MSG.txt`. Additional seam: `ui/src/board/dho/roll.rs` for the shared stream poll to honor
+STOP/rearm in scan as well as roll. No new UI completion state is needed: the
+existing outbox applies STOP before publishing changed settings. Also reserve
+`ui/src/ui/change/transitions.rs`: keep STOP held after CLEAR removes the retained
+record, using the existing `cleared` state rather than another completion flag.
+Reserve `ui/src/ui/change/legacy_keys.rs` to independently observe slow-mode changes;
+the mode-only regression exposes a missing legacy acquisition observation.
+
+M2.3c review round 1: owner `codex-d`, branch `t0003-m2`, base `3882594`,
+unit tier under the owner's assignment. Apply P2-1 and P3-1 through P3-4;
+record the accepted P3-5/P3-6 semantics and pending reviewer smoke in Status.
+Move autoset after record/measurement folding, guard writer entry against settings drift,
+skip idle writers, retain lifecycle polls on rejection, and narrow the sweep companion.
+Reuse the accepted c reservations, including `ui/src/ui.rs` explicitly, and reserve
+`ui/src/ui/autoset/recovery.rs` only if the existing begin-step fixture needs updating.
+Pin failing regressions before fixes. Run focused debug/release with default threads,
+soak/census, release timing, unchanged goldens, exact gate clippy and the fast gate.
+Keep one section in `target/COMMIT_MSG.txt`; no commits or hardware access.
+
+M2.3c implementation claim: owner `codex-d`, active on `t0003-m2`, base `adb72ff`,
+unit tier under the owner's assignment. Complete remaining internal STOP and autoset/Bode
+outbox writes, guard pending completion against extra records, and centralize accepted
+run-transition consumers. Preserve the normalization notification bridge and all d/e
+consumers. Keep stepping on rejected changes and preserve epoch-only rejection without
+hardware reconfiguration. Hardware smoke runs independently and holds integration only;
+its findings may require a revision. No hardware access or commits.
+Reserved paths: `ui/src/ui.rs`, `ui/src/ui/change.rs`, `ui/src/ui/change/`,
+`ui/src/ui/{autoset,bode,hwmask}.rs`, `ui/src/ui/tests/{outbox,epochs,shadow,roll}.rs`,
+`ui/src/ui/host.rs` (existing SINGLE completion fixture only),
+`core/src/change/{mod,shadow}.rs`, `core/src/change/tests/requests.rs`
+(request-boundary sweep classification when external RUN overrides pending STOP),
+`ui/src/ui/script/batch.rs` (only if completion accounting requires it),
+`docs/architecture/README.md`, this task and `target/COMMIT_MSG.txt`.
+First pin parent-compatible completion regressions, then implement bounded command
+capture and accepted run transitions; test focused debug/release with default parallelism,
+soak/census, release timing and goldens with per-case reasons for changes. Run all exact
+xtask clippy invocations with zero new/grown findings and the fast gate. Retain complete
+logs and a single draft-message section. Independent unit-tier review and coordinator
+full gate remain required.
+
 M2.3b clippy follow-up: owner `codex-d`, active on `t0003-m2`, under the
 owner's approved M2.3b assignment after the overhaul merge. Preserve behaviour
 while extracting named test helpers, using struct update syntax and checked
@@ -631,6 +730,486 @@ M4/M5/M9/M10 retain their specified conversion, channels, whole-batch ownership 
 Every candidate and conflict resolution needs independent cross-vendor review; the author never merges or pushes.
 
 ## Status
+
+- 2026-11-16: integ-19 coverage repair handoff at unchanged `0137955` plus the
+  unstaged test/task diff. The cause is a test assumption about one UI step,
+  not a production SINGLE completion race: its hardware fixture enables the
+  15 ms wall-clock record budget. Yielding after the partial counts one accepted
+  record and keeps SINGLE armed; the complete record queues STOP on a later step.
+  The existing headless host removes this scheduling dependence only in the
+  regression. Both same-step and separate-step deliveries retain all original
+  record, queue, deferred STOP, hold and trace assertions; extra checks pin an
+  empty waiting step and no further completion/queue consumption after STOP.
+  No production Rust source changed, including the restored budget diagnostic.
+  All 600 final-source focused executions pass: 200 debug, 200 release and 200
+  via cargo-llvm-cov 0.9.1, with four concurrent CPU load workers and default
+  test threads. Coverage runs use the xtask target and command from `ui`:
+  `CARGO_TARGET_DIR=../target/xtask-cov cargo llvm-cov --locked --json --summary-only --lib -- ui::tests::outbox::partial_single_completes_once_and_leaves_later_records_queued --exact`.
+  Each run emitted its own JSON summary; no report, instrumentation or test
+  work was skipped. Per-run commands/exits/logs and CPU-load evidence are in
+  `target/m2-coverage-stress/results.json` and `target/m2-coverage-stress/`.
+  The complete UI lib suite ran once under the same runner, without test filters
+  or extra skips: exit 101, `721 passed; 21 failed; 31 ignored; 0 measured;
+  0 filtered out`, 109.22 s. The target regression passes. All 21 failures need
+  TCP/UDP sockets unavailable in this sandbox: HTTP/listener initialization
+  fails, with direct bind errors `PermissionDenied: Operation not permitted`.
+  Complete log: `target/m2-coverage-stress/coverage-lib-001.log`.
+  Exact gate clippy and fast-gate passes are recorded below. Final source hashes
+  match every verification; `target/m2-coverage-verification.json` consolidates
+  results. CPU workers stopped. One section in `target/COMMIT_MSG.txt`; no
+  commits, staging or hardware access. The full suite still needs a socket-capable
+  runner; independent review and the coordinator integration gate remain pending.
+
+- 2026-11-16: final-source debug and release stress pass 200/200 each with four
+  concurrent CPU load workers and default test threads. Full commands, per-run
+  exits and logs: `target/m2-coverage-stress/results.json`. The exact unchanged
+  `steps::clippy` passes all host/ARM invocations and protected-base ratchet
+  comparisons (`ok   clippy (8.2 s)`), zero new/grown findings or compile errors;
+  `target/m2-coverage-clippy.log` links complete command logs and
+  `target/m2-coverage-clippy-dispatch.json` pins the scratch dispatch copy.
+  Fast gate exit 0: `partial gate passed (not done): 8 steps in 22 s`
+  (`target/m2-coverage-fast.log`). Coverage stress is running; its first command
+  used an unsupported positional filter and exited before tests. Corrected to
+  pass the exact test filter after `--`; the CLI error is retained separately.
+
+- 2026-11-16: cause isolated to the live `Ui::step` 15 ms wall-clock record
+  budget, enabled by `Host::fixture()`. After the accepted partial, a deadline
+  yield leaves records=1 and RUN; the complete record and deferred STOP belong
+  to later steps. No producer thread or scripted-source deadline runs in this
+  fixture. A temporary zero-budget diagnostic reproduces the exact parent
+  assertion (exit 101) and the revised test passes (exit 0). Production budget
+  and all production sources restored byte-for-byte before stress verification.
+  The headless test now exercises same-step and separate-step partial delivery,
+  an empty intervening step, deferred STOP, retained trace/hold and the untouched
+  third frame through another stopped step. Logs:
+  `target/m2-coverage-{before,after}-zero-budget.log`. Stress/gates pending.
+
+- 2026-11-16: claimed the owner-assigned integ-19 coverage regression at clean
+  `0137955` on `t0003-m2`. Inspecting the hardware queue and record budget;
+  completion/outbox and all retained queue/trace assertions remain required.
+
+- 2026-11-16: SINGLE/segment verification handoff on unchanged `b53aee1` plus
+  unstaged changes. Both P2 fixes are implemented. Recording/Reading alone abort
+  at pair boundaries; completed STOP segments and times survive CLEAR and mask
+  source changes without configuration or another arm. Browse reads use the
+  current snapshot, reject and retry a pair change during DMA. Real hardware
+  reconfiguration cancels pending requests and clears UI times/position on Idle,
+  including when segments are disabled and a late click races that observation.
+  Rejected final recording DMA does not advance its cursor into Done.
+  VXI-11's host/device callbacks now use optional terminated SCPI responses;
+  empty queries return a newline, while commands queue no reply. The remote
+  caller search also found MCP's empty-to-`ok` substitution, now fixed using the
+  optional unframed message so MCP keeps its existing JSON framing and reply text.
+  The lossy `exec_line` wrapper is now test-only. No other production caller remains.
+
+- 2026-11-16: final focused checks exit 0 on unchanged hashes of all 14 changed
+  Rust files, with default threads (`RUST_TEST_THREADS` unset): 61 debug / 60
+  release passed. Selection covers outbox/SINGLE, hardware worker fixtures, SCPI,
+  VXI-11 and MCP, including all five new browse/transport regressions. Tests use
+  the production TCP response encoder, VXI-11 RPC core and MCP handler; existing
+  compound-query TCP and host VXI listener tests are explicitly excluded because
+  socket binding is unavailable. Commands, counts and complete logs are in
+  `target/segment-verification-final-checks.json` and
+  `target/segment-verification-final-focused-{debug,release}.log`; source hashes
+  are in `target/segment-verification-final-source.json`.
+  The unchanged gate `steps::clippy` passes its actual host/ARM invocations and
+  protected-base ratchet comparisons: zero new/grown findings, zero errors.
+  Its target-only dispatch copy changes no check implementation or lint;
+  `target/segment-verification-final-clippy.log` and its referenced command logs
+  retain all 11 invocations. Fast gate exits 0 and prints
+  `partial gate passed (not done): 8 steps in 32 s`
+  (`target/segment-verification-final-fast.log`). Initial fast gate printed
+  `FAIL size` / `gate FAILED in 24 s: size` for HTTP 1115 -> 1116; nesting the
+  test declaration fixed it. Initial exact clippy printed `FAIL clippy` for
+  the unused production `exec_line`; restricting that wrapper to tests fixed it.
+  These failures remain in `target/segment-verification-fast-initial.log` and
+  `target/segment-verification-clippy.log`. No ratchets, allowances, dependencies,
+  hooks, remotes, golden references or tolerances changed. The draft message has
+  one section in `target/COMMIT_MSG.txt`. No staging, commits, push or hardware
+  access. Task stays active for renewed cross-vendor unit-tier review and the
+  coordinator's full/image gate and required unit smoke. Final Status/message-only
+  fast-gate repeat is retained in `target/segment-verification-post-status-fast.log`.
+
+- 2026-11-16: SINGLE/segment verification at `b53aee1`, owner `codex-d`, branch
+  `t0003-m2`, unit tier under the owner's assignment. Items 1, 2, 4 and 5 are
+  owner-confirmed. The two P2s reproduce before fixes: STOP browse becomes Idle,
+  hardware reconfigure leaves UI times, VXI-11 returns error 15 and MCP returns
+  `ok` for an empty query. All four regressions fail (exit 101) in
+  `target/segment-verification-before.log`. Focused post-fix debug passes 24
+  tests with default threads (exit 0), including existing active-recording and
+  DMA-boundary cases. Final debug/release, exact clippy and fast-gate evidence pending.
+  Bode empty-query fixtures explicitly clear the default generator address.
+
+- 2026-11-16: arm-count interpretation for unit smoke: a worker that sees the new
+  pair before the new UI run number arms once with the old number and rearms when
+  the new number arrives. Two `seg_start` calls per boundary in that ordering are
+  expected, so unit smoke arm-count deltas must allow both. The host worker
+  regression now exercises this order in Recording and Reading for CLEAR and
+  mask-source changes. Owner reports STOP browsing across these identity-only
+  changes passed on the unit with M2.3b and confirms it as intended behaviour.
+  This verification round uses no hardware; that prior unit observation is
+  owner-supplied evidence, not a new smoke result.
+
+- 2026-11-16: SINGLE review-round handoff at unchanged `36c2173` plus unstaged
+  changes, owner `codex-d`, branch `t0003-m2`, unit tier. All 14 final check commands
+  exit 0 on unchanged hashes of all 13 changed Rust files
+  (`target/single-review-final-{checks,source,verification}.json` and referenced logs).
+  Default-thread focused library tests pass 302 debug / 301 release, with eight
+  existing ignores per profile. All 22 SINGLE-focused cases pass in both profiles,
+  including the eight retained cases and 14 review-round additions. Existing
+  socket-dependent Bode-generator and compound-query socket fixtures are excluded
+  because binding is unavailable; the new SCPI regression exercises the exact
+  production TCP message encoder, including empty and compound responses.
+  Segment tests run real worker phases and DMA decoding against the HAL engine;
+  the scan column test models the hardware counter and uses production boundary,
+  restart and sweep-write decisions. Real stream chunk IO is still unit smoke.
+
+- 2026-11-16: supporting final checks pass: core 25 units plus three value tests,
+  host script 14 and soak 11 per profile. All five warmed UI census rows report
+  256 calls and zero allocations; snapshots reuse zero allocations versus 210 for
+  naive cloning, retaining 5,104 bytes each. Five release composed soak modes each
+  complete 1,000 steps after warmup 500, with no retained growth, zero failed cycles
+  and acquired/used/dropped 13,648/13,618/30. Goldens pass 20 debug / 263 release
+  cases, 566 fresh processes and 1,330 exact-repeat captures. Independent decoded
+  RGB and metadata match all 665 baseline captures exactly; all 566 stderr logs
+  have zero unreviewed masks. No references, manifests or tolerances changed.
+  Isolated aarch64 release timing (256 samples): intake p99 63,875 ns, change
+  5,416 ns, paired intake/change 64,417 ns against 500,000 ns; shadow 24,250 ns
+  separately. ARM check and all 11 exact gate clippy invocations pass with zero
+  new/grown findings or compile errors. Fast gate exits 0 and prints
+  `partial gate passed (not done): 8 steps in 22 s`. Complete golden/soak evidence
+  and timing are in `target/single-review-final-*`. Status/message-only updates
+  are followed by a repeated fast gate in `target/single-review-post-status-fast.log`.
+  Added-text/message privacy and whitespace checks pass; `target/COMMIT_MSG.txt`
+  has one section. No staging, commits, push, hardware access or changes to ratchets,
+  dependencies, allowances, hooks or remotes. Task remains active pending renewed
+  cross-vendor unit-tier review, coordinator full/image gate and required unit smoke.
+
+- 2026-11-16: review-round failing-first evidence retained. Original UI transitions
+  and the original absent-run sentinel fail both setup-B/command-zero regressions
+  (`target/single-review-setup-before.log`, exit 101). The identity-only worker test
+  fails Reading versus Recording without a new UI run (`single-review-before-worker-pair.log`,
+  exit 101). Hidden average and incomplete scan tests both fail with the old latch
+  point and no sweep restart (`single-review-before-average-scan.log`, exit 101).
+  The extracted unchanged SCPI response decision returns None instead of a newline
+  (`single-review-before-scpi.log`, exit 101). Initial fixture import, ADC handover
+  and unavailable-listener failures are not counted as behavioural evidence. The
+  final socket-free regression runs the same encoder called by TCP polling.
+  An expanded setup test exposed unapplied segment-history invalidation; the restart
+  now applies that existing class and records the actual reset rather than suppressing
+  diagnostics. A statistics-only control caught an initial full-Identity comparison;
+  restart decisions now compare only `(gen, epoch)`. A DMA callback verifies captured
+  identities reject old frames/times/browse results while retaining stale-drop counters.
+  Initial fast gate failed only `size` (SCPI file 1484 -> 1495); extracting the message
+  methods with a declared move passes size without ratchet edits. Initial exact clippy
+  compiled all 11 invocations but found one new unused import; it has been removed.
+  Final default-thread debug/release and supporting checks are running.
+
+- 2026-11-16: review-round implementation and regression evidence in progress.
+  The setup B fake uses CH2+CH3, 50 segments, 200 ns and Normal RUN before enabling
+  hardware segments and pressing SINGLE. The UI previously advanced `seg_run` only
+  on a RUN edge; enabling segments during RUN could leave command zero (the worker
+  treated absent run as zero), and re-pressing SINGLE could reuse old Done status.
+  Accepted running pair boundaries now refresh segment status before polling, and
+  an absent worker run starts even at command zero. Segment configuration changes
+  also apply their existing history invalidation to the restarted hardware recording.
+  The SCPI query did not wait on segment state: its empty result was silently omitted
+  by the TCP response encoder. Empty queries now produce a terminated response;
+  compound replies retain empty members. Socket binding is unavailable in this
+  sandbox, so the executable regression uses the exact production message encoder.
+  No claim of reproducing the unit's four-minute timing or DMA behaviour is made.
+
+- 2026-11-16: accepted behaviour and pending unit smoke additions (not verified on
+  hardware here): STOP after CLEAR in RUN before the first record now holds the
+  hardware, matching `acquiring()`; scan RUN honours hold, so STOP stops its stream.
+  Check both on setup B and record `records` plus arm/stream-start/stream-stop deltas.
+  Enable hardware segments after a setup change during Normal RUN, press SINGLE,
+  and verify exactly 50 records followed by STOP without a persistent WAIT. Repeat
+  with CLEAR (epoch only), mask-source change (generation only) and hardware
+  reconfigure during Recording and Reading. Every replacement recording must contain
+  50 segments of one current pair; no old timestamps, browse result or completion may
+  leak through. Query `:ACQuire:SEGMents:TIMes?` during Recording (empty line is a
+  valid empty list), during partial Reading (current available times), then `*OPC?`
+  on the same connection. Each query must answer promptly without waiting for Done.
+  Also change generation mid-sweep in scan SINGLE and check a complete current-pair
+  sweep without a blank prefix. Retain existing producer/c smoke and integration holds.
+
+- 2026-11-16: claimed the owner-assigned SINGLE review round at clean `36c2173`.
+  Plan and reservations above precede implementation. Task remains active; no
+  hardware access, commits or publication authorized in this worker.
+
+- 2026-11-16: SINGLE-finding worker handoff at unchanged `fbe6211` plus the unstaged
+  diff, owner `codex-d`, branch `t0003-m2`, unit tier. All 14 final check commands
+  exit 0 with unchanged hashes of all eight changed Rust files
+  (`target/m23c-single-final-{checks,source,verification}.json`, complete referenced logs).
+  Focused default-thread library tests pass 274 debug / 273 release, eight existing
+  ignores per profile; the existing socket-dependent `bode_sweep_drives_the_generator`
+  fixture stays explicitly excluded. All eight new SINGLE tests pass in both profiles:
+  late old-pair records before/after publication in shallow, roll, scan and deep memory;
+  reconfigure after completion; CLEAR before/after completion; mode-only reconfigure;
+  gen-only invalidation without configure; twenty SCPI presses; explicit RUN override.
+  The twenty-press case has exactly twenty completed records, forty arm attempts
+  (one obsolete and one replacement per press), and no post-completion arm. The fake
+  uses the production SINGLE gate, configure/batch lifecycle wrappers, HAL engine and
+  publication filters; stream records are synthetic complete snapshots. Real stream
+  chunk IO and the on-unit timing race remain for smoke, not claimed as host coverage.
+
+- 2026-11-16: final supporting checks pass on those same sources: core 25 units plus
+  three value tests, host script 14 and soak 11 per profile. Five warmed UI census rows
+  each report 256 calls and zero allocations; snapshots reuse zero allocations versus
+  210 naive-clone allocations, retaining 5,104 bytes each. Release raw/codes/pairs/
+  deep-pairs/average each complete 1,000 steps after warmup 500, with no retained growth,
+  zero failed cycles and acquired/used/dropped 13,648/13,618/30. Debug retains the
+  existing release-only composed-soak policy. Goldens pass 20 debug / 263 release cases,
+  566 fresh processes and 1,330 repeat captures. Independent decoded RGB and settings
+  metadata exactly match all 665 baseline captures; all 566 stderr logs have zero
+  unreviewed event/field masks. References, manifests and tolerances stay unchanged
+  (`target/m23c-single-final-{soak,golden}-evidence.{json,log}` where applicable).
+  ARM check passes. Isolated release timing, 256 samples: intake p99 70,667 ns, change
+  4,125 ns, paired intake/change 71,125 ns against 500,000 ns; shadow 34,542 ns separately.
+  All 11 exact `xtask/src/clippy.rs` invocations pass with zero new/grown findings or
+  compile errors (host hal/dsp/core/ui/fpgad/xtask; ARM for the first five).
+  Fast gate exits 0: `partial gate passed (not done): 8 steps in 23 s`.
+  Repeat fast-gate output after Status/message updates is retained in
+  `target/m23c-single-post-status-fast.log`. Whitespace and added-text/message privacy
+  checks pass. `target/COMMIT_MSG.txt` has one section. No staging, commits, merge,
+  push, hardware access or ratchet/allowance/dependency/hook/remote changes. Task 0003
+  remains active: renewed cross-vendor unit-tier review, coordinator full/image gate
+  and required producer/c unit smoke still hold integration.
+
+- 2026-11-16: failing-first and correction evidence retained. With the parent worker
+  gate and stream poll, the new pre-fix selection exits 101, two failed / one passed:
+  incomplete reconfigure stalls and completed scan can restart
+  (`target/m23c-single-before-final.log`). The separate completed-CLEAR test exits 101
+  before the hold fix (`target/m23c-single-clear-before.log`); mode-only observation
+  exits 101 with one unreviewed acquisition disagreement before adding slow mode to
+  the independent key (`target/m23c-single-mode-before.log`). Initial fixture compilation
+  had two API mistakes, corrected before the rebuilt failing run. The first broader
+  debug/release selections each exit 101 only on the new RUN-override fixture, which
+  directly called the key handler instead of external-command intake; corrected to use
+  `cmd::run`, with the accepted run priority unchanged. Initial exact clippy exits 1
+  for one `items_after_test_module` finding on the test-only re-export; declarations
+  now precede the test modules. All final commands above pass without suppressions.
+
+- 2026-11-16: SINGLE finding implementation, host verified by the final handoff above. The worker's
+  returned-batch latch now uses `(gen, epoch)` rather than epoch alone. This revises
+  M2.3b P3-1's premise: a returned old-pair batch is not UI completion. A current-pair
+  replacement is eligible only while acquisition is active; M2.3c completion remains
+  an outbox STOP applied before new publication. Worker eligibility covers stale drops
+  before UI publication as well as queue trimming, unlike a UI-drop-triggered re-arm.
+  CLEAR before completion retries without configuring hardware. CLEAR after completion
+  keeps STOP held through the existing `cleared` flag; the parent regression reproduced
+  an extra arm when the last record disappeared. The stream poll now honors STOP/rearm
+  for scan as well as roll; the parent completed-scan regression otherwise restarted
+  after reconfigure. A mode-only test also exposed the independent legacy key omitting
+  slow mode; that key now observes mode while retaining the sweep-companion exception.
+  No added UI completion state, queue or hardware access.
+
+- 2026-11-16: add to M2.3c's pending unit smoke (not verified on the unit here): on
+  setup B shallow, batch route, repeat STOP -> `:SINGle`, then `:TIMebase:SCALe`
+  about 30 ms later, x20. Record before/after `(gen, epoch)`, `records`, `acquired`,
+  configured/error/stale counters and `acq_single_arm`. Every press must complete
+  exactly one record of the new pair and reach STOP, with no stuck Wait beyond 2 s.
+  A captured obsolete batch needs one replacement arm: `acq_single_arm` +2 when
+  the old arm already occurred, versus +1 when the new pair was applied before any
+  arm. One accepted completed record per press is mandatory; no further arm after
+  completion. Follow with reconfigure after accepted record (including the one-frame
+  pending STOP window): records and arms must stay unchanged. Check CLEAR before
+  acceptance (new epoch, one completed record, no configure) and after completion
+  (remain STOP, no arm). Repeat reconfigure-before/after acceptance in roll, scan
+  and deep memory; allow the full sweep/deep-read duration when checking latency.
+  For roll/scan `acq_single_arm` stays zero: use `acq_roll_start`/`acq_roll_stop`
+  for stream starts/stops rather than equating a stream snapshot with a batch arm.
+  Include scan-to-roll mode change and explicit RUN/SINGLE after completion to prove
+  hold releases. Keep the existing producer and c unit-smoke/integration holds.
+
+- 2026-11-16: claimed the owner-assigned M2.3c SINGLE reconfigure regression at clean
+  `fbe6211`, owner `codex-d`, branch `t0003-m2`, unit tier. Task 0061 is already
+  merged. Plan and exact reservations above precede code. No device access or commit.
+
+- 2026-11-16: round-1 handoff at unchanged `3882594` plus the unstaged diff;
+  all 13 final check commands exit 0 with unchanged hashes of all 11 changed Rust
+  files (`target/m23c-r1-{checks,source,verification}.json` and complete referenced logs).
+  Default-thread focused library tests pass 262 debug / 261 release, eight existing
+  ignores per profile; the entry-assertion test is debug-only. The existing socket-dependent
+  `bode_sweep_drives_the_generator` fixture remains explicitly excluded. Core passes
+  25 units plus three value tests, host-script 14, soak 11 per profile. Five warmed UI
+  census rows each report 256 calls and zero allocations in both profiles; snapshots
+  reuse zero allocations versus 210 naive-clone allocations, retaining 5,104 bytes each.
+  Release raw/codes/pairs/deep-pairs/average each complete 1,000 steps, warmup 500,
+  with no retained growth or failed cycles and acquired/used/dropped exactly
+  13,648/13,618/30. Debug retains its existing release-only composed-soak policy.
+  Complete retained soak evidence: `target/m23c-r1-soak-evidence.json`.
+
+- 2026-11-16: round-1 picture and performance checks pass on that same code:
+  debug goldens 20 cases / 40 processes / 88 repeat captures, release 263 / 526 / 1,242.
+  Independent decoded RGB and settings metadata exactly match all 665 baseline captures;
+  all 566 stderr logs have zero unreviewed oracle event/field masks. No references,
+  manifests, tolerances or exceptions changed (`target/m23c-r1-golden-evidence.{json,log}`).
+  ARM check passes. Isolated release timing passes with 256 aarch64 samples: intake p99
+  73,666 ns, change 5,001 ns, paired intake/change 73,958 ns against 500,000 ns;
+  shadow p99 24,167 ns separately (`target/m23c-r1-release-timing.log`). All 11 exact
+  invocations from `xtask/src/clippy.rs` exit 0, zero new/grown findings or compile errors:
+  host for hal/dsp/core/ui/fpgad/xtask, ARM for the first five, using
+  `cargo clippy --locked --all-targets --message-format=json --quiet` plus
+  `--target aarch64-unknown-linux-musl` for ARM (`target/m23c-r1-clippy-*`).
+  Fast gate exits 0 and prints `partial gate passed (not done): 8 steps in 22 s`
+  (`target/m23c-r1-fast.log`); the early fast check printed the same passing result.
+  Whitespace and added-text/message privacy checks pass. `target/COMMIT_MSG.txt` has one
+  draft-message section. No staging, commits, push, full gate, image/coverage acceptance,
+  hardware access, ratchet/allowance/dependency/hook/remote changes. Task remains active;
+  cross-vendor unit-tier verification, coordinator integration gate and the recorded
+  producer/c smoke remain required. Integration stays held; unit findings may require changes.
+
+- 2026-11-16: round-1 failing-first evidence on `3882594` plus regression tests:
+  terminal autoset repopulates statistics after its clear, NORM plus RUN drops ACQ|STATS,
+  and rejected segment completion loses its times/STOP (`target/m23c-r1-ui-before-rebuilt.log`,
+  exit 101, all three fail). The core NORM/RUN classification also fails, returning
+  HW_AVERAGE alone (`target/m23c-r1-core-before.log`, exit 101). The initial UI fixture
+  had a reversed measurement tuple/name and did not compile; corrected before reproduction
+  (`target/m23c-r1-ui-before.log`). All four behavior regressions pass after the fixes.
+  The first broader run found four autoset fixtures coupled to begin-step polling
+  (`target/m23c-r1-focused-initial.log`, exit 101); they now execute the relocated writer
+  or full step. Default-thread debug selection then passes 262 tests, eight existing ignores.
+  The independent legacy want observation also distinguishes real sweep edits from
+  Single-to-Auto companions using its run/sweep values, avoiding a false oracle mismatch
+  for NORM/RUN. This is within the existing `ui/src/ui/change/` reservation.
+
+- 2026-11-16: M2.3c review round 1 claimed at clean `3882594`, owner `codex-d` on
+  `t0003-m2`; no P1. P2-1: align terminal autoset marks with deferred settings by
+  running autoset after records and measurement folding. P3-1/P3-2: assert accepted
+  settings at writer entry and skip idle autoset/Bode. P3-3: keep segment completion
+  polling and STOP final-read requests during rejected steps; accepted boundary effects
+  remain gated. P3-4: exempt only the Single-to-Auto sweep companion of RUN/SINGLE.
+  P3-5 accepted: re-pressing SINGLE while armed restarts hardware averaging;
+  RUN/STOP twice in one frame is a RUN boundary. P3-6 accepted: completion leaves
+  one frame of RUN status before next-step STOP, under D5.
+
+- 2026-11-16: reviewer M2.3c unit smoke remains pending, not verified on hardware:
+  SINGLE in roll, scan and deep memory with a `:SING` + `:TRIG:STAT?` loop, checking
+  one record and STOP latency; RUN within one frame of SINGLE completion; hardware
+  segment completion then immediate RUN, checking `seg::start` and `seg_run`;
+  hardware and software mask stop; hardware autoset with infinite persistence and
+  statistics on; stepped Bode restoring tscale and generator; free-sweep Bode with a
+  real generator; on-unit intake/change p99 idle and with autoset/Bode active.
+  No device access is authorized in this worker; the existing producer-smoke and
+  integration holds remain.
+
+- 2026-11-16: final M2.3c handoff after the rejected-preparation correction, at unchanged
+  `adb72ff` plus the unstaged diff. All 13 final check commands exit 0 on unchanged hashes
+  of the 16 changed Rust files (`target/m23c-handoff-verification.{json,log}` and
+  `target/m23c-handoff-source.json`). Focused default-thread library tests pass 256 per
+  profile, eight existing ignores and the explicit socket-dependent Bode generator fixture
+  exclusion; core passes 24 + 3, host-script 14 and soak 11 per profile. The strengthened
+  rejected-resolution regression passes in both profiles. Five census rows each have 256
+  calls and zero allocations; snapshots reuse zero allocations versus 210 naive allocations,
+  retaining 5,104 bytes each. Five release soak modes complete 1,000 steps, warmup 500,
+  with no growth/failed cycles and exact 13,648/13,618/30 acquired/used/dropped counts.
+  Complete commands, environments, exits and logs: `target/m23c-handoff-checks.json`;
+  retained-growth details: `target/m23c-handoff-soak-evidence.json`.
+
+- 2026-11-16: final c picture/performance evidence after that correction: unchanged debug
+  goldens pass 20 cases / 40 processes / 88 repeat captures; release passes 263 / 526 /
+  1,242. All 665 baseline captures match exactly in decoded RGB and settings metadata;
+  all 566 stderr logs have zero unreviewed event/field masks. No reference, manifest,
+  tolerance or per-case exception changed (`target/m23c-handoff-golden-evidence.{json,log}`).
+  ARM check passes. Isolated release timing has 256 aarch64 samples: intake p99 77,458 ns,
+  change 8,833 ns, paired 81,792 ns against 500,000 ns; shadow p99 19,168 ns separately
+  (`target/m23c-handoff-release-timing.log`). All 11 exact xtask clippy invocations pass
+  with zero new/grown findings (`target/m23c-handoff-clippy-*`). Fast gate exits 0 and
+  prints `partial gate passed (not done): 8 steps in 22 s`
+  (`target/m23c-handoff-fast.log`). Earlier failures and their corrections remain below.
+  Added-text privacy/whitespace checks pass and `target/COMMIT_MSG.txt` has one section.
+  Task remains active. No staging, commits, push, full gate, image/coverage acceptance,
+  hardware access, ratchet/allowance/dependency/hook/remote changes. Independent cross-vendor
+  unit-tier review, coordinator integration gate and the parallel M2.3b producer smoke
+  remain required; c integration stays held and smoke findings may require changes.
+
+- 2026-11-16: final inspection found a rejected-preparation regression: unconditional
+  internal capture could requeue unaccepted external fields even when auto_step did no work.
+  The strengthened existing epoch regression fails before the correction (requested scale
+  17 becomes 16, exit 101, `target/m23c-final-rejection-before.log`). A one-byte accepted-
+  preparation flag now gates all internal captures and is cleared on quarantine. External
+  edits stay at the intake edge after rejection. The step loop and last publication remain
+  active. Final verification is rerun under the `m23c-handoff-*` log prefix; the preceding
+  source-bound results remain recorded for the previous candidate.
+
+- 2026-11-16: M2.3c worker handoff at unchanged `adb72ff` plus the unstaged diff,
+  unit tier, still active. Final focused library tests pass 256 per profile with eight
+  existing ignores and the explicit socket-dependent `bode_sweep_drives_the_generator`
+  fixture exclusion; no thread-count override. Core tests pass 24 units plus three value
+  tests per profile. Host-script passes 14 and soak passes 11 per profile. Five warmed
+  census rows each report 256 calls and zero allocations in both profiles; snapshot reuse
+  allocates zero versus 210 naive-clone allocations and retains 5,104 bytes per snapshot.
+  Release raw/codes/pairs/deep-pairs/average each complete 1,000 steps with warmup 500,
+  no growth or failed cycles, and acquired/used/dropped exactly 13,648/13,618/30.
+  Debug preserves the existing release-only composed-soak policy. Commands, exits, source
+  hashes and limits: `target/m23c-final-verification.{json,log}`; raw check records:
+  `target/m23c-final-checks.json`, `target/m23c-final-source.json` and referenced full logs.
+  The first final core-debug call reused the parent reproduction's generated test executable
+  and failed (exit 101, `target/m23c-final-core-debug.log`). Removing only that exact owned
+  artifact and rebuilding the unchanged current sources passes all 27 tests, exit 0
+  (`target/m23c-final-core-debug-rebuilt.log`). Both outcomes remain in the evidence.
+
+- 2026-11-16: final unchanged goldens pass: debug 20 cases / 40 processes / 88 repeat
+  captures and release 263 / 526 / 1,242. Independent decoded RGB and settings metadata
+  comparisons exactly match all 44 debug and 621 release baseline captures. All 566 stderr
+  logs have zero unreviewed oracle event/field masks. References, manifests, tolerances and
+  per-case exceptions are unchanged. Evidence: `target/m23c-final-golden-evidence.{json,log}`.
+  ARM check passes. Isolated release timing passes with 256 aarch64 samples: intake p99
+  58,501 ns, change 15,583 ns, paired intake/change 61,542 ns against 500,000 ns;
+  shadow p99 18,876 ns separately (`target/m23c-final-release-timing.log`).
+
+- 2026-11-16: final gate-equivalent clippy passes all 11 exact invocations from
+  `xtask/src/clippy.rs`: host for hal/dsp/core/ui/fpgad/xtask and ARM for the first five.
+  Per crate: `cargo clippy --locked --all-targets --message-format=json --quiet`,
+  additionally `--target aarch64-unknown-linux-musl` for ARM. Deduplicated manifest-specific
+  counts, with existing planned moves applied, show zero new/grown findings or compile
+  errors. No ratchet changed. Complete JSONL/stderr logs, exits and comparison:
+  `target/m23c-final-clippy-*`, `target/m23c-final-clippy-summary.txt`.
+  Fast gate exits 0 and prints `partial gate passed (not done): 8 steps in 22 s`
+  (`target/m23c-final-fast.log`). Initial failures remain recorded above. The final code
+  hashes stayed unchanged throughout verification. `target/COMMIT_MSG.txt` contains one
+  draft-message section. No staging, commits, push, full gate, image/coverage acceptance,
+  dependency/ratchet/hook/remote changes or hardware access. Cross-vendor unit-tier review,
+  the coordinator's full gate and the parallel M2.3b producer smoke still hold integration;
+  smoke findings may require changes to c.
+
+- 2026-11-16: the request-boundary regression also fails against unmodified `adb72ff`
+  core/dsp sources with only the new test added in a scratch two-member workspace:
+  `Classes(73)` rather than `Classes(64)`, exit 101 (`target/m23c-parent-sweep.{log,json}`).
+  It passes on c. The scripted producer initially fed one extra batch after preparation
+  consumed pending STOP (`target/m23c-host_script-debug.log`, exit 101); the final helper
+  rechecks accepted run state before feeding, and the existing host SINGLE regression
+  passes (`target/m23c-host-single.log`). Initial clippy found one collapsible condition
+  and a legacy segment test grown past 60 lines; both are fixed without ratchet changes.
+
+- 2026-11-16: c implementation queues SINGLE, software/hardware segment and both mask
+  STOP writers. The bounded pending-completion flag prevents additional records and survives
+  another proposal's quarantine; intake applies it before external inputs. Terminal autoset
+  and Bode writes reuse the stage outbox and accepted snapshots. Free Bode consumes its
+  retained record after deferred STOP, then queues restoration. Run/SINGLE averaging and
+  segmented-run history now have one accepted-boundary consumer before publication.
+  The narrow core reservation covers a request's sweep companion when external RUN
+  overrides pending STOP without changing accepted run values; other effective fields
+  and derived acquisition policies still classify normally. Deferred command application
+  supplies an actual Stage oracle event under D5. D1-D9 and the a-d normalization bridge
+  are unchanged. An oversized rejected payload releases its live capacity on restoration;
+  otherwise it would permanently prevent following preparations. No extra snapshot is retained.
+
+- 2026-11-16: the three initial parent-compatible c regressions compile and fail on
+  `adb72ff` plus only their test wiring: SINGLE, software segments and software mask each
+  write STOP immediately instead of waiting for the next change point (exit 101,
+  `target/m23c-before.log`). The expanded focused regressions pass after the implementation,
+  including roll with a late snapshot, partial SINGLE, external override, terminal commands,
+  rejected payload recovery, and retained free-sweep analysis (`target/m23c-outbox-extra5.log`).
+  Initial focused runs exposed six old same-step test expectations; the final fixtures
+  assert the pending state and next accepted transition, preserving their original outcomes.
+
+- 2026-11-16: M2.3c claimed at clean `adb72ff` on `t0003-m2`, owner `codex-d`.
+  Read the c switch, bridge rules, D1-D9 and the b review-round decisions. The owner
+  authorizes implementation in parallel with the b producer smoke; integration stays held.
+  No hardware access is authorized for this worker.
 
 - 2026-11-16: M2.3b clippy follow-up validation on the same unstaged code passes.
   `cargo test --locked -p oos-ui --bin oos-ui FILTER`, with filters

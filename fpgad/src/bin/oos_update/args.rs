@@ -44,9 +44,9 @@ impl Args {
         }
     }
     /// Only card-file installs may select a simulated identity; hardware uses the running image.
-    pub(crate) fn running_unit(&self) -> String {
+    pub(crate) fn running_unit(&self, test_card: bool) -> String {
         use oos_hal::update::unit;
-        if self.val("--card").is_some_and(|c| c != "/dev/mmcblk0") {
+        if test_card {
             return unit::validate(self.val("--unit").unwrap_or(unit::NONE)).unwrap_or_else(|e| die(&e)).into();
         }
         if self.val("--unit").is_some() {

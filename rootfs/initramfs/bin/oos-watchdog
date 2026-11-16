@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Hardware watchdog (dw_wdt at ff848000, /dev/watchdog): busybox `watchdog` asks for 30 s and writes every 5 s. When the
 # kernel hangs hard enough that this process no longer runs, the SoC resets and the loader starts again. A panic restarts
-# by itself (`panic=10` in OOS_BOOTARGS); this covers what never reaches a panic. rcS starts it before oos-ui; it does
-# not depend on oos-ui and stays up when oos-ui restarts. A busybox `watchdog` that exits is started again, for as long as
+# by itself once rcS confirms stock boot selection; this covers what never reaches a panic. rcS starts it before
+# oos-ui; it does not depend on oos-ui and stays up when oos-ui restarts. A busybox `watchdog` that exits is started again, for as long as
 # the system runs: after 1 s, doubling up to 60 s while it keeps exiting, back to 1 s once it ran 10 min. Each restart
 # is logged to the kernel log. A pause longer than 30 s after an exit without magic close ends in a reset, which is the
 # intended outcome when the kicker keeps getting killed.
@@ -65,37 +65,52 @@ up() { cut -d. -f1 /proc/uptime 2>/dev/null || echo 0; }
 control=${OOS_WATCHDOG_CONTROL:-/tmp/oos-watchdog}
 handoff=0
 kicker=
+sleeper=
 request() {
 	handoff=1
 	[ -z "$kicker" ] || kill -KILL "$kicker" 2>/dev/null
+	[ -z "$sleeper" ] || kill "$sleeper" 2>/dev/null
 }
 trap request USR1
 echo $$ > "$control.pid" || exit 1
 delay=1
 while :; do
+	if [ "$handoff" = 1 ]; then
+		# wait may return for USR1 before the killed child exits. Reap before acknowledging this request.
+		[ -z "$kicker" ] || wait "$kicker" 2>/dev/null
+		kicker=
+		cat "$control.handoff" > "$control.ack"
+		echo "oos-watchdog: kexec handoff, kicker reaped" | tee -a "$kmsg"
+		while [ -e "$control.handoff" ]; do sleep 0.1; done
+		handoff=0
+		rm -f "$control.ack"
+		delay=1
+		echo "oos-watchdog: kexec returned, resuming kicker" | tee -a "$kmsg"
+	fi
 	t0=$(up)
 	watchdog -F -T 30 -t 5 "$dev" &
 	kicker=$!
 	# A request can arrive between launching the child and recording its pid.
 	[ "$handoff" = 0 ] || request
 	wait "$kicker"
-	rc=$?
+	rc=$? reaped=$kicker kicker=
+	# An interrupted wait has not necessarily reaped the child killed by the trap.
 	if [ "$handoff" = 1 ]; then
-		# wait may have returned for USR1 before the killed child exited. Reap before publishing readiness.
-		wait "$kicker" 2>/dev/null
-		kicker=
-		echo "oos-watchdog: kexec handoff, kicker reaped" | tee -a "$kmsg"
-		while [ -e "$control.handoff" ]; do sleep 0.1; done
-		handoff=0
-		delay=1
-		echo "oos-watchdog: kexec returned, resuming kicker" | tee -a "$kmsg"
+		wait "$reaped" 2>/dev/null
 		continue
 	fi
-	kicker=
 	ran=$(($(up) - t0))
 	[ $ran -ge 600 ] && delay=1
 	echo "oos-watchdog: busybox watchdog exited ($rc) after $ran s, starting it again in $delay s" | tee -a "$kmsg"
-	sleep $delay
+	# ash defers traps during foreground commands, but an explicit wait is interruptible.
+	sleep $delay &
+	sleeper=$!
+	# Before the pid assignment the flag catches USR1; afterwards the trap kills the sleep, even before wait.
+	[ "$handoff" = 0 ] || kill "$sleeper" 2>/dev/null
+	wait "$sleeper" 2>/dev/null
+	[ "$handoff" = 0 ] || wait "$sleeper" 2>/dev/null
+	sleeper=
+	[ "$handoff" = 0 ] || continue
 	delay=$((delay * 2))
 	[ $delay -gt 60 ] && delay=60
 done

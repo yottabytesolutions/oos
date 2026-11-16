@@ -18,8 +18,8 @@ Data path per batch (`ui/src/board/dho/hw.rs`, `hal/src/dho/seq.rs`):
 5. Re-arm only after decode, unless `OOS_PREARM`.
 
 Consequence: displayed wfm/s is capped at about 95 x UI frame rate (about 3k to 6k), whatever the FPGA and PCIe
-deliver. `fpga.md` puts the PCIe ceiling near 80k frames/s at 1 ch for 0x11f0-point frames; stock reaches about 190k
-at its fastest setting. The host software is the bottleneck, as `fpga.md` already concludes.
+deliver. An early estimate (not measured) put the PCIe ceiling near 80k frames/s at 1 ch for 0x11f0-point frames;
+stock reaches about 190k at its fastest setting (reported). The host software is the bottleneck.
 
 All threads of oos-ui inherit the A72 affinity (`pin_to_big_cores` in `main.rs` before the source starts): UI loop,
 hw thread and GPU helper share cpu4/cpu5. Web encoder and `MeasWorker` sit on the A53s. The xdma completion thread
@@ -287,5 +287,5 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   out (the record is measured on sinc points, which overshoot between samples: raw-sample max/min would be another
   definition); `measured` in the status line and "Frames in statistics" in System info show the coverage.
   Software averaging: deferred until the unit shows whether the FPGA average (B1) works and covers deep records
-  (`fpga.md` "Average mode": coupled to the frame read-out, unverified). In batch mode Average stays outside the fast
+  (`unit-dho804.md` B1). In batch mode Average stays outside the fast
   path, so every frame goes through the queue as in frames mode.

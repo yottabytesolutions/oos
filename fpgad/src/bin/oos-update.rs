@@ -110,15 +110,7 @@ fn notice(msg: &str) {
 
 fn open_card(a: &Args, write: bool) -> Card {
     let path = a.val("--card").unwrap_or("/dev/mmcblk0");
-    if path == "/dev/mmcblk0" {
-        // the boot card of this board, as oos-oneshot checks
-        let ctl = oos_hal::target::ACTIVE.card_controller;
-        let dev = std::fs::canonicalize("/sys/block/mmcblk0/device").ok();
-        if !dev.is_some_and(|d| d.to_string_lossy().contains(ctl)) {
-            die(&format!("mmcblk0 is not the SD card on {}: not touching it", ctl));
-        }
-    }
-    Card::open(Path::new(path), write).unwrap_or_else(|e| die(&format!("{}: {}", path, e)))
+    card::open_checked(Path::new(path), write).unwrap_or_else(|e| die(&e))
 }
 
 /// The SD card as the stock system names it.
@@ -149,8 +141,8 @@ fn gel_install(a: &Args) {
         .unwrap_or_else(|| die(&format!("no SD card on {}", oos_hal::target::ACTIVE.card_controller)));
     out!("card {}", path);
     let vendor = std::fs::read(a.val("--vendor").unwrap_or("/rigol/data/vendor.bin")).ok();
-    let mut c = Card::open(Path::new(&path), opt.execute).unwrap_or_else(|e| die(&format!("{}: {}", path, e)));
-    let keys = keys(a, a.val("--card").is_some());
+    let mut c = card::open_checked(Path::new(&path), opt.execute).unwrap_or_else(|e| die(&e));
+    let keys = keys(a, c.is_test_file().unwrap_or_else(|e| die(&e.to_string())));
     let r = update::first::first_install(&mut c, &p, &keys, Path::new(save), vendor.as_deref(), &opt, &mut |l| {
         out!("{}", l)
     });
@@ -269,10 +261,10 @@ fn install(a: &Args) {
     let f = a.rest.get(1).unwrap_or_else(|| die("install FILE.oosupd [--execute] [--no-kexec | --new-dt]"));
     need_data(a);
     let p = read_file(f);
-    let running_unit = a.running_unit();
+    let mut c = open_card(a, a.flag("--execute"));
+    let test_card = c.is_test_file().unwrap_or_else(|e| die(&e.to_string()));
+    let running_unit = a.running_unit(test_card);
     let opt = a.install_opt(&running_unit);
-    let mut c = open_card(a, opt.execute);
-    let test_card = a.val("--card").is_some_and(|c| c != "/dev/mmcblk0");
     let keys = keys(a, test_card);
     let sp = state_path(a);
     let announced = pkg::verify_header(&p, &keys).is_ok_and(|h| kexec::announced(&h.manifest));
@@ -554,7 +546,7 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
         keys.push(k);
     }
     let mut c = open_card(a, true);
-    let done = match update::install(&mut c, p, &pk, &keys, &Args::kexec_opt(f, &a.running_unit())) {
+    let done = match update::install(&mut c, p, &pk, &keys, &Args::kexec_opt(f, &a.running_unit(false))) {
         Ok(r) => {
             r.lines.iter().for_each(|l| out!("{}", l));
             if r.written {

@@ -115,9 +115,15 @@ pub fn refresh(a: &mut Model, b: &Model) {
 }
 
 pub fn classify(a: &Model, b: &Model, old: UiAcq, new: UiAcq) -> Classes {
+    classify_boundary(a, b, old, new, false)
+}
+
+fn classify_boundary(a: &Model, b: &Model, old: UiAcq, new: UiAcq, run_request: bool) -> Classes {
     let mut c = Classes::NONE;
+    let sweep_companion =
+        run_request && a.trig_mode == crate::model::TrigMode::Single && b.trig_mode == crate::model::TrigMode::Auto;
     fields(a, b, |f| {
-        if f.changed {
+        if f.changed && !(sweep_companion && f.name == "trig_mode") {
             c |= f.classes;
         }
     });

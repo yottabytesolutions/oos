@@ -11,10 +11,13 @@ pub(super) struct Stages {
     resolved: [Option<oos_core::change::Identity>; 2],
     commands: Outbox,
     restarts: [u64; 2],
+    stop_pending: bool,
+    accepted: bool,
 }
 impl Stages {
     pub(super) fn quarantine(&mut self) {
         self.commands.clear();
+        self.accepted = false;
         self.tokens = [None; 2];
         self.resolved = [None; 2];
     }
@@ -44,26 +47,8 @@ pub(super) fn stage(ui: &mut Ui, requester: Requester) {
     let token = Token::new(requester, observer.stages.runs[i], observer.stages.stages[i]);
     observer.stages.tokens[i] = Some(token);
     observer.stages.resolved[i] = None;
-    if let Some(shadow) = &mut observer.shadow {
-        if let Err(error) =
-            if observer.executing { observer.stages.commands.capture(shadow.accepted(), &ui.m) } else { Ok(()) }
-        {
-            observer.diagnostics.error(error);
-            return;
-        }
-        observer.proposals.clear();
-        if let Err(error) = observer.proposals.capture(shadow.normalized(), &ui.m) {
-            observer.diagnostics.error(error);
-        }
-        if !shadow.proposals_agree(&observer.proposals, &ui.m) {
-            observer.diagnostics.outbox += 1;
-        }
-        observer.proposals.clear();
-        if observer.executing {
-            let outputs = (ui.m.status, ui.m.hw_avg_clear);
-            oos_core::change::refresh(&mut ui.m, shadow.accepted());
-            (ui.m.status, ui.m.hw_avg_clear) = outputs;
-        }
+    if observer.executing && !capture(observer, &mut ui.m) {
+        return;
     }
     if let Err(error) = observer.pending.push(Command::Request(Request::Epoch(token))) {
         observer.diagnostics.error(error);
@@ -126,8 +111,16 @@ pub(in crate::ui) fn resolved(ui: &Ui, requester: Requester) -> Option<oos_core:
 
 pub(in crate::ui) fn apply(ui: &mut Ui) {
     let observer = &mut ui.host.runtime_mut().change;
+    let emitted = !observer.stages.commands.entries().is_empty() || observer.stages.stop_pending;
     observer.stages.commands.apply(&mut ui.m);
     observer.stages.commands.clear();
+    // A completion remains authoritative even if a later rejected proposal quarantined its slot.
+    if std::mem::take(&mut observer.stages.stop_pending) {
+        Command::Run(RunState::Stop).apply(&mut ui.m);
+    }
+    if emitted {
+        event(ui, Row::Stage, C::NONE);
+    }
 }
 
 pub(super) fn restart_counts(ui: &Ui) -> [u64; 2] {
@@ -137,4 +130,100 @@ pub(super) fn restart_counts(ui: &Ui) -> [u64; 2] {
 pub(in crate::ui) fn take_autoset(ui: &mut Ui) -> Option<super::super::autoset::AutoRun> {
     resolved(ui, Requester::Autoset)?;
     ui.auto.take()
+}
+
+pub(in crate::ui) fn autoset(ui: &mut Ui) {
+    if ui.auto.is_none() {
+        return;
+    }
+    defer(ui, Ui::auto_step);
+}
+
+pub(in crate::ui) fn bode(ui: &mut Ui) {
+    if !ui.bode.running {
+        return;
+    }
+    defer(ui, Ui::bode_update);
+}
+
+/// Complete legacy internal writers against the accepted snapshot, then return only commands.
+/// The two existing detector snapshots and bounded outbox are reused; outputs stay live.
+pub(in crate::ui) fn defer(ui: &mut Ui, writer: impl FnOnce(&mut Ui)) {
+    if !ui.host.runtime().change.stages.accepted {
+        return;
+    }
+    debug_assert!(
+        {
+            let observer = &ui.host.runtime().change;
+            let mut agrees = true;
+            if let Some(shadow) = &observer.shadow {
+                oos_core::change::fields(shadow.accepted(), &ui.m, |f| {
+                    // Status and hardware counters are outputs, not proposed settings.
+                    agrees &= !f.changed() || matches!(f.name(), "status" | "hw_stamp" | "hw_avg_clear");
+                });
+            }
+            agrees
+        },
+        "internal writer must enter with accepted settings"
+    );
+    writer(ui);
+    let observer = &mut ui.host.runtime_mut().change;
+    capture(observer, &mut ui.m);
+}
+
+fn capture(observer: &mut Observer, model: &mut Model) -> bool {
+    let Some(shadow) = &mut observer.shadow else { return false };
+    let result = observer.stages.commands.capture(shadow.accepted(), model);
+    if let Err(error) = result {
+        // Reusing a rejected writer's oversized capacity would prevent all following preparations.
+        let outputs = (model.status, model.hw_avg_clear);
+        *model = shadow.accepted().clone();
+        (model.status, model.hw_avg_clear) = outputs;
+        super::recovery::reject(observer, error);
+        return false;
+    }
+    observer.proposals.clear();
+    if let Err(error) = observer.proposals.capture(shadow.normalized(), model) {
+        observer.diagnostics.error(error);
+    }
+    if !shadow.proposals_agree(&observer.proposals, model) {
+        observer.diagnostics.outbox += 1;
+    }
+    observer.proposals.clear();
+    let outputs = (model.status, model.hw_avg_clear);
+    oos_core::change::refresh(model, shadow.accepted());
+    (model.status, model.hw_avg_clear) = outputs;
+    true
+}
+
+/// Keep completion local until the next intake applies STOP before external inputs.
+pub(in crate::ui) fn stop(ui: &mut Ui) {
+    let observer = &mut ui.host.runtime_mut().change;
+    if observer.stages.stop_pending {
+        return;
+    }
+    observer.stages.stop_pending = true;
+    if let Err(error) = observer.stages.commands.push(Command::Run(RunState::Stop)) {
+        observer.diagnostics.error(error);
+    }
+}
+
+pub(in crate::ui) fn stopping(ui: &Ui) -> bool {
+    ui.host.runtime().change.stages.stop_pending
+}
+
+pub(in crate::ui) fn acquiring(ui: &Ui) -> bool {
+    !stopping(ui) && (ui.m.run == RunState::Run || ui.stop_final.is_some() || (ui.last[0].is_none() && !ui.cleared))
+}
+
+/// Free Bode consumes the completed SINGLE record after its deferred STOP has been accepted.
+pub(in crate::ui) fn stopped(ui: &mut Ui) {
+    if ui.m.run == RunState::Stop && ui.bode.running && ui.bode.free {
+        bode(ui);
+    }
+}
+
+pub(super) fn prepared(ui: &mut Ui) {
+    let observer = &mut ui.host.runtime_mut().change;
+    observer.stages.accepted = observer.prepared.is_some();
 }

@@ -1266,6 +1266,7 @@ fn foreign(head: &str, route: &str, post: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    mod empty_tests;
     use super::*;
     use std::io::Read;
 

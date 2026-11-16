@@ -2883,10 +2883,7 @@ impl Ui {
         }
         let live = self.m.n_on() > 0 || self.m.la_on();
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared
-        if !self.record_mode()
-            && live
-            && (self.m.run == RunState::Run || self.stop_final.is_some() || (self.last[0].is_none() && !self.cleared))
-        {
+        if !self.record_mode() && live && change::proposals::acquiring(self) {
             if self.m.run == RunState::Run {
                 self.stop_ti_off = None;
             }
@@ -3134,7 +3131,7 @@ impl Ui {
                                 if self.m.trig_mode == TrigMode::Single {
                                     self.scpi_finish_operation(OperationToken::Single(self.single_operation));
                                 }
-                                self.m.run = RunState::Stop;
+                                change::proposals::stop(self);
                                 self.toast(&format!("{} segments recorded", self.seg_n));
                                 break;
                             }
@@ -3142,13 +3139,13 @@ impl Ui {
                             && !self.last[0].as_ref().is_some_and(|r| r.partial)
                         {
                             self.scpi_finish_operation(OperationToken::Single(self.single_operation));
-                            self.m.run = RunState::Stop;
+                            change::proposals::stop(self);
                             break;
                         }
                     }
                     None => {}
                 }
-                if self.m.run == RunState::Stop && self.stop_final.is_none() {
+                if change::proposals::stopping(self) || (self.m.run == RunState::Stop && self.stop_final.is_none()) {
                     break;
                 }
             }
@@ -3233,7 +3230,7 @@ impl Ui {
                 self.analyzer_update();
                 self.monitor_analyzer_update();
                 self.protocol_watch();
-                self.bode_update();
+                change::proposals::bode(self);
                 let p2 = std::time::Instant::now();
                 self.prof_add(0, p1 - p0);
                 self.prof_add(1, p2 - p1);
@@ -3291,6 +3288,7 @@ impl Ui {
             }
         }
         // the measurements of the newest record (in the background: when they are done, also after a stop)
+        change::proposals::stopped(self);
         self.meas_poll();
         if std::mem::take(&mut self.meas_new) {
             let rows = self.meas_rows();
@@ -3310,6 +3308,9 @@ impl Ui {
                 }
             }
         }
+        // Terminal autoset marks clear statistics now and the picture on the next step.
+        // Finish all old-pair drawing and measurement folds before emitting those marks.
+        change::proposals::autoset(self);
         // the final frame was taken (or did not come in time): stopped
         if self.stop_final.is_some_and(|t| final_done || self.now > t) {
             self.stop_final = None;
@@ -4111,7 +4112,7 @@ impl Ui {
             self.mask_fail += 1;
             // with the hardware test the counters decide (hwmask.rs)
             if self.m.mask_stop && self.m.run == RunState::Run && !self.mask_hw_active() {
-                self.m.run = RunState::Stop;
+                change::proposals::stop(self);
                 self.toast("Mask failed: stopped");
             }
         }
@@ -6847,16 +6848,15 @@ impl Ui {
     /// segment is on the screen, shows a segment asked for.
     fn seg_poll(&mut self, running: bool) {
         let Some(v) = self.src.seg_sync(self.seg_run, running) else { return };
-        let was = self.seg_view.map(|x| x.phase);
         self.seg_view = Some(v);
-        if v.phase == crate::board::SegPhase::Done && was != Some(crate::board::SegPhase::Done) {
+        if v.phase == crate::board::SegPhase::Idle {
+            self.seg_times.clear();
+            (self.seg_pos, self.seg_n) = (None, 0);
+        } else {
             self.seg_times = self.src.seg_times();
-            if running && !v.queued {
-                self.m.run = RunState::Stop;
-                self.toast(&format!("{} segments recorded", v.recorded));
-            }
-        } else if running && v.phase == crate::board::SegPhase::Done && !v.queued {
-            self.m.run = RunState::Stop;
+        }
+        if running && v.phase == crate::board::SegPhase::Done && !v.queued {
+            change::proposals::stop(self);
             self.toast(&format!("{} segments recorded", v.recorded));
         }
         if let Some((k, rec)) = self.src.seg_shown(&self.m) {
@@ -9156,8 +9156,9 @@ impl Ui {
     /// A setting the user or a remote client changed: a pending bus candidate and a running SINGLE start over.
     fn settings_changed(&mut self) {
         self.cancel_bus_candidate(true);
+        // an incomplete SINGLE keeps its press: the new settings make a new generation of it, not a new arm (M2.3c);
+        // a waiting *OPC? waits for the capture with the new settings
         if self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run {
-            self.single_armed = false;
             self.scpi_arm_operation();
         }
         self.settings_marked();
@@ -12547,8 +12548,10 @@ mod tests {
     mod change;
     mod epochs;
     mod mapping;
+    mod outbox;
     mod producer;
     use producer::Producer as _;
+    mod deep_intake;
     mod roll;
     mod shadow;
 
@@ -13940,6 +13943,7 @@ mod tests {
         }
         assert!(!ui.bode.running, "sweep did not finish ({} of {})", ui.bode.idx, ui.bode.freqs.len());
         assert_eq!(ui.bode.points.len(), 5);
+        ui.producer_step(0.05); // Apply the sweep completion commands.
         assert_eq!(ui.m.tscale, ts0, "time base restored");
         std::thread::sleep(std::time::Duration::from_millis(200));
         let cmds = got.lock().unwrap().clone();
@@ -13973,6 +13977,8 @@ mod tests {
         }
         assert!(!ui.bode.running);
         assert!(seen.iter().any(|f| (f / 1e4 - 1.0).abs() < 1e-9) && seen.contains(&1e5), "{:?}", seen);
+        assert_eq!((ui.m.afg_on, ui.m.afg_freq), (true, 1e5), "completion settings wait for change");
+        ui.producer_step(0.05);
         assert_eq!((ui.m.afg_on, ui.m.afg_freq), (false, 1234.0), "generator restored");
         // one channel on the generator: gain only
         assert!(ui.bode.points.iter().all(|p| p.2.is_nan() && p.1.is_finite()), "{:?}", ui.bode.points);
@@ -14379,6 +14385,7 @@ mod tests {
             g.seg.times = (0..100).map(|k| Some(k as f64 * 10e-6)).collect();
         }
         ui.producer_step(0.02);
+        ui.producer_step(0.02); // Consume the queued completion at the following change point.
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.toast.as_ref().unwrap().0, "100 segments recorded");
         // browse: back from the newest asks the thread for segment 99, then 98

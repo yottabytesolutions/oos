@@ -5,6 +5,19 @@
 use crate::board::{Frame, Shared};
 use crate::model::NCH;
 
+/// An incomplete SINGLE scan must collect a whole new sweep after a pair boundary.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn restart_scan(
+    mode: crate::board::Slow,
+    halted: bool,
+    rolling: &mut Option<oos_hal::dho::roll::Params>,
+) -> bool {
+    if !halted && matches!(mode, crate::board::Slow::Scan { single: true, .. }) {
+        return rolling.take().is_some();
+    }
+    false
+}
+
 /// Discard retained samples at a pair boundary without touching the running hardware.
 #[cfg(any(target_os = "linux", test))]
 pub(super) fn boundary(
@@ -70,7 +83,7 @@ pub(crate) fn publish(g: &mut Shared, f: Frame, scan: bool) {
     }
 }
 
-/// Apply STOP/rearm before reading another roll chunk, releasing Shared before bus IO.
+/// Apply STOP/rearm before reading another roll or scan chunk, releasing Shared before bus IO.
 #[cfg(any(target_os = "linux", test))]
 pub(super) fn poll(
     mode: crate::board::Slow,
@@ -81,7 +94,7 @@ pub(super) fn poll(
     sh: &mut oos_hal::dho::scu::Shadows,
     bar: &mut impl oos_hal::dho::bus::Bus,
 ) -> bool {
-    if mode != crate::board::Slow::Roll {
+    if mode == crate::board::Slow::Off {
         return true;
     }
     let was_rolling = rolling.is_some();

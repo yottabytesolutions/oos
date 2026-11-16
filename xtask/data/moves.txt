@@ -31,3 +31,7 @@ ui/src/ui/sim_bus_candidate.rs -> ui/src/ui/sim/sim_bus_candidate.rs
 ui/src/ui/sim_bus_tests.rs -> ui/src/ui/sim/sim_bus_tests.rs
 ui/src/ui/meascatalog_backend.rs -> ui/src/ui/meascatalog/backend.rs
 struct core/src/model/mod.rs Model -> struct core/src/model/state.rs Model
+struct ui/src/board/dho/hw.rs SegRun -> struct ui/src/board/dho/hw/segmented.rs SegRun
+fn ui/src/board/dho/hw.rs seg_abort -> fn ui/src/board/dho/hw/segmented.rs seg_abort
+fn ui/src/board/dho/hw.rs seg_step -> fn ui/src/board/dho/hw/segmented.rs SegmentIo::step
+fn ui/src/scpi.rs Scpi::exec_line -> fn ui/src/scpi/message.rs Scpi::exec_line

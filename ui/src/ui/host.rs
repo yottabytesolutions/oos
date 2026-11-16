@@ -461,7 +461,13 @@ mod auto_timeout {
             ui.step(1.0 / 30.0);
             assert!(ui.records > count, "{:?}: a matching edge still delivers", mode);
             assert!(ui.last[0].as_ref().unwrap().triggered);
-            assert_eq!(ui.m.status, if mode == TrigMode::Single { TrigStatus::Stop } else { TrigStatus::Triggered });
+            assert_eq!((ui.m.run, ui.m.status), (RunState::Run, TrigStatus::Triggered));
+            if mode == TrigMode::Single {
+                let records = ui.records;
+                ui.step(1.0 / 30.0);
+                assert_eq!(ui.records, records, "pending SINGLE completion accepts no extra record");
+                assert_eq!(ui.m.status, TrigStatus::Stop);
+            }
             assert_eq!(ui.m.run, if mode == TrigMode::Single { RunState::Stop } else { RunState::Run });
         }
     }

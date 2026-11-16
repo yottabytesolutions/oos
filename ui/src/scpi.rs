@@ -52,6 +52,9 @@ use crate::model::*;
 use crate::ui::Ui;
 
 mod actions;
+mod message;
+#[cfg(test)]
+mod segments_tests;
 mod ser;
 #[cfg(test)]
 use std::io::Read;
@@ -859,37 +862,6 @@ impl Scpi {
                 self.clients.remove(i);
             } else {
                 i += 1;
-            }
-        }
-    }
-
-    /// Immediate adapter for HTTP and in-process callers. Deferred barriers must use
-    /// `poll_program`: returning 1 here while an operation is pending would be false.
-    /// Commands before a pending barrier execute once; the remaining message is rejected.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub fn exec_line(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Vec<u8> {
-        self.exec_line_checked(ui, cv, line).unwrap_or_default()
-    }
-
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub fn exec_line_checked(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Result<Vec<u8>, &'static str> {
-        self.exec_message_checked(ui, cv, line).map(|(response, _)| response)
-    }
-
-    pub fn exec_message_checked(
-        &mut self,
-        ui: &mut Ui,
-        cv: &Canvas,
-        line: &str,
-    ) -> Result<(Vec<u8>, bool), &'static str> {
-        let mut program = Program::new(line);
-        match self.poll_program(ui, cv, &mut program) {
-            Some(response) => Ok((response, program.has_reply)),
-            None => {
-                let error = "Operation pending; use raw TCP or HiSLIP for *OPC?";
-                self.push_err(format!("-221,\"{}\"", error));
-                self.normalize_errors();
-                Err(error)
             }
         }
     }

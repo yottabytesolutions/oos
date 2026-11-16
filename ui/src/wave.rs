@@ -546,9 +546,12 @@ impl Source {
     /// source.
     pub fn seg_sync(&self, run: u64, running: bool) -> Option<SegView> {
         let Source::Hw { shared, .. } = self else { return None };
-        let mut g = shared.lock().unwrap();
+        let mut g = oos_hal::sync::lock(shared);
         (g.seg.run, g.seg.running) = (run, running);
         let current = g.seg.done_run == run;
+        if !current || g.seg.phase == crate::board::SegPhase::Idle {
+            (g.seg.want, g.seg.shown) = (None, None);
+        }
         Some(SegView {
             phase: if current { g.seg.phase } else { crate::board::SegPhase::Idle },
             total: g.seg.total,

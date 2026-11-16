@@ -188,3 +188,48 @@ fn card_file_install_uses_its_explicit_simulated_unit() {
     let mut c = card::Card::open(&f.path("card"), false).expect("test setup");
     assert_eq!(c.boot_magic().expect("test setup"), *b"OOSK");
 }
+
+#[test]
+fn device_aliases_never_accept_a_simulated_unit_or_extra_keys() {
+    let f = Fixture::new();
+    std::os::unix::fs::symlink("/dev/null", f.path("card-link")).expect("device alias");
+    for path in [PathBuf::from("/dev/null"), PathBuf::from("/dev/./null"), f.path("card-link")] {
+        let out = f
+            .command()
+            .arg("install")
+            .arg(f.path("image"))
+            .arg("--state")
+            .arg(f.path("state"))
+            .args(["--unit", "fake-unit", "--card"])
+            .arg(&path)
+            .output()
+            .expect("CLI runs");
+        refused(&out, "regular test file");
+        for extra_keys in [false, true] {
+            let mut command = f.command();
+            command.arg("gel-install").arg(f.path("image")).arg("--save").arg(f.path("save")).arg("--card").arg(&path);
+            if extra_keys {
+                command.arg("--keys").arg(f.path("public"));
+            }
+            refused(&command.output().expect("CLI runs"), "regular test file");
+        }
+    }
+}
+
+#[test]
+fn regular_card_file_aliases_keep_simulation_and_unit_checks() {
+    let f = Fixture::new();
+    simulated_card(&f);
+    std::fs::write(f.path("image"), image_unit(Some("fake-unit"))).expect("test setup");
+    success(&f.pack().arg("--community").output().expect("test setup"));
+    std::os::unix::fs::symlink(f.path("card"), f.path("card-link")).expect("file alias");
+    for path in [f.path("./card"), f.path("card-link")] {
+        let install = || {
+            let mut c = f.command();
+            c.arg("install").arg(f.path("package")).arg("--card").arg(&path).arg("--state").arg(f.path("state"));
+            c
+        };
+        refused(&install().output().expect("CLI runs"), "running image unit 'none'");
+        success(&install().args(["--unit", "fake-unit"]).output().expect("CLI runs"));
+    }
+}

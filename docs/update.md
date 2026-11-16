@@ -36,7 +36,12 @@ Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/s
 
 ## Trial start by kexec
 
-OOS has no loader of its own, so nothing counts the starts before rcS. An image written to `recovery` and selected with
+OOS has no loader of its own, so nothing counts the starts before rcS. The loader does not consume `OOSK`;
+stock selection is restored only by `oos-oneshot`. Boot arguments use `panic=0` until rcS confirms stock
+selection, then enable a 10 s panic restart through `/proc/sys/kernel/panic`. An early cold-start panic halts
+rather than resetting into the selected image indefinitely. Kexec command lines also force `panic=0`, even
+when the running image's old command line had a panic restart timeout. The inherited watchdog can still
+reset a failed kexec start into the installed fallback. An image written to `recovery` and selected with
 `OOSK` that hangs in the kernel would start again at every power-on. So `install --execute` does not write it:
 
 1. All checks of the install, nothing written. The package must say `trial kexec` (a signed header line that
@@ -141,9 +146,16 @@ is absent, the supervisor need not have published a pid: proceed without a watch
 Counter survival is then unverified. The checks repeat at takeover to catch changes during teardown.
 
 Both start paths transfer the single-open watchdog from `oos-watchdog` after the read-only remount attempt.
+Supervisor crash backoff uses an interruptible background sleep and explicit wait, so USR1 is processed even
+in a 60 s backoff. After reaping the kicker (or cancelling backoff with no kicker), the supervisor copies the
+requester pid to `/tmp/oos-watchdog.ack`. Takeover waits for that exact acknowledgement before opening the
+device, sharing a 2 s deadline with the open retries. An idle device alone is not proof of handoff. Read-only
+preflight also rejects an acknowledgement left by a previous handoff. On cancellation the supervisor removes
+its acknowledgement, resets backoff and resumes. These task 0067 changes are host-tested, not yet verified
+on the unit.
 The supervisor publishes its pid; an exclusive handoff request recording the updater pid plus USR1 makes it kill
 and reap only its own BusyBox kicker with SIGKILL, avoiding magic close, then pause until the request is removed.
-The updater waits at most 2 s for the device, keeps its handle open, writes the immediate jump timestamp for a changed tree,
+The updater waits at most 2 s for acknowledgement and the device, keeps its handle open, writes the immediate jump timestamp for a changed tree,
 performs a final `sync()` and writes a non-`V` byte to ping hardware immediately before `reboot(KEXEC)`.
 No sync, remount, logging or process launch comes between that ping and the syscall. This makes the final
 userspace ping less than about 1 s before the syscall in normal scheduling. The syscall's shutdown-to-jump delay still needs unit measurement;
@@ -197,6 +209,12 @@ confirmation is claimed yet. Bounded legacy evidence and both preparation/jump t
 
 `oos-update kexec-check FILE` loads a package's kernel and initramfs and unloads them again, nothing written, no
 restart: it shows that the running kernel takes the image for a kexec start.
+
+Only opened regular card files may use a simulated `--unit`, extra `--keys` or the direct card-file install
+route. Device aliases are canonicalized; the opened block device number is resolved through sysfs and
+must name a whole disk on the board's SD controller. This also covers gel-install on stock Android,
+where the card can be named `/dev/block/mmcblk1`. Symlinks and paths containing `.` cannot turn hardware
+into a test file. Unit comparison and `--any-unit` retain their normal meaning for hardware.
 
 ## Card layout used
 

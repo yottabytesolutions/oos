@@ -140,7 +140,12 @@ fn rejected_resolution_keeps_the_previous_publication() {
     let id = oos_hal::sync::lock(&shared).acquisition.identity();
     ui.m.tscale += 1;
     assert_eq!(change::duplicate_requests(&mut ui), 2);
+    let requested_scale = ui.m.tscale;
     ui.step(0.04);
+    assert_eq!(
+        ui.m.tscale, requested_scale,
+        "a rejected preparation cannot recapture external edits as internal commands"
+    );
     let g = oos_hal::sync::lock(&shared);
     assert_eq!(g.want, before, "failed resolution cannot publish new settings under the previous pair");
     assert_eq!(g.acquisition.identity(), id);

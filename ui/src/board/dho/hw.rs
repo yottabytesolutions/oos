@@ -6,16 +6,22 @@
 //! real data; the hardware itself triggers with an edge on the source at the level, in AUTO or NORMAL).
 
 #[cfg(target_os = "linux")]
-use super::{lifecycle, publication::tag};
+use super::lifecycle;
 use crate::board::{Frame, Slow};
 #[cfg(target_os = "linux")]
-use crate::board::{HwShared, SegPhase, Shared};
+use crate::board::{HwShared, Shared};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Couple, Segments, Settings, Trig};
 use oos_hal::dho::{afe, auxout, hz, serialtrig, tpu, uarttrig};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
+
+#[cfg(any(target_os = "linux", test))]
+mod segmented;
+mod single;
+#[cfg(target_os = "linux")]
+use segmented::{seg_abort, SegRun, SegmentIo};
 
 /// Time base from which the hardware source streams in roll mode: 200 ms/div (stock: 50 ms/div). Below it the stream
 /// comes out too fast for its time axis with two or four channels, a normal acquisition is right there.
@@ -43,11 +49,11 @@ fn single_takes_first(m: &Model) -> bool {
     m.trig_mode == TrigMode::Single && m.trig_type != TrigType::Bus && !m.zones.iter().any(|z| z.usable())
 }
 
-/// Whether the thread acquires another batch for SINGLE: not once a batch brought frames under this press's `stamp`
-/// (`done`). The UI's STOP reached the thread only a few UI steps later, and each batch in between counted:
-/// `acquired` +10 at 1 us/div, +3 at 1 ms/div per press (unit 2026-11-13).
-fn single_wants_more(b: &Settings, done: Option<u64>, stamp: u64) -> bool {
-    !b.single || done != Some(stamp)
+/// A returned batch suppresses further SINGLE arms only for its captured pair. A new pair
+/// must replace an obsolete batch that the UI cannot complete with. Accepted completion
+/// retains the UI's hardware hold until the next RUN/SINGLE, including across reconfiguration.
+fn single_wants_more(b: &Settings, done: Option<(u64, u64)>, pair: (u64, u64)) -> bool {
+    !b.single || done != Some(pair)
 }
 
 /// Live record length for Auto depth (keeps the read short enough for a fluid display).
@@ -1612,8 +1618,8 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         let mut help_cost = std::time::Duration::from_micros(500);
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, (u64, u64))> = None;
-        // the SINGLE stamp whose batch brought its frame (`single_wants_more`)
-        let mut single_done: Option<u64> = None;
+        // the captured pair whose SINGLE batch brought its frame (`single_wants_more`)
+        let mut single_done: Option<(u64, u64)> = None;
         // the hardware segmented recording in progress or read back
         let mut segrun: Option<SegRun> = None;
         // hardware average: triggers since the last clear, the `Shared::avg_clear` it was cleared for, batches logged
@@ -1721,7 +1727,10 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             };
             if super::roll::boundary(applied_pair, identity, &mut ring, &mut sweep, &mut ring_la, &mut sweep_la, &mut cursor) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                // D4: discard old work and stream samples without restarting recording or roll.
+                if super::roll::restart_scan(want_mode, halted, &mut rolling) {
+                    bar.apply(&lifecycle::roll_stop(&mut state.sh));
+                }
+                // RUN streams retain hardware; an incomplete SINGLE scan needs a whole new sweep.
             }
             // the settings as the UI gave them: when they change, a wait for a trigger ends early (`acquire_batch_until`)
             let asked = (Some(want.clone()), want_mode);
@@ -2098,7 +2107,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             }
             if s.segments.is_some() {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                if let Err(e) = seg_step(&mut segrun, &s, &p, &mut state, &mut bar, &mut c2h, &mut dma, &out, &mut n, identity) {
+                if let Err(e) = SegmentIo::new(&mut state, &mut bar, &mut c2h, &mut dma, &out, &mut n).step(&mut segrun, &s, &p, identity) {
                     status(format!("segments: {}", e));
                     seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
                     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -2106,7 +2115,8 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 continue;
             }
             // STOP, after the hold above: no arming until RUN or SINGLE (the UI's final-frame request is answered there)
-            if hold {
+            let poll = single::progress(&s, single_done, pair, hold, 0).1;
+            if poll == single::Poll::Hold {
                 out.lock().unwrap().final_ack = final_req;
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 continue;
@@ -2122,7 +2132,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             if !matches!(b.mode, oos_hal::dho::acq::Mode::Average { .. }) {
                 b.frames = cap.apply(b.frames);
             }
-            if !single_wants_more(&b, single_done, stamp) {
+            if poll == single::Poll::Wait {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 std::thread::sleep(std::time::Duration::from_millis(2));
                 continue;
@@ -2340,9 +2350,6 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     // the next batch records while this one is decoded (after the LA read, which needs this record);
                     // not in average mode, where a clear may have to come first, and not where the deep measurements
                     // read the newest frame raw (its ring must stay for the replay at STOP)
-                    if count > 0 && b.single {
-                        single_done = Some(stamp);
-                    }
                     if switches.board.prearm && avg.is_none() && !b.single && prearm_keeps_replay(&b, &p, deep_want) {
                         match lifecycle::prearm(b.single, || seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {})) {
                             Ok(()) => armed = Some((b.clone(), pair)),
@@ -2475,6 +2482,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         g.decoded += count as u64;
                         g.dropped += skip as u64;
                     }
+                    single_done = single::progress(&b, single_done, pair, false, frames.len() as u32).0;
                     super::publication::push_frames(&out, frames);
                 }
                 // new settings (or STOP) while it waited for a trigger: at once to them. The arm has filled frame 0
@@ -2509,172 +2517,6 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
     shared
 }
 
-/// A hardware segmented recording.
-#[cfg(target_os = "linux")]
-struct SegRun {
-    /// `HwSeg::run` it belongs to
-    run: u64,
-    n: u32,
-    recording: bool,
-    /// segments recorded; the next one to read back
-    count: u32,
-    next: u32,
-    /// read the frames into the queue too (the recording ended by itself, not by STOP)
-    deliver: bool,
-    tl: oos_hal::dho::seg::Timeline,
-}
-
-/// Ends a recording that is still in the FPGA before anything else writes it, and forgets the segments (their settings
-/// are no longer the configured ones).
-#[cfg(target_os = "linux")]
-fn seg_abort(
-    run: &mut Option<SegRun>,
-    state: &mut oos_hal::dho::seq::State,
-    bar: &mut oos_hal::dho::bus::Bar1,
-    c2h: &mut std::fs::File,
-    out: &HwShared,
-) {
-    let Some(r) = run.take() else { return };
-    if r.recording {
-        if let Err(e) = lifecycle::seg_stop(state, bar, c2h, true) {
-            eprintln!("oos-ui hw: segments stop: {}", e);
-        }
-    }
-    let mut g = out.lock().unwrap();
-    (g.seg.phase, g.seg.shown) = (crate::board::SegPhase::Idle, None);
-    g.seg.times.clear();
-}
-
-/// One step of the hardware segmented recording: start on a new `HwSeg::run`, poll the progress every 10 ms (no
-/// transfer), then stop and read back one batch per step (stamps by single-frame plays, frames into the queue), then
-/// play single segments on request. The segments are read with their headers (`seg::read_settings`); they are logged
-/// only with the header probe, which the live settings `s` carry as `header` (`settings`).
-#[cfg(target_os = "linux")]
-#[allow(clippy::too_many_arguments)]
-fn seg_step(
-    run: &mut Option<SegRun>,
-    s: &Settings,
-    p: &hz::Params,
-    state: &mut oos_hal::dho::seq::State,
-    bar: &mut oos_hal::dho::bus::Bar1,
-    c2h: &mut std::fs::File,
-    dma: &mut oos_hal::dho::bus::DmaBuf,
-    out: &HwShared,
-    n: &mut u64,
-    identity: oos_core::change::Identity,
-) -> Result<(), String> {
-    use oos_hal::dho::seg;
-    let (cmd, running, want) = {
-        let g = out.lock().unwrap();
-        (g.seg.run, g.seg.running, g.seg.want)
-    };
-    if running && run.as_ref().map_or(0, |r| r.run) != cmd {
-        if run.as_ref().is_some_and(|r| r.recording) {
-            lifecycle::seg_stop(state, bar, c2h, true)?;
-        }
-        let total = lifecycle::seg_start(state, s, p, bar, c2h)?;
-        *run = Some(SegRun {
-            run: cmd,
-            n: total,
-            recording: true,
-            count: 0,
-            next: 0,
-            deliver: true,
-            tl: seg::Timeline::new(None),
-        });
-        let mut g = out.lock().unwrap();
-        g.seg = crate::board::HwSeg {
-            run: g.seg.run,
-            running: g.seg.running,
-            done_run: cmd,
-            phase: SegPhase::Recording,
-            total,
-            ..Default::default()
-        };
-        return Ok(());
-    }
-    let Some(r) = run.as_mut() else {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        return Ok(());
-    };
-    if r.recording {
-        let x = seg::status(bar, r.n);
-        out.lock().unwrap().seg.recorded = x.recorded;
-        if !x.complete(r.n) && running {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            return Ok(());
-        }
-        let tag = seg::first_trigger(bar);
-        lifecycle::seg_stop(state, bar, c2h, !x.complete(r.n))?;
-        (r.recording, r.count, r.next, r.deliver, r.tl) = (false, x.recorded, 0, running, seg::Timeline::new(tag));
-        eprintln!(
-            "oos-ui hw: segments: {} of {} recorded, 0x4034 {:#x}, first-trigger stamp {:?}",
-            x.recorded, r.n, x.fsm, tag
-        );
-        out.lock().unwrap().seg.phase = if r.count == 0 { SegPhase::Done } else { SegPhase::Reading };
-        return Ok(());
-    }
-    let rs = seg_read_plan(s, p);
-    let fb = oos_hal::dho::seq::frame_bytes(&rs, p);
-    if r.next < r.count {
-        r.deliver &= running;
-        let cnt = rs.frames.min(r.count - r.next);
-        if r.deliver && out.lock().unwrap().queue.len() + cnt as usize > crate::board::QUEUE_MAX {
-            // the screen has not taken the last batch yet
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            return Ok(());
-        }
-        let st = seg::stamps(state, &rs, p, bar, c2h, r.next, cnt)?;
-        if r.next == 0 {
-            // hardware check 5.3: header words 5..7 against the latch, frame by frame
-            for (k, x) in st.iter().take(8).enumerate() {
-                eprintln!("oos-ui hw: segment {} latch {:?} header {:?}", k, x.latch, x.header);
-            }
-        }
-        let times: Vec<Option<f64>> = st.iter().map(|x| r.tl.push(*x)).collect();
-        let mut frames = Vec::new();
-        if r.deliver {
-            seg::read(state, &rs, p, bar, c2h, dma, r.next, cnt)?;
-            frames = dma
-                .data()
-                .chunks_exact(fb)
-                .take(cnt as usize)
-                .map(|chunk| {
-                    *n += 1;
-                    tag(decode_probed(chunk, &rs, p, *n, s.header), identity)
-                })
-                .collect();
-        }
-        r.next += cnt;
-        let mut g = out.lock().unwrap();
-        g.seg.times.extend(times);
-        g.seg.read = r.next;
-        frames.retain(|f| super::publication::current(&g, f));
-        if let Some(f) = frames.last() {
-            g.frame = f.clone();
-        }
-        g.queue.extend(frames);
-        if r.next >= r.count {
-            g.seg.phase = SegPhase::Done;
-        }
-        return Ok(());
-    }
-    // done: single segments on request
-    match want {
-        Some(k) if k < r.count => {
-            out.lock().unwrap().seg.want = None;
-            let one = oos_hal::dho::seg::read_settings(&rs, 1);
-            seg::read(state, &one, p, bar, c2h, dma, k, 1)?;
-            *n += 1;
-            let f = tag(decode_probed(&dma.data()[..fb.min(dma.data().len())], &one, p, *n, s.header), identity);
-            out.lock().unwrap().seg.shown = Some((k, f));
-        }
-        Some(_) => out.lock().unwrap().seg.want = None,
-        None => std::thread::sleep(std::time::Duration::from_millis(10)),
-    }
-    Ok(())
-}
-
 /// Writes the scan points `v` into the sweep picture (`width` points) from `at`, wrapping at the right edge.
 fn scan_write(pic: &mut Vec<f32>, width: usize, at: usize, v: &[f32]) {
     if pic.len() != width {
@@ -2699,6 +2541,9 @@ fn scan_gap(pic: &mut [Vec<f32>; NCH], at: usize, gap: usize) {
         }
     }
 }
+
+#[cfg(test)]
+pub(crate) mod single_fake;
 
 #[cfg(test)]
 mod tests {
@@ -2729,24 +2574,27 @@ mod tests {
         let mut m = Model { trig_mode: TrigMode::Single, ..Default::default() };
         let b = settings(&m, false, &Default::default());
         assert!(b.single);
-        assert!(single_wants_more(&b, None, 4), "the first batch after the press");
-        assert!(!single_wants_more(&b, Some(4), 4), "its frame came: no more for this press");
+        assert!(single_wants_more(&b, None, (2, 4)), "the first batch after the press");
+        assert!(!single_wants_more(&b, Some((2, 4)), (2, 4)), "its frame came: no more for this press");
         let mut model = m.clone();
         let config = crate::model::config();
         let mut changes = oos_core::change::Shadow::new(&model, Default::default(), &config).unwrap();
         let mut arms = 1;
-        let done = Some(changes.identity().epoch());
+        let done = Some((changes.identity().gen(), changes.identity().epoch()));
         for _ in 0..20 {
             model.mask_src = 1 - model.mask_src;
             let id = changes.observe(&model, Default::default(), &[], &config).unwrap().identity();
             assert!(id.gen() > 0);
-            arms += usize::from(single_wants_more(&b, done, id.epoch()));
+            arms += usize::from(single_wants_more(&b, done, (id.gen(), id.epoch())));
         }
-        assert_eq!(arms, 1, "generation-only boundaries cannot arm SINGLE again");
+        assert_eq!(arms, 21, "an unaccepted old-pair batch cannot complete a new pair");
 
-        assert!(single_wants_more(&b, Some(4), 5), "the next press");
+        assert!(single_wants_more(&b, Some((2, 4)), (2, 5)), "the next press");
         m.trig_mode = TrigMode::Normal;
-        assert!(single_wants_more(&settings(&m, false, &Default::default()), Some(4), 4), "RUN is not limited");
+        assert!(
+            single_wants_more(&settings(&m, false, &Default::default()), Some((2, 4)), (2, 4)),
+            "RUN is not limited"
+        );
         // the UI may refuse the frame: protocol trigger, zone trigger
         m.trig_mode = TrigMode::Single;
         m.trig_type = TrigType::Bus;

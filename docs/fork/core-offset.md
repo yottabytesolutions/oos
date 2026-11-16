@@ -7,7 +7,7 @@ Status: implemented on `feat/core-offset`, opt-in (`cal.core_offset = tight` in 
 The RT8847 interleaves eight cores; each has an offset register (0x14 + 8n, 11-bit signed, one ADC step). The stock
 calibration (self-cal.md 14.6) trims every core to mid-scale and stops at +-1.5 steps, so two cores can differ by up
 to 3 steps. The FPGA has per-core gain trims only (0x1058, 0x105c) and no per-core offset; every rate path decimates
-after them (netlist, private RE notes `docs/fpga.md`).
+after them (assumed, not checked on hardware).
 
 Which cores feed consecutive samples, one channel (assumed; the spur pattern on the unit fits it):
 

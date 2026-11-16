@@ -68,7 +68,7 @@ impl Ui {
         self.unit_blocked_poll();
         let Some(r) = self.src.hw_mask() else { return };
         if mask_stops(self.mask_hw, r, self.m.mask_src) && self.m.mask_stop && self.m.run == RunState::Run {
-            self.m.run = RunState::Stop;
+            change::proposals::stop(self);
             self.toast("Mask failed: stopped");
         }
         self.mask_hw = r;

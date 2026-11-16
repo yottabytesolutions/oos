@@ -29,21 +29,18 @@ mod tests {
         let shared = crate::board::HwShared::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.auto_start();
-        change::begin_step(&mut ui, 0.04).unwrap();
-        change::finish_step(&mut ui);
+        ui.step(0.04);
         let old = ui.auto.as_ref().unwrap().stamp;
         assert!(ui.auto.as_ref().unwrap().unit.is_some());
         ui.clear_display();
-        change::begin_step(&mut ui, 0.04).unwrap();
+        ui.step(0.04);
         assert_eq!(ui.auto.as_ref().unwrap().stamp, 0, "foreign pair must not accept unit answers");
-        change::finish_step(&mut ui);
-        change::begin_step(&mut ui, 0.04).unwrap();
+        ui.step(0.04);
         let epoch = ui.auto.as_ref().unwrap().stamp;
         assert!(epoch > old);
         let (token, wanted, _) = oos_hal::sync::lock(&shared).levels_want.unwrap();
         assert_eq!((token, wanted), (epoch, epoch));
         assert!(change::text(&ui).contains("stage_restart_autoset=1"));
-        change::finish_step(&mut ui);
         for _ in 0..3 {
             ui.step(0.04);
         }

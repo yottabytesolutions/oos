@@ -2,7 +2,7 @@
 
 The zone trigger in the FPGA. Opt-in: `zone.hw = on` in system.conf, read once at start, off by default. Code:
 `hal/src/dho/zone.rs`, `hal/src/dho/zonegeom.rs`, `seq::State::zone_steps`, `ui/src/ui/hwzone.rs`. Register facts:
-private RE notes `docs/fpga.md` "Zone trigger" (static analysis).
+below; the confirmed part is in [../hardware/fpga.md](../hardware/fpga.md) "Zone unit".
 
 Status: experimental, not working (round 20). With the strobe count that works for the mask test (`cols=record`), the
 frame counter 0x11a0 stays 0 at 20 µs/div 10k and 200 µs/div 100k. The readings show armed=0 and state=0. The hardware
@@ -27,8 +27,9 @@ needs a new register combination (bit 15 with the zone tables), so it waits for 
 - 0x11d0: bits 24/25 zone 1/2 on, bits 26/27 mode (1 = pass when touched, 0 = pass when not touched). The result is
   the AND of both zones; a zone that is off passes.
 - 0x4020 bit 1 arms the logic (readable at 0x4030 bit 28). The latched pass flag (0x4038 bit 19) feeds the trigger
-  FSM: the zone qualifies the trigger. That a failing frame is not accepted and the FSM re-arms is inferred, not
-  measured. The normal trigger stays configured; the zone acts on top of it.
+  FSM: the zone qualifies the trigger. That a failing frame is not accepted was seen on the unit (round 3,
+  `unit-dho804.md`); that the FSM re-arms on its own is inferred. The normal trigger stays configured; the zone acts on
+  top of it.
 - The mask frame counter (0x11a0/0x11a4) counts zone-qualified frames.
 
 ## What OOS does

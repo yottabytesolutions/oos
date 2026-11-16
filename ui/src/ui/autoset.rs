@@ -959,6 +959,7 @@ mod tests {
         for _ in 0..4000 {
             ui.step(0.02);
             if ui.auto.is_none() {
+                ui.step(0.02); // Apply the final internal settings at the following change point.
                 return;
             }
         }
@@ -1039,6 +1040,7 @@ mod tests {
     /// the time base set now, 8000 samples, the hardware point in the middle.
     fn resolve(ui: &mut Ui) {
         change::begin_step(ui, 0.0).unwrap();
+        change::proposals::autoset(ui);
         change::finish_step(ui);
     }
 
@@ -1087,6 +1089,36 @@ mod tests {
             ui.auto_step();
         }
         panic!("auto set-up never ended: {:?}", stages);
+    }
+
+    #[test]
+    fn terminal_autoset_leaves_no_old_pair_after_its_clear() {
+        let (mut ui, shared) = hw_ui();
+        ui.m.persist = PERSIST.len() - 1;
+        ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
+        ui.auto_start();
+        ui.auto.as_mut().unwrap().unit = None;
+        ui.step(0.04);
+        for seq in 1..20 {
+            let stamp = ui.auto.as_ref().unwrap().stamp;
+            let rec = hw_record_of(&ui, stamp, &|_| 0.0);
+            let mut old = (*rec.raw.unwrap().frame).clone();
+            old.seq = seq;
+            oos_hal::sync::lock(&shared).queue.push_back(old.clone());
+            ui.step(0.04);
+            if ui.auto.is_some() {
+                continue;
+            }
+            assert!(ui.mstat.is_empty(), "no pre-final measurement may fold after the terminal clear");
+            let records = ui.records;
+            oos_hal::sync::lock(&shared).queue.push_back(old);
+            ui.step(0.04);
+            assert_eq!(ui.records, records, "the pre-final pair is stale after terminal settings apply");
+            assert!(ui.ph.map.iter().flatten().all(|&v| v == 0), "no old-pair trace after the clear");
+            assert!(ui.mstat.is_empty(), "no old-pair measurement after the clear");
+            return;
+        }
+        panic!("scripted hardware autoset never terminated");
     }
 
     // Break it catches: stages that wait for several records and a time on the hardware (2.5 to 5.4 s on the unit),

@@ -40,8 +40,7 @@ impl Ui {
                 self.look = reflook::RefLook::TakeOver;
             }
             self.idle_analog();
-            self.ph.clear();
-            self.phz.clear();
+            change::replay(self);
         } else {
             self.offline = false;
             self.look = reflook::RefLook::Live;
@@ -61,7 +60,7 @@ impl Ui {
                 self.m.tfine = h.tfine;
                 self.m.delay = h.delay;
             }
-            self.dirty_map = true;
+            change::mapping_observed(self, change::oracle::Row::Layout);
         }
     }
 
@@ -78,6 +77,7 @@ impl Ui {
     pub(super) fn present_record(&mut self, slot: usize) {
         let slot = slot.min(NREF - 1);
         self.idle_analog();
+        change::replay(self);
         self.offline_ref = slot;
         self.sim_play = false;
         let spec = self.refs[slot].as_mut().map(|r| {
@@ -96,8 +96,6 @@ impl Ui {
         }
         self.m.eye_src = WaveId::Ref(slot);
         self.select_workspace_source(WaveId::Ref(slot));
-        self.ph.clear();
-        self.phz.clear();
         // Install the stopped screen gate before touching other references.
         // A previous full SSC record may be millions of samples long.
         self.refresh_stopped_reference();

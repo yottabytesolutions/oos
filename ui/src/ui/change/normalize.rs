@@ -26,6 +26,6 @@ pub(super) fn apply(ui: &mut Ui) {
 }
 
 pub(in crate::ui) fn default_setup(ui: &mut Ui) {
-    dirty(ui, Row::Recall);
+    mapping_observed(ui, Row::Recall);
     stats_reset(ui);
 }

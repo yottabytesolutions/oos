@@ -34,7 +34,9 @@ pub fn guard_pair(
 pub struct StageTiming {
     intake: [u64; 256],
     change: [u64; 256],
+    picture: [u64; 256],
     count: usize,
+    picture_count: usize,
     shadow: [u64; 256],
     queued_intake: u64,
     queued_shadow: u64,
@@ -47,8 +49,10 @@ impl Default for StageTiming {
         Self {
             intake: [0; 256],
             change: [0; 256],
+            picture: [0; 256],
             shadow: [0; 256],
             count: 0,
+            picture_count: 0,
             queued_intake: 0,
             queued_shadow: 0,
             intake_start: None,
@@ -114,6 +118,23 @@ impl StageTiming {
         let i = (self.count - 1) % 256;
         self.shadow[i] = self.shadow[i].saturating_add(nanos(duration));
     }
+    /// Record an actual main/zoom clear; idle steps do not enter this ring.
+    pub fn picture(&mut self, duration: Duration) {
+        self.picture[self.picture_count % 256] = nanos(duration);
+        self.picture_count += 1;
+    }
+    pub fn picture_p99(&self) -> Option<u64> {
+        let n = self.picture_count.min(256);
+        if n < 50 {
+            return None;
+        }
+        let mut values = self.picture;
+        values[..n].sort_unstable();
+        Some(values[(n * 99).div_ceil(100) - 1])
+    }
+    pub fn picture_max(&self) -> Option<u64> {
+        self.picture[..self.picture_count.min(256)].iter().copied().max()
+    }
     pub fn shadow_p99(&self) -> Option<u64> {
         let n = self.samples();
         if n < 50 {
@@ -142,18 +163,27 @@ impl StageTiming {
         self.count.min(256)
     }
     pub fn text(&self) -> String {
-        match self.p99() {
-            Some([a, b, c]) => format!(
-                " stage intake n={} p99_ns={} stage change n={} p99_ns={} stage intake+change p99_ns={} shadow_p99_ns={}",
-                self.samples(),
-                a,
-                self.samples(),
-                b,
-                c,
-                self.shadow_p99().unwrap_or(0)
-            ),
+        let picture = match self.picture_p99() {
+            Some(p99) => format!("p99_ns={p99}"),
+            None => "p99=pending".into(),
+        };
+        let stages = match self.p99() {
+            Some([a, b, c]) => {
+                format!(
+                    " stage intake n={} p99_ns={} stage change n={} p99_ns={}",
+                    self.samples(),
+                    a,
+                    self.samples(),
+                    b
+                ) + &format!(" stage intake+change p99_ns={c} shadow_p99_ns={}", self.shadow_p99().unwrap_or(0))
+            }
             None => format!(" stage intake n={} stage change n={} p99=pending", self.samples(), self.samples()),
-        }
+        };
+        format!(
+            "{stages} stage picture n={} {picture} max_ns={}",
+            self.picture_count.min(256),
+            self.picture_max().unwrap_or(0)
+        )
     }
 }
 
@@ -164,6 +194,36 @@ fn nanos(duration: Duration) -> u64 {
 #[cfg(test)]
 mod stage_tests {
     use super::*;
+
+    #[test]
+    fn picture_tail_uses_only_clears_across_idle_steps_and_ring_wrap() {
+        let mut timing = StageTiming::default();
+        for i in 1..=400 {
+            timing.add(Duration::ZERO, Duration::ZERO);
+            timing.picture(Duration::from_nanos(i));
+            for _ in 0..300 {
+                timing.add(Duration::ZERO, Duration::ZERO);
+            }
+            assert_eq!(timing.picture_p99(), if i < 50 { None } else { Some(i - i.min(256) / 100) });
+        }
+        assert!(timing.text().contains("stage picture n=256 p99_ns=398 max_ns=400"));
+    }
+
+    #[test]
+    fn picture_pending_reports_clear_count_and_max_independently() {
+        let mut timing = StageTiming::default();
+        for _ in 0..100 {
+            timing.add(Duration::ZERO, Duration::ZERO);
+        }
+        assert_eq!(timing.picture_p99(), None);
+        timing.picture(Duration::from_nanos(7));
+        assert!(timing.text().contains("stage picture n=1 p99=pending max_ns=7"));
+        for _ in 0..256 {
+            timing.picture(Duration::ZERO);
+        }
+        assert_eq!(timing.picture_p99(), Some(0));
+        assert!(timing.text().contains("stage picture n=256 p99_ns=0 max_ns=0"));
+    }
 
     #[test]
     fn legacy_budget_excludes_shadow_and_uses_paired_samples() {
@@ -180,8 +240,11 @@ mod stage_tests {
             timing.shadow(shadow);
             timing.shadow(Duration::from_nanos(200));
             timing.shadow(Duration::from_nanos(300));
+            timing.picture(Duration::from_nanos(2000));
         }
         assert_eq!(timing.p99(), Some([30, 30, 60]));
         assert_eq!(timing.shadow_p99(), Some(1500));
+        assert_eq!(timing.picture_p99(), Some(2000));
+        assert!(timing.text().contains("stage picture n=50 p99_ns=2000 max_ns=2000"));
     }
 }

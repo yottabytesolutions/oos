@@ -12,6 +12,7 @@ pub struct Layout {
     hdmi: Option<(usize, usize)>,
     pane: usize,
     menu: usize,
+    vertical_zoom: [u32; 2],
 }
 impl Layout {
     pub fn new(
@@ -22,7 +23,11 @@ impl Layout {
         pane: usize,
         menu: usize,
     ) -> Self {
-        Self { main, zoom, panel, hdmi, pane, menu }
+        Self { main, zoom, panel, hdmi, pane, menu, vertical_zoom: [0; 2] }
+    }
+    pub fn with_vertical_zoom(mut self, factor: f32, center: f32) -> Self {
+        self.vertical_zoom = [factor.to_bits(), center.to_bits()];
+        self
     }
     pub fn main(self) -> (usize, usize) {
         self.main

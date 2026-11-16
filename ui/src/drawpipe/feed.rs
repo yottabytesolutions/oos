@@ -162,7 +162,8 @@ pub(super) fn set_view(
         pipe.release();
         return;
     };
-    let key = Key::of(m, w, h);
+    let layout = oos_core::change::Layout::new((w, h), (0, 0), (0, 0), None, 0, 0);
+    let key = oos_core::change::WorkerViewKey::of(m, layout, &crate::model::config());
     let mapping = v.key.as_ref() != Some(&key);
     let statistics = identity.is_some_and(|id| v.identity.map(|old| old.stats_gen()) != Some(id.stats_gen()));
     if mapping || statistics {

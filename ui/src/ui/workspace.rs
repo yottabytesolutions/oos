@@ -791,7 +791,7 @@ impl Ui {
         }
         self.m.win_layout = WinLayout::One;
         self.relayout();
-        self.dirty_map = true;
+        change::mapping_observed(self, change::oracle::Row::Layout);
     }
     pub(super) fn footer_rects(&self) -> (Rect, Rect, Rect, Rect, Option<Rect>, Option<Rect>, Rect) {
         let y = BOTTOM.y + 3;
@@ -1402,7 +1402,7 @@ impl Ui {
         self.set_zoom(false);
         self.zoom_vfactor = 1.0;
         self.zoom_vcenter = 0.0;
-        self.dirty_map = true;
+        change::mapping_observed(self, change::oracle::Row::Layout);
         self.toast("Fit record");
         true
     }

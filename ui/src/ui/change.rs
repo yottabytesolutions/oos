@@ -12,6 +12,7 @@ mod legacy_keys;
 pub(super) mod normalize;
 pub(super) mod observations;
 pub(super) mod oracle;
+mod picture;
 pub(super) mod proposals;
 mod recovery;
 pub(super) mod transitions;
@@ -30,6 +31,7 @@ struct Signals {
     effects_by_row: [C; oracle::ROW_COUNT],
     marked_in_stop: bool,
     normalized: C,
+    required: C,
 }
 impl Default for Signals {
     fn default() -> Self {
@@ -40,6 +42,7 @@ impl Default for Signals {
             effects_by_row: [C::NONE; oracle::ROW_COUNT],
             marked_in_stop: false,
             normalized: C::NONE,
+            required: C::NONE,
         }
     }
 }
@@ -50,6 +53,7 @@ struct Prepared {
     stopped: bool,
     run_edge: bool,
     single: bool,
+    workers: bool,
 }
 
 const _: () = assert!(std::mem::size_of::<Prepared>() < 16 * 1024);
@@ -79,7 +83,8 @@ fn needs(ui: &Ui, keys: &legacy_keys::Keys) -> UiAcq {
         ui.hdmi_out.map(|(w, h)| (w as usize, h as usize)),
         ui.pane_h() as usize,
         0,
-    );
+    )
+    .with_vertical_zoom(ui.zoom_vfactor, ui.zoom_vcenter);
     let format = if ui.src.is_hw() && !ui.needs_raw() { keys.compress() } else { 1 };
     UiAcq::of(ui.needs_raw(), ui.fast_ok(), ui.auto.is_some(), ui.bode.running, layout).with_read_format(format)
 }
@@ -119,7 +124,7 @@ pub(super) fn request(ui: &mut Ui, request: Request, row: Row) {
     }
 }
 
-pub(super) fn begin_step(ui: &mut Ui, dt: f64) -> Option<bool> {
+pub(super) fn begin_step(ui: &mut Ui, dt: f64) -> Option<(bool, bool)> {
     ui.host.runtime_mut().change.executing = true;
     let t = Instant::now();
     if !lifecycle::begin_step(ui, dt) {
@@ -132,12 +137,17 @@ pub(super) fn begin_step(ui: &mut Ui, dt: f64) -> Option<bool> {
     legacy::settings(ui);
     let final_done = transitions::apply(ui);
     acquisition::publish(ui);
-    observe(ui);
     let timing = &mut ui.host.runtime_mut().change.timing;
     let shadow = timing.end_change();
     timing.add(intake, t.elapsed().saturating_sub(shadow));
     timing.shadow(shadow);
-    Some(final_done)
+    let t = Instant::now();
+    let cleared = picture::apply(ui);
+    if cleared {
+        ui.host.runtime_mut().change.timing.picture(t.elapsed());
+    }
+    observe(ui);
+    Some((final_done, cleared))
 }
 
 pub(super) fn prepare(ui: &mut Ui) {
@@ -174,6 +184,7 @@ fn prepare_inner(ui: &mut Ui) {
     }
     let Some(shadow) = &mut observer.shadow else { return };
     if shadow.needs().layout() != needs.layout() {
+        observer.signals.required |= C::MAPPING;
         observer.signals.effects |= C::MAPPING;
         observer.signals.effects_by_row[Row::Layout as usize] |= C::MAPPING;
         observer.signals.rows |= 1 << Row::Layout as usize;
@@ -196,6 +207,7 @@ fn prepare_inner(ui: &mut Ui) {
                 signals: std::mem::take(&mut observer.signals),
                 stopped,
                 run_edge,
+                workers: true,
                 single: requests[..n].contains(&Request::Single),
             })
         }
@@ -211,7 +223,7 @@ fn observe(ui: &mut Ui) {
     if let Some(prepared) = observer.prepared.take() {
         compare(observer, prepared);
     }
-    observer.timing.record_shadow(started.elapsed());
+    observer.timing.shadow(started.elapsed());
     sample.finish(&mut observer.census, 1);
 }
 
@@ -266,7 +278,6 @@ pub(super) fn single_key(ui: &mut Ui) {
     single(ui);
     ui.m.trig_mode = TrigMode::Single;
     ui.m.run = RunState::Run;
-    ui.dirty_map = true;
 }
 pub(super) fn autoset_mark(ui: &mut Ui) {
     ui.mark_changed();
@@ -331,8 +342,13 @@ fn compare(observer: &mut Observer, prepared: Prepared) {
         old,
         signals.rows,
         &by_row,
-        stopped || signals.marked_in_stop,
-        signals.normalized,
+        oracle::OracleContext::new(
+            stopped || signals.marked_in_stop,
+            signals.normalized,
+            signals.required
+                | if fields.iter().flatten().any(|f| oracle::mapping_field(f.name())) { C::MAPPING } else { C::NONE }
+                | if persistence { C::PHOSPHOR } else { C::NONE },
+        ),
     );
     if difference != 0 {
         for field in fields.into_iter().flatten() {
@@ -343,7 +359,6 @@ fn compare(observer: &mut Observer, prepared: Prepared) {
 }
 
 pub(super) fn recall(ui: &mut Ui) {
-    ui.dirty_map = true;
     ui.mstat.clear();
     event(ui, Row::Recall, C::MAPPING | C::STATS);
 }
@@ -405,8 +420,13 @@ pub(super) fn stats_reset(ui: &mut Ui) {
     stats_clear(ui);
 }
 
-pub(super) fn dirty(ui: &mut Ui, row: Row) {
-    ui.dirty_map = true;
+pub(super) fn replay(ui: &mut Ui) {
+    request(ui, Request::Replay, Row::Layout);
+    event(ui, Row::Layout, C::MAPPING);
+    ui.host.runtime_mut().change.signals.required |= C::MAPPING;
+}
+
+pub(super) fn mapping_observed(ui: &mut Ui, row: Row) {
     event(ui, row, C::MAPPING);
 }
 

@@ -103,9 +103,24 @@ impl Difference {
     }
 }
 
-/// A proposed difference id is evidence to review, not an exemption from a raw disagreement counter.
-/// Restrict broad legacy marks to their actual two consumers, and retain unknown cases separately.
-pub fn difference(row: Row, class: C, old: bool, stopped: bool, repaired: C) -> Option<Difference> {
+/// Effective contracts are independent of the classifier output, so D1 cannot hide a missing clear.
+#[derive(Clone, Copy, Default)]
+pub struct OracleContext {
+    stopped: bool,
+    repaired: C,
+    required: C,
+}
+impl OracleContext {
+    pub fn new(stopped: bool, repaired: C, required: C) -> Self {
+        Self { stopped, repaired, required }
+    }
+}
+
+pub fn difference(row: Row, class: C, old: bool, context: OracleContext) -> Option<Difference> {
+    let OracleContext { stopped, repaired, required } = context;
+    if old && required.contains(class) {
+        return None;
+    }
     match row {
         Row::Mark | Row::Recall | Row::Stage if old && (class == C::MAPPING || class == C::STATS) => {
             Some(Difference::D1)
@@ -160,9 +175,12 @@ pub fn dirty_contracts(old: C, geometry: bool, persistence: bool) -> C {
 }
 
 pub fn persistence_field(name: &str) -> bool {
-    matches!(name, "persist" | "color_grade" | "acq" | "avg_count" | "avg_hw")
+    matches!(name, "persist" | "color_grade" | "acq" | "avg_count" | "avg_hw" | "draw_batch" | "deskew_ch")
 }
 pub fn geometry_field(name: &str) -> bool {
+    mapping_field(name) || matches!(name, "ref_win" | "density" | "strip_dock" | "split_pane")
+}
+pub fn mapping_field(name: &str) -> bool {
     matches!(
         name,
         "tscale"
@@ -172,14 +190,10 @@ pub fn geometry_field(name: &str) -> bool {
             | "zscale"
             | "zdelay"
             | "dots"
+            | "z_src"
             | "win_layout"
             | "ch_win"
             | "math_win"
             | "la_win"
-            | "ref_win"
-            | "density"
-            | "strip_dock"
-            | "split_pane"
-            | "deskew_ch"
     ) || (name.starts_with("ch") && name.contains('.') && !name.ends_with(".unit"))
 }

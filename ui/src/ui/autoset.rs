@@ -143,7 +143,7 @@ impl Ui {
             self.auto_start();
         } else {
             autoset(&mut self.m, &self.src);
-            change::dirty(self, change::oracle::Row::Recall);
+            change::mapping_observed(self, change::oracle::Row::Recall);
             self.settings_changed();
             self.toast("Auto set-up");
         }
@@ -529,7 +529,7 @@ impl Ui {
                 self.toast("Auto set-up: no steady period");
             }
         }
-        change::dirty(self, change::oracle::Row::Stage);
+        change::mapping_observed(self, change::oracle::Row::Stage);
         change::autoset_mark(self);
     }
 }
@@ -606,10 +606,8 @@ impl Ui {
         if self.m.zoom {
             self.reset_zoom();
         }
-        self.ph.clear();
-        self.phz.clear();
         self.measure_refs();
-        self.dirty_map = true;
+        change::mapping_observed(self, change::oracle::Row::Layout);
         self.toast("Record fitted");
     }
 }
@@ -729,7 +727,7 @@ impl Ui {
         if let Some(s) = slope {
             self.m.slope = s;
         }
-        change::dirty(self, change::oracle::Row::Stage);
+        change::mapping_observed(self, change::oracle::Row::Stage);
         self.settings_changed();
         change::autoset_mark(self);
     }

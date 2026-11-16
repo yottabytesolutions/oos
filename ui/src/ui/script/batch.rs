@@ -66,13 +66,12 @@ impl BatchScript {
         if self.pending.is_some() {
             return Err(format!("batch {} still in flight", self.id));
         }
-        let Some(identity) = running_identity(ui) else { return Ok(()) };
+        let Some(identity) = running_identity(ui, self.record_only) else { return Ok(()) };
         let Source::Hw { shared, .. } = &ui.src else { return Err("scripted source replaced".into()) };
         if !lock(shared).queue.is_empty() {
             return Err(format!("batch {} left queued frames", self.id));
         }
         let pipe = drawpipe::pipe(ui.switches()).ok_or("scripted source needs batch pipeline")?;
-        pipe.set_view((ui.fast_ok() && !self.record_only).then_some(&ui.m), ui.ph.w, ui.ph.h, ui.switches().interp);
         let frames =
             if ui.m.trig_mode == crate::model::TrigMode::Single { 1 } else { SCHEDULE[self.id % SCHEDULE.len()] };
         let batch = self.source.next_batch(&ui.m, ui.switches(), frames, self.spare.take())?;
@@ -160,12 +159,12 @@ impl BatchScript {
     }
 }
 
-fn running_identity(ui: &mut Ui) -> Option<oos_core::change::Identity> {
+fn running_identity(ui: &mut Ui, records: bool) -> Option<oos_core::change::Identity> {
     if ui.m.run != RunState::Run {
         return None;
     }
     ui.relayout();
-    let identity = super::super::change::acquisition::script_prepare(ui);
+    let identity = super::super::change::acquisition::script_prepare_route(ui, records);
     // Preparation can apply an internal STOP; never feed an extra batch under that completion.
     (ui.m.run == RunState::Run).then_some(identity)
 }

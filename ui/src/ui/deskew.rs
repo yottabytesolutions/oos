@@ -150,9 +150,7 @@ impl Ui {
         self.toast("Source deskew cleared");
     }
     fn deskew_changed(&mut self) {
-        self.ph.clear();
-        self.phz.clear();
-        self.dirty_map = true;
+        change::mapping_observed(self, change::oracle::Row::Layout);
         self.replay.viewport = None;
         // Time is part of every downstream gate/search/math/decode key. Do not
         // call settings_changed: this is calibration, not a new acquisition.

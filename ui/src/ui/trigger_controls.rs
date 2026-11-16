@@ -90,7 +90,7 @@ impl Ui {
         self.m.status = TrigStatus::Wait;
         self.m.floor_live_tdiv();
         self.last[0] = None;
-        self.dirty_map = true;
+        change::mapping_observed(self, change::oracle::Row::Layout);
         self.relayout();
     }
 

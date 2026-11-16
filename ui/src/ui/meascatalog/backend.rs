@@ -429,7 +429,7 @@ impl Ui {
         }
         if changed {
             self.finish_deferred_capture_statistics();
-            self.dirty_map = true;
+            change::mapping_observed(self, change::oracle::Row::Layout);
         }
     }
 }

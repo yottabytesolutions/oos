@@ -88,11 +88,9 @@ fn scripted_change_storm_matches_reviewed_oracle() {
     for (name, run, apply, classes, raw) in ORACLE_CASES {
         let mut ui = base(*run);
         ui.mstat = vec![MStat { n: 7, ..Default::default() }];
-        ui.dirty_map = false;
         apply(&mut ui);
         let unmarked = name.starts_with("unmarked");
         assert_eq!(ui.mstat.is_empty(), !unmarked, "old statistics seam: {name}");
-        assert_eq!(ui.dirty_map, *run == RunState::Run, "old dirty seam: {name}");
         ui.step(0.04);
         assert_eq!(ui.host.runtime().change.last.as_ref().unwrap().classes(), *classes, "{name}");
         if unmarked {
@@ -186,8 +184,9 @@ fn perf_guard_intake_change_shadow_budget() {
         return;
     }
     let mut timing = crate::perfguard::StageTiming::default();
-    super::super::script::host::soak::run_observed("raw", 300, |step, _, ui| {
-        if step == 300 {
+    // Sparse clears need enough storm cycles for at least 50 clearing observations.
+    super::super::script::host::soak::run_observed("raw", 1000, |step, _, ui| {
+        if step == 1000 {
             timing = change::timing(ui);
         }
     })
@@ -195,12 +194,14 @@ fn perf_guard_intake_change_shadow_budget() {
     assert!(timing.samples() >= 50);
     let quantiles = timing.p99().unwrap();
     println!(
-        "{} host={} profile={} budget_ns=500000",
+        "{} host={} profile={} budget_ns=500000 picture_host_budget_ns=750000 estimated_a72_budget_ns=3000000",
         timing.text(),
         std::env::consts::ARCH,
         if cfg!(debug_assertions) { "debug" } else { "release" }
     );
     assert!(quantiles[2] <= 500_000, "combined intake/change p99 {} exceeds 0.5 ms", quantiles[2]);
+    let picture = timing.picture_p99().unwrap();
+    assert!(picture > 0 && picture <= 750_000, "picture p99 {picture} exceeds the calibrated host budget");
 }
 
 #[test]
@@ -240,8 +241,8 @@ fn oracle_differences_do_not_exempt_unrelated_classes() {
         (Row::Single, C::VIEW),
         (Row::Run, C::PHOSPHOR),
     ] {
-        assert_eq!(difference(row, class, true, false, C::NONE), None);
-        assert_eq!(difference(row, class, false, false, C::NONE), None);
+        assert_eq!(difference(row, class, true, change::oracle::OracleContext::default()), None);
+        assert_eq!(difference(row, class, false, change::oracle::OracleContext::default()), None);
     }
 }
 

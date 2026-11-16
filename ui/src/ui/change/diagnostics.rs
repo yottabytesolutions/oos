@@ -50,8 +50,7 @@ impl Diagnostics {
         old: Classes,
         rows: u32,
         by_row: &[Classes; oracle::ROW_COUNT],
-        stopped: bool,
-        repaired: Classes,
+        context: oracle::OracleContext,
     ) -> u16 {
         let mut differences = 0;
         for (i, c) in Classes::ALL.into_iter().enumerate() {
@@ -62,7 +61,7 @@ impl Diagnostics {
             let found = Row::ALL
                 .into_iter()
                 .filter(|r| rows & (1 << *r as usize) != 0 && (!old.contains(c) || by_row[*r as usize].contains(c)))
-                .find_map(|r| oracle::difference(r, c, old.contains(c), stopped, repaired).map(|d| (r, d)));
+                .find_map(|r| oracle::difference(r, c, old.contains(c), context).map(|d| (r, d)));
             let row = found.map_or(Row::Drawing, |(row, _)| row);
             let difference = found.map_or("unreviewed", |(_, d)| d.name());
             if let Some((_, difference)) = found {
@@ -163,8 +162,7 @@ mod normalization_tests {
             Classes::NONE,
             1 << Row::Normalize as usize,
             &[Classes::NONE; oracle::ROW_COUNT],
-            false,
-            Classes::MAPPING,
+            oracle::OracleContext::new(false, Classes::MAPPING, Classes::NONE),
         );
         assert_eq!(mask, oracle::Difference::D3.mask() | (1 << 15));
         assert_eq!(d.unreviewed, 1, "unrelated VIEW must not receive a D3 allowance");
@@ -180,8 +178,7 @@ mod normalization_tests {
                 Classes::NONE,
                 1 << row as usize,
                 &[Classes::NONE; oracle::ROW_COUNT],
-                false,
-                Classes::NONE,
+                oracle::OracleContext::default(),
             );
             let source = row == Row::MaskSource;
             assert_eq!(mask, (1 << 15) | if source { oracle::Difference::D9.mask() } else { 0 });
@@ -197,12 +194,28 @@ mod normalization_tests {
                 old[Row::MaskSource as usize],
                 1 << Row::MaskSource as usize,
                 &old,
-                false,
-                Classes::NONE
+                oracle::OracleContext::default()
             ),
             1 << 15,
             "D9 cannot excuse missing new acquisition or mask resets"
         );
         assert_eq!(d.unreviewed, 2);
+    }
+    #[test]
+    fn an_effective_geometry_contract_cannot_hide_a_missing_mapping_as_d1() {
+        for row in [Row::Mark, Row::Layout, Row::Recall, Row::Stage] {
+            let mut d = Diagnostics::default();
+            let mut old = [Classes::NONE; oracle::ROW_COUNT];
+            old[row as usize] = Classes::MAPPING;
+            d.compare(
+                Classes::NONE,
+                Classes::MAPPING,
+                1 << row as usize,
+                &old,
+                oracle::OracleContext::new(false, Classes::NONE, Classes::MAPPING),
+            );
+            assert_eq!(d.unreviewed, 1, "missing geometry class at {row:?} is a regression");
+            assert_eq!(d.raw[1], 1);
+        }
     }
 }

@@ -18,19 +18,29 @@ pub(crate) fn identity(ui: &Ui) -> Identity {
 
 pub(in crate::ui) fn publish(ui: &mut Ui) {
     let Some(id) = ui.host.runtime().change.prepared.as_ref().map(|p| p.changes.identity()) else { return };
-    let Source::Hw { shared, .. } = &ui.src else { return };
     let Some(shadow) = &ui.host.runtime().change.shadow else { return };
     let (model, needs) = (shadow.accepted(), shadow.needs());
     let sw = &draw_switches(ui, model);
-    let access =
-        if model.run == RunState::Run { crate::drawpipe::Access::from(sw) } else { crate::drawpipe::Access::Existing };
+    let batch = sw.pipeline == crate::drawpipe::Mode::Batch;
+    let access = if ui.src.is_hw() && model.run == RunState::Run && batch {
+        crate::drawpipe::Access::from(sw)
+    } else {
+        crate::drawpipe::Access::Existing
+    };
     if let Some(pipe) = crate::drawpipe::pipe(access) {
-        if model.run == RunState::Run && needs.route() {
+        if ui.src.is_hw()
+            && (model.run == RunState::Run || ui.stop_final.is_some())
+            && needs.route()
+            && batch
+            && ui.host.runtime().change.prepared.as_ref().is_some_and(|p| p.workers)
+        {
             pipe.publish_view(model, ui.ph.w, ui.ph.h, sw.interp, id);
         } else {
+            pipe.set_view(None, 0, 0, sw.interp);
             pipe.set_identity(id);
         }
     }
+    let Source::Hw { shared, .. } = &ui.src else { return };
     let mut g = lock(shared);
     if g.acquisition.identity().gen() != id.gen() {
         crate::pacing::changed();
@@ -69,18 +79,6 @@ pub(crate) fn draw_switches(ui: &Ui, model: &Model) -> crate::sysconf::Switches 
     sw
 }
 
-/// Draw path Standard: the workers stay, idle, and forget their view, so no frame of the old settings is merged when
-/// Batch comes on again.
-pub(crate) fn draw_path_enforce(ui: &Ui) {
-    let sw = draw_switches(ui, &ui.m);
-    if sw.pipeline == crate::drawpipe::Mode::Batch {
-        return;
-    }
-    if let Some(p) = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).filter(|p| p.accepting()) {
-        p.set_view(None, 0, 0, sw.interp);
-    }
-}
-
 pub(crate) fn current(f: &crate::board::Frame, id: Identity) -> bool {
     (f.cfg, f.stamp) == (id.gen(), id.epoch())
 }
@@ -97,14 +95,22 @@ pub(in crate::ui) fn stage_record(ui: &Ui, requester: Requester, rec: &Record) -
 }
 
 /// Script producers run the same intake point before feeding a batch, then Ui::step runs its consumers.
+#[cfg(test)]
 pub(in crate::ui) fn script_prepare(ui: &mut Ui) -> Identity {
+    script_prepare_route(ui, false)
+}
+
+pub(in crate::ui) fn script_prepare_route(ui: &mut Ui, records: bool) -> Identity {
     if ui.host.runtime().change.prepared.is_none() {
         if !lifecycle::polls(ui) {
             return identity(ui);
         }
         legacy::intake_settings(ui);
-        publish(ui);
     }
+    if let Some(p) = &mut ui.host.runtime_mut().change.prepared {
+        p.workers = !records;
+    }
+    publish(ui);
     identity(ui)
 }
 

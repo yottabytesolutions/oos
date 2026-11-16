@@ -126,7 +126,7 @@ pub(super) const CASES: &[Case] = &[
         |m| {
             m.z_src = if m.z_src.is_some() { None } else { Some(1) };
         },
-        C::ACQ.union(C::STATS),
+        C::ACQ.union(C::STATS).union(C::MAPPING),
     ),
     (
         "hist",

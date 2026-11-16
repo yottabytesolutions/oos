@@ -244,6 +244,41 @@ boundaries still reject old work without hardware reconfiguration, and rejected 
 keep the step loop alive. This implementation is host-verified; independent unit-tier
 review, the coordinator's full gate and the parallel M2.3b producer smoke hold integration.
 
+M2.3d intermediate state: accepted MAPPING and PHOSPHOR now own settings-driven
+picture invalidation. The persistent dirty-map flag and every writer are removed,
+including upstream's new writers. Legacy mapping notifications only observe the
+old effects for the oracle. Normalization still invokes the statistics bridge;
+marks no longer clear the picture. Main and zoom clear together, once for the
+union of those two classes. A local step result tells Min drawing that the maps
+are already empty, avoiding another clear before its first new record. Ordinary
+Min replacement and timed decay retain their previous behavior.
+
+STOP retains its existing clear-and-redraw operation on each step, including
+mapping/phosphor boundaries, with the same stored record and redraw weight.
+That operation is the sole picture clear while stopped; record-only reference
+sessions instead use the accepted class consumer. This does not implement M4's
+running preview, batch-first-view pinning or mapping-key rejection, nor M10's
+frozen picture/weight model. Upstream's vertical zoom enters the same mapping
+comparison through value geometry in Layout. Z source enters the MappingKey display
+projection and requires MAPPING in addition to its acquisition/statistics classes.
+Equal-settings session entry, record presentation and return to live use an explicit
+Replay mapping request, with their old map clears observed by the oracle.
+Draw-path changes classify PHOSPHOR
+so the previous path's accumulated maps are discarded at acceptance.
+
+The accepted acquisition publication is the only normal worker-view writer. It
+publishes a view on Batch's active route and disables the retained view on
+Standard, completed STOP, record routes or a non-hardware source. While a STOP
+final read is pending, Batch retains its view and merges in-flight worker frames. The scripted producer
+carries its existing record-only policy in the prepared step rather than writing
+a second view. Test fixtures and the deliberate stale-batch soak injection still
+construct controlled worker views. Pipe uses the transitional WorkerViewKey:
+MappingKey plus every original channel/trigger/acquisition dependency remains
+until M4 supplies batch-owned snapshots. Trigger-only changes refresh the workers
+without a MAPPING class. Remaining statistics/history/mask/zone/hardware-average,
+math and view consumer switches and deletion of legacy observations belong to e.
+These contracts are host tested; unit smoke and independent review remain required.
+
 ## Layers
 
 Hexagonal where it pays, plain modules where it does not. The domain is its own crate, so Cargo enforces the direction.
@@ -1300,6 +1335,7 @@ after each step may tighten them, never loosen them without a doc change.
 |---|---|---|---|---|
 | main, full step (first A72) | p50 <= 8 ms, p99 <= 15 ms | `step` | unitlab | M3d (counter), asserted from round 1 |
 | intake + change | p99 <= 0.5 ms | `stage intake`, `stage change` | host timing guard, unitlab | M2.3 |
+| picture invalidation (main and zoom map clear) | p99 <= 3 ms, provisional 4x host estimate plus tail headroom | `stage picture` | host mapping-edit storm, mandatory unit storm | M2.3d |
 | records stage | p99 <= 1.5 ms off the fast path; records are built on the workers | `stage records` | host timing guard, unitlab | M6 |
 | accumulate (at most 3 map sets, touched rows, fused grade) | p99 <= 2 ms; <= 4 ms on HDMI | `stage accumulate` | host timing guard, unitlab | M9, M10 |
 | compose + present submission (sum) | p99 <= 4 ms; <= 6 ms on HDMI | `stage compose`, `stage present` | unitlab | M3d (counter), asserted from M9b |
@@ -1321,6 +1357,24 @@ after each step may tighten them, never loosen them without a doc change.
 | idle in STOP | total CPU < 3 % of one A53; main wakes only on flips and input | `cpu`, `wakes` | unitlab | M3d |
 | allocations | 0 per frame after warm-up on every hot path ([Allocations](#allocations)) | `alloc` | counting-allocator tests | each step that touches a hot path; harness in G2 |
 | memory | RSS <= 120 MB + `memplan` total, flat over a 2 h soak ([Memory and queues](#memory-and-queues)) | `rss` | host soak, unitlab | M5b |
+
+Picture invalidation is a separate consumer phase; G2 intake/change timing excludes it.
+Ten isolated release runs of each storm measured a worst clearing-step p99 of
+422,833 ns in the shared M1 storm (90 clears per run); the dedicated main/zoom
+storm retained 256 clears. This exceeds the reviewer's earlier 164,500 ns and
+supersedes calibration that included idle steps. The existing A72 estimate in
+[Host measurements](../fork/perf-plan.md#host-measurements) is 4x: 1,691,332 ns.
+Apply the perf guard's existing 50% tail headroom (2,536,998 ns), then round up to a
+provisional 3,000,000 ns unit budget and a 750,000 ns host guard.
+Both storm guards assert the picture budget. The dedicated mapping-edit storm
+exercises both maps on every sample; the shared storm runs 1,000 steps to collect
+at least 50 clears. Both report clearing-step count, p99 and maximum alongside
+change in the perf report and `:SYSTem:STATe?`, keeping the 0.5 ms intake/change
+budget separate. This estimate is not unit evidence: unit p99 under a mapping-edit
+storm must pass before acceptance.
+The additional timing ring holds the last 256 clears (2 KiB plus one usize
+counter), owned by the UI observer for its lifetime; idle steps do not overwrite
+it. It adds no queue or per-step allocation.
 
 ### Host budget rows
 

@@ -777,7 +777,6 @@ impl Ui {
         } else {
             self.refresh_stopped_reference();
         }
-        self.ph.clear();
         self.measure_refs();
         self.analyzer_update();
         match replaced {

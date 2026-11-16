@@ -748,8 +748,7 @@ impl Ui {
         self.select_workspace_source(WaveId::Ch(self.m.active));
         self.last[0] = None;
         self.cleared = false;
-        self.ph.clear();
-        self.phz.clear();
+        change::replay(self);
         self.close_menu();
         self.relayout();
         self.settings_changed();
@@ -970,7 +969,7 @@ impl Ui {
             self.fit_reference_trigger_levels();
         } else {
             self.select_workspace_source(WaveId::Ref(first));
-            self.dirty_map = true;
+            change::mapping_observed(self, change::oracle::Row::Layout);
         }
         self.relayout();
         self.toast(&format!("Loaded {} into R{}", name, first + 1));

@@ -1431,7 +1431,6 @@ pub struct Ui {
     /// parts of `step` (ms, smoothed): measurements, analysers and decoders, the second pane, the brightest pixels
     pub t_parts: [f32; 4],
     pub info: String,
-    pub dirty_map: bool,
     vmax: [u32; NCH],
     /// brightest pixel of the merged maps (colour grade), main / zoom view
     vmax_cg: u32,
@@ -1762,7 +1761,6 @@ impl Ui {
             t_gpu_screens: None,
             t_parts: [0.0; 4],
             info: String::new(),
-            dirty_map: true,
             vmax: [1; NCH],
             vmax_cg: 1,
             vmaxz_cg: 1,
@@ -2283,7 +2281,7 @@ impl Ui {
         let anchor = self.zoom_divs_at(area, fraction);
         self.zoom_vfactor = (self.zoom_vfactor * 2.0f32.powi(direction)).clamp(1.0, 1024.0);
         self.zoom_vcenter = anchor - (0.5 - fraction) * VDIV / self.zoom_vfactor;
-        self.dirty_map = true;
+        change::mapping_observed(self, change::oracle::Row::Layout);
     }
 
     fn main_horizontal_step(&mut self, direction: i32, fraction: f32) {
@@ -2383,7 +2381,7 @@ impl Ui {
                 self.clamp_zoom();
             }
         }
-        self.dirty_map = true;
+        change::mapping_observed(self, change::oracle::Row::Layout);
         true
     }
 
@@ -2445,7 +2443,7 @@ impl Ui {
                 self.ph = Phosphor::new(w0.w as usize, w0.h as usize);
                 self.phz = Phosphor::new(1, 1);
             }
-            change::dirty(self, change::oracle::Row::Layout);
+            change::mapping_observed(self, change::oracle::Row::Layout);
         }
         self.wins = wins;
         self.cur_win = 0;
@@ -2806,8 +2804,6 @@ impl Ui {
         );
         self.wfm_total = 0;
         self.bus_views_clear();
-        self.ph.clear();
-        self.phz.clear();
         (self.vmax, self.vmaxz, self.vmax_cg, self.vmaxz_cg) = ([1; NCH], [1; NCH], 1, 1);
         // without a last record there is nothing to redraw in STOP, average with, compute math / decode / search on
         self.last[0] = None;
@@ -2856,8 +2852,6 @@ impl Ui {
     // ------------------------------------------------------------------ acquisition per frame
 
     pub fn step(&mut self, dt_wall: f64) {
-        // Acquire > Draw path: the batch pipeline of PR #7 on the hardware only
-        change::acquisition::draw_path_enforce(self);
         // System > Features: what is left out runs nothing
         self.features_enforce();
         self.poll_reference_measurements();
@@ -2865,7 +2859,7 @@ impl Ui {
         self.math_fit_tick();
         self.sim_poll();
         self.eye_auto_poll();
-        let Some(final_done) = change::begin_step(self, dt_wall) else { return };
+        let Some((final_done, picture_cleared)) = change::begin_step(self, dt_wall) else { return };
         let hw_seg = self.seg_hw_on();
         let persist = PERSIST[self.m.persist].1;
         if self.record_mode() {
@@ -2887,14 +2881,9 @@ impl Ui {
             if self.m.run == RunState::Run {
                 self.stop_ti_off = None;
             }
-            if self.dirty_map {
-                self.ph.clear();
-                self.phz.clear();
-                self.dirty_map = false;
-            }
             // minimum persistence: replace the picture when a new record arrives, not every frame (at large depths
             // the hardware delivers fewer records than frames, and clearing each frame made the trace flicker)
-            let mut clear_pending = persist == 0.0;
+            let mut clear_pending = persist == 0.0 && !picture_cleared;
             if persist > 0.0 {
                 let f = (-dt_wall / persist as f64).exp() as f32;
                 self.ph.decay(f);
@@ -2924,11 +2913,6 @@ impl Ui {
             // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
             let deep_raw = crate::deepmeas::want(&self.m, &sw).is_some();
             let mut raw_rec: Option<Record> = None;
-            if !fast {
-                if let Some(p) = crate::drawpipe::pipe(&sw) {
-                    p.set_view(None, 0, 0, sw.interp);
-                }
-            }
             // fast display path (fastdraw.rs): every queued frame but the newest straight into the phosphor map
             if fast {
                 let t0 = std::time::Instant::now();
@@ -2965,7 +2949,6 @@ impl Ui {
                 // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
                 if let Some(p) = crate::drawpipe::pipe(&sw) {
                     let t1 = std::time::Instant::now();
-                    p.set_view(Some(&self.m), self.ph.w, self.ph.h, sw.interp);
                     let d = p.merge(&mut self.ph, &mut clear_pending, &mut self.fast_edges, &mut self.fast_off);
                     if d.triggered > 0 {
                         self.m.status = TrigStatus::Triggered;
@@ -7310,7 +7293,7 @@ impl Ui {
             }
         }
         if !demo {
-            self.dirty_map = true;
+            change::mapping_observed(self, change::oracle::Row::Layout);
             return;
         }
         // the demo: every source the protocol uses; the traffic of some is on all its channels or on every channel
@@ -7346,7 +7329,7 @@ impl Ui {
                 }
             }
         }
-        change::dirty(self, change::oracle::Row::Trigger);
+        change::mapping_observed(self, change::oracle::Row::Trigger);
     }
 
     /// Trigger menu rows for the selected type.
@@ -7554,7 +7537,7 @@ impl Ui {
             let Proto::Module(i) = p;
             let (what, val) = crate::protocols::get(i).trigger_default();
             (m.trig_bus, m.trig_bus_val, m.ser) = (what, val as u64, SerialTrig::default());
-            change::dirty(self, change::oracle::Row::Trigger);
+            change::mapping_observed(self, change::oracle::Row::Trigger);
             return;
         }
         // the presets below suit the demo signals (each type on a channel that shows it). On the hardware a trigger
@@ -7653,7 +7636,7 @@ impl Ui {
                 }
             }
         }
-        change::dirty(self, change::oracle::Row::Trigger);
+        change::mapping_observed(self, change::oracle::Row::Trigger);
     }
 
     fn menu_title(&self, menu: MenuId) -> String {
@@ -8851,7 +8834,6 @@ impl Ui {
             }
             Item::Persist => {
                 m.persist = cyc(m.persist, PERSIST.len(), d);
-                self.ph.clear();
             }
             Item::Intensity => m.intensity = (m.intensity as i32 + d * 5).clamp(10, 100) as u32,
             Item::ZoneSel => self.zone_sel = cyc(self.zone_sel, 2, d),
@@ -8870,16 +8852,16 @@ impl Ui {
             Item::Dots => {
                 let i = DOTS_MODES.iter().position(|&x| x == m.dots).unwrap_or(0);
                 m.dots = DOTS_MODES[cyc(i, DOTS_MODES.len(), d)];
-                change::dirty(self, change::oracle::Row::Layout);
+                change::mapping_observed(self, change::oracle::Row::Layout);
             }
             Item::BottomBar => {
                 m.bar_compact = !m.bar_compact;
-                self.dirty_map = true;
+                change::mapping_observed(self, change::oracle::Row::Layout);
             }
             Item::AcqCores => m.cores = !m.cores,
             Item::AcqDrawPath => {
                 m.draw_batch = !m.draw_batch;
-                self.dirty_map = true;
+                change::mapping_observed(self, change::oracle::Row::Layout);
             }
             Item::Hdmi => {
                 let i = HDMI_MODES.iter().position(|&x| x == m.hdmi).unwrap_or(0);
@@ -8896,7 +8878,7 @@ impl Ui {
                 let i = m.z_src.map_or(0, |c| c + 1);
                 let i = opt_src_step(i, d);
                 m.z_src = if i == 0 { None } else { Some(i - 1) };
-                change::dirty(self, change::oracle::Row::Layout);
+                change::mapping_observed(self, change::oracle::Row::Layout);
             }
             Item::Histogram => {
                 let all = [Hist::Off, Hist::Vertical, Hist::Horizontal];
@@ -9173,9 +9155,6 @@ impl Ui {
                     oos_core::change::Classes::NONE
                 },
         );
-        if self.m.run == RunState::Run {
-            change::dirty(self, change::oracle::Row::Mark);
-        }
         change::stats_clear(self);
     }
 
@@ -11433,7 +11412,7 @@ impl Ui {
                 match t.drag {
                     Drag::ZoomVertical => {
                         self.zoom_vcenter = t.start_offset + dy as f32 / ppy / self.zoom_vfactor;
-                        self.dirty_map = true;
+                        change::mapping_observed(self, change::oracle::Row::Layout);
                     }
                     Drag::RefOffset(i) => {
                         if let Some(reference) = &mut self.refs[i] {
@@ -11656,7 +11635,7 @@ impl Ui {
         self.zoom_vcenter = next_center;
         self.clamp_zoom();
         self.zoom_arm = true;
-        self.dirty_map = true;
+        change::mapping_observed(self, change::oracle::Row::Layout);
         if !on {
             self.relayout();
         }
@@ -12542,6 +12521,7 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     mod change;
+    mod change_picture_contracts;
     mod epochs;
     mod mapping;
     mod outbox;

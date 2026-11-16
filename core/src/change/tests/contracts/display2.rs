@@ -7,7 +7,7 @@ pub(super) const CASES: &[Case] = &[
         |m| {
             m.draw_batch = !m.draw_batch;
         },
-        C::NONE,
+        C::PHOSPHOR,
     ),
     (
         "bar_compact",

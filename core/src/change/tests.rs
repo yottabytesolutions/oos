@@ -48,7 +48,6 @@ fn unrelated_fields_snapshot() {
             "dec_ascii",
             "dec_sel",
             "decs",
-            "draw_batch",
             "fine_t",
             "fine_v",
             "grid",

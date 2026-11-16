@@ -101,7 +101,6 @@ mod tests {
         ui.m.trig_bus = BusWhat::Data;
         ui.m.trig_bus_val = 0xa5;
         ui.relayout();
-        ui.dirty_map = false;
         assert!(ui.mixed_bus_mode());
         (ui, shared)
     }
@@ -437,7 +436,7 @@ impl Ui {
                 self.m.run = RunState::Run;
                 self.m.status = TrigStatus::Wait;
                 self.m.floor_live_tdiv();
-                self.dirty_map = true;
+                change::mapping_observed(self, change::oracle::Row::Layout);
             }
             3 => {
                 self.bus_candidate.force = true;

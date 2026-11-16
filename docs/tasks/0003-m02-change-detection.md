@@ -16,6 +16,34 @@ Complete [migration M2](../architecture/migration.md#m2-one-change-detection-poi
 
 ## Plan
 
+M2.3d claim: owner `codex-d`, branch `t0003-m23d`, base `d7418b0d`, unit tier,
+under the owner's assignment. Switch mapping/phosphor only. Remove dirty-map state
+and every writer (including upstream additions); retain observation-only legacy
+signals and the normalization statistics bridge until e. Centralize accepted
+picture invalidation and worker-view publication, preserving all old worker-key
+inputs through M4 and ordinary Min/decay/STOP drawing. Pin changed and unchanged
+behavior on the base before production edits. Compare base/candidate scripted
+captures directly without re-blessing. Run focused debug/release, soak/census,
+isolated timing, exact gate clippy and fast gate. No commits or hardware access.
+Review-round plan: reproduce all seven findings before their fixes; audit each base dirty-map seam and effective field contract; separate detection and picture timing, derive the picture budget with the existing 4x A72 estimate, and retain unit storm/final-read acceptance. Also reserve `ui/src/perfguard.rs`, `ui/src/ui/tests/mapping/sessions.rs` and `ui/src/drawpipe/tests/publication.rs` for these fixes and regressions. No commits.
+
+Round 3 plan: sample actual picture clears only, report count/p99/max, calibrate
+both release storms with at least ten runs and the worst observed p99, re-render
+base/final candidate, move review regressions to a named test module and assert
+oracle counters. Reuse the accepted claim; additionally reserve
+`ui/src/ui/tests/change_picture_contracts.rs`. Run focused debug/release, timing,
+exact clippy and fast gate; update one draft-message section, no commits.
+
+Reserved paths: `ui/src/ui.rs` explicitly, `ui/src/ui/change.rs`,
+`ui/src/ui/change/`, `ui/src/ui/tests/{mapping,change,shadow}.rs`,
+`ui/src/ui/tests/mapping/`, `ui/src/ui/{marks,autoset,analysis,deskew,offline,workflow,measure_pairs,trigger_controls,bus_candidate,workspace,sim}.rs`,
+`ui/src/ui/meascatalog/backend.rs`, `ui/src/ui/bode.rs`, `ui/src/ui/analysis/window/tests.rs`,
+`ui/src/ui/script/batch.rs`, `ui/src/drawpipe.rs`, `ui/src/drawpipe/feed.rs`,
+`core/src/change/{mapping,values,display2}.rs`,
+`core/src/change/tests/contracts/display2.rs`, `core/src/change/tests.rs`, `ui/src/drawpipe/tests/`,
+`docs/architecture/README.md`, this task and `target/COMMIT_MSG.txt`.
+New helpers stay within these existing modules; no ratchet edits or upstream rebaseline.
+
 Integration coverage failure repair: owner `codex-d`, branch `t0003-m2`, base
 `0137955`, under the owner's assignment for batch integ-19. Trace partial SINGLE
 completion and prove whether the 15 ms record budget changes completion or only
@@ -460,7 +488,7 @@ from the classifier under test. A bare `dirty_map` or `mstat.clear` cannot suppl
 | `fit_platform`, `model.rs:2020` / `ui.rs:1888`, marks on any repair | Unavailable channel/coupling repair: `{acq, mapping, stats}`; missing trigger source: `{acq, stats}`; active-channel-only repair: `{}`. Other repairs use their exact field union. | Pin each capability/repair case, including LA, decoder, generator and analysis sources; no blanket all-class repair. Extra old marks/clears are D1. |
 | `clamp_zoom`, `ui.rs:1675`, called by zoom edits/recall/timebase changes | `{mapping}` for effective zoom geometry, plus any classes of the initiating timebase change | Compare effective zscale/zdelay after clamps and both plot sizes; earlier normalization is D3. |
 | Analyzer source repair in `ui/analysis.rs:528` | `{math, view}` for spec_src repair, `{view}` for eye_src repair, plus the triggering channel diff's classes | Compare after the corresponding repair, not before the old view stage; moving repair before classify is D3. |
-| Relayout `dirty_map`, `ui.rs:1631`; dots/Z-input marks `ui.rs:6527,6544` | `{mapping}` for effective dimensions/dots; Z-input additionally `{acq, stats}` when raw needs or measured channel set change | Observe actual dimensions and raw-policy changes; add phosphor/view only where their field fixtures require it. Old broad clears use D1/D2. |
+| Relayout `dirty_map`, `ui.rs:1631`; dots/Z-input marks `ui.rs:6527,6544` | `{mapping}` for effective dimensions/dots; Z-input additionally `{acq, stats}` by its field contract | Observe actual dimensions, Z source and raw-policy changes; an effective Z-source edit requires MAPPING and cannot be labelled D1 when its clear is missing. Only extra broad clears use D1; STOP absence uses D2. |
 | Trigger/demo marks `ui.rs:5227,5413,5495`; autoset/Bode marks `ui/autoset.rs:504,596`, `ui/bode.rs:548,666` | Trigger-only changes: `{acq, stats}` and worker-view refresh; accompanying channel/timebase changes add `{mapping}` and their declared classes | Keep all old Key::of worker dependencies; dirty-map marks do not make every trigger field a mapping field. Stage timing is D5. |
 | Recall/default/auto marks `ui.rs:7122,7896,7913`; history-navigation mark `ui/marks.rs:40` | Recall/default/auto: exact union of changed fields and derived UiAcq. Replay navigation: `{mapping}` preview event, without inventing `acq` for navigation alone | Same-value recall has no diff-driven classes; explicit requests still act. Seed every affected consumer; D1/D2/D5 as applicable. |
 | SINGLE key mark `ui.rs:7889`, stamp bump `ui.rs:1883` and average restart | SINGLE request resolves epoch in the current step; `{phosphor, stats, hw_average}` plus other declared request resets | Compare request consumers even at equal settings; generic run/sweep diff is excluded. Old stamp is an epoch observation, not automatically `acq`; D4. |
@@ -730,6 +758,356 @@ M4/M5/M9/M10 retain their specified conversion, channels, whole-batch ownership 
 Every candidate and conflict resolution needs independent cross-vendor review; the author never merges or pushes.
 
 ## Status
+
+- 2026-11-16: M2.3d round 3 worker handoff, no commits, unchanged HEAD
+  `d7418b0d`. All five requested items are addressed. Fresh picture evidence
+  supersedes `target/m23d-verified-pictures.json` from before round 2. Verify the
+  archived base source byte-for-byte against d7418b0d, rebuild debug and release
+  with its own `target/m23d-r3-base-build`, then render base and final candidate
+  in fresh processes and isolated state directories, twice per capture.
+  Debug: 20 cases / 44 captures per binary, all repeated captures deterministic,
+  zero RGB or metadata differences. Release: 263 cases / 621 captures per binary,
+  all repeated captures deterministic, zero RGB or metadata differences. There
+  are no differing captures to justify and no golden references were changed.
+  The matrix does not replace the focused Z-input, equal-settings session Replay
+  and pending STOP-final Batch regressions, which pass on the final source.
+  Commands: `cargo build --locked --manifest-path target/m23d-base-source/ui/Cargo.toml
+  --bin oos-ui` with/without `--release` and isolated CARGO_TARGET_DIR, and
+  `python3 target/m23d-capture.py {r3base,r3final} {debug,release}` for fresh renders.
+  Build/render logs use those labels; direct comparison is
+  `target/m23d-r3-pictures.json` and `target/m23d-r3-compare.log`. Source and binary
+  SHA-256 receipts are in `target/m23d-r3-source.json`.
+
+  Final focused debug and release each pass 42 tests, zero failures, two explicit
+  timing ignores, with default test parallelism. Commands/exits/logs are in
+  `target/m23d-r3-final-checks.json`. Both ignored release timing guards then
+  pass explicitly and in isolation, exit 0 each, using the calibrated 750,000 ns
+  host budget and provisional 3,000,000 ns unit budget. This adds run 11 of each
+  storm: shared n=90, picture p99/max 296,875/296,875 ns, intake/change/paired p99
+  78,958/4,625/81,541 ns; mapping n=256, picture p99/max 86,250/93,417 ns,
+  paired p99 14,083 ns. Neither exceeds the 422,833 ns calibration worst, so the
+  derivation below holds across all 22 runs. Full commands, reports and exits:
+  `target/m23d-r3-final-timing.json` and its two logs. The mapping guard's exact
+  zero-oracle assertion passes, with no unreviewed diagnostic.
+
+  The exact unchanged gate clippy step runs all six host/five ARM invocations,
+  exits 1 and prints `FAIL clippy (8.4 s)`
+  (`target/m23d-r3-final-exact-clippy.log`). Its complete 198-finding list equals
+  the round 2 list (`target/m23d-r3-final-clippy-equality.log`). The direct
+  d7418b0d/candidate runner reports new=0/grown=0 for every one of six crates,
+  zero compiler errors, exit 0 (`target/m23d-r3-clippy-comparison.log`); the final
+  budget-only literals/comment update adds no finding. No ratchet or rule edits.
+  `cargo xtask check --fast` exits 0 and prints exactly
+  `partial gate passed (not done): 8 steps in 84 s`
+  (`target/m23d-r3-fast.log`). Whitespace, source-receipt and added-text privacy
+  checks pass. `target/COMMIT_MSG.txt` retains one section, with fresh capture
+  evidence and the new derivation. No staging, commit, push, merge or hardware
+  access. Task stays active for cross-vendor verification, coordinator full/image
+  gate, the earlier socket checks on a permitted host, and actual unit storm p99
+  plus Batch final-read acceptance. The 3 ms unit estimate supersedes the earlier
+  1 ms provisional entries; it is not measured unit acceptance.
+
+- 2026-11-16: M2.3d round 3 calibration supersedes the earlier mixed-step
+  130,458 ns derivation and 1 ms provisional budget. The actual-clear-only ring
+  retains the last 256 clears across idle steps, with an independent sample count;
+  both state query and perf output report `stage picture n=... p99_ns=... max_ns=...`.
+  Fewer than 50 clears report p99 pending, while max is already available. Storage
+  remains 2 KiB plus one usize, observer-owned, without per-step allocations.
+  Both new synthetic regressions fail with the old sampler (exit 101,
+  `target/m23d-r3-timing-before.log`); idle steps, sparse clears, ring wrap and
+  legitimate zero-duration samples are covered. The state-query regression pins
+  60 actual clears across 120 steps and zero oracle disagreements.
+
+  `change.rs`'s inline review module moved to
+  `ui/src/ui/tests/change_picture_contracts.rs`; the test-only
+  `mark_mapping_events` field and writer are gone. The settings-mark test now
+  asserts exact reviewed oracle deltas. The mapping storm calls settings_marked
+  after each offset edit and requires every oracle counter to remain zero;
+  no unreviewed storm line is accepted. The shared storm now runs 1,000 steps
+  to collect 90 actual clears, enough for p99, instead of padding 300 steps
+  with idle timings.
+
+  Isolated aarch64 release calibration ran each guard ten times, interleaved,
+  with no builds/captures/gates running alongside. Each shared run has n=90
+  (nearest-rank p99 is its max); each mapping run has n=256. All values are ns:
+
+  | Run | Shared p99 / max | Main+zoom mapping p99 / max |
+  |---|---|---|
+  | 1 | 422,833 / 422,833 | 39,375 / 66,000 |
+  | 2 | 332,875 / 332,875 | 67,875 / 115,417 |
+  | 3 | 319,416 / 319,416 | 76,792 / 82,084 |
+  | 4 | 302,917 / 302,917 | 69,667 / 97,541 |
+  | 5 | 291,125 / 291,125 | 56,750 / 305,041 |
+  | 6 | 251,333 / 251,333 | 32,458 / 49,959 |
+  | 7 | 365,791 / 365,791 | 59,250 / 106,166 |
+  | 8 | 310,667 / 310,667 | 37,000 / 76,667 |
+  | 9 | 264,667 / 264,667 | 41,458 / 78,208 |
+  | 10 | 273,542 / 273,542 | 68,833 / 93,041 |
+
+  All ten shared calibration runs exit 101 at the old 250,000 ns picture
+  assertion; all ten mapping runs exit 0, with zero oracle counters. Detection
+  retains its independent 500,000 ns guard. Full commands, exits and raw reports:
+  `target/m23d-r3-calibration.json` and `target/m23d-r3-calibration-{shared,mapping}-NN.log`.
+  The worst observed p99, 422,833 ns, exceeds the reviewer's 164,500 ns and all
+  dedicated-storm results. Derivation: 422,833 x 4 = 1,691,332 ns estimated A72;
+  x 1.5 tail headroom = 2,536,998 ns; round up to 3,000,000 ns provisional unit
+  budget, giving a 750,000 ns host guard. Both guards and the permanent performance
+  documentation use these values (`target/m23d-r3-budget.json`). Unit storm p99
+  remains the real acceptance item; no hardware access or unit performance claim.
+
+- 2026-11-16: final review-round worker handoff, uncommitted on unchanged d7418b0d.
+  All seven findings are addressed; the audit table below covers the base's
+  dirty-map seams, key fields and oracle rows. Failing-before execution logs are
+  `target/m23d-review-before-{mapping,events-timing,core}.log`: four picture/session
+  failures, four emission/timing/script/STOP failures, and the literal Z contract
+  failure respectively (all exit 101). The independent oracle-required-class and
+  warmed-record negative controls also both fail their behavioral assertions,
+  exit 101 (`target/m23d-review-negative-oracle-record.log`); controls were restored.
+
+  Final focused debug and release each pass 41 tests, zero failures, two explicit
+  timing ignores. Complete logs: `target/m23d-review-final-focused-{debug,release}.log`.
+  Both timing tests then pass explicitly, isolated after builds/soaks, with 256
+  samples: shared storm intake/change/paired p99 66,958/6,250/71,124 ns and picture
+  21,792 ns; dedicated main/zoom mapping storm picture p99 52,208 ns, paired
+  11,000 ns. Both assert picture <=250,000 ns and paired <=500,000 ns independently.
+  The provisional unit picture budget is 1 ms, with hard unit storm acceptance
+  still pending. Commands, exits and complete logs are in
+  `target/m23d-review-isolated-timing-final.json`. No unit speed claim is made.
+
+  Final-source host-script 14 and soak/census 11 tests pass in each profile;
+  `target/m23d-review-final-integration-checks.json` records commands/exits/logs.
+  Five release modes each complete 1,000 steps after 500 warmup steps, zero failed
+  plateau cycles, no retained growth, and acquired/used/dropped 13,648/13,618/30.
+  Each of the five warmed UI census rows reports 256 calls and zero allocations;
+  snapshot reuse reports zero versus 220 naive calls, 6,579 bytes per snapshot.
+  Debug retains the composed-soak release-only policy; its allocator/census tests
+  do run. No extended 10,000-step/image or new golden acceptance is claimed.
+  The broader implementation check also passed UI 736 debug / 735 release
+  (23 ignores, two socket exclusions), drawpipe 18 / 2 ignores, and core 26 unit
+  plus 3 value tests in each profile. Its UI run predates only the final oracle
+  value-type encapsulation/rename and ignored timing-budget calibration; the
+  final focused, integration and timing runs above cover the final implementation.
+  Commands and evidence are in `target/m23d-review-final-checks.json`.
+
+  Final fast gate exits 0 and prints exactly
+  `partial gate passed (not done): 8 steps in 82 s`
+  (`target/m23d-review-fast-final.log`). The exact unchanged gate clippy step,
+  including six host and five ARM invocations, exits 1 and prints
+  `FAIL clippy (8.7 s)` (`target/m23d-review-exact-clippy-final.log`). All 198 reported
+  entries match the earlier exact list. The isolated baseline comparison has
+  new=0/grown=0 for all six crates, zero compiler errors; complete comparison logs
+  are in `target/m23d-review-clippy-comparison.log`. Final-list equality is in
+  `target/m23d-review-clippy-final-equality.log`. No ratchet, lint, allowance,
+  dependency, hook or remote was changed. Source hashes are retained in
+  `target/m23d-review-final-source.json`; whitespace and added-text/message privacy
+  checks pass. One draft section remains in `target/COMMIT_MSG.txt`.
+
+  Both socket cases were attempted on the final debug/release test binaries and
+  exit 101: Bode's listener bind is PermissionDenied/Operation not permitted;
+  bus-candidate's SCPI listener is unavailable. Full failures and commands are in
+  `target/m23d-review-sockets.json` and its logs. No skip/ignore annotation was
+  added. The coordinator must run both on a host that permits loopback sockets.
+  No staging, commit, push, merge or hardware access. Task remains active for
+  cross-vendor verification, coordinator full/image gate and the recorded unit
+  smoke, including mapping-edit-storm p99 and Batch RUN-to-STOP final read.
+
+- 2026-11-16: review-round timing decision: G2 detection ends before picture::apply;
+  the main/zoom clear has its own fixed 256-sample ring (2 KiB), `stage picture`
+  counter in :SYSTem:STATe? and adjacent perf output. Isolated calibration on the
+  aarch64 release host measured picture p99 55,292 ns in a 300-edit storm that
+  clears both maps every step; the mixed M1 storm reached 130,458 ns. Use the
+  higher result, including colder and varied-layout clears. The existing
+  A72/host estimate is 4x (`docs/fork/perf-plan.md`, Host measurements): 521,832 ns.
+  Apply the perf guard's existing 50% tail headroom, giving 782,748 ns, then round
+  up to a provisional 1,000,000 ns unit budget and a 250,000 ns host guard. Both
+  storm tests assert this independent picture budget. Unit storm p99 is a hard
+  acceptance item, not established by this estimate. The paired G2 guard remains
+  500,000 ns. Calibration counter lines and derivation are retained in
+  `target/m23d-review-timing-calibration.json`; those earlier raw captures were
+  superseded by the final run. Complete final logs and both independent budget
+  assertions are in `target/m23d-review-isolated-timing-final.json` and its logs.
+  The final syntax round initially printed `gate FAILED in 86 s: size` (exit 1):
+  the walker counts impls by spelling, so the new private Context constructor was
+  grouped with unrelated Context types. Renamed it OracleContext; no rule was
+  changed. The exact base/candidate size walker then reports new=0/grown=0 in
+  all six crates, with ten UI entries shrinking (`target/m23d-review-size-delta-final.log`).
+
+- 2026-11-16: M2.3d review-round implementation addresses findings 1-7 without
+  commits. Z source now participates in MappingKey; its RUN/infinite-persistence
+  regression exercises Standard and Batch. The literal core field contract also
+  requires MAPPING. Record presentation observes its old map clear; offline entry
+  and return to retained live settings issue an explicit Replay request even at
+  equal settings. Script route policy updates an existing Prepared. Batch keeps
+  merging while STOP final read is pending. settings_marked emits one Mark/MAPPING
+  observation. Each finding has a failing-before host regression (logs and final
+  validation follow). The oracle now keeps required effective mapping/phosphor
+  contracts independently of the classifier: a missing required class increments
+  unreviewed instead of receiving D1. Conditional layout inputs require MAPPING
+  only when their effective Layout changes; unrelated broad clears still use D1.
+
+  Base dirty-map/clear audit, including upstream writers and every MappingKey
+  projection. `M` means MAPPING, `P` PHOSPHOR; these are picture classes only,
+  unioned with the independently declared acquisition/statistics/view classes.
+  The exhaustive 296 literal core field fixtures and nested worker fixtures pin
+  the key/class relationship; host UI regressions pin accepted clear behavior.
+
+  | Base fields or effective input | Class/key coverage | Old seam and oracle disposition |
+  |---|---|---|
+  | `ch[c].on/vscale/vfine/bias/skew/offset/coupling/bw/probe/invert` | M, MappingKey.channels | Mark/Recall/Stage/Normalize; required geometry, D2/D3 for old absence only |
+  | `tscale/tfine/delay/zoom/zscale/zdelay` | M, MappingKey.timebase | Mark/Recall/Stage, wheel/zoom/fit; required geometry |
+  | `dots` | M, MappingKey.display | Layout; equal dots is extra old D1, effective edit requires M |
+  | `z_src` | M plus ACQ/STATS, MappingKey.display | Layout; required M, missing clear is a regression, never D1 |
+  | `win_layout/ch_win/math_win/la_win` | M, MappingKey.display | Layout/workspace/relayout; direct key changes require M |
+  | Main/zoom dimensions, panel/HDMI output, pane/menu geometry | M, MappingKey.layout | Layout, actual size comparison; required M |
+  | `zoom_vfactor/zoom_vcenter` | M, Layout.vertical_zoom | Vertical wheel/drag/set_zoom; required M |
+  | `persist/color_grade` | P, literal field classes | Mark/direct persistence clear; required P |
+  | `acq/avg_count/avg_hw` | P, literal field classes | Acquisition/Mark/Stage; required P; missing old average/STOP reset remains D7 |
+  | `draw_batch` | P, literal field class | Layout/draw-path switch; required P |
+  | `deskew_ch` | P plus STATS, literal field class | Layout/direct clear; required P; extra old M is D1 |
+  | `ref_win/density/strip_dock/split_pane/pane`, HDMI and bottom-bar choices | M when effective layout changes, through Layout | Raw settings are not unconditional geometry; actual Layout is required, extra old clear D1 |
+  | `deskew_ref`, ref scale/offset/visibility, record timebase/source selection | M from effective timebase/Layout, or Replay on presentation/session transition | Analog phosphor does not store reference traces; extra analog clear D1; explicit presentation clear observed at Layout |
+  | Trigger/demo/decoder choices, `ch[c].unit`, labels, brightness, cursor/analysis/measurement choices and same-value recall | M/P only for accompanying effective fields in the rows above | Mark/Trigger/Recall/Stage/Analyzer/Measurement; broad extra old clears D1; trigger-only worker refresh retained |
+  | Initial construction; CLEAR; SINGLE; record presentation/session entry/return | Initial empty maps; CLEAR/SINGLE P; Replay M | Clear/Single/Layout request consumers act at equal settings and once per acceptance |
+  | RUN-to-STOP, ordinary Min replacement, decay, STOP redraw, measurement-result arrivals | No new settings clear class | Run/Drawing/Measurement; drawing/final-read behavior retained, extra result-driven dirty marks D1 |
+  | Publication/Reset/Mask/Math/MaskSource and explicit stage epoch | No implicit M/P | Their own declared consumers remain unchanged; any accompanying geometry/persistence uses this table |
+
+  The post-d unit smoke additionally requires RUN -> STOP final raw read in Batch:
+  an in-flight batch merges before the final current-pair raw record replaces it,
+  then workers retire. Repeat Z-input edits with infinite persistence and repeat
+  equal-settings record/session transitions. Hard performance acceptance: unit p99
+  under a mapping-edit storm must meet the provisional 1 ms picture-clear
+  budget and the existing 500 us G2 intake/change budget, retaining FPS and complete-step comparison.
+  These hardware checks remain pending; no device access is authorized here.
+
+- 2026-11-16: M2.3d worker handoff on unchanged `d7418b0d` plus this unstaged
+  diff. Final broad UI selection passes 727 debug / 726 release, 22 existing
+  ignores each, with default test parallelism. Exact commands:
+  `cargo test --locked -p oos-ui --bin oos-ui [--release] ui:: -- --skip ui::tests::bode_sweep_drives_the_generator --skip ui::bus_candidate::tests::real_scpi_queries_keep_pending_candidate_and_force_uses_the_live_bus_path`.
+  Logs: `target/m23d-final-ui-{debug,release}-socketless.log`, both exit 0.
+  The first broad runs excluded only Bode and exited 101 (727/726 passed,
+  one failed): the existing bus-candidate SCPI socket has no listening port
+  in this sandbox. Both failures are retained in `target/m23d-final-ui-{debug,release}.log`;
+  no test annotation, assertion or transport was changed to hide them.
+  All other final commands exit 0: drawpipe 18 passed / 2 ignored, core 26
+  unit + 3 value tests, host-script 14 and soak 11 in each profile. Commands,
+  exits and complete logs: `target/m23d-final-checks.json` and its references.
+  New coverage includes STOP redraw without a new record on both paths,
+  accepted class unions, same-value CLEAR/SINGLE, no repeated clears, rejected
+  mapping followed by acceptance, vertical zoom, same dots, unchanged Min/decay,
+  retained statistics effects and accepted trigger-only worker publication.
+  The controlled real-worker/reference regression passes; forcing its
+  mapping-only negative control fails its new-level picture assertion as intended
+  (exit 101, `target/m23d-mapping-only-negative-control.log`). Core's full old
+  worker-dependency table also passes in both profiles.
+
+- 2026-11-16: final picture verification renders d7418b0d and the candidate in
+  fresh processes twice per case: debug 20 cases / 44 captures, release 263 /
+  621. All 665 decoded RGB images and settings metadata match exactly; every
+  repeat is deterministic. There are zero differing captures, so no per-capture
+  exception or re-bless is needed. Evidence: `target/m23d-verified-pictures.json`,
+  `target/m23d-{base-smoke,verified}-debug-captures.json`,
+  `target/m23d-{base,verified}-release-captures.json` and their capture directories.
+  Every stderr log has the same unreviewed event/field lines as its base:
+  debug 0/0, release 58/58 lines across repeat logs (inherited upstream cases),
+  zero differing logs (`target/m23d-oracle-inventory.json`). Golden references,
+  manifests and tolerances remain unchanged; the redesign reference mismatch
+  is still task 0066's separate re-bless work.
+
+- 2026-11-16: final soak/census and isolated timing evidence uses the same Rust
+  source hashes (`target/m23d-final-source.json`). Five release modes (raw,
+  codes, pairs, deep-pairs, average) each complete 1,000 steps, warmup 500,
+  with zero failed cycles and no retained growth. Each has exactly
+  acquired/used/dropped 13,648/13,618/30. Debug retains the existing explicit
+  release-only policy for this composed soak. Both profiles' five warmed UI
+  census rows report 256 calls and zero allocations. Snapshot reuse has zero
+  allocations versus 220 naive allocations, retaining 6,579 bytes per snapshot.
+  Logs: `target/m23d-final-soak-{debug,release}.log`; summaries and cycle CSVs
+  are under the per-mode directories printed there. No 10,000-step/image
+  acceptance is claimed. Isolated aarch64 release timing, run sequentially
+  after builds/captures/checks, passes on base and candidate with 256 samples:
+  base intake/change/paired p99 73,959/5,249/78,084 ns; candidate intake/change/paired p99 71,417/234,875/260,501 ns
+  (budget 500,000 ns). Complete samples are recorded in `target/m23d-isolated-timing.json` and its complete logs.
+  The accepted picture clears now count inside change time; the old dirty
+  clears ran later in Ui::step. This phase movement is explicit; it is not
+  an on-unit frame-rate or complete-step performance claim. The required
+  unit comparison against the latest baseline remains in the smoke list below.
+
+- 2026-11-16: final fast gate exits 0 and prints exactly
+  `partial gate passed (not done): 8 steps in 90 s`
+  (`target/m23d-fast-final.log` and its printed complete-log directory).
+  Its upstream-pending entries remain task 0066 work; full/performance/coverage/
+  image checks are not selected. A direct measurement with the unchanged gate
+  size walker compares the complete base and candidate: zero new or grown
+  size entries in every crate, ten UI entries shrink (`target/m23d-size-delta-final.log`).
+  The exact unchanged gate `steps::clippy` was run, including all six host and
+  five ARM invocations and protected-base comparisons: it exits 1 and prints
+  `FAIL clippy (1.6 s)` for inherited upstream ratchet findings. Its pending
+  comparison also fails on three inherited core enum_variant_names findings
+  and the inherited segmented-test unnecessary_cast; these are not waived
+  or repaired in d (`target/m23d-exact-clippy-final.log`). Measuring d7418b0d
+  and the final candidate with that same clippy runner in separate target
+  directories proves zero new/grown findings and zero compiler errors in all
+  six crates (exit 0, `target/m23d-clippy-isolated-comparison.log`, with full
+  command logs). Early shared-target comparisons duplicated diagnostics at
+  old/new line numbers, and the first incomplete base archive lacked a required
+  included public-key file; those exploratory failures remain recorded separately.
+  No ratchets, lint limits, allowances, hooks, dependencies or remotes changed.
+  Whitespace and added-text/message privacy checks pass (zero findings).
+  `target/COMMIT_MSG.txt` contains one draft section. No staging, commits,
+  push, full gate or hardware access. Task remains active for cross-vendor
+  unit-tier review, coordinator integration/image checks and the listed unit
+  smoke; existing producer/c integration holds are preserved.
+
+- 2026-11-16: M2.3d implementation removes every `dirty_map` occurrence in source,
+  plus the old drawpipe Key. `mapping_observed` is observation-only; mark_changed,
+  settings_changed and normalize's statistics bridge remain until e. Accepted
+  MAPPING/PHOSPHOR clear both maps once for their union. Min receives a local
+  already-cleared result and retains its replacement/decay operations. STOP's
+  existing same-record redraw owns its sole clear and legacy weight; running
+  no-frame preview remains M4, as the reviewed acceptance map specifies.
+  Accepted publication now owns worker enable/disable, including Standard/Batch
+  switches and leaving the hardware source. WorkerViewKey preserves every old
+  Key dependency; scripted record-only policy travels in Prepared (one bool,
+  no extra snapshot or allocation). Explicit stale-batch injection and isolated
+  host fixtures retain their controlled view construction, not normal UI writers.
+  Upstream vertical zoom now enters Layout's mapping value (two u32 float bits);
+  draw_batch classifies PHOSPHOR to preserve its old deliberate reset. Its core
+  contract and unrelated-field snapshot are updated, not widened globally.
+  Reservations also include `core/src/change/tests.rs`, its display2 contract,
+  `ui/src/drawpipe/tests/publication.rs` and the existing Bode observation callers.
+
+- 2026-11-16: base-compatible regression evidence with production unchanged:
+  `target/m23d-before-valid.log` (debug) and `target/m23d-before-release.log`
+  each exit 101: three failures, four passes. Failures demonstrate no accepted
+  map clear without the old mark, immediate main-only persistence clear at input,
+  and broad picture clearing for unrelated/trigger/same-value marks. The STOP
+  scale/offset/zoom/layout acceptance and Min/decay characterization already pass
+  on the base; no parent failure is claimed for them. Initial fixture attempts
+  had a wrong Grid variant and indexed a 1-pixel inactive zoom map; corrected
+  before this behavioral evidence. Their logs remain under the m23d-before prefix.
+  Initial exact clippy exposed a new unused test-only script_prepare wrapper;
+  it is now cfg(test). Upstream findings remain a separate baseline comparison.
+
+- 2026-11-16: M2.3d claimed on clean `t0003-m23d` at `d7418b0d` by codex-d.
+  Read the row-8 contract, all recorded coordinator decisions and task 0066.
+  Upstream adds dirty-map writers beyond the historical 16; these are included
+  in the deletion audit. Existing redesign golden failures and upstream size
+  findings remain task 0066's separate rebaseline/re-bless work.
+  Required post-d unit smoke (pending, not verified here): for both menu-selected
+  Standard and Batch paths, change mapping while RUN and while STOP; test scale,
+  offset, zoom (including vertical zoom), timebase/delay and layout with no new
+  frame, retaining the same last record and a nonempty trace at every capture.
+  Check persistence Min/500 ms/infinite, colour grade, mode/average changes,
+  CLEAR and SINGLE: main and zoom phosphor maps/weights clear once at each
+  accepted boundary, with no retained old mapping, lost clear or blank trace.
+  Check trigger-only changes refresh real Batch workers without geometry changes,
+  and Standard -> Batch -> Standard cannot merge a retained old worker picture.
+  Confirm Min replacement and timed decay still work with and without new frames.
+  Compare frame rate, complete step timing and intake/change p99 against the
+  latest same-mode baseline, idle and during repeated edits; retain build,
+  lease, settings, counts and per-step captures. Review regressions before
+  acceptance. Hardware release/install go and the existing producer/c holds
+  remain coordinator requirements. No unit access is authorized here.
 
 - 2026-11-16: integ-19 coverage repair handoff at unchanged `0137955` plus the
   unstaged test/task diff. The cause is a test assumption about one UI step,

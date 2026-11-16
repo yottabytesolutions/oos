@@ -10,7 +10,6 @@ fn base(run: RunState) -> Ui {
     ui.m.meas2.clear();
     ui.step(0.04);
     change::reset(&mut ui);
-    ui.dirty_map = false;
     ui
 }
 
@@ -32,12 +31,9 @@ fn normalize_diff_notifies_remaining_legacy_consumers() {
             ui.mstat = vec![MStat { n: 7, ..Default::default() }];
             change::begin_step(&mut ui, 0.04).unwrap();
             assert!(ui.mstat.is_empty(), "normalize must notify statistics: {run:?}, repair {repair}");
-            assert_eq!(ui.dirty_map, run == RunState::Run);
-            ui.dirty_map = false;
             ui.mstat = vec![MStat { n: 9, ..Default::default() }];
             change::begin_step(&mut ui, 0.04).unwrap();
             assert_eq!(ui.mstat[0].n, 9, "idempotent normalize must not notify twice");
-            assert!(!ui.dirty_map);
         }
     }
 }

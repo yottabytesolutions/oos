@@ -188,7 +188,6 @@ fn running_analyzer_source_step_snaps_before_submitting_without_broad_resets() {
         ui.m.spec_src = WaveId::Ch(0);
         ui.m.eye_src = WaveId::Ch(0);
         change::reset(&mut ui);
-        ui.dirty_map = false;
         ui.mstat = vec![MStat { n: 7, ..Default::default() }];
         ui.ph.map[0][3] = 19;
         let picture = ui.ph.map.clone();
@@ -201,10 +200,8 @@ fn running_analyzer_source_step_snaps_before_submitting_without_broad_resets() {
         );
         assert_eq!((ui.m.eye_src, ui.m.spec_src), (WaveId::Ch(0), WaveId::Ch(0)));
         assert_eq!(ui.mstat[0].n, 7);
-        assert!(!ui.dirty_map);
         change::begin_step(&mut ui, 0.04).unwrap();
         assert_eq!(ui.mstat[0].n, 7);
-        assert!(!ui.dirty_map);
         assert_eq!(ui.ph.map, picture);
         assert_eq!(change::counters(&ui).4, 0);
     }

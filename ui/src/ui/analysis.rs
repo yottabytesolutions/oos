@@ -842,7 +842,7 @@ impl Ui {
             self.measure_channel_sources();
             self.measure_refs();
             self.finish_deferred_capture_statistics();
-            self.dirty_map = true;
+            change::mapping_observed(self, change::oracle::Row::Layout);
         }
         self.poll_pair_measurements();
     }

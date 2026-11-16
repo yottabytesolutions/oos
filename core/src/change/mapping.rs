@@ -9,7 +9,14 @@ use crate::model::{AmpUnit, Channel, Model, NCH};
 pub struct MappingKey {
     channels: [ChannelMapping; NCH],
     timebase: (usize, f32, f32, bool, usize, f32),
-    display: (crate::model::DotsMode, crate::model::WinLayout, [usize; NCH], [usize; crate::math::NMATH], usize),
+    display: (
+        crate::model::DotsMode,
+        crate::model::WinLayout,
+        [usize; NCH],
+        [usize; crate::math::NMATH],
+        usize,
+        Option<usize>,
+    ),
     layout: Layout,
 }
 
@@ -35,7 +42,7 @@ impl MappingKey {
         Self {
             channels: std::array::from_fn(|i| channel(&m.ch[i])),
             timebase: (m.tscale, m.tfine, m.delay, m.zoom, m.zscale, m.zdelay),
-            display: (m.dots, m.win_layout, m.ch_win, m.math_win, m.la_win),
+            display: (m.dots, m.win_layout, m.ch_win, m.math_win, m.la_win, m.z_src),
             layout,
         }
     }

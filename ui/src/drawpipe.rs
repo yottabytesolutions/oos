@@ -458,41 +458,6 @@ struct View {
     h: usize,
 }
 
-/// The fields of the model `draw_frame` depends on (a change of any other field keeps the workers' maps).
-#[derive(Clone, PartialEq)]
-struct Key {
-    ch: [Channel; NCH],
-    tscale: usize,
-    delay: f32,
-    trig: (usize, Option<u8>, TrigType, Slope, f32, TrigCoup, bool, bool),
-    acq: AcqMode,
-    dots: DotsMode,
-    size: (usize, usize),
-}
-
-impl Key {
-    fn of(m: &Model, w: usize, h: usize) -> Key {
-        Key {
-            ch: m.ch.clone(),
-            tscale: m.tscale,
-            delay: m.delay,
-            trig: (
-                m.trig_src,
-                m.trig_line(),
-                m.trig_type,
-                m.slope,
-                m.trig_level,
-                m.trig_coup,
-                m.trig_nrej,
-                m.trig_on_la(),
-            ),
-            acq: m.acq,
-            dots: m.dots,
-            size: (w, h),
-        }
-    }
-}
-
 /// What a worker drew and the UI has not merged yet.
 struct Acc {
     gen: u64,
@@ -604,7 +569,7 @@ struct ViewState {
     #[cfg(test)]
     stamp: u64,
     identity: Option<oos_core::change::Identity>,
-    key: Option<Key>,
+    key: Option<oos_core::change::WorkerViewKey>,
     gen: u64,
 }
 
@@ -962,6 +927,7 @@ pub fn pipe<'a>(access: impl Into<Access<'a>>) -> Option<&'static Pipe> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod publication;
     use oos_hal::dho::hz;
     use oos_hal::dho::seq::Settings;
 

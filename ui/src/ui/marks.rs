@@ -37,7 +37,7 @@ impl Ui {
     /// Display > Dots from SCPI (`:DISPlay:TYPE`) or elsewhere: the maps start again in the new style.
     pub fn set_dots(&mut self, d: DotsMode) {
         self.m.dots = d;
-        change::dirty(self, change::oracle::Row::Layout);
+        change::mapping_observed(self, change::oracle::Row::Layout);
     }
 
     /// Auto with samples at least `MARK_SPACING_PX` apart in `area` at `view` (s/div, delay): each sample of the newest
@@ -114,9 +114,8 @@ mod tests {
             ("auto", DotsMode::Auto, b"AUTO"),
             ("VECT", DotsMode::Off, b"VECT"),
         ] {
-            u.dirty_map = false;
             scpi.exec_line(&mut u, &cv, &format!(":DISP:TYPE {}", cmd));
-            assert_eq!((u.m.dots, u.dirty_map), (mode, true), "{}", cmd);
+            assert_eq!(u.m.dots, mode, "{}", cmd);
             assert_eq!(scpi.exec_line(&mut u, &cv, ":DISP:TYPE?"), answer);
         }
         scpi.exec_line(&mut u, &cv, ":DISP:TYPE LINES");

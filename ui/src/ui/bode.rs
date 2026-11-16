@@ -608,7 +608,7 @@ impl Ui {
             (m.tscale, m.delay, m.trig_type, m.trig_src, m.trig_la, m.trig_level, m.slope) =
                 (s.tscale, s.delay, s.trig_type, s.trig_src, s.trig_la, s.trig_level, s.slope);
             (m.trig_mode, m.mdepth, m.auto_roll, m.acq, m.run) = (s.trig_mode, s.mdepth, s.auto_roll, s.acq, s.run);
-            change::dirty(self, change::oracle::Row::Stage);
+            change::mapping_observed(self, change::oracle::Row::Stage);
             self.settings_changed();
         }
         if let Some((on, f, a, o, w, md)) = self.bode.afg_saved.take() {
@@ -748,7 +748,7 @@ impl Ui {
         self.bode.points.clear();
         self.bode.cursor = 0;
         (self.bode.running, self.bode.free, self.bode.capturing) = (true, true, false);
-        change::dirty(self, change::oracle::Row::Stage);
+        change::mapping_observed(self, change::oracle::Row::Stage);
         self.settings_changed();
         let slow = if plan.scan { " (slow time base: gain only)" } else { "" };
         self.toast(&format!("Waiting for the sync edge on CH{}: start the sweep{}", sync + 1, slow));

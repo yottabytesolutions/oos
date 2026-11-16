@@ -60,39 +60,11 @@ pub fn draw_with(ph: &mut Phosphor, m: &Model, f: &Frame, wgt: u16, mode: Interp
     Some(true)
 }
 
-/// Phases of the kernel tables (as `oos_dsp::interp::lanczos8`).
-const PHASES: usize = 1024;
-
-/// Kernel table of a Lanczos window with `a` lobes, computed as `oos_dsp::interp::lanczos8` computes its own (a = 8:
-/// the same values), and per phase the sum of its weights in the order `lanczos8` adds them (the same bits).
-fn make_table(a: usize) -> (Vec<f32>, Vec<f32>) {
-    let sinc =
-        |x: f64| if x.abs() < 1e-9 { 1.0 } else { (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x) };
-    let mut t = Vec::with_capacity((PHASES + 1) * 2 * a);
-    let mut ws = Vec::with_capacity(PHASES + 1);
-    for p in 0..=PHASES {
-        let fr = p as f64 / PHASES as f64;
-        let mut wsum = 0.0f32;
-        for j in 0..2 * a {
-            let d = fr - (j as f64 - (a as f64 - 1.0));
-            let w = (sinc(d) * sinc(d / a as f64)) as f32;
-            t.push(w);
-            wsum += w;
-        }
-        ws.push(wsum);
-    }
-    (t, ws)
-}
-
-fn table8() -> &'static (Vec<f32>, Vec<f32>) {
-    static T: std::sync::OnceLock<(Vec<f32>, Vec<f32>)> = std::sync::OnceLock::new();
-    T.get_or_init(|| make_table(8))
-}
-
-/// `oos_dsp::interp::lanczos8(v, x).unwrap_or(NAN)` for every x, appended to `out`, bit for bit.
+/// `oos_dsp::interp::lanczos8(v, x).unwrap_or(NAN)` for every x, appended to `out`. Its weights are normalised per
+/// phase and its dot product runs on four sums since 0.1.13, about what a batched copy of the kernel gained, and a
+/// copy of it here would have to follow every change: the points are `lanczos8`'s own.
 fn lanczos8_many(v: &[f32], xs: impl Iterator<Item = f64>, out: &mut Vec<f32>) {
-    let (t, ws) = table8();
-    lanczos_many::<16>(v, xs, out, t, ws);
+    out.extend(xs.map(|x| oos_dsp::interp::lanczos8(v, x).unwrap_or(f32::NAN)));
 }
 
 /// Points of the fast interpolation's grid per sample: linear interpolation between grid points spaced 1/U sample
@@ -182,78 +154,6 @@ fn fast_many(v: &[f32], x0: f64, step: f64, n: usize, out: &mut Vec<f32>) {
             });
         }
     });
-}
-
-/// Windowed sinc of `TAPS` taps from table `t` (weight sums `ws`) at every x, eight points at a time in the inner part:
-/// eight independent sums instead of one dependent chain, each summed in `lanczos8`'s order. Points near the record
-/// ends or next to a gap: `lanczos8` itself.
-fn lanczos_many<const TAPS: usize>(
-    v: &[f32],
-    xs: impl Iterator<Item = f64>,
-    out: &mut Vec<f32>,
-    t: &[f32],
-    ws: &[f32],
-) {
-    const L: usize = 8;
-    let a = TAPS / 2;
-    let scalar = |x: f64| oos_dsp::interp::lanczos8(v, x).unwrap_or(f32::NAN);
-    let mut xs = xs.peekable();
-    while xs.peek().is_some() {
-        let mut x = [0.0f64; L];
-        let mut cnt = 0;
-        while cnt < L {
-            match xs.next() {
-                Some(y) => x[cnt] = y,
-                None => break,
-            }
-            cnt += 1;
-        }
-        // first sample and phase of each point; any point outside the inner part: these points one by one
-        let mut first = [0usize; L];
-        let mut ph = [0usize; L];
-        let mut inner = cnt == L;
-        for q in 0..cnt {
-            let xq = x[q];
-            if !(xq >= 0.0 && xq <= v.len() as f64 - 1.0 && v.len() >= 2) {
-                inner = false;
-                break;
-            }
-            let i0 = xq.floor() as i64;
-            // the inner part of `lanczos8` (8 lobes), whatever the taps: the same points fall back
-            let f8 = i0 - 7;
-            if f8 < 0 || f8 + 16 > v.len() as i64 {
-                inner = false;
-                break;
-            }
-            first[q] = (i0 - a as i64 + 1) as usize;
-            ph[q] = (((xq - i0 as f64) * PHASES as f64).round() as usize).min(PHASES);
-        }
-        if !inner {
-            out.extend(x[..cnt].iter().map(|&y| scalar(y)));
-            continue;
-        }
-        let row = |q: usize| -> (&[f32; TAPS], &[f32; TAPS]) {
-            let s = v[first[q]..first[q] + TAPS].try_into().expect("TAPS samples");
-            let w = t[ph[q] * TAPS..(ph[q] + 1) * TAPS].try_into().expect("TAPS weights");
-            (s, w)
-        };
-        let rows: [(&[f32; TAPS], &[f32; TAPS]); L] = std::array::from_fn(row);
-        let mut sum = [0.0f32; L];
-        for j in 0..TAPS {
-            for q in 0..L {
-                sum[q] += rows[q].0[j] * rows[q].1[j];
-            }
-        }
-        for q in 0..L {
-            out.push(if !sum[q].is_finite() {
-                scalar(x[q])
-            } else if ws[ph[q]].abs() > 1e-6 {
-                sum[q] / ws[ph[q]]
-            } else {
-                f32::NAN
-            });
-        }
-    }
 }
 
 /// Interpolation of sparse frames: `exact` (`lanczos8`, the record path's) or `fast` (`fast_many`).

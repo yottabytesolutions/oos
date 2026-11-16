@@ -9,7 +9,7 @@ pub(super) struct Remote {
     vxi: vxi11::Server,
     web_port: u16,
     scpi_port: u16,
-    remote_now: Option<[bool; 5]>,
+    remote_now: Option<[bool; 6]>,
     mdns: mdns::Mdns,
     mdns_now: Option<mdns::Config>,
     mdns_t: Option<Instant>,
@@ -38,10 +38,17 @@ impl Remote {
         }
     }
     pub(super) fn poll(&mut self, ui: &mut Ui, cv: &Canvas, sw: &sysconf::Switches) {
-        // the services follow their switches: the ports were opened above, SSH is started by rcS (oos-ssh)
-        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_ssh, ui.sys.ssh_password];
+        // the services follow their switches: the ports were opened above, SSH (oos-ssh) and telnet are started by rcS
+        let want = [
+            ui.sys.remote_web,
+            ui.sys.remote_scpi,
+            ui.sys.remote_vxi11,
+            ui.sys.remote_ssh,
+            ui.sys.ssh_password,
+            ui.sys.remote_telnet,
+        ];
         if self.remote_now != Some(want) {
-            let was = self.remote_now.unwrap_or([true, true, true, want[3], want[4]]);
+            let was = self.remote_now.unwrap_or([true, true, true, want[3], want[4], !want[5]]);
             if want[0] != was[0] {
                 self.web.set_open(want[0].then_some(self.web_port), sw.ipv6);
             }
@@ -53,6 +60,9 @@ impl Remote {
             }
             if want[3] != was[3] || want[4] != was[4] {
                 ssh::apply(want[3]);
+            }
+            if want[5] != was[5] {
+                remote::telnet(want[5]);
             }
             self.remote_now = Some(want);
         }

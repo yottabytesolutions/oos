@@ -38,7 +38,9 @@ the unit).
 The steps of 1.3 run in one piece. Channel set-up, restored settings and the first RUN follow afterwards through the normal
 paths of `horizontal-config.md`, `trigger.md`, `afe-settings.md`, `acquisition-start.md`.
 
-Not part of the start-up: LMK04828 clock init (see `pll.md`), and any ADC bit-slip calibration.
+Not part of the start-up: LMK04828 clock init (see `pll.md`), and any ADC bit-slip calibration. Another project reports
+that the bit-slip register has no effect in this bitstream and that the lanes are aligned through the IDELAY taps only
+(step j, section 3.4); not checked on the unit here.
 
 ### 1.3 Ordered steps
 

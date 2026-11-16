@@ -10,7 +10,7 @@
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3  # or dhcp: the zone of the DHCP lease (option 100), else tz.fallback
 //! tz.fallback = UTC0        # with tz = dhcp, while no lease names a valid zone
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
-//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.ssh,
+//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet, remote.ssh,
 //!                           # remote.mdns)
 //! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
 //! net.name = dho924s-204527 # the scope's name on the network (host name, <name>.local); written at the first start
@@ -63,6 +63,8 @@ pub struct SysConf {
     pub remote_web: bool,
     pub remote_scpi: bool,
     pub remote_vxi11: bool,
+    /// the telnet shell (23, read by rcS too): on by default as before, a shell without password
+    pub remote_telnet: bool,
     pub remote_ssh: bool,
     /// SSH login with the generated password as well as with a trusted key (`/bin/oos-ssh`)
     pub ssh_password: bool,
@@ -91,6 +93,7 @@ impl Default for SysConf {
             remote_web: true,
             remote_scpi: true,
             remote_vxi11: true,
+            remote_telnet: true,
             remote_ssh: false,
             ssh_password: true,
             remote_mdns: true,
@@ -204,6 +207,7 @@ impl SysConf {
                 "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
                 "remote.vxi11" => on_off(v).map(|b| c.remote_vxi11 = b).is_some(),
+                "remote.telnet" => on_off(v).map(|b| c.remote_telnet = b).is_some(),
                 "remote.ssh" => on_off(v).map(|b| c.remote_ssh = b).is_some(),
                 "ssh.password" => on_off(v).map(|b| c.ssh_password = b).is_some(),
                 "remote.mdns" => on_off(v).map(|b| c.remote_mdns = b).is_some(),
@@ -245,6 +249,7 @@ impl SysConf {
         s.push_str(&format!("remote.web = {}\n", word(self.remote_web)));
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
         s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
+        s.push_str(&format!("remote.telnet = {}\n", word(self.remote_telnet)));
         s.push_str(&format!("remote.ssh = {}\n", word(self.remote_ssh)));
         s.push_str(&format!("ssh.password = {}\n", word(self.ssh_password)));
         s.push_str(&format!("remote.mdns = {}\n", word(self.remote_mdns)));
@@ -315,7 +320,7 @@ impl SysConf {
     }
 }
 
-/// The text the fork's keys (`acq.*`, `perf.*`, `trig.*`, ...; `drawpipe::conf_value`) are looked up in: the settings
+/// The text the opt-in keys (`acq.*`, `perf.*`, `trig.*`, ...; `drawpipe::conf_value`) are looked up in: the settings
 /// file (`default_path`), then the image defaults (`IMAGE_PATH`). `conf_value` takes the first line of a key, so the
 /// settings file wins, also with an empty value, as `oos-conf` has it for the scripts.
 pub fn fork_text_of(settings: &str, image: &str) -> String {
@@ -370,7 +375,8 @@ mod tests {
         c.ntp_server = "ptbtime1.ptb.de".into();
         c.tz = "CET-1CEST,M3.5.0,M10.5.0/3".into();
         c.eth_retry_10m = false;
-        (c.remote_web, c.remote_ssh, c.ssh_password, c.remote_mdns) = (false, true, false, false);
+        (c.remote_web, c.remote_telnet, c.remote_ssh, c.ssh_password, c.remote_mdns) =
+            (false, false, true, false, false);
         c.net_name = "lab-scope-3".into();
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
@@ -498,8 +504,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    // the DHO804 unit image: clock from NTP, server and zone of the DHCP lease (CET without one) unless the settings
-    // name them
+    // an image built for one unit (`OOS_UNIT`, /etc/oos/system.conf): clock from NTP, server and zone of the DHCP
+    // lease (CET without one) unless the settings name them
     #[test]
     fn unit_image_takes_the_time_from_the_dhcp_server() {
         let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/unit/dho804/system.conf"));
@@ -526,8 +532,9 @@ mod tests {
         assert!(c.ntp && c.remote_ssh);
         let (c, _) = SysConf::parse_over(base, "remote.ssh = off\nssh.password = off\n");
         assert!(!c.remote_ssh && !c.ssh_password);
-        // telnet is not part of this fork: an old line stays in the file and starts nothing
-        let (c, bad) = SysConf::parse("remote.telnet = on\n");
-        assert!(bad.is_empty() && c.text().contains("\nremote.telnet = on\n") && !c.remote_ssh);
+        // telnet and SSH are separate switches: telnet stays on by default, SSH off
+        let (c, bad) = SysConf::parse("remote.telnet = off\n");
+        assert!(bad.is_empty() && !c.remote_telnet && !c.remote_ssh);
+        assert!(SysConf::default().remote_telnet);
     }
 }

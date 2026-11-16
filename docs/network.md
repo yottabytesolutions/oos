@@ -154,15 +154,15 @@ System > Network > Remote services has a switch for each service, next to where 
 | Web remote | 8080 | live picture, keys and touch, downloads, LXI identification, MCP, **the update page** |
 | SCPI | 5555 (TCP) | the SCPI commands |
 | VXI-11 | 111 (portmapper, TCP and UDP) and 9009 | SCPI through VISA (LXI instruments) |
+| telnet | 23 | a shell **without password** (bring-up; use it on the bench LAN only) |
 | SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
 
-Web remote, SCPI and VXI-11 are on by default, SSH is off unless the image or the user switches it on. A service
-switched off closes its port at once, with the connections on it. Switching off the web remote also takes away the
-update page: an update then comes from a USB stick. SSH is started by `rcS` at power-on (`/bin/oos-ssh`), which reads
-`remote.ssh` from `/oos/system.conf`; oos-ui starts or stops it when the switch changes.
-
-This fork ships no telnet: rcS does not start `telnetd`, the switch is gone, and a `remote.telnet` line in
-`/oos/system.conf` is kept but starts nothing. The serial console (UART2) keeps its shell without a login.
+Web remote, SCPI, VXI-11 and telnet are on by default, SSH is off unless the image or the user switches it on. A
+service switched off closes its port at once, with the connections on it. Switching off the web remote also takes away
+the update page: an update then comes from a USB stick. telnet and SSH are started by `rcS` at power-on (`telnetd`,
+`/bin/oos-ssh`), which reads `remote.telnet` and `remote.ssh` from `/oos/system.conf`; oos-ui starts or stops them
+when a switch changes. With SSH set up, switch telnet off: it is a shell for anyone on the network. The serial
+console (UART2) keeps its shell without a login.
 
 ### 4.1 The scope by name: mDNS and DNS-SD
 
@@ -193,7 +193,7 @@ and looks at the interfaces every 2 s: a cable plugged in later, DHCP after the 
 | `_http._tcp.local` | PTR, SRV, TXT | web remote: port 8080, `path=/` |
 | `_scpi-raw._tcp.local` | PTR, SRV, TXT | SCPI: port 5555 |
 | `_vxi-11._tcp.local` | PTR, SRV, TXT | VXI-11: port 111 |
-| `_ssh._tcp.local` | PTR, SRV, TXT | SSH (this fork, section 7): port 22, only while oos-ssh listens (`remote.ssh = on`, `net.allow` set, firewall loaded) |
+| `_ssh._tcp.local` | PTR, SRV, TXT | SSH (section 7): port 22, only while oos-ssh listens (`remote.ssh = on`, `net.allow` set, firewall loaded) |
 
 The instance name a computer lists is `Rigol DHO924S OOS (204527)` (with a name of its own: `Rigol DHO924S OOS
 (lab-scope-3)`). A service switched off is not announced; its records get a goodbye. A name of the scope without the
@@ -225,7 +225,7 @@ the scope then answers nothing on it. It is on by default because it only works 
 forward 224.0.0.251 and ff02::fb, and it sends nothing but the answers, the probes and the announcements. oos-ui also
 sends the goodbye when it ends.
 
-**With the fork's firewall** (section 6): mDNS questions come in from the asking computer's own address, so a
+**With the firewall** (section 6): mDNS questions come in from the asking computer's own address, so a
 computer inside `net.allow` reaches the responder and one outside does not, like every other service. Questions over
 IPv6 (from fe80:: addresses) are dropped unless `fe80::/10` is listed; computers ask over IPv4 as well, and the
 responder has no AAAA anyway. With mDNS the web remote is at `http://<name>.local:8080` (the web server's
@@ -251,6 +251,7 @@ eth.retry_10m = on
 remote.web = on
 remote.scpi = on
 remote.vxi11 = on
+remote.telnet = on
 remote.ssh = off
 ssh.password = on
 remote.mdns = on              # mDNS and DNS-SD (4.1)

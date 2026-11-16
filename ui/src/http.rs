@@ -96,6 +96,28 @@ fn lower_priority(little: u64) {
     let _ = little;
 }
 
+/// The slower cores of a big.LITTLE SoC (RK3399: 0-3), empty where the cores are all alike.
+pub fn little_core_list() -> Vec<usize> {
+    crate::placement::cpus(crate::placement::Cores::read().little)
+}
+
+/// The calling thread onto `cores` (nothing when it is empty).
+pub fn pin_to(cores: &[usize]) {
+    #[cfg(target_os = "linux")]
+    if !cores.is_empty() {
+        // SAFETY: a local CPU set for the calling thread
+        unsafe {
+            let mut set: libc::cpu_set_t = std::mem::zeroed();
+            for &c in cores {
+                libc::CPU_SET(c, &mut set);
+            }
+            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = cores;
+}
+
 /// The calling thread onto the slower cores of a big.LITTLE SoC (`little`, `Cores::little`; RK3399: the four A53), at
 /// normal priority: the measurements in the background (`ui::MeasWorker`); the threads it starts after this stay
 /// there too. Nothing without little cores.

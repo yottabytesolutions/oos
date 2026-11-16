@@ -172,6 +172,14 @@ pub fn stat_text(ui: &Ui) -> String {
         if ui.sys.gpu { "gpu" } else { "cpu" },
         hdmi
     );
+    // the hardware's frames: decoded, and dropped unseen when the screen fell behind
+    let gpu = match ui.src.hw_frames() {
+        Some((d, x)) => format!(
+            "{} hw frames {} dropped {} fast {:.1} ms (place {:.1} draw {:.1} of it fold {:.1}, {:.0} frames a call) take {} map {}x{}",
+            gpu, d, x, ui.t_fast, ui.t_fast_ab.0, ui.t_fast_ab.1, ui.t_fast_fold, ui.fast_n, ui.fast_take as usize, ui.ph.w, ui.ph.h
+        ),
+        None => gpu,
+    };
     format!(
         "fps {:.1} frames {} records {} run {:?} status {:?} t {:.1} step {:.1} ms (acq {:.1} draw {:.1}) render {:.1} ms present {:.1} ms edges {} {} {} {} off {:.0} {:.0}{}\n",
         ui.fps, ui.frames, ui.records, ui.m.run, ui.m.status, ui.now, ui.t_step, ui.t_acq, ui.t_draw, ui.t_render, ui.t_present, e[0], e[1], e[2], e[3], ui.fast_off.0, ui.fast_off.1, gpu

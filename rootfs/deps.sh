@@ -1,6 +1,6 @@
 # Copyright (C) 2026 OOS contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# deps.sh - sourced by the fork's build scripts: their sources from rootfs/deps.lock (docs/fork/deps.md).
+# deps.sh - sourced by the build scripts of Dropbear, nftables and sftp-server: their sources from rootfs/deps.lock (docs/fork/deps.md).
 #   dep_ver NAME                       the pinned version
 #   dep_fetch NAME DIR                 download into DIR once, check the SHA-256, print the path
 #   dep_stale ARTIFACT SCRIPT NAME...  true when ARTIFACT is missing or was built from other manifest lines or another

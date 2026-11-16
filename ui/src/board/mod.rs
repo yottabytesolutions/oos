@@ -196,6 +196,9 @@ pub struct Frame {
     /// logic analyser words of the acquisition, times relative to the hardware trigger point (la.md 4.2; the last
     /// frame of a batch only, roll/scan: none yet)
     pub la: Option<crate::ui::la::LaRec>,
+    /// a frame read again from the stored record in STOP (another part or zoom of it): the trigger is at this
+    /// (fractional) sample, which may lie outside the frame, and no software trigger moves it
+    pub fixed_ti: Option<f64>,
     /// the FPGA averaged this frame (Average mode with `Board::avg_hw`): the software average leaves it alone
     pub hw_avg: bool,
     /// `pre` is the sample the trigger fired on (with FPGA compression: its pair): read at the full rate of the channel
@@ -333,6 +336,18 @@ pub struct Shared {
     pub frame: Frame,
     /// frames not drawn yet, oldest first (one batch delivers many)
     pub queue: std::collections::VecDeque<Frame>,
+    /// STOP: the view the UI shows (time per div, delay); the thread acquires nothing and reads the last record again
+    /// for it when it changes, into `replay` (`hw::stop_window`)
+    pub stop_view: Option<(f64, f64)>,
+    pub replay: Option<Frame>,
+    /// frames decoded, and those dropped from the queue unseen because the screen fell behind (`:SYSTem:STATe?`)
+    pub decoded: u64,
+    pub dropped: u64,
+    /// frames the screen takes at most (`Ui::fast_max` and the record, 0 = all): the thread decodes no more of the
+    /// newest frames of a batch, the older ones count as dropped without costing the fast cores their decoding
+    pub take: usize,
+    /// the offsets of the ADC cores taken off the frames (`Model::cores`, `dho::cores`)
+    pub cores: bool,
     pub status: String,
     /// self-calibration: request (channels, AFE zero too), progress (done, total, text), result, cancel flag
     /// (channels, AFE zero, ADC cores)
@@ -446,7 +461,10 @@ pub struct HwSeg {
     pub shown: Option<(u32, Frame)>,
 }
 
-/// Frames kept for the UI; older ones are dropped when the screen cannot keep up.
-pub const QUEUE_MAX: usize = 96;
+/// Frames kept for the UI; older ones are dropped when the screen cannot keep up. The screen itself takes no more
+/// than its time budget allows (`Ui::fast_max`), so the queue only has to hold a few screens' worth.
+pub const QUEUE_MAX: usize = 256;
+/// Samples (all channels) the queue holds at most: deep frames are hundreds of MB each.
+pub const QUEUE_SAMPLES: usize = 32 << 20;
 
 pub type HwShared = Arc<Mutex<Shared>>;

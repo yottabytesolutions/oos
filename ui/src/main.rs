@@ -45,6 +45,7 @@ mod pacing;
 mod perfguard;
 mod placement;
 mod protocols;
+mod remote;
 mod scpi;
 mod sntp;
 mod sparse;

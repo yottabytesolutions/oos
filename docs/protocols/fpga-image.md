@@ -163,6 +163,9 @@ MIO GPIO. **SPI0 (MIO16-21) is the slave link to the RK3399 SPI1.**
 - Address map 0xF800603C/40/44 = 0x777 / 0xfff00000 / 0x0ff66666: 14 row, 10 column, 8 banks. Together with 32 bit this gives
   **512 MiB** (2 x 16-bit 2 Gbit). The register set equals the ZedBoard DDR3 preset except for timings (assumed).
 - Clock 533.3 MHz (DDR3-1066). Last steps: poll DCI done (0xF8000B74 bit 13), start DDRC, poll operating mode (0xF8006054).
+- Another project reports "DDR3 at 600 MHz with timings generated for 533 MHz". That does not fit this PS memory (533.3 MHz
+  from the PLL above) and may concern the acquisition memory behind the MIG in the PL (`cold-boot.md` step 10), whose
+  clock is not known here. Open.
 
 ### 3.5 Peripherals / post config
 

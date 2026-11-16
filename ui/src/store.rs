@@ -222,6 +222,7 @@ pub fn setup_text(m: &Model) -> String {
     kv("setup", m.setup.to_string());
     kv("hold", m.hold.to_string());
     kv("acq", name(m.acq));
+    kv("cores", m.cores.to_string());
     kv("avg_count", m.avg_count.to_string());
     kv("avg_hw", m.avg_hw.to_string());
     kv("segments", m.segments.to_string());
@@ -549,6 +550,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         "setup" => m.setup = p_f32(v)?,
         "hold" => m.hold = p_f32(v)?,
         "acq" => m.acq = p_enum(v, &ACQ_MODES)?,
+        "cores" => m.cores = p_bool(v)?,
         "avg_count" => m.avg_count = p_u32(v)?.max(1),
         "avg_hw" => m.avg_hw = p_bool(v)?,
         "segments" => m.segments = (p_u32(v)? as usize).min(crate::ui::SEG_HW_MAX),

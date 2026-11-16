@@ -4,7 +4,7 @@
 //! SCPI server (TCP 5555, the port of the stock firmware), a Rigol-compatible subset:
 //! *IDN? *RST *OPC? *CLS, :RUN :STOP :SINGle :AUToscale :CLEar,
 //! :CHANnel<n>:DISPlay|SCALe|VERNier|OFFSet|COUPling|BWLimit|PROBe|INVert, :TIMebase[:MAIN]:SCALe|OFFSet,
-//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:RS232|SPI|IIC:* (protocol trigger, scpi/ser.rs), :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M),
+//! :TRIGger:MODE? :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:RS232|SPI|IIC:* (protocol trigger, scpi/ser.rs), :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?, :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M), OOS: :ACQuire:CORes[?] MATCh|RAW,
 //! :MEASure:ITEM[?] <item>[,CHANn[,CHANm]], :MEASure:CLEar ALL|ITEM<n>, :MEASure:STATistic:DISPlay ON|OFF, :MEASure:STATistic:RESet,
 //! :MEASure:STATistic:ITEM? MAXimum|MINimum|CURRent|AVERages|DEViation|CNT,<item>[,CHANn[,CHANm]], :WAVeform:SOURce|MODE NORM/RAW|FORMat|DATA?|PREamble?|POINts?, :DISPlay:DATA? (BMP),
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
@@ -707,6 +707,21 @@ impl Scpi {
                     (v.parse::<f64>().ok()? * mul).round() as u64
                 };
                 m.mdepth = mdepths().iter().position(|d| d.1 == want)?;
+                return Some(None);
+            }
+            if kw(n0, "ACQuire") && nodes.len() == 2 && kw(nodes[1], "CORes") {
+                // the ADC cores matched in software (on) or the words as they come (Acquire > ADC cores)
+                if query {
+                    return Some(t(if m.cores { "MATC" } else { "RAW" }));
+                }
+                let a = arg.trim().to_ascii_uppercase();
+                m.cores = if a.starts_with("MATC") || a == "ON" || a == "1" {
+                    true
+                } else if a.starts_with("RAW") || a == "OFF" || a == "0" {
+                    false
+                } else {
+                    return None;
+                };
                 return Some(None);
             }
             // segmented recording (OOS): :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>

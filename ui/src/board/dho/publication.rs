@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use crate::board::{Frame, Gen, HwShared, MaskWant, Slow, Want, ZoneWant, QUEUE_MAX};
+use crate::board::{Frame, Gen, HwShared, MaskWant, Slow, Want, ZoneWant, QUEUE_MAX, QUEUE_SAMPLES};
 use oos_core::change::Identity;
 use oos_hal::sync::lock;
 
@@ -21,7 +21,8 @@ pub(super) fn snapshot(out: &HwShared) -> Request {
     )
 }
 
-/// Frames of a batch into the UI queue, the oldest dropped beyond `QUEUE_MAX`.
+/// Frames of a batch into the UI queue, the oldest dropped beyond `QUEUE_MAX` frames or `QUEUE_SAMPLES` samples (the
+/// newest frame stays whatever its size).
 pub(super) fn push_frames(out: &HwShared, mut frames: Vec<Frame>) {
     if frames.is_empty() {
         return;
@@ -29,10 +30,18 @@ pub(super) fn push_frames(out: &HwShared, mut frames: Vec<Frame>) {
     let mut g = lock(out);
     frames.retain(|f| current(&g, f));
     g.queue.extend(frames);
-    let over = g.queue.len().saturating_sub(QUEUE_MAX);
-    g.queue.drain(..over);
-    crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.overflow, over as u64);
-    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, over as u64);
+    let size = |f: &Frame| f.ch.iter().map(Vec::len).sum::<usize>();
+    let mut held: usize = g.queue.iter().map(size).sum();
+    let mut over = 0u64;
+    while g.queue.len() > 1 && (g.queue.len() > QUEUE_MAX || held > QUEUE_SAMPLES) {
+        if let Some(f) = g.queue.pop_front() {
+            held -= size(&f);
+        }
+        over += 1;
+    }
+    g.dropped += over;
+    crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.overflow, over);
+    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, over);
     if let Some(f) = g.queue.back() {
         g.frame = f.clone();
     }

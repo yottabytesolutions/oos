@@ -42,6 +42,11 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
     g.zone_want = ui.zone_hw_want();
     g.needs_raw = needs.raw();
     g.avg_clear = ui.m.hw_avg_clear;
+    g.cores = model.cores;
+    if model.run == RunState::Run {
+        // running: no STOP view any more, the thread acquires again
+        (g.stop_view, g.replay) = (None, None);
+    }
     g.acquisition = crate::board::identity::Publication::new(id, needs.route());
     for i in 0..crate::model::gen_count() {
         g.afg[i] = Some(board().gen(&model.gen_ch(i)));

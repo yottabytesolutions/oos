@@ -313,6 +313,17 @@ A-D only use 0x1000, 0x4004, 0x4008, 0x400c, 0x4010-0x4018, 0x4068, 0x406c, 0x40
 - So one batch costs ~10 ms plus the time the triggers need: about 800 records/s with the probe-comp signal instead
   of ~30 with single frames. `frames` is capped by `max_frames` = 7 340 032 / segment size.
 
+## Reading a stored frame again (STOP)
+
+After a batch has been read, any frame of it can be played and read again with the same type-4 read-out, as long as
+nothing is armed in between: 0x4010 = 0x4014 = frame, 0x4018 = frame, with any read-out window or compression. OOS
+does this in STOP for every new view (time base, delay): the newest frame of the last batch, as a window of every
+sample when the view with a quarter screen on each side fits 625 k points (also far from the trigger), else the whole
+record through the compression. Verified on the unit 2026-11-13: CH1, 10 M points at 1.25 GSa/s (8 ms), a 100 kHz
+square; stopped at 100 ns/div, then 10 us/div, 1 ms/div (the whole record, -4..4 ms), 1 us/div and 1 us/div at a
+delay of 3 ms (the edge at 3 ms at every sample). Any arm overwrites the ring from frame `first` on, so the stored
+record is only good until the next RUN.
+
 ## Memory depth beyond 50 M on the unit
 
 `oos-fpgad run --depth D --tdiv 1e-2 --at A` (CH1, probe comp 1 kHz), 4000-point windows at the start, around the
@@ -346,7 +357,8 @@ So the live path gives a min/max envelope at large depths. For OOS: read huge re
 that ceil(memsel / k) stays near 625 k points (2.5 M at k = 4 gives this value), draw the points as a polyline
 (min-max pairs become vertical spans), and read uncompressed windows only for zoom / measurements on raw samples.
 Not checked yet: the exact block size of one min/max pair (2k samples?) and the extra + k term in 0x1100 of the live set-up (OOS
-writes memsel + 0x248, which works).
+writes memsel + 0x248, which works). Another project reports 2N samples per pair, the minimum and maximum taken over all
+eight ADC cores together; not checked on the unit here.
 
 ### Time axis of compressed reads by depth
 

@@ -177,11 +177,19 @@ fn txt_bytes(t: &[String]) -> Vec<u8> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Data {
     A(Ipv4Addr),
+    /// not sent while the services listen on IPv4 only (`Responder::records`), kept for when they do
+    #[allow(dead_code)]
     Aaaa(Ipv6Addr),
     Ptr(Name),
-    Srv { port: u16, target: Name },
+    Srv {
+        port: u16,
+        target: Name,
+    },
     Txt(Vec<String>),
-    Nsec { next: Name, types: Vec<u16> },
+    Nsec {
+        next: Name,
+        types: Vec<u16>,
+    },
 }
 
 impl Data {

@@ -798,7 +798,15 @@ impl State {
         self.read_steps_at(s, p, 0, count)
     }
 
-    /// `read_steps` of `count` frames from frame `first` of the ring (the segments of a hardware segmented record).
+    /// Frame `frame` of the last batch read again, with the window and compression of `s` (STOP: another part of the
+    /// record, or the whole record): the same read-out with a type-4 play of that frame only; play-last without
+    /// `play4`. Nothing is armed, the ring keeps the batch (acquisition-start.md, "Reading a stored frame again").
+    pub fn reread_steps(&mut self, s: &Settings, p: &hz::Params, frame: u32) -> Vec<Step> {
+        self.read_steps_at(s, p, frame, 1)
+    }
+
+    /// `read_steps` of `count` frames from frame `first` of the ring (the segments of a hardware segmented record,
+    /// a stored frame read again).
     pub fn read_steps_at(&mut self, s: &Settings, p: &hz::Params, first: u32, count: u32) -> Vec<Step> {
         let nf = if s.play4 { count.max(1) } else { 1 };
         let mut st = Vec::new();
@@ -821,7 +829,7 @@ impl State {
                     w.1 = compress_word(compress_k(s, p));
                 }
             }
-            let mut r = scu::readout_play4(&win, &mut self.sh, if s.play4 { first } else { 0 }, nf);
+            let mut r = scu::readout_play4(&win, &mut self.sh, first, nf);
             if s.compress > 1 {
                 let len = compressed_len(s, p);
                 for w in r.iter_mut().filter(|w| w.0 == 0x11f0) {

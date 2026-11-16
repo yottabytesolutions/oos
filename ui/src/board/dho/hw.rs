@@ -1132,16 +1132,60 @@ pub fn decode_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut
 /// Decodes a read-out of the whole record into a frame; with `probe` (`BoardSwitches::header_probe`, trigger.md 8)
 /// a frame read with its header has the header logged next to where the edge actually is.
 pub fn decode_probed(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, probe: bool) -> Frame {
+    decode_with(bytes, s, p, seq, probe, None)
+}
+
+/// `decode_probed`, with the offsets of the ADC cores taken off the words of every sample (not of min/max pairs: Peak,
+/// FPGA compression) when `cores` is given.
+pub fn decode_with(
+    bytes: &[u8],
+    s: &Settings,
+    p: &hz::Params,
+    seq: u64,
+    probe: bool,
+    cores: Option<&mut super::cores::Cores>,
+) -> Frame {
     let mut f = Frame::default();
-    decode_into_probed(bytes, s, p, seq, &mut f, probe);
+    decode_into_with(bytes, s, p, seq, &mut f, probe, cores);
     f
 }
 
 /// `decode_probed` into a kept frame: its channel vectors are refilled (no allocation once they have room), every
 /// other field is set as `decode_probed` sets it.
 pub fn decode_into_probed(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame, probe: bool) {
+    decode_into_with(bytes, s, p, seq, f, probe, None)
+}
+
+/// `decode_into_probed` with the ADC cores matched (`decode_with`). The cores' offsets are taken off the words before
+/// they become volts, so that path de-interleaves first; without them the fused decode (`seq::decode_volts_into`) runs.
+pub fn decode_into_with(
+    bytes: &[u8],
+    s: &Settings,
+    p: &hz::Params,
+    seq: u64,
+    f: &mut Frame,
+    probe: bool,
+    cores: Option<&mut super::cores::Cores>,
+) {
     let (hdr, bytes) = if s.header && bytes.len() >= 16 { bytes.split_at(16) } else { (&bytes[..0], bytes) };
-    oos_hal::dho::seq::decode_volts_into(bytes, s.mask, s.ch.map(|k| (k.scale, k.offset)), &mut f.ch);
+    match cores.filter(|_| s.mode == oos_hal::dho::acq::Mode::Normal && s.compress <= 1) {
+        Some(cores) => {
+            let mut w = oos_hal::dho::seq::deinterleave(bytes, s.mask);
+            for (c, w) in w.iter_mut().enumerate() {
+                if !w.is_empty() {
+                    cores.apply((s.mask, c, p.rate), w);
+                }
+            }
+            f.ch = std::array::from_fn(|c| {
+                if w[c].is_empty() {
+                    Vec::new()
+                } else {
+                    oos_hal::dho::seq::volts(&w[c], s.ch[c].scale, s.ch[c].offset)
+                }
+            });
+        }
+        None => oos_hal::dho::seq::decode_volts_into(bytes, s.mask, s.ch.map(|k| (k.scale, k.offset)), &mut f.ch),
+    }
     // with FPGA compression every point stands for k samples (min/max pairs, acquisition-start.md)
     let k = oos_hal::dho::seq::compress_k(s, p) as usize;
     if !hdr.is_empty() && probe {
@@ -1175,6 +1219,7 @@ fn set_meta(s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame) {
         hw_avg: false,
         pre_exact,
         cfg: 0,
+        fixed_ti: None,
     };
 }
 
@@ -1313,6 +1358,35 @@ fn window_with(s: &Settings, p: &hz::Params, cap: i64, margin: i64) -> Option<(u
         return None;
     }
     Some((n as u32, lo - pre))
+}
+
+/// STOP: what of the stored record (parameters `p`, read live with the settings `b`) to read again for a view of
+/// `tdiv` per division at `delay`, and where the trigger lies in the frame that read gives (in its points, may be
+/// outside it). The view with a quarter screen on each side at every sample when that fits `LIVE_READ` points; else
+/// the whole record through the FPGA compression (as the live read of a long record). The record is laid out from
+/// the trigger point `p.pre` at `p.rate`, so any part of it can be read, the trigger need not be in the window.
+pub fn stop_plan(b: &Settings, p: &hz::Params, tdiv: f64, delay: f64) -> (Settings, f64) {
+    let mut r = b.clone();
+    (r.frames, r.window, r.compress) = (1, None, 1);
+    let rate = p.rate as f64;
+    let screen = (tdiv * 10.0 * rate).ceil();
+    let margin = (screen / 4.0).max(4096.0);
+    let (mem, pre) = (p.memsel as f64, p.pre as f64);
+    let centre = pre + delay * rate;
+    let lo = ((centre - screen / 2.0 - margin).max(0.0) / 8.0).floor() * 8.0;
+    let hi = (centre + screen / 2.0 + margin).min(mem);
+    if hi > lo {
+        let n = ((hi - lo) / 8.0).ceil() * 8.0;
+        if n < LIVE_READ as f64 && lo + n <= mem {
+            r.window = Some((n as u32, lo as i64 - p.pre as i64));
+            return (r, pre - lo);
+        }
+    }
+    if p.memsel > LIVE_READ && r.play4 {
+        r.compress = p.memsel.div_ceil(LIVE_READ);
+    }
+    let k = r.compress.max(1) as f64;
+    (r, pre / k)
 }
 
 /// Whether arming ahead (`acq.prearm`) leaves the replay at STOP possible: not for a batch of the live compression or
@@ -1501,6 +1575,11 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         let mut applied_pair = None;
         let mut xadc_at: Option<std::time::Instant> = None;
         let mut la_fails = 0u32;
+        // STOP: the last batch (its read settings, parameters, newest frame in the ring) and the view last read for
+        let mut last_batch: Option<(Settings, hz::Params, u32)> = None;
+        let mut replayed: Option<(f64, f64)> = None;
+        // the learnt offsets of the ADC cores (`cores`)
+        let mut cores = super::cores::Cores::default();
         // the read buffer of the batches, kept (bus::DmaBuf)
         let mut dma = oos_hal::dho::bus::DmaBuf::new();
         // the raw second read of the newest frame of a compressed batch (compress.rs)
@@ -1659,11 +1738,41 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
             }
+            // STOP (normal acquisitions only): nothing is armed, the record in the ring stays; for every new view
+            // the newest frame of the last batch is read again (`stop_plan`), settings changed meanwhile wait for RUN
+            let stop_view = out.lock().unwrap().stop_view;
+            match stop_view {
+                Some(v) if mode == Slow::Off && want_mode == Slow::Off => {
+                    match &last_batch {
+                        Some((lb, lp, idx)) if replayed != Some(v) => {
+                            replayed = Some(v);
+                            let (rb, ti) = stop_plan(lb, lp, v.0, v.1);
+                            let steps = state.reread_steps(&rb, lp, *idx);
+                            match seq::execute(&steps, &mut bar, None, &mut c2h, |_| {}) {
+                                Ok(bytes) => {
+                                    let fb = seq::frame_bytes(&rb, lp);
+                                    n += 1;
+                                    let m = out.lock().unwrap().cores.then_some(&mut cores);
+                                    let f = decode_with(&bytes[..fb.min(bytes.len())], &rb, lp, n, switches.board.header_probe, m);
+                                    // tagged with the publication of this view: the change point published it
+                                    let f = tag(Frame { fixed_ti: Some(ti), ..f }, identity);
+                                    out.lock().unwrap().replay = Some(f);
+                                }
+                                Err(e) => status(format!("STOP read: {}", e)),
+                            }
+                        }
+                        _ => std::thread::sleep(std::time::Duration::from_millis(20)),
+                    }
+                    continue;
+                }
+                _ => replayed = None,
+            }
             if super::publication::reconfigure(current.as_ref().map(|c| (&c.0, mode)), &want, want_mode) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
                 last_read = None;
                 mode = want_mode;
+                last_batch = None;
                 if rolling.take().is_some() {
                     bar.apply(&lifecycle::roll_stop(&mut state.sh));
                 }
@@ -1910,7 +2019,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         }
                         // word 0 at the left edge like analog point 0; only what the sweeps have written so far
                         let la = la_t.map(|_| crate::ui::la::LaRec { words: Arc::new(sweep_la.iter().take_while(|x| !x.is_nan()).map(|&x| x as u16).collect()), t0: 0.0, dt: la_dt });
-                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen }
+                        Frame { seq: n, dt, pre: 0, ch, roll: false, envelope: true, scan: true, partial: !done, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen, fixed_ti: None }
                     } else {
                         let len = ring.iter().map(|r| r.len()).max().unwrap_or(0);
                         // the newest point at the right edge: index len - 1 sits half a screen right of `pre`
@@ -1921,7 +2030,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             words: Arc::new(ring_la.iter().copied().collect()),
                             dt: la_dt,
                         });
-                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen }
+                        Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen, fixed_ti: None }
                     };
                     let mut g = out.lock().unwrap();
                     if super::publication::current(&g, &f) { super::roll::publish(&mut g, f, scan.is_some()); }
@@ -2023,7 +2132,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             // a wait for a trigger also ends for a force request: the next pass arms and pulses (above)
             let changed = || {
                 let g = out.lock().unwrap();
-                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || (g.acquisition.identity().gen(), g.acquisition.identity().epoch()) != pair || g.acquisition.route() != route || g.force
+                (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || (g.acquisition.identity().gen(), g.acquisition.identity().epoch()) != pair || g.acquisition.route() != route || g.force || g.stop_view.is_some()
             };
             let pipe = crate::drawpipe::pipe(&switches);
             let t_batch = std::time::Instant::now();
@@ -2214,7 +2323,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         }
                     }
                     let fb = seq::frame_bytes(&b, &p);
-                    // decode before taking the lock: the UI must not wait for 100 k-point conversions
+                    // decode before taking the lock: the UI must not wait for 100 k-point conversions;
                     // every recorded frame was read; in average mode only the newest goes to the screen
                     let shown = match after {
                         Some(a) if !a.show => 0,
@@ -2228,6 +2337,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     // the raw newest frame stands for the newest compressed one (same record)
                     let raw_frame = raw_frame.filter(|_| avail as u32 == count);
                     let mut la_words = la_words;
+                    let mut skip = 0usize;
                     let mut frames: Vec<Frame> = if let Some(pipe) = pipe {
                         n += avail as u64;
                         let mut newest = match raw_frame {
@@ -2261,14 +2371,23 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             }
                         }
                     } else {
+                        // only the newest frames the screen takes are decoded (`Shared::take`; on the fast cores,
+                        // which the frame loop needs), in average mode the newest one
+                        let (take, match_cores) = {
+                            let g = out.lock().unwrap();
+                            (if g.take == 0 { avail } else { g.take.min(avail) }, g.cores)
+                        };
+                        let take = if after.is_some() { take.min(1) } else { take };
+                        skip = avail - take;
+                        n += skip as u64;
                         let mut all: Vec<Frame> = dma
                             .data()
                             .chunks_exact(fb.max(1))
                             .take(avail)
-                            .skip(if after.is_some() { avail.saturating_sub(1) } else { 0 })
+                            .skip(skip)
                             .map(|chunk| {
                                 n += 1;
-                                Frame { stamp, cfg: want_gen, hw_avg: after.is_some(), ..decode_probed(chunk, &b, &p, n, switches.board.header_probe) }
+                                Frame { stamp, cfg: want_gen, hw_avg: after.is_some(), ..decode_with(chunk, &b, &p, n, switches.board.header_probe, match_cores.then_some(&mut cores)) }
                             })
                             .collect();
                         if let (Some(r), Some(last)) = (raw_frame, all.last_mut()) {
@@ -2284,11 +2403,28 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     if let (Some(w), Some(f)) = (la_words, frames.last_mut()) {
                         f.la = Some(la_record(w, &b, &p));
                     }
+                    if count > 0 {
+                        last_batch = Some((b.clone(), p, count - 1));
+                    }
+                    {
+                        let mut g = out.lock().unwrap();
+                        g.decoded += count as u64;
+                        g.dropped += skip as u64;
+                    }
                     super::publication::push_frames(&out, frames);
                 }
-                // new settings while it waited for a trigger: at once to them
-                Err(e) if e == seq::NEW_SETTINGS => {}
+                // new settings (or STOP) while it waited for a trigger: at once to them. The arm has filled frame 0
+                // of the ring with pre-trigger samples (it stops only before the first trigger): a stored record
+                // there is gone, later frames of the last batch are untouched
+                Err(e) if e == seq::NEW_SETTINGS => {
+                    if last_batch.as_ref().is_some_and(|l| l.2 == 0) {
+                        last_batch = None;
+                    }
+                }
                 Err(e) => {
+                    if last_batch.as_ref().is_some_and(|l| l.2 == 0) {
+                        last_batch = None;
+                    }
                     let unit = state.mask_ctrl().is_some() || state.zone_ctrl().is_some();
                     let stalled = is_stall(&e);
                     if logs_acquire_error(stalled, unit) {
@@ -3173,6 +3309,55 @@ mod tests {
         assert_eq!(settings(&m, false, &Default::default()).depth, 0);
     }
 
+    /// STOP reads the stored record again for each view: zoomed in every sample of the part on screen (also far from
+    /// the trigger, which then lies outside the frame), zoomed out the whole record compressed; and the frame read
+    /// that way puts the trigger where the record had it.
+    #[test]
+    fn stop_reads_the_part_of_the_record_the_view_shows() {
+        let mut m = Model::default();
+        m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-7).abs() < 1e-12).unwrap();
+        m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
+        let s = settings(&m, false, &Default::default());
+        let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
+        let b = batch_plan(&s, &p, 1);
+        let rate = p.rate as f64;
+        // as shown at the stop: a window around the trigger, every sample, the trigger inside
+        let (r, ti) = stop_plan(&b, &p, 1e-7, 0.0);
+        let (n, start) = oos_hal::dho::seq::window(&r, &p);
+        assert_eq!((r.compress, r.frames), (1, 1));
+        assert_eq!(ti, p.pre as f64 - start as f64);
+        assert!(ti > 0.0 && ti < n as f64 && (n as f64) < 20_000.0, "{} {}", ti, n);
+        // 1 us/div 3 ms after the trigger: the window there, the trigger far before it
+        let (r, ti) = stop_plan(&b, &p, 1e-6, 3e-3);
+        let (n, start) = oos_hal::dho::seq::window(&r, &p);
+        assert_eq!(r.compress, 1);
+        let centre = start as f64 + n as f64 / 2.0;
+        assert!((centre - (p.pre as f64 + 3e-3 * rate)).abs() < 16.0, "{} {}", centre, p.pre);
+        assert!((ti + 3e-3 * rate - n as f64 / 2.0).abs() < 16.0, "{}", ti);
+        // 1 ms/div: the whole 8 ms record through the compression, the trigger at its point / k
+        let (r, ti) = stop_plan(&b, &p, 1e-3, 0.0);
+        assert!(r.compress > 1 && r.window.is_none());
+        assert_eq!(ti, p.pre as f64 / r.compress as f64);
+        // a frame of that read (a square with its edge at the trigger) becomes a record with the edge at 0 s
+        let k = r.compress as usize;
+        let len = (p.memsel as usize).div_ceil(k);
+        let v: Vec<f32> = (0..len).map(|i| if (i as f64) < ti { -1.0 } else { 1.0 }).collect();
+        let f = Frame {
+            seq: 1,
+            dt: k as f64 / rate,
+            pre: 0,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            envelope: true,
+            acq: (rate, p.memsel as usize),
+            fixed_ti: Some(ti),
+            ..Default::default()
+        };
+        let rec = to_record(&Arc::new(f), &m, 3600, 10e-3, -5e-3);
+        assert!(rec.triggered);
+        let at = |t: f64| rec.ch[0][((t + 5e-3) / rec.dt) as usize];
+        assert!(at(-1e-4) < 0.0 && at(1e-4) > 0.0, "{} {}", at(-1e-4), at(1e-4));
+    }
+
     #[test]
     fn scan_picture_wraps_and_fills_the_screen() {
         let mut pic = Vec::new();
@@ -3198,6 +3383,7 @@ mod tests {
             acq: (0.0, 0),
             stamp: 0,
             la: None,
+            fixed_ti: None,
             hw_avg: false,
             pre_exact: false,
             cfg: 0,

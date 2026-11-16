@@ -11,6 +11,13 @@ pub(super) fn settings(ui: &mut Ui) {
     if ui.host.runtime().change.prepared.is_none() {
         intake_settings(ui);
     }
+    // the trigger level line shows for a while after a level change (`level_line_on`); the first look is no change
+    if (ui.m.trig_level, ui.m.trig_level2) != ui.level_seen {
+        if !ui.level_seen.0.is_nan() {
+            ui.level_changed = ui.now;
+        }
+        ui.level_seen = (ui.m.trig_level, ui.m.trig_level2);
+    }
     ui.auto_step();
     ui.sysinfo_poll();
     ui.cal_poll();

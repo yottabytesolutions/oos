@@ -3412,6 +3412,12 @@ mod tests {
         step(&mut ui, pairs.clone());
         assert!(ui.meas(1, Meas::Vavg).is_nan(), "pairs alone: no mean");
         step(&mut ui, raw);
+        // the raw window (10 M points) is measured by the background worker, not in the step: wait for it, bounded
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while ui.meas(1, Meas::Vavg).is_nan() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            ui.step(0.02);
+        }
         let v = ui.meas(1, Meas::Vavg);
         assert!((v - level).abs() < 1e-6, "Vavg {} of the raw window, level {}", v, level);
         // the pair frames after it keep the raw value

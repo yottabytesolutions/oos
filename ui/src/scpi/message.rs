@@ -46,4 +46,25 @@ impl Scpi {
             }
         }
     }
+
+    pub(super) fn append_program_reply(&mut self, program: &mut Program, response: &[u8]) -> bool {
+        let separator = usize::from(program.has_reply);
+        if response.len() > RESP_MAX.saturating_sub(program.out.len().saturating_add(separator)) {
+            self.push_err("-363,\"Output buffer overrun; remaining commands dropped\"".into());
+            program.commands.clear();
+            return false;
+        }
+        program.append(response);
+        true
+    }
+}
+
+/// A measurement query (`:MEASure...?`) of a large record waits, bounded, for its background measurement
+/// (`Ui::measurement_settle`); it never answers with the value of other settings or another record.
+pub(super) fn settle_measurements(ui: &mut Ui, cmd: &str) {
+    let head = cmd.split_whitespace().next().unwrap_or("");
+    let first = head.trim_start_matches(':').split(':').next().unwrap_or("").trim_end_matches('?');
+    if head.ends_with('?') && kw(first, "MEASure") {
+        ui.measurement_settle();
+    }
 }

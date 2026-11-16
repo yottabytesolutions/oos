@@ -186,7 +186,7 @@ fn synchronous_measurement_rejection_does_not_feed_statistics() {
     ui.clear_display();
     ui.step(0.04);
     ui.meas_new = false;
-    assert!(!ui.measure_rec(&old));
+    assert!(!ui.measure_rec(&old, usize::MAX));
     assert!(!ui.meas_new);
 }
 

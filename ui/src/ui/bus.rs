@@ -616,7 +616,10 @@ mod tests {
         u.m.delay = 0.0013;
         assert!(u.bus_packets().is_empty());
         assert!(u.trace_bus.borrow().worker.as_ref().unwrap().busy);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // each wait bounded on its own: the bound only turns a hang into a failure, and the worker shares the CPUs with
+        // the rest of the suite (a coverage build ran past one 5 s bound for both scans)
+        let bound = std::time::Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + bound;
         let packets = loop {
             let packets = u.bus_packets();
             if !packets.is_empty() {
@@ -630,10 +633,11 @@ mod tests {
         assert_eq!(u.trace_bus.borrow().scans, 1);
         u.m.bus.clk_thr = 5.0;
         assert!(u.bus_words().is_empty(), "old-threshold words must not leak");
+        let deadline = std::time::Instant::now() + bound;
         while u.trace_bus.borrow().worker.as_ref().unwrap().busy {
             let _ = u.bus_packets();
             assert!(std::time::Instant::now() < deadline);
-            std::thread::yield_now();
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         assert!(u.bus_words().is_empty());
         assert_eq!(u.trace_bus.borrow().scans, 2);

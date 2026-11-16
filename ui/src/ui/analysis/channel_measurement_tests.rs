@@ -135,3 +135,37 @@ fn native_cache_rejects_conditioning_changes_and_new_acceptance_without_mutating
     assert_eq!(frame.ch[0][0].to_bits(), original);
     assert_eq!((ui.m.run, ui.records), (RunState::Stop, 0));
 }
+
+// Break it catches: `measure_last` measuring a raw window above the background size on the calling thread again (the
+// merge of PR 8 did: 22 ms per 600k points on a host release build, several times that on the unit, for every SCPI
+// :MEASure and every STOP redraw). Deterministic: the work list, not the time.
+#[test]
+fn measure_last_leaves_a_large_raw_window_to_the_worker() {
+    let mut ui = native(600_000);
+    ui.m.meas.push((Meas::Freq, WaveId::Ch(0)));
+    let rec = ui.last[0].clone().unwrap();
+    assert!(ui.measure_work(&rec, BACKGROUND_MEASUREMENT_POINTS).is_empty(), "600k samples measured inline");
+    assert_eq!(ui.measure_work(&rec, usize::MAX).len(), 1);
+    ui.measure_last();
+    assert!(ui.ana[0].rises.is_empty(), "no inline edge analysis of the raw window");
+    assert_eq!(ui.azr.ref_measure_worker.borrow().as_ref().unwrap().submitted, 1);
+    let small = native(100_000);
+    let rec = small.last[0].clone().unwrap();
+    assert_eq!(small.measure_work(&rec, BACKGROUND_MEASUREMENT_POINTS).len(), 1, "a small window stays inline");
+}
+
+// Break it catches: a measurement query answering "not available" (or an older value) while the record's background
+// job runs, after the large raw windows left the inline path.
+#[test]
+fn a_measurement_query_waits_for_the_background_job() {
+    let mut ui = native(600_000);
+    ui.m.meas.push((Meas::Freq, WaveId::Ch(0)));
+    ui.measure_last();
+    assert!(ui.measurement_busy());
+    let mut scpi = crate::scpi::Scpi::open(0, false);
+    let answer =
+        String::from_utf8(scpi.exec_line(&mut ui, &Canvas::new(1, 1), ":MEASure:ITEM? FREQ,CHANnel1")).unwrap();
+    let freq: f64 = answer.trim().parse().unwrap();
+    assert!((freq - 25e6).abs() < 1.0, "{answer}");
+    assert!(!ui.measurement_busy());
+}

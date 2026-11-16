@@ -43,7 +43,37 @@ fn analysis_key(mut key: RefMeasureKey) -> RefMeasureKey {
     key
 }
 
+/// The longest a measurement query waits for the background measurement of the record shown.
+const QUERY_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
 impl Ui {
+    /// The channels `measure_rec` measures on this thread: on, with at most `limit` samples to measure (`meas_slice`).
+    /// A larger raw window is measured by the background worker (`measure_channel_sources`).
+    pub(in crate::ui) fn measure_work<'a>(&self, rec: &'a Record, limit: usize) -> Vec<(usize, &'a [f32], f64, f64)> {
+        (0..NCH)
+            .filter(|&c| self.m.ch[c].on)
+            .map(|c| {
+                let (v, dt) = self.meas_slice(rec, c);
+                (c, v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64)
+            })
+            .filter(|w| w.1.len() <= limit)
+            .collect()
+    }
+
+    /// For a remote measurement query: the background measurements of the record shown, started if they are not yet,
+    /// waited for up to `QUERY_WAIT`. A job that does not finish in time leaves its value unavailable; a result for other
+    /// settings or another record is never taken (the keys of `channel_measurement`).
+    pub(crate) fn measurement_settle(&mut self) {
+        let deadline = std::time::Instant::now() + QUERY_WAIT;
+        self.poll_reference_measurements();
+        self.measure_channel_sources();
+        while self.measurement_busy() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            self.poll_reference_measurements();
+        }
+        self.measure_channel_sources();
+    }
+
     fn own_params(&self, kind: Meas, owner: WaveId) -> Option<MeasOwn> {
         let own = self.meas_own.get(&(kind, owner)).copied()?;
         if !(own.refs_set

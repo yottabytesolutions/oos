@@ -72,7 +72,7 @@ fn envelope_pair_and_hires_windows_match_measurement_threshold_and_frequency() {
             ui.m.acq = AcqMode::HiRes;
         }
         let record = ui.last[0].clone().unwrap();
-        ui.measure_rec(&record);
+        ui.measure_rec(&record, usize::MAX);
         let mut job = prepare(&ui, AView::Eye, false).unwrap();
         let (v, dt) = job.context.meas_wave(&job.record, 0);
         assert_eq!((v.as_slice(), dt), ui.meas_slice(&record, 0));

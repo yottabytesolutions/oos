@@ -17,7 +17,7 @@ use std::{
     sync::{mpsc, Arc},
 };
 
-const BACKGROUND_MEASUREMENT_POINTS: usize = 262_144;
+pub(super) const BACKGROUND_MEASUREMENT_POINTS: usize = 262_144;
 #[cfg(test)]
 mod channel_measurement_tests;
 mod own;

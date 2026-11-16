@@ -885,17 +885,6 @@ impl Scpi {
         response
     }
 
-    fn append_program_reply(&mut self, program: &mut Program, response: &[u8]) -> bool {
-        let separator = usize::from(program.has_reply);
-        if response.len() > RESP_MAX.saturating_sub(program.out.len().saturating_add(separator)) {
-            self.push_err("-363,\"Output buffer overrun; remaining commands dropped\"".into());
-            program.commands.clear();
-            return false;
-        }
-        program.append(response);
-        true
-    }
-
     fn advance_program(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
         self.poll_events(ui);
         if program.invalid {
@@ -953,6 +942,7 @@ impl Scpi {
             self.push_err(format!("-224,\"SIM generation failed\" {error}"));
         }
         let before = self.error_serial;
+        message::settle_measurements(ui, cmd);
         let r = self.exec_cmd(ui, cv, cmd);
         // a query with no payload would leave the client blocked on the next line: answer with the error instead
         let query = cmd.split_whitespace().next().unwrap_or("").ends_with('?');

@@ -3206,7 +3206,7 @@ impl Ui {
                             self.meas_want = true;
                             self.meas_pending = Some(r);
                         } else {
-                            self.meas_new |= self.measure_rec(&r);
+                            self.meas_new |= self.measure_rec(&r, usize::MAX);
                         }
                     }
                 } else if self.meas_bg.is_some() {
@@ -6926,7 +6926,9 @@ impl Ui {
     /// dropped; the samples are read where they are, not copied), then upstream's channel analyses of that record and
     /// every loaded ref. False when the record shown belongs to an old acquisition generation.
     pub(crate) fn measure_last(&mut self) -> bool {
-        let measured = self.last[0].clone().is_some_and(|rec| self.measure_rec(&rec));
+        // a raw window above the background size goes to the measurement worker (`measure_channel_sources`)
+        let limit = analysis::BACKGROUND_MEASUREMENT_POINTS;
+        let measured = self.last[0].clone().is_some_and(|rec| self.measure_rec(&rec, limit));
         if measured {
             self.measure_channel_sources();
         }
@@ -6934,18 +6936,12 @@ impl Ui {
         measured
     }
 
-    /// The measurements of `rec` now, on this thread.
-    fn measure_rec(&mut self, rec: &Record) -> bool {
+    /// The measurements of `rec` now, on this thread, of the channels with at most `limit` samples (`measure_work`).
+    fn measure_rec(&mut self, rec: &Record, limit: usize) -> bool {
         if !change::acquisition::record(self, rec) {
             return false;
         }
-        let work: Vec<(usize, &[f32], f64, f64)> = (0..NCH)
-            .filter(|&c| self.m.ch[c].on)
-            .map(|c| {
-                let (v, dt) = self.meas_slice(rec, c);
-                (c, v, dt, 0.4 * self.m.ch[c].volts_per_div() as f64)
-            })
-            .collect();
+        let work = self.measure_work(rec, limit);
         let done = measure_channels(&work, self.meas_cheap(rec));
         self.meas_env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         self.meas_set(done);

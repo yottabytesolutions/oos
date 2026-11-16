@@ -28,8 +28,9 @@ Ratchet entries may be added or raised only in a dedicated rebaseline commit tha
    default module file) or a key move that continues a listed move. A destination no such move names fails, and so
    does a file move onto a file the base already has.
 
-An upstream merge is a merge after the base that changes the tree and whose own merge base is not in the base: a
-task branch starts from the base, upstream does not.
+An upstream merge is a merge after the base that changes the tree and whose own merge base is not on the base's
+first-parent line: a task branch starts from that line, upstream does not. After a first intake the next upstream
+commit meets the base through the second parent of the earlier merge (refined 2026-11-16, task 0084).
 
 Between an upstream merge and its rebaseline commit, the fast gate (`check --fast`, the pre-commit hook) reports
 the findings rule 4 would cover as pending rebaseline, with a count per crate and ratchet, instead of failing. It

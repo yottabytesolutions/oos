@@ -112,6 +112,13 @@ fn is_ancestor(ctx: &run::Context, root: &Path, a: &str, b: &str) -> Result<bool
     Ok(run::capture(ctx, root, "git", &["merge-base", "--is-ancestor", a, b])?.ok)
 }
 
+/// Whether `c` is on the first-parent line of `base`. A task branch starts there; upstream, once merged before, meets
+/// the base only through the second parent of that earlier merge.
+fn on_first_parents(ctx: &run::Context, root: &Path, c: &str, base: &str) -> Result<bool, String> {
+    let c = git(ctx, root, &["rev-parse", c])?;
+    Ok(git(ctx, root, &["rev-list", "--first-parent", base])?.lines().any(|l| l == c))
+}
+
 fn short(c: &str) -> &str {
     c.get(..8).unwrap_or(c)
 }
@@ -163,7 +170,7 @@ fn upstream_merge(
     theirs: &str,
 ) -> Result<Option<Changed>, String> {
     let mb = git(ctx, root, &["merge-base", ours, theirs])?;
-    if is_ancestor(ctx, root, theirs, base)? || is_ancestor(ctx, root, &mb, base)? {
+    if is_ancestor(ctx, root, theirs, base)? || on_first_parents(ctx, root, &mb, base)? {
         return Ok(None);
     }
     let files = git(ctx, root, &["diff", "--name-only", &mb, theirs])?.lines().map(str::to_string).collect();

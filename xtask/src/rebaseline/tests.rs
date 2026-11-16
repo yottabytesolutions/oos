@@ -204,3 +204,19 @@ fn a_carried_key_may_move_on_but_an_unrelated_key_move_carries_nothing() {
     assert!(!changed.covers("struct ui/src/big.rs Big"));
     let _ = up;
 }
+
+/// A second intake: the base already holds an upstream merge, so the next upstream commit's merge base with ours is
+/// in the base (on the second-parent line). Before, that merge did not count as upstream and nothing was pending.
+#[test]
+fn a_second_upstream_merge_after_one_in_the_base_is_upstream() {
+    let (d, _) = integration("rebaseline-second");
+    git(&d, &["checkout", "-q", "overhaul"]);
+    git(&d, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--ff-only", "integ"]);
+    git(&d, &["checkout", "-q", "-b", "integ2"]);
+    git(&d, &["checkout", "-q", "up"]);
+    commit(&d, &[("ui/src/up2.rs", "more upstream")], "upstream work 2");
+    git(&d, &["checkout", "-q", "integ2"]);
+    git(&d, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-ff", "-m", "merge upstream 2", "up"]);
+    let p = pending(&Default::default(), &d, &base_of(&d)).expect("pending");
+    assert!(p.covers("fn ui/src/up2.rs f") && !p.covers("fn ui/src/ours.rs f") && !p.covers("fn ui/src/up.rs f"));
+}

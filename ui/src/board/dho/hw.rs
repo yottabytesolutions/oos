@@ -1132,6 +1132,21 @@ fn append_header_log(line: &str) {
     }
 }
 
+/// A raw read (the live-compression newest frame, the deep window: up to ~24 MB) decoded with the ADC cores matched
+/// when the UI asks for it. The flag is read first: a guard taken in the argument would hold `Shared` through the
+/// whole decode, and the UI waits on it (upstream 3930159f).
+#[cfg(target_os = "linux")]
+fn decode_raw(
+    bytes: &[u8],
+    (s, p): (&Settings, &hz::Params),
+    probe: super::switches::HeaderProbe,
+    out: &HwShared,
+    cores: &mut super::cores::Cores,
+) -> Frame {
+    let matched = crate::perfguard::deep::acq_lock(out).cores;
+    decode_with(bytes, s, p, 0, probe, matched.then_some(cores))
+}
+
 /// Decodes a read-out of the whole record into a frame (tests: no header probe).
 #[cfg(test)]
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
@@ -2275,7 +2290,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     let raw_frame = if raw_newest(&b, &p) && count > 0 && comp_last.is_none_or(|t| t.elapsed() >= crate::compress::RAW_PERIOD) {
                         comp_last = Some(std::time::Instant::now());
                         match seq::read_raw_again(&mut state, &b, &p, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
-                            Ok(()) => Some(decode_with(raw_dma.data(), &seq::raw_settings(&b), &p, 0, switches.board.header_probe, crate::perfguard::deep::acq_lock(&out).cores.then_some(&mut cores))),
+                            Ok(()) => Some(decode_raw(raw_dma.data(), (&seq::raw_settings(&b), &p), switches.board.header_probe, &out, &mut cores)),
                             Err(e) => {
                                 status(format!("raw read of the newest frame: {}", e));
                                 None
@@ -2302,7 +2317,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                                 Ok(()) => {
                                     use crate::deepmeas::cost;
                                     let t1 = std::time::Instant::now();
-                                    let f = decode_with(raw_dma.data(), &ds, &p, 0, switches.board.header_probe, crate::perfguard::deep::acq_lock(&out).cores.then_some(&mut cores));
+                                    let f = decode_raw(raw_dma.data(), (&ds, &p), switches.board.header_probe, &out, &mut cores);
                                     cost::set(&cost::DMA_US, t1 - t0);
                                     cost::set(&cost::DECODE_US, t1.elapsed());
                                     cost::READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2560,6 +2575,18 @@ pub(crate) mod single_fake;
 
 #[cfg(test)]
 mod tests {
+
+    // Upstream 3930159f: a decode call with `acq_lock(&out).cores.then_some(..)` in its arguments kept the guard to
+    // the end of the statement, so `Shared` stayed locked through a raw decode of up to ~24 MB. The loop is Linux-only and needs the
+    // FPGA, so this checks its source. Break it catches: a lock taken in a decode's arguments.
+    #[test]
+    fn no_decode_holds_the_shared_lock() {
+        let src = include_str!("hw.rs");
+        let call = |l: &&str| !l.trim_start().starts_with("//") && !l.contains("contains(");
+        let held =
+            src.lines().filter(call).filter(|l| l.contains("decode_with(") && l.contains("lock(")).collect::<Vec<_>>();
+        assert!(held.is_empty(), "{held:?}");
+    }
 
     #[test]
     fn audit0073_selfcal_reloads_published_files_and_warns_on_sync_failure() {

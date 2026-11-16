@@ -30,10 +30,65 @@ Reserved paths: `docs/tasks/0065-scpi-spec.md`, `docs/spec/scpi.md`,
 4. Apply the coordinator review decisions: complete transport procedures, error and
    Command/Query contracts, STEP and trigger MODE dispositions, and transitional
    state fields with global-regex compatibility fixtures.
-5. Audit the tables against source and run `cargo xtask check --fast`; record the
+5. Re-spec against merged c59b71d5: walk every parser/dispatch branch, preserve
+   existing IDs, mark changed/removed contracts, add upstream paths with new IDs,
+   compare the validator and state producer, and record counts/disagreements.
+6. Audit the tables against source and run `cargo xtask check --fast`; record the
    actual result and prepare one commit-message section for coordinator review.
 
 ## Status
+
+
+- 2026-11-16: merged-base re-spec on c59b71d5 prepared for coordinator review,
+  docs uncommitted. `docs/spec/scpi.md`: 358 live header templates / 628 C/Q
+  paths (270 both, 25 command, 63 query), nine removed side-effect alias
+  tombstones, nine separate RPC rows. Kept all 153 inherited header IDs:
+  119 retain their row contract and 34 are marked changed, with updated global
+  error/framing rules. Added 205 rows scpi-500..704 (203 upstream additions
+  and two prior-extraction omissions, CORes and channel POSition). Complete
+  value tables: 70 single definitions / 60 measurement kinds, 17 pairs and
+  46 eye figures. State schema: 140 diagnostic positions (130 retained plus
+  ten hardware suffix fields), eight separate /ui-state JSON keys.
+  Recorded fork/upstream/merge decisions, including task 0080's still-missing
+  clear-item/drop-oldest behavior, source-aware RUN/SINGLE, 50 ps display ladder,
+  strict waveform enums/paging, actual trigger type and bounded programs/OPC.
+- 2026-11-16: validator cross-check: 251 literal header occurrences, 200 distinct
+  spellings, 119 mapped inventory IDs; sole unmatched header REF:NOPE? is the
+  intentional negative test. Eight findings V1..V8 in the spec: invalid-query
+  error text versus earlier empty-invalid target; cancelled/oversized query
+  no-reply exceptions to validator's broad comment; JSON versus diagnostic
+  schema; client text/binary limits and whitespace/encoding coverage; absent
+  selective-clear/full-list assertions; changed numeric/source/page contracts;
+  OPC acknowledgement versus completion coverage; current statistics without
+  history. No current parser-versus-validator contradiction established by
+  static audit. Remaining target divergences: MODE protocol selection (D2),
+  STEP (D5), TVM compatibility proposal and M15 gen/epoch waveform barrier.
+  Successful empty replies/compound slots are fixed in this tree; the old
+  *CLS? side effect and missing reply are gone. SYST:PIPeline? preference and
+  STATe pipeline startup-switch diagnostic can disagree. Hardware suffix adds
+  a global frames regex match; recorded as a version 0 wire addition.
+- 2026-11-16: `cargo xtask check --fast`, c59b71d5 plus documentation changes:
+  exit 0, exactly `partial gate passed (not done): 8 steps in 161 s`.
+  All selected steps passed: `ok fmt`, `ok size`, `ok architecture`,
+  `ok mutable-statics`, `ok unsafe`, `ok method-exceptions`,
+  `ok known-failures`, `ok agent-rules`; no failed steps. Complete logs:
+  `target/check-logs/16886-1794848842552098000/` (`steps.log` has exit=0).
+  Default/full and image steps were not selected. Existing validator framing
+  suite: `python3 -m unittest discover -s tools/tests -p test_scpi_validate.py -v`,
+  exit 0, four tests passed. Static audit passed unique IDs, Markdown table
+  widths, all source anchor bounds and complete non-overlapping inherited
+  row error coverage. All 15 original regex definitions preserved; first-match
+  and find-all captures remain stable after version append across 32 synthetic
+  merged CPU/GPU, identity, settle, hardware-suffix and transitional shapes.
+  Evidence: `target/t0065-respec-audit.log` and
+  `target/t0065-validator-literals.json`. `git diff --check` passed. Replaced
+  `target/COMMIT_MSG.txt` with one section. No running-server validator or
+  hardware access; no source-code changes, commits, pushes or merges.
+  Task remains active; coordinator owns cross-vendor review and full batch gate.
+
+- 2026-11-16: owner assigned merged-base re-spec on `t0065-scpi-respec`,
+  HEAD c59b71d5; initial worktree clean. Accepted task 0065 claim and reserved
+  paths retained. Docs only, no hardware or commits. Plan extended before edits.
 
 - 2026-11-16: review corrections applied on dd8df94 with documentation changes
   uncommitted. Added nine VXI-11 procedure rows with dispositions and D6/D7

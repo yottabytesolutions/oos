@@ -1,12 +1,12 @@
 # :SYSTem:STATe? response schema
 
-Source baseline: `overhaul` c6f1f98, 2026-11-16. Extracted from source, not
+Source baseline: merged `overhaul` c59b71d5, 2026-11-16. Extracted from source, not
 verified on hardware in this task. This is the current diagnostic wire format
 and the coordinator-decided version boundary for M15/unitlab. It does not
 change any producer.
 The SCPI dispatcher calls `cmd::stat_text(ui).trim()`
-(`ui/src/scpi.rs:1135`); that producer is shared with the control FIFO `stat`
-command (`ui/src/cmd.rs:133`). Transport framing is in [scpi.md](scpi.md).
+(`ui/src/scpi.rs:2333`); that producer is shared with the control FIFO `stat`
+command (`ui/src/cmd.rs:140`). Transport framing is in [scpi.md](scpi.md).
 
 Today the answer is a labelled, whitespace-delimited diagnostic line, **not
 JSON** and not uniformly key=value. Literal parentheses, percent signs, slashes
@@ -44,6 +44,7 @@ acq_batch_prearm=N acq_batch_disarm=N acq_configure=N acq_single_arm=N
 stage_restart_autoset=N stage_restart_bode=N
 diag intake.p50 ... diag intake.p99 ... diag poll.memory ... [other diag blocks]
 graphics gpu_OR_cpu hdmi ...
+[hw frames N dropped N fast X ms (place X draw X of it fold X, N frames a call) take N map WIDTHxHEIGHT]
 ```
 
 Line breaks above are editorial; the response is one line except that unescaped
@@ -67,47 +68,55 @@ so the whole diagnostic answer is not an atomic multi-counter snapshot.
 | Requirement | Wire field / position | Type and unit | Meaning and source | Evidence |
 |---|---|---|---|---|
 | state-query-1 | `fps` | f1, pictures/s | ui.fps; recent presentation-loop rate, timers adapter updates it | `ui/src/system/device/timers.rs:80` |
-| state-query-2 | `frames` | u64, UI frames | ui.frames; increments per layer composition/render, distinct from acquired waveform frames | `ui/src/ui.rs:2400` |
-| state-query-3 | `records` | u64, records | ui.records; records taken into the UI record path | `ui/src/ui.rs:2026` |
-| state-query-4 | `run` | enum Run/Stop | ui.m.run | `core/src/model/display.rs:35` |
-| state-query-5 | `status` | enum Triggered/Auto/Wait/Stop | ui.m.status; differs from the abbreviations of TRIG:STAT? | `core/src/model/display.rs:41` |
-| state-query-6 | `t` | f1, s | ui.now; UI session elapsed time, not Unix time | `ui/src/cmd.rs:177` |
-| state-query-7 | `step` | f1, ms | ui.t_step; exponential smoothing factor 0.05 of step duration | `ui/src/system/device.rs:121` |
-| state-query-8 | `(acq` | f1, ms | ui.t_acq; source intake/record conversion part of step | `ui/src/ui.rs:1062` |
-| state-query-9 | `draw)` | f1, ms | ui.t_draw; phosphor-map drawing part of step | `ui/src/ui.rs:1064` |
-| state-query-10 | `render` | f1, ms | ui.t_render; rendering duration | `ui/src/ui.rs:1065` |
-| state-query-11 | `present` | f1, ms | ui.t_present; presentation duration | `ui/src/ui.rs:1066` |
+| state-query-2 | `frames` | u64, UI frames | ui.frames; increments per layer composition/render, distinct from acquired waveform frames | `ui/src/ui.rs:3689` |
+| state-query-3 | `records` | u64, records | ui.records; records taken into the UI record path | `ui/src/ui.rs:3126` |
+| state-query-4 | `run` | enum Run/Stop | ui.m.run | `core/src/model/display.rs:57` |
+| state-query-5 | `status` | enum Triggered/Auto/Wait/Stop | ui.m.status; differs from the abbreviations of TRIG:STAT? | `core/src/model/display.rs:63` |
+| state-query-6 | `t` | f1, s | ui.now; UI session elapsed time, not Unix time | `ui/src/cmd.rs:192` |
+| state-query-7 | `step` | f1, ms | ui.t_step; exponential smoothing factor 0.05 of step duration | `ui/src/system/device.rs:122` |
+| state-query-8 | `(acq` | f1, ms | ui.t_acq; source intake/record conversion part of step | `ui/src/ui.rs:1422` |
+| state-query-9 | `draw)` | f1, ms | ui.t_draw; phosphor-map drawing part of step | `ui/src/ui.rs:1424` |
+| state-query-10 | `render` | f1, ms | ui.t_render; rendering duration | `ui/src/ui.rs:1425` |
+| state-query-11 | `present` | f1, ms | ui.t_present; presentation duration | `ui/src/ui.rs:1426` |
 | state-query-12 | `edges[0]` | u64, frames | ui.fast_edges[0]; edge found within col+16 samples of hardware pretrigger; analog fast path only | `ui/src/drawpipe.rs:122` |
 | state-query-13 | `edges[1]` | u64, frames | ui.fast_edges[1]; edge farther away with nearest edge of wrong direction (unless Either slope); analog fast path only | `ui/src/drawpipe.rs:122` |
 | state-query-14 | `edges[2]` | u64, frames | ui.fast_edges[2]; other found edge farther away; analog fast path only | `ui/src/drawpipe.rs:122` |
 | state-query-15 | `edges[3]` | u64, frames | ui.fast_edges[3]; no refined edge found; analog fast path only | `ui/src/drawpipe.rs:122` |
 | state-query-16 | `off[0]` | f0, samples | ui.fast_off.0; sum of absolute refined-edge offsets for edges[2] | `ui/src/drawpipe.rs:128` |
 | state-query-17 | `off[1]` | f0, samples | ui.fast_off.1; maximum of those offsets | `ui/src/drawpipe.rs:129` |
-| state-query-18 | `parts.meas` | f1, ms | ui.t_parts[0]; measurements; smoothed step part | `ui/src/ui.rs:1071` |
-| state-query-19 | `parts.analyse` | f1, ms | ui.t_parts[1]; analysers and decoders; smoothed step part | `ui/src/ui.rs:1071` |
-| state-query-20 | `parts.pane` | f1, ms | ui.t_parts[2]; second pane; smoothed step part | `ui/src/ui.rs:1071` |
-| state-query-21 | `parts.max` | f1, ms | ui.t_parts[3]; brightest-pixel scans; smoothed step part | `ui/src/ui.rs:1071` |
-| state-query-22 | `gpu.layers` | optional f1, ms | ui.t_gpu[0]; last panel helper frame layer composition timing; block absent if t_gpu=None | `ui/src/cmd.rs:136` |
-| state-query-23 | `gpu.copy` | optional f1, ms | ui.t_gpu[1]; last panel helper frame copy timing; block absent if t_gpu=None | `ui/src/cmd.rs:136` |
-| state-query-24 | `gpu.wait` | optional f1, ms | ui.t_gpu[2]; last panel helper frame wait timing; block absent if t_gpu=None | `ui/src/cmd.rs:136` |
-| state-query-25 | `gpu.upload` | optional f1, ms | ui.t_gpu[3]; last panel helper frame upload timing; block absent if t_gpu=None | `ui/src/cmd.rs:136` |
-| state-query-26 | `gpu.draw` | optional f1, ms | ui.t_gpu[4]; last panel helper frame draw timing; block absent if t_gpu=None | `ui/src/cmd.rs:136` |
-| state-query-27 | `gpu.read` | optional f1, ms | ui.t_gpu[5]; last panel helper frame readback timing; block absent if t_gpu=None | `ui/src/cmd.rs:136` |
-| state-query-28 | `pipeline` | enum Frames/Batch | switches.pipeline; configured acquisition drawing mode | `ui/src/drawpipe.rs:354` |
-| state-query-29 | `interp` | enum Exact/Fast | switches.interp; sparse interpolation policy | `ui/src/sparse.rs:261` |
+| state-query-18 | `parts.meas` | f1, ms | ui.t_parts[0]; measurements; smoothed step part | `ui/src/ui.rs:1431` |
+| state-query-19 | `parts.analyse` | f1, ms | ui.t_parts[1]; analysers and decoders; smoothed step part | `ui/src/ui.rs:1431` |
+| state-query-20 | `parts.pane` | f1, ms | ui.t_parts[2]; second pane; smoothed step part | `ui/src/ui.rs:1431` |
+| state-query-21 | `parts.max` | f1, ms | ui.t_parts[3]; brightest-pixel scans; smoothed step part | `ui/src/ui.rs:1431` |
+| state-query-22 | `gpu.layers` | optional f1, ms | ui.t_gpu[0]; last panel helper frame layer composition timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
+| state-query-23 | `gpu.copy` | optional f1, ms | ui.t_gpu[1]; last panel helper frame copy timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
+| state-query-24 | `gpu.wait` | optional f1, ms | ui.t_gpu[2]; last panel helper frame wait timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
+| state-query-25 | `gpu.upload` | optional f1, ms | ui.t_gpu[3]; last panel helper frame upload timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
+| state-query-26 | `gpu.draw` | optional f1, ms | ui.t_gpu[4]; last panel helper frame draw timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
+| state-query-27 | `gpu.read` | optional f1, ms | ui.t_gpu[5]; last panel helper frame readback timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
+| state-query-28 | `pipeline` | enum Frames/Batch | startup switches.pipeline; not m.draw_batch or the effective draw_switches route | `ui/src/drawpipe.rs:354` |
+| state-query-29 | `interp` | enum Exact/Fast | switches.interp; sparse interpolation policy | `ui/src/sparse.rs:161` |
 | state-query-30 | `acquired` | u64, frames | drawpipe::Counters.acquired; process aggregate of frames acquired | `ui/src/drawpipe.rs:320` |
 | state-query-31 | `used` | u64, frames | drawpipe::Counters.used; process aggregate of frames drawn into picture | `ui/src/drawpipe.rs:320` |
 | state-query-32 | `dropped` | u64, frames | drawpipe::Counters.dropped; process aggregate of frames discarded across pipeline sites | `ui/src/drawpipe.rs:320` |
 | state-query-33 | `measured` | u64, frames | drawpipe::Counters.measured; process aggregate of frames whose cheap measurements entered statistics | `ui/src/drawpipe.rs:320` |
 | state-query-34 | `compress.k` | u32, dimensionless | compress::last_k(); last FPGA compression factor | `ui/src/compress.rs:45` |
-| state-query-35 | `deep.reads` | u64, reads | deepmeas::cost::READS; accumulated raw deep rereads | `ui/src/deepmeas.rs:26` |
-| state-query-36 | `deep.dma` | f1, ms | deepmeas::cost::DMA_US/1000; last DMA duration, not lifetime total | `ui/src/deepmeas.rs:38` |
-| state-query-37 | `deep.decode` | f1, ms | deepmeas::cost::DECODE_US/1000; last decode duration, not lifetime total | `ui/src/deepmeas.rs:38` |
-| state-query-38 | `deep.record` | f1, ms | deepmeas::cost::RECORD_US/1000; last screen-record creation duration, not lifetime total | `ui/src/deepmeas.rs:38` |
-| state-query-39 | `deep.measure` | f1, ms | deepmeas::cost::MEASURE_US/1000; last worker measurement duration, not lifetime total | `ui/src/deepmeas.rs:38` |
-| state-query-40 | `deep.(pts)` | u64, samples | deepmeas::cost::MEASURE_N; samples of last measurement job, all channels | `ui/src/deepmeas.rs:31` |
-| state-query-41 | `gpu.panel` | optional f1, ms | ui.t_gpu_screens.0; helper time of last panel frame | `ui/src/cmd.rs:161` |
-| state-query-42 | `gpu.monitor` | optional f1, ms | ui.t_gpu_screens.1 when Some; helper time of last monitor frame; monitor is every second frame | `ui/src/cmd.rs:160` |
+| state-query-35 | `deep.reads` | u64, reads | deepmeas::cost::READS; accumulated raw deep rereads | `ui/src/deepmeas.rs:30` |
+| state-query-36 | `deep.dma` | f1, ms | deepmeas::cost::DMA_US/1000; last DMA duration, not lifetime total | `ui/src/deepmeas.rs:42` |
+| state-query-37 | `deep.decode` | f1, ms | deepmeas::cost::DECODE_US/1000; last decode duration, not lifetime total | `ui/src/deepmeas.rs:42` |
+| state-query-38 | `deep.record` | f1, ms | deepmeas::cost::RECORD_US/1000; last screen-record creation duration, not lifetime total | `ui/src/deepmeas.rs:42` |
+| state-query-39 | `deep.measure` | f1, ms | deepmeas::cost::MEASURE_US/1000; last worker measurement duration, not lifetime total | `ui/src/deepmeas.rs:42` |
+| state-query-40 | `deep.(pts)` | u64, samples | deepmeas::cost::MEASURE_N; samples of last measurement job, all channels | `ui/src/deepmeas.rs:35` |
+| state-query-41 | `gpu.panel` | optional f1, ms | ui.t_gpu_screens.0; helper time of last panel frame | `ui/src/cmd.rs:168` |
+| state-query-42 | `gpu.monitor` | optional f1, ms | ui.t_gpu_screens.1 when Some; helper time of last monitor frame; monitor is every second frame | `ui/src/cmd.rs:167` |
+
+The `pipeline` diagnostic (state-query-28) reads the startup host switch,
+while :SYST:PIPeline? reads m.draw_batch. Hardware draw_switches substitutes
+the model preference; non-hardware paths retain startup switches. These can
+differ after a remote write; the diagnostic is not proof of the effective
+route. Evidence: `ui/src/cmd.rs:156`, `ui/src/ui/host.rs:88`,
+`ui/src/ui/change/acquisition.rs:62`. This merged-tree mismatch remains
+observable and is not repaired by the re-spec.
 
 ## Pacing, composition and frame costs
 
@@ -136,8 +145,8 @@ so the whole diagnostic answer is not an atomic multi-counter snapshot.
 | state-query-63 | `picture.age` | f1/f1/f1/f1, ms | p50/p90/p99/max newest merged batch age; entries with no age omitted | `ui/src/pacing.rs:412` |
 | state-query-64 | `picture.stale` | u64, frames | pacing::STALE; obsolete frames actually reaching picture; distinct from rejected stale_* counters | `ui/src/pacing.rs:130` |
 | state-query-65 | `picture.partial` | u64, batches | pacing::PARTIAL; batches whose frames reached the picture in more than one merge | `ui/src/pacing.rs:127` |
-| state-query-66 | `picture.wanted` | u64, generation | pacing::WANTED; metrics mirror of published identity.gen, not an identity authority | `ui/src/ui/change/acquisition.rs:49` |
-| state-query-67 | `picture.applied` | u64, generation | pacing::APPLIED; metrics mirror of worker-applied want_gen | `ui/src/board/dho/hw.rs:1702` |
+| state-query-66 | `picture.wanted` | u64, generation | pacing::WANTED; metrics mirror of published identity.gen, not an identity authority | `ui/src/ui/change/acquisition.rs:54` |
+| state-query-67 | `picture.applied` | u64, generation | pacing::APPLIED; metrics mirror of worker-applied want_gen | `ui/src/board/dho/hw.rs:1881` |
 | state-query-68 | `settle.configured/first/steady ms/empty` | zero..4 space-separated tuples, or - | Most recent first. Each tuple configured/first/steady/empty: rounded ms from settings change for first three, -1 if missing; final u32 empty-picture count. State.settled, ten new pictures in a row defines steady | `ui/src/pacing.rs:392` |
 | state-query-69 | `cost.frames` | u64, frames | framecost::FRAMES; dense fast-path frame calls since process start | `ui/src/framecost.rs:26` |
 | state-query-70 | `cost.wide` | u64, searches | framecost::WIDES; wide trigger searches since start | `ui/src/framecost.rs:28` |
@@ -206,10 +215,10 @@ none is part of version 1. M2.3e removes the old mechanisms and shadow tracking
 | state-query-99 | `shadow.SnapshotTooLarge=` | u64, errors | Diagnostics.error_counts for Error::SnapshotTooLarge; settings snapshot bound exceeded | `ui/src/ui/change/diagnostics.rs:32` |
 | state-query-100 | `shadow.DuplicateToken=` | u64, errors | Diagnostics.error_counts for Error::DuplicateToken; duplicate stage request token | `ui/src/ui/change/diagnostics.rs:32` |
 | state-query-101 | `shadow.GenerationOverflow=` | u64, errors | Diagnostics.error_counts for Error::GenerationOverflow; identity generation/epoch arithmetic overflow | `ui/src/ui/change/diagnostics.rs:32` |
-| state-query-102 | `gen=` | optional u64, identity | observer.last.identity().gen(); hardware acquisition settings generation; absent before first publication | `ui/src/ui/change.rs:242` |
-| state-query-103 | `epoch=` | optional u64, identity | observer.last.identity().epoch(); acquisition request epoch, including equal-settings rearm; absent before first publication | `ui/src/ui/change.rs:242` |
-| state-query-104 | `stats_gen=` | optional u64, identity | observer.last.identity().stats_gen(); measurement statistics generation; absent before first publication | `ui/src/ui/change.rs:242` |
-| state-query-105 | `resolved=` | repeated optional Requester/u64/u64:u64 | one per latest ChangeSet resolution: requester Autoset/Bode, run token, stage token, resolved acquisition epoch; not a lifetime list | `ui/src/ui/change.rs:245` |
+| state-query-102 | `gen=` | optional u64, identity | observer.last.identity().gen(); hardware acquisition settings generation; absent before first publication | `ui/src/ui/change.rs:241` |
+| state-query-103 | `epoch=` | optional u64, identity | observer.last.identity().epoch(); acquisition request epoch, including equal-settings rearm; absent before first publication | `ui/src/ui/change.rs:241` |
+| state-query-104 | `stats_gen=` | optional u64, identity | observer.last.identity().stats_gen(); measurement statistics generation; absent before first publication | `ui/src/ui/change.rs:241` |
+| state-query-105 | `resolved=` | repeated optional Requester/u64/u64:u64 | one per latest ChangeSet resolution: requester Autoset/Bode, run token, stage token, resolved acquisition epoch; not a lifetime list | `ui/src/ui/change.rs:244` |
 | state-query-106 | `stage.intake.n=` | usize 0..256, samples | StageTiming.samples(); paired intake/change rolling sample count | `ui/src/perfguard.rs:141` |
 | state-query-107 | `stage.intake.p99_ns=` | optional u64, ns | StageTiming.p99()[0], nearest-rank p99 intake incl queued intake | `ui/src/perfguard.rs:127` |
 | state-query-108 | `stage.change.n=` | usize 0..256, samples | same paired StageTiming.samples() | `ui/src/perfguard.rs:147` |
@@ -220,7 +229,7 @@ none is part of version 1. M2.3e removes the old mechanisms and shadow tracking
 
 The class names come from `core/src/change/classes.rs:31`; they are case-sensitive
 wire keys. The normalizing and staged-proposal comparisons increment their
-separate counts in `ui/src/ui/change.rs:352` and `ui/src/ui/change.rs:229`. Errors quarantine requests and keep
+separate counts in `ui/src/ui/change.rs:351` and `ui/src/ui/change.rs:228`. Errors quarantine requests and keep
 the last publication (`ui/src/ui/change/diagnostics.rs:32`). Generations identify
 different contracts and cannot be substituted for each other or for pacing
 wanted/applied metrics mirrors. Stage token types are `core/src/change/requests.rs:8`.
@@ -230,23 +239,25 @@ wanted/applied metrics mirrors. Stage token types are `core/src/change/requests.
 
 | Requirement | Wire field / position | Type and unit | Meaning and source | Evidence |
 |---|---|---|---|---|
-| state-query-113 | `stale_worker_push=` | u64, frames | drawpipe::Counters.losses.worker_push; frames rejected under worker publication lock by current identity before handoff | `ui/src/board/dho/publication.rs:55` |
+| state-query-113 | `stale_worker_push=` | u64, frames | drawpipe::Counters.losses.worker_push; frames rejected under worker publication lock by current identity before handoff | `ui/src/board/dho/publication.rs:64` |
 | state-query-114 | `stale_ui_publish=` | u64, frames | drawpipe::Counters.losses.ui_publish; queued frames removed at UI acquisition publication because identity is obsolete | `ui/src/ui/change/acquisition.rs:32` |
-| state-query-115 | `stale_queue_pop=` | u64, frames | drawpipe::Counters.losses.queue_pop; obsolete frames rejected while draining/popping UI source queue | `ui/src/wave.rs:770` |
+| state-query-115 | `stale_queue_pop=` | u64, frames | drawpipe::Counters.losses.queue_pop; obsolete frames rejected while draining/popping UI source queue | `ui/src/wave.rs:587` |
 | state-query-116 | `stale_pipe=` | u64, frames | drawpipe::Counters.losses.pipe; obsolete frames rejected at deposit pipe admission/worker/merge sites | `ui/src/drawpipe.rs:696` |
 | state-query-117 | `queue_overflow=` | u64, frames | drawpipe::Counters.losses.overflow; oldest frames evicted beyond QUEUE_MAX; independent of stale identity | `ui/src/board/dho/publication.rs:24` |
-| state-query-118 | `fold_drops=` | u64, measurement samples | drawpipe::Counters.losses.folds; measurement samples discarded from invalid statistics-generation folds, sum of fold.n, not number of folds | `ui/src/drawpipe.rs:1912` |
+| state-query-118 | `fold_drops=` | u64, measurement samples | drawpipe::Counters.losses.folds; measurement samples discarded from invalid statistics-generation folds, sum of fold.n, not number of folds | `ui/src/drawpipe.rs:1920` |
 
 All six wire names are serialized by `ui/src/drawpipe/losses.rs:17` and appended
-by `ui/src/ui/change.rs:250`. They are independent reasons/sites, not disjoint
+by `ui/src/ui/change.rs:249`. They are independent reasons/sites, not disjoint
 parts of one conservation equation. `queue_overflow` also increments aggregate
-`dropped` (`ui/src/board/dho/publication.rs:34`). `fold_drops` deliberately counts
+`dropped` (`ui/src/board/dho/publication.rs:43`). `fold_drops` deliberately counts
 samples while stale identity counts frames. `picture stale` counts what reached
 the screen, whereas these stale_* counters count rejection. Atomics are process
 lifetime, initialized to zero, not reset by CLEAR or acquisition changes;
 ordinary losses use fetch_add (u64 wrapping at overflow), unlike saturating
 acquisition attempts (`ui/src/drawpipe.rs:343`).
 
+| Requirement | Wire field / position | Type and unit | Meaning and source | Evidence |
+|---|---|---|---|---|
 | state-query-119 | `acq_seg_start=` | saturating u64, attempts | AcquisitionCounters.events[Event::SegStart]; seg::start operation attempts; failures included | `ui/src/board/dho/lifecycle.rs:29` |
 | state-query-120 | `acq_seg_abort=` | saturating u64, attempts | AcquisitionCounters.events[Event::SegAbort]; seg::stop attempts only with abort=true; normal completed-stop is excluded; failures included | `ui/src/board/dho/lifecycle.rs:39` |
 | state-query-121 | `acq_roll_stop=` | saturating u64, attempts | AcquisitionCounters.events[Event::RollStop]; roll::stop calls; failures included | `ui/src/board/dho/lifecycle.rs:50` |
@@ -267,26 +278,82 @@ zero does not prove missing hardware or an idle UI. SINGLE also increments at
 `ui/src/board/dho/lifecycle.rs:69` when not prearmed. Never sum `acq_single_arm`
 with `acq_batch_prearm` as disjoint operations.
 
-| state-query-127 | `stage_restart_autoset=` | u64, stage restarts | proposals::Stages.restarts[0]; Autoset stage restarted when acknowledgement identity is superseded or no stage token remains | `ui/src/ui/change/proposals.rs:109` |
-| state-query-128 | `stage_restart_bode=` | u64, stage restarts | proposals::Stages.restarts[1]; Bode stage restarted for that same condition | `ui/src/ui/change/proposals.rs:109` |
+| Requirement | Wire field / position | Type and unit | Meaning and source | Evidence |
+|---|---|---|---|---|
+| state-query-127 | `stage_restart_autoset=` | u64, stage restarts | proposals::Stages.restarts[0]; Autoset stage restarted when acknowledgement identity is superseded or no stage token remains | `ui/src/ui/change/proposals.rs:94` |
+| state-query-128 | `stage_restart_bode=` | u64, stage restarts | proposals::Stages.restarts[1]; Bode stage restarted for that same condition | `ui/src/ui/change/proposals.rs:94` |
 
 ## Output selection
 
 | Requirement | Wire field / position | Type and unit | Meaning and source | Evidence |
 |---|---|---|---|---|
-| state-query-129 | `graphics` | enum gpu/cpu | ui.sys.gpu requested preference, distinct from optional actual GPU timing block | `ui/src/cmd.rs:164` |
-| state-query-130 | `hdmi` | off or WIDTHxHEIGHT MODE | ui.hdmi_out dimensions in pixels and ui.m.hdmi debug name Mirror/Waveform/Layout; mode absent when off | `ui/src/cmd.rs:159` |
+| state-query-129 | `graphics` | enum gpu/cpu | ui.sys.gpu requested preference, distinct from optional actual GPU timing block | `ui/src/cmd.rs:171` |
+| state-query-130 | `hdmi` | off or WIDTHxHEIGHT MODE | ui.hdmi_out dimensions in pixels and ui.m.hdmi debug name Mirror/Waveform/Layout; mode absent when off | `ui/src/cmd.rs:166` |
+
+## Merged hardware fast-path suffix
+
+Added by upstream and present at c59b71d5. Existing state-query-1..130 retain
+their IDs, wire shapes and optional conditions. New fields are 131..140; none
+of the old fields was removed by this merge. The suffix follows HDMI and is
+present only when Source::hw_frames returns Some, so non-hardware sources
+omit it; retained references do not themselves decide presence. It is unversioned like the rest of the current diagnostic line.
+
+| Requirement | Wire field / position | Type and unit | Meaning and source | Evidence |
+|---|---|---|---|---|
+| state-query-131 | `hw frames` | u64, frames | ui.src.hw_frames().0 = Shared.decoded; board-decoded frame count, independent of UI frames | `ui/src/cmd.rs:183` |
+| state-query-132 | `hw dropped` | u64, frames | ui.src.hw_frames().1 = Shared.dropped; board unseen frame losses, not aggregate pipeline dropped | `ui/src/cmd.rs:183` |
+| state-query-133 | `hw fast` | f1, ms | ui.t_fast, smoothed fast-path time | `ui/src/cmd.rs:183` |
+| state-query-134 | `hw (place` | f1, ms | ui.t_fast_ab.0, smoothed placement time | `ui/src/cmd.rs:183` |
+| state-query-135 | `hw draw` | f1, ms | ui.t_fast_ab.1, smoothed drawing time | `ui/src/cmd.rs:183` |
+| state-query-136 | `hw of it fold` | f1, ms | ui.t_fast_fold, smoothed statistics fold time | `ui/src/cmd.rs:183` |
+| state-query-137 | `hw frames a call` | f0, frames/call | ui.fast_n, smoothed per-call frame count rounded to zero decimals | `ui/src/cmd.rs:183` |
+| state-query-138 | `hw take` | usize, frames | ui.fast_take as usize; current adaptive take value, not a cumulative count | `ui/src/cmd.rs:183` |
+| state-query-139 | `hw map width` | usize, pixels | ui.ph.w current picture map width | `ui/src/cmd.rs:183` |
+| state-query-140 | `hw map height` | usize, pixels | ui.ph.h current picture map height | `ui/src/cmd.rs:183` |
+
+Only the first frames/dropped pair are counters. Timings/count averages use the
+UI fast path's smoothing; map dimensions and take are current values. Producers
+are `ui/src/ui.rs:2956`, `ui/src/ui.rs:3528`, and `ui/src/wave.rs` hw_frames.
+The suffix's repeated frames/dropped labels add matches to global regexes.
+state-query-203 now compares the complete merged first-match and find-all
+capture lists, including the appended match. This is a version 0 addition;
+append-only stability still begins at M15 version 1.
+
+## Separate HTTP workflow state used by the upstream validator
+
+`tools/scpi_validate.py:110` state() reads GET /ui-state, **not** :SYST:STATe?.
+The JSON comes from Ui::workflow_state (`ui/src/ui/workflow.rs`), serialized
+with crate::json::J. It is not the labelled diagnostic line and has no
+state_version key. These added IDs document that separate surface; they do
+not renumber or replace diagnostic fields. All eight keys are emitted, in the
+following producer order. Strings are JSON escaped, booleans are JSON bools,
+and captures is converted from its integer source to an f64 JSON number.
+
+| Requirement | JSON key | Type / units | Source and meaning |
+|---|---|---|---|
+| state-query-300 | mode | string live/reference/sim | session_is_sim first, then record_mode, else live |
+| state-query-301 | running | boolean | m.run==Run |
+| state-query-302 | busy | boolean | sim_generating, background generation pending |
+| state-query-303 | measurementBusy | boolean | measurement_busy, background measurement pending |
+| state-query-304 | source | string Rn or CHn, one-based | active_reference in record mode, else m.active |
+| state-query-305 | captures | JSON number, captures | replay.captures as f64; replay counter, not diagnostic frames/records |
+| state-query-306 | status | string TRIGGERED/WAIT/AUTO/STOP | m.status; SCPI TRIG:STAT? instead overrides Stop and reports TD for Triggered |
+| state-query-307 | gate | string full-record/screen | m.meas_full_record |
+
+The validator only
+checks a subset (captures/running/status); it does not verify the diagnostic
+schema, loss counters, identity, optional blocks or regex compatibility.
 
 ## Version and stability contract
 
 **state-query-200 (change; coordinator decision): define version 1 at M15.**
 Version 0 is today's answer without a version key, including transitional
-migration diagnostics. M2.3e removes state-query-83..101 and 112 before version
-1 is defined; do not freeze those fields into the public schema. At M15, append
+migration diagnostics and the merged optional hardware fast-path suffix. M2.3e
+removes state-query-83..101 and 112 before version 1 is defined; do not freeze those fields into the public schema. At M15, append
 `state_version=1` to the surviving diagnostic line before its transport LF,
 without wrapping, reordering or renaming its surviving fields. The field is a
 decimal u32 schema identifier, not firmware or acquisition generation. It is not
-emitted by c6f1f98. Coordinate the producer and consumer update at M15. The
+emitted by c59b71d5. Coordinate the producer and consumer update at M15. The
 supplied external-consumer patterns and additional format-derived fixtures in
 state-query-203 define compatibility checks; complete consumer implementations
 are not present in this worktree.
@@ -317,7 +384,7 @@ are distinct values. Preserve integer counters exactly, never parse them through
 float. Snapshot before/after with process identity to detect restart before
 computing deltas. Reject negative acquisition deltas and mismatched units.
 
-**state-query-203 (keep): schema/oracle fixtures.** M15 host fixtures must cover
+**state-query-203 (changed for merged suffix): schema/oracle fixtures.** M15 host fixtures must cover
 CPU and GPU, HDMI off and all modes, no and present crash header, RSS unknown,
 watchdog states, pre-publication absent identity, zero and repeated resolutions,
 0/49/50/256 timing samples, empty/populated pacing windows, every loss cause,
@@ -326,22 +393,24 @@ restart counters, missing version and appended version 1 plus unknown fields.
 Use exact source-format strings and a fake event schedule; validate both the
 producer and consumer readers against them. Include a pre-M2.3e version 0
 fixture with shadow fields and a post-M2.3e/M15 fixture without them; version 1
-must never include the transitional fields.
+must never include the transitional fields. Merged-base fixtures also cover
+the optional hardware suffix with distinct UI/cost/hw frame counts; the third
+global frames capture is an upstream wire addition, not a version field.
 
 The first three patterns below are exact compatibility patterns supplied in the
 coordinator review, copied verbatim. The rest are additional fixtures derived
-from the documented producer formats (`ui/src/cmd.rs:177`,
-`ui/src/pacing.rs:432`, `ui/src/deepmeas.rs:36`, `ui/src/ui/change.rs:242`),
+from the documented producer formats (`ui/src/cmd.rs:192`,
+`ui/src/pacing.rs:432`, `ui/src/deepmeas.rs:40`, `ui/src/ui/change.rs:241`),
 not claims about unseen consumer source. Run them as global searches on the
 whole line, without first splitting into sections. Preserve the first match,
 all matches in order, and capture strings before and after appending
 ` state_version=1` and further compatible fields. In particular, the frames
-pattern can match both UI `frames` and `cost frames`; the read pattern matches
+pattern can match UI `frames`, `cost frames` and the appended `hw frames`; the read pattern matches
 the pacing timing tuple rather than GPU `read X) ms`.
 
 | Pattern (regex source) | Expected matching shape |
 |---|---|
-| `\bframes (\d+)` | UI frames first, cost frames later; same ordered captures |
+| `\bframes (\d+)` | UI frames first, cost frames later, optional hw frames last; preserve ordered captures |
 | `read ([\d./]+) ms` | Pacing read p50/p90/p99/max tuple |
 | `settle configured/first/steady ms/empty` | Exact settle label, including slash/space punctuation |
 | `\bfps ([\d.]+)` | Leading picture rate |

@@ -187,6 +187,14 @@ mod tests {
             "live compression: the newest frame is raw anyway"
         );
         assert!(!hold(&m, &Default::default(), None, true));
+        // the LA on (upstream 1a457e30: no raw read came, statistics stood still): the hold follows the thread's plan,
+        // not the UI's view of the LA
+        if crate::ui::la::available() {
+            m.la.on = true;
+            assert!(!hold(&m, &Default::default(), Some(&deep(true)), false), "LA on, no raw read planned");
+            assert!(hold(&m, &Default::default(), Some(&deep(true)), true), "LA on, a raw read planned");
+            m.la.on = false;
+        }
         m.run = RunState::Stop;
         assert!(!hold(&m, &Default::default(), Some(&deep(true)), true));
         m.run = RunState::Run;

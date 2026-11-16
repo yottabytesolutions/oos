@@ -35,6 +35,15 @@ Single scan only).
 - No replay when that newest frame was already read raw (rate-limited deep read, periodic raw read of the live
   compression), when the next batch was armed ahead anyway, or when anything else ran on the FPGA since the read (the
   read is only remembered for one pass). Then the record shown is the newest one already queued, measured as it is.
+- Views after the STOP (`Ui::stop_replay`, upstream b19a56ad and 371f82bc): the thread reads the stored record again
+  for every view (`stop_plan`), the first time right after the STOP. Zoomed out on a record above `LIVE_READ` (625 k
+  points: 10 M at 1 ms/div) that read is the whole record through the compression, min/max pairs. Those pairs are
+  drawn (`stop_pic`), but the raw record of the STOP (`stop_raw`: the final frame, or a raw record already shown)
+  stays `last[0]`, the record measured and read out (`:WAV:MODE RAW`). Far zoomed in the thread reads every sample of
+  the view; that window becomes the record shown and measured, and the raw record of the STOP comes back with the next
+  view read as pairs. A view adds nothing to the statistics (`stop_reads_the_record_again_without_counting_it`); a
+  time base or delay change clears them, as every setting does. RUN, Clear and the history let the raw record go.
+  The pair picture is drawn by the legacy stopped redraw; moving it to an accumulator input is left to M2.3e.
 
 ## Host tests
 
@@ -66,6 +75,12 @@ Single scan only).
    shown: `:WAV:MODE RAW;:WAV:DATA?` over the screen, mean computed on the host, equal to Vavg. Repeat 10 times at
    different moments. Check the final-frame answer and the measurement separately. Round 3 (unit-dho804.md): equal at
    2.3 s after STOP (4 of 4), still NaN or an older value at 0.8 s. A sub-second result is an unmet target.
+   Then the views (A3): 10 M at 1 ms/div, generator 1 kHz square or sine on CH1, Vavg, Vrms, Std dev and AC RMS on
+   the list, Measure statistics on, Screen gate. RUN a few seconds, STOP, note the values and the count. Wait 2 s:
+   the values and the count stay (no "----"), the picture stays the whole record. Time base to 500 us and 200 us/div
+   and back to 1 ms/div: the values stay valid at every view, the statistics are cleared by the change and the count
+   stays 0 while nothing else changes. 10 us/div (a raw window): values of that window; back to 1 ms/div: the values
+   of the STOP again. RUN: the values update again.
 4. Normal trigger without a signal, STOP: the STOP completes within 3 s (log: no error), RUN works again.
 5. `acq.prearm = on` (the unit's set-up): step 3 again, same result; wfm/s at 1 us/div unchanged against prearm without
    the deep measurements (prearm stays on there); no `disarm` errors.

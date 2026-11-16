@@ -70,8 +70,9 @@ The compressed frames are only drawn. `drawpipe::draw_frame` sends a frame of th
 envelope, not roll or scan, at most 1 M deep) through the dense path: trigger refinement on the pairs with an even
 smoothing length (`compress::smooth_len`, whole pairs), then `compress::deposit_pairs` (per column the span of the
 pairs whose centre lies in it, joined to the nearest end of the last pair before it). The
-per-frame statistics (`framestats`) skip these frames; the raw newest frame of each batch counts through the record
-path.
+per-frame statistics skip these frames, both those of the deposit workers (`framestats`) and those of the fast path
+(`Ui::fast_draw_all`, which also leaves out Mean, RMS, Std dev and AC RMS of deep pairs, upstream 42e6e5d6); the raw
+newest frame of each batch counts through the record path.
 
 Live frames in Dots On stay raw. An earlier version compressed them too: raw frames deposited one dot per sample, pair
 frames one span per column, and the mix flickered (docs/fork/flicker.md).

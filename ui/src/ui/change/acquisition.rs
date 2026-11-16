@@ -129,10 +129,13 @@ pub(in crate::ui) fn script_prepare_route(ui: &mut Ui, records: bool) -> Identit
     identity(ui)
 }
 
+/// A measurement still out, and a record waiting for the worker (`meas_pending`), belong to the record cleared away
+/// (upstream 99dd12e9: the waiting record held the next measurement cycle back).
 pub(in crate::ui) fn cancel_measurement(ui: &mut Ui) {
     if let Some(worker) = &mut ui.meas_bg {
         worker.accept = false;
     }
+    ui.meas_pending = None;
 }
 
 pub(in crate::ui) fn autoset_fresh(ui: &Ui) -> Option<bool> {

@@ -101,7 +101,7 @@ and `OOS_DEEP_RAW` unset, then restart oos-ui. The key absent means on.
    before it (no shift of the window: trigger point check).
 5. Budget: 1 channel at 25 M and 2 ms/div (window above 24 MiB): mean-type stay NaN, Max/Min update per record, no
    raw reads in the log. Two lanes at 10 M and 1 ms/div fit and do read raw.
-6. STOP while running at 10 M: see docs/fork/stop-exact.md step 3; then RUN again.
+6. STOP while running at 10 M: see docs/fork/stop-exact.md step 3 (with the views after the STOP); then RUN again.
 7. Peak mode, roll, zoom: no raw deep reads (log), as before.
 
 Record the results here and in `docs/fork/unit-dho804.md`.

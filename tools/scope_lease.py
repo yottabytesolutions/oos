@@ -152,13 +152,20 @@ class Client:
         script = f"""set -eu
 umask 077
 fail() {{ echo "$*" >&2; exit 1; }}
+interrupted=0
+trap 'interrupted=1' PIPE HUP INT TERM
 for delay in 0 0.1 0.2 0.4 0.8 1.6; do
     [ "$delay" = 0 ] || sleep "$delay"
-    if mkdir {GUARD} 2>/dev/null; then break; fi
+    if mkdir {GUARD} 2>/dev/null; then
+        # Defer signals until mkdir's result is known and cleanup is armed.
+        trap 'rmdir {GUARD}' EXIT
+        trap 'exit 1' PIPE HUP INT TERM
+        [ "$interrupted" = 0 ] || exit 1
+        break
+    fi
+    [ "$interrupted" = 0 ] || fail 'lease operation interrupted'
     [ "$delay" != 1.6 ] || fail 'lease operation busy; owner must inspect the guard'
 done
-trap 'rmdir {GUARD}' EXIT
-trap 'exit 1' PIPE HUP INT TERM
 wall=$(date +%s)
 read -r uptime rest < /proc/uptime
 now=${{uptime%%.*}}

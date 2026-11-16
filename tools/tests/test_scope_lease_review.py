@@ -3,6 +3,7 @@
 """Offline regressions for the task 0021 review decisions."""
 import json
 import os
+import signal
 import threading
 import time
 import unittest
@@ -281,7 +282,54 @@ class ReviewTests(LeaseFixture, unittest.TestCase):
                 timer.join()
 
     def test_guard_cleanup_traps_pipe_and_other_catchable_signals(self):
-        for signal in ("PIPE", "HUP", "INT", "TERM"):
-            with self.subTest(signal=signal), self.assertRaises(sl.LeaseError):
-                self.client._run(f"kill -s {signal} $$")
-            self.assertFalse((self.fake.data / "lease.guard").exists())
+        self.assert_guard_signal_cleanup()
+
+    def assert_guard_signal_cleanup(self):
+        for name in ("PIPE", "HUP", "INT", "TERM"):
+            with self.subTest(signal=name):
+                with self.assertRaises(sl.LeaseError):
+                    # Stay alive until the trap exits; EOF can race signal delivery.
+                    # FakeSSH's timeout fails the test if the signal is ignored.
+                    self.client._run(f"kill -s {name} $$\nwhile :; do :; done")
+                self.assertFalse((self.fake.data / "lease.guard").exists())
+
+    def test_guard_cleanup_with_inherited_sigint_ignored(self):
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            self.assert_guard_signal_cleanup()
+        finally:
+            signal.signal(signal.SIGINT, previous)
+
+    def test_guard_cleanup_when_signalled_during_acquisition(self):
+        for name in ("PIPE", "HUP", "INT", "TERM"):
+            for busy in (False, True):
+                with self.subTest(signal=name, busy=busy):
+                    self.assert_acquisition_signal_cleanup(name, busy)
+
+    def assert_acquisition_signal_cleanup(self, name, busy):
+        guard = self.fake.data / "lease.guard"
+        if busy:
+            guard.mkdir()
+
+        def executor(host, script):
+            # Signal before mkdir's caller regains control, with its real exit status.
+            prefix = f'''mkdir() {{
+    status=0
+    command mkdir "$@" || status=$?
+    kill -s {name} $$
+    # The shell dispatches pending signals after a builtin returns.
+    :
+    return "$status"
+}}
+'''
+            return self.fake(host, prefix + script)
+
+        try:
+            with patch.object(self.client, "executor", executor):
+                with self.assertRaises(sl.LeaseError):
+                    self.client._run(":")
+            self.assertEqual(guard.exists(), busy)
+        finally:
+            # Keep subtests independent even when a regression strands the guard.
+            if guard.exists():
+                guard.rmdir()

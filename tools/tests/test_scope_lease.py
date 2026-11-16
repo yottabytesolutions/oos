@@ -52,7 +52,13 @@ class FakeSSH:
                               f"printf '%s' {shlex.quote(self.boot_id)}")
         stat = f"{shlex.quote(sys.executable)} -I -c 'import os, sys; print(int(os.stat(sys.argv[1]).st_mtime))'"
         local = local.replace("stat -c %Y", stat)
-        result = subprocess.run(["sh", "-s"], input=local, text=True,
+        # A background runner may inherit ignored SIGINT. Non-interactive shells
+        # cannot trap it then. Reset in a fresh child, without thread-unsafe preexec_fn.
+        bootstrap = ("import os, signal\n"
+                     "for name in ('SIGPIPE', 'SIGHUP', 'SIGINT', 'SIGTERM'):\n"
+                     "    signal.signal(getattr(signal, name), signal.SIG_DFL)\n"
+                     "os.execlp('sh', 'sh', '-s')\n")
+        result = subprocess.run([sys.executable, "-I", "-c", bootstrap], input=local, text=True,
                                 capture_output=True, timeout=5, check=False)
         if result.returncode:
             raise sl.LeaseError(result.stderr.strip())

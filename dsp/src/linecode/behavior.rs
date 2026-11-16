@@ -159,7 +159,6 @@ fn manchester_reacquires_mid_cells_after_a_missing_transition() {
 }
 
 #[test]
-#[ignore = "bug: mlt3 uses a single comparator and misses transitions through the zero level"]
 fn mlt3_decodes_a_three_level_all_ones_signal() {
     // Independent MLT-3 encoding of 40 ones: 0,+1,0,-1,0,+1,... .
     // The first byte may lack the first transition, but later bytes are 0xff.

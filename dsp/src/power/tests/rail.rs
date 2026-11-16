@@ -85,7 +85,6 @@ fn pwm_duty_uses_only_complete_rising_to_rising_periods() {
 }
 
 #[test]
-#[ignore = "bug: rail panics when clock cycles start beyond the rail sample count"]
 fn longer_clock_cannot_index_past_the_rail() {
     let clock: Vec<f32> = (0..64).map(|k| if k % 8 < 4 { 0.0 } else { 1.0 }).collect();
     let r = rail(&[5.0; 8], 1.0, Some(5.0), None, Some(&clock));

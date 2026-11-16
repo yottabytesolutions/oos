@@ -42,6 +42,10 @@ Reserved paths: `dsp/src/power.rs`, `dsp/src/linecode/behavior.rs`,
 
 ## Status
 
+- 2026-11-16 (task 0084): upstream fixed three of the recorded bugs (Hall start on an invalid code ad6d4b45, MLT-3
+  67c9f7a9, a clock longer than the rail 79491fbd); `hall_recovers_when_record_starts_with_invalid_code`,
+  `mlt3_decodes_a_three_level_all_ones_signal` and `longer_clock_cannot_index_past_the_rail` run again and pass.
+  Convolution and D2A extrema stay ignored.
 - 2026-11-16: Final `cargo xtask check --fast` passed, exit 0, exactly:
   `partial gate passed (not done): 8 steps in 198 s`. All eight selected steps
   passed: fmt, size, architecture, mutable-statics, unsafe, method-exceptions,

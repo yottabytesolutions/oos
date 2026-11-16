@@ -264,7 +264,6 @@ fn mechanical_power_uses_paired_finite_samples_and_signed_unclamped_ratio() {
 }
 
 #[test]
-#[ignore = "bug: Hall decoding never recovers from an invalid initial code"]
 fn hall_recovers_when_record_starts_with_invalid_code() {
     let s = hall(&[0, 4, 6, 2, 3, 1, 5, 4], 1.0 / 6.0);
     assert!(s.rad[0].is_nan());

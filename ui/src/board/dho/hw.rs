@@ -1303,7 +1303,10 @@ pub fn batch_plan(s: &Settings, p: &hz::Params, zone_batch: u32) -> Settings {
     // hardware average: one frame is read whatever the batch holds, so the read size does not limit it
     let by_size =
         if matches!(s.mode, oos_hal::dho::acq::Mode::Average { .. }) { u32::MAX } else { (4_000_000 / fb) as u32 };
-    b.frames = by_size.min(p.max_frames).min(1000 / p.ratio.max(1)).max(1);
+    b.frames = by_size.min(p.max_frames).min(super::BATCH_MAX as u32 / p.ratio.max(1)).max(1);
+    if s.mode == oos_hal::dho::acq::Mode::Peak {
+        b.frames = b.frames.min(super::PEAK_BATCH_MAX as u32);
+    }
     // SINGLE shows the first frame after the press: one frame per batch. A full batch recorded up to 248 more triggers
     // at 1 us/div (`acquired`, unit 2026-11-13) and waited up to 25 ms longer for the ring before the read
     if s.single {
@@ -1635,6 +1638,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         let mut trim_tries = [0u8; 11];
         let mut trim_pending: Option<TrimPending> = None;
         let mut slots_done: Option<u64> = None;
+        let mut peak_wait = super::publication::PeakWait::default();
         loop {
             let mut last_read = fresh.take();
             counter_tick(&mut bar, &out, &mut counting, &mut count_n);
@@ -2111,6 +2115,9 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 // RUN or SINGLE: the frames of the batch before the STOP are not new
                 crate::perfguard::deep::acq_lock(&out).queue.clear();
             }
+            if peak_wait.poll(&out, s.mode, status) {
+                continue;
+            }
             let mut b = batch_plan(&s, &p, switches.board.zone_batch);
             // fewer frames where the read would take the screen frame (pacing.rs; not the hardware average, whose
             // batches count triggers)
@@ -2367,27 +2374,20 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             oos_hal::dho::bus::DmaBuf::new()
                         }));
                         let readout = batch::Readout::new(pipe, (&b, &p), (fb, avail, switches.board.frame0_drop), (n, switches.board.header_probe, raw_frame), identity);
-                        let o = out.clone();
+                        let (o, applied_mode) = (out.clone(), b.mode);
                         readout.dispatch(&mut dma, next, match_cores.then_some(&mut cores), |newest| {
                             let mut newest = Frame { stamp, cfg: want_gen, ..newest };
                             if let Some(w) = la_words.take() {
                                 newest.la = Some(la_record(w, &b, &p));
                             }
                             newest
-                        }, move |newest| Box::new(move || super::publication::push_frames(&o, vec![newest])))
+                        }, move |newest| Box::new(move || super::publication::push_frames(&o, vec![newest], applied_mode)))
                     } else {
-                        // only the newest frames the screen takes are decoded (`Shared::take`; on the fast cores,
-                        // which the frame loop needs), in average mode the newest one
-                        let (take, match_cores) = {
-                            let g = crate::perfguard::deep::acq_lock(&out);
-                            (if g.take == 0 { avail } else { g.take.min(avail) }, g.cores)
-                        };
-                        let take = if after.is_some() { take.min(1) } else { take };
                         // frame 0 of a batch is the frame the FPGA held across the stop, read-out and arm: recorded
                         // before this arm, sometimes joined with older memory (a stray trace; issue #5, mj1911). With
                         // more frames in the batch it is left out (1 of 26 at 1 kpts, 10 us/div)
-                        let stale = (avail > 1 && after.is_none() && switches.board.frame0_drop) as usize;
-                        skip = (avail - take).max(stale);
+                        let (record_skip, match_cores) = super::publication::record_decode(&out, b.mode, avail, after.is_some(), switches.board.frame0_drop);
+                        skip = record_skip;
                         n += skip as u64;
                         let mut all: Vec<Frame> = dma
                             .data()
@@ -2454,7 +2454,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         g.dropped += skip as u64;
                     }
                     single_done = single::progress(&b, single_done, pair, false, frames.len() as u32).0;
-                    super::publication::push_frames(&out, frames);
+                    super::publication::push_frames(&out, frames, b.mode);
                 }
                 // new settings (or STOP) while it waited for a trigger: at once to them. The arm has filled frame 0
                 // of the ring with pre-trigger samples (it stops only before the first trigger): a stored record

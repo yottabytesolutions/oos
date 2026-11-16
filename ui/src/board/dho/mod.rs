@@ -11,6 +11,8 @@ pub mod hw;
 #[cfg(any(target_os = "linux", test))]
 mod lifecycle;
 mod matching;
+#[cfg(test)]
+pub(super) mod peak_tests;
 #[cfg(any(target_os = "linux", test))]
 mod publication;
 #[cfg(any(target_os = "linux", test))]
@@ -24,6 +26,11 @@ mod tests;
 use super::{Board, PanelCmd, Slow, Zone};
 use crate::model::{Coupling, GenCh, Model};
 use oos_hal::dho::{afe, afg, board, bus, panel};
+
+/// One hardware batch at most, before read-size and ratio limits.
+const BATCH_MAX: usize = 1000;
+/// Peak retains at most one count-budget step of records before waiting for the UI.
+const PEAK_BATCH_MAX: usize = crate::board::RECORDS_PER_STEP;
 
 /// The Rigol DHO800/DHO900.
 pub struct Dho;

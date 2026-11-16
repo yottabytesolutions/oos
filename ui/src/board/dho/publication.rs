@@ -3,6 +3,7 @@
 use crate::board::{Frame, Gen, HwShared, MaskWant, Slow, Want, ZoneWant, QUEUE_MAX, QUEUE_SAMPLES};
 use crate::perfguard::deep::acq_lock as lock;
 use oos_core::change::Identity;
+use oos_hal::dho::acq::Mode;
 
 type Request = (Option<Gen>, Option<Want>, Slow, u64, Option<MaskWant>, Option<ZoneWant>, bool, Identity, bool);
 
@@ -21,19 +22,20 @@ pub(super) fn snapshot(out: &HwShared) -> Request {
     )
 }
 
-/// Frames of a batch into the UI queue, the oldest dropped beyond `QUEUE_MAX` frames or `QUEUE_SAMPLES` samples (the
-/// newest frame stays whatever its size).
-pub(super) fn push_frames(out: &HwShared, mut frames: Vec<Frame>) {
+/// Peak holds one complete batch; its producer waits for this queue before reading another.
+/// Other modes keep the newest `QUEUE_MAX` frames. All modes retain the sample bound and newest-frame exception.
+pub(super) fn push_frames(out: &HwShared, mut frames: Vec<Frame>, mode: Mode) {
     if frames.is_empty() {
         return;
     }
     let mut g = lock(out);
     frames.retain(|f| current(&g, f));
+    let max = if mode == Mode::Peak { super::PEAK_BATCH_MAX } else { QUEUE_MAX };
     g.queue.extend(frames);
     let size = |f: &Frame| f.ch.iter().map(Vec::len).sum::<usize>();
     let mut held: usize = g.queue.iter().map(size).sum();
     let mut over = 0u64;
-    while g.queue.len() > 1 && (g.queue.len() > QUEUE_MAX || held > QUEUE_SAMPLES) {
+    while g.queue.len() > 1 && (g.queue.len() > max || held > QUEUE_SAMPLES) {
         if let Some(f) = g.queue.pop_front() {
             held -= size(&f);
         }
@@ -51,6 +53,81 @@ pub(super) fn push_frames(out: &HwShared, mut frames: Vec<Frame>) {
     if let Some(sample) = sample {
         sample.record();
     }
+}
+
+/// Called after controls and STOP handling, before reading the next ordinary batch.
+/// A prearmed batch may fill its bounded FPGA ring while the UI drains the preceding batch.
+pub(super) fn peak_backpressure(g: &crate::board::Shared, mode: Mode) -> bool {
+    mode == Mode::Peak && !g.queue.is_empty()
+}
+
+/// Worker-owned wait timer. Log at most once per second, including across separate waits.
+#[derive(Default)]
+pub(super) struct PeakWait {
+    started: Option<(Identity, std::time::Instant)>,
+    logged: Option<std::time::Instant>,
+}
+
+impl PeakWait {
+    pub(super) fn poll(&mut self, out: &HwShared, mode: Mode, status: impl FnOnce(String)) -> bool {
+        let (waiting, identity, queued) = {
+            let g = lock(out);
+            (peak_backpressure(&g, mode), g.acquisition.identity(), g.queue.len())
+        };
+        if let Some(message) = self.observe(std::time::Instant::now(), identity, waiting, queued) {
+            status(message);
+        }
+        if waiting {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        waiting
+    }
+
+    pub(super) fn observe(
+        &mut self,
+        now: std::time::Instant,
+        identity: Identity,
+        waiting: bool,
+        queued: usize,
+    ) -> Option<String> {
+        if !waiting {
+            self.started = None;
+            return None;
+        }
+        let (id, start) = self.started.get_or_insert((identity, now));
+        if *id != identity {
+            (*id, *start) = (identity, now);
+        }
+        let elapsed = now.duration_since(*start);
+        let interval = std::time::Duration::from_secs(1);
+        if elapsed <= interval || self.logged.is_some_and(|last| now.duration_since(last) < interval) {
+            return None;
+        }
+        self.logged = Some(now);
+        Some(format!(
+            "event=peak_backpressure wait_ms={} queued={} gen={} epoch={}",
+            elapsed.as_millis(),
+            queued,
+            id.gen(),
+            id.epoch()
+        ))
+    }
+}
+
+/// Peak must decode every capture even when the previous Normal step requested only a few.
+/// Frame-zero rejection and hardware-average selection keep their existing policies.
+pub(super) fn record_decode(
+    out: &HwShared,
+    mode: Mode,
+    avail: usize,
+    average: bool,
+    frame0_drop: bool,
+) -> (usize, bool) {
+    let g = lock(out);
+    let take = if mode == Mode::Peak || g.take == 0 { avail } else { g.take.min(avail) };
+    let take = if average { take.min(1) } else { take };
+    let stale = (avail > 1 && !average && frame0_drop) as usize;
+    ((avail - take).max(stale), g.cores)
 }
 
 pub(super) fn boundary(applied: Option<(u64, u64)>, identity: Identity) -> bool {
@@ -106,7 +183,7 @@ mod timing_tests {
         let _scope = crate::drawpipe::test_scope::Scope::new();
         let shared = HwShared::default();
         let frame = Frame { ch: std::array::from_fn(|_| vec![2.0; 625_000]), ..Default::default() };
-        push_frames(&shared, vec![frame]);
+        push_frames(&shared, vec![frame], Mode::Normal);
         let text = crate::perfguard::deep::counters().text();
         assert!(text.contains("lock.acq.wait n=1 total=1"));
         assert!(text.contains("lock.acq.held n=1 total=1"));
@@ -140,7 +217,7 @@ mod timing_tests {
                 }
             });
             ready_rx.recv().unwrap();
-            push_frames(shared, vec![Frame { seq: 7, ..Default::default() }]);
+            push_frames(shared, vec![Frame { seq: 7, ..Default::default() }], Mode::Normal);
         });
         assert!(diagnostics.text().contains("producer.clone n=1 total=1"));
     }

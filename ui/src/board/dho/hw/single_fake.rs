@@ -128,7 +128,7 @@ impl SingleWorker {
     }
 
     pub(crate) fn deliver(shared: &HwShared, frame: Frame) {
-        publication::push_frames(shared, vec![frame]);
+        publication::push_frames(shared, vec![frame], oos_hal::dho::acq::Mode::Normal);
     }
 }
 

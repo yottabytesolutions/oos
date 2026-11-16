@@ -5,6 +5,8 @@
 use super::{Active, Frame};
 
 #[cfg(test)]
+pub(crate) use super::dho::peak_tests::{peak_batch, peak_batch_frames};
+#[cfg(test)]
 pub(crate) use super::dho::scripted::deep_intake_frame;
 use crate::drawpipe::{CodesInto, DecodeInto, RawBatch};
 use crate::model::Model;

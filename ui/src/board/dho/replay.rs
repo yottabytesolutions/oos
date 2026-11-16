@@ -86,10 +86,14 @@ mod tests {
         assert_eq!((replay.cfg, replay.stamp), (captured.gen(), captured.epoch()));
         assert_ne!(current.epoch(), captured.epoch());
         assert!(last_read.plan(false, None).is_some(), "CLEAR preserves physical reread eligibility");
-        super::super::publication::push_frames(&shared, vec![replay]);
+        super::super::publication::push_frames(&shared, vec![replay], oos_hal::dho::acq::Mode::Normal);
         assert!(lock(&shared).queue.is_empty(), "old samples cannot become a new-epoch record");
         let fresh = Read::new(last_read.settings.clone(), params, 3, false, current);
-        super::super::publication::push_frames(&shared, vec![fresh.tag(Frame { seq: 5, ..Default::default() })]);
+        super::super::publication::push_frames(
+            &shared,
+            vec![fresh.tag(Frame { seq: 5, ..Default::default() })],
+            oos_hal::dho::acq::Mode::Normal,
+        );
         assert_eq!(lock(&shared).queue.back().unwrap().seq, 5, "current replay remains publishable");
     }
 

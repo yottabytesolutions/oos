@@ -284,6 +284,22 @@ without a MAPPING class. Remaining statistics/history/mask/zone/hardware-average
 math and view consumer switches and deletion of legacy observations belong to e.
 These contracts are host tested; unit smoke and independent review remain required.
 
+Current Peak record batches use a bounded whole-batch queue: at most one UI
+count-budget step (48 records), derived from the shared `RECORDS_PER_STEP`
+limit, and the existing 32 Mi-sample bound (the newest frame alone may exceed
+it). The ordinary acquisition worker waits for the queue to drain before
+reading another Peak batch, after servicing controls and STOP. A prearmed batch can fill its bounded FPGA ring meanwhile.
+A Peak wait exceeding one second reports `event=peak_backpressure` with
+wait duration, queued records and identity through hardware status, at most
+once per second. The UI retains its 48-record and 15 ms limits per step;
+with time-budget cuts, draining a full batch can require up to 48 progressing
+steps rather than one. This bounds queue-induced lag, not wall-clock delay
+or progress while stopped. Unit timing is not yet verified. Normal retains its
+256-frame best-effort queue and existing producer behavior. Identity changes,
+STOP/RUN boundaries and hardware frame-zero rejection keep their existing
+discard policies. This prevents queue overflow within a current Peak stream;
+it does not promise continuous trigger capture while acquisition is paused.
+
 ## Layers
 
 Hexagonal where it pays, plain modules where it does not. The domain is its own crate, so Cargo enforces the direction.

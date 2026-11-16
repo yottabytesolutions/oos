@@ -19,7 +19,7 @@ mod record;
 pub mod scripted;
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
-pub use record::resample as resample_record;
+pub use record::{resample as resample_record, RECORDS_PER_STEP};
 pub use record::{sw_trig_level, sw_trig_level_of, to_record, trigger_point};
 use std::sync::{Arc, Mutex};
 
@@ -521,8 +521,8 @@ pub struct HwSeg {
     pub shown: Option<(u32, Frame)>,
 }
 
-/// Frames kept for the UI; older ones are dropped when the screen cannot keep up. The screen itself takes no more
-/// than its time budget allows (`Ui::fast_max`), so the queue only has to hold a few screens' worth.
+/// Default UI frame bound; older frames are dropped when the screen cannot keep up.
+/// DHO Peak instead holds one hardware batch and pauses its producer until the queue drains.
 pub const QUEUE_MAX: usize = 256;
 /// Samples (all channels) the queue holds at most: deep frames are hundreds of MB each.
 pub const QUEUE_SAMPLES: usize = 32 << 20;

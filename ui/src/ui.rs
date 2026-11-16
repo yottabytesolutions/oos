@@ -2899,7 +2899,7 @@ impl Ui {
                 // come in meanwhile wait for the next screen's fast path instead of a full record each, one by one)
                 _ if fast => 1,
                 // the hardware source delivers batches: draw up to 48 queued records per frame
-                _ if matches!(self.src, Source::Hw { .. }) => 48,
+                _ if matches!(self.src, Source::Hw { .. }) => crate::board::RECORDS_PER_STEP,
                 TrigType::Edge | TrigType::Pattern => 6,
                 TrigType::Video => 1,
                 _ => 2,

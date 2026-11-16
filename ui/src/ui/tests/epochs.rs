@@ -2,6 +2,8 @@
 
 use super::super::*;
 
+mod peak;
+
 fn hardware() -> (Ui, crate::board::HwShared) {
     let shared = crate::board::HwShared::default();
     let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });

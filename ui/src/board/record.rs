@@ -8,6 +8,9 @@ use super::Frame;
 use crate::model::*;
 use std::sync::Arc;
 
+/// Maximum hardware records consumed by the UI in one step, before its time budget.
+pub const RECORDS_PER_STEP: usize = 48;
+
 /// The level the software trigger looks for on the samples of the source: the set level, and with AC or LF-reject
 /// trigger coupling the level around the mean of the frame (the TPU filters the mean out before its comparators,
 /// trigger.md 2.5; the frame holds the signal as the channel's own coupling gives it), from `MEAN_SAMPLES` samples.

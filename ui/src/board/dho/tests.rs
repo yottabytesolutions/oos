@@ -41,6 +41,7 @@ fn epoch_only_boundary_rejects_old_work() {
                 Frame { seq: 2, cfg: id.gen(), stamp: id.epoch(), ..Default::default() },
                 Frame { seq: 3, cfg: id.gen(), stamp: id.epoch() + 1, ..Default::default() },
             ],
+            oos_hal::dho::acq::Mode::Normal,
         );
         let mut g = lock(&shared);
         assert_eq!(g.queue.len(), 1, "reject both old and different newer pairs, retain valid work");
@@ -129,40 +130,45 @@ fn worker_identity_rejection_and_queue_overflow_have_distinct_counts() {
     let shared = HwShared::default();
     let mut frames = vec![Frame { cfg: 1, ..Default::default() }; 2];
     frames.extend((0..crate::board::QUEUE_MAX + 3).map(|_| Frame::default()));
-    publication::push_frames(&shared, frames);
+    publication::push_frames(&shared, frames, oos_hal::dho::acq::Mode::Normal);
     assert_eq!(lock(&shared).queue.len(), crate::board::QUEUE_MAX);
     assert_eq!(counters.losses.worker_push.load(std::sync::atomic::Ordering::Relaxed) - worker, 2);
     assert_eq!(counters.losses.overflow.load(std::sync::atomic::Ordering::Relaxed) - overflow, 3);
 }
 
 #[test]
-fn record_route_overflow_loses_oldest_records_but_keeps_the_newest_current_capture() {
+fn peak_record_batch_keeps_every_capture_in_order() {
     use std::sync::atomic::Ordering::Relaxed;
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let shared = HwShared::default();
     let counters = crate::drawpipe::counters();
-    // Peak and autoset's Peak stages use the full-record route. A batch can
-    // exceed the bounded UI queue even before another batch arrives.
+    // Task 0082 S8: this batch lost 464 captures before the first UI step.
     let model = Model { acq: crate::model::AcqMode::Peak, ..Default::default() };
-    let frames = (1..=720)
-        .map(|seq| Frame {
-            seq,
-            dt: 1e-6,
-            pre: 32,
-            ch: [vec![seq as f32; 64], vec![], vec![], vec![]],
-            ..Default::default()
-        })
-        .collect();
-    publication::push_frames(&shared, frames);
-    assert_eq!(counters.losses.overflow.load(Relaxed), 720 - crate::board::QUEUE_MAX as u64);
-    assert_eq!(counters.losses.worker_push.load(Relaxed), 0, "overflow is current-pair loss");
-    assert_eq!(lock(&shared).frame.seq, 720, "autoset can still read the newest capture");
+    lock(&shared).want = Some(crate::board::board().want(&model, &Default::default()));
     let mut source = crate::wave::Source::Hw { shared: shared.clone(), seen: 0 };
     let mut rng = crate::wave::Rng::new(1);
-    for seq in 721 - crate::board::QUEUE_MAX as u64..=720 {
-        let record = source.acquire(&model, 0.04, &mut rng, &Default::default()).unwrap();
-        assert_eq!(record.raw.unwrap().frame.seq, seq, "only the oldest captures were discarded");
+    let bound = super::peak_tests::peak_batch_frames(&model) as u64;
+    for first in (1..=720).step_by(bound as usize) {
+        let last = (first + bound - 1).min(720);
+        let frames = (first..=last)
+            .map(|seq| Frame {
+                seq,
+                dt: 1e-6,
+                pre: 32,
+                ch: [vec![seq as f32; 64], vec![], vec![], vec![]],
+                ..Default::default()
+            })
+            .collect();
+        assert!(super::peak_tests::peak_batch(&shared, frames).is_ok());
+        assert_eq!(lock(&shared).frame.seq, last, "autoset reads the newest published capture");
+        for seq in first..=last {
+            assert!(super::peak_tests::peak_batch(&shared, vec![]).is_err());
+            let record = source.acquire(&model, 0.04, &mut rng, &Default::default()).unwrap();
+            assert_eq!(record.raw.unwrap().frame.seq, seq);
+        }
     }
+    assert_eq!(counters.losses.overflow.load(Relaxed), 0, "all 720 captures reach the record route");
+    assert_eq!(counters.losses.worker_push.load(Relaxed), 0);
     assert!(source.acquire(&model, 0.04, &mut rng, &Default::default()).is_none());
     assert_eq!(counters.losses.queue_pop.load(Relaxed), 0);
     assert_eq!(counters.losses.ui_publish.load(Relaxed), 0);
@@ -187,7 +193,7 @@ fn mask_source_boundary_rejects_worker_records_only_from_the_previous_pair() {
         .map(|seq| publication::tag(Frame { seq, ..Default::default() }, old))
         .chain(std::iter::once(publication::tag(Frame { seq: 81, ..Default::default() }, id)))
         .collect();
-    publication::push_frames(&shared, frames);
+    publication::push_frames(&shared, frames, oos_hal::dho::acq::Mode::Normal);
     assert_eq!(lock(&shared).queue.len(), 1);
     assert_eq!(lock(&shared).frame.seq, 81);
     let losses = &crate::drawpipe::counters().losses;

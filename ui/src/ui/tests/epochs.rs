@@ -281,3 +281,32 @@ fn state_query_reports_acquisition_counters_beside_stale_counts() {
     assert!(text.contains(&format!("{}{}", crate::drawpipe::counters().losses.text(), fields)));
     assert_eq!(text.matches("acq_single_arm=").count(), 1);
 }
+
+#[test]
+fn mask_source_publication_discards_queued_old_generation_without_dropping_current_records() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let (mut ui, shared) = hardware();
+    ui.m.ch[1].on = true;
+    ui.step(0.04);
+    let old = frame(&ui, 1);
+    let id = change::acquisition::identity(&ui);
+    let loss = &crate::drawpipe::counters().losses;
+    oos_hal::sync::lock(&shared).queue.extend(std::iter::repeat_n(old.clone(), 96));
+    ui.m.mask_src = 1;
+    let records = ui.records;
+    ui.step(0.04);
+    let next = change::acquisition::identity(&ui);
+    assert_eq!(next.gen(), id.gen() + 1);
+    assert_eq!(next.epoch(), id.epoch());
+    assert_eq!(loss.ui_publish.load(Relaxed), 96);
+    assert_eq!(loss.queue_pop.load(Relaxed), 0);
+    assert_eq!(loss.overflow.load(Relaxed), 0);
+    assert_eq!(ui.records, records, "old mask-source captures cannot feed readers");
+    for seq in 2..=4 {
+        oos_hal::sync::lock(&shared).queue.push_back(frame(&ui, seq));
+        ui.step(0.04);
+        assert_eq!(ui.records, records + seq - 1, "current-pair work must remain eligible");
+        assert_eq!(loss.ui_publish.load(Relaxed), 96, "unchanged source must not discard records");
+    }
+}

@@ -60,6 +60,49 @@ fn native_channel_pages_walk_full_memory_with_original_time_and_screen_fallback(
 }
 
 #[test]
+fn stopped_raw_and_max_fall_back_for_deep_pairs_and_use_native_samples_when_retained() {
+    let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+    ui.m.run = RunState::Stop;
+    let mut scpi = crate::scpi::Scpi::open(0u16, false);
+    let canvas = Canvas::new(1, 1);
+    for envelope in [true, false] {
+        let frame = Arc::new(crate::board::Frame {
+            dt: 2e-9,
+            pre: 4000,
+            ch: [vec![0.25; 8000], Vec::new(), Vec::new(), Vec::new()],
+            envelope,
+            acq: (1e9, 10_000_000),
+            ..Default::default()
+        });
+        let mut record = Ui::blank_record();
+        record.ch[0] = vec![0.5; 3600];
+        record.dt = 10e-9;
+        record.t0 = -20e-9;
+        record.raw = Some(crate::wave::Raw { frame, i0: 40, i1: 104, t0: -20e-9, conditioned: true });
+        ui.last[0] = Some(record);
+        for mode in ["NORM", "RAW", "MAX"] {
+            scpi.exec_line(&mut ui, &canvas, &format!(":WAV:MODE {mode};:WAV:FORM ASC;:WAV:STAR 1;:WAV:STOP 8000"));
+            let native = !envelope && mode != "NORM";
+            let points = if native { 8000 } else { 3600 };
+            let pre = String::from_utf8(scpi.exec_line(&mut ui, &canvas, ":WAV:PRE?")).unwrap();
+            let pre: Vec<&str> = pre.split(',').collect();
+            assert_eq!(pre[2].parse::<usize>().unwrap(), points);
+            assert_eq!(pre[4].parse::<f64>().unwrap(), if native { 2e-9 } else { 10e-9 });
+            let origin = if native { -100e-9 } else { -20e-9 };
+            assert!((pre[5].parse::<f64>().unwrap() - origin).abs() < 1e-15);
+            assert_eq!(scpi.exec_line(&mut ui, &canvas, ":WAV:POIN?"), points.to_string().as_bytes());
+            scpi.exec_line(&mut ui, &canvas, ":WAV:STAR 3599;:WAV:STOP 4000");
+            let data = scpi.exec_line(&mut ui, &canvas, ":WAV:DATA?");
+            let begin = 2 + (data[1] - b'0') as usize;
+            let values: Vec<f32> =
+                std::str::from_utf8(&data[begin..]).unwrap().split(',').map(|v| v.parse().unwrap()).collect();
+            assert_eq!(values, vec![if native { 0.25 } else { 0.5 }; if native { 402 } else { 2 }]);
+            assert_eq!(scpi.exec_line(&mut ui, &canvas, ":SYST:ERR?"), b"0,\"No error\"");
+        }
+    }
+}
+
+#[test]
 fn reference_pages_keep_native_time_and_scale_independent_of_deskew_and_view() {
     let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
     ui.refs[2] = Some(reference((0..20).map(|i| i as f32).collect(), 5e-12, -50e-6));

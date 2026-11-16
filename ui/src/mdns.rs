@@ -1359,6 +1359,14 @@ mod net {
     /// A received packet: length, sender, interface index, whether it went to the group.
     type Got = (usize, SocketAddr, u32, bool);
 
+    pub(super) fn wait(mut fds: Vec<libc::pollfd>, secs: f64, wake: &lifecycle::Wake) {
+        fds.push(libc::pollfd { fd: wake.fd(), events: libc::POLLIN, revents: 0 });
+        let ms = (secs * 1000.0).clamp(0.0, 60_000.0).ceil() as i32;
+        // SAFETY: the array lives for the call and contains valid socket descriptors.
+        unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, ms) };
+        wake.drain();
+    }
+
     impl Net {
         pub fn open() -> io::Result<Net> {
             let s4 = open(false)?;
@@ -1403,14 +1411,12 @@ mod net {
         }
 
         /// Waits up to `secs` for a packet on either socket.
-        pub fn wait(&self, secs: f64) {
+        pub fn wait(&self, secs: f64, wake: &lifecycle::Wake) {
             let mut fds = vec![libc::pollfd { fd: self.s4.as_raw_fd(), events: libc::POLLIN, revents: 0 }];
             if let Some(s) = &self.s6 {
                 fds.push(libc::pollfd { fd: s.as_raw_fd(), events: libc::POLLIN, revents: 0 });
             }
-            let ms = (secs * 1000.0).clamp(0.0, 60_000.0).ceil() as i32;
-            // SAFETY: the array lives for the call
-            unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, ms) };
+            wait(fds, secs, wake);
         }
 
         /// The next waiting packet of either socket, without waiting.
@@ -1525,43 +1531,14 @@ enum Ctl {
 pub struct Mdns {
     tx: Option<std::sync::mpsc::Sender<Ctl>>,
     th: Option<std::thread::JoinHandle<()>>,
+    wake: Option<lifecycle::Wake>,
     /// interface names to use (a host test), else all but loopback
     only: Option<Vec<String>>,
 }
 
-impl Mdns {
-    pub fn new(only: Option<Vec<String>>) -> Mdns {
-        Mdns { tx: None, th: None, only }
-    }
-
-    /// The configuration to announce (on or off).
-    pub fn set(&mut self, cfg: Config) {
-        if self.tx.is_none() {
-            if !cfg.on {
-                return;
-            }
-            let (tx, rx) = std::sync::mpsc::channel();
-            let only = self.only.clone();
-            match std::thread::Builder::new().name("mdns".into()).spawn(move || run(rx, only)) {
-                Ok(h) => {
-                    self.tx = Some(tx);
-                    self.th = Some(h);
-                }
-                Err(e) => {
-                    eprintln!("oos-ui: mDNS: no thread: {}", e);
-                    return;
-                }
-            }
-        }
-        if let Some(tx) = &self.tx {
-            let _ = tx.send(Ctl::Set(cfg));
-        }
-    }
-}
-
 /// The thread: sockets while on, a blocking wait between packets and timers.
 #[cfg(unix)]
-fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>) {
+fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>, control_wake: lifecycle::Wake) {
     use std::sync::mpsc::TryRecvError;
     let t0 = std::time::Instant::now();
     let now = || t0.elapsed().as_secs_f64();
@@ -1572,11 +1549,6 @@ fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>) {
     let mut ifs: Vec<Iface> = Vec::new();
     let mut if_t = f64::NEG_INFINITY;
     let mut buf = vec![0u8; 9000];
-    let flush = |r: &mut Responder| {
-        for l in r.log.drain(..) {
-            eprintln!("oos-ui: {}", l);
-        }
-    };
     loop {
         // the frame loop's wishes: without sockets the thread sleeps until the next one
         let msg = if sock.is_some() {
@@ -1588,6 +1560,7 @@ fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>) {
         } else {
             Some(rx.recv().unwrap_or(Ctl::Stop))
         };
+        let control = msg.is_some();
         match msg {
             Some(Ctl::Set(c)) => {
                 let on = c.on;
@@ -1650,16 +1623,18 @@ fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>) {
         for o in r.tick(now()) {
             s.send(&o, &ifs);
         }
-        flush(&mut r);
+        lifecycle::flush(&mut r);
         set_status(Status { state: r.state(), name: r.host_label() });
         let t = now();
         let wake = r.next_wake().map_or(1.0, |w| w - t).min(if_t + 2.0 - t).clamp(0.0, 1.0);
-        s.wait(wake);
+        if !control {
+            s.wait(wake, &control_wake);
+        }
     }
 }
 
 #[cfg(not(unix))]
-fn run(_rx: std::sync::mpsc::Receiver<Ctl>, _only: Option<Vec<String>>) {}
+fn run(_rx: std::sync::mpsc::Receiver<Ctl>, _only: Option<Vec<String>>, _wake: lifecycle::Wake) {}
 
 #[cfg(test)]
 mod tests {

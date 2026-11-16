@@ -118,6 +118,14 @@ Choose a level inside the actual waveform range. Use `*OPC?` only when willing t
 
 For CH inputs, NORM reads the interpolated display record; RAW uses retained native acquisition memory when available, including points outside the screen. If no native record exists, it falls back to the available processed record. References use their native arrays in all three modes, restricted by the chosen transfer page. Do not assume `:ACQ:SRAT?` describes a reference: read its preamble. RAW is permitted while running in OOS; stock Rigol stop-only transfer assumptions differ. Multiple queries while running can observe different accepted captures; Stop first when metadata and data must match.
 
+Normal deep captures may retain only FPGA min/max pairs. RAW and stopped MAX then
+return the 3600-point screen record, with its screen interval and origin in the
+preamble. Selecting RAW does not request a new FPGA read. Deep sample-consuming
+measurements can retain a raw reread, subject to the acquisition's window and byte
+budget; RAW transfers that retained window, which need not span all configured
+memory. Check returned points and preamble before treating a transfer as a deep
+capture.
+
 Preamble fields:
 
 ```text

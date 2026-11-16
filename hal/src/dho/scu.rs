@@ -57,7 +57,7 @@ pub struct Window {
     pub avg: bool,
 }
 
-/// Main window average offset (docs/fork/specs/01-hw-averaging.md 1.2); 0x1114 is the zoom window's, which OOS does
+/// Main window average offset; 0x1114 is the zoom window's, which OOS does
 /// not use.
 pub const AVG_OFFSET: u32 = 0x1110;
 
@@ -78,10 +78,10 @@ pub mod status {
     pub const STOPPED: u32 = 1 << 13;
     /// waiting for a trigger
     pub const WAIT_TRIG: u32 = 1 << 4;
-    /// sticky: the TPU's trigger fired (rising edge of SLICE_X62Y75_BFF, the trigger output into the SCU FSM), until
-    /// the status clear (`clear_status`). Netlist, docs/fork/trigger-lockin.md "Trigger status from the hardware"
+    /// sticky: the TPU's trigger fired (the trigger output into the SCU FSM), until
+    /// the status clear (`clear_status`). Assumed, docs/fork/trigger-lockin.md "Trigger status from the hardware"
     pub const TPU_TRIGGER: u32 = 1 << 6;
-    /// sticky: the FSM accepted a trigger while waiting (SLICE_X53Y73_AFF rising): the TPU's, the auto-trigger timeout
+    /// sticky: the FSM accepted a trigger while waiting (assumed): the TPU's, the auto-trigger timeout
     /// (0x4020 bit0, 0x4060/0x4064) or a forced one, until the status clear
     pub const ACCEPTED: u32 = 1 << 7;
 }
@@ -107,8 +107,8 @@ pub fn fired(v: u32) -> Fired {
     }
 }
 
-/// The stock status clear (libscope `DevSystemSCU_clrStatus(1, 1)`): the last read value with bits 31:30 set, then
-/// with them clear. Bit 31 clears the sticky bits 6 and 7 (the netlist: SLICE_X34Y76_AFF in their next-state LUTs).
+/// The status clear as the stock system does it: the last read value with bits 31:30 set, then with them clear. Bit
+/// 31 clears the sticky bits 6 and 7 (assumed; seen on the unit, docs/fork/trigger-lockin.md).
 pub fn clear_status(last: u32) -> Vec<Write> {
     let v = last & 0x3fff_ffff;
     vec![(0x4034, v | 0xc000_0000), (0x4034, v)]
@@ -248,7 +248,7 @@ pub fn arm(fsm: u32, sh: &mut Shadows, first: u32, n: u32) -> Vec<Write> {
     record_run(fsm, sh, first, n, 0)
 }
 
-/// Hardware segmented recording (stock record state 0xb, docs/fork/specs/03-segmented-timestamps.md 1.2 steps 2..7):
+/// Hardware segmented recording (stock record state 0xb):
 /// `n` frames from frame 0, the FPGA re-arms itself between them and waits `interval_ticks` x 6.4 ns (0x4068) after
 /// each. The same 29 writes as `arm`; with interval 0 they are identical.
 pub fn record_arm(fsm: u32, sh: &mut Shadows, n: u32, interval_ticks: u32) -> Vec<Write> {
@@ -286,7 +286,7 @@ pub fn interval_ticks(fs: i128) -> u32 {
     (fs.max(0) / FSM_TICK_FS).min(u32::MAX as i128) as u32
 }
 
-/// Timestamp registers (spec 03, 1.1): latched stamp, control, first-trigger stamp. Low word first, high word at +4.
+/// Timestamp registers: latched stamp, control, first-trigger stamp. Low word first, high word at +4.
 pub mod stamp {
     pub const LATCHED: u32 = 0x40b0;
     pub const CTRL: u32 = 0x40b8;
@@ -387,7 +387,7 @@ mod tests {
         let (mut a, mut b) = (Shadows::HANDOVER, Shadows::HANDOVER);
         assert_eq!(record_arm(1, &mut a, 100, 0), arm(1, &mut b, 0, 100));
         assert_eq!(a, b);
-        // 1 ms = 156,250 ticks of 6.4 ns (spec 03, 4)
+        // 1 ms = 156,250 ticks of 6.4 ns
         assert_eq!(interval_ticks(1_000_000_000_000), 156_250);
         assert_eq!((interval_ticks(-5), interval_ticks(6_399_999), interval_ticks(i128::MAX)), (0, 0, u32::MAX));
         let mut c = Shadows::HANDOVER;
@@ -396,7 +396,7 @@ mod tests {
         let diff: Vec<usize> = (0..w.len()).filter(|&i| w[i] != d[i]).collect();
         assert_eq!(diff.len(), 1);
         assert_eq!(w[diff[0]], (0x4068, 156_250));
-        // the full sequence of `seq::State::record_steps` (stamp clear, record arm) against the fixture from spec 03 1.2
+        // the full sequence of `seq::State::record_steps` (stamp clear, record arm) against the fixture by hand
         let mut sh = Shadows::HANDOVER;
         let mut v = ts_first_clear(&mut sh);
         v.extend(record_arm(1, &mut sh, 100, 156_250));
@@ -416,7 +416,7 @@ mod tests {
     }
 
     // Break it catches: the start in words instead of points per channel, no rounding to 4 half bursts, the remainder
-    // in points instead of words. Expected values by hand from spec 01, 1.2: q = m s / 5, qa = q & !3,
+    // in points instead of words. Expected values worked out by hand: q = m s / 5, qa = q & !3,
     // word = qa << 8 | (s - qa 5 / m) m.
     #[test]
     fn average_offset_word() {

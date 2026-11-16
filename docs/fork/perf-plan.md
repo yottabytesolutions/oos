@@ -61,10 +61,10 @@ Gain is the expected effect on the unit; "est" means derived from the host numbe
 | 9 | Peak decimation (0x1004 bit 1) for deep memory and slow time bases | deep window 1.25 MB -> ~8 kB per frame; true peak detect; records/s at 10 M toward the 8 ms record bound | M | M | plan only | yes | M (upstream deep-window code) |
 | 10 | DVM 0x2244-0x2258 for background Vpp/RMS/mean | no full raw record per pass for background stats at deep memory | M | M | plan only | yes | L (new module next to `counter.rs`) |
 | 11 | Phosphor decay branchless, on channels only | 0.5-1 ms per screen frame on A72 | XS | L | yes | no | L (offer upstream) |
-| 12 | Smarter batch wait (spec 10 3.8) | lower latency at low trigger rates; fewer polls at slow time bases | S | L | yes (sim engine) | no | L |
+| 12 | Smarter batch wait | lower latency at low trigger rates; fewer polls at slow time bases | S | L | yes (sim engine) | no | L |
 | 13 | Mali deposit (additive line strips into R16 maps) | only if CPU deposit stays below the PCIe ceiling after 1+6 | L | M | yes (oos-gpu host test) | yes | H (upstream `oos-gpu.c` protocol) |
 
-Not recommended now: FPGA sinc chain (spec 05), hi-res FIR (spec 02, no FPGA mode bit), skipping the 45 dead
+Not recommended now: FPGA sinc chain, hi-res FIR (no FPGA mode bit), skipping the 45 dead
 register writes (posted writes, microseconds per configure; do it only as cleanup in the fork's step lists).
 
 ## Notes per item
@@ -265,7 +265,7 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   about 8x): 4 A53 reach about 10 k frames/s at 100 ns/div, 20 k at 1 us/div, 3 k at 10 us/div; the A72 helper adds up
   to 5 k / 10 k / 1.5 k when its wait is long.
   Arm ahead, opt-in `acq.prearm = on` in system.conf or OOS_PREARM (any value; set wins over the key): `seq::prearm`
-  arms the next batch before the decode of the current one (spec 10 item 3.5). Default off until the unit check
+  arms the next batch before the decode of the current one. Default off until the unit check
   (unit-dho804.md, arm ahead).
   Fast interpolation, opt-in `acq.interp = fast` / OOS_INTERP=fast (`sparse::fast_many`): the exact 16-tap sinc
   on a grid of 24 points per sample (one fixed filter per phase over consecutive samples, vectorised), linear in

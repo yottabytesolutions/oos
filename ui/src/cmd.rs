@@ -122,6 +122,7 @@ fn execute(ui: &mut Ui, line: &str) -> Out {
         "frames" if w.len() > 1 => return Out::Frames(num(w[1]).max(0) as u32),
         "shot" if w.len() > 1 => return Out::Shot(w[1].to_string()),
         "quit" => ui.quit = true,
+        "close" => ui.script_close(),
         "selfcal" if w.len() > 1 => ui.selfcal_remote_full(w[1], w[2..].contains(&"zero"), w[2..].contains(&"adc")),
         "storedir" if w.len() > 1 => ui.store_dir = w[1].into(),
         "textsize" if w.len() > 1 => match TEXT_SIZES.iter().find(|t| t.name().eq_ignore_ascii_case(w[1])) {

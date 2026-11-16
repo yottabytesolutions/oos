@@ -1,7 +1,7 @@
 # Hardware mask test
 
 The mask (pass/fail) test in the FPGA's mask unit. Opt-in: `mask.hw = on` in system.conf, read once at start. Off by
-default until the steps below confirm the assumptions. Register description: `specs/06-mask-unit.md`. Code:
+default until the steps below confirm the assumptions. Code:
 `hal/src/dho/mask.rs`, `seq::State::mask_steps`, `ui/src/ui/hwmask.rs`.
 
 ## What it does
@@ -32,7 +32,7 @@ default until the steps below confirm the assumptions. Register description: `sp
 | assumption | where | how the bench checks it |
 |---|---|---|
 | The comparator sees the read-out word >> 8 (32768 at the offset, 7500 codes per division) | `mask::MID`, `CODES_PER_DIV`, `SHIFT` | step 3 and 4 |
-| Slot = stream slot (libscope): 0 with one channel; lower of two 0, higher 1; the channel with 3 or 4 | `mask::slot` | step 5 |
+| Slot = stream slot (assumed): 0 with one channel; lower of two 0, higher 1; the channel with 3 or 4 | `mask::slot` | step 5 |
 | 1000 columns spread over the whole record, n = points / 1000 per column | `mask::per_column` | step 4, a failure late in the record |
 | One counted frame per acquired frame | | step 2 |
 | Stop on fail (0x4020 bit 12) stops the FSM without hanging the acquisition thread | | step 6 |
@@ -100,7 +100,7 @@ the screen (1.6 screens at 10k points from 20 us/div). With a flat signal around
   is placed on the screen (10 divisions around the delay). Columns not wholly on the screen test nothing.
 - The strobe count stays within 1023 and within what the record holds for 1000 columns (`Map::layout`); the stalls
   came from counts whose columns ran past the record. Records above 1.02 M points have their first 1.02 M tested.
-- The slot is the stream slot (regmap from libscope): CH2 alone is slot 0, CH2 of CH1+CH2 slot 1.
+- The slot is the stream slot: CH2 alone is slot 0, CH2 of CH1+CH2 slot 1.
 
 ## Stall guard (round 8)
 

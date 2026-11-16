@@ -320,8 +320,7 @@ impl Ui {
         let scr = self.scr.rect();
         cv.blend(scr, rgb(0, 0, 0), 140);
         let r = scr.inset(10);
-        cv.round(r, 8, ACCENT, 255);
-        cv.round(r.inset(2), 7, DLG_BG, 255);
+        cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
         let top = Rect::new(r.x + 16, r.y + 8, r.w - 32, 30);
         cv.text_in(&f.lb, top, 0, "System information", ACCENT);
         cv.text_in(&f.s, top, 2, "updated every second \u{b7} tap to close", DIM);

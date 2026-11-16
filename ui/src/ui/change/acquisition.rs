@@ -21,7 +21,7 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
     let Source::Hw { shared, .. } = &ui.src else { return };
     let Some(shadow) = &ui.host.runtime().change.shadow else { return };
     let (model, needs) = (shadow.accepted(), shadow.needs());
-    let sw = ui.switches();
+    let sw = &draw_switches(ui, model);
     let access =
         if model.run == RunState::Run { crate::drawpipe::Access::from(sw) } else { crate::drawpipe::Access::Existing };
     if let Some(pipe) = crate::drawpipe::pipe(access) {
@@ -57,6 +57,28 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
     g.queue.retain(|f| current(f, id));
     crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.ui_publish, (before - g.queue.len()) as u64);
     crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, (before - g.queue.len()) as u64);
+}
+
+/// The start switches with the draw path in force: on the hardware Acquire > Draw path (`Model::draw_batch`) decides
+/// batch mode, elsewhere the start switches do (scripted runs, soak).
+pub(crate) fn draw_switches(ui: &Ui, model: &Model) -> crate::sysconf::Switches {
+    let mut sw = *ui.switches();
+    if ui.src.is_hw() {
+        sw.pipeline = if model.draw_batch { crate::drawpipe::Mode::Batch } else { crate::drawpipe::Mode::Frames };
+    }
+    sw
+}
+
+/// Draw path Standard: the workers stay, idle, and forget their view, so no frame of the old settings is merged when
+/// Batch comes on again.
+pub(crate) fn draw_path_enforce(ui: &Ui) {
+    let sw = draw_switches(ui, &ui.m);
+    if sw.pipeline == crate::drawpipe::Mode::Batch {
+        return;
+    }
+    if let Some(p) = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).filter(|p| p.accepting()) {
+        p.set_view(None, 0, 0, sw.interp);
+    }
 }
 
 pub(crate) fn current(f: &crate::board::Frame, id: Identity) -> bool {

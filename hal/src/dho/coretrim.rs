@@ -4,8 +4,8 @@
 //! Matching of the ADC core offsets of the active ADC mode at run time (fork, opt-in `cal.core_offset = tight`,
 //! docs/fork/core-offset.md). The RT8847's eight cores each have an offset register (0x14 + 8n, about half an ADC step per register step, unit round 11); the stock
 //! calibration trims every core to mid-scale within +-1.5 steps (self-cal.md 14.6), so two cores can differ by up to
-//! 3 steps. At decimated rates neighbouring samples come from two cores (netlist), and the difference stays in every
-//! frame: a fixed fs/2 pattern that the hardware average and the DVM block keep (spec 01 section 8, dvm.md).
+//! 3 steps. At decimated rates neighbouring samples come from two cores (assumed), and the difference stays in every
+//! frame: a fixed fs/2 pattern that the hardware average and the DVM block keep (dvm.md).
 //!
 //! This trim matches the cores that sample one channel to each other, not to mid-scale: target = the channel's mean
 //! over its cores, tolerance `TOL` steps. Matching needs no known input level, only one that every core of the

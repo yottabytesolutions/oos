@@ -1,22 +1,22 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Hardware averaging (docs/fork/specs/01-hw-averaging.md): the FPGA averages every trigger, the host plays every
+//! Hardware averaging: the FPGA averages every trigger, the host plays every
 //! frame of a batch (the averaging sits on the play side) and shows the newest (`seq::State::read_steps`). The register side is in `acq` (mode, count, clear), `hz` (segment
 //! layout) and `scu` (window word). NOT VERIFIED ON THE UNIT: what the frames hold in average mode is not visible in the
-//! stock library (spec 01, 6.1). Two readings are supported, chosen by `Kind`:
+//! stock system. Two readings are supported, chosen by `Kind`:
 //!
 //! - `Running`: the FPGA keeps a running average and never stops; every batch shows the current average. The stock
 //!   driver fits this: it clears only on a change, never during a steady run.
 //! - `Hold`: the FPGA averages `count` triggers and then holds the result; the host shows it once complete and
 //!   clears for the next one.
 //!
-//! The data format is assumed unchanged: the stock library decodes average frames like normal ones (spec 01, 1.4), so
+//! The data format is assumed unchanged: the stock system decodes average frames like normal ones, so
 //! the averaged words are 16-bit codes around 32768 with 7500 codes per division (`seq::decode_volts`).
 
 use crate::dho::bus::Bus;
 
-/// How the FPGA average behaves once `count` triggers are in (spec 01, 6.1; decided on the unit by
+/// How the FPGA average behaves once `count` triggers are in (decided on the unit by
 /// docs/fork/unit-dho804.md, "Hardware averaging" step 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -27,7 +27,7 @@ pub enum Kind {
 }
 
 /// Counts the hardware averages: powers of two, 2..1024 (the stock UI offers powers of two; the width of 0x10b0 is
-/// not known, spec 01, 6.3). Others average in software.
+/// not known). Others average in software.
 pub fn hw_count(n: u32) -> Option<u32> {
     (n.is_power_of_two() && (2..=1024).contains(&n)).then_some(n)
 }
@@ -76,7 +76,7 @@ impl Tracker {
     }
 }
 
-/// 0x10b0 read back: the configured count - 1, or the progress (spec 01, 6.2). Diagnostic only.
+/// 0x10b0 read back: the configured count - 1, or the progress. Diagnostic only.
 pub fn progress<B: Bus>(bar: &mut B) -> u32 {
     bar.rd(crate::dho::acq::AVG_COUNT)
 }
@@ -125,7 +125,7 @@ mod tests {
     }
 
     // The fixture hal/testdata/avg-writes.txt (Average 16, CH1, 100 ns/div, 1000 points, a batch of 10 with 4
-    // recorded), checked by hand against spec 01: clear pulse after the stop poll and before the configuration, 0x1004
+    // recorded), checked by hand: clear pulse after the stop poll and before the configuration, 0x1004
     // bit 3 and bit 2, 0x10b0 = 15, 0x404c = 10, 0x10e0 = 512 bursts, 0x1110 after 0x1108 (window from 0: 0), play of
     // frames 0..3 as in normal mode. Break it catches: any change of the average sequence, any difference to normal
     // mode beyond these, a play of the newest frame alone (B1: the frames not played never reach the average).

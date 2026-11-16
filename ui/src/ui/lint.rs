@@ -356,7 +356,7 @@ fn menus_fit_at(scr: Screen, ts: TextSize, all: &mut BTreeSet<String>) {
         );
     }
     for t in TRIG_TYPES {
-        for p in [Proto::Uart, Proto::Can, Proto::I2c] {
+        for p in [Proto::UART, Proto::CAN, Proto::I2C] {
             walk(
                 &|| {
                     open(Trigger, &|u| {
@@ -379,21 +379,23 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert!(u.menu_open && u.menu == MenuId::Acquire);
     u.tap(160, 20);
     assert!(!u.menu_open);
-    // File loading and simulation are direct actions beside the usual tools.
-    assert_eq!(
-        u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(),
-        ["Load file", "SIM", "Measure", "Cursor", "Display", "Storage", "System"]
-    );
-    let (_, _, load) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Load).unwrap();
-    u.tap(load.x + 5, load.y + 5);
+    // The bar keeps what is used most. System and SIM are in the start menu (System first in its group), Load file is a
+    // row of the Reference menu.
+    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Measure", "Cursor", "Display", "Storage"]);
+    let system = u.main_groups().into_iter().find(|g| g.0 == "System").unwrap().1;
+    assert_eq!(system[0], Item::Open(MenuId::Utility));
+    assert!(u.main_groups().iter().any(|g| g.1.contains(&Item::Open(MenuId::Sim))));
+    assert!(u.items(MenuId::Ref).contains(&Item::RefLoad));
+    // The destination dialog of the desktop's Ctrl+O.
+    u.request_waveform();
     assert!(u.load_slot_ask && !u.open_wave_request && !u.menu_open);
     u.dismiss_context();
     assert!(!u.load_slot_ask && !u.open_wave_request);
     assert!(u.refs.iter().all(Option::is_none));
-    u.tap(load.x + 5, load.y + 5);
+    u.request_waveform();
     u.tap(8, 8);
     assert!(!u.load_slot_ask && !u.open_wave_request, "an outside tap cancels without loading");
-    u.tap(load.x + 5, load.y + 5);
+    u.request_waveform();
     let r3 = Ui::load_slot_button(2);
     u.tap(r3.x + 4, r3.y + 4);
     assert!(!u.load_slot_ask && u.open_wave_request);
@@ -404,6 +406,27 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     let (_, _, r) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).unwrap();
     u.tap(r.x + 5, r.y + 5);
     assert!(u.menu_open && u.menu == MenuId::MeasAdd);
+}
+
+/// Reference > Load file on the scope: the file comes from storage and lands in the Slot row's reference.
+#[cfg(not(windows))]
+#[test]
+fn load_file_in_the_reference_menu_takes_a_file_from_storage() {
+    let dir = std::env::temp_dir().join(format!("oos-refload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut u = with_two_channels();
+    u.store_dir = dir.clone();
+    u.activate(Item::RefLoad);
+    assert!(u.refs.iter().all(Option::is_none), "nothing in storage, nothing loaded");
+    let rec = u.last[0].as_ref().unwrap().clone();
+    std::fs::write(dir.join("capture.bin"), crate::store::wave_bin(&rec, &u.m)).unwrap();
+    u.ref_sel = 2;
+    u.activate(Item::RefLoad);
+    let r = u.refs[2].as_ref().expect("R3");
+    assert_eq!(*r.v, rec.ch[0]);
+    assert!(!u.load_slot_ask && !u.open_wave_request, "no file dialog on the scope");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -441,6 +464,12 @@ fn files_go_to_the_stick_while_it_is_there() {
     u.store_dir = "/oos/shots".into();
     assert_eq!(u.save_dir(), std::path::Path::new("/oos/shots"));
     assert_eq!(u.saved_where(), "");
+    // Local keeps the files in the storage directory while the stick is there, and the title says so
+    u.store_dir = crate::store::DEFAULT_DIR.into();
+    u.store_dest = crate::store::StoreDest::Local;
+    assert_eq!(u.save_dir(), std::path::Path::new(crate::store::DEFAULT_DIR));
+    assert_eq!(u.saved_where(), " locally, not on the stick");
+    assert!(u.menu_title(MenuId::Storage).contains("lost at power-off"));
 }
 
 #[test]
@@ -456,16 +485,42 @@ fn system_info_has_the_rates() {
         .any(|r| matches!(r, super::sysinfo::Row::Kv(k, ..) if k.contains("Waveforms"))));
 }
 
-/// Compact source controls fit every mix; auxiliary tools remain in Sources.
+/// The cards fit every mix of channels, LA and generator; the compact bar's source controls too, auxiliary tools
+/// there remain in Sources.
 #[test]
 fn bottom_row_fits_in_every_mix() {
     for scr in SCREENS {
         bottom_row_fits_on(scr);
+        bottom_row_fits_on_compact(scr);
     }
 }
 
 fn bottom_row_fits_on(scr: Screen) {
     let mut u = demo_on(scr);
+    for bits in 0..64 {
+        for c in 0..NCH {
+            u.m.ch[c].on = bits >> c & 1 == 1;
+        }
+        (u.m.la.on, u.m.afg_on) = (bits & 16 != 0, bits & 32 != 0);
+        let c = u.card_layout();
+        let (la, gen) = (c.la.expect("the DHO924S has an LA port"), c.gen.expect("and a generator"));
+        let mut all: Vec<Rect> = c.ch.to_vec();
+        all.extend([la, gen, c.time, c.trig]);
+        for (i, a) in all.iter().enumerate() {
+            assert!(a.w >= 54 && a.right() <= u.scr.w - 6, "{:?} mix {:b}: {:?}", scr, bits, a);
+            assert!(!all[i + 1..].iter().any(|b| overlaps(*a, *b)), "mix {:b}: {:?}", bits, a);
+        }
+        assert!(c.trig.w >= 222 && c.time.w >= 130, "mix {:b}", bits);
+        // a channel that is on keeps room for its text
+        for k in 0..NCH {
+            assert!(!u.m.ch[k].on || c.ch[k].w >= 90, "mix {:b}: CH{} {}", bits, k + 1, c.ch[k].w);
+        }
+    }
+}
+
+fn bottom_row_fits_on_compact(scr: Screen) {
+    let mut u = demo_on(scr);
+    u.m.bar_compact = true;
     for bits in 0..64 {
         for c in 0..NCH {
             u.m.ch[c].on = bits >> c & 1 == 1;
@@ -651,12 +706,15 @@ fn screen_in_order_on(scr: Screen) {
 #[test]
 fn sources_menu_opens_la_and_generator_without_starting_generator_output() {
     let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
+    u.m.bar_compact = true;
     u.tap(80, BOTTOM.y + 15);
-    u.tap(110, BOTTOM.y - 49); // Sources: Logic analyser, immediately above Generator.
+    let (x, y) = fix_tests::row_xy(&u, "Logic analyser");
+    u.tap(x, y); // Sources: Logic analyser, immediately above Generator.
     assert!(u.m.la.on && u.menu_open && u.menu == MenuId::La);
     u.close_menu();
     u.tap(80, BOTTOM.y + 15);
-    u.tap(110, BOTTOM.y - 19);
+    let (x, y) = fix_tests::row_xy(&u, "Generator");
+    u.tap(x, y);
     assert!(u.menu_open && u.menu == MenuId::Afg);
     assert!(!u.m.afg_on, "a card must not switch an output on");
 }
@@ -889,16 +947,16 @@ fn four_decoders_side_by_side() {
     u.m.ch[2].on = true;
     u.m.dec_on = true;
     u.m.dec_src = 2;
-    u.set_dec_proto(Proto::Uart);
+    u.set_dec_proto(Proto::UART);
     u.m.dec_select(1);
     assert_eq!(u.m.dec_sel, 1);
     assert!(!u.m.dec_on, "a new slot starts off");
     u.m.dec_on = true;
-    u.set_dec_proto(Proto::I2c);
+    u.set_dec_proto(Proto::I2C);
     u.m.dec_select(0);
-    assert_eq!(u.m.dec_proto, Proto::Uart);
+    assert_eq!(u.m.dec_proto, Proto::UART);
     assert!(u.m.dec_is_on(0) && u.m.dec_is_on(1) && !u.m.dec_is_on(2));
-    assert_eq!(u.m.dec_view(1).dec_proto, Proto::I2c);
+    assert_eq!(u.m.dec_view(1).dec_proto, Proto::I2C);
     for _ in 0..4 {
         u.step(0.04);
     }
@@ -910,9 +968,9 @@ fn four_decoders_side_by_side() {
     // setups keep all of them
     let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
     assert_eq!(b.dec_sel, 0);
-    assert_eq!(b.dec_view(1).dec_proto, Proto::I2c);
+    assert_eq!(b.dec_view(1).dec_proto, Proto::I2C);
     assert!(b.dec_is_on(1));
-    assert_eq!(b.dec_proto, Proto::Uart);
+    assert_eq!(b.dec_proto, Proto::UART);
 }
 
 #[test]
@@ -1142,6 +1200,33 @@ fn xy_cursors_show_both_axes() {
     u.render(&mut cv);
     let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
     assert_eq!((b.cursor, b.cur_d), (CursorMode::Xy, u.m.cur_d));
+}
+
+#[test]
+fn track_cursor_b_follows_its_own_source() {
+    let mut u = with_two_channels();
+    u.m.cursor = CursorMode::Track;
+    assert_eq!(u.items(MenuId::Cursor).len(), 4);
+    assert_eq!(u.value(Item::CurSrcB), "CH1", "follows cursor A's source until set");
+    u.adjust(Item::CurSrcB, 1);
+    assert_eq!((u.m.cur_b_source, u.value(Item::CurSrcB).as_str()), (Some(WaveId::Ch(1)), "CH2"));
+    let (ta, _) = u.cursor_times();
+    let mut r = u.last[0].clone().unwrap();
+    r.t0 = ta - 1.0;
+    r.dt = 1.0;
+    r.ch[0] = vec![0.0, 1.0, 2.0];
+    r.ch[1] = vec![0.0, 5.0, 6.0];
+    u.last[0] = Some(r);
+    assert_eq!((u.wave_at_source(WaveId::Ch(0), ta), u.wave_at_source(WaveId::Ch(1), ta)), (Some(1.0), Some(5.0)));
+    let v = u.cursor_values();
+    assert_ne!(v[1].1, v[3].1, "Y1 and Y2 read different sources");
+    let mut cv = Canvas::new(PANEL_W, PANEL_H);
+    u.render(&mut cv);
+    let b = crate::store::parse_setup(&crate::store::setup_text(&u.m)).unwrap();
+    assert_eq!(b.cur_b_source, Some(WaveId::Ch(1)));
+    // the other modes have no such row
+    u.m.cursor = CursorMode::Time;
+    assert!(!u.items(MenuId::Cursor).contains(&Item::CurSrcB));
 }
 
 #[test]
@@ -1695,16 +1780,19 @@ fn a_long_results_list_scrolls_by_touch() {
     u.render(&mut cv);
     let r = u.pane_rect();
     let (fit, _) = Ui::results_fit(r, 14);
-    let [up, down] = Ui::results_scroll_btns(r);
-    u.tap(down.x + 5, down.y + 5);
-    assert_eq!(u.pn.top, fit.min(14 - fit));
-    u.tap(down.x + 5, down.y + 5);
+    // the scroll bar: the thumb to the bottom is the end of the list, a tap at the top of the track the start
+    let (bar, _) = u.results_bar().expect("Results pane");
+    assert!(bar.needed());
+    let th = bar.thumb();
+    crate::cmd::run(
+        &mut u,
+        &format!("drag {} {} {} {}", th.x + th.w / 2, th.y + 5, th.x + th.w / 2, bar.track.y + bar.track.h + 40),
+    );
     assert_eq!(u.pn.top, 14 - fit);
     u.render(&mut cv);
-    u.tap(up.x + 5, up.y + 5);
-    assert!(u.pn.top < 14 - fit);
+    crate::cmd::run(&mut u, &format!("drag {0} {1} {0} {1}", bar.track.x + bar.track.w / 2, bar.track.y + 2));
+    assert_eq!(u.pn.top, 0, "a press on the track jumps there");
     // a finger up the table goes down the list
-    u.pn.top = 0;
     crate::cmd::run(&mut u, &format!("drag 300 {} 300 {}", r.y + r.h - 10, r.y + 50));
     assert!(u.pn.top > 0);
     // still there after the list got shorter
@@ -2336,7 +2424,7 @@ fn a_loaded_ref_feeds_measure_power_bode_spectrum_and_eye() {
     u.m.ch[0].bw = BW_20M;
     u.m.ch[0].coupling = Coupling::Ac;
     u.m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
-    let row = u.meas_rows().into_iter().find(|r| r.name == "Vpp").expect("pk-pk");
+    let row = u.meas_rows().into_iter().find(|r| r.name == Meas::Vpp.name()).expect("pk-pk");
     let direct = oos_dsp::measure::analyze_min(&sine, dt, 0.4 * 0.2);
     assert!((row.v - direct.get(Meas::Vpp)).abs() < 1e-6, "{} vs {}", row.v, direct.get(Meas::Vpp));
     let mut filtered = sine.clone();
@@ -2620,7 +2708,7 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
             u.m.dec_select(1);
             u.m.dec_on = true;
             u.m.dec_src = 2;
-            u.set_dec_proto(Proto::Spi);
+            u.set_dec_proto(Proto::SPI);
             u.m.dec_select(0);
             u.table = Some(tables::TableKind::Decode);
         }),

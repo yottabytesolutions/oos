@@ -34,7 +34,7 @@ impl Ui {
             }
         };
         match (m.dec_proto, m.trig_bus) {
-            (Proto::Uart, w) => {
+            (Proto::UART, w) => {
                 if w == BusWhat::Data {
                     value(&mut v, s.rel, false);
                 }
@@ -43,17 +43,17 @@ impl Ui {
                 }
                 v.extend([UartPol, UartStop]);
             }
-            (Proto::Spi, w) => {
+            (Proto::SPI, w) => {
                 if w == BusWhat::Data {
                     value(&mut v, s.rel, true);
                 }
                 v.push(if m.dec_cs.is_some() { SpiCs } else { SpiTimeout });
             }
-            (Proto::I2c, BusWhat::Id) => {
+            (Proto::I2C, BusWhat::Id) => {
                 value(&mut v, s.addr_rel, false);
                 v.extend([I2cAddrBits, I2cDir]);
             }
-            (Proto::I2c, BusWhat::Data) => {
+            (Proto::I2C, BusWhat::Data) => {
                 value(&mut v, s.rel, true);
                 v.extend([I2cBytes, I2cDir]);
             }
@@ -64,7 +64,7 @@ impl Ui {
 
     /// The relation the value items edit: the address's for an I2C address, else the value's.
     fn rel_mut(&mut self) -> &mut Rel {
-        if self.m.dec_proto == Proto::I2c && self.m.trig_bus == BusWhat::Id {
+        if self.m.dec_proto == Proto::I2C && self.m.trig_bus == BusWhat::Id {
             &mut self.m.ser.addr_rel
         } else {
             &mut self.m.ser.rel
@@ -73,7 +73,7 @@ impl Ui {
 
     pub(super) fn serial_value(&self, it: Item) -> String {
         let s = &self.m.ser;
-        let i2c_addr = self.m.dec_proto == Proto::I2c && self.m.trig_bus == BusWhat::Id;
+        let i2c_addr = self.m.dec_proto == Proto::I2C && self.m.trig_bus == BusWhat::Id;
         match it {
             Item::SerRel => (if i2c_addr { s.addr_rel } else { s.rel }).name().into(),
             Item::SerMax | Item::SerMask => format!("0x{:X}", self.hex_value(it)),
@@ -187,7 +187,7 @@ impl Ui {
     pub(super) fn hex_value(&self, it: Item) -> u64 {
         let s = &self.m.ser;
         match it {
-            Item::SerMax if self.m.dec_proto == Proto::I2c && self.m.trig_bus == BusWhat::Id => s.addr_max as u64,
+            Item::SerMax if self.m.dec_proto == Proto::I2C && self.m.trig_bus == BusWhat::Id => s.addr_max as u64,
             Item::SerMax => s.max,
             Item::SerMask => s.mask & BUS_VAL_MAX,
             _ => self.m.trig_bus_val,
@@ -196,7 +196,7 @@ impl Ui {
 
     pub(super) fn set_hex(&mut self, it: Item, v: u64) {
         let v = v.min(BUS_VAL_MAX);
-        let i2c_addr = self.m.dec_proto == Proto::I2c && self.m.trig_bus == BusWhat::Id;
+        let i2c_addr = self.m.dec_proto == Proto::I2C && self.m.trig_bus == BusWhat::Id;
         let s = &mut self.m.ser;
         match it {
             Item::SerMax if i2c_addr => s.addr_max = v.min(0x3ff) as u32,
@@ -223,18 +223,18 @@ mod tests {
     #[test]
     fn items_follow_protocol_condition_and_relation() {
         use Item::*;
-        let mut ui = ui_for(Proto::Uart, BusWhat::Data);
+        let mut ui = ui_for(Proto::UART, BusWhat::Data);
         assert_eq!(ui.serial_items(), [SerRel, UartPol, UartStop]);
         ui.select_option(SerRel, "In range");
         assert_eq!((ui.m.ser.rel, ui.serial_items()), (Rel::In, vec![SerRel, SerMax, UartPol, UartStop]));
         ui.m.trig_bus = BusWhat::Error;
         assert_eq!(ui.serial_items(), [UartErr, UartPol, UartStop]);
-        let mut ui = ui_for(Proto::Spi, BusWhat::Data);
+        let mut ui = ui_for(Proto::SPI, BusWhat::Data);
         ui.m.dec_cs = None;
         assert_eq!(ui.serial_items(), [SerRel, SerMask, SpiTimeout]);
         ui.m.dec_cs = Some(2);
         assert_eq!(ui.serial_items(), [SerRel, SerMask, SpiCs]);
-        let mut ui = ui_for(Proto::I2c, BusWhat::Id);
+        let mut ui = ui_for(Proto::I2C, BusWhat::Id);
         assert_eq!(ui.serial_items(), [SerRel, I2cAddrBits, I2cDir]);
         // the address has its own relation
         ui.select_option(SerRel, ">");
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn choices_steps_and_hex_entry() {
-        let mut ui = ui_for(Proto::Uart, BusWhat::Error);
+        let mut ui = ui_for(Proto::UART, BusWhat::Error);
         for (it, opt, check) in [
             (Item::UartPol, "Inverted", (|u: &Ui| u.m.ser.uart_inv) as fn(&Ui) -> bool),
             (Item::UartStop, "1.5", |u: &Ui| u.m.ser.uart_stop == StopBits::OneHalf),
@@ -258,7 +258,7 @@ mod tests {
             ui.select_option(it, opt);
             assert!(check(&ui) && ui.value(it) == opt, "{:?}", it);
         }
-        let mut ui = ui_for(Proto::Spi, BusWhat::Data);
+        let mut ui = ui_for(Proto::SPI, BusWhat::Data);
         ui.m.dec_cs = None;
         assert_eq!(ui.value(Item::SpiTimeout), "Off");
         ui.adjust(Item::SpiTimeout, 4);
@@ -269,7 +269,7 @@ mod tests {
         ui.set_hex(Item::SerMask, 0xf0);
         ui.set_hex(Item::SerMax, 0x7f);
         assert_eq!((ui.m.ser.mask, ui.m.ser.max, ui.value(Item::SerMask)), (0xf0, 0x7f, "0xF0".to_string()));
-        let mut ui = ui_for(Proto::I2c, BusWhat::Id);
+        let mut ui = ui_for(Proto::I2C, BusWhat::Id);
         ui.set_hex(Item::SerMax, 0x7ff);
         assert_eq!(ui.m.ser.addr_max, 0x3ff);
         ui.m.trig_bus = BusWhat::Data;

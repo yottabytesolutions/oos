@@ -9,7 +9,7 @@ calibration (self-cal.md 14.6) trims every core to mid-scale and stops at +-1.5 
 to 3 steps. The FPGA has per-core gain trims only (0x1058, 0x105c) and no per-core offset; every rate path decimates
 after them (netlist, private RE notes `docs/fpga.md`).
 
-Which cores feed consecutive samples, one channel (netlist simulation):
+Which cores feed consecutive samples, one channel (assumed; the spur pattern on the unit fits it):
 
 | rate | cores |
 |---|---|
@@ -37,9 +37,9 @@ Reading:
   other seven. At 100 mV/div the digital gain of CH3 is 1.174 (cal file), so one ADC step is 18.8 codes: the core is
   about **11 steps** high. The other seven sit within about +-1.5 steps of each other, as the stock tolerance
   allows.
-- The two cores of the 62.5 and 312.5 MSa/s paths (regmap cores 0 and 1 in the netlist model) differ by 0.7 to 1
+- The two cores of the 62.5 and 312.5 MSa/s paths (cores 0 and 1 of the register model) differ by 0.7 to 1
   step. The far core is not one of them. It shows only where all eight cores are used.
-- The core's register index n is not known: the netlist's core numbers are not mapped to RT8847 registers
+- The core's register index n is not known: the model's core numbers are not mapped to RT8847 registers
   (rt8847.md open item 8). The step procedure below finds it.
 - The offsets OOS writes for CH3 alone are the stored mode-2 offsets of the Rigol file (`seq::State::configure`
   writes them on the change to mode 2). In the unit's file (scope_dump 20261113): 32, 66, 33, 73, 53, 85, -32, 62

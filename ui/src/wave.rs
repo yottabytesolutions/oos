@@ -175,7 +175,7 @@ impl DemoCfg {
         DemoCfg {
             runts: matches!(m.trig_type, TrigType::Runt | TrigType::Timeout),
             video: if m.trig_type == TrigType::Video { Some(m.video_std) } else { None },
-            bus: if m.dec_on && m.dec_proto != Proto::Uart { Some(m.dec_proto) } else { None },
+            bus: if m.dec_on && m.dec_proto != Proto::UART { Some(m.dec_proto) } else { None },
             gen: DemoGen::of(m, demo_loop),
         }
     }
@@ -202,178 +202,6 @@ fn demo_bus() -> &'static (oos_dsp::sim::Logic, oos_dsp::sim::Logic, [oos_dsp::s
     })
 }
 
-/// Demo traffic of the extended decoders: (main line, second line / clock), repeat period. 3.3 V logic unless noted.
-struct ExtDemo {
-    a: oos_dsp::sim::Logic,
-    b: Option<oos_dsp::sim::Logic>,
-    period: f64,
-}
-
-fn ext_demo(p: Proto) -> Option<&'static ExtDemo> {
-    use oos_dsp::decode::Parity;
-    use oos_dsp::decode_ext::gen as g1;
-    use oos_dsp::decode_ext2::gen as g2;
-    use oos_dsp::decode_ext3::gen as g3;
-    static L: std::sync::OnceLock<Vec<(Proto, ExtDemo)>> = std::sync::OnceLock::new();
-    let all = L.get_or_init(|| {
-        let end = |l: &oos_dsp::sim::Logic| l.seg.last().map_or(1e-3, |s| s.0);
-        let mk = |a: oos_dsp::sim::Logic, b: Option<oos_dsp::sim::Logic>, idle: f64| {
-            let period = end(&a).max(b.as_ref().map_or(0.0, end)) + idle;
-            ExtDemo { a, b, period }
-        };
-        let uart = |bytes: &[u32], bits: u32, parity: Parity, baud: f64| {
-            let mut w = g1::Wave::new(0.0, 3.3, 20e-9);
-            w.level(true, 5.0 / baud);
-            for &b in bytes {
-                w.uart(b, bits, parity, 1, baud);
-            }
-            w.level(true, 5.0 / baud);
-            w.done()
-        };
-        let mut v = Vec::new();
-        let fd = g1::FdFrame { id: 0x123, ext: false, fd: true, brs: true, esi: false, data: (1..=12).collect() };
-        v.push((Proto::CanFd, mk(g1::can_fd_logic(&[fd], 500e3, 2e6, 0.0, 3.3), None, 40e-6)));
-        let f: Vec<u32> =
-            g1::modbus_rtu_frame(0x11, &[0x03, 0x00, 0x6B, 0x00, 0x03]).into_iter().map(u32::from).collect();
-        v.push((Proto::ModbusRtu, mk(uart(&f, 8, Parity::Even, 19200.0), None, 2e-3)));
-        v.push((Proto::Uart9, mk(uart(&[0x1A5, 0x0C3, 0x07E], 9, Parity::None, 9600.0), None, 1e-3)));
-        let ow = [
-            g1::Ow::Reset { presence: true },
-            g1::Ow::Write(0x33),
-            g1::Ow::Read(0x28),
-            g1::Ow::Read(0xFF),
-            g1::Ow::Read(0x4C),
-            g1::Ow::Read(0x3D),
-        ];
-        v.push((Proto::OneWire, mk(g1::onewire_logic(&ow, 0.0, 3.3), None, 200e-6)));
-        let ops = [
-            g2::SwdOp::LineReset,
-            g2::SwdOp::JtagToSwd,
-            g2::SwdOp::LineReset,
-            g2::SwdOp::Idle(2),
-            g2::SwdOp::Xfer { ap: false, read: true, a: 0, ack: 1, data: 0x2BA0_1477, bad_parity: false },
-            g2::SwdOp::Idle(4),
-        ];
-        let (clk, dio) = g2::swd(&ops, 1e6, 0.0, 3.3);
-        v.push((Proto::Swd, mk(dio, Some(clk), 20e-6)));
-        // FlexRay 10 Mbit/s on RxD: a static frame with 8 payload bytes
-        let fr = g1::FrFrame {
-            ppi: false,
-            nf: true,
-            sync: false,
-            startup: false,
-            id: 0x2a,
-            cycle: 5,
-            payload: vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
-            channel_b: false,
-        };
-        v.push((
-            Proto::FlexRay,
-            mk(oos_dsp::sim::bits_logic(&g1::flexray_bits(&fr, 11), 1e-7, 20, 0.0, 3.3), None, 10e-6),
-        ));
-        // SENT 3 us tick, 5 V: two fast-channel frames of 6 data nibbles with a pause pulse
-        let sf = |status: u8, data: [u8; 6]| g3::SentFrame { status, data: data.to_vec(), crc: None, pause: 40 };
-        v.push((
-            Proto::Sent,
-            mk(
-                g3::sent(
-                    &[sf(0x0, [0x7, 0xf, 0x3, 0x8, 0x0, 0xc]), sf(0x4, [0x7, 0xf, 0x4, 0x8, 0x0, 0xb])],
-                    3e-6,
-                    0.0,
-                    5.0,
-                ),
-                None,
-                0.0,
-            ),
-        ));
-        // USB full speed, D+ on CH3, D- on CH4: SOF; SETUP GET_DESCRIPTOR(device) to address 5, ACK; IN, the first 8
-        // bytes of the device descriptor in DATA1, ACK
-        let fs = oos_dsp::decode_ext3::USB_FULL;
-        let up = |b: Vec<u8>| g3::UsbItem::packet(&b, fs);
-        let ip = || g3::UsbItem::Idle(4.0 / fs); // inter-packet delay
-        let items = [
-            g3::UsbItem::Idle(2e-6),
-            up(g3::usb_sof(0x2a5)),
-            g3::UsbItem::Idle(3e-6),
-            up(g3::usb_token(0x2D, 5, 0)),
-            ip(),
-            up(g3::usb_data(0xC3, &[0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00])),
-            ip(),
-            up(vec![0xD2]),
-            g3::UsbItem::Idle(3e-6),
-            up(g3::usb_token(0x69, 5, 0)),
-            ip(),
-            up(g3::usb_data(0x4B, &[0x12, 0x01, 0x00, 0x02, 0xff, 0x00, 0x00, 0x40])),
-            ip(),
-            up(vec![0xD2]),
-        ];
-        let (dp, dm) = g3::usb(&items, false, 0.0, 0.0, 3.3);
-        v.push((Proto::Usb, mk(dp, Some(dm), 5e-6)));
-        v
-    });
-    all.iter().find(|(q, _)| *q == p).map(|(_, d)| d)
-}
-
-/// Demo CAN traffic (500 kbit/s, RX logic level): a standard and an extended data frame.
-fn demo_can() -> &'static oos_dsp::sim::Logic {
-    use oos_dsp::sim::{can_logic, CanFrame};
-    static L: std::sync::OnceLock<oos_dsp::sim::Logic> = std::sync::OnceLock::new();
-    L.get_or_init(|| {
-        can_logic(
-            &[
-                CanFrame { id: 0x123, ext: false, rtr: false, data: vec![0x11, 0x22, 0x33, 0x44] },
-                CanFrame { id: 0x18da_f110, ext: true, rtr: false, data: vec![0x02, 0x10, 0x03] },
-            ],
-            500e3,
-            0.0,
-            3.3,
-        )
-    })
-}
-
-/// Demo I2S stream: 4 stereo frames of 16 bits at 48 kHz (WS, SD, SCK on CH1..CH3).
-const I2S_PERIOD: f64 = 4.0 / 48e3;
-/// Start of the generated stream (`i2s_logic` begins after four idle clocks of 1 / (48 kHz x 32)).
-const I2S_T0: f64 = 4.0 / (48e3 * 32.0);
-fn demo_i2s() -> &'static (oos_dsp::sim::Logic, oos_dsp::sim::Logic, oos_dsp::sim::Logic) {
-    static L: std::sync::OnceLock<(oos_dsp::sim::Logic, oos_dsp::sim::Logic, oos_dsp::sim::Logic)> =
-        std::sync::OnceLock::new();
-    L.get_or_init(|| {
-        oos_dsp::sim::i2s_logic(&[(0x1234, -0x1234), (0x4000, -0x4000), (0x7fff, 0x0001), (0, -1)], 16, 48e3, 0.0, 3.3)
-    })
-}
-
-/// Demo MIL-STD-1553 traffic: a command word and three data words, +-7 V bus.
-fn demo_1553() -> &'static oos_dsp::sim::Levels {
-    static L: std::sync::OnceLock<oos_dsp::sim::Levels> = std::sync::OnceLock::new();
-    L.get_or_init(|| {
-        oos_dsp::sim::mil1553_wave(&[(true, 0x0c23), (false, 0xbeef), (false, 0x1234), (false, 0x00ff)], 7.0, 4.0)
-    })
-}
-
-/// Demo ARINC 429 traffic (high speed, one line against ground: +-5 V): three words, 8 bit times apart; and the
-/// repeat period.
-fn demo_arinc() -> &'static (oos_dsp::sim::Levels, f64) {
-    use oos_dsp::decode_ext3::gen;
-    static L: std::sync::OnceLock<(oos_dsp::sim::Levels, f64)> = std::sync::OnceLock::new();
-    L.get_or_init(|| {
-        let w = [
-            gen::arinc429_word(0o203, 0, 0x0_2710, 3, false),
-            gen::arinc429_word(0o310, 1, 0x2_5a5a, 3, false),
-            gen::arinc429_word(0o206, 0, 0x0_1388, 0, false),
-        ];
-        let l = gen::arinc429(&w, 100e3, 5.0, 8);
-        let end = l.seg.last().map_or(1e-3, |s| s.0);
-        (l, end)
-    })
-}
-
-/// Demo LIN traffic (19200 baud, 12 V bus scaled to 3.3 V): one frame with enhanced checksum.
-fn demo_lin() -> &'static oos_dsp::sim::Logic {
-    static L: std::sync::OnceLock<oos_dsp::sim::Logic> = std::sync::OnceLock::new();
-    L.get_or_init(|| oos_dsp::sim::lin_logic(&[(0x21, vec![0x10, 0x20, 0x30, 0x40], true)], 19200.0, 0.0, 3.3))
-}
-
 fn demo_signal(cfg: DemoCfg, ch: usize, t: f64) -> f64 {
     use std::f64::consts::PI;
     if let Some(g) = cfg.gen {
@@ -381,34 +209,12 @@ fn demo_signal(cfg: DemoCfg, ch: usize, t: f64) -> f64 {
         return if g.mask & 1 << ch != 0 { g.v(t) * g.probe[ch] as f64 } else { 0.0 };
     }
     match (cfg.bus, ch) {
-        (Some(Proto::Can), 2) => return demo_can().v(t.rem_euclid(500e-6)),
-        (Some(Proto::I2s), 0) => return demo_i2s().1.v(I2S_T0 + t.rem_euclid(I2S_PERIOD)),
-        (Some(Proto::I2s), 1) => return demo_i2s().2.v(I2S_T0 + t.rem_euclid(I2S_PERIOD)),
-        (Some(Proto::I2s), 2) => return demo_i2s().0.v(I2S_T0 + t.rem_euclid(I2S_PERIOD)),
-        (Some(Proto::Mil1553), 2) => return demo_1553().v(t.rem_euclid(120e-6)),
-        (Some(Proto::Lin), 2) => return demo_lin().v(t.rem_euclid(12e-3)),
-        (Some(Proto::Arinc429), 2) => return demo_arinc().0.v(t.rem_euclid(demo_arinc().1)),
-        (Some(Proto::I2c), 2) => return demo_bus().0.v(t.rem_euclid(200e-6)),
-        (Some(Proto::I2c), 3) => return demo_bus().1.v(t.rem_euclid(200e-6)),
-        (Some(Proto::Spi), 1) => return demo_bus().2[0].v(t.rem_euclid(50e-6)),
-        (Some(Proto::Spi), 2) => return demo_bus().2[2].v(t.rem_euclid(50e-6)),
-        (Some(Proto::Spi), 3) => return demo_bus().2[1].v(t.rem_euclid(50e-6)),
         // a protocol module: its demo lines on the channels of its setup
         (Some(Proto::Module(i)), _) => {
             if let Some(d) = crate::protocols::demo(i) {
                 let s = crate::protocols::get(i).setup();
                 if let Some(f) = (0..4).find(|&r| s.src[r] == Some(ch)).and_then(|r| d.lines[r].as_ref()) {
                     return f(t.rem_euclid(d.period));
-                }
-            }
-        }
-        (Some(p), 2 | 3) => {
-            if let Some(d) = ext_demo(p) {
-                let tt = t.rem_euclid(d.period);
-                match (ch, &d.b) {
-                    (2, _) => return d.a.v(tt),
-                    (3, Some(b)) => return b.v(tt),
-                    _ => {}
                 }
             }
         }
@@ -1542,6 +1348,7 @@ pub fn autoset(m: &mut Model, src: &Source) {
 /// fills 80 % of its band, the midpoint sits on the band centre). The time base shows about three periods of the
 /// slowest record. Analog channels, the trigger and the run state stay as they are.
 /// `None` where the record is flatter than the live set-up's floor (50 mV).
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub fn autoset_shown(m: &mut Model, waves: &[(&[f32], f64)]) -> Vec<Option<(f32, f32)>> {
     let measured: Vec<Stats> = waves.iter().map(|(v, dt)| autoset_summary(v, *dt)).collect();
     let hot: Vec<bool> = measured.iter().map(|s| s.vmax - s.vmin >= 0.05).collect();

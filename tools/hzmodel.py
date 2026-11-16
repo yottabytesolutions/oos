@@ -14,11 +14,11 @@ def memsize(pts,mode=0):
     if mode==2: n=((pts+0x17f)//320+2)*32*2
     else: n=(pts+0x180)//10
     n=max(n,32) if n>32 else 32
-    # average (fork spec 01, 1.3): from 25 M points on, the next multiple of 2048 bursts above
+    # average: from 25 M points on, the next multiple of 2048 bursts above
     n=(n//2048+1)*2048 if mode==2 and pts>=25000000 else pow2(n)
     return min(n,(16777216-0x100000)//2)
 def max_frames_avg(seg):
-    # live ring in average mode (fork spec 01, 1.3): the half ring with the average segment
+    # live ring in average mode: the half ring with the average segment
     return (16777216//2-0x100000)//max(seg,1)
 def avg_vectors():
     # test vectors for hal hz::mem_size_avg / max_frames_avg: points per channel, ratio, segment, frames
@@ -27,7 +27,7 @@ def avg_vectors():
             seg=memsize(pts*ratio,2)
             print(pts,ratio,seg,max_frames_avg(seg))
 def max_record_frames(seg):
-    # segmented record (fork spec 03, 1.5): the whole stock frame memory less the reserved 1 M bursts
+    # segmented record: the whole stock frame memory less the reserved 1 M bursts
     return (16777216-0x100000)//max(seg,1)
 def maxauto(cnt,la=False):
     if la: return 12500000 if cnt==2 else (10000000 if cnt>2 else 31250000)

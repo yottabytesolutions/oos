@@ -863,8 +863,7 @@ impl Ui {
         };
         cv.text_in(&f.lb, on(Rect::new(12, 18, OSK_W - 24, 34), blk), 1, &title, ACCENT);
         let r = on(FIELD, blk);
-        cv.round(r, 6, BTN_BORDER, 255);
-        cv.round(r.inset(1), 5, BG, 255);
+        cv.framed(r, 6, 1, BTN_BORDER, 5, BG);
         let (a, b) = o.window(&f.lb);
         let s: Vec<char> = o.shown().chars().collect();
         let t: String = s[a..b].iter().collect();

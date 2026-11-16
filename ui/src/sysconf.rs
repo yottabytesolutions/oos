@@ -78,6 +78,10 @@ pub struct SysConf {
     pub gpu: bool,
     /// Display > Backlight, percent (ui/backlight.rs)
     pub backlight: u32,
+    /// System > Features: what is left out of the menus and pages (ids of `ui::features::features()`, `features.off`), and
+    /// the decoders left out (protocol keys, `decoders.off`); nothing is left out by default
+    pub features_off: Vec<String>,
+    pub decoders_off: Vec<String>,
     /// lines this version does not know
     extra: Vec<String>,
 }
@@ -100,6 +104,8 @@ impl Default for SysConf {
             net_name: String::new(),
             gpu: true,
             backlight: 100,
+            features_off: Vec::new(),
+            decoders_off: Vec::new(),
             extra: Vec::new(),
         }
     }
@@ -225,6 +231,14 @@ impl SysConf {
                 "backlight" => {
                     v.parse::<u32>().ok().filter(|p| (10..=100).contains(p)).map(|p| c.backlight = p).is_some()
                 }
+                "features.off" => {
+                    c.features_off = v.split_whitespace().map(str::to_string).collect();
+                    true
+                }
+                "decoders.off" => {
+                    c.decoders_off = v.split_whitespace().map(str::to_string).collect();
+                    true
+                }
                 _ => {
                     c.extra.push(line.to_string());
                     true
@@ -258,6 +272,12 @@ impl SysConf {
         }
         s.push_str(&format!("graphics = {}\n", if self.gpu { "gpu" } else { "cpu" }));
         s.push_str(&format!("backlight = {}\n", self.backlight));
+        if !self.features_off.is_empty() {
+            s.push_str(&format!("features.off = {}\n", self.features_off.join(" ")));
+        }
+        if !self.decoders_off.is_empty() {
+            s.push_str(&format!("decoders.off = {}\n", self.decoders_off.join(" ")));
+        }
         for l in &self.extra {
             s.push_str(l);
             s.push('\n');

@@ -4,6 +4,7 @@
 # build.sh: oos-ui for the scope (static aarch64 musl) and for the host (off-screen test runner).
 #   ./build.sh            both
 #   ./build.sh test       render tests/ to unique test-shots.* directories under the selected target (needs Pillow)
+#   OOS_DECODERS="usb dcc" / OOS_DECODERS_OFF="avionics" ./build.sh    fewer decoders (tools/decoder-features.sh)
 set -eu
 cd "$(dirname "$0")"
 root=$(cd .. && pwd)
@@ -12,8 +13,11 @@ export PATH="$HOME/.cargo/bin:$PATH"
 [ -f assets/font.bin ] || python3 tools/mkfont.py assets/font.bin normal
 [ -f assets/font-large.bin ] || python3 tools/mkfont.py assets/font-large.bin large
 [ -f assets/font-larger.bin ] || python3 tools/mkfont.py assets/font-larger.bin larger
-python3 "$root/tools/output.py" build -p oos-ui --release --target aarch64-unknown-linux-musl
-python3 "$root/tools/output.py" build -p oos-ui --release
+feat=$(tools/decoder-features.sh)
+# shellcheck disable=SC2086 # the decoder feature arguments split into words on purpose
+python3 "$root/tools/output.py" build -p oos-ui --release --target aarch64-unknown-linux-musl $feat
+# shellcheck disable=SC2086
+python3 "$root/tools/output.py" build -p oos-ui --release $feat
 ls -l "$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/oos-ui"
 if [ "${1:-}" = test ]; then
 	out=$(mktemp -d "$CARGO_TARGET_DIR/test-shots.XXXXXX")

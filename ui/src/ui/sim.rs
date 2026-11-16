@@ -150,6 +150,7 @@ const SIM_MEAS: [Meas; 12] = [
     Meas::PEdges,
 ];
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     fn sim_meas(slot: usize) -> Vec<(Meas, WaveId)> {
         SIM_MEAS.into_iter().map(|k| (k, WaveId::Ref(slot))).collect()
@@ -422,6 +423,7 @@ impl Ui {
     }
 
     /// Sample rate and length of the loaded SIM slot, when it is shown.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn sim_rate_depth(&self) -> Option<(f64, u64)> {
         let r = self.refs[self.m.sim_slot].as_ref()?;
         if !r.on || r.dt <= 0.0 {
@@ -533,6 +535,9 @@ impl Ui {
         let lane = self.sim_lane();
         let count = serial::sample_count(&lane)?;
         let continuing = self.session_is_sim && !self.replay.sim_initial_armed;
+        if !continuing {
+            self.sim_pick_free_slot(lane.name);
+        }
         let mut request = self.sim_capture_request(lane, self.m.sim_slot, continuing, false, run);
         if let Some(Err(error)) = &request.bus_trigger {
             return Err((*error).into());
@@ -562,6 +567,19 @@ impl Ui {
             self.toast(&format!("Generating {} ({:.1} M samples)", lane.name, count as f64 / 1e6));
         }
         Ok(())
+    }
+
+    /// A new simulation does not overwrite a ref the user loaded: it moves to the first free slot. With every slot in
+    /// use it keeps the chosen one, and the toast at the end says which ref it replaced. A slot that holds the output
+    /// of an earlier run of the same preset is simply reused.
+    fn sim_pick_free_slot(&mut self, preset: &str) {
+        let slot = self.m.sim_slot;
+        if self.refs.get(slot).and_then(Option::as_ref).is_none_or(|r| r.label == preset) {
+            return;
+        }
+        if let Some(free) = (0..NREF).find(|&i| self.refs[i].is_none()) {
+            self.m.sim_slot = free;
+        }
     }
 
     pub(super) fn sim_poll(&mut self) {
@@ -679,6 +697,8 @@ impl Ui {
         let dt = serial::dt_of(&lane);
         let span = (lane.v_high - lane.v_low).abs().max(0.2);
         let vpd = nearest_vdiv((span / 4.0) as f32);
+        let replaced =
+            self.refs[slot].as_ref().filter(|r| !continuing && r.label != lane.name).map(|r| r.label.clone());
         self.refs[slot] = Some(RefWave {
             src: 0,
             color: 0,
@@ -696,8 +716,9 @@ impl Ui {
         }
         // Required CH bus auxiliaries remain accepted immutable snapshots.
         let retained_channels = bus_decode.as_ref().map_or([false; NCH], |decoded| decoded.channels);
+        // The SIM never switches an input off; the inputs its bus decode needs are switched on.
         for c in 0..NCH {
-            self.m.ch[c].on = retained_channels[c];
+            self.m.ch[c].on |= retained_channels[c];
         }
         self.m.la.on = false;
         let rec_s = n as f64 * dt;
@@ -759,7 +780,10 @@ impl Ui {
         self.ph.clear();
         self.measure_refs();
         self.analyzer_update();
-        self.toast(&format!("{} to R{}", lane.name, slot + 1));
+        match replaced {
+            Some(old) => self.toast(&format!("{} to R{}, replacing {}", lane.name, slot + 1, old)),
+            None => self.toast(&format!("{} to R{}", lane.name, slot + 1)),
+        }
     }
 
     pub(crate) fn sim_preset_name(&self) -> &'static str {
@@ -1234,7 +1258,7 @@ mod tests {
         assert!((r.dt - 1.0 / (8.0 * 16e9)).abs() < 1e-18);
         assert_eq!(u.m.eye_src, WaveId::Ref(2));
         assert!((u.m.eye_rate - 16e9).abs() < 1.0);
-        assert!(!u.m.ch.iter().any(|c| c.on), "SIM is a reference, not the analog channels");
+        assert!(u.m.ch[0].on, "SIM is a reference and does not switch the analog channels off");
         assert!(u.last[0].is_none());
         assert_eq!(u.meas_src, WaveId::Ref(2));
         assert!(u.m.zoom);
@@ -1273,23 +1297,23 @@ mod tests {
         let rows = u.meas_rows();
         assert_eq!(rows.len(), 12);
         for want in [
-            "Vpp",
+            "Pk-pk",
             "Freq",
             "Period",
-            "Rise time",
-            "Fall time",
+            "Rise",
+            "Fall",
             "+Duty",
-            "Vamp",
+            "Amp",
             "Overshoot",
             "+Width",
             "-Width",
-            "+Rate",
+            "+Slew",
             "+Edges",
         ] {
             let row = rows.iter().find(|r| r.name == want).unwrap_or_else(|| panic!("missing {want}"));
             assert!(!row.v.is_infinite(), "{want} {}", row.v);
         }
-        let vpp = rows.iter().find(|r| r.name == "Vpp").unwrap().v;
+        let vpp = rows.iter().find(|r| r.name == Meas::Vpp.name()).unwrap().v;
         assert!(vpp > 0.5 && vpp < 1.2, "vpp {}", vpp);
         assert!(!u.m.meas_labels, "labels are opt-in so initial SIM does not hide the waveform");
         let mut cv = Canvas::new(W, H);
@@ -1354,7 +1378,7 @@ mod tests {
         u.m.run = RunState::Run;
         u.step(1.0 / 60.0);
         assert!(u.last[0].is_none(), "Run with analog off must not acquire");
-        assert!(!u.m.ch.iter().any(|c| c.on));
+        assert!(u.m.ch[0].on, "the inputs keep their state; Run in a record session still does not acquire");
         u.return_to_live();
         u.m.tscale = 0;
         u.m.ch[0].on = true;
@@ -1613,7 +1637,7 @@ mod tests {
                 u.m.set_trigger_wave(WaveId::Ref(1), true);
             } else if change == 6 {
                 u.m.trig_type = TrigType::Bus;
-                u.m.dec_proto = Proto::Uart;
+                u.m.dec_proto = Proto::UART;
                 u.m.trig_bus = BusWhat::Data;
                 u.m.trig_bus_val = 0x55;
             }

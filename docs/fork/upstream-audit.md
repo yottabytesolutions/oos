@@ -45,13 +45,13 @@ measured on the unit.
 | LA read | `execute` -> new buffer per read | unchanged (`acquire_la` still allocates) | equal | n/a on this unit (`la = no`) | low: pass a second `DmaBuf` |
 | Roll/scan read | `read_dma` + `deinterleave` + `volts` per chunk read | unchanged upstream path | upstream path left | small reads, ~30/s | low: switch to a kept `DmaBuf` and `decode_volts` |
 | xdma params | `insmod xdma.ko poll_mode=1` fixed | `xdma.params` system key, default `poll_mode=1`, validated in `oos-fpga-up` (sh) and `fpgad::xdma_params` (Rust) | fork, opt-in, unverified | default identical to upstream | keep; validation exists twice, add one test that feeds both the same bad inputs |
-| MaxPayload 256 | none | `OOS_BOOTARGS_EXTRA` in unit `build.env`, commented out | fork, opt-in | spec 10, 3.7 | keep |
+| MaxPayload 256 | none | `OOS_BOOTARGS_EXTRA` in unit `build.env`, commented out | fork, opt-in | perf-plan.md | keep |
 
 ## Settings, deep memory, counter, segments, averaging
 
 | item | upstream | fork | verdict | evidence | action |
 |---|---|---|---|---|---|
-| Deep-memory screen window (8ecd182) | `batch_plan` + `screen_window`: reads the screen window instead of the compressed record | uses upstream's code; fused decode applies to it | upstream adopted | 4 ch window 0.67 -> 0.43 ms | keep upstream's; FPGA peak path (spec 04) is the next step for the compressed case |
+| Deep-memory screen window (8ecd182) | `batch_plan` + `screen_window`: reads the screen window instead of the compressed record | uses upstream's code; fused decode applies to it | upstream adopted | 4 ch window 0.67 -> 0.43 ms | keep upstream's; FPGA peak path is the next step for the compressed case |
 | `batch_plan` frames | 4 MB / frame bytes | plus: average mode reads one frame, so no size limit | fork extension | `batch_read` | keep |
 | Header logging | header only with `OOS_FRAME_HEADER`, logged on every decode | logged only with `header_probe()` | fork | segment read-back turns the header on; upstream would log every segment | keep |
 | Frequency counter | `counter_tick` once per loop pass, mutex lock per pass | same; fork B8 dropped | upstream | cost: one lock per pass, register reads only after the gate | keep upstream's. Unverified: counter start/stop writes land while a prearmed batch records. Check on the unit with `OOS_PREARM` |

@@ -29,13 +29,15 @@ struct Gesture {
     held: bool,
 }
 #[derive(Clone)]
-enum Action {
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+pub(super) enum Action {
     Overlay,
     Stacked,
     Sources,
     Source(WaveId),
     Trigger(WaveId),
     Menu(MenuId),
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     ZoomReset,
     ZoomClose,
     FitRecord,
@@ -48,6 +50,7 @@ enum Action {
     EyeBelow,
     EyeFloat,
     EyeClose,
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     MeasureFloat,
     MeasureDock(StripDock),
     Close,
@@ -319,7 +322,10 @@ mod tests {
                     }
                     _ => unreachable!(),
                 };
-                assert!(header.contains(x, y), "the test must overlap the actual background header");
+                // a floating measurement card keeps clear of the full-screen and zoom buttons (PR #8), and the
+                // settings' Close sits beside them: there the card cannot lie under it any more
+                let unreachable = panel == Panel::Measurements && !back;
+                assert!(unreachable || header.contains(x, y), "the test must overlap the actual background header");
                 let position = (ui.workspace.measure_float, ui.workspace.eye_float);
                 pointer_tap(&mut ui, target);
                 assert!(!ui.results_min, "Back/Close must not fold the statistics panel behind the menu");
@@ -633,9 +639,9 @@ mod tests {
         assert_eq!((ui.m.run, ui.replay.captures), (RunState::Stop, 0));
     }
 }
-struct Popup {
-    rect: Rect,
-    rows: Vec<(String, Action)>,
+pub(super) struct Popup {
+    pub(super) rect: Rect,
+    pub(super) rows: Vec<(String, Action)>,
 }
 #[derive(Default)]
 pub(super) struct Workspace {
@@ -644,11 +650,13 @@ pub(super) struct Workspace {
     pub eye_float: Option<Rect>,
     pub eye_left: bool,
     pub measure_float: Option<(i32, i32)>,
-    pub measure_dock: Option<StripDock>,
+    /// the measurement card sits in the strip dock (`m.strip_dock`) instead of floating
+    pub measure_docked: bool,
     gesture: Option<Gesture>,
-    popup: Option<Popup>,
+    pub(super) popup: Option<Popup>,
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// Display/knob focus is independent of acquisition and measurement A/B.
     pub(super) fn selected_workspace_source(&self) -> Option<WaveId> {
@@ -734,7 +742,9 @@ impl Ui {
         self.workspace.stacked && !self.xy && matches!(self.m.view, AView::Scope | AView::Eye)
     }
     pub(super) fn trace_sources(&self) -> Vec<Trace> {
-        let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on).map(Trace::Channel).collect();
+        // a record session (SIM, offline) has no live data: its inputs keep their state but get no lane
+        let mut sources: Vec<_> =
+            (0..n_ch()).filter(|&c| self.m.ch[c].on && !self.record_mode()).map(Trace::Channel).collect();
         sources.extend((0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).map(Trace::Reference));
         sources.extend((0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).map(Trace::Math));
         sources
@@ -767,10 +777,19 @@ impl Ui {
             _ => None,
         }
     }
-    fn trace_mode(&mut self, stacked: bool) {
-        self.workspace.stacked = stacked;
-        self.m.win_layout = WinLayout::One;
+    pub(super) fn trace_mode(&mut self, stacked: bool) {
         self.workspace.popup = None;
+        // a split already gives every source its own window: Overlay keeps it, Stacked replaces it
+        if !stacked && self.m.win_layout != WinLayout::One {
+            self.workspace.stacked = false;
+            return;
+        }
+        self.workspace.stacked = stacked;
+        if stacked && matches!(self.m.density, Density::Split | Density::Four) {
+            self.m.density = Density::Scope;
+            self.apply_density();
+        }
+        self.m.win_layout = WinLayout::One;
         self.relayout();
         self.dirty_map = true;
     }
@@ -799,28 +818,53 @@ impl Ui {
         let stacked = Rect::new(right + 62, y, 58, 30);
         (overlay, stacked, time, trigger, live, panel, Rect::new(126, y, (right - 132).max(0), 30))
     }
-    fn source_pills(&self) -> Vec<(WaveId, Rect)> {
-        let r = self.footer_rects().6;
+    /// Sources that get a pill: every live channel and every loaded or selected reference.
+    fn pill_sources(&self) -> Vec<WaveId> {
         let mut sources: Vec<_> = (0..n_ch()).filter(|&c| self.m.ch[c].on).map(WaveId::Ch).collect();
         sources.extend(
             (0..NREF)
                 .filter(|&i| self.refs[i].as_ref().is_some_and(|reference| reference.on || self.ref_sel == i))
                 .map(WaveId::Ref),
         );
-        let count = sources.len().min((r.w / 42).max(1) as usize);
+        sources
+    }
+    /// How many pills fit, and whether the rest goes behind a "+N" pill.
+    fn pill_count(&self, total: usize) -> (usize, bool) {
+        let fit = (self.footer_rects().6.w / 42).max(1) as usize;
+        if total > fit && fit > 1 {
+            (fit - 1, true)
+        } else {
+            (total.min(fit), false)
+        }
+    }
+    pub(super) fn source_pills(&self) -> Vec<(WaveId, Rect)> {
+        let r = self.footer_rects().6;
+        let mut sources = self.pill_sources();
+        let (count, more) = self.pill_count(sources.len());
         let active = self.selected_workspace_source();
         if let Some(index) = sources.iter().position(|id| Some(*id) == active) {
             if index >= count && count > 0 {
                 sources.swap(index, count - 1);
             }
         }
-        let width = (r.w / count.max(1) as i32).clamp(38, 78);
+        let width = (r.w / (count + more as usize).max(1) as i32).clamp(38, 78);
         sources
             .into_iter()
             .take(count)
             .enumerate()
             .map(|(i, id)| (id, Rect::new(r.x + i as i32 * width, r.y, width - 4, r.h)))
             .collect()
+    }
+    /// The "+N" pill after the last source pill that opens the Sources popup, when not every source has a pill.
+    pub(super) fn source_overflow(&self) -> Option<(usize, Rect)> {
+        let r = self.footer_rects().6;
+        let total = self.pill_sources().len();
+        let (count, more) = self.pill_count(total);
+        if !more {
+            return None;
+        }
+        let width = (r.w / (count + 1) as i32).clamp(38, 78);
+        Some((total - count, Rect::new(r.x + count as i32 * width, r.y, width - 4, r.h)))
     }
     pub(super) fn compact_cards(&self) -> Cards {
         let mut ch = [Rect::new(0, BOTTOM.y, 0, 30); NCH];
@@ -850,6 +894,9 @@ impl Ui {
             // the active source is filled in its colour, the others only carry it in their label
             btn(cv, rect, if selected { color } else { BAR }, if selected { color } else { BTN_BORDER });
             cv.text_in(&self.fonts().sb, rect, 1, &label, if selected { BAR } else { color });
+        }
+        if let Some((n, rect)) = self.source_overflow() {
+            draw(cv, rect, &format!("+{n}"), false);
         }
         let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
         draw(cv, overlay, "Overlay", !self.workspace.stacked);
@@ -891,6 +938,12 @@ impl Ui {
             }
             return true;
         }
+        if let Some((_, rect)) = self.source_overflow() {
+            if rect.contains(x, y) {
+                self.open_sources(rect.x, BOTTOM.y);
+                return true;
+            }
+        }
         let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
         if overlay.contains(x, y) {
             self.trace_mode(false);
@@ -910,7 +963,15 @@ impl Ui {
     fn popup(&mut self, x: i32, y: i32, rows: Vec<(String, Action)>) {
         let width = 244;
         let height = rows.len() as i32 * 30 + 8;
-        let rect = Rect::new(x.clamp(4, W - width - 4), y.clamp(TOP.h, (BOTTOM.y - height).max(TOP.h)), width, height);
+        // inside the plot, so the popup never covers the bars or runs off the screen
+        let g = self.grid;
+        let (x0, y0) = (g.x + 4, g.y.max(TOP.h));
+        let rect = Rect::new(
+            x.clamp(x0, (g.right() - width - 4).max(x0)),
+            y.clamp(y0, (g.bottom() - height).max(y0)),
+            width,
+            height,
+        );
         self.workspace.popup = Some(Popup { rect, rows });
     }
     fn open_sources(&mut self, x: i32, y: i32) {
@@ -1002,12 +1063,16 @@ impl Ui {
         }
         true
     }
-    fn workspace_action(&mut self, action: Action) {
+    pub(super) fn workspace_action(&mut self, action: Action) {
         match action {
             Action::Overlay => self.trace_mode(false),
             Action::Stacked => self.trace_mode(true),
             Action::Sources => self.open_sources(56, BOTTOM.y),
             Action::Source(WaveId::Ch(c)) => {
+                if self.m.ch[c].on && self.trace_sources().len() <= 1 {
+                    self.toast("Keep one source on");
+                    return;
+                }
                 if self.m.ch[c].on {
                     self.m.ch[c].on = false;
                     self.settings_changed();
@@ -1017,6 +1082,10 @@ impl Ui {
                 self.relayout();
             }
             Action::Source(WaveId::Ref(i)) => {
+                if self.refs[i].as_ref().is_some_and(|r| r.on) && self.trace_sources().len() <= 1 {
+                    self.toast("Keep one source on");
+                    return;
+                }
                 if let Some(reference) = &mut self.refs[i] {
                     reference.on = !reference.on;
                 }
@@ -1074,14 +1143,15 @@ impl Ui {
             }
             Action::MeasureFloat => {
                 self.workspace.measure_float = Some((W - RESULTS_W - 28, TOP.h + 32));
-                self.workspace.measure_dock = None;
+                self.workspace.measure_docked = false;
                 self.stats_on = true;
                 self.results_min = false;
                 self.relayout();
             }
             Action::MeasureDock(dock) => {
                 self.workspace.measure_float = None;
-                self.workspace.measure_dock = Some(dock);
+                self.workspace.measure_docked = true;
+                self.m.strip_dock = dock;
                 self.stats_on = true;
                 self.relayout();
             }
@@ -1090,13 +1160,23 @@ impl Ui {
     }
     pub(super) fn workspace_draw(&self, cv: &mut Canvas) {
         if let Some(popup) = &self.workspace.popup {
-            cv.round(popup.rect, 5, BTN_BORDER, 255);
-            cv.round(popup.rect.inset(1), 4, BAR, 255);
-            for (index, (label, _)) in popup.rows.iter().enumerate() {
+            cv.framed(popup.rect, 5, 1, BTN_BORDER, 4, BAR);
+            for (index, (label, action)) in popup.rows.iter().enumerate() {
                 let r = Rect::new(popup.rect.x + 5, popup.rect.y + 4 + index as i32 * 30, popup.rect.w - 10, 30);
                 cv.set_clip(r);
                 cv.text(&self.fonts().s, r.x + 7, r.y + 20, label, TEXT);
                 cv.no_clip();
+                let current = match action {
+                    Action::Overlay => !self.workspace.stacked,
+                    Action::Stacked => self.workspace.stacked,
+                    _ => false,
+                };
+                if current {
+                    // a check at the right end marks the mode in force
+                    let (cx, cy) = (r.x + r.w - 18, r.y + 15);
+                    cv.line(cx, cy, cx + 4, cy + 4, ACCENT);
+                    cv.line(cx + 4, cy + 4, cx + 11, cy - 5, ACCENT);
+                }
             }
         }
         if self.workspace.gesture.is_some_and(|gesture| gesture.moved && gesture.panel != Panel::Plot) {
@@ -1208,7 +1288,7 @@ impl Ui {
                     }
                     Panel::Measurements => {
                         self.workspace.measure_float = Some((left, top));
-                        self.workspace.measure_dock = None;
+                        self.workspace.measure_docked = false;
                         self.relayout();
                     }
                     _ => {}
@@ -1250,6 +1330,7 @@ impl Ui {
         }
     }
     /// Escape closes transient surfaces and leaves box/zoom modes immediately.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn dismiss_context(&mut self) {
         if self.load_slot_ask {
             self.cancel_load_slot();
@@ -1330,7 +1411,7 @@ impl Ui {
         self.workspace.popup = None;
         self.workspace.eye_float = None;
         self.workspace.eye_left = false;
-        self.workspace.measure_dock = None;
+        self.workspace.measure_docked = false;
         self.workspace.measure_float = None;
         self.stats_on = false;
         self.m.pane = 0;

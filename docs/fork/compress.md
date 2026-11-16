@@ -102,7 +102,7 @@ off.
 | claim | level |
 |---|---|
 | 0x1170 = 0xc0000000 \| k compresses the play to ceil(memsel / k) points, aligned, alternating low/high | unit, k = 4 at 1 M (acquisition-start.md); time axis exact for k 16..200 at deep records |
-| pair = min and max of 2k samples from the window start, in time order | unit, 100 % of the points for k 3, 4, 15, 16, 64, 128, 1 and 2 ch (unitlab round 2); netlist simulation (k up to 16383, k = 0 stalls) |
+| pair = min and max of 2k samples from the window start, in time order | unit, 100 % of the points for k 3, 4, 15, 16, 64, 128, 1 and 2 ch (unitlab round 2); assumed: k up to 16383, k = 0 stalls |
 | k = 256 at 1 M time-out = TX length beyond the window | inferred from the sample counts above; unit re-test pending |
 | a frame of the ring can be played again after a batch read | unit: the raw replay returns the same record (round 2) |
 | k down to 3 (1 us/div) | unit (round 2) |

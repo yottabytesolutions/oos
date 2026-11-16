@@ -1,9 +1,9 @@
 // Copyright (C) 2026 OOS contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The FPGA mask (pass/fail) unit (docs/fork/hwmask.md, docs/fork/specs/06-mask-unit.md): a table of 1000 columns with
+//! The FPGA mask (pass/fail) unit (docs/fork/hwmask.md): a table of 1000 columns with
 //! an 8-bit lower and upper limit each, a comparator on one source slot, and 48-bit counters of tested and failed
-//! frames. Register facts come from static analysis of the FPGA image; the sample scale the comparator sees and the
+//! frames. Register facts are assumed; the sample scale the comparator sees and the
 //! slot of each channel are assumptions until the unit session.
 
 use crate::dho::bus::Bus;
@@ -372,8 +372,8 @@ pub fn load(cols: &[Column]) -> Vec<Write> {
     w
 }
 
-/// The source slot of channel `ch` (0..3) with the channel set `mask`: a stream slot, not an ADC lane (libscope
-/// `SetMaskChanEn`, regmap): slot 0 with one channel; with two the lower channel 0, the higher 1; with three or four
+/// The source slot of channel `ch` (0..3) with the channel set `mask`: a stream slot, not an ADC lane (assumed):
+/// slot 0 with one channel; with two the lower channel 0, the higher 1; with three or four
 /// the channel itself. None when the channel is not acquired.
 pub fn slot(mask: u32, ch: usize) -> Option<u32> {
     if ch > 3 || mask & (1 << ch) == 0 {

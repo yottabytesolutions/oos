@@ -138,12 +138,12 @@ pub fn settings(m: &Model, program_afe: bool, sw: &crate::sysconf::Switches) -> 
         },
         invert: m.ch[c].invert,
     });
-    // protocol trigger: hardware edge on the line where frames start (SPI: chip select, else the data line)
+    // protocol trigger: hardware edge on the line where frames start (the protocol's start role: SPI chip select, I2S
+    // word select, else the data line)
     let mut src = if m.trig_type == TrigType::Bus {
-        match (m.dec_proto, m.dec_cs) {
-            (Proto::Spi, Some(c)) | (Proto::I2s, Some(c)) => c,
-            _ => m.dec_src,
-        }
+        let Proto::Module(i) = m.dec_proto;
+        [Some(m.dec_src), Some(m.dec_src2), m.dec_cs, m.dec_src4][crate::protocols::get(i).start_role().min(3)]
+            .unwrap_or(m.dec_src)
     } else {
         m.trig_src
     };
@@ -163,11 +163,8 @@ pub fn settings(m: &Model, program_afe: bool, sw: &crate::sysconf::Switches) -> 
         // LA line n: the stock source number 9 + n (trigger.md 2.2)
         trig_src: m.trig_line().or(bus_line(m)).map_or(src as u32 + 1, |n| 9 + n as u32),
         slope: match (m.trig_type, m.slope) {
-            // frames start with a falling edge (start bit, SOF, break, I2C start, CS); 1553, I2S and ARINC 429:
-            // either edge
-            (TrigType::Bus, _) if matches!(m.dec_proto, Proto::Mil1553 | Proto::I2s | Proto::Arinc429) => {
-                tpu::Slope::Either
-            }
+            // frames start with a falling edge (start bit, SOF, break, I2C start, CS); I2S and the modules that say so
+            // (1553, ARINC 429): either edge
             (TrigType::Bus, _) if m.dec_proto.module().is_some() => {
                 match m.dec_proto.module().map(|p| p.start_edge()) {
                     Some(Slope::Rise) => tpu::Slope::Rising,
@@ -270,7 +267,7 @@ fn aux_out(a: AuxOut) -> auxout::AuxOut {
 }
 
 /// The count of a hardware average for the model and its settings `s`, None for the software average
-/// (docs/fork/specs/01-hw-averaging.md): Average mode with `Model::avg_hw`, a power-of-two count, ordinary triggered
+///: Average mode with `Model::avg_hw`, a power-of-two count, ordinary triggered
 /// records (not roll or scan, which average in software as in stock), no LA, no hardware segments (they record raw
 /// frames), and a record whose average segment fits the frame ring.
 fn hw_avg_count(m: &Model, s: &Settings) -> Option<u32> {
@@ -436,7 +433,7 @@ fn core_trim(
 }
 
 /// Hardware segments record ordinary triggered frames: not in roll or scan, not with the LA (its record layout and
-/// read are not worked out for them, spec 03 5.9).
+/// read are not worked out for them).
 fn hw_segments_ok(m: &Model) -> bool {
     slow_mode(m) == Slow::Off && !m.la_on()
 }
@@ -473,10 +470,8 @@ fn bus_line(m: &Model) -> Option<u8> {
     if !m.bus_on_la() {
         return None;
     }
-    match (m.dec_proto, m.dec_la[2]) {
-        (Proto::Spi, Some(n)) | (Proto::I2s, Some(n)) => Some(n),
-        _ => m.dec_la[0],
-    }
+    let Proto::Module(i) = m.dec_proto;
+    m.dec_la[crate::protocols::get(i).start_role().min(3)].or(m.dec_la[0])
 }
 
 /// The UI trigger as a hardware (TPU) trigger. Two-level types: `Settings::level` is the upper level.
@@ -778,7 +773,7 @@ fn hw_rel(r: Rel) -> uarttrig::Relation {
 fn uart_of(m: &Model) -> Option<uarttrig::Uart> {
     use uarttrig::{Cond, ErrKind, Parity, Stop, Uart};
     if m.trig_type != TrigType::Bus
-        || m.dec_proto != Proto::Uart
+        || m.dec_proto != Proto::UART
         || m.dec_on_la()
         || m.dec_diff.is_some()
         || !(1..=8).contains(&m.dec_bits)
@@ -861,7 +856,7 @@ fn serial_of(m: &Model) -> Option<Trig> {
 /// of samples), 1..32 bits, and Frame (every word) or Data against value, limit and mask. MSB first, the clock edge of
 /// the decoder's mode, as the software decoder.
 fn spi_of(m: &Model) -> Option<serialtrig::Spi> {
-    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::Spi || m.dec_on_la() || !(1..=32).contains(&m.dec_bits) {
+    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::SPI || m.dec_on_la() || !(1..=32).contains(&m.dec_bits) {
         return None;
     }
     let s = &m.ser;
@@ -898,7 +893,7 @@ fn spi_of(m: &Model) -> Option<serialtrig::Spi> {
 /// against value, limit and mask, in the chosen direction. Data in any byte (`bytes` 0) stays with the software.
 fn i2c_of(m: &Model) -> Option<serialtrig::I2c> {
     use serialtrig::{Dir, I2cCond};
-    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::I2c || m.dec_on_la() {
+    if m.trig_type != TrigType::Bus || m.dec_proto != Proto::I2C || m.dec_on_la() {
         return None;
     }
     let s = &m.ser;
@@ -1321,6 +1316,15 @@ pub fn batch_plan(s: &Settings, p: &hz::Params, zone_batch: u32) -> Settings {
     b
 }
 
+/// Longest record whose first batch after a change of settings is left out (`read_with` in `spawn`), in seconds.
+const FIRST_LEFT_MAX_S: f64 = 0.05;
+
+/// Whether frame 0 of a batch of several frames is left out (issue #5): on unless `acq.frame0 = keep` in the settings
+/// file (`BoardSwitches::frame0_drop`).
+pub(super) fn frame0_drop_from(conf: &str) -> bool {
+    crate::drawpipe::conf_value(None, conf, "acq.frame0").as_deref() != Some("keep")
+}
+
 pub(super) fn zone_batch_from(conf: &str) -> u32 {
     crate::drawpipe::conf_value(None, conf, "zone.batch")
         .and_then(|v| v.parse::<u32>().ok())
@@ -1587,6 +1591,9 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         let mut raw_dma = oos_hal::dho::bus::DmaBuf::new();
         // the last raw read of a deep record's screen window for the measurements (deepmeas.rs)
         let mut deep_last: Option<std::time::Instant> = None;
+        // the settings of the last batch read, and whether its record was left out as the first with new ones
+        let mut read_with: Option<Settings> = None;
+        let mut first_left = false;
         // the last raw read of the newest frame of a live-compressed batch (compress.rs, at most one per RAW_PERIOD)
         let mut comp_last: Option<std::time::Instant> = None;
         // the batch read by the previous pass and nothing since (settings, parameters, frames, newest frame read
@@ -1739,11 +1746,52 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             if let Some(l) = want.la.as_mut() {
                 l.cal = la_cal;
             }
+            // STOP: the batch in progress has been read. Once, before anything else of the STOP: disarm (a batch armed
+            // ahead writes the ring the views below read again, so the last batch is gone with it), and the newest
+            // frame once more raw where the live compression or the deep measurements want it (the record that stays
+            // on screen). Both STOP ways go through here: the hold (PR #7) and the views read again (`stop_view`)
+            let (hold, final_req, deep_want) = {
+                let g = out.lock().unwrap();
+                (g.hold, g.final_req, g.deep_raw)
+            };
+            if hold && !paused {
+                let ahead = armed.is_some();
+                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
+                if ahead {
+                    last_batch = None;
+                }
+                let replay = last_read.as_ref().and_then(|read| read.plan(ahead, deep_want).map(|(ds, lp, count)| (read, ds, lp, count)));
+                let match_cores = out.lock().unwrap().cores;
+                let last = replay.and_then(|(read, ds, lp, count)| match seq::read_raw_again(&mut state, &ds, &lp, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
+                    Ok(()) => {
+                        n += 1;
+                        // the samples are those of the batch read last: its identity (M2.3b)
+                        Some(read.tag(decode_with(raw_dma.data(), &ds, &lp, n, switches.board.header_probe, match_cores.then_some(&mut cores))))
+                    }
+                    Err(e) => {
+                        status(format!("raw read of the deep window at STOP: {}", e));
+                        None
+                    }
+                });
+                let mut g = out.lock().unwrap();
+                if let Some(f) = last.filter(|f| super::publication::current(&g, f)) {
+                    g.frame = f.clone();
+                    g.queue.push_back(f);
+                }
+                g.final_ack = final_req;
+                drop(g);
+                paused = true;
+            }
             // STOP (normal acquisitions only): nothing is armed, the record in the ring stays; for every new view
             // the newest frame of the last batch is read again (`stop_plan`), settings changed meanwhile wait for RUN
             let stop_view = out.lock().unwrap().stop_view;
             match stop_view {
                 Some(v) if mode == Slow::Off && want_mode == Slow::Off => {
+                    // a final-frame request of the UI while the views are read again: answered as the hold does
+                    {
+                        let mut g = out.lock().unwrap();
+                        g.final_ack = g.final_req;
+                    }
                     match &last_batch {
                         Some(batch) if replayed != Some(v) => {
                             replayed = Some(v);
@@ -2057,34 +2105,9 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 }
                 continue;
             }
-            // STOP: the batch in progress has been read; the newest frame once more raw where the deep measurements
-            // want it (the record that stays on screen), then no arming until RUN or SINGLE
-            let (hold, final_req, deep_want) = {
-                let g = out.lock().unwrap();
-                (g.hold, g.final_req, g.deep_raw)
-            };
+            // STOP, after the hold above: no arming until RUN or SINGLE (the UI's final-frame request is answered there)
             if hold {
-                let ahead = armed.is_some();
-                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                let replay = last_read.as_ref().and_then(|read| read.plan(ahead, deep_want).map(|(ds, lp, count)| (read, ds, lp, count)));
-                let last = replay.and_then(|(read, ds, lp, count)| match seq::read_raw_again(&mut state, &ds, &lp, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
-                    Ok(()) => {
-                        n += 1;
-                        Some(read.tag(decode_probed(raw_dma.data(), &ds, &lp, n, switches.board.header_probe)))
-                    }
-                    Err(e) => {
-                        status(format!("raw read of the deep window at STOP: {}", e));
-                        None
-                    }
-                });
-                let mut g = out.lock().unwrap();
-                if let Some(f) = last.filter(|f| super::publication::current(&g, f)) {
-                    g.frame = f.clone();
-                    g.queue.push_back(f);
-                }
-                g.final_ack = final_req;
-                drop(g);
-                paused = true;
+                out.lock().unwrap().final_ack = final_req;
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 continue;
             }
@@ -2136,7 +2159,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 let g = out.lock().unwrap();
                 (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || (g.acquisition.identity().gen(), g.acquisition.identity().epoch()) != pair || g.acquisition.route() != route || g.force || g.stop_view.is_some()
             };
-            let pipe = crate::drawpipe::pipe(&switches);
+            let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing);
             let t_batch = std::time::Instant::now();
             // the ring fills for at most `fill_ms` after the first frame: the batch is read and drawn just before a
             // screen step (pacing.rs)
@@ -2208,7 +2231,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     let raw_frame = if raw_newest(&b, &p) && count > 0 && comp_last.is_none_or(|t| t.elapsed() >= crate::compress::RAW_PERIOD) {
                         comp_last = Some(std::time::Instant::now());
                         match seq::read_raw_again(&mut state, &b, &p, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
-                            Ok(()) => Some(decode_probed(raw_dma.data(), &seq::raw_settings(&b), &p, 0, switches.board.header_probe)),
+                            Ok(()) => Some(decode_with(raw_dma.data(), &seq::raw_settings(&b), &p, 0, switches.board.header_probe, out.lock().unwrap().cores.then_some(&mut cores))),
                             Err(e) => {
                                 status(format!("raw read of the newest frame: {}", e));
                                 None
@@ -2224,7 +2247,9 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         g.deep_ok = deep_raw_settings(&b, &p).is_some();
                         g.deep_raw
                     };
-                    let deep = deep_want.filter(|w| count > 0 && crate::deepmeas::due(*w, deep_last, std::time::Instant::now())).and_then(|_| deep_raw_settings(&b, &p));
+                    let deep = deep_want.filter(|_| count > 0).and_then(|w| {
+                        deep_raw_settings(&b, &p).filter(|ds| crate::deepmeas::due(w, deep_last, std::time::Instant::now(), seq::frame_bytes(ds, &p)))
+                    });
                     let raw_frame = match deep {
                         Some(ds) if raw_frame.is_none() => {
                             deep_last = Some(std::time::Instant::now());
@@ -2233,7 +2258,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                                 Ok(()) => {
                                     use crate::deepmeas::cost;
                                     let t1 = std::time::Instant::now();
-                                    let f = decode_probed(raw_dma.data(), &ds, &p, 0, switches.board.header_probe);
+                                    let f = decode_with(raw_dma.data(), &ds, &p, 0, switches.board.header_probe, out.lock().unwrap().cores.then_some(&mut cores));
                                     cost::set(&cost::DMA_US, t1 - t0);
                                     cost::set(&cost::DECODE_US, t1.elapsed());
                                     cost::READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2335,7 +2360,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
                     // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
                     // deposit workers, the next batch read into a buffer they gave back
-                    let pipe = crate::drawpipe::pipe(&switches).filter(|x| route && after.is_none() && avail > 1 && x.accepting());
+                    let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).filter(|x| route && after.is_none() && avail > 1 && x.accepting());
                     // the raw newest frame stands for the newest compressed one (same record)
                     let raw_frame = raw_frame.filter(|_| avail as u32 == count);
                     let mut la_words = la_words;
@@ -2380,7 +2405,11 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             (if g.take == 0 { avail } else { g.take.min(avail) }, g.cores)
                         };
                         let take = if after.is_some() { take.min(1) } else { take };
-                        skip = avail - take;
+                        // frame 0 of a batch is the frame the FPGA held across the stop, read-out and arm: recorded
+                        // before this arm, sometimes joined with older memory (a stray trace; issue #5, mj1911). With
+                        // more frames in the batch it is left out (1 of 26 at 1 kpts, 10 us/div)
+                        let stale = (avail > 1 && after.is_none() && switches.board.frame0_drop) as usize;
+                        skip = (avail - take).max(stale);
                         n += skip as u64;
                         let mut all: Vec<Frame> = dma
                             .data()
@@ -2397,6 +2426,34 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         }
                         all
                     };
+                    // the first batch with new settings, of one frame (a deep record): that frame is frame 0, which the
+                    // FPGA records before the arm (issue #5), and the first after a change can still be the older
+                    // memory of the old settings (unit 2026-11-15: the whole screen window of a 10 M record was the
+                    // 4 Vpp of the depth-Auto records before it). It is left out, never two in a row; not in SINGLE
+                    // (its one record is the answer), not in hardware average, and only for a record shorter than
+                    // `FIRST_LEFT_MAX_S`: at slow time bases the next record would keep the screen waiting as long
+                    // again (1.25 s at 50 ms/div)
+                    let first = read_with.as_ref() != Some(&b);
+                    read_with = Some(b.clone());
+                    // not in roll and scan: their pieces come in batches of one with settings of their own
+                    let short = (p.memsel as f64) < FIRST_LEFT_MAX_S * p.rate as f64
+                        && frames.first().is_some_and(|f| !f.roll && !f.scan);
+                    if first
+                        && !first_left
+                        && short
+                        && frames.len() == 1
+                        && avail == 1
+                        && !b.single
+                        && after.is_none()
+                        && switches.board.frame0_drop
+                    {
+                        frames.clear();
+                        first_left = true;
+                        // the deep window read of this batch went with it: the next batch reads one at once
+                        deep_last = None;
+                    } else {
+                        first_left = false;
+                    }
                     if after.is_some_and(|a| a.clear) {
                         if let Err(e) = seq::execute(&state.avg_clear_steps(), &mut bar, None, &mut c2h, |_| {}) {
                             status(format!("average clear: {}", e));
@@ -2452,7 +2509,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
     shared
 }
 
-/// A hardware segmented recording (docs/fork/specs/03-segmented-timestamps.md 3.2).
+/// A hardware segmented recording.
 #[cfg(target_os = "linux")]
 struct SegRun {
     /// `HwSeg::run` it belongs to
@@ -2829,10 +2886,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn uart_from_the_decoder_settings() {
         use oos_hal::dho::uarttrig::{Cond, ErrKind, Parity, Relation};
         let mut m = Model::default();
-        (m.trig_type, m.dec_proto, m.dec_src, m.dec_bits, m.dec_baud) = (TrigType::Bus, Proto::Uart, 1, 8, 7);
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_bits, m.dec_baud) = (TrigType::Bus, Proto::UART, 1, 8, 7);
         // (condition, value) -> receiver condition (None = the software trigger)
         let cases = [
             (BusWhat::Frame, 0, Some(Cond::Start)),
@@ -2855,8 +2913,8 @@ mod tests {
         // other protocols, the LA as input, RS-485: the software trigger
         (m.dec_bits, m.trig_bus) = (8, BusWhat::Frame);
         for f in [
-            |m: &mut Model| m.dec_proto = Proto::Spi,
-            |m: &mut Model| m.dec_proto = Proto::Uart9,
+            |m: &mut Model| m.dec_proto = Proto::SPI,
+            |m: &mut Model| m.dec_proto = Proto::from_key("Uart9").unwrap(),
             |m: &mut Model| m.dec_diff = Some(2),
             |m: &mut Model| m.trig_type = TrigType::Edge,
         ] {
@@ -2873,7 +2931,7 @@ mod tests {
         use oos_hal::dho::serialtrig::I2cCond;
         let mut m = Model::default();
         (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2, m.dec_cs, m.dec_bits, m.dec_mode) =
-            (TrigType::Bus, Proto::Spi, 0, 1, Some(2), 8, 0);
+            (TrigType::Bus, Proto::SPI, 0, 1, Some(2), 8, 0);
         // (condition, value) -> (value, mask) of the SPI compare; None = software
         let cases = [
             (BusWhat::Frame, 0, Some((0, 0))),
@@ -2895,7 +2953,7 @@ mod tests {
         assert_eq!(spi_of(&m), None, "no chip select: software");
         // I2C: SDA on dec_src, SCL on dec_src2
         let mut m = Model::default();
-        (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2) = (TrigType::Bus, Proto::I2c, 0, 1);
+        (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2) = (TrigType::Bus, Proto::I2C, 0, 1);
         let cases = [
             (BusWhat::Frame, 0, Some(I2cCond::Start)),
             (BusWhat::Id, 0x50, Some(I2cCond::Address)),
@@ -2932,7 +2990,7 @@ mod tests {
         // UART: relation and limit, polarity, stop bits, error kind; a mask keeps the software
         let mut m = Model::default();
         (m.trig_type, m.dec_proto, m.dec_bits, m.trig_bus, m.trig_bus_val) =
-            (TrigType::Bus, Proto::Uart, 8, BusWhat::Data, 0x30);
+            (TrigType::Bus, Proto::UART, 8, BusWhat::Data, 0x30);
         (m.ser.rel, m.ser.max, m.ser.uart_inv, m.ser.uart_stop) = (Rel::In, 0x39, true, StopBits::Two);
         let u = uart_of(&m).unwrap();
         assert_eq!((u.cond, u.invert, u.stop), (Cond::Data(Relation::In, 0x30, 0x39), true, Stop::Two));
@@ -2945,7 +3003,7 @@ mod tests {
         // SPI: without CS the timeout frames; relation, limit and mask to the width; CS polarity
         let mut m = Model::default();
         (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2, m.dec_cs, m.dec_bits) =
-            (TrigType::Bus, Proto::Spi, 0, 1, None, 16);
+            (TrigType::Bus, Proto::SPI, 0, 1, None, 16);
         (m.trig_bus, m.trig_bus_val, m.ser.rel, m.ser.max, m.ser.mask) =
             (BusWhat::Data, 0x1000, Rel::Out, 0x2000, 0xff00);
         assert_eq!(spi_of(&m), None, "no CS and no timeout");
@@ -2961,7 +3019,7 @@ mod tests {
         // I2C: 10-bit address range, read only
         let mut m = Model::default();
         (m.trig_type, m.dec_proto, m.dec_src, m.dec_src2, m.trig_bus, m.trig_bus_val) =
-            (TrigType::Bus, Proto::I2c, 0, 1, BusWhat::Id, 0x200);
+            (TrigType::Bus, Proto::I2C, 0, 1, BusWhat::Id, 0x200);
         (m.ser.ten_bit, m.ser.addr_rel, m.ser.addr_max, m.ser.dir) = (true, Rel::In, 0x2ff, I2cDir::Read);
         let i = i2c_of(&m).unwrap();
         assert_eq!(
@@ -2975,7 +3033,7 @@ mod tests {
     #[test]
     fn uart_shifts_the_record_to_the_software_point() {
         let mut m = Model::default();
-        (m.trig_type, m.dec_proto, m.dec_src, m.trig_bus) = (TrigType::Bus, Proto::Uart, 0, BusWhat::Frame);
+        (m.trig_type, m.dec_proto, m.dec_src, m.trig_bus) = (TrigType::Bus, Proto::UART, 0, BusWhat::Frame);
         let u = uart_of(&m).unwrap();
         let mut s = settings(&m, false, &Default::default());
         let d0 = s.delay;

@@ -678,3 +678,40 @@ fn pad(lo: f64, hi: f64) -> (f64, f64) {
     let p = (hi - lo) * 0.08;
     (lo - p, hi + p)
 }
+
+/// The inverter page (motor drive: phases, DQ0, shaft).
+pub(super) struct InverterPage;
+
+impl super::analysers::Analyser for InverterPage {
+    fn view(&self) -> AView {
+        AView::Inverter
+    }
+
+    fn feature(&self) -> (&'static str, &'static str) {
+        ("inverter", "Inverter")
+    }
+
+    fn name(&self) -> &'static str {
+        "Inverter"
+    }
+
+    fn menu(&self) -> MenuId {
+        MenuId::Inverter
+    }
+
+    fn scpi(&self) -> Option<&'static str> {
+        Some("INVerter")
+    }
+
+    fn without_record(&self, _ui: &Ui) -> bool {
+        true
+    }
+
+    fn update(&self, ui: &mut Ui, rec: &Record, _pane: bool) {
+        ui.inverter_update(rec);
+    }
+
+    fn draw(&self, ui: &Ui, cv: &mut Canvas) {
+        ui.draw_inverter(cv);
+    }
+}

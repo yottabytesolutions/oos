@@ -26,26 +26,20 @@ pub enum StoreDest {
     Auto,
     /// USB stick (`/mnt/usb/OOS`)
     Stick,
-    /// Desktop folder of the logged-in user
-    Desk,
+    /// The local storage directory, also when a stick is mounted (on the unit `/tmp/oos`, in RAM)
+    Local,
 }
 
 impl StoreDest {
-    pub const ALL: [StoreDest; 3] = [StoreDest::Auto, StoreDest::Stick, StoreDest::Desk];
+    pub const ALL: [StoreDest; 3] = [StoreDest::Auto, StoreDest::Stick, StoreDest::Local];
 
     pub fn name(self) -> &'static str {
         match self {
             StoreDest::Auto => "Auto",
             StoreDest::Stick => "USB",
-            StoreDest::Desk => "Desktop",
+            StoreDest::Local => "Local",
         }
     }
-}
-
-/// Desktop save folder (`$HOME/Desktop/OOS`, else `/root/Desktop/OOS`).
-pub fn desktop_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    PathBuf::from(home).join("Desktop").join("OOS")
 }
 
 /// A stick is mounted, by the text of /proc/mounts.
@@ -380,7 +374,10 @@ pub fn setup_text(m: &Model) -> String {
     kv("zdelay", m.zdelay.to_string());
     kv("color_grade", m.color_grade.to_string());
     kv("dots", name(m.dots));
+    kv("bar", if m.bar_compact { "compact" } else { "cards" }.to_string());
+    kv("draw_path", if m.draw_batch { "batch" } else { "standard" }.to_string());
     kv("hdmi", name(m.hdmi));
+    kv("hdmi_view", m.hdmi_view.to_string());
     kv("view", name(m.view));
     // Display > Views: the count and the one shown, then what each of the others keeps (ui/views.rs)
     kv("views", format!("{} {}", m.views, m.view_cur + 1));
@@ -996,7 +993,28 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
                 _ => p_enum(v, &DOTS_MODES)?,
             }
         }
+        "draw_path" => {
+            m.draw_batch = match v.trim() {
+                "batch" => true,
+                "standard" => false,
+                _ => return Err(format!("{:?}: standard or batch", v)),
+            }
+        }
+        "bar" => {
+            m.bar_compact = match v.trim() {
+                "compact" => true,
+                "cards" => false,
+                _ => return Err(format!("{:?}: cards or compact", v)),
+            }
+        }
         "hdmi" => m.hdmi = p_enum(v, &HDMI_MODES)?,
+        "hdmi_view" => {
+            let n = v.trim().parse::<usize>().map_err(|e| e.to_string())?;
+            if n > crate::ui::VIEWS_MAX {
+                return Err(format!("{:?}: 0 (the panel's) to {}", v, crate::ui::VIEWS_MAX));
+            }
+            m.hdmi_view = n;
+        }
         "views" => {
             let n = p_list(v, 2, |x| x.parse::<usize>().map_err(|e| e.to_string()))?;
             if !(1..=crate::ui::VIEWS_MAX).contains(&n[0]) || !(1..=n[0]).contains(&n[1]) {
@@ -1014,21 +1032,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
         }
         // setups before the Layout mode: true = Waveform, false = Mirror
         "hdmi_wave" => m.hdmi = if p_bool(v)? { HdmiMode::Waveform } else { HdmiMode::Mirror },
-        "view" => {
-            m.view = p_enum(
-                v,
-                &[
-                    AView::Scope,
-                    AView::Spectrum,
-                    AView::Eye,
-                    AView::Power,
-                    AView::Bode,
-                    AView::Magnetic,
-                    AView::Inverter,
-                    AView::Dpt,
-                ],
-            )?
-        }
+        "view" => m.view = p_enum(v, &crate::ui::stored_views())?,
         "bode" => {
             // the address is the rest of the line: it may be empty
             let w: Vec<&str> = v.trim().splitn(8, char::is_whitespace).collect();
@@ -1325,16 +1329,65 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
 
 /// Parses a setup file on top of the default set-up (keys missing in the file keep their defaults). Errors name the
 /// line and the key; unknown keys are ignored.
+#[cfg_attr(not(test), allow(dead_code))] // the strict form, for the tests
 pub fn parse_setup(text: &str) -> Result<Model, String> {
+    let (m, bad) = parse_setup_lenient(text);
+    match bad.into_iter().next() {
+        Some(e) => Err(e),
+        None => Ok(m),
+    }
+}
+
+/// `parse_setup` that loads what it can: a line it cannot take (a key of a newer or another build, a protocol not in
+/// this one, a value out of range) is left out and named in the list, the rest of the setup stands. A decoder whose
+/// protocol is not in this build is switched off, its other settings kept. For recalling a setup and the restart.
+pub fn parse_setup_lenient(text: &str) -> (Model, Vec<String>) {
+    let mut bad = Vec::new();
+    let m = parse_lines(text, &mut bad);
+    (m, bad)
+}
+
+fn parse_lines(text: &str, bad: &mut Vec<String>) -> Model {
     let mut m = Model::default();
+    let mut proto_missing = false;
     for (ln, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (k, v) = line.split_once('=').ok_or_else(|| format!("line {}: no '='", ln + 1))?;
+        let Some((k, v)) = line.split_once('=') else {
+            bad.push(format!("line {}: no '='", ln + 1));
+            continue;
+        };
         let k = k.trim();
-        set(&mut m, k, v.trim()).map_err(|e| format!("line {}: {}: {}", ln + 1, k, e))?;
+        if let Err(e) = set(&mut m, k, v.trim()) {
+            proto_missing |= k == "dec_proto";
+            bad.push(format!("line {}: {}: {}", ln + 1, k, e));
+        }
+    }
+    if proto_missing {
+        m.dec_on = false;
+    }
+    // a protocol that became a module since the setup was written: its options from the shared decoder rows
+    if let (Proto::Module(i), false) =
+        (m.dec_proto, text.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == "dec_opt")))
+    {
+        let old = crate::protocols::Legacy {
+            baud: m.dec_baud,
+            bits: m.dec_bits,
+            parity: m.dec_parity,
+            canrate: m.dec_canrate,
+            canh: m.dec_canh,
+            fdrate: m.dec_fdrate,
+            arate: m.dec_arate,
+            tick: m.dec_tick,
+            nibbles: m.dec_nibbles,
+            uspeed: m.dec_uspeed,
+        };
+        if let Some(o) = crate::protocols::get(i).legacy(&old) {
+            m.dec_opt = o.map(|x| x as u8);
+            m.dec_opt = crate::protocols::opt_fit(i, m.dec_opt).map(|x| x as u8);
+        }
     }
     // a setup from before the density row: the windows and the pane already say which of the four it was
     if !text.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == "density")) {
@@ -1355,7 +1408,65 @@ pub fn parse_setup(text: &str) -> Result<Model, String> {
     if m.zscale > m.tscale {
         m.zscale = m.tscale;
     }
-    Ok(m)
+    m
+}
+
+/// Display state of a ref slot, kept in a setup file as `ref<N>.<key>` lines. The samples are not part of a setup:
+/// a recall restores how the slot looks, and applies it to the slot when that holds a waveform.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct RefLook {
+    pub on: Option<bool>,
+    pub vdiv: Option<f32>,
+    pub offset: Option<f32>,
+    pub color: Option<usize>,
+    pub label: Option<String>,
+}
+
+/// `ref<N>.*` lines for the loaded slots (`None` = empty slot, nothing is written).
+pub fn ref_setup_text(looks: &[Option<RefLook>]) -> String {
+    let mut s = String::new();
+    for (i, l) in looks.iter().enumerate() {
+        let Some(l) = l else { continue };
+        let mut kv = |k: &str, v: String| s.push_str(&format!("ref{}.{} = {}\n", i + 1, k, v));
+        if let Some(v) = l.on {
+            kv("on", v.to_string());
+        }
+        if let Some(v) = l.vdiv {
+            kv("vdiv", v.to_string());
+        }
+        if let Some(v) = l.offset {
+            kv("offset", v.to_string());
+        }
+        if let Some(v) = l.color {
+            kv("color", v.to_string());
+        }
+        if let Some(v) = &l.label {
+            kv("name", v.replace(['\r', '\n'], " "));
+        }
+    }
+    s
+}
+
+/// The `ref<N>.*` lines of a setup file; a setup from before they existed gives all `None`.
+pub fn parse_ref_looks(text: &str, n: usize) -> Vec<Option<RefLook>> {
+    let mut out: Vec<Option<RefLook>> = vec![None; n];
+    for line in text.lines() {
+        let Some((k, v)) = line.trim().split_once('=') else { continue };
+        let Some(rest) = k.trim().strip_prefix("ref") else { continue };
+        let Some((idx, key)) = rest.split_once('.') else { continue };
+        let Some(i) = idx.parse::<usize>().ok().and_then(|i| i.checked_sub(1)).filter(|&i| i < n) else { continue };
+        let v = v.trim();
+        let l = out[i].get_or_insert_with(RefLook::default);
+        match key {
+            "on" => l.on = v.parse().ok(),
+            "vdiv" => l.vdiv = v.parse().ok().filter(|x: &f32| x.is_finite() && *x > 0.0),
+            "offset" => l.offset = v.parse().ok().filter(|x: &f32| x.is_finite()),
+            "color" => l.color = v.parse().ok(),
+            "name" => l.label = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------------------------- waveform CSV
@@ -3218,7 +3329,7 @@ pub(crate) mod tests {
         m.dec_baud = 3;
         m.dec_thr = 0.8;
         m.dec_ascii = false;
-        m.dec_proto = Proto::Spi;
+        m.dec_proto = Proto::SPI;
         (m.dec_arate, m.dec_tick, m.dec_nibbles, m.dec_uspeed) = (2, 3, 4, 2);
         m.dec_src2 = 0;
         m.dec_cs = None;
@@ -3403,6 +3514,7 @@ pub(crate) mod tests {
 
     /// Every protocol is stored by name; the USB decoder with its D- source and speed.
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn setup_protocols_by_name() {
         for &p in PROTOS.iter() {
             let mut m = Model::default();
@@ -3424,7 +3536,7 @@ pub(crate) mod tests {
         assert_eq!(parse_setup(&text).unwrap(), m);
         assert!(parse_setup("dec_proto = NoSuchBus").is_err());
         let mut m = Model::default();
-        (m.dec_proto, m.dec_src, m.dec_cs, m.dec_uspeed) = (Proto::Usb, 2, Some(3), 1);
+        (m.dec_proto, m.dec_src, m.dec_cs, m.dec_uspeed) = (Proto::from_key("Usb").unwrap(), 2, Some(3), 1);
         let text = setup_text(&m);
         assert!(text.contains("dec_proto = Usb\n") && text.contains("dec_uspeed = 1\n"));
         assert_eq!(parse_setup(&text).unwrap(), m);
@@ -4302,5 +4414,22 @@ mod header_import_tests {
             b.extend_from_slice(&x.to_le_bytes());
         }
         b
+    }
+
+    // Break it catches (rdtsc in the forum): a setup naming a protocol this build does not have, or a key of a newer
+    // build, failing to load as a whole
+    #[test]
+    fn a_setup_loads_what_it_can() {
+        let mut m = Model::default();
+        m.dec_on = true;
+        m.tscale = 5;
+        // unknown keys were always passed over; a protocol this build lacks and a value out of range were not
+        let text = setup_text(&m).replace("dec_proto = ", "dec_proto = NoSuchDecoder # was ") + "avg_hw = maybe\n";
+        assert!(parse_setup(&text).is_err(), "strict parse names the first bad line");
+        let (back, bad) = parse_setup_lenient(&text);
+        assert_eq!(back.tscale, 5, "the rest of the setup stands");
+        assert!(!back.dec_on, "the decoder without its protocol is off");
+        assert!(bad.len() == 2 && bad[0].contains("dec_proto") && bad[1].contains("avg_hw"), "{:?}", bad);
+        assert_eq!(parse_setup_lenient(&setup_text(&m)).1, Vec::<String>::new());
     }
 }

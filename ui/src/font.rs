@@ -111,3 +111,21 @@ impl Fonts {
         Fonts { s: next(), sb: next(), m: next(), mb: next(), l: next(), lb: next(), xl: next() }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The symbols the screens write have a glyph of their own at every text size (not the '?' of a missing one).
+    #[test]
+    fn the_symbols_in_use_have_glyphs() {
+        for k in 0..3 {
+            let f = Fonts::get(k);
+            for font in [&f.s, &f.sb, &f.m, &f.mb, &f.l, &f.lb, &f.xl] {
+                for ch in "µ±°Ω×Δ²·σ…ψ—≠θαβμ".chars() {
+                    assert_eq!(font.glyph(ch).cp, ch as u32, "text size {k}: {ch}");
+                }
+            }
+        }
+    }
+}

@@ -9,6 +9,8 @@ How the Rigol DHO800/DHO900 hardware works and how OOS drives it. "Verified on t
 - [System](architecture/system.md): how the SD card, kernel, Rust crates and GUI fit together.
 - [development.md](development.md): the gate (`cargo xtask check`), what it enforces, the ratchets, hooks and CI.
 - [Tasks](tasks/README.md) and [releases](releases.md): planned work and release criteria.
+- [Upstream ADRs](adr/README.md): upstream's architecture decision records by category (code, ui-ux, hardware,
+  system, process); ours are in [architecture/adr](architecture/adr/).
 - [boot.md](boot.md): card layout, boot chain, the image format of the stock loader, OOS start-up order.
 - [install-usb.md](install-usb.md): installing OOS from a USB stick, without opening the scope.
 - [sdcard-backup.md](sdcard-backup.md): backing up and cloning the SD card on Windows, macOS and Linux (card route).
@@ -17,6 +19,8 @@ How the Rigol DHO800/DHO900 hardware works and how OOS drives it. "Verified on t
 - [network.md](network.md): Ethernet and a link at 10 Mbit/s, date and time from NTP, time zones, `/oos/system.conf`.
 - [models.md](models.md): model identity, capabilities, limits, overclocking and `/oos/limits.conf`.
 - [protocol-modules.md](protocol-modules.md): adding a protocol decoder as a module: one file, one registration.
+- [measurement-modules.md](measurement-modules.md): adding measurements as a module: their tiles, sources and computation behind one trait.
+- [analyser-modules.md](analyser-modules.md): adding an analyser page: its start menu entry, Features, view bar, SCPI, setups and drawing behind one trait.
 - [porting.md](porting.md): other models (MHO900, DHO1000/4000): what carries over, and how to describe one.
 - [bandwidth-test.md](bandwidth-test.md): procedure to measure the analog bandwidth.
 

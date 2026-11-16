@@ -1,13 +1,13 @@
 // Copyright (C) 2026 OOS contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The FPGA's DVM block next to the frequency counter (docs/fork/dvm.md, spec 08 section 1.2): it accumulates 2^exp
+//! The FPGA's DVM block next to the frequency counter (docs/fork/dvm.md): it accumulates 2^exp
 //! samples of one ADC lane, their sum and their sum of squares, independent of the time base and the record. Fork,
 //! opt-in (`dvm.hw = on`).
 //!
-//! Register facts (BAR1). Write side netlist-proven in simulation; result layout and units measured on the unit
+//! Register facts (BAR1). Write side assumed; result layout and units measured on the unit
 //! (2026-11-13, round 2):
-//! - `CFG` 0x2244: bit 0 a pulse (written 1, then 0 with the new fields; the stock driver does this on every
+//! - `CFG` 0x2244: bit 0 a pulse (written 1, then 0 with the new fields; the stock system does this on every
 //!   reconfiguration, so it is taken as a restart), [5:1] exp, [9:8] lane. Read back it is not the configuration: the
 //!   unit returned `SQ_HI` with bits 7:0 replaced.
 //! - `LATCH` 0x2248 bit 0: write 1 then 0 to copy the results into the read registers.
@@ -36,7 +36,7 @@ const LANE_MASK: u32 = 3;
 /// The upper 16 bits of the first result sit in `SUM_HI` [31:16].
 const SUM_HI_SHIFT: u32 = 16;
 
-/// Samples per window, log2. The stock driver's default (2^28).
+/// Samples per window, log2. The stock system's default (2^28).
 pub const EXP: u32 = 28;
 
 /// Mid-scale and full scale of the samples the block sums (stored 12-bit ADC codes).
@@ -91,7 +91,7 @@ pub fn start(lane: u32, exp: u32) -> Vec<Write> {
     vec![(CFG, f | RESTART), (CFG, f)]
 }
 
-/// The writes that stop it (as the stock driver: a restart pulse, then everything zero).
+/// The writes that stop it (as the stock system: a restart pulse, then everything zero).
 pub fn stop() -> Vec<Write> {
     vec![(CFG, RESTART), (CFG, 0)]
 }

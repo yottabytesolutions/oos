@@ -91,22 +91,26 @@ const WEB_NICE: i32 = 10;
 /// (RK3399: the four A53 in `little`, `Cores::little`; the frame loop keeps the two A72 for itself). Nice 10 where
 /// that fails.
 fn lower_priority(little: u64) {
+    // not in the tests: with every core busy with tests in parallel (CI), a thread at SCHED_IDLE got no time for
+    // seconds, and a viewer waiting for a picture got 304 or 503 instead
     #[cfg(target_os = "linux")]
-    // SAFETY: plain system calls on the calling thread; the parameter and the CPU set are local values.
-    unsafe {
-        let tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
-        // priority 0, the only one SCHED_IDLE takes (musl's struct has more fields)
-        let p: libc::sched_param = std::mem::zeroed();
-        // the system call itself: musl's sched_setscheduler() is a stub that always fails
-        if libc::syscall(libc::SYS_sched_setscheduler, tid, libc::SCHED_IDLE, &p as *const libc::sched_param) != 0 {
-            libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, WEB_NICE);
-        }
-        if little != 0 {
-            let mut set: libc::cpu_set_t = std::mem::zeroed();
-            for c in crate::placement::cpus(little) {
-                libc::CPU_SET(c, &mut set);
+    if !cfg!(test) {
+        // SAFETY: plain system calls on the calling thread; the parameter and the CPU set are local values.
+        unsafe {
+            let tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
+            // priority 0, the only one SCHED_IDLE takes (musl's struct has more fields)
+            let p: libc::sched_param = std::mem::zeroed();
+            // the system call itself: musl's sched_setscheduler() is a stub that always fails
+            if libc::syscall(libc::SYS_sched_setscheduler, tid, libc::SCHED_IDLE, &p as *const libc::sched_param) != 0 {
+                libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, WEB_NICE);
             }
-            libc::sched_setaffinity(tid, std::mem::size_of::<libc::cpu_set_t>(), &set);
+            if little != 0 {
+                let mut set: libc::cpu_set_t = std::mem::zeroed();
+                for c in crate::placement::cpus(little) {
+                    libc::CPU_SET(c, &mut set);
+                }
+                libc::sched_setaffinity(tid, std::mem::size_of::<libc::cpu_set_t>(), &set);
+            }
         }
     }
     #[cfg(not(target_os = "linux"))]
@@ -808,7 +812,7 @@ function pause(){paused=!paused;pb.textContent=paused?'Resume picture':'Pause pi
 function pt(e){const r=s.getBoundingClientRect();const p=e.changedTouches?e.changedTouches[0]:e;return [Math.round((p.clientX-r.left)*(s.naturalWidth||1024)/r.width),Math.round((p.clientY-r.top)*(s.naturalHeight||600)/r.height)];}
 let d0=null;
 function down(e){e.preventDefault();d0=pt(e);}
-function up(e){if(!d0)return;e.preventDefault();const p=pt(e),start=d0;d0=null;if(Math.abs(p[0]-start[0])+Math.abs(p[1]-start[1])<8){const r=workflowState?.loadRect;if(Array.isArray(r)&&r.length===4&&start[0]>=r[0]&&start[0]<r[0]+r[2]&&start[1]>=r[1]&&start[1]<r[1]+r[3])askFile();else c('tap '+start[0]+' '+start[1]);}else c('drag '+start[0]+' '+start[1]+' '+p[0]+' '+p[1]);}
+function up(e){if(!d0)return;e.preventDefault();const p=pt(e),start=d0;d0=null;if(Math.abs(p[0]-start[0])+Math.abs(p[1]-start[1])<8){c('tap '+start[0]+' '+start[1]);}else c('drag '+start[0]+' '+start[1]+' '+p[0]+' '+p[1]);}
 s.addEventListener('mousedown',down);s.addEventListener('mouseup',up);s.addEventListener('touchstart',down,{passive:false});s.addEventListener('touchend',up,{passive:false});
 s.ondragstart=()=>false;
 let count=0;setInterval(()=>{n=count;count=0;if(!document.hidden){refreshState();if(!paused)show(st.className=='bad');}},1000);

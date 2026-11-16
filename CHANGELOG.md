@@ -1,5 +1,153 @@
 # Changes
 
+## 0.1.13
+
+Merged from the forks on GitHub (PR #7 by ichnograph, DHO804; PR #8 by W4R/wasimlhr, OOS Plus), with main since
+0.1.12. Their work is credited in the commits. PR #9 to #13 (W4R/wasimlhr, topics cut from PR #8) are merged as
+well: their functions were in the tree with PR #8, new from them are the Cursor B source row and the power
+measurement tests. From PR #8's second round (2026-11-15) the fixes are in, its Studio layout is not.
+
+New:
+
+- One measurement page for everything: the categories down the left (Basic, Two sources, Serial & PAM, Jitter & eye,
+  Power, Motor drive, Power rails, Double pulse; under them Selected), right of them the sources and the groups, one
+  open at a time, at the bottom the last tile tapped with what it measures. Basic now holds all 60 standard
+  measurements with full names (Peak-to-Peak, Upper Level, Time of Maximum ...), Two sources all 17 pair variants;
+  the separate All 60 / Pairs page is gone. One tap on a tile adds it, a second removes it; a tile that is on is
+  filled. Selected lists what is on with Remove, Set and Clear all. Analysis > Measure in the start menu opens this
+  page (with Back), as the Measure button and key do. The settings are in named groups: Sources, Measure over,
+  Display, Parameters, More.
+- Lists scroll by touch: the measurement page, the Results pane and the event / search / segment tables have a scroll
+  bar (drag the thumb, or press the track to jump there) and follow a finger drawn over them; a press that does not
+  move is still a tap. The Up / Down buttons are gone. Fixed: folding a group of the measurement page after scrolling
+  left the list past its end with no way back; a list's position is now always kept in range.
+- Graphics = GPU: buttons and dialog frames no longer cover their area twice (the border is drawn only where the
+  fill leaves it, `Canvas::framed`), pixel for pixel the same picture. With the measurement page open and HDMI
+  Layout the monitor's GPU time fell from 38.5 to 12.3 ms a frame, the frame rate rose from 25.3 to 27.4 (DHO924S,
+  four channels, 1920 x 1080).
+- Measurements are modules (`ui/src/measures`, docs/measurement-modules.md): a module gives its measurements' tiles
+  (name, description, mark, unit, sources, category and group) and computes their values on the worker thread; one
+  line registers it. The 83 analysis measurements moved into nine modules (NRZ rate, jitter & eye, power, rails,
+  magnetics, motor, double pulse ...), the standard and pair measurements are placed by two more. Their values are
+  bit for bit the same; every module is checked by the tests (numbers, names, places, a square wave through
+  `compute`).
+- Every decoder is a module (`ui/src/protocols`, docs/protocol-modules.md), the core ones too: UART, I2C, SPI, CAN,
+  LIN, Parallel, C-PHY, I2S, USB, ARINC 429, MIL-STD-1553, Manchester, MLT-3, 9-bit UART, Modbus RTU/ASCII, 1-Wire,
+  DS2482, SWD, JTAG, QSPI, I3C, CAN FD, FlexRay and SENT moved out of the hand-wired code. The Decode menu, the
+  protocol trigger, the bus timing and the demo traffic come from the module alone; values several protocols use (baud
+  rate, bits, parity, SPI mode, CAN rate ...) are shared rows. Saved setups load as before. Choosing a protocol no
+  longer changes the sources of roles it doesn't have.
+- Decoders can be left out of a build: every optional decoder is a Cargo feature (`dec-<file>`, all on by default),
+  `OOS_DECODERS="usb dcc"` or `OOS_DECODERS_OFF="avionics"` with ui/build.sh and boot/build-dev-image.sh. The seven
+  core decoders are always in. Without the optional ones the scope binary is 260 KB smaller. Suggested by rdtsc.
+- Analyser pages register the same way (`ui/src/ui/analysers.rs`, docs/analyser-modules.md): the start menu, System
+  > Features, the view bar and its menu, SCPI `:VIEW`, the `view` of setups, which record a page needs, computing and
+  drawing ask one registry instead of eight lists. Every page is checked the same way by the tests; the pages look
+  and compute as before, pixel for pixel.
+- Architecture decision records in `docs/adr`, by category (code, ui-ux, hardware, system, process), with a template
+  and the first fifteen records of decisions already taken.
+- The screens' symbols ψ, —, ≠, θ, α, β and μ have glyphs (they showed as '?', e.g. μ before the mean in the
+  statistics card); the existing glyphs of the atlases are unchanged.
+- Host layout scripts (ui/tests) open menus and set values by name (`menu`, `set`, `do`, and new: `close`, `do <tile>`
+  on the measurement page) instead of tapping coordinates that moved; the storage script no longer shows a path that
+  differs between runs.
+- Top bar: Measure, Cursor, Display and Storage only. System is the first entry of its group in the start menu, SIM is
+  under Analysis there, and Load file is a row of the Reference menu (the file comes from storage on the scope, from
+  the file dialog in the desktop window).
+- Cursor > Cursor B source (Track mode): cursor B reads another channel or reference than cursor A (PR #10; SCPI
+  had it already).
+- Short time bases draw every frame they can: the frames of a screen are placed on the little cores and added as
+  differences per band, the hardware thread decodes only the frames the screen takes, a time budget keeps 27 to 30
+  frames a second (4 channels at 100 ns/div: 29.5 instead of 3.5). Max, Min, Pk-pk, Mean, RMS and Std dev count every
+  frame drawn.
+- STOP keeps the whole record in the scope's memory and reads it again for every view: zoom out to see all of it, zoom
+  in or move the delay anywhere for every sample of that part.
+- Acquire > ADC cores: Matched (default) takes the offset pattern of the eight interleaved ADC cores off every frame
+  (spur at 156.25 MHz: -52 to -77..-80 dBc with one channel); Raw shows the words as they come. `:ACQuire:CORes`.
+  Acquire says "Aliasing: above <half the rate>, Peak shows it" while the rate is below the ADC's.
+- Trigger level: no mark with AC or LF reject coupling; with DC a dashed line for 1.5 s after every change.
+- From PR #7 (opt-in through `/oos/system.conf` unless noted): hardware segments with trigger time stamps (Acquire >
+  HW segments), hardware averaging (Acquire > HW average), the trigger status from the SCU (default on), auto set-up
+  levels from the FPGA measure unit (`autoset.levels = unit`; it answered with the levels of an earlier signal on a
+  DHO924S, so Auto missed a 5 MHz sine of 0.2 Vpp), hardware DVM, hardware mask and zone tests, UART/SPI/I2C hardware
+  triggers (Trigger > Bus), System > AUX out (trigger out, pass/fail), live min/max compression in the FPGA, deep-memory
+  measurements from raw reads, an ADC core offset trim, `:CHANnel<n>:VERNier`, auto noise reject, batch pipeline,
+  core placement, arming ahead, MSI for the DMA driver.
+- SSH (Dropbear, PR #7): System > Network > Remote services > SSH and SSH settings (password, trusted keys from a USB
+  stick, host key); off by default and only with `net.allow` and the firewall. telnet stays as it was. Keys can also
+  be built into an image or written to a card on a computer (PR #8, docs/ssh.md).
+- Network (PR #7, opt-in): a LAN-only firewall and source ACL (`net.allow`), the time zone from DHCP option 100, IPv6
+  with stable addresses and the services and mDNS on IPv6.
+- From PR #8: SCPI answers every query (errors instead of silence) and much more of the stock command tree, `*ESR?`,
+  `*OPC?` that waits, `:TFORce`, `:WAVeform:STARt/STOP`, HiSLIP on a computer; references loaded from CSV, OOS BIN and
+  WFM files (Load file), an offline mode that leaves the live screen alone; many new measurements and a measurement
+  catalog in tabs, copy measurements from one source to another, measurements on references; SIM, a serial-record
+  simulator into reference slots; an eye diagram; Measure > Dock; a zoom-area button; Ctrl+wheel zoom; channel
+  deskew; a desktop build for Windows and macOS.
+- Display > Bottom bar: Cards (default) or Compact, PR #8's bar with Menu, Sources, Overlay/Stacked, time and trigger.
+- Display > Monitor view: with HDMI Layout the monitor shows one of the views (Display > Views) instead of the
+  panel's, a second screen with its own arrangement (asked for in the forum): the panel keeps the controls, the monitor
+  shows e.g. the spectrum, the eye or four windows. Set it up by switching the panel to that view; its analyser page
+  is worked out beside the panel's. Saved with a setup (`hdmi_view`), `:DISPlay:VIEW:MONitor <n>` (0: the panel's).
+- Acquire > Draw path: Standard (the fast path) or Batch (PR #7's pipeline), to compare them; `:SYSTem:PIPeline`.
+- System > Features: leave out what you do not use (asked for in the forum): the analyser pages (Spectrum, Eye,
+  Power, Bode, Bandwidth test, Magnetic, Inverter, Double pulse), SIM, Load file, and each decoder (System > Features >
+  Decoders). What is left out is gone from the start menu, the top bar and the pickers and runs nothing. A setting of
+  the scope (`features.off`, `decoders.off` in `/oos/system.conf`); nothing is left out by default.
+- A setup loads what it can: a line this build cannot take (a decoder it does not have, a value out of range) is left
+  out and named, the decoder switched off; before, the whole setup failed.
+
+Changed:
+
+- Mean, RMS, Std dev and Area of deep records (above 1 M points, shown as min/max pairs) are measured again: the
+  screen window is read raw once in a while (`meas.deep_raw`, now on by default; `meas.deep_raw = off` turns it
+  off). 0.711 Vrms for a 2 Vpp sine at 10 to 125 M on the DHO924S. The reads come less often for a larger window,
+  so they cost about 5 % of the records; a window above 24 MB keeps "not available". Max, Min and Pk-pk come from
+  the pairs until the first raw read.
+- Choosing a decoder protocol on the hardware sets its own parameters only (threshold, baud, bits ...): no channel is
+  switched on and the trigger stays. The sources the protocols share stay; a role the old protocol did not have takes
+  a channel that is on and no other role uses, or none. The demo keeps the sources and trigger that suit its traffic.
+  Same rule as the trigger types (the forum: one setting must not change another).
+- Auto keeps a memory depth you fixed (PR #7); with depth Auto it picks a short record, as before.
+- Frame 0 of a hardware batch of several frames is left out: the FPGA records it before the arm, sometimes joined
+  with older memory, a stray trace (issue #5). `acq.frame0 = keep` keeps it.
+- With two channels at different V/div the read-path gain and offset follow the stock lane order (PR #7): the DC level
+  was off by about 7 % of the offset.
+- The DHCP script flushes only IPv4 addresses (the IPv6 link-local address stayed gone).
+- DMA reads are at most 4 MiB each; SINGLE arms one frame per batch; STOP disarms (PR #7).
+- `:ACQuire:SRATe?` and `:MDEPth?` answer the hardware's rate and depth, as the top bar shows them.
+- `:ACQuire:AVERages` snaps a count the menu does not offer down to the next one (PR #8).
+- Storage > Save to: Desktop is now Local, the storage directory also while a USB stick is in (on the unit
+  `/tmp/oos`, in RAM). Desktop wrote to `/root/Desktop/OOS` on the unit, a RAM folder nobody looks in, and to
+  `Documents\OOS\Desktop` on Windows. The Storage title names where the files go now, also with a stick in.
+
+Fixed:
+
+- The first record after a change of settings in a deep record (one frame per batch) could show the older memory of
+  the settings before, e.g. twice the amplitude after the memory depth was changed: it is left out.
+- A deep record measured from its raw window no longer shows "not available" for the time the background
+  measurement takes: the last value of the same settings stays until the new one is there.
+- SCPI over the raw socket answered nothing when the client closed its side after the command
+  (`echo "*IDN?" | nc <scope> 5555`); the lines it sent are answered again.
+- From PR #8's second round (W4R): SIM no longer overwrites a loaded reference or switches channels off; math with
+  a reference as source fits its scale; setups keep how references look; references with no channel shown get a volt
+  axis; the power page says why it has no numbers (no signal, no current probe, no whole cycle) instead of zeros;
+  the eye of a held SIM reference is computed instead of waiting for edges; Measure > Dock docks the card again after
+  it floated, a floated eye follows the placement, a card docked under the plot shows up to 8 rows a page; the
+  trigger pill shows the Pattern/Duration level; Delay and Setup/Hold take their second source from a channel that is
+  on; the Sources popup keeps one source on; overlapping labels of the eye, spectrum, Bode, histogram, references and
+  time axis, and the floating measurement card kept clear of the corner buttons.
+- Choosing a trigger type changed settings the other types share (found by a new test after eTobey's point in the
+  forum): Pulse switched CH4 on and made it the source, Video set CH2 to 0.2 V/div, Setup/Hold switched CH3 on, Nth
+  edge turned the slope to falling. These presets suit the demo signals only; on the hardware a trigger type now sets
+  its own parameters and leaves the channels, the source, the level and the slope as they were.
+- Dots mode drew min/max pairs as two dots and lost the edges of a square at slow time bases (PR #7).
+- Minimum persistence flickered with the batch sizes; the picture is graded by the frames it holds (PR #7).
+- Mean-type measurements are no longer computed from min/max pairs, which made them wrong (PR #7); deep records get
+  them from raw reads (see Changed).
+- The record path no longer takes up to 48 records in a screen, which split a batch over two screens (issue #6).
+- Axis labels: enough decimals for small steps at a large delay.
+
 ## 0.1.12
 
 Install from 0.1.7 or newer as always: the web page, System > Update, or the USB stick; then switch the scope off at
@@ -283,8 +431,6 @@ From 0.1.1 to 0.1.4: install the package through the web page or `oos-update ins
 
 New:
 
-- Measure > Dock places the measurement strip under the plot (the default), on the left, on the right, or above the
-  trace. The choice is kept in the setup file.
 - Waveform windows: Display > Windows splits the plot into two windows side by side, two stacked, or four. Each
   channel and math channel stands in one window (chosen on the same page; a new split spreads the channels that are
   on), all on the same time base. The LA gets a window too: its lanes stand at the bottom of it (all of it when no
@@ -293,8 +439,6 @@ New:
   use one window. A drag in a window moves a channel of that window. Saved in setups.
 - Full screen: the button at the top right of the plot (or Display > Windows > Full screen) gives the plot the whole
   screen without the top bar and the cards; the same button goes back. Not while the touch lock is on.
-- Zoom area: the button under the full-screen button arms one drag. The next drag on the plot draws a box, and the
-  time span of that box is the zoom window. A tap, or a second tap, does not zoom.
 - After an auto set-up a bar at the top of the waveform window, above the signal, offers four views of the trigger
   channel: about three periods, about ten periods, the rising edge, the falling edge (the edge's 10-90 % time across
   about two divisions, slope set to match). Its cross or a tap elsewhere closes it, otherwise it goes after 30 s.

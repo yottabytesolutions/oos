@@ -4,7 +4,7 @@
 //! Built-in arbitrary waveform generator of the DHO900 "S" models (docs/protocols/afg.md): a DDS in the FPGA (BAR1
 //! 0x3000..0x3ffc, banks selected by 0x3ff0 / 0x3ff4 / 0x3ff8, 156.25 MHz clock, 8192-sample s16 table), relays for
 //! the attenuators over GPIO (afg_in1..5) and the generator supply (FG_M2C). Pure functions return the operations;
-//! amplitude/offset are corrected with the factory table `cal_afg.hex` (read only). Units like the stock driver:
+//! amplitude/offset are corrected with the factory table `cal_afg.hex` (read only). Units like the stock system:
 //! frequency uHz, amplitude (peak-to-peak) and offset nV.
 
 /// One step of a generator sequence.

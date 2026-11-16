@@ -42,7 +42,7 @@ The software decode stays the reference; the record path places the trigger poin
 
 ## SCPI
 
-Stock names (libscope's command table) where they exist, fork additions otherwise. Values decimal or 0x hex.
+Stock names where they exist, fork additions otherwise. Values decimal or 0x hex.
 
 | Command | Meaning |
 |---|---|

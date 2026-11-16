@@ -34,7 +34,8 @@ pub struct Switches {
     pub place: bool,
     /// IPv6 (`net6::enabled_from`)
     pub ipv6: bool,
-    /// the auto set-up reads levels with the measure unit (`autoset.levels`)
+    /// the auto set-up reads levels with the measure unit, only with `autoset.levels = unit`: on the unit (DHO924S,
+    /// 2026-11-15) it answered every request with the levels of an earlier signal
     pub autoset_unit_levels: bool,
     /// the board's own switches
     pub board: crate::board::BoardSwitches,
@@ -66,7 +67,7 @@ impl Switches {
             deep_raw: crate::deepmeas::enabled_from(flag(env, "OOS_DEEP_RAW"), conf),
             place: conf_value(flag(env, "OOS_PLACE"), conf, "perf.place").as_deref() == Some("on"),
             ipv6: crate::net6::enabled_from(flag(env, "OOS_IPV6"), conf),
-            autoset_unit_levels: levels.as_deref() != Some("records"),
+            autoset_unit_levels: levels.as_deref() == Some("unit"),
             board: crate::board::BoardSwitches::parse(env, conf, settings),
             memory: crate::system::memory::Limits::parse(conf),
         }
@@ -95,7 +96,7 @@ mod tests {
     fn empty_configuration_is_the_default() {
         let s = Switches::default();
         assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (0, false, Mode::Frames, Interp::Exact));
-        assert!(s.deep_raw && !s.place && !s.ipv6 && s.autoset_unit_levels);
+        assert!(s.deep_raw && !s.place && !s.ipv6 && !s.autoset_unit_levels);
         assert_eq!(s.board, crate::board::BoardSwitches::parse(&|_| None, "", ""));
     }
 

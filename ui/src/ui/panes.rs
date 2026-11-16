@@ -116,8 +116,10 @@ impl Ui {
         let col_x = a.x + a.w - PEAK_W;
         let title = Rect::new(a.x + AXIS_W, a.y, a.w - AXIS_W - PEAK_W - 8, TITLE_H);
         let plot = Rect::new(title.x, a.y + TITLE_H, title.w, a.h - self.spec_wf_h(a, pane) - TITLE_H - XLABEL_H);
+        // the full view: under the full-screen and zoom buttons, which sit at the top of this column
+        let below = (self.zoom_btn().1.bottom() + 2).max(a.y + 46);
         let sort =
-            if pane { Rect::new(col_x, a.y + 2, PEAK_W - 50, 36) } else { Rect::new(col_x, a.y + 46, PEAK_W - 6, 36) };
+            if pane { Rect::new(col_x, a.y + 2, PEAK_W - 50, 36) } else { Rect::new(col_x, below, PEAK_W - 6, 36) };
         let y = sort.y + sort.h + 2;
         SpecBox { title, plot, sort, list: Rect::new(col_x, y, PEAK_W - 6, a.y + a.h - y) }
     }
@@ -449,17 +451,23 @@ impl Ui {
         (fit, room / fit as i32)
     }
 
-    pub(super) fn results_scroll_btns(r: Rect) -> [Rect; 2] {
-        let b = |i: i32| Rect::new(r.x + r.w - 46 * i, r.y + 2, 42, 36);
-        [b(3), b(2)]
+    /// The scroll bar of the Results pane and its rows, while the pane shows them.
+    pub(super) fn results_bar(&self) -> Option<(scroll::Bar, Rect)> {
+        if self.pane_h() == 0 || self.m.pane != tables::PANE_RESULTS {
+            return None;
+        }
+        let r = self.pane_rect();
+        let n = self.meas_rows().len();
+        let (fit, pitch) = Self::results_fit(r, n);
+        let (t, _) = self.results_box(r);
+        let rows = Rect::new(t.x, t.y + BAND_H, t.w, fit as i32 * pitch);
+        let track = Rect::new(t.x + t.w - scroll::BAR_W, rows.y, scroll::BAR_W, rows.h);
+        Some((scroll::Bar { track, total: n as i32, shown: fit as i32, pos: self.pn.top as i32 }, rows))
     }
 
-    fn results_scroll(&mut self, d: i32) {
-        let n = self.meas_rows().len();
-        let r = self.pane_rect();
-        let (fit, _) = Self::results_fit(r, n);
-        let last = n.saturating_sub(fit);
-        self.pn.top = (self.pn.top.min(last) as i32 + d).clamp(0, last as i32) as usize;
+    /// Height of a row of the Results pane.
+    pub(super) fn results_row_pitch(&self) -> i32 {
+        Self::results_fit(self.pane_rect(), self.meas_rows().len()).1
     }
 
     fn draw_results_pane(&self, cv: &mut Canvas, r: Rect) {
@@ -480,6 +488,14 @@ impl Ui {
     fn draw_result_table(&self, cv: &mut Canvas, r: Rect, t: Rect, rows: &[ResultRow]) {
         let f = self.fonts();
         let (fit, pitch) = Self::results_fit(r, rows.len());
+        // a longer list keeps its scroll bar at the right of the rows
+        let bar = (rows.len() > fit).then(|| scroll::Bar {
+            track: Rect::new(t.x + t.w - scroll::BAR_W, t.y + BAND_H, scroll::BAR_W, fit as i32 * pitch),
+            total: rows.len() as i32,
+            shown: fit as i32,
+            pos: self.pn.top as i32,
+        });
+        let t = if bar.is_some() { Rect::new(t.x, t.y, t.w - scroll::BAR_W - 4, t.h) } else { t };
         let top = self.pn.top.min(rows.len() - fit);
         let band = format!("Measurements  \u{b7}  {}", rows.len());
         let bx = cv.text(&f.sb, t.x + 12, t.y + 16, &band, TEXT);
@@ -540,6 +556,9 @@ impl Ui {
             if x.len() > 9 {
                 Self::range_bar(cv, Rect::new(x0 + x[8], y + pitch / 2 - 3, x[9] - x[8] - 6, 6), w, col);
             }
+        }
+        if let Some(b) = bar {
+            b.draw(cv);
         }
     }
 
@@ -935,15 +954,6 @@ impl Ui {
                 cv.no_clip();
             }
         }
-        if self.m.pane == tables::PANE_RESULTS {
-            let (fit, _) = Self::results_fit(r, self.meas_rows().len());
-            if self.meas_rows().len() > fit {
-                for (b, t) in Self::results_scroll_btns(r).iter().zip(["Up", "Dn"]) {
-                    btn(cv, *b, BTN, BTN_BORDER);
-                    cv.text_in(&self.fonts().mb, *b, 1, t, TEXT);
-                }
-            }
-        }
     }
 
     /// A tap on the pane, or on the sort button of the full view; true when it was used.
@@ -981,26 +991,9 @@ impl Ui {
                     self.toggle_menu(MenuId::Spectrum);
                 }
             }
-            tables::PANE_RESULTS => {
-                let (fit, _) = Self::results_fit(r, self.meas_rows().len());
-                let [up, down] = Self::results_scroll_btns(r);
-                if self.meas_rows().len() > fit && up.contains(x, y) {
-                    self.results_scroll(-(fit as i32));
-                } else if self.meas_rows().len() > fit && down.contains(x, y) {
-                    self.results_scroll(fit as i32);
-                }
-            }
             tables::PANE_TREND => self.trend_tap(x, y),
             _ => {}
         }
         true
-    }
-
-    /// A finger drawn over the results table moves it by the rows it passed.
-    pub(super) fn pane_swipe(&mut self, x0: i32, y0: i32, y1: i32) {
-        if self.pane_h() > 0 && self.m.pane == tables::PANE_RESULTS && self.pane_rect().contains(x0, y0) {
-            let (_, pitch) = Self::results_fit(self.pane_rect(), self.meas_rows().len());
-            self.results_scroll((y0 - y1) / pitch.max(1));
-        }
     }
 }

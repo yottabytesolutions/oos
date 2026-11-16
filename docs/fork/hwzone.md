@@ -67,7 +67,7 @@ the read follows the first qualified frame at once. `:SYSTem:DEBug:ZONE?` report
 <planned>,batch_ms=<arm to read>`; with `zone.batch = 8` the bench sees whether the ring holds more than one
 qualified frame per arm after all.
 
-Readback (regmap, netlist): the arm bit (0x4030[28]) and the pass flag (0x4038[19]) are right but clear whenever no
+Readback (assumed): the arm bit (0x4030[28]) and the pass flag (0x4038[19]) are right but clear whenever no
 acquisition cycle runs (0x4030 bit 8 = 0, FSM state 0), which is when OOS reads them, after the batch. The debug line
 now shows `cycle` and `state`: `armed` and `pass` mean something only with `cycle=1`. The FSM decides in state 5 once
 the record is complete: pass goes on to completion, fail re-arms in hardware (14, 15, 0). A rejected frame costs a

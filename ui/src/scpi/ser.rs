@@ -1,8 +1,8 @@
 // Copyright (C) 2026 OOS contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! `:TRIGger:RS232|SPI|IIC:*`: the protocol trigger's settings under the stock command names (libscope's SCPI
-//! table), and fork additions for what the stock commands leave out (relations, limits, masks):
+//! `:TRIGger:RS232|SPI|IIC:*`: the protocol trigger's settings under the stock command names, and fork
+//! additions for what the stock commands leave out (relations, limits, masks):
 //! `:RELation EQ|NE|GT|LT|IN|OUT`, `:DMAX <n>`, `:MASK <n>`, `:ARELation`, `:AMAX` (docs/fork/serial-ui.md).
 
 use super::kw;

@@ -11,9 +11,13 @@
 use crate::board::Frame;
 use crate::model::*;
 
-/// Least time between two raw deep reads while running: one raw read of up to `MAX_BYTES` a second keeps the batch
-/// rate of the pair reads.
+/// Least time between two raw deep reads while running, for a read of up to `PERIOD_BYTES`; a larger read waits
+/// longer in proportion (`period`). On the DHO924S a raw read cost about 3 % of the records per MiB read once a second
+/// (10 M at 1 ms/div, 20 MiB: a third of the records at once a second, unit 2026-11-15): so a read costs at most about
+/// 6 % of them and of the screen rate.
 pub const PERIOD: std::time::Duration = std::time::Duration::from_secs(1);
+/// Raw bytes a read may have to be due every `PERIOD`.
+pub const PERIOD_BYTES: usize = 2 << 20;
 /// Largest raw read of one frame (all channels): 24 MiB, 12 M points of one channel, six C2H reads of 4 MiB. A
 /// screen window above it keeps the pair measurement (mean-type values NaN).
 pub const MAX_BYTES: usize = 24 << 20;
@@ -111,10 +115,15 @@ pub fn hold(m: &Model, sw: &crate::sysconf::Switches, f: Option<&Frame>, planned
     f.is_some_and(deep_pairs) && planned && m.run == RunState::Run && want(m, sw).is_some_and(|w| !w.every)
 }
 
-/// The acquisition thread's rate limit: a raw deep read is due for every batch with `every`, else when `PERIOD` has
-/// passed since the last (or none was made).
-pub fn due(w: Want, last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
-    w.every || last.is_none_or(|t| now.duration_since(t) >= PERIOD)
+/// Least time between two raw deep reads of `bytes`: `PERIOD` per `PERIOD_BYTES`, at least `PERIOD`.
+pub fn period(bytes: usize) -> std::time::Duration {
+    PERIOD.mul_f64((bytes as f64 / PERIOD_BYTES as f64).max(1.0))
+}
+
+/// The acquisition thread's rate limit: a raw deep read of `bytes` is due for every batch with `every`, else when its
+/// `period` has passed since the last (or none was made).
+pub fn due(w: Want, last: Option<std::time::Instant>, now: std::time::Instant, bytes: usize) -> bool {
+    w.every || last.is_none_or(|t| now.duration_since(t) >= period(bytes))
 }
 
 #[cfg(test)]
@@ -133,6 +142,7 @@ mod tests {
     #[test]
     fn asked_for_only_when_on_and_a_measurement_needs_samples() {
         assert!(enabled_from(None, ""), "on by default");
+        assert!(!enabled_from(None, "meas.deep_raw = off\n"));
         assert!(enabled_from(None, "meas.deep_raw = on\n"));
         assert!(!enabled_from(None, "ntp = off\nmeas.deep_raw = off   # opt out\n"));
         assert!(!enabled_from(Some("off"), "meas.deep_raw = on\n"));
@@ -184,5 +194,19 @@ mod tests {
         assert!(!hold(&m, &Default::default(), Some(&deep(true)), true), "Single: every batch is read raw");
         m.trig_mode = TrigMode::Auto;
         force(None);
+    }
+
+    #[test]
+    fn raw_reads_wait_in_proportion_to_their_size() {
+        let t = std::time::Instant::now();
+        let w = Want { every: false };
+        let small = PERIOD_BYTES / 2;
+        assert!(due(w, None, t, small));
+        assert!(!due(w, Some(t), t + std::time::Duration::from_millis(999), small));
+        assert!(due(w, Some(t), t + PERIOD, small));
+        assert!(due(Want { every: true }, Some(t), t, 10 * PERIOD_BYTES));
+        // a read of ten times the bytes waits ten times as long
+        assert!(!due(w, Some(t), t + PERIOD * 9, 10 * PERIOD_BYTES));
+        assert!(due(w, Some(t), t + PERIOD * 10, 10 * PERIOD_BYTES));
     }
 }

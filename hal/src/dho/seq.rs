@@ -192,7 +192,7 @@ pub struct Settings {
     /// shown, LA doubling, rate block, thresholds), and after the analog read a second, raw LA read (`la_read_steps`).
     /// None = the analog path exactly as without the LA.
     pub la: Option<la::Set>,
-    /// hardware segmented recording (docs/fork/specs/03-segmented-timestamps.md): one arm records this many frames
+    /// hardware segmented recording: one arm records this many frames
     /// with FPGA re-arm and per-frame trigger timestamps (`seg`). None = the live batches.
     pub segments: Option<Segments>,
     /// what the rear AUX OUT BNC carries (docs/fork/auxout.md); written with the acquisition block when it changed
@@ -367,7 +367,7 @@ impl State {
             p = la::prep(p, l.analog_shown);
         }
         if let acq::Mode::Average { count } = s.mode {
-            // spec 01, 6.5: the library does not prevent these combinations, OOS refuses them
+            // the hardware does not refuse these combinations (assumed), OOS does
             if s.la.is_some() || s.segments.is_some() {
                 return Err("hardware average with the LA or hardware segments".into());
             }
@@ -454,7 +454,7 @@ impl State {
         if s.blocks & 2 != 0 {
             st.push(Step::Poll { reg: 0x4034, bit: scu::status::STOPPED, ms: 30, what: "FSM stopped (stop poll)" });
             if matches!(s.mode, acq::Mode::Average { .. }) {
-                // stock RunConfig: stop, average clear, then the configuration (spec 01, 1.5)
+                // stock RunConfig: stop, average clear, then the configuration
                 st.push(Step::Note("average clear".into()));
                 st.extend(acq::avg_clear().into_iter().map(Step::Wr));
             }
@@ -790,8 +790,8 @@ impl State {
     }
 
     /// Read-out of the `count` frames a batch recorded, all of them in every mode: pass-through, window, stop sequence,
-    /// type-4 play, one read. In average mode too, as the stock driver does: the FPGA's averaging sits on the play
-    /// side (netlist: the next frame waits for the play-out of the one before), so a frame that is not played does not
+    /// type-4 play, one read. In average mode too, as the stock system does: the FPGA's averaging sits on the play
+    /// side (assumed: the next frame waits for the play-out of the one before), so a frame that is not played does not
     /// reach the average (B1, unit 2026-11-13: reading the newest frame alone left the noise near 0.5 mV at any
     /// count). The caller shows the newest.
     pub fn read_steps(&mut self, s: &Settings, p: &hz::Params, count: u32) -> Vec<Step> {
@@ -856,7 +856,7 @@ impl State {
 }
 
 impl State {
-    /// Start of a hardware segmented recording (spec 03, 1.2): clear the first-trigger stamp, then the record arm of
+    /// Start of a hardware segmented recording: clear the first-trigger stamp, then the record arm of
     /// `record_frames(s, p)` frames with the interval of `s.segments`. Poll the progress with `seg::status`.
     pub fn record_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
         let n = record_frames(s, p);
@@ -867,7 +867,7 @@ impl State {
         st
     }
 
-    /// The stamp play of segment `k` (spec 03, 1.4): a type-4 play of frame `k` alone with the smallest read-out window
+    /// The stamp play of segment `k`: a type-4 play of frame `k` alone with the smallest read-out window
     /// (`STAMP_WORDS` words of all channels, from the start of the record window, header on), its read, then the latch
     /// pulse. Read the stamp from 0x40b0/0x40b4 after it (`seg::read_latched`).
     pub fn segment_stamp_steps(&mut self, s: &Settings, p: &hz::Params, k: u32) -> Vec<Step> {
@@ -954,7 +954,7 @@ pub fn compress_k(s: &Settings, p: &hz::Params) -> u32 {
 }
 
 /// The 0x1170 word for factor `k`: k > 1 enables the min/max path with k in bits 13:0; k <= 1 is the pass-through
-/// word. Enable with k = 0 stalls the read (no C2H word at all, netlist simulation), so it is never written.
+/// word. Enable with k = 0 stalls the read (no C2H word at all, assumed), so it is never written.
 pub fn compress_word(k: u32) -> u32 {
     match k.min(COMPRESS_K_MAX) {
         0 | 1 => 0x4000_0001,

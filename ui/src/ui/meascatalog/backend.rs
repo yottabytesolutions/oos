@@ -2,7 +2,6 @@
 //! Bounded catalog jobs over immutable sources; no waveform DSP on the render thread.
 use super::*;
 use std::{
-    cell::RefCell,
     collections::VecDeque,
     sync::{mpsc, Arc, Weak},
 };
@@ -11,52 +10,9 @@ type Row = (u16, WaveId, WaveId, WaveId, WaveId);
 const MAX_POINTS: usize = 32_000_000;
 const MAX_ALIGNED_BYTES: usize = 256 << 20;
 const MAX_SMALL_COPY: usize = 262_144;
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Family {
-    Rate,
-    Eye,
-    Common,
-    Quality,
-    Harmonics,
-    Inrush,
-    InputC,
-    Turn,
-    Switch,
-    Magnetic,
-    Ripple,
-    LineRipple,
-    SwRipple,
-    Ratio,
-    Motor,
-    Mechanical,
-    Rail,
-    RailTurn,
-    Pulse,
-}
-fn family(c: Cat) -> Family {
-    use Cat::*;
-    match c {
-        UnitInterval | DataRate => Family::Rate,
-        DcCommon | AcCommon | DiffCross => Family::Common,
-        PowerQuality | PowerFactor => Family::Quality,
-        Harmonics => Family::Harmonics,
-        Inrush => Family::Inrush,
-        InputC => Family::InputC,
-        TurnOn | TurnOff => Family::Turn,
-        EOn | EOff | ECond | DvdtRise | DvdtFall | DidtRise | DidtFall | RdsOn => Family::Switch,
-        Inductance | MagProp | MagLoss => Family::Magnetic,
-        Ripple => Family::Ripple,
-        LineRipple => Family::LineRipple,
-        SwRipple => Family::SwRipple,
-        Psrr | Impedance => Family::Ratio,
-        Dq0 | Speed | Accel | Direction | Angle => Family::Motor,
-        Torque | MechPower | SysEff => Family::Mechanical,
-        RailOver | RailUnder | DcRail => Family::Rail,
-        RailTurn => Family::RailTurn,
-        Vpeak | Ipeak | TdOn | Tr | Ton | TdOff | Tf | Toff | DpdtV | DpdtI | Tdt | Trr | Qrr | Err | Irrm
-        | DiodeDdt | Qoss => Family::Pulse,
-        _ => Family::Eye,
-    }
+/// The module of a measurement: what is computed together and cached under one key.
+fn module_of(c: Cat) -> usize {
+    measures::find(c.id).map_or(0, |x| x.0)
 }
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct SourceKey {
@@ -72,7 +28,7 @@ struct SourceKey {
 }
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Key {
-    family: Family,
+    module: usize,
     sources: Vec<SourceKey>,
     roles: Vec<WaveId>,
     settings: Vec<u64>,
@@ -102,6 +58,7 @@ struct Input {
     t0: f64,
     dt: f64,
 }
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Input {
     fn values(&self) -> &[f32] {
         &self.samples.values()[self.lo..self.hi]
@@ -142,11 +99,11 @@ struct Job {
     stats_epoch: u64,
 }
 struct Batch {
-    values: Vec<(Cat, f64)>,
+    values: Vec<(u16, f64)>,
     quality: &'static str,
 }
 impl std::ops::Deref for Batch {
-    type Target = [(Cat, f64)];
+    type Target = [(u16, f64)];
     fn deref(&self) -> &Self::Target {
         &self.values
     }
@@ -219,69 +176,14 @@ impl State {
         self.cache.truncate(tools::MEAS_MAX);
     }
 }
-fn settings(m: &Model, f: Family) -> Vec<u64> {
+fn settings(m: &Model, module: usize) -> Vec<u64> {
     let mut v = vec![];
-    let mut put = |x: f64| v.push(x.to_bits());
-    match f {
-        Family::Eye => {
-            for x in [m.eye_rate, m.eye_ber, m.eye_pn_lo, m.eye_pn_hi, m.eye_notch] {
-                put(x);
-            }
-            v.extend([m.eye_hp as u64, m.eye_npj as u64]);
-        }
-        Family::Common => v.push(m.eye_hp as u64),
-        Family::Magnetic => {
-            for x in [m.mag_n, m.mag_ae, m.mag_le, m.mag_rcu] {
-                put(x);
-            }
-        }
-        Family::LineRipple | Family::Quality | Family::Harmonics | Family::Ratio => put(m.pw_fline),
-        Family::SwRipple => put(m.pw_fsw),
-        Family::Motor | Family::Mechanical => {
-            put(m.inv_scale);
-            v.push(m.inv_poles as u64);
-            for id in [m.inv_ev, m.inv_ei] {
-                v.push(id.map_or(u64::MAX, wave_number));
-            }
-        }
-        Family::Rail | Family::RailTurn => v.push(m.pw_ref.map_or(u64::MAX, f64::to_bits)),
-        Family::Pulse => {
-            put(m.dpt_pct);
-            v.push(m.dpt_4th as u64);
-            v.push(wave_number(m.dpt_4ch));
-        }
-        _ => {}
-    }
+    measures::get(module).settings(m, &mut v);
     v
-}
-fn wave_number(id: WaveId) -> u64 {
-    match id {
-        WaveId::Ch(c) => c as u64,
-        WaveId::Ref(r) => (NCH + r) as u64,
-    }
 }
 fn role_ids(c: Cat, row: [WaveId; 4], m: &Model) -> Result<Vec<WaveId>, &'static str> {
     let mut ids = catalog_roles(c).iter().map(|&r| row[r]).collect::<Vec<_>>();
-    match family(c) {
-        Family::Motor | Family::Mechanical => {
-            if row[0] == row[1] || row[0] == row[2] || row[1] == row[2] {
-                return Err("Three distinct phase sources required");
-            }
-            if family(c) == Family::Mechanical {
-                if m.inv_ev.is_some() != m.inv_ei.is_some() {
-                    return Err("Electrical voltage and current sources required together");
-                }
-                ids.extend(m.inv_ev);
-                ids.extend(m.inv_ei);
-            }
-        }
-        Family::Pulse => {
-            if m.dpt_4th != DptFourth::Off {
-                ids.push(m.dpt_4ch);
-            }
-        }
-        _ => {}
-    }
+    measures::get(module_of(c)).sources(c.id, row, m, &mut ids)?;
     if ids.is_empty() {
         return Err("Catalog source roles missing");
     }
@@ -379,7 +281,7 @@ impl Ui {
         ))
     }
     fn catalog_snapshot(&self, c: Cat, row: [WaveId; 4]) -> Result<(Key, Vec<Input>), &'static str> {
-        if !matches!(meta(c).kind, CatKind::Wave) {
+        if c.kind != Kind::Module {
             return Err("Catalog entry uses a legacy measurement");
         }
         let roles = role_ids(c, row, &self.m)?;
@@ -396,10 +298,10 @@ impl Ui {
         }
         Ok((
             Key {
-                family: family(c),
+                module: module_of(c),
                 sources: keys,
                 roles,
-                settings: settings(&self.m, family(c)),
+                settings: settings(&self.m, module_of(c)),
                 epoch: self.workflow_epoch,
                 full: self.m.meas_full_record,
             },
@@ -407,13 +309,8 @@ impl Ui {
         ))
     }
     pub(in crate::ui) fn catalog_reading(&self, c: Cat, row: [WaveId; 4]) -> Reading {
-        let quality = if family(c) == Family::Eye {
-            "NRZ estimate / jitter model"
-        } else if family(c) == Family::Rate {
-            "NRZ UI estimate"
-        } else {
-            "Derived from scaled source roles"
-        };
+        let module = measures::get(module_of(c));
+        let quality = module.pending_quality(c.id);
         let (key, inputs) = match self.catalog_snapshot(c, row) {
             Ok(value) => value,
             Err(reason) => return Reading { value: f64::NAN, computing: false, reason: Some(reason), quality },
@@ -422,22 +319,18 @@ impl Ui {
         if let Some(answer) = state.cache.iter().find(|answer| answer.key == key) {
             return match &answer.result {
                 Ok(values) => {
-                    let value = values.iter().find(|(id, _)| *id == c).map_or(f64::NAN, |(_, v)| *v);
+                    let value = values.iter().find(|(id, _)| *id == c.id).map_or(f64::NAN, |(_, v)| *v);
                     Reading {
                         value,
                         computing: false,
-                        reason: if !value.is_finite() && family(c) == Family::Rate {
-                            Some("NRZ UI unrecoverable; need transitions and at least 2 samples/UI")
-                        } else {
-                            None
-                        },
+                        reason: if !value.is_finite() { module.missing_reason(c.id) } else { None },
                         quality: values.quality,
                     }
                 }
                 Err(reason) => Reading { value: f64::NAN, computing: false, reason: Some(*reason), quality },
             };
         }
-        let tuple = (c as u16, row[0], row[1], row[2], row[3]);
+        let tuple = (c.id, row[0], row[1], row[2], row[3]);
         if !state.pending.iter().any(|(old, _)| *old == key) {
             state.pending.push_back((key.clone(), tuple));
             while state.pending.len() > tools::MEAS_MAX {
@@ -506,7 +399,7 @@ impl Ui {
                                 && *epoch == answer.stats_epoch
                                 && *epoch == state.stats_epoch
                             {
-                                if let Some((_, value)) = values.iter().find(|(cat, _)| *cat as u16 == row.0) {
+                                if let Some((_, value)) = values.iter().find(|(id, _)| *id == row.0) {
                                     accepted.push((*row, *value, *capture));
                                 }
                             }
@@ -588,515 +481,18 @@ fn align_inputs(inputs: &[Input]) -> Result<Aligned, &'static str> {
     }
     Ok(Aligned { dt, t0, inputs: out })
 }
-struct Evaluator {
-    quality: RefCell<Option<oos_dsp::power::Quality>>,
-    rail: RefCell<Option<oos_dsp::power::Rail>>,
-    rate: RefCell<Option<oos_dsp::measure::Analysis>>,
-    model: Model,
-    t0: f64,
-    dt: f64,
-    inputs: Vec<(WaveId, Vec<f32>)>,
-    eye: RefCell<Option<Option<EyeSnap>>>,
-    switching: RefCell<Option<oos_dsp::power::Switching>>,
-    magnetic: RefCell<Option<Arc<oos_dsp::magnetic::Magnetic>>>,
-    shaft: RefCell<Option<Arc<oos_dsp::motor::Shaft>>>,
-    mechanical: RefCell<Option<Arc<oos_dsp::motor::Mech>>>,
-    pulse: RefCell<Option<Arc<oos_dsp::dpt::Pulse>>>,
-}
-impl Evaluator {
-    fn wave_vec(&self, id: WaveId) -> Option<(&[f32], f64, f64)> {
-        self.inputs.iter().find(|(source, _)| *source == id).map(|(_, v)| (v.as_slice(), self.t0, self.dt))
-    }
-    fn align(&self, ids: &[WaveId]) -> Option<(f64, Vec<&[f32]>)> {
-        Some((self.dt, ids.iter().map(|&id| self.wave_vec(id).map(|w| w.0)).collect::<Option<_>>()?))
-    }
-}
+/// A job on the worker: the module computes every measurement of the row's that reads the same roles.
 fn compute(job: &Job) -> Result<Batch, &'static str> {
     let aligned = align_inputs(&job.inputs)?;
-    let eval = Evaluator {
-        quality: RefCell::new(None),
-        rail: RefCell::new(None),
-        rate: RefCell::new(None),
-        model: job.model.clone(),
-        t0: aligned.t0,
-        dt: aligned.dt,
-        inputs: aligned.inputs,
-        eye: RefCell::new(None),
-        switching: RefCell::new(None),
-        magnetic: RefCell::new(None),
-        shaft: RefCell::new(None),
-        mechanical: RefCell::new(None),
-        pulse: RefCell::new(None),
-    };
-    let (_, a, b, c, d) = job.row;
-    let values = listed()
-        .into_iter()
-        .filter(|&cat| {
-            matches!(meta(cat).kind, CatKind::Wave)
-                && family(cat) == job.key.family
-                && catalog_roles(cat) == catalog_roles(cat_from(job.row.0).unwrap())
-        })
-        .map(|cat| (cat, eval.cat_number(cat, a, b, c, d)))
-        .collect();
-    let quality = if job.key.family == Family::Eye {
-        eval.eye
-            .borrow()
-            .as_ref()
-            .and_then(|eye| eye.as_ref())
-            .map_or("NRZ estimate: insufficient transitions or sampling", |eye| eye.quality)
-    } else if job.key.family == Family::Rate {
-        eval.rate.borrow().as_ref().map_or("NRZ estimate: insufficient transitions", |analysis| {
-            if !analysis.est_ui.is_finite() || analysis.est_ui < 2.0 * eval.dt {
-                "NRZ estimate: insufficient transitions or sampling"
-            } else if analysis.est_ui / eval.dt < 10.0 {
-                "NRZ estimate: limited sampling"
-            } else {
-                "NRZ estimate: transition intervals / fitted bit counts"
-            }
-        })
-    } else if job.key.family == Family::Pulse {
-        eval.pulse.borrow().as_ref().map_or("DPT: no qualifying pulse", |pulse| {
-            if pulse.sample_limit {
-                "DPT estimate: sample limited"
-            } else if pulse.diode_from_id || pulse.err_from_vds || pulse.qoss_approx {
-                "DPT estimate: inferred recovery or charge"
-            } else {
-                "Derived DPT result"
-            }
-        })
-    } else {
-        "Derived from scaled source roles"
-    };
-    Ok(Batch { values, quality })
-}
-#[derive(Clone)]
-struct EyeSnap {
-    quality: &'static str,
-    period: f64,
-    rate: f64,
-    tj: f64,
-    tie_pp: f64,
-    rj: f64,
-    dj: f64,
-    pj: f64,
-    sj: f64,
-    ddj: f64,
-    dcd: f64,
-    srj: f64,
-    j2: f64,
-    pn: f64,
-    one: f64,
-    zero: f64,
-    amp: f64,
-    height: f64,
-    width: f64,
-    height_ber: f64,
-    width_ber: f64,
-    q: f64,
-    s1: f64,
-    s0: f64,
-    ssc_ppm: f64,
-    ssc_hz: f64,
-    tnt: f64,
-}
-
-fn eye_of(v: &[f32], dt: f64, ber: f64, pn_lo: f64, pn_hi: f64, rate: f64) -> Option<EyeSnap> {
-    if v.len() < 16 || !(dt > 0.0) {
-        return None;
-    }
-    let finite = v.iter().copied().filter(|x| x.is_finite());
-    if finite.clone().take(16).count() < 16 {
-        return None;
-    }
-    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
-    for x in finite {
-        lo = lo.min(x);
-        hi = hi.max(x);
-    }
-    if !(hi > lo) {
-        return None;
-    }
-    let (summary, clk) = super::super::eyepage::automatic::infer(v, dt, (rate > 0.0).then_some(rate), false).ok()?;
-    let tie = oos_dsp::eye::tie(&clk.edges, &clk);
-    let j = oos_dsp::eye::jitter(&tie);
-    let mut means = oos_dsp::eye::EdgeMeans::default();
-    means.add(&tie, &clk);
-    let trend = oos_dsp::eye::tie_trend(&clk.edges, &tie, &clk);
-    let (df, spec) = oos_dsp::eye::tie_spectrum(&trend, clk.period);
-    let lines = oos_dsp::eye::pj_lines(df, &spec, 12);
-    let pj = lines.iter().map(|(_, r)| r * r).sum::<f64>().sqrt();
-    let sj = lines.first().map(|x| x.1).unwrap_or(f64::NAN);
-    let pad = 0.15 * (hi - lo);
-    let mut diagram = oos_dsp::eye::Eye::new(72, 40, 2, lo - pad, hi + pad);
-    diagram.accumulate(v, dt, &clk);
-    let meas = diagram.measure(clk.period);
-    let (ssc_ppm, _) = oos_dsp::eye::ssc_deviation(&clk);
-    let snap = EyeSnap {
-        quality: if summary.samples_per_ui < 10.0 {
-            "NRZ estimate: limited sampling"
-        } else {
-            match j.fit {
-                oos_dsp::eye::JitterFit::TooFew => "NRZ estimate: too few edges for jitter model",
-                oos_dsp::eye::JitterFit::Limit => "NRZ estimate: dual-Dirac upper limits",
-                oos_dsp::eye::JitterFit::Quiet => "NRZ estimate: jitter below time resolution",
-                oos_dsp::eye::JitterFit::Tails => "NRZ estimate: dual-Dirac tail model",
-            }
-        },
-        period: clk.period,
-        rate: clk.rate(),
-        tj: oos_dsp::eye::tj_at(&j, ber),
-        tie_pp: j.pp,
-        rj: j.rj_rms,
-        dj: j.dj_pp,
-        pj,
-        sj,
-        ddj: means.ddj(),
-        dcd: means.dcd(),
-        srj: oos_dsp::eye::srj_pp(&trend, clk.period),
-        j2: oos_dsp::eye::tj_at(&j, oos_dsp::eye::BER_J2),
-        pn: oos_dsp::eye::phase_noise(&trend, clk.period, pn_lo, pn_hi),
-        one: meas.one,
-        zero: meas.zero,
-        amp: meas.amplitude,
-        height: meas.height,
-        width: meas.width,
-        height_ber: meas.height_at(ber),
-        width_ber: oos_dsp::eye::eye_width_at(&j, clk.period, ber),
-        q: meas.q_factor,
-        s1: meas.sigma_one,
-        s0: meas.sigma_zero,
-        ssc_ppm,
-        ssc_hz: oos_dsp::eye::ssc_rate(&clk),
-        tnt: oos_dsp::eye::tnt_ratio(v, dt, &clk),
-    };
-    Some(snap)
-}
-
-impl Evaluator {
-    fn cat_number(&self, c: Cat, a: WaveId, b: WaveId, csrc: WaveId, d: WaveId) -> f64 {
-        let nan = f64::NAN;
-        let one = |id| self.wave_vec(id).map(|w| w);
-        match c {
-            Cat::UnitInterval | Cat::DataRate => {
-                let Some((v, _, dt)) = one(a) else { return nan };
-                if self.rate.borrow().is_none() {
-                    *self.rate.borrow_mut() = Some(oos_dsp::measure::analyze(v, dt));
-                }
-                let analysis = self.rate.borrow();
-                let analysis = analysis.as_ref().unwrap();
-                let interval = analysis.est_ui;
-                // Clock cycle period on random NRZ data averages several UIs.
-                // Neither it nor a SIM/eye preset is a substitute for recovered bit spacing.
-                if !interval.is_finite() || interval < 2.0 * dt || analysis.rises.len() + analysis.falls.len() < 3 {
-                    return nan;
-                }
-                if c == Cat::UnitInterval {
-                    interval
-                } else {
-                    1.0 / interval
-                }
-            }
-            Cat::JitterSummary | Cat::TjBer => self.eye_num(a, |e| e.tj),
-            Cat::Tie => self.eye_num(a, |e| e.tie_pp),
-            Cat::PhaseNoise => self.eye_num(a, |e| e.pn),
-            Cat::RjDd => self.eye_num(a, |e| e.rj),
-            Cat::DjDd => self.eye_num(a, |e| e.dj),
-            Cat::SjFreq => self.eye_num(a, |e| e.sj),
-            Cat::Pj => self.eye_num(a, |e| e.pj),
-            Cat::Ddj => self.eye_num(a, |e| e.ddj),
-            Cat::Dcd => self.eye_num(a, |e| e.dcd),
-            Cat::Srj => self.eye_num(a, |e| e.srj),
-            Cat::J2 => self.eye_num(a, |e| e.j2),
-            Cat::EyeHeight => self.eye_num(a, |e| e.height),
-            Cat::EyeWidth => self.eye_num(a, |e| e.width),
-            Cat::EyeHigh => self.eye_num(a, |e| e.one - 3.0 * e.s1),
-            Cat::EyeHeightBer => self.eye_num(a, |e| e.height_ber),
-            Cat::EyeWidthBer => self.eye_num(a, |e| e.width_ber),
-            Cat::EyeLow => self.eye_num(a, |e| e.zero + 3.0 * e.s0),
-            Cat::QFactor => self.eye_num(a, |e| e.q),
-            Cat::BitHigh => self.eye_num(a, |e| e.one),
-            Cat::BitLow => self.eye_num(a, |e| e.zero),
-            Cat::BitAmplitude => self.eye_num(a, |e| e.amp),
-            Cat::Tnt => self.eye_num(a, |e| e.tnt),
-            Cat::BitRate => self.eye_num(a, |e| e.rate),
-            Cat::SscDev => self.eye_num(a, |e| e.ssc_ppm),
-            Cat::SscRate => self.eye_num(a, |e| e.ssc_hz),
-            Cat::DcCommon => {
-                if a == b {
-                    return nan;
-                }
-                let Some((dt, v)) = self.align(&[a, b]) else { return nan };
-                let _ = dt;
-                oos_dsp::eye::dc_common(&v[0], &v[1])
-            }
-            Cat::AcCommon => {
-                let Some((v, _, dt)) = one(a) else { return nan };
-                if a == b {
-                    oos_dsp::eye::ac_common_pp(&v, None, dt, self.model.eye_hp)
-                } else if let Some((aligned_dt, w)) = self.align(&[a, b]) {
-                    oos_dsp::eye::ac_common_pp(&w[0], Some(&w[1]), aligned_dt, self.model.eye_hp)
-                } else {
-                    nan
-                }
-            }
-            Cat::DiffCross => {
-                if a == b {
-                    return nan;
-                }
-                let Some((_, v)) = self.align(&[a, b]) else { return nan };
-                oos_dsp::eye::diff_crossover(&v[0], &v[1])
-            }
-            Cat::PowerQuality => self.power_quality(a, b).map_or(nan, |q| q.p_real),
-            Cat::Harmonics => one(b)
-                .map(|(i, _, dt)| {
-                    let h = oos_dsp::power::harmonics(
-                        i,
-                        dt,
-                        (self.model.pw_fline > 0.0).then_some(self.model.pw_fline),
-                        40,
-                    );
-                    let fund = h.iter().find(|x| x.0 == 1).map(|x| x.1).unwrap_or(0.0);
-                    let rest = h.iter().filter(|x| x.0 > 1).map(|x| x.1 * x.1).sum::<f64>().sqrt();
-                    if fund > 0.0 {
-                        100.0 * rest / fund
-                    } else {
-                        nan
-                    }
-                })
-                .unwrap_or(nan),
-            Cat::Inrush => one(b).map(|(i, _, dt)| oos_dsp::power::inrush(i, dt).0).unwrap_or(nan),
-            Cat::InputC => self.vi(a, b, |v, i, dt| oos_dsp::power::input_capacitance(v, i, dt)),
-            Cat::TurnOn => self.vi(a, b, |vout, vin, dt| oos_dsp::power::turn_on_time(vin, vout, dt)),
-            Cat::TurnOff => self.vi(a, b, |vout, vin, dt| oos_dsp::power::turn_off_time(vin, vout, dt)),
-            Cat::EOn => self.sw(a, b, |s| s.e_on),
-            Cat::EOff => self.sw(a, b, |s| s.e_off),
-            Cat::ECond => self.sw(a, b, |s| s.e_cond),
-            Cat::DvdtRise => self.sw(a, b, |s| s.dvdt_rise),
-            Cat::DvdtFall => self.sw(a, b, |s| s.dvdt_fall),
-            Cat::DidtRise => self.sw(a, b, |s| s.didt_rise),
-            Cat::DidtFall => self.sw(a, b, |s| s.didt_fall),
-            Cat::RdsOn => self.sw(a, b, |s| s.rds_on),
-            Cat::Inductance => self.mag(a, b).and_then(|m| m.l).unwrap_or(nan),
-            Cat::MagProp => self.mag(a, b).and_then(|m| m.mu_r).unwrap_or(nan),
-            Cat::MagLoss => self.mag(a, b).and_then(|m| m.loss).unwrap_or(nan),
-            Cat::Ripple => one(a).map(|(v, _, _)| oos_dsp::power::ripple(&v).0).unwrap_or(nan),
-            Cat::LineRipple => one(a)
-                .map(|(v, _, dt)| {
-                    let f =
-                        if self.model.pw_fline > 0.0 { self.model.pw_fline } else { oos_dsp::power::line_hz(&v, dt) };
-                    oos_dsp::power::tone_ripple(&v, dt, f).pp
-                })
-                .unwrap_or(nan),
-            Cat::SwRipple => one(a)
-                .map(|(v, _, dt)| {
-                    let f = if self.model.pw_fsw > 0.0 { self.model.pw_fsw } else { oos_dsp::power::switch_hz(&v, dt) };
-                    oos_dsp::power::switching_ripple(&v, dt, f).pp
-                })
-                .unwrap_or(nan),
-            Cat::Psrr => self.ratio(a, b, oos_dsp::bode::Mode::Psrr),
-            Cat::Impedance => self.ratio(a, b, oos_dsp::bode::Mode::Z),
-            Cat::PowerFactor => self.power_quality(a, b).map_or(nan, |q| q.pf),
-            Cat::Dq0 => self
-                .phases(a, b, csrc)
-                .and_then(|(dt, v)| {
-                    oos_dsp::motor::dq0(&v[0], &v[1], &v[2], dt, oos_dsp::motor::Theta::Vector).map(|q| q.d)
-                })
-                .unwrap_or(nan),
-            Cat::Speed => self.shaft(a, b, csrc).and_then(|s| s.rpm).unwrap_or(nan),
-            Cat::Accel => self.shaft(a, b, csrc).and_then(|s| s.accel).unwrap_or(nan),
-            Cat::Direction => self
-                .shaft(a, b, csrc)
-                .map(|s| match s.direction {
-                    oos_dsp::motor::Direction::Forward => 1.0,
-                    oos_dsp::motor::Direction::Stopped => 0.0,
-                    oos_dsp::motor::Direction::Reverse => -1.0,
-                })
-                .unwrap_or(nan),
-            Cat::Angle => self.shaft(a, b, csrc).and_then(|s| s.angle_deg).unwrap_or(nan),
-            Cat::Torque | Cat::MechPower | Cat::SysEff => self
-                .mech(a, b, csrc, d)
-                .map(|m| match c {
-                    Cat::Torque => m.torque.unwrap_or(nan),
-                    Cat::MechPower => m.p_mech.unwrap_or(nan),
-                    _ => m.eff.unwrap_or(nan),
-                })
-                .unwrap_or(nan),
-            Cat::RailOver | Cat::RailUnder | Cat::RailTurn | Cat::DcRail => {
-                let Some((v, _, dt)) = one(a) else { return nan };
-                let vin = if a != b { self.wave_vec(b).map(|w| w.0) } else { None };
-                if self.rail.borrow().is_none() {
-                    *self.rail.borrow_mut() = Some(oos_dsp::power::rail(
-                        v,
-                        dt,
-                        self.model.pw_ref.filter(|v| v.is_finite() && *v != 0.0),
-                        vin.as_deref(),
-                        None,
-                    ));
-                }
-                let rail = self.rail.borrow();
-                let rail = rail.as_ref().unwrap();
-                match c {
-                    Cat::RailOver => rail.overshoot,
-                    Cat::RailUnder => rail.undershoot,
-                    Cat::RailTurn => rail.turn_on,
-                    _ => rail.dc,
-                }
-            }
-            Cat::Vpeak
-            | Cat::Ipeak
-            | Cat::TdOn
-            | Cat::TdOff
-            | Cat::Tr
-            | Cat::Tf
-            | Cat::Ton
-            | Cat::Toff
-            | Cat::DpdtV
-            | Cat::DpdtI
-            | Cat::Tdt
-            | Cat::Trr
-            | Cat::Qrr
-            | Cat::Err
-            | Cat::Irrm
-            | Cat::DiodeDdt
-            | Cat::Qoss => self
-                .pulse(a, b, csrc)
-                .map(|p| match c {
-                    Cat::Vpeak => p.vpeak.unwrap_or(nan),
-                    Cat::Ipeak => p.ipeak.unwrap_or(nan),
-                    Cat::TdOn => p.td_on.unwrap_or(nan),
-                    Cat::TdOff => p.td_off.unwrap_or(nan),
-                    Cat::Tr => p.tr.unwrap_or(nan),
-                    Cat::Tf => p.tf.unwrap_or(nan),
-                    Cat::Ton => p.ton.unwrap_or(nan),
-                    Cat::Toff => p.toff.unwrap_or(nan),
-                    Cat::DpdtV => p.dvdt.unwrap_or(nan),
-                    Cat::DpdtI => p.didt.unwrap_or(nan),
-                    Cat::Tdt => p.tdt.unwrap_or(nan),
-                    Cat::Trr => p.trr.unwrap_or(nan),
-                    Cat::Qrr => p.qrr.unwrap_or(nan),
-                    Cat::Err => p.err.unwrap_or(nan),
-                    Cat::Irrm => p.irrm.unwrap_or(nan),
-                    Cat::DiodeDdt => p.diode_didt.unwrap_or(nan),
-                    _ => p.qoss.unwrap_or(nan),
-                })
-                .unwrap_or(nan),
-            _ => nan,
-        }
-    }
-
-    fn eye_num(&self, id: WaveId, f: impl FnOnce(&EyeSnap) -> f64) -> f64 {
-        let Some((v, _, dt)) = self.wave_vec(id) else { return f64::NAN };
-        if self.eye.borrow().is_none() {
-            *self.eye.borrow_mut() = Some(eye_of(
-                &v,
-                dt,
-                self.model.eye_ber,
-                self.model.eye_pn_lo,
-                self.model.eye_pn_hi,
-                self.model.eye_rate,
-            ));
-        }
-        self.eye.borrow().as_ref().and_then(|e| e.as_ref()).map(f).unwrap_or(f64::NAN)
-    }
-
-    fn power_quality(&self, a: WaveId, b: WaveId) -> Option<oos_dsp::power::Quality> {
-        if self.quality.borrow().is_none() {
-            let (dt, v) = self.align(&[a, b])?;
-            *self.quality.borrow_mut() = Some(oos_dsp::power::quality(
-                v[0],
-                v[1],
-                dt,
-                (self.model.pw_fline > 0.0).then_some(self.model.pw_fline),
-            ));
-        }
-        *self.quality.borrow()
-    }
-    fn vi(&self, a: WaveId, b: WaveId, f: impl FnOnce(&[f32], &[f32], f64) -> f64) -> f64 {
-        self.align(&[a, b]).map(|(dt, v)| f(&v[0], &v[1], dt)).unwrap_or(f64::NAN)
-    }
-
-    fn sw(&self, a: WaveId, b: WaveId, f: impl FnOnce(&oos_dsp::power::Switching) -> f64) -> f64 {
-        if self.switching.borrow().is_none() {
-            let Some((dt, v)) = self.align(&[a, b]) else { return f64::NAN };
-            *self.switching.borrow_mut() = Some(oos_dsp::power::switching(v[0], v[1], dt, 10.0));
-        }
-        self.switching.borrow().as_ref().map(f).unwrap_or(f64::NAN)
-    }
-
-    fn mag(&self, a: WaveId, b: WaveId) -> Option<Arc<oos_dsp::magnetic::Magnetic>> {
-        if let Some(value) = self.magnetic.borrow().as_ref() {
-            return Some(Arc::clone(value));
-        }
-        let (dt, v) = self.align(&[a, b])?;
-        let geom = oos_dsp::magnetic::Geom {
-            turns: self.model.mag_n.max(1.0),
-            area: (self.model.mag_ae > 0.0).then_some(self.model.mag_ae),
-            length: (self.model.mag_le > 0.0).then_some(self.model.mag_le),
-            rcu: self.model.mag_rcu.max(0.0),
-        };
-        let value = Arc::new(oos_dsp::magnetic::measure(v[0], v[1], dt, geom));
-        *self.magnetic.borrow_mut() = Some(Arc::clone(&value));
-        Some(value)
-    }
-
-    fn ratio(&self, a: WaveId, b: WaveId, mode: oos_dsp::bode::Mode) -> f64 {
-        let Some((dt, v)) = self.align(&[a, b]) else { return f64::NAN };
-        let f = if self.model.pw_fline > 0.0 { self.model.pw_fline } else { oos_dsp::power::line_hz(v[0], dt) };
-        oos_dsp::bode::response(mode, &v[0], &v[1], dt, f).map(|p| p.0).unwrap_or(f64::NAN)
-    }
-
-    fn phases(&self, a: WaveId, b: WaveId, c: WaveId) -> Option<(f64, Vec<&[f32]>)> {
-        if a == b || a == c || b == c {
-            return None;
-        }
-        self.align(&[a, b, c])
-    }
-
-    fn shaft(&self, a: WaveId, b: WaveId, c: WaveId) -> Option<Arc<oos_dsp::motor::Shaft>> {
-        if let Some(value) = self.shaft.borrow().as_ref() {
-            return Some(Arc::clone(value));
-        }
-        let (dt, v) = self.phases(a, b, c)?;
-        let value = Arc::new(oos_dsp::motor::shaft_phase(v[0], v[1], v[2], dt, self.t0, self.model.inv_poles.max(1)));
-        *self.shaft.borrow_mut() = Some(Arc::clone(&value));
-        Some(value)
-    }
-
-    fn mech(&self, a: WaveId, b: WaveId, c: WaveId, d: WaveId) -> Option<Arc<oos_dsp::motor::Mech>> {
-        if let Some(value) = self.mechanical.borrow().as_ref() {
-            return Some(Arc::clone(value));
-        }
-        let shaft = self.shaft(a, b, c)?;
-        let torque = self.wave_vec(d).map(|w| w.0);
-        let ev = self.model.inv_ev.and_then(|id| self.wave_vec(id)).map(|w| w.0);
-        let ei = self.model.inv_ei.and_then(|id| self.wave_vec(id)).map(|w| w.0);
-        let value = Arc::new(oos_dsp::motor::mechanical(
-            shaft.as_ref().clone(),
-            torque.as_deref(),
-            self.model.inv_scale,
-            ev.as_deref(),
-            ei.as_deref(),
-        ));
-        *self.mechanical.borrow_mut() = Some(Arc::clone(&value));
-        Some(value)
-    }
-
-    fn pulse(&self, a: WaveId, b: WaveId, g: WaveId) -> Option<Arc<oos_dsp::dpt::Pulse>> {
-        if let Some(value) = self.pulse.borrow().as_ref() {
-            return Some(Arc::clone(value));
-        }
-        let (dt, v) = self.align(&[a, b, g])?;
-        let fourth = self.wave_vec(self.model.dpt_4ch).map(|w| w.0);
-        let fourth = match (self.model.dpt_4th, fourth) {
-            (DptFourth::Gate, Some(v)) => oos_dsp::dpt::Fourth::Gate(v),
-            (DptFourth::DiodeV, Some(v)) => oos_dsp::dpt::Fourth::DiodeV(v),
-            (DptFourth::DiodeI, Some(v)) => oos_dsp::dpt::Fourth::DiodeI(v),
-            _ => oos_dsp::dpt::Fourth::Off,
-        };
-        let value = Arc::new(oos_dsp::dpt::measure(v[0], v[1], Some(v[2]), fourth, dt, self.model.dpt_pct));
-        *self.pulse.borrow_mut() = Some(Arc::clone(&value));
-        Some(value)
-    }
+    let (id, a, b, c, d) = job.row;
+    let asked = cat_from(id).ok_or("Unknown catalog measurement")?;
+    let module = measures::get(job.key.module);
+    let ids: Vec<u16> =
+        module.defs().iter().filter(|x| x.kind == Kind::Module && x.roles == asked.roles).map(|x| x.id).collect();
+    let ctx =
+        measures::Ctx { model: &job.model, t0: aligned.t0, dt: aligned.dt, row: [a, b, c, d], waves: &aligned.inputs };
+    let out = module.compute(&ctx, &ids);
+    Ok(Batch { values: out.values, quality: out.quality })
 }
 #[cfg(test)]
 mod tests {
@@ -1130,7 +526,7 @@ mod tests {
         });
     }
     fn row(c: Cat) -> Row {
-        (c as u16, WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3))
+        (c.id, WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3))
     }
     fn wait(ui: &mut Ui, c: Cat) -> Reading {
         let end = Instant::now() + Duration::from_secs(20);
@@ -1164,45 +560,63 @@ mod tests {
         }
         ui.m.dpt_4th = DptFourth::Gate;
         ui.m.dpt_4ch = WaveId::Ref(3);
-        let (_, inputs) =
-            ui.catalog_snapshot(Cat::Vpeak, [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)]).unwrap();
+        let (_, inputs) = ui
+            .catalog_snapshot(
+                tile(measures::double_pulse::VPEAK),
+                [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)],
+            )
+            .unwrap();
         assert_eq!(inputs.len(), 4);
         let aligned = align_inputs(&inputs).unwrap();
         assert_eq!((aligned.t0, aligned.dt, aligned.inputs[0].1.len()), (5.0, 1.0, 4));
         ui.refs[3].as_mut().unwrap().t0 = 20.0;
-        let (_, inputs) =
-            ui.catalog_snapshot(Cat::Vpeak, [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)]).unwrap();
+        let (_, inputs) = ui
+            .catalog_snapshot(
+                tile(measures::double_pulse::VPEAK),
+                [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)],
+            )
+            .unwrap();
         assert!(align_inputs(&inputs).is_err());
     }
     #[test]
     fn families_queue_once_share_immutable_data_and_never_count_stopped_reads() {
         let mut ui = fixture();
         put(&mut ui, 0, (0..400_000).map(|i| if i % 40 < 20 { -0.5 } else { 0.5 }).collect(), 0.0, 1e-9);
-        ui.m.cat = vec![row(Cat::EyeHeight), row(Cat::Tie)];
+        ui.m.cat = vec![row(tile(measures::jitter::EYE_HEIGHT)), row(tile(measures::jitter::TIE))];
         let started = Instant::now();
         for _ in 0..100 {
             let _ = ui.cat_row(
-                row(Cat::EyeHeight).0,
-                row(Cat::EyeHeight).1,
-                row(Cat::EyeHeight).2,
-                row(Cat::EyeHeight).3,
-                row(Cat::EyeHeight).4,
+                row(tile(measures::jitter::EYE_HEIGHT)).0,
+                row(tile(measures::jitter::EYE_HEIGHT)).1,
+                row(tile(measures::jitter::EYE_HEIGHT)).2,
+                row(tile(measures::jitter::EYE_HEIGHT)).3,
+                row(tile(measures::jitter::EYE_HEIGHT)).4,
             );
-            let _ = ui.cat_row(row(Cat::Tie).0, row(Cat::Tie).1, row(Cat::Tie).2, row(Cat::Tie).3, row(Cat::Tie).4);
+            let _ = ui.cat_row(
+                row(tile(measures::jitter::TIE)).0,
+                row(tile(measures::jitter::TIE)).1,
+                row(tile(measures::jitter::TIE)).2,
+                row(tile(measures::jitter::TIE)).3,
+                row(tile(measures::jitter::TIE)).4,
+            );
         }
         assert!(started.elapsed() < Duration::from_millis(500));
         assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted, 1);
         assert!(Arc::strong_count(&ui.refs[0].as_ref().unwrap().v) >= 2, "worker must hold the same immutable source");
-        let height = wait(&mut ui, Cat::EyeHeight);
+        let height = wait(&mut ui, tile(measures::jitter::EYE_HEIGHT));
         assert!(height.value.is_finite());
         assert!(height.quality.contains("NRZ"));
-        assert!(wait(&mut ui, Cat::Tie).value.is_finite());
+        assert!(wait(&mut ui, tile(measures::jitter::TIE)).value.is_finite());
         assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted, 1);
         assert_eq!((ui.wfm_total, ui.replay.captures, ui.m.run), (0, 0, RunState::Stop));
         assert!(ui.measurement_statistics_snapshot_for_test().iter().all(|(n, _)| *n == 0));
         ui.m.delay = 100.;
         assert!(
-            !ui.catalog_reading(Cat::Tie, [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)]).computing
+            !ui.catalog_reading(
+                tile(measures::jitter::TIE),
+                [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)]
+            )
+            .computing
         );
         assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted, 1);
     }
@@ -1210,32 +624,45 @@ mod tests {
     fn replacing_unsampled_interior_data_discards_old_answer_and_has_unique_owner_version() {
         let mut ui = fixture();
         put(&mut ui, 0, vec![0.; 400_000], 0.0, 1e-9);
-        ui.m.cat = vec![row(Cat::Ripple)];
+        ui.m.cat = vec![row(tile(measures::power::RIPPLE))];
         assert!(
-            ui.catalog_reading(Cat::Ripple, [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)]).computing
+            ui.catalog_reading(
+                tile(measures::power::RIPPLE),
+                [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)]
+            )
+            .computing
         );
         let old = ui
-            .catalog_snapshot(Cat::Ripple, [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)])
+            .catalog_snapshot(
+                tile(measures::power::RIPPLE),
+                [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)],
+            )
             .unwrap()
             .0;
         Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v)[123_456] = 7.;
         let new = ui
-            .catalog_snapshot(Cat::Ripple, [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)])
+            .catalog_snapshot(
+                tile(measures::power::RIPPLE),
+                [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)],
+            )
             .unwrap()
             .0;
         assert_ne!(old, new);
-        let reading = wait(&mut ui, Cat::Ripple);
+        let reading = wait(&mut ui, tile(measures::power::RIPPLE));
         assert_eq!(reading.value, 7.);
         assert!(ui.azr.catalog_measurements.borrow().cache.iter().all(|entry| entry.key != old));
         // No full source owner is held by the compact result cache. A retained Weak
         // still forces make_mut to disassociate and receive a new monotonic ID.
         Arc::make_mut(&mut ui.refs[0].as_mut().unwrap().v)[123_457] = 9.;
         let newest = ui
-            .catalog_snapshot(Cat::Ripple, [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)])
+            .catalog_snapshot(
+                tile(measures::power::RIPPLE),
+                [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)],
+            )
             .unwrap()
             .0;
         assert_ne!(newest, new);
-        assert_eq!(wait(&mut ui, Cat::Ripple).value, 9.);
+        assert_eq!(wait(&mut ui, tile(measures::power::RIPPLE)).value, 9.);
         assert_eq!(ui.wfm_total, 0);
     }
     #[test]
@@ -1243,28 +670,31 @@ mod tests {
         let mut ui = fixture();
         put(&mut ui, 0, vec![0.; 10_000], -5e-6, 1e-9);
         let ids = [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)];
-        let full = ui.catalog_snapshot(Cat::Ripple, ids).unwrap().0;
+        let full = ui.catalog_snapshot(tile(measures::power::RIPPLE), ids).unwrap().0;
         ui.m.delay = 1e-6;
-        assert_eq!(ui.catalog_snapshot(Cat::Ripple, ids).unwrap().0, full);
+        assert_eq!(ui.catalog_snapshot(tile(measures::power::RIPPLE), ids).unwrap().0, full);
         ui.m.meas_full_record = false;
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-9).abs() < 1e-14).unwrap();
         ui.m.delay = 0.;
-        let screen = ui.catalog_snapshot(Cat::Ripple, ids).unwrap().0;
+        let screen = ui.catalog_snapshot(tile(measures::power::RIPPLE), ids).unwrap().0;
         ui.m.delay = 1e-6;
-        assert_ne!(ui.catalog_snapshot(Cat::Ripple, ids).unwrap().0, screen);
+        assert_ne!(ui.catalog_snapshot(tile(measures::power::RIPPLE), ids).unwrap().0, screen);
         assert_eq!(
-            ui.catalog_snapshot(Cat::Ripple, [ids[0], WaveId::Ch(3), ids[2], ids[3]]).unwrap().0,
-            ui.catalog_snapshot(Cat::Ripple, ids).unwrap().0
+            ui.catalog_snapshot(tile(measures::power::RIPPLE), [ids[0], WaveId::Ch(3), ids[2], ids[3]]).unwrap().0,
+            ui.catalog_snapshot(tile(measures::power::RIPPLE), ids).unwrap().0
         );
     }
     #[test]
     fn missing_data_and_alignment_budget_are_explicit_not_zero() {
         let mut ui = fixture();
         put(&mut ui, 0, vec![0.; 4000], 0., 1e-9);
-        ui.m.cat = vec![row(Cat::EyeHeight)];
-        let r = wait(&mut ui, Cat::EyeHeight);
+        ui.m.cat = vec![row(tile(measures::jitter::EYE_HEIGHT))];
+        let r = wait(&mut ui, tile(measures::jitter::EYE_HEIGHT));
         assert!(r.value.is_nan());
-        let missing = ui.catalog_reading(Cat::Vpeak, [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)]);
+        let missing = ui.catalog_reading(
+            tile(measures::double_pulse::VPEAK),
+            [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)],
+        );
         assert!(!missing.computing && missing.value.is_nan() && missing.reason.is_some());
         // Metadata-only impossible span verifies the guard runs before indexing/allocation.
         let a = Input {
@@ -1283,40 +713,45 @@ mod tests {
         for r in 0..4 {
             put(&mut ui, r, vec![1.; 4000], 0., 1e-9);
         }
-        let catalog = listed().into_iter().filter(|&c| matches!(meta(c).kind, CatKind::Wave)).collect::<Vec<_>>();
+        let catalog = listed()
+            .into_iter()
+            .filter(|&c| {
+                c.kind == Kind::Module && measures::find(c.id).is_some_and(|x| measures::get(x.0).key() != "example")
+            })
+            .collect::<Vec<_>>();
         assert_eq!(catalog.len(), 83);
         ui.m.cat = catalog.iter().map(|&c| row(c)).collect();
         for &cat in &catalog {
             let r = wait(&mut ui, cat);
             assert!(!r.computing);
         }
-        assert_eq!(wait(&mut ui, Cat::Ripple).value, 0.);
-        assert_eq!(wait(&mut ui, Cat::Inrush).value, 1.);
-        assert_eq!(wait(&mut ui, Cat::DcCommon).value, 1.);
-        assert!(wait(&mut ui, Cat::EyeHeight).value.is_nan());
-        assert!(wait(&mut ui, Cat::TdOn).value.is_nan());
+        assert_eq!(wait(&mut ui, tile(measures::power::RIPPLE)).value, 0.);
+        assert_eq!(wait(&mut ui, tile(measures::power::INRUSH)).value, 1.);
+        assert_eq!(wait(&mut ui, tile(measures::jitter::DC_COMMON)).value, 1.);
+        assert!(wait(&mut ui, tile(measures::jitter::EYE_HEIGHT)).value.is_nan());
+        assert!(wait(&mut ui, tile(measures::double_pulse::TD_ON)).value.is_nan());
         assert!(ui.azr.catalog_measurements.borrow().cache.len() < catalog.len(), "family results must be shared");
     }
     #[test]
     fn only_explicit_accepted_capture_queue_counts_a_completed_result_once() {
         let mut ui = fixture();
         put(&mut ui, 0, (0..400_000).map(|i| if i % 20 < 10 { 0.0 } else { 2.0 }).collect(), 0., 1e-9);
-        ui.m.cat = vec![row(Cat::Ripple)];
+        ui.m.cat = vec![row(tile(measures::power::RIPPLE))];
         ui.wfm_total = 1;
         let ids = [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)];
-        assert!(ui.catalog_reading(Cat::Ripple, ids).computing);
-        ui.queue_catalog_statistics(row(Cat::Ripple), 1);
-        assert_eq!(wait(&mut ui, Cat::Ripple).value, 2.);
+        assert!(ui.catalog_reading(tile(measures::power::RIPPLE), ids).computing);
+        ui.queue_catalog_statistics(row(tile(measures::power::RIPPLE)), 1);
+        assert_eq!(wait(&mut ui, tile(measures::power::RIPPLE)).value, 2.);
         assert_eq!(ui.measurement_statistics_snapshot_for_test()[0].0, 1);
         for _ in 0..20 {
             ui.poll_catalog_measurements();
-            let _ = ui.catalog_reading(Cat::Ripple, ids);
+            let _ = ui.catalog_reading(tile(measures::power::RIPPLE), ids);
         }
         assert_eq!(ui.measurement_statistics_snapshot_for_test()[0].0, 1);
         ui.m.meas_full_record = false;
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-9).abs() < 1e-14).unwrap();
         ui.m.delay = 1e-6;
-        assert_eq!(wait(&mut ui, Cat::Ripple).value, 2.);
+        assert_eq!(wait(&mut ui, tile(measures::power::RIPPLE)).value, 2.);
         assert_eq!(ui.measurement_statistics_snapshot_for_test()[0].0, 1, "stopped pan is not a capture");
     }
 
@@ -1325,10 +760,10 @@ mod tests {
         let mut ui = fixture();
         put(&mut ui, 0, vec![0., 1., 2., 3., 4., 5., 6., 7.], -1.5, 0.5);
         put(&mut ui, 1, vec![0., 1., 2., 3., 4., 5.], -2.0, 1.0);
-        ui.m.cat = vec![row(Cat::DcCommon), row(Cat::AcCommon)];
+        ui.m.cat = vec![row(tile(measures::jitter::DC_COMMON)), row(tile(measures::jitter::AC_COMMON))];
         ui.m.eye_hp = false;
-        assert_eq!(wait(&mut ui, Cat::DcCommon).value, 3.25);
-        assert_eq!(wait(&mut ui, Cat::AcCommon).value, 4.5);
+        assert_eq!(wait(&mut ui, tile(measures::jitter::DC_COMMON)).value, 3.25);
+        assert_eq!(wait(&mut ui, tile(measures::jitter::AC_COMMON)).value, 4.5);
         assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted, 1);
     }
 
@@ -1336,11 +771,11 @@ mod tests {
     fn clear_cancels_old_accounting_even_when_capture_number_is_reused() {
         let mut ui = fixture();
         put(&mut ui, 0, (0..400_000).map(|i| if i % 20 < 10 { 0.0 } else { 2.0 }).collect(), 0., 1e-9);
-        ui.m.cat = vec![row(Cat::Ripple)];
+        ui.m.cat = vec![row(tile(measures::power::RIPPLE))];
         ui.wfm_total = 1;
         let ids = [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)];
-        let _ = ui.catalog_reading(Cat::Ripple, ids);
-        ui.queue_catalog_statistics(row(Cat::Ripple), 1);
+        let _ = ui.catalog_reading(tile(measures::power::RIPPLE), ids);
+        ui.queue_catalog_statistics(row(tile(measures::power::RIPPLE)), 1);
         // Hold a finished answer before UI delivery, then clear and reuse sequence1.
         let answer = ui
             .azr
@@ -1354,12 +789,12 @@ mod tests {
             .unwrap();
         ui.clear_display();
         ui.wfm_total = 1;
-        ui.queue_catalog_statistics(row(Cat::Ripple), 1);
+        ui.queue_catalog_statistics(row(tile(measures::power::RIPPLE)), 1);
         let (send, receive) = mpsc::sync_channel(1);
         ui.azr.catalog_measurements.borrow_mut().worker.as_mut().unwrap().receive = receive;
         assert!(send.send(answer).is_ok());
         ui.poll_catalog_measurements();
-        assert_eq!(ui.catalog_reading(Cat::Ripple, ids).value, 2.0, "a valid value may still cache");
+        assert_eq!(ui.catalog_reading(tile(measures::power::RIPPLE), ids).value, 2.0, "a valid value may still cache");
         assert!(
             ui.measurement_statistics_snapshot_for_test().is_empty(),
             "pre-Clear capture must never repopulate statistics"
@@ -1382,12 +817,12 @@ mod tests {
             pairs: false,
         });
         let ids = [WaveId::Ch(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)];
-        ui.m.cat = vec![(Cat::Ripple as u16, ids[0], ids[1], ids[2], ids[3])];
+        ui.m.cat = vec![(measures::power::RIPPLE, ids[0], ids[1], ids[2], ids[3])];
         let read = |ui: &mut Ui| {
             let deadline = Instant::now() + Duration::from_secs(20);
             loop {
                 ui.poll_catalog_measurements();
-                let r = ui.catalog_reading(Cat::Ripple, ids);
+                let r = ui.catalog_reading(tile(measures::power::RIPPLE), ids);
                 if !r.computing {
                     return r.value;
                 }
@@ -1424,7 +859,11 @@ mod tests {
         ui.m.sim_slot = 0;
         ui.replay.sim_revision = 1;
         ui.m.sim_rate = 1e9;
-        ui.m.cat = vec![row(Cat::DataRate), row(Cat::BitRate), row(Cat::UnitInterval)];
+        ui.m.cat = vec![
+            row(tile(measures::serial::DATA_RATE)),
+            row(tile(measures::jitter::BIT_RATE)),
+            row(tile(measures::serial::UNIT_INTERVAL)),
+        ];
         ui.relayout();
         let owner = Arc::clone(&ui.refs[0].as_ref().unwrap().v);
         let counters = (ui.wfm_total, ui.records, ui.replay.captures);
@@ -1473,16 +912,16 @@ mod tests {
             (indices.last().unwrap() - indices[0]) as f64 / (crossings.last().unwrap().0 - crossings[0].0)
         };
         let oracle = independent_rate(&ui);
-        let rate = wait(&mut ui, Cat::DataRate);
-        let clock = wait(&mut ui, Cat::BitRate);
-        let interval = wait(&mut ui, Cat::UnitInterval);
+        let rate = wait(&mut ui, tile(measures::serial::DATA_RATE));
+        let clock = wait(&mut ui, tile(measures::jitter::BIT_RATE));
+        let interval = wait(&mut ui, tile(measures::serial::UNIT_INTERVAL));
         assert!(rate.quality.contains("NRZ") && rate.quality.contains("limited"));
         assert!((rate.value - oracle).abs() / oracle < 0.001, "{} vs oracle{}", rate.value, oracle);
         assert!((clock.value - oracle).abs() / oracle < 0.001);
         assert!((interval.value * rate.value - 1.0).abs() < 1e-12);
         assert!(rate.value > 15.9e9 && rate.value < 16.1e9, "accepted data, not the pending1G SIM setting");
-        assert_eq!(meta(Cat::DataRate).unit, "b/s");
-        assert_eq!(meta(Cat::BitRate).unit, "b/s");
+        assert_eq!(tile(measures::serial::DATA_RATE).unit, "b/s");
+        assert_eq!(tile(measures::jitter::BIT_RATE).unit, "b/s");
         let a = ui.meas_analysis(WaveId::Ref(0)).unwrap().0;
         assert!(rate.value / a.get(Meas::Freq) > 3.8 && rate.value / a.get(Meas::Freq) < 4.2);
         assert!((a.est_ui * rate.value - 1.0).abs() < 1e-12);
@@ -1493,8 +932,8 @@ mod tests {
             ui.handle(Ev::Wheel { x, y, steps: 32, ctrl: false, shift: false, alt: false });
         }
         ui.step(0.0);
-        let panned = wait(&mut ui, Cat::DataRate);
-        let panned_clock = wait(&mut ui, Cat::BitRate);
+        let panned = wait(&mut ui, tile(measures::serial::DATA_RATE));
+        let panned_clock = wait(&mut ui, tile(measures::jitter::BIT_RATE));
         let oracle = independent_rate(&ui);
         assert!((panned.value - oracle).abs() / oracle < 0.001);
         assert!((panned_clock.value - oracle).abs() / oracle < 0.001);
@@ -1508,8 +947,8 @@ mod tests {
     fn nrz_rate_is_missing_when_no_ui_can_be_recovered_instead_of_using_a_cycle_fallback() {
         let mut ui = fixture();
         put(&mut ui, 0, vec![0.0; 1000], 0.0, 1e-9);
-        ui.m.cat = vec![row(Cat::DataRate), row(Cat::UnitInterval)];
-        for cat in [Cat::DataRate, Cat::UnitInterval] {
+        ui.m.cat = vec![row(tile(measures::serial::DATA_RATE)), row(tile(measures::serial::UNIT_INTERVAL))];
+        for cat in [tile(measures::serial::DATA_RATE), tile(measures::serial::UNIT_INTERVAL)] {
             let r = wait(&mut ui, cat);
             assert!(r.value.is_nan() && r.reason.is_some());
         }

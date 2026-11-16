@@ -1033,10 +1033,43 @@ impl Ui {
             });
             cv.text(&f.s, a.x + 6, pt + 30, &format!("{}, {}", gm, pm), TEXT);
         }
-        let w = f.s.width(&status) + 16;
-        let r = Rect::new(a.x + a.w - w - 8, a.y + 22, w, 20);
+        // right-aligned, but left of the full-screen, zoom and more buttons in the corner, and inside the plot
+        let right = (self.full_home().0.x - 8).min(a.x + a.w - 8);
+        let w = (f.s.width(&status) + 16).min((right - a.x - 8).max(40));
+        let r = Rect::new(right - w, a.y + 22, w, 20);
         cv.round(r, 4, PANEL_BG, 230);
+        cv.set_clip(r);
         cv.text_in(&f.s, r, 1, &status, TEXT);
+        cv.no_clip();
+    }
+}
+
+/// The Bode page: a frequency sweep of the generator (it runs on its own, not from a record).
+pub(super) struct BodePage;
+
+impl super::analysers::Analyser for BodePage {
+    fn view(&self) -> AView {
+        AView::Bode
+    }
+
+    fn feature(&self) -> (&'static str, &'static str) {
+        ("bode", "Bode")
+    }
+
+    fn name(&self) -> &'static str {
+        "Bode plot"
+    }
+
+    fn menu(&self) -> MenuId {
+        MenuId::Bode
+    }
+
+    fn scpi(&self) -> Option<&'static str> {
+        Some("BODE")
+    }
+
+    fn draw(&self, ui: &Ui, cv: &mut Canvas) {
+        ui.draw_bode(cv);
     }
 }
 

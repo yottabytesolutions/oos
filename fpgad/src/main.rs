@@ -132,7 +132,7 @@ fn parse(args: &[String]) -> Result<Opt, String> {
             "--blocks" => s.blocks = int(v)? as u8,
             "--frames" => s.frames = int(v)?,
             "--compress" => s.compress = int(v)?,
-            // hardware averaging (docs/fork/specs/01-hw-averaging.md), not verified on the unit
+            // hardware averaging, not verified on the unit
             "--average" => s.mode = oos_hal::dho::acq::Mode::Average { count: int(v)? },
             "--la-thr" => {
                 let t = num(v)?;
@@ -644,7 +644,7 @@ fn status_lines(rd: &mut dyn FnMut(u32) -> u32) -> Vec<String> {
 }
 
 /// Parameters of xdma.ko without `xdma.params`: DMA completion by polling the write-back word, what OOS was verified
-/// with. The stock system loads it with interrupts (docs/fork/specs/10-transfer-efficiency.md 1.4).
+/// with. The stock system loads it with interrupts.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const XDMA_DEFAULT: &str = "poll_mode=1";
 

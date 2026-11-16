@@ -47,6 +47,16 @@ const SWIPE: i32 = 70;
 /// Width of a number in the top bar's view buttons.
 const NUM_W: i32 = 28;
 
+/// Whether `k` is a key of a view's model part (not `xy` and `full`).
+pub(super) fn is_view_key(k: &str) -> bool {
+    KEYS.contains(&k)
+}
+
+/// A view not set up yet: the plot alone.
+pub(super) fn plot_alone() -> String {
+    snapshot_of(&Model::default(), false, false)
+}
+
 fn known(k: &str) -> bool {
     KEYS.contains(&k) || k == "xy" || k == "full"
 }
@@ -194,8 +204,7 @@ impl Ui {
     pub(super) fn draw_view_box(&self, cv: &mut Canvas) {
         let Some(r) = self.view_box() else { return };
         let f = self.fonts();
-        cv.round(r, 5, BTN_BORDER, 255);
-        cv.round(r.inset(1), 4, BTN, 255);
+        cv.framed(r, 5, 1, BTN_BORDER, 4, BTN);
         for i in 0..self.m.views {
             let c = Rect::new(r.x + 1 + NUM_W * i as i32, r.y + 1, NUM_W, r.h - 2);
             let on = i == self.m.view_cur;

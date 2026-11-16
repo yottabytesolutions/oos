@@ -455,7 +455,7 @@ mod tests {
         assert!(!ui.reference_search_supported());
         assert!(ui.search_events().is_empty());
         ui.m.trig_type = TrigType::Bus;
-        ui.m.dec_proto = Proto::Spi;
+        ui.m.dec_proto = Proto::SPI;
         assert!(!ui.reference_search_supported());
         assert!(ui.search_events().is_empty());
         assert_eq!(ui.azr.reference_search.borrow().scans, 0);
@@ -466,7 +466,7 @@ mod tests {
         let mut ui = fixture(1600);
         let edge = ui.search_events();
         ui.m.trig_type = TrigType::Bus;
-        ui.m.dec_proto = Proto::Uart;
+        ui.m.dec_proto = Proto::UART;
         ui.m.trig_bus = BusWhat::Error;
         let errors = ui.search_events();
         assert!(!Arc::ptr_eq(&edge, &errors));

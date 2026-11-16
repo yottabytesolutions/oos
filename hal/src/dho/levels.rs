@@ -213,7 +213,7 @@ mod tests {
     #[test]
     // Break it catches: the DDR word order for the measure unit (CH1 = 6/7 ...), which gave CH3 the signal of CH1 and CH2
     // on the unit; a lower/higher split of 2 channels the wrong way round
-    fn slots_follow_libscopes_core_table_and_disagreeing_slots_are_refused() {
+    fn slots_follow_the_core_table_and_disagreeing_slots_are_refused() {
         assert_eq!(slots(1, 0), (0..8).collect::<Vec<_>>());
         assert_eq!((slots(0b1010, 1), slots(0b1010, 3)), (vec![0, 1, 2, 3], vec![4, 5, 6, 7]));
         assert_eq!((slots(0b0101, 0), slots(0b0101, 2)), (vec![0, 1, 2, 3], vec![4, 5, 6, 7]));

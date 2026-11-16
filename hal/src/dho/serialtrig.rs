@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The TPU's SPI and I2C triggers (docs/fork/hwserial.md): word compares on the comparator lines of events A, B and R.
-//! Field layout from a simulation of the FPGA netlist; the register writes of the triggers are `tpu::spi` and
+//! Field layout assumed; the register writes of the triggers are `tpu::spi` and
 //! `tpu::i2c`. Relations as the UART's (`uarttrig::Relation`): == / != / > against min, < against max, ranges
 //! inclusive, all after the mask.
 

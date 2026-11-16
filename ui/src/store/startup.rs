@@ -87,7 +87,14 @@ impl<F: Files> Startup<F> {
     }
 
     fn restore_model(&self) -> io::Result<Option<crate::model::Model>> {
-        self.restore()?.map(|text| super::parse_setup(&text).map_err(io::Error::other)).transpose()
+        // what this build cannot take is left out, the rest stands (upstream 0.1.13, `store::parse_setup_lenient`)
+        Ok(self.restore()?.map(|text| {
+            let (model, bad) = super::parse_setup_lenient(&text);
+            for e in &bad {
+                eprintln!("oos-ui: restore: left out: {}", e);
+            }
+            model
+        }))
     }
 
     pub(crate) fn restored_model(&self) -> Option<crate::model::Model> {

@@ -106,7 +106,7 @@ fn actual_cphy_reference_trio_decode_backend() {
     }
     ui.set_offline(true);
     ui.m.run = RunState::Stop;
-    ui.m.dec_proto = Proto::Cphy;
+    ui.m.dec_proto = Proto::CPHY;
     ui.m.dec_on = true;
     ui.m.dec_src = DEC_REF_BASE;
     ui.m.dec_src2 = DEC_REF_BASE + 1;

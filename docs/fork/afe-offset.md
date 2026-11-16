@@ -14,7 +14,7 @@ About -13 mV per volt on the positive side, about -4 mV per volt on the negative
 
 - The offset DAC code is `trunc(-(sign * offset + position) / lsb + zero)`: `lsb` from cal_lsb per channel and input
   gain path (record field g[0]), `zero` from the cal_vertical record of the scale. The stock firmware computes the
-  same expression from the same fields (checked against its decompiled offset setter). The record block it picks by
+  same expression from the same fields (assumed; the codes agree on the unit). The record block it picks by
   bandwidth limit matches OOS's `block_group` on this unit (hardware code 0x0c selects the fourth block at full
   bandwidth).
 - So OOS reproduces the stock offset. The residual is a property of the unit and its factory cal, and the stock

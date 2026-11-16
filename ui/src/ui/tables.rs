@@ -72,7 +72,7 @@ pub(super) const PANE_TREND: usize = 4;
 /// what a protocol module makes of its packets (`busview.rs`)
 pub(super) const PANE_BUS: usize = 5;
 
-const ROW_H: i32 = 26;
+pub(super) const ROW_H: i32 = 26;
 const HEAD_H: i32 = 40;
 
 /// One line of an event table.
@@ -193,10 +193,28 @@ impl Ui {
         self.close_menu();
     }
 
-    /// Buttons of the table head: up, down, close.
-    fn table_buttons(r: Rect) -> [Rect; 3] {
-        let b = |i: i32| Rect::new(r.x + r.w - 46 * i, r.y + 2, 42, HEAD_H - 4);
-        [b(3), b(2), b(1)]
+    /// The close button of the table head.
+    fn table_close(r: Rect) -> Rect {
+        Rect::new(r.x + r.w - 46, r.y + 2, 42, HEAD_H - 4)
+    }
+
+    /// The number of rows of the open table.
+    fn table_total(&self, k: TableKind) -> usize {
+        if k == TableKind::Search {
+            self.search_events().len()
+        } else {
+            self.table_rows(k).len()
+        }
+    }
+
+    /// The scroll bar of the open table and its rows.
+    pub(super) fn table_bar(&self) -> Option<(scroll::Bar, Rect)> {
+        let k = self.table?;
+        let total = self.table_total(k);
+        let (r, fit) = self.table_rect(total);
+        let rows = Rect::new(r.x, r.y + HEAD_H, r.w, fit as i32 * ROW_H);
+        let track = Rect::new(r.x + r.w - scroll::BAR_W - 2, rows.y, scroll::BAR_W, rows.h);
+        Some((scroll::Bar { track, total: total as i32, shown: fit as i32, pos: self.table_top as i32 }, rows))
     }
 
     pub(super) fn draw_table(&self, cv: &mut Canvas) {
@@ -243,10 +261,16 @@ impl Ui {
             TableKind::Segments => format!("Segments \u{b7} {}", rows.len()),
         };
         cv.text(&f.sb, r.x + 12, r.y + 25, &title, TEXT);
-        for (b, t) in Self::table_buttons(r).iter().zip(["Up", "Dn", "\u{d7}"]) {
-            btn(cv, *b, BTN, BTN_BORDER);
-            cv.text_in(&f.mb, *b, 1, t, TEXT);
+        let close = Self::table_close(r);
+        btn(cv, close, BTN, BTN_BORDER);
+        cv.text_in(&f.mb, close, 1, "\u{d7}", TEXT);
+        scroll::Bar {
+            track: Rect::new(r.x + r.w - scroll::BAR_W - 2, r.y + HEAD_H, scroll::BAR_W, fit as i32 * ROW_H),
+            total: total as i32,
+            shown: fit as i32,
+            pos: top as i32,
         }
+        .draw(cv);
         if rows.is_empty() {
             let empty = if k == TableKind::Search && self.m.trig_ref.is_some() && !self.reference_search_supported() {
                 "This condition needs physical hardware channels"
@@ -278,15 +302,13 @@ impl Ui {
         if !r.contains(x, y) {
             return false;
         }
-        let [up, down, close] = Self::table_buttons(r);
         let last = total.saturating_sub(fit);
         self.table_top = self.table_top.min(last);
-        if close.contains(x, y) {
+        let on_bar = total > fit && x >= r.x + r.w - scroll::BAR_W - 2;
+        if Self::table_close(r).contains(x, y) {
             self.table = None;
-        } else if up.contains(x, y) {
-            self.table_top = self.table_top.saturating_sub(fit);
-        } else if down.contains(x, y) {
-            self.table_top = (self.table_top + fit).min(last);
+        } else if on_bar {
+            // the scroll bar (moved by the finger, see ui/scroll.rs)
         } else if y >= r.y + HEAD_H {
             let i = self.table_top + ((y - r.y - HEAD_H) / ROW_H) as usize;
             if k == TableKind::Segments && i < rows.len() {

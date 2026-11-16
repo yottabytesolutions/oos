@@ -89,7 +89,7 @@ mod tests {
             on: true,
         });
         ui.m.dec_on = true;
-        ui.m.dec_proto = Proto::Spi;
+        ui.m.dec_proto = Proto::SPI;
         ui.m.dec_src = 0;
         ui.m.dec_src2 = DEC_REF_BASE;
         ui.m.dec_cs = None;

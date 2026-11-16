@@ -301,7 +301,7 @@ pub fn early_start(
     progress: &mut dyn FnMut(u32),
 ) -> Result<Early, String> {
     progress(2);
-    // the 50 ms of the stock driver between words are not needed by the chip; the last word (R0) starts its calibration
+    // the 50 ms of the stock system between words are not needed by the chip; the last word (R0) starts its calibration
     for w in pll_table()? {
         for (pin, v) in pll_edges(w) {
             pll.set(pin, v);

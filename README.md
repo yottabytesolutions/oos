@@ -182,6 +182,7 @@ For how the hardware works, see the [hardware overview](https://deckerjulian.git
 - Model railways: NMRA DCC (contributed by Arjen Halma), with a view of the layout in Display > Second pane > Bus view:
   locomotives, turnouts, signals, and the track status, green while live and red after an emergency stop
 - New decoders come as protocol modules: one file, one registration ([docs/protocol-modules.md](docs/protocol-modules.md))
+- New measurements come as measurement modules the same way ([docs/measurement-modules.md](docs/measurement-modules.md))
 
 **Analysers**
 - Spectrum analyser: resolution from the whole record, span that follows the signal in the pane, fundamental and harmonics
@@ -299,9 +300,9 @@ For development, run the checkout and automatically restart after saving source 
 ```
 
 Rust compiles changed code automatically. The window includes front-panel buttons and knob controls.
-Use **Load file** or **Ctrl+O** to open CSV, OOS BIN, or WFM files; the web remote at `http://localhost:18080`
+Use **Reference > Load file** or **Ctrl+O** to open CSV, OOS BIN, or WFM files; the web remote at `http://localhost:18080`
 also accepts file selection and drag-and-drop. Loaded sources appear as **R1–R10** cards.
-**SIM** starts a simulated reference; **Run/Stop**, **Single**, and trigger settings control its acquisitions.
+**SIM** (start menu, Analysis) starts a simulated reference; **Run/Stop**, **Single**, and trigger settings control its acquisitions.
 **Live** restores the live session. Measurements follow each captured window and recompute when a stopped
 reference is panned. **Measure** opens categorized choices with Source, Settings, and Selected; large readout
 lists have page controls. The Windows app announces its actual SCPI and HiSLIP listeners over mDNS.

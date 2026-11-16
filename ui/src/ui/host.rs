@@ -113,7 +113,9 @@ impl Host {
 
     #[cfg(test)]
     pub fn fixture() -> Self {
-        Self { unix: || 946_684_800.0, time_budgets: true, switches: Default::default(), ..Self::headless() }
+        // the tests run the measure-unit path of Auto, which is what they check (`autoset.levels = unit`)
+        let switches = crate::sysconf::Switches { autoset_unit_levels: true, ..Default::default() };
+        Self { unix: || 946_684_800.0, time_budgets: true, switches, ..Self::headless() }
     }
 
     #[cfg(test)]
@@ -338,7 +340,8 @@ mod tests {
             std::env::set_var(k, v);
         }
         let ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        let want = crate::sysconf::Switches::default();
+        // the fixture's switches: the defaults, with the measure-unit path of Auto the tests check
+        let want = crate::sysconf::Switches { autoset_unit_levels: true, ..Default::default() };
         assert_eq!(*ui.switches(), want);
         let hw = |sw| crate::board::dho::hw::settings(&ui.m, false, sw);
         assert!(hw(ui.switches()) == hw(&want), "the hardware settings follow the supplied switches only");

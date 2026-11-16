@@ -152,7 +152,7 @@ mod tests {
         assert_eq!(v.status.as_ref().map(|s| s.1), Some(Tone::Good), "{:?}", v);
         assert!(v.sections[0].rows.iter().any(|r| r == "4F"), "{:?}", v);
         assert!(ui.pane_want() > 60);
-        ui.set_dec_proto(Proto::Uart);
+        ui.set_dec_proto(Proto::UART);
         ui.step(0.3);
         assert!(ui.pn.views.is_empty());
     }

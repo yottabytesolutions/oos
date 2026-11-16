@@ -103,6 +103,7 @@ impl MeasRow {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn measurement_count(&self) -> usize {
         self.m.meas.len() + self.m.meas2.len() + self.m.cat.len()
@@ -118,11 +119,11 @@ impl Ui {
 
     pub(super) fn selected_measurement_label(&self, index: usize) -> String {
         if let Some(&(kind, source)) = self.m.meas.get(index) {
-            return format!("{} {}", self.wave_name(source), kind.name());
+            return format!("{} {}", self.wave_name(source), meascatalog::meas_long_name(kind));
         }
         let index = index.saturating_sub(self.m.meas.len());
         if let Some(&(kind, a, b)) = self.m.meas2.get(index) {
-            return format!("{}-{} {}", self.wave_name(a), self.wave_name(b), PAIRS[kind.min(PAIRS.len() - 1)].0);
+            return format!("{}-{} {}", self.wave_name(a), self.wave_name(b), meascatalog::pair_long_name(kind));
         }
         let Some(&(id, a, b, c, d)) = self.m.cat.get(index.saturating_sub(self.m.meas2.len())) else {
             return String::new();
@@ -170,6 +171,20 @@ impl Ui {
         stat.max = stat.max.max(value);
     }
 
+    /// While a large record of channel `c` is measured in the background with the settings of the last one: the value
+    /// of that one (`measure_channel_sources` keeps it), so a deep record measured raw once a second does not show "not
+    /// available" for the time the worker takes (unit 2026-11-15). NaN when nothing is computing or the settings
+    /// changed (`computing_like_last`).
+    fn meas_while_computing(&self, c: usize, k: Meas) -> f64 {
+        if !self.m.ch[c].on || !self.computing_like_last(c) || matches!(k, Meas::TVmax | Meas::TVmin) {
+            return f64::NAN;
+        }
+        if self.meas_env[c] && crate::framestats::needs_samples(k) {
+            return f64::NAN;
+        }
+        self.meas_of(&self.ana[c], k)
+    }
+
     /// Measurement `k` of a channel or a reference. A channel that is off, or a ref with no samples, is NaN.
     pub fn meas_at(&self, id: WaveId, k: Meas) -> f64 {
         if let WaveId::Ch(channel) = id {
@@ -182,7 +197,11 @@ impl Ui {
                 if crate::deepmeas::hold(&self.m, self.switches(), shown, self.src.hw_deep_ok())
                     || crate::compress::hold(&self.m, shown)
                 {
-                    return self.ana_get(channel, k);
+                    // before the first raw record Max, Min and Pk-pk still come from the pairs
+                    let held = self.ana_get(channel, k);
+                    if held.is_finite() || crate::framestats::needs_samples(k) {
+                        return held;
+                    }
                 }
                 if crate::framestats::needs_samples(k) {
                     return f64::NAN;
@@ -202,6 +221,7 @@ impl Ui {
                     value
                 }
             }
+            None if matches!(id, WaveId::Ch(_)) => self.meas_while_computing(id.ch().unwrap_or(0), k),
             None => f64::NAN,
         }
     }
@@ -294,6 +314,7 @@ impl Ui {
 
     /// Extremum times use the physical waveform coordinate, including the gate's
     /// start. Keep DSP timestamps relative so durations and edge pairing do not change.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn meas_of_at(&self, a: &Analysis, k: Meas, t0: f64) -> f64 {
         let value = self.meas_of(a, k);
         if matches!(k, Meas::TVmax | Meas::TVmin) {
@@ -543,6 +564,7 @@ impl Ui {
     }
 
     /// Clear counter, from SCPI :COUNter:TOTalize:CLEar.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn counter_reset(&mut self) {
         self.counter_clear();
     }
@@ -714,11 +736,13 @@ impl Ui {
         value.is_finite().then_some(value)
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(crate) fn wave_at_ch(&self, c: usize, t: f64) -> Option<f32> {
         self.wave_at_source(WaveId::Ch(c), t)
     }
 
     /// Cursor A follows the selected workspace source.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(crate) fn wave_at(&self, t: f64) -> Option<f32> {
         self.wave_at_source(self.selected_workspace_source()?, t)
     }
@@ -1169,6 +1193,15 @@ impl Ui {
         }
     }
 
+    /// Reference > Load file: a waveform file into the Slot row's reference. The desktop build asks with its file
+    /// dialog; the scope has none and takes the file from storage, as Import slot does.
+    pub(super) fn ref_load(&mut self) {
+        #[cfg(windows)]
+        self.request_waveform_into(self.ref_sel);
+        #[cfg(not(windows))]
+        self.ref_import();
+    }
+
     pub(super) fn ref_load_path(&mut self, path: &std::path::Path) {
         match self.ref_load_file(path) {
             Ok(()) => self.toast(&format!("R{} loaded from {}", self.ref_sel + 1, crate::store::file_name(path))),
@@ -1190,6 +1223,7 @@ impl Ui {
     }
 
     /// Whether the selected slot is drawn. None when it is empty.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(crate) fn ref_shown(&self) -> Option<bool> {
         self.refs.get(self.ref_sel).and_then(|r| r.as_ref()).map(|r| r.on)
     }
@@ -1387,6 +1421,7 @@ impl Ui {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 fn nearest_ref_vdiv(want: f32) -> f32 {
     VSCALES.iter().copied().min_by(|a, b| (a - want).abs().partial_cmp(&(b - want).abs()).unwrap()).unwrap_or(0.2)
 }

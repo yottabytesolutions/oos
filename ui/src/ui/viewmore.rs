@@ -16,17 +16,7 @@ impl Ui {
         if self.xy {
             return "XY";
         }
-        match self.m.view {
-            AView::Spectrum => "Spectrum",
-            AView::Eye => "Eye / jitter",
-            AView::Power => "Power analysis",
-            AView::Bode => "Bode plot",
-            AView::Step => "Bandwidth test",
-            AView::Magnetic => "Magnetic",
-            AView::Inverter => "Inverter",
-            AView::Dpt => "Double pulse",
-            AView::Scope => "Scope",
-        }
+        super::analysers::of(self.m.view).map_or("Scope", |a| a.name())
     }
 
     pub(super) fn view_btn(&self) -> Rect {
@@ -43,27 +33,17 @@ impl Ui {
     }
 
     fn view_menu(&self) -> Option<MenuId> {
-        match self.m.view {
-            _ if self.xy => None,
-            AView::Spectrum => Some(MenuId::Spectrum),
-            AView::Eye => Some(MenuId::Eye),
-            AView::Power => Some(MenuId::Power),
-            AView::Bode => Some(MenuId::Bode),
-            AView::Step => Some(MenuId::BwTest),
-            AView::Magnetic => Some(MenuId::Magnetic),
-            AView::Inverter => Some(MenuId::Inverter),
-            AView::Dpt => Some(MenuId::Dpt),
-            AView::Scope => None,
+        if self.xy {
+            return None;
         }
+        super::analysers::of(self.m.view).map(|a| a.menu())
     }
 
     pub(super) fn view_more_items(&self) -> Vec<Item> {
         let mut v = Vec::new();
         if !self.xy {
-            match self.m.view {
-                AView::Eye => v.push(Item::EyeClear),
-                AView::Spectrum => v.push(Item::SpecPeak),
-                _ => {}
+            if let Some(a) = super::analysers::of(self.m.view) {
+                v.extend(a.more(self));
             }
         }
         if self.view_menu().is_some() {

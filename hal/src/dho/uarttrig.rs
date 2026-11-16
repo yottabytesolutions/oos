@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The TPU's UART trigger (docs/fork/hwuart.md): a receiver on the comparator line of event R that fires on a start
-//! bit, a data value or a frame error. Field layout from a simulation of the FPGA netlist; the register writes of the
+//! bit, a data value or a frame error. Field layout assumed; the register writes of the
 //! trigger itself are `tpu::uart`.
 
 use crate::dho::Write;

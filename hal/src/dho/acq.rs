@@ -14,7 +14,7 @@ use crate::dho::Write;
 pub enum Mode {
     Normal,
     Peak,
-    /// hardware averaging of `count` triggers (docs/fork/specs/01-hw-averaging.md): 0x1004 bit3, its own segment layout
+    /// hardware averaging of `count` triggers: 0x1004 bit3, its own segment layout
     /// (`hz::avg_params`), 0x1110 window word, cleared with `avg_clear`. NOT VERIFIED ON THE UNIT.
     Average {
         count: u32,
@@ -92,9 +92,9 @@ pub fn configure_la(
     w.push((0x4008, sh.s4008));
     sh.s4008 &= !(1 << 24);
     w.push((0x4008, sh.s4008));
-    // bit2 ("AvgSinc"): rate < max rate / 8 as the stock driver sets it, and always in average mode. Unit 2026-11-13
-    // (B1, spec 01 section 8): without it every averaged frame above 62.5 MSa/s was zero; with it every rate up to
-    // 1.25 GSa/s averaged. The netlist routes the bit to the play side only.
+    // bit2 ("AvgSinc"): rate < max rate / 8 as the stock system sets it, and always in average mode. Unit 2026-11-13
+    // (B1): without it every averaged frame above 62.5 MSa/s was zero; with it every rate up to
+    // 1.25 GSa/s averaged. The bit acts on the play side only (assumed).
     let avg = matches!(mode, Mode::Average { .. });
     sh.s1004 = (sh.s1004 & !4) | if avg || p.rate < max_rate / 8 { 4 } else { 0 };
     w.push((0x1004, sh.s1004));
@@ -207,7 +207,7 @@ mod tests {
 
     // Break it catches: the peak bit or bit 12 left set in average mode, 0x10b0 = count instead of count - 1, the
     // normal pre-sample compensation, the normal segment size, bit 2 missing in average mode (B1: zero frames above
-    // 62.5 MSa/s). Values by hand from spec 01, 1.1 and 1.3.
+    // 62.5 MSa/s). Values worked out by hand.
     #[test]
     fn average_mode_writes() {
         for (tdiv, mask) in [(200 * US, 1), (US, 1), (US, 3)] {

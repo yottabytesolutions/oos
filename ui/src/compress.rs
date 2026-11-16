@@ -25,7 +25,7 @@ pub const POINTS_PER_COLUMN: f64 = 4.0;
 pub const SCREEN_COLUMNS: f64 = 1000.0;
 /// Smallest factor worth a compressed read; below it every sample is read.
 pub const K_MIN: u32 = 2;
-/// Largest factor: 0x1170 holds k in bits 13:0 (`seq::COMPRESS_K_MAX`; the netlist simulation shows larger values wrap).
+/// Largest factor: 0x1170 holds k in bits 13:0 (`seq::COMPRESS_K_MAX`; larger values wrap, assumed).
 pub const K_MAX: u32 = 16383;
 /// Least time between two raw reads of a compressed batch's newest frame (`seq::read_raw_again`). A read after every
 /// batch cost 7-9 % of the frames at 1 channel, 1 and 100 us/div (unitlab round 2); between the raw records the UI

@@ -165,7 +165,13 @@ pub(super) fn layout(a: Rect, fill: bool) -> Layout {
     let fig = Rect::new(a.x, bottom - fh, lw, fh);
     let jit = Rect::new(rx, bottom - jh, rw, jh);
     let eye = Rect::new(a.x, a.y, lw, a.h - fh - if fh > 0 { GAP } else { 0 });
-    let plot = Rect::new(eye.x + EYE_GUTTER, eye.y + EYE_TITLE, eye.w - EYE_GUTTER - 10, eye.h - EYE_TITLE - EYE_FOOT);
+    // the tab on the right edge of the eye has its own margin
+    let plot = Rect::new(
+        eye.x + EYE_GUTTER,
+        eye.y + EYE_TITLE,
+        eye.w - EYE_GUTTER - 10 - (TAB_W - 4),
+        eye.h - EYE_TITLE - EYE_FOOT,
+    );
     let head = Rect::new(rx, a.y, rw - 54, HEAD_H);
     let (gy, gh) = (a.y + HEAD_H, a.h - HEAD_H - jh - if jh > 0 { GAP } else { 0 });
     let (cw, ch) = ((rw - GAP) / 2, (gh - GAP) / 2);
@@ -180,7 +186,7 @@ pub(super) fn layout(a: Rect, fill: bool) -> Layout {
         Rect::new(
             c.x + CHART_GUTTER,
             c.y + CHART_TITLE,
-            c.w - CHART_GUTTER - 6,
+            c.w - CHART_GUTTER - 10,
             (c.h - CHART_TITLE - CHART_FOOT).max(1),
         )
     });
@@ -252,7 +258,9 @@ fn eye_tab_at(a: Rect, l: &Layout) -> Rect {
     let edge = l.eye.x + l.eye.w;
     let x = (edge - TAB_W).clamp(a.x, (a.x + a.w - TAB_W).max(a.x));
     let (y0, y1) = (l.charts[0].y, l.charts[2].y + l.charts[2].h);
-    let y = (y0 + (y1 - y0 - TAB_H) / 2).clamp(a.y + HEAD_H, (a.y + a.h - TAB_H).max(a.y + HEAD_H));
+    // a narrow pane keeps the charts under the eye: the tab sits in the right margin of the eye, not over a chart
+    let mid = if a.w < 700 { l.eye.y + (l.eye.h - TAB_H) / 2 } else { y0 + (y1 - y0 - TAB_H) / 2 };
+    let y = mid.clamp(a.y + HEAD_H, (a.y + a.h - TAB_H).max(a.y + HEAD_H));
     Rect::new(x, y, TAB_W, TAB_H)
 }
 
@@ -265,7 +273,7 @@ fn layout_stacked(a: Rect) -> Layout {
     let plot = Rect::new(
         eye.x + EYE_GUTTER,
         eye.y + EYE_TITLE,
-        (eye.w - EYE_GUTTER - 10).max(1),
+        (eye.w - EYE_GUTTER - 10 - if charts_on { TAB_W - 4 } else { 0 }).max(1),
         (eye.h - EYE_TITLE - EYE_FOOT).max(1),
     );
     let gy = eye.y + eye.h + if ch > 0 { GAP } else { 0 };
@@ -287,7 +295,7 @@ fn layout_stacked(a: Rect) -> Layout {
         Rect::new(
             c.x + CHART_GUTTER,
             c.y + CHART_TITLE,
-            (c.w - CHART_GUTTER - 6).max(1),
+            (c.w - CHART_GUTTER - 10).max(1),
             (c.h - CHART_TITLE - CHART_FOOT).max(1),
         )
     });
@@ -744,6 +752,7 @@ impl Page {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// Generated and imported references are immutable records. Eye analysis reads
     /// the whole record even when ordinary measurements follow the zoom window.
@@ -1126,7 +1135,7 @@ impl Ui {
         self.eye_from + (self.eye_to - self.eye_from) * e
     }
 
-    fn eye_tab(&self) -> Rect {
+    pub(super) fn eye_tab(&self) -> Rect {
         eye_tab_at(self.eye_page_rect(), &placed(self.eye_page_rect(), self.eye_column_open()))
     }
 
@@ -1487,6 +1496,7 @@ impl Ui {
 
     /// Left edge of the heat scale on plot `r`. On the usual split it is the top right of the plot; with the column
     /// away that corner belongs to the full-screen button, so the scale stops short of it.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn heat_x(&self, r: Rect) -> i32 {
         let src = match self.src.name() {
             "DEMO" => "Demo signals",
@@ -1515,6 +1525,7 @@ impl Ui {
         chevron(cv, r.x + r.w / 2, r.y + r.h / 2, if self.eye_to > 0.5 { 1 } else { -1 }, TEXT);
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn eye_head(&self, cv: &mut Canvas, l: &Layout) {
         if l.head.w < 40 || l.head.h < 16 {
             return;
@@ -1588,15 +1599,25 @@ impl Ui {
         let f = self.fonts();
         cv.round(c, 4, BAR, 255);
         cv.round_outline(c, 4, CARD_BORDER);
-        cv.text(&f.sb, c.x + 6, c.y + 13, &ch.title, TEXT);
+        // a title wider than the card takes the smaller font, then loses its last words (never a cut word)
+        let room = c.w - 12;
+        let mut title = ch.title.clone();
+        let font = if f.sb.width(&title) <= room { &f.sb } else { &f.s };
+        while font.width(&title) > room {
+            let Some((head, _)) = title.trim_end().rsplit_once(' ') else { break };
+            title = head.trim_end().trim_end_matches(" at").to_string();
+        }
+        cv.text(font, c.x + 6, c.y + 13, &title, TEXT);
         cv.fill(r, BG);
         cv.rect(r, GRID_AXIS);
         if !ch.empty.is_empty() {
             cv.text_in(&f.s, r, 1, &ch.empty, DIM);
             return;
         }
-        cv.text(&f.s, r.x - 3 - f.s.width(&ch.y.0), r.y + 10, &ch.y.0, AXIS_TEXT);
-        cv.text(&f.s, r.x - 3 - f.s.width(&ch.y.1), r.y + r.h - 1, &ch.y.1, AXIS_TEXT);
+        // a wide label stays inside the frame instead of running over its border
+        let lx = |w: i32| (r.x - 3 - w).max(c.x + 3);
+        cv.text(&f.s, lx(f.s.width(&ch.y.0)), r.y + 10, &ch.y.0, AXIS_TEXT);
+        cv.text(&f.s, lx(f.s.width(&ch.y.1)), r.y + r.h - 1, &ch.y.1, AXIS_TEXT);
         cv.text(&f.s, r.x, r.y + r.h + 12, &ch.x.0, AXIS_TEXT);
         cv.text(&f.s, r.x + r.w - f.s.width(&ch.x.1), r.y + r.h + 12, &ch.x.1, AXIS_TEXT);
     }
@@ -1647,9 +1668,14 @@ impl Ui {
         let n = (b.ui.len() as i32 - 1).max(1);
         let x = |k: usize| r.x + 1 + k as i32 * (r.w - 3) / n;
         let f = self.fonts();
-        let x0 = r.x + r.w / 2 - 44;
-        let x1 = cv.text(&f.s, x0, r.y + r.h + 12, "counted", MEASURED);
-        cv.text(&f.s, x1 + 8, r.y + r.h + 12, "model", MODELLED);
+        // the legend sits between the axis ends ("0", "1 UI"); a plot too narrow for all three leaves it out
+        let (lo, hi) = (r.x + f.s.width("0") + 8, r.x + r.w - f.s.width("1 UI") - 8);
+        let legend = f.s.width("counted") + 8 + f.s.width("model");
+        if legend <= hi - lo {
+            let x0 = (r.x + r.w / 2 - legend / 2).clamp(lo, hi - legend);
+            let x1 = cv.text(&f.s, x0, r.y + r.h + 12, "counted", MEASURED);
+            cv.text(&f.s, x1 + 8, r.y + r.h + 12, "model", MODELLED);
+        }
         for (curve, c) in [(&b.model, MODELLED), (&b.measured, MEASURED)] {
             let mut prev: Option<(i32, i32)> = None;
             for (k, &l) in curve.iter().enumerate() {
@@ -1690,7 +1716,12 @@ impl Ui {
                     Kind::Missing => DIM,
                 };
                 cv.text(&f.s, x, y, c.label, DIM);
-                cv.text(&f.s, x + LABEL_W, y, &c.value, tone);
+                // a long value starts earlier, after its label, and stops at the end of its column
+                let (end, w) = (x + cw - 6, f.s.width(&c.value));
+                let vx = if x + LABEL_W + w <= end { x + LABEL_W } else { (end - w).max(x + f.s.width(c.label) + 8) };
+                cv.set_clip(Rect::new(x, y - ROW, end - x, ROW + 4));
+                cv.text(&f.s, vx, y, &c.value, tone);
+                cv.no_clip();
             }
         }
     }
@@ -1921,6 +1952,48 @@ fn blit_hits(cv: &mut Canvas, r: Rect, img: &[u32], iw: usize) {
         }
     }
     cv.image(r, &px, true);
+}
+
+/// The eye page (eye diagram, jitter, the charts).
+pub(super) struct EyePage;
+
+impl super::analysers::Analyser for EyePage {
+    fn view(&self) -> AView {
+        AView::Eye
+    }
+
+    fn feature(&self) -> (&'static str, &'static str) {
+        ("eye", "Eye")
+    }
+
+    fn name(&self) -> &'static str {
+        "Eye / jitter"
+    }
+
+    fn menu(&self) -> MenuId {
+        MenuId::Eye
+    }
+
+    fn scpi(&self) -> Option<&'static str> {
+        Some("EYE")
+    }
+
+    fn more(&self, _ui: &Ui) -> Vec<Item> {
+        vec![Item::EyeClear]
+    }
+
+    fn without_record(&self, ui: &Ui) -> bool {
+        let is_ref = |id: WaveId| matches!(id, WaveId::Ref(_));
+        is_ref(ui.m.eye_src) || ui.m.eye_b.is_some_and(is_ref) || ui.m.eye_rail.is_some_and(is_ref)
+    }
+
+    fn update(&self, ui: &mut Ui, rec: &Record, _pane: bool) {
+        ui.eye_update(rec);
+    }
+
+    fn draw(&self, ui: &Ui, cv: &mut Canvas) {
+        ui.draw_eye(cv);
+    }
 }
 
 #[cfg(test)]
@@ -2469,8 +2542,9 @@ mod tests {
         assert!(wave.w > eye.w && eye.w > 250, "wave {:?} eye {:?}", wave, eye);
         let (x, y) = (eye.x + 20, eye.y + 12);
         ui.context_menu(x, y);
-        let popup_x = x.clamp(4, W - 244 - 4);
-        let popup_y = y.clamp(TOP.h, (BOTTOM.y - (6 * 30 + 8)).max(TOP.h));
+        let popup = ui.workspace.popup.as_ref().unwrap().rect;
+        let popup_x = popup.x;
+        let popup_y = popup.y;
         ui.tap(popup_x + 24, popup_y + 4 + 2 * 30 + 15); // Dock Eye below.
         ui.render(&mut Canvas::new(W, H));
         let (wave, eye) = (ui.grid, ui.eye_pane_rect());

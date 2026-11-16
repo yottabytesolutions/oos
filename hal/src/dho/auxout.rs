@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The rear AUX OUT BNC (docs/fork/auxout.md). One FPGA output with a source multiplexer in 0x1430 bits 2:0 and a
-//! pulse generator for mask/zone results configured by 0x119c. Static analysis of the FPGA image, not yet measured
+//! pulse generator for mask/zone results configured by 0x119c. Assumed, not yet measured
 //! on the unit.
 
 use crate::dho::Write;
@@ -39,7 +39,7 @@ pub mod pf {
 /// Where the pass/fail result comes from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Source {
-    /// the FPGA mask comparator (0x1190..0x11dc, docs/fork/specs/06-mask-unit.md); OOS does not drive it yet
+    /// the FPGA mask comparator (0x1190..0x11dc); OOS does not drive it yet
     Mask,
     /// the zone trigger result
     Zone,

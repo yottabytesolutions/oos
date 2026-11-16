@@ -218,7 +218,9 @@ class Scope:
                 f.write(b)
 
     def shell(self, cmd, wait=2.0, reads_card=False):
-        """A read-only command over SSH, with strict host identity checking."""
+        """A read-only command on the scope's shell, the output as text: telnet (the default, as the image starts it)
+        or, with OOS_SHELL=ssh, key-authenticated SSH with strict host identity checking (OOS_SSH_IDENTITY,
+        OOS_SSH_PORT)."""
         if self.sim:
             raise Skip("no shell in the simulation")
         self.check_lease()
@@ -341,7 +343,8 @@ def build_on_the_unit(s, o):
 
 @test("a0")
 def log_has_no_panic(s, o):
-    t = s.shell("grep -c -i 'panic\\|segfault\\|oom' /tmp/oos-ui.log; dmesg | grep -c 'Oops:\\|Kernel panic\\|BUG:'")
+    # whole words: "oom" alone matched "zoom" in a setup warning (2026-11-15)
+    t = s.shell("grep -c -i -w 'panic\\|panicked\\|segfault\\|oom\\|out of memory' /tmp/oos-ui.log; dmesg | grep -c 'Oops:\\|Kernel panic\\|BUG:'")
     assert t.split() == ["0", "0"], t
 
 
@@ -1329,6 +1332,10 @@ def deep_memory(s, o):
     c = s.loop[0]
     s.gen("SIN", 1e3, 2.0)
     s.w(":TIM:SCAL 0.0002")
+    # RMS on the measurement list: a deep record shown as min/max pairs is measured from a raw read of the screen
+    # window while a shown measurement needs every sample (meas.deep_raw, docs/fork/deep-meas.md)
+    s.w(":MEAS:CLE ALL")
+    s.w(f":MEAS:ITEM VRMS,CHAN{c}")
     rows = []
     for d in ("10000000", "25000000", "50000000", "100000000", "125000000"):
         s.w(f":ACQ:MDEP {d}")
@@ -1339,11 +1346,12 @@ def deep_memory(s, o):
         got = s.stat()["frames"] > a
         # Vpp over every sample of millions at 1.25 GSa/s takes the noise peaks with it (about 2.16 V for 2.04 V of
         # sine on a DHO924S): the RMS (as Vpp of a sine) checks the data, Vpp is only reported
-        v, rms = s.meas("VPP", c, 1), s.meas("VRMS", c, 1)
+        v, rms = s.meas("VPP", c, 1), s.meas("VRMS", c, 5)
         rows.append(f"{int(d) // 1000000} M: {time.time() - t0:.1f} s, {v:.2f} Vpp, {rms:.3f} Vrms")
         assert got, f"no record at {d}: {rows}"
         near(f"RMS as Vpp at {d}", rms * 2 * 2**0.5, 2.0, rel=0.08)
     s.w(":ACQ:MDEP AUTO")
+    s.w(":MEAS:CLE ALL")
     return "; ".join(rows)
 
 
@@ -1598,7 +1606,8 @@ def generator_has_no_dc_in_any_gear(s, o):
 
 @test("a1", need=(1,))
 def deep_memory_stays_responsive(s, o):
-    """100 kHz in a 50 M record is a hundred thousand edges, for each frame's measurements; Auto from there is quick too."""
+    """100 kHz in a 50 M record is a hundred thousand edges, for each frame's measurements; Auto from there is quick
+    too and keeps the 50 M, and with depth Auto it picks a short record."""
     s.gen("SIN", 1e5, 1.0)
     s.w(":TIM:SCAL 5e-6")
     s.w(":ACQ:MDEP 50000000")
@@ -1613,16 +1622,25 @@ def deep_memory_stays_responsive(s, o):
             worst = max(worst, time.time() - t)
     s.w(":TIM:SCAL 5e-6")
     time.sleep(3)
-    t = time.time()
-    s.w(":AUT")
-    while time.time() - t < 15 and s.q(":AUT?").strip() not in ("0", "OFF"):
-        time.sleep(0.3)
-    took = time.time() - t
-    depth = s.num(":ACQ:MDEP?")
+
+    def auto():
+        t = time.time()
+        s.w(":AUT")
+        while time.time() - t < 15 and s.q(":AUT?").strip() not in ("0", "OFF"):
+            time.sleep(0.3)
+        return time.time() - t
+
+    # Auto keeps a depth the user fixed (one setting does not change another); with depth Auto it picks a short one
+    took = auto()
+    kept = s.num(":ACQ:MDEP?")
     s.w(":ACQ:MDEP AUTO")
+    time.sleep(1)
+    took2 = auto()
+    depth = s.num(":ACQ:MDEP?")
     clean(s)
-    assert worst < 1.0 and took < 10 and depth < 1e7, f"answer {worst:.2f} s, Auto {took:.1f} s, depth {depth:g}"
-    return f"answer {worst * 1e3:.0f} ms, Auto {took:.1f} s"
+    assert worst < 1.0 and max(took, took2) < 10 and abs(kept - 5e7) < 1 and depth < 1e7, \
+        f"answer {worst:.2f} s, Auto {took:.1f} / {took2:.1f} s, depth kept {kept:g}, with Auto depth {depth:g}"
+    return f"answer {worst * 1e3:.0f} ms, Auto {took:.1f} s (50 M kept), {took2:.1f} s (depth Auto: {depth:g})"
 
 
 @test("a1", need=(1,))

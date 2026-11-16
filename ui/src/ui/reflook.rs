@@ -68,6 +68,7 @@ pub(super) struct CfgGeom {
     pub edges: Option<Rect>,
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn set_look(&mut self, look: RefLook) {
         if self.look == look {
@@ -492,8 +493,7 @@ impl Ui {
         let Some(&(k, id)) = self.m.meas.get(index) else { return };
         let own = self.meas_own.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
         let f = &self.fonts();
-        cv.round(g.panel, 8, ACCENT, 255);
-        cv.round(g.panel.inset(2), 7, DLG_BG, 255);
+        cv.framed(g.panel, 8, 2, ACCENT, 7, DLG_BG);
         cv.text(&f.mb, g.panel.x + 16, g.panel.y + 26, &format!("{} settings", k.name()), TEXT);
         btn(cv, g.close, BTN, BTN_BORDER);
         cv.text_in(&f.sb, g.close, 1, "X", TEXT);
@@ -637,6 +637,7 @@ impl Ui {
         v
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(crate) fn set_meas_refs(&mut self, index: usize, low: f64, high: f64) {
         if index >= self.m.meas.len() {
             return;
@@ -863,7 +864,8 @@ mod tests {
         for _ in 0..12 {
             let view = u.catalog_view();
             if !opened {
-                if let Some(time) = u.catalog_group_rect(1) {
+                // TIMING is the third group of Basic
+                if let Some(time) = u.catalog_group_rect(2) {
                     if time.y < view.y + view.h - 4 && time.y + time.h > view.y + 4 {
                         let y = (time.y + 4).clamp(view.y + 2, view.y + view.h - 2);
                         u.tap(time.x + 12, y);
@@ -878,8 +880,8 @@ mod tests {
                     break;
                 }
             }
-            let down = u.catalog_scroll_down().expect("scroll");
-            u.tap(down.x + 4, down.y + 4);
+            let next = u.cat_scroll + 80;
+            u.scroll_to(super::scroll::List::Catalog, next);
         }
         let g = u.cfg_geom().expect("Burst has a settings dialog");
         assert!(g.refs.w > 0 && g.idle_m.is_some(), "Burst keeps its own idle");

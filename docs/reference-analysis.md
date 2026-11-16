@@ -1,9 +1,29 @@
 # Loaded waveforms, zoom and automatic analysis
 
-Measure opens a tabbed catalog with Standard, Jitter, Power, IMDA, DPM and WBG-DPT
-groups. **All 60 / Pairs** retains all 60 single-source measurements and 17 pair
-variants. **Selected (N)** pages every added row, with explicit Remove controls
-and individual settings for standard measurements.
+Measure (the Measure button, the MEASURE key, or Analysis > Measure in the start
+menu) opens one measurement page with every measurement OOS has. Its categories
+run down the left:
+
+| Category | Groups |
+|---|---|
+| Basic | Amplitude, Average & statistics, Timing, Edges & counts, Per cycle |
+| Two sources | Delay, Phase, Skew, Setup & hold (all 17 pair variants) |
+| Serial & PAM | Clock & unit interval, PAM levels |
+| Jitter & eye | Jitter, Eye, Amplitude, Timing |
+| Power | Input, Amplitude, Timing, Switching, Magnetics, Output, PSRR & impedance, Power factor |
+| Motor drive | DQ0 transform, Shaft & efficiency |
+| Power rails | Rail sequencing |
+| Double pulse | Switching, Diode recovery |
+
+Basic holds all 60 standard single-source measurements. One group of a category
+is open at a time. The sources the category needs sit above the groups (Source,
+Source A/B, phases, rail and input, voltage, current and gate). One tap on a tile
+adds the measurement on those sources; a tile that is on is filled, and a second
+tap removes it. The line at the bottom names the last tile tapped and says what
+it measures. A standard measurement that is on has a Set button for its own
+reference levels and parameters. The header has the gate (Screen / Full record)
+and Settings; **Selected (N)** under the categories pages every measurement that
+is on, with Remove, Set and Clear all.
 
 Additional catalog rows use the Screen/Full record gate and corrected physical
 source times. A bounded catalog worker reads shared immutable captures. Pending

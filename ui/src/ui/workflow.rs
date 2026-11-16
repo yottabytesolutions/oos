@@ -608,6 +608,7 @@ impl Replay {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     fn capture_statistics_context(&self) -> String {
         let refs: Vec<_> = self
@@ -767,6 +768,16 @@ impl Ui {
         self.cancel_pointer();
     }
 
+    /// The file dialog of the desktop build for reference `slot`, without asking for the destination.
+    #[cfg(windows)]
+    pub(super) fn request_waveform_into(&mut self, slot: usize) {
+        self.request_waveform();
+        self.load_slot_ask = false;
+        self.load_destination = Some(slot);
+        self.open_wave_request = true;
+    }
+
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn waveform_destination(&self) -> Option<usize> {
         self.load_destination
     }
@@ -806,8 +817,7 @@ impl Ui {
         }
         cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 150);
         let r = Self::load_slot_box();
-        cv.round(r, 8, ACCENT, 255);
-        cv.round(r.inset(2), 7, DLG_BG, 255);
+        cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
         cv.text_in(&self.fonts().lb, Rect::new(r.x, r.y + 16, r.w, 28), 1, "Load into", ACCENT);
         cv.text_in(
             &self.fonts().m,
@@ -838,6 +848,7 @@ impl Ui {
     }
 
     /// Native/tool Load adds a file without silently replacing the prior source.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn load_waveform_auto(&mut self, data: &[u8], name: &str) -> Result<(), String> {
         let traces = crate::store::parse_wave(data, name)?;
         self.commit_waveform_traces(traces, name, true)
@@ -1022,7 +1033,7 @@ impl Ui {
             return None;
         }
         let g = self.grid;
-        Some(Rect::new(g.x + 8, g.y + g.h - 28, 52, 22))
+        Some(Rect::new(g.x + 8, g.y + g.h - 48, 52, 22))
     }
 
     pub(super) fn reference_slice(&self, slot: usize) -> Option<(&[f32], f64, f64)> {
@@ -1261,13 +1272,6 @@ impl Ui {
             ("captures", J::Num(self.replay.captures as f64)),
             ("status", J::s(status)),
             ("gate", J::s(if self.m.meas_full_record { "full-record" } else { "screen" })),
-            (
-                "loadRect",
-                self.top_buttons().iter().find(|button| button.0 == TopBtn::Load).map_or(J::Null, |button| {
-                    let r = button.2;
-                    J::Arr(vec![J::Num(r.x as f64), J::Num(r.y as f64), J::Num(r.w as f64), J::Num(r.h as f64)])
-                }),
-            ),
         ])
         .to_string()
     }
@@ -1290,6 +1294,7 @@ impl Ui {
             .collect()
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn draw_record_cards(&self, cv: &mut Canvas) {
         for (slot, rect) in self.record_cards() {
             let r = self.refs[slot].as_ref().unwrap();
@@ -1316,6 +1321,7 @@ impl Ui {
         (Rect::new(r.x + 6, r.y + 22, r.w / 2 - 9, 40), Rect::new(r.x + r.w / 2 + 3, r.y + 22, r.w / 2 - 9, 40))
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn draw_session_card(&self, cv: &mut Canvas, r: Rect) {
         btn(cv, r, BAR, CARD_BORDER);
         let title = if self.session_is_sim { "SIMULATION" } else { "STORED WAVEFORM" };

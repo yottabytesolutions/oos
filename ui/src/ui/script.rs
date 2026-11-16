@@ -130,11 +130,22 @@ impl Ui {
         Ok(())
     }
 
-    /// Presses the item `label` of the open menu (an action, or a sub-menu).
+    /// Presses the item `label` of the open menu (an action, or a sub-menu). On the measurement page: the tile of that
+    /// name, as a tap on it (on, or off again).
     pub fn script_do(&mut self, label: &str) -> Result<(), String> {
+        if self.menu_open && self.menu == MenuId::MeasAdd {
+            return self.catalog_tap_name(label);
+        }
         let it = self.script_item(label)?;
         self.activate(it);
         Ok(())
+    }
+}
+
+impl Ui {
+    /// Closes the open menu (the × of the dialog).
+    pub fn script_close(&mut self) {
+        self.close_menu();
     }
 }
 
@@ -162,6 +173,16 @@ mod tests {
         u.script_set("Tolerance X", "0.36 div").unwrap();
         assert!((u.m.mask_x - 0.36).abs() < 1e-6);
         u.script_menu("close").unwrap();
+        assert!(!u.menu_open);
+        // the measurement page: tiles by name, in any category
+        u.m.meas.clear();
+        u.key(key::MEASURE);
+        u.script_do("Peak-to-Peak").unwrap();
+        u.script_do("delay fall-rise").unwrap();
+        assert_eq!(u.m.meas, vec![(Meas::Vpp, WaveId::Ch(0))]);
+        assert_eq!(u.m.meas2, vec![(3, WaveId::Ch(0), WaveId::Ch(1))]);
+        assert!(u.script_do("No such tile").is_err());
+        u.script_close();
         assert!(!u.menu_open);
     }
 }

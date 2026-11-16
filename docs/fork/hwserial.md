@@ -16,7 +16,7 @@ The SPI and I2C protocol triggers in the TPU's receivers, next to the UART (`hwu
   [14:12]; 0x2190 address min/max/mask; 0x2194..0x21a0 data min/max/mask, big-endian over the first 1..5 bytes after
   the address. Start at the SDA fall; address and data at the 8th SCL rise of the last compared byte; missing ACK at
   the ACK's SCL rise.
-- Each line as the stock drivers route it (libscope): the channel's level-A comparator on both inputs of its event,
+- Each line routed as the stock system routes it (assumed): the channel's level-A comparator on both inputs of its event,
   pattern (2, invert, 2, invert): SPI data (2, 0, 2, 0), clock and CS with their inversion, I2C SCL and SDA (2, 0, 2, 0).
   Only bits 23:20 reach the line (bit 23 the inversion); bits 19:16 are the stock values. The threshold is the
   trigger level of the protocol trigger (Decode threshold) on every line.

@@ -62,6 +62,9 @@ impl Ui {
                 self.m.win_layout = if self.m.pane == 0 { WinLayout::Rows } else { WinLayout::One };
             }
         }
+        if self.m.win_layout != WinLayout::One {
+            self.workspace.stacked = false;
+        }
         self.sync_full();
         if self.m.win_layout != prev && self.m.win_layout != WinLayout::One {
             self.spread_wins();
@@ -447,7 +450,7 @@ mod tests {
         let (head, _) = u.results_rects().unwrap();
         let at = (head.y * W + head.x + 8) as usize;
         let snap_at = ((head.y - TOP.h) * W + head.x + 8) as usize;
-        assert_eq!(u.hdmi_snap.len(), (W * (BOTTOM.y - TOP.h)) as usize);
+        assert_eq!(u.hdmi_snap.len(), (W * (u.frame().bottom.y - TOP.h)) as usize);
         assert_ne!(u.hdmi_snap[snap_at], cv.px[at], "Full leaves the statistics card off the external plot");
         u.select_option(Item::WinLayout, "Scope");
         u.render(&mut cv);
@@ -455,14 +458,14 @@ mod tests {
         u.select_option(Item::WinLayout, "Four");
         u.render(&mut cv);
         assert_eq!(u.wins.len(), 4);
-        assert!(u.wins.iter().all(|w| w.y >= TOP.h && w.y + w.h <= BOTTOM.y));
+        assert!(u.wins.iter().all(|w| w.y >= TOP.h && w.y + w.h <= u.frame().bottom.y));
         assert!(!u.full);
         u.select_option(Item::WinLayout, "Split");
         u.select_option(Item::PaneSel, "Results");
         u.render(&mut cv);
         assert!(u.pane_h() > 0 && u.wins.len() == 1 && !u.full);
         let pane = u.pane_rect();
-        assert!(pane.y >= TOP.h && pane.y + pane.h <= BOTTOM.y);
+        assert!(pane.y >= TOP.h && pane.y + pane.h <= u.frame().bottom.y);
     }
 
     #[test]

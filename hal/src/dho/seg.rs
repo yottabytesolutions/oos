@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Hardware segmented memory with trigger timestamps (docs/fork/specs/03-segmented-timestamps.md). One arm records N
+//! Hardware segmented memory with trigger timestamps. One arm records N
 //! frames into the frame ring, the FPGA re-arms itself between them; the host transfers nothing until the end. Then
 //! every segment is played on its own for its stamp (latch 0x40b0/0x40b4 and header words 5..7), and read in batches
 //! like the live frames. Unit 2026-11-13 (private RE notes docs/logs/oos_unitlab_20261113.md, B3): the latch counts
@@ -14,7 +14,7 @@ use crate::dho::bus::{Bus, DmaBuf};
 use crate::dho::{hz, scu, seq};
 
 /// One LSB of the latched and first-trigger stamps (0x40b0, 0x40c0) in femtoseconds: 0.8 ns, one sample at 1.25 GSa/s.
-/// Unit 2026-11-13: a 1.000 kHz trigger gave latch steps of 1,250,000. (The stock API's 250,000 fs per tick, spec 03
+/// Unit 2026-11-13: a 1.000 kHz trigger gave latch steps of 1,250,000. (The stock system's 250,000 fs per tick
 /// 1.1, made every interval 3.2 times too short.)
 pub const LATCH_TICK_FS: i128 = 800_000;
 /// One LSB of the 48-bit stamp in header words 5..7: the latch's tick (unit 2026-11-13: the header value equals a
@@ -36,7 +36,7 @@ pub fn join(lo: u32, hi: u32) -> u64 {
     (hi as u64) << 32 | lo as u64
 }
 
-/// The 48-bit value in header words 5 (most significant), 6, 7 of a 16-byte frame header (spec 03, 1.6).
+/// The 48-bit value in header words 5 (most significant), 6, 7 of a 16-byte frame header.
 pub fn header_stamp(hdr: &[u8]) -> Option<u64> {
     let w = |i: usize| hdr.get(2 * i..2 * i + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as u64);
     Some(w(5)? << 32 | w(6)? << 16 | w(7)?)
@@ -172,12 +172,12 @@ pub fn read<B: Bus, R: std::io::Read>(
 }
 
 /// A model of the record engine and the play path for host runs of the whole sequence: what the steps of
-/// `State::record_steps`, `read_steps_at`, `segment_stamp_steps` and `disarm_steps` do, as spec 03 describes it, with
+/// `State::record_steps`, `read_steps_at`, `segment_stamp_steps` and `disarm_steps` do, with
 /// what the unit showed on 2026-11-13: the latch holds the trigger time of the last frame played in 0.8 ns ticks, the
 /// header of frame k holds the trigger time of frame k - 1 in the same ticks (frame 0 an older trigger), and 0x4034
 /// shows bit 5 (in the stock 0x2320 mask) while frames are still to come.
 ///
-/// Average mode (0x1004 bit3, docs/fork/specs/01-hw-averaging.md): the played words are the average of `Engine::raw`
+/// Average mode (0x1004 bit3): the played words are the average of `Engine::raw`
 /// over the triggers since the last 0x10b4 pulse, of the last 0x10b0 + 1 of them (`avg_hold` false: running) or of the
 /// first 0x10b0 + 1 (`avg_hold` true: cumulative, then held), as `avg::mean_words` computes it. Trigger numbers count on
 /// across arms; a clear pulse starts from the next one.

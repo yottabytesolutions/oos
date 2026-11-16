@@ -12,7 +12,7 @@ Dark theme, the colour-blind safe channel colours yellow / sky blue / pink / tea
 
 | area | content |
 |---|---|
-| top bar (40 px) | state pill (TRIG'D / AUTO / WAIT / STOP, tap = run/stop), acquisition "rate · depth · mode" (e.g. 12.5 MSa/s · 100 kpts · Normal; the hardware's numbers while `--hw` runs), tap on it = Acquire page, buttons for what is used most and the menus without a front-panel key: Measure, Cursor, Display, Storage, System (with About and the Quick key setting), network box ("Ethernet · DHCP" + IPv4 address, or "not connected"). Buttons are drawn 30 px high and tapped over the full 40 px |
+| top bar (40 px) | state pill (TRIG'D / AUTO / WAIT / STOP, tap = run/stop), acquisition "rate · depth · mode" (e.g. 12.5 MSa/s · 100 kpts · Normal; the hardware's numbers while `--hw` runs), tap on it = Acquire page, buttons for what is used most and the menus without a front-panel key: Measure, Cursor, Display, Storage (System and SIM are in the start menu, Load file is a row of the Reference menu), network box ("Ethernet · DHCP" + IPv4 address, or "not connected"). Buttons are drawn 30 px high and tapped over the full 40 px |
 | plot 970 x 448 (10 x 8 div; 970 x 464 without strip rows) | from y = 52 to the cards, 24 px gutters: channel markers left of it, trigger level marker right of it (its value inside the plot), trigger position above it. Drawn inside the plot: volt labels of the active channel along the left edge (a label that would overlap another label, the status line, the time labels, the mask pill or the decode band is left out; 5 px gap to the channel markers), time labels along the bottom edge (0 s in orange), a status line at the top (left: Touch locked, History n/m, Search count; right: source · wfm/s · fps), messages as an amber pill at the top centre (beside or under an open dialog, never over its controls), the mask pill, the math label, cursors (X1/X2, Y1/Y2 tags), the decode band above the time labels |
 | strip | one row per channel with measurements (label grey, value in the channel colour), one row for the cursor read-outs. Measure > Dock puts it under the plot (the default; each row makes the plot 18 px shorter), above the trace, or in a column on the left or the right |
 | results overlay | with Measure > Statistics on: a translucent card at the top right of the plot (left of the strip where a drag moves the trigger level) with value, mean, ±σ per item and the number of acquisitions; tap its header to fold it to one line. It takes no room from the plot |
@@ -35,9 +35,9 @@ groups, each entry 140 x 40 px:
 |---|---|
 | Acquisition | Run/Stop (orange while running), Single, Autoset, Clear, Default, Acquire > |
 | Trigger | Trigger >, Slope (steps like the key, the menu stays open), Force |
-| Analysis | Measure >, Cursor > (turns the cursors on like the key), Math >, Reference >, Decode >, Mask > |
+| Analysis | Measure > (the measurement page, as the Measure button and key open it), Cursor > (turns the cursors on like the key), Math >, Reference > (with Load file), SIM >, Decode >, Mask > |
 | Display | Display >, Horizontal >, History (Navigate key; "Live" while a stored record is shown, then Older / Newer appear) |
-| System | Storage >, Screenshot, Quick · <action> (runs the Quick key action), Touch lock, System >, Power (the power dialog) |
+| System | System > (with About and the Quick key setting), Storage >, Screenshot, Quick · <action> (runs the Quick key action), Touch lock, Power (the power dialog) |
 
 One-shot entries close the menu; the menus opened from it have Back to the start menu. LA and the generator have no
 OOS function yet and are left out. While touch is locked the Menu button shows "Locked" in amber and is the only

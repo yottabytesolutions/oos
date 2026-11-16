@@ -30,11 +30,11 @@ after that. A reading the decode refuses, a reading of another channel, or no re
 
 | register | content | evidence |
 |---|---|---|
-| 0x2244 [0] | restart: written 1, then 0 together with the new fields | write path netlist-proven (sim); the pulse is how the stock driver writes it, the restart meaning is inferred |
-| 0x2244 [5:1] | log2 of the samples per window; stock default 28 | netlist-proven (sim); unit: N = 2^28 |
-| 0x2244 [9:8] | lane: the channel with one, three or four channels; with two channels 0 for the lower, 2 for the higher | netlist-proven (sim) for the bits; unit: with CH1 + CH2 the lane-2 reading follows CH2 |
+| 0x2244 [0] | restart: written 1, then 0 together with the new fields | assumed; the restart meaning is inferred |
+| 0x2244 [5:1] | log2 of the samples per window; stock default 28 | assumed; unit: N = 2^28 |
+| 0x2244 [9:8] | lane: the channel with one, three or four channels; with two channels 0 for the lower, 2 for the higher | assumed for the bits; unit: with CH1 + CH2 the lane-2 reading follows CH2 |
 | 0x2244 read | not the configuration: `SQ_HI` with bits 7:0 replaced | measured |
-| 0x2248 [0] | latch: write 1 then 0 before reading the results | netlist-proven (sim) |
+| 0x2248 [0] | latch: write 1 then 0 before reading the results | assumed |
 | 0x224c, 0x2250 [31:16] | sum of the samples, 48 bits: `(0x2250 >> 16) << 32 \| 0x224c` | measured |
 | 0x2254, 0x2258 | sum of their squares, 64 bits: `0x2258 << 32 \| 0x2254` | measured (a square's sigma matches half its amplitude) |
 
@@ -67,13 +67,13 @@ Reading:
   The block sums one lane, and with one channel a lane is one pair of the eight ADC cores. The software averages all
   cores. A lane's DC therefore differs from the all-core DC by the cores' offset residuals, which self-cal only trims
   to +-1.5 steps per core (more if the stored offsets belong to another mode or were not loaded after the hand-over).
-  The same residuals limit the hardware average (spec 01 section 8). Not a decode error.
+  The same residuals limit the hardware average. Not a decode error.
 - 1 V/div with +2 V: -34 mV is 1.7 % of the 2 V offset. Without a valid software value it cannot be separated from
   the AFE offset accuracy, which the records share. The 428 codes per division of round 2 came from this same reading
   (it assumed the offset was exactly 2 div), so it is not evidence of a scale error either.
 - STOP and RUN: no zero reading reached the strip.
 - Lane 2 for CH2 alone (round 2): the trigger was on CH1, which OOS acquires even when hidden, so the set was CH1 +
-  CH2 and lane 2 is right (Rigol's rule, confirmed by the regmap reading of `DrvDvm_SetSource`).
+  CH2 and lane 2 is right (Rigol's rule, assumed).
 
 Per-lane check (needs this branch): `:SYSTem:DEBug:DVM:LANE 0..3 | AUTO` forces the lane with one channel acquired
 (every lane carries the channel then). CH1 alone with the trigger on CH1 (OOS also acquires a hidden trigger

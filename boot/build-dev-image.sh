@@ -4,6 +4,8 @@
 # build-dev-image.sh - the first OOS development boot image for `recovery` (Phase 2).
 #
 #   boot/build-dev-image.sh            -> $CARGO_TARGET_DIR/image/oos-dev.img (+ .sha256)
+#   OOS_DECODERS="usb dcc" / OOS_DECODERS_OFF="avionics" boot/build-dev-image.sh   fewer decoders in oos-ui
+#   (ui/tools/decoder-features.sh; the seven core decoders are always in)
 #
 # Contents: the kernel and DHO900 DTB from kernel/out/base (kernel/build-base.sh), the DTB's bootargs
 # changed to log on the panel (tty0) and UART2, and an initramfs from rootfs/initramfs with a static busybox and the
@@ -54,7 +56,9 @@ sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else s
 owner="$(id -u):$(id -g)"
 ui="$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release"
 # always rebuild (incremental), so the image never carries a stale binary
-python3 "$root/tools/output.py" build -p oos-ui --release --target aarch64-unknown-linux-musl || exit 1
+feat=$("$root/ui/tools/decoder-features.sh") || exit 1
+# shellcheck disable=SC2086 # the decoder feature arguments split into words on purpose
+python3 "$root/tools/output.py" build -p oos-ui --release --target aarch64-unknown-linux-musl $feat || exit 1
 fpgad="$ui"
 python3 "$root/tools/output.py" build -p oos-fpgad --release --target aarch64-unknown-linux-musl || exit 1
 # Build and verify the ARM helper just like the other consumable programs.
@@ -129,6 +133,10 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS
 	cp $M/modules.dep $M/modules.alias $M/modules.order $M/modules.builtin* $r/lib/modules/$rel/ 2>/dev/null || true
 	# the console node the kernel opens before /init mounts devtmpfs
 	mknod -m 600 $r/dev/console c 5 1
+	# copies a file sync made in the build outputs (iCloud: "libc.so.6 2", "oos-gpu 2") stay out of the image: 27 MB
+	# of them in rootfs/out/gpu made the initramfs of the first 0.1.13 build 10 MB larger (2026-11-15)
+	dup=$(cd $r && find . \( -name "* [0-9]" -o -name "* [0-9].*" \) | head -5)
+	[ -z "$dup" ] || { echo "build-dev-image.sh: copies of a file sync in the image, remove them from the source: $dup" >&2; exit 1; }
 	(cd $r && find . | sort | cpio -o -H newc -R 0:0 --quiet) > /tmp/root.cpio
 	gzip -9n < /tmp/root.cpio > /out/initramfs.cpio.gz
 	cp /k/$OOS_KERNEL_DTB /out/$OOS_IMAGE_NAME.dtb

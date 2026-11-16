@@ -11,8 +11,15 @@ use crate::model::*;
 use crate::wave::*;
 
 mod afg;
+mod analysers;
 mod analysis;
 mod autoset;
+#[cfg(test)]
+mod batch1_tests;
+#[cfg(test)]
+mod batch2_tests;
+#[cfg(test)]
+mod batch5_tests;
 pub mod bode;
 mod bus;
 mod busview;
@@ -21,6 +28,8 @@ mod deskew;
 mod dpt;
 mod eyepage;
 pub(crate) mod facts;
+#[cfg(test)]
+mod fix_tests;
 pub mod host;
 mod hwmask;
 mod hwzone;
@@ -38,6 +47,7 @@ mod overclock;
 mod panes;
 mod reflook;
 mod scpi_operations;
+mod scroll;
 mod selfcal;
 mod sertrig;
 mod sim;
@@ -56,8 +66,12 @@ pub(crate) use scpi_operations::{OperationState, OperationToken, Operations};
 mod backlight;
 mod bus_candidate;
 mod capture_memory;
+mod features;
 mod graphics;
+#[cfg(test)]
+mod interplay_tests;
 mod mathwave;
+mod monitor;
 mod reference_decode;
 mod reference_search;
 mod remote;
@@ -92,8 +106,11 @@ pub const BOTTOM_H: i32 = 36;
 pub const W: i32 = PANEL_W;
 pub const H: i32 = PANEL_H;
 pub const TOP: Rect = Rect::new(0, 0, W, METRICS.top_h);
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 const PLOT_X: i32 = 0;
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 const PLOT_W: i32 = W;
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 const PLOT_Y: i32 = TOP.h;
 pub const BOTTOM: Rect = Rect::new(0, H - BOTTOM_H, W, BOTTOM_H);
 /// The normal text size's `Lay::results_w` and `Lay::strip_row`, for the same code.
@@ -276,20 +293,8 @@ pub mod key {
     pub const TLEVEL_CW: u8 = 0xea;
 }
 
-/// Options of the ARINC 429 bit rate (decode::ARINC_RATES).
-const ARATE_NAMES: [&str; 3] = ["Auto", "12.5 k", "100 k"];
-
 /// Options of the USB speed (decode::USB_SPEEDS).
 const USPEED_NAMES: [&str; 3] = ["Auto", "Low 1.5M", "Full 12M"];
-
-/// A SENT clock tick (0 = Auto).
-fn tick_name(t: f64) -> String {
-    if t > 0.0 {
-        si_short(t, "s")
-    } else {
-        "Auto".into()
-    }
-}
 
 /// Longest record the web page takes as CSV (about 50 MB of text).
 const WEB_CSV_MAX: usize = 2_000_000;
@@ -307,6 +312,17 @@ const REF_COLORS: [(&str, Rgb); 5] = [
 ];
 /// Kinds of delay and phase measurement and of second panes, for the setups.
 pub const PAIRS_N: usize = tools::PAIRS.len();
+/// The short names of the two-source variants (strip, SCPI).
+pub fn pair_short_name(k: usize) -> &'static str {
+    tools::PAIRS[k.min(PAIRS_N - 1)].0
+}
+
+pub(crate) use analysers::{scpi_views, stored_views};
+
+/// Clock recovery of the eye for the measurement modules: samples per UI and the recovered clock.
+pub fn eye_infer(v: &[f32], dt: f64, rate: Option<f64>) -> Result<(f64, oos_dsp::eye::Clock), String> {
+    eyepage::automatic::infer(v, dt, rate, false).map(|(s, clk)| (s.samples_per_ui, clk))
+}
 pub const PANES_N: usize = tables::PANES.len();
 pub use eyepage::EYE_ITEMS;
 pub use panes::{PANE_HARMS, TREND_SEL_N};
@@ -408,6 +424,10 @@ pub enum MenuId {
     SelfCal,
     /// network overview and WLAN through a USB stick (ui/wlan.rs)
     Network,
+    /// System > Features (ui/features.rs) and its decoder page
+    Features,
+    /// System > Features > Decoders, page n (`features::DEC_PAGE` a page)
+    Decoders(usize),
     /// which network services run (ui/remote.rs)
     Remote,
     /// the SSH server: password, host key, trusted keys (ui/ssh.rs)
@@ -430,15 +450,13 @@ pub enum MenuId {
     /// list of all options of a choice (`Ui::pick` names the item); picking returns to the menu of the item
     Pick,
     /// Full legacy measurement and pair catalog, including Selected.
-    MeasLegacy,
+    MeasSelected,
 }
 
 /// Buttons of the top bar.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum TopBtn {
     Menu(MenuId),
-    System,
-    Load,
     /// Back to live acquisition from a simulation or a stored waveform.
     Live,
 }
@@ -503,10 +521,6 @@ enum Item {
     DecBaud,
     DecCanRate,
     DecCanH,
-    DecFdRate,
-    DecArate,
-    DecTick,
-    DecNibbles,
     DecUsbSpeed,
     /// option row `k` of a protocol module
     DecOpt(usize),
@@ -609,6 +623,8 @@ enum Item {
     AcqSeg,
     /// software matching of the ADC cores' offsets (`board::dho::cores`)
     AcqCores,
+    /// Acquire > Draw path: Standard (fast path) or Batch (PR #7, `Model::draw_batch`)
+    AcqDrawPath,
     /// a note while the sample rate is below the ADC's: what lies above half of it folds down, nothing filters it
     AcqAlias,
     /// segments recorded by the FPGA (`Model::seg_hw`)
@@ -663,6 +679,7 @@ enum Item {
     RefOffset,
     RefExport,
     RefImport,
+    RefLoad,
     MaskSave,
     MaskLoad,
     MathLinA,
@@ -677,6 +694,7 @@ enum Item {
     MeasTsetup,
     MeasThold,
     CurMode,
+    CurSrcB,
     CurA,
     CurB,
     Persist,
@@ -691,6 +709,13 @@ enum Item {
     WinLa,
     ClearDisp,
     Dots,
+    /// Display > Bottom bar: Cards or Compact (`Model::bar_compact`)
+    BottomBar,
+    /// System > Features: one row per feature of `features::features()`, one per decoder of `PROTOS`
+    FeatOn(usize),
+    FeatDec(usize),
+    /// Display > Monitor view (ui/monitor.rs)
+    HdmiView,
     Hdmi,
     TextSize,
     ZInput,
@@ -985,10 +1010,24 @@ enum Kind {
     Action,
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub enum Ev {
     Key(u8),
-    Touch { id: i32, phase: Phase, x: i32, y: i32 },
-    Wheel { x: i32, y: i32, steps: i32, ctrl: bool, shift: bool, alt: bool },
+    Touch {
+        id: i32,
+        phase: Phase,
+        x: i32,
+        y: i32,
+    },
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    Wheel {
+        x: i32,
+        y: i32,
+        steps: i32,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1030,6 +1069,8 @@ enum Drag {
     CursorD,
     /// the bus, by its vertical position
     Bus,
+    /// a list: by its content or its scroll bar (ui/scroll.rs)
+    Scroll(scroll::List, scroll::Grip),
 }
 
 struct Pinch {
@@ -1111,11 +1152,10 @@ fn measure_channels(
 
 pub struct Ui {
     host: host::Host,
-    meas_category: usize,
     /// Add-measurements catalog: tab, selected button, which groups are open, scroll, and the extra sources.
     cat_tab: u8,
     cat_sel: u16,
-    cat_open: [u16; 6],
+    cat_open: [u16; crate::measures::CATEGORIES.len()],
     cat_scroll: i32,
     cat_c: WaveId,
     cat_d: WaveId,
@@ -1130,6 +1170,7 @@ pub struct Ui {
     load_slot_ask: bool,
     load_destination: Option<usize>,
     pub lan_status: String,
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub lan_web_port: Option<u16>,
     pub m: Model,
     pub src: Source,
@@ -1259,9 +1300,12 @@ pub struct Ui {
     /// SIM: Play is moving the timebase window through the selected record
     workspace: workspace::Workspace,
     pub desktop_panel: Option<bool>,
+    /// the analyser view the last frame had: a change of view analyses what is already there (a stopped record gets no new one)
+    analyzed_view: AView,
     sim_play: bool,
     sim_generation: Option<sim::Generation>,
     sim_error: Option<String>,
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     sim_i: usize,
     /// Offline mode. Off, the live screen stays as it is.
     offline: bool,
@@ -1483,6 +1527,7 @@ fn copy_page(v: &[f32], dt: f64, t0: f64, start: u64, stop: u64) -> (Vec<f32>, f
     (page, dt, t0 + lo as f64 * dt)
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// The fonts of the text size.
     pub fn fonts(&self) -> &'static Fonts {
@@ -1497,6 +1542,8 @@ impl Ui {
     pub fn new(src: Source, host: host::Host) -> Ui {
         let mut m = Model::default();
         m.meas = Self::default_meas();
+        // `acq.pipeline = batch` (or OOS_PIPELINE): the draw path starts as Batch (Acquire > Draw path)
+        m.draw_batch = host.switches().pipeline == crate::drawpipe::Mode::Batch;
         if let Source::Replay { .. } = src {
             // the replayed frame of 2026-11-02: 3.2 µs at 0.8 ns
             m.tscale = tscales().iter().position(|&t| (t - 200e-9).abs() < 1e-12).unwrap_or(0);
@@ -1506,10 +1553,9 @@ impl Ui {
         }
         let mut ui = Ui {
             host,
-            meas_category: 0,
             cat_tab: 0,
             cat_sel: 1,
-            cat_open: [1; 6],
+            cat_open: [1; crate::measures::CATEGORIES.len()],
             cat_scroll: 0,
             cat_c: WaveId::Ch(2),
             cat_d: WaveId::Ch(3),
@@ -1620,6 +1666,7 @@ impl Ui {
             bode: Default::default(),
             workspace: workspace::Workspace::default(),
             desktop_panel: None,
+            analyzed_view: AView::Scope,
             sim_play: false,
             sim_generation: None,
             sim_error: None,
@@ -1817,7 +1864,10 @@ impl Ui {
     /// Top bar, waveform area and bottom bar of the screen.
     pub fn frame(&self) -> Frame {
         let mut f = Frame::of(self.scr);
-        // the compact bottom bar: the body takes what the cards would have had
+        if !self.m.bar_compact {
+            return f;
+        }
+        // the compact bottom bar (PR #8, Display > Bottom bar = Compact): the body takes what the cards would have had
         let grow = f.bottom.h - BOTTOM_H;
         f.body.h += grow;
         f.bottom = Rect::new(f.bottom.x, f.bottom.y + grow, f.bottom.w, BOTTOM_H);
@@ -2633,6 +2683,7 @@ impl Ui {
     }
 
     /// (points, dt, time of the first point relative to the trigger) of the last record of channel c.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn record_info(&self, c: usize) -> Option<(usize, f64, f64)> {
         let r = self.last[0].as_ref()?;
         if r.ch[c].is_empty() {
@@ -2664,6 +2715,7 @@ impl Ui {
     }
 
     /// The samples of `raw_info`.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn raw_volts(&self, c: usize) -> Option<Vec<f32>> {
         let r = self.last[0].as_ref()?.raw.as_ref()?;
         let v = r.frame.ch.get(c)?;
@@ -2712,6 +2764,7 @@ impl Ui {
     }
 
     /// Samples of a reference slot, finite volts. Empty when that slot holds nothing.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(crate) fn ref_volts(&self, slot: usize) -> Vec<f32> {
         self.ref_page(slot, 1, 0).map(|(v, _, _, _, _)| v).unwrap_or_default()
     }
@@ -2803,8 +2856,13 @@ impl Ui {
     // ------------------------------------------------------------------ acquisition per frame
 
     pub fn step(&mut self, dt_wall: f64) {
+        // Acquire > Draw path: the batch pipeline of PR #7 on the hardware only
+        change::acquisition::draw_path_enforce(self);
+        // System > Features: what is left out runs nothing
+        self.features_enforce();
         self.poll_reference_measurements();
         self.poll_catalog_measurements();
+        self.math_fit_tick();
         self.sim_poll();
         self.eye_auto_poll();
         let Some(final_done) = change::begin_step(self, dt_wall) else { return };
@@ -2863,13 +2921,13 @@ impl Ui {
             // what this picture is made of (pacing::composition): frames through a deposit kernel, through the record
             // path, and when the newest pipe batch in it was fed
             let (mut n_dep, mut n_rec, mut newest) = (0usize, 0usize, None);
-            let (mut ta, mut td, sw) = (0f32, 0f32, *self.host.switches());
+            let (mut ta, mut td, sw) = (0f32, 0f32, change::acquisition::draw_switches(self, &self.m));
             // the newest raw deep record of this step (deepmeas.rs): with one frame per batch (2 ms/div and up at
             // 10 M) the next pair frame is often queued behind it, which drew it on the fast path or replaced it as
             // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
             let deep_raw = crate::deepmeas::want(&self.m, &sw).is_some();
             let mut raw_rec: Option<Record> = None;
-            if !self.fast_ok() {
+            if !fast {
                 if let Some(p) = crate::drawpipe::pipe(&sw) {
                     p.set_view(None, 0, 0, sw.interp);
                 }
@@ -3159,7 +3217,13 @@ impl Ui {
                     self.meas_want = true;
                     // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
                     // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
-                    if crate::deepmeas::want(&self.m, &sw).is_some() {
+                    // (only a raw deep record: a clone of every record cost the screen rate, 26 instead of 27 frames a
+                    // second with GPU and HDMI Layout, unit 2026-11-15)
+                    let raw_deep = self.last[0]
+                        .as_ref()
+                        .and_then(|r| r.raw.as_ref())
+                        .is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame));
+                    if raw_deep && crate::deepmeas::want(&self.m, &sw).is_some() {
                         self.meas_pending = self.last[0].clone();
                     }
                 } else {
@@ -3167,6 +3231,7 @@ impl Ui {
                 }
                 let p1 = std::time::Instant::now();
                 self.analyzer_update();
+                self.monitor_analyzer_update();
                 self.protocol_watch();
                 self.bode_update();
                 let p2 = std::time::Instant::now();
@@ -3217,6 +3282,12 @@ impl Ui {
                         }
                     }
                 }
+            }
+        }
+        if self.analyzed_view != self.m.view {
+            self.analyzed_view = self.m.view;
+            if self.m.view != AView::Scope {
+                self.analyzer_update();
             }
         }
         // the measurements of the newest record (in the background: when they are done, also after a stop)
@@ -3580,7 +3651,10 @@ impl Ui {
         self.draw_info(cv);
         self.draw_zoom_box(cv);
         self.draw_full_btn(cv);
-        if !(self.eye_open() && self.m.eye_place == EyePlace::Full && self.workspace.eye_float.is_none()) {
+        // the zoom magnifier belongs to the scope picture: an analyser page has its own controls under it
+        if !(self.eye_open() && self.m.eye_place == EyePlace::Full && self.workspace.eye_float.is_none())
+            && !self.view_on()
+        {
             self.draw_zoom_btn(cv);
         }
         self.draw_auto_bar(cv);
@@ -3655,6 +3729,16 @@ impl Ui {
 
     /// `render_view` into layers (System > Graphics = GPU): the traces become jobs at the monitor's size.
     pub fn render_view_layers(&mut self, l: &mut Layers) {
+        // Display > Monitor view: another view than the panel's
+        if self.monitor_view().is_some() {
+            self.with_monitor_view(|u| u.render_view_layers_as_is(l));
+            return;
+        }
+        self.render_view_layers_as_is(l);
+    }
+
+    /// `render_view_layers` of the view in place.
+    fn render_view_layers_as_is(&mut self, l: &mut Layers) {
         let keep = (
             self.scr,
             self.grid,
@@ -3732,6 +3816,25 @@ impl Ui {
         }
     }
 
+    /// The refs that are shown over the live channels, in slot order.
+    pub(super) fn shown_refs(&self) -> Vec<usize> {
+        (0..NREF).filter(|&i| self.refs[i].as_ref().is_some_and(|r| r.on)).collect()
+    }
+
+    /// (V/div, offset, unit, colour) of the ref that labels the volt axis when no channel is shown here: the selected
+    /// ref, else the first one this window holds.
+    fn ref_axis_source(&self) -> Option<(f32, f32, &'static str, Rgb)> {
+        let here: Vec<usize> =
+            self.shown_refs().into_iter().filter(|&i| self.workspace_source_visible_here(WaveId::Ref(i))).collect();
+        let i = here
+            .iter()
+            .copied()
+            .find(|&i| self.selected_workspace_source() == Some(WaveId::Ref(i)))
+            .or(here.first().copied())?;
+        let r = self.refs[i].as_ref()?;
+        Some((r.vpd, r.offset, "V", self.wave_color(WaveId::Ref(i))))
+    }
+
     /// Axis labels inside the plot: volts of the active channel along the left edge (not on the top and bottom
     /// lines, where the status line and the time labels are), times along the bottom edge. A volt label is left out
     /// rather than drawn over another label, the status line, the time labels, the mask pill or the decode band; it
@@ -3744,11 +3847,18 @@ impl Ui {
         } else {
             (0..NCH).find(|&i| self.m.ch[i].on && self.shows(i))
         };
-        if let Some(c) = c {
-            let ch = &self.m.ch[c];
+        // with no channel to label, the shown ref gives the axis (R1 in the lane or window that holds it)
+        let axis = match c {
+            Some(c) => {
+                let ch = &self.m.ch[c];
+                Some((ch.volts_per_div(), ch.offset, ch.unit.name(), CH_COLORS[c]))
+            }
+            None => self.ref_axis_source(),
+        };
+        if let Some((base_vpd, base_offset, unit, color)) = axis {
             let (factor, center) = self.zoom_vertical_transform(a);
-            let vpd = ch.volts_per_div() / factor;
-            let offset = ch.offset - center * ch.volts_per_div();
+            let vpd = base_vpd / factor;
+            let offset = base_offset - center * base_vpd;
             let span = (VDIV / 2.0 * vpd).abs() + offset.abs();
             let mut taken: Vec<Rect> = vec![Rect::new(a.x, a.y, a.w, 20), Rect::new(a.x, a.y + a.h - 22, a.w, 22)];
             if self.m.mask_on && self.mask.is_some() && self.shows(self.m.mask_src) {
@@ -3773,13 +3883,13 @@ impl Ui {
             for j in 1..VDIV as i32 {
                 let y = a.y + (j as f32 * a.h as f32 / VDIV).round() as i32;
                 let v = (VDIV / 2.0 - j as f32) * vpd - offset;
-                let s = axis_label(v, vpd, offset, span, ch.unit.name());
+                let s = axis_label(v, vpd, offset, span, unit);
                 let r = Rect::new(x - 3, y + 4 - f.s.size, f.s.width(&s) + 6, f.s.size + 4);
                 if taken.iter().any(|t| overlaps(*t, r)) {
                     continue;
                 }
                 taken.push(r);
-                backed_text(cv, &f.s, x, y + 4, &s, scale(CH_COLORS[c], 210));
+                backed_text(cv, &f.s, x, y + 4, &s, scale(color, 210));
             }
         }
         if self.stacked() && self.cur_win + 1 < self.wins.len() {
@@ -3789,6 +3899,7 @@ impl Ui {
         let span = (HDIV / 2.0 * tdiv).abs() + delay.abs();
         // a narrow window (side by side) labels every second division, the centre always
         let every = if a.w < 700 { 2 } else { 1 };
+        let mut free = i32::MIN;
         for i in 0..=HDIV as i32 {
             if (i - HDIV as i32 / 2).rem_euclid(every) != 0 {
                 continue;
@@ -3799,6 +3910,10 @@ impl Ui {
             let s = if zero { "0 s".to_string() } else { axis_label(t, tdiv, delay, span, "s") };
             let w = f.s.width(&s);
             let tx = (x - w / 2).clamp(a.x + 6, a.x + a.w - 6 - w);
+            if tx < free + 8 {
+                continue;
+            }
+            free = tx + w;
             backed_text(cv, &f.s, tx, a.y + a.h - 6, &s, if zero { ACCENT } else { AXIS_TEXT });
         }
     }
@@ -4248,8 +4363,8 @@ impl Ui {
         };
         cv.no_clip();
         let f = self.fonts();
-        // above the decoder band and the time labels
-        let r = Rect::new(a.x + 8, a.y + a.h - 76, f.s.width(&txt) + 16, 20);
+        // above the decoder band and the time labels, right of the volt labels
+        let r = Rect::new(a.x + 14 + f.s.width("-0.00 mV"), a.y + a.h - 76, f.s.width(&txt) + 16, 20);
         cv.round(r, 4, PANEL_BG, 230);
         cv.text_in(&f.s, r, 1, &txt, col);
     }
@@ -4268,6 +4383,7 @@ impl Ui {
     }
 
     /// Test/legacy adapter; production rendering reuses immutable timed results.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn math_source(&self, s: usize, below: usize) -> Vec<f32> {
         self.math_source_record(s, below).map_or_else(Vec::new, |w| w.v.as_ref().clone())
     }
@@ -4287,21 +4403,33 @@ impl Ui {
 
     /// Picks the math scale so that the waveform spans about 6 divisions.
     fn math_autoscale(&mut self) {
-        if self.m.math == MathOp::Fft {
-            self.m.math_scale = 3;
-            self.m.math_offset = 0.0;
-            return;
+        self.math_fit(self.m.math_sel);
+    }
+
+    /// Fits the scale and offset of math channel `k` to its result. A result that is flat (a source minus itself) is
+    /// not stretched to nanovolts: the scale stays within 1/100 of the V/div of the sources it was made from.
+    fn math_fit(&mut self, k: usize) {
+        let mut c = self.m.math_ch(k);
+        if c.op == MathOp::Fft {
+            (c.scale, c.offset) = (3, 0.0);
+        } else {
+            let w = self.math_wave_of(k);
+            let (mn, mx) =
+                w.iter().filter(|x| x.is_finite()).fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+            let sc = math_scales();
+            if mx < mn {
+                c.scale = sc.iter().position(|&x| x >= 1.0).unwrap_or(0);
+            } else {
+                let floor = if c.op.unit() == "V" { self.math_source_vpd(k) as f64 / 100.0 } else { 0.0 };
+                let want = ((mx - mn) as f64 / 6.0).max(1e-9).max(floor);
+                c.scale = sc.iter().position(|&x| x >= want).unwrap_or(sc.len() - 1);
+                c.offset = -((mx + mn) as f64 / 2.0 / sc[c.scale]) as f32;
+            }
         }
-        let w = self.math_wave();
-        let (mn, mx) = w.iter().filter(|x| x.is_finite()).fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
-        let sc = math_scales();
-        if mx < mn {
-            self.m.math_scale = sc.iter().position(|&x| x >= 1.0).unwrap_or(0);
-            return;
+        if k == self.m.math_sel {
+            (self.m.math_scale, self.m.math_offset) = (c.scale, c.offset);
         }
-        let want = ((mx - mn) as f64 / 6.0).max(1e-9);
-        self.m.math_scale = sc.iter().position(|&x| x >= want).unwrap_or(sc.len() - 1);
-        self.m.math_offset = -((mx + mn) as f64 / 2.0 / sc[self.m.math_scale]) as f32;
+        self.m.maths[k] = c;
     }
 
     fn draw_math(&self, cv: &mut Canvas) {
@@ -4332,7 +4460,12 @@ impl Ui {
         let c = self.m.math_ch(k);
         let col = MATH_COLORS[k % MATH_COLORS.len()];
         let f = self.fonts();
-        cv.set_clip(self.area);
+        // the last stacked lane keeps its time labels clear: the trace is clipped above them
+        let mut lane = self.area;
+        if self.stacked() && self.cur_win + 1 == self.wins.len() {
+            lane.h = (lane.h - (f.s.size + 8)).max(f.s.size);
+        }
+        cv.set_clip(lane);
         let ppy = self.area.h as f32 / VDIV;
         let cy = self.area.y as f32 + self.area.h as f32 / 2.0;
         let label;
@@ -4595,15 +4728,15 @@ impl Ui {
             x_prev_end = x1;
         }
         // threshold line on the source trace (LA lines have no analog level)
-        if !m.dec_on_la() && m.dec_proto != Proto::Cphy {
+        if !m.dec_on_la() && m.dec_proto != Proto::CPHY {
             let Some(source) = decode_wave(m.dec_src) else {
                 cv.no_clip();
                 return;
             };
             let ty = self.y_of_wave(source, m.dec_thr);
             cv.dashed_hline(a.x + 26, a.x + a.w - 26, ty, 2, 6, scale(col, 160));
-            if m.dec_proto == Proto::Arinc429 {
-                // the LO level
+            if m.dec_proto.module().is_some_and(|p| p.key() == "Arinc429") {
+                // the LO level of ARINC 429
                 let ty = self.y_of_wave(source, -m.dec_thr);
                 cv.dashed_hline(a.x + 26, a.x + a.w - 26, ty, 2, 6, scale(col, 160));
             }
@@ -4648,7 +4781,7 @@ impl Ui {
         let text_w = f.sb.width(&name).max(f.s.width(&readout));
         let bw = (text_w + 12).clamp(36, maximum);
         let bh = 34;
-        let y0 = y.clamp(area.y + 2, (area.y + area.h - bh - 2).max(area.y + 2));
+        let y0 = y.clamp(area.y + 2, (area.y + area.h - bh - self.ref_badge_pad()).max(area.y + 2));
         let x0 = (area.x + 80).min((area.x + area.w - bw - 4).max(area.x + 2));
         let b = Rect::new(x0, y0, bw, bh);
         cv.round(b, 3, col, 255);
@@ -4658,6 +4791,15 @@ impl Ui {
         cv.text_in(&f.sb, Rect::new(b.x, b.y + 1, b.w, row), 1, &name, ink);
         cv.text_in(&f.s, Rect::new(b.x, b.y + row, b.w, row), 1, &readout, ink);
         cv.set_clip(area);
+    }
+
+    /// Room a ref badge keeps clear under it: the time labels along the bottom of the lowest lane.
+    fn ref_badge_pad(&self) -> i32 {
+        if self.stacked() && self.cur_win + 1 < self.wins.len() {
+            2
+        } else {
+            self.fonts().s.size + 10
+        }
     }
 
     fn draw_refs(&self, cv: &mut Canvas) {
@@ -4675,6 +4817,7 @@ impl Ui {
         }
         let half = tdiv * HDIV as f64 / 2.0;
         let (t_left, t_right) = (delay - half, delay + half);
+        let mut badges: Vec<i32> = Vec::new();
         for (i, r) in self.refs.iter().enumerate() {
             let Some(r) = r else { continue };
             let t0 = self.source_time_origin(WaveId::Ref(i), r.t0);
@@ -4730,7 +4873,14 @@ impl Ui {
                 prev = Some((x, y));
             }
             if let Some(y) = first {
-                self.draw_ref_badge(cv, area, y, col, i, r);
+                // badges of references that start at the same height are fanned out instead of printed over each other
+                // none in the overview of a zoom (it shows the whole record, the detail has the badges)
+                if !all_sources {
+                    let (lo, hi) = (area.y + 2, (area.y + area.h - 34 - self.ref_badge_pad()).max(area.y + 2));
+                    let spot = badge_spot(&badges, y, lo, hi);
+                    badges.push(spot);
+                    self.draw_ref_badge(cv, area, spot, col, i, r);
+                }
             }
         }
         cv.no_clip();
@@ -4863,8 +5013,7 @@ impl Ui {
         // drag feedback
         let tag = |cv: &mut Canvas, x: i32, y: i32, s: &str, col: Rgb| {
             let r = Rect::new(x, y, f.sb.width(s) + 20, 22);
-            cv.round(r, 5, LINE, 255);
-            cv.round(r.inset(1), 4, BAR, 255);
+            cv.framed(r, 5, 1, LINE, 4, BAR);
             cv.text_in(&f.sb, r, 1, s, col);
         };
         match self.touch.drag {
@@ -4923,11 +5072,15 @@ impl Ui {
                     for (frac, name) in [(self.m.cur_c, "Y1"), (self.m.cur_d, "Y2")] {
                         let y = a.y + (frac * a.h as f32) as i32;
                         cv.dashed_hline(a.x, a.x + a.w - 1, y, 4, 3, CURSOR);
-                        tagbox(cv, a.x + a.w - 26, y - 16, name);
+                        tagbox(cv, self.right_tag_x(a, y - 16, f.s.width(name) + 8), y - 16, name);
                     }
                 }
                 let (ta, tb) = self.cursor_times();
                 for (frac, name, t) in [(self.m.cur_a, "X1", ta), (self.m.cur_b, "X2", tb)] {
+                    // a cursor that the zoomed view does not show keeps its time and is not drawn
+                    if !(0.0..=1.0).contains(&frac) {
+                        continue;
+                    }
                     let x = a.x + (frac * a.w as f32) as i32;
                     cv.dashed_vline(x, a.y, a.y + a.h - 1, 4, 3, CURSOR);
                     tagbox(cv, x + 2, a.y + a.h - 36, name);
@@ -4947,11 +5100,22 @@ impl Ui {
                 for (frac, name) in [(self.m.cur_a, "Y1"), (self.m.cur_b, "Y2")] {
                     let y = a.y + (frac * a.h as f32) as i32;
                     cv.dashed_hline(a.x, a.x + a.w - 1, y, 4, 3, CURSOR);
-                    tagbox(cv, a.x + a.w - 26, y - 16, name);
+                    tagbox(cv, self.right_tag_x(a, y - 16, f.s.width(name) + 8), y - 16, name);
                 }
             }
         }
         cv.no_clip();
+    }
+
+    /// Left edge of a cursor tag at the right end of the plot: where it clears the full-screen and zoom buttons.
+    fn right_tag_x(&self, a: Rect, y: i32, w: i32) -> i32 {
+        let mut x = a.x + a.w - 26;
+        for r in [self.full_btn().0, self.zoom_btn().0] {
+            if x + w > r.x - 2 && x < r.right() + 2 && y < r.bottom() + 2 && y + 14 > r.y - 2 {
+                x = r.x - 6 - w;
+            }
+        }
+        x
     }
 
     /// Cursor read-outs: (label, value) pairs.
@@ -5043,7 +5207,7 @@ impl Ui {
             }
         };
         if !src.is_empty() {
-            backed_text(cv, &f.s, self.full_home().0.x - 8 - f.s.width(src), y, src, DIM);
+            backed_text(cv, &f.s, self.full_home().0.x - 16 - f.s.width(src), y, src, DIM);
         }
         let mut x = g.x + 8;
         if self.m.touch_lock {
@@ -5078,15 +5242,39 @@ impl Ui {
         }
         let note = self.live_ref_note();
         if !note.is_empty() && !self.view_on() && !self.eye_open() {
-            let y = g.y + g.h - 16;
+            let y = g.y + g.h - 36;
             let fit = Rect::new(g.x + 8, y - 12, 52, 22);
             btn(cv, fit, BTN, ACCENT);
             cv.text_in(&f.s, fit, 1, "Fit", TEXT);
             let lab = Rect::new(fit.x + fit.w + 8, y - 12, (g.x + g.w - fit.x - fit.w - 16).max(1), 22);
             cv.set_clip(lab);
-            cv.text_in(&f.s, lab, 0, &note, LABEL);
+            let text = self.fit_ref_note(&note, lab.w);
+            // over a trace of the last lane: backed, like the time labels
+            cv.blend(Rect::new(lab.x - 3, lab.y + 2, f.s.width(&text) + 6, lab.h - 4), BG, 190);
+            cv.text_in(&f.s, lab, 0, &text, LABEL);
             cv.no_clip();
         }
+    }
+
+    /// The "With live" note cut to `width`, naming how many references no longer fit ("+2").
+    fn fit_ref_note(&self, note: &str, width: i32) -> String {
+        let f = self.fonts();
+        if f.s.width(note) <= width {
+            return note.to_string();
+        }
+        let Some((head, rest)) = note.split_once(" · ") else { return note.to_string() };
+        let parts: Vec<&str> = rest.split("   ").collect();
+        for keep in (0..parts.len()).rev() {
+            let text = if keep == 0 {
+                format!("{head} · +{}", parts.len())
+            } else {
+                format!("{head} · {}   +{}", parts[..keep].join("   "), parts.len() - keep)
+            };
+            if f.s.width(&text) <= width || keep == 0 {
+                return text;
+            }
+        }
+        note.to_string()
     }
 
     /// Search markers: an amber tick at the top of the plot for every event of the trigger condition.
@@ -5113,27 +5301,52 @@ impl Ui {
         }
     }
 
-    /// Height the strip takes when it sits under the plot or above the trace.
+    /// Height the strip takes when it sits under the plot or above the trace, with the measurement card if that is
+    /// docked there too.
     fn strip_rows_h(&self) -> i32 {
         let rows = self.strip_rows();
-        if rows == 0 {
-            0
+        (if rows == 0 { 0 } else { rows * self.lay().strip_row + 4 }) + self.results_band_h()
+    }
+
+    /// The measurement card in a dock (compact bottom bar), when it was docked rather than floated.
+    fn results_docked(&self) -> Option<StripDock> {
+        (self.m.bar_compact
+            && self.workspace.measure_docked
+            && self.workspace.measure_float.is_none()
+            && self.results_panel())
+        .then_some(self.m.strip_dock)
+    }
+
+    /// Width a side-docked measurement card takes from the plot.
+    fn results_side_w(&self) -> i32 {
+        if matches!(self.results_docked(), Some(StripDock::Left | StripDock::Right)) {
+            self.lay().results_w + 6
         } else {
-            rows * self.lay().strip_row + 4
+            0
         }
     }
 
-    /// Left edge and width of the graticule. A side dock keeps a column for the strip.
+    /// Height a card docked under or above the plot takes: the header and two rows, paged.
+    fn results_band_h(&self) -> i32 {
+        if !matches!(self.results_docked(), Some(StripDock::Under | StripDock::Above)) {
+            return 0;
+        }
+        let total = self.measurement_count();
+        let page = self.results_page_size();
+        let lines = total.min(page).div_ceil(self.results_cols()) as i32;
+        let nav = if total > page { 38 } else { 0 };
+        30 + if self.results_min { 0 } else { lines * self.results_row(total as i32) + nav + 4 } + 4
+    }
+
+    /// Left edge and width of the graticule. A side dock keeps a column for the strip and for a docked card.
     fn plot_span(&self) -> (i32, i32) {
         let body = self.frame().body;
-        if self.strip_rows() > 0 {
-            match self.m.strip_dock {
-                StripDock::Left => return (body.x + STRIP_SIDE, body.w - STRIP_SIDE),
-                StripDock::Right => return (body.x, body.w - STRIP_SIDE),
-                _ => {}
-            }
+        let side = if self.strip_rows() > 0 { STRIP_SIDE } else { 0 } + self.results_side_w();
+        match self.m.strip_dock {
+            StripDock::Left => (body.x + side, body.w - side),
+            StripDock::Right => (body.x, body.w - side),
+            _ => (body.x, body.w),
         }
-        (body.x, body.w)
     }
 
     /// Top of the rows when the strip runs across the screen.
@@ -5158,6 +5371,7 @@ impl Ui {
     }
 
     /// Where the strip is drawn. None when it has nothing to show.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn strip_rect(&self) -> Option<Rect> {
         let rows = self.strip_rows();
         if rows == 0 {
@@ -5364,24 +5578,48 @@ impl Ui {
         }
         let a = self.over_area();
         let total = self.measurement_count();
-        let n = total.min(self.results_page_size()) as i32;
-        let nav = if total > n as usize { 38 } else { 0 };
+        let page = self.results_page_size();
+        let n = total.min(page).div_ceil(self.results_cols()) as i32;
+        let nav = if total > page { 38 } else { 0 };
         let body_h = if self.results_min { 0 } else { n * self.results_row(total as i32) + nav + 4 };
         let panel_h = 30 + body_h;
-        let rw = self.lay().results_w;
+        let rw = self.lay().results_w * self.results_cols() as i32;
         let fr = self.frame();
         let (top, bottom, sw) = (fr.top.bottom(), fr.bottom.y, self.scr.w);
-        let default = match self.workspace.measure_dock {
-            Some(StripDock::Left) => (4, top + 4),
-            Some(StripDock::Right) => (sw - rw - 4, top + 4),
-            Some(StripDock::Above) => ((sw - rw) / 2, top + 4),
-            Some(StripDock::Under) => ((sw - rw) / 2, bottom - panel_h - 4),
+        let docked = self.results_docked();
+        let strip_side = if self.strip_rows() > 0 { STRIP_SIDE } else { 0 };
+        let strip_h = {
+            let rows = self.strip_rows();
+            if rows == 0 {
+                0
+            } else {
+                rows * self.lay().strip_row + 4
+            }
+        };
+        let (body_top, plot_x, plot_w) =
+            (if self.full_on() { 0 } else { fr.body.y }, self.plot_span().0, self.plot_span().1);
+        let default = match docked {
+            Some(StripDock::Left) => (fr.body.x + strip_side + 2, body_top),
+            Some(StripDock::Right) => (fr.body.right() - strip_side - rw - 2, body_top),
+            Some(StripDock::Above) => (plot_x + (plot_w - rw) / 2, body_top + strip_h + 2),
+            Some(StripDock::Under) => (plot_x + (plot_w - rw) / 2, bottom - strip_h - panel_h - 2),
             None => (
                 a.x + a.w - 56 - rw,
                 a.y + 22 + 26 * (0..NMATH).filter(|&k| self.m.math_ch(k).op != MathOp::Off).count() as i32,
             ),
         };
-        let (x, y) = self.workspace.measure_float.unwrap_or(default);
+        let (mut x, mut y) = self.workspace.measure_float.unwrap_or(default);
+        // A floating card never covers the full-screen and zoom corner buttons or the zoom bar.
+        let floating = docked.is_none();
+        for r in if floating { vec![self.full_btn().0, self.zoom_btn().0] } else { Vec::new() } {
+            let r = Rect::new(r.x - 4, r.y - 4, r.w + 8, r.h + 8);
+            if x + rw > r.x && x < r.right() && y < r.bottom() && y + panel_h > r.y {
+                x = (r.x - rw).max(0);
+            }
+        }
+        if floating && self.m.zoom && !self.view_on() {
+            y = y.max(self.zoom_readout().bottom() + 2);
+        }
         // Expanding a collapsed panel or changing its page must never put the
         // body and navigation beyond the touchable workspace.
         let x = x.clamp(0, sw - rw);
@@ -5436,8 +5674,12 @@ impl Ui {
         // baselines: 16 and 35 px into a row at the normal text size
         let (y1, y2) = (one - 6, two - 7);
         let (first, end) = self.results_page_range(rows.len());
+        let cols = self.results_cols();
+        let cw = body.w / cols as i32;
         for (page_row, (i, r)) in rows.iter().enumerate().skip(first).take(end - first).enumerate() {
-            let by = body.y + page_row as i32 * pitch;
+            // the rows of a card docked under or above the plot run in columns
+            let body = Rect::new(body.x + (page_row % cols) as i32 * cw, body.y, cw, body.h);
+            let by = body.y + (page_row / cols) as i32 * pitch;
             cv.hline(body.x + 8, body.x + body.w - 9, by, LINE);
             let st = self.mstat.get(i).copied().unwrap_or_default();
             let mean = st.sum / st.n.max(1) as f64;
@@ -5457,7 +5699,7 @@ impl Ui {
             cv.text(&f.sb, value_x, by + y1, &value, self.wave_color(r.src));
             if st.n > 1 {
                 cv.set_clip(Rect::new(body.x + 10, by + y1 + 4, (sd_x - body.x - 15).max(1), pitch - y1 - 4));
-                cv.text(&f.s, body.x + 10, by + y2, &format!("\u{3bc} {}", r.fmt(mean)), DIM);
+                cv.text(&f.s, body.x + 10, by + y2, &format!("\u{b5} {}", r.fmt(mean)), DIM);
                 cv.no_clip();
                 cv.text(&f.s, sd_x, by + y2, &sd, DIM);
             }
@@ -5490,6 +5732,7 @@ impl Ui {
     const MENU_BTN: Rect = Rect::new(4, H - BOTTOM_H + 3, 46, 30);
     const SINGLE_BTN: Rect = Rect::new(104, 5, 54, 30);
     /// Run state pill at the panel's normal text size (`run_pill` grows with the text).
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     const RUN_PILL: Rect = Rect::new(8, 6, 92, 28);
     fn menu_btn(&self) -> Rect {
         self.frame().menu_btn
@@ -5502,18 +5745,20 @@ impl Ui {
     }
 
     /// Top-bar buttons, right-aligned before the network box: what is used most, and the menus without a front-panel key
-    /// (Display, Storage, System). Everything else is in the start menu.
+    /// (Display, Storage). Everything else is in the start menu: System first in its group, SIM under Analysis; Load file
+    /// is a row of the Reference menu.
     fn top_buttons(&self) -> Vec<(TopBtn, &'static str, Rect)> {
         let f = self.fonts();
         let mut all = vec![
-            (TopBtn::Load, "Load file"),
-            (TopBtn::Menu(MenuId::Sim), "SIM"),
             (TopBtn::Menu(MenuId::Measure), "Measure"),
             (TopBtn::Menu(MenuId::Cursor), "Cursor"),
             (TopBtn::Menu(MenuId::Display), "Display"),
             (TopBtn::Menu(MenuId::Storage), "Storage"),
-            (TopBtn::System, "System"),
         ];
+        all.retain(|(b, _)| match b {
+            TopBtn::Menu(m) => !self.menu_left_out(*m),
+            _ => true,
+        });
         if self.record_mode() {
             all.insert(0, (TopBtn::Live, "Live"));
         }
@@ -5525,18 +5770,12 @@ impl Ui {
         };
         let mut padding = 28;
         if !fits(&all, padding) {
-            if let Some((_, label)) = all.iter_mut().find(|(b, _)| *b == TopBtn::Load) {
-                *label = "Load";
-            }
-        }
-        if !fits(&all, padding) {
             padding = 20;
         }
         for (button, short) in [
             (TopBtn::Menu(MenuId::Storage), "Store"),
             (TopBtn::Menu(MenuId::Display), "Disp"),
             (TopBtn::Menu(MenuId::Measure), "Meas"),
-            (TopBtn::System, "Sys"),
         ] {
             if fits(&all, padding) {
                 break;
@@ -5692,8 +5931,6 @@ impl Ui {
             let hl = match b {
                 TopBtn::Live => true,
                 TopBtn::Menu(m) => self.menu_open && root == m,
-                TopBtn::System => self.menu_open && root == MenuId::Utility,
-                TopBtn::Load => false,
             };
             btn(cv, r, BTN, if hl { ACCENT } else { BTN_BORDER });
             cv.text_in(&f.mb, r, 1, l, if hl { ACCENT } else { TEXT });
@@ -5773,7 +6010,7 @@ impl Ui {
             (MenuId::Pick, Some(p)) => p.menu,
             (m, _) => m,
         };
-        if matches!(m, MenuId::MeasAdd | MenuId::MeasHold | MenuId::MeasLegacy) {
+        if matches!(m, MenuId::MeasAdd | MenuId::MeasHold | MenuId::MeasSelected) {
             MenuId::Measure
         } else if m == MenuId::SimAdvanced {
             MenuId::Sim
@@ -5798,7 +6035,63 @@ impl Ui {
     /// All bottom cards. LA and generator sit behind the channels, wide like them when they are on and the channels keep
     /// room for their text, else narrow.
     fn card_layout(&self) -> Cards {
-        self.compact_cards()
+        if self.m.bar_compact {
+            self.compact_cards()
+        } else if self.record_mode() {
+            // a stored record or the simulator on the screen (Offline, Take over, SIM): no analog channel, LA or
+            // generator cards, the time base and trigger stay (as the compact bar has it, PR #8)
+            let c = self.card_layout_cards();
+            Cards { ch: c.ch.map(|r| Rect::new(r.x, r.y, 0, r.h)), la: None, gen: None, time: c.time, trig: c.trig }
+        } else {
+            self.card_layout_cards()
+        }
+    }
+
+    /// The cards of the card bar (Display > Bottom bar = Cards, the default).
+    fn card_layout_cards(&self) -> Cards {
+        let row = self.frame().cards;
+        let (y, h) = (row.y, row.h);
+        // 2-channel models: no cards for CH3/CH4 (zero width, never drawn or hit)
+        let n = n_ch();
+        let n_on = (0..n).filter(|&c| self.m.ch[c].on).count() as i32;
+        let n_off = n as i32 - n_on;
+        let caps = &oos_hal::model::platform().caps;
+        let aux = [(caps.la, self.m.la.on), (caps.has_gen(), self.m.afg_on)];
+        let start = row.x;
+        let room = |wide: bool| {
+            let a: i32 = aux.iter().filter(|a| a.0).map(|a| if a.1 && wide { AUX_WIDE } else { AUX_NARROW } + 7).sum();
+            row.right() - start - n_off * (56 + 7) - n_on * 7 - a - (130 + 7) - 222
+        };
+        let wide = n_on == 0 || room(true) / n_on.max(1) >= CH_MIN;
+        let won = if n_on > 0 { (room(wide) / n_on).min(213) } else { 0 };
+        let mut x = start;
+        let mut ch = [Rect::new(0, 0, 0, 0); NCH];
+        for (c, r) in ch.iter_mut().enumerate() {
+            if c >= n {
+                *r = Rect::new(x, y, 0, h);
+                continue;
+            }
+            let w = if self.m.ch[c].on { won } else { 56 };
+            *r = Rect::new(x, y, w, h);
+            x += w + 7;
+        }
+        let mut next = |(has, on): (bool, bool)| {
+            has.then(|| {
+                let w = if on && wide { AUX_WIDE } else { AUX_NARROW };
+                let r = Rect::new(x, y, w, h);
+                x += w + 7;
+                r
+            })
+        };
+        let (la, gen) = (next(aux[0]), next(aux[1]));
+        let rest = row.right() - x - 7;
+        let tw = ((rest as f32 * 0.42) as i32).min(rest - 222).max(130);
+        let tw = tw.min(TIME_CARD_MAX);
+        let trw = (rest - tw).min(TRIG_CARD_MAX);
+        // a wide screen: TIME and trigger keep their largest size and move to the right edge, the room stays between
+        // the channels and them (as in the top bar)
+        let x = row.right() - trw - 7 - tw;
+        Cards { ch, la, gen, time: Rect::new(x, y, tw, h), trig: Rect::new(x + tw + 7, y, trw, h) }
     }
 
     /// The big digits of a card while `s` fits `room`, else the next size: nothing is cut off with every card on.
@@ -5868,7 +6161,166 @@ impl Ui {
     }
 
     fn draw_bottom(&self, cv: &mut Canvas) {
-        self.draw_workspace_footer(cv);
+        if self.m.bar_compact {
+            self.draw_workspace_footer(cv);
+        } else {
+            self.draw_bottom_cards(cv);
+        }
+    }
+
+    /// The card bar: Menu, a card per channel, LA, generator, time base and trigger.
+    fn draw_bottom_cards(&self, cv: &mut Canvas) {
+        let f = self.fonts();
+        let (yn, yb, ys) = self.lay().card;
+        // a line that would run out of a narrow card takes the normal size
+        let small = |s: &str, room: i32| fit_font(&[&f.s, &Fonts::get(0).s], room, s);
+        cv.fill(self.frame().bottom, BG);
+        let root = if self.menu_open { Some(self.menu_root()) } else { None };
+        // start menu button: three bars and "Menu"; amber "Locked" while touch is locked (a tap unlocks)
+        let r = self.menu_btn();
+        let (hl, lock) = (root == Some(MenuId::Main), self.m.touch_lock);
+        cv.round(
+            r,
+            7,
+            if hl {
+                ACCENT
+            } else if lock {
+                AMBER
+            } else {
+                CARD_BORDER
+            },
+            255,
+        );
+        cv.round(r.inset(2), 5, BAR, 255);
+        let col = if hl {
+            ACCENT
+        } else if lock {
+            AMBER
+        } else {
+            TEXT
+        };
+        for k in 0..3 {
+            cv.fill(Rect::new(r.x + r.w / 2 - 11, r.y + 16 + k * 7, 22, 3), col);
+        }
+        cv.text_in(&f.sb, Rect::new(r.x, r.y + 42, r.w, 16), 1, if lock { "Locked" } else { "Menu" }, col);
+        let (chs, tr, trg) = self.cards();
+        let sub_font = self.card_sub_font();
+        for (c, &r) in chs.iter().enumerate() {
+            if r.w == 0 {
+                continue;
+            }
+            let ch = &self.m.ch[c];
+            let col = CH_COLORS[c];
+            let sel = root == Some(MenuId::Channel(c));
+            let border = if ch.on && (self.m.active == c || sel) { col } else { CARD_BORDER };
+            cv.round(r, 7, border, 255);
+            cv.round(r.inset(2), 5, BAR, 255);
+            // narrow cards: the text stays inside
+            cv.set_clip(r.inset(3));
+            let name = self.ch_name(c);
+            if ch.on {
+                cv.fill(Rect::new(r.x + 6, r.y + 10, 3, r.h - 20), col);
+                cv.text(&f.sb, r.x + 16, r.y + yn, &name, col);
+                cv.circle(r.x + r.w - 16, r.y + 14, 5, col);
+                let scale = format!("{}/div", si_short(ch.volts_per_div() as f64, ch.unit.name()));
+                cv.text(Self::card_font(f, &scale, r.w - 24), r.x + 16, r.y + yb, &scale, TEXT);
+                cv.text(sub_font, r.x + 16, r.y + ys, &self.card_sub(c), DIM);
+            } else {
+                cv.text_in(&f.sb, Rect::new(r.x, r.y + 8, r.w, 18), 1, &name, LABEL);
+                let (cx, cy) = (r.x + r.w / 2, r.y + 45);
+                cv.circle(cx, cy, 7, col);
+                cv.circle(cx, cy, 6, BAR);
+            }
+            cv.no_clip();
+        }
+        // logic analyser and generator, in the manner of the channels
+        let (la, gen) = self.aux_cards();
+        if let Some(r) = la {
+            let sel = matches!(root, Some(MenuId::La | MenuId::LaLines | MenuId::LaPat));
+            let l = &self.m.la;
+            let sub = format!("{} \u{b7} {}", si_short(l.thr(0) as f64, "V"), si_short(l.thr(1) as f64, "V"));
+            // grey without a probe: nothing to switch on
+            let col = if l.on || self.la_probe_ok() { la::line_color(0) } else { CARD_BORDER };
+            self.draw_aux_card(cv, r, "LA", col, l.on, sel, &format!("{} lines", l.lines().len()), &sub);
+        }
+        if let Some(r) = gen {
+            let (big, sub) = self.afg_card_text();
+            self.draw_aux_card(cv, r, "GEN", GEN_COLOR, self.m.afg_on, root == Some(MenuId::Afg), &big, &sub);
+        }
+        // time base (sample rate and depth are in the top bar)
+        let r = tr;
+        let sel = root == Some(MenuId::Horizontal);
+        cv.round(r, 7, if sel { ACCENT } else { CARD_BORDER }, 255);
+        cv.round(r.inset(2), 5, BAR, 255);
+        cv.text(&f.sb, r.x + 12, r.y + yn, "TIME", LABEL);
+        let tdiv = format!("{}/div", si_short(self.m.time_per_div() as f64, "s"));
+        cv.text(Self::card_font(f, &tdiv, r.w - 20), r.x + 12, r.y + yb, &tdiv, TEXT);
+        if self.m.zoom {
+            cv.text(
+                &f.sb,
+                r.x + 12,
+                r.y + ys,
+                &format!("zoom {}/div", si_short(tscales()[self.m.zscale] as f64, "s")),
+                ACCENT,
+            );
+        } else {
+            let t = format!("delay {}", si_short(self.m.delay as f64, "s"));
+            cv.text(small(&t, r.w - 18), r.x + 12, r.y + ys, &t, DIM);
+        }
+        // trigger: type, slope / polarity / standard and level; source and sweep buttons
+        let r = trg;
+        let sel = root == Some(MenuId::Trigger);
+        cv.round(r, 7, if sel { ACCENT } else { CARD_BORDER }, 255);
+        cv.round(r.inset(2), 5, BAR, 255);
+        // type and slope on the first line, the level under them: it has the width up to the buttons
+        let tx = cv.text(&f.sb, r.x + 12, r.y + yn, &self.m.trig_type.name().to_uppercase(), LABEL) + 8;
+        if matches!(
+            self.m.trig_type,
+            TrigType::Edge | TrigType::Slope | TrigType::Timeout | TrigType::NthEdge | TrigType::Delay
+        ) {
+            draw_slope(cv, tx, r.y + 6, self.m.slope, ACCENT);
+        } else {
+            let tag = match self.m.trig_type {
+                TrigType::Pulse | TrigType::Runt => {
+                    if self.m.trig_pol == Pol::Pos {
+                        "+"
+                    } else {
+                        "-"
+                    }
+                }
+                TrigType::Video => {
+                    if self.m.video_std == VideoStd::Pal {
+                        "P"
+                    } else {
+                        "N"
+                    }
+                }
+                _ => "",
+            };
+            cv.text(&f.sb, tx, r.y + yn, tag, ACCENT);
+        }
+        // an LA line has the pod's threshold, not a level of its own
+        let lv = match self.m.trig_line() {
+            Some(n) => si(self.m.la.thr(n as usize / 8) as f64, "V"),
+            None => si(self.trig_level_shown() as f64, self.m.unit(self.m.trig_src)),
+        };
+        let (sb, mb) = Self::trig_parts(r);
+        // the big digits while they fit
+        cv.text(Self::card_font(f, &lv, sb.x - r.x - 18), r.x + 12, r.y + 50, &lv, TEXT);
+        let mode = match self.m.trig_mode {
+            TrigMode::Auto => "Auto",
+            TrigMode::Normal => "Normal",
+            TrigMode::Single => "Single",
+        };
+        let ts = self.m.trig_src;
+        let (src, scol) = match self.m.trig_line() {
+            Some(n) => (format!("D{}", n), la::line_color(n)),
+            None => (format!("CH{}", ts + 1), CH_COLORS[ts]),
+        };
+        for (b, val, col) in [(sb, src, scol), (mb, mode.to_string(), TEXT)] {
+            btn(cv, b, BTN, BTN_BORDER);
+            cv.text_in(&f.sb, b, 1, &val, col);
+        }
     }
 
     /// Front-panel LED mask (19 LEDs, stock order; `Inputs::set_leds` maps it to
@@ -5903,6 +6355,9 @@ impl Ui {
     // ------------------------------------------------------------------ menus
 
     fn items(&self, menu: MenuId) -> Vec<Item> {
+        if let Some(v) = self.features_items(menu) {
+            return v;
+        }
         let mut v = self.menu_items(menu);
         if !self.off_sources(menu).is_empty() {
             v.push(Item::SrcOn);
@@ -6044,6 +6499,7 @@ impl Ui {
                     v.extend([Item::AcqSegIvl, Item::AcqSegTable]);
                 }
                 v.push(Item::AcqCores);
+                v.push(Item::AcqDrawPath);
                 if self.alias_above().is_some() {
                     v.push(Item::AcqAlias);
                 }
@@ -6061,23 +6517,24 @@ impl Ui {
                 Item::CntDigits,
                 Item::CntClear,
             ],
+            // in the order of the groups of `measure_layout`
             MenuId::Measure => vec![
                 Item::MeasSrc,
                 Item::MeasSrcB,
                 Item::MeasCopyTo,
                 Item::MeasGate,
-                Item::Open(MenuId::MeasPair),
-                Item::Open(MenuId::Dvm),
                 Item::MeasRefs,
+                Item::MeasStats,
+                Item::MeasLabels,
+                Item::StripDock,
                 Item::MeasIdle,
                 Item::MeasTsetup,
                 Item::MeasThold,
                 Item::MeasOutside,
                 Item::MeasN,
                 Item::MeasEdges,
-                Item::MeasStats,
-                Item::MeasLabels,
-                Item::StripDock,
+                Item::Open(MenuId::MeasPair),
+                Item::Open(MenuId::Dvm),
                 Item::MeasClear,
             ],
             MenuId::MeasHold => vec![Item::AddMeas],
@@ -6093,17 +6550,22 @@ impl Ui {
                 Item::RefOffset,
                 Item::RefColor,
                 Item::RefLabel,
+                Item::RefLoad,
                 Item::RefExport,
                 Item::RefImport,
             ]
             .into_iter()
+            .filter(|&it| it != Item::RefLoad || self.feature_on("load"))
             .chain((0..NREF).map(Item::RefShow))
             .collect(),
             MenuId::MeasAdd => Vec::new(),
-            MenuId::MeasLegacy => self.measurement_catalog(),
+            MenuId::MeasSelected => self.measurement_catalog(),
             MenuId::Cursor if self.m.cursor == CursorMode::Off => vec![Item::CurMode],
             MenuId::Cursor if self.m.cursor == CursorMode::Xy => {
                 vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD]
+            }
+            MenuId::Cursor if self.m.cursor == CursorMode::Track => {
+                vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurSrcB]
             }
             MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
             MenuId::Display => {
@@ -6117,10 +6579,12 @@ impl Ui {
                     Item::GridBright,
                     Item::GridFrame,
                     Item::Dots,
+                    Item::BottomBar,
                     Item::ZInput,
                     Item::Histogram,
                     Item::XyMode,
                     Item::Hdmi,
+                    Item::HdmiView,
                     Item::Backlight,
                     Item::TextSize,
                     Item::ClearDisp,
@@ -6198,6 +6662,7 @@ impl Ui {
                 Item::WlanForget,
                 Item::WlanInfo,
             ],
+            MenuId::Features | MenuId::Decoders(_) => self.features_items(menu).unwrap_or_default(),
             MenuId::Remote => self.remote_items(),
             MenuId::Ssh => self.ssh_items(),
             MenuId::Time => self.time_items(),
@@ -6248,6 +6713,7 @@ impl Ui {
                 Item::Shot,
                 Item::Open(MenuId::SelfCal),
                 Item::Open(MenuId::Network),
+                Item::Open(MenuId::Features),
                 Item::Open(MenuId::Time),
                 Item::SysInfo,
                 Item::About,
@@ -6305,17 +6771,12 @@ impl Ui {
         if self.hist_pos.is_some() {
             disp.extend([NavBack, NavFwd]);
         }
-        let ana = vec![
-            Open(MenuId::Spectrum),
-            Open(MenuId::Eye),
-            Open(MenuId::Power),
-            Open(MenuId::Bode),
-            Open(MenuId::BwTest),
-            IdentifyAct,
-            Open(MenuId::Magnetic),
-            Open(MenuId::Inverter),
-            Open(MenuId::Dpt),
-        ];
+        // System > Features: what is left out is not offered
+        let ana: Vec<Item> = analysers::ANALYSERS
+            .iter()
+            .flat_map(|a| a.start())
+            .filter(|it| !matches!(it, Open(m) if self.menu_left_out(*m)))
+            .collect();
         // the generator page only on models with one (S models), the LA only with the port
         let mut ins = Vec::new();
         if oos_hal::model::platform().caps.has_gen() {
@@ -6331,7 +6792,7 @@ impl Ui {
             ("Trigger", vec![Open(MenuId::Trigger), SlopeAct, ForceAct, Open(MenuId::Zone)]),
             (
                 "Analysis",
-                vec![
+                [
                     Open(MenuId::Measure),
                     Open(MenuId::Cursor),
                     Open(MenuId::Math),
@@ -6340,12 +6801,15 @@ impl Ui {
                     Open(MenuId::Decode),
                     Open(MenuId::Bus),
                     Open(MenuId::Mask),
-                ],
+                ]
+                .into_iter()
+                .filter(|it| !matches!(it, Open(m) if self.menu_left_out(*m)))
+                .collect(),
             ),
             ("Analysers", ana),
             ("Instruments", ins),
             ("Display", disp),
-            ("System", vec![Open(MenuId::Storage), Shot, QuickRun, LockAct, Open(MenuId::Utility), PowerAct]),
+            ("System", vec![Open(MenuId::Utility), Open(MenuId::Storage), Shot, QuickRun, LockAct, PowerAct]),
         ];
         g.retain(|x| !x.1.is_empty());
         g
@@ -6715,7 +7179,7 @@ impl Ui {
         let r = p.roles();
         let on_la = self.m.dec_on_la();
         let mut v = vec![DecSel, DecOn, DecProto];
-        if self.m.la_on() && p != Proto::Cphy {
+        if self.m.la_on() && p != Proto::CPHY {
             v.push(DecIn);
         }
         v.push(DecSrc);
@@ -6731,23 +7195,22 @@ impl Ui {
         if p.diff_ok() && !on_la {
             v.push(DecDiff);
         }
-        match p {
-            Proto::Uart => v.extend([DecBaud, DecBits, DecParity, DecFmt]),
-            Proto::Spi => v.extend([DecMode, DecBits]),
-            Proto::Can => v.extend([DecCanRate, DecCanH]),
-            Proto::CanFd => v.extend([DecCanRate, DecFdRate, DecCanH]),
-            Proto::Lin | Proto::Uart9 => v.push(DecBaud),
-            Proto::ModbusRtu => v.extend([DecBaud, DecParity]),
-            Proto::ModbusAscii => v.extend([DecBaud, DecBits, DecParity]),
-            Proto::I2s | Proto::Parallel => v.push(DecBits),
-            Proto::Arinc429 => v.push(DecArate),
-            Proto::Sent => v.extend([DecTick, DecNibbles]),
-            Proto::Usb => v.push(DecUsbSpeed),
-            Proto::Manchester | Proto::Mlt3 => v.push(DecBaud),
-            Proto::Cphy => v.push(DecCphyRate),
-            Proto::Module(_) => v.extend((0..p.module().map_or(0, |x| x.options().len())).map(DecOpt)),
-            _ => {}
+        // the shared rows the protocol names, then its own options
+        use crate::protocols::Row;
+        for r in p.module().map_or(&[][..], |x| x.shared()) {
+            v.push(match r {
+                Row::Baud => DecBaud,
+                Row::Bits => DecBits,
+                Row::Parity => DecParity,
+                Row::SpiMode => DecMode,
+                Row::CanRate => DecCanRate,
+                Row::CanH => DecCanH,
+                Row::UsbSpeed => DecUsbSpeed,
+                Row::CphyRate => DecCphyRate,
+                Row::Fmt => DecFmt,
+            });
         }
+        v.extend((0..p.module().map_or(0, |x| x.options().len())).map(DecOpt));
         // LA lines: the probe's comparators set the levels (LA page)
         if !on_la {
             v.push(DecThr);
@@ -6757,117 +7220,104 @@ impl Ui {
         v
     }
 
-    /// Switches the decoder protocol with sources that match the demo bus traffic.
+    /// Switches the decoder protocol. The demo takes the sources, channels and trigger that match its bus traffic
+    /// (`Protocol::setup`). On the hardware one setting must not change another (the forum, eTobey): the channels and
+    /// the trigger stay as they are, the sources the protocols share stay, and a role the old protocol did not have
+    /// takes a channel that is on and no other role uses, or none. The protocol's own parameters (threshold, baud, bits
+    /// ...) are set on both.
     fn set_dec_proto(&mut self, p: Proto) {
+        let Proto::Module(i) = p;
+        let s = crate::protocols::get(i).setup();
         if Self::decoder_uses_refs(&self.m) {
             self.m.dec_proto = p;
-            if p == Proto::Cphy {
-                self.m.dec_thr = 0.02;
-                self.m.dec_la_in = false;
+            if s.la_off {
+                (self.m.dec_thr, self.m.dec_la_in) = (s.thr, false);
             }
             return;
         }
+        let demo = !self.src.is_hw();
         let m = &mut self.m;
         let changed = m.dec_proto != p;
+        let old = m.dec_proto.roles();
         m.dec_proto = p;
-        // LA input: the lines of the demo traffic (D8 UART, D9 CS, D10 clock, D11 MOSI, D12 SCL, D13 SDA)
-        m.dec_la = match p {
-            Proto::I2c | Proto::I3c | Proto::Ds2482 => [Some(13), Some(12), None, None],
-            Proto::Spi => [Some(11), Some(10), Some(9), None],
-            Proto::Parallel => [Some(0), None, None, None],
-            Proto::Module(i) => crate::protocols::get(i).setup().la,
-            _ => [Some(8), Some(10), None, None],
-        };
-        match p {
-            Proto::Uart => {
-                (m.dec_src, m.dec_bits) = (2, 8);
+        // its threshold and shared rows; its own options from their defaults when it is newly chosen
+        m.dec_thr = s.thr;
+        let r = p.roles();
+        if demo {
+            // its demo channels and LA lines; roles the protocol doesn't have keep their sources
+            m.dec_la = s.la;
+            m.dec_src = s.src[0].unwrap_or(2);
+            if r[2].is_some() {
+                m.dec_cs = s.src[2];
             }
-            Proto::I2c => {
-                (m.dec_src, m.dec_src2) = (2, 3);
+            if r[3].is_some() {
+                m.dec_src4 = s.src[3];
             }
-            Proto::Spi => {
-                (m.dec_src, m.dec_src2, m.dec_cs, m.dec_mode, m.dec_bits) = (2, 3, Some(1), 0, 8);
+            if let Some(c) = s.src[1] {
+                m.dec_src2 = c;
             }
-            Proto::Can => {
-                (m.dec_src, m.dec_canrate, m.dec_canh) = (2, 2, false);
+        } else {
+            // a new role: a channel that is on and that no other role of the protocol uses
+            let mut used = vec![m.dec_src];
+            if r[1].is_some() && old[1].is_some() && m.dec_src2 != m.dec_src {
+                used.push(m.dec_src2);
             }
-            Proto::Lin => {
-                (m.dec_src, m.dec_baud) = (2, 4);
-            }
-            // demo: WS on CH1, SD on CH2, SCK on CH3
-            Proto::I2s => {
-                (m.dec_src, m.dec_src2, m.dec_cs, m.dec_bits) = (1, 2, Some(0), 16);
-                m.ch[0].on = true;
-                m.ch[1].on = true;
-            }
-            // bipolar bus: threshold at 0 V
-            Proto::Mil1553 => {
-                (m.dec_src, m.dec_thr) = (2, 0.0);
-            }
-            Proto::ModbusAscii => {
-                (m.dec_src, m.dec_bits) = (2, 7);
-            }
-            Proto::ModbusRtu => {
-                (m.dec_src, m.dec_baud, m.dec_parity) = (2, 4, oos_dsp::decode::Parity::Even);
-            }
-            Proto::Uart9 => {
-                (m.dec_src, m.dec_baud) = (2, 3);
-            }
-            Proto::Parallel => {
-                (m.dec_src, m.dec_bits, m.dec_cs) = (0, 3, Some(3));
-                for channel in &mut m.ch {
-                    channel.on = true;
-                }
-            }
-            Proto::Cphy => {
-                (m.dec_src, m.dec_src2, m.dec_cs, m.dec_thr, m.dec_bits) = (0, 1, Some(2), 0.02, 16);
-                m.dec_la_in = false;
-            }
-            Proto::Jtag | Proto::Qspi => {
-                (m.dec_src, m.dec_src2, m.dec_cs, m.dec_src4) = (0, 1, Some(2), Some(3));
-            }
-            Proto::Ds2482 | Proto::I3c | Proto::Swd => {
-                (m.dec_src, m.dec_src2) = (2, 3);
-            }
-            // demo: one ARINC 429 line against ground (+-5 V), HI / LO at +-2.5 V
-            Proto::Arinc429 => {
-                (m.dec_src, m.dec_thr) = (2, 2.5);
-            }
-            // 5 V logic
-            Proto::Sent => {
-                (m.dec_src, m.dec_thr) = (2, 2.5);
-            }
-            // demo: D+ on CH3, D- on CH4, 3.3 V
-            Proto::Usb => {
-                (m.dec_src, m.dec_cs, m.dec_thr) = (2, Some(3), 1.65);
-            }
-            // a module: its demo channels and threshold; its options from their defaults when it is newly chosen
-            Proto::Module(i) => {
-                let s = crate::protocols::get(i).setup();
-                (m.dec_src, m.dec_cs, m.dec_src4, m.dec_thr) = (s.src[0].unwrap_or(2), s.src[2], s.src[3], s.thr);
-                if let Some(c) = s.src[1] {
+            used.extend(
+                [(r[2], old[2], m.dec_cs), (r[3], old[3], m.dec_src4)]
+                    .into_iter()
+                    .filter_map(|(n, o, c)| n.and(o).and(c)),
+            );
+            let mut free = |m: &Model| {
+                let c = (0..NCH).find(|&c| m.ch[c].on && !used.contains(&c));
+                used.extend(c);
+                c
+            };
+            if r[1].is_some() && (old[1].is_none() || m.dec_src2 == m.dec_src) {
+                if let Some(c) = free(m) {
                     m.dec_src2 = c;
                 }
-                if changed {
-                    m.dec_opt = crate::protocols::opt_default(i);
-                    // a module with a view of its own: open it, when no other pane is open
-                    if m.pane == 0
-                        && crate::protocols::get(i)
-                            .view(&[], &crate::protocols::opt_fit(i, m.dec_opt), &mut None)
-                            .is_some()
-                    {
-                        m.pane = tables::PANE_BUS;
-                    }
-                }
             }
-            _ => m.dec_src = 2,
+            if r[2].is_some() && (old[2].is_none() || m.dec_cs.is_none()) {
+                m.dec_cs = free(m);
+            }
+            if r[3].is_some() && (old[3].is_none() || m.dec_src4.is_none()) {
+                m.dec_src4 = free(m);
+            }
         }
-        m.ch[2.min(NCH - 1)].on = true;
-        if matches!(p, Proto::I2c | Proto::Spi) {
-            m.ch[3.min(NCH - 1)].on = true;
+        if s.la_off {
+            m.dec_la_in = false;
         }
-        // every source the protocol uses
-        let r = p.roles();
+        use crate::protocols::Row;
+        for &(r, v) in s.rows {
+            match r {
+                Row::Baud => m.dec_baud = v as usize,
+                Row::Bits => m.dec_bits = v,
+                Row::Parity => {
+                    m.dec_parity =
+                        [oos_dsp::decode::Parity::None, oos_dsp::decode::Parity::Even, oos_dsp::decode::Parity::Odd]
+                            [(v as usize).min(2)]
+                }
+                Row::SpiMode => m.dec_mode = v as u8,
+                Row::CanRate => m.dec_canrate = v as usize,
+                Row::CanH => m.dec_canh = v != 0,
+                Row::UsbSpeed => m.dec_uspeed = v as usize,
+                Row::CphyRate | Row::Fmt => {}
+            }
+        }
+        if changed {
+            m.dec_opt = crate::protocols::opt_default(i);
+            // a module with a view of its own: open it, when no other pane is open
+            if m.pane == 0
+                && crate::protocols::get(i).view(&[], &crate::protocols::opt_fit(i, m.dec_opt), &mut None).is_some()
+            {
+                m.pane = tables::PANE_BUS;
+            }
+        }
+        if !demo {
+            self.dirty_map = true;
+            return;
+        }
+        // the demo: every source the protocol uses; the traffic of some is on all its channels or on every channel
         m.ch[m.dec_src].on = true;
         if r[1].is_some() {
             m.ch[m.dec_src2].on = true;
@@ -6878,31 +7328,27 @@ impl Ui {
         if let (Some(_), Some(c)) = (r[3], m.dec_src4) {
             m.ch[c].on = true;
         }
-        if p == Proto::Spi {
-            m.ch[1].on = true;
+        if s.show {
+            for c in s.src.into_iter().flatten().filter(|&c| c < NCH) {
+                m.ch[c].on = true;
+            }
         }
-        // a trigger that holds the demo bus still: I2C start (first SDA fall after idle), SPI CS falling
-        match p {
-            Proto::I2c => {
-                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) =
-                    (TrigType::NthEdge, 2, Slope::Fall, 20e-6, 1, 1.65);
+        if s.show_all {
+            for channel in &mut m.ch {
+                channel.on = true;
             }
-            Proto::Spi => {
-                (m.trig_type, m.trig_src, m.slope, m.trig_level) = (TrigType::Edge, 1, Slope::Fall, 1.65);
+        }
+        // the demo: a trigger that holds its traffic still, on the channel of the role
+        if let Some(t) = s.trig.filter(|_| demo) {
+            let c = [Some(m.dec_src), Some(m.dec_src2), m.dec_cs, m.dec_src4][t.role.min(3)];
+            if let Some(c) = c.filter(|&c| c < NCH) {
+                (m.trig_src, m.slope, m.trig_level) = (c, t.slope, t.level);
+                if t.idle > 0.0 {
+                    (m.trig_type, m.nth_idle, m.nth_n) = (TrigType::NthEdge, t.idle, 1);
+                } else {
+                    m.trig_type = TrigType::Edge;
+                }
             }
-            // CAN start of frame / LIN break: first falling edge after the bus idle
-            Proto::I2s => {
-                (m.trig_type, m.trig_src, m.slope, m.trig_level) = (TrigType::Edge, 0, Slope::Fall, 1.65);
-            }
-            Proto::Mil1553 => {
-                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) =
-                    (TrigType::NthEdge, 2, Slope::Rise, 3e-6, 1, 2.0);
-            }
-            Proto::Can | Proto::Lin => {
-                (m.trig_type, m.trig_src, m.slope, m.nth_idle, m.nth_n, m.trig_level) =
-                    (TrigType::NthEdge, 2, Slope::Fall, 20e-6, 1, 1.65);
-            }
-            _ => {}
         }
         change::dirty(self, change::oracle::Row::Trigger);
     }
@@ -7040,7 +7486,7 @@ impl Ui {
             Item::DecSrc2 if self.m.dec_proto.roles()[1].is_some() => self.m.dec_proto.roles()[1].unwrap_or("Clock"),
             Item::DecCs if self.m.dec_proto.roles()[2].is_some() => self.m.dec_proto.roles()[2].unwrap_or("CS"),
             Item::DecSrc4 if self.m.dec_proto.roles()[3].is_some() => self.m.dec_proto.roles()[3].unwrap_or("Source 4"),
-            Item::DecThr if self.m.dec_proto == Proto::Cphy => "Min level gap",
+            Item::DecThr if self.m.dec_proto == Proto::CPHY => "Min level gap",
             Item::TrigT1 if matches!(self.m.trig_when, WhenKind::In | WhenKind::Out) => "Lower limit",
             Item::NavHist if self.hist_pos.is_some() => "Live",
             _ => Self::label(it),
@@ -7108,25 +7554,18 @@ impl Ui {
             }
             let m = &mut self.m;
             m.trig_type = t;
-            let (what, val) = match p {
-                Proto::Can => (BusWhat::Id, 0x123),
-                Proto::Lin => (BusWhat::Id, 0x21),
-                Proto::I2c => (BusWhat::Id, 0x50),
-                Proto::Mil1553 => (BusWhat::Id, 0x0c23),
-                Proto::I2s => (BusWhat::Data, 0x7fff),
-                Proto::FlexRay => (BusWhat::Id, 0x2a),
-                // label 310 (octal)
-                Proto::Arinc429 => (BusWhat::Id, 0o310),
-                Proto::Sent => (BusWhat::Data, 0x7f480b),
-                // the demo device's address
-                Proto::Usb => (BusWhat::Id, 5),
-                Proto::Module(i) => crate::protocols::get(i).trigger_default(),
-                _ => (BusWhat::Frame, 0x40),
-            };
+            // a value the protocol's demo traffic contains
+            let Proto::Module(i) = p;
+            let (what, val) = crate::protocols::get(i).trigger_default();
             (m.trig_bus, m.trig_bus_val, m.ser) = (what, val as u64, SerialTrig::default());
             change::dirty(self, change::oracle::Row::Trigger);
             return;
         }
+        // the presets below suit the demo signals (each type on a channel that shows it). On the hardware a trigger
+        // type sets only its own parameters: the channels, the source, the level and the slope, which the other types
+        // share, stay as they were (the forum, eTobey: one setting must not change another)
+        let hw = self.src.is_hw();
+        let shared = (self.m.ch.clone(), self.m.trig_src, self.m.trig_level, self.m.slope);
         let m = &mut self.m;
         m.trig_type = t;
         let on = |c: usize, m: &mut Model| m.ch[c].on = true;
@@ -7206,17 +7645,31 @@ impl Ui {
         if m.trig_type != TrigType::Runt && m.trig_when == WhenKind::Off {
             m.trig_when = WhenKind::Lt;
         }
+        if hw {
+            (m.ch, m.trig_src, m.trig_level, m.slope) = shared;
+            // the second source of Delay and Setup/Hold on a channel that is on (PR #8, W4R)
+            let src = m.trig_src;
+            if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold)
+                && (m.trig_src2 == src || !m.ch[m.trig_src2.min(NCH - 1)].on)
+            {
+                if let Some(c) = (0..NCH).find(|&k| k != src && m.ch[k].on) {
+                    m.trig_src2 = c;
+                }
+            }
+        }
         change::dirty(self, change::oracle::Row::Trigger);
     }
 
     fn menu_title(&self, menu: MenuId) -> String {
         match menu {
-            // /tmp is in RAM: say so where the files go
-            MenuId::Storage if self.usb_used() => "Storage \u{b7} USB stick".into(),
-            MenuId::Storage if self.store_dir.starts_with("/tmp") => {
-                format!("Storage \u{b7} {} (lost at power-off)", self.store_dir.display())
+            // where the files go now; /tmp is in RAM: say so
+            MenuId::Storage if self.save_dir() == std::path::Path::new(crate::store::USB_DIR) => {
+                "Storage \u{b7} USB stick".into()
             }
-            MenuId::Storage => format!("Storage \u{b7} {}", self.store_dir.display()),
+            MenuId::Storage if self.save_dir().starts_with("/tmp") => {
+                format!("Storage \u{b7} {} (lost at power-off)", self.save_dir().display())
+            }
+            MenuId::Storage => format!("Storage \u{b7} {}", self.save_dir().display()),
             MenuId::Mask => "Mask test".into(),
             MenuId::Zone => "Zone trigger".into(),
             MenuId::Spectrum => "Spectrum analyser".into(),
@@ -7225,6 +7678,8 @@ impl Ui {
             MenuId::Identify => "Identify: tap to apply".into(),
             MenuId::SelfCal => "Self-calibration".into(),
             MenuId::Network => "Network".into(),
+            MenuId::Features => "Features".into(),
+            MenuId::Decoders(k) => format!("Decoders {} of {}", k + 1, PROTOS.len().div_ceil(features::DEC_PAGE)),
             MenuId::Remote => "Remote services".into(),
             MenuId::Ssh => "SSH".into(),
             MenuId::Time => "Date and time".into(),
@@ -7246,9 +7701,9 @@ impl Ui {
             MenuId::ChMore(c) => format!("CH{} more", c + 1),
             MenuId::Trigger => "Trigger".into(),
             MenuId::Acquire => "Acquire".into(),
-            MenuId::Measure => "Measure".into(),
+            MenuId::Measure => "Measure settings".into(),
             MenuId::MeasAdd => "Add measurement".into(),
-            MenuId::MeasLegacy => "All measurements / Selected".into(),
+            MenuId::MeasSelected => format!("Selected measurements ({})", self.measurement_count()),
             MenuId::MeasHold => "Add".into(),
             MenuId::MeasPair => format!(
                 "Pairs {} to {}",
@@ -7305,6 +7760,7 @@ impl Ui {
             .or_else(|| Self::remote_kind(it))
             .or_else(|| Self::graphics_kind(it))
             .or_else(|| Self::views_kind(it))
+            .or_else(|| Self::features_kind(it))
             .or_else(|| Self::backlight_kind(it))
         {
             return k;
@@ -7369,6 +7825,7 @@ impl Ui {
             | Item::RefLabel
             | Item::RefExport
             | Item::RefImport
+            | Item::RefLoad
             | Item::DecTable
             | Item::DecExport
             | Item::SearchTable
@@ -7429,6 +7886,8 @@ impl Ui {
             .or_else(|| Self::remote_label(it))
             .or_else(|| Self::graphics_label(it))
             .or_else(|| Self::views_label(it))
+            .or_else(|| Self::monitor_label(it))
+            .or_else(|| Self::features_label(it))
             .or_else(|| Self::backlight_label(it))
         {
             return l;
@@ -7508,10 +7967,6 @@ impl Ui {
             Item::I2cAddrBits => "Address",
             Item::I2cBytes => "Bytes",
             Item::DecCanH => "Signal",
-            Item::DecFdRate => "Data rate",
-            Item::DecArate => "Bit rate",
-            Item::DecTick => "Clock tick",
-            Item::DecNibbles => "Data nibbles",
             Item::DecUsbSpeed => "Speed",
             Item::DecOpt(_) => "Option",
             Item::DecSrc4 => "Source 4",
@@ -7542,7 +7997,7 @@ impl Ui {
             Item::MathBw => "Bandwidth",
             Item::MathSel => "Channel",
             Item::MathAuto => "Auto scale",
-            Item::Open(MenuId::MeasLegacy) => "All / Selected",
+            Item::Open(MenuId::MeasSelected) => "Selected",
             Item::Open(_) => "",
             Item::ChOn(_) => "Display",
             Item::ChCoupling(_) => "Coupling",
@@ -7592,6 +8047,7 @@ impl Ui {
             Item::AcqSegTable => "Segment times",
             Item::AcqDepth => "Memory",
             Item::AcqCores => "ADC cores",
+            Item::AcqDrawPath => "Draw path",
             Item::AcqAlias => "Aliasing",
             Item::MeasSrc => "Source A",
             Item::MeasCopyTo => "Copy meas. to",
@@ -7627,6 +8083,7 @@ impl Ui {
             Item::RefOffset => "Slot offset",
             Item::RefExport => "Export slot",
             Item::RefImport => "Import slot",
+            Item::RefLoad => "Load file",
             Item::MaskSave => "Save mask",
             Item::MaskLoad => "Load mask",
             Item::MathLinA => "A",
@@ -7638,6 +8095,7 @@ impl Ui {
             Item::CatSourceC => "Source C",
             Item::CatSourceD => "Source D",
             Item::CurMode => "Mode",
+            Item::CurSrcB => "Cursor B source",
             Item::CurA => "Cursor A",
             Item::CurB => "Cursor B",
             Item::CurC => "Y1",
@@ -7652,6 +8110,7 @@ impl Ui {
             Item::TrigCoup => "Coupling",
             Item::ClearDisp => "Clear",
             Item::Dots => "Dots",
+            Item::BottomBar => "Bottom bar",
             Item::Hdmi => "HDMI",
             Item::TextSize => "Text size",
             Item::ZoneSel => "Zone",
@@ -7753,6 +8212,8 @@ impl Ui {
             .or_else(|| self.remote_value(it))
             .or_else(|| self.graphics_value(it))
             .or_else(|| self.views_value(it))
+            .or_else(|| self.monitor_value(it))
+            .or_else(|| self.features_value(it))
             .or_else(|| self.backlight_value(it))
         {
             return v;
@@ -7868,12 +8329,14 @@ impl Ui {
             Item::AcqSegIvl => seg_ivl_name(m.seg_ivl),
             Item::AcqDepth => mdepths()[m.mdepth].0.into(),
             Item::AcqCores => if m.cores { "Matched" } else { "Raw" }.into(),
+            Item::AcqDrawPath => if m.draw_batch { "Batch" } else { "Standard" }.into(),
             Item::AcqAlias => {
                 self.alias_above().map_or(String::new(), |f| format!("above {}, Peak shows it", si_short(f, "Hz")))
             }
             Item::MeasSrc => self.wave_name(self.meas_src),
             Item::MeasCopyTo => "Pick".into(),
             Item::MeasSrcB => self.wave_name(self.meas_src_b),
+            Item::CurSrcB => self.wave_name(self.cursor_b_source()),
             Item::ChFine => onoff(m.fine_v),
             Item::MathExprI => {
                 if m.math_expr[m.math_sel].is_empty() {
@@ -7924,6 +8387,7 @@ impl Ui {
             Item::TrigAutoNoise => onoff(m.auto_nrej),
             Item::TrigCoup => m.trig_coup.name().into(),
             Item::Dots => format!("{:?}", m.dots),
+            Item::BottomBar => if m.bar_compact { "Compact" } else { "Cards" }.into(),
             Item::Hdmi => format!("{:?}", m.hdmi),
             Item::TextSize => m.text_size.name().into(),
             Item::ZoneSel => format!("Z{}", self.zone_sel + 1),
@@ -7983,10 +8447,6 @@ impl Ui {
                     "RX/TX".into()
                 }
             }
-            Item::DecFdRate => format!("{} M", crate::decode::FD_RATES[m.dec_fdrate] / 1e6),
-            Item::DecArate => ARATE_NAMES[m.dec_arate].into(),
-            Item::DecTick => tick_name(crate::decode::SENT_TICKS[m.dec_tick]),
-            Item::DecNibbles => format!("{}", m.dec_nibbles),
             Item::DecUsbSpeed => USPEED_NAMES[m.dec_uspeed].into(),
             Item::DecSrc4 => m.dec_src4.map_or("None".into(), decode_source_name),
             Item::DecDiff => m.dec_diff.map_or("None".into(), decode_source_name),
@@ -8133,6 +8593,8 @@ impl Ui {
             || self.remote_adjust(it, d)
             || self.graphics_adjust(it, d)
             || self.views_adjust(it, d)
+            || self.monitor_adjust(it, d)
+            || self.features_adjust(it, d)
             || self.backlight_adjust(it, d)
             || self.aux_adjust(it, d)
         {
@@ -8345,6 +8807,12 @@ impl Ui {
                 let cur = self.meas_src_b;
                 self.meas_src_b = self.step_wave(cur, d);
             }
+            // Track cursor B on its own source (follows cursor A's until set)
+            Item::CurSrcB => {
+                let cur = self.cursor_b_source();
+                let next = self.step_wave(cur, d);
+                self.set_cursor_b_source(next);
+            }
             Item::DvmOn => m.dvm_on = !m.dvm_on,
             Item::DvmSrc => m.dvm_src = src_step(m.dvm_src, NCH, d),
             Item::DvmMode => m.dvm_mode = (m.dvm_mode as i32 + d).rem_euclid(3) as usize,
@@ -8408,7 +8876,15 @@ impl Ui {
                 m.dots = DOTS_MODES[cyc(i, DOTS_MODES.len(), d)];
                 change::dirty(self, change::oracle::Row::Layout);
             }
+            Item::BottomBar => {
+                m.bar_compact = !m.bar_compact;
+                self.dirty_map = true;
+            }
             Item::AcqCores => m.cores = !m.cores,
+            Item::AcqDrawPath => {
+                m.draw_batch = !m.draw_batch;
+                self.dirty_map = true;
+            }
             Item::Hdmi => {
                 let i = HDMI_MODES.iter().position(|&x| x == m.hdmi).unwrap_or(0);
                 m.hdmi = HDMI_MODES[step(i, HDMI_MODES.len(), d)];
@@ -8504,6 +8980,9 @@ impl Ui {
                 let all = StripDock::ALL;
                 let i = all.iter().position(|&s| s == m.strip_dock).unwrap_or(0);
                 m.strip_dock = all[(i as i32 + d).clamp(0, all.len() as i32 - 1) as usize];
+                // the statistics card follows the dock the strip uses
+                self.workspace.measure_docked = true;
+                self.workspace.measure_float = None;
             }
             Item::DecOn => self.m.dec_on = !self.m.dec_on,
             Item::DecSel => {
@@ -8563,13 +9042,13 @@ impl Ui {
             Item::DecThr => self.m.dec_thr += d as f32 * self.decoder_vpd() / 25.0,
             Item::DecFmt => self.m.dec_ascii = !self.m.dec_ascii,
             Item::DecProto => {
-                let i = PROTOS.iter().position(|&x| x == self.m.dec_proto).unwrap();
-                self.set_dec_proto(PROTOS[cyc(i, PROTOS.len(), d)]);
+                // only the decoders System > Features offers
+                let on = self.protos_on();
+                let i = on.iter().position(|&x| x == self.m.dec_proto).unwrap_or(0);
+                if let Some(&p) = on.get(cyc(i, on.len(), d)) {
+                    self.set_dec_proto(p);
+                }
             }
-            Item::DecFdRate => self.m.dec_fdrate = cyc(self.m.dec_fdrate, crate::decode::FD_RATES.len(), d),
-            Item::DecArate => self.m.dec_arate = cyc(self.m.dec_arate, crate::decode::ARINC_RATES.len(), d),
-            Item::DecTick => self.m.dec_tick = step(self.m.dec_tick, crate::decode::SENT_TICKS.len(), d),
-            Item::DecNibbles => self.m.dec_nibbles = (self.m.dec_nibbles as i32 + d).clamp(1, 6) as u32,
             Item::DecUsbSpeed => self.m.dec_uspeed = cyc(self.m.dec_uspeed, crate::decode::USB_SPEEDS.len(), d),
             Item::DecOpt(k) => {
                 if let Some(o) = self.m.dec_proto.module().and_then(|p| p.options().get(k)) {
@@ -8589,12 +9068,12 @@ impl Ui {
                 self.configure_decoder_source(1, next);
             }
             Item::DecCs => {
-                let next = self.decoder_source_step(self.m.dec_cs, self.m.dec_proto != Proto::Cphy, d);
+                let next = self.decoder_source_step(self.m.dec_cs, self.m.dec_proto != Proto::CPHY, d);
                 self.configure_decoder_source(2, next);
             }
             Item::DecMode => self.m.dec_mode = cyc(self.m.dec_mode as usize, 4, d) as u8,
             Item::DecBits => {
-                let (lo, hi) = if self.m.dec_proto == Proto::Uart { (5, 9) } else { (4, 32) };
+                let (lo, hi) = if self.m.dec_proto == Proto::UART { (5, 9) } else { (4, 32) };
                 self.m.dec_bits = (self.m.dec_bits as i32 + d).clamp(lo, hi) as u32;
             }
             Item::DecParity => {
@@ -8720,6 +9199,11 @@ impl Ui {
             Kind::Value => {}
             Kind::Action => match it {
                 Item::Open(MenuId::La) if !self.m.la.on && !self.la_probe_ok() => self.toast("No LA probe connected"),
+                // start menu > Measure: the measurement page, as the Measure button and key open it
+                Item::Open(MenuId::Measure) if self.menu == MenuId::Main => {
+                    self.ensure_meas_own();
+                    self.open_submenu(MenuId::MeasAdd);
+                }
                 Item::Open(id) => {
                     if id == MenuId::Cursor && self.m.cursor == CursorMode::Off {
                         // like the CURSOR key
@@ -8843,7 +9327,11 @@ impl Ui {
                             self.meas_cfg = self.meas_cfg.map(|n| n - 1);
                         }
                         change::stats_clear(self);
-                        self.toast(&format!("{} {} removed", k.name(), self.wave_name(self.meas_src)));
+                        self.toast(&format!(
+                            "{} {} removed",
+                            meascatalog::meas_long_name(k),
+                            self.wave_name(self.meas_src)
+                        ));
                         return;
                     } else {
                         if !self.meas_make_room() {
@@ -8861,7 +9349,7 @@ impl Ui {
                         }
                     }
                     self.ensure_meas_own();
-                    self.toast(&format!("{} {} added", k.name(), self.wave_name(self.meas_src)));
+                    self.toast(&format!("{} {} added", meascatalog::meas_long_name(k), self.wave_name(self.meas_src)));
                 }
                 Item::MeasPair(k) => self.meas_pair_toggle(k),
                 Item::CntClear => self.counter_clear(),
@@ -8879,6 +9367,7 @@ impl Ui {
                 },
                 Item::RefExport => self.ref_export(),
                 Item::RefImport => self.ref_import(),
+                Item::RefLoad => self.ref_load(),
                 Item::MaskSave => self.mask_save(),
                 Item::MaskLoad => self.mask_load(),
                 Item::ChLabel(c) => self.wlan.osk = Some(wlan::Osk::for_label(c, &self.m.ch_label[c])),
@@ -8996,7 +9485,10 @@ impl Ui {
                 }
                 Item::StoreSaveSetup => {
                     let p = self.setup_path();
-                    let r = crate::store::write(&p, crate::store::setup_text(&self.m).as_bytes());
+                    let r = crate::store::write(
+                        &p,
+                        format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text()).as_bytes(),
+                    );
                     self.toast_saved(&p, r);
                 }
                 Item::StoreRecall => self.recall_setup(),
@@ -9093,13 +9585,7 @@ impl Ui {
     pub fn save_dir(&self) -> std::path::PathBuf {
         match self.store_dest {
             crate::store::StoreDest::Stick => std::path::PathBuf::from(crate::store::USB_DIR),
-            crate::store::StoreDest::Desk => {
-                if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) {
-                    crate::store::desktop_dir()
-                } else {
-                    self.store_dir.join("Desktop")
-                }
-            }
+            crate::store::StoreDest::Local => self.store_dir.clone(),
             crate::store::StoreDest::Auto => {
                 if self.usb_used() {
                     std::path::PathBuf::from(crate::store::USB_DIR)
@@ -9113,7 +9599,7 @@ impl Ui {
     /// For the message after saving.
     pub fn saved_where(&self) -> &'static str {
         match self.store_dest {
-            crate::store::StoreDest::Desk => " on the desktop",
+            crate::store::StoreDest::Local if self.usb => " locally, not on the stick",
             crate::store::StoreDest::Stick => " on the USB stick",
             crate::store::StoreDest::Auto if self.usb_used() => " on the USB stick",
             _ => "",
@@ -9155,12 +9641,60 @@ impl Ui {
         dir.join(format!("setup{}.txt", self.store_slot))
     }
 
+    /// The `ref<N>.*` lines of a setup: how each loaded ref slot looks (on/off, scale, offset, colour, name).
+    fn ref_setup_text(&self) -> String {
+        let looks: Vec<_> = self
+            .refs
+            .iter()
+            .map(|r| {
+                r.as_ref().map(|r| crate::store::RefLook {
+                    on: Some(r.on),
+                    vdiv: Some(r.vpd),
+                    offset: Some(r.offset),
+                    color: Some(r.color),
+                    label: Some(r.label.clone()),
+                })
+            })
+            .collect();
+        crate::store::ref_setup_text(&looks)
+    }
+
+    /// Applies the saved look to the ref slots that hold a waveform now (the samples are not in a setup).
+    fn apply_ref_looks(&mut self, looks: &[Option<crate::store::RefLook>]) {
+        for (r, l) in self.refs.iter_mut().zip(looks) {
+            let (Some(r), Some(l)) = (r.as_mut(), l) else { continue };
+            if let Some(v) = l.on {
+                r.on = v;
+            }
+            if let Some(v) = l.vdiv {
+                r.vpd = v;
+            }
+            if let Some(v) = l.offset {
+                r.offset = v;
+            }
+            if let Some(v) = l.color {
+                r.color = v.min(REF_COLORS.len() - 1);
+            }
+            if let Some(v) = &l.label {
+                r.label = v.clone();
+            }
+        }
+    }
+
     /// Loads setup<slot>.txt of the storage directory; the acquisition state (run / stop) stays as it is.
     fn recall_setup(&mut self) {
         let p = self.setup_path();
-        let parsed = std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| crate::store::parse_setup(&t));
+        // what this build cannot take (a decoder it does not have, a key of a newer build) is left out and named
+        let text = std::fs::read_to_string(&p).map_err(|e| e.to_string());
+        let parsed = text.as_ref().map_err(|e| e.clone()).map(|t| crate::store::parse_setup_lenient(t));
         match parsed {
-            Ok(mut m) => {
+            Ok((mut m, bad)) => {
+                for e in &bad {
+                    eprintln!("oos-ui: recall {}: left out: {}", p.display(), e);
+                }
+                if let Ok(t) = &text {
+                    self.apply_ref_looks(&crate::store::parse_ref_looks(t, NREF));
+                }
                 (m.run, m.status) = (self.m.run, self.m.status);
                 // the text size is a preference of this screen, not part of a set-up
                 m.text_size = self.m.text_size;
@@ -9169,6 +9703,7 @@ impl Ui {
                     self.mask_ref = None;
                 }
                 self.m = m;
+                self.math_state.borrow_mut().forget_fit();
                 self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
                 self.sync_full();
                 if self.mask.is_none() {
@@ -9177,7 +9712,16 @@ impl Ui {
                 self.build_mask();
                 self.relayout();
                 change::recall(self);
-                self.toast(&format!("Recalled {}", crate::store::file_name(&p)));
+                match bad.first() {
+                    None => self.toast(&format!("Recalled {}", crate::store::file_name(&p))),
+                    Some(e) => self.toast(&format!(
+                        "Recalled {}, {} line{} left out ({})",
+                        crate::store::file_name(&p),
+                        bad.len(),
+                        if bad.len() == 1 { "" } else { "s" },
+                        e
+                    )),
+                }
             }
             Err(e) => self.toast(&format!("Recall failed: {}", e)),
         }
@@ -9318,6 +9862,8 @@ impl Ui {
             .or_else(|| self.remote_options(it))
             .or_else(|| self.graphics_options(it))
             .or_else(|| self.views_options(it))
+            .or_else(|| self.monitor_options(it))
+            .or_else(|| self.features_options(it))
         {
             return o;
         }
@@ -9344,7 +9890,9 @@ impl Ui {
             }
             Item::DecSrc => return self.decoder_sources().into_iter().map(decode_source_name).collect(),
             Item::RefSrc => return ch_names(),
-            Item::MeasSrc | Item::MeasSrcB | Item::CatSourceC | Item::CatSourceD => return self.wave_names(),
+            Item::MeasSrc | Item::MeasSrcB | Item::CurSrcB | Item::CatSourceC | Item::CatSourceD => {
+                return self.wave_names()
+            }
             Item::MeasCopyTo => {
                 return self.wave_names().into_iter().filter(|n| *n != self.wave_name(self.meas_src)).collect()
             }
@@ -9374,11 +9922,7 @@ impl Ui {
                 }
             }
             Item::WinModeI => &["Enter", "Exit", "Inside"],
-            Item::DecProto => return PROTOS.iter().map(|p| p.name().to_string()).collect(),
-            Item::DecFdRate => &["1 M", "2 M", "4 M", "5 M", "8 M"],
-            Item::DecArate => &ARATE_NAMES,
-            Item::DecTick => return crate::decode::SENT_TICKS.iter().map(|&t| tick_name(t)).collect(),
-            Item::DecNibbles => &["1", "2", "3", "4", "5", "6"],
+            Item::DecProto => return self.protos_on().iter().map(|p| p.name().to_string()).collect(),
             Item::DecUsbSpeed => &USPEED_NAMES,
             Item::DecOpt(k) => {
                 return self
@@ -9397,7 +9941,7 @@ impl Ui {
             Item::TrigBusWhat => &["Frame", "ID/Addr", "Data", "Error"],
             Item::DecSrc2 => return self.decoder_sources().into_iter().map(decode_source_name).collect(),
             Item::DecCs => {
-                return (if self.m.dec_proto == Proto::Cphy { Vec::new() } else { vec!["None".into()] })
+                return (if self.m.dec_proto == Proto::CPHY { Vec::new() } else { vec!["None".into()] })
                     .into_iter()
                     .chain(self.decoder_sources().into_iter().map(decode_source_name))
                     .collect()
@@ -9410,7 +9954,9 @@ impl Ui {
             Item::GridFrame | Item::TrigNoise | Item::TrigAutoNoise => &["Off", "On"],
             Item::Dots => &["Off", "On", "Auto"],
             Item::ZoneOn => &["Off", "On"],
+            Item::BottomBar => &["Cards", "Compact"],
             Item::AcqCores => &["Raw", "Matched"],
+            Item::AcqDrawPath => &["Standard", "Batch"],
             Item::Hdmi => &["Mirror", "Waveform", "Layout"],
             Item::TextSize => return TEXT_SIZES.iter().map(|t| t.name().to_string()).collect(),
             Item::ZoneSel => &["Z1", "Z2"],
@@ -9489,6 +10035,11 @@ impl Ui {
         }
         if let Item::RefShow(_) = it {
             return Ctl::Button;
+        }
+        // a finding is one wide button; its text takes a smaller font instead of being cut
+        if let Item::IdFind(_) = it {
+            let cur = self.value(it);
+            return Ctl::Seg(vec![cur.clone()], Some(0));
         }
         if matches!(
             it,
@@ -9574,6 +10125,29 @@ impl Ui {
             }
             return;
         }
+        if it == Item::EyePlace {
+            // a placement choice always places the eye, also the one it already has while it floats
+            if let Some(place) = [(EyePlace::Full, "Full"), (EyePlace::Side, "Side"), (EyePlace::Under, "Under")]
+                .into_iter()
+                .find(|(_, l)| *l == want)
+                .map(|(p, _)| p)
+            {
+                self.workspace.eye_float = None;
+                self.eye_set_place(place);
+                self.relayout();
+            }
+            return;
+        }
+        if it == Item::StripDock {
+            // every dock choice docks the card, also the one already selected after it was floated
+            if let Some(dock) = StripDock::ALL.into_iter().find(|d| d.label() == want) {
+                self.m.strip_dock = dock;
+                self.workspace.measure_docked = true;
+                self.workspace.measure_float = None;
+                self.relayout();
+            }
+            return;
+        }
         let opts = self.options(it);
         let cur = self.value(it);
         if let (Some(k), Some(i)) = (opts.iter().position(|o| o == want), opts.iter().position(|o| *o == cur)) {
@@ -9605,11 +10179,6 @@ impl Ui {
                 self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false))
             }
             MenuId::Afg => self.aux_cards().1.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
-            MenuId::Utility => self
-                .top_buttons()
-                .iter()
-                .find(|t| t.0 == TopBtn::System)
-                .map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
             // menus of front-panel keys (also opened from the start menu): centred above the cards
             m => self
                 .top_buttons()
@@ -9626,11 +10195,14 @@ impl Ui {
         if self.menu == MenuId::MeasAdd {
             return Some(self.catalog_dialog());
         }
-        if self.menu == MenuId::MeasLegacy {
+        if self.menu == MenuId::MeasSelected {
             return Some(self.measurement_chooser_layout());
         }
         if self.menu == MenuId::Main {
             return Some(self.main_layout());
+        }
+        if self.menu == MenuId::Measure {
+            return Some(self.measure_layout());
         }
         let items = self.items(self.menu);
         let n = items.len() as i32;
@@ -9718,6 +10290,83 @@ impl Ui {
         Dlg { r, close, back: None, rows, heads }
     }
 
+    /// The group of the measurement settings a row belongs to (`MEASURE_GROUPS`).
+    fn measure_group(it: Item) -> usize {
+        match it {
+            Item::MeasSrc | Item::MeasSrcB | Item::MeasCopyTo => 0,
+            Item::MeasGate | Item::MeasRefs => 1,
+            Item::MeasStats | Item::MeasLabels | Item::StripDock => 2,
+            Item::MeasIdle | Item::MeasTsetup | Item::MeasThold | Item::MeasOutside | Item::MeasN | Item::MeasEdges => {
+                3
+            }
+            _ => 4,
+        }
+    }
+
+    /// The groups of the measurement settings: name and column.
+    const MEASURE_GROUPS: [(&'static str, usize); 5] =
+        [("Sources", 0), ("Measure over", 0), ("Display", 0), ("Parameters", 1), ("More", 1)];
+
+    /// Measurement settings: two columns of named groups (what is measured, over what, how the results show; the
+    /// parameters of single measurements, and the pages beside them), below the top bar. The pages of the last group
+    /// share a line.
+    fn measure_layout(&self) -> Dlg {
+        const HEAD: i32 = 24;
+        let l = self.lay();
+        let gap = 16;
+        let cw = l.dlg_col;
+        let w = 24 + 2 * cw + gap;
+        let (ax, _) = self.menu_anchor();
+        let x = (ax - w / 2).clamp(METRICS.edge, self.scr.w - METRICS.edge - w);
+        let y = self.frame().top.bottom() + 4;
+        let mut col_y = [y + DLG_HEAD - 8; 2];
+        let (mut rows, mut heads) = (Vec::new(), Vec::new());
+        let mut last = usize::MAX;
+        // the left half of a line of two pages is taken: the next page goes right of it
+        let mut half: Option<i32> = None;
+        for it in self.items(MenuId::Measure) {
+            let g = Self::measure_group(it);
+            let (name, col) = Self::MEASURE_GROUPS[g];
+            let cx = x + 12 + col as i32 * (cw + gap);
+            if g != last {
+                heads.push((Rect::new(cx, col_y[col], cw, HEAD), name));
+                col_y[col] += HEAD;
+                last = g;
+                half = None;
+            }
+            if let Item::Open(_) = it {
+                let hw = (cw - 6) / 2;
+                let ctrl = match half.take() {
+                    Some(ry) => Rect::new(cx + hw + 6, ry, cw - hw - 6, DLG_CTRL),
+                    None => {
+                        let ry = col_y[col];
+                        col_y[col] += DLG_ROW;
+                        half = Some(ry);
+                        Rect::new(cx, ry, hw, DLG_CTRL)
+                    }
+                };
+                rows.push(Row { it, label: Rect::new(ctrl.x, ctrl.y, 0, 0), ctrl, ctl: Ctl::Button });
+                continue;
+            }
+            half = None;
+            let ry = col_y[col];
+            col_y[col] += DLG_ROW;
+            let label = Rect::new(cx, ry, l.dlg_label, DLG_CTRL);
+            let lw = l.dlg_label + 4;
+            let ctrl = if Self::kind(it) == Kind::Action {
+                Rect::new(cx, ry, cw, DLG_CTRL)
+            } else {
+                Rect::new(cx + lw, ry, cw - lw, DLG_CTRL)
+            };
+            rows.push(Row { it, label, ctl: self.ctl(it, ctrl.w), ctrl });
+        }
+        let h = col_y.into_iter().max().unwrap_or(y) - y + 6;
+        let r = Rect::new(x, y, w, h);
+        let close = Rect::new(r.x + r.w - 52, r.y + 6, 44, DLG_CTRL);
+        let back = self.parent.map(|_| Rect::new(close.x - 88, close.y, 82, DLG_CTRL));
+        Dlg { r, close, back, rows, heads }
+    }
+
     /// Font and box of the text of a menu button, and whether it fits: centred in the button while it fits, else
     /// centred left of the chevron of a button that opens a menu, else one size smaller (long labels at the large text
     /// sizes).
@@ -9746,8 +10395,7 @@ impl Ui {
         }
         let Some(d) = self.dlg_layout() else { return };
         let f = self.fonts();
-        cv.round(d.r, 8, ACCENT, 255);
-        cv.round(d.r.inset(2), 7, DLG_BG, 255);
+        cv.framed(d.r, 8, 2, ACCENT, 7, DLG_BG);
         let tcol = match self.menu_root() {
             MenuId::Channel(c) => CH_COLORS[c],
             _ => TEXT,
@@ -9798,10 +10446,10 @@ impl Ui {
                         let r = Rect::new(c.x + k as i32 * (sw + 4), c.y, sw, c.h);
                         if *sel == Some(k) {
                             cv.round(r, 5, ACCENT, 255);
-                            cv.text_in(&f.mb, r, 1, o, DARK_TEXT);
+                            fitted_text(cv, &[&f.mb, &f.m, &f.s], r, o, DARK_TEXT);
                         } else {
                             btn(cv, r, BTN, BTN_BORDER);
-                            cv.text_in(&f.m, r, 1, o, TEXT);
+                            fitted_text(cv, &[&f.m, &f.s], r, o, TEXT);
                         }
                     }
                 }
@@ -9843,12 +10491,6 @@ impl Ui {
                     let txt = match picked {
                         Some((o, _)) => o,
                         None if row.it == Item::QuickRun => format!("Quick \u{b7} {}", self.m.quick.short()),
-                        None if self.menu == MenuId::MeasLegacy && row.it == Item::Open(MenuId::Measure) => {
-                            "Settings".into()
-                        }
-                        None if self.menu == MenuId::MeasLegacy && row.it == Item::Open(MenuId::MeasPair) => {
-                            "Channel pairs".into()
-                        }
                         None if matches!(row.it, Item::MeasRemove(_)) => {
                             if let Item::MeasRemove(index) = row.it {
                                 format!("Remove {}", self.selected_measurement_label(index as usize))
@@ -9880,6 +10522,18 @@ impl Ui {
         }
     }
 
+    /// Back in a sub menu: the menu it was opened from, with the focus it had.
+    fn menu_back(&mut self) {
+        if let Some((menu, focus)) = self.menu_history.pop() {
+            self.menu = menu;
+            self.focus = focus;
+            self.parent = self.menu_history.last().map(|entry| entry.0);
+        } else {
+            self.menu = self.parent.take().unwrap_or(MenuId::Main);
+            self.focus = 0;
+        }
+    }
+
     /// Tap inside the menu dialog; false when (x, y) is outside it.
     fn tap_menu(&mut self, x: i32, y: i32) -> bool {
         if self.menu_open && self.menu == MenuId::MeasAdd {
@@ -9901,14 +10555,7 @@ impl Ui {
                 if self.menu == MenuId::Pick {
                     self.close_picker();
                 } else {
-                    if let Some((menu, focus)) = self.menu_history.pop() {
-                        self.menu = menu;
-                        self.focus = focus;
-                        self.parent = self.menu_history.last().map(|entry| entry.0);
-                    } else {
-                        self.menu = self.parent.take().unwrap_or(MenuId::Main);
-                        self.focus = 0;
-                    }
+                    self.menu_back();
                 }
                 return true;
             }
@@ -9978,8 +10625,7 @@ impl Ui {
         if self.power_dlg {
             cv.blend(self.scr.rect(), rgb(0, 0, 0), 160);
             let (r, [off, restart, cancel]) = self.pwr_layout();
-            cv.round(r, 8, ACCENT, 255);
-            cv.round(r.inset(2), 7, DLG_BG, 255);
+            cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
             cv.text_in(&f.lb, Rect::new(r.x, r.y + 18, r.w, 28), 1, "Power", ACCENT);
             cv.text_in(&f.m, Rect::new(r.x, r.y + 52, r.w, 24), 1, "Power key again or tap outside to cancel", DIM);
             for (b, t, c) in [(off, "Power off", RED), (restart, "Restart", ACCENT), (cancel, "Cancel", TEXT)] {
@@ -9997,8 +10643,7 @@ impl Ui {
             // wider for long lines at the larger text sizes
             let w = lines.iter().map(|l| f.m.width(l) + 40).max().unwrap_or(0).clamp(480, scr.w - 20);
             let r = scr.center(w, h);
-            cv.round(r, 8, ACCENT, 255);
-            cv.round(r.inset(2), 7, DLG_BG, 255);
+            cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
             for (i, l) in lines.iter().enumerate() {
                 let fnt = if i == 0 { &f.lb } else { &f.m };
                 cv.text_in(
@@ -10015,6 +10660,7 @@ impl Ui {
     // ------------------------------------------------------------------ input
 
     /// A menu is on the screen (the desktop window turns Multi 1 with the wheel only then).
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn menu_is_open(&self) -> bool {
         self.menu_open
     }
@@ -10549,13 +11195,24 @@ impl Ui {
         // the plot buttons are taps; a zoom box starts on the waveform, not on them
         let on_chrome = ph == Phase::Down
             && (on_full
-                || self.zoom_btn().1.contains(x, y)
+                || (self.zoom_btn().1.contains(x, y) && !self.view_on())
                 || (self.m.zoom && self.zoom_readout().contains(x, y))
                 || (self.view_on() && self.view_btn().contains(x, y)));
         let zmap = if self.zoom_arm && in_plot && !on_chrome { self.zoom_drag_map(x, y) } else { None };
         let full_from = if on_full {
             let (r, _) = self.full_btn();
             Some((r.x, r.y, self.full_at))
+        } else {
+            None
+        };
+        // a finger on a list that scrolls (the measurement page, the Results pane, a table) moves it
+        let grip = if ph == Phase::Down
+            && !self.m.touch_lock
+            && self.dialog.is_none()
+            && !self.power_dlg
+            && self.wlan.osk.is_none()
+        {
+            self.scroll_grip(x, y)
         } else {
             None
         };
@@ -10579,6 +11236,10 @@ impl Ui {
                     win: self.cur_win,
                 };
                 if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+                    return;
+                }
+                if let Some((l, g)) = grip {
+                    t.drag = Drag::Scroll(l, g);
                     return;
                 }
                 if let Some((ox, oy, prev)) = full_from {
@@ -10609,6 +11270,11 @@ impl Ui {
                 }
                 t.x = x;
                 t.y = y;
+                if let Drag::Scroll(l, g) = t.drag {
+                    let y0 = t.y0;
+                    self.scroll_move(l, g, y0, y);
+                    return;
+                }
                 if t.drag == Drag::ViewEdge {
                     let (x0, dx, dy) = (t.x0, x - t.x0, y - t.y0);
                     match self.view_swipe(x0, dx, dy) {
@@ -10921,12 +11587,21 @@ impl Ui {
                     }
                     return;
                 }
-                if was.1 == Drag::None || was.1 == Drag::Pending || was.1 == Drag::ViewEdge {
-                    if (x - was.2).abs() < 16 && (y - was.3).abs() < 16 {
+                // a press on a list that did not move it is a tap on what is under the finger
+                if let Drag::Scroll(_, g) = was.1 {
+                    if matches!(g, scroll::Grip::Content { .. })
+                        && (x - was.2).abs() < 16
+                        && (y - was.3).abs() < scroll::SLOP
+                    {
                         self.tap(was.2, was.3);
-                    } else {
-                        self.pane_swipe(was.2, was.3, y);
                     }
+                    return;
+                }
+                if (was.1 == Drag::None || was.1 == Drag::Pending || was.1 == Drag::ViewEdge)
+                    && (x - was.2).abs() < 16
+                    && (y - was.3).abs() < 16
+                {
+                    self.tap(was.2, was.3);
                 }
             }
         }
@@ -11089,7 +11764,7 @@ impl Ui {
             self.key(key::SINGLE);
             return;
         }
-        if !self.full_on() && self.workspace_footer_tap(x, y) {
+        if !self.full_on() && self.m.bar_compact && self.workspace_footer_tap(x, y) {
             return;
         }
         if self.power_dlg {
@@ -11149,12 +11824,8 @@ impl Ui {
             }
             return;
         }
-        if self.zoom_btn().1.contains(x, y) {
-            if self.view_on() {
-                self.toast("Not on this view");
-            } else {
-                self.set_zoom(!self.m.zoom);
-            }
+        if self.zoom_btn().1.contains(x, y) && !self.view_on() {
+            self.set_zoom(!self.m.zoom);
             return;
         }
         if self.zoom_close_tap(x, y) {
@@ -11213,8 +11884,6 @@ impl Ui {
                     // a tap opens the measurement list; a press-and-hold opens the short menu (meas_hold_tick)
                     TopBtn::Menu(MenuId::Measure) => self.open_meas_list(),
                     TopBtn::Menu(id) => self.toggle_menu(id),
-                    TopBtn::System => self.toggle_menu(MenuId::Utility),
-                    TopBtn::Load => self.request_waveform(),
                     TopBtn::Live => self.return_to_live(),
                 };
             }
@@ -11367,6 +12036,15 @@ fn heat_palette() -> &'static [Rgb; 256] {
     })
 }
 
+/// Where a reference badge goes: the wanted height, or the nearest free slot (36 px apart) between `lo` and `hi`.
+fn badge_spot(taken: &[i32], y: i32, lo: i32, hi: i32) -> i32 {
+    (0..8)
+        .flat_map(|k| [y + 36 * k, y - 36 * k])
+        .map(|c| c.clamp(lo, hi))
+        .find(|c| taken.iter().all(|t| (t - c).abs() >= 36))
+        .unwrap_or(y.clamp(lo, hi))
+}
+
 fn overlaps(a: Rect, b: Rect) -> bool {
     a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 }
@@ -11402,6 +12080,22 @@ fn fit_font(fonts: &[&'static Font], room: i32, s: &str) -> &'static Font {
     fonts.iter().copied().find(|f| f.width(s) <= room).unwrap_or(fonts[fonts.len() - 1])
 }
 
+/// `s` centred in `r` in the first of `fonts` that fits; a text too long for the last one goes on two lines of it.
+fn fitted_text(cv: &mut Canvas, fonts: &[&'static Font], r: Rect, s: &str, c: Rgb) {
+    let room = r.w - 12;
+    let f = fit_font(fonts, room, s);
+    if f.width(s) <= room {
+        return cv.text_in(f, r, 1, s, c);
+    }
+    let words: Vec<&str> = s.split(' ').collect();
+    let first = (1..words.len()).rev().find(|&k| f.width(&words[..k].join(" ")) <= room).unwrap_or(1);
+    let (a, b) = (words[..first].join(" "), words[first..].join(" "));
+    cv.set_clip(r);
+    cv.text_in(f, Rect::new(r.x, r.y, r.w, r.h / 2 + 1), 1, &a, c);
+    cv.text_in(f, Rect::new(r.x, r.y + r.h / 2 - 1, r.w, r.h / 2 + 1), 1, &b, c);
+    cv.no_clip();
+}
+
 fn backed_text(cv: &mut Canvas, f: &Font, x: i32, y: i32, s: &str, col: Rgb) -> i32 {
     cv.blend(Rect::new(x - 3, y - f.size + 2, f.width(s) + 6, f.size + 2), BG, 180);
     cv.text(f, x, y, s, col)
@@ -11409,8 +12103,7 @@ fn backed_text(cv: &mut Canvas, f: &Font, x: i32, y: i32, s: &str, col: Rgb) -> 
 
 /// Button: 2 px border, filled.
 fn btn(cv: &mut Canvas, r: Rect, fill: Rgb, border: Rgb) {
-    cv.round(r, 5, border, 255);
-    cv.round(r.inset(2), 4, fill, 255);
+    cv.framed(r, 5, 2, border, 4, fill);
 }
 
 fn chevron_down(cv: &mut Canvas, x: i32, y: i32, col: Rgb) {
@@ -11441,26 +12134,11 @@ fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
         Kind::Addr { read } => {
             format!("{} {}{}", hex(p.value), if read { "R" } else { "W" }, if p.ok { "" } else { " N" })
         }
-        // ARINC 429 label in octal; SENT tick and data nibbles
-        Kind::Id { .. } if m.dec_proto == Proto::Arinc429 => format!("L {:03o}", p.value),
-        Kind::Field("SYNC") if m.dec_proto == Proto::Sent => {
-            format!("SYNC {}{}", si(p.value as f64 * 1e-9, "s"), if p.ok { "" } else { " !" })
-        }
-        Kind::Data if m.dec_proto == Proto::Sent => format!("{:0w$X}", p.value, w = p.value2.unwrap_or(1) as usize),
-        // USB: the speed of the SYNC, PID names, bytes
-        Kind::Field("SYNC") if m.dec_proto == Proto::Usb => {
-            format!("SYNC {}{}", if p.value >= 12000 { "FS" } else { "LS" }, if p.ok { "" } else { " !" })
-        }
-        Kind::Field("PID") if m.dec_proto == Proto::Usb && p.ok => {
-            oos_dsp::decode_ext3::usb_pid_name(p.value as u8).to_string()
-        }
-        Kind::Field("PID") if m.dec_proto == Proto::Usb => format!("PID {:02X} !", p.value),
-        Kind::Data if m.dec_proto == Proto::Usb => format!("{:02X}", p.value),
         Kind::Id { ext, rtr } => format!(
             "ID {}{}{}",
             if ext {
                 format!("{:08X}", p.value)
-            } else if m.dec_proto == Proto::Lin {
+            } else if m.dec_proto == Proto::LIN {
                 format!("{:02X}", p.value)
             } else {
                 format!("{:03X}", p.value)
@@ -11476,7 +12154,7 @@ fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
         }
         Kind::Crc => format!(
             "{} {:X}{}",
-            if m.dec_proto == Proto::Lin { "CS" } else { "CRC" },
+            if m.dec_proto == Proto::LIN { "CS" } else { "CRC" },
             p.value,
             if p.ok { "" } else { " !" }
         ),
@@ -11501,13 +12179,13 @@ fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
             _ => format!("{} {:X}{}", l, p.value, if p.ok { "" } else { " !" }),
         },
         Kind::Ack => format!("ACK {}", p.value),
-        _ if m.dec_proto == Proto::Uart && m.dec_ascii && p.value == 0x20 => "SP".to_string(),
-        _ if m.dec_proto == Proto::Uart && m.dec_ascii && (0x21..0x7f).contains(&p.value) => {
+        _ if m.dec_proto == Proto::UART && m.dec_ascii && p.value == 0x20 => "SP".to_string(),
+        _ if m.dec_proto == Proto::UART && m.dec_ascii && (0x21..0x7f).contains(&p.value) => {
             format!("{}", p.value as u8 as char)
         }
         _ => match p.value2 {
             Some(v2) => format!("{}/{}", hex(p.value), hex(v2)),
-            None if m.dec_proto == Proto::I2c && !p.ok => format!("{} N", hex(p.value)),
+            None if m.dec_proto == Proto::I2C && !p.ok => format!("{} N", hex(p.value)),
             None => hex(p.value),
         },
     }
@@ -11516,16 +12194,17 @@ fn packet_text(m: &Model, p: &oos_dsp::decode::Packet) -> String {
 /// The short tag of an event (start, stop, acknowledge ...), None for a field with a value.
 fn packet_tag(m: &Model, p: &oos_dsp::decode::Packet) -> Option<&'static str> {
     use oos_dsp::decode::Kind;
+    // a field a protocol module names itself is no tag (the ACK of SWD has a value)
+    if m.dec_proto.module().is_some_and(|x| x.text(p, &m.dec_opts()).is_some()) {
+        return None;
+    }
     let event = matches!(p.kind, Kind::Field(l) if l.starts_with('!'));
-    if !(event
-        || matches!(p.kind, Kind::Start | Kind::RepStart | Kind::Stop | Kind::Break)
-        || (p.kind == Kind::Ack && m.dec_proto != Proto::Swd))
-    {
+    if !(event || matches!(p.kind, Kind::Start | Kind::RepStart | Kind::Stop | Kind::Break | Kind::Ack)) {
         return None;
     }
     Some(match p.kind {
         Kind::Field(l) => &l[1..],
-        Kind::Start if matches!(m.dec_proto, Proto::Can) => "SOF",
+        Kind::Start if matches!(m.dec_proto, Proto::CAN) => "SOF",
         Kind::Start => "S",
         Kind::RepStart => "Sr",
         Kind::Break => "BRK",
@@ -11948,6 +12627,8 @@ mod tests {
     #[test]
     fn measurements_on_min_max_pairs_leave_out_the_mean_type() {
         use super::*;
+        // without the raw reads of deepmeas.rs (meas.deep_raw = off)
+        crate::deepmeas::force(Some(false));
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
@@ -11994,6 +12675,7 @@ mod tests {
             let row = ui.meas_rows().into_iter().find(|r| r.name == Meas::Vavg.name()).map(|r| r.v);
             assert!(row.is_none_or(|x| x.is_nan() == envelope));
         }
+        crate::deepmeas::force(None);
     }
 
     // Break it catches (compress.rs, raw newest frame every RAW_PERIOD): live-compression pair records measured between
@@ -12252,10 +12934,10 @@ mod tests {
                 ui.producer_step(0.02);
             }
         };
-        // before the first raw record: nothing measured on pairs
+        // before the first raw record: no mean-type value on pairs, the maximum from them
         push(1, true, pairs(1.0));
         step(&mut ui);
-        assert!(ui.meas(0, Meas::Vavg).is_nan() && ui.meas(0, Meas::Vmax).is_nan());
+        assert!(ui.meas(0, Meas::Vavg).is_nan() && (ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
         push(2, false, raw.clone());
         step(&mut ui);
         let avg = ui.meas(0, Meas::Vavg);
@@ -12603,7 +13285,7 @@ mod tests {
     fn can_and_lin_decode_the_demo_bus() {
         use super::*;
         use oos_dsp::decode::Kind;
-        for (proto, tdiv, want_id) in [(Proto::Can, 100e-6f32, 0x123u32), (Proto::Lin, 1e-3, 0x21)] {
+        for (proto, tdiv, want_id) in [(Proto::CAN, 100e-6f32, 0x123u32), (Proto::LIN, 1e-3, 0x21)] {
             // (I2S and 1553 have their own test below)
             let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.m.dec_on = true;
@@ -12705,7 +13387,7 @@ mod tests {
             ui.m.ch[c].on = c == 0;
         }
         ui.m.dec_on = false;
-        ui.m.dec_proto = Proto::I2c;
+        ui.m.dec_proto = Proto::I2C;
         ui.set_trig_type(TrigType::Bus);
         assert!(ui.m.dec_on && ui.m.ch[2].on && ui.m.ch[3].on, "Bus: the decoder and its sources (I2C on CH3/CH4)");
         // Bus again: nothing new recorded, still undone once
@@ -12733,7 +13415,7 @@ mod tests {
         use oos_dsp::decode::Kind;
         for id in [0x123u32, 0x18da_f110] {
             let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-            ui.m.dec_proto = Proto::Can;
+            ui.m.dec_proto = Proto::CAN;
             ui.set_trig_type(TrigType::Bus);
             ui.m.trig_bus_val = id as u64;
             ui.m.tscale = tscales().iter().position(|&t| (t - 50e-6).abs() < 1e-9).unwrap();
@@ -12758,7 +13440,7 @@ mod tests {
             }
         }
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        ui.m.dec_proto = Proto::Can;
+        ui.m.dec_proto = Proto::CAN;
         ui.set_trig_type(TrigType::Bus);
         ui.m.trig_bus = BusWhat::Error;
         ui.m.trig_mode = TrigMode::Normal;
@@ -12772,26 +13454,31 @@ mod tests {
     /// Protocol trigger on ARINC 429 (label), SENT (data nibbles) and FlexRay (frame ID) with the demo traffic: the end
     /// of the matching field sits at the trigger point, Frame triggers, Error never fires on the clean traffic.
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn bus_trigger_on_arinc_sent_and_flexray() {
         use super::*;
         use oos_dsp::decode::Kind;
-        for (proto, tdiv) in [(Proto::Arinc429, 100e-6f32), (Proto::Sent, 200e-6), (Proto::FlexRay, 5e-6)] {
+        let k = |s: &str| Proto::from_key(s).unwrap();
+        let (arinc, sent) = (k("Arinc429"), k("Sent"));
+        for (proto, tdiv) in [(arinc, 100e-6f32), (sent, 200e-6), (k("FlexRay"), 5e-6)] {
             let tsc = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
             let tol = 3.0 * tdiv as f64 * HDIV as f64 / 3600.0; // three record samples
             for what in [BusWhat::Id, BusWhat::Data, BusWhat::Frame, BusWhat::Error] {
                 let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-                ui.m.dec_proto = proto;
+                ui.set_dec_proto(proto);
                 ui.set_trig_type(TrigType::Bus);
                 let id_default = ui.m.trig_bus_val;
                 ui.m.trig_bus = what;
                 // a payload value of the demo traffic
                 if what == BusWhat::Data {
-                    ui.m.trig_bus_val = match proto {
-                        Proto::Arinc429 => 0x2_5a5a,
-                        Proto::Sent => 0x7f_480b,
-                        _ => 0x55,
+                    ui.m.trig_bus_val = if proto == arinc {
+                        0x2_5a5a
+                    } else if proto == sent {
+                        0x7f_480b
+                    } else {
+                        0x55
                     };
-                } else if what == BusWhat::Id && proto == Proto::Sent {
+                } else if what == BusWhat::Id && proto == sent {
                     ui.m.trig_bus_val = 0x4; // status nibble of the second frame
                 }
                 ui.m.trig_mode = TrigMode::Normal;
@@ -12812,8 +13499,8 @@ mod tests {
                     what,
                     p
                 );
-                if what == BusWhat::Id && proto != Proto::Sent {
-                    let want = if proto == Proto::Arinc429 { 0o310 } else { 0x2a };
+                if what == BusWhat::Id && proto != sent {
+                    let want = if proto == arinc { 0o310 } else { 0x2a };
                     assert_eq!(id_default, want);
                     assert!(p
                         .iter()
@@ -12825,7 +13512,7 @@ mod tests {
                     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
                     let _ = std::fs::create_dir_all(&dir);
                     let _ = crate::store::write(
-                        &dir.join(format!("j-bus-{:?}.png", proto).to_lowercase()),
+                        &dir.join(format!("j-bus-{}.png", proto.key()).to_lowercase()),
                         &crate::store::png_of(&cv),
                     );
                 }
@@ -12836,6 +13523,7 @@ mod tests {
     /// Protocol trigger on USB with the demo traffic (full speed, D+ / D- on CH3 / CH4): the token address, a PID,
     /// a payload byte and Frame (end of SYNC) at the trigger point, Error never fires; D+ alone decodes the same.
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn bus_trigger_on_usb() {
         use super::*;
         use oos_dsp::decode::Kind;
@@ -12850,7 +13538,7 @@ mod tests {
             (BusWhat::Error, None),
         ] {
             let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-            ui.m.dec_proto = Proto::Usb;
+            ui.m.dec_proto = Proto::from_key("Usb").unwrap();
             ui.set_trig_type(TrigType::Bus);
             assert_eq!((ui.m.dec_src, ui.m.dec_cs, ui.m.trig_bus, ui.m.trig_bus_val), (2, Some(3), BusWhat::Id, 5));
             assert!(ui.decode_items().contains(&Item::DecUsbSpeed) && ui.decode_items().contains(&Item::DecCs));
@@ -12965,6 +13653,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn extended_decoders_decode_their_demo() {
         use super::*;
         // (protocol, time/div that shows a whole frame, a label or kind that must appear)
@@ -12972,19 +13661,19 @@ mod tests {
         let m = |k: &str| Proto::from_key(k).unwrap();
         let cases: [(Proto, f32, &str); 14] = [
             (m("Dcc"), 10e-3, "PRE"),
-            (Proto::CanFd, 50e-6, "BRS"),
+            (m("CanFd"), 50e-6, "BRS"),
             (m("Dmx512"), 100e-6, "SC"),
-            (Proto::ModbusRtu, 1e-3, "FUNC"),
-            (Proto::Uart9, 1e-3, "Addr"),
-            (Proto::OneWire, 200e-6, "ROM"),
+            (m("ModbusRtu"), 1e-3, "FUNC"),
+            (m("Uart9"), 1e-3, "Addr"),
+            (m("OneWire"), 200e-6, "ROM"),
             (m("UsbPd"), 100e-6, "HDR"),
-            (Proto::Swd, 20e-6, "REQ"),
+            (m("Swd"), 20e-6, "REQ"),
             (m("Spdif"), 20e-6, "Sample"),
             (m("Example"), 1e-3, "Data"),
-            (Proto::FlexRay, 5e-6, "HCRC"),
-            (Proto::Arinc429, 100e-6, "SSM"),
-            (Proto::Sent, 200e-6, "STAT"),
-            (Proto::Usb, 5e-6, "ENDP"),
+            (m("FlexRay"), 5e-6, "HCRC"),
+            (m("Arinc429"), 100e-6, "SSM"),
+            (m("Sent"), 200e-6, "STAT"),
+            (m("Usb"), 5e-6, "ENDP"),
         ];
         for (p, tdiv, want) in cases {
             let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
@@ -13102,7 +13791,7 @@ mod tests {
         ui.activate(Item::IdentifyAct);
         shot(&mut ui, "identify");
         ui.close_menu();
-        ui.set_dec_proto(Proto::CanFd);
+        ui.set_dec_proto(Proto::from_key("CanFd").unwrap());
         ui.m.dec_on = true;
         ui.m.math = MathOp::Off;
         ui.m.math_select(0);
@@ -13121,6 +13810,7 @@ mod tests {
     /// System > Graphics = GPU draws the layers from commands: replayed, they give exactly the pixels of drawing
     /// directly, on every kind of screen.
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn recorded_layers_replay_to_the_same_pixels() {
         use super::*;
         let same = |ui: &mut Ui, what: &str| {
@@ -13161,6 +13851,9 @@ mod tests {
         ui.open_menu(MenuId::Measure);
         same(&mut ui, "measure menu");
         ui.close_menu();
+        ui.key(key::MEASURE);
+        same(&mut ui, "measure page");
+        ui.close_menu();
         ui.m.zoom = true;
         ui.m.color_grade = true;
         ui.producer_step(0.05);
@@ -13178,7 +13871,7 @@ mod tests {
         }
         same(&mut ui, "eye");
         ui.m.view = AView::Scope;
-        ui.set_dec_proto(Proto::CanFd);
+        ui.set_dec_proto(Proto::from_key("CanFd").unwrap());
         ui.m.dec_on = true;
         for _ in 0..5 {
             ui.producer_step(0.05);
@@ -13194,7 +13887,7 @@ mod tests {
     fn protocol_watch_names_a_new_bus() {
         use super::*;
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        ui.set_dec_proto(Proto::Uart);
+        ui.set_dec_proto(Proto::UART);
         // demo UART on CH3 (115200 Bd): watch on at 100 us/div (a screen record resolves the bits), a few seconds
         ui.m.ch[2].on = true;
         ui.m.tscale = tscales().iter().position(|&x| (x - 100e-6).abs() < 1e-9).unwrap();
@@ -13304,7 +13997,7 @@ mod tests {
     fn keypad_enters_a_long_can_id() {
         use super::*;
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        ui.m.dec_proto = Proto::Can;
+        ui.m.dec_proto = Proto::CAN;
         ui.set_trig_type(TrigType::Bus);
         ui.open_menu(MenuId::Trigger);
         ui.open_picker(Item::TrigBusVal);
@@ -13335,40 +14028,48 @@ mod tests {
 
     /// I2S and MIL-STD-1553 decode their demo signals.
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn i2s_and_1553_decode_the_demo() {
         use super::*;
         use oos_dsp::decode::Kind;
-        for (proto, tdiv) in [(Proto::I2s, 10e-6f32), (Proto::Mil1553, 20e-6)] {
+        for (key, tdiv) in [("I2s", 10e-6f32), ("Mil1553", 20e-6)] {
+            let proto = Proto::from_key(key).unwrap();
             let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.m.dec_on = true;
             ui.set_dec_proto(proto);
+            // the trigger that holds the demo still: I2S the falling WS edge on CH1, 1553 the first rising edge after
+            // 3 us of quiet bus on CH3
+            let m = &ui.m;
+            let want = if key == "I2s" {
+                (TrigType::Edge, 0, Slope::Fall, 1.65)
+            } else {
+                (TrigType::NthEdge, 2, Slope::Rise, 2.0)
+            };
+            assert_eq!((m.trig_type, m.trig_src, m.slope, m.trig_level), want, "{}", key);
+            assert!(key == "I2s" || (m.nth_idle, m.nth_n) == (3e-6, 1));
             ui.m.tscale = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-3).unwrap();
             for _ in 0..20 {
                 ui.producer_step(1.0 / 30.0);
             }
             let p = ui.decode_packets().unwrap();
-            match proto {
-                Proto::I2s => {
-                    let s: Vec<(bool, u32)> = p
-                        .iter()
-                        .filter_map(|x| if let Kind::Sample { right } = x.kind { Some((right, x.value)) } else { None })
-                        .collect();
-                    assert!(s.contains(&(false, 0x4000)) && s.contains(&(true, 0xc000)), "{:x?}", s);
-                }
-                _ => {
-                    let w: Vec<(bool, u32, bool)> = p
-                        .iter()
-                        .filter_map(|x| if let Kind::Word { cmd } = x.kind { Some((cmd, x.value, x.ok)) } else { None })
-                        .collect();
-                    assert!(w.contains(&(true, 0x0c23, true)) && w.contains(&(false, 0xbeef, true)), "{:x?}", w);
-                }
+            if key == "I2s" {
+                let s: Vec<(bool, u32)> = p
+                    .iter()
+                    .filter_map(|x| if let Kind::Sample { right } = x.kind { Some((right, x.value)) } else { None })
+                    .collect();
+                assert!(s.contains(&(false, 0x4000)) && s.contains(&(true, 0xc000)), "{:x?}", s);
+            } else {
+                let w: Vec<(bool, u32, bool)> = p
+                    .iter()
+                    .filter_map(|x| if let Kind::Word { cmd } = x.kind { Some((cmd, x.value, x.ok)) } else { None })
+                    .collect();
+                assert!(w.contains(&(true, 0x0c23, true)) && w.contains(&(false, 0xbeef, true)), "{:x?}", w);
             }
             let mut cv = Canvas::new(PANEL_W, PANEL_H);
             ui.render(&mut cv);
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-shots");
             let _ = std::fs::create_dir_all(&dir);
-            let _ =
-                crate::store::write(&dir.join(format!("i-{:?}.png", proto).to_lowercase()), &crate::store::png_of(&cv));
+            let _ = crate::store::write(&dir.join(format!("i-{}.png", key).to_lowercase()), &crate::store::png_of(&cv));
         }
     }
 
@@ -13557,7 +14258,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("oos-mask-{}", std::process::id()));
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.store_dir = dir.clone();
-        ui.store_dest = crate::store::StoreDest::Desk;
+        ui.store_dest = crate::store::StoreDest::Local;
         ui.step(0.033);
         let rec = ui.last[0].as_ref().unwrap();
         ui.refs[0] = Some(RefWave {
@@ -13576,10 +14277,9 @@ mod tests {
         ui.adjust(Item::MaskInvert, 1);
         assert!(ui.m.mask_inv && ui.mask.as_ref().unwrap().invert);
         ui.activate(Item::MaskSave);
-        let desk = dir.join("Desktop");
-        assert!(desk.join("mask-001.txt").is_file());
+        assert!(dir.join("mask-001.txt").is_file());
         assert!(dir.join("mask1.txt").is_file());
-        let t = std::fs::read_to_string(desk.join("mask-001.txt")).unwrap();
+        let t = std::fs::read_to_string(dir.join("mask-001.txt")).unwrap();
         assert!(t.starts_with("# OOS mask\n") && t.contains("inv=1"));
         ui.activate(Item::MaskClear);
         assert!(ui.mask.is_none() && !ui.m.mask_on);
@@ -13590,18 +14290,18 @@ mod tests {
     }
 
     #[test]
-    fn fast_frame_save_and_load_and_desktop_dest() {
+    fn fast_frame_save_and_load_and_local_dest() {
         use super::*;
         let dir = std::env::temp_dir().join(format!("oos-ff-{}", std::process::id()));
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.store_dir = dir.clone();
-        ui.store_dest = crate::store::StoreDest::Desk;
+        ui.store_dest = crate::store::StoreDest::Local;
         for _ in 0..4 {
             ui.step(0.033);
         }
         assert!(ui.history.len() >= 3);
         ui.activate(Item::StoreFfSave);
-        let p = dir.join("Desktop/frame-001.bin");
+        let p = dir.join("frame-001.bin");
         assert!(p.is_file());
         let n = ui.history.len();
         ui.history.clear();
@@ -14234,21 +14934,22 @@ mod tests {
         ui.dlg_layout().expect("menu open").rows.into_iter().find(|r| r.it == it).expect("row")
     }
 
-    /// The compact 30px footer returns space to the plot. Menus keep 40px rows.
+    /// Layout: the plot fills the width and the height between the top bar and the cards (results as an overlay),
+    /// touch targets of at least 40 px everywhere.
     #[test]
     fn layout_plot_size_and_touch_targets() {
         use super::*;
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         // default: one measurement row under the plot
-        assert_eq!((ui.grid.x, ui.grid.y, ui.grid.w, ui.grid.h), (0, 40, 1024, 496));
+        assert_eq!((ui.grid.x, ui.grid.y, ui.grid.w, ui.grid.h), (0, 40, 1024, 456));
         ui.m.meas.clear();
         ui.relayout();
-        assert_eq!((ui.grid.w, ui.grid.h), (1024, 520));
+        assert_eq!((ui.grid.w, ui.grid.h), (1024, 480));
         // statistics: the results panel takes no room
         ui.m.meas = vec![(Meas::Freq, WaveId::Ch(0))];
         ui.stats_on = true;
         ui.relayout();
-        assert_eq!((ui.grid.w, ui.grid.h), (1024, 520));
+        assert_eq!((ui.grid.w, ui.grid.h), (1024, 480));
         for (_, _, r) in ui.top_buttons() {
             assert!(ui.top_hit(r).h >= 40 && r.x + r.w <= ui.net_box().x, "{:?}", r);
         }
@@ -14271,40 +14972,15 @@ mod tests {
                 ui.m.ch[c].on = c < n;
             }
             let (chs, tr, trg) = ui.cards();
-            assert!(trg.x + trg.w <= W && trg.w >= 222 && tr.w >= 124, "{} on", n);
-            for r in chs.iter().filter(|r| r.w > 0).chain([tr, trg, Ui::MENU_BTN].iter()) {
-                assert!(r.h >= 30 && r.y + r.h <= H && r.w >= 38, "{:?}", r);
+            let (sb, mb) = Ui::trig_parts(trg);
+            let menu = ui.menu_btn();
+            assert!(chs[0].x >= menu.right() && trg.right() <= ui.scr.w - 6 && trg.w >= 222 && tr.w >= 130, "{} on", n);
+            for r in chs.iter().chain([tr, trg, menu].iter()) {
+                assert!(r.h >= 40 && r.bottom() <= ui.scr.h && r.w >= 54, "{:?}", r);
             }
+            // two buttons in a card: the finger gets half of its height each
+            assert!(trg.h / 2 >= 32 && sb.w >= 60 && mb.y > sb.y + sb.h, "{:?} {:?}", sb, mb);
         }
-        // Analog off, a ref on: CH pills disappear while the reference and Time remain accessible.
-        for c in 0..NCH {
-            ui.m.ch[c].on = false;
-        }
-        ui.refs[0] = Some(RefWave {
-            src: 0,
-            color: 0,
-            label: "DQ".into(),
-            t0: 0.0,
-            dt: 1e-9,
-            v: vec![0.0, 1.0].into(),
-            vpd: 0.2,
-            offset: 0.0,
-            on: true,
-        });
-        let (chs, tr, trg) = ui.cards();
-        assert!(chs.iter().all(|r| r.w == 0), "{:?}", chs);
-        assert!(tr.w >= 124 && trg.w >= 222);
-        ui.tap(145, BOTTOM.y + 15);
-        assert!(ui.menu_open && ui.menu == MenuId::Ref, "a stored reference has a direct source pill");
-        ui.close_menu();
-        assert!(!ui.m.zoom);
-        ui.tap(tr.x + 10, tr.y + 10);
-        assert!(ui.menu_open && ui.menu_root() == MenuId::Horizontal);
-        ui.refs[0] = None;
-        for c in 0..n_ch() {
-            ui.m.ch[c].on = true;
-        }
-
         for m in [
             MenuId::Main,
             MenuId::Trigger,
@@ -14318,7 +14994,13 @@ mod tests {
             ui.open_menu(m);
             let d = ui.dlg_layout().unwrap();
             let fr = ui.frame();
-            assert!(d.close.h >= 40 && d.r.y >= fr.top.bottom() && d.r.bottom() <= fr.bottom.y, "{:?}", m);
+            assert!(
+                d.close.h >= 40 && d.r.y >= fr.top.bottom() && d.r.bottom() <= fr.bottom.y,
+                "{:?} {:?} {:?}",
+                m,
+                d.r,
+                fr.bottom
+            );
             assert!(d.rows.iter().all(|r| r.ctrl.h >= 40), "{:?}", m);
         }
     }
@@ -14474,18 +15156,18 @@ mod tests {
             Item::MeasSrcB,
             Item::MeasCopyTo,
             Item::MeasGate,
-            Item::Open(MenuId::MeasPair),
-            Item::Open(MenuId::Dvm),
             Item::MeasRefs,
+            Item::MeasStats,
+            Item::MeasLabels,
+            Item::StripDock,
             Item::MeasIdle,
             Item::MeasTsetup,
             Item::MeasThold,
             Item::MeasOutside,
             Item::MeasN,
             Item::MeasEdges,
-            Item::MeasStats,
-            Item::MeasLabels,
-            Item::StripDock,
+            Item::Open(MenuId::MeasPair),
+            Item::Open(MenuId::Dvm),
             Item::MeasClear,
         ];
         ui.key(key::MEASURE);
@@ -14713,7 +15395,14 @@ mod tests {
             ui.open_menu(MenuId::Main);
             let (x, y) = mid(row_of(&ui, Item::Open(m)).ctrl);
             ui.tap(x, y);
-            assert_eq!((ui.menu, ui.parent), (m, Some(MenuId::Main)));
+            // Measure is the measurement page, as its key and the top bar open it (with Back to the start menu)
+            let page = if m == MenuId::Measure { MenuId::MeasAdd } else { m };
+            assert_eq!((ui.menu, ui.parent), (page, Some(MenuId::Main)));
+            if m == MenuId::Measure {
+                let (x, y) = mid(ui.dlg_layout().unwrap().back.expect("Back to the start menu"));
+                ui.tap(x, y);
+                assert_eq!(ui.menu, MenuId::Main);
+            }
         }
         assert_eq!(ui.m.cursor, CursorMode::Time, "Cursor entry turns the cursors on like the key");
         // slope steps and keeps the menu, history entries appear with the history

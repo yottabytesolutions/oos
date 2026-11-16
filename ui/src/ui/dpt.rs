@@ -336,3 +336,40 @@ fn draw_cols(cv: &mut Canvas, band: Rect, cols: &[(f32, f32)], col: Rgb) {
         cv.line(x, y0, x, y1, col);
     }
 }
+
+/// The double-pulse page (switching and recovery of a power switch).
+pub(super) struct DoublePulsePage;
+
+impl super::analysers::Analyser for DoublePulsePage {
+    fn view(&self) -> AView {
+        AView::Dpt
+    }
+
+    fn feature(&self) -> (&'static str, &'static str) {
+        ("dpt", "Double pulse")
+    }
+
+    fn name(&self) -> &'static str {
+        "Double pulse"
+    }
+
+    fn menu(&self) -> MenuId {
+        MenuId::Dpt
+    }
+
+    fn scpi(&self) -> Option<&'static str> {
+        Some("DPT")
+    }
+
+    fn without_record(&self, _ui: &Ui) -> bool {
+        true
+    }
+
+    fn update(&self, ui: &mut Ui, rec: &Record, _pane: bool) {
+        ui.dpt_update(rec);
+    }
+
+    fn draw(&self, ui: &Ui, cv: &mut Canvas) {
+        ui.draw_dpt(cv);
+    }
+}

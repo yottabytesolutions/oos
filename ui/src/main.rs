@@ -45,6 +45,7 @@ mod json;
 mod layout;
 mod math;
 mod mdns;
+mod measures;
 mod model;
 mod net;
 mod net6;

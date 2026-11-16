@@ -194,7 +194,7 @@ impl Ui {
         m.run = RunState::Run;
         self.operation_serial = self.operation_serial.wrapping_add(1);
         let stamp = 0;
-        // any channel set: the slots per channel follow libscope's core table (`levels::slots`); a channel whose slots
+        // any channel set: the slots per channel follow the core table (`levels::slots`); a channel whose slots
         // disagree falls back to the records (`auto_unit`)
         let unit = (self.host.switches().autoset_unit_levels && self.src.hw_levels(None).is_some()).then_some(Unit {
             id: stamp,
@@ -534,9 +534,11 @@ impl Ui {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// Whether the separate Fit record action is working with stored references.
     /// The hardware Auto action does not call this reference fitting path.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn reference_autoset(&self) -> bool {
         if self.sim_play {
             return true;
@@ -547,6 +549,7 @@ impl Ui {
 
     /// Bounded Fit record helper: scale/position/time base from shown refs;
     /// never called by hardware Auto and never turns an ADC channel on.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn autoset_reference(&mut self) {
         let shown: Vec<usize> = self
             .refs
@@ -1193,6 +1196,20 @@ mod tests {
         assert_eq!((need, runs), (ui.auto.as_ref().unwrap().stamp, UNIT_RUNS));
         let l = ch1.map(|(lo, hi, clipped)| crate::board::ChLevels { lo, hi, mean: (lo + hi) / 2.0, clipped });
         g.levels = Some((id, [l, None, None, None]));
+    }
+
+    // Break it catches: the measure unit on by default again (it gave stale levels on the unit, 2026-11-15)
+    #[test]
+    fn measure_unit_levels_only_on_request() {
+        let on = |env: Option<&'static str>, conf: &str| {
+            let env = move |k: &str| (k == "OOS_AUTOSET_LEVELS").then_some(env).flatten().map(Into::into);
+            crate::sysconf::Switches::parse(&env, conf, "", crate::placement::Cores::default()).autoset_unit_levels
+        };
+        assert!(!on(None, ""));
+        assert!(!on(None, "autoset.levels = records\n"));
+        assert!(on(None, "autoset.levels = unit\n"));
+        assert!(on(Some("unit"), "autoset.levels = records\n"));
+        assert!(!on(Some("records"), "autoset.levels = unit\n"));
     }
 
     // Break it catches: the measure-unit levels not used (the 20 ms/div records again), used from an answer to an

@@ -23,7 +23,7 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
     let wave = |n: u8| -> Vec<f32> { words.iter().map(|w| (w >> n & 1) as f32).collect() };
     let (thr, hy) = (0.5, 0.1);
     let la = m.dec_la;
-    if m.dec_proto == Proto::Parallel {
+    if m.dec_proto == Proto::PARALLEL {
         // up to 16 data lines upwards from the main source, skipping the clock line
         let first = la[0].unwrap_or(0);
         let lines: Vec<Vec<f32>> = (0..16u8)
@@ -44,8 +44,7 @@ pub fn decode_la(m: &Model, words: &[u16], dt: f64) -> Result<Vec<Packet>, &'sta
 
 /// `decode` with the threshold and hysteresis given.
 pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32) -> Result<Vec<Packet>, &'static str> {
-    use oos_dsp::decode::{can, i2c, i2s, lin, mil1553, spi, uart, Parity};
-    use oos_dsp::{decode_ext as x1, decode_ext2 as x2, decode_ext3 as x3};
+    use oos_dsp::decode_ext as x1;
     let get = |c: usize| ch.get(c).copied().filter(|v| !v.is_empty()).ok_or("source channel off");
     let opt = |c: Option<usize>| -> Result<Option<&[f32]>, &'static str> { c.map(get).transpose() };
     // RS-485 / differential: A - B, threshold around 0 V like the pair's receiver
@@ -57,103 +56,28 @@ pub(crate) fn decode_at(m: &Model, ch: [&[f32]; NCH], dt: f64, thr: f32, hy: f32
         }
         _ => get(m.dec_src)?,
     };
-    let baud = crate::decode::BAUDS[m.dec_baud];
-    let can_rate = crate::decode::CAN_RATES[m.dec_canrate];
-    Ok(match m.dec_proto {
-        Proto::Uart => uart(line, dt, baud, m.dec_bits, m.dec_parity, thr, hy, m.ser.uart_inv),
-        Proto::I2c => i2c(get(m.dec_src)?, get(m.dec_src2)?, thr, hy),
-        Proto::Spi => {
-            let bit = 1e-9f64.max(dt);
-            // a clock pause of the trigger's timeout starts a frame, else 20 samples
-            let gap = if m.ser.spi_timeout > 0.0 { m.ser.spi_timeout as f64 / dt } else { 20.0 * bit / dt };
-            // the decoder takes CS active low: an active-high CS is mirrored at the threshold
-            let cs_hi: Option<Vec<f32>> = match (m.ser.spi_cs_high, opt(m.dec_cs)?) {
-                (true, Some(c)) => Some(c.iter().map(|&x| 2.0 * thr - x).collect()),
-                _ => None,
-            };
-            let cs = match &cs_hi {
-                Some(c) => Some(&c[..]),
-                None => opt(m.dec_cs)?,
-            };
-            spi(get(m.dec_src2)?, get(m.dec_src)?, None, cs, m.dec_mode, m.dec_bits, true, thr, hy, gap)
-        }
-        Proto::Can => can(line, dt, can_rate, thr, hy, m.dec_canh),
-        Proto::Lin => lin(line, dt, baud, thr, hy),
-        Proto::I2s => i2s(get(m.dec_src2)?, opt(m.dec_cs)?, get(m.dec_src)?, m.dec_bits, thr, hy),
-        Proto::Mil1553 => mil1553(get(m.dec_src)?, dt, thr, hy),
-        Proto::Parallel => {
-            // dec_bits data lines from the main source upwards, skipping the clock
-            let clk = m.dec_cs;
-            let lines: Vec<&[f32]> = (0..NCH)
-                .map(|k| (m.dec_src + k) % NCH)
-                .filter(|&c| Some(c) != clk)
-                .take(m.dec_bits.clamp(1, 4) as usize)
-                .map(get)
-                .collect::<Result<_, _>>()?;
-            x1::parallel(&lines, opt(clk)?, oos_dsp::trigger::Slope::Rising, thr, hy)
-        }
-        Proto::CanFd => x1::can_fd(line, dt, can_rate, crate::decode::FD_RATES[m.dec_fdrate], thr, hy, m.dec_canh),
-        Proto::FlexRay => x1::flexray(line, dt, 10e6, thr, hy, false),
-        Proto::ModbusRtu => x1::modbus_rtu(line, dt, baud, m.dec_parity, thr, hy, false),
-        Proto::ModbusAscii => x1::modbus_ascii(
-            line,
-            dt,
-            baud,
-            m.dec_bits.clamp(7, 8),
-            if m.dec_parity == Parity::None { Parity::Even } else { m.dec_parity },
-            thr,
-            hy,
-            false,
-        ),
-        Proto::OneWire => x1::onewire(get(m.dec_src)?, dt, thr, hy, false),
-        Proto::Ds2482 => x1::ds2482(&i2c(get(m.dec_src)?, get(m.dec_src2)?, thr, hy)),
-        Proto::Uart9 => x1::uart9(line, dt, baud, thr, hy, false),
-        Proto::Swd => x2::swd(get(m.dec_src2)?, get(m.dec_src)?, thr, hy),
-        Proto::Jtag => {
-            let tdi = opt(m.dec_cs)?.ok_or("TDI source missing")?;
-            x2::jtag(get(m.dec_src2)?, get(m.dec_src)?, tdi, opt(m.dec_src4)?, None, thr, hy)
-        }
-        Proto::Qspi => {
-            let cs = opt(m.dec_cs)?.ok_or("CS# source missing")?;
-            let mut io = vec![get(m.dec_src)?];
-            if let Some(c) = opt(m.dec_src4)? {
-                io.push(c);
-            }
-            x2::qspi(cs, get(m.dec_src2)?, &io, &x2::QspiCfg::new(1, 1, 1, 3, 0, false), true, thr, hy)
-        }
-        Proto::I3c => x2::i3c(get(m.dec_src)?, get(m.dec_src2)?, &[], thr, hy),
-        Proto::Arinc429 => {
-            let r = crate::decode::ARINC_RATES[m.dec_arate];
-            x3::arinc429(line, dt, if r > 0.0 { Some(r) } else { None }, thr, hy)
-        }
-        Proto::Sent => {
-            let t = crate::decode::SENT_TICKS[m.dec_tick];
-            x3::sent(get(m.dec_src)?, dt, if t > 0.0 { Some(t) } else { None }, m.dec_nibbles as usize, thr, hy)
-        }
-        // D- optional (D+ alone: no SE0)
-        Proto::Usb => x3::usb(get(m.dec_src)?, opt(m.dec_cs)?, dt, crate::decode::USB_SPEEDS[m.dec_uspeed], thr, hy),
-        Proto::Manchester => oos_dsp::linecode::manchester(line, dt, baud, thr, hy),
-        Proto::Mlt3 => oos_dsp::linecode::mlt3(line, dt, baud, thr, hy),
-        Proto::Cphy => oos_dsp::cphy::decode(
-            get(m.dec_src)?,
-            get(m.dec_src2)?,
-            opt(m.dec_cs)?.ok_or("C-PHY C source missing")?,
-            dt,
-            (m.dec_cphy_rate > 0.0).then_some(m.dec_cphy_rate),
-            thr.abs().max(1e-6),
-        ),
-        // a module: the lines of its roles; a role it names must have a source (the third and fourth may be "none")
-        Proto::Module(i) => {
-            let p = crate::protocols::get(i);
-            let r = p.roles();
-            let lines = [
-                Some(line),
-                if r[1].is_some() { Some(get(m.dec_src2)?) } else { None },
-                if r[2].is_some() { opt(m.dec_cs)? } else { None },
-                if r[3].is_some() { opt(m.dec_src4)? } else { None },
-            ];
-            return p.decode(&crate::protocols::Lines { lines, dt, thr, hy, opt: m.dec_opts() });
-        }
+    // the protocol module: the lines of its roles; a role it names must have a source (the third and fourth may be
+    // "none")
+    let Proto::Module(i) = m.dec_proto;
+    let p = crate::protocols::get(i);
+    let r = p.roles();
+    let lines = [
+        Some(line),
+        if r[1].is_some() { Some(get(m.dec_src2)?) } else { None },
+        if r[2].is_some() { opt(m.dec_cs)? } else { None },
+        if r[3].is_some() { opt(m.dec_src4)? } else { None },
+    ];
+    let chans: [Option<&[f32]>; 4] = std::array::from_fn(|c| ch.get(c).copied().filter(|v| !v.is_empty()));
+    let src = [Some(m.dec_src), Some(m.dec_src2), m.dec_cs, m.dec_src4];
+    p.decode(&crate::protocols::Lines {
+        lines,
+        dt,
+        thr,
+        hy,
+        opt: m.dec_opts(),
+        sh: crate::protocols::Shared::of(m),
+        chans,
+        src,
     })
 }
 
@@ -165,26 +89,23 @@ pub fn matches(m: &Model, p: &Packet) -> bool {
         return r;
     }
     let v32 = v as u32;
-    if matches!(m.dec_proto, Proto::Uart | Proto::Spi) && m.trig_bus == BusWhat::Data {
+    if matches!(m.dec_proto, Proto::UART | Proto::SPI) && m.trig_bus == BusWhat::Data {
         return p.kind == Kind::Data && m.ser.rel.test(p.value as u64, v, m.ser.max, m.ser.mask);
     }
-    if m.dec_proto == Proto::I2c && matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
+    if m.dec_proto == Proto::I2C && matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
         return false;
     }
     let v = v32;
     match m.trig_bus {
         BusWhat::Frame => match p.kind {
             Kind::Start | Kind::Break | Kind::Word { cmd: true } => true,
-            Kind::Data => matches!(m.dec_proto, Proto::Uart | Proto::Spi | Proto::Uart9 | Proto::Parallel),
+            Kind::Data => matches!(m.dec_proto, Proto::UART | Proto::SPI | Proto::PARALLEL),
             Kind::Sample { right: false } => true,
-            // an ARINC 429 word starts with its label
-            Kind::Id { .. } => m.dec_proto == Proto::Arinc429,
             // the first field of a frame of the extended decoders
             Kind::Field(l) => matches!(l, "!RESET" | "PRE" | "TSS" | "CMD" | "REQ" | "BLK" | "IR" | "DR" | "SYNC"),
             _ => false,
         },
         // USB: the token address or the PID byte
-        BusWhat::Id if m.dec_proto == Proto::Usb => matches!(p.kind, Kind::Field("ADDR" | "PID")) && p.value == v,
         BusWhat::Id => {
             (matches!(p.kind, Kind::Id { .. } | Kind::Addr { .. } | Kind::Word { cmd: true })
                 || p.kind == Kind::Field("ROM")
@@ -202,7 +123,7 @@ pub fn matches(m: &Model, p: &Packet) -> bool {
 /// the address (relation, direction, 10-bit) and the first `ser.bytes` data bytes after it, big-endian, as the TPU's
 /// receiver compares them.
 pub fn points(m: &Model, packets: &[Packet]) -> Vec<f64> {
-    if m.dec_proto != Proto::I2c || !matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
+    if m.dec_proto != Proto::I2C || !matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
         return packets.iter().filter(|p| matches(m, p)).map(|p| p.t1).collect();
     }
     let s = &m.ser;
@@ -312,12 +233,12 @@ mod serial_tests {
 
     #[test]
     fn uart_and_spi_data_take_the_relation() {
-        let mut m = Model { dec_proto: Proto::Uart, trig_bus: BusWhat::Data, trig_bus_val: 0x30, ..Model::default() };
+        let mut m = Model { dec_proto: Proto::UART, trig_bus: BusWhat::Data, trig_bus_val: 0x30, ..Model::default() };
         m.ser.rel = Rel::In;
         m.ser.max = 0x39;
         let p = [pk(1.0, Kind::Data, 0x2f), pk(2.0, Kind::Data, 0x35), pk(3.0, Kind::Data, 0x3a)];
         assert_eq!(points(&m, &p), [2.0]);
-        m.dec_proto = Proto::Spi;
+        m.dec_proto = Proto::SPI;
         m.ser.rel = Rel::Ne;
         assert_eq!(points(&m, &p), [1.0, 2.0, 3.0]);
     }
@@ -325,7 +246,7 @@ mod serial_tests {
     #[test]
     fn i2c_address_direction_ten_bit_and_data_bytes() {
         use Kind::*;
-        let mut m = Model { dec_proto: Proto::I2c, trig_bus: BusWhat::Id, trig_bus_val: 0x50, ..Model::default() };
+        let mut m = Model { dec_proto: Proto::I2C, trig_bus: BusWhat::Id, trig_bus_val: 0x50, ..Model::default() };
         // write to 0x50: 0x12 0x34 0x56; read from 0x50: 0xab; 10-bit write to 0x2a5: 0x01
         let p = [
             pk(0.0, Start, 0),

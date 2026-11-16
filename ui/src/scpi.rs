@@ -34,7 +34,7 @@
 //! a long stored record is computing, and BUSY? polls without changing acquisition or statistics.
 //! :DECode:CPHY:RATE {AUTO|symbols_per_second} sets a known C-PHY symbol rate; :DECode:SRATe is an alias.
 //! :LA:STATe, :LA:DIGital<n>:DISPlay, :LA:POD<n>:THReshold, :LA:POINts?, :LA:PREamble?, :LA:DATA? (u16 LE words),
-//! :COUNter:TOTalize:CLEar, :DISPlay:VIEW <n>, :DISPlay:VIEW:COUNt 1..4,
+//! :COUNter:TOTalize:CLEar, :DISPlay:VIEW <n>, :DISPlay:VIEW:COUNt 1..4, :DISPlay:VIEW:MONitor 0..4 (HDMI Layout),
 //! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, OOS: :VIEW SCOPe|SPECtrum|EYE|POWer|BODE|MAGnetic|INVerter|DPT, :IDENtify?, :CALibrate:STARt 0..4[,ZERO] / :STATus? /
 //! :TRIGger:RS232|SPI|IIC:* (protocol trigger, scpi/ser.rs), OOS: :ACQuire:CORes[?] MATCh|RAW, :ACQuire:SEGMents[:HARDware|:INTerval], :ACQuire:AVERages:HARDware,
 //! :SYSTem:ERRor?, :SYSTem:STATe?, :SYSTem:GRAPhics CPU|GPU, :SYSTem:AOUTput TOUT|OFF (rear AUX OUT; OFF is OOS), fork: :SYSTem:DEBug:DVM? (DVM block raw), :SYSTem:DEBug:MASK? (mask unit raw), :SYSTem:DEBug:MASK:MAP[?] key=value, :SYSTem:DEBug:MASK:COLumns? a,b, :SYSTem:DEBug:ZONE? (zone unit raw), :SYSTem:DEBug:SERial? / UART? (TPU UART, SPI, I2C words), OOS: :ACQuire:AVERages:HARDware ON|OFF (FPGA average), :ACQuire:SEGMents <n>|OFF, :SEGMents:HARDware ON|OFF, :SEGMents:INTerval <s>,
@@ -285,12 +285,12 @@ fn put_bus_wave(ui: &mut Ui, slot: usize, protocol: Proto, role: usize, source: 
 
 fn proto_token(p: Proto) -> String {
     match p {
-        Proto::Parallel => "PAR".into(),
-        Proto::Uart => "RS232".into(),
-        Proto::Spi => "SPI".into(),
-        Proto::I2c => "IIC".into(),
-        Proto::Lin => "LIN".into(),
-        Proto::Can => "CAN".into(),
+        Proto::PARALLEL => "PAR".into(),
+        Proto::UART => "RS232".into(),
+        Proto::SPI => "SPI".into(),
+        Proto::I2C => "IIC".into(),
+        Proto::LIN => "LIN".into(),
+        Proto::CAN => "CAN".into(),
         other => other.name().chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_uppercase(),
     }
 }
@@ -298,22 +298,22 @@ fn proto_token(p: Proto) -> String {
 fn parse_proto(arg: &str) -> Option<Proto> {
     let a = arg.trim();
     if kw(a, "PARallel") {
-        return Some(Proto::Parallel);
+        return Some(Proto::PARALLEL);
     }
     if kw(a, "RS232") || kw(a, "UART") {
-        return Some(Proto::Uart);
+        return Some(Proto::UART);
     }
     if kw(a, "IIC") || kw(a, "I2C") {
-        return Some(Proto::I2c);
+        return Some(Proto::I2C);
     }
     if kw(a, "LIN") {
-        return Some(Proto::Lin);
+        return Some(Proto::LIN);
     }
     if kw(a, "SPI") {
-        return Some(Proto::Spi);
+        return Some(Proto::SPI);
     }
     if kw(a, "CAN") {
-        return Some(Proto::Can);
+        return Some(Proto::CAN);
     }
     PROTOS.iter().copied().find(|p| proto_token(*p).eq_ignore_ascii_case(a))
 }
@@ -704,6 +704,7 @@ fn e(v: f64) -> String {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Scpi {
     pub fn open(port: impl Into<crate::net6::Port>, v6: bool) -> Scpi {
         Scpi {
@@ -797,11 +798,14 @@ impl Scpi {
         while i < self.clients.len() {
             let mut tmp = [0u8; 4096];
             let mut closed = false;
+            // the client sent its last bytes (`echo "*IDN?" | nc host 5555` closes its side after the line): what came
+            // before is still answered, as in 0.1.12 and on the stock system
+            let mut eof = false;
             let mut read_bytes = 0;
             loop {
                 match crate::net::read_now(&self.clients[i].s, &mut tmp) {
                     Ok(0) => {
-                        closed = true;
+                        eof = true;
                         break;
                     }
                     Ok(n) => {
@@ -822,6 +826,10 @@ impl Scpi {
                     }
                 }
             }
+            // a program waiting for an operation (`*OPC?`) when the client went is not resumed: no later command of it runs
+            if eof && self.clients[i].program.is_some() {
+                closed = true;
+            }
             while !closed {
                 if self.clients[i].program.is_none() {
                     let Some(p) = self.clients[i].buf.iter().position(|&c| c == b'\n') else {
@@ -832,7 +840,10 @@ impl Scpi {
                 }
                 let mut program = self.clients[i].program.take().unwrap();
                 let Some(mut response) = self.poll_program(ui, cv, &mut program) else {
-                    self.clients[i].program = Some(program);
+                    // after the end of the input a program that would have to wait is dropped
+                    if !eof {
+                        self.clients[i].program = Some(program);
+                    }
                     break;
                 };
                 if program.has_reply {
@@ -843,7 +854,7 @@ impl Scpi {
                     }
                 }
             }
-            closed |= self.clients[i].buf.len() > MAX_LINE;
+            closed |= eof || self.clients[i].buf.len() > MAX_LINE;
             if closed {
                 self.clients.remove(i);
             } else {
@@ -855,10 +866,12 @@ impl Scpi {
     /// Immediate adapter for HTTP and in-process callers. Deferred barriers must use
     /// `poll_program`: returning 1 here while an operation is pending would be false.
     /// Commands before a pending barrier execute once; the remaining message is rejected.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn exec_line(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Vec<u8> {
         self.exec_line_checked(ui, cv, line).unwrap_or_default()
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn exec_line_checked(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Result<Vec<u8>, &'static str> {
         self.exec_message_checked(ui, cv, line).map(|(response, _)| response)
     }
@@ -1656,7 +1669,7 @@ impl Scpi {
                 }
                 return Some(None);
             }
-            // OOS: :ACQuire:AVERages:HARDware ON|OFF (docs/fork/specs/01-hw-averaging.md)
+            // OOS: :ACQuire:AVERages:HARDware ON|OFF
             if kw(n0, "ACQuire") && nodes.len() == 3 && kw(nodes[1], "AVERages") && kw(nodes[2], "HARDware") {
                 if query {
                     return Some(t(if m.avg_hw { "1" } else { "0" }));
@@ -2054,6 +2067,17 @@ impl Scpi {
         // Display > Views (ui/views.rs): :DISPlay:VIEW <n> shows view n, :DISPlay:VIEW:COUNt <1..4> how many there are
         if kw(n0, "DISPlay") && nodes.len() >= 2 && kw(nodes[1], "VIEW") {
             let count = nodes.len() == 3 && kw(nodes[2], "COUNt");
+            // Display > Monitor view (ui/monitor.rs): the view an HDMI monitor in Layout shows, 0 the panel's
+            if nodes.len() == 3 && kw(nodes[2], "MONitor") {
+                if query {
+                    return t(&ui.m.hdmi_view.to_string());
+                }
+                match arg.trim().parse::<usize>().ok() {
+                    Some(n) if n <= ui.m.views && (n == 0 || ui.m.views >= 2) => ui.m.hdmi_view = n,
+                    _ => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+                }
+                return None;
+            }
             if nodes.len() > 3 || (nodes.len() == 3 && !count) {
                 self.push_err("-113,\"Undefined header\"".into());
                 return None;
@@ -2071,20 +2095,11 @@ impl Scpi {
         }
         // OOS extensions: analyser view, Identify, self-calibration, Bode
         if kw(n0, "VIEW") && nodes.len() == 1 {
-            const VIEWS: [(&str, AView); 8] = [
-                ("SCOPe", AView::Scope),
-                ("SPECtrum", AView::Spectrum),
-                ("EYE", AView::Eye),
-                ("POWer", AView::Power),
-                ("BODE", AView::Bode),
-                ("MAGnetic", AView::Magnetic),
-                ("INVerter", AView::Inverter),
-                ("DPT", AView::Dpt),
-            ];
+            let views = crate::ui::scpi_views();
             if query {
                 return t(&format!("{:?}", ui.m.view).to_ascii_uppercase());
             }
-            match VIEWS.iter().find(|(k, _)| kw(arg, k)) {
+            match views.iter().find(|(k, _)| kw(arg, k)) {
                 Some((_, v)) => ui.set_analysis_view(*v),
                 None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
             }
@@ -2355,6 +2370,22 @@ impl Scpi {
             }
             if kw(nodes[1], "STATe") && query {
                 return t(crate::cmd::stat_text(ui).trim());
+            }
+            // Acquire > Draw path: FRAMes (the fast path, default) or BATCh (PR #7's pipeline); the `pipe` part of
+            // :SYSTem:STATe? says which runs
+            if kw(nodes[1], "PIPeline") {
+                if query {
+                    return t(if ui.m.draw_batch { "BATC" } else { "FRAM" });
+                }
+                let a = arg.trim().to_ascii_uppercase();
+                if a.starts_with("BATC") {
+                    ui.m.draw_batch = true;
+                } else if a.starts_with("FRAM") || a.starts_with("STAN") {
+                    ui.m.draw_batch = false;
+                } else {
+                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+                }
+                return None;
             }
             // System > Graphics: CPU or GPU (whether the GPU really draws: the `gpu` part of :SYSTem:STATe?)
             if kw(nodes[1], "GRAPhics") {
@@ -3287,7 +3318,7 @@ impl Scpi {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             };
-            with_bus(ui, k, |m| m.dec_proto = p);
+            with_bus(ui, k, |m| m.set_dec_proto_only(p));
             return None;
         }
         if n.len() == 1 && kw(n0, "DISPlay") {
@@ -3380,7 +3411,7 @@ impl Scpi {
                 self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg));
                 return None;
             };
-            if !put_bus_wave(ui, k, Proto::I2c, usize::from(clock), Some(source)) {
+            if !put_bus_wave(ui, k, Proto::I2C, usize::from(clock), Some(source)) {
                 self.push_err("-224,\"Decoder source is unavailable\"".into());
             }
             return None;
@@ -3415,7 +3446,7 @@ impl Scpi {
                     }
                 }
             };
-            if !put_bus_wave(ui, k, Proto::Spi, role, source) {
+            if !put_bus_wave(ui, k, Proto::SPI, role, source) {
                 self.push_err("-224,\"Decoder source is unavailable\"".into());
             }
             return None;
@@ -3429,7 +3460,7 @@ impl Scpi {
                 return None;
             };
             with_bus(ui, k, |m| {
-                m.dec_proto = Proto::Spi;
+                m.dec_proto = Proto::SPI;
                 m.dec_bits = v;
             });
             return None;
@@ -3450,7 +3481,7 @@ impl Scpi {
                 self.push_err(format!("-224,\"Decoder source is unavailable\" {}", arg));
                 return None;
             };
-            if !put_bus_wave(ui, k, Proto::Uart, role, Some(source)) {
+            if !put_bus_wave(ui, k, Proto::UART, role, Some(source)) {
                 self.push_err("-224,\"Decoder source is unavailable\"".into());
             }
             return None;
@@ -3465,7 +3496,7 @@ impl Scpi {
             };
             let i = nearest_baud(v);
             with_bus(ui, k, |m| {
-                m.dec_proto = Proto::Uart;
+                m.dec_proto = Proto::UART;
                 m.dec_baud = i;
             });
             return None;
@@ -3492,7 +3523,7 @@ impl Scpi {
                 return None;
             };
             with_bus(ui, k, |m| {
-                m.dec_proto = Proto::Uart;
+                m.dec_proto = Proto::UART;
                 m.dec_parity = p;
             });
             return None;
@@ -3506,7 +3537,7 @@ impl Scpi {
                 return None;
             };
             with_bus(ui, k, |m| {
-                m.dec_proto = Proto::Uart;
+                m.dec_proto = Proto::UART;
                 m.dec_bits = v;
             });
             return None;
@@ -4190,8 +4221,8 @@ impl Scpi {
                 return illegal(self);
             };
             // SCPI configures an instrument, not the demo's suggested sources/trigger.
-            ui.m.dec_proto = protocol;
-            if protocol == Proto::Cphy {
+            ui.m.set_dec_proto_only(protocol);
+            if protocol == Proto::CPHY {
                 ui.m.dec_thr = 0.02;
                 ui.m.dec_la_in = false;
             }
@@ -4230,7 +4261,7 @@ impl Scpi {
             if query {
                 return text(if ui.m.dec_la_in { "LA" } else { "WAVEFORM" }.into());
             }
-            if arg.eq_ignore_ascii_case("LA") && ui.m.la_on() && ui.m.dec_proto != Proto::Cphy {
+            if arg.eq_ignore_ascii_case("LA") && ui.m.la_on() && ui.m.dec_proto != Proto::CPHY {
                 ui.m.dec_la_in = true;
             } else if arg.eq_ignore_ascii_case("WAVEFORM") || arg.eq_ignore_ascii_case("ANALOG") {
                 ui.m.dec_la_in = false;
@@ -5075,7 +5106,7 @@ mod vernier_tests {
         let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
         assert_eq!(q(&mut ui, ":MEASure:ITEM VPP,CHANnel1"), "");
         assert_eq!(q(&mut ui, ":MEAS:ITEM FREQ,CHAN2;:MEAS:ITEM RRDelay,CHAN1,CHAN2"), "");
-        assert_eq!(ui.meas_list().0, ["Vpp 1", "Freq 2", "Delay rise-rise 1-2 1"]);
+        assert_eq!(ui.meas_list().0, ["Pk-pk 1", "Freq 2", "Delay rise-rise 1-2 1"]);
         assert_eq!(q(&mut ui, ":SYST:ERR?"), "0,\"No error\"");
         for bad in [":MEAS:ITEM BOGUS,CHAN1", ":MEAS:ITEM VPP,CHAN9", ":MEAS:ITEM RRD,CHAN1,CHAN1"] {
             assert_eq!(q(&mut ui, bad), "", "{}", bad);
@@ -5459,9 +5490,15 @@ mod tests {
         let mut waiting = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
         waiting.set_nonblocking(true).unwrap();
         waiting.write_all(b":SINGLE;*OPC?;:TRIG:STAT?\n").unwrap();
-        s.poll(&mut ui, &cv);
+        for _ in 0..25 {
+            s.poll(&mut ui, &cv);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         ui.step(0.2);
-        s.poll(&mut ui, &cv);
+        for _ in 0..25 {
+            s.poll(&mut ui, &cv);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         let mut bytes = [0; 128];
         assert_eq!(waiting.read(&mut bytes).unwrap_err().kind(), ErrorKind::WouldBlock);
         let mut control = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
@@ -5508,9 +5545,15 @@ mod tests {
         assert_eq!(init.typ, 1);
         let mut bytes = [0; 1024];
         client.write_all(&crate::hislip::encode(7, 0, 77, b":SINGLE;:TRIG:STAT?;*OPC?\n:TRIG:STAT?\n")).unwrap();
-        server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
+        for _ in 0..25 {
+            server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         ui.step(0.2);
-        server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
+        for _ in 0..25 {
+            server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         assert_eq!(client.read(&mut bytes).unwrap_err().kind(), ErrorKind::WouldBlock);
         line(&mut s, &mut ui, &cv, ":TRIG:FORC");
         ui.step(0.2);
@@ -5522,13 +5565,43 @@ mod tests {
         assert_eq!(response.data, b"WAIT;1\nSTOP\n");
     }
 
+    // Break it catches: `echo "*IDN?" | nc host 5555` (the client closes its side after the line) got no answer
+    #[test]
+    fn a_query_is_answered_after_the_client_closed_its_side() {
+        let (mut s, mut ui, cv) = session();
+        let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
+        client.write_all(b"*IDN?\n").unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        // until the session has taken the client, answered and let it go (bounded: tests in parallel are slow to
+        // deliver the line and the end of the input)
+        let (deadline, mut seen) = (std::time::Instant::now() + Duration::from_secs(2), false);
+        while std::time::Instant::now() < deadline {
+            s.poll(&mut ui, &cv);
+            seen |= !s.clients.is_empty();
+            if seen && s.clients.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let mut answer = String::new();
+        std::io::Read::read_to_string(&mut client, &mut answer).unwrap();
+        assert!(answer.starts_with("OOS,"), "{answer:?}");
+    }
+
     #[test]
     fn compatibility_disconnected_raw_client_cannot_resume_trailing_writes() {
         let (mut s, mut ui, cv) = reference_session();
         line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10");
         let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
         client.write_all(b":SINGLE;*OPC?;:RUN\n").unwrap();
-        s.poll(&mut ui, &cv);
+        for _ in 0..50 {
+            s.poll(&mut ui, &cv);
+            if !s.clients.is_empty() && s.clients[0].program.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         assert!(s.clients[0].program.is_some());
         client.shutdown(std::net::Shutdown::Both).unwrap();
         drop(client);
@@ -5603,7 +5676,10 @@ mod tests {
             let session = test_io::hislip(&mut sync, || server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p)))
                 .param as u16;
             sync.write_all(&crate::hislip::encode(7, 0, 42, b":SINGLE;*OPC?;:RUN\n")).unwrap();
-            server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+            for _ in 0..25 {
+                server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
             if asynchronous {
                 let mut control = TcpStream::connect(("127.0.0.1", port)).unwrap();
                 control.set_nonblocking(true).unwrap();
@@ -5620,7 +5696,10 @@ mod tests {
             }
             line(&mut scpi, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
             ui.step(0.2);
-            server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+            for _ in 0..25 {
+                server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
             assert_eq!(ui.m.run, RunState::Stop);
             let mut b = [0; 128];
             assert_eq!(sync.read(&mut b).unwrap_err().kind(), ErrorKind::WouldBlock);
@@ -7041,5 +7120,33 @@ mod tests {
             b[CURVE + k * 4..CURVE + k * 4 + 4].copy_from_slice(&x.to_le_bytes());
         }
         b
+    }
+}
+
+#[cfg(test)]
+mod draw_path_tests {
+    use super::*;
+
+    // Break it catches: the draw path switch not reaching the model or the setup, or the pipe running where the
+    // switch is off
+    #[test]
+    fn draw_path_over_scpi_in_the_menu_and_the_setup() {
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = Scpi::open(0, false);
+        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        assert_eq!(q(&mut ui, ":SYST:PIP?"), "FRAM");
+        q(&mut ui, ":SYSTem:PIPeline BATCh");
+        assert!(ui.m.draw_batch);
+        assert!(crate::store::setup_text(&ui.m).contains("draw_path = batch\n"));
+        let back = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
+        assert!(back.draw_batch);
+        // the demo source is not the hardware: no workers
+        ui.step(0.02);
+        assert_eq!(crate::ui::change::acquisition::draw_switches(&ui, &ui.m).pipeline, crate::drawpipe::Mode::Frames);
+        q(&mut ui, ":SYST:PIP FRAM");
+        assert!(!ui.m.draw_batch);
+        q(&mut ui, ":SYST:PIP BOGUS");
+        assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
     }
 }

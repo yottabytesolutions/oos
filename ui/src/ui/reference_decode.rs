@@ -74,7 +74,7 @@ impl Cache {
 /// The required analogue roles, including the implicit Parallel data bank.
 pub(super) fn sources(m: &Model) -> Result<Vec<usize>, &'static str> {
     let mut ids = vec![m.dec_src];
-    if m.dec_proto == Proto::Parallel {
+    if m.dec_proto == Proto::PARALLEL {
         let (base, count) = if m.dec_src >= DEC_REF_BASE { (DEC_REF_BASE, NREF) } else { (0, NCH) };
         ids = (0..count)
             .map(|i| base + (m.dec_src - base + i) % count)
@@ -174,7 +174,7 @@ pub(super) fn decode_borrowed(original: &Model, waves: &[BorrowedWave<'_>], hyst
     model.dec_src4 = model.dec_src4.and_then(slot);
     model.dec_diff = model.dec_diff.and_then(slot);
     // Parallel's selected bank is already ordered in the four DSP slots.
-    if model.dec_proto == Proto::Parallel {
+    if model.dec_proto == Proto::PARALLEL {
         model.dec_src = 0;
     }
     let mut packets = crate::trig::decode_at(&model, ch, dt, model.dec_thr, hysteresis)?;
@@ -416,7 +416,7 @@ impl Ui {
     }
     pub(crate) fn configure_decoder_source(&mut self, role: usize, source: Option<usize>) -> bool {
         if role > 4
-            || ((role < 2 || (role == 2 && self.m.dec_proto == Proto::Cphy)) && source.is_none())
+            || ((role < 2 || (role == 2 && self.m.dec_proto == Proto::CPHY)) && source.is_none())
             || source.is_some_and(|id| !self.decoder_sources().contains(&id))
         {
             return false;
@@ -463,7 +463,7 @@ mod tests {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let (v, dt) = uart(0xa5, count);
         ui.refs[0] = Some(reference(v, dt, -0.005, 0.5));
-        ui.m.dec_proto = Proto::Uart;
+        ui.m.dec_proto = Proto::UART;
         ui.m.dec_on = true;
         ui.m.dec_src = DEC_REF_BASE;
         ui.m.dec_baud = crate::decode::BAUDS.iter().position(|&v| v == 115_200.0).unwrap();
@@ -516,6 +516,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn loaded_sources_are_selectable_in_every_decoder_role_and_survive_setup() {
         let mut ui = uart_ui(1000);
         ui.refs[9] = Some(reference(vec![0.0; 1000], 1e-9, -1e-6, 0.2));
@@ -543,13 +544,14 @@ mod tests {
             crate::store::set(&mut restored, "dec_src", "4").is_err(),
             "reserved LA IDs must not become CH indices"
         );
-        ui.set_dec_proto(Proto::Jtag);
+        ui.set_dec_proto(Proto::from_key("Jtag").unwrap());
         assert_eq!(ui.m.dec_src, DEC_REF_BASE + 9, "protocol changes must preserve stored roles");
         let mut canvas = Canvas::new(W, H);
         ui.render(&mut canvas);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "decoders"), ignore = "needs every decoder")]
     fn four_wire_and_mixed_inputs_align_at_native_physical_times() {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let clk = |t: f64| {
@@ -569,7 +571,7 @@ mod tests {
         };
         ui.refs[0] = Some(reference((0..100).map(|i| data(-3.0 + i as f64)).collect(), 1e-6, -3e-6, 0.5));
         ui.refs[1] = Some(reference((0..220).map(|i| clk(-5.0 + i as f64 * 0.5)).collect(), 0.5e-6, -5e-6, 0.5));
-        ui.m.dec_proto = Proto::Spi;
+        ui.m.dec_proto = Proto::SPI;
         ui.m.dec_src = DEC_REF_BASE;
         ui.m.dec_src2 = DEC_REF_BASE + 1;
         ui.m.dec_cs = None;
@@ -624,7 +626,7 @@ mod tests {
         for i in 2..4 {
             ui.refs[i] = Some(reference(vec![0.0; 100], 1e-6, 1.0, 0.5));
         }
-        ui.m.dec_proto = Proto::Jtag;
+        ui.m.dec_proto = Proto::from_key("Jtag").unwrap();
         ui.m.dec_src2 = DEC_REF_BASE + 1;
         ui.m.dec_cs = Some(DEC_REF_BASE + 2);
         ui.m.dec_src4 = Some(DEC_REF_BASE + 3);
@@ -659,7 +661,7 @@ mod tests {
 
     #[test]
     fn all_twenty_seven_protocol_dispatchers_match_the_same_live_samples_as_refs() {
-        for protocol in PROTOS.iter().copied().filter(|protocol| *protocol != Proto::Cphy) {
+        for protocol in PROTOS.iter().copied().filter(|protocol| *protocol != Proto::CPHY) {
             let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
             ui.set_dec_proto(protocol);
             ui.m.dec_on = true;
@@ -707,7 +709,7 @@ mod tests {
             ui.refs[wire] = Some(reference(values, dt, t0, 0.1));
         }
         ui.m.dec_src = DEC_REF_BASE;
-        ui.set_dec_proto(Proto::Cphy);
+        ui.set_dec_proto(Proto::CPHY);
         assert!(ui.configure_decoder_source(1, Some(DEC_REF_BASE + 1)));
         assert!(ui.configure_decoder_source(2, Some(DEC_REF_BASE + 2)));
         assert!(!ui.configure_decoder_source(2, None), "the third C-PHY wire is required");

@@ -5,7 +5,7 @@ written by `seq::State::configure`.
 
 ## Hardware
 
-Static analysis of the FPGA image. Not measured on the unit yet.
+Assumed, not yet verified on hardware.
 
 - One FPGA output pin, always driven, combinational from a source multiplexer. That it reaches the BNC through a
   buffer is inferred from the register use, not from a board trace.

@@ -19,6 +19,7 @@ pub(super) struct LiveHold {
     delay: f32,
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub fn set_offline(&mut self, on: bool) {
         if on == self.offline {
@@ -188,6 +189,7 @@ impl Ui {
         }
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn draw_offline_card(&self, cv: &mut Canvas, r: Rect, sel: bool) {
         let f = &self.fonts();
         cv.round(r, 7, if sel { ACCENT } else { CARD_BORDER }, 255);
@@ -200,6 +202,7 @@ impl Ui {
     }
 
     /// Run pill while the mode is on: play the loaded record, or hold it. It does not start the demo.
+    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(super) fn toggle_offline_run(&mut self) {
         if self.sim_play {
             self.sim_play = false;
@@ -343,7 +346,7 @@ mod tests {
         let mut play = ui();
         play.activate(Item::SimPlay);
         play.wait_sim_generation();
-        assert!(play.m.ch.iter().all(|channel| !channel.on), "SIM plays a stored reference");
+        assert!(play.m.ch[0].on, "SIM plays a stored reference and leaves the inputs as they were");
         assert!(play.refs[play.m.sim_slot].is_some());
 
         let mut u = ui();

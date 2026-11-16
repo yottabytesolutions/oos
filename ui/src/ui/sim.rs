@@ -1718,8 +1718,9 @@ mod tests {
         let before = u.replay.captures;
         u.step(0.5);
         // A fresh capture is generated off-thread. Advancing simulated time is
-        // not evidence that the worker has run, particularly in the full suite.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // not evidence that the worker has run, particularly in the full suite and the
+        // instrumented coverage build, where the worker can be starved for seconds.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while u.replay.captures == before && std::time::Instant::now() < deadline {
             u.step(0.01);
             std::thread::sleep(std::time::Duration::from_millis(1));

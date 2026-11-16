@@ -240,7 +240,7 @@ fn check_segment_boundary(phase: crate::board::SegPhase, boundary: &str) {
         }
     }
     assert_eq!(ui.m.run, RunState::Stop, "{phase:?} {boundary}");
-    assert_eq!((ui.records - records, ui.seg_n as usize, ui.seg_times.len()), (n as u64, n, n));
+    assert_eq!((ui.records - records, ui.seg_n, ui.seg_times.len()), (n as u64, n, n));
     assert_eq!(change::counters(&ui).4, 0);
 }
 

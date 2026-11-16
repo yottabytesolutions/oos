@@ -45,3 +45,27 @@ fn hot_paths_allocate_nothing_after_warmup() {
     });
     assert_eq!(paths, 6, "all currently guarded UI hot kernels were exercised");
 }
+
+#[test]
+fn draw_timing_recording_allocates_nothing() {
+    if std::env::var_os("OOS_DRAW_ALLOC_CHILD").is_none() {
+        let inputs = support::isolated_inputs();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "snapshots::hot_paths::draw_timing_recording_allocates_nothing", "--nocapture"])
+            .env("OOS_DRAW_ALLOC_CHILD", "1");
+        let output = support::run_command(&inputs, command, 120);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+        return;
+    }
+    let mut timing = oos_ui::StageTiming::default();
+    let (allocations, ()) = HEAP.count(|| {
+        for _ in 0..1024 {
+            timing.draw_step([std::time::Duration::from_nanos(17); 5]);
+            timing.draw_render(std::time::Duration::ZERO, false);
+            timing.draw_render(std::time::Duration::ZERO, true);
+        }
+    });
+    assert_eq!(allocations, 0, "step/render recording, including ring wrap, must allocate nothing");
+    assert!(timing.diagnostics_text().contains("draw.grade n=256 total=1024 p50_ns=17 p99_ns=17"));
+}

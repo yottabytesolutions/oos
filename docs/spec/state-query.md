@@ -542,3 +542,40 @@ a long UI hold points to UI work. Use total-count deltas over measured wall
 time to separate increased clone frequency from increased cost per clone.
 Do not subtract unrelated p99s or the EWMA `step` from these distributions;
 matched repetitions and scheduling context are still needed for causal evidence.
+
+
+## Draw sub-stage diagnostics (P0)
+
+These seven blocks are appended after `diag producer.clone_size`, preserving all
+existing field and block order. Each has the existing call-ring grammar
+`diag LABEL n=N total=T p50_ns=V p99_ns=V max_ns=V`, including literal `pending`
+for p50 at n=0 and p99 at n<50. Nearest-rank quantiles retain the latest 256
+observations, including zeros; totals saturate over process lifetime. CLEAR and
+acquisition identity changes do not reset them.
+
+| ID | Label after `diag` | Observation boundary | Unit |
+|---|---|---|---|
+| state-query-230 | `draw.decay` | Persistence factor and main/zoom map decay | ns |
+| state-query-231 | `draw.fast` | Newest-frame drain/draw, including deep raw record conversion, and fast-take bookkeeping, ending before worker merge | ns |
+| state-query-232 | `draw.merge` | Worker pipe lookup, map merge, stale/status updates and measurement folds | ns |
+| state-query-233 | `draw.records` | Whole bounded record loop, including acquisition/conversion, conditioning, deposition, history and completion; or stopped replay/redraw | ns |
+| state-query-234 | `draw.grade` | grade_refs and main/zoom halving, excluding intervening finish-step observer work | ns |
+| state-query-235 | `draw.render` | One panel render_layers call, including relayout and start-up early return; CPU composition/job construction, excluding presentation/helper execution | ns |
+| state-query-236 | `draw.view_render` | One render_layers call within render_view_layers for the HDMI layout view; same CPU boundary as draw.render, excluding the outer view save/restore | ns |
+
+The first five rings receive one sample per completed `Ui::step`; an unexecuted
+sub-stage contributes zero. Their intervals are disjoint and additive elapsed
+costs, not a partition of the entire step: setup, change, measurements/analyzers,
+panes and other bookkeeping remain outside them. In particular `draw.records`
+includes acquisition time already represented by the legacy EWMA `acq`; do not
+add that EWMA again. Each render ring receives one sample per actual call for
+its target, independent of step count; HDMI layout renders never enter the panel
+ring, including start-up early returns. Individual
+p50/p99 values are independent quantiles and must not be summed as a frame p99.
+They are wall time, including scheduling delays, not CPU time or GPU time.
+
+Sources: `ui/src/perfguard/draw.rs`, `ui/src/ui.rs`, `ui/src/ui/step_draw.rs`.
+Storage adds less than 15 KiB inline to each StageTiming owner and a fixed
+five-duration local per step. Recording does not allocate or sort; reporting
+sorts copies. Allocation guards and unchanged host layout/goldens are host
+evidence only; timing overhead and budgets are not yet verified on the unit.

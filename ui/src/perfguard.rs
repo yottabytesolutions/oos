@@ -5,6 +5,7 @@
 //! compare a candidate tail with the reference minimum. All rounds interleave the paths.
 
 pub(crate) mod deep;
+mod draw;
 mod intake;
 #[cfg(test)]
 pub(crate) mod latency;
@@ -38,6 +39,7 @@ pub fn guard_pair(
 /// Shared tail samples for intake/change budgets. A fixed ring avoids timing allocations in the UI.
 #[derive(Clone)]
 pub struct StageTiming {
+    draw: draw::Timing,
     intake: [u64; 256],
     change: [u64; 256],
     picture: [u64; 256],
@@ -51,6 +53,7 @@ pub struct StageTiming {
 impl Default for StageTiming {
     fn default() -> Self {
         Self {
+            draw: draw::Timing::default(),
             intake: [0; 256],
             change: [0; 256],
             picture: [0; 256],
@@ -64,6 +67,14 @@ impl Default for StageTiming {
     }
 }
 impl StageTiming {
+    /// Disjoint per-step decay, fast, merge, records and grade durations, including skipped zeros.
+    pub fn draw_step(&mut self, parts: [Duration; 5]) {
+        self.draw.step(parts);
+    }
+    /// Rendering is separate from step; panel and HDMI view calls have independent rings.
+    pub fn draw_render(&mut self, elapsed: Duration, view: bool) {
+        self.draw.render(elapsed, view);
+    }
     pub fn begin_change(&mut self) {
         self.current_shadow = Some(Duration::ZERO);
     }
@@ -185,7 +196,7 @@ impl StageTiming {
     }
     /// Appended after the existing restart fields in state queries; also used by host reports.
     pub fn diagnostics_text(&self) -> String {
-        self.split.text(&self.intake, self.samples()) + &deep::counters().text()
+        self.split.text(&self.intake, self.samples()) + &deep::counters().text() + &self.draw.text()
     }
     pub(crate) fn intake_active(&self) -> bool {
         self.split.active()

@@ -108,3 +108,66 @@ fn feed_pending_batch(ui: &Ui, pipe: &crate::drawpipe::Pipe) {
     pipe.feed_with(Box::new(batch.into_bytes()), fb, 0..26, acquisition::identity(ui), decode, None, Box::new(|| {}));
     crate::drawpipe::host::finish_batch(pipe, 1).unwrap();
 }
+
+#[test]
+fn draw_timing_state_query_appends_completed_steps_and_independent_renders() {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let mut ui = Ui::for_tests(Source::Hw { shared: Default::default(), seen: 0 });
+    let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
+    ui.m.persist = 1;
+    for _ in 0..50 {
+        ui.step(0.04);
+    }
+    ui.render(&mut cv);
+    let state = String::from_utf8(crate::scpi::Scpi::open(0u16, false).exec_line(&mut ui, &cv, ":SYST:STAT?")).unwrap();
+    assert!(state.find("diag producer.clone_size").unwrap() < state.find("diag draw.decay").unwrap());
+    for label in ["decay", "fast", "merge", "records", "grade"] {
+        let block = state.split_once(&format!("diag draw.{label} ")).unwrap().1.split(" diag ").next().unwrap();
+        assert!(block.starts_with("n=50 total=50 p50_ns="), "{block}");
+        assert!(!block.contains("pending"), "{block}");
+    }
+    assert!(state.contains("draw.render n=1 total=1 p50_ns="));
+    ui.m.run = RunState::Stop;
+    ui.step(0.04);
+    assert!(timing(&ui).text().contains("draw.decay n=51 total=51"));
+    let frames = ui.frames;
+    ui.start_up_begin(None);
+    assert!(ui.start_up_active());
+    ui.render(&mut cv);
+    assert_eq!(ui.frames, frames, "start-up retains its existing early return");
+    assert!(timing(&ui).text().contains("draw.render n=2 total=2"));
+}
+
+#[test]
+fn state_query_real_reply_has_separate_panel_and_view_renders() {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+    let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
+    ui.step(0.04);
+    ui.render(&mut cv);
+    ui.render_view(&mut cv);
+    assert!(timing(&ui).text().contains("draw.render n=1 total=1"));
+    assert!(timing(&ui).text().contains("draw.view_render n=1 total=1"));
+    let frames = ui.frames;
+    ui.start_up_begin(None);
+    ui.render_view(&mut cv);
+    assert_eq!(ui.frames, frames);
+    assert!(timing(&ui).text().contains("draw.render n=1 total=1"));
+    assert!(timing(&ui).text().contains("draw.view_render n=2 total=2"));
+    let state =
+        String::from_utf8(crate::scpi::Scpi::open(0u16, false).exec_line(&mut ui, &cv, ":SYSTem:STATe?")).unwrap();
+    assert!(state.starts_with("fps "), "{state}");
+    assert!(state.contains("diag draw.render n=1 total=1"), "{state}");
+    assert!(state.contains("diag draw.view_render n=2 total=2"), "{state}");
+    let fixture = include_str!("../../../../tools/tests/fixtures/perfmap/state.txt");
+    let labels = |reply: &str| {
+        reply
+            .split(" diag ")
+            .skip(1)
+            .map(|block| block.split_whitespace().next().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(labels(&state), labels(fixture), "fixture diagnostic labels must track the real handler");
+    // Retain the actual production reply for fixture regeneration on restricted hosts.
+    println!("{state}");
+}

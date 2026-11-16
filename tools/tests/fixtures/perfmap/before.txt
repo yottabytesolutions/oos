@@ -1,0 +1,38 @@
+@@ ui_stat
+100 (oos-ui) R 0 0 0 0 0 0 5 0 0 0 98 2 0 0 0 0 0 0 1234 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 4 0 0 0 0 0 0 0 0 0 0 0 0 0
+@@ thread_stat:100
+100 (oos-ui) R 0 0 0 0 0 0 5 0 0 0 98 2 0 0 0 0 0 0 1234 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 4 0 0 0 0 0 0 0 0 0 0 0 0 0
+@@ thread_status:100
+Name:	oos-ui
+voluntary_ctxt_switches:	10
+nonvoluntary_ctxt_switches:	20
+@@ thread_stat:101
+101 (draw ) worker) R 0 0 0 0 0 0 5 0 0 0 98 2 0 0 0 0 0 0 1335 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0
+@@ thread_status:101
+Name:	draw ) worker
+voluntary_ctxt_switches:	10
+nonvoluntary_ctxt_switches:	20
+@@ gpu_stat
+200 (oos-gpu) R 0 0 0 0 0 0 8 0 0 0 198 2 0 0 0 0 0 0 2222 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 4 0 0 0 0 0 0 0 0 0 0 0 0 0
+@@ interrupts
+           CPU0 CPU1 CPU2 CPU3 CPU4 CPU5
+ 45: 10 0 0 0 0 20 GICv2 123 Level xdma
+ 46: 999 0 0 0 0 0 GICv2 eth0
+@@ policy0
+408000 20
+816000 80
+@@ policy4
+816000 50
+1416000 50
+@@ gpu_trans_stat
+     From  :    To
+           : 200000000 600000000   time(ms)
+ 200000000: 0 4 500
+*600000000: 3 0 1500
+Total transition : 7
+@@ clock_ticks
+100
+@@ ui_stat_end
+100 (oos-ui) R 0 0 0 0 0 0 5 0 0 0 98 2 0 0 0 0 0 0 1234 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 4 0 0 0 0 0 0 0 0 0 0 0 0 0
+@@ unrelated
+ignored

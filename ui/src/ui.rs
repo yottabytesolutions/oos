@@ -53,6 +53,7 @@ mod selfcal;
 mod sertrig;
 mod sim;
 pub mod startup;
+mod step_draw;
 mod sysinfo;
 mod tables;
 mod tools;
@@ -2893,6 +2894,7 @@ impl Ui {
         self.sim_poll();
         self.eye_auto_poll();
         let Some((final_done, picture_cleared)) = change::begin_step(self, dt_wall) else { return };
+        let mut draw = [std::time::Duration::ZERO; 5];
         let hw_seg = self.seg_hw_on();
         let persist = PERSIST[self.m.persist].1;
         if self.record_mode() {
@@ -2919,9 +2921,11 @@ impl Ui {
             // the hardware delivers fewer records than frames, and clearing each frame made the trace flicker)
             let mut clear_pending = persist == 0.0 && !picture_cleared;
             if persist > 0.0 {
+                let started = std::time::Instant::now();
                 let f = (-dt_wall / persist as f64).exp() as f32;
                 self.ph.decay(f);
                 self.phz.decay(f);
+                draw[0] += started.elapsed();
             }
             let fast = self.fast_ok();
             if !fast {
@@ -2980,6 +2984,7 @@ impl Ui {
                     self.fast_take = fast_take_next(self.fast_take, n, ms, self.fast_budget());
                 }
                 let t_merge = std::time::Instant::now();
+                draw[1] += t_merge - t0;
                 // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
                 if let Some(p) = crate::drawpipe::pipe(&sw) {
                     let t1 = std::time::Instant::now();
@@ -2993,6 +2998,7 @@ impl Ui {
                     self.mstat_fold(&d.folds);
                     td += t1.elapsed().as_secs_f32() * 1000.0;
                 }
+                draw[2] += t_merge.elapsed();
                 crate::pacing::fast_block((t_merge - t0).as_secs_f32() * 1e3, t_merge.elapsed().as_secs_f32() * 1e3);
             }
             let t_records = std::time::Instant::now();
@@ -3166,6 +3172,7 @@ impl Ui {
                     break;
                 }
             }
+            draw[3] += t_records.elapsed();
             // WAIT only when the whole frame brought nothing (the hardware source delivers a new record only every
             // few attempts; an empty attempt must not override TRIG'D)
             // at large depths the hardware delivers fewer records than frames: WAIT only after 0.5 s without one, or
@@ -3253,52 +3260,9 @@ impl Ui {
                 self.prof_add(1, p2 - p1);
             }
         } else if !self.record_mode() {
-            // stopped: the whole stored record for the view shown (read again by the thread, `stop_replay`), then
-            // redraw the stored record with the current scale/offset
-            self.stop_replay();
-            self.ph.clear();
-            self.phz.clear();
-            let mainv = (self.m.time_per_div(), self.m.delay);
-            let zv = (tscales()[self.m.zscale], self.m.zdelay);
-            let zoom_model = self.zoom_display_model();
-            let detail = self.captured_view(zv);
-            // the view read again as pairs while the raw record of the STOP is the one measured: the pairs are drawn
-            let shown = self.stop_picture().cloned().or_else(|| self.last[0].clone());
-            if let Some(rec) = shown {
-                let zw = self.z_weights(&rec);
-                for c in 0..NCH {
-                    if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                        let shifted_main = self.deskew_channel_view(&rec, c, mainv);
-                        let main = shifted_main.as_deref().unwrap_or(&rec);
-                        self.ph.draw_ex(
-                            c,
-                            &self.m,
-                            mainv,
-                            main.t0 - self.m.deskew_ch[c],
-                            main.dt,
-                            &main.ch[c],
-                            24 * 6,
-                            if shifted_main.is_some() { None } else { zw.as_deref() },
-                            main.pairs,
-                        );
-                        if self.m.zoom {
-                            let shifted = self.deskew_channel_view(&rec, c, zv);
-                            let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
-                            self.phz.draw_ex(
-                                c,
-                                &zoom_model,
-                                zv,
-                                z.t0 - self.m.deskew_ch[c],
-                                z.dt,
-                                &z.ch[c],
-                                24 * 6,
-                                if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() },
-                                z.pairs,
-                            );
-                        }
-                    }
-                }
-            }
+            let started = std::time::Instant::now();
+            step_draw::stopped(self);
+            draw[3] += started.elapsed();
         }
         if self.analyzed_view != self.m.view {
             self.analyzed_view = self.m.view;
@@ -3355,12 +3319,16 @@ impl Ui {
             self.vmax.iter_mut().for_each(|v| *v = (*v / 2).max(1));
             self.vmax_cg = (self.vmax_cg / 2).max(1);
         }
+        draw[4] += p5.elapsed();
         change::finish_step(self);
+        let halve_zoom = std::time::Instant::now();
         if fullz {
             self.phz.halve();
             self.vmaxz.iter_mut().for_each(|v| *v = (*v / 2).max(1));
             self.vmaxz_cg = (self.vmaxz_cg / 2).max(1);
         }
+        draw[4] += halve_zoom.elapsed();
+        change::timing_mut(self).draw_step(draw);
     }
 
     /// One line of settings for the HDMI workspace: channels, time base, trigger, state, rate.
@@ -3585,15 +3553,10 @@ impl Ui {
     /// background, graticule and masks go under the traces, everything else over them, and the traces become jobs
     /// for the GPU (`gpu.rs`). The order of the drawing is the same either way.
     pub fn render_layers(&mut self, l: &mut Layers) {
-        self.relayout();
-        if let Some(o) = l.over.as_deref_mut() {
-            o.no_clip();
-            o.clear(0);
-        }
-        if self.start_up_active() {
-            self.draw_start_up(l.under);
-            // the power dialog over it (the power key works during the start-up)
-            self.draw_overlay(l.over());
+        let started = std::time::Instant::now();
+        let view = self.view_pass;
+        if step_draw::render_start(self, l) {
+            change::timing_mut(self).draw_render(started.elapsed(), view);
             return;
         }
         l.under.no_clip();
@@ -3733,6 +3696,7 @@ impl Ui {
         self.draw_overlay(cv);
         self.workspace_draw(cv);
         self.frames += 1;
+        change::timing_mut(self).draw_render(started.elapsed(), view);
     }
 
     /// The traces of a plot window: drawn now on one canvas, a job for the GPU with layers. `zoom`: the zoom

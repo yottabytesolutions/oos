@@ -320,6 +320,10 @@ pub(super) fn timing(ui: &Ui) -> crate::perfguard::StageTiming {
     ui.host.runtime().change.timing.clone()
 }
 
+pub(super) fn timing_mut(ui: &mut Ui) -> &mut crate::perfguard::StageTiming {
+    &mut ui.host.runtime_mut().change.timing
+}
+
 pub(super) fn autoset_begin(ui: &mut Ui) {
     proposals::begin(ui, oos_core::change::Requester::Autoset);
     autoset_stage(ui);

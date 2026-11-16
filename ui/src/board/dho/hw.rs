@@ -17,9 +17,9 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
-mod overlay;
 #[cfg(any(target_os = "linux", test))]
 mod batch;
+mod overlay;
 #[cfg(any(target_os = "linux", test))]
 mod segmented;
 mod single;

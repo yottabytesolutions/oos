@@ -192,9 +192,9 @@ The example deliberately stops acquisition and retains that state. It reads one 
 | --- | --- |
 | `:MEASure:ITEM? <item>[,<source>]` | Standard scalar; default source is the current Measure selection. Valid items are listed below. |
 | `:MEASure:ITEM? <pair>,<A>,<B>` | Pair scalar, with native physical-time alignment; omitted roles use the Measure selections. |
-| `:MEASure:ITEM <item>[,<A>[,<B>]]` | Add a standard/pair readout. Duplicates preserve statistics and Single. |
+| `:MEASure:ITEM <item>[,<A>[,<B>]]` | Add a standard/pair readout. At the 1024-row limit, evict the first screen row before adding. Duplicates preserve statistics and Single. |
 | `:MEASure:SOURce[?] <A>[,<B>]` | Default Measure source(s); query returns A. Sources are `CHANn|Rn`. |
-| `:MEASure:CLEar` | Clear standard, pair and catalog selections through the shared statistics reset. |
+| `:MEASure:CLEar [ALL\|ITEM<n>]` | No argument or `ALL` clears all standard, pair and catalog selections. `ITEM<n>` removes the current one-based row in screen order (standard, then pair, then catalog). Invalid or absent rows queue -224 and leave the list unchanged. Successful removal resets statistics. |
 | `:MEASure:GATing[?]` | `SCREEN` follows the viewport; `NONE` means Full record. This gate is an OOS extension. |
 | `:MEASure:REFS[?]` | `10/90|20/80` edge thresholds. |
 | `:MEASure:TSETup[?]` / `:THOLd[?]` | Nonnegative seconds used by applicable setup/hold results. |

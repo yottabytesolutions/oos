@@ -1,7 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Legacy acquisition actions, retaining the existing broad mark even for repeated values.
+//! Legacy acquisition and measurement actions, using the UI's shared setters and reset paths.
 use super::*;
+
+pub(super) fn meas_clear(scpi: &mut Scpi, ui: &mut Ui, arg: &str) {
+    let a = arg.trim();
+    if a.is_empty() || kw(a, "ALL") {
+        ui.meas_clear_remote();
+        return;
+    }
+    let (k, i) = suffix(a);
+    if let Some(i) = i.filter(|&i| kw(k, "ITEM") && i >= 1 && i <= ui.measurement_count()) {
+        ui.remove_measurement(i - 1);
+        ui.mark_changed();
+    } else {
+        scpi.push_err(format!("-224,\"Illegal parameter value\" {}", a));
+    }
+}
 
 pub(super) fn run(ui: &mut Ui, name: &str, query: bool) -> bool {
     if kw(name, "RUN") {

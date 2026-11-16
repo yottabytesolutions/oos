@@ -8,7 +8,7 @@
 //! :TIMebase:XY:ENABle|X|Y|Z,
 //! :TRIGger:MODE[?]|TYPe[?] :TRIGger:EDGE:SOURce|LEVel|SLOPe, :TRIGger:COUPling DC|AC|LFR|HFR, :TRIGger:SWEep, :TRIGger:HOLDoff, :TRIGger:STATus?,
 //! :ACQuire:SRATe?|MDEPth[?] (AUTO, 1k..125M)|TYPE NORM/PEAK/AVER/HRES|AVERages|ULTRa:MAXFrame,
-//! :MEASure:ITEM[?] <item>[,CHANn|Rn[,src]] (the set form adds a readout row), :MEASure:SOURce, :MEASure:CLEar, :MEASure:INDicator,
+//! :MEASure:ITEM[?] <item>[,CHANn|Rn[,src]] (the set form adds a readout row), :MEASure:SOURce, :MEASure:CLEar [ALL|ITEM<n>], :MEASure:INDicator,
 //! :MEASure:STRip?, :MEASure:READout?, :EYE:ITEM? <figure>,
 //! :MEASure:STATistic:DISPlay|RESet|ITEM, :MEASure:REFS 10/90|20/80, :MEASure:TSETup, :MEASure:THOLd,
 //! :MEASure:BURSt:IDLE, :MEASure:OUTSide ABOVe|BELow|BOTH, :MEASure:NPERiods, :MEASure:EDGes CLOCk|DATA,
@@ -1796,7 +1796,7 @@ impl Scpi {
                 return None;
             }
             if kw(n1, "CLEar") && !query {
-                ui.meas_clear_remote();
+                actions::meas_clear(self, ui, arg);
                 return None;
             }
             if kw(n1, "ITEM") && !query {
@@ -5044,6 +5044,8 @@ pub fn bmp(cv: &Canvas) -> Vec<u8> {
 #[cfg(test)]
 mod vernier_tests {
     mod depth_tests;
+    mod measurement_eviction_tests;
+    mod measurement_list_tests;
 
     use super::*;
 
@@ -5061,7 +5063,8 @@ mod vernier_tests {
     }
 
     // Break it catches: :MEASure:ITEM not adding (the unit answered -113), a bad item or source taken silently, the
-    // existing query changed. Upstream's implementation (PR 8): the list refuses rather than drops the oldest when full.
+    // existing query changed.
+    // The menu still refuses new measurements at capacity (upstream PR 8).
     #[test]
     fn meas_item_adds_to_the_list() {
         let (mut ui, cv, mut scpi) = meas_setup();
@@ -5080,18 +5083,6 @@ mod vernier_tests {
         let v = q(&mut ui, ":MEAS:ITEM? NWIDth,CHAN1");
         assert!(v.contains('E'), "{}", v);
         assert_eq!(ui.meas_list().0, rows);
-    }
-
-    // Break it catches: CLEar leaving rows or pairs (upstream's :MEASure:CLEar clears the whole list).
-    #[test]
-    fn meas_clear_all_or_one_item() {
-        let (mut ui, cv, mut scpi) = meas_setup();
-        let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
-        q(&mut ui, ":MEAS:ITEM VPP,CHAN1;:MEAS:ITEM FREQ,CHAN2;:MEAS:ITEM RRPHase,CHAN1,CHAN2");
-        assert_eq!(ui.meas_list().0.len(), 3);
-        assert_eq!(q(&mut ui, ":MEASure:CLEar"), "");
-        assert!(ui.meas_list().0.is_empty());
-        assert_eq!(q(&mut ui, ":SYST:ERR?"), "0,\"No error\"");
     }
 
     // Break it catches: the statistics switch not reaching the Measure page, a bad value taken silently.

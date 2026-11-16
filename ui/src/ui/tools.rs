@@ -105,7 +105,7 @@ impl MeasRow {
 
 #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
-    pub(super) fn measurement_count(&self) -> usize {
+    pub(crate) fn measurement_count(&self) -> usize {
         self.m.meas.len() + self.m.meas2.len() + self.m.cat.len()
     }
 
@@ -131,7 +131,7 @@ impl Ui {
         self.catalog_source_label(id, [a, b, c, d])
     }
 
-    pub(super) fn remove_measurement(&mut self, index: usize) {
+    pub(crate) fn remove_measurement(&mut self, index: usize) {
         if index < self.m.meas.len() {
             let entry = self.m.meas.remove(index);
             self.meas_own.remove(&entry);
@@ -853,8 +853,8 @@ impl Ui {
         if self.m.meas.iter().any(|item| *item == e) {
             return Ok(false);
         }
-        if !self.meas_make_room() {
-            return Err("Measurement selection is full");
+        while self.measurement_count() >= MEAS_MAX {
+            self.remove_measurement(0);
         }
         self.m.meas.push(e);
         self.ensure_meas_own();
@@ -871,15 +871,15 @@ impl Ui {
         if self.m.meas2.iter().any(|item| *item == e) {
             return Ok(false);
         }
-        if !self.meas_make_room() {
-            return Err("Measurement selection is full");
+        while self.measurement_count() >= MEAS_MAX {
+            self.remove_measurement(0);
         }
         self.m.meas2.push(e);
         self.mark_changed();
         Ok(true)
     }
 
-    /// `:MEASure:CLEar`: the strip, the pair rows, and the catalog rows.
+    /// `:MEASure:CLEar [ALL]`: the strip, the pair rows, and the catalog rows.
     pub(crate) fn meas_clear_remote(&mut self) -> bool {
         if self.m.meas.is_empty() && self.m.meas2.is_empty() && self.m.cat.is_empty() {
             return false;

@@ -293,7 +293,7 @@ impl Ui {
         }
     }
 
-    fn bus_ids(&self) -> Vec<WaveId> {
+    pub(super) fn bus_ids(&self) -> Vec<WaveId> {
         let mut v: Vec<WaveId> = (0..n_ch()).map(WaveId::Ch).collect();
         v.extend((0..NREF).map(WaveId::Ref));
         v

@@ -340,9 +340,9 @@ impl Ui {
         for (hit, (_, label, id)) in lay.sources.iter().zip(&slots) {
             let lab = Rect::new(hit.r.x - hit.r.w / 2, hit.r.y, hit.r.w / 2, hit.r.h);
             cv.text_in(&f.s, lab, 0, label, DIM);
-            btn(cv, hit.r, BTN, BTN_BORDER);
-            cv.text_in(&f.s, Rect::new(hit.r.x + 8, hit.r.y, hit.r.w - 22, hit.r.h), 0, &self.src_label(*id), TEXT);
-            chevron_down(cv, hit.r.x + hit.r.w - 16, hit.r.y + hit.r.h / 2 - 3, DIM);
+            let ink = active_choice::paint(cv, hit.r, true);
+            cv.text_in(&f.s, Rect::new(hit.r.x + 8, hit.r.y, hit.r.w - 22, hit.r.h), 0, &self.src_label(*id), ink);
+            chevron_down(cv, hit.r.x + hit.r.w - 16, hit.r.y + hit.r.h / 2 - 3, ink);
         }
         cv.set_clip(lay.view);
         let scroll = self.cat_top();

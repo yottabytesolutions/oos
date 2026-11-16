@@ -16,7 +16,7 @@ mod sim_bus_candidate;
 #[cfg(test)]
 mod sim_bus_tests;
 
-const PRBS: [u8; 6] = [7, 9, 13, 15, 23, 31];
+pub(super) const PRBS: [u8; 6] = [7, 9, 13, 15, 23, 31];
 
 struct Request {
     id: u64,

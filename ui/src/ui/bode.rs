@@ -235,7 +235,7 @@ fn gen_thread(
     tx
 }
 
-const BODE_MODES: [oos_dsp::bode::Mode; 3] =
+pub(super) const BODE_MODES: [oos_dsp::bode::Mode; 3] =
     [oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z];
 
 fn bode_mode_name(m: oos_dsp::bode::Mode) -> &'static str {

@@ -20,7 +20,7 @@ const LA_DEC: i32 = 26;
 /// Height of the time labels at the bottom of a window: the lanes in a window end above them.
 const AXIS_ROW: i32 = 22;
 /// Line groups of the Lines row; "Custom" = any other set (Lines sub menu).
-const GROUPS: [(&str, u16); 4] = [("D0-D7", 0x00ff), ("D8-D15", 0xff00), ("All", 0xffff), ("Custom", 0x000f)];
+pub(super) const GROUPS: [(&str, u16); 4] = [("D0-D7", 0xff), ("D8-D15", 0xff00), ("All", 0xffff), ("Custom", 0x000f)];
 /// Line names (menu labels are static).
 const NAMES: [&str; 16] =
     ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14", "D15"];

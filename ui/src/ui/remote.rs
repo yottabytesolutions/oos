@@ -142,7 +142,7 @@ impl Ui {
     }
 
     /// The name set, when it is not the one from model and serial number.
-    fn name_own(&self) -> Option<String> {
+    pub(super) fn name_own(&self) -> Option<String> {
         let n = &self.sys.net_name;
         (!n.is_empty() && *n != Self::name_default()).then(|| n.clone())
     }

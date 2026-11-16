@@ -10,6 +10,7 @@ use crate::math::*;
 use crate::model::*;
 use crate::wave::*;
 
+mod active_choice;
 mod afg;
 mod analysers;
 mod analysis;
@@ -10012,10 +10013,10 @@ impl Ui {
         if let Item::RefShow(_) = it {
             return Ctl::Button;
         }
-        // a finding is one wide button; its text takes a smaller font instead of being cut
+        // Keep the finding's tap path and smaller-font fallback without a committed-option cue.
         if let Item::IdFind(_) = it {
             let cur = self.value(it);
-            return Ctl::Seg(vec![cur.clone()], Some(0));
+            return Ctl::Seg(vec![cur], None);
         }
         if matches!(
             it,
@@ -10041,9 +10042,7 @@ impl Ui {
                 if n == 0 {
                     Ctl::Value
                 } else if k == Kind::Choice && opts.iter().all(|o| f.mb.width(o) + 12 <= (w - (n - 1) * 4) / n) {
-                    let cur = self.value(it);
-                    let sel = opts.iter().position(|o| *o == cur);
-                    Ctl::Seg(opts, sel)
+                    Ctl::Seg(opts, active_choice::index(self, it))
                 } else {
                     Ctl::Pick
                 }
@@ -10060,12 +10059,11 @@ impl Ui {
         if it == Item::AfgFreqEntry {
             self.keypad.clear();
         }
-        let opts = self.options(it);
-        let cur = self.value(it);
+        let active = active_choice::index(self, it);
         self.pick = Some(Pick { it, menu: self.menu, parent: self.parent, focus: self.focus });
         self.parent = Some(self.menu);
         self.menu = MenuId::Pick;
-        self.focus = opts.iter().position(|o| *o == cur).unwrap_or(0);
+        self.focus = active.unwrap_or(0);
     }
 
     /// Leaves the picker for the menu it was opened from (after a pick, or with Back).
@@ -10420,13 +10418,9 @@ impl Ui {
                     let sw = (c.w - (n - 1) * 4) / n;
                     for (k, o) in opts.iter().enumerate() {
                         let r = Rect::new(c.x + k as i32 * (sw + 4), c.y, sw, c.h);
-                        if *sel == Some(k) {
-                            cv.round(r, 5, ACCENT, 255);
-                            fitted_text(cv, &[&f.mb, &f.m, &f.s], r, o, DARK_TEXT);
-                        } else {
-                            btn(cv, r, BTN, BTN_BORDER);
-                            fitted_text(cv, &[&f.m, &f.s], r, o, TEXT);
-                        }
+                        let ink = active_choice::paint(cv, r, *sel == Some(k));
+                        let fonts: &[&Font] = if *sel == Some(k) { &[&f.mb, &f.m, &f.s] } else { &[&f.m, &f.s] };
+                        fitted_text(cv, fonts, r, o, ink);
                     }
                 }
                 Ctl::Text => {
@@ -10437,27 +10431,22 @@ impl Ui {
                     let (mi, mid, pl) = Self::value_parts(c);
                     btn(cv, mi, BTN, BTN_BORDER);
                     cv.text_in(&f.mb, mi, 1, "-", TEXT);
-                    btn(cv, mid, BTN, if focus { ACCENT } else { BTN_BORDER });
-                    let v = self.value_shown(row.it);
-                    cv.text_in(self.value_font(mid, matches!(row.ctl, Ctl::Pick), &v), mid, 1, &v, TEXT);
-                    if let Ctl::Pick = row.ctl {
-                        // the value opens the list
-                        chevron_down(cv, mid.x + mid.w - 20, mid.y + mid.h / 2 - 3, DIM);
-                    }
+                    active_choice::value(self, cv, row.it, mid, matches!(row.ctl, Ctl::Pick));
                     btn(cv, pl, BTN, BTN_BORDER);
                     cv.text_in(&f.mb, pl, 1, "+", TEXT);
                 }
                 Ctl::Button => {
                     let picked = match (row.it, self.pick) {
                         (Item::PickOpt(k), Some(p)) => {
-                            self.options(p.it).get(k).map(|o| (o.clone(), *o == self.value(p.it)))
+                            self.options(p.it).get(k).map(|o| (o.clone(), active_choice::index(self, p.it) == Some(k)))
                         }
                         _ => None,
                     };
-                    // orange: added measurement, current option of a picker, active state of a start menu entry
+                    // Committed choices and the existing running/measurement state cues.
                     let on = match row.it {
                         Item::MeasAdd(k) => self.m.meas.contains(&(k, self.meas_src)),
                         Item::MeasPair(k) => self.m.meas2.contains(&(k, self.meas_src, self.meas_src_b)),
+                        Item::RefShow(_) => active_choice::index(self, row.it) == Some(1),
                         Item::NavHist => self.hist_pos.is_some(),
                         Item::SingleAct => self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run,
                         Item::RunStop => self.m.run == RunState::Run,
@@ -10478,22 +10467,15 @@ impl Ui {
                         None => self.value(row.it),
                     };
                     let (tf, tr, _) = self.btn_text(c, matches!(row.it, Item::Open(_)), &txt);
-                    if added {
-                        cv.round(c, 5, ACCENT, 255);
-                        cv.text_in(tf, tr, 1, &txt, DARK_TEXT);
-                    } else {
-                        btn(cv, c, BTN, if focus { ACCENT } else { BTN_BORDER });
-                        cv.text_in(tf, tr, 1, &txt, TEXT);
-                    }
+                    let ink = active_choice::paint(cv, c, added);
+                    cv.text_in(tf, tr, 1, &txt, ink);
                     if let Item::Open(_) = row.it {
                         chevron(cv, c.x + c.w - 14, c.y + c.h / 2, 1, DIM);
                     }
                 }
             }
-            if focus {
-                if let Ctl::Seg(..) = row.ctl {
-                    cv.round_outline(Rect::new(c.x - 3, c.y - 3, c.w + 6, c.h + 6), 7, ACCENT);
-                }
+            if focus && !matches!(row.ctl, Ctl::Text) {
+                cv.round_outline(Rect::new(c.x - 3, c.y - 3, c.w + 6, c.h + 6), 7, ACCENT);
             }
         }
     }

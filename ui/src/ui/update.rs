@@ -49,7 +49,7 @@ fn state(dir: bool, text: Option<String>) -> Option<State> {
 
 impl Ui {
     /// The update state through the host.
-    fn update_state(&self) -> Option<State> {
+    pub(super) fn update_state(&self) -> Option<State> {
         let path = Path::new(update::STATE_PATH);
         state(path.parent().is_some_and(|d| self.host.is_dir(d)), self.host.text(update::STATE_PATH))
     }

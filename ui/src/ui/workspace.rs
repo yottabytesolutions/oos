@@ -723,17 +723,17 @@ impl Ui {
         cv.text(&self.fonts().mb, dialog.r.x + 14, dialog.r.y + 31, "Pairs", TEXT);
         let targets = self.pair_header_sources(dialog);
         for ((_, rect), id) in targets.into_iter().zip([self.meas_src, self.meas_src_b]) {
-            btn(cv, rect, BTN, BTN_BORDER);
+            let ink = active_choice::source(cv, rect, self.wave_color(id));
             cv.set_clip(Rect::new(rect.x + 5, rect.y, (rect.w - 27).max(1), rect.h));
             cv.text_in(
                 &self.fonts().sb,
                 Rect::new(rect.x + 5, rect.y, (rect.w - 27).max(1), rect.h),
                 1,
                 &self.pair_source_caption(id),
-                self.wave_color(id),
+                ink,
             );
             cv.no_clip();
-            chevron_down(cv, rect.x + rect.w - 16, rect.y + rect.h / 2 - 3, DIM);
+            chevron_down(cv, rect.x + rect.w - 16, rect.y + rect.h / 2 - 3, ink);
         }
         let a = targets[0].1;
         cv.text_in(&self.fonts().mb, Rect::new(a.x + a.w, a.y, 26, a.h), 1, "to", TEXT);

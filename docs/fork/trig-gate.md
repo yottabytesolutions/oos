@@ -36,8 +36,9 @@ Written for the 1024 trial; the mean is back at 4096 (worst 0.009 div in the sam
 periods holds for any stride.
 
 Against the mean of all samples, at 1 V/div. Noise: sigma/sqrt(N), sigma/32 at 1024. A periodic signal not locked to
-the stride: about A/N. Locked (period step/j; a period j*step/k averages out over its k phases): a fixed error up to A
-at any N, as with 4096.
+the stride: about A/N. Locked (period step/j): a fixed error up to A at any N, as with 4096. A period j*step/k
+(j, k coprime) is sampled at j distinct phases; a sine's mean cancels over whole cycles of them, a partial cycle or
+another waveform leaves an error.
 
 The locked periods are at most one step, about one screen column. The edge search averages over a column, which
 flattens such a signal, so the level does not move the picture. Measured on the host (100 k points, column 103 samples,
@@ -53,8 +54,10 @@ flattens such a signal, so the level does not move the picture. Measured on the 
 
 A start per frame (the first version) turns the locked error into a jump of up to A between frames. Stratified random
 offsets turn it into noise of A/sqrt(2N), but for every period below the step (p99 0.21-0.24 div, above the 0.1 div
-bound) and with more error than the fixed stride everywhere else. The fixed stride is the smallest error for all
-unlocked periods and is stable from frame to frame.
+bound), and their p99 is above the fixed stride's at every unlocked period in the table. The fixed stride was kept
+for its repeatability and these results: stable from frame to frame, and no higher p99 than the others at the
+unlocked periods of the table. It is not shown to be the smallest error for every period or metric (p50 at 97.5
+and 400.3 is lower for another method), and a period near lock can still give a large fixed error.
 
 Host tests: `frame_mean_within_a_tenth_of_a_division_at_full_screen` (sines of +-4 div at five periods, a square,
 ripple with noise, lengths 12.5 k to 1 M: worst 0.055 div, bound 0.1; locked periods at levels across +-4 div: an edge

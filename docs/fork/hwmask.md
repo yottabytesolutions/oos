@@ -6,13 +6,16 @@ default until the steps below confirm the assumptions. Code:
 
 ## What it does
 
-- The software mask (`dsp/src/mask.rs`) stays the source of truth. `Mask::columns(1000)` reduces it to 1000 column
-  bands over the record, each the union of the bands it covers, so the table never forbids what the software allows.
+- The software mask (`dsp/src/mask.rs`) stays the source of truth. `mask::table_map` reduces it to 1000 column
+  bands, each the union of the bands its samples cover on the screen, so the table never forbids what the software
+  allows.
 - `mask::table` turns the volt bands into 8-bit limits for the source channel's current V/div and offset. Limits are
   rounded outwards; a limit at or beyond the code range is disabled. A V/div or offset change reloads the table.
 - With the FSM stopped (acquisition block of `configure`): 0x4020 bit 15 off, the table (1000 writes to 0x1194, then
-  0x1194 = 0), 0x1184 = samples per column (points / 1000, bit 31 when more than 1), the slot in 0x1190, 0x4020 bits
-  15..13 on and bit 12 = stop on fail. Nothing is written while the test runs as wanted.
+  0x1194 = 0), 0x1184 = 0x40000000 | n | bit 31 when n > 1, the slot in 0x1190, 0x4020 bits 15..13 on and bit 12 =
+  stop on fail. n = samples per column = clamp(points per channel / 1000, 1, 1023) with the default `cols=record`
+  (`Map::layout`). Column c covers record samples c n .. (c + 1) n at (k - pre - skew) / rate (round 20). Nothing is
+  written while the test runs as wanted.
 - Counters are cleared on the first start, a new slot, Create mask, Load mask, Reset and Clear display. A table reload
   keeps them, as the software test keeps its counts when the tolerances change.
 - After every batch: latch (0x1190 bit 28: 0, 1, 0), read 0x11a0/0x11a4 (frames) and 0x11b0/0x11b4 (fails), 48 bits.
@@ -32,8 +35,8 @@ default until the steps below confirm the assumptions. Code:
 | assumption | where | how the bench checks it |
 |---|---|---|
 | The comparator sees the read-out word >> 8 (32768 at the offset, 7500 codes per division) | `mask::MID`, `CODES_PER_DIV`, `SHIFT` | step 3 and 4 |
-| Slot = stream slot (assumed): 0 with one channel; lower of two 0, higher 1; the channel with 3 or 4 | `mask::slot` | step 5 |
-| 1000 columns spread over the whole record, n = points / 1000 per column | `mask::per_column` | step 4, a failure late in the record |
+| Slot = stream slot (libscope): 0 with one channel; lower of two 0, higher 1; the channel with 3 or 4 | `mask::slot` | step 5 |
+| 1000 columns spread over the whole record, n = points / 1000 per column (first assumption; now capped at 1023 and mapped by time, round 5) | `mask::Map::layout` | step 4, a failure late in the record |
 | One counted frame per acquired frame | | step 2 |
 | Stop on fail (0x4020 bit 12) stops the FSM without hanging the acquisition thread | | step 6 |
 
@@ -61,7 +64,7 @@ next batch reloads the table). `:SYSTem:DEBug:MASK:MAP?` reads it back.
 | `shift` | 0..16, default 8 | right shift to the 8-bit sample (a 12-bit sample: `mid=2048 cpd=468.75 shift=4`) |
 | `offs` | number, default 0 | added to every 8-bit code |
 | `invert` | 0, 1 | code axis upside down |
-| `cols` | `record` (default), `clocks`, `stock`, or a number | 1000 columns of points/1000 samples; the same count in sample clocks (4/ratio samples each); the stock zone set-up (count 1, 1000/(4/ratio) columns); 1000 columns with this strobe count |
+| `cols` | `record` (default), `clocks`, `stock`, a number, or `raw:<count>:<samples per strobe>` | 1000 columns of n = clamp(points/1000, 1, 1023) samples; the same count in sample clocks (4/ratio samples each); the stock zone set-up (count 1, 1000/(4/ratio) columns); 1000 columns with this strobe count, kept to 1023 and to the record; see "Strobe sweep" |
 | `range` | `a-b`, default `0-999` | only these columns test; the others pass everything |
 
 The hardware gives no per-column result. `:SYSTem:DEBug:MASK:COLumns? a,b` shows the software's view of the same
@@ -82,7 +85,8 @@ Procedure (probe-comp on CH1, 1 V/div, hardware mask on, Reset between steps, 20
 3. When step 1 passes (0 fails in 2000 on the clean signal, fails rising with a 0.2 div offset nudge), repeat at 1, 2
    and 4 channels (the clock layout depends on it) and at 100 mV/div and 2 V/div (the gain).
 4. Then the long record: 200 us/div, Auto (2.5 Mpts). With `cols=record` the count 2500 does not fit 10 bits; try
-   `cols=` 2500 & 1023 (452) and `cols=1023`, and note whether bit 15 changes anything (`cols=33220` is 452 with bit 15 set).
+   `cols=` 2500 & 1023 (452) and `cols=1023`. The current code keeps every count to 1023 (`Map::layout`, also
+   `cols=raw`), so `cols=33220` no longer sets bit 15 of 0x1184 and cannot test it. Its meaning is open.
 5. Write the winning map into this file and make it the default in `mask::Map::default()`; the zone trigger takes the
    same map (`hwzone.md`).
 
@@ -97,7 +101,8 @@ Cause: the software mask spreads over the screen, the table columns over the rec
 the screen (1.6 screens at 10k points from 20 us/div). With a flat signal around the trigger (20 and 50 us/div on a
 1 kHz square) the stretch did not show; from 100 us/div the edges at +-0.5 ms landed in the wrong columns. Fixes:
 - The table maps by time (`mask::Timing`): column c covers record samples c n .. (c + 1) n at (k - pre) / rate, which
-  is placed on the screen (10 divisions around the delay). Columns not wholly on the screen test nothing.
+  is placed on the screen (10 divisions around the delay). Columns not wholly on the screen test nothing. Round 20
+  adds the skew: (k - pre - skew) / rate.
 - The strobe count stays within 1023 and within what the record holds for 1000 columns (`Map::layout`); the stalls
   came from counts whose columns ran past the record. Records above 1.02 M points have their first 1.02 M tested.
 - The slot is the stream slot: CH2 alone is slot 0, CH2 of CH1+CH2 slot 1.
@@ -132,8 +137,10 @@ and sw agree on the shift gives the unit.
 
 ## Round 19: strobe rule, skew
 
-The sweep settled the strobe rule: one strobe per record sample, at any rate and time base. The largest count that
-runs is points / 1000 (10k: 10, 100k: 100); one more stalls with 0x4030 read-back 0, state 5. Samples per strobe 2 or
+The sweep settled the strobe rule at 200 µs/div and 1 ms/div with the depths of the grid, one channel: one strobe
+per record sample. OOS assumes it at every other rate, channel set and mode; that is not yet verified on hardware.
+The largest count that runs is points / 1000 (10k: 10, 100k: 100); one more stalls with 0x4030 read-back 0,
+state 5. Samples per strobe 2 or
 4 fail every clean frame. The default `cols=record` layout is that rule.
 
 With the right count, 10k at 200 µs/div (2.5 MSa/s) misses the +10 µs shift and 10k at 1 ms/div (0.5 MSa/s) fails
@@ -181,7 +188,8 @@ after every step. The mask is in volts, so an offset change moves mask and trace
    reads `Mask (HW) CH1`; the debug line shows `slot=0`, `ctrl=0x00100000`.
 2. Regression grid (round 5): for each of 20, 50, 100, 200 us/div and 1 ms/div at depth 10k, and 200 us/div at 100k
    and Auto: Create mask, Reset, 1000 frames: `fails` 0; delay +10 us: every frame fails; delay back, Reset: 0 again.
-   The software counts (`mask.hw = off`) give the same verdicts.
+   The software counts (`mask.hw = off`) give the same verdicts. Exception at 1 ms/div 10k: a column is 20 us, so
+   +10 us can pass in hardware while the software fails it (round 20); use +200 us there, which fails in both.
 3. Frames counter against acquisition: 30 s, `frames` rate equals the `acquired` rate of `:SYSTem:STATe?`.
 4. Scale: Create mask at 1 V/div, switch to 500 mV/div: the table is reloaded and `fails` stays 0 while the trace fits
    on screen; Y tolerance to the minimum and delay +2 us: fails rise.

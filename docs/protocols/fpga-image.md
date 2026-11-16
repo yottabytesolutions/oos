@@ -13,9 +13,11 @@ runs no own image, so everything else here has not been verified on hardware.
    `VER?` must be answered by the golden image in slot 0x000000 (assumed).
    Ways to an own bitstream, by cost:
    - **JTAG** on the Zynq (volatile, no flash), if the board brings out the JTAG pins. Not checked.
-   - **One write to a spare flash slot** (for example 0x800000) with an own `BOOT.bin`. Its own PS monitor can then receive
-     bitstreams over SPI (or later PCIe) and load them through PCAP from DDR/OCM. After that, no more flash writes. Slot
-     0x000000 (golden) and 0x400000 (stock) stay untouched. A power cycle always comes back to the golden image (assumed).
+   - **One write to a free flash slot** with an own `BOOT.bin`. No free slot is established: 0x800000 holds the factory
+     self-test image (section 2.5) and is not free space. Its own PS monitor can then receive bitstreams over SPI (or
+     later PCIe) and load them through PCAP from DDR/OCM. After that, no more flash writes. Slots 0x000000 (golden),
+     0x400000 (stock) and 0x800000 (self-test) stay untouched. A power cycle always comes back to the golden image
+     (assumed).
      This is an FPGA flash write: OOS itself never does it (`cold-boot.md`, never-do list).
 2. **PS side of an own design:** PS_CLK 33.333 MHz (as configured), CPU 500 MHz, DDR3 32 bit at 533 MHz (DDR3-1066,
    512 MiB geometry), QSPI quad on MIO1-6, **SPI0 slave on MIO16/17/18/21** (the RK3399 link), UART1 115200 on MIO28/29
@@ -82,7 +84,9 @@ Frame: `\rPROG\r` + addr (4, BE) + size (4, BE) + `size` raw data bytes. No chec
 
 1. Erase:
    - `size == 0x1000000` exactly: **bulk erase (0xC7) of the whole chip, golden image included.**
-   - otherwise `(size >> 16) + 1` sector erases (0xD8, 64 KiB) from `addr & ~0xffff` (always one sector more than needed).
+   - otherwise `(size >> 16) + 1` sector erases (0xD8, 64 KiB) from `addr & ~0xffff`. For a sector-aligned `addr` that
+     is one sector more than needed only when `size` is a multiple of 64 KiB; otherwise it is exactly enough. For an
+     unaligned `addr` it can be one sector too few.
    - Flash commands: WREN 0x06, RDSR 0x05 poll WIP, PP 0x02, READ 0x03, RDID 0x9F. All use **3-byte addresses**, so only the
      first 16 MiB are reachable.
 2. For each full 256-byte page: 4 x `spi_rx(64)`, page program, read back, compare. A mismatch only increments an error count

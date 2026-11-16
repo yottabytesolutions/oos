@@ -29,13 +29,16 @@ Register values in STOP after a complete set-up (verified on the unit): 0x1000 =
 
 Run after the calibration files are loaded. Details and the boot order are in `cold-boot.md` 3.3 to 3.5.
 1. Sync delay sweep: step the ADC sync delay, 20 ms per step, each step ADC SPI sync + SPU ADC sync + SPU reset, read
-   ADC reg 7, find the best window over the results, set the best sync delay.
+   ADC reg 7, take bit 1 of each result, select the first delay n with a 1 -> 0 step to n + 1, set it and sync again.
+   Without a falling edge the delay stays at 7 (`cold-boot.md` 3.3).
 2. Eye scan of the 28 LVDS lanes: ADC to test pattern (data mode 2, fixed output code), FPGA Gray decode off, ADC SPI
    sync + SPU ADC sync, SPU reset, ADC calibration select 1. For delay 0..31: set the IDELAY of all lanes to delay,
    enable the IDELAY calibration, read the bit errors per lane. Per lane, take the centre of the error-free window into
    buf[28]. ADC back to normal data (data mode 4).
 3. Load the lane delays: ADC calibration select 1, then for lane 0..27 set the IDELAY of the lane to buf[lane].
-   The fallback is delay 10 on every lane.
+   If any lane has no window, OOS loads `Options::idelay_fallback` for all 28 lanes, by default the stored lane list
+   (`cold-boot.md` 3.4). A flat delay 10 is an alternative, not the OOS default. The fallback is not yet verified on
+   hardware.
 
 IDELAY write, register 0x1018, three writes:
 `delay & 0x1ff`; then `delay | mask` with mask = 0x3ffff000 for all lanes, `(0x1000 << lane) | 0x10000000` for

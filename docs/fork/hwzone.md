@@ -30,7 +30,8 @@ needs a new register combination (bit 15 with the zone tables), so it waits for 
   FSM: the zone qualifies the trigger. That a failing frame is not accepted was seen on the unit (round 3,
   `unit-dho804.md`); that the FSM re-arms on its own is inferred. The normal trigger stays configured; the zone acts on
   top of it.
-- The mask frame counter (0x11a0/0x11a4) counts zone-qualified frames.
+- OOS reads the mask frame counter (0x11a0/0x11a4) as the count of zone-qualified frames. On the unit it stayed 0 in
+  every zone run (status above), so that it counts them is not verified.
 
 ## What OOS does
 
@@ -38,10 +39,11 @@ needs a new register combination (bit 15 with the zone tables), so it waits for 
   vertical extent of the zone within the column's time strip (`zonegeom::extent`) gives the limits.
 - Codes: the same assumed scale as the mask (`mask::code`: read-out word >> 8 at the channel's V/div and offset),
   rounded outwards and clipped to 0..255. A column the zone does not reach has bit 16 clear.
-- Columns: 1000 over the record, `points / 1000` samples per column (0x1184), as the mask test. Column c covers
-  samples c n .. (c + 1) n at times (k - pre) / rate relative to the trigger. The stock system instead leaves 0x1184
-  at one count and writes 1000 / (4 / ratio) columns (250, 500, 1000 for 1, 2, 4 channels). The bench decides which
-  holds; `zone::columns` is the one place to change.
+- Columns: 1000, n = clamp(points per channel / 1000, 1, 1023) samples per column (0x1184), as the mask test
+  (`Map::layout`). Column c covers samples c n .. (c + 1) n at times (k - pre - skew) / rate relative to the trigger,
+  skew 6.5 samples as measured for the mask (`hwmask.md` round 20); for the zone not yet verified on hardware. The
+  stock system instead leaves 0x1184 at one count and writes 1000 / (4 / ratio) columns (250, 500, 1000 for 1, 2, 4
+  channels). The bench decides which holds; `mask::Map::layout` (`cols`) is the one place to change.
 - With the FSM stopped (acquisition block of `configure`): 0x4020 bit 1 off, the tables that changed, 0x11d0, 0x1184,
   the slot (counter cleared on the first start, a new slot, Clear display), 0x4020 bit 1 on. Nothing is written while
   it runs as wanted. A V/div, offset or time base change reloads the tables.
@@ -88,8 +90,8 @@ and the software-filter rate for comparison. Goal: at least the software rate.
 | assumption | where | bench step |
 |---|---|---|
 | Limits in the read-out word >> 8 (Rigol writes the low byte of a 16-bit level; that does not fit an 8-bit sample) | `mask::code` | 3, 4 |
-| 1000 columns of points / 1000 samples over the record | `zone::columns` | 4 |
-| Column times relative to the trigger at sample `pre` | `zone::table` | 4 |
+| 1000 columns of clamp(points / 1000, 1, 1023) samples | `mask::Map::layout` | 4 |
+| Column times relative to the trigger at sample `pre` + skew (6.5, the mask's value) | `zone::table` | 4 |
 | A failing frame is not accepted; the FSM re-arms | | 2, 3 |
 | Slot = stream slot, as the mask test (CH2 alone 0, CH2 of CH1+CH2 1) | `mask::slot` | 5 |
 
@@ -101,6 +103,10 @@ runs. After two in a row it drops the unit for the current settings (time base, 
 publishes the reason in `Shared::unit_blocked`. The UI then runs the software test and filter and shows a toast once.
 `:SYSTem:DEBug:MASK?` reports `blocked=1`. Changing any of those settings tries the hardware again. The cause of the
 stall is open.
+
+Later rounds (`hwmask.md` rounds 19 and 20, the same guard): after every stall one batch runs without the unit, and
+the stall count survives it. A first block of a settings key lapses after 5 s for one more try; a second block of the
+same key stays. That the batch without the unit clears the read-back state machine is assumed.
 
 ## On-unit procedure
 

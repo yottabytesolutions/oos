@@ -34,17 +34,17 @@ Register meanings marked "assumed" are inferred. Notation as in `acquisition-sta
 | 1 | 0x4008 = s4008 \| bit23 (analog stream on) |
 | 2 | 0x4008 = s4008 & ~bit24 (LA stream off) |
 | 3 | request the frames (1.3) -> count; count < 1 means no frame (sleep 10 ms first if the time base is >= 1 ms/div) |
-| 4 | len = display trace length; len < 8 means no frame |
-| 5 | one read of `count * (Z + 16 + 2*ratio*len)` bytes, Z = 16 + 2*ratio*zoomlen with zoom on, else 0 |
+| 4 | len = the TX length 0x11f0 = roundup8(display trace length); len < 8 means no frame |
+| 5 | one read of `count * (Z + 16 + 2*ratio*len)` bytes, Z = 16 + 2*ratio*zoomlen with zoom on, else 0. Both lengths are multiples of 8, so no stream padding (section 3.2) |
 | 6 | in scan mode only: 0x400c \|= bit25 |
 | 7 | de-interleave: `len`, `count`, 8 header words per frame, `Z/2` words of zoom frame; no registers |
 
 LA path: 0x4008 bit23 off, bit24 on, stop sequence, play-last pulse, FSM start (`la.md`).
 
-RMS path (RMS measurement on, len == 1,000,000, memsel > 1 M): the pass-through writes, 0x1100 = 1000000 | 0x400,
-0x1108 = 0, 0x11f0 = 1,000,000, play, read ratio x 2,000,000 bytes, stop sequence, horizontal block again, zoom enable
-restored. This is the one raw window read inside a live loop. It uses the pass-through writes and restores the chain
-with the horizontal block.
+RMS path (RMS measurement on, len == 1,000,000, memsel > 1 M): the pass-through writes, 0x1100 = 1000000 | 0x400, 0x1108
+= 0, 0x11f0 = 1,000,000, play, read ratio x 2,000,000 bytes, stop sequence, horizontal block again, zoom enable
+restored. This is the one raw window read inside the stock live loop. OOS has no such branch. It uses the pass-through
+writes and restores the chain with the horizontal block.
 
 The read is one `read()` on `/dev/xdma0_c2h_0`. A short read or an error means no frame.
 
@@ -94,8 +94,9 @@ sequence + the same 12 writes. It is identical except for the window/header writ
 
 | path | TX register | `read()` bytes |
 |---|---|---|
-| live frame | 0x11f0 = roundup8(len) | count x (16 + 2 x ratio x len) [+ zoom frame] |
+| live frame | 0x11f0 = roundup8(len) | count x (16 + 2 x ratio x 0x11f0) [+ zoom frame] |
 | raw export | 0x11f0 = w/ratio, w = roundup4(n) (w = 128 if roundup4(n)/ratio == 8) | 2 x w (header off: 0x1010 bit31 = 1) |
+| OOS window (`readout_play4`) | 0x11f0 = per-channel points L | count x roundup8(H + 2 x ratio x L), H = 16 with a header, else 0; drop the padding per frame (`seq::read_len`, `seq::unpad`) |
 | RMS path | 0x11f0 = 1,000,000 | ratio x 2,000,000 |
 
 ## 2. The export path

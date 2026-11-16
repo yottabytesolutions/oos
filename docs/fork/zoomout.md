@@ -58,8 +58,9 @@ vertical span over the columns it covers, from its minimum to its maximum.
 - Test `board::record::dots::dots_draw_min_max_pairs_as_spans`: a 1 kHz square with 3 us edges at 2 and 50 ms/div,
   every edge lit from low to high level; the old two-dot drawing lights none.
 
-The `dots: true` default stays (upstream's choice; the saved setting overrides it anyway). Display > Dots off was the
-workaround.
+At the time of this fix the Boolean `dots: true` default stayed (upstream's choice; the saved setting overrides it
+anyway), and Display > Dots off was the workaround. The default is now `DotsMode::Auto` (`core/src/model/defaults.rs`,
+`docs/fork/display.md`); old Boolean setup values load as Auto.
 
 ## SCPI rate and depth
 

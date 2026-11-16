@@ -1,7 +1,8 @@
 # Live display compression (next round 2.2, perf plan item 7)
 
-Branch `feat/compress`. Opt-in: `acq.compress = on` in /oos/system.conf, or `OOS_COMPRESS=1` for oos-ui alone. Off
-by default until the procedure below has passed on the unit.
+Switch: `acq.compress = on` in /oos/system.conf, or `OOS_COMPRESS=1` for oos-ui alone. Without the line the parser
+keeps it off (`compress::enabled_from`). The DHO804 unit image sets `acq.compress = on`
+(`rootfs/unit/dho804/system.conf`) since the procedure below passed in round 5 (`unit-dho804.md`).
 
 ## What it does
 
@@ -29,6 +30,8 @@ Host, release, one core: decode + draw of one 10 us/div frame 117 us raw, 12.9 u
 All of these (`compress::allowed`, `hw::live_compress`):
 
 - `acq.compress = on`;
+- a line display: Dots On keeps the frames raw; Dots Auto draws lines at these densities and compresses
+  (`compress::allowed`, docs/fork/flicker.md);
 - not roll or scan (`hw::slow_mode`);
 - plain edge trigger, Normal acquisition, not Single, no segments, no mask, no zones, no zoom, no Z input, no LA, every
   shown channel DC (or DC 50 ohm) without the 20 MHz limit: the conditions of the dense fast path (`Ui::fast_ok`) plus
@@ -65,12 +68,12 @@ read is always possible.
 The compressed frames are only drawn. `drawpipe::draw_frame` sends a frame of the live compression (`compress::live`:
 envelope, not roll or scan, at most 1 M deep) through the dense path: trigger refinement on the pairs with an even
 smoothing length (`compress::smooth_len`, whole pairs), then `compress::deposit_pairs` (per column the span of the
-pairs whose centre lies in it, joined to the nearest end of the last pair before it; in dots mode no join). The
+pairs whose centre lies in it, joined to the nearest end of the last pair before it). The
 per-frame statistics (`framestats`) skip these frames; the raw newest frame of each batch counts through the record
 path.
 
-Visible difference in dots mode: a raw frame deposits one dot per sample (brightness follows dwell), a pair frame one
-span per column (brightness uniform along the span), as the record path already draws pairs in dots mode.
+Live frames in Dots On stay raw. An earlier version compressed them too: raw frames deposited one dot per sample, pair
+frames one span per column, and the mix flickered (docs/fork/flicker.md).
 
 ## Named constants (correct them from the unit test)
 
@@ -101,9 +104,9 @@ off.
 
 | claim | level |
 |---|---|
-| 0x1170 = 0xc0000000 \| k compresses the play to ceil(memsel / k) points, aligned, alternating low/high | unit, k = 4 at 1 M (acquisition-start.md); time axis exact for k 16..200 at deep records |
-| pair = min and max of 2k samples from the window start, in time order | unit, 100 % of the points for k 3, 4, 15, 16, 64, 128, 1 and 2 ch (unitlab round 2); assumed: k up to 16383, k = 0 stalls |
-| k = 256 at 1 M time-out = TX length beyond the window | inferred from the sample counts above; unit re-test pending |
+| 0x1170 = 0xc0000000 \| k compresses the play: one point per k samples, aligned with the record. 0x11f0 sets how many points are sent; OOS asks for floor(memsel / k / 8) x 8 (`compressed_len`) | unit, k = 4 at 1 M (acquisition-start.md); time axis exact for k 16..200 at deep records |
+| pair = min and max of 2k samples from the window start, in time order | unit, 100 % of the points for k 3, 4, 15, 16, 64, 128, 1 and 2 ch (unitlab round 2); netlist simulation (k up to 16383, k = 0 stalls) |
+| k = 256 at 1 M time-out = TX length beyond the window | unit: 3912 points timed out twice (round 2); 3904 points read without a time-out and compress-check passed at k = 4, 16, 64, 256 (round 5) |
 | a frame of the ring can be played again after a batch read | unit: the raw replay returns the same record (round 2) |
 | k down to 3 (1 us/div) | unit (round 2) |
 | picture of pairs = software min/max of the raw record | host model only |
@@ -169,7 +172,8 @@ Probe on the 1 kHz compensation output, CH1 and CH2 on the same probe or a secon
    (the factor of the last batch read, 1 = raw) drops to 1 at once, no `raw read of the newest frame` errors in
    /tmp/oos-ui.log.
 
-Record the results here and in `docs/fork/unit-dho804.md`; flip the default only after steps 2, 6 and 7 pass.
+Record the results here and in `docs/fork/unit-dho804.md`. Round 5 passed steps 2, 6 and 7 on the DHO804; its unit
+image turns compression on. Another image enables it only after the same steps pass on its hardware.
 
 ## Risks and open points
 
@@ -182,5 +186,6 @@ Record the results here and in `docs/fork/unit-dho804.md`; flip the default only
   frames, a slightly wider edge in persistence than raw at the same rate.
 - The Settings change (k) depends on the model, so toggling a raw-only feature reconfigures the acquisition, as any
   settings change does.
-- Deep-memory envelope frames (> 1 M) still go to the record path and to `framestats`, which measures Vavg/RMS on
-  their min/max points: an existing inaccuracy, not changed here.
+- Deep-memory envelope frames (> 1 M) go to the record path. `framestats` counts only maximum, minimum and peak-peak
+  on them; mean-type values come from a raw replay of the screen window (`meas.deep_raw`, docs/fork/deep-meas.md) or
+  show as not available.

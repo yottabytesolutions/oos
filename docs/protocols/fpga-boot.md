@@ -87,11 +87,17 @@ main image never loads.
   this code left the BAR1 mapping behind after the unload, which kept `rmmod xdma` from working; `Bar1` now unmaps
   when dropped.
 
-## OOS plan for this step (`oos-fpgad` start-up)
+## OOS start-up (`oos-fpgad cold-boot`)
 
-1. open `/dev/spidev1.0`, send `\rBOOT\r` + 00 40 00 00 (slot from a config file, default 0x400000)
-2. poll instead of sleeping: `modprobe pcie_rockchip_host`; if no link, `rmmod` and retry every 500 ms up to 15 s
-   (the RK3399 host driver cannot retrain after one failed attempt without a reload)
-3. load xdma (`xdma.params`; MSI with `poll_mode=0` on normal boots, `poll_mode=1` forced in a kexec session,
-   `../hardware/fpga.md` PCIe), check BAR1 0x4000 == expected version, else fall back to slot 0x000000 once
-4. never touch the flash commands
+1. Open `/dev/spidev1.0`, send `\rBOOT\r` + the slot address (0x400000; `boot_message` accepts only 0x0 and
+   0x400000). Wait `FPGA_BOOT_WAIT_S` (3 s, `/oos/fpga-wait` overrides) from the moment BOOT went out.
+2. PCIe host driver (`pcie_up` in `fpgad/src/main.rs`): at most six attempts. Each attempt loads `pcierockchiphost`
+   and polls every 20 ms for up to 2 s for the endpoint; on failure it unloads the driver and waits 2 s (the RK3399
+   host driver cannot retrain after one failed attempt without a reload). The shell helper `oos-fpga-up` does the
+   same with fixed waits: 5 s after BOOT, 2 s after each load, 2 s after each unload.
+3. Load xdma (`xdma.params`; MSI with `poll_mode=0` on normal boots, `poll_mode=1` forced in a kexec session,
+   `../hardware/fpga.md` PCIe) and check BAR1 0x4000 against the expected main-image version. On a mismatch repeat
+   BOOT to the same slot as described above (unmap BAR1, unload both drivers, BOOT, wait, bring the link up), at
+   most twice (`FPGA_BOOT_RETRIES`). If the version is still wrong the cold boot fails. There is no fall-back to slot
+   0x000000.
+4. Never send the flash commands.

@@ -1,10 +1,13 @@
 # ADC core offset matching
 
-Status: implemented on `feat/core-offset`, opt-in (`cal.core_offset = tight` in system.conf), host-tested only.
+Status: implemented, opt-in (`cal.core_offset = tight` in system.conf). Verified on the unit for CH3 alone (ADC mode
+2) in rounds 13 to 16, including the kept overlay and the reduced phase spread. Other channel sets and modes are not
+yet verified on hardware.
 
 ## Problem
 
-The RT8847 interleaves eight cores; each has an offset register (0x14 + 8n, 11-bit signed, one ADC step). The stock
+The RT8847 interleaves eight cores; each has an offset register (0x14 + 8n, 11-bit signed). One register step moves a
+core by about half to 0.6 of an ADC step on the unit (rounds 11 and 12), so the trim measures it per core. The stock
 calibration (self-cal.md 14.6) trims every core to mid-scale and stops at +-1.5 steps, so two cores can differ by up
 to 3 steps. The FPGA has per-core gain trims only (0x1058, 0x105c) and no per-core offset; every rate path decimates
 after them (assumed, not checked on hardware).
@@ -177,14 +180,15 @@ armed, once per ADC mode and session:
    divided by 64 is that core's measure codes per register step; `trim` uses it instead of an assumed size. Every
    nudge is taken back.
 2. `trim`: per acquired channel, its slots (`levels::slots`) are matched to the channel's mean, not to mid-scale.
-   Correction = difference divided by the measured codes per register step, rounded; up to 8 rounds; target 0.6
-   steps. Each reading averages 4 measure runs, and every round waits 50 ms after its writes (`order` waits 5 ms
-   after each nudge), as the stock calibration does. When noise keeps one core above 0.6 in every round, the best
-   round is kept if its worst core is within 1.5 steps, the stock calibration's own tolerance. Up to 12 rounds. Codes per ADC step for the tolerance: 16, or
-   32 where a digital gain of 2 or more puts the ADC x2 of 0x105c before the measure unit.
-3. Quietness gate: a channel is matched only when every slot's samples stay within 128 steps (max - min) and every
-   slot's mean moves by at most 1 step over three runs 20 ms apart (one run's slot means scatter by about 0.3 step). Matching to the channel mean assumes each core
-   sees the same signal on average; a signal near a multiple of fs/8 would otherwise be trimmed into the offsets.
+   Correction = difference divided by the measured codes per register step, rounded; at most 12 rounds
+   (`ROUNDS`); target 0.6 steps. Each reading averages 4 measure runs, and every round waits 50 ms after its writes
+   (`order` waits 5 ms after each nudge), as the stock calibration does. When noise keeps one core above 0.6 in every round, the best
+   round is kept if its worst core is within 1.5 steps, the stock calibration's own tolerance. Codes per ADC step
+   for the tolerance: 16, or 32 where a digital gain of 2 or more puts the ADC x2 of 0x105c before the measure unit.
+3. Quietness gate: a channel is matched only when every slot's samples stay within 128 raw 12-bit measure codes
+   (max - min, `QUIET_RANGE`; after the x2 of 0x105c, so with x2 active that is 64 ADC steps) and every slot's mean
+   moves by at most 1 step over three runs 20 ms apart (one run's slot means scatter by about 0.3 step). Matching to
+   the channel mean assumes each core sees the same signal on average; a signal near a multiple of fs/8 would otherwise be trimmed into the offsets.
    One that is not locked to the ADC clock moves the core means from run to run and is refused; one that is locked
    (the built-in generator) cannot be told from an offset, so nothing is trimmed while the generator runs. Inputs open
    or terminated is still the safe state, as for the stock calibration.

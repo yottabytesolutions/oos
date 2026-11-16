@@ -17,10 +17,11 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
   software DVM needs samples. `every` in Single.
 - After a compressed deep batch (`deep_raw_settings`: compression on, no window, record above 1 M, Normal, no LA) the
   acquisition thread reads the screen window of the newest frame once more, raw (`seq::read_raw_again` with a window),
-  before the next arm, as the live compression's raw newest frame does. Window: `screen_window`'s rule (screen and a
-  quarter screen each side, at least 4096 points, the trigger point inside), or the whole record when that reaches
-  past its end; at most `deepmeas::MAX_BYTES` = 24 MiB for all channels (12 M points of one channel). The C2H path
-  splits it into reads of at most 4 MiB.
+  before the next arm, as the live compression's raw newest frame does. Window: the screen and 4096 points each side,
+  widened to keep 4096 points around the hardware trigger point, aligned to 8 points and clipped to the record; or the
+  whole record if it fits. The selected window across all `ratio` acquired lanes must fit `deepmeas::MAX_BYTES` = 24 MiB
+  (12,582,912 points of one lane). The quarter-screen margins of the first version are gone (see "Cost on the unit").
+  The C2H path splits it into reads of at most 4 MiB.
 - Rate: once per `deepmeas::PERIOD` = 1 s while running; every batch in Single.
 - The raw frame replaces the newest frame of its batch, so its record is an ordinary raw record: measurements,
   cursors, FFT, decode and history get samples. The picture of that record goes through the record path like the
@@ -48,16 +49,16 @@ belong to it. With `acq.prearm = on` such batches are not armed ahead, so the re
 |---|---|---|
 | `PERIOD` | `ui/src/deepmeas.rs` | 1 s |
 | `MAX_BYTES` | `ui/src/deepmeas.rs` | 24 MiB |
-| window rule | `hw::window_below` | screen + 2 x max(screen / 4, 4096), trigger point +-4096 |
+| window rule | `hw::deep_raw_settings` | screen + 2 x 4096, trigger point +-4096, or the whole record if it fits |
 
 ## Evidence
 
 | claim | level |
 |---|---|
-| a frame of the ring can be played again after a batch read | unit for the LA read and the segment stamp plays; the compressed-then-raw replay of the live compression is host only (compress.md step 2) |
+| a frame of the ring can be played again after a batch read | unit: LA read, segment stamp plays, and the raw replay of the live compression returns the same record (round 2, compress.md) |
 | a raw window read of a deep record (screen_window) | unit, existing deep-memory path |
-| replay of a deep frame with a window after a compressed read | not shown |
-| cost: about 0.1 s of read per second at 10 M, 1 channel | estimate from the PCIe rate, not measured |
+| replay of a deep frame with a window after a compressed read | unit at 10 M, 1 ch: STOP raw-window Vavg equals the host mean, 4 of 4 (round 3); live updates at 1 ms/div (round 5). Trigger alignment of raw against pairs, other depths, channel sets and delays not yet verified on hardware |
+| cost at 10 M, 1 ch, 1 ms/div | measured: acquired/s 11.41 -> 9.0 (about -21 %), fps unchanged ("Cost on the unit") |
 
 ## Host tests
 
@@ -65,8 +66,8 @@ belong to it. With `acq.prearm = on` such batches are not armed ahead, so the re
   refuse, the software DVM asks), `hold` (only running, not Single, pair records of deep frames within the budget),
   budget and rate.
 - `ui/src/board/dho/hw.rs` `deep_raw_window_for_the_measurements`: 10 M at 1 ms/div: window holds screen and trigger
-  point, within 24 MiB, decodes to a raw frame with the right trigger point; none for 2 channels at 10 M, 25 M, the
-  short-time-base window read, 1 M, Peak.
+  point, within 24 MiB, decodes to a raw frame with the right trigger point; none above the budget (25 M at 2 ms/div),
+  for the short-time-base window read, 1 M, Peak. Two lanes at 10 M and 1 ms/div fit (section "Two lanes").
 - `ui/src/ui.rs` `deep_raw_records_carry_the_measurements_between_pair_records`: nothing on pairs before the first
   raw record, the raw record's Mean, then three pair records keep it and are not counted in the statistics; off: pair
   records measured with Mean NaN. Mutation check: without the hold the test fails.
@@ -77,20 +78,22 @@ belong to it. With `acq.prearm = on` such batches are not armed ahead, so the re
 
 ## On-unit verification
 
-Probe on the 1 kHz compensation output, CH1, 1 V/div. Baseline first without the key.
+Probe on the 1 kHz compensation output, CH1, 1 V/div. Baseline first with `meas.deep_raw = off` in /oos/system.conf
+and `OOS_DEEP_RAW` unset, then restart oos-ui. The key absent means on.
 
 1. 10 M depth, 1 ms/div (10 periods on screen), Auto trigger. Measure Vavg, Vrms, Std dev,
-   Vmax. Without `meas.deep_raw`: Vavg/Vrms/Std dev show NaN ("----"). Note wfm/s and `:SYSTem:STATe?` (acquired/s).
-2. `meas.deep_raw = on`, restart oos-ui. Within about 1 s Vavg, Vrms and Std dev show values; Vavg about half the
-   square's amplitude plus its low level, Vrms consistent with a 50 % square. Compare with the same measurements at
-   1 M depth (raw records, no compression): within 1 %.
-3. Rate: acquired/s against step 1; at most about 10 % lower. `top -H -d 1`: oos-ui CPU, the measure thread on the
-   little cores. /tmp/oos-ui.log: no `raw read of the deep window` errors.
+   Vmax. With `meas.deep_raw = off`: Vavg/Vrms/Std dev show NaN ("----"). Note wfm/s and `:SYSTem:STATe?` (acquired/s).
+2. Remove the line or set `meas.deep_raw = on`, restart oos-ui. Within about 1 s Vavg, Vrms and Std dev show values;
+   Vavg about half the square's amplitude plus its low level, Vrms consistent with a 50 % square. Compare with the same
+   measurements at 1 M depth (raw records, no compression): within 1 %.
+3. Rate: acquired/s against step 1. The 10 % target was not met: 11.41 -> 9.0/s, about -21 % ("Cost on the unit").
+   `top -H -d 1`: oos-ui CPU, the measure thread on the little cores. /tmp/oos-ui.log: no `raw read of the deep
+   window` errors.
 4. The raw record is the same acquisition: Single at 10 M, then the record shown (`:WAV:DATA?` RAW over the screen)
    against its Vavg: equal. A slow edge on screen must sit at the same place in the raw record as in the pair picture
    before it (no shift of the window: trigger point check).
-5. Budget: 2 channels at 10 M (40 MB) and 1 channel at 25 M: mean-type stay NaN, Max/Min update per record, no raw
-   reads in the log.
+5. Budget: 1 channel at 25 M and 2 ms/div (window above 24 MiB): mean-type stay NaN, Max/Min update per record, no
+   raw reads in the log. Two lanes at 10 M and 1 ms/div fit and do read raw.
 6. STOP while running at 10 M: see docs/fork/stop-exact.md step 3; then RUN again.
 7. Peak mode, roll, zoom: no raw deep reads (log), as before.
 
@@ -113,14 +116,15 @@ Fix:
 
 Host tests: `hw::tests::deep_raw_window_for_one_and_two_lanes_at_10m` and
 `hw::tests::deep_record_gives_vavg_from_the_raw_window` (end to end: pair frames, then the raw window, Vavg equal to
-its level). Both fail without the narrow window. Mean-type values at 10 M still need `meas.deep_raw = on` in
-/oos/system.conf. The unit default (`rootfs/unit/dho804/system.conf`) does not set it.
+its level). Both fail without the narrow window. Mean-type values at 10 M were then still opt-in; since "Default on"
+below the key absent means on.
 
-The `measured` counter of `:SYSTem:STATe?` is wired. It counts only the frames that the batch pipeline's workers fold
-into the statistics (`framestats::fold_frame`, the cheap measurements, `acq.pipeline = batch` on the unit). At 1 ms/div
-every depth gives pair frames: live compression up to 1 M, the FPGA compression above. `fold_frame` skips pairs, and
-the UI measures the raw records itself without counting them. So 0 is expected there. It counts at time bases
-without compression and with frames to spare for the workers, for example 1 us/div with Vavg on.
+The `measured` counter of `:SYSTem:STATe?` is wired. It counts the frames whose worker-side fold
+(`framestats::fold_frame`, the cheap measurements, `acq.pipeline = batch` on the unit) gave at least one result.
+Live-compression pair frames never count. Deep envelope frames count for Max, Min and Pk-pk, not for mean-type
+measurements. The raw records the UI measures itself are not counted. So whether it reads 0 at 1 ms/div depends on the
+measurements shown, not on the time base alone. It counts at time bases without compression and with frames to spare
+for the workers, for example 1 us/div with Vavg on.
 
 ## Default on (2026-11-14)
 
@@ -177,8 +181,9 @@ Estimate: the first two together about -5 to -6 %, all three about -3 %.
 
 ## Risks
 
-- Replay of a deep frame after a compressed read is not shown on the unit (step 4 decides); a wrong window would put
-  the measurement on the wrong samples.
+- Replay of a deep frame after a compressed read gave the right means at 10 M (round 3), but the trigger alignment of
+  the raw window against the pairs is not yet verified on hardware (step 4 decides); a wrong window would put the
+  measurement on the wrong samples.
 - A 12 M-point raw frame is copied once into `Shared::frame` (48 MB) and run through `to_record` and the measurement
   threads: about once a second; the measurement of 12 M samples on the little cores may take longer than the period,
   then results come less often.

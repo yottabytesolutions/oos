@@ -3,7 +3,9 @@
 The SPI and I2C protocol triggers in the TPU's receivers, next to the UART (`hwuart.md`). Opt-in with the same switch,
 `trig.serial_hw = on` in system.conf. Code: `hal/src/dho/serialtrig.rs` (words), `tpu::spi`, `tpu::i2c`,
 `seq::Trig::Spi`/`I2c`, `ui/src/board/dho/hw.rs` (`spi_of`, `i2c_of`, `serial_debug`). Register facts: below, indexed from
-[../hardware/fpga.md](../hardware/fpga.md) (not yet verified on hardware).
+[../hardware/fpga.md](../hardware/fpga.md) (not yet verified on hardware). They come from a simulation of the FPGA
+netlist and supersede `specs/07-serial-triggers.md` sections 1.3 and 1.4, which give R = clock, A = data for SPI and
+another byte layout for the I2C data.
 
 ## Hardware
 
@@ -65,7 +67,9 @@ address 0x50, or an Arduino as master. Probes: CH1 on SDA, CH2 on SCL. Read the 
 1. SPI Frame: stable triggers, one per word at 300 words/s (3 per 10 ms); debug `on,proto=SPI,...,mux=12`.
 2. SPI Data = 0xa5: only the second word at the trigger point, 100 triggers/s. Data = 0x42: no triggers. Mode 1 on
    the scope (falling edge) with the Pi in mode 0: decoded values change, triggers follow the scope's mode.
-3. SPI with CS removed from the decoder: debug `off`, software trigger as before.
+3. SPI with CS removed from the decoder, Trigger > Protocol > Timeout = Off: debug `off`, software trigger as before.
+   Then a Timeout below the 10 ms pause between transfers: debug `on`, 0x2178 bit 0 = 1, 0x217c = ceil(timeout /
+   6.4 ns); triggers as in step 1.
 4. I2C Frame: a trigger at every start (one per read, two with the repeated start of `i2cget`: note which).
 5. I2C ID = 0x50: triggers; ID = 0x51: none. Unplug the device (or ID 0x51 with a non-existent device in the loop):
    Error triggers on the missing ACK.

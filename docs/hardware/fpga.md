@@ -21,11 +21,11 @@ Every statement carries one of the three marks defined in [../README.md](../READ
 | Flash | 16 MiB QSPI flash on the Zynq side, three boot images (slots 0x000000, 0x400000, 0x800000) | verified on the unit (external reader, 2026-11-12) |
 | Host link | PCIe endpoint (Xilinx XDMA) to the RK3399; register window and one card-to-host DMA channel | verified on the unit |
 | Boot control | SPI from the RK3399 to the monitor on the Zynq PS | verified on the unit, `../protocols/fpga-boot.md` |
-| ADC | RT8847, eight interleaved cores, 1.25 GSa/s together, 156.25 MSa/s each | verified on the unit, `../protocols/adc-spu-init.md` |
+| ADC | RT8847, eight interleaved cores, 1.25 GSa/s together | verified on the unit, `../protocols/adc-spu-init.md`; 156.25 MSa/s per core is assumed (Clocks and time units) |
 | Sample clock | LMX2582, programmed by the RK3399 | verified on the unit (`../protocols/pll.md`) |
-| Front end | four RT1642, programmed by the RK3399, not through the FPGA | verified on the unit (`../protocols/afe-spi.md`) |
+| Front end | one RT1642 per analog channel (four on four-channel models), programmed by the RK3399, not through the FPGA | verified on the four-channel unit (`../protocols/afe-spi.md`); two-channel models not yet verified on hardware (`../models.md`) |
 | Acquisition memory | DDR3 on the PL side; holds at least 125 M points; a segment of 2^24 bursts was accepted | verified on the unit: 100 M and 125 M records without wrap (`../protocols/acquisition-start.md`) |
-| Generator DAC | DAC behind the FPGA (DHO900 only) | verified on a DHO924S (`../protocols/afg.md`) |
+| Generator DAC | DAC behind the FPGA (DHO900 S models with the generator fitted) | verified on a DHO924S (`../protocols/afg.md`) |
 | Logic analyser | 16 inputs into the FPGA (DHO900 / LA option) | verified on a DHO924S (`../protocols/la.md`) |
 
 ### Functional block map
@@ -98,6 +98,7 @@ documented here.
 | Slow rate path | rate = 62.5 MSa/s / 0x10d8 at and below 62.5 MSa/s | verified on the unit: 1 kHz measured as 1000.000 Hz at 10 M points, 62.5 MSa/s (`../protocols/acquisition-start.md`, time axis table) |
 | Time stamps 0x40b0-0x40c4 | 0.8 ns per tick | verified on the unit: 1 ms spacing reads as 1 250 000 ticks (`hal/src/dho/seg.rs`, `LATCH_TICK_FS`) |
 | Sample delay 0x1080/0x1084 | one step moves a channel by 1.6 ns at 2 channels; at 4 channels every second step moves it, by 6.4 ns | verified on the unit (one source on two channels, `hal/src/dho/acq.rs`) |
+| TPU event limits t1/t2 (A, B, R events, from 0x2020) | 1.6 ns per tick | OOS code: pulse, window, timeout and delay triggers use it (`hal/src/dho/tpu.rs`, `TICK_FS`; `../protocols/trigger.md`) |
 | TPU holdoff 0x2084/0x2088, 0x4068, 0x406c, AUX pulse 0x119c | 6.4 ns per tick | assumed; the holdoff is in use on the unit, its exact unit not measured |
 | Auto trigger 0x4060/0x4064 | 4 ns per tick | assumed; auto trigger works on the unit with OOS's values, the unit not measured |
 | Measure unit 0x1040 | one sample per core per 156.25 MHz clock; e = 18 gives 2^18 samples, 1.68 ms | assumed; the run completes on the unit, its length not measured |
@@ -145,9 +146,13 @@ So a kexec session loads xdma with `poll_mode=1` whatever the configuration says
   running when the reading process dies times out 10 s later in the kernel. Verified on the unit.
 - An open BAR1 mapping keeps `rmmod xdma` from working. Unmap before unloading. Verified on the unit.
 - Never send BOOT while xdma or the PCIe host driver is loaded: reconfiguring the FPGA behind a bound endpoint can
-  lock the CPU (`../protocols/fpga-boot.md`). OOS refuses it (`hal/src/dho/boot/io.rs`, `fpgad/src/main.rs`).
-- If the link does not train, the RK3399 host driver cannot retrain without a reload. `oos-fpga-up` reloads it up to
-  6 times, 2 s apart. OOS code.
+  lock the CPU (`../protocols/fpga-boot.md`). The caller must unmap BAR1 and unload both. OOS checks this only in
+  part: the BOOT repeat unloads both and stops if either stays loaded (`pcie_down` in `fpgad/src/main.rs`); the
+  `cold-boot` and `fpga-boot` commands refuse only when xdma is loaded, and `--force` skips that check; `fpga_boot`
+  in `hal/src/dho/boot/io.rs` checks nothing. OOS code.
+- If the link does not train, the RK3399 host driver cannot retrain without a reload. `oos-fpgad` makes at most six
+  attempts: each polls for the endpoint every 20 ms for up to 2 s, a failed one unloads the driver and waits 2 s.
+  `oos-fpga-up` does the same with fixed 2 s waits. OOS code; the retry timing is not measured on the unit.
 
 ## Throughput and what limits it
 
@@ -204,8 +209,9 @@ Measured on the unit (2026-11-15 and 2026-11-16, `:SYSTem:STATe?` counters):
   k up to 200 (`../protocols/acquisition-start.md`).
 - k = 0 with the enable bit set is assumed to give no output, so the read would stall. OOS never writes it.
 - The compressed length must be a multiple of 8 with points x k <= record length. Asking for more stalls the read
-  (k = 256 on a 1 M record timed out). The time-out is verified on the unit (twice); that the point count is its
-  cause is assumed, the re-test is pending.
+  (k = 256 on a 1 M record timed out twice with 3912 points). Verified on the unit: with the length rounded down
+  (3904 points, `compressed_len` in `hal/src/dho/seq.rs`) k = 256 at 1 M read without a time-out and compress-check
+  passed at k = 4, 16, 64 and 256 (`../fork/unit-dho804.md`, round 5).
 - Compression acts on stored samples: decimation and peak detect happen before the memory, so k counts stored points.
   Assumed.
 
@@ -221,9 +227,12 @@ Measured on the unit (2026-11-15 and 2026-11-16, `:SYSTem:STATe?` counters):
 
 ### Memory and segments
 
-- Memory unit: a burst of 10 points per channel stream. 0x10e0 = segment size in bursts, 0x10e4 = record depth.
-  OOS code (`hal/src/dho/acq.rs`, `hz.rs`). 10 points per burst is assumed from the code's memory arithmetic, which
-  works.
+- Memory unit: a burst of 10 stored sample words, counted over all channels in memory together. 0x10e0 = segment
+  size in bursts, sized from points per channel x ratio (1, 2 or 4 channels in memory) plus 384 words of guard,
+  rounded up to a power of two (`mem_size` in `hal/src/dho/hz.rs`). 0x10e4 = record depth in points per channel
+  (`memsel`, written unchanged by `hal/src/dho/acq.rs`). Average mode uses the same burst and about twice the
+  bursts (`mem_size_avg`, `../protocols/horizontal-config.md` 1.4). OOS code. 10 words per burst is assumed from the
+  code's memory arithmetic, which works.
 - With a segment of 7 864 320 bursts a deeper record wraps inside its segment (the phase jump lands where the
   arithmetic predicts); with a segment of 2^24 bursts 100 M and 125 M records are complete. Verified on the unit.
 - Frame ring: 0x4010 reads back the last recorded frame. A batch waits until 0x4010 - first + 1 reaches the wanted
@@ -241,7 +250,7 @@ Three units see per-core or per-stream data. Their numbering differs:
 |---|---|---|---|---|
 | measure unit 0x1040 slot k (normal mode) | all 8 | lower channel 0-3, higher 4-7 | CH1 0/2, CH2 1/3, CH3 4/6, CH4 5/7 | verified on the unit for CH1/CH2 in 4-channel mode (2026-11-13); the rest OOS code (`hal/src/dho/levels.rs`) |
 | measure unit in core-order mode (self-cal) | | | channel = cores ch and ch+4; core order 0, 2, 1, 3, 4, 6, 5, 7 | verified on the unit (`../protocols/self-cal.md` 14.3) |
-| mask/zone source 0x1190[23:20] | slot 0 | lower 0, higher 1 | CHn: slot n-1 | verified on the unit at 1, 2 and 4 channels (`../fork/hwmask.md`, round 5) |
+| mask/zone source 0x1190[23:20] (slot index s; the field takes 1 << s) | slot 0 | lower 0, higher 1 | CHn: slot n-1 | verified on the unit at 1, 2 and 4 channels (`../fork/hwmask.md`, round 5) |
 | DVM lane 0x2244[9:8] | channel - 1 | lower 0, higher 2 | channel - 1 | verified on the unit for CH2 in 2-channel mode (`../fork/dvm.md`) |
 
 The two measure-unit rows describe different ADC modes and have not been compared in one session. A host that needs
@@ -276,8 +285,12 @@ mux 4), `../fork/hwserial.md` (SPI mux 12, I2C mux 13); not yet verified on hard
   write whole words from it. OOS code (`hal/src/dho/tpu.rs`).
 - The force pulse is 0x205c = shadow | 0x20, then shadow. A force built from a constant switches the trigger mux
   (serial receivers included). Not yet verified on hardware (host test in `hal/src/dho/tpu.rs`).
-- Timers in the TPU, the serial receivers, the AUX pulse and 0x4068/0x406c count 6.4 ns (156.25 MHz); the auto-trigger
-  times 0x4060/0x4064 count 4 ns. Assumed (Clocks and time units).
+- TPU time units differ per register. The event limits t1/t2 of the A, B and R events (pulse, window, timeout and
+  delay triggers, 0x2020 onwards) count 1.6 ns. Holdoff (0x2084/0x2088), the R timeout (0x2068/0x206c) and the delay
+  time (0x2060/0x2064) count 6.4 ns. OOS code (`TICK_FS` and `TICK64_FS` in `hal/src/dho/tpu.rs`, register map in
+  `../protocols/trigger.md`).
+- The serial receivers, the AUX pulse and 0x4068/0x406c count 6.4 ns (156.25 MHz); the auto-trigger times
+  0x4060/0x4064 count 4 ns. Assumed (Clocks and time units).
 
 ### Mask unit (0x1184-0x11b4, 0x4020 bits 12-15)
 
@@ -331,7 +344,8 @@ Sums 2^n samples of one lane; result layout measured on the unit. `../fork/dvm.m
 
 ### Hardware average (0x1004 bit 3, 0x10b0, 0x10b4)
 
-0x10b0 = N - 1, 0x10b4 = clear pulse with the FSM stopped, 0x1004 bit 2 set in average mode. Verified on the unit
+0x10b0 = N - 1 for N >= 2 (OOS writes at least 1, so N = 1 and 2 both write 1; a value of 0 is untested), 0x10b4 =
+clear pulse with the FSM stopped, 0x1004 bit 2 set in average mode. Verified on the unit
 (`../fork/unit-dho804.md`, B1, round 4): without bit 2 every averaged frame above 62.5 MSa/s (156.25 MSa/s and up) is
 zero; with it averaging works at 156.25, 312.5, 625 and 1250 MSa/s (312.5 MSa/s: noise 1.08 -> 0.46 mV at N = 16). At
 62.5 MSa/s the noise falls 1.07 -> 0.72 / 0.53 / 0.42 / 0.40 mV at N = 2 / 4 / 16 / 256 (100 mV/div): a floor near
@@ -360,17 +374,17 @@ the unit" means OOS's feature that depends on the field behaves correctly on the
 | 0x1080, 0x1084 | | per-channel sample delay | measured on the unit (Clocks) |
 | 0x10b0, 0x10b4 | | average count - 1, average clear pulse (FSM stopped) | works on the unit at 62.5 MSa/s and, with 0x1004 bit 2, above |
 | 0x10d0, 0x10d8 | | rate divider, two paths | works on the unit |
-| 0x10e0, 0x10e4 | | segment size and record depth in bursts | works on the unit (no wrap at 2^24 bursts) |
+| 0x10e0, 0x10e4 | | segment size in bursts of 10 stored words over all channels together (Memory and segments); record depth in points per channel | works on the unit (no wrap at 2^24 bursts) |
 | 0x1100, 0x1108 | | play window length and start | works on the unit |
 | 0x1170, 0x1174 | | compression, main and zoom | verified on the unit (main) |
 | 0x11e8 | | roll/scan FIFO fill level in 8-byte units | works on the unit |
 | 0x11f0 | | points per channel per frame to send | works on the unit |
 | 0x11fc | | points per chunk: 100/ratio in roll and scan, 1000 otherwise | works on the unit |
 | 0x1204, 0x1208 | | scan trigger position and flag; recorded points after a roll stop | verified on the unit (`../protocols/roll-mode.md` 9.1) |
-| 0x12d4, 0x12dc | | LA thresholds; live LA comparator state | verified on a DHO924S (`../protocols/la.md`) |
+| 0x12d4, 0x12dc | | LA threshold DAC codes; live LA comparator state | 0x12dc and the zero codes in 0x12d4 verified on a DHO924S; a threshold sweep had no effect there, under stock as well (`../protocols/la.md`) |
 | 0x1430 | [2:0] | AUX OUT source; power-up value 0 | not yet verified on hardware (`hal/src/dho/auxout.rs`) |
 | 0x2000-0x208c | | TPU levels, sources, coupling, holdoff | works on the unit (`../protocols/trigger.md`) |
-| 0x205c | [4:0], bit 5, bit 12 | trigger type mux, force pulse, coupling-filter path | works on the unit |
+| 0x205c | [4:0], bit 5, bit 12 | trigger type mux, force pulse, coupling-filter path | [4:0] and bit 12 work on the unit; the force pulse (bit 5) is not yet verified on hardware |
 | 0x2244, 0x2248 | | DVM configuration and latch | layout measured on the unit (`../fork/dvm.md`) |
 | 0x4000 | | image version | verified on the unit |
 | 0x4004 | bit 0, bit 31, bit 2 | FSM run, stop, play-last pulse | works on the unit |
@@ -421,9 +435,11 @@ the unit" means OOS's feature that depends on the field behaves correctly on the
 - Use MSI, keep the completion off the cores that draw. Poll mode costs an A53 per transfer.
 - Minimise BAR writes: skip unchanged words (OOS shadows), and lower the timer slack so the 10 us write pause is
   10 us.
-- The FPGA attaches no sequence number to frames. Stale frames after a settings change are filtered on the host: OOS
-  tags each frame with the (generation, epoch) of the settings it was armed with and drops mismatches
-  (`../architecture/acquisition.md`, `ui/src/board/dho/publication.rs`). A SINGLE armed just before a settings change
+- Nothing in a frame identifies the settings it was recorded with. Header word 4 holds a frame or chunk counter when
+  headers are on (`../protocols/trigger.md`, `hal/src/dho/roll.rs`), but it does not change with the settings. Stale
+  frames after a settings change are filtered on the host: OOS tags each frame with the (generation, epoch) of the
+  settings it was armed with and drops mismatches (`../architecture/acquisition.md`,
+  `ui/src/board/dho/publication.rs`). A SINGLE armed just before a settings change
   can deliver only an old-generation frame and stay in Wait. Verified on the unit (2026-11-16).
 
 ## Hazards and recovery
@@ -434,7 +450,7 @@ the unit" means OOS's feature that depends on the field behaves correctly on the
 | BOOT while xdma is bound | can lock the CPU | unload xdma and the host driver first |
 | BOOT to an empty or foreign slot | no monitor afterwards, no PCIe | OOS allows slots 0x0 and 0x400000 only; a power cycle returns to slot 0 |
 | C2H read the frame cannot satisfy (k = 0, too many compressed points, compression without the pass-through chain) | read blocks 10 s, then times out | keep 0x11f0 within what the window delivers |
-| mask/zone window that never completes | FSM waits in state 5, no acquisitions | stall guard, or a stop sequence before the next arm |
+| mask/zone window that never completes | FSM waits in state 5, no acquisitions; the state survives a stop and a reconfiguration | stall guard: one batch with the unit off, then arm it again (`../fork/hwmask.md`, round 20); a stop alone is not a known recovery |
 | interrupt-mode, PCIe or FPGA experiments | FPGA and endpoint keep their state across a warm reboot; the next kernel can meet a device in the experiment's state | recover by a power cycle, not a warm reboot (`../architecture/system.md`) |
 | kexec with MSI | every C2H read times out | poll mode in kexec sessions |
 | killing a reader during a read | a transfer that times out 10 s later | stop oos-ui cleanly |

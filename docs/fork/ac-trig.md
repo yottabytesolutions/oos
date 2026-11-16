@@ -31,7 +31,8 @@ trigger on.
    deposit workers' frames; level, near and wide count every dense frame, also the UI's newest frame of a batch.
 2. Filtered path near-only (`trignear::edge_near`): the edge nearest the hardware point within the near window, None
    without one, never the wide search. Then the hardware point stands, as it already did when no edge was found.
-3. Filtered path on the codes path: the level from the same 4096 strided samples, read from the words
+3. Filtered path on the codes path: the level from the same strided samples (stride max(len / 4096, 1): 4096 to 8191
+   samples, all of them below 4096 points; the finite ones averaged), read from the words
    (`board::sw_trig_level_of`), then the near window as for DC.
 4. Unit: setup A before (counters only) and after, 5/10/50 us/div; setup B unchanged.
 

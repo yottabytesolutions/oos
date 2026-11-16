@@ -105,6 +105,8 @@ fn the_lower_trigger_level_never_ends_above_the_upper() {
     u.set_trig_type(TrigType::Delay);
     (u.m.trig_level, u.m.trig_level2) = (0.4, 1.6);
     u.set_trig_type(TrigType::Runt);
+    // the change point orders the levels (core normalisation), so the step applies it
+    u.step(0.05);
     assert_eq!((u.m.trig_level, u.m.trig_level2), (0.4, 0.4), "the lower level gives way to the upper");
     let ordered = |u: &Ui| u.m.trig_level2 <= u.m.trig_level;
     // the knob: each level stops at the other
@@ -123,13 +125,13 @@ fn the_lower_trigger_level_never_ends_above_the_upper() {
         u.set_trig_type(t);
         (u.m.trig_level, u.m.trig_level2) = (1.0, 0.5);
         u.m.trig_level = 0.2;
-        u.mark_changed();
+        u.step(0.05);
         assert_eq!((u.m.trig_level, u.m.trig_level2), (0.2, 0.2), "{t:?}");
     }
     // the other types keep two levels of their own, in any order
     u.set_trig_type(TrigType::Delay);
     (u.m.trig_level, u.m.trig_level2) = (0.2, 1.0);
-    u.mark_changed();
+    u.step(0.05);
     assert_eq!((u.m.trig_level, u.m.trig_level2), (0.2, 1.0));
 }
 

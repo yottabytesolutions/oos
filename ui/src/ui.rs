@@ -9195,8 +9195,6 @@ impl Ui {
 
     /// A setting the user or a remote client changed: a pending bus candidate and a running SINGLE start over.
     fn settings_changed(&mut self) {
-        // whatever moved the upper level (50 %, SCPI's LEVel, a fit) leaves the two levels in order
-        self.m.order_trigger_levels();
         self.cancel_bus_candidate(true);
         // an incomplete SINGLE keeps its press: the new settings make a new generation of it, not a new arm (M2.3c);
         // a waiting *OPC? waits for the capture with the new settings
@@ -9750,8 +9748,6 @@ impl Ui {
                     self.mask_ref = None;
                 }
                 self.m = m;
-                // a set-up written by hand or by an older build may have the two levels the wrong way round
-                self.m.order_trigger_levels();
                 // what Bus switched on belongs to the set-up before: leaving Bus leaves the recalled one as it is
                 self.bus_auto = None;
                 self.math_state.borrow_mut().forget_fit();

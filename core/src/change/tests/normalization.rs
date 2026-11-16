@@ -94,3 +94,19 @@ fn live_normalization_reports_only_effective_repair_classes() {
         (true, Classes::ACQ | Classes::STATS | Classes::MASK | Classes::VIEW),
     );
 }
+
+// Upstream b90facd5 as a rule of the change point: whatever moved a level (a type change, a recall, 50 %, SCPI
+// LEVel), the lower level of Slope, Runt and Window ends at or below the upper one; other types keep both.
+#[test]
+fn the_lower_trigger_level_of_a_two_level_type_gives_way_to_the_upper() {
+    use crate::model::TrigType;
+    for t in [TrigType::Slope, TrigType::Runt, TrigType::Window] {
+        let mut m = Model { trig_type: t, trig_level: 0.4, trig_level2: 1.6, ..Model::default() };
+        assert!(normalize(&mut m, &config(4)), "{t:?}");
+        assert_eq!((m.trig_level, m.trig_level2), (0.4, 0.4), "{t:?}");
+        assert!(!normalize(&mut m, &config(4)));
+    }
+    let mut m = Model { trig_type: TrigType::Delay, trig_level: 0.4, trig_level2: 1.6, ..Model::default() };
+    normalize(&mut m, &config(4));
+    assert_eq!((m.trig_level, m.trig_level2), (0.4, 1.6), "Delay's level B is free");
+}

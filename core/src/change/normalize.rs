@@ -46,6 +46,11 @@ fn timebase(m: &mut Model) -> bool {
 fn trigger(m: &mut Model, config: &Config) -> bool {
     let mut changed = repair(&mut m.trig_src, config);
     changed |= repair(&mut m.trig_src2, config);
+    // a two-level type keeps its lower level at or below the upper one; the lower gives way, since the upper is the
+    // level every type shares and the lower is also Delay's level B and Setup/Hold's clock level
+    if m.trig_type.two_level() && m.trig_level2 > m.trig_level {
+        changed |= set(&mut m.trig_level2, m.trig_level);
+    }
     changed
 }
 fn acquire(m: &mut Model, config: &Config) -> bool {

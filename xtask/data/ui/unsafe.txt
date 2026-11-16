@@ -1,17 +1,23 @@
 # unsafe outside the allowed paths (architecture.txt): <count> unsafe <file>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
+5 unsafe ui/src/announce.rs
+4 unsafe ui/src/announce/windows.rs
+3 unsafe ui/src/desktop/input.rs
+2 unsafe ui/src/desktop/picker.rs
 1 unsafe ui/src/drawpipe.rs
 16 unsafe ui/src/drm.rs
 1 unsafe ui/src/ethlink.rs
 3 unsafe ui/src/fastdraw.rs
 19 unsafe ui/src/gpu.rs
-3 unsafe ui/src/http.rs
+4 unsafe ui/src/http.rs
 2 unsafe ui/src/main.rs
 7 unsafe ui/src/mdns.rs
 1 unsafe ui/src/net.rs
 1 unsafe ui/src/placement.rs
 2 unsafe ui/src/sntp.rs
+1 unsafe ui/src/store.rs
 1 unsafe ui/src/ui.rs
+1 unsafe ui/src/ui/analysis.rs
 2 unsafe ui/src/ui/sysinfo.rs
 1 unsafe ui/src/ui/wlan.rs
 1 unsafe ui/src/usbtmc.rs

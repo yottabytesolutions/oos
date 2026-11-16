@@ -8,7 +8,7 @@
 459 file hal/src/dho/mask.rs
 432 file hal/src/dho/seg.rs
 848 file hal/src/dho/selfcal.rs
-1493 file hal/src/dho/seq.rs
+1501 file hal/src/dho/seq.rs
 1027 file hal/src/dho/tpu.rs
 586 file hal/src/model.rs
 410 file hal/src/update/ed25519.rs

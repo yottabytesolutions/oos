@@ -18,6 +18,8 @@ pub(super) fn index(u: &Ui, it: Item) -> Option<usize> {
         Item::RemMdns => usize::from(s.remote_mdns),
         Item::SshPassword => usize::from(s.ssh_password),
         Item::RemName => usize::from(u.name_own().is_some()),
+        // Allowed's picker lists the list in force first; without a list ("everyone") no row stands for it
+        Item::RemAllow => return (!s.net_allow().is_empty()).then_some(0),
         Item::NtpServer => time::SERVERS.iter().position(|v| *v == s.ntp_server).unwrap_or(time::SERVERS.len()),
         Item::TimeZone => {
             if s.tz == crate::sysconf::DHCP {

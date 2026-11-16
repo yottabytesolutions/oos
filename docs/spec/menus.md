@@ -722,7 +722,7 @@ Delta vs e9f7c30b: **Changed**. Constructor: `ui/src/ui.rs:6432`.
 Path: **Network > Remote services**. Menu requirement: **menus-35**, keep; shared H1/N1 changes apply.
 Delta vs e9f7c30b: **Changed**. Constructor: `ui/src/ui/remote.rs:35`.
 
-Stored order is column-major. Display pairs by row: Web/Address, SCPI/Port, VXI-11/Port, SSH/SSH settings, mDNS/Name.
+Stored order is column-major. Display pairs by row: Web/Address, SCPI/Port, VXI-11/Port, telnet/Port, SSH/SSH settings, mDNS/Name, Allowed/Firewall.
 
 | ID | Item / label | Kind | Field or action; value set / step | Visibility / enable conditions | Highlight today | Disposition | Evidence | Delta vs e9f7c30b |
 |---|---|---|---|---|---|---|---|---|
@@ -738,6 +738,8 @@ Stored order is column-major. Display pairs by row: Web/Address, SCPI/Port, VXI-
 | menus-1254 | `RemTelnetInfo`: Port | status | remote telnet port and configured state; no action | Always | text only | keep | `ui/src/ui/remote.rs:203` | Added |
 | menus-458 | `Open:Ssh`: SSH settings | submenu | `open_menu(Ssh); parent=current menu`; navigate; current summary required by H1 | Always | focus border only; no active summary | change H1: inline summary and selected-state cue | `ui/src/ui/ssh.rs:94`; `ui/src/ui.rs:9197` | Kept |
 | menus-459 | `RemName`: Name | picker | `sys.net_name; net_name/name_value`; default name, current custom name, Other keyboard; 1..63 lowercase letters/digits/hyphen; D-Name | Always | string comparison can miss current option (decorated name/DHCP zone) | change H1: compare value identity | `ui/src/ui/remote.rs:250`; `ui/src/ui.rs:9279`; `ui/src/ui/remote.rs:235` | Kept |
+| menus-1909 | `RemAllow`: Allowed | picker | `sys.net_allow`; the list in force, the networks the scope is on, Other keyboard (`netacl::canonical`; a bad word refuses the whole entry, empty removes the line); written and put in force at once (servers' list, firewall and SSH off the frame loop) | Always | current list is the first picker row V; no list (everyone) has no row | committed-choice highlight (task 81) | `ui/src/ui/remote.rs`; `ui/src/ui/active_choice/system.rs` | Added (upstream c24899c4, 256a48d4) |
+| menus-1910 | `RemFirewall`: Firewall | status (text only) | `sys.net_allow`, last run; on, off: everyone, applying, failed: see the log | Always | text only | keep | `ui/src/ui/remote.rs` | Added (upstream c24899c4) |
 
 ### Ssh
 

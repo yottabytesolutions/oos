@@ -175,6 +175,10 @@ fn active_choice_inventory_has_an_identity_for_each_committed_selector() {
             if matches!(it, Item::SimShow) && u.refs[u.m.sim_slot].is_none() {
                 continue;
             }
+            // no address list (everyone) has no row in Allowed's picker; with a list it is the first, below
+            if matches!(it, Item::RemAllow) && u.sys.net_allow().is_empty() {
+                continue;
+            }
             let selected = index(&u, it).unwrap_or_else(|| panic!("missing identity: {menu:?} {it:?}"));
             assert!(selected < u.options(it).len(), "invalid option identity: {it:?}");
         }
@@ -187,6 +191,10 @@ fn active_choice_inventory_has_an_identity_for_each_committed_selector() {
     assert_eq!(index(&u, Item::DecSrc), Some(7));
     assert_eq!(index(&u, Item::DecCs), Some(0));
     assert_eq!(index(&u, Item::DecSrc4), Some(13));
+    // Allowed (upstream c24899c4): the list in force is the first row of its picker
+    u.sys.set_net_allow(Some("192.0.2.0/24"));
+    assert_eq!(index(&u, Item::RemAllow), Some(0));
+    assert_eq!(u.options(Item::RemAllow).first().map(String::as_str), Some("192.0.2.0/24"));
 }
 
 #[test]

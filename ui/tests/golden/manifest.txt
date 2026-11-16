@@ -162,7 +162,7 @@
         ]
       ],
       "rgb_sha256": "4597d4a5fef761b164fba97d897a83ca601817903a671d2122ad40a259d6f060",
-      "script_sha256": "2a0a52759f912858341a0b37373131fd1c09591c6091352baccd840f7e24f8d5",
+      "script_sha256": "cabb331aaf6b8ca8172231b964b056baceaf1eded4490f796437bce7a9b3dec0",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=6 grade=true zoom=false acquisition=Normal run=Run frames=4 records=24 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -182,7 +182,7 @@
         ]
       ],
       "rgb_sha256": "bdfe574eda9ff976a038eda8e3972b36efeee7b2c4d139ccd3a0bbf36f7dfe74",
-      "script_sha256": "2a0a52759f912858341a0b37373131fd1c09591c6091352baccd840f7e24f8d5",
+      "script_sha256": "cabb331aaf6b8ca8172231b964b056baceaf1eded4490f796437bce7a9b3dec0",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=6 grade=true zoom=false acquisition=Normal run=Run frames=125 records=750 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -202,7 +202,7 @@
         ]
       ],
       "rgb_sha256": "35502ea3c1fdd68a5dfa38ec7674ce95fa11644cd38cfb451689cf82180ebc9c",
-      "script_sha256": "2a0a52759f912858341a0b37373131fd1c09591c6091352baccd840f7e24f8d5",
+      "script_sha256": "cabb331aaf6b8ca8172231b964b056baceaf1eded4490f796437bce7a9b3dec0",
       "settings": "settings dots=Auto channels=1 tdiv=0.00002 persist=6 grade=true zoom=false acquisition=Normal run=Run frames=276 records=1656 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -222,7 +222,7 @@
         ]
       ],
       "rgb_sha256": "4baa8febfdb6b8eaba98215e0726c7690e19860cfa4a473b6b930f6592d50e3b",
-      "script_sha256": "7e1035e4b2a7c4bf1eddab754143ed9aa1626e516402d7b5c3bed1bdbccded43",
+      "script_sha256": "5e1bb2d603bf179beba500b081289892caeec28651a46dcf6de7a2621ba33379",
       "settings": "settings dots=Auto channels=1 tdiv=0.00005 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=12 records=72 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -242,7 +242,7 @@
         ]
       ],
       "rgb_sha256": "1c817c4ee6f4fcf29322987e48d63ba991370832ed81762451505f6e1a83b039",
-      "script_sha256": "7e1035e4b2a7c4bf1eddab754143ed9aa1626e516402d7b5c3bed1bdbccded43",
+      "script_sha256": "5e1bb2d603bf179beba500b081289892caeec28651a46dcf6de7a2621ba33379",
       "settings": "settings dots=Auto channels=1 tdiv=0.00005 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=23 records=138 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -681,7 +681,7 @@
           456
         ]
       ],
-      "rgb_sha256": "8959464b8e9035a7cb65ad131ef5691f9e548e5363b44382bbb9d664fb2ecc7f",
+      "rgb_sha256": "a3ac9e19a9d413a784835a27c003fc29264dbac9eb03a713ffe6eeb1ccfa381d",
       "script_sha256": "f78c42846b9c96df2288bbb039bcc6c8a72c084acf1926fcee904e3f1f4bfca2",
       "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -802,7 +802,7 @@
         ]
       ],
       "rgb_sha256": "af0c411b479f149fa92da28b30725c676fb7de89a9995a7e92a971a70c2216cc",
-      "script_sha256": "eb2fb5d54b9aecd453dc56fd9a010dc3fafa5d388c15f51bc9585998c7687ad3",
+      "script_sha256": "b91a4f0e8d1e8166c8d03297547a5f6a10633111c9c0526487e78adc7cd99a59",
       "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=3 grade=false zoom=false acquisition=Normal run=Run frames=92 records=552 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -921,7 +921,7 @@
           456
         ]
       ],
-      "rgb_sha256": "2d3ef781d491a73fd0967030456b470d64ac2bbf06779428ae06961427ea040d",
+      "rgb_sha256": "cd2ff2de190f1242ee72ba8aefc97b34fe4b60e79153cae256194fa8b84569be",
       "script_sha256": "113f0c0b7020dfad414de7ba6fc10b0b7c8060a0130ed325ace4706035e45bc1",
       "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=50 records=136 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -2063,7 +2063,7 @@
         ]
       ],
       "rgb_sha256": "3d9636a6446fb16757a3ab6cf6353aa0b076ccea6cf25b93801dfa9b90e92dbc",
-      "script_sha256": "3febd880ef72474c1791e9d67a9a1ee0fed48742e5e91ca01ef081329691418c",
+      "script_sha256": "9aaab2e002de89e1b86cacbb3f02c85d1934fdbd422439ba4fea9af99566f75d",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=6 grade=true zoom=false acquisition=Normal run=Run frames=4 records=24 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -2083,7 +2083,7 @@
         ]
       ],
       "rgb_sha256": "cd1fc2ce36198b2fa1a479b44c7b239bf120c61237b09a4843b99b4c029bd3c1",
-      "script_sha256": "3febd880ef72474c1791e9d67a9a1ee0fed48742e5e91ca01ef081329691418c",
+      "script_sha256": "9aaab2e002de89e1b86cacbb3f02c85d1934fdbd422439ba4fea9af99566f75d",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=6 grade=true zoom=false acquisition=Normal run=Run frames=125 records=750 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -2103,7 +2103,7 @@
         ]
       ],
       "rgb_sha256": "e91f53d4fb50e0ca6452c10b03f6e9c8aa5ba6e4bd9602d527cea636f8b8f285",
-      "script_sha256": "3febd880ef72474c1791e9d67a9a1ee0fed48742e5e91ca01ef081329691418c",
+      "script_sha256": "9aaab2e002de89e1b86cacbb3f02c85d1934fdbd422439ba4fea9af99566f75d",
       "settings": "settings dots=Auto channels=1 tdiv=0.00002 persist=6 grade=true zoom=false acquisition=Normal run=Run frames=276 records=1656 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -2123,7 +2123,7 @@
         ]
       ],
       "rgb_sha256": "bb4eb5c3b3a1fdd44299e3bd5a921435d3e87b9250eb9b74c7bf1547002ed34b",
-      "script_sha256": "7645f1e24bf2bcf73f47c37cdd099ee9b6e5e6dd8f69c25dfa747ef1129882d7",
+      "script_sha256": "134ae980654b936915fee9d8eed14b7dc717fd93e9c1748ae0891bea9e8b65e6",
       "settings": "settings dots=Auto channels=1 tdiv=0.00005 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=12 records=72 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -2143,7 +2143,7 @@
         ]
       ],
       "rgb_sha256": "ff03de339e09af66584ce7fc931055f8001e533a4b1ac6b979b04c68fbbd349b",
-      "script_sha256": "7645f1e24bf2bcf73f47c37cdd099ee9b6e5e6dd8f69c25dfa747ef1129882d7",
+      "script_sha256": "134ae980654b936915fee9d8eed14b7dc717fd93e9c1748ae0891bea9e8b65e6",
       "settings": "settings dots=Auto channels=1 tdiv=0.00005 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=23 records=138 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -2582,7 +2582,7 @@
           456
         ]
       ],
-      "rgb_sha256": "c7871725a8cb4caeb0db06e6689af412b9b3480dcfbb1b2296002a6ee880f2b6",
+      "rgb_sha256": "8eabc3709d3297970cd34447b1a21800fbed7fc0b212e1cb19de6cc67f816e78",
       "script_sha256": "2e4e07c9bada5cf129894deeb2b477b9f77649c2a9832842746fc6384b4a07f0",
       "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -2703,7 +2703,7 @@
         ]
       ],
       "rgb_sha256": "b0aee767abaf11679a0aca24fad22d8aac22bdce5ba21c441e7adf8ba2b1b4c8",
-      "script_sha256": "4315bcfdecef976142090fd0ccda55c4e7f2d28cb2dd175bd95dc9867b657e86",
+      "script_sha256": "65233728f9ab953a80db26b87c112506b59b1b8b64049d4dbe02e298d1eb831a",
       "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=3 grade=false zoom=false acquisition=Normal run=Run frames=92 records=552 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -2822,7 +2822,7 @@
           456
         ]
       ],
-      "rgb_sha256": "c6de675e4e6eda3f431ee825f2b9b4f4dca610b974f18cfeb6874128734cc609",
+      "rgb_sha256": "c207a309a7b5ee41a1b5e0ef4ed04c52e8a03378fb38377014dd9d0a3c485a0e",
       "script_sha256": "383737cdbb2d28e84aebee80d75e04c5b41e61f017d45b21f00871096acf6b2c",
       "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=50 records=136 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -3964,7 +3964,7 @@
         ]
       ],
       "rgb_sha256": "d87bb162470e5922dae1d65d16807477d8b7c25142cddec82d3dc54c64b82299",
-      "script_sha256": "a8435d49af89d0b78fcb936e6adcba0b1b0e319ee466d2dbe869d677e7d07189",
+      "script_sha256": "a48865e97b72ab9b0828332b40bdc8e03c5662123f3fe9abf0cb0e99dff575ad",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=6 grade=true zoom=false acquisition=Normal run=Run frames=4 records=24 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -3984,7 +3984,7 @@
         ]
       ],
       "rgb_sha256": "db6692870906cd383321bc1dfb90b376582ac91b1c6a1ae0e69ef4221818777c",
-      "script_sha256": "a8435d49af89d0b78fcb936e6adcba0b1b0e319ee466d2dbe869d677e7d07189",
+      "script_sha256": "a48865e97b72ab9b0828332b40bdc8e03c5662123f3fe9abf0cb0e99dff575ad",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=6 grade=true zoom=false acquisition=Normal run=Run frames=125 records=750 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -4004,7 +4004,7 @@
         ]
       ],
       "rgb_sha256": "ff512fbe1edd5c138b272b2e88d7f3aec8e1834b64c8cd0d6dbaa7a106220458",
-      "script_sha256": "a8435d49af89d0b78fcb936e6adcba0b1b0e319ee466d2dbe869d677e7d07189",
+      "script_sha256": "a48865e97b72ab9b0828332b40bdc8e03c5662123f3fe9abf0cb0e99dff575ad",
       "settings": "settings dots=Auto channels=1 tdiv=0.00002 persist=6 grade=true zoom=false acquisition=Normal run=Run frames=276 records=1656 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -4024,7 +4024,7 @@
         ]
       ],
       "rgb_sha256": "50b7afec8f3c81ff3a64cd13e53e1c5389b5f94f1d8ad53c426ebab0c3116e4e",
-      "script_sha256": "c576ea59a9cf518825cc31601070e62978cee32db41a60aab533687ee38e7efd",
+      "script_sha256": "c8cdbda640ce26254a50f10a31ed524e1dd61e21c9dd345cdcecd10b065895e7",
       "settings": "settings dots=Auto channels=1 tdiv=0.00005 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=12 records=72 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -4044,7 +4044,7 @@
         ]
       ],
       "rgb_sha256": "727c6e9edb23449bfae343f655057a9f1efd835d2ab1836a76aaa4a13eb3b6de",
-      "script_sha256": "c576ea59a9cf518825cc31601070e62978cee32db41a60aab533687ee38e7efd",
+      "script_sha256": "c8cdbda640ce26254a50f10a31ed524e1dd61e21c9dd345cdcecd10b065895e7",
       "settings": "settings dots=Auto channels=1 tdiv=0.00005 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=23 records=138 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -4483,7 +4483,7 @@
           456
         ]
       ],
-      "rgb_sha256": "1fa60f0b56288474597ef24d9a2f8cb9c4305f90f26320e10f52e69654bf56fa",
+      "rgb_sha256": "8781b274477903e83f15b3c14f13857ef0b98c30f78646b47af27dbae331a06e",
       "script_sha256": "825f59c6aa635647300315fb08ef98b1b5287edc8dd488245de478b7bf195eb9",
       "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -4604,7 +4604,7 @@
         ]
       ],
       "rgb_sha256": "7cf85bb7c973307b643c3b8e1a8ccd11c0995a8d95b9d564f8dda49888aeff60",
-      "script_sha256": "10c989d1d2de340fdf8bbe7f53f4ce60e5951635b040ce7c33f8eb33519e3d70",
+      "script_sha256": "4f09d9176dd3d60f09b4c2dd440d325e52809c1e1064ea3bf9dc123c665a2168",
       "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=3 grade=false zoom=false acquisition=Normal run=Run frames=92 records=552 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
@@ -4723,7 +4723,7 @@
           456
         ]
       ],
-      "rgb_sha256": "c4dba18170fa6c9b550509c87b0e5855fbd0d82e63617b82137768ecd3c1d540",
+      "rgb_sha256": "280b826bdc7a231b51df1179d9a43b38b92aa64defd66035eef069a565ce05b8",
       "script_sha256": "61cdce0d156a53520719304cabff57772d58c652b39bbfe83aaf905b59cbcbee",
       "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=50 records=136 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",

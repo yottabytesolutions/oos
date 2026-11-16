@@ -189,6 +189,7 @@ fn publish_with(paths: &[String], mut rename: impl FnMut(&str, &str) -> std::io:
 fn backup_with(path: &str, link: impl FnOnce(&str, &str) -> std::io::Result<()>) -> std::io::Result<()> {
     let backup = format!("{}.bak", path);
     let temporary = format!("{}.new", backup);
+    remove_temporary(&temporary);
     link(path, &temporary)?;
     let result = (|| {
         let dir =

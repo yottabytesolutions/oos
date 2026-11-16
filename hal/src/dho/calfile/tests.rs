@@ -86,6 +86,24 @@ fn audit0073_backup_link_failure_preserves_previous_backup() {
 }
 
 #[test]
+fn stale_backup_link_does_not_block_save() {
+    let (dir, paths) = staged("stale-backup", 1);
+    let temporary = format!("{}.bak.new", paths[0]);
+    std::fs::hard_link(&paths[0], &temporary).unwrap();
+    let result = save(dir.to_str().unwrap(), "0.hex", b"saved", (2000, 1, 1, 0, 0, 0));
+    let live = std::fs::read(&paths[0]);
+    let backup = std::fs::read(format!("{}.bak", paths[0]));
+    let temporary_exists = std::path::Path::new(&temporary).exists();
+    let staged_exists = std::path::Path::new(&format!("{}.new", paths[0])).exists();
+    std::fs::remove_dir_all(dir).unwrap();
+    result.unwrap();
+    assert_eq!(parse(&live.unwrap()), Ok(&b"saved"[..]));
+    assert_eq!(backup.unwrap(), b"good");
+    assert!(!temporary_exists);
+    assert!(!staged_exists);
+}
+
+#[test]
 fn audit0073_backup_links_before_replacing_previous_backup() {
     let (dir, paths) = staged("backup-link-order", 1);
     backup_with(&paths[0], |from, to| {

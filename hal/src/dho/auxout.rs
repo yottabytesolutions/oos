@@ -39,7 +39,7 @@ pub mod pf {
 /// Where the pass/fail result comes from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Source {
-    /// the hardware mask comparator driven by OOS (0x1190..0x11dc, docs/fork/hwmask.md)
+    /// the hardware mask comparator driven by OOS when `mask.hw = on` (0x1190..0x11dc, docs/fork/hwmask.md)
     Mask,
     /// the zone trigger result
     Zone,

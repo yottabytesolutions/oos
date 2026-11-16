@@ -381,6 +381,16 @@ fn load_overlay() -> Option<oos_hal::dho::coretrim::Overlay> {
     coretrim::Overlay::from_bytes(calfile::parse(&b).ok()?)
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn overlay_save_error(error: &oos_hal::dho::calfile::SaveError) -> String {
+    use oos_hal::dho::{calfile, coretrim};
+    let status = match error {
+        calfile::SaveError::Failed(_) => "not saved",
+        calfile::SaveError::PublishedDirectorySync(_) => "warning",
+    };
+    format!("oos-ui hw: core offsets: {}/{} {}: {}", calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, status, error)
+}
+
 /// Matches the core offsets of the active ADC mode (`coretrim`), keeps them in `cal` and in `overlay`, and saves the
 /// overlay to OOS's own cal directory when they changed (never a Rigol file, never cal_adc.hex). True when the mode is
 /// done (matched, or nothing to change); false to try again at a later configuration.
@@ -433,12 +443,7 @@ fn core_trim(
                 if let Err(e) =
                     calfile::save(calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, &overlay.to_bytes(), calfile::now())
                 {
-                    eprintln!(
-                        "oos-ui hw: core offsets: {}/{} not saved: {}",
-                        calfile::OOS_CAL_DIR,
-                        coretrim::OVERLAY_FILE,
-                        e
-                    );
+                    eprintln!("{}", overlay_save_error(&e));
                 }
             }
             t.matched != 0 && t.skipped == 0
@@ -2563,6 +2568,18 @@ pub(crate) mod single_fake;
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn overlay_save_error_distinguishes_published_sync_failure() {
+        use oos_hal::dho::calfile::SaveError;
+        let published =
+            super::overlay_save_error(&SaveError::PublishedDirectorySync(std::io::Error::other("sync failed")));
+        assert!(published.contains("warning: calibration files published; directory fsync failed: sync failed"));
+        assert!(!published.contains("not saved"));
+        let failed = super::overlay_save_error(&SaveError::Failed(std::io::Error::other("publish failed")));
+        assert!(failed.contains("not saved: publish failed"));
+        assert!(!failed.contains("published"));
+    }
 
     #[test]
     fn audit0073_selfcal_reloads_published_files_and_warns_on_sync_failure() {

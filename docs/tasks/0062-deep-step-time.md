@@ -26,6 +26,36 @@ Review tier: standard. No commits or hardware access.
    regression budget to M5/M5b/M7. Run focused debug/release tests, release timing,
    the exact clippy step and `cargo xtask check --fast`.
 
+Step 1 instrumentation plan (owner assignment, 2026-11-16): measure each lifecycle
+poll independently, both Shared lock sides, and producer Frame clones with payload
+bytes. Keep bounded 256-entry rings in the existing process metrics owner; record
+without allocations, sort copied rings only when reporting. Preserve publication,
+lock scope and sample ownership. Expose identical fields beside StageTiming in
+state queries and host perf reports. Test statistics, lock/clone wiring, release
+micro-overhead and existing timing guards; run exact clippy and the fast gate.
+No runtime fix, commits or hardware access in this step.
+
+Review-round plan (2026-11-16): add independent blocked/held lock cases, typed
+poll slots, and an additive per-step intake split paired with StageTiming. Report
+p50/p99 intake samples with their own splits; append all new diagnostics after
+`stage_restart_bode`. Keep call rings, defer copy-metric recording until Shared
+release, reuse the outer intake clock, and reserve real diagnostic memory headroom.
+Repeat focused debug/release, perf guards, exact clippy and the fast gate.
+The copy-sample return also reserves the existing
+`ui/src/ui/script/roll.rs` host fixture caller. The assignment also reserves the narrow `ui/src/ui/change.rs::text` append seam
+and poll-accounting re-export;
+no settings, transitions or central UI changes. Existing claims on that file
+remain authoritative outside this reporting seam.
+
+Reserved paths (step 1): `ui/src/perfguard.rs`, `ui/src/perfguard/`,
+`ui/src/board/counters.rs`, `ui/src/board/dho/{hw,publication,roll}.rs`,
+`ui/src/board/dho/hw/segmented.rs`, `ui/src/wave.rs`,
+`ui/src/ui/{lifecycle,la,selfcal}.rs`, `ui/src/ui/change.rs` (report append and poll re-export only), `ui/src/ui/change/{intake,acquisition}.rs`,
+`docs/spec/state-query.md`, this task, `target/t0062/`, `target/COMMIT_MSG.txt`.
+The explicit assignment authorizes these diagnostic seams on `t0062-instrument`;
+`ui/src/ui.rs` stays with the other lane.
+
+Previous diagnosis reservation:
 Reserved paths: `docs/tasks/0062-deep-step-time.md`,
 `ui/src/ui/tests/deep_intake.rs`, `ui/src/ui.rs` (test module declaration only),
 `ui/src/board/scripted.rs`, `ui/src/board/dho/scripted.rs` (test-only fixture),
@@ -213,6 +243,194 @@ M5 work, rather than a safe local edit in this investigation.
    the lifecycle intake timer, and M5b alone does not remove the current clone.
 
 ## Status
+
+- 2026-11-16: step 1 review corrections are ready for independent verification
+  on the uncommitted source fingerprint recorded below. Final serial
+  `sh tools/perf-guard.sh` exits 0 and prints exactly
+  `10 timing budgets and 4 zero-allocation budgets passed`, then
+  `perf guards: all passed (278 s)`. Complete report and observations are in
+  `target/t0062/review-perf-guards.log` and `target/perf-guard.log`.
+  All nine existing release UI timing guards pass. The shared storm reports
+  intake/change/paired p99 62,666/7,375/66,375 ns against 500,000 ns; picture
+  p99/max 168,541/168,541 ns against 750,000 ns. Its intake p99 sample reports
+  polls/external/wait/residual 0/62,666/0/0 ns, exactly summing to 62,666 ns;
+  scripted lifecycle polls outside timed intake remain visible only in call rings.
+  Use the paired `diag intake.p50/p99` samples for attribution and retain the
+  independent call rings for frequency/body evidence in the next released unit round.
+  Diff whitespace, added-text privacy/punctuation and commit-message checks pass.
+  `target/COMMIT_MSG.txt` contains one updated section. No commits, staging,
+  push, hardware access, ratchet/lint/dependency/remote/hook changes or golden
+  changes. The raw-decode Shared lifetime remains a step-2 candidate, unchanged.
+  Task stays active for the coordinator's cross-vendor verification and full
+  integrated gate; this host-only round does not establish hardware acceptance.
+
+- 2026-11-16: final focused debug and release both exit 0: 28 passed per profile,
+  three explicit timing tests ignored. All 12 commands and exit codes are in
+  `target/t0062/review-final-run-focused.py`, `review-final-focused-exits.json`,
+  `review-final-focused-summary.log` and `review-final-{debug,release}-*.log`.
+  Tests cover blocked wait >=50 ms versus short hold, uncontended hold >=50 ms
+  versus short wait, ranked additive split selection, ring wrap/saturation,
+  nested poll/external/wait accounting through an actual completed UI step,
+  state/perf output agreement and append order, all poll slots, clone payload
+  and LA sharing, and release of Shared before copy-metric recording.
+
+- 2026-11-16: final release micro-benchmark exits 0 (`review-micro.log` under
+  `target/t0062/`): 16 poll timers, 12 timed locks, outer intake accounting and
+  paired split recording add 1,546 ns best and 2,056 ns p99 CPU against the
+  existing 5,000/10,000 ns limits. A 10 MB clone reports reference/instrumented
+  best 132,604/135,104 ns and p99 CPU 232,375/236,500 ns, within 1.05/1.15.
+  Command is the recorded release benchmark with `OOS_PERF_TESTS=1` and
+  `--ignored --nocapture --test-threads=1`. No unit timing is inferred.
+
+- 2026-11-16: review corrections implemented, uncommitted candidate source
+  fingerprint `da9bac7c93c03945210a9c514ddfb56b3c6b51456fd4cc4277b9ed96a8ca8c32`
+  (`python3 tools/output.py revision`). StageTiming now pairs each intake with
+  exclusive poll/external time, UI Shared wait and residual. Every retained
+  split sums to its own intake; p50/p99 report that ranked sample's components,
+  not independent component quantiles. All new fields append after restart
+  counters with `diag` labels and state-query-205..229 IDs. Poll slots use the
+  typed Poll enum and have a one-to-one label/slot regression. Outer external
+  intake and its call ring share one start/end. Copy samples record after Shared
+  release at every producer seam. Diagnostics occupy 47,992 bytes under a
+  64 KiB budget (17,544 bytes spare); the paired split adds 8 KiB per StageTiming.
+
+- 2026-11-16: final fast gate exits 0 and prints exactly
+  `partial gate passed (not done): 8 steps in 111 s`;
+  `target/t0062/review-fast.log` retains the full report and child-log location.
+  Exact `xtask::steps::clippy` runs all 11 real host/ARM invocations, exits 1
+  on inherited ratchet findings, and adds zero new or grown findings against
+  the assigned base: 1,243 base versus 1,175 candidate observations, no compile
+  errors. Full step output, comparison and child logs are retained through
+  `review-clippy-final.log`, `review-clippy-delta.json` and its named directories
+  under `target/t0062/`. No ratchet or lint suppression was changed.
+
+- 2026-11-16: isolated mutation probe copies the actual diagnostic/ring source
+  and the two new independent blocked/held tests into a minimal host fixture.
+  Unchanged source passes both; swapping `Diagnostics::locked` wait/held writes
+  fails both (exit 101, 0 passed/2 failed). Probe/source/logs are retained in
+  `target/t0062/review-mutation/` and `review-mutation.py`; the worktree source
+  was not mutated. The warmed allocator probe uses copied current StageTiming,
+  diagnostic and ring sources: 10,000 iterations with nested intake accounting,
+  17 polls and 12 timed locks allocate zero; a 10 MB clone allocates four vectors
+  with or without diagnostics. `review-alloc-source/`, `review-alloc-build.log`
+  and `review-alloc.log` retain the fixture and results.
+
+- 2026-11-16: initial new copy-release test used a publisher thread outside its
+  thread-local test-counter scope and failed its sample-count assertion. The
+  corrected fixture publishes on the owning test thread while a helper holds
+  that same metric mutex and verifies Shared is released before unblocking it.
+  Final focused debug and release pass, including that production-publication
+  regression. Earlier test
+  setup/visibility errors and the new unused-method clippy warning were fixed
+  without suppressions; final evidence supersedes those attempts.
+
+- 2026-11-16: step 1 review fixes in progress, same uncommitted worktree. The
+  owner requires additive paired intake attribution and separate wait/hold
+  regression cases. Step 2 candidate, unchanged here: `hw.rs:2255` and `:2282`
+  (now `:2260` and `:2287`) call `decode_with(..., acq_lock(&out).cores.then_some(..))`; the temporary
+  Shared guard spans raw decode. `lock.acq.held` will expose that duration.
+  No decode/lock-scope fix is part of step 1.
+
+- 2026-11-16: final serial `tools/perf-guard.sh` exits 0 and prints exactly
+  `10 timing budgets and 4 zero-allocation budgets passed`, then
+  `perf guards: all passed (155 s)`. Complete output: `target/t0062/perf-guards.log`;
+  the script's retained observations are also in `target/perf-guard.log`.
+  HAL deterministic/timing suites, UI warmed zero-allocation guards and all nine
+  release UI timing guards pass. Existing shared storm reports intake p99
+  65,167 ns, change 12,791 ns, paired 69,416 ns against 500,000 ns; separate
+  shadow p99 46,709 ns, picture p99/max 175,750/175,750 ns against 750,000 ns.
+  The dedicated picture storm reports p99/max 33,791/50,250 ns. New deep fields
+  appear beside those phases in the perf report. Source fingerprint is unchanged
+  from the recorded candidate. Added-source/docs/message privacy, punctuation
+  and diff-whitespace checks pass. One section in `target/COMMIT_MSG.txt`.
+  All edits are intentional step 1 source/tests/docs changes, left unstaged and
+  uncommitted as requested. No push, hardware access, remote/hook, ratchet,
+  dependency, lint-limit or golden-reference changes. Independent cross-vendor
+  review, the coordinator's full integrated gate and a released unit round remain
+  open; task status stays active, with review as the next owner/coordinator action.
+
+- 2026-11-16: final focused debug and release runs both exit 0: 19 passed per
+  profile across perfguard/rings, actual 10 MB publication, deep intake, lifecycle
+  and roll fixtures; three explicit timing tests ignored per profile. Exact
+  commands and all ten exit codes are in `target/t0062/run-focused.py`,
+  `focused-exits.json`, `focused-summary.log` and `final-{debug,release}-*.log`.
+  New tests cover 0/49/50/256 observations, ring overwrite/max/zero handling,
+  nearest-rank p50/p99, total saturation, lock release before metric recording,
+  outer intake nesting, state/perf report consistency, copied size and LA sharing.
+  The final fast gate exits 0 and prints exactly
+  `partial gate passed (not done): 8 steps in 99 s`; complete output is
+  `target/t0062/fast-final.log`, with child logs under its named directory.
+  Doctor, full tests, perf, coverage and image are not selected by this fast run;
+  only separately recorded focused/timing/clippy evidence is claimed.
+
+- 2026-11-16: serial release micro-benchmark exits 0 (`target/t0062/micro.log`):
+  101 alternating rounds, 1,000 runs per round for 16 poll timers plus 12 Shared
+  locks. Incremental overhead best 1,436 ns, p99 process CPU 1,703 ns, below
+  the explicit 5,000/10,000 ns limits. The instrumentation primitives add about
+  0.34% of the existing 0.5 ms host intake/change budget at p99. For 10 MB
+  clones, 101 x 8 alternating runs report reference/instrumented best
+  130,380/129,072 ns and p99 CPU 216,500/186,500 ns; best ratio 0.990 and
+  tail 0.861, below 1.05/1.15. This establishes negligible host diagnostic
+  overhead, not a unit speedup or the cause of the unit regression. Command:
+  `OOS_PERF_TESTS=1 cargo test --locked --release -p oos-ui --bin oos-ui
+  bench_deep_diagnostics_overhead -- --ignored --nocapture --test-threads=1`.
+  Builds use `CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0
+  CARGO_PROFILE_TEST_DEBUG=0` after initial disk exhaustion; no optimization,
+  code-generation, lint or timing limits were changed. Initial compilation and
+  command/test-fixture mistakes were corrected; final logs supersede them.
+
+- 2026-11-16: step 1 instrumentation implemented on the dirty `11a8b2b9` base;
+  source fingerprint `c7362341941e03ed972824cd20199fa3df3894cd7712cf808b15a7672cc8c328`
+  (`python3 tools/output.py revision`). New fixed 256-entry rings report all
+  16 lifecycle polls plus outer external intake, UI/acquisition Shared waits and
+  holds, and producer Frame clone time/payload bytes beside existing phases.
+  Inline diagnostic storage is 47,976 bytes in the existing acquisition metrics
+  owner, without new mutable statics or record retention. UI source, acquisition
+  publication/worker/segment/stream, probe, recovery and calibration locks are
+  instrumented; `ui/src/ui.rs` is untouched. Added paths beyond the old diagnosis
+  claim are the step 1 reservation above. Fields and exact absence/window/unit
+  semantics are documented in `docs/spec/state-query.md#deep-step-diagnostics-task-0062-step-1`.
+
+- 2026-11-16: next authorized unit round should take stationary shallow/deep RUN
+  samples with the same channels, view and services, allowing >=256 steps and
+  >=50 producer clones (about 14 s at 3.7 records/s; use total deltas to confirm).
+  Read `deep poll.*`, `lock.ui.wait/held`, `lock.acq.wait/held`, `producer.clone`
+  and `producer.clone_size` alongside intake/change. Deep size should be
+  10,000,000 copied bytes. Large UI waits together with acquisition holds and
+  clone tails support the copy-under-Shared hypothesis; small UI waits point to
+  the slow poll's body/service. Long acquisition holds without long clone times
+  identify other locked work. Compare clone total deltas per wall second to
+  separate frequency from per-clone cost. Rings have independent call windows:
+  never subtract their p99s or the smoothed step EWMA to infer causality. Query
+  handling enters the next completed external-intake observation. No new unit
+  observation or hardware access is claimed; the regression's cause remains
+  unverified pending that round.
+
+- 2026-11-16: exact `xtask::steps::clippy` executed through an untracked scratch
+  entry point on both archived HEAD and the candidate, each in a separate build
+  directory. Both exit 1 on inherited ratchet findings. All 11 real host/ARM
+  clippy invocations compiled without errors; deduplicated observations are
+  base 1,243, candidate 1,175, zero new or grown keys. Xtask's own findings stay
+  zero. Comparison and complete child logs are in `target/t0062/clippy-delta.json`,
+  `clippy-{base,final}.log` and their named child-log directories. No ratchet,
+  lint or gate source was changed. Initial candidate findings (borrow and constant
+  assertion diagnostics) were fixed without suppressions. An initial shared
+  target comparison replayed cached diagnostics from the other source archive;
+  it is superseded by the isolated-directory comparison, never used as evidence.
+
+- 2026-11-16: warmed standalone allocator probe compiles the actual diagnostic
+  and ring sources with a minimal Frame/counter fixture and a counting System
+  allocator. 10,000 iterations of 17 polls plus 12 timed locks allocate zero;
+  a 10 MB clone allocates four channel vectors with or without diagnostics.
+  Platform mutex initialization is warmed outside the count. This pins recording
+  overhead, not all legacy UI allocations. Source/build/output are retained as
+  `target/t0062/alloc-probe.rs`, `alloc-build.log`, `alloc.log`. The first unwarmed
+  probe observed host mutex initialization and is not a per-step claim.
+
+- 2026-11-16: step 1 claimed by Codex on `t0062-instrument`, base `11a8b2b9`;
+  initial tree clean. Plan and diagnostic reservations recorded before code.
+  Scope is instrumentation and host evidence only; independent cross-vendor
+  review and the coordinator's integrated full gate remain outstanding.
 
 - 2026-11-16: host investigation and standard-review handoff prepared, uncommitted.
   No new O(samples) intake body or new per-record slowdown reproduced between

@@ -4,12 +4,16 @@
 //! Tail limits allow 50 % contention headroom over each throughput limit; they never
 //! compare a candidate tail with the reference minimum. All rounds interleave the paths.
 
+pub(crate) mod deep;
+mod intake;
+mod ring;
+
 #[cfg(test)]
 use crate::system::perfguard as samples;
 
 #[cfg(test)]
 pub use samples::ROUNDS;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[cfg(test)]
 pub fn guard_pair(
@@ -38,10 +42,8 @@ pub struct StageTiming {
     count: usize,
     picture_count: usize,
     shadow: [u64; 256],
-    queued_intake: u64,
+    split: intake::Timing,
     queued_shadow: u64,
-    intake_start: Option<Instant>,
-    depth: usize,
     current_shadow: Option<Duration>,
 }
 impl Default for StageTiming {
@@ -53,10 +55,8 @@ impl Default for StageTiming {
             shadow: [0; 256],
             count: 0,
             picture_count: 0,
-            queued_intake: 0,
+            split: intake::Timing::default(),
             queued_shadow: 0,
-            intake_start: None,
-            depth: 0,
             current_shadow: None,
         }
     }
@@ -77,36 +77,28 @@ impl StageTiming {
     }
     pub fn add(&mut self, intake: Duration, change: Duration) {
         let i = self.count % 256;
-        self.intake[i] = nanos(intake).saturating_add(self.queued_intake);
+        self.intake[i] = self.split.finish(i, nanos(intake));
         self.change[i] = nanos(change);
         self.shadow[i] = self.queued_shadow;
-        self.queued_intake = 0;
         self.queued_shadow = 0;
         self.count += 1;
     }
     #[cfg(test)]
     pub(crate) fn intake_idle(&self) -> bool {
-        self.depth == 0 && self.intake_start.is_none()
+        !self.intake_active()
     }
     pub fn intake_begin(&mut self) {
-        if self.depth == 0 {
-            self.intake_start = Some(Instant::now());
-        }
-        self.depth += 1;
+        self.split.begin();
     }
     pub fn intake_end(&mut self) {
-        self.depth = self.depth.saturating_sub(1);
-        if self.depth == 0 {
-            if let Some(start) = self.intake_start.take() {
-                self.queue_intake(start.elapsed());
-            }
-        }
+        self.split.end();
     }
+    #[cfg(test)]
     pub fn queue_intake(&mut self, duration: Duration) {
-        self.queued_intake = self.queued_intake.saturating_add(nanos(duration));
+        self.split.queue(nanos(duration));
     }
     pub fn queue_shadow(&mut self, duration: Duration) {
-        if self.depth == 0 {
+        if !self.intake_active() {
             self.queued_shadow = self.queued_shadow.saturating_add(nanos(duration));
         }
     }
@@ -162,7 +154,7 @@ impl StageTiming {
     pub fn samples(&self) -> usize {
         self.count.min(256)
     }
-    pub fn text(&self) -> String {
+    pub fn stage_text(&self) -> String {
         let picture = match self.picture_p99() {
             Some(p99) => format!("p99_ns={p99}"),
             None => "p99=pending".into(),
@@ -184,6 +176,20 @@ impl StageTiming {
             self.picture_count.min(256),
             self.picture_max().unwrap_or(0)
         )
+    }
+    #[cfg(test)]
+    pub fn text(&self) -> String {
+        self.stage_text() + &self.diagnostics_text()
+    }
+    /// Appended after the existing restart fields in state queries; also used by host reports.
+    pub fn diagnostics_text(&self) -> String {
+        self.split.text(&self.intake, self.samples()) + &deep::counters().text()
+    }
+    pub(crate) fn intake_active(&self) -> bool {
+        self.split.active()
+    }
+    pub(crate) fn poll(&mut self, elapsed: Duration, wait: u64) {
+        self.split.poll(nanos(elapsed), wait);
     }
 }
 

@@ -41,7 +41,9 @@ stale_worker_push=N stale_ui_publish=N stale_queue_pop=N stale_pipe=N
 queue_overflow=N fold_drops=N
 acq_seg_start=N acq_seg_abort=N acq_roll_stop=N acq_roll_start=N
 acq_batch_prearm=N acq_batch_disarm=N acq_configure=N acq_single_arm=N
-stage_restart_autoset=N stage_restart_bode=N graphics gpu_OR_cpu hdmi ...
+stage_restart_autoset=N stage_restart_bode=N
+diag intake.p50 ... diag intake.p99 ... diag poll.memory ... [other diag blocks]
+graphics gpu_OR_cpu hdmi ...
 ```
 
 Line breaks above are editorial; the response is one line except that unescaped
@@ -371,3 +373,103 @@ append-only rule when implemented. Do not synthesize fields from documentation
 promises or interpret
 acquisition-attempt counters as DMA completion success.
 
+
+## Deep-step diagnostics (task 0062 step 1)
+
+The diagnostics append after `stage_restart_bode=`. Existing stage, loss,
+acquisition and restart fields keep their order. Host StageTiming reports use
+the same diagnostic formatter after their stage fields. The `diag` prefix is
+distinct from the existing `deep reads` block.
+
+Each completed StageTiming observation retains an additional paired split,
+using the same ring index and eviction as intake/change (latest 256 steps).
+`diag intake.p50` and `diag intake.p99` report `n=N intake_ns=I polls_ns=P
+external_ns=E lock_wait_ns=W residual_ns=R` from the actual intake-ranked sample,
+with `P + E + W + R = I` for every retained sample. `polls_ns` sums the timed
+lifecycle calls, excluding their Shared lock waits. `external_ns` sums outer
+external command/SCPI/panel intake, excluding nested polls and Shared waits;
+nested external calls count once. `lock_wait_ns` sums UI Shared waits within
+those intake intervals, excluding change/acquisition-stage locks. The residual
+is intake minus the other three and includes lifecycle bookkeeping, timer and
+metric recording overhead, and any unclassified elapsed time. External calls
+queued before completion belong to that next completed step. Script preparation
+outside any timed intake and memory-stopped steps without completion contribute
+only call-ring observations. At u64 saturation components are capped in
+poll/external/wait order so their sum still equals the represented intake.
+
+The nearest-rank sample is chosen by intake time, with physical ring index
+breaking equal-time ties. Its split components are not independent percentiles.
+p50 is pending at n=0 and p99 at n<50, emitted as `diag intake.pNN n=N pending`.
+The p99 sample's `intake_ns` equals the existing `stage intake` p99. The extra
+paired ring occupies 8 KiB per StageTiming owner, with bounded scalar bookkeeping.
+
+The per-call blocks begin `diag LABEL` and have
+`n=N total=T p50_UNIT=V p99_UNIT=V max_UNIT=V`. Units are `ns` for elapsed
+wall time and `bytes` for copied payload. `n` is the number retained (0..256),
+`total` a saturating u64 process-lifetime observation count. Each independent
+ring retains its latest 256 calls, including zeros. Nearest-rank p50 is pending
+at n=0, p99 at n<50; pending is the literal `pending` in the value position
+(e.g. `p99_ns=pending`). Empty max is 0. These per-call rings are neither
+time-aligned nor additive. Neither CLEAR nor an acquisition identity change
+resets diagnostic rings; process restart resets them.
+
+| ID | Label after `diag` | Observation boundary | Unit |
+|---|---|---|---|
+| state-query-205 | `intake.p50` | Intake-ranked median step and its additive split | ns |
+| state-query-206 | `intake.p99` | Intake-ranked p99 step and its additive split | ns |
+| state-query-207 | `poll.memory` | Memory watchdog sample/recovery | ns |
+| state-query-208 | `poll.relayout` | Layout refresh | ns |
+| state-query-209 | `poll.meas_hold` | Held measurement key | ns |
+| state-query-210 | `poll.workspace_hold` | Held workspace key | ns |
+| state-query-211 | `poll.update` | Update service poll | ns |
+| state-query-212 | `poll.wlan` | WLAN service poll | ns |
+| state-query-213 | `poll.ntp` | NTP service poll | ns |
+| state-query-214 | `poll.ssh` | SSH service poll | ns |
+| state-query-215 | `poll.usb` | USB service poll | ns |
+| state-query-216 | `poll.ch_hold` | Held channel key | ns |
+| state-query-217 | `poll.counter` | Hardware reading/request handling, including Shared wait | ns |
+| state-query-218 | `poll.dvm` | Hardware reading/request handling, including Shared wait | ns |
+| state-query-219 | `poll.mask` | Hardware test-result handling, including Shared wait | ns |
+| state-query-220 | `poll.zone` | Hardware test-result handling, including Shared wait | ns |
+| state-query-221 | `poll.la_probe` | Logic probe detection, including Shared wait | ns |
+| state-query-222 | `poll.log` | Logging tick | ns |
+| state-query-223 | `poll.external` | One outer command/SCPI/panel intake including pending proposals; shares StageTiming's intake start/end, including nested polls/waits | ns |
+| state-query-224 | `lock.ui.wait` | UI Shared wait at acquisition-source, publication, probe, recovery and calibration accesses | ns |
+| state-query-225 | `lock.ui.held` | UI Shared hold at those same accesses | ns |
+| state-query-226 | `lock.acq.wait` | Producer Shared wait at acquisition-thread requests/readings and batch/stream/segment publication, including deferred delivery on a worker | ns |
+| state-query-227 | `lock.acq.held` | Producer Shared hold at those same accesses | ns |
+| state-query-228 | `producer.clone` | One producer Frame::clone, including allocation/copy, excluding replacement/drop of the old destination | ns |
+| state-query-229 | `producer.clone_size` | Channel vector lengths times sizeof(f32) for that clone; shared LA Arc storage and fixed metadata excluded | bytes |
+
+Sources: `ui/src/ui/lifecycle.rs`, `ui/src/ui/change/intake.rs`,
+`ui/src/perfguard/{intake,deep,ring}.rs`. The existing acquisition metrics owner
+has a 64 KiB inline diagnostic budget, with a test requiring at least 8 KiB
+headroom. It retains no record payload. Host std mutexes may initialize OS
+storage once on first use; warmed recording allocates nothing and does no sort.
+Ring mutexes are separate from Shared. Lock wait ends just after Shared is
+acquired; held ends immediately before its release, including scheduling delays
+and the existing clone operation. Lock and copy samples are recorded after
+releasing Shared. Copy samples carry only elapsed nanoseconds and payload bytes
+until release, preserving the existing clone/publication order and lock scope.
+Reports copy each ring under its metric mutex, then sort/format outside it;
+blocks are best-effort snapshots, not an atomic process snapshot. Reading the
+state itself adds a UI Shared observation after the report snapshot and the
+outer query intake is visible on the next query. Polls skipped on memory stop
+have no observation; a disabled poll that is called still has one. Scripted
+prepared steps may skip lifecycle polls. No acquisition thread means acquisition
+and clone rings may remain pending, distinct from measured zero cost.
+Live debug-source locks, deposit locks and synthetic fixture writes are excluded.
+
+A 4-channel 10 M deep-pair frame currently contains 4 x 625,000 f32 values:
+`producer.clone_size` should show 10,000,000 bytes, not 40,000,000 original
+sample points. This is host-verified, not a fresh unit measurement. Compare
+stationary shallow/deep RUN windows after >=256 UI steps and >=50 producer
+clones; at low delivery rates the clone window spans much longer than intake.
+If intake/poll tails rise with `lock.ui.wait`, and acquisition held/clone tails
+and sizes rise in the deep case, the Shared-copy hypothesis is supported.
+If UI waits stay small, inspect the slow poll's own service/body instead. A
+long acquisition hold without a long clone points to other work inside Shared;
+a long UI hold points to UI work. Use total-count deltas over measured wall
+time to separate increased clone frequency from increased cost per clone.
+Do not subtract unrelated p99s or the EWMA `step` from these distributions;
+matched repetitions and scheduling context are still needed for causal evidence.

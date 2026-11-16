@@ -1479,7 +1479,7 @@ fn counter_tick(
 ) {
     use oos_hal::dho::bus::Bus;
     use oos_hal::dho::counter;
-    let want = out.lock().unwrap().counter_want;
+    let want = crate::perfguard::deep::acq_lock(out).counter_want;
     if want != counting.map(|c| c.0) {
         match want {
             Some(w) => {
@@ -1492,7 +1492,7 @@ fn counter_tick(
                 *counting = None;
             }
         }
-        out.lock().unwrap().counter = None;
+        crate::perfguard::deep::acq_lock(out).counter = None;
         return;
     }
     if let Some((w, t)) = *counting {
@@ -1500,7 +1500,7 @@ fn counter_tick(
         if t.elapsed().as_secs_f64() >= gate + 0.1 {
             let r = counter::read(bar);
             *n += 1;
-            out.lock().unwrap().counter =
+            crate::perfguard::deep::acq_lock(out).counter =
                 Some(crate::board::CounterRead { period: counter::period(&r, gate), total: r.total, n: *n });
             *counting = Some((w, std::time::Instant::now()));
         }
@@ -1520,7 +1520,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         crate::placement::place(crate::placement::Role::Hw, &switches);
         let status = |s: String| {
             eprintln!("oos-ui hw: {}", s);
-            out.lock().unwrap().status = s;
+            crate::perfguard::deep::acq_lock(&out).status = s;
         };
         // started with the start-up (rcS): nothing of the hardware is touched before its `end` line, written after
         // oos-fpgad cold-boot exited (its GPIO lines are free then)
@@ -1540,7 +1540,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             Err(e) => return status(format!("/dev/xdma0_bypass: {}", e)),
         };
         let v = bar.rd(0x4000);
-        out.lock().unwrap().fpga_version = v;
+        crate::perfguard::deep::acq_lock(&out).fpga_version = v;
         if v != FPGA_VERSION {
             return status(format!("unexpected FPGA version {:#x}, not touching it", v));
         }
@@ -1663,17 +1663,17 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             if xadc_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
                 xadc_at = Some(std::time::Instant::now());
                 let x = oos_hal::dho::board::read_xadc(&mut bar);
-                out.lock().unwrap().xadc = x;
+                crate::perfguard::deep::acq_lock(&out).xadc = x;
                 // LA probe detect, also with the LA off: without a probe it cannot be switched on
                 if oos_hal::model::platform().caps.la {
                     let p = oos_hal::dho::la::probe_present().ok();
-                    out.lock().unwrap().la_probe = p;
+                    crate::perfguard::deep::acq_lock(&out).la_probe = p;
                 }
             }
             // self-calibration (selfcal.rs): owns the FPGA and the AFEs until it is done; the result goes to /oos/cal
             // (the request is taken in its own statement: a lock in the `if let` scrutinee would be held for the whole
             // run, and the cancel check and the UI would wait on it forever)
-            let req = out.lock().unwrap().cal_req.take();
+            let req = crate::perfguard::deep::acq_lock(&out).cal_req.take();
             if let Some((chans, zero, adc_cores)) = req {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 seg_abort(&mut segrun, &mut state, &mut bar, &mut c2h, &out);
@@ -1683,12 +1683,12 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 let res = match (afe_bus.as_mut(), cal.as_ref()) {
                     (Some(afe), Some(c)) => {
                         let cancel_out = out.clone();
-                        let cancel = move || cancel_out.lock().unwrap().cal_cancel;
+                        let cancel = move || crate::perfguard::deep::acq_lock(&cancel_out).cal_cancel;
                         let mut unit = oos_hal::dho::selfcal::Unit { bar: &mut bar, afe, c2h: &mut c2h, state: &mut state, cal: c, cal_adc: cal_adc.as_ref(), cancel: &cancel, adc_new: None };
                         let prog_out = out.clone();
                         let adc_base = if adc_cores { cal_adc.as_ref() } else { None };
                         let r = oos_hal::dho::selfcal::run_all_with(&mut unit, c, adc_base, &chans, zero, &mut |d, t, s| {
-                            prog_out.lock().unwrap().cal_progress = Some((d, t, s.to_string()));
+                            crate::perfguard::deep::acq_lock(&prog_out).cal_progress = Some((d, t, s.to_string()));
                         });
                         match r {
                             Ok(r) => selfcal_saved(oos_hal::dho::selfcal::save(&r, &o.cal_dir), || {
@@ -1704,7 +1704,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 };
                 status(format!("self-cal CH{:?}: {}", chans.iter().map(|c| c + 1).collect::<Vec<_>>(), match &res { Ok(s) => format!("done, {}", s), Err(e) => format!("failed: {}", e) }));
                 current = None;
-                let mut g = out.lock().unwrap();
+                let mut g = crate::perfguard::deep::acq_lock(&out);
                 (g.cal_progress, g.cal_result, g.cal_cancel) = (None, Some(res), false);
                 continue;
             }
@@ -1756,7 +1756,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 hw_merge(&mut want, mask_want.as_ref(), zone_want.as_ref(), map);
             }
             {
-                let mut g = out.lock().unwrap();
+                let mut g = crate::perfguard::deep::acq_lock(&out);
                 // the flush batch is no block: the UI keeps the hardware view
                 let why = (blocked && !guard.flush).then(|| "the mask/zone unit stopped the acquisition with these settings: tested in software".to_string());
                 if g.unit_blocked != why {
@@ -1771,7 +1771,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             // frame once more raw where the live compression or the deep measurements want it (the record that stays
             // on screen). Both STOP ways go through here: the hold (PR #7) and the views read again (`stop_view`)
             let (hold, final_req, deep_want) = {
-                let g = out.lock().unwrap();
+                let g = crate::perfguard::deep::acq_lock(&out);
                 (g.hold, g.final_req, g.deep_raw)
             };
             if hold && !paused {
@@ -1781,7 +1781,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     last_batch = None;
                 }
                 let replay = last_read.as_ref().and_then(|read| read.plan(ahead, deep_want).map(|(ds, lp, count)| (read, ds, lp, count)));
-                let match_cores = out.lock().unwrap().cores;
+                let match_cores = crate::perfguard::deep::acq_lock(&out).cores;
                 let last = replay.and_then(|(read, ds, lp, count)| match seq::read_raw_again(&mut state, &ds, &lp, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
                     Ok(()) => {
                         n += 1;
@@ -1793,23 +1793,26 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         None
                     }
                 });
-                let mut g = out.lock().unwrap();
-                if let Some(f) = last.filter(|f| super::publication::current(&g, f)) {
-                    g.frame = f.clone();
+                let mut g = crate::perfguard::deep::acq_lock(&out);
+                let sample = last.filter(|f| super::publication::current(&g, f)).map(|f| {
+                    let (copy, sample) = crate::perfguard::deep::clone_frame(&f);
+                    g.frame = copy;
                     g.queue.push_back(f);
-                }
+                    sample
+                });
                 g.final_ack = final_req;
                 drop(g);
+                if let Some(sample) = sample { sample.record(); }
                 paused = true;
             }
             // STOP (normal acquisitions only): nothing is armed, the record in the ring stays; for every new view
             // the newest frame of the last batch is read again (`stop_plan`), settings changed meanwhile wait for RUN
-            let stop_view = out.lock().unwrap().stop_view;
+            let stop_view = crate::perfguard::deep::acq_lock(&out).stop_view;
             match stop_view {
                 Some(v) if mode == Slow::Off && want_mode == Slow::Off => {
                     // a final-frame request of the UI while the views are read again: answered as the hold does
                     {
-                        let mut g = out.lock().unwrap();
+                        let mut g = crate::perfguard::deep::acq_lock(&out);
                         g.final_ack = g.final_req;
                     }
                     match &last_batch {
@@ -1822,11 +1825,11 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                                 Ok(bytes) => {
                                     let fb = seq::frame_bytes(&rb, lp);
                                     n += 1;
-                                    let m = out.lock().unwrap().cores.then_some(&mut cores);
+                                    let m = crate::perfguard::deep::acq_lock(&out).cores.then_some(&mut cores);
                                     let f = decode_with(&bytes[..fb.min(bytes.len())], &rb, lp, n, switches.board.header_probe, m);
                                     // the samples stay those of the captured batch: its identity, not the view's (M2.3b)
                                     let f = batch.view(f, ti);
-                                    out.lock().unwrap().replay = Some(f);
+                                    crate::perfguard::deep::acq_lock(&out).replay = Some(f);
                                 }
                                 Err(e) => status(format!("STOP read: {}", e)),
                             }
@@ -1883,25 +1886,25 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
             {
                 use oos_hal::dho::dvm;
-                let want = out.lock().unwrap().dvm_want;
+                let want = crate::perfguard::deep::acq_lock(&out).dvm_want;
                 let elapsed = dvm_run.map_or(0.0, |r| r.1.elapsed().as_secs_f64());
                 let (step, key) = dvm_step(want, s.mask, configs, dvm_run.map(|r| r.0), elapsed);
                 match step {
                     DvmStep::Start(lane) => {
                         disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                         bar.apply(&dvm::start(lane, dvm::EXP));
-                        out.lock().unwrap().dvm = None;
+                        crate::perfguard::deep::acq_lock(&out).dvm = None;
                     }
                     DvmStep::Stop => {
                         disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                         bar.apply(&dvm::stop());
-                        out.lock().unwrap().dvm = None;
+                        crate::perfguard::deep::acq_lock(&out).dvm = None;
                     }
                     DvmStep::Read => {
                         let raw = dvm::read(&mut bar);
                         dvm_n += 1;
                         let r = key.map(|k| dvm_reading(&raw, k, &s, &state.gain, dvm_n));
-                        out.lock().unwrap().dvm = r;
+                        crate::perfguard::deep::acq_lock(&out).dvm = r;
                     }
                     DvmStep::Idle => {}
                 }
@@ -1911,11 +1914,11 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             }
             // levels for the auto set-up from the measure unit, once the settings they ask for are applied; the unit
             // is set up while nothing is armed (configuration crosses into the ADC clock without synchronisers)
-            let lw = out.lock().unwrap().levels_want;
+            let lw = crate::perfguard::deep::acq_lock(&out).levels_want;
             if let Some((id, _, runs)) = lw.filter(|w| mode == Slow::Off && stamp == w.1 && levels_done != Some(w.0)) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 let v = levels_measure(&mut bar, &s, &state.gain, runs);
-                out.lock().unwrap().levels = Some((id, v));
+                crate::perfguard::deep::acq_lock(&out).levels = Some((id, v));
                 levels_done = Some(id);
             }
             // the core trim of the current configuration, with nothing armed
@@ -1932,11 +1935,11 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 }
             }
             // debug: one raw run of the measure unit for `:DEBug:SLOTs?`
-            let sw = out.lock().unwrap().slots_want;
+            let sw = crate::perfguard::deep::acq_lock(&out).slots_want;
             if let Some(id) = sw.filter(|&id| mode == Slow::Off && slots_done != Some(id)) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 let r = oos_hal::dho::levels::run(&mut bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64)));
-                out.lock().unwrap().slots = Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));
+                crate::perfguard::deep::acq_lock(&out).slots = Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));
                 slots_done = Some(id);
             }
             if mode != Slow::Off {
@@ -1987,7 +1990,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 };
                 if halted {
                     // SINGLE scan complete: wait for the next SINGLE press
-                    let go = std::mem::take(&mut out.lock().unwrap().rearm);
+                    let go = std::mem::take(&mut crate::perfguard::deep::acq_lock(&out).rearm);
                     if !go {
                         std::thread::sleep(std::time::Duration::from_millis(20));
                         continue;
@@ -2102,9 +2105,11 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         });
                         Frame { seq: n, dt, pre, ch: ring.clone().map(|r| r.into_iter().collect()), roll: true, envelope: true, scan: false, partial: len < keep, acq: (0.0, 0), stamp, la, hw_avg: false, pre_exact: false, cfg: want_gen, fixed_ti: None, basic: Default::default() }
                     };
-                    let mut g = out.lock().unwrap();
-                    if super::publication::current(&g, &f) { super::roll::publish(&mut g, f, scan.is_some()); }
+                    let mut g = crate::perfguard::deep::acq_lock(&out);
+                    let sample = if super::publication::current(&g, &f) { super::roll::publish(&mut g, f, scan.is_some()) } else { None };
                     g.halted = halted;
+                    drop(g);
+                    if let Some(sample) = sample { sample.record(); }
                 }
                 if done && !halted {
                     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -2128,13 +2133,13 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             // STOP, after the hold above: no arming until RUN or SINGLE (the UI's final-frame request is answered there)
             let poll = single::progress(&s, single_done, pair, hold, 0).1;
             if poll == single::Poll::Hold {
-                out.lock().unwrap().final_ack = final_req;
+                crate::perfguard::deep::acq_lock(&out).final_ack = final_req;
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 continue;
             }
             if std::mem::take(&mut paused) {
                 // RUN or SINGLE: the frames of the batch before the STOP are not new
-                out.lock().unwrap().queue.clear();
+                crate::perfguard::deep::acq_lock(&out).queue.clear();
             }
             let mut b = batch_plan(&s, &p, switches.board.zone_batch);
             // fewer frames where the read would take the screen frame (pacing.rs; not the hardware average, whose
@@ -2168,7 +2173,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             // then one pulse of the force bit, and the batch only waits for that frame. The pulse writes the 0x205c
             // shadow with bit 5 and then the shadow again, so the trigger type and the serial mux bits stay. Not in the
             // hardware average (its batches count triggers).
-            if std::mem::take(&mut out.lock().unwrap().force) && avg.is_none() {
+            if std::mem::take(&mut crate::perfguard::deep::acq_lock(&out).force) && avg.is_none() {
                 let armed_now = ahead || lifecycle::prearm(b.single, || seq::prearm(&mut state, &b, &p, &mut bar, &mut c2h, |_| {})).map_err(|e| status(format!("force: arm: {}", e))).is_ok();
                 if armed_now {
                     bar.apply(&oos_hal::dho::tpu::force(&state.ts));
@@ -2177,7 +2182,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             }
             // a wait for a trigger also ends for a force request: the next pass arms and pulses (above)
             let changed = || {
-                let g = out.lock().unwrap();
+                let g = crate::perfguard::deep::acq_lock(&out);
                 (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || (g.acquisition.identity().gen(), g.acquisition.identity().epoch()) != pair || g.acquisition.route() != route || g.force || g.stop_view.is_some()
             };
             let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing);
@@ -2252,7 +2257,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     let raw_frame = if raw_newest(&b, &p) && count > 0 && comp_last.is_none_or(|t| t.elapsed() >= crate::compress::RAW_PERIOD) {
                         comp_last = Some(std::time::Instant::now());
                         match seq::read_raw_again(&mut state, &b, &p, &mut bar, &mut c2h, &mut raw_dma, count - 1, |_| {}) {
-                            Ok(()) => Some(decode_with(raw_dma.data(), &seq::raw_settings(&b), &p, 0, switches.board.header_probe, out.lock().unwrap().cores.then_some(&mut cores))),
+                            Ok(()) => Some(decode_with(raw_dma.data(), &seq::raw_settings(&b), &p, 0, switches.board.header_probe, crate::perfguard::deep::acq_lock(&out).cores.then_some(&mut cores))),
                             Err(e) => {
                                 status(format!("raw read of the newest frame: {}", e));
                                 None
@@ -2264,7 +2269,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     // deep record and mean-type measurements wanted: the screen window of the newest frame raw, at most
                     // once per deepmeas::PERIOD while running (deepmeas.rs)
                     let deep_want = {
-                        let mut g = out.lock().unwrap();
+                        let mut g = crate::perfguard::deep::acq_lock(&out);
                         g.deep_ok = deep_raw_settings(&b, &p).is_some();
                         g.deep_raw
                     };
@@ -2279,7 +2284,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                                 Ok(()) => {
                                     use crate::deepmeas::cost;
                                     let t1 = std::time::Instant::now();
-                                    let f = decode_with(raw_dma.data(), &ds, &p, 0, switches.board.header_probe, out.lock().unwrap().cores.then_some(&mut cores));
+                                    let f = decode_with(raw_dma.data(), &ds, &p, 0, switches.board.header_probe, crate::perfguard::deep::acq_lock(&out).cores.then_some(&mut cores));
                                     cost::set(&cost::DMA_US, t1 - t0);
                                     cost::set(&cost::DECODE_US, t1.elapsed());
                                     cost::READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2304,7 +2309,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             oos_hal::dho::scu::Fired::Forced => Some(false),
                             oos_hal::dho::scu::Fired::None => None,
                         };
-                        let mut g = out.lock().unwrap();
+                        let mut g = crate::perfguard::deep::acq_lock(&out);
                         g.trig_fired = Some((g.trig_fired.map_or(1, |x| x.0 + 1), f));
                     }
                     // the mask unit's counters after every batch (docs/fork/hwmask.md)
@@ -2313,7 +2318,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         (m.ch, run.0, ctrl, raw)
                     });
                     {
-                        let mut g = out.lock().unwrap();
+                        let mut g = crate::perfguard::deep::acq_lock(&out);
                         let n = g.mask.map_or(0, |r| r.n) + 1;
                         g.mask = mr.map(|(ch, slot, ctrl, raw)| crate::board::MaskRead {
                             ch,
@@ -2338,7 +2343,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     // the zone unit's status and qualified-frame counter (docs/fork/hwzone.md)
                     let zr = state.zone_ctrl().zip(b.hwzone.as_ref()).zip(state.zone_run).map(|((ctrl, z), run)| (z.ch, run.0, ctrl, oos_hal::dho::zone::read(&mut bar, ctrl)));
                     {
-                        let mut g = out.lock().unwrap();
+                        let mut g = crate::perfguard::deep::acq_lock(&out);
                         let n = g.zone.map_or(0, |r| r.n) + 1;
                         g.zone = zr.map(|(ch, slot, ctrl, r)| {
                             let c = r.counters;
@@ -2419,7 +2424,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         // only the newest frames the screen takes are decoded (`Shared::take`; on the fast cores,
                         // which the frame loop needs), in average mode the newest one
                         let (take, match_cores) = {
-                            let g = out.lock().unwrap();
+                            let g = crate::perfguard::deep::acq_lock(&out);
                             (if g.take == 0 { avail } else { g.take.min(avail) }, g.cores)
                         };
                         let take = if after.is_some() { take.min(1) } else { take };
@@ -2489,7 +2494,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         last_batch = Some(super::replay::Batch::new(b.clone(), p, count - 1, identity));
                     }
                     {
-                        let mut g = out.lock().unwrap();
+                        let mut g = crate::perfguard::deep::acq_lock(&out);
                         g.decoded += count as u64;
                         g.dropped += skip as u64;
                     }

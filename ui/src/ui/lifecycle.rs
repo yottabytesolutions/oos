@@ -96,7 +96,7 @@ fn apply_sample(ui: &mut Ui, now: std::time::Duration, rss: Option<u64>) -> bool
 fn release_board(ui: &mut Ui) {
     ui.src.hw_hold(true, ui.final_req);
     if let Source::Hw { shared, .. } = &ui.src {
-        let mut shared = oos_hal::sync::lock(shared);
+        let mut shared = crate::perfguard::deep::ui_lock(shared);
         shared.queue.clear();
         shared.frame = Default::default();
         shared.deep_raw = None;
@@ -213,25 +213,26 @@ pub(super) fn begin_step(ui: &mut Ui, dt_wall: f64) -> bool {
 }
 
 pub(in crate::ui) fn polls(ui: &mut Ui) -> bool {
-    let stopped = memory_step(ui);
-    ui.relayout();
-    ui.meas_hold_tick();
-    ui.workspace_hold_tick();
-    ui.update_poll();
-    ui.wlan_poll();
-    ui.ntp_poll();
-    ui.ssh_poll();
-    ui.usb_poll();
+    use crate::perfguard::deep::Poll;
+    let stopped = change::poll(ui, Poll::Memory, memory_step);
+    change::poll(ui, Poll::Relayout, Ui::relayout);
+    change::poll(ui, Poll::MeasHold, Ui::meas_hold_tick);
+    change::poll(ui, Poll::WorkspaceHold, Ui::workspace_hold_tick);
+    change::poll(ui, Poll::Update, Ui::update_poll);
+    change::poll(ui, Poll::Wlan, Ui::wlan_poll);
+    change::poll(ui, Poll::Ntp, Ui::ntp_poll);
+    change::poll(ui, Poll::Ssh, Ui::ssh_poll);
+    change::poll(ui, Poll::Usb, Ui::usb_poll);
     if stopped {
         return false;
     }
-    ui.ch_hold_poll();
-    ui.counter_poll();
-    ui.dvm_poll();
-    ui.mask_hw_poll();
-    ui.zone_hw_poll();
-    ui.la_probe_poll();
-    ui.log_tick();
+    change::poll(ui, Poll::ChHold, Ui::ch_hold_poll);
+    change::poll(ui, Poll::Counter, Ui::counter_poll);
+    change::poll(ui, Poll::Dvm, Ui::dvm_poll);
+    change::poll(ui, Poll::Mask, Ui::mask_hw_poll);
+    change::poll(ui, Poll::Zone, Ui::zone_hw_poll);
+    change::poll(ui, Poll::LaProbe, Ui::la_probe_poll);
+    change::poll(ui, Poll::Log, Ui::log_tick);
     true
 }
 

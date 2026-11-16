@@ -3,8 +3,8 @@
 //! The change point owns acquisition publication; legacy reset consumers remain at their old seams.
 
 use super::*;
+use crate::perfguard::deep::ui_lock as lock;
 use oos_core::change::{Identity, Requester};
-use oos_hal::sync::lock;
 
 pub(crate) fn identity(ui: &Ui) -> Identity {
     let observer = &ui.host.runtime().change;

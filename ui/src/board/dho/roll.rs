@@ -57,29 +57,33 @@ pub(crate) fn roll_run(
 }
 
 /// A roll picture into the UI queue (also called on ticks without new chunks).
-pub(crate) fn publish_roll(g: &mut Shared, f: Frame) {
+pub(crate) fn publish_roll(g: &mut Shared, f: Frame) -> Option<crate::perfguard::deep::CopySample> {
     // STOP may have arrived during the read; keep the stopped picture and count no publication.
     if g.hold {
-        return;
+        return None;
     }
     // Roll pictures overlap: only the newest snapshot is needed, always within QUEUE_MAX.
     g.queue.clear();
-    g.queue.push_back(f.clone());
+    let (copy, sample) = crate::perfguard::deep::clone_frame(&f);
+    g.queue.push_back(copy);
     g.frame = f;
     crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, 1);
+    Some(sample)
 }
 
 /// Scan retains complete sweeps; roll replaces its overlapping snapshot.
-pub(crate) fn publish(g: &mut Shared, f: Frame, scan: bool) {
+pub(crate) fn publish(g: &mut Shared, f: Frame, scan: bool) -> Option<crate::perfguard::deep::CopySample> {
     if scan {
         // A complete sweep must not be dropped by the next partial picture.
         if g.queue.back().is_none_or(|b| b.partial) {
             g.queue.clear();
         }
-        g.queue.push_back(f.clone());
+        let (copy, sample) = crate::perfguard::deep::clone_frame(&f);
+        g.queue.push_back(copy);
         g.frame = f;
+        Some(sample)
     } else {
-        publish_roll(g, f);
+        publish_roll(g, f)
     }
 }
 
@@ -98,7 +102,7 @@ pub(super) fn poll(
         return true;
     }
     let was_rolling = rolling.is_some();
-    let run = roll_run(&mut oos_hal::sync::lock(out), rolling, ring, ring_la);
+    let run = roll_run(&mut crate::perfguard::deep::acq_lock(out), rolling, ring, ring_la);
     if was_rolling && rolling.is_none() {
         bar.apply(&super::lifecycle::roll_stop(sh));
     }
@@ -196,7 +200,12 @@ mod tests {
         };
         let mut g = lock(shared);
         assert!(super::super::publication::current(&g, &f));
-        publish(&mut g, f, scan);
+        let sample = publish(&mut g, f, scan);
+        drop(g);
+        if let Some(sample) = sample {
+            sample.record();
+        }
+        let g = lock(shared);
         assert!(g.frame.ch.iter().flatten().all(|&v| v == 23.0));
         assert!(g.frame.la.as_ref().unwrap().words.iter().all(|&v| v == 23));
         assert_eq!(g.frame.ch[0].len(), chunks);

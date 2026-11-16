@@ -46,7 +46,10 @@ fn growing_roll_step_profile() {
         ui.ph.draw_ex(0, &ui.m, (ui.m.time_per_div(), 0.0), rec.t0, rec.dt, &rec.ch[0], 24, None, rec.pairs);
         let draw = start.elapsed();
         if let Source::Hw { shared, .. } = &ui.src {
-            crate::board::dho::roll::publish_roll(&mut oos_hal::sync::lock(shared), frame);
+            let sample = crate::board::dho::roll::publish_roll(&mut oos_hal::sync::lock(shared), frame);
+            if let Some(sample) = sample {
+                sample.record();
+            }
         }
         ui.t_acq = 0.0;
         ui.t_draw = 0.0;

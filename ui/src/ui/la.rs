@@ -340,7 +340,7 @@ impl Ui {
     /// From `step`: the probe state the hardware thread read.
     pub(super) fn la_probe_poll(&mut self) {
         if let Source::Hw { shared, .. } = &self.src {
-            let p = shared.lock().unwrap().la_probe;
+            let p = crate::perfguard::deep::ui_lock(shared).la_probe;
             self.la_probe_set(p);
         }
     }

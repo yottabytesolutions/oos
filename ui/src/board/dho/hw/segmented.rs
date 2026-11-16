@@ -8,13 +8,13 @@ use crate::board::dho::{
     publication::{self, tag},
 };
 use crate::board::{HwShared, SegPhase};
+use crate::perfguard::deep::acq_lock as lock;
 use oos_core::change::Identity;
 use oos_hal::dho::{
     bus::{Bus, DmaBuf},
     hz, seg,
     seq::{Settings, State},
 };
-use oos_hal::sync::lock;
 
 /// A recording retains the identity captured before its first hardware arm.
 pub(super) struct SegRun {
@@ -191,12 +191,17 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
         r.next += cnt;
         g.seg.times.extend(times);
         g.seg.read = r.next;
-        if let Some(f) = frames.last() {
-            g.frame = f.clone();
-        }
+        let sample = frames.last().map(crate::perfguard::deep::clone_frame).map(|(frame, sample)| {
+            g.frame = frame;
+            sample
+        });
         g.queue.extend(frames);
         if r.next >= r.count {
             g.seg.phase = SegPhase::Done;
+        }
+        drop(g);
+        if let Some(sample) = sample {
+            sample.record();
         }
         Ok(())
     }

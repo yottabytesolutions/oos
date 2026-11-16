@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[derive(Debug, Default)]
 pub struct AcquisitionCounters {
     events: [AtomicU64; 8],
+    diagnostics: crate::perfguard::deep::Diagnostics,
 }
 
 #[derive(Clone, Copy)]
@@ -21,6 +22,10 @@ pub(super) enum Event {
 }
 
 impl AcquisitionCounters {
+    pub(crate) fn diagnostics(&self) -> &crate::perfguard::deep::Diagnostics {
+        &self.diagnostics
+    }
+
     #[cfg(any(target_os = "linux", test))]
     pub(super) fn add(&self, event: Event) {
         // Saturation preserves monotonicity even at the lifetime limit.

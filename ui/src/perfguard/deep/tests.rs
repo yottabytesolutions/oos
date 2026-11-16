@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+use super::*;
+use std::time::Duration;
+
+#[test]
+fn guard_records_both_sides_and_releases_shared_before_recording() {
+    let diagnostics = Diagnostics::default();
+    let shared = Mutex::new(0);
+    let samples = lock(&diagnostics.locks[0]);
+    std::thread::scope(|scope| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let shared = &shared;
+        let diagnostics = &diagnostics;
+        scope.spawn(move || {
+            let guard = timed_lock(shared, diagnostics, 0);
+            tx.send(()).unwrap();
+            drop(guard);
+        });
+        rx.recv().unwrap();
+        // Drop can block on the metric mutex, but must first release the application mutex.
+        let start = Instant::now();
+        loop {
+            if shared.try_lock().is_ok() {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::yield_now();
+        }
+        drop(samples);
+    });
+    *timed_lock(&shared, &diagnostics, 1) += 1;
+    let text = diagnostics.text();
+    for name in ["ui.wait", "ui.held", "acq.wait", "acq.held"] {
+        assert!(text.contains(&format!("diag lock.{name} n=1 total=1 p50_ns=")));
+    }
+    assert_eq!(*lock(&shared), 1);
+}
+
+#[test]
+fn polls_external_nesting_and_state_query_share_the_perf_report() {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let mut ui = crate::ui::Ui::for_tests(crate::wave::Source::Hw { shared: Default::default(), seen: 0 });
+    crate::ui::change::intake(&mut ui, |ui| crate::ui::change::intake(ui, |_| {}));
+    ui.step(0.04);
+    let expected = counters().text();
+    let stage = super::super::StageTiming::default().text();
+    assert!(stage.contains(&expected));
+    let text = crate::cmd::stat_text(&ui);
+    for poll in &Poll::ALL[..16] {
+        let poll = poll.label();
+        assert!(text.contains(&format!("diag poll.{poll} n=1 total=1")), "{poll}: {text}");
+    }
+    assert!(text.contains("diag poll.external n=1 total=1"));
+    assert!(text.contains(&expected));
+    let restart = text.find(" stage_restart_bode=").unwrap();
+    let diagnostic = text.find(" diag ").unwrap();
+    assert!(restart < diagnostic);
+    assert!(text.contains("diag intake.p50 n=1 intake_ns="));
+    assert!(text.contains("diag lock.ui.wait n="));
+    assert!(text.contains("diag lock.acq.wait n=0 total=0 p50_ns=pending p99_ns=pending max_ns=0"));
+    assert!(std::mem::size_of::<Diagnostics>() <= 56 * 1024);
+}
+
+#[test]
+fn clone_records_actual_sample_bytes_without_counting_shared_la_storage() {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let mut frame = crate::board::Frame { ch: [vec![1.0; 7], vec![2.0; 3], vec![], vec![]], ..Default::default() };
+    frame.la = Some(crate::ui::la::LaRec { t0: 0.0, dt: 1.0, words: std::sync::Arc::new(vec![3; 123]) });
+    let (copied, sample) = clone_frame(&frame);
+    assert!(counters().text().contains("producer.clone n=0 total=0"));
+    sample.record();
+    assert_eq!(copied.ch, frame.ch);
+    assert_ne!(copied.ch[0].as_ptr(), frame.ch[0].as_ptr());
+    assert!(std::sync::Arc::ptr_eq(&copied.la.unwrap().words, &frame.la.unwrap().words));
+    let text = counters().text();
+    assert!(text.contains("producer.clone n=1 total=1"));
+    assert!(text.contains("producer.clone_size n=1 total=1 p50_bytes=40 p99_bytes=pending max_bytes=40"));
+}
+
+#[test]
+#[ignore = "explicit release micro-benchmark: OOS_PERF_TESTS=1, one test thread"]
+fn bench_deep_diagnostics_overhead() {
+    assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"));
+    if cfg!(debug_assertions) {
+        panic!("overhead evidence requires release");
+    }
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let shared = Mutex::new(0u64);
+    let diagnostics = counters();
+    let mut timing = super::super::StageTiming::default();
+    let pair = crate::system::perfguard::measure(
+        super::super::ROUNDS,
+        1000,
+        || {
+            for _ in 0..12 {
+                *lock(&shared) += 1;
+            }
+        },
+        || {
+            timing.intake_begin();
+            for poll in &Poll::ALL[..16] {
+                let wait = diagnostics.ui_wait();
+                let started = Instant::now();
+                std::hint::black_box(poll);
+                let elapsed = started.elapsed();
+                timing.poll(elapsed, diagnostics.ui_wait().wrapping_sub(wait));
+                diagnostics.poll(*poll, elapsed);
+            }
+            for side in 0..12 {
+                *timed_lock(&shared, diagnostics, side % 2) += 1;
+            }
+            timing.intake_end();
+            timing.add(Duration::from_millis(1), Duration::ZERO);
+        },
+    );
+    let best = pair.best.1.saturating_sub(pair.best.0);
+    let tail = pair.p99.1.saturating_sub(pair.p99.0);
+    println!("diagnostic overhead 16 polls + 12 locks: best={best:?} p99_cpu={tail:?}; limits 5/10 us");
+    assert!(best < Duration::from_micros(5) && tail < Duration::from_micros(10));
+    let frame = crate::board::Frame { ch: std::array::from_fn(|_| vec![1.0; 625_000]), ..Default::default() };
+    let copy = crate::system::perfguard::measure(
+        super::super::ROUNDS,
+        8,
+        || {
+            std::hint::black_box(frame.clone());
+        },
+        || {
+            let (copy, sample) = clone_frame(&frame);
+            sample.record();
+            std::hint::black_box(copy);
+        },
+    );
+    println!("10 MB clone diagnostic: {copy:?}");
+    assert!(copy.best.1.as_secs_f64() / copy.best.0.as_secs_f64() < 1.05);
+    copy.check_tail(1.15);
+    println!("{}", diagnostics.text());
+}
+
+fn median(text: &str, label: &str) -> u64 {
+    text.split_once(&format!("diag {label} n=1 total=1 p50_ns="))
+        .unwrap()
+        .1
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn blocked_mutex_records_wait_longer_than_held() {
+    let diagnostics = Diagnostics::default();
+    let shared = Mutex::new(());
+    std::thread::scope(|scope| {
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (start_tx, start_rx) = std::sync::mpsc::channel();
+        let shared = &shared;
+        scope.spawn(move || {
+            let _guard = lock(shared);
+            ready_tx.send(()).unwrap();
+            start_rx.recv().unwrap();
+            std::thread::sleep(Duration::from_millis(75));
+        });
+        ready_rx.recv().unwrap();
+        start_tx.send(()).unwrap();
+        drop(timed_lock(shared, &diagnostics, 0));
+    });
+    let text = diagnostics.text();
+    let wait = median(&text, "lock.ui.wait");
+    let held = median(&text, "lock.ui.held");
+    assert!(wait >= 50_000_000 && held < wait, "wait={wait} held={held}");
+}
+
+#[test]
+fn uncontended_mutex_records_held_longer_than_wait() {
+    let diagnostics = Diagnostics::default();
+    let shared = Mutex::new(());
+    let guard = timed_lock(&shared, &diagnostics, 0);
+    std::thread::sleep(Duration::from_millis(50));
+    drop(guard);
+    let text = diagnostics.text();
+    let wait = median(&text, "lock.ui.wait");
+    let held = median(&text, "lock.ui.held");
+    assert!(held >= 50_000_000 && wait < held, "wait={wait} held={held}");
+}
+
+#[test]
+fn every_poll_label_has_its_own_slot() {
+    let labels = [
+        "memory",
+        "relayout",
+        "meas_hold",
+        "workspace_hold",
+        "update",
+        "wlan",
+        "ntp",
+        "ssh",
+        "usb",
+        "ch_hold",
+        "counter",
+        "dvm",
+        "mask",
+        "zone",
+        "la_probe",
+        "log",
+        "external",
+    ];
+    for (index, poll) in Poll::ALL.into_iter().enumerate() {
+        let diagnostics = Diagnostics::default();
+        diagnostics.poll(poll, Duration::from_nanos(index as u64 + 1));
+        let text = diagnostics.text();
+        assert_eq!(poll.label(), labels[index]);
+        assert_eq!(median(&text, &format!("poll.{}", labels[index])), index as u64 + 1);
+        for (other, label) in labels.iter().enumerate() {
+            if other != index {
+                assert!(text.contains(&format!("diag poll.{label} n=0 total=0")), "{text}");
+            }
+        }
+    }
+}

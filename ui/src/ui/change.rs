@@ -7,6 +7,7 @@ pub(super) mod census;
 mod diagnostics;
 mod intake;
 pub(crate) use intake::intake;
+pub(super) use intake::poll;
 mod legacy;
 mod legacy_keys;
 pub(super) mod normalize;
@@ -257,11 +258,12 @@ pub(crate) fn text(ui: &Ui) -> String {
             let _ = write!(text, " resolved={:?}/{}/{}:{}", token.requester(), token.run(), token.stage(), epoch);
         }
     }
-    text.push_str(&observer.timing.text());
+    text.push_str(&observer.timing.stage_text());
     text.push_str(&crate::drawpipe::counters().losses.text());
     text.push_str(&crate::drawpipe::counters().acquisition.text());
     let [autoset, bode] = proposals::restart_counts(ui);
     let _ = write!(text, " stage_restart_autoset={autoset} stage_restart_bode={bode}");
+    text.push_str(&observer.timing.diagnostics_text());
     text
 }
 

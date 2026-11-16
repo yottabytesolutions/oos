@@ -1,3 +1,3 @@
-main0 0 40 1024 104
+main0 0 40 1024 96
 zoom1 0 168 1024 328
 settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=true acquisition=Normal run=Run frames=22 records=132 menu_open=true Demo acq.pipeline=batch

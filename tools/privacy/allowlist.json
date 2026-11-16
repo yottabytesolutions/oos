@@ -124,5 +124,11 @@
     "rule": "private-key",
     "sha256": "03d104c669e3c7b6be7f989db8b12c8b910d3be8c1e2a73c9369d3cc0ba803b5",
     "reason": "Upstream test input: a bare PEM header the key tool must reject; no key material."
+  },
+  {
+    "path": "ui/tests/golden/demo/large/results/f0-results.png",
+    "rule": "email",
+    "sha256": "478b4006beae5c15d8aa786df6d0ab2271155622ef7e780ed80878ad04cd46e0",
+    "reason": "Compressed PNG bytes of a golden picture that happen to match the address pattern; no address."
   }
 ]

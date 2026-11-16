@@ -38,6 +38,12 @@ Reserved paths: whole tree on branch `integ-27-upstream` (integration merge), th
 
 ## Status
 
+- 2026-11-16: rebaseline 9052357e (trailer `Ratchet-Rebaseline: upstream 15b819e2`); our code moved or fixed first
+  (55e6a5fc, e125767c, 0ebc0441); goldens 83051e4c (Touch row gone). Full gate twice on e125767c..9052357e: every step
+  ok except coverage, where load-sensitive tests timed out under instrumentation (run 1: SIM generation 30 s guard;
+  run 2: that and five background-measurement waits) while the host load average was 20 to 65 (Spotlight indexing).
+  The same tests pass in tests-debug and tests-release of both runs. `--image` and `cargo xtask ratchet` wait for a
+  passing full gate on a quiet host.
 - 2026-11-16: ports committed: 1 trigger-level order 81e6cef3; 2 frame 0/1 072d8c98 (with 85fccdc2, an aarch64 build fix
   of the merge); 3 lock e39ab33e; 4 STOP/statistics tests 603a6b6c; 7 dsp tests d21d7002; 8 RemAllow 847190a0; doc
   privacy af0988b5. Port 5 (net.allow as a Command plus system adapter) left as follow-up: commands cover the Model

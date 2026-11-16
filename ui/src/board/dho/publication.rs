@@ -79,6 +79,24 @@ pub(super) fn current(g: &crate::board::Shared, f: &Frame) -> bool {
     false
 }
 
+/// The frame read again at STOP into the screen and the UI queue when it is still current, and the UI's final-frame
+/// request answered; the copy sample is recorded after Shared is released.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn publish_held(out: &HwShared, last: Option<Frame>, final_req: u64) {
+    let mut g = lock(out);
+    let sample = last.filter(|f| current(&g, f)).map(|f| {
+        let (copy, sample) = crate::perfguard::deep::clone_frame(&f);
+        g.frame = copy;
+        g.queue.push_back(f);
+        sample
+    });
+    g.final_ack = final_req;
+    drop(g);
+    if let Some(sample) = sample {
+        sample.record();
+    }
+}
+
 #[cfg(test)]
 mod timing_tests {
     use super::*;
@@ -125,5 +143,21 @@ mod timing_tests {
             push_frames(shared, vec![Frame { seq: 7, ..Default::default() }]);
         });
         assert!(diagnostics.text().contains("producer.clone n=1 total=1"));
+    }
+    #[test]
+    fn held_frame_is_published_only_when_current_and_always_acknowledged() {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
+        let shared = HwShared::default();
+        let id = oos_hal::sync::lock(&shared).acquisition.identity();
+        let held = tag(Frame { seq: 3, ..Default::default() }, id);
+        publish_held(&shared, Some(held), 5);
+        {
+            let g = oos_hal::sync::lock(&shared);
+            assert_eq!((g.frame.seq, g.queue.len(), g.final_ack), (3, 1, 5));
+        }
+        let stale = Frame { seq: 4, cfg: id.gen().wrapping_add(1), ..Default::default() };
+        publish_held(&shared, Some(stale), 6);
+        let g = oos_hal::sync::lock(&shared);
+        assert_eq!((g.frame.seq, g.queue.len(), g.final_ack), (3, 1, 6));
     }
 }

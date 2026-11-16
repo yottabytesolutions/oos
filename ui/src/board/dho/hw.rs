@@ -17,6 +17,7 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
+mod overlay;
 #[cfg(any(target_os = "linux", test))]
 mod segmented;
 mod single;
@@ -361,36 +362,6 @@ impl oos_hal::dho::coretrim::TrimHw for UnitTrim<'_> {
     }
 }
 
-/// The core offsets laid over cal_adc: the kept file's with `cal.core_offset = tight`, none with the key off (the file
-/// is then not even read, so the key off is a full undo).
-fn overlay_in_use(
-    tight: bool,
-    load: impl FnOnce() -> Option<oos_hal::dho::coretrim::Overlay>,
-) -> oos_hal::dho::coretrim::Overlay {
-    if tight {
-        load().unwrap_or_default()
-    } else {
-        oos_hal::dho::coretrim::Overlay::default()
-    }
-}
-
-/// The kept core offsets (`coretrim::Overlay`) from OOS's cal directory; None without a valid file.
-fn load_overlay() -> Option<oos_hal::dho::coretrim::Overlay> {
-    use oos_hal::dho::{calfile, coretrim};
-    let (b, _) = calfile::load_first(coretrim::OVERLAY_FILE, &[calfile::OOS_CAL_DIR])?;
-    coretrim::Overlay::from_bytes(calfile::parse(&b).ok()?)
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn overlay_save_error(error: &oos_hal::dho::calfile::SaveError) -> String {
-    use oos_hal::dho::{calfile, coretrim};
-    let status = match error {
-        calfile::SaveError::Failed(_) => "not saved",
-        calfile::SaveError::PublishedDirectorySync(_) => "warning",
-    };
-    format!("oos-ui hw: core offsets: {}/{} {}: {}", calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, status, error)
-}
-
 /// Matches the core offsets of the active ADC mode (`coretrim`), keeps them in `cal` and in `overlay`, and saves the
 /// overlay to OOS's own cal directory when they changed (never a Rigol file, never cal_adc.hex). True when the mode is
 /// done (matched, or nothing to change); false to try again at a later configuration.
@@ -443,7 +414,7 @@ fn core_trim(
                 if let Err(e) =
                     calfile::save(calfile::OOS_CAL_DIR, coretrim::OVERLAY_FILE, &overlay.to_bytes(), calfile::now())
                 {
-                    eprintln!("{}", overlay_save_error(&e));
+                    eprintln!("{}", overlay::save_error(&e));
                 }
             }
             t.matched != 0 && t.skipped == 0
@@ -1570,7 +1541,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         };
         let mut cal_adc = adc::CalAdc::load(&o.cal_dir).ok();
         // the matched core offsets: only with `cal.core_offset = tight` (key off = the cal_adc.hex above, unchanged)
-        let mut trim_overlay = overlay_in_use(switches.board.core_offset_tight, load_overlay);
+        let mut trim_overlay = overlay::in_use(switches.board.core_offset_tight, overlay::load);
         if let Some(c) = cal_adc.as_mut() {
             trim_overlay.apply(c);
         }
@@ -1798,16 +1769,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         None
                     }
                 });
-                let mut g = crate::perfguard::deep::acq_lock(&out);
-                let sample = last.filter(|f| super::publication::current(&g, f)).map(|f| {
-                    let (copy, sample) = crate::perfguard::deep::clone_frame(&f);
-                    g.frame = copy;
-                    g.queue.push_back(f);
-                    sample
-                });
-                g.final_ack = final_req;
-                drop(g);
-                if let Some(sample) = sample { sample.record(); }
+                super::publication::publish_held(&out, last, final_req);
                 paused = true;
             }
             // STOP (normal acquisitions only): nothing is armed, the record in the ring stays; for every new view
@@ -2570,18 +2532,6 @@ pub(crate) mod single_fake;
 mod tests {
 
     #[test]
-    fn overlay_save_error_distinguishes_published_sync_failure() {
-        use oos_hal::dho::calfile::SaveError;
-        let published =
-            super::overlay_save_error(&SaveError::PublishedDirectorySync(std::io::Error::other("sync failed")));
-        assert!(published.contains("warning: calibration files published; directory fsync failed: sync failed"));
-        assert!(!published.contains("not saved"));
-        let failed = super::overlay_save_error(&SaveError::Failed(std::io::Error::other("publish failed")));
-        assert!(failed.contains("not saved: publish failed"));
-        assert!(!failed.contains("published"));
-    }
-
-    #[test]
     fn audit0073_selfcal_reloads_published_files_and_warns_on_sync_failure() {
         use oos_hal::dho::calfile::SaveError;
         for outcome in [
@@ -3216,19 +3166,6 @@ mod tests {
                 el
             );
         }
-    }
-
-    // Break it catches: the kept offsets applied with the key off (no full undo), or read at all then.
-    #[test]
-    fn overlay_only_with_the_key_on() {
-        let mut file = oos_hal::dho::coretrim::Overlay::default();
-        file.set(2, &[1; 8]);
-        assert_eq!(
-            overlay_in_use(false, || panic!("read with the key off")),
-            oos_hal::dho::coretrim::Overlay::default()
-        );
-        assert_eq!(overlay_in_use(true, || Some(file.clone())), file);
-        assert_eq!(overlay_in_use(true, || None).modes, 0);
     }
 
     // Round 15: a trim right after the start-up mode switches read a settling front end. Break it catches: a trim

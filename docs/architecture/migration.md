@@ -544,8 +544,12 @@ enforce.
 
 ### M15: remote adapters on commands and queries
 
-Transports generic over `Read + Write`, tested with in-memory streams; `RemoteRequest` to main; SCPI, HTTP, MCP, VXI-11 and the control FIFO parse
-into `Command` and `Query`; answers come from the `reply` stage.
+Transports generic over `Read + Write`, tested with in-memory streams; `RemoteRequest` to main. Transports only frame:
+raw socket, HTTP, MCP, VXI-11, HiSLIP and the control FIFO hand SCPI programs to the one SCPI interpreter in the frame
+loop, which produces `Command` and `Query`; answers come from the `reply` stage. A synchronous transport refuses a
+barrier with -221 (upstream [ADR 0022](../adr/code/0022-one-scpi-interpreter-transports-only-frame.md)). Every
+remote service keeps its switch and the `net.allow` check when it can change the scope (upstream
+[ADR 0025](../adr/system/0025-remote-services-are-bench-lan-services.md)).
 
 Proposed (adr/0017): the SCPI parser is rebuilt from the SCPI reference table, with the legacy parser as a
 differential oracle on the host.

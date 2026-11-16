@@ -137,11 +137,11 @@ static DEFS: [Def; 17] = [
     pair(
         239,
         "Setup + Hold",
-        "s",
+        "",
         Edge,
         14,
         &[(TWO, "SETUP & HOLD")],
-        "Setup time and hold time added: the window the data (A) stays valid around the clock (B).",
+        "Rising clock edges (B) where the data (A) misses the Tsetup or Thold limit of the Measure menu.",
     ),
     pair(
         240,

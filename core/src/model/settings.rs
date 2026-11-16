@@ -269,4 +269,12 @@ impl Model {
             self.trig_la = None;
         }
     }
+
+    /// Keeps the lower level of a two-level type at or below the upper one. The lower level gives way: the upper is
+    /// the level every type shares, the lower one is also Delay's level B and Setup/Hold's clock level.
+    pub fn order_trigger_levels(&mut self) {
+        if self.trig_type.two_level() && self.trig_level2 > self.trig_level {
+            self.trig_level2 = self.trig_level;
+        }
+    }
 }

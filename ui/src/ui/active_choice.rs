@@ -140,7 +140,6 @@ fn display(u: &Ui, it: Item) -> Option<usize> {
         Item::BottomBar => usize::from(m.bar_compact),
         Item::Hdmi => return position(&HDMI_MODES, m.hdmi),
         Item::TextSize => return position(&TEXT_SIZES, m.text_size),
-        Item::TouchLock => usize::from(m.touch_lock),
         Item::CurMode => m.cursor as usize,
         Item::XyMode => usize::from(u.xy),
         Item::StripDock => return position(&StripDock::ALL, m.strip_dock),

@@ -199,7 +199,8 @@ fn hall(codes: &[u8], dt: f64) -> Shaft {
     let a: Vec<_> = codes.iter().map(|x| x & 4 != 0).collect();
     let b: Vec<_> = codes.iter().map(|x| x & 2 != 0).collect();
     let c: Vec<_> = codes.iter().map(|x| x & 1 != 0).collect();
-    motor::shaft_hall(&a, &b, &c, dt, 0.0)
+    // one pole pair: the mechanical angle and speed are the electrical ones
+    motor::shaft_hall(&a, &b, &c, dt, 0.0, 1)
 }
 
 #[test]

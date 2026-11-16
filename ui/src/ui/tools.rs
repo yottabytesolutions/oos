@@ -249,17 +249,13 @@ impl Ui {
             })
             .collect();
         for &(k, a, b) in &self.m.meas2 {
-            let (name, kind, _, _) = PAIRS[k.min(PAIRS.len() - 1)];
+            let name = PAIRS[k.min(PAIRS.len() - 1)].0;
             let val = self.pair_at(k, a, b);
             let tag = |id: WaveId| match id {
                 WaveId::Ch(c) => (c + 1).to_string(),
                 WaveId::Ref(i) => format!("R{}", i + 1),
             };
-            let unit = match kind {
-                PairKind::Phase => "\u{b0}",
-                PairKind::SetupAndHold => "",
-                _ => "s",
-            };
+            let unit = pair_unit(k);
             v.push(MeasRow {
                 name: format!("{} {}-{}", name, tag(a), tag(b)),
                 src: a,
@@ -1340,6 +1336,18 @@ impl Ui {
     /// Empties every reference slot, the same as Clear all.
     pub(crate) fn ref_clear_all(&mut self) {
         self.refs = std::array::from_fn(|_| None);
+        // readouts of the cleared slots go with them: an import adds Vpp, Freq, RMS and Rise of its first slot, and those
+        // rows stayed as "----" after the clear (unit 2026-11-16)
+        let is_ref = |w: &WaveId| matches!(w, WaveId::Ref(_));
+        self.m.meas.retain(|(_, w)| !is_ref(w));
+        self.m.meas2.retain(|(_, a, b)| !is_ref(a) && !is_ref(b));
+        if is_ref(&self.meas_src) {
+            self.meas_src = WaveId::Ch(0);
+        }
+        if is_ref(&self.meas_src_b) {
+            self.meas_src_b = WaveId::Ch(0);
+        }
+        self.ensure_meas_own();
         self.measure_refs();
         self.analyzer_update();
     }
@@ -1405,10 +1413,7 @@ impl Ui {
     }
 
     fn ref_load_file(&mut self, p: &std::path::Path) -> Result<(), String> {
-        if !p.is_file() {
-            return Err(format!("missing {}", crate::store::file_name(p)));
-        }
-        let bytes = std::fs::read(p).map_err(|_| format!("missing {}", crate::store::file_name(p)))?;
+        let bytes = crate::store::read_waveform_file(p)?;
         self.load_waveform_bytes(&bytes, &crate::store::file_name(p))
     }
     /// Name of a channel on its card: its label, or CHn.
@@ -1424,6 +1429,29 @@ impl Ui {
 #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 fn nearest_ref_vdiv(want: f32) -> f32 {
     VSCALES.iter().copied().min_by(|a, b| (a - want).abs().partial_cmp(&(b - want).abs()).unwrap()).unwrap_or(0.2)
+}
+
+#[cfg(test)]
+mod ref_clear_tests {
+    use super::*;
+
+    // Break it catches: the readouts an import adds for its slot staying as empty rows after Reference > Clear.
+    #[test]
+    fn clearing_the_references_takes_their_readouts_along() {
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+        let csv: String = (0..2000)
+            .map(|i| format!("{:e},{}\n", i as f64 * 1e-6, if (i / 100) % 2 == 0 { 1.0 } else { -1.0 }))
+            .collect();
+        ui.load_waveform_bytes_at(csv.as_bytes(), "r.csv", 1).unwrap();
+        assert!(ui.m.meas.iter().any(|(_, w)| *w == WaveId::Ref(1)), "the import adds readouts of its slot");
+        ui.m.meas2.push((0, WaveId::Ch(0), WaveId::Ref(1)));
+        let own: Vec<(Meas, WaveId)> =
+            ui.m.meas.iter().filter(|(_, w)| !matches!(w, WaveId::Ref(_))).cloned().collect();
+        ui.ref_clear_all();
+        assert_eq!(ui.m.meas, own, "the channel readouts stay, the reference ones go");
+        assert!(ui.m.meas2.is_empty());
+        assert!(!matches!(ui.meas_src, WaveId::Ref(_)));
+    }
 }
 
 #[cfg(test)]

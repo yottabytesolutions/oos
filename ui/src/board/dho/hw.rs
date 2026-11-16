@@ -1081,22 +1081,43 @@ fn disarm(
 }
 
 /// One line of the header log: the 8 header words, `pre`, and the offsets (samples) of the nearest rising and falling
-/// crossing of the trigger level from `pre` on the trigger channel.
+/// crossing of the trigger level from `pre` on the trigger channel. With OOS_FRAME_HEADER=off only the frames whose
+/// edge (of the trigger slope) is not within 20 samples of `pre`, and a count of all frames every 10,000: a long run
+/// for rare frames such as issue #5's.
 fn log_header(h: &[u8], v: &[f32], s: &Settings, pre: usize, k: usize) {
     use std::io::Write;
-    static LINES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    if LINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 20_000 {
-        return;
-    }
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+    static LINES: AtomicU32 = AtomicU32::new(0);
+    static FRAMES: AtomicU64 = AtomicU64::new(0);
     let words: Vec<String> = h.chunks_exact(2).map(|b| format!("{:04x}", u16::from_le_bytes([b[0], b[1]]))).collect();
     let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
     let hyst = (0.3 * s.ch[tc].scale) as f32;
     let span = v.len();
-    let off = |rising: bool| {
-        crate::fastdraw::edge_near(v, pre, s.level as f32, hyst, rising, false, span)
-            .map_or("-".to_string(), |t| format!("{:.1}", t - pre as f64))
+    let near = |rising: bool| {
+        crate::fastdraw::edge_near(v, pre, s.level as f32, hyst, rising, false, span).map(|t| t - pre as f64)
     };
-    let line = format!(
+    let off = |rising: bool| near(rising).map_or("-".to_string(), |t| format!("{:.1}", t));
+    let only_off = std::env::var_os("OOS_FRAME_HEADER").is_some_and(|x| x == "off");
+    let mut line = String::new();
+    if only_off {
+        let n = FRAMES.fetch_add(1, Ordering::Relaxed) + 1;
+        if n % 10_000 == 0 {
+            line = format!("frames {}\n", n);
+        }
+        let rising = !matches!(s.slope, oos_hal::dho::tpu::Slope::Falling);
+        if near(rising).is_some_and(|t| t.abs() <= 20.0) {
+            if !line.is_empty() {
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/oos-hdr.log") {
+                    let _ = f.write_all(line.as_bytes());
+                }
+            }
+            return;
+        }
+    }
+    if LINES.fetch_add(1, Ordering::Relaxed) >= 20_000 {
+        return;
+    }
+    line += &format!(
         "{} pre {} k {} n {} rise {} fall {} scale {} tdiv {:e}\n",
         words.join(" "),
         pre,
@@ -1857,8 +1878,12 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             applied_pair = Some(pair);
             crate::pacing::APPLIED.store(want_gen, std::sync::atomic::Ordering::Relaxed);
             let (s, p) = current.clone().unwrap();
+            // a hardware segment recording in the FPGA: the measure unit (DVM, levels, slots) and the ADC core offsets
+            // wait until it has ended. `disarm` does not stop it, and a write in between would change the segments
+            // still to come (H4 of the 0.1.13 review)
+            let seg_recording = segrun.as_ref().is_some_and(|r| r.recording);
             // the DVM block (`dvm.hw = on`): (re)started while nothing is armed, read like the counter
-            {
+            if !seg_recording {
                 use oos_hal::dho::dvm;
                 let want = crate::perfguard::deep::acq_lock(&out).dvm_want;
                 let elapsed = dvm_run.map_or(0.0, |r| r.1.elapsed().as_secs_f64());
@@ -1889,14 +1914,18 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             // levels for the auto set-up from the measure unit, once the settings they ask for are applied; the unit
             // is set up while nothing is armed (configuration crosses into the ADC clock without synchronisers)
             let lw = crate::perfguard::deep::acq_lock(&out).levels_want;
-            if let Some((id, _, runs)) = lw.filter(|w| mode == Slow::Off && stamp == w.1 && levels_done != Some(w.0)) {
+            if let Some((id, _, runs)) =
+                lw.filter(|w| mode == Slow::Off && !seg_recording && stamp == w.1 && levels_done != Some(w.0))
+            {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 let v = levels_measure(&mut bar, &s, &state.gain, runs);
                 crate::perfguard::deep::acq_lock(&out).levels = Some((id, v));
                 levels_done = Some(id);
             }
             // the core trim of the current configuration, with nothing armed
-            if let Some(t) = trim_pending.filter(|t| mode == Slow::Off && t.due(std::time::Instant::now())) {
+            if let Some(t) =
+                trim_pending.filter(|t| mode == Slow::Off && !seg_recording && t.due(std::time::Instant::now()))
+            {
                 trim_pending = None;
                 // not while the generator runs: its signal is locked to the ADC clock (coretrim gate)
                 let gen_on = afg_done.is_some_and(|d| d.0);
@@ -1910,7 +1939,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             }
             // debug: one raw run of the measure unit for `:DEBug:SLOTs?`
             let sw = crate::perfguard::deep::acq_lock(&out).slots_want;
-            if let Some(id) = sw.filter(|&id| mode == Slow::Off && slots_done != Some(id)) {
+            if let Some(id) = sw.filter(|&id| mode == Slow::Off && !seg_recording && slots_done != Some(id)) {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
                 let r = oos_hal::dho::levels::run(&mut bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64)));
                 crate::perfguard::deep::acq_lock(&out).slots = Some((id, r.map(|r| r.map(|x| [x.min as f32, x.max as f32, x.mean as f32]))));

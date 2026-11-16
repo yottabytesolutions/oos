@@ -76,6 +76,8 @@ mod monitor;
 mod reference_decode;
 mod reference_search;
 mod remote;
+#[cfg(test)]
+mod session_tests;
 mod ssh;
 mod time;
 pub mod views;
@@ -254,6 +256,12 @@ const GRID_AXIS: Rgb = rgb(0x38, 0x38, 0x3b);
 /// graticule: dots of the division lines, frame / centre axes / ticks (the classic dotted scope look)
 const GRID_DOT: Rgb = rgb(0x68, 0x68, 0x6b);
 const GRID_FRAME: Rgb = rgb(0x64, 0x64, 0x67);
+/// the measurement page: the box of the picked measurement, a step lighter than a button so it reads as one panel
+const PREVIEW_BG: Rgb = rgb(0x24, 0x24, 0x28);
+/// the measurement page: the header row of a group, between a button and its border
+const GROUP_HEAD: Rgb = rgb(0x2a, 0x2a, 0x2e);
+/// the self-cal banner over the plot: a dark amber, so it is not taken for a dialog while the inputs must stay free
+const CAL_BANNER: Rgb = rgb(0x30, 0x22, 0x08);
 
 /// Averaging counts of Acquire > Averages.
 /// Stops of the density scale, rare to frequent (`heat_palette`).
@@ -316,6 +324,14 @@ pub const PAIRS_N: usize = tools::PAIRS.len();
 /// The short names of the two-source variants (strip, SCPI).
 pub fn pair_short_name(k: usize) -> &'static str {
     tools::PAIRS[k.min(PAIRS_N - 1)].0
+}
+/// The unit of a two-source variant: degrees for phase, none for the setup/hold violation count, else seconds.
+pub fn pair_unit(k: usize) -> &'static str {
+    match tools::PAIRS[k.min(PAIRS_N - 1)].1 {
+        tools::PairKind::Phase => "\u{b0}",
+        tools::PairKind::SetupAndHold => "",
+        _ => "s",
+    }
 }
 
 pub(crate) use analysers::{scpi_views, stored_views};
@@ -837,7 +853,6 @@ enum Item {
     About,
     SysInfo,
     Shot,
-    TouchLock,
     AuxOut,
     Stock,
     Update,
@@ -874,6 +889,9 @@ enum Item {
     /// the mDNS switch, and the scope's name on the network (`<name>.local`, a picker with Other on the keyboard)
     RemMdns,
     RemName,
+    /// who may reach the scope (`net.allow`, a picker with Other on the keyboard), and whether that is in force
+    RemAllow,
+    RemFirewall,
     /// System > Graphics: CPU or GPU (ui/graphics.rs)
     Graphics,
     /// Display > Views (ui/views.rs)
@@ -1192,10 +1210,13 @@ pub struct Ui {
     /// the window being drawn
     cur_win: usize,
     /// Full density on the panel: the plot covers the top bar and the cards. Stays off while the external display
-    /// shows the waveform, so the panel keeps the controls.
+    /// shows the waveform, so the panel keeps the controls, unless the expand button asked for it (`full_asked`).
     full: bool,
     /// Top left of the corner button after a drag. None keeps it at the top right of the plot.
     full_at: Option<(i32, i32)>,
+    /// Full came from a tap on the expand button: the panel enlarges its plot even while the external display shows
+    /// the waveform. Full chosen under Density, a display plugged in, or leaving Full clears it.
+    full_asked: bool,
     vmaxz: [u32; NCH],
     rng: Rng,
     trace_bus: std::cell::RefCell<bus::Cache>,
@@ -1276,6 +1297,11 @@ pub struct Ui {
     /// STOP: the software trigger of the record shown at the stop (s from the hardware trigger point), kept for the
     /// records read again (`stop_replay`)
     stop_ti_off: Option<f64>,
+    /// STOP: the raw record shown at the stop (the final frame of a deep or live-compressed record), and the min/max
+    /// pair record the thread read again for the view when that came as pairs. The pairs are drawn; the raw record
+    /// stays `last[0]`, the record measured and read out (`stop_replay`, docs/fork/stop-exact.md)
+    stop_raw: Option<Record>,
+    stop_pic: Option<Record>,
     pub t_fast: f32,
     pub t_fast_ab: (f32, f32),
     /// of the drawing: adding the collected frames to the maps (ms), frames a call (smoothed)
@@ -1417,6 +1443,8 @@ pub struct Ui {
     /// NTP worker and schedule (ui/time.rs)
     ntp: time::NtpUi,
     ssh: ssh::SshUi,
+    /// System > Network > Remote services > Allowed (ui/remote.rs)
+    remote: remote::RemoteUi,
     /// the system clock was set in this boot (NTP or by hand): file names carry the date
     pub clock_known: bool,
     pub t_step: f32,
@@ -1586,6 +1614,7 @@ impl Ui {
             cur_win: 0,
             full: false,
             full_at: None,
+            full_asked: false,
             vmaxz: [1; NCH],
             trace_bus: Default::default(),
             rng: Rng::new(0x9e3779b97f4a7c15),
@@ -1643,6 +1672,8 @@ impl Ui {
             fast_off: (0.0, 0.0),
             fast_take: crate::board::QUEUE_MAX as f32,
             stop_ti_off: None,
+            stop_raw: None,
+            stop_pic: None,
             t_fast: 0.0,
             t_fast_ab: (0.0, 0.0),
             t_fast_fold: 0.0,
@@ -1752,6 +1783,7 @@ impl Ui {
             sys_path: None,
             ntp: Default::default(),
             ssh: Default::default(),
+            remote: Default::default(),
             clock_known: false,
             t_step: 0.0,
             t_acq: 0.0,
@@ -1935,7 +1967,7 @@ impl Ui {
     }
 
     /// Full density drawn on the panel. Not while the external display shows the waveform (the panel stays the
-    /// controls), and not with the touch lock, whose way out is the Menu button.
+    /// controls) unless the expand button asked for it, and not with the touch lock, whose way out is the Menu button.
     fn full_on(&self) -> bool {
         self.full && !self.m.touch_lock
     }
@@ -2881,6 +2913,7 @@ impl Ui {
         if !self.record_mode() && live && change::proposals::acquiring(self) {
             if self.m.run == RunState::Run {
                 self.stop_ti_off = None;
+                (self.stop_raw, self.stop_pic) = (None, None);
             }
             // minimum persistence: replace the picture when a new record arrives, not every frame (at large depths
             // the hardware delivers fewer records than frames, and clearing each frame made the trace flicker)
@@ -3229,7 +3262,9 @@ impl Ui {
             let zv = (tscales()[self.m.zscale], self.m.zdelay);
             let zoom_model = self.zoom_display_model();
             let detail = self.captured_view(zv);
-            if let Some(rec) = self.last[0].clone() {
+            // the view read again as pairs while the raw record of the STOP is the one measured: the pairs are drawn
+            let shown = self.stop_picture().cloned().or_else(|| self.last[0].clone());
+            if let Some(rec) = shown {
                 let zw = self.z_weights(&rec);
                 for c in 0..NCH {
                     if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
@@ -3383,10 +3418,14 @@ impl Ui {
         if !ok {
             self.src.hw_stop(None);
             self.stop_ti_off = None;
+            (self.stop_raw, self.stop_pic) = (None, None);
             return;
         }
         // the software trigger of the record shown at the stop, as a time from the hardware trigger point
         if self.stop_ti_off.is_none() {
+            // and that record itself when it is of samples: measured while the views come as pairs
+            self.stop_raw = self.last[0].clone().filter(|r| r.raw.as_ref().is_some_and(|x| !x.frame.envelope));
+            self.stop_pic = None;
             self.stop_ti_off = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|raw| {
                 let f = &raw.frame;
                 let ti = raw.i0 as f64 - raw.t0 / f.dt;
@@ -3400,9 +3439,24 @@ impl Ui {
         }
         let window = view.0 * HDIV as f64;
         let rec = crate::board::to_record(&std::sync::Arc::new(f), &self.m, 3600, window, view.1 - window / 2.0);
-        self.last[0] = Some(rec);
+        // a view read as min/max pairs (zoomed out on a record above `LIVE_READ`: the whole record compressed) after a
+        // STOP on a raw record (the final frame of a deep record): the pairs are drawn, the raw record stays the one
+        // measured and read out; pairs hold no Mean, RMS or Std dev (A3 of the 2026-11-16 review). A view read raw (far
+        // zoomed in) is the record shown and measured, as before
+        match self.stop_raw.as_ref().filter(|_| rec.raw.as_ref().is_some_and(|r| r.frame.envelope)) {
+            Some(raw) => (self.last[0], self.stop_pic) = (Some(raw.clone()), Some(rec)),
+            None => (self.last[0], self.stop_pic) = (Some(rec), None),
+        }
+        // the record counted when it came in RUN: its values for the view, not a new one for the statistics, the trend
+        // and the catalog (as `refresh_stopped_measurements`)
         self.measure_last();
-        self.meas_new = true;
+    }
+
+    /// STOP: the pair record to draw for the view (`stop_pic`) while the raw record of the stop is the record shown.
+    fn stop_picture(&self) -> Option<&Record> {
+        let frame = |r: Option<&Record>| r.and_then(|r| r.raw.as_ref()).map(|r| std::sync::Arc::as_ptr(&r.frame));
+        let same = frame(self.last[0].as_ref()).is_some_and(|f| Some(f) == frame(self.stop_raw.as_ref()));
+        self.stop_pic.as_ref().filter(|_| same)
     }
 
     /// The fast display path applies: hardware frames with a plain edge trigger and nothing that needs every record
@@ -3444,7 +3498,7 @@ impl Ui {
         let placed = crate::fastdraw::par_map(&frames, |f| fast_plan(m, w, h, f, fold));
         let t1 = std::time::Instant::now();
         let mut trig = 0;
-        for p in &placed {
+        for (p, f) in placed.iter().zip(&frames) {
             trig += p.triggered as usize;
             if let FastPlan::Raw { class: Some(k), off, .. } = p.plan {
                 self.fast_edges[k] += 1;
@@ -3452,9 +3506,14 @@ impl Ui {
                     self.fast_off = (self.fast_off.0 + off, self.fast_off.1.max(off));
                 }
             }
-            if rows_ready {
+            // as the deposit workers (`framestats::fold_frame`): nothing of live-compression pairs (the raw newest
+            // frame of the batch counts), of other min/max pairs only what pairs give (Max, Min, Pk-pk)
+            if rows_ready && !crate::compress::live(f) {
                 for (i, &(k, src)) in self.m.meas.iter().enumerate() {
                     let Some(c) = src.ch() else { continue };
+                    if f.envelope && crate::framestats::needs_samples(k) {
+                        continue;
+                    }
                     if let Some(v) = p.fold[c].and_then(|f| f.get(k)).filter(|v| v.is_finite()) {
                         self.mstat[i].add(v);
                     }
@@ -3550,8 +3609,11 @@ impl Ui {
             let (tz, dz) = self.view();
             let ppx = o.w as f32 / HDIV;
             let tdiv = self.m.time_per_div();
-            let xa = o.x + (o.w as f32 / 2.0 + ((dz - tz * HDIV / 2.0) - self.m.delay) / tdiv * ppx) as i32;
-            let xb = o.x + (o.w as f32 / 2.0 + ((dz + tz * HDIV / 2.0) - self.m.delay) / tdiv * ppx) as i32;
+            // a window far off the overview (an extreme delay) is held a screen width beyond it: drawn the same (it is
+            // clipped to the overview), and the pixel arithmetic below stays within i32
+            let far = 2.0 * o.w as f32;
+            let at = |t: f32| o.x + (o.w as f32 / 2.0 + (t - self.m.delay) / tdiv * ppx).clamp(-far, far) as i32;
+            let (xa, xb) = (at(dz - tz * HDIV / 2.0), at(dz + tz * HDIV / 2.0));
             let cv = l.over();
             cv.set_clip(o);
             cv.blend(Rect::new(o.x, o.y, (xa - o.x).max(0), o.h), BG, 170);
@@ -6690,7 +6752,6 @@ impl Ui {
             MenuId::Utility => vec![
                 Item::Offline,
                 Item::QuickAct,
-                Item::TouchLock,
                 Item::AuxOut,
                 Item::BootMode,
                 Item::Overclock,
@@ -7201,10 +7262,10 @@ impl Ui {
     }
 
     /// Switches the decoder protocol. The demo takes the sources, channels and trigger that match its bus traffic
-    /// (`Protocol::setup`). On the hardware one setting must not change another (the forum, eTobey): the channels and
-    /// the trigger stay as they are, the sources the protocols share stay, and a role the old protocol did not have
-    /// takes a channel that is on and no other role uses, or none. The protocol's own parameters (threshold, baud, bits
-    /// ...) are set on both.
+    /// (`Protocol::setup`). On every other source (the hardware, Live, Replay of a recorded file) one setting must not
+    /// change another (the forum, eTobey): the channels and the trigger stay as they are, the sources the protocols
+    /// share stay, and a role the old protocol did not have takes a channel that is on and no other role uses, or none.
+    /// The protocol's own parameters (threshold, baud, bits ...) are set on both.
     fn set_dec_proto(&mut self, p: Proto) {
         let Proto::Module(i) = p;
         let s = crate::protocols::get(i).setup();
@@ -7215,7 +7276,7 @@ impl Ui {
             }
             return;
         }
-        let demo = !self.src.is_hw();
+        let demo = self.src.is_demo();
         let m = &mut self.m;
         let changed = m.dec_proto != p;
         let old = m.dec_proto.roles();
@@ -7541,15 +7602,16 @@ impl Ui {
             change::mapping_observed(self, change::oracle::Row::Trigger);
             return;
         }
-        // the presets below suit the demo signals (each type on a channel that shows it). On the hardware a trigger
-        // type sets only its own parameters: the channels, the source, the level and the slope, which the other types
-        // share, stay as they were (the forum, eTobey: one setting must not change another)
-        let hw = self.src.is_hw();
-        let shared = (self.m.ch.clone(), self.m.trig_src, self.m.trig_level, self.m.slope);
+        // the presets below suit the demo signals (each type on a channel that shows it). Every other source (the
+        // hardware, a live or replayed record) keeps what the user set: the channels, source, level and slope, and
+        // also the width, the pattern, the lower level and the rest that several types share (the forum, eTobey: one
+        // setting must not change another). A SIM session triggers on its reference: set_reference_trigger_type
+        let demo = self.src.is_demo();
         let m = &mut self.m;
         m.trig_type = t;
         let on = |c: usize, m: &mut Model| m.ch[c].on = true;
         match t {
+            _ if !demo => {}
             TrigType::Bus => {} // handled above
             TrigType::Edge => {
                 m.trig_src = 0;
@@ -7625,8 +7687,7 @@ impl Ui {
         if m.trig_type != TrigType::Runt && m.trig_when == WhenKind::Off {
             m.trig_when = WhenKind::Lt;
         }
-        if hw {
-            (m.ch, m.trig_src, m.trig_level, m.slope) = shared;
+        if !demo {
             // the second source of Delay and Setup/Hold on a channel that is on (PR #8, W4R)
             let src = m.trig_src;
             if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold)
@@ -8105,7 +8166,6 @@ impl Ui {
             Item::About => "About OOS",
             Item::SysInfo => "System info",
             Item::Shot => "Screenshot",
-            Item::TouchLock => "Touch",
             Item::AuxOut => "AUX out",
             Item::Stock => "Back to stock",
             Item::Update => "Update",
@@ -8382,13 +8442,6 @@ impl Ui {
             }
             Item::ZInput => m.z_src.map_or("Off".to_string(), |c| format!("CH{}", c + 1)),
             Item::Histogram => format!("{:?}", m.hist),
-            Item::TouchLock => {
-                if m.touch_lock {
-                    "Locked".into()
-                } else {
-                    "On".into()
-                }
-            }
             Item::AuxOut => m.aux_out.name().into(),
             Item::MathOpI => m.math.name().into(),
             Item::MathFam => self.math_fam.name().into(),
@@ -8705,7 +8758,13 @@ impl Ui {
                     m.run = RunState::Run;
                 }
             }
-            Item::TrigLevel => m.trig_level += d as f32 * m.ch[m.trig_src].volts_per_div() / 25.0,
+            Item::TrigLevel => {
+                m.trig_level += d as f32 * m.ch[m.trig_src].volts_per_div() / 25.0;
+                // the upper level of a two-level type stops at the lower one, as Bode's start stops at its stop
+                if m.trig_type.two_level() {
+                    m.trig_level = m.trig_level.max(m.trig_level2);
+                }
+            }
             Item::TrigType => {
                 let i = TRIG_TYPES.iter().position(|&x| x == m.trig_type).unwrap_or(0);
                 let t = TRIG_TYPES[cyc(i, TRIG_TYPES.len(), d)];
@@ -8715,6 +8774,9 @@ impl Ui {
                 let c =
                     if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold) { m.trig_src2 } else { m.trig_src };
                 m.trig_level2 += d as f32 * m.ch[c].volts_per_div() / 25.0;
+                if m.trig_type.two_level() {
+                    m.trig_level2 = m.trig_level2.min(m.trig_level);
+                }
             }
             Item::TrigSrc2 => m.trig_src2 = src_step(m.trig_src2, NCH, d),
             Item::SearchOn => {
@@ -8899,7 +8961,6 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.grid).unwrap();
                 m.grid = all[cyc(i, 3, d)];
             }
-            Item::TouchLock => m.touch_lock = !m.touch_lock,
             Item::QuickAct => {
                 let i = QUICKS.iter().position(|&q| q == m.quick).unwrap_or(0);
                 m.quick = QUICKS[cyc(i, QUICKS.len(), d)];
@@ -9021,11 +9082,11 @@ impl Ui {
             Item::DecThr => self.m.dec_thr += d as f32 * self.decoder_vpd() / 25.0,
             Item::DecFmt => self.m.dec_ascii = !self.m.dec_ascii,
             Item::DecProto => {
-                // only the decoders System > Features offers
+                // only the decoders System > Features offers (none: a hand-edited system.conf, see `load_system`)
                 let on = self.protos_on();
-                let i = on.iter().position(|&x| x == self.m.dec_proto).unwrap_or(0);
-                if let Some(&p) = on.get(cyc(i, on.len(), d)) {
-                    self.set_dec_proto(p);
+                if !on.is_empty() {
+                    let i = on.iter().position(|&x| x == self.m.dec_proto).unwrap_or(0);
+                    self.set_dec_proto(on[cyc(i, on.len(), d)]);
                 }
             }
             Item::DecUsbSpeed => self.m.dec_uspeed = cyc(self.m.dec_uspeed, crate::decode::USB_SPEEDS.len(), d),
@@ -9134,6 +9195,8 @@ impl Ui {
 
     /// A setting the user or a remote client changed: a pending bus candidate and a running SINGLE start over.
     fn settings_changed(&mut self) {
+        // whatever moved the upper level (50 %, SCPI's LEVel, a fit) leaves the two levels in order
+        self.m.order_trigger_levels();
         self.cancel_bus_candidate(true);
         // an incomplete SINGLE keeps its press: the new settings make a new generation of it, not a new arm (M2.3c);
         // a waiting *OPC? waits for the capture with the new settings
@@ -9257,7 +9320,9 @@ impl Ui {
                     self.wlan_pick(k);
                 }
                 Item::PickOpt(k)
-                    if self.pick.is_some_and(|p| matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName)) =>
+                    if self.pick.is_some_and(|p| {
+                        matches!(p.it, Item::NtpServer | Item::TimeZone | Item::RemName | Item::RemAllow)
+                    }) =>
                 {
                     let it = self.pick.map(|p| p.it).unwrap_or(Item::TimeZone);
                     self.close_picker();
@@ -9669,6 +9734,11 @@ impl Ui {
                 for e in &bad {
                     eprintln!("oos-ui: recall {}: left out: {}", p.display(), e);
                 }
+                // a set-up is a live one, as with the Default key: a reference or SIM session ends first, so a Live
+                // afterwards does not bring back the set-up from before it over the recalled one
+                if self.record_mode() {
+                    self.leave_session();
+                }
                 if let Ok(t) = &text {
                     self.apply_ref_looks(&crate::store::parse_ref_looks(t, NREF));
                 }
@@ -9680,6 +9750,10 @@ impl Ui {
                     self.mask_ref = None;
                 }
                 self.m = m;
+                // a set-up written by hand or by an older build may have the two levels the wrong way round
+                self.m.order_trigger_levels();
+                // what Bus switched on belongs to the set-up before: leaving Bus leaves the recalled one as it is
+                self.bus_auto = None;
                 self.math_state.borrow_mut().forget_fit();
                 self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
                 self.sync_full();
@@ -9941,7 +10015,6 @@ impl Ui {
             Item::ZoneMode => &["Intersect", "Not intersect"],
             Item::ZInput => return opt_ch_names("Off"),
             Item::Histogram => &["Off", "Vertical", "Horizontal"],
-            Item::TouchLock => &["On", "Locked"],
             Item::AuxOut => {
                 return AuxOut::choices(board().mask_hw(self.switches()) || board().zone_hw(self.switches()))
                     .iter()
@@ -10006,8 +10079,9 @@ impl Ui {
     /// Control of a menu row whose control rectangle is `w` px wide: segmented buttons when all options fit, a
     /// picker (- value +, the value opens the list of all options) for longer option lists, else - value +.
     fn ctl(&self, it: Item, w: i32) -> Ctl {
-        // - and + step, the value opens the keypad (`open_picker`); the name's value opens its list even when short
-        if matches!(it, Item::AfgFreq | Item::RemName) {
+        // - and + step, the value opens the keypad (`open_picker`); the name's and the address list's value open their
+        // list even when short
+        if matches!(it, Item::AfgFreq | Item::RemName | Item::RemAllow) {
             return Ctl::Pick;
         }
         if let Item::RefShow(_) = it {
@@ -10783,6 +10857,13 @@ impl Ui {
                         m.floor_live_tdiv();
                     }
                     self.open_menu(MenuId::Channel(c));
+                } else if m.n_on() > 1 && m.active != c {
+                    // several channels on: the first press only selects the channel, so the knobs act on it; the
+                    // next press opens its menu. Another channel's menu would show the wrong channel: it closes.
+                    m.active = c;
+                    if self.menu_open && matches!(self.menu, MenuId::Channel(_)) {
+                        self.close_menu();
+                    }
                 } else if self.menu_open && self.menu == MenuId::Channel(c) {
                     m.ch[c].on = false;
                     self.menu_open = false;
@@ -10827,6 +10908,7 @@ impl Ui {
                 self.m = Model::default();
                 self.m.meas = meas;
                 (self.m.quick, self.m.text_size) = (quick, text_size);
+                self.bus_auto = None;
                 change::stats_clear(self);
                 self.select_workspace_source(WaveId::Ch(self.m.active));
                 self.meas_own.clear();
@@ -11447,10 +11529,12 @@ impl Ui {
                             .source_area(id)
                             .map_or(ppy, |area| area.h as f32 / VDIV * self.zoom_vertical_transform(area).0);
                         let level = t.start_level - dy as f32 / ppy * self.trigger_vpd(secondary);
+                        // a two-level type: the dragged line stops at the other one, as the knob does
+                        let two = self.m.trig_type.two_level();
                         if lower {
-                            self.m.trig_level2 = level;
+                            self.m.trig_level2 = if two { level.min(self.m.trig_level) } else { level };
                         } else {
-                            self.m.trig_level = level;
+                            self.m.trig_level = if two { level.max(self.m.trig_level2) } else { level };
                         }
                         self.settings_changed();
                     }
@@ -11862,6 +11946,14 @@ impl Ui {
                 if !self.m.ch[c].on {
                     self.m.ch[c].on = true;
                     self.settings_changed();
+                } else if self.m.n_on() > 1 && self.m.active != c {
+                    // as the channel key: with several channels on, the first tap only selects; the next opens the
+                    // menu. Another channel's menu would show the wrong channel: it closes.
+                    self.m.active = c;
+                    if self.menu_open && matches!(self.menu, MenuId::Channel(_)) {
+                        self.close_menu();
+                    }
+                    return self.select_workspace_source(WaveId::Ch(c));
                 }
                 self.m.active = c;
                 return self.toggle_menu(MenuId::Channel(c));
@@ -12580,6 +12672,59 @@ mod tests {
             let avg = ui.meas(0, Meas::Vavg);
             assert!((avg - high as f64 / 4.0).abs() < 0.03, "Mean live at {} s/div, round {}: {}", tdiv, round, avg);
         }
+        crate::deepmeas::force(None);
+    }
+
+    // Break it catches: Clear keeping the raw deep record that waits for the busy worker. The next record asked for a
+    // measurement and the worker took the record cleared away: its values were kept and shown for the pair records
+    // after the Clear (held, deepmeas.rs).
+    #[test]
+    fn clear_drops_the_record_waiting_for_the_worker() {
+        use super::*;
+        crate::deepmeas::force(Some(true));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.measure_in_background();
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
+        ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 40_000usize;
+        let frame = |seq: u64, envelope: bool, depth: usize, high: f32| {
+            let v: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { high } else { 0.0 }).collect();
+            let dt = window * 1.2 / n as f64;
+            let ch = [v, Vec::new(), Vec::new(), Vec::new()];
+            crate::board::Frame { seq, dt, pre: n / 2, ch, envelope, acq: (1e9, depth), ..Default::default() }
+        };
+        // steps until the worker has answered what the record asked for (however slow the computer)
+        let wait = |ui: &mut Ui| {
+            let t = std::time::Instant::now();
+            loop {
+                ui.step(0.02);
+                if (!ui.meas_bg.as_ref().unwrap().busy && !ui.meas_want) || t.elapsed().as_secs() > 20 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+        // a raw deep record waits for the busy worker
+        ui.meas_bg.as_mut().unwrap().busy = true;
+        shared.lock().unwrap().queue.push_back(frame(1, false, 10_000_000, 2.0));
+        ui.step(0.02);
+        assert!(ui.meas_pending.is_some());
+        ui.clear_display();
+        // the worker is free and a shallow record comes: it is the one measured
+        ui.meas_bg.as_mut().unwrap().busy = false;
+        shared.lock().unwrap().queue.push_back(frame(2, false, 100_000, 4.0));
+        wait(&mut ui);
+        // a deep pair record: its measurement stays that of the last record measured
+        shared.lock().unwrap().queue.push_back(frame(3, true, 10_000_000, 1.0));
+        wait(&mut ui);
+        let avg = ui.meas(0, Meas::Vavg);
+        assert!((avg - 1.0).abs() < 0.03, "Mean held after the Clear: {}", avg);
         crate::deepmeas::force(None);
     }
 
@@ -14702,6 +14847,51 @@ mod tests {
         assert!(fo.get(Meas::Freq).is_none());
     }
 
+    // Break it catches: the fast path folding Mean, RMS, Std dev and AC RMS of min/max pairs into the statistics
+    // (deep pairs: the value shown is NaN while the statistics count pair values), or anything of live-compression
+    // pairs (only their raw newest frame counts), where the deposit workers (`framestats::fold_frame`) leave them out
+    #[test]
+    fn statistics_of_the_fast_path_leave_out_what_pairs_cannot_give() {
+        use super::*;
+        crate::deepmeas::force(Some(false));
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+        ui.m.trig_level = 0.0;
+        ui.m.ch[0].offset = 0.0;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0)), (Meas::Vmax, WaveId::Ch(0)), (Meas::StdDev, WaveId::Ch(0))];
+        ui.m.meas2.clear();
+        let n = 20_000usize;
+        let dt = 1e-5 * 1.2 / n as f64;
+        // a fifth of the time high: the mean (-0.6) is far from that of the pairs (0)
+        let frame = |seq: u64, envelope: bool, depth: usize| {
+            let v: Vec<f32> = (0..n).map(|k| if (k + n / 2) % 1000 < 200 { 1.0 } else { -1.0 }).collect();
+            let ch = [v, Vec::new(), Vec::new(), Vec::new()];
+            crate::board::Frame { seq, dt, pre: n / 2, ch, envelope, acq: (1.0 / dt, depth), ..Default::default() }
+        };
+        let counts = |ui: &Ui| ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>();
+        // deep pairs: the newest is the record (Max measured), the fast path draws the other nine
+        shared.lock().unwrap().queue.push_back(frame(0, true, 10_000_000));
+        ui.step(0.05);
+        assert_eq!(counts(&ui), [0, 1, 0]);
+        shared.lock().unwrap().queue.extend((1..=10).map(|s| frame(s, true, 10_000_000)));
+        ui.step(0.05);
+        assert_eq!(counts(&ui), [0, 11, 0], "Max of every frame, no Mean or Std dev of pairs");
+        // live-compression pairs: a raw record, then pair frames; only the raw one counts
+        ui.clear_display();
+        ui.m.run = RunState::Run;
+        shared.lock().unwrap().queue.push_back(frame(11, false, n));
+        ui.step(0.05);
+        assert_eq!(counts(&ui), [1, 1, 1]);
+        shared.lock().unwrap().queue.extend((12..=21).map(|s| frame(s, true, n)));
+        ui.step(0.05);
+        assert_eq!(counts(&ui), [1, 1, 1], "values of live-compression pairs counted");
+        crate::deepmeas::force(None);
+    }
+
     /// The fast path takes what fits into its time budget: the newest frames, the older ones are counted as dropped.
     #[test]
     fn fast_path_keeps_to_its_budget() {
@@ -15248,6 +15438,45 @@ mod tests {
                 assert!(r.x + r.w + 14 + w <= room, "{:?} {} {}", ts, main, w);
             }
         }
+    }
+
+    /// With several channels on, the key of a channel that is not selected only selects it; the next press opens its
+    /// menu, the one after that switches it off. Another channel's menu closes, other menus stay.
+    #[test]
+    fn a_channel_key_first_selects_when_several_are_on() {
+        use super::*;
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+        ui.step(0.033);
+        assert!(ui.m.ch[0].on && ui.m.n_on() == 1 && ui.m.active == 0);
+        ui.key(key::CH1 + 1);
+        assert!(ui.m.ch[1].on && ui.m.active == 1 && ui.menu_open && ui.menu == MenuId::Channel(1));
+        ui.key(key::CH1);
+        assert!(ui.m.ch[0].on && ui.m.active == 0 && !ui.menu_open, "select only, CH2's menu closes");
+        ui.key(key::CH1);
+        assert!(ui.menu_open && ui.menu == MenuId::Channel(0), "selected: the menu opens");
+        ui.key(key::CH1);
+        assert!(!ui.m.ch[0].on && ui.m.active == 1, "menu open: off");
+        // one channel on: its key opens the menu at once, as before
+        ui.key(key::CH1 + 1);
+        assert!(ui.menu_open && ui.menu == MenuId::Channel(1));
+        // a menu that is not a channel's stays while the key selects
+        ui.key(key::CH1);
+        assert!(ui.m.ch[0].on && ui.m.active == 0);
+        ui.open_menu(MenuId::Display);
+        ui.key(key::CH1 + 1);
+        assert!(ui.m.active == 1 && ui.menu_open && ui.menu == MenuId::Display);
+        // a tap on a channel's card does the same: select first, then the menu
+        ui.close_menu();
+        let card = |ui: &Ui, c: usize| mid(ui.cards().0[c]);
+        let (x, y) = card(&ui, 0);
+        ui.tap(x, y);
+        assert!(ui.m.active == 0 && !ui.menu_open, "tap: select only");
+        let (x, y) = card(&ui, 0);
+        ui.tap(x, y);
+        assert!(ui.menu_open && ui.menu == MenuId::Channel(0), "tap again: the menu");
+        let (x, y) = card(&ui, 1);
+        ui.tap(x, y);
+        assert!(ui.m.active == 1 && !ui.menu_open, "CH1's menu closes when CH2 is selected");
     }
 
     /// A channel key held on the front panel: AC/DC, nothing else; a short press does what the key does, when it is

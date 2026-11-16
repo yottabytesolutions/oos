@@ -107,6 +107,8 @@ mod slot_loading_tests {
 pub(super) struct LiveSession {
     model: Model,
     visible: [bool; NREF],
+    /// what the Bus trigger of `model` switched on by itself (`Ui::bus_auto`)
+    bus_auto: Option<([bool; NCH], bool)>,
 }
 
 #[cfg(test)]
@@ -709,10 +711,8 @@ impl Ui {
 
     pub(super) fn remember_live(&mut self) {
         if self.workflow_hold.is_none() && !self.record_mode() {
-            self.workflow_hold = Some(LiveSession {
-                model: self.m.clone(),
-                visible: std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on)),
-            });
+            let visible = std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on));
+            self.workflow_hold = Some(LiveSession { model: self.m.clone(), visible, bus_auto: self.bus_auto });
         }
     }
 
@@ -720,35 +720,48 @@ impl Ui {
         self.workflow_epoch
     }
 
-    pub fn return_to_live(&mut self) {
+    /// Ends a reference, Take over or SIM session: the live set-up from before it (`remember_live`) comes back and
+    /// nothing of it stays held, so a later session remembers afresh. Whether a set-up was held.
+    pub(super) fn leave_session(&mut self) -> bool {
         self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
         self.sim_cancel_generation();
         self.set_offline(false);
         self.session_is_sim = false;
         self.sim_play = false;
         self.replay = Replay::default();
-        if let Some(saved) = self.workflow_hold.take() {
+        let held = self.workflow_hold.take();
+        let restored = held.is_some();
+        if let Some(saved) = held {
             self.m = saved.model;
+            self.bus_auto = saved.bus_auto;
             for (i, r) in self.refs.iter_mut().enumerate() {
                 if let Some(r) = r {
                     r.on = saved.visible[i];
                 }
             }
-        } else {
-            for r in self.refs.iter_mut().flatten() {
-                r.on = false;
-            }
-            self.m.ch[0].on = true;
-            self.m.run = RunState::Run;
-            self.m.zoom = false;
-            self.m.view = AView::Scope;
-            self.m.meas = Self::default_meas();
         }
         self.m.floor_live_tdiv();
-        self.select_workspace_source(WaveId::Ch(self.m.active));
         self.last[0] = None;
         self.cleared = false;
         change::replay(self);
+        restored
+    }
+
+    pub fn return_to_live(&mut self) {
+        if !self.leave_session() {
+            // a session entered without `remember_live` (OOS started with --offline): `set_offline` gave back the
+            // channels and the time base it held; an input shows and acquires, the measurements and the page stay
+            for r in self.refs.iter_mut().flatten() {
+                r.on = false;
+            }
+            if !(0..n_ch()).any(|c| self.m.ch[c].on) {
+                self.m.ch[0].on = true;
+            }
+            self.m.run = RunState::Run;
+            self.m.zoom = false;
+            self.m.floor_live_tdiv();
+        }
+        self.select_workspace_source(WaveId::Ch(self.m.active));
         self.close_menu();
         self.relayout();
         self.settings_changed();

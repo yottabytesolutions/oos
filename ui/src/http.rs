@@ -51,6 +51,10 @@ struct Limits {
 
 const LIMITS: Limits =
     Limits { idle: Duration::from_secs(10), deadline: Duration::from_secs(120), take: Duration::from_secs(10) };
+
+/// A body above this (an update package, a waveform) is read one at a time: a second one is answered 503 when its
+/// head is in, so the readers hold at most one large body and `MAX_PENDING` small ones.
+const LARGE_BODY: usize = MAX_OTHER;
 /// Answers above this size are sent from a thread of their own: over WLAN a picture takes long enough to stall the
 /// frame loop, and with it the scope's own screen and keys. A screen as PNG is 60 to 175 KB (a BMP 1.8 MB), so it
 /// goes the same way; the page and the small answers fit into the socket's buffer and go at once.
@@ -248,6 +252,9 @@ struct ShotState {
     no_jpeg: bool,
     /// when the VPU failed: it is tried again after `VPU_RETRY` (one timeout must not end JPEG for the session)
     no_jpeg_at: Option<Instant>,
+    /// tests: a long poll other than `LONG_POLL`
+    #[cfg(test)]
+    long_poll: Option<Duration>,
     /// the frame loop hands its screens over (`hand_over`) instead of `tick` copying them
     frames: bool,
     thread: bool,
@@ -313,8 +320,12 @@ impl Shots {
             return;
         }
         let now = Instant::now();
+        #[cfg(test)]
+        let long_poll = st.long_poll.unwrap_or(LONG_POLL);
+        #[cfg(not(test))]
+        let long_poll = LONG_POLL;
         let (old, keep): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut st.waiting).into_iter().partition(|w| now - w.2 >= LONG_POLL);
+            std::mem::take(&mut st.waiting).into_iter().partition(|w| now - w.2 >= long_poll);
         st.waiting = keep;
         if !old.is_empty() {
             let (png, tag) = (st.png.clone().unwrap_or_else(|| Arc::from(&[][..])), st.tag.clone());
@@ -511,10 +522,11 @@ pub struct Http {
     inbox: Arc<Inbox>,
     limits: Limits,
     shots: Arc<Shots>,
-    /// who may install an update or use MCP (empty: everyone)
-    pub acl: crate::netacl::Acl,
-    /// the copy of `acl` the reader threads see (refused before the body is read)
-    acl_shared: Arc<Mutex<crate::netacl::Acl>>,
+    /// who may install an update or use MCP (empty: everyone); the list Remote services > Allowed sets, checked per
+    /// request, so a change counts at once
+    acl: crate::netacl::Shared,
+    /// the list the reader threads see (refused before the body is read): `acl`, swapped by `set_acl`
+    acl_shared: Arc<Mutex<crate::netacl::Shared>>,
     /// the addresses the identification page names
     offer: Offer,
 }
@@ -547,6 +559,30 @@ struct Inbox {
     quit: std::sync::atomic::AtomicBool,
     /// reader threads running
     active: std::sync::atomic::AtomicUsize,
+    /// a reader holds the one large body (`LARGE_BODY`)
+    large: std::sync::atomic::AtomicBool,
+}
+
+/// The large-body place of a reader, given back when the reader ends.
+struct LargeSlot<'a>(Option<&'a std::sync::atomic::AtomicBool>);
+
+impl<'a> LargeSlot<'a> {
+    /// One large body at a time: a second is answered at its head, so the readers hold at most one. None: taken.
+    fn take(h: &Head, taken: &'a std::sync::atomic::AtomicBool) -> Option<Self> {
+        let large = h.len.is_some_and(|n| n > LARGE_BODY);
+        if large && taken.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
+        Some(Self(large.then_some(taken)))
+    }
+}
+
+impl Drop for LargeSlot<'_> {
+    fn drop(&mut self) {
+        if let Some(b) = self.0 {
+            b.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
 }
 
 impl Inbox {
@@ -630,7 +666,7 @@ fn refuse_early(h: &Head, text: &str, peer_ok: bool) -> Option<(&'static str, &'
 
 /// One connection: the head (`MAX_HEAD`), the early refusals, `100 Continue` when asked for, the body within the
 /// limits, then the request to the frame loop; 503 when the frame loop does not take it in `Limits::take`.
-fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Acl>, lim: Limits) {
+fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Shared>, lim: Limits) {
     use std::io::Read;
     let t0 = Instant::now();
     let _ = s.set_nonblocking(false);
@@ -671,11 +707,16 @@ fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Acl>, lim: Lim
     };
     let text = String::from_utf8_lossy(&req[..end]).into_owned();
     let h = parse_head(&text);
-    let peer_ok = s.peer_addr().is_ok_and(|a| acl.lock().unwrap_or_else(|e| e.into_inner()).permits(a.ip()));
+    let peer_ok = acl.lock().unwrap_or_else(|e| e.into_inner()).clone().permits_peer(s.peer_addr());
     if let Some((status, msg)) = refuse_early(&h, &text, peer_ok) {
         return answer(&s, status, msg);
     }
+    let Some(_slot) = LargeSlot::take(&h, &inbox.large) else {
+        return answer(&s, "503 Service Unavailable", "busy, try again");
+    };
     let need = end + h.len.unwrap_or(0);
+    // the whole request in one allocation, not a doubling past it
+    req.reserve_exact(need.saturating_sub(req.len()));
     if h.expect_continue && req.len() < need {
         let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
         if (&s).write_all(b"HTTP/1.1 100 Continue\r\n\r\n").is_err() {
@@ -697,7 +738,7 @@ fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Acl>, lim: Lim
 fn acceptor(
     l: TcpListener,
     inbox: Arc<Inbox>,
-    acl: Arc<Mutex<crate::netacl::Acl>>,
+    acl: Arc<Mutex<crate::netacl::Shared>>,
     stop: Arc<std::sync::atomic::AtomicBool>,
     lim: Limits,
     tasks: Arc<shutdown::Tasks>,
@@ -877,14 +918,21 @@ impl Http {
         self.open.as_ref().map(|(addr, _)| addr.port())
     }
 
+    /// The address list to check (`Ui::acl`, shared with the other servers), for the frame loop and the readers.
+    pub fn set_acl(&mut self, acl: crate::netacl::Shared) {
+        *self.acl_shared.lock().unwrap_or_else(|e| e.into_inner()) = acl.clone();
+        self.acl = acl;
+    }
+
     fn open_with(port: impl Into<crate::net6::Port>, limits: Limits, sw: &crate::sysconf::Switches) -> Http {
+        let acl = crate::netacl::Shared::default();
         let mut h = Http {
             open: None,
             inbox: Arc::new(Inbox::default()),
             limits,
             shots: Shots::new(sw.cores.little),
-            acl: crate::netacl::Acl::default(),
-            acl_shared: Arc::new(Mutex::new(crate::netacl::Acl::default())),
+            acl_shared: Arc::new(Mutex::new(acl.clone())),
+            acl,
             offer: Offer::default(),
         };
         h.start(port, sw.ipv6);
@@ -968,12 +1016,6 @@ impl Http {
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
         let mut cmds = Vec::new();
         self.shots.tick(cv);
-        {
-            let mut a = self.acl_shared.lock().unwrap_or_else(|e| e.into_inner());
-            if *a != self.acl {
-                *a = self.acl.clone();
-            }
-        }
         let reqs: Vec<Req> = self.inbox.lock().drain(..).collect();
         if !reqs.is_empty() {
             self.inbox.taken.notify_all();
@@ -986,8 +1028,8 @@ impl Http {
                 let (route, query) = path.split_once('?').unwrap_or((&path, ""));
                 let mut req_body = body;
                 let post = text.starts_with("POST ");
-                // what changes the scope beyond keys and knobs: only from the allowed prefixes
-                let peer_ok = s.peer_addr().is_ok_and(|a| self.acl.permits(a.ip()));
+                // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
+                let peer_ok = self.acl.permits_peer(s.peer_addr());
                 // an answer that is text for the page to show, not the data asked for
                 let mut failed = false;
                 let mut csv = |r: Result<String, String>| match r {
@@ -1838,13 +1880,12 @@ setTimeout(() => {
                 assert_eq!(&out[e..e + 4], b"\x89PNG");
             }
         }
-        for _ in 0..200 {
-            if SENDERS.load(SeqCst) == 0 {
-                return;
-            }
+        // the client has every byte, the sender only lets go of its place: a minute is a guard against a hang only
+        let until = Instant::now() + Duration::from_secs(60);
+        while SENDERS.load(SeqCst) != 0 {
+            assert!(Instant::now() < until, "a sender did not finish");
             std::thread::sleep(Duration::from_millis(5));
         }
-        panic!("a sender did not finish");
     }
 
     /// With a frame loop that hands its screens over before each render, the picture is the screen that was shown,
@@ -2009,7 +2050,7 @@ setTimeout(() => {
             let t0 = Instant::now();
             let t = std::thread::spawn(move || {
                 let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-                c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+                c.set_read_timeout(Some(Duration::from_secs(120))).unwrap();
                 let _ = c.write_all(&req);
                 let mut out = Vec::new();
                 let _ = c.read_to_end(&mut out);
@@ -2032,22 +2073,29 @@ setTimeout(() => {
         };
         let encodes = |h: &Http| h.shots.lock().encodes;
         let png_of = |cv: &Canvas| crate::store::png(cv.w as u32, cv.h as u32, &cv.px);
+        // the long poll is a minute but where it is waited out: a debug PNG takes most of a second, and the encoder
+        // waits twice its last encode before the next copy (`SHOT_DUTY`), so the test's one second could end before a
+        // picture is made on a slow or busy computer (a viewer without a picture then got an empty one)
+        let long_poll = |h: &Http, d: Duration| h.shots.lock().long_poll = Some(d);
+        long_poll(&h, Duration::from_secs(60));
         let (head, tag1, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
         assert!(head.starts_with("HTTP/1.1 200") && head.contains("Content-Type: image/png"), "{}", head);
         assert!(tag1.starts_with('"') && tag1.ends_with('"') && tag1.len() > 2, "{}", head);
         assert!(body == png_of(&cv), "the PNG of the screen");
         // the screen unchanged, the viewer has it: it waits the long poll out, then 304 without a body, no encode
+        long_poll(&h, LONG_POLL);
         let (head, tag, body, took) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), false);
         assert!(head.starts_with("HTTP/1.1 304") && body.is_empty() && tag == tag1, "{}", head);
         assert!(took >= LONG_POLL, "answered after {:?}", took);
+        long_poll(&h, Duration::from_secs(60));
         // a viewer without it gets the same picture, without a new encode
         let (head, tag, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
         assert!(head.starts_with("HTTP/1.1 200") && tag == tag1 && body == png_of(&cv), "{}", head);
         assert_eq!(encodes(&h), 1);
-        // the screen changes while the viewer waits: the new picture comes before the long poll ends
-        let (head, tag2, body, took) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), true);
+        // the screen changes while the viewer waits: the new picture comes before the long poll ends (a 304 would come
+        // after a minute)
+        let (head, tag2, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), true);
         assert!(head.starts_with("HTTP/1.1 200") && tag2 != tag1 && body == png_of(&cv), "{}", head);
-        assert!(took < LONG_POLL, "answered after {:?}", took);
         assert_eq!(encodes(&h), 2);
         // a foreign page still gets nowhere
         let r = request(
@@ -2104,6 +2152,74 @@ setTimeout(() => {
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
         assert!(r.starts_with("HTTP/1.1 200") && r.contains("<Manufacturer>OOS"), "{}", r);
         assert!(r.contains("TCPIP::INSTR") && r.contains("TCPIP::5555::SOCKET"), "{}", r);
+    }
+
+    /// The readers hold at most one large body: before, eight connections could each buffer up to 128 MiB, and
+    /// `POST /update` or `/mcp` from outside `net.allow` are refused when the head is in; only a head is sent here,
+    /// so the answer must not wait for a body.
+    #[test]
+    fn a_large_body_at_a_time_and_net_allow_before_the_body() {
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
+        let head = |path: &str, n: usize| format!("POST {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {n}\r\n\r\n");
+        // a large upload in progress: its head and a part of its body
+        let port = h.port().unwrap();
+        let mut first = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        first.write_all(head("/update", 8 << 20).as_bytes()).unwrap();
+        first.write_all(&vec![0u8; 64 << 10]).unwrap();
+        let until = Instant::now() + Duration::from_secs(60);
+        while !h.inbox.large.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(Instant::now() < until, "the first upload was not taken");
+            h.poll(&mut ui, &cv, &mut scpi);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        for path in ["/waveform?slot=1", "/update"] {
+            let r = request(&mut h, &mut ui, &cv, &mut scpi, head(path, 2 << 20).into_bytes());
+            assert!(r.starts_with("HTTP/1.1 503"), "{path}: {r}");
+        }
+        // a small body still goes through beside it
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+        drop(first);
+        // outside net.allow: refused at the head, the body never asked for
+        h.acl.set(crate::netacl::Acl::parse("192.0.2.0/24").0);
+        h.acl.peers_as(Some("198.51.100.7".parse().unwrap()));
+        for path in ["/update", "/mcp"] {
+            let r = request(&mut h, &mut ui, &cv, &mut scpi, head(path, 1 << 20).into_bytes());
+            assert!(r.starts_with("HTTP/1.1 403") && r.ends_with("refused"), "{path}: {r}");
+        }
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+    }
+
+    // Break it catches: the web server keeping the net.allow of its start, so a list changed on the screen
+    // (Remote services > Allowed) refused or let in an update only after a restart of oos-ui
+    #[test]
+    fn net_allow_follows_a_change_without_a_restart() {
+        let mut h = Http::open(0, &Default::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
+        // the list the screen sets, shared with the server; the test's connections come from 198.51.100.7
+        let acl = crate::netacl::Shared::default();
+        h.set_acl(acl.clone());
+        acl.peers_as(Some("198.51.100.7".parse().unwrap()));
+        let update = b"POST /update HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\njunk".to_vec();
+        // taken: the package itself is refused (409, task 0074), not the address
+        let taken = |r: &str| r.starts_with("HTTP/1.1 409") && r.contains("REFUSED: not an OOS update package");
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update.clone());
+        assert!(taken(&r), "no list: everyone: {r}");
+        acl.set(crate::netacl::Acl::parse("192.0.2.0/24").0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update.clone());
+        assert!(r.starts_with("HTTP/1.1 403") && r.ends_with("refused"), "outside the new list: {r}");
+        acl.set(crate::netacl::Acl::parse("192.0.2.0/24 198.51.100.0/24").0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update.clone());
+        assert!(taken(&r), "inside the next one: {r}");
+        acl.set(crate::netacl::Acl::from_value("").0);
+        let r = request(&mut h, &mut ui, &cv, &mut scpi, update);
+        assert!(taken(&r), "the list removed: {r}");
     }
 
     #[test]

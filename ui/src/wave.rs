@@ -345,6 +345,11 @@ impl Source {
         matches!(self, Source::Hw { .. })
     }
 
+    /// The made-up signals of the demo: the starting values of the trigger types are made for them.
+    pub fn is_demo(&self) -> bool {
+        matches!(self, Source::Demo { .. })
+    }
+
     /// Ask the acquisition thread for one force-trigger pulse. Other sources ignore it.
     pub fn force_hw(&self) {
         if let Source::Hw { shared, .. } = self {
@@ -375,7 +380,8 @@ impl Source {
     }
 
     /// STOP for the hardware thread (`Shared::hold`): whether it may arm, and the newest final-frame request. True when
-    /// that request is done and every frame before it was taken (always for other sources).
+    /// that request is done and every frame before it was taken (always for other sources). The release (RUN, SINGLE)
+    /// drops what was queued during the hold: the thread does so on its next pass, but the UI takes frames at once.
     pub fn hw_hold(&self, hold: bool, req: u64) -> bool {
         if let Source::Hw { shared, .. } = self {
             let mut g = crate::perfguard::deep::ui_lock(shared);

@@ -35,7 +35,7 @@ pub fn run(mut ui: Ui, args: &[String], sw: sysconf::Switches, state: Option<sto
     let inp = startup::prepare(&mut ui, &mut disp, args, &state);
     let started = Instant::now();
     let cv = Canvas::new(ui.scr.w, ui.scr.h);
-    let remote = remote::Remote::new(args, &sw);
+    let remote = remote::Remote::new(args, &sw, &mut ui);
     let graphics = graphics::Graphics::new(&ui);
     let mut device = Device {
         ui,

@@ -34,7 +34,8 @@ OOS builds on the work of these projects. Thank you to everyone behind them:
 - **[linux-firmware](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git)** and Realtek, for the
   firmware of the WLAN stick.
 - **[Rust](https://www.rust-lang.org)** and the **[libc](https://github.com/rust-lang/libc)** crate, the only dependency
-  of the OOS code.
+  of the OOS code on the scope. The Windows desktop build also uses **[minifb](https://github.com/emoon/rust_minifb)**
+  and **[windows-sys](https://github.com/microsoft/windows-rs)** for its window and network.
 - **[Roboto](https://github.com/googlefonts/roboto-classic)**, the typeface of the screen.
 
 Sources and licences of the kernel parts are listed in [kernel/README.md](kernel/README.md).
@@ -677,7 +678,10 @@ works. Putting it back needs the card in a reader, with `recovery.bin` from the 
 
 **Controls.** Front-panel keys and knobs work as labelled. The Menu button at the bottom left reaches every function.
 A channel key held for more than half a second, or a finger held on a channel's card, switches that channel between
-AC and DC coupling.
+AC and DC coupling. A short press switches a channel that is off on and opens its menu. With several channels on, the
+first press on one that is not selected only selects it, so the knobs act on it (its card has the coloured border);
+the next press opens its menu, and a press with its menu open switches it off. A tap on a channel's card selects and
+opens the menu the same way; a tap with the menu open closes it.
 
 **Backlight.** Display > Backlight sets the panel's brightness from 10 to 100 %, in steps that look even to the eye. It is
 a setting of the scope (`/oos/system.conf`).
@@ -868,15 +872,17 @@ OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and `par
 
 ## Development
 
-Each crate builds on its own. The hardware code is Linux-only, so check it for the target as well:
+Each crate builds on its own. The hardware code is Linux-only, so it is checked for the target as well.
+`tools/check.sh` runs every check CI runs (the tests of all crates, the target build, the decoder builds, the file
+and script checks); `tools/check.sh test` runs one layer of them:
 
 ```sh
-(cd hal && cargo test)
-(cd dsp && cargo test)
-(cd ui && cargo test)
-(cd fpgad && cargo test)
+tools/check.sh
+(cd ui && cargo test)                                 # one crate
 (cd ui && cargo check --target aarch64-unknown-linux-musl)
 ```
+
+Coding agents, and people new to the tree, start with [AGENTS.md](AGENTS.md).
 
 Tests that need the calibration files of a real unit are skipped without them. To run them, copy `/rigol/data` of your
 scope to `local/cal-full` and `local/cal` (the folder `local/` stays out of git). `OOS_CAL_DIR` overrides this for most of
@@ -902,18 +908,13 @@ Start with the [hardware overview](https://deckerjulian.github.io/oos/hardware/o
 OOS is free software under the GNU General Public License, version 2 or (at your option) any later version. See
 [LICENSE](LICENSE).
 
-Third-party parts keep their own licences:
+Third-party parts keep their own licences. [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) lists every one of
+them with its version, its licence, where its licence text is and which source files go with a release: the Linux
+kernel and the XDMA driver, BusyBox, glibc and GCC's runtime, Mesa, libdrm and zlib (the GPU helper,
+[gpu/README.md](gpu/README.md)), e2fsck, kexec, wpa_supplicant with libnl, nftables with libmnl and libnftnl, Dropbear,
+OpenSSH's `sftp-server`, musl, the Rust standard library, the Roboto font, the wireless regulatory database and the
+RTL8188EU firmware. An image built from this tree carries the licence texts and that list under `/etc/licenses`.
 
-| Part | Licence |
-|---|---|
-| Linux kernel and patches | GPL-2.0, device trees GPL-2.0+ OR MIT; see [kernel/README.md](kernel/README.md) |
-| XDMA driver | Dual BSD/GPL |
-| BusyBox | GPL-2.0 |
-| e2fsck (e2fsprogs) | GPL-2.0; the notice is in the image at `/etc/licenses/e2fsck` |
-| kexec (kexec-tools) | GPL-2.0; the text is in the image at `/etc/licenses/kexec-tools` |
-| Mesa, libdrm, glibc, libstdc++, zlib (the GPU helper, [gpu/README.md](gpu/README.md)) | MIT, MIT, LGPL-2.1, GPL-3.0 with the runtime exception, zlib; the texts are in the image under `/etc/licenses` |
-| Roboto font | Apache-2.0, see [ui/tools/fonts/LICENSE-Roboto.txt](ui/tools/fonts/LICENSE-Roboto.txt) |
-| wpa_supplicant | BSD-3-Clause; the text is in the image at `/etc/licenses/wpa_supplicant` |
-| RTL8188EU firmware | Realtek's redistribution licence, see [LICENCE.rtlwifi_firmware.txt](rootfs/initramfs/lib/firmware/rtlwifi/LICENCE.rtlwifi_firmware.txt) |
-
-If you pass on an OOS image, the GPL requires you to provide the corresponding source, including the kernel source.
+Every release carries the source archives of the binaries in its image next to the image. If you pass on an OOS
+image, the GPL requires you to provide the corresponding source as well: pass those archives and this tree at the
+release's tag on with it, or point to the release.

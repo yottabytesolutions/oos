@@ -118,5 +118,35 @@
     "rule": "email",
     "sha256": "478b4006beae5c15d8aa786df6d0ab2271155622ef7e780ed80878ad04cd46e0",
     "reason": "Compressed PNG bytes of a golden picture that happen to match the address pattern; no address."
+  },
+  {
+    "path": "rootfs/initramfs/etc/licenses/wireless-regdb.txt",
+    "rule": "email",
+    "sha256": "e17fcc658cee4425ec1b57d377988a1508bcb5ff441852a4bd3c10062d3c5214",
+    "reason": "Copyright holder in the verbatim wireless-regdb licence text the image ships; a licence text must not be altered."
+  },
+  {
+    "path": "rootfs/initramfs/etc/licenses/wireless-regdb.txt",
+    "rule": "email",
+    "sha256": "e4a69575f602e3f0409442c0b184d33169ce98cc8d4d0cd3b84d90ebffed9a4f",
+    "reason": "Copyright holder in the verbatim wireless-regdb licence text the image ships; a licence text must not be altered."
+  },
+  {
+    "path": "rootfs/initramfs/etc/licenses/wireless-regdb.txt",
+    "rule": "email",
+    "sha256": "5a7ecc262bf247c5e56d1fbedc0b57c407cbb2f9c892776982b85da305813f23",
+    "reason": "Copyright holder in the verbatim wireless-regdb licence text the image ships; a licence text must not be altered."
+  },
+  {
+    "path": "ui/src/ui/remote.rs",
+    "rule": "private-ipv6",
+    "sha256": "e971921fa3150f24ddd7e4a5c04da3b5ff87e067c6618e3c19dab3016d475a64",
+    "reason": "Invented unique-local prefix in the Allowed test: the row's width check needs this short IPv6 form; no real device address."
+  },
+  {
+    "path": "ui/src/ui/remote.rs",
+    "rule": "private-ipv6",
+    "sha256": "aa0766e50e80b2e96b2335313e04063392e50d6ada623bf400bdeff3ef3990ec",
+    "reason": "Invented unique-local prefix in the Allowed test: the row's width check needs this short IPv6 form; no real device address."
   }
 ]

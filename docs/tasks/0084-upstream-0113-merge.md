@@ -38,4 +38,10 @@ Reserved paths: whole tree on branch `integ-27-upstream` (integration merge), th
 
 ## Status
 
+- 2026-11-16: paused, disk full (925 MiB free). Merge of 15b819e2 resolved in the working tree, not committed
+  (MERGE_HEAD set; formatted method: base 7f7adc95, upstream 82cff324 fetched from scratchpad/fmtclone). 29 paths
+  conflicted; all resolved; `cargo check --workspace --all-targets` clean, `cargo fmt` applied. Fast gate before the
+  merge commit: size, statics, unsafe (upstream findings, pending rebaseline once committed). Next: debug test run
+  (killed by ENOSPC), commit the merge, then ports 1 to 8. Prepared: core-offset doc patch
+  (scratchpad/t84/coreoffset.patch), upstream frame-0 test (scratchpad/t84/frames_before_first.rs).
 - 2026-11-16: claimed on `integ-27-upstream` from `overhaul` 8fafc719.

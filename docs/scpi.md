@@ -9,7 +9,7 @@ This reference describes the repository implementation. Primary Rigol syntax was
 | Interface | Default | Implementation |
 | --- | --- | --- |
 | Raw TCP SCPI | TCP 5555 | Recommended for scripts. Newline-terminated program messages; newline-terminated replies. |
-| HiSLIP | TCP 4880 | Same interpreter, with HiSLIP framing. Basic sessions; full locking/overlap semantics are not implemented. |
+| HiSLIP | TCP 4880 | Same interpreter, with HiSLIP framing. Basic sessions; full locking/overlap semantics are not implemented. A reply is split into messages of the client's maximum message size, but of at least 4 KiB of data. |
 | VXI-11 | Linux scope service | Same interpreter, partial RPC transport. Pending operation reads have the limitation described below. Not advertised by the Windows app. |
 | HTTP/MCP adapter | HTTP web port | `POST /mcp`, JSON-RPC `tools/call` with tool name `scpi`. This is not a VISA interface. `/cmd` uses a separate front-panel command language. |
 
@@ -82,7 +82,7 @@ The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports
 | `:TRIGger:EDGE:SLOPe[?]` | `POS|NEG|RFAL`. |
 | `:TRIGger:HOLDoff[?]` | Seconds, 0 through 10. |
 | `:TRIGger:NREJect[?]` | Boolean. |
-| `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Absolute high/low thresholds; aliases `ALEVel` / `BLEVel`. |
+| `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Absolute high/low thresholds; aliases `ALEVel` / `BLEVel`. A threshold past the other one is refused with `-224`, as `:MEASure:SETup:MAX` / `MIN`. |
 | `:TRIGger:SOURce2[?]` | Secondary CH/ref source for applicable OOS trigger types. |
 
 Trigger type names are `EDGE`, `PULSE`, `SLOPE`, `VIDEO`, `PATTERN`, `DURATION`, `TIMEOUT`, `RUNT`, `WINDOW`, `DELAY`, `SETUPHOLD`, `NTHEDGE`, `BUS`. MODE replies use canonical short tokens: `EDGE`, `PULS`, `SLOP`, `VID`, `PATT`, `DUR`, `TIM`, `RUNT`, `WIND`, `DEL`, `SET`, `NEDG`, `BUS`; TYPE retains the UI's descriptive names. This list does not imply that every stock type-specific subtree exists. Additional settings use the UI/setup schema; unsupported headers report an error.
@@ -205,13 +205,18 @@ The example deliberately stops acquisition and retains that state. It reads one 
 | `:MEASure:CLEar [ALL\|ITEM<n>]` | No argument or `ALL` clears all standard, pair and catalog selections. `ITEM<n>` removes the current one-based row in screen order (standard, then pair, then catalog). Invalid or absent rows queue -224 and leave the list unchanged. Successful removal resets statistics. |
 | `:MEASure:GATing[?]` | `SCREEN` follows the viewport; `NONE` means Full record. This gate is an OOS extension. |
 | `:MEASure:REFS[?]` | `10/90|20/80` edge thresholds. |
-| `:MEASure:TSETup[?]` / `:THOLd[?]` | Nonnegative seconds used by applicable setup/hold results. |
+| `:MEASure:TSETup[?]` / `:THOLd[?]` | Nonnegative seconds: `SETHOLD` counts the clock edges whose setup or hold is shorter. |
 | `:MEASure:STRip?` | Configured standard/pair/catalog rows, then enabled DVM/counter rows. |
 | `:MEASure:READout?` | Strip rows plus Eye figures when that analysis page is active. |
 | `:EYE:ITEM? <figure>` | Current configured Eye result; does not itself run one-click Auto Eye. |
 | `:VIEW[?]` | `SCOPE|SPECTRUM|EYE|POWER|BODE|MAGNETIC|INVERTER|DPT`. |
 
 Values use base units, phase in degrees and duty/overshoot in percent. Unavailable or pending numeric values use `9.9E37`, not a real measurement. Poll pending analysis without counting it as another capture. `*OPC?` does not wait for these calculations. Long standard/reference analysis uses bounded workers; some one-off advanced fact queries remain synchronous and should not be polled at high frequency.
+
+For the pair items `SETUP`, `HOLD`, `SETHOLD`, `FSETUP` and `FHOLD`, A is the data and B the clock, as on the
+measurement page. They are OOS items: the stock DHO800/DHO900 programming guide has no setup or hold measurement under
+`:MEASure:ITEM` (its pair items are the delays and phases). The order follows the stock setup/hold trigger, which
+names the data source (`:TRIGger:SHOLd:DSRC`) before the clock source (`CSRC`).
 
 Readout rows are separated by semicolons. Standard rows are `ITEM,SOURCE,value`; pairs are `ITEM,A,B,value`. Catalog rows are `CAT<id>,A,B,C,D,value`, including unused stored role columns. DVM/counter rows use `DVM,mode,SOURCE,value` and `COUNTER,mode,SOURCE,value`; Eye rows use `FIGURE,value`. The six-tab catalog's selected rows are exported here; `:MEAS:ITEM? CAT<id>` is not a direct-query command. Select/configure catalog rows through the UI or the explicit setup schema.
 
@@ -262,8 +267,8 @@ Cursor changes preserve capture statistics and an armed Single. Track values use
 | Command | Meaning |
 | --- | --- |
 | `:REFerence:SLOT[?] R1..R10` | Choose the destination/working slot. |
-| `:REFerence:LOAD "path"` | Load into that slot. Absolute paths refer to the server PC/scope; relative paths are beside setups. |
-| `:REFerence:IMPort ["path"]` | Load named file, or the selected `refN` file beside setups. |
+| `:REFerence:LOAD "path"` | Load into that slot. Absolute paths refer to the server PC/scope; relative paths are beside setups. A file under `/proc`, `/sys` or `/dev` (where the path resolves to) and a file over 128 MiB are refused (-224) before it is read. |
+| `:REFerence:IMPort ["path"]` | Load named file (as LOAD), or the selected `refN` file beside setups. |
 | `:REFerence:SAVE` | Copy the selected acquired channel record into the selected reference slot. Does not write a waveform file. |
 | `:REFerence:SHOW[?] [<slot>,]ON|OFF` | Visibility of one slot; DISPlay aliases SHOW. Query accepts a slot number. |
 | `:REFerence:CURRent[?] 1..10` | Working slot, returned as a number; SLOT returns `Rn`. |
@@ -294,7 +299,7 @@ Cursor changes preserve capture statistics and an armed Single. Track values use
 | `:DECode:BUSY?` | Worker readiness, without changing acquisition. |
 | `:DECode:EVENts?` | Physical-time event rows, `BUSY` while pending, or an error if unavailable. |
 
-A file load is not an ADC acquisition. Multi-trace imports validate capacity before replacing slots. Protocol roles may mix references and acquired records; their native intervals/origins must overlap. Decoder events, Search and Bus qualification share the decoded timing.
+A file load is not an ADC acquisition. Multi-trace imports validate capacity before replacing slots; a CSV line with more data columns than there are reference slots (10) ends the import while the file is read. Protocol roles may mix references and acquired records; their native intervals/origins must overlap. Decoder events, Search and Bus qualification share the decoded timing.
 
 ```text
 :REF:SLOT R1

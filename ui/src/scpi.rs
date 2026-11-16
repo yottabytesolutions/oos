@@ -164,8 +164,10 @@ pub struct Scpi {
     wav_start: u64,
     wav_stop: u64,
     err: Vec<String>,
-    /// who may connect (`netacl`, net.allow; empty: everyone)
-    pub acl: crate::netacl::Acl,
+    /// who may connect (`netacl`, net.allow; empty: everyone): new connections, and after a change those held
+    pub acl: crate::netacl::Shared,
+    /// the changes of `acl` looked at (`netacl::Shared::changed`)
+    acl_seen: u64,
     event_status: u8,
     error_serial: u64,
     last_error: Option<String>,
@@ -723,7 +725,8 @@ impl Scpi {
             error_serial: 0,
             last_error: None,
             opc_events: Vec::new(),
-            acl: crate::netacl::Acl::default(),
+            acl: crate::netacl::Shared::default(),
+            acl_seen: 0,
         }
     }
 
@@ -786,7 +789,7 @@ impl Scpi {
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
         if let Some(l) = &self.l {
             while let Ok((s, peer)) = l.accept() {
-                if !self.acl.permits(peer.ip()) {
+                if !self.acl.permits_peer(Ok(peer)) {
                     continue; // dropped: closes the connection
                 }
                 let _ = s.set_nonblocking(false);
@@ -796,6 +799,11 @@ impl Scpi {
                     self.clients.push(Client { s, buf: Vec::new(), program: None });
                 }
             }
+        }
+        // net.allow changed on the screen: a client the list now leaves out is closed, as at `accept`
+        if self.acl.changed(&mut self.acl_seen) {
+            let acl = &self.acl;
+            self.clients.retain(|c| acl.permits_peer(c.s.peer_addr()));
         }
         let mut i = 0;
         while i < self.clients.len() {
@@ -1199,7 +1207,9 @@ impl Scpi {
                 return None;
             }
             if nodes.len() == 3 && kw(nodes[1], "RUNT") {
-                let value = if kw(last, "UPPer") || kw(last, "ALEVel") {
+                let upper = kw(last, "UPPer") || kw(last, "ALEVel");
+                let (lower, higher) = (ui.m.trig_level2, ui.m.trig_level);
+                let value = if upper {
                     Some(&mut ui.m.trig_level)
                 } else if kw(last, "LOWer") || kw(last, "BLEVel") {
                     Some(&mut ui.m.trig_level2)
@@ -1210,11 +1220,17 @@ impl Scpi {
                     if query {
                         return t(&e(*value as f64));
                     }
-                    if let Some(number) = num(arg) {
-                        *value = number;
-                        ui.mark_changed();
-                    } else {
-                        self.push_err("-224,\"Invalid runt threshold\"".into());
+                    // the pair stays in order, as :MEASure:SETup:MAX|MIN: a threshold past the other is refused
+                    match num(arg) {
+                        Some(number) if (upper && number < lower) || (!upper && number > higher) => {
+                            let other = if upper { "below the lower" } else { "above the upper" };
+                            self.push_err(format!("-224,\"Illegal parameter value\" {other} threshold"));
+                        }
+                        Some(number) => {
+                            *value = number;
+                            ui.mark_changed();
+                        }
+                        None => self.push_err("-224,\"Invalid runt threshold\"".into()),
                     }
                     return None;
                 }
@@ -4904,15 +4920,16 @@ impl Scpi {
                     return t("9.9E37");
                 }
             };
-            let (clock, data) = match waves.as_slice() {
+            // A is the data, B the clock, as for SETUP and HOLD and on the measurement page
+            let (data, clock) = match waves.as_slice() {
                 [] => ui.meas_pair_sources(),
-                [clock, data] => (*clock, *data),
+                [data, clock] => (*data, *clock),
                 _ => {
                     self.push_err("-224,\"Illegal parameter value\"".into());
                     return t("9.9E37");
                 }
             };
-            return t(&shown(ui.fact_setup_hold(clock, data)));
+            return t(&shown(ui.fact_setup_hold(data, clock)));
         }
         // no source: CH1, as before. A word that is not CHANn or R1–R10 is an error.
         let src = match parts.next().map(str::trim).filter(|s| !s.is_empty()) {
@@ -5516,6 +5533,53 @@ mod tests {
         });
         assert_eq!((response.typ, response.param), (7, 77));
         assert_eq!(response.data, b"WAIT;1\nSTOP\n");
+    }
+
+    // Break it catches: SCPI keeping the net.allow of its start (a list changed on the screen counted only after a
+    // restart of oos-ui), or a client the new list leaves out kept on its open connection
+    #[test]
+    fn net_allow_follows_a_change_without_a_restart() {
+        let (mut s, mut ui, cv) = session();
+        let acl = crate::netacl::Shared::default();
+        s.acl = acl.clone();
+        // the test's connections come from 198.51.100.7
+        acl.peers_as(Some("198.51.100.7".parse().unwrap()));
+        let port = s.port().unwrap();
+        // what the client reads until it has a line (Some) or the server closed it (None)
+        let mut read = |s: &mut Scpi, c: &mut TcpStream| -> Option<String> {
+            c.set_nonblocking(true).unwrap();
+            let (mut got, until) = (Vec::new(), std::time::Instant::now() + Duration::from_secs(20));
+            loop {
+                assert!(std::time::Instant::now() < until, "no answer and not closed");
+                s.poll(&mut ui, &cv);
+                let mut b = [0u8; 256];
+                match c.read(&mut b) {
+                    Ok(0) => return None,
+                    Ok(n) => got.extend_from_slice(&b[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(1))
+                    }
+                    Err(_) => return None,
+                }
+                if got.ends_with(b"\n") {
+                    return Some(String::from_utf8_lossy(&got).into_owned());
+                }
+            }
+        };
+        let mut held = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        held.write_all(b"*IDN?\n").unwrap();
+        assert!(read(&mut s, &mut held).is_some_and(|a| a.starts_with("OOS,")), "no list: everyone");
+        // a list without the client: the connection held is closed, a new one refused
+        acl.set(crate::netacl::Acl::parse("192.0.2.0/24").0);
+        assert_eq!(read(&mut s, &mut held), None, "the connection held is closed");
+        let mut new = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        assert_eq!(read(&mut s, &mut new), None, "a new connection is refused");
+        assert!(s.clients.is_empty());
+        // a list with it: in again, without a restart
+        acl.set(crate::netacl::Acl::parse("192.0.2.0/24 198.51.100.0/24").0);
+        let mut again = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        again.write_all(b"*IDN?\n").unwrap();
+        assert!(read(&mut s, &mut again).is_some_and(|a| a.starts_with("OOS,")), "inside the new list");
     }
 
     // Break it catches: `echo "*IDN?" | nc host 5555` (the client closes its side after the line) got no answer
@@ -6350,6 +6414,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// :REF:LOAD names any path on the scope. A file of the kernel's file systems is refused by where it resolves to
+    /// (before, /proc/kmsg passed the is_file check and its read never ended: the frame loop stood still), and a file
+    /// over the import limit by its size, before it is read.
+    #[test]
+    fn load_refuses_kernel_files_and_oversize_files_before_reading() {
+        let (mut s, mut ui, cv) = session();
+        let dir = std::env::temp_dir().join(format!("oos-ref-limits-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let csv = dir.join("lane.csv");
+        std::fs::write(&csv, "Time (s),Volts\n0,0.1\n1e-9,0.4\n").unwrap();
+        // a regular file under /proc or /dev: Linux has /proc; macOS shows an open regular file as /dev/fd/N
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let open = std::fs::File::open(&csv).unwrap();
+            let kernel = if cfg!(target_os = "linux") {
+                std::path::PathBuf::from("/proc/self/status")
+            } else {
+                use std::os::fd::AsRawFd;
+                std::path::PathBuf::from(format!("/dev/fd/{}", open.as_raw_fd()))
+            };
+            assert!(kernel.is_file());
+            line(&mut s, &mut ui, &cv, &format!(":REF:SLOT R1;:REF:LOAD \"{}\"", kernel.display()));
+            let err = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
+            assert!(err.starts_with("-224,") && err.contains("/proc, /sys and /dev"), "{err}");
+            assert!(ui.ref_shown_slot(0).is_none());
+        }
+        let big = dir.join("big.csv");
+        std::fs::File::create(&big).unwrap().set_len(crate::store::MAX_WAVEFORM_BYTES as u64 + 1).unwrap();
+        line(&mut s, &mut ui, &cv, &format!(":REF:LOAD \"{}\"", big.display()));
+        let err = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
+        assert!(err.starts_with("-224,") && err.contains("big.csv exceeds the 128 MiB"), "{err}");
+        line(&mut s, &mut ui, &cv, &format!(":REF:LOAD \"{}\"", dir.display()));
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-256,"), "a directory is no file");
+        line(&mut s, &mut ui, &cv, &format!(":REF:LOAD \"{}\"", csv.display()));
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
+        assert!(ui.ref_shown_slot(0).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn probewright_queries_answer_and_the_rigol_pages_round_trip() {
         let (mut s, mut ui, cv) = session();
@@ -6793,6 +6897,19 @@ mod tests {
             "the upper threshold must stay above the lower"
         );
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:SET:MAX?"), "80");
+
+        // the runt thresholds the same way (review U6)
+        line(&mut s, &mut ui, &cv, "*CLS;:TRIG:TYPE RUNT;:TRIG:RUNT:UPP 1.5;:TRIG:RUNT:LOW 0.25");
+        assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("0,"), "thresholds in order are taken");
+        line(&mut s, &mut ui, &cv, ":TRIG:RUNT:LOW 2");
+        let error = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
+        assert!(error.starts_with("-224,"), "the lower threshold must stay below the upper: {error}");
+        line(&mut s, &mut ui, &cv, ":TRIG:RUNT:UPP 0.1");
+        let error = line(&mut s, &mut ui, &cv, ":SYST:ERR?");
+        assert!(error.starts_with("-224,"), "the upper threshold must stay above the lower: {error}");
+        let upper: f64 = line(&mut s, &mut ui, &cv, ":TRIG:RUNT:UPP?").parse().unwrap();
+        let lower: f64 = line(&mut s, &mut ui, &cv, ":TRIG:RUNT:LOW?").parse().unwrap();
+        assert!((upper - 1.5).abs() < 1e-6 && (lower - 0.25).abs() < 1e-6, "{upper} {lower}");
     }
 
     #[test]

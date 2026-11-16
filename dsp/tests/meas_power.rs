@@ -91,6 +91,19 @@ fn switching_slew_rds_ripple_turn_times_capacitance_and_rail() {
 }
 
 #[test]
+fn rail_with_a_clock_longer_than_the_rail_uses_the_cycles_inside_it() {
+    // 100 rail samples, a clock of 1000 samples with a period of 50 rising at 24.5, 74.5, 124.5, ...
+    let mut v = vec![1.0f32; 100];
+    v[30] = 1.5;
+    let clk: Vec<f32> = (0..1000).map(|i| if (i / 25) % 2 == 0 { 0.0 } else { 1.0 }).collect();
+    let r = power::rail(&v, 1e-6, Some(1.0), None, Some(&clk));
+    // only the cycle of samples 25..=74 lies inside the rail; it holds the spike
+    assert!(close(r.overshoot, 0.5, 1e-6) && close(r.dc, 1.0 + 0.5 / 50.0, 1e-6), "{:?}", r);
+    let r = power::rail(&v[..10], 1e-6, Some(1.0), None, Some(&clk));
+    assert!(close(r.overshoot, 0.0, 1e-9) && close(r.dc, 1.0, 1e-9), "no cycle inside: the whole record {:?}", r);
+}
+
+#[test]
 fn bode_psrr_negates_the_gain_and_impedance_is_the_ratio() {
     use oos_dsp::bode::{self, Mode};
     let dt = 1e-6;
@@ -117,4 +130,22 @@ fn acpr_ratio_and_a_band_that_runs_off_the_trace() {
     assert!(close(a.ratio, 0.1, 1e-6), "{:?}", a);
     assert!(close(a.upper_db, -10.0, 1e-4) && a.lower_db.is_nan(), "{:?}", a);
     assert!(spectrum::acpr(&s, 0.0, 1.0).ratio.is_nan());
+}
+
+#[test]
+fn ripple_on_a_dc_rail_leaves_the_dc_out_over_part_cycles() {
+    // 12 V rail with 20 mV peak-peak at 60 Hz: the record ends in the middle of a cycle
+    let dt = 1e-5;
+    for cycles in [10.0, 10.5, 2.5] {
+        let n = (cycles / 60.0 / dt) as usize;
+        let v = sample(|t| 12.0 + 0.01 * (2.0 * PI * 60.0 * t).sin(), 0.0, dt, n);
+        let t = power::tone_ripple(&v, dt, 60.0);
+        assert!(close(t.pp, 0.02, 4e-4) && close(t.rms, 0.01 / 2f64.sqrt(), 2e-4), "{cycles} cycles {t:?}");
+    }
+    // 1 MHz switching ripple, 10 mV peak, 1000.5 cycles
+    let dt = 1e-8;
+    let n = (1000.5 / 1e6 / dt) as usize;
+    let v = sample(|t| 12.0 + 0.01 * (2.0 * PI * 1e6 * t).sin(), 0.0, dt, n);
+    let s = power::switching_ripple(&v, dt, 1e6);
+    assert!(close(s.pp, 0.02, 4e-4), "{s:?}");
 }

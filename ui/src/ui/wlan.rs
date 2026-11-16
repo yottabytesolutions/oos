@@ -362,7 +362,7 @@ impl Ui {
             Item::NetWeb if !self.sys.remote_web => "off".into(),
             Item::NetWeb if self.net.is_empty() => "not connected".into(),
             Item::NetWeb => format!("http://{}:8080", self.net),
-            Item::NetPorts => "SCPI 5555, VXI-11, SSH 22 (key)".into(),
+            Item::NetPorts => "SCPI 5555, VXI-11, SSH 22 (password or key)".into(),
             _ => {
                 let l = &self.wlan.link;
                 if !l.stick {
@@ -443,8 +443,9 @@ pub(super) enum OskFor {
     NtpServer,
     Tz,
     DateTime,
-    /// System > Network > Remote services > Name (remote.rs)
+    /// System > Network > Remote services > Name and Allowed (remote.rs)
     NetName,
+    NetAllow,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -572,6 +573,7 @@ impl Osk {
             OskFor::Tz => crate::clock::TZ_MAX,
             OskFor::DateTime => 19,
             OskFor::NetName => crate::mdns::NAME_MAX,
+            OskFor::NetAllow => crate::netacl::ALLOW_MAX,
         }
     }
 
@@ -731,6 +733,12 @@ impl Ui {
                     self.wlan.osk = None;
                 }
             }
+            OskFor::NetAllow => {
+                let t = o.text.clone();
+                if self.allow_osk_done(&t) {
+                    self.wlan.osk = None;
+                }
+            }
             OskFor::Label(c) => {
                 self.m.ch_label[c] = o.text.trim().to_string();
                 self.wlan.osk = None;
@@ -858,6 +866,7 @@ impl Ui {
             OskFor::Tz => "Time zone, POSIX: CET-1CEST,M3.5.0,M10.5.0/3 or <+04>-4 (4 hours east)".to_string(),
             OskFor::DateTime => "Local date and time: 2026-11-11 14:30".to_string(),
             OskFor::NetName => "Name on the network: letters, digits and - (name.local, host name)".to_string(),
+            OskFor::NetAllow => "Allowed prefixes: 192.0.2.0/24 2001:db8::/32 onlink6 (empty: no list)".to_string(),
             OskFor::Pass(s) if self.wlan.nets.iter().any(|n| n.ssid == *s) => format!("Password for {}", wlan::name(s)),
             OskFor::Pass(s) => format!("Password for {} (empty: open network)", wlan::name(s)),
         };
@@ -1178,10 +1187,11 @@ mod tests {
     }
 
     #[test]
-    fn hardware_network_fallback_names_key_only_ssh_instead_of_telnet() {
+    fn hardware_network_fallback_names_ssh_instead_of_telnet() {
         let ui = Ui::for_tests(Source::Demo { t: 0.0 });
         let ports = ui.net_value(Item::NetPorts);
-        assert!(ports.contains("SSH 22 (key)"));
+        // oos-ssh takes the password and trusted keys (docs/network.md 7), not only a key
+        assert!(ports.contains("SSH 22 (password or key)"));
         assert!(!ports.contains("telnet"));
     }
 

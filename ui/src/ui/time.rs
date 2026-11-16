@@ -181,6 +181,9 @@ impl Ui {
     /// At the start on the unit: the settings file, the time zone for the kernel, whether the clock was set already.
     pub fn load_system(&mut self, path: std::path::PathBuf) {
         self.sys = sysconf::SysConf::load_with_image(&path, &self.host.text(sysconf::IMAGE_PATH).unwrap_or_default());
+        if let Some(name) = self.keep_one_decoder() {
+            eprintln!("oos-ui: {}: decoders.off leaves out every decoder, {} stays", path.display(), name);
+        }
         self.sys_path = Some(path);
         self.net_name_init();
         self.clock_known = self.host.text(CLOCK_SET).is_some();
@@ -188,12 +191,14 @@ impl Ui {
         self.apply_backlight();
     }
 
-    /// Writes the settings (not in tests: there `sys_path` is none).
-    pub(super) fn sys_save(&mut self) {
-        let Some(p) = self.sys_path.clone() else { return };
+    /// Writes the settings (not in tests: there `sys_path` is none). False: not written, the toast says why.
+    pub(super) fn sys_save(&mut self) -> bool {
+        let Some(p) = self.sys_path.clone() else { return true };
         if let Err(e) = self.sys.save(&p) {
             self.toast(&format!("Not saved: {}", e));
+            return false;
         }
+        true
     }
 
     /// The time zone in use: the setting, with `tz = dhcp` the lease's or the fallback (`resolve_zone`).
@@ -562,6 +567,7 @@ impl Ui {
             }
             Item::TimeZone if o == DHCP_LABEL => self.set_tz(sysconf::DHCP),
             Item::RemName => self.remote_pick(k),
+            Item::RemAllow => self.allow_pick(k),
             Item::NtpServer => {
                 if let Some(s) = SERVERS.iter().find(|s| server_label(s) == *o) {
                     self.set_server(s);

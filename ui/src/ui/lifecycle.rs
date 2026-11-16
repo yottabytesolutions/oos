@@ -221,7 +221,10 @@ pub(in crate::ui) fn polls(ui: &mut Ui) -> bool {
     change::poll(ui, Poll::Update, Ui::update_poll);
     change::poll(ui, Poll::Wlan, Ui::wlan_poll);
     change::poll(ui, Poll::Ntp, Ui::ntp_poll);
-    change::poll(ui, Poll::Ssh, Ui::ssh_poll);
+    change::poll(ui, Poll::Ssh, |u| {
+        u.ssh_poll();
+        u.allow_poll();
+    });
     change::poll(ui, Poll::Usb, Ui::usb_poll);
     if stopped {
         return false;

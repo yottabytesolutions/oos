@@ -1561,6 +1561,39 @@ pub struct WaveTrace {
 pub const MAX_WAVEFORM_BYTES: usize = 128 << 20;
 pub const MAX_WAVEFORM_SAMPLES: usize = 32_000_000;
 
+/// File systems of the kernel: their files can be regular and still endless (`/proc/kmsg`), or a device.
+const NOT_STORAGE: [&str; 3] = ["/proc", "/sys", "/dev"];
+
+/// The bytes of a waveform file named by a remote client (SCPI `:REFerence:LOAD`, also over VXI-11 and MCP) or found
+/// beside the setups, read on the frame loop. Refused: a file of `NOT_STORAGE` (by the path it resolves to), and one
+/// larger than the import limit, from its size before anything is read; the read stops one byte past the limit should
+/// the file grow meanwhile. A path that is not there or not a regular file is `missing <name>`.
+pub fn read_waveform_file(p: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let name = file_name(p);
+    let missing = || format!("missing {name}");
+    let real = p.canonicalize().map_err(|_| missing())?;
+    if NOT_STORAGE.iter().any(|d| real.starts_with(d)) {
+        return Err(format!("{name}: files under /proc, /sys and /dev are not read"));
+    }
+    let too_large = || format!("{name} exceeds the {} MiB import limit", MAX_WAVEFORM_BYTES >> 20);
+    // before the open: opening a FIFO would wait for a writer
+    let meta = std::fs::metadata(&real).map_err(|_| missing())?;
+    if !meta.is_file() {
+        return Err(missing());
+    }
+    if meta.len() > MAX_WAVEFORM_BYTES as u64 {
+        return Err(too_large());
+    }
+    let file = std::fs::File::open(&real).map_err(|_| missing())?;
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    file.take(MAX_WAVEFORM_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| format!("{name}: {e}"))?;
+    if bytes.len() > MAX_WAVEFORM_BYTES {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
 /// Extensions shown by native and browser waveform import. The header chooses the parser.
 pub const WAVE_EXTS: &[&str] = &["wfm", "bin", "csv", "trc", "isf", "tr0", "wfmx"];
 
@@ -1648,32 +1681,55 @@ fn parse_oosw(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     Ok(out)
 }
 
+/// A time column, then one trace per further column. The columns are kept as the samples they become, and a line wider
+/// than the reference slots ends the parse: a single line of many columns no longer makes as many traces.
 fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
-    let mut rows: Vec<(f64, Vec<f64>)> = Vec::new();
+    let mut columns: Vec<Vec<f32>> = Vec::new();
+    let mut times: [f64; 2] = [f64::NAN; 2];
+    let mut rows = 0usize;
     for line in text.lines() {
         let mut cols = line.split(',').map(|s| s.trim().parse::<f64>().ok());
         let Some(Some(t)) = cols.next() else { continue };
-        let rest: Vec<f64> = cols.map(|x| x.unwrap_or(f64::NAN)).collect();
-        if rest.is_empty() {
+        let mut rest = cols.map(|x| x.unwrap_or(f64::NAN)).peekable();
+        if rest.peek().is_none() {
             continue;
         }
-        if rows.len() >= MAX_WAVEFORM_SAMPLES {
+        if rows >= MAX_WAVEFORM_SAMPLES {
             return Err("waveform exceeds the 32-million-sample import limit".into());
         }
-        rows.push((t, rest));
+        let mut k = 0;
+        for x in rest {
+            if k >= NREF {
+                return Err("The file has more traces than the remaining reference slots".into());
+            }
+            if k == columns.len() {
+                // a column that starts on a later line: the lines before it have no sample there
+                columns.push(vec![f32::NAN; rows]);
+            }
+            columns[k].push(x as f32);
+            k += 1;
+        }
+        for c in &mut columns[k..] {
+            c.push(f32::NAN);
+        }
+        if rows < 2 {
+            times[rows] = t;
+        }
+        rows += 1;
     }
-    let dt = match rows.as_slice() {
-        [a, b, ..] if b.0 > a.0 => b.0 - a.0,
+    let dt = match times {
+        [a, b] if rows >= 2 && b > a => b - a,
         _ => return Err("that file holds no waveform".into()),
     };
-    let ntrace = rows.iter().map(|r| r.1.len()).max().unwrap_or(0).max(1);
-    let mut traces = Vec::with_capacity(ntrace);
-    for k in 0..ntrace {
-        let v: Vec<f32> = rows.iter().map(|r| r.1.get(k).copied().unwrap_or(f64::NAN) as f32).collect();
-        let label = if ntrace == 1 { name.into() } else { format!("CH{}", k + 1) };
-        traces.push(WaveTrace { t0: rows[0].0, dt, v, label });
-    }
-    Ok(traces)
+    let ntrace = columns.len();
+    Ok(columns
+        .into_iter()
+        .enumerate()
+        .map(|(k, v)| {
+            let label = if ntrace == 1 { name.into() } else { format!("CH{}", k + 1) };
+            WaveTrace { t0: times[0], dt, v, label }
+        })
+        .collect())
 }
 
 /// Tek reference waveform version 001/002/003, YT vector, first frame.
@@ -2630,11 +2686,16 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
         return Err(format!("waveform version {}", ver));
     }
     let nch = u32_le(b, 8).unwrap_or(0) as usize;
-    let n = u64_le(b, 12).unwrap_or(0) as usize;
+    // the sample count comes from the file: bounded before it sizes anything, so a damaged or hostile count is an
+    // error and not an overflow or an allocation the size of the count
+    let n = usize::try_from(u64_le(b, 12).unwrap_or(0)).unwrap_or(usize::MAX);
     let dt = f64_le(b, 20).unwrap_or(0.0);
     let t0 = f64_le(b, 28).unwrap_or(0.0);
     if nch == 0 || nch > NCH || dt <= 0.0 {
         return Err("waveform header".into());
+    }
+    if n > MAX_WAVEFORM_SAMPLES {
+        return Err("waveform exceeds the 32-million-sample import limit".into());
     }
     let mut off = 36;
     let mut rec =
@@ -2645,7 +2706,7 @@ pub fn parse_wave_bin(b: &[u8]) -> Result<(Record, usize), String> {
         if c < 1 || c > NCH {
             return Err(format!("channel {}", c));
         }
-        if b.len() < off + 4 * n {
+        if b.len().saturating_sub(off) < 4 * n {
             return Err("truncated waveform".into());
         }
         let mut v = vec![0f32; n];
@@ -2682,6 +2743,11 @@ pub fn parse_ff(b: &[u8]) -> Result<Vec<Record>, String> {
         return Err(format!("fast-frame version {}", ver));
     }
     let n = u32_le(b, 8).unwrap_or(0) as usize;
+    // every frame is at least a header and one channel number: a count the bytes cannot hold is refused before it
+    // sizes the list
+    if n > (b.len() - 12) / 40 {
+        return Err("truncated fast-frame file".into());
+    }
     let mut off = 12;
     let mut recs = Vec::with_capacity(n);
     for _ in 0..n {
@@ -3572,6 +3638,24 @@ pub(crate) mod tests {
         assert_eq!(back[1].v[2], 3.3);
     }
 
+    /// A line wider than the reference slots ends the parse: before, one line of a million columns made a million
+    /// traces (40 MB of text took 1.9 GB) before the slots refused them.
+    #[test]
+    fn csv_wider_than_the_reference_slots_is_refused_while_parsing() {
+        let wide = format!("0{}\n1,0\n", ",0".repeat(NREF + 1));
+        assert!(parse_wave(wide.as_bytes(), "wide.csv").unwrap_err().contains("more traces"));
+        let full = format!("0{}\n1{}\n", ",1".repeat(NREF), ",2".repeat(NREF));
+        assert_eq!(parse_wave(full.as_bytes(), "full.csv").unwrap().len(), NREF);
+        // ragged lines: a column missing on a line, or starting late, is NaN there
+        let back = parse_wave(b"Time,A\n0,1\n1,2,7\n2,,8\n3\n", "r.csv").unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!((back[0].t0, back[0].dt, back[0].label.as_str()), (0.0, 1.0, "CH1"));
+        assert_eq!(&back[0].v[..2], [1.0, 2.0]);
+        assert!(back[0].v[2].is_nan() && back[0].v.len() == 3);
+        assert!(back[1].v[0].is_nan());
+        assert_eq!(&back[1].v[1..], [7.0, 8.0]);
+    }
+
     #[test]
     fn oos_bin_and_wfm_round_trip() {
         let mut m = Model::default();
@@ -3723,6 +3807,38 @@ pub(crate) mod tests {
         let old = parse_mask("1.0\n2.0\n").unwrap();
         assert_eq!(old.v, vec![1.0, 2.0]);
         assert!(old.src.is_none());
+    }
+
+    /// Counts in a frame file come from the file. One that does not fit the bytes is an error: before, a sample count
+    /// near 2^62 overflowed the offset (a panic, and with panic=abort the end of oos-ui) and a frame count of 2^32 - 1
+    /// asked for a list of that many records.
+    #[test]
+    fn frame_file_counts_beyond_the_bytes_are_refused() {
+        let mut huge = b"OOSW".to_vec();
+        for x in [1u32, 1] {
+            huge.extend_from_slice(&x.to_le_bytes());
+        }
+        huge.extend_from_slice(&((1u64 << 62) + 1).to_le_bytes());
+        huge.extend_from_slice(&1e-9f64.to_le_bytes());
+        huge.extend_from_slice(&0f64.to_le_bytes());
+        huge.extend_from_slice(&1u32.to_le_bytes());
+        huge.extend_from_slice(&[0u8; 16]);
+        assert!(parse_wave_bin(&huge).err().unwrap().contains("limit"));
+        let over = (MAX_WAVEFORM_SAMPLES as u64 + 1).to_le_bytes();
+        huge[12..20].copy_from_slice(&over);
+        assert!(parse_ff(&huge).err().unwrap().contains("limit"));
+        huge[12..20].copy_from_slice(&5u64.to_le_bytes());
+        assert!(parse_wave_bin(&huge).err().unwrap().contains("truncated"));
+        huge[12..20].copy_from_slice(&4u64.to_le_bytes());
+        assert_eq!(parse_wave_bin(&huge).unwrap().1, huge.len());
+
+        let mut ff = b"OOSF".to_vec();
+        ff.extend_from_slice(&1u32.to_le_bytes());
+        ff.extend_from_slice(&u32::MAX.to_le_bytes());
+        ff.extend_from_slice(&huge);
+        assert!(parse_ff(&ff).err().unwrap().contains("truncated"));
+        ff[8..12].copy_from_slice(&1u32.to_le_bytes());
+        assert_eq!(parse_ff(&ff).unwrap().len(), 1);
     }
 
     #[test]

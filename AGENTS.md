@@ -142,6 +142,25 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Update `docs/architecture/README.md` when code matches it or when the target changes.
 - Statements about hardware say how they are known: verified on the unit, assumed, or not yet verified.
 
+## Work sent upstream
+
+Upstream's records live in `docs/adr/` and their numbers collide with ours in `docs/architecture/adr/`. Cite every
+record by path, never by bare number. A branch or PR for upstream also follows:
+
+- [0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md): every commit signed off,
+  no vendor material in code, docs, commit messages or PR texts, one squashed commit per topic.
+- [0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md): SPDX line in each source file, subject
+  `Area: statement`, body says how it was tested, `CHANGELOG.md` entry for user-visible changes.
+- [0016](docs/adr/process/0016-rust-code-formatted-by-rustfmt.md),
+  [0017](docs/adr/process/0017-lints-clippy-warnings-are-errors.md),
+  [0020](docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md): no layout-only hunks in existing files,
+  Clippy clean under upstream's table, `tools/check.sh` passes; the PR names the layers run and `tools/plan-matrix.sh`
+  before and after.
+- [0022](docs/adr/code/0022-one-scpi-interpreter-transports-only-frame.md),
+  [0023](docs/adr/code/0023-scpi-stock-names-first-oos-identifies-as-oos.md),
+  [0025](docs/adr/system/0025-remote-services-are-bench-lan-services.md): one SCPI interpreter, stock names first,
+  a switch and the `net.allow` check for every service that can change the scope.
+
 ## The scope
 
 The unit is real hardware and can be bricked. Rules for anything that runs on it:

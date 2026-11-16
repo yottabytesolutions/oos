@@ -1076,8 +1076,16 @@ impl Ui {
                 if self.m.ch[c].on {
                     self.m.ch[c].on = false;
                     self.settings_changed();
-                } else {
+                } else if self.record_mode() {
                     self.activate_live_channel(c);
+                } else {
+                    // in Live as the channel key: the channel goes on, the trigger and Run/Stop stay
+                    self.m.ch[c].on = true;
+                    self.select_workspace_source(WaveId::Ch(c));
+                    if self.m.run == RunState::Run {
+                        self.m.floor_live_tdiv();
+                    }
+                    self.settings_changed();
                 }
                 self.relayout();
             }

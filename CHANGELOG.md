@@ -1,5 +1,85 @@
 # Changes
 
+## Unreleased
+
+Fixes from a review of 0.1.13, and the forum's report on it. All of it is tested on the host. Marked "(unit)" where
+it also ran on a DHO924S (2026-11-16).
+
+Added:
+
+- System > Network > Remote services > **Allowed** sets `net.allow` from the scope's screen (unit). The picker offers
+  every network the scope is on, and Other opens the keyboard. A wrong entry is refused with a message and not
+  stored. A change takes effect at once, without a restart:
+  - the firewall is reloaded;
+  - SCPI, VXI-11 and HiSLIP close the connections the new list leaves out, and the web remote checks every request;
+  - SSH starts or stops with the list.
+  The Firewall row shows the state in force (host-tested; the earlier build of the row ran on a unit).
+
+Changed:
+
+- SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
+  clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
+  clock first gets swapped results now. These are OOS items; the stock programming guide has none.
+- A change of trigger type keeps the user's pulse width, pattern, levels and limits on the hardware, Live and Replay.
+  The demo's starting values are set on the demo only. Slope, Runt and Window keep the lower level at or below the
+  upper one; `:TRIGger:RUNT:UPPer/LOWer` refuses a threshold past the other with -224.
+- Choosing a decoder protocol on Live or a Replay keeps the sources, as on the hardware. Before, they moved to the
+  demo's channels.
+- Touch lock has one place on the screen: the Touch lock action in the start menu, next to the other front-panel
+  keys (and the TOUCH key itself). Utility > Touch, the same switch a second time, is gone.
+
+Fixed:
+
+- The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
+  only changed the density there and the panel stayed as it was (forum report). Full chosen under Density still
+  keeps the panel's bars while the external display has the waveform.
+- A typo in `net.allow` (`192.0.2.0/`, `2001:db8:::1`) made nft refuse the whole firewall, and the scope came up
+  without one while telnet listened. Such entries are left out and logged; a ruleset nft refuses anyway closes the
+  scope to everything but loopback.
+- STOP (unit): the stopped record is no longer counted twice in the statistics, trend and catalog, and a change of view while
+  stopped adds nothing. Clear while stopped keeps the hardware stopped (it went on acquiring and overwrote the stored
+  record). RUN after STOP starts with a frame from after the RUN press.
+- Deep records read as min/max pairs: Mean, RMS, Std dev and AC RMS statistics no longer count pair values while the
+  reading is empty; with the LA on or three channels the measurements no longer stand still waiting for a raw read
+  the hardware never makes; after a Clear a held deep measurement no longer shows the cleared record.
+- The acquisition thread no longer holds the shared state while it decodes a raw window (up to ~24 MB), and the
+  newest frame of a batch gets the ADC-core correction like every other record.
+- Leaving a reference, Take over, Offline or SIM session brings back the live set-up from before it, whichever way it
+  is left (Live, Record = With live, a channel key, a channel as trigger source, Sources). A set-up recalled during a
+  session ends it and stays. Leaving the Bus trigger after a recall keeps the recalled decoder on. In Live, switching
+  a channel on from Sources leaves the trigger and Run/Stop alone.
+- Issue #5, stray traces (unit): frame 0 of a batch is left out in Batch draw mode too. Frame 1 is the first
+  trigger after the arm, and now and then it holds a piece of older memory. With an edge trigger it is left out
+  when its edge is not at the trigger point. SINGLE returned no frame from before the arm in 40 tries.
+- `:REF:LOAD "/proc/kmsg"` froze the screen for good (unit). Files under /proc, /sys and /dev are refused now. So is
+  any file larger than the 128 MiB import limit, before it is read.
+- Waveform import (unit for the first two):
+  - A CSV with more columns than reference slots is refused while it is read. It used to take gigabytes first.
+  - An upload over the web page is parsed beside the frame loop: 32 MB took 6 s, and SCPI answered within 43 ms
+    meanwhile.
+  - A frame file (`frame-NNN.bin`) whose counts do not fit its size no longer crashes oos-ui.
+- Web remote: `/update` and `/mcp` from outside `net.allow` are refused at the request head, before the body is read.
+  Only one large body is read at a time.
+- HiSLIP (desktop): a tiny maximum message size no longer splits a reply into one message per byte.
+- The zoom window no longer overflows at extreme delays.
+- The console banner and the Network page said SSH takes a provisioned key only. It takes the password or a key.
+- With hardware segments recording, the DVM, the levels and the ADC core trim wait for the recording to end.
+- STOP on a deep record (e.g. 10 M at 1 ms/div): the views read again as min/max pairs are drawn, while Mean, RMS,
+  Std dev and the other readouts stay measured on the raw record of the STOP. Before, they turned to "----".
+- Reference > Clear also removes the readouts of the cleared slots. Before, an import's Vpp, Freq, RMS and Rise rows
+  stayed empty (unit).
+- A `system.conf` that leaves out every decoder no longer crashes Decode > Protocol.
+- Measurements: line and switching ripple without the rail's DC level on records of partial cycles; double pulse
+  I_L, td_on, tr, td_off, tf, di/dt, Ipeak - I_L and Qoss with a ramping load current; high time, low time and time
+  outside without noise from slow edges; Ones counts bits, not samples; setup/hold violations judged per clock edge,
+  and the Setup + Hold tile says it counts violations; Eye Width@BER in seconds; Hall shaft speed and angle
+  mechanical (divided by the pole pairs) and no longer stuck after a fault code at the record start.
+- Decoders: MLT-3 decodes every change between its three levels (half of the ones were lost).
+- Phase noise and switching dV/dt, dI/dt no longer take quadratic time on long records; a power-rail clock longer
+  than the rail no longer crashes.
+- Tests no longer depend on the speed of the computer (wall-time limits replaced), and the SSH key tests run in a
+  checkout without `local/`.
+
 ## 0.1.13
 
 Merged from the forks on GitHub (PR #7 by ichnograph, DHO804; PR #8 by W4R/wasimlhr, OOS Plus), with main since
@@ -99,6 +179,10 @@ New:
 
 Changed:
 
+- Channel keys with several channels on: the first press on a channel that is not selected only selects it, so V/div
+  and position act on it without its menu covering the screen; the next press opens the menu, the one after that
+  switches the channel off, as before. A channel menu that is open closes when another channel is selected. A tap on
+  a channel's card selects and opens the menu the same way (a tap with the menu open still closes it).
 - Mean, RMS, Std dev and Area of deep records (above 1 M points, shown as min/max pairs) are measured again: the
   screen window is read raw once in a while (`meas.deep_raw`, now on by default; `meas.deep_raw = off` turns it
   off). 0.711 Vrms for a 2 Vpp sine at 10 to 125 M on the DHO924S. The reads come less often for a larger window,
@@ -123,6 +207,8 @@ Changed:
 
 Fixed:
 
+- The top bar and the Network page showed eth0's link-local address (169.254.x.x, kept when no DHCP server answered)
+  instead of an address set later by DHCP or by hand; a link-local address now comes only when there is no other.
 - The first record after a change of settings in a deep record (one frame per batch) could show the older memory of
   the settings before, e.g. twice the amplitude after the memory depth was changed: it is left out.
 - A deep record measured from its raw window no longer shows "not available" for the time the background

@@ -62,7 +62,8 @@ Between two raw records the newest record is of pairs. While running the UI does
 (`compress::hold`): the measurement shown stays that of the last raw record, so every value belongs to one record and
 the statistics count each raw record once; measurements update up to 5 times a second. STOP on a pair record asks the
 thread for the final frame raw (docs/fork/stop-exact.md: `final_replay` reads the whole newest frame of the last batch
-raw), so the record left on screen is raw. Batches of the live compression are not armed ahead (`acq.prearm`), so that
+raw), so the record left on screen is raw; views read again as pairs after it are drawn while that raw record stays
+the one measured. Batches of the live compression are not armed ahead (`acq.prearm`), so that
 read is always possible.
 
 The compressed frames are only drawn. `drawpipe::draw_frame` sends a frame of the live compression (`compress::live`:
@@ -132,6 +133,8 @@ off.
   - `perf_guard_compressed_frame` (ignored, `tools/perf-guard.sh`): compressed frame <= 0.25 x raw frame.
 - `ui/src/board/dho/hw.rs` `live_compression_plan_by_time_base`: k, frame bytes and frames per batch from 1 us/div to
   1 ms/div, 1 and 2 channels; off at 100 ns/div, in Single, above 1 M.
+- `ui/src/ui.rs` `statistics_of_the_fast_path_leave_out_what_pairs_cannot_give`: frames of the fast path add Max but
+  not Mean or Std dev of deep pairs, and nothing of live-compression pairs.
 - `fpgad/src/compcheck.rs`: the report names PASS, a different layout, or FAIL.
 
 ## On-unit verification

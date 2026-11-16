@@ -33,7 +33,8 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
 - The raw record measured is the newest raw one of the UI step, not the newest record: at 2 ms/div and up (10 M) a
   batch is one frame, so the next pair frame is often queued behind the raw one. The UI drew the raw frame on the fast
   path (or replaced it as the record) and the value stayed at the last raw record's for good (unit round 5). A raw
-  record that comes while the background worker is busy waits for it (`meas_pending`).
+  record that comes while the background worker is busy waits for it (`meas_pending`); Clear drops it with the record
+  it belongs to.
 - Off, in Peak (the memory holds peak pairs), above the budget, or with the deep screen-window read (short time base,
   already raw): as before.
 
@@ -42,6 +43,10 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
 Since `fix/stop-exact` (docs/fork/stop-exact.md): STOP holds the acquisition thread, which reads the newest frame of
 its last batch raw when the record shown is of pairs; that frame becomes the record on screen, so the measurements
 belong to it. With `acq.prearm = on` such batches are not armed ahead, so the replay works there too.
+
+The views after the STOP are read again from the stored record; zoomed out on a deep record that read is of pairs
+again. It is drawn, while the raw frame of the STOP stays the record measured, so Mean, RMS, Std dev and AC RMS keep
+their values and the statistics count nothing more (docs/fork/stop-exact.md, "Views after the STOP").
 
 ## Constants
 
@@ -75,6 +80,8 @@ belong to it. With `acq.prearm = on` such batches are not armed ahead, so the re
   each round, the worker busy when the raw record comes, pair records after it (at 2 and 5 ms/div one already queued
   behind it in the same step). Fails without `meas_pending` (Mean NaN) and without the step's raw record (NaN at
   2 ms/div).
+- `ui/src/ui.rs` `clear_drops_the_record_waiting_for_the_worker`: a raw deep record waits for the busy worker, Clear,
+  a shallow record is measured, a pair record after it keeps that record's Mean, not the one cleared away.
 
 ## On-unit verification
 

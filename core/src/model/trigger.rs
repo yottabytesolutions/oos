@@ -218,6 +218,11 @@ impl TrigType {
             TrigType::Bus => "Bus",
         }
     }
+
+    /// The types with an upper (`trig_level`) and a lower level (`trig_level2`).
+    pub fn two_level(self) -> bool {
+        matches!(self, TrigType::Slope | TrigType::Runt | TrigType::Window)
+    }
 }
 
 /// Time condition kind of the "When" setting (Off only for runt).

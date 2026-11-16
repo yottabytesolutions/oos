@@ -19,7 +19,7 @@ pub(super) struct Remote {
     mdns_t: Option<Instant>,
 }
 impl Remote {
-    pub(super) fn new(args: &[String], sw: &sysconf::Switches) -> Self {
+    pub(super) fn new(args: &[String], sw: &sysconf::Switches, ui: &mut Ui) -> Self {
         let web_port = arg(args, "--web-port").and_then(|p| p.parse().ok()).unwrap_or(8080);
         let scpi_port = arg(args, "--scpi-port").and_then(|p| p.parse().ok()).unwrap_or(5555);
         let scope = on_scope();
@@ -32,10 +32,15 @@ impl Remote {
             let port = arg(args, "--hislip-port").and_then(|p| p.parse().ok()).unwrap_or(hislip::PORT);
             hislip::Server::open(port)
         };
-        let acl = netacl::Acl::load(&sysconf::default_path());
-        web.acl = acl.clone();
-        scpi.acl = acl.clone();
-        vxi.acl = acl;
+        // who may update or control the scope over the network: net.allow (docs/network.md 6), read here at the start;
+        // the servers share the list with Remote services > Allowed, which sets it after a change
+        let acl = ui.acl();
+        acl.set(netacl::Acl::load(&sysconf::default_path()));
+        if std::path::Path::new(crate::remote::FIREWALL).exists() {
+            ui.set_allow_runner(crate::remote::script_runner());
+        }
+        web.set_acl(acl.clone());
+        (scpi.acl, vxi.acl) = (acl.clone(), acl);
         let mut r = Self {
             web,
             scpi,

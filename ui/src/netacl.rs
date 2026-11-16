@@ -4,12 +4,18 @@
 //! Who may control the scope over the network: `net.allow` in `/oos/system.conf`, with the image default from
 //! `/etc/oos/system.conf` (docs/network.md 6). A list of address prefixes, `192.0.2.0/24 fd00::/8`. Empty or
 //! absent: everyone, as before. rcS builds the firewall from the same key (`oos-firewall`); this list is the second
-//! line behind it, for what can change the scope: `POST /update`, `/mcp`, SCPI and VXI-11. The scope itself
+//! line behind it, for what can change the scope: `POST /update`, `/mcp`, SCPI, VXI-11 and HiSLIP. The scope itself
 //! (loopback) is always allowed. `onlink6` stands for the IPv6 prefixes on the link (from the router's advertisements,
 //! `net6::PREFIX_FILE`), which change with the provider.
+//!
+//! The servers hold one list (`Shared`) that Remote services > Allowed sets after it saved a change (ui/remote.rs):
+//! every check takes the list of that moment, and each server closes the connections it holds from an address the new
+//! list leaves out.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, PoisonError, RwLock};
 
 /// The image default of the system settings (an image built for one unit, boot/build-dev-image.sh `OOS_UNIT`).
 pub const IMAGE_CONF: &str = "/etc/oos/system.conf";
@@ -23,6 +29,9 @@ pub struct Acl {
 
 /// The `net.allow` word for the IPv6 prefixes on the link (`oos-firewall` has it too).
 pub const ONLINK6: &str = "onlink6";
+
+/// Longest `net.allow` taken from the keyboard (System > Network > Remote services > Allowed).
+pub const ALLOW_MAX: usize = 160;
 
 /// The value of `key` in the text of a `key = value` file: the last line wins, `#` starts a comment.
 pub fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
@@ -110,6 +119,11 @@ impl Acl {
             .and_then(|t| value(t, "net.allow"))
             .or_else(|| image.and_then(|t| value(t, "net.allow")))
             .unwrap_or("");
+        Acl::from_value(v)
+    }
+
+    /// The value of `net.allow` in force (the settings' line or the image default), as `from_texts` takes it.
+    pub fn from_value(v: &str) -> (Acl, Vec<String>) {
         let (mut acl, bad) = Acl::parse(v);
         if acl.is_open() && !bad.is_empty() {
             acl.nets.push(("::1".parse().unwrap(), 128));
@@ -125,11 +139,112 @@ impl Acl {
         for b in bad {
             eprintln!("oos-ui: net.allow: {:?} is not an address prefix, left out", b);
         }
-        if !acl.is_open() {
-            eprintln!("oos-ui: update, MCP, SCPI and VXI-11 only from {}", acl);
-        }
+        acl.log();
         acl
     }
+
+    /// The list in the log, when there is one.
+    pub fn log(&self) {
+        if !self.is_open() {
+            eprintln!("oos-ui: update, MCP, SCPI, VXI-11 and HiSLIP only from {}", self);
+        }
+    }
+}
+
+/// The list the servers check, one for all of them: Remote services > Allowed sets it after it saved a change. Each
+/// check takes the list of that moment; `changed` tells a server to look again at the connections it holds.
+#[derive(Clone, Default)]
+pub struct Shared(Arc<SharedList>);
+
+#[derive(Default)]
+struct SharedList {
+    acl: RwLock<Acl>,
+    /// counts the changes (`set`)
+    changes: AtomicU64,
+    /// tests: every peer is taken to be this address (a test connects over loopback, which is always allowed)
+    #[cfg(test)]
+    peers_as: std::sync::Mutex<Option<IpAddr>>,
+}
+
+impl Shared {
+    /// The list from now on, for new connections and those held.
+    pub fn set(&self, acl: Acl) {
+        *self.0.acl.write().unwrap_or_else(PoisonError::into_inner) = acl;
+        self.0.changes.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn permits(&self, ip: IpAddr) -> bool {
+        self.0.acl.read().unwrap_or_else(PoisonError::into_inner).permits(ip)
+    }
+
+    /// The peer of a connection (`TcpStream::peer_addr`, or the address `accept` gave); none is refused.
+    pub fn permits_peer(&self, peer: std::io::Result<SocketAddr>) -> bool {
+        #[cfg(test)]
+        if let Some(ip) = *self.0.peers_as.lock().unwrap_or_else(PoisonError::into_inner) {
+            return self.permits(ip);
+        }
+        peer.is_ok_and(|a| self.permits(a.ip()))
+    }
+
+    /// True once after each change since the server last asked (`seen` is its count of changes).
+    pub fn changed(&self, seen: &mut u64) -> bool {
+        let n = self.0.changes.load(Ordering::SeqCst);
+        std::mem::replace(seen, n) != n
+    }
+
+    /// Tests: every peer is taken to be `ip` (None: its own address again).
+    #[cfg(test)]
+    pub fn peers_as(&self, ip: Option<IpAddr>) {
+        *self.0.peers_as.lock().unwrap() = ip;
+    }
+}
+
+/// A `net.allow` value from the screen in the form it is written: the prefixes of `Acl::parse` with the host bits
+/// cleared, a bare address as `/32` or `/128`, `onlink6` last; empty for an empty entry. Err names the words not
+/// taken: what `parse` leaves out, and an IPv6 address written with dotted IPv4, which `oos-firewall` leaves out. A list
+/// with such a word is refused whole, so a typo never reaches the firewall (which would close or open the wrong way).
+pub fn canonical(s: &str) -> Result<String, String> {
+    let bad: Vec<&str> = s
+        .split([' ', ',', '\t'])
+        .filter(|w| !w.is_empty())
+        .filter(|w| {
+            let (a, bad) = Acl::parse(w);
+            let t = a.to_string();
+            !bad.is_empty() || (t.contains(':') && t.contains('.'))
+        })
+        .collect();
+    if !bad.is_empty() {
+        return Err(format!("Not an address prefix: {}", bad.join(" ")));
+    }
+    Ok(Acl::parse(s).0.to_string())
+}
+
+/// The network of the scope's IPv4 address `a` with its netmask, `192.0.2.0/24`: what Allowed offers. None for a
+/// mask that is no prefix or is empty (that would be everyone) and for loopback or no address.
+pub fn lan_of(a: Ipv4Addr, mask: Ipv4Addr) -> Option<String> {
+    let m = u32::from(mask);
+    let n = m.leading_ones();
+    if n == 0 || m.count_ones() != n || a.is_loopback() || a.is_unspecified() {
+        return None;
+    }
+    Some(format!("{}/{}", masked(IpAddr::V4(a), n as u8), n))
+}
+
+/// The networks Allowed offers, from every IPv4 address of the scope with its netmask (`lan_of`), each once: the
+/// link-local one (169.254.0.0/16) only when there is no other, since a list of it alone shuts out every computer
+/// that reaches the scope through a router or by a DHCP address (unit 2026-11-16: the top bar showed the link-local
+/// address of the Ethernet port, which also had 203.0.113.51/24, and the WLAN had 198.51.100.75/24).
+pub fn lans(addrs: &[(Ipv4Addr, Ipv4Addr)]) -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    for &(a, m) in addrs.iter().filter(|x| !x.0.is_link_local()).chain(addrs.iter().filter(|x| x.0.is_link_local())) {
+        if a.is_link_local() && !v.is_empty() {
+            break;
+        }
+        if let Some(l) = lan_of(a, m).filter(|l| !v.contains(l)) {
+            v.push(l);
+        }
+    }
+    v
 }
 
 impl std::fmt::Display for Acl {
@@ -219,5 +334,72 @@ mod tests {
         let (a, _) = Acl::from_texts(Some(image), Some("net.allow =\n"));
         assert!(a.is_open());
         assert_eq!(value("a = 1\n#a = 2\na = 3 # c\n", "a"), Some("3"));
+    }
+
+    // Break it catches: an entry from the screen stored with a word the firewall leaves out (a list of which nothing
+    // is usable closes the scope), or stored with host bits that nft may refuse
+    #[test]
+    fn an_entry_from_the_screen() {
+        assert_eq!(canonical("").as_deref(), Ok(""));
+        assert_eq!(canonical("  ").as_deref(), Ok(""));
+        assert_eq!(
+            canonical("192.0.2.7/24, onlink6 2001:db8::1:0/32 203.0.113.3").as_deref(),
+            Ok("192.0.2.0/24 2001:db8::/32 203.0.113.3/32 onlink6")
+        );
+        assert_eq!(canonical("169.254.0.0/16").as_deref(), Ok("169.254.0.0/16"));
+        for (s, bad) in [
+            ("192.0.2.0/33", "192.0.2.0/33"),
+            ("192.0.2.0/24 x", "x"),
+            ("300.1.1.1", "300.1.1.1"),
+            ("::ffff:192.0.2.1", "::ffff:192.0.2.1"),
+            ("::ffff:c000:201/128", "::ffff:c000:201/128"),
+            ("fe80::1%eth0", "fe80::1%eth0"),
+            ("010.0.0.1", "010.0.0.1"),
+            ("192.0.2.0/24;reboot", "192.0.2.0/24;reboot"),
+        ] {
+            assert_eq!(canonical(s), Err(format!("Not an address prefix: {}", bad)), "{}", s);
+        }
+        // what is written reads back as the same list, and the firewall's checks take every word of it
+        let c = canonical("192.0.2.200/25 2001:db8::/32 onlink6").unwrap();
+        assert_eq!(Acl::parse(&c), (Acl::parse("192.0.2.128/25 2001:db8::/32 onlink6").0, Vec::new()));
+    }
+
+    // Break it catches: a server that kept the list of the start (a change on the screen counted only after a restart),
+    // or never looked again at the connections it held
+    #[test]
+    fn one_list_for_every_server_that_follows_a_change() {
+        let a = Shared::default();
+        let b = a.clone();
+        let (mut seen_a, mut seen_b) = (0, 0);
+        assert!(!a.changed(&mut seen_a) && b.permits(ip("198.51.100.7")), "open, as without net.allow");
+        a.set(Acl::parse("192.0.2.0/24").0);
+        assert!(!b.permits(ip("198.51.100.7")) && b.permits(ip("192.0.2.7")) && b.permits(ip("127.0.0.1")));
+        assert!(b.changed(&mut seen_b) && !b.changed(&mut seen_b), "once per change");
+        assert!(a.changed(&mut seen_a), "each server sees it");
+        let peer = |s: &str| Ok(SocketAddr::new(ip(s), 5555));
+        assert!(b.permits_peer(peer("192.0.2.1")) && !b.permits_peer(peer("198.51.100.7")));
+        assert!(!b.permits_peer(Err(std::io::ErrorKind::NotConnected.into())), "no address: refused");
+        a.set(Acl::from_value("").0);
+        assert!(b.changed(&mut seen_b) && b.permits_peer(peer("198.51.100.7")));
+    }
+
+    #[test]
+    fn the_network_the_scope_is_on() {
+        let v4 = |s: &str| s.parse::<Ipv4Addr>().unwrap();
+        assert_eq!(lan_of(v4("192.0.2.148"), v4("255.255.255.0")).as_deref(), Some("192.0.2.0/24"));
+        assert_eq!(lan_of(v4("169.254.7.9"), v4("255.255.0.0")).as_deref(), Some("169.254.0.0/16"));
+        assert_eq!(lan_of(v4("203.0.113.3"), v4("255.255.255.255")).as_deref(), Some("203.0.113.3/32"));
+        assert_eq!(lan_of(v4("203.0.113.3"), v4("0.0.0.0")), None, "no mask: that would be everyone");
+        assert_eq!(lan_of(v4("203.0.113.3"), v4("255.0.255.0")), None);
+        assert_eq!(lan_of(v4("127.0.0.1"), v4("255.0.0.0")), None);
+        // every network once, the link-local one only alone
+        let m24 = v4("255.255.255.0");
+        let ll = (v4("169.254.124.87"), v4("255.255.0.0"));
+        assert_eq!(
+            lans(&[ll, (v4("203.0.113.51"), m24), (v4("198.51.100.75"), m24), (v4("203.0.113.9"), m24)]),
+            vec!["203.0.113.0/24", "198.51.100.0/24"]
+        );
+        assert_eq!(lans(&[ll]), vec!["169.254.0.0/16"]);
+        assert!(lans(&[]).is_empty());
     }
 }

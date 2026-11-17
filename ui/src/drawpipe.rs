@@ -17,7 +17,11 @@
 //! path, kept for comparison until the unit has verified the new one.
 
 mod decoder;
+mod frame;
+pub use frame::draw_frame;
+pub(crate) use frame::draw_frame_reusing;
 mod feed;
+pub(crate) mod reuse;
 pub use decoder::IndexedDecodeInto;
 mod losses;
 pub use losses::Losses;
@@ -41,52 +45,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub struct Stats<'a> {
     pub edges: &'a mut [u64; 4],
     pub off: &'a mut (f64, f64),
-}
-
-/// One frame of the fast path into `ph`; false if its trigger edge was not found near the hardware trigger point.
-/// Sparse frames (fewer than 2 samples per column) take the record path (`sparse::draw_with`, else `board::to_record`).
-pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, interp: Interp, stats: Option<Stats>) -> bool {
-    let (w, h) = (ph.w, ph.h);
-    let tdiv = m.time_per_div() as f64;
-    let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    // min/max pairs of the live compression (compress.rs) take the dense path with a pair deposit
-    let pairs = crate::compress::live(f) && x_per_sample <= 0.5;
-    // the raw screen window of a deep record (`deepmeas`, once a second) takes the record path of its record's pair
-    // frames: drawn densely it was 1.44 times their brightness (lines) and the grade swung (docs/fork/flicker.md)
-    if !pairs && (x_per_sample > 0.5 || f.envelope || f.roll || f.scan || crate::deepmeas::deep_raw_frame(f)) {
-        if let Some(t) = crate::sparse::draw_with(ph, m, f, 24, interp) {
-            return t;
-        }
-        let fr = std::sync::Arc::new(f.clone());
-        let window = tdiv * HDIV as f64;
-        let rec = crate::board::to_record(&fr, m, 3600, window, m.delay as f64 - window / 2.0);
-        for c in 0..NCH {
-            if m.ch[c].on && !rec.ch[c].is_empty() {
-                ph.draw_ex(c, m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[c], 24, None, rec.pairs);
-            }
-        }
-        return rec.triggered;
-    }
-    let src = &f.ch[m.trig_src];
-    let present: [bool; NCH] = std::array::from_fn(|c| !f.ch[c].is_empty());
-    let refine = |hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
-        let t = std::time::Instant::now();
-        let level = crate::board::sw_trig_level(m, f);
-        cost::add(Part::Level, t);
-        refine_near(src, 0, src.len(), f.pre, near_only(m, f), level, hyst, rising, either, half, col).unwrap_or_else(
-            || refine_wide(std::time::Instant::now(), src, f.pre, level, hyst, rising, either, half, col),
-        )
-    };
-    let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
-        if pairs {
-            crate::compress::deposit_pairs(map, w, h, &f.ch[c], xm, 24, m.dots_at(x_per_sample));
-        } else if m.dots_at(x_per_sample) {
-            crate::fastdraw::deposit_dots(map, w, h, &f.ch[c], xm, 24);
-        } else {
-            crate::fastdraw::deposit(map, w, h, &f.ch[c], xm, 24);
-        }
-    };
-    dense(ph, m, f, x_per_sample, pairs, present, stats, refine, deposit)
 }
 
 /// The dense fast path of `draw_frame` for the frame `f` (its samples reached only through `refine`, the trigger

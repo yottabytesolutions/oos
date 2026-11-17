@@ -81,6 +81,7 @@ impl BatchScript {
         let mut newest = batch.newest(identity.epoch());
         newest.cfg = identity.gen();
         self.pending = Some(Pending { before, frames: frames as u64, newest: newest.seq, workers: pipe.accepting() });
+        let newest = Arc::new(newest);
         if pipe.accepting() {
             let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
             self.decoded.store(0, Ordering::Relaxed);
@@ -173,7 +174,7 @@ fn queue_frames(batch: &impl Batch, shared: &mut crate::board::Shared, frames: u
     for i in 0..frames {
         let mut frame = batch.frame(i, id.epoch());
         frame.cfg = id.gen();
-        shared.queue.push_back(frame);
+        shared.queue.push_back(frame.into());
     }
 }
 

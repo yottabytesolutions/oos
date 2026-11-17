@@ -25,6 +25,7 @@ pub mod bode;
 mod bus;
 mod busview;
 pub(crate) mod change;
+mod deep_draw;
 mod deskew;
 mod dpt;
 mod eyepage;
@@ -3012,7 +3013,7 @@ impl Ui {
                     break;
                 }
                 let t0 = std::time::Instant::now();
-                let r = self.acquire_bus_candidate(dt_wall / k as f64);
+                let (r, drawing_input) = deep_draw::acquire(self, dt_wall / k as f64);
                 ta += t0.elapsed().as_secs_f32() * 1000.0;
                 if r.is_none() && self.bus_candidate_waiting() {
                     break;
@@ -3093,8 +3094,7 @@ impl Ui {
                             crate::pacing::drawn(r.frame.cfg, 1);
                         }
                         if let Some(f) = frame {
-                            let stats = crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off };
-                            crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, sw.interp, Some(stats));
+                            deep_draw::draw(self, &f, &rec, sw.interp, drawing_input);
                             n_dep += 1;
                         } else {
                             n_rec += 1;
@@ -3450,8 +3450,7 @@ impl Ui {
     /// The fast path for the queued frames (every one but the newest): placed on several cores (trigger, columns or
     /// screen record, statistics of each frame), then the maps filled in bands, channel by band on several cores.
     /// Returns the frames that counted as triggered.
-    fn fast_draw_all(&mut self, frames: Vec<crate::board::Frame>) -> usize {
-        let frames: Vec<std::sync::Arc<crate::board::Frame>> = frames.into_iter().map(std::sync::Arc::new).collect();
+    fn fast_draw_all(&mut self, frames: Vec<std::sync::Arc<crate::board::Frame>>) -> usize {
         let (w, h) = (self.ph.w, self.ph.h);
         let m = &self.m;
         // the statistics of every frame for the voltage measurements, once the measurements of the record have set
@@ -4396,7 +4395,7 @@ impl Ui {
     /// Test/legacy adapter; production rendering reuses immutable timed results.
     #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn math_source(&self, s: usize, below: usize) -> Vec<f32> {
-        self.math_source_record(s, below).map_or_else(Vec::new, |w| w.v.as_ref().clone())
+        self.math_source_record(s, below).map_or_else(Vec::new, |w| w.v.to_vec())
     }
 
     /// The waveform of math channel `k` (empty for FFT/Off or missing sources).
@@ -4404,7 +4403,7 @@ impl Ui {
         if self.m.math_ch(k).op == MathOp::Fft {
             return Vec::new();
         }
-        self.math_record(k).ok().flatten().map_or_else(Vec::new, |w| w.v.as_ref().clone())
+        self.math_record(k).ok().flatten().map_or_else(Vec::new, |w| w.v.to_vec())
     }
 
     /// The waveform of the selected math channel.
@@ -12612,16 +12611,16 @@ mod tests {
             // the worker is still on the previous record when the raw one comes, and pair records follow
             ui.meas_bg.as_mut().unwrap().busy = true;
             seq += 1;
-            shared.lock().unwrap().queue.push_back(frame(seq, false, raw(high)));
+            shared.lock().unwrap().queue.push_back(frame(seq, false, raw(high)).into());
             // one batch of one frame each at 2 and 5 ms/div: the next pair record is queued before the UI looks
             if tdiv > 1.5e-3 {
                 seq += 1;
-                shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
+                shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()).into());
             }
             ui.producer_step(0.02);
             for _ in 0..3 {
                 seq += 1;
-                shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
+                shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()).into());
                 ui.producer_step(0.02);
             }
             ui.meas_bg.as_mut().unwrap().busy = false;
@@ -12674,16 +12673,16 @@ mod tests {
         };
         // a raw deep record waits for the busy worker
         ui.meas_bg.as_mut().unwrap().busy = true;
-        shared.lock().unwrap().queue.push_back(frame(1, false, 10_000_000, 2.0));
+        shared.lock().unwrap().queue.push_back(frame(1, false, 10_000_000, 2.0).into());
         ui.producer_step(0.02);
         assert!(ui.meas_pending.is_some());
         ui.clear_display();
         // the worker is free and a shallow record comes: it is the one measured
         ui.meas_bg.as_mut().unwrap().busy = false;
-        shared.lock().unwrap().queue.push_back(frame(2, false, 100_000, 4.0));
+        shared.lock().unwrap().queue.push_back(frame(2, false, 100_000, 4.0).into());
         wait(&mut ui);
         // a deep pair record: its measurement stays that of the last record measured
-        shared.lock().unwrap().queue.push_back(frame(3, true, 10_000_000, 1.0));
+        shared.lock().unwrap().queue.push_back(frame(3, true, 10_000_000, 1.0).into());
         wait(&mut ui);
         let avg = ui.meas(0, Meas::Vavg);
         assert!((avg - 1.0).abs() < 0.03, "Mean held after the Clear: {}", avg);
@@ -12718,15 +12717,18 @@ mod tests {
             .collect();
         for (seq, envelope) in [(1u64, true), (2, false), (3, true)] {
             // a deep record (above 1 M points): pairs of the live compression are held instead (compress::hold)
-            shared.lock().unwrap().queue.push_back(crate::board::Frame {
-                seq,
-                dt: window * 1.2 / n as f64,
-                pre: n / 2,
-                ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
-                envelope,
-                acq: (1e9, 10_000_000),
-                ..Default::default()
-            });
+            shared.lock().unwrap().queue.push_back(
+                crate::board::Frame {
+                    seq,
+                    dt: window * 1.2 / n as f64,
+                    pre: n / 2,
+                    ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
+                    envelope,
+                    acq: (1e9, 10_000_000),
+                    ..Default::default()
+                }
+                .into(),
+            );
             for _ in 0..3 {
                 ui.producer_step(0.02);
             }
@@ -12778,13 +12780,13 @@ mod tests {
                 ui.producer_step(0.02);
             }
         };
-        shared.lock().unwrap().queue.push_back(frame(1, false, raw.clone()));
+        shared.lock().unwrap().queue.push_back(frame(1, false, raw.clone()).into());
         steps(&mut ui, 2);
         let avg = ui.meas(0, Meas::Vavg);
         assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
         let counted = ui.mstat.first().map_or(0, |s| s.n);
         for seq in 2..5 {
-            shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
+            shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()).into());
             steps(&mut ui, 2);
             assert_eq!(ui.meas(0, Meas::Vavg), avg);
             assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
@@ -12796,7 +12798,7 @@ mod tests {
         assert!(ui.stop_final.is_some() && shared.lock().unwrap().final_req == 1);
         {
             let mut g = shared.lock().unwrap();
-            g.queue.push_back(frame(5, false, raw.iter().map(|x| 2.0 * x).collect()));
+            g.queue.push_back(frame(5, false, raw.iter().map(|x| 2.0 * x).collect()).into());
             g.final_ack = 1;
         }
         steps(&mut ui, 2);
@@ -12860,7 +12862,7 @@ mod tests {
                 ui.producer_step(0.02);
             }
         };
-        shared.lock().unwrap().queue.push_back(frame(1, true, 10_000_000, pairs.clone()));
+        shared.lock().unwrap().queue.push_back(frame(1, true, 10_000_000, pairs.clone()).into());
         steps(&mut ui, 3);
         assert!(!shared.lock().unwrap().hold);
         // STOP on a pair record: the thread is held and asked for the final frame, the UI waits for it
@@ -12877,8 +12879,8 @@ mod tests {
         // the thread: the last frame of the batch in progress, then the newest frame raw, then the answer
         {
             let mut g = shared.lock().unwrap();
-            g.queue.push_back(frame(2, true, 10_000_000, pairs.clone()));
-            g.queue.push_back(frame(3, false, 10_000_000, raw(2.0)));
+            g.queue.push_back(frame(2, true, 10_000_000, pairs.clone()).into());
+            g.queue.push_back(frame(3, false, 10_000_000, raw(2.0)).into());
             g.final_ack = 1;
         }
         steps(&mut ui, 2);
@@ -12889,7 +12891,7 @@ mod tests {
         assert!((avg - 0.5).abs() < 0.03, "mean of the record shown: {}", avg);
         assert_eq!(ui.m.status, TrigStatus::Stop);
         // frames after it stay unseen in STOP
-        shared.lock().unwrap().queue.push_back(frame(4, false, 10_000_000, raw(4.0)));
+        shared.lock().unwrap().queue.push_back(frame(4, false, 10_000_000, raw(4.0)).into());
         steps(&mut ui, 2);
         assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(3));
         assert!(shared.lock().unwrap().hold);
@@ -12899,7 +12901,7 @@ mod tests {
         assert!(!shared.lock().unwrap().hold);
         // no answer: the STOP ends after STOP_FINAL_WAIT anyway
         shared.lock().unwrap().queue.clear();
-        shared.lock().unwrap().queue.push_back(frame(5, true, 10_000_000, pairs.clone()));
+        shared.lock().unwrap().queue.push_back(frame(5, true, 10_000_000, pairs.clone()).into());
         steps(&mut ui, 2);
         ui.m.run = RunState::Stop;
         steps(&mut ui, 2);
@@ -12909,7 +12911,7 @@ mod tests {
         // a shallow record: STOP holds the thread at once, without a final frame
         ui.m.run = RunState::Run;
         steps(&mut ui, 1);
-        shared.lock().unwrap().queue.push_back(frame(6, false, 100_000, raw(1.0)));
+        shared.lock().unwrap().queue.push_back(frame(6, false, 100_000, raw(1.0)).into());
         steps(&mut ui, 2);
         ui.m.run = RunState::Stop;
         steps(&mut ui, 1);
@@ -12987,15 +12989,18 @@ mod tests {
         let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 1.0 } else { 0.0 }).collect();
         let pairs = |top: f32| -> Vec<f32> { (0..n).map(|i| if i % 2 == 0 { 0.0 } else { top }).collect() };
         let push = |seq: u64, envelope: bool, v: Vec<f32>| {
-            shared.lock().unwrap().queue.push_back(crate::board::Frame {
-                seq,
-                dt: window * 1.2 / n as f64,
-                pre: n / 2,
-                ch: [v, Vec::new(), Vec::new(), Vec::new()],
-                envelope,
-                acq: (1e9, 10_000_000),
-                ..Default::default()
-            });
+            shared.lock().unwrap().queue.push_back(
+                crate::board::Frame {
+                    seq,
+                    dt: window * 1.2 / n as f64,
+                    pre: n / 2,
+                    ch: [v, Vec::new(), Vec::new(), Vec::new()],
+                    envelope,
+                    acq: (1e9, 10_000_000),
+                    ..Default::default()
+                }
+                .into(),
+            );
         };
         let step = |ui: &mut Ui| {
             for _ in 0..3 {
@@ -13065,7 +13070,7 @@ mod tests {
                 let mut g = shared.lock().unwrap();
                 for _ in 0..k {
                     seq += 1;
-                    g.queue.push_back(frame(seq));
+                    g.queue.push_back(frame(seq).into());
                 }
             }
             ui.producer_step(0.033);
@@ -13143,7 +13148,7 @@ mod tests {
                 let mut g = shared.lock().unwrap();
                 for i in 0..3 {
                     seq += 1;
-                    g.queue.push_back(frame(seq, !(with_raw && i == 2)));
+                    g.queue.push_back(frame(seq, !(with_raw && i == 2)).into());
                 }
             }
             ui.producer_step(0.033);
@@ -13248,7 +13253,7 @@ mod tests {
                 let mut g = shared.lock().unwrap();
                 for _ in 0..3 {
                     seq += 1;
-                    g.queue.push_back(frame(seq));
+                    g.queue.push_back(frame(seq).into());
                 }
                 g.trig_fired = fired;
             }
@@ -13406,7 +13411,7 @@ mod tests {
                 ch: [vec![0.0; n], Vec::new(), Vec::new(), Vec::new()],
                 ..Default::default()
             };
-            shared.lock().unwrap().queue.push_back(f);
+            shared.lock().unwrap().queue.push_back(f.into());
             ui.producer_step(0.02);
             assert_ne!(ui.m.status, TrigStatus::Wait, "the forced frame came (force {})", k);
             // the scope waits again: WAIT within the plain 0.5 s, as read 2 s after a force on the unit and sooner
@@ -14577,7 +14582,7 @@ mod tests {
                 basic: Default::default(),
             }
         };
-        shared.lock().unwrap().queue.extend((1..=10).map(frame));
+        shared.lock().unwrap().queue.extend((1..=10).map(frame).map(std::sync::Arc::new));
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         ui.m.trig_level = 0.0;
@@ -14655,13 +14660,13 @@ mod tests {
                 }
             }
             ui.ph.clear();
-            assert_eq!(ui.fast_draw_all(frames.clone()), 40);
+            assert_eq!(ui.fast_draw_all(frames.iter().cloned().map(std::sync::Arc::new).collect()), 40);
             for c in 0..NCH {
                 assert!(want.map[c].iter().any(|&x| x > 0), "{} s/div CH{}: nothing drawn", tdiv, c + 1);
                 assert!(ui.ph.map[c] == want.map[c], "{} s/div CH{}: maps differ", tdiv, c + 1);
             }
             // through `step`: 41 queued frames, 40 by the fast path, the newest as the record; nothing left
-            shared.lock().unwrap().queue.extend((1..=41).map(frame));
+            shared.lock().unwrap().queue.extend((1..=41).map(frame).map(std::sync::Arc::new));
             // the take of this screen (the step adapts it to the time the draw took afterwards: debug builds miss the
             // budget)
             let max = ui.fast_max();
@@ -14732,7 +14737,7 @@ mod tests {
                     fast_deposit(&ui.m, w, h, 0, &mut want, 0, &f, &p.plan);
                 }
                 ui.ph.clear();
-                ui.fast_draw_all(frames);
+                ui.fast_draw_all(frames.into_iter().map(std::sync::Arc::new).collect());
                 assert!(want.iter().filter(|&&x| x > 0).count() > w / 2, "{} s/div dots {}: little drawn", tdiv, dots);
                 assert!(ui.ph.map[0] == want, "{} s/div dots {}: maps differ", tdiv, dots);
             }
@@ -14784,12 +14789,12 @@ mod tests {
         ];
         ui.m.meas2.clear();
         // the first record sets up the rows
-        shared.lock().unwrap().queue.push_back(frame(0));
+        shared.lock().unwrap().queue.push_back(frame(0).into());
         ui.producer_step(0.05);
         assert_eq!(ui.mstat.len(), 5);
         assert_eq!(ui.mstat[0].n, 1);
         // 20 more: 19 by the fast path, the newest as the record
-        shared.lock().unwrap().queue.extend((1..=20).map(frame));
+        shared.lock().unwrap().queue.extend((1..=20).map(frame).map(std::sync::Arc::new));
         ui.producer_step(0.05);
         assert_eq!(ui.mstat[0].n, 21, "Pk-pk over every frame");
         assert_eq!(ui.mstat[4].n, 2, "Freq only over the records");
@@ -14838,19 +14843,19 @@ mod tests {
         };
         let counts = |ui: &Ui| ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>();
         // deep pairs: the newest is the record (Max measured), the fast path draws the other nine
-        shared.lock().unwrap().queue.push_back(frame(0, true, 10_000_000));
+        shared.lock().unwrap().queue.push_back(frame(0, true, 10_000_000).into());
         ui.producer_step(0.05);
         assert_eq!(counts(&ui), [0, 1, 0]);
-        shared.lock().unwrap().queue.extend((1..=10).map(|s| frame(s, true, 10_000_000)));
+        shared.lock().unwrap().queue.extend((1..=10).map(|s| frame(s, true, 10_000_000)).map(std::sync::Arc::new));
         ui.producer_step(0.05);
         assert_eq!(counts(&ui), [0, 11, 0], "Max of every frame, no Mean or Std dev of pairs");
         // live-compression pairs: a raw record, then pair frames; only the raw one counts
         ui.clear_display();
         ui.m.run = RunState::Run;
-        shared.lock().unwrap().queue.push_back(frame(11, false, n));
+        shared.lock().unwrap().queue.push_back(frame(11, false, n).into());
         ui.producer_step(0.05);
         assert_eq!(counts(&ui), [1, 1, 1]);
-        shared.lock().unwrap().queue.extend((12..=21).map(|s| frame(s, true, n)));
+        shared.lock().unwrap().queue.extend((12..=21).map(|s| frame(s, true, n)).map(std::sync::Arc::new));
         ui.producer_step(0.05);
         assert_eq!(counts(&ui), [1, 1, 1], "values of live-compression pairs counted");
         crate::deepmeas::force(None);
@@ -14867,7 +14872,11 @@ mod tests {
         // frames carry the identity the acquisition had when it read them (our generation filter)
         let push = |ui: &Ui, f: crate::board::Frame| {
             let id = change::acquisition::identity(ui);
-            shared.lock().unwrap().queue.push_back(crate::board::Frame { cfg: id.gen(), stamp: id.epoch(), ..f });
+            shared
+                .lock()
+                .unwrap()
+                .queue
+                .push_back(crate::board::Frame { cfg: id.gen(), stamp: id.epoch(), ..f }.into());
         };
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         ui.m.trig_level = 0.0;
@@ -14922,7 +14931,11 @@ mod tests {
         // frames carry the identity the acquisition had when it read them (our generation filter)
         let push = |ui: &Ui, f: crate::board::Frame| {
             let id = change::acquisition::identity(ui);
-            shared.lock().unwrap().queue.push_back(crate::board::Frame { cfg: id.gen(), stamp: id.epoch(), ..f });
+            shared
+                .lock()
+                .unwrap()
+                .queue
+                .push_back(crate::board::Frame { cfg: id.gen(), stamp: id.epoch(), ..f }.into());
         };
         ui.m.run = RunState::Run;
         for c in 1..NCH {
@@ -15035,7 +15048,11 @@ mod tests {
         // frames carry the identity the acquisition had when it read them (our generation filter)
         let push = |ui: &Ui, f: crate::board::Frame| {
             let id = change::acquisition::identity(ui);
-            shared.lock().unwrap().queue.push_back(crate::board::Frame { cfg: id.gen(), stamp: id.epoch(), ..f });
+            shared
+                .lock()
+                .unwrap()
+                .queue
+                .push_back(crate::board::Frame { cfg: id.gen(), stamp: id.epoch(), ..f }.into());
         };
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         for c in 1..NCH {
@@ -15078,7 +15095,11 @@ mod tests {
         // frames carry the identity the acquisition had when it read them (our generation filter)
         let push = |ui: &Ui, f: crate::board::Frame| {
             let id = change::acquisition::identity(ui);
-            shared.lock().unwrap().queue.push_back(crate::board::Frame { cfg: id.gen(), stamp: id.epoch(), ..f });
+            shared
+                .lock()
+                .unwrap()
+                .queue
+                .push_back(crate::board::Frame { cfg: id.gen(), stamp: id.epoch(), ..f }.into());
         };
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         for c in 1..NCH {
@@ -15123,7 +15144,7 @@ mod tests {
             ch: [vec![0.0; 100], Vec::new(), Vec::new(), Vec::new()],
             ..Default::default()
         };
-        shared.lock().unwrap().queue.extend((1..=100).map(frame));
+        shared.lock().unwrap().queue.extend((1..=100).map(frame).map(std::sync::Arc::new));
         let mut src = Source::Hw { shared: shared.clone(), seen: 0 };
         let got = src.drain_newest(30);
         assert_eq!(got.iter().map(|f| f.seq).collect::<Vec<_>>(), (70..=99).collect::<Vec<_>>());
@@ -15223,12 +15244,12 @@ mod tests {
         assert!(board().avg_hw(&ui.m));
         assert!(ui.items(MenuId::Acquire).contains(&Item::AcqAvgHw));
         for (k, v) in [1.0, 0.0].into_iter().enumerate() {
-            shared.lock().unwrap().queue.push_back(flat(k as u64 + 1, v, true));
+            shared.lock().unwrap().queue.push_back(flat(k as u64 + 1, v, true).into());
             ui.producer_step(0.02);
         }
         assert_eq!(mid(&ui), 0.0);
         // a frame the FPGA did not average is blended: 0 + (1 - 0) / 16
-        shared.lock().unwrap().queue.push_back(flat(3, 1.0, false));
+        shared.lock().unwrap().queue.push_back(flat(3, 1.0, false).into());
         ui.producer_step(0.02);
         assert!((mid(&ui) - 1.0 / 16.0).abs() < 1e-6, "{}", mid(&ui));
         // CLEAR, then STOP and RUN, then SINGLE: each a new clear request

@@ -55,7 +55,8 @@ impl Fixture {
             partial: roll && points < 15_625,
             acq,
             ..Default::default()
-        };
+        }
+        .into();
     }
 
     fn assert_readback(&mut self, rate: f64, depth: u64) {

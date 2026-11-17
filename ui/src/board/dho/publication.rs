@@ -31,8 +31,8 @@ pub(super) fn push_frames(out: &HwShared, mut frames: Vec<Frame>, mode: Mode) {
     let mut g = lock(out);
     frames.retain(|f| current(&g, f));
     let max = if mode == Mode::Peak { super::PEAK_BATCH_MAX } else { QUEUE_MAX };
-    g.queue.extend(frames);
-    let size = |f: &Frame| f.ch.iter().map(Vec::len).sum::<usize>();
+    g.queue.extend(frames.into_iter().map(std::sync::Arc::new));
+    let size = |f: &std::sync::Arc<Frame>| f.ch.iter().map(Vec::len).sum::<usize>();
     let mut held: usize = g.queue.iter().map(size).sum();
     let mut over = 0u64;
     while g.queue.len() > 1 && (g.queue.len() > max || held > QUEUE_SAMPLES) {
@@ -162,6 +162,7 @@ pub(super) fn current(g: &crate::board::Shared, f: &Frame) -> bool {
 pub(super) fn publish_held(out: &HwShared, last: Option<Frame>, final_req: u64) {
     let mut g = lock(out);
     let sample = last.filter(|f| current(&g, f)).map(|f| {
+        let f = std::sync::Arc::new(f);
         let (copy, sample) = crate::perfguard::deep::clone_frame(&f);
         g.frame = copy;
         g.queue.push_back(f);
@@ -179,7 +180,7 @@ mod timing_tests {
     use super::*;
 
     #[test]
-    fn publication_times_actual_clone_and_preserves_queue_and_latest() {
+    fn publication_shares_samples_and_preserves_queue_and_latest() {
         let _scope = crate::drawpipe::test_scope::Scope::new();
         let shared = HwShared::default();
         let frame = Frame { ch: std::array::from_fn(|_| vec![2.0; 625_000]), ..Default::default() };
@@ -188,13 +189,10 @@ mod timing_tests {
         assert!(text.contains("lock.acq.wait n=1 total=1"));
         assert!(text.contains("lock.acq.held n=1 total=1"));
         assert!(text.contains("producer.clone n=1 total=1"));
-        assert!(
-            text.contains("producer.clone_size n=1 total=1 p50_bytes=10000000 p99_bytes=pending max_bytes=10000000")
-        );
         let g = oos_hal::sync::lock(&shared);
         assert_eq!(g.queue.len(), 1);
         assert_eq!(g.frame.ch, g.queue[0].ch);
-        assert_ne!(g.frame.ch[0].as_ptr(), g.queue[0].ch[0].as_ptr());
+        assert!(std::sync::Arc::ptr_eq(&g.frame, &g.queue[0]));
     }
     #[test]
     fn publication_releases_shared_before_waiting_to_record_copy() {

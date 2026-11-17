@@ -31,14 +31,14 @@ fn old_pair_records_are_not_measured() {
             ui.m.tscale += 1;
         }
         ui.step(0.04);
-        oos_hal::sync::lock(&shared).queue.push_back(old);
+        oos_hal::sync::lock(&shared).queue.push_back(old.into());
         let records = ui.records;
         ui.step(0.04);
         assert_eq!(ui.records, records, "old pair reached record/measurement path: epoch_only={epoch_only}");
         assert!(ui.last[0].is_none());
         assert_eq!(ui.stats[0].vavg, 0.0);
         let valid = frame(&ui, 2);
-        oos_hal::sync::lock(&shared).queue.push_back(valid);
+        oos_hal::sync::lock(&shared).queue.push_back(valid.into());
         ui.step(0.04);
         assert_eq!(ui.records, records + 1, "valid current-pair record was dropped");
         assert!(ui.stats[0].vavg > 0.0);
@@ -56,7 +56,7 @@ fn bode_accepts_only_resolved_epoch() {
 
 fn stage_tokens(requester: oos_core::change::Requester) {
     let (mut ui, _) = hardware();
-    let mut old = crate::wave::hw_record(&ui.m, frame(&ui, 1));
+    let mut old = crate::wave::hw_record(&ui.m, std::sync::Arc::new(frame(&ui, 1)));
     for _ in 0..2 {
         match requester {
             oos_core::change::Requester::Autoset => change::autoset_begin(&mut ui),
@@ -69,10 +69,13 @@ fn stage_tokens(requester: oos_core::change::Requester) {
         ui.step(0.04);
         assert!(!change::acquisition::stage_record(&ui, requester, &old), "previous run/stage pair");
         let current = frame(&ui, 2);
-        let record = crate::wave::hw_record(&ui.m, current.clone());
+        let record = crate::wave::hw_record(&ui.m, std::sync::Arc::new(current.clone()));
         assert!(change::acquisition::stage_record(&ui, requester, &record));
         old = record;
-        let newer = crate::wave::hw_record(&ui.m, crate::board::Frame { stamp: current.stamp + 1, ..current });
+        let newer = crate::wave::hw_record(
+            &ui.m,
+            std::sync::Arc::new(crate::board::Frame { stamp: current.stamp + 1, ..current }),
+        );
         assert!(
             !change::acquisition::stage_record(&ui, requester, &newer),
             "a different newer epoch is not this token"
@@ -89,7 +92,11 @@ fn stage_settings_and_token_publish_together_on_the_next_step() {
     ui.m.tscale += 1;
     change::stage(&mut ui, Requester::Bode);
     assert_eq!(ui.m.tscale, scale, "late stage settings wait for their token");
-    assert!(!change::acquisition::stage_record(&ui, Requester::Bode, &crate::wave::hw_record(&ui.m, frame(&ui, 1))));
+    assert!(!change::acquisition::stage_record(
+        &ui,
+        Requester::Bode,
+        &crate::wave::hw_record(&ui.m, std::sync::Arc::new(frame(&ui, 1)))
+    ));
     change::finish_step(&mut ui);
     crate::cmd::run(&mut ui, "knob hscale +1");
     let expected = ui.m.tscale;
@@ -184,7 +191,7 @@ fn oversized_model_keeps_stepping_and_recovers_without_replaying_requests() {
 #[test]
 fn synchronous_measurement_rejection_does_not_feed_statistics() {
     let (mut ui, _) = hardware();
-    let old = crate::wave::hw_record(&ui.m, frame(&ui, 1));
+    let old = crate::wave::hw_record(&ui.m, std::sync::Arc::new(frame(&ui, 1)));
     ui.clear_display();
     ui.step(0.04);
     ui.meas_new = false;
@@ -220,7 +227,7 @@ fn foreign_clear_or_generation_cannot_stall_a_stepped_bode_stage() {
             let mut f = frame(&ui, seq);
             f.ch[0] = (0..1000).map(|k| (std::f32::consts::TAU * k as f32 / 1000.0).sin()).collect();
             f.ch[1] = f.ch[0].iter().map(|v| v * 0.5).collect();
-            oos_hal::sync::lock(&shared).queue.push_back(f);
+            oos_hal::sync::lock(&shared).queue.push_back(f.into());
             ui.step(0.04);
         }
         assert_eq!(ui.bode.points.len(), 1, "restarted stage finishes after its two settling records");
@@ -254,13 +261,13 @@ fn publication_and_queue_pop_report_stale_frames_at_their_own_sites() {
     let loss = &crate::drawpipe::counters().losses;
     let before = (loss.ui_publish.load(Relaxed), loss.queue_pop.load(Relaxed), loss.overflow.load(Relaxed));
     let old = frame(&ui, 1);
-    oos_hal::sync::lock(&shared).queue.push_back(old.clone());
+    oos_hal::sync::lock(&shared).queue.push_back(old.clone().into());
     ui.clear_display();
     ui.step(0.04);
     assert_eq!(loss.ui_publish.load(Relaxed) - before.0, 1);
-    oos_hal::sync::lock(&shared).queue.push_back(old.clone());
+    oos_hal::sync::lock(&shared).queue.push_back(old.clone().into());
     ui.src.drain_newest(crate::board::QUEUE_MAX);
-    oos_hal::sync::lock(&shared).queue.push_back(old);
+    oos_hal::sync::lock(&shared).queue.push_back(old.into());
     assert!(ui.src.acquire(&ui.m, 0.04, &mut ui.rng, ui.host.switches()).is_none());
     assert_eq!(loss.queue_pop.load(Relaxed) - before.1, 2);
     assert_eq!(loss.overflow.load(Relaxed), before.2);
@@ -294,7 +301,7 @@ fn mask_source_publication_discards_queued_old_generation_without_dropping_curre
     let old = frame(&ui, 1);
     let id = change::acquisition::identity(&ui);
     let loss = &crate::drawpipe::counters().losses;
-    oos_hal::sync::lock(&shared).queue.extend(std::iter::repeat_n(old.clone(), 96));
+    oos_hal::sync::lock(&shared).queue.extend(std::iter::repeat_n(std::sync::Arc::new(old.clone()), 96));
     ui.m.mask_src = 1;
     let records = ui.records;
     ui.step(0.04);
@@ -306,7 +313,7 @@ fn mask_source_publication_discards_queued_old_generation_without_dropping_curre
     assert_eq!(loss.overflow.load(Relaxed), 0);
     assert_eq!(ui.records, records, "old mask-source captures cannot feed readers");
     for seq in 2..=4 {
-        oos_hal::sync::lock(&shared).queue.push_back(frame(&ui, seq));
+        oos_hal::sync::lock(&shared).queue.push_back(frame(&ui, seq).into());
         ui.step(0.04);
         assert_eq!(ui.records, records + seq - 1, "current-pair work must remain eligible");
         assert_eq!(loss.ui_publish.load(Relaxed), 96, "unchanged source must not discard records");

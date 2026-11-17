@@ -334,9 +334,9 @@ fn demo_la(t: f64) -> u16 {
 }
 
 /// The record `Source::acquire` makes of a hardware frame: 3600 points across the screen.
-pub fn hw_record(m: &Model, f: crate::board::Frame) -> Record {
+pub fn hw_record(m: &Model, f: std::sync::Arc<crate::board::Frame>) -> Record {
     let window = m.time_per_div() as f64 * HDIV as f64;
-    crate::board::to_record(&std::sync::Arc::new(f), m, 3600, window, m.delay as f64 - window / 2.0)
+    crate::board::to_record(&f, m, 3600, window, m.delay as f64 - window / 2.0)
 }
 
 impl Source {
@@ -485,7 +485,7 @@ impl Source {
     /// Hardware source: takes the newest `max` queued frames but the newest one (the fast display path draws them;
     /// the newest stays for `acquire`, which makes the full record for measurements, decoding and history). Older
     /// ones are dropped and counted.
-    pub fn drain_newest(&mut self, max: usize) -> Vec<crate::board::Frame> {
+    pub fn drain_newest(&mut self, max: usize) -> Vec<std::sync::Arc<crate::board::Frame>> {
         if let Source::Hw { shared, .. } = self {
             let mut g = crate::perfguard::deep::ui_lock(shared);
             // the thread decodes no more than this of a batch (the record takes one more)

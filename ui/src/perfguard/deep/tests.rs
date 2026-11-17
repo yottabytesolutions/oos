@@ -59,19 +59,20 @@ fn polls_external_nesting_and_state_query_share_the_perf_report() {
 }
 
 #[test]
-fn clone_records_actual_sample_bytes_without_counting_shared_la_storage() {
+fn clone_shares_analog_and_la_storage() {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let mut frame = crate::board::Frame { ch: [vec![1.0; 7], vec![2.0; 3], vec![], vec![]], ..Default::default() };
     frame.la = Some(crate::ui::la::LaRec { t0: 0.0, dt: 1.0, words: std::sync::Arc::new(vec![3; 123]) });
+    let frame = std::sync::Arc::new(frame);
     let (copied, sample) = clone_frame(&frame);
     assert!(counters().text().contains("producer.clone n=0 total=0"));
     sample.record();
     assert_eq!(copied.ch, frame.ch);
-    assert_ne!(copied.ch[0].as_ptr(), frame.ch[0].as_ptr());
-    assert!(std::sync::Arc::ptr_eq(&copied.la.unwrap().words, &frame.la.unwrap().words));
+    assert!(std::sync::Arc::ptr_eq(&copied, &frame));
+    assert!(std::sync::Arc::ptr_eq(&copied.la.as_ref().unwrap().words, &frame.la.as_ref().unwrap().words));
     let text = counters().text();
     assert!(text.contains("producer.clone n=1 total=1"));
-    assert!(text.contains("producer.clone_size n=1 total=1 p50_bytes=40 p99_bytes=pending max_bytes=40"));
+    assert!(!text.contains("producer.clone_size"));
 }
 
 #[test]
@@ -114,22 +115,6 @@ fn bench_deep_diagnostics_overhead() {
     let tail = pair.p99.1.saturating_sub(pair.p99.0);
     println!("diagnostic overhead 16 polls + 12 locks: best={best:?} p99_cpu={tail:?}; limits 5/10 us");
     assert!(best < Duration::from_micros(5) && tail < Duration::from_micros(10));
-    let frame = crate::board::Frame { ch: std::array::from_fn(|_| vec![1.0; 625_000]), ..Default::default() };
-    let copy = crate::system::perfguard::measure(
-        super::super::ROUNDS,
-        8,
-        || {
-            std::hint::black_box(frame.clone());
-        },
-        || {
-            let (copy, sample) = clone_frame(&frame);
-            sample.record();
-            std::hint::black_box(copy);
-        },
-    );
-    println!("10 MB clone diagnostic: {copy:?}");
-    assert!(copy.best.1.as_secs_f64() / copy.best.0.as_secs_f64() < 1.05);
-    copy.check_tail(1.15);
     println!("{}", diagnostics.text());
 }
 

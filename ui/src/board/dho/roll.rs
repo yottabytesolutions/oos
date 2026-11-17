@@ -64,6 +64,7 @@ pub(crate) fn publish_roll(g: &mut Shared, f: Frame) -> Option<crate::perfguard:
     }
     // Roll pictures overlap: only the newest snapshot is needed, always within QUEUE_MAX.
     g.queue.clear();
+    let f = std::sync::Arc::new(f);
     let (copy, sample) = crate::perfguard::deep::clone_frame(&f);
     g.queue.push_back(copy);
     g.frame = f;
@@ -78,6 +79,7 @@ pub(crate) fn publish(g: &mut Shared, f: Frame, scan: bool) -> Option<crate::per
         if g.queue.back().is_none_or(|b| b.partial) {
             g.queue.clear();
         }
+        let f = std::sync::Arc::new(f);
         let (copy, sample) = crate::perfguard::deep::clone_frame(&f);
         g.queue.push_back(copy);
         g.frame = f;

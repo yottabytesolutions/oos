@@ -179,6 +179,17 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
 /// Turns the latest frame into a screen record: software trigger (oos-dsp) closest to the hardware trigger point,
 /// then the screen window (`n` points over `window` s from `t_first` relative to the trigger) by linear interpolation.
 pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64) -> crate::wave::Record {
+    let (ti, triggered) = record_trigger(f, m, n, window, t_first);
+    resample_record(f, m, n, window, t_first, ti, triggered)
+}
+
+/// A temporary display record borrows acquisition samples and retains no raw owner.
+pub fn display_record(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> crate::wave::Record {
+    let (ti, triggered) = record_trigger(f, m, n, window, t_first);
+    resample(f, m, n, window, t_first, ti, triggered)
+}
+
+fn record_trigger(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> (f64, bool) {
     let found = trigger_point(f, m, n, window, t_first);
     // roll: right-aligned like a chart recorder, the start of the stream may be left of the buffer (blank)
     let ti = if f.roll {
@@ -190,12 +201,12 @@ pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64)
     } else {
         found.unwrap_or(f.pre as f64)
     };
-    resample(f, m, n, window, t_first, ti, found.is_some())
+    (ti, found.is_some())
 }
 
 /// Rebuild a display window from the retained acquisition without retriggering.
 /// `ti` is the original accepted trigger's fractional sample index.
-pub fn resample(
+pub fn resample_record(
     f: &Arc<Frame>,
     m: &Model,
     n: usize,
@@ -204,7 +215,43 @@ pub fn resample(
     ti: f64,
     triggered: bool,
 ) -> crate::wave::Record {
+    let mut rec = resample(f, m, n, window, t_first, ti, triggered);
     let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
+    // the frame's samples inside the screen window
+    let i0 = ((ti + t_first / f.dt).floor().max(0.0) as usize).min(len);
+    let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(len);
+    // Keep the acquisition even for a window outside it: navigation can return.
+    rec.raw = (len > 1).then(|| crate::wave::Raw {
+        frame: f.clone(),
+        i0,
+        i1: i1.max(i0),
+        t0: (i0 as f64 - ti) * f.dt,
+        conditioned: true,
+    });
+    rec
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESAMPLES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn resample_count() -> usize {
+    RESAMPLES.with(std::cell::Cell::get)
+}
+
+fn resample(
+    f: &Frame,
+    m: &Model,
+    n: usize,
+    window: f64,
+    t_first: f64,
+    ti: f64,
+    triggered: bool,
+) -> crate::wave::Record {
+    #[cfg(test)]
+    RESAMPLES.with(|count| count.set(count.get() + 1));
     let dt = window / n.max(1) as f64;
     // several samples per point and no averaging: the points become min/max pairs (the peak-detect branch below)
     let pairs = dt / f.dt >= 2.0 && m.acq != AcqMode::HiRes;
@@ -285,20 +332,9 @@ pub fn resample(
             })
             .collect();
     }
-    // the frame's samples inside the screen window
-    let i0 = ((ti + t_first / f.dt).floor().max(0.0) as usize).min(len);
-    let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(len);
-    // Keep the acquisition even for a window outside it: navigation can return.
-    let raw = (len > 1).then(|| crate::wave::Raw {
-        frame: f.clone(),
-        i0,
-        i1: i1.max(i0),
-        t0: (i0 as f64 - ti) * f.dt,
-        conditioned: true,
-    });
     // LA: the same shift as the analog record (software trigger at `ti` instead of the hardware point `pre`)
     let la = f.la.as_ref().map(|l| crate::ui::la::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
-    crate::wave::Record { t0: t_first, dt, ch, triggered, partial: f.partial, raw, la, pairs }
+    crate::wave::Record { t0: t_first, dt, ch, triggered, partial: f.partial, raw: None, la, pairs }
 }
 
 #[cfg(test)]
@@ -736,6 +772,41 @@ mod pair_tests {
                 assert!(got.0.is_nan() && got.1.is_nan(), "pair {} outside the frame: {:?}", j, got);
             } else {
                 assert_eq!(got, (lo, hi), "pair {}", j);
+            }
+        }
+    }
+
+    #[test]
+    fn borrowed_display_conversion_matches_retained_records_exactly() {
+        for acq in [AcqMode::Normal, AcqMode::Peak, AcqMode::Average, AcqMode::HiRes] {
+            for envelope in [false, true] {
+                let mut m = Model { acq, ..Default::default() };
+                for c in &mut m.ch {
+                    c.on = true;
+                }
+                let f = Arc::new(Frame {
+                    dt: 1e-6,
+                    pre: 5000,
+                    ch: std::array::from_fn(|c| (0..10_000).map(|i| ((i + c) as f32 * 0.01).sin()).collect()),
+                    envelope,
+                    acq: (1e6, 10_000_000),
+                    ..Default::default()
+                });
+                for (window, first) in [(1e-2, -5e-3), (1e-3, -2e-3), (1e-3, 1.0)] {
+                    let retained = to_record(&f, &m, 3600, window, first);
+                    let borrowed = display_record(&f, &m, 3600, window, first);
+                    assert!(borrowed.raw.is_none());
+                    assert_eq!(
+                        (retained.t0, retained.dt, retained.triggered, retained.pairs),
+                        (borrowed.t0, borrowed.dt, borrowed.triggered, borrowed.pairs)
+                    );
+                    for (a, b) in retained.ch.iter().zip(&borrowed.ch) {
+                        assert_eq!(
+                            a.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                            b.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+                        );
+                    }
+                }
             }
         }
     }

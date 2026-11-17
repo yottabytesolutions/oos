@@ -44,6 +44,37 @@ fn hot_paths_allocate_nothing_after_warmup() {
         println!("ALLOC_BUDGET {} 64 0", name.replace(' ', "_"));
     });
     assert_eq!(paths, 6, "all currently guarded UI hot kernels were exercised");
+    deep_census();
+}
+
+fn deep_census() {
+    let mut cases = 0;
+    oos_ui::Ui::deep_step_probe(|name, bytes, mut reference, step| {
+        HEAP.set_large_min(bytes);
+        let before = HEAP.large_allocations();
+        std::hint::black_box(vec![0u8; bytes]);
+        assert_eq!(HEAP.large_allocations() - before, 1, "observer sees freed {bytes}-byte copies");
+        for _ in 0..8 {
+            if let Some(reference) = reference.as_mut() {
+                reference();
+            }
+            step();
+        }
+        for index in 0..64 {
+            let before = HEAP.large_allocations();
+            if let Some(reference) = reference.as_mut() {
+                reference();
+            }
+            let scratch = HEAP.large_allocations() - before;
+            let before = HEAP.large_allocations();
+            step();
+            let copies = HEAP.large_allocations() - before;
+            assert_eq!(copies, scratch, "{name} step {index}: extra allocations >= {bytes} can copy samples");
+        }
+        cases += 1;
+        println!("COPY_BUDGET {name} 64 no_extra_allocations_at_or_above_{bytes}_bytes");
+    });
+    assert_eq!(cases, 4, "deep pairs, shallower pairs, queued raw and synchronous raw readers ran");
 }
 
 #[test]

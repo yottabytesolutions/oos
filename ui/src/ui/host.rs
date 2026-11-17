@@ -407,6 +407,7 @@ mod auto_timeout {
         let id = g.acquisition.identity();
         (frame.cfg, frame.stamp) = (id.gen(), id.epoch());
         g.trig_fired = Some((frame.seq, Some(tpu)));
+        let frame = std::sync::Arc::new(frame);
         g.frame = frame.clone();
         g.queue.push_back(frame);
     }
@@ -436,7 +437,7 @@ mod auto_timeout {
             assert_eq!((ui.records, ui.wfm_total), (0, 0));
         }
         let frame = crossing(&ui, 1);
-        assert!(crate::wave::hw_record(&ui.m, frame.clone()).triggered, "software sees an edge");
+        assert!(crate::wave::hw_record(&ui.m, std::sync::Arc::new(frame.clone())).triggered, "software sees an edge");
         deliver(&shared, frame, false);
         ui.step(0.03125);
         assert_eq!((ui.records, ui.wfm_total, ui.m.status), (1, 1, TrigStatus::Auto));

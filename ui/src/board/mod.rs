@@ -15,12 +15,12 @@ mod counters;
 pub use counters::AcquisitionCounters;
 pub mod dho;
 pub(crate) mod identity;
-mod record;
+pub(crate) mod record;
 pub mod scripted;
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
-pub use record::{resample as resample_record, RECORDS_PER_STEP};
-pub use record::{sw_trig_level, sw_trig_level_of, to_record, trigger_point};
+pub use record::{display_record, sw_trig_level, sw_trig_level_of, to_record, trigger_point};
+pub use record::{resample_record, RECORDS_PER_STEP};
 use std::sync::{Arc, Mutex};
 
 /// The board this build drives, and its part of the switches (`sysconf::Switches`).
@@ -390,9 +390,9 @@ pub struct Shared {
     pub halted: bool,
     pub rearm: bool,
     /// the latest frame (auto set-up and the replay of the screen look at it)
-    pub frame: Frame,
+    pub frame: std::sync::Arc<Frame>,
     /// frames not drawn yet, oldest first (one batch delivers many)
-    pub queue: std::collections::VecDeque<Frame>,
+    pub queue: std::collections::VecDeque<std::sync::Arc<Frame>>,
     /// STOP: the view the UI shows (time per div, delay); the thread acquires nothing and reads the last record again
     /// for it when it changes, into `replay` (`hw::stop_window`)
     pub stop_view: Option<(f64, f64)>,

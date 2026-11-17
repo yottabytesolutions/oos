@@ -1,7 +1,7 @@
 # STATe fixture provenance
 
 `state.txt` is an unmodified production `:SYSTem:STATe?` reply captured on the
-host on 2026-11-16 by
+host on 2026-11-17 by
 `state_query_real_reply_has_separate_panel_and_view_renders` in
 `ui/src/ui/tests/change_picture_contracts.rs`. It uses the real SCPI handler,
 demo acquisition, one panel render and two HDMI view renders, including a

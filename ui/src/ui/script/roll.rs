@@ -40,7 +40,7 @@ fn growing_roll_step_profile() {
         frame.partial = len < 100_000;
         frame.ch[0] = template.ch[0].iter().copied().cycle().take(len).collect();
         let start = Instant::now();
-        let rec = crate::wave::hw_record(&ui.m, frame.clone());
+        let rec = crate::wave::hw_record(&ui.m, std::sync::Arc::new(frame.clone()));
         let convert = start.elapsed();
         let start = Instant::now();
         ui.ph.draw_ex(0, &ui.m, (ui.m.time_per_div(), 0.0), rec.t0, rec.dt, &rec.ch[0], 24, None, rec.pairs);
@@ -137,6 +137,7 @@ fn assert_bounded_analysis_steps(roll: bool) {
                     snapshot.ch[1].truncate([1000, 25_000, 100_000][step]);
                     snapshot.partial = step < 2;
                 }
+                let snapshot = std::sync::Arc::new(snapshot);
                 g.frame = snapshot.clone();
                 g.queue.push_back(snapshot);
             }

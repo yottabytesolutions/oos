@@ -9,6 +9,9 @@ use std::{
     sync::{mpsc, Arc},
 };
 
+mod samples;
+use samples::Samples;
+
 const BACKGROUND: usize = 262_144;
 const MAX_POINTS: usize = 32_000_000;
 const MAX_CONV_TERMS: usize = 16_000_000;
@@ -16,7 +19,7 @@ const MAX_CONV_TERMS: usize = 16_000_000;
 pub(super) struct Signal {
     pub t0: f64,
     pub dt: f64,
-    pub v: Arc<Vec<f32>>,
+    pub v: Samples,
 }
 struct Job {
     slot: usize,
@@ -129,7 +132,7 @@ fn compute_job(job: &Job) -> Result<Signal, &'static str> {
             return Ok(Signal {
                 t0: 0.0,
                 dt: df,
-                v: Arc::new(spectrum.iter().map(|&v| oos_dsp::math::dbv(v) as f32).collect()),
+                v: Arc::new(spectrum.iter().map(|&v| oos_dsp::math::dbv(v) as f32).collect::<Vec<_>>()).into(),
             });
         }
         let b = aligned.get(1).map_or(&[][..], |x| x.1.as_slice());
@@ -141,7 +144,7 @@ fn compute_job(job: &Job) -> Result<Signal, &'static str> {
         }
         v
     };
-    Ok(Signal { t0: start, dt, v: Arc::new(v) })
+    Ok(Signal { t0: start, dt, v: Arc::new(v).into() })
 }
 
 impl Ui {
@@ -305,13 +308,13 @@ impl Ui {
                 return Some(Arc::new(Signal {
                     t0: self.source_time_origin(WaveId::Ch(id), raw.t0 - raw.i0 as f64 * raw.frame.dt),
                     dt: raw.frame.dt,
-                    v: Arc::new(raw.frame.ch[id].clone()),
+                    v: Samples::Frame { frame: raw.frame.clone(), channel: id, window: 0..raw.frame.ch[id].len() },
                 }));
             }
             return Some(Arc::new(Signal {
                 t0: self.source_time_origin(WaveId::Ch(id), r.t0),
                 dt: r.dt,
-                v: Arc::new(r.ch[id].clone()),
+                v: Arc::new(r.ch[id].clone()).into(),
             }));
         }
         if id < MATH_REF_BASE {
@@ -321,7 +324,7 @@ impl Ui {
         Some(Arc::new(Signal {
             t0: self.source_time_origin(WaveId::Ref(id - MATH_REF_BASE), r.t0),
             dt: r.dt,
-            v: Arc::clone(&r.v),
+            v: Arc::clone(&r.v).into(),
         }))
     }
 

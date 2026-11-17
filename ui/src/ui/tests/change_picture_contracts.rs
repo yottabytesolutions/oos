@@ -90,7 +90,7 @@ fn batch_worker_view_stays_enabled_during_stop_final_read() {
         crate::board::Frame { seq: 2, cfg: id.gen(), stamp: id.epoch(), envelope: false, ..(*frame).clone() };
     {
         let mut board = oos_hal::sync::lock(shared);
-        board.queue.push_back(final_frame);
+        board.queue.push_back(final_frame.into());
         board.final_ack = ui.final_req;
     }
     ui.step(0.04);
@@ -120,7 +120,7 @@ fn draw_timing_state_query_appends_completed_steps_and_independent_renders() {
     }
     ui.render(&mut cv);
     let state = String::from_utf8(crate::scpi::Scpi::open(0u16, false).exec_line(&mut ui, &cv, ":SYST:STAT?")).unwrap();
-    assert!(state.find("diag producer.clone_size").unwrap() < state.find("diag draw.decay").unwrap());
+    assert!(state.find("diag producer.clone ").unwrap() < state.find("diag draw.decay").unwrap());
     for label in ["decay", "fast", "merge", "records", "grade"] {
         let block = state.split_once(&format!("diag draw.{label} ")).unwrap().1.split(" diag ").next().unwrap();
         assert!(block.starts_with("n=50 total=50 p50_ns="), "{block}");

@@ -1,3 +1,4 @@
 # Planned moves of this branch: <old key or file> -> <new key or file> (docs/development.md).
 # The integrator applies them with `cargo xtask ratchet --move` at merge, which empties this file.
 static ui/src/board/dho/hw.rs log_header::LINES -> static ui/src/board/dho/hw/header.rs log::LINES
+fn ui/src/drawpipe.rs draw_frame -> fn ui/src/drawpipe/frame.rs draw_frame_reusing

@@ -55,9 +55,9 @@ fn mixed_bus_intake_rejects_old_generation_at_current_epoch() {
     let id = change::acquisition::script_prepare(&mut ui);
     let mut old = (*frame(10_000, 0xa5, 2, id)).clone();
     old.cfg = id.gen() - 1;
-    lock(&shared).queue.push_back(old);
+    lock(&shared).queue.push_back(old.into());
     assert!(ui.acquire_mixed_bus_record(0.001).is_none(), "old generation reached the mixed-source decoder");
-    lock(&shared).queue.push_back((*frame(10_000, 0xa5, 3, id)).clone());
+    lock(&shared).queue.push_back((*frame(10_000, 0xa5, 3, id)).clone().into());
     let record = ui.acquire_mixed_bus_record(0.001).unwrap();
     let raw = &record.raw.as_ref().unwrap().frame;
     assert_eq!((raw.seq, raw.cfg, raw.stamp), (3, id.gen(), id.epoch()));

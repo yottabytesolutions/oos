@@ -35,3 +35,6 @@ pub fn run(mut sample: impl FnMut(&str, &mut dyn FnMut())) {
         black_box(crate::framestats::cheap_results(black_box(&samples)));
     });
 }
+
+mod deep_steps;
+pub use deep_steps::run as deep_step;

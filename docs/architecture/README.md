@@ -300,6 +300,17 @@ STOP/RUN boundaries and hardware frame-zero rejection keep their existing
 discard policies. This prevents queue overflow within a current Peak stream;
 it does not promise continuous trigger capture while acquisition is paused.
 
+The current decoded-frame handoff (task 0089) moves each acquired `Frame` into an
+`Arc` at publication. `Shared.frame`, its bounded queue and `Record.raw` share that
+owner through UI intake, fast drawing and measurement jobs. Publication and main
+therefore do not clone channel sample vectors. Temporary render records borrow the
+frame. The main path reuses its already converted deep-pair record when frame
+identity, 3600-point grid, window/delay and every normal analog-edge conversion
+input match; other fallbacks independently resample. Math CH inputs share a frame
+handle plus channel/range, and Identify and autoset borrow their raw windows. Screen
+vectors, acquisition-side roll/scan snapshots and worker DSP scratch retain their
+existing allocation policies; this is not a zero-allocation whole-step claim.
+
 ## Layers
 
 Hexagonal where it pays, plain modules where it does not. The domain is its own crate, so Cargo enforces the direction.
@@ -1431,6 +1442,7 @@ unverified on hardware; other rows use ratios only.
 | perf_guard_compressed_frame | 0.5 | 0.75 | 100 k point square, k=15; compressed / raw decode and draw | deposit kernel |
 | perf_guard_codes_per_frame | 0.9 | 1.35 | five channel/trigger cases; codes / decode and draw | deposit kernel |
 | perf_guard_deposit_worker_per_frame | 1.5 | 2.25 | three depths, measurements off; one worker / frames mode | worker orchestration |
+| perf_guard_deep_record_reuse | 0.8 | 1.0 | 4 channels, 10M depth (625k pairs each); actual hw_record + reused draw / hw_record + independent draw_frame conversion | main-view conversion and draw |
 | perf_guard_framestats | 0.7 | 1.05 | 125 k points, cheap set; fused / reference statistics | measure primitive |
 
 The same checker requires 64 allocation-free post-warm-up frames for each UI probe (`deposit_spans`,
@@ -1438,7 +1450,14 @@ The same checker requires 64 allocation-free post-warm-up frames for each UI pro
 `core_matching_worker_decode`). The process-wide counting allocator includes
 allocations, zeroed allocations, reallocations and freed transients; each probe warms up eight frames in
 an isolated child with no workers. HAL additionally guards retained DMA reads, read steps and kept-vector
-decode in `hal/tests/alloc_batch.rs`. The existing soak guards retained memory, not zero allocations.
+decode in `hal/tests/alloc_batch.rs`. A separate sample-copy census runs 64 steps
+for 625k and 125k pair channels, queued raw-before-pair intake, and raw math,
+Identify/watch and autoset readers. Its allocation threshold is one channel's byte
+size per step case (2.5 MB or 500 kB), and the measured raw-window byte
+size for readers, including freed transients. Reader observations subtract an
+independent pair of direct Identify calls, preserving its legitimate DSP scratch
+budget while detecting extra input copies in either live handler. The existing soak
+guards retained memory, not zero allocations.
 
 These rows gate existing host primitives. They do not stand in for complete future stages. Intake/change,
 light steps and acquisition wake tests land with M2.3/M3c/M3d; records, reductions, accumulator and full

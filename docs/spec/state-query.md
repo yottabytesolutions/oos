@@ -507,8 +507,7 @@ resets diagnostic rings; process restart resets them.
 | state-query-225 | `lock.ui.held` | UI Shared hold at those same accesses | ns |
 | state-query-226 | `lock.acq.wait` | Producer Shared wait at acquisition-thread requests/readings and batch/stream/segment publication, including deferred delivery on a worker | ns |
 | state-query-227 | `lock.acq.held` | Producer Shared hold at those same accesses | ns |
-| state-query-228 | `producer.clone` | One producer Frame::clone, including allocation/copy, excluding replacement/drop of the old destination | ns |
-| state-query-229 | `producer.clone_size` | Channel vector lengths times sizeof(f32) for that clone; shared LA Arc storage and fixed metadata excluded | bytes |
+| state-query-228 | `producer.clone` | One producer Arc::clone, excluding replacement/drop of the old destination | ns |
 
 Sources: `ui/src/ui/lifecycle.rs`, `ui/src/ui/change/intake.rs`,
 `ui/src/perfguard/{intake,deep,ring}.rs`. The existing acquisition metrics owner
@@ -517,8 +516,8 @@ headroom. It retains no record payload. Host std mutexes may initialize OS
 storage once on first use; warmed recording allocates nothing and does no sort.
 Ring mutexes are separate from Shared. Lock wait ends just after Shared is
 acquired; held ends immediately before its release, including scheduling delays
-and the existing clone operation. Lock and copy samples are recorded after
-releasing Shared. Copy samples carry only elapsed nanoseconds and payload bytes
+and the publication handle clone. Lock and copy samples are recorded after
+releasing Shared. Clone samples carry only elapsed nanoseconds
 until release, preserving the existing clone/publication order and lock scope.
 Reports copy each ring under its metric mutex, then sort/format outside it;
 blocks are best-effort snapshots, not an atomic process snapshot. Reading the
@@ -529,13 +528,15 @@ prepared steps may skip lifecycle polls. No acquisition thread means acquisition
 and clone rings may remain pending, distinct from measured zero cost.
 Live debug-source locks, deposit locks and synthetic fixture writes are excluded.
 
-A 4-channel 10 M deep-pair frame currently contains 4 x 625,000 f32 values:
-`producer.clone_size` should show 10,000,000 bytes, not 40,000,000 original
-sample points. This is host-verified, not a fresh unit measurement. Compare
-stationary shallow/deep RUN windows after >=256 UI steps and >=50 producer
-clones; at low delivery rates the clone window spans much longer than intake.
-If intake/poll tails rise with `lock.ui.wait`, and acquisition held/clone tails
-and sizes rise in the deep case, the Shared-copy hypothesis is supported.
+Publication shares the acquisition's analog and LA buffers with the queue (task
+0089). The retired `producer.clone_size` row measured a constant zero after the
+Arc handoff and is removed. The checked-in device-test parser does not consume
+that row; no perfmap scripts are present in this tree. Sample-sized allocation
+censuses and pointer-identity tests guard sharing instead. This is host-verified,
+not a fresh unit measurement. Compare stationary shallow/deep RUN windows after
+>=256 UI steps and >=50 producer clones; at low delivery rates the clone window
+spans much longer than intake. Clone timing now measures handle acquisition,
+not sample-copy work.
 If UI waits stay small, inspect the slow poll's own service/body instead. A
 long acquisition hold without a long clone points to other work inside Shared;
 a long UI hold points to UI work. Use total-count deltas over measured wall
@@ -546,7 +547,7 @@ matched repetitions and scheduling context are still needed for causal evidence.
 
 ## Draw sub-stage diagnostics (P0)
 
-These seven blocks are appended after `diag producer.clone_size`, preserving all
+These seven blocks are appended after `diag producer.clone`, preserving all
 existing field and block order. Each has the existing call-ring grammar
 `diag LABEL n=N total=T p50_ns=V p99_ns=V max_ns=V`, including literal `pending`
 for p50 at n=0 and p99 at n<50. Nearest-rank quantiles retain the latest 256

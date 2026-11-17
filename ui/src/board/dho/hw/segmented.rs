@@ -186,6 +186,7 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
                     *self.seq += 1;
                     tag(decode_probed(chunk, rs, p, *self.seq, Probe::of_header(s.header)), r.identity)
                 })
+                .map(std::sync::Arc::new)
                 .collect();
         }
         let mut g = lock(self.out);

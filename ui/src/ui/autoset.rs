@@ -12,6 +12,8 @@
 
 pub(super) mod recovery;
 
+pub(in crate::ui) mod samples;
+
 use super::*;
 use crate::wave::{autoset_shown, flat_noise, mid_level, periodic, place, Stats};
 use recovery::scale_for;
@@ -301,16 +303,12 @@ impl Ui {
             Stage::Search(i) => {
                 let dt = self.last[0].as_ref().map_or(0.0, |r| r.dt);
                 // the samples of the acquisition where the source has them (all of a deep record), else the record
-                let raw = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.clone());
                 let mut slow = false;
                 for c in 0..n_ch() {
                     if dt == 0.0 || !a.want[c] {
                         continue;
                     }
-                    let (v, vdt) = match &raw {
-                        Some(f) if f.ch[c].len() > 1 && !f.envelope => (f.ch[c].clone(), f.dt),
-                        _ => (self.record_volts(c), dt),
-                    };
+                    let (v, vdt) = samples::search(self, c, dt);
                     // a slow signal is flat here, and what rides on it looks regular: a window counts with most of the
                     // height, and one with clearly more height beats it. Not all of it: hum at a slow time base can
                     // stand higher than a weak fast signal
@@ -1103,14 +1101,14 @@ mod tests {
             let rec = hw_record_of(&ui, stamp, &|_| 0.0);
             let mut old = (*rec.raw.unwrap().frame).clone();
             old.seq = seq;
-            oos_hal::sync::lock(&shared).queue.push_back(old.clone());
+            oos_hal::sync::lock(&shared).queue.push_back(old.clone().into());
             ui.step(0.04);
             if ui.auto.is_some() {
                 continue;
             }
             assert!(ui.mstat.is_empty(), "no pre-final measurement may fold after the terminal clear");
             let records = ui.records;
-            oos_hal::sync::lock(&shared).queue.push_back(old);
+            oos_hal::sync::lock(&shared).queue.push_back(old.into());
             ui.step(0.04);
             assert_eq!(ui.records, records, "the pre-final pair is stale after terminal settings apply");
             assert!(ui.ph.map.iter().flatten().all(|&v| v == 0), "no old-pair trace after the clear");

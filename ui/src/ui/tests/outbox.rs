@@ -109,7 +109,7 @@ fn partial_single_completes_once_and_leaves_later_records_queued() {
         let (mut ui, shared) = hardware_with_host(host::Host::headless());
         ui.key(key::SINGLE);
         ui.step(0.04);
-        oos_hal::sync::lock(&shared).queue.push_back(frame(&ui, 1, true));
+        oos_hal::sync::lock(&shared).queue.push_back(frame(&ui, 1, true).into());
         if separate_steps {
             ui.step(0.04);
             assert_eq!((ui.records, ui.m.run), (1, RunState::Run));
@@ -119,7 +119,7 @@ fn partial_single_completes_once_and_leaves_later_records_queued() {
             assert_eq!((ui.records, ui.m.run), (1, RunState::Run), "an empty step cannot complete SINGLE");
         }
         for seq in [2, 3] {
-            oos_hal::sync::lock(&shared).queue.push_back(frame(&ui, seq, false));
+            oos_hal::sync::lock(&shared).queue.push_back(frame(&ui, seq, false).into());
         }
         ui.step(0.04);
         assert_eq!((ui.records, ui.m.run), (2, RunState::Run));

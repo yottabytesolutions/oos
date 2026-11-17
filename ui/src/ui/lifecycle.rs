@@ -322,8 +322,8 @@ mod tests {
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         {
             let mut board = oos_hal::sync::lock(&shared);
-            board.frame.ch[0] = vec![42.0; 1024];
-            board.queue.push_back(crate::board::Frame::default());
+            std::sync::Arc::make_mut(&mut board.frame).ch[0] = vec![42.0; 1024];
+            board.queue.push_back(crate::board::Frame::default().into());
         }
         reset(&mut ui);
         let board = oos_hal::sync::lock(&shared);

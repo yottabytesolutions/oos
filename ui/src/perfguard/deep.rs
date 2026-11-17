@@ -21,7 +21,6 @@ struct LockTiming {
 #[derive(Debug, Default)]
 struct CopyTiming {
     time: Ring,
-    bytes: Ring,
 }
 
 /// 64 KiB budget per process, with at least 8 KiB spare; no record data or per-observation allocation after mutex warmup.
@@ -66,12 +65,8 @@ impl Diagnostics {
             text.push_str(&wait.text(&format!("lock.{side}.wait"), "ns"));
             text.push_str(&held.text(&format!("lock.{side}.held"), "ns"));
         }
-        let (time, bytes) = {
-            let copies = lock(&self.copies);
-            (copies.time.clone(), copies.bytes.clone())
-        };
+        let time = { lock(&self.copies).time.clone() };
         text.push_str(&time.text("producer.clone", "ns"));
-        text.push_str(&bytes.text("producer.clone_size", "bytes"));
         text
     }
 }
@@ -80,25 +75,24 @@ pub(crate) fn counters() -> &'static Diagnostics {
     crate::drawpipe::counters().acquisition.diagnostics()
 }
 
-/// Time the existing deep-copy operation only; Arc-held LA words are shared, not copied.
-pub(crate) fn clone_frame(frame: &crate::board::Frame) -> (crate::board::Frame, CopySample) {
+/// Time publication handle cloning.
+pub(crate) fn clone_frame(
+    frame: &std::sync::Arc<crate::board::Frame>,
+) -> (std::sync::Arc<crate::board::Frame>, CopySample) {
     let start = Instant::now();
     let copy = frame.clone();
     let elapsed = nanos(start.elapsed());
-    let bytes = frame.ch.iter().map(|v| std::mem::size_of_val(v.as_slice()) as u64).sum();
-    (copy, CopySample { elapsed, bytes })
+    (copy, CopySample { elapsed })
 }
 
 #[must_use = "record the copy sample after releasing Shared"]
 pub(crate) struct CopySample {
     elapsed: u64,
-    bytes: u64,
 }
 impl CopySample {
     pub(crate) fn record(self) {
         let mut rings = lock(&counters().copies);
         rings.time.add(self.elapsed);
-        rings.bytes.add(self.bytes);
     }
 }
 

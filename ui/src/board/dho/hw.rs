@@ -3355,7 +3355,7 @@ mod tests {
         let step = |ui: &mut crate::ui::Ui, mut f: Frame| {
             let mut g = oos_hal::sync::lock(&shared);
             (f.cfg, f.stamp) = (g.acquisition.identity().gen(), g.acquisition.identity().epoch());
-            g.queue.push_back(f);
+            g.queue.push_back(f.into());
             drop(g);
             for _ in 0..3 {
                 ui.step(0.02);

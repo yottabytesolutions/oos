@@ -29,7 +29,7 @@ fn create_and_enable_mask_publish_limits_and_pair_together() {
             ch: std::array::from_fn(|c| if c == 0 { vec![1.0; 64] } else { Vec::new() }),
             ..Default::default()
         };
-        ui.last[0] = Some(crate::wave::hw_record(&ui.m, frame));
+        ui.last[0] = Some(crate::wave::hw_record(&ui.m, std::sync::Arc::new(frame)));
         ui.create_mask();
         ui.mask_hw_poll();
         assert!(lock(&shared).mask_want.is_none(), "poll cannot publish new mask under old pair");

@@ -1335,21 +1335,8 @@ impl Ui {
             return;
         }
         self.azr.watch_t = self.now;
-        let Some(rec) = self.last[0].clone() else { return };
-        // every captured sample of the window (the screen record undersamples fast buses), as the measurements do
-        let mut dt = rec.dt;
-        let owned: Vec<Vec<f32>> = (0..NCH)
-            .map(|c| {
-                if !self.m.ch[c].on || rec.ch[c].is_empty() {
-                    return Vec::new();
-                }
-                let (v, d) = self.meas_wave(&rec, c);
-                dt = d;
-                v
-            })
-            .collect();
-        let ws: Vec<&[f32]> = owned.iter().map(|v| v.as_slice()).collect();
-        let found = identify::identify(&ws, dt);
+        let Some(rec) = self.last[0].as_ref() else { return };
+        let found = self.identify_record(rec);
         let buses: Vec<String> = found.iter().filter(|f| f.confidence >= 0.6).filter_map(bus_name).collect();
         for b in &buses {
             if !self.azr.watch_seen.contains(b) {
@@ -1380,27 +1367,27 @@ impl Ui {
 
     /// Identify on every captured sample of the channels that are on.
     fn identify_now(&mut self) {
-        let Some(rec) = self.last[0].clone() else {
+        let Some(rec) = self.last[0].as_ref() else {
             self.azr.findings.clear();
             return;
         };
-        let mut dt = rec.dt;
-        let ws: Vec<Vec<f32>> = (0..NCH)
-            .map(|c| {
-                if self.m.ch[c].on && !rec.ch[c].is_empty() {
-                    let (v, d) = self.meas_wave(&rec, c);
-                    dt = d;
-                    v
-                } else {
-                    Vec::new()
-                }
-            })
-            .collect();
-        let refs: Vec<&[f32]> = ws.iter().map(|v| v.as_slice()).collect();
-        self.azr.findings = identify::identify(&refs, dt);
+        self.azr.findings = self.identify_record(rec);
         if self.azr.findings.is_empty() {
             self.toast("Identify: nothing found");
         }
+    }
+
+    fn identify_record(&self, rec: &Record) -> Vec<identify::Finding> {
+        let mut dt = rec.dt;
+        let ws: [&[f32]; NCH] = std::array::from_fn(|c| {
+            if !self.m.ch[c].on || rec.ch[c].is_empty() {
+                return &[][..];
+            }
+            let (v, d) = self.meas_slice(rec, c);
+            dt = d;
+            v
+        });
+        identify::identify(&ws, dt)
     }
 
     /// Trigger and decoder of an Identify finding.

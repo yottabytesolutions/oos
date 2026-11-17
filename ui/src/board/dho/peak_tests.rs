@@ -201,7 +201,7 @@ fn peak_wait_poll_releases_the_lock_for_status_and_bypasses_normal_or_empty_queu
     use std::time::{Duration, Instant};
     let shared = shared();
     let identity = lock(&shared).acquisition.identity();
-    lock(&shared).queue.push_back(Frame::default());
+    lock(&shared).queue.push_back(Frame::default().into());
     let mut wait = publication::PeakWait::default();
     wait.observe(
         Instant::now().checked_sub(Duration::from_secs(2)).expect("monotonic clock past 2 s"),

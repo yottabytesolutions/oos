@@ -19,6 +19,7 @@ impl Producer for Ui {
             if let Source::Hw { shared, .. } = &self.src {
                 let mut g = oos_hal::sync::lock(shared);
                 for frame in &mut frames {
+                    let frame = std::sync::Arc::make_mut(frame);
                     (frame.cfg, frame.stamp) = (id.gen(), id.epoch());
                 }
                 g.queue = frames;

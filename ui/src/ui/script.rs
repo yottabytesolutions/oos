@@ -29,6 +29,11 @@ impl Ui {
         host::hot_paths::run(sample);
     }
 
+    /// Expose deep-step sample-copy regressions to an isolated allocation observer.
+    pub fn deep_step_probe(sample: impl FnMut(&str, usize, Option<&mut dyn FnMut()>, &mut dyn FnMut())) {
+        host::hot_paths::deep_step(sample);
+    }
+
     pub fn start_headless_script(args: &[String]) {
         host::headless(args);
     }

@@ -83,7 +83,7 @@ fn mask_toggle_only_advances_generation_for_an_effective_worker_route_change() {
         }
         let Source::Hw { shared, .. } = &ui.src else { unreachable!() };
         let shared = shared.clone();
-        let mut frame = oos_hal::sync::lock(&shared).frame.clone();
+        let mut frame = (*oos_hal::sync::lock(&shared).frame).clone();
         frame.seq = 1;
         frame.dt = 1e-6;
         frame.pre = 32;
@@ -91,7 +91,7 @@ fn mask_toggle_only_advances_generation_for_an_effective_worker_route_change() {
         frame.stamp = id.epoch();
         frame.cfg = id.gen();
         frame.ch[0] = (0..64).map(|i| (i as f32 - 32.0) * 0.01).collect();
-        oos_hal::sync::lock(&shared).queue.push_back(frame);
+        oos_hal::sync::lock(&shared).queue.push_back(frame.into());
         let stamp = ui.m.hw_stamp;
         let before = ui.fast_ok();
         ui.m.mask_on = true;

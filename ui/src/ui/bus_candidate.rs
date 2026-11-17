@@ -64,8 +64,8 @@ mod tests {
             ch: [(0..4096).map(|i| if i % 16 < 8 { 0.0 } else { 3.3 }).collect(), Vec::new(), Vec::new(), Vec::new()],
             ..Default::default()
         });
-        shared.lock().unwrap().queue.push_back((*old).clone());
-        shared.lock().unwrap().frame = (*old).clone();
+        shared.lock().unwrap().queue.push_back(old.clone());
+        shared.lock().unwrap().frame = old.clone();
         ui.step(0.05);
         assert_eq!(ui.records, 1);
         assert!(ui.azr.eye.as_ref().is_some_and(|eye| eye.records > 0), "seed a genuine accepted Eye record");
@@ -106,8 +106,8 @@ mod tests {
     fn push(ui: &mut Ui, shared: &crate::board::HwShared, points: usize, byte: u8, sequence: u64) {
         let frame = frame(points, byte, sequence, change::acquisition::script_prepare(ui));
         let mut state = shared.lock().unwrap();
-        state.frame = (*frame).clone();
-        state.queue.push_back((*frame).clone());
+        state.frame = frame.clone();
+        state.queue.push_back(frame.clone());
     }
     fn until(ui: &mut Ui, condition: impl Fn(&Ui) -> bool) {
         let deadline = crate::ui::lifecycle::test_wait::Wait::new("until");
@@ -465,7 +465,7 @@ impl Ui {
             // CH alone here would shift it relative to the fixed R roles.
             let pre = frame.pre as f64;
             return Some(crate::board::resample_record(
-                &std::sync::Arc::new(frame),
+                &frame,
                 &self.m,
                 3600,
                 window,

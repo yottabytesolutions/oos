@@ -7,6 +7,8 @@ pub struct Counting {
     peak: AtomicUsize,
     allocations: AtomicUsize,
     frees: AtomicUsize,
+    large: AtomicUsize,
+    large_min: AtomicUsize,
 }
 
 impl Default for Counting {
@@ -22,6 +24,8 @@ impl Counting {
             peak: AtomicUsize::new(0),
             allocations: AtomicUsize::new(0),
             frees: AtomicUsize::new(0),
+            large: AtomicUsize::new(0),
+            large_min: AtomicUsize::new(2_000_000),
         }
     }
     /// Counts transient allocations and reallocations too, not just retained bytes.
@@ -31,6 +35,7 @@ impl Counting {
         (self.allocations() - before, result)
     }
     pub fn allocated(&self, bytes: usize) {
+        self.large.fetch_add(usize::from(bytes >= self.large_min.load(SeqCst)), SeqCst);
         self.added(bytes);
         self.allocations.fetch_add(1, SeqCst);
     }
@@ -39,6 +44,7 @@ impl Counting {
         self.frees.fetch_add(1, SeqCst);
     }
     pub fn resized(&self, old: usize, new: usize) {
+        self.large.fetch_add(usize::from(new >= self.large_min.load(SeqCst)), SeqCst);
         if new >= old {
             self.added(new - old);
         } else {
@@ -51,6 +57,12 @@ impl Counting {
     }
     pub fn peak(&self) -> usize {
         self.peak.load(SeqCst)
+    }
+    pub fn set_large_min(&self, bytes: usize) {
+        self.large_min.store(bytes, SeqCst);
+    }
+    pub fn large_allocations(&self) -> usize {
+        self.large.load(SeqCst)
     }
     pub fn allocations(&self) -> usize {
         self.allocations.load(SeqCst)

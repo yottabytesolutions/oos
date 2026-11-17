@@ -6,6 +6,26 @@
 use super::*;
 
 impl Scpi {
+    /// An in-process interpreter with no transport or listener.
+    pub fn disconnected() -> Self {
+        Self {
+            l: None,
+            clients: Vec::new(),
+            wav_src: WaveId::Ch(0),
+            wav_fmt: 0,
+            wav_mode: 0,
+            wav_start: 1,
+            wav_stop: 0,
+            err: Vec::new(),
+            event_status: 0,
+            error_serial: 0,
+            last_error: None,
+            opc_events: Vec::new(),
+            acl: crate::netacl::Shared::default(),
+            acl_seen: 0,
+        }
+    }
+
     /// A response message includes its terminator even when a query's current list is empty; `None`: no query.
     #[cfg(test)]
     pub(crate) fn response(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Option<Vec<u8>> {

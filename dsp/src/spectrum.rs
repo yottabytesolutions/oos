@@ -296,10 +296,10 @@ pub fn analyze(v: &[f32], dt: f64, s: &Settings, state: &mut Option<Avg>) -> Spe
     }
     st.n = st.n.saturating_add(1);
     let wgt = 1.0 / st.n.min(s.averaging.max(1)) as f64;
-    for i in 0..points {
-        st.avg[i] += (cur[i] - st.avg[i]) * wgt;
-        st.max[i] = st.max[i].max(cur[i]);
-        st.min[i] = st.min[i].min(cur[i]);
+    for (((avg, max), min), &current) in st.avg.iter_mut().zip(&mut st.max).zip(&mut st.min).zip(&cur) {
+        *avg += (current - *avg) * wgt;
+        *max = max.max(current);
+        *min = min.min(current);
     }
     let out = match s.trace {
         Trace::Normal => &cur,
@@ -866,21 +866,4 @@ pub fn limit_check(sp: &Spectrum, l: &[(f64, f32)]) -> Option<(f64, f32)> {
 }
 
 #[cfg(test)]
-mod limit_tests {
-    use super::*;
-
-    #[test]
-    fn a_limit_catches_what_rises_above_it() {
-        let mut sp = Spectrum { f0: 0.0, df: 10.0, dbv: vec![-60.0; 100], rbw: 10.0, ..Default::default() };
-        sp.dbv[50] = -20.0;
-        let l = limit_from(&sp, 6.0, 2);
-        assert_eq!((l.len(), l[48].1, l[47].1), (100, -14.0, -54.0));
-        assert_eq!(limit_check(&sp, &l), None);
-        assert_eq!(limit_at(&l, 5.0), Some(-54.0));
-        assert_eq!(limit_at(&l, 1e6), None);
-        sp.dbv[10] = -50.0;
-        sp.dbv[80] = -40.0;
-        let (f, over) = limit_check(&sp, &l).unwrap();
-        assert_eq!((f, over), (800.0, 14.0));
-    }
-}
+mod tests;

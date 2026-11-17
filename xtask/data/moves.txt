@@ -25,3 +25,7 @@ dsp dsp/src/decode_ext.rs clippy::cognitive_complexity -> dsp dsp/src/decode/can
 dsp dsp/src/decode_ext.rs clippy::too_many_arguments -> dsp dsp/src/decode/modbus.rs clippy::too_many_arguments
 dsp dsp/src/decode_ext2.rs clippy::too_many_lines -> dsp dsp/src/decode/automotive.rs clippy::too_many_lines
 dsp dsp/src/decode_ext3.rs clippy::too_many_lines -> dsp dsp/src/decode/dcc.rs clippy::too_many_lines
+fn dsp/src/eye.rs psij -> fn dsp/src/eye/psij.rs psij
+dsp dsp/src/eye.rs clippy::too_many_arguments -> dsp dsp/src/eye/psij.rs clippy::too_many_arguments
+dsp dsp/src/eye.rs clippy::too_many_lines -> dsp dsp/src/eye/psij.rs clippy::too_many_lines
+dsp dsp/src/eye.rs clippy::unwrap_used -> dsp dsp/src/eye/signal.rs clippy::unwrap_used

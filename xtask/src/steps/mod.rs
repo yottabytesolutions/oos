@@ -77,7 +77,10 @@ pub fn tests(ctx: &crate::run::Context, root: &Path, release: bool) -> Outcome {
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for c in CRATES {
         match testrun::run(ctx, root, c.dir, release) {
-            Ok(n) => ok.push(format!("{}: {}", c.dir, n)),
+            Ok((n, slow)) => {
+                ok.push(format!("{}: {}", c.dir, n));
+                ok.extend(slow.into_iter().map(|line| format!("{}: slow: {}", c.dir, line)));
+            }
             Err(e) => bad.push(format!("{}: {}", c.dir, e)),
         }
     }

@@ -27,7 +27,7 @@ jobs:
       matrix:
         include:
           - name: fast
-            steps: fmt size architecture mutable-statics unsafe method-exceptions known-failures agent-rules test-time
+            steps: fmt size architecture mutable-statics unsafe method-exceptions known-failures agent-rules test-time links
           - name: clippy
             steps: clippy
           - name: tests-debug

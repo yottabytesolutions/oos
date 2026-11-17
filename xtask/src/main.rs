@@ -15,6 +15,7 @@ mod coverage;
 mod doctor;
 mod fmt;
 mod inventory;
+mod links;
 mod loc;
 mod moves;
 mod ratchet;

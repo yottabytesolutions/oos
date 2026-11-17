@@ -58,7 +58,7 @@ jobs:
         with:
           shared-key: fast
           save-if: ${{ env.SAVE_CACHE }}
-      - name: Fast gate (fmt, size, architecture, statics, unsafe, ignores, agent rules, test time)
+      - name: Fast gate (fmt, size, architecture, statics, unsafe, ignores, agent rules, test time, links)
         if: steps.changes.outputs.run == 'true'
         run: cargo xtask check --fast
       # Host scripts stay POSIX sh for Linux, the BSDs and macOS; the runner image has shellcheck.

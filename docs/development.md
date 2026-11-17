@@ -134,6 +134,7 @@ and the coverage margin of 0.5 percentage points are unchanged.
 | `known-failures` | known failures and open tasks | sources | fast and full |
 | `agent-rules` | exact loaders and Git inventory | root AGENTS.md | fast and full |
 | `test-time` | test sleep/deadline syntax and nonincreasing ratchet | sources | fast and full |
+| `links` | links in README.md, SECURITY.md, `wiki/` and `docs/` name existing paths, wiki pages and headings | Git | fast and full |
 | `doctor-base` | base doctor probes, including active toolchain identity | bootstrap; no Docker | full |
 | `doctor` | `--gpu --sim` doctor profiles | base doctor, bootstrap, Docker | `--image` |
 | `clippy` | host and ARM clippy per crate | musl std and clippy | full |

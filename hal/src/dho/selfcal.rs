@@ -404,7 +404,7 @@ impl CalHw for Unit<'_> {
             match *op {
                 Op::Afe { ch, reg, val } => self.afe.write(ch, reg, val),
                 Op::Gear { ch, gear } => {
-                    let _ = crate::dho::afe::set_gear(ch, gear);
+                    crate::dho::gpio::best_effort(crate::dho::afe::set_gear(ch, gear));
                 }
                 Op::Adc(w) => {
                     std::thread::sleep(std::time::Duration::from_micros(100));

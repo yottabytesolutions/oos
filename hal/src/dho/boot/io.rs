@@ -20,24 +20,17 @@ pub const SPI_IOC_WR_MAX_SPEED_HZ: u32 = spi_iow(4, 4);
 /// way to send PROG or flash data through this module.
 #[cfg(target_os = "linux")]
 pub fn fpga_boot(addr: u32) -> std::io::Result<()> {
+    use crate::dho::ioctl::ioctl;
     use std::io::Write;
-    use std::os::unix::io::AsRawFd;
     let msg = super::regs::boot_message(addr).ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{:#x} is not an FPGA image slot", addr))
     })?;
     let mut f = std::fs::OpenOptions::new().read(true).write(true).open("/dev/spidev1.0")?;
-    let fd = f.as_raw_fd();
-    let mode: u8 = 0;
-    let bits: u8 = 8;
-    let speed: u32 = 10_000_000;
-    for (req, p) in [
-        (SPI_IOC_WR_MODE, &mode as *const u8 as *const libc::c_void),
-        (SPI_IOC_WR_BITS_PER_WORD, &bits as *const u8 as *const libc::c_void),
-        (SPI_IOC_WR_MAX_SPEED_HZ, &speed as *const u32 as *const libc::c_void),
-    ] {
-        if unsafe { libc::ioctl(fd, req as _, p) } < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
+    // SAFETY: spidev reads u8 mode/bits and u32 speed buffers without retaining them or closing f.
+    unsafe {
+        ioctl(&f, SPI_IOC_WR_MODE as _, &mut 0u8)?;
+        ioctl(&f, SPI_IOC_WR_BITS_PER_WORD as _, &mut 8u8)?;
+        ioctl(&f, SPI_IOC_WR_MAX_SPEED_HZ as _, &mut 10_000_000u32)?;
     }
     f.write_all(&msg[..6])?;
     f.write_all(&msg[6..])?;
@@ -69,11 +62,12 @@ impl GpioPll {
 impl super::PllPins for GpioPll {
     fn set(&mut self, pin: super::PllPin, v: bool) {
         use super::PllPin::*;
-        match pin {
+        let result = match pin {
             Le => self.le.set(v),
             Sclk => self.sclk.set(v),
             Sdio => self.sdio.set(v),
-        }
+        };
+        crate::dho::gpio::best_effort(result);
         std::thread::sleep(std::time::Duration::from_micros(1));
     }
 }

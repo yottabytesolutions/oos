@@ -1,6 +1,6 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-802 file hal/src/dho/afe.rs
+798 file hal/src/dho/afe.rs
 619 file hal/src/dho/afg.rs
 787 file hal/src/dho/boot/mod.rs
 492 file hal/src/dho/lmx2582.rs

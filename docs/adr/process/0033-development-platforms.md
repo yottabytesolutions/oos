@@ -1,6 +1,6 @@
 # ADR 0033: Development runs on Linux, the BSDs and macOS; Windows users develop in WSL or a Linux VM
 
-- Status: accepted
+- Status: accepted, amended by ADR 0036 (the open question: the window moved to oos-desktop)
 - Date: 2026-11-17
 - Category: process
 

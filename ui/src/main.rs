@@ -4,7 +4,6 @@
 //! oos-ui: the OOS oscilloscope screen.
 //!
 //!   oos-ui                         on the scope: DRM/KMS display, touch, front panel, control FIFO
-//!   oos-ui                         on Windows: the screen in a desktop window, demo signal (src/desktop.rs)
 //!   oos-ui --offline               start in offline mode: analog off, no demo on CH1-CH4
 //!   oos-ui --script FILE           anywhere: run a command script off-screen and write screenshots (tests)
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
@@ -15,17 +14,12 @@
 // SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
-// the announcer runs in the Windows desktop build (desktop/lan.rs); the scope announces itself through mdns.rs
-#[cfg_attr(not(windows), allow(dead_code))]
-mod announce;
 mod board;
 mod clock;
 mod cmd;
 mod compress;
 mod decode;
 mod deepmeas;
-#[cfg(windows)]
-mod desktop;
 mod drawpipe;
 #[cfg(target_os = "linux")]
 mod drm;
@@ -179,11 +173,6 @@ pub fn main() {
     }
     if let Some(d) = arg(&args, "--store-dir") {
         ui.store_dir = d.into();
-    } else if cfg!(windows) {
-        // no /tmp on Windows: setups, CSV and screenshots go to Documents\OOS
-        if let Some(home) = std::env::var_os("USERPROFILE") {
-            ui.store_dir = std::path::Path::new(&home).join("Documents").join("OOS");
-        }
     }
     if args.iter().any(|a| a == "--serve") {
         return serve(ui, &switches);
@@ -192,14 +181,10 @@ pub fn main() {
     {
         system::device::run(ui, &args, switches, startup);
     }
-    #[cfg(windows)]
-    {
-        desktop::run(ui, &args);
-    }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(target_os = "linux"))]
     {
         let _ = (ui, startup);
-        eprintln!("oos-ui: no display backend on this OS; use --script FILE");
+        eprintln!("oos-ui: no display on this OS; use --serve and a browser, or --script FILE");
     }
 }
 

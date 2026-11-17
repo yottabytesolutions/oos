@@ -53,15 +53,16 @@ and cited as `architecture/NNNN`.
 | 0021 | process | What runs on the scope depends on `libc` only; a desktop build may use its platform's crates | superseded by ADR 0037 |
 | [0022](code/0022-one-scpi-interpreter-transports-only-frame.md) | code | One SCPI interpreter in the frame loop; every remote transport only frames its messages | accepted, amended by ADR 0037 |
 | [0023](code/0023-scpi-stock-names-first-oos-identifies-as-oos.md) | code | SCPI follows the stock command names where they exist; OOS identifies itself as OOS | accepted |
-| [0024](system/0024-vxi11-on-the-scope-hislip-on-a-computer-own-discovery.md) | system | VXI-11 on the scope, HiSLIP on a computer; found by mDNS / DNS-SD and LXI identification | accepted |
+| [0024](system/0024-vxi11-on-the-scope-hislip-on-a-computer-own-discovery.md) | system | VXI-11 on the scope, HiSLIP on a computer; found by mDNS / DNS-SD and LXI identification | accepted, amended 2026-11-17 |
 | [0025](system/0025-remote-services-are-bench-lan-services.md) | system | Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow` | accepted |
 | 0026 | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | superseded by ADR 0040 |
 | [0030](process/0030-this-tree-is-a-hard-fork-of-oos.md) | process | This tree is a hard fork of OOS; upstream enters only by cherry-pick | accepted |
 | [0031](process/0031-the-gate-is-cargo-xtask-check.md) | process | The gate is `cargo xtask check` | accepted, amended 2026-11-17 |
 | 0032 | process | Lints and limits are per crate and ratchet down only | superseded by ADR 0039 |
-| [0033](process/0033-development-platforms.md) | process | Development runs on Linux, the BSDs and macOS; Windows users develop in WSL or a Linux VM; Rust tooling goes into `xtask` | accepted |
+| [0033](process/0033-development-platforms.md) | process | Development runs on Linux, the BSDs and macOS; Windows users develop in WSL or a Linux VM; Rust tooling goes into `xtask` | accepted, amended by ADR 0036 |
 | [0034](process/0034-multi-pr-work-lands-as-a-stack.md) | process | Work that spans more than one pull request lands as a stack | proposed |
 | [0035](process/0035-each-release-has-less-production-code.md) | process | Each release strives for less production code than the one before | proposed |
+| [0036](code/0036-the-desktop-view-is-the-browser-ui.md) | code | The desktop view is the browser UI behind `oos-ui --serve`; the native Windows window is its own project | accepted |
 | [0037](code/0037-crates-where-they-remove-code-remote-io-on-tokio.md) | code | Crates where they remove code or blocking; remote IO runs async on tokio | accepted |
 | [0038](code/0038-one-table-may-generate-per-field-code.md) | code | One declarative table may generate per-field code when tests cover every item | accepted |
 | [0039](process/0039-format-lints-and-ratchets-the-author-tightens.md) | process | rustfmt formats; lints and limits ratchet down; the author of a change tightens | accepted |

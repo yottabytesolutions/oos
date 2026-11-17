@@ -7,7 +7,7 @@
 | `sdcard-layout.py IMAGE [--extract DIR] [--compare DIR]` | no (reads an image or `/dev/rdiskN`) | IDB, vendor storage (MAC), PARM partition table, partition contents |
 | `scope-lease {acquire,check,renew,release,status,break}` | SSH lease metadata only | exclusive access across machines and agent vendors |
 | `device-test.py [--host HOST]` | SCPI, HTTP and SSH lease metadata | acceptance test of a running OOS with nobody at the scope; `--sim` runs it against `oos-ui --serve` on this computer |
-| `scpi_validate.py --web-port 18080` | local desktop only | uploads analytic waveforms into R1-R3 and validates numeric SCPI, thresholds, source isolation, stopped panning and trigger/run/stop state; writes evidence to `local/scpi-validation.json` |
+| `scpi_validate.py --web-port 18080` | local `oos-ui` only | uploads analytic waveforms into R1-R3 and validates numeric SCPI, thresholds, source isolation, stopped panning and trigger/run/stop state; writes evidence to `local/scpi-validation.json` |
 | `device-deploy.sh [--host HOST] [--restore]` | programs in `/tmp`, lease metadata in `/oos` | **owner-only**, requires an install lease; runs the oos-ui of this tree on a running OOS |
 | `ssh-keys.py --data-dir DIR add / list / remove` | offline mounted data directory only | manage Ed25519 public keys without a network connection; [SSH setup](../docs/ssh.md) |
 | `device-survey.sh [--host HOST] [--keys]` | read-only over adb | inventory of the running stock system: USB/HID, input, GPIO owners, pinmux, ttyS0, PCIe, partitions |

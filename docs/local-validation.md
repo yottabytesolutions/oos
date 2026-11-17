@@ -1,6 +1,6 @@
 # Local validation
 
-The Windows source app runs through `run-windows.ps1 -Watch -Offline -WebPort 18080 -ScpiPort 5555 -HislipPort 14880`. The watcher keeps the previous app visible until a successful build, then replaces only its own process. Source saves rebuild automatically; loaded waveforms may need reopening after a restart. F6 opens detached hardware controls.
+This validation ran on the native Windows desktop app with web port 18080, SCPI port 5555 and HiSLIP port 14880. That app moved to its own project, [oos-desktop](https://github.com/yottabytesolutions/oos-desktop), on 2026-11-17 ([ADR 0036](adr/code/0036-the-desktop-view-is-the-browser-ui.md)); the record below is kept as it was measured.
 
 The final combined source at `c556944` passed **613 UI tests** with 18 opt-in tests ignored, **231 DSP tests** with 2 benchmarks ignored, and **4 Python client-framing tests**. The external Python SCPI validator passed **129 checks** against a separately owned headless backend on private ports. That backend opened no desktop, physical device or discovery announcer, and was stopped afterward. The Windows development build and ARM64/Linux Rust check passed. Unchanged SSH provisioning had already passed **10 offline tests**.
 

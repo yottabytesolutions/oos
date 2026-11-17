@@ -420,7 +420,6 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
 }
 
 /// Reference > Load file on the scope: the file comes from storage and lands in the Slot row's reference.
-#[cfg(not(windows))]
 #[test]
 fn load_file_in_the_reference_menu_takes_a_file_from_storage() {
     let dir = std::env::temp_dir().join(format!("oos-refload-{}", std::process::id()));

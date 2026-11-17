@@ -324,26 +324,6 @@ impl Ui {
 
     /// Text rows of the network page.
     pub(super) fn net_value(&self, it: Item) -> String {
-        #[cfg(windows)]
-        if !self.lan_status.is_empty() {
-            match it {
-                Item::NetEth => {
-                    return if self.net.is_empty() {
-                        "No active LAN address".into()
-                    } else {
-                        format!("{} \u{b7} connected", self.net)
-                    }
-                }
-                Item::NetWeb => {
-                    return self.lan_web_port.map_or_else(
-                        || "Web port unavailable; choose another --web-port".into(),
-                        |port| format!("http://{}:{}", if self.net.is_empty() { "localhost" } else { &self.net }, port),
-                    )
-                }
-                Item::NetPorts => return self.lan_status.clone(),
-                _ => {}
-            }
-        }
         let addr = |n: &str| self.net_ifs.iter().find(|i| i.0 == n).map(|i| i.1.as_str());
         let file = |p: &str| self.host.text(p).map(|t| t.trim().to_string()).unwrap_or_default();
         match it {
@@ -1167,23 +1147,6 @@ mod tests {
         assert!(ui.fonts().m.width(&ui.net_value(Item::NetWlan)) <= row.ctrl.w, "{}", ui.net_value(Item::NetWlan));
         ui.tap(950, 20);
         assert!(!ui.menu_open);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn desktop_network_page_uses_actual_runtime_ports_before_scope_fallbacks() {
-        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        ui.net = "192.0.2.148".into();
-        ui.lan_web_port = Some(18080);
-        ui.lan_status = "SCPI 5555 / HiSLIP 14880 / mDNS on".into();
-        assert_eq!(ui.net_value(Item::NetWeb), "http://192.0.2.148:18080");
-        assert_eq!(ui.net_value(Item::NetPorts), ui.lan_status);
-        assert!(!ui.net_value(Item::NetPorts).contains("VXI"));
-        assert!(!ui.net_value(Item::NetPorts).contains("telnet"));
-        ui.lan_web_port = None;
-        ui.lan_status = "SCPI unavailable / HiSLIP 14999 / mDNS unavailable".into();
-        assert!(ui.net_value(Item::NetWeb).contains("Web port unavailable"));
-        assert_eq!(ui.net_value(Item::NetPorts), ui.lan_status, "failed binds must not invent default listeners");
     }
 
     #[test]

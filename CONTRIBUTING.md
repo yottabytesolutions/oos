@@ -50,6 +50,8 @@ and run there as on any Linux computer
 helpers into `tools/` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)).
 In WSL, clone into the Linux file system (for example `~/oos`), not under `/mnt/c`: builds there are much slower,
 and file modes and line ends do not survive the Windows file system.
+To run OOS on your computer, `cargo run --release -p oos-ui -- --serve` and open the address it prints in a browser
+(in WSL, the browser on Windows reaches it). The browser UI is the desktop view on every host.
 
 ```sh
 git clone https://github.com/yottabytesolutions/oos && cd oos

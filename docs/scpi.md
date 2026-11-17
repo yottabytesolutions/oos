@@ -13,7 +13,7 @@ This reference describes the repository implementation. Primary Rigol syntax was
 | VXI-11 | Linux scope service | Same interpreter, partial RPC transport. Pending operation reads have the limitation described below. |
 | HTTP/MCP adapter | HTTP web port | `POST /mcp`, JSON-RPC `tools/call` with tool name `scpi`. This is not a VISA interface. `/cmd` uses a separate front-panel command language. |
 
-On a computer, `oos-ui --serve` runs the same interpreter with the demo source on free loopback ports and prints them ([README](../README.md#try-it-without-a-scope)). With SCPI on port 40002, use `TCPIP0::127.0.0.1::40002::SOCKET`; it also prints the HiSLIP port and the VXI-11 mapper and core ports. The host server listens on `127.0.0.1` only. These services are unauthenticated bench interfaces. The desktop app does not require or start an SSH server; [scope-image SSH](ssh.md) is separate.
+On a computer, `oos-ui --serve` runs the same interpreter with the demo source on free loopback ports and prints them ([Try it without a scope](../wiki/Try-it-without-a-scope.md)). With SCPI on port 40002, use `TCPIP0::127.0.0.1::40002::SOCKET`; it also prints the HiSLIP port and the VXI-11 mapper and core ports. The host server listens on `127.0.0.1` only. These services are unauthenticated bench interfaces. The desktop app does not require or start an SSH server; [scope-image SSH](ssh.md) is separate.
 
 Keywords are case-insensitive. The capitalized part in a mixed-case spelling is the short form: `:TRIG:EDGE:SOUR?` and `:TRIGger:EDGE:SOURce?` are equivalent. Use either the complete long form or its documented short form. Intermediate abbreviations are not generally accepted.
 

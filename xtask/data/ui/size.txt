@@ -1,6 +1,5 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-615 file ui/src/announce.rs
 2111 file ui/src/board/dho/hw.rs
 745 file ui/src/drawpipe.rs
 568 file ui/src/drm.rs
@@ -9,40 +8,40 @@
 650 file ui/src/gpu.rs
 406 file ui/src/hislip.rs
 1042 file ui/src/http.rs
-476 file ui/src/main.rs
+464 file ui/src/main.rs
 1531 file ui/src/mdns.rs
 463 file ui/src/measures/jitter.rs
 544 file ui/src/measures/power.rs
 519 file ui/src/measures/standard.rs
-4841 file ui/src/scpi.rs
+4840 file ui/src/scpi.rs
 3060 file ui/src/store.rs
-11441 file ui/src/ui.rs
+11358 file ui/src/ui.rs
 1752 file ui/src/ui/analysis.rs
-677 file ui/src/ui/autoset.rs
+608 file ui/src/ui/autoset.rs
 992 file ui/src/ui/bode.rs
-480 file ui/src/ui/bus.rs
-1872 file ui/src/ui/eyepage.rs
+475 file ui/src/ui/bus.rs
+1840 file ui/src/ui/eyepage.rs
 611 file ui/src/ui/eyepage/automatic.rs
 451 file ui/src/ui/facts.rs
 495 file ui/src/ui/la.rs
 554 file ui/src/ui/magnetic.rs
-648 file ui/src/ui/meascatalog.rs
-466 file ui/src/ui/meascatalog/backend.rs
+632 file ui/src/ui/meascatalog.rs
+462 file ui/src/ui/meascatalog/backend.rs
 712 file ui/src/ui/motor.rs
 688 file ui/src/ui/panes.rs
 407 file ui/src/ui/reference_decode.rs
-716 file ui/src/ui/reflook.rs
+701 file ui/src/ui/reflook.rs
 402 file ui/src/ui/remote.rs
-911 file ui/src/ui/sim.rs
+902 file ui/src/ui/sim.rs
 416 file ui/src/ui/startup.rs
 563 file ui/src/ui/time.rs
-1324 file ui/src/ui/tools.rs
-827 file ui/src/ui/wlan.rs
-773 file ui/src/ui/workflow.rs
-830 file ui/src/ui/workspace.rs
+1291 file ui/src/ui/tools.rs
+807 file ui/src/ui/wlan.rs
+655 file ui/src/ui/workflow.rs
+804 file ui/src/ui/workspace.rs
 435 file ui/src/usbtmc.rs
 434 file ui/src/vxi11.rs
-1278 file ui/src/wave.rs
+1240 file ui/src/wave.rs
 138 fn ui/src/board/dho/fpga.rs spawn
 72 fn ui/src/board/dho/hw.rs hw_trigger
 125 fn ui/src/board/dho/hw.rs settings
@@ -50,8 +49,6 @@
 83 fn ui/src/board/record.rs resample
 103 fn ui/src/board/record.rs trigger_point
 91 fn ui/src/cmd.rs execute
-61 fn ui/src/desktop.rs PointerState::apply
-178 fn ui/src/desktop.rs run
 62 fn ui/src/drawpipe.rs dense
 105 fn ui/src/drm.rs Display::on_fd
 64 fn ui/src/framestats.rs cheap_results
@@ -64,7 +61,7 @@
 73 fn ui/src/input.rs Inputs::read_touch
 77 fn ui/src/json.rs value
 77 fn ui/src/main.rs hdmi_gpu_frame
-81 fn ui/src/main.rs main
+73 fn ui/src/main.rs main
 68 fn ui/src/mdns.rs Responder::answer
 92 fn ui/src/mdns.rs run
 69 fn ui/src/measures/jitter.rs eye_of
@@ -109,25 +106,25 @@
 66 fn ui/src/ui.rs Ui::draw_strip_band
 73 fn ui/src/ui.rs Ui::draw_top
 83 fn ui/src/ui.rs Ui::fast_draw_all
-165 fn ui/src/ui.rs Ui::key
+161 fn ui/src/ui.rs Ui::key
 128 fn ui/src/ui.rs Ui::kind
 117 fn ui/src/ui.rs Ui::knob
 293 fn ui/src/ui.rs Ui::label
 330 fn ui/src/ui.rs Ui::menu_items
 76 fn ui/src/ui.rs Ui::menu_title
-107 fn ui/src/ui.rs Ui::multi_touch
-260 fn ui/src/ui.rs Ui::new
+100 fn ui/src/ui.rs Ui::multi_touch
+253 fn ui/src/ui.rs Ui::new
 179 fn ui/src/ui.rs Ui::options
-77 fn ui/src/ui.rs Ui::pointer_wheel_motion
+76 fn ui/src/ui.rs Ui::pointer_wheel_motion
 135 fn ui/src/ui.rs Ui::render_layers
 121 fn ui/src/ui.rs Ui::set_dec_proto
 133 fn ui/src/ui.rs Ui::set_trig_type
 375 fn ui/src/ui.rs Ui::step
-217 fn ui/src/ui.rs Ui::tap
+214 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 409 fn ui/src/ui.rs Ui::touch_in
 89 fn ui/src/ui.rs Ui::trigger_items
-327 fn ui/src/ui.rs Ui::value
+324 fn ui/src/ui.rs Ui::value
 62 fn ui/src/ui.rs fast_plan
 66 fn ui/src/ui.rs packet_text
 121 fn ui/src/ui/analysis.rs Ui::ana_adjust
@@ -181,7 +178,7 @@
 93 fn ui/src/ui/workflow.rs Ui::commit_waveform_traces_to
 64 fn ui/src/ui/workflow.rs Ui::record_key
 74 fn ui/src/ui/workflow.rs Ui::replay_acquire
-102 fn ui/src/ui/workspace.rs Ui::workspace_action
+99 fn ui/src/ui/workspace.rs Ui::workspace_action
 116 fn ui/src/ui/workspace.rs Ui::workspace_touch
 107 fn ui/src/vxi11.rs Server::poll_async
 105 fn ui/src/vxi11.rs core_async
@@ -207,7 +204,7 @@
 14 struct ui/src/scpi.rs Scpi
 19 struct ui/src/sysconf.rs SysConf
 13 struct ui/src/ui.rs TouchState
-222 struct ui/src/ui.rs Ui
+215 struct ui/src/ui.rs Ui
 19 struct ui/src/ui/analysis.rs RefMeasureKey
 49 struct ui/src/ui/analysis.rs State
 17 struct ui/src/ui/autoset.rs AutoRun

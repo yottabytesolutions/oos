@@ -7,13 +7,22 @@ use std::path::Path;
 mod tests;
 
 pub(crate) fn matrix(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    let shard = crate::run::partition("OOS_DECODER_PARTITION", std::env::var("OOS_DECODER_PARTITION").ok().as_deref())
+        .map_err(|e| vec![e])?;
+    partitioned(ctx, root, shard)
+}
+
+fn partitioned(ctx: &crate::run::Context, root: &Path, shard: Option<(u32, u32)>) -> Outcome {
     let list = crate::run::capture(ctx, root, "sh", &["ui/tools/decoder-features.sh", "list"]).map_err(|e| vec![e])?;
     if !list.ok {
         return Err(vec![format!("ui: list decoders: {}", crate::run::tail(&list.stderr, 30))]);
     }
-    let mut ok = build(ctx, root, None)?;
-    for decoder in list.stdout.split_whitespace() {
-        ok.extend(build(ctx, root, Some(&format!("dec-{decoder}")))?);
+    let features = std::iter::once(None).chain(list.stdout.split_whitespace().map(|d| Some(format!("dec-{d}"))));
+    let mut ok = Vec::new();
+    for (i, feature) in features.enumerate() {
+        if shard.is_none_or(|(k, n)| i % n as usize == (k - 1) as usize) {
+            ok.extend(build(ctx, root, feature.as_deref())?);
+        }
     }
     Ok(ok)
 }

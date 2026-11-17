@@ -168,6 +168,18 @@ pub fn available(ctx: &Context, root: &Path, program: &str, args: &[&str]) -> bo
     probe(ctx, root, program, args).is_ok_and(|o| o.status.success())
 }
 
+/// Parse an optional K/N work partition, rejecting invalid or out-of-range indices.
+pub(crate) fn partition(name: &str, value: Option<&str>) -> Result<Option<(u32, u32)>, String> {
+    let Some(value) = value.filter(|v| !v.is_empty()) else { return Ok(None) };
+    let bad = || format!("{name}={value}: expected K/N with 1 <= K <= N");
+    let (k, n) = value.split_once('/').ok_or_else(bad)?;
+    let (k, n): (u32, u32) = (k.parse().map_err(|_| bad())?, n.parse().map_err(|_| bad())?);
+    if k == 0 || k > n {
+        return Err(bad());
+    }
+    Ok(Some((k, n)))
+}
+
 /// The last `n` lines of `text`, for a failure report.
 pub fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();

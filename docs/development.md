@@ -266,9 +266,11 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
   depends on changed: documents, `.github/` (except `pr.yml` and files a Rust test includes) and `tools/ci/` skip
   clippy, the tests and cargo-deny. A merge-queue group whose tree equals its PR head skips the checks that passed
   on that head. Skipped jobs still report success under their required name.
-- `pr.yml` runs the tests in four parallel shards per profile (`OOS_TEST_PARTITION=K/N`). The last shard runs
-  the UI golden binary alone; the others exclude that binary and use nextest `--partition hash:K/(N-1)`.
-  This separates the golden comparison from the expensive layout tests that formerly shared hash shard 2/3.
+- `pr.yml` runs the tests in five parallel shards per profile (`OOS_TEST_PARTITION=K/N`). The last shard runs
+  the UI golden binary alone. With at least three shards, the penultimate shard runs only
+  `ui::lint::second_pane_fits_with_everything_else`; it skips the other crates and builds only the UI binary.
+  The remaining shards exclude those tests and use nextest `--partition hash:K/(N-2)` (N-1 with two shards).
+  This separates the second-pane test from large-monitor random input, which formerly shared hash shard 2/4.
   Unsharded runs and 1/1 still run every test. The doctests run in shard 1. A shard's skipped count includes
   tests excluded by its filter or partition.
   Pull requests run the debug tests only; the merge queue adds the release tests. The required `test` check sums
@@ -284,9 +286,11 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
   every test that ran 60 s or longer. A test that leaves a process holding its output fails. Tests kill a process
   group with `kill -KILL -- -<pgid>`: without `--`, the procps-ng `kill` of Ubuntu 24.04 signals the wrong group, or
   every process of the user (#23).
-- Lints, register plans and standalone decoder configurations run in three independent PR jobs, each with its
-  own cache. The required `clippy` check fails unless all three succeed. Host/ARM lint findings are still counted
-  together once per place. Nightly also separates the decoder matrix from lints.
+- Standalone decoder builds run in three parallel clippy matrix rows (`OOS_DECODER_PARTITION=K/N`). The
+  core-only configuration and each optional feature alone are distributed round robin from the feature list.
+  Unpartitioned gates still check every configuration. Host/ARM lint deduplication and ratchets remain in one
+  row; the required `clippy` result waits for all decoder groups, lints and register plans. Nightly also separates
+  the decoder matrix from lints.
 - A push to `main` runs `pr.yml` as the only writer of the PR Rust caches (one per job kind); its test jobs build the
   tests without running them, because the merge queue already ran them on that tree. Rust caches retain workspace
   crates as well as dependencies, so those warm-up builds survive cleanup; PRs and queue groups only restore them.

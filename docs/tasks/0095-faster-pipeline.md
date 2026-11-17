@@ -77,7 +77,58 @@ Reserved paths: `.github/workflows/pr.yml`, `xtask/src/testrun.rs`, `xtask/src/s
 3. Run partition regression tests, debug/release xtask tests and the fast gate. Record supplied CI baseline evidence;
    the coordinator supplies after timings and full CI acceptance under this worker's network/Git restrictions.
 
+### Round 3, issue #141 follow-up
+
+Reserved paths: `.github/workflows/pr.yml`, `xtask/src/steps/decoders/`,
+`xtask/src/steps/decoders.rs`, `xtask/src/testrun.rs`, `xtask/src/run.rs`,
+`xtask/src/run/tests.rs`, `xtask/src/stack_ci/tests.rs`, `docs/development.md`, this task file.
+
+1. Split the 15 standalone decoder configurations across independent CI runners, retaining each configuration's
+   all-target, no-default-feature check and the aggregate `clippy` result. Preserve the host/ARM lint ratchet.
+2. Inspect nextest durations and selections for debug shard 2/4. Spread its expensive tests across the available
+   runners without changing tests, profiles, doctest coverage or the aggregate `test` result.
+3. Run focused xtask tests in debug and test-release, all changed shards, the fast gate and the default full gate.
+   Record the supplied run 44196789417 baseline. The coordinator supplies the PR's after-run timings because this
+   worker has build-only network access and may not use GitHub or `gh`. Target: PR wall time at most 220 s.
+
 ## Status
+
+- 2026-11-18: Round 3 default full gate exited 1: `gate FAILED in 507 s: perf`.
+  Final fast gate exited 0: `partial gate passed (not done): 11 steps in 3 s`.
+  All other steps passed: debug/release tests (including 222 xtask tests in each profile and 1513/1512 UI tests),
+  coverage, host/ARM clippy, all 15 decoder configurations, Python and all 65 register plans. Performance
+  preparation passed in 438.4 s. The unchanged `ui::tests::shadow::perf_guard_intake_change_shadow_budget`
+  failed its picture p99 assertion: 883959 ns against the calibrated host limit of 750000 ns; the other 23 UI
+  performance tests passed. The guard and its threshold were left unchanged, and it was not retried for a green
+  result. This failure requires coordinator investigation before full-gate acceptance.
+  Changed files have no lowered ratchet counts. Production line delta is 0; Rust tooling grows by 23 lines.
+  Host only; no hardware accessed. Task remains active for full-gate acceptance, independent review and the
+  PR's CI after timings verifying the 220-second target. Complete local evidence is in `target/pipeline-speed3/`
+  and the full gate's `target/check-logs/` directory.
+
+- 2026-11-18: All three decoder groups passed through `cargo xtask step decoders` (exit 0 each),
+  checking five configurations each: `partial gate passed (not done): 1 steps in 60 s`, then 64 s and 88 s.
+  Through-Cargo wall times were 59.90, 64.15 and 88.41 s; these sequential local checks are not CI after timings.
+  The unpartitioned default full gate is running. Production lines remain 108344 (delta 0); Rust tooling grows
+  by 23 lines. The final fast gate so far passed all 11 steps in 2 s, with no lowered counts in changed files.
+
+- 2026-11-18: All five debug partitions passed through `cargo xtask step tests-debug` (exit 0 each):
+  `partial gate passed (not done): 1 steps in 31 s`, then 32 s, 39 s, 28 s and 20 s.
+  Through-Cargo wall times were 31.48, 32.06, 39.52, 28.05 and 20.29 s. The dedicated shards skip
+  unrelated crate builds; doctests still run only in shard 1. These sequential local runs are not CI after timings.
+
+- 2026-11-18: Round 3 nextest JSON verifies complete, disjoint coverage of all 1513 runnable UI tests:
+  511, 480, 515, 1 and 6 per shard. Baseline debug hash shard 2/3 (CI 2/4) passed 481 UI tests in 31.796 s
+  locally. Its two dominant tests were second-pane layout (30.246 s) and large-monitor random input (27.638 s);
+  the next slowest was 8.063 s. The layout test now runs alone in shard 4/5, with golden tests in 5/5.
+  These local measurements identify the imbalance; CI per-test evidence is still requested.
+  Decoder groups select configurations round robin, including core-only, with five configurations each today.
+  Debug and test-release xtask tests pass (222 each), and the initial fast gate exited 0:
+  `partial gate passed (not done): 11 steps in 2 s`. All partitioned steps and the full gate remain in progress.
+
+- 2026-11-18: Round 3 assigned on `ci/141-pipeline-speed-3`, base `2e2af564`. Decoder checks currently
+  execute 15 feature configurations serially; the four test shards reserve only the golden binary explicitly.
+  Local baseline shard 2 is running; CI per-test logs and after-run timings requested from the coordinator.
 
 - 2026-11-18: Critical-path repair full gate exited 0: `gate passed (default): 22 steps in 429 s`.
   All 220 xtask tests passed in both profiles, UI debug/release passed 1491/1490 tests, and coverage, host/ARM
@@ -206,3 +257,29 @@ After publication, record all four debug shards (4/4 is golden only), all three 
 - 2026-11-17: nextest dropped from this branch after two CI runs hung (#23). Codex finding on API read timeouts fixed.
 - 2026-11-17: branch `ci/t0095-faster-pipeline` from main 9072ea2. Pre-release `kernel-base-6.12.115` published,
   asset sha256 matches `kernel/base.sha256`.
+
+### Round 3 CI timing table (issue #141)
+
+Baseline run 44196789417, supplied in the brief after PR #148. Target: PR wall time at most 220 s.
+After values require the coordinator to publish this change and supply its own PR run's job JSON and test log.
+This worker may not access GitHub, run `gh`, push or create a PR. No CI speed improvement is claimed yet.
+
+| Metric, seconds | Before | Round 3 after |
+|---|---:|---:|
+| PR wall time | ~303 | coordinator measurement needed |
+| clippy (decoders) | 276 | replaced by three groups |
+| clippy (decoders 1/3) | n/a | coordinator measurement needed |
+| clippy (decoders 2/3) | n/a | coordinator measurement needed |
+| clippy (decoders 3/3) | n/a | coordinator measurement needed |
+| clippy (lints) | 110 | coordinator measurement needed |
+| clippy (plans) | 42 | coordinator measurement needed |
+| test (debug 1/4), now 1/5 | 180 | coordinator measurement needed |
+| test (debug 2/4), now 2/5 | 250 | coordinator measurement needed |
+| test (debug 3/4), now 3/5 | 147 | coordinator measurement needed |
+| test (debug 4/5), layout alone | n/a | coordinator measurement needed |
+| test (debug 4/4), now 5/5 golden | 107 | coordinator measurement needed |
+| fast | 56 | coordinator measurement needed |
+| python | 45 | coordinator measurement needed |
+
+Record the after run id, aggregate `clippy` and `test` conclusions, all group durations and full-run wall time here
+before accepting the 220-second target. CI per-test durations should confirm or revise the local layout-test split.

@@ -82,3 +82,33 @@ fn failure_to_list_decoders_fails_the_step() {
     fs::write(fixture.root.join("ui/tools/decoder-features.sh"), "echo 'no decoder list' >&2\nexit 7\n").unwrap();
     assert!(fixture.check().unwrap_err().join("\n").contains("no decoder list"));
 }
+
+#[test]
+fn partitions_build_every_configuration_once_and_preserve_failures() {
+    let fixture = Fixture::new("");
+    let manifest = fixture.root.join("ui/Cargo.toml");
+    let features = fs::read_to_string(&manifest).unwrap().replace(
+        "decoders = [\"dec-first\", \"dec-second\"]",
+        "decoders = [\"dec-first\", \"dec-second\", \"dec-third\", \"dec-fourth\", \"dec-fifth\"]",
+    );
+    fs::write(manifest, format!("{features}dec-third = []\ndec-fourth = []\ndec-fifth = []\n")).unwrap();
+    let mut all = fixture.check().unwrap();
+    let mut selected = Vec::new();
+    for k in 1..=3 {
+        let group = super::partitioned(&fixture.ctx, &fixture.root, Some((k, 3))).unwrap();
+        assert_eq!(group.len(), 2);
+        selected.extend(group);
+    }
+    assert_eq!(super::partitioned(&fixture.ctx, &fixture.root, Some((1, 1))).unwrap(), all);
+    selected.sort();
+    all.sort();
+    assert_eq!(selected, all);
+    fs::write(
+        fixture.root.join("ui/src/lib.rs"),
+        "#[cfg(all(test, feature = \"dec-second\"))]\ncompile_error!(\"second tests fail\");\n",
+    )
+    .unwrap();
+    assert!(super::partitioned(&fixture.ctx, &fixture.root, Some((2, 3))).is_ok());
+    let errors = super::partitioned(&fixture.ctx, &fixture.root, Some((3, 3))).unwrap_err().join("\n");
+    assert!(errors.contains("second tests fail"), "{errors}");
+}

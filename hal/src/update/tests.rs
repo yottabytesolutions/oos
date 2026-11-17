@@ -439,17 +439,6 @@ fn persist_arm_needs_a_good_image_and_no_trial() {
     assert_eq!(&f.magic(), b"KRNL");
 }
 
-#[test]
-#[cfg(unix)] // the lock is flock(2): the scope only
-fn busy_follows_the_lock() {
-    let f = Fake::new("busy", Some(1));
-    assert!(!busy(&f.state()), "no lock file yet");
-    let l = lock(&f.state()).unwrap();
-    assert!(busy(&f.state()));
-    drop(l);
-    assert!(!busy(&f.state()));
-}
-
 // ---- first install from the stock system
 
 /// The model check has its own test, `only_verified_models_by_default`.

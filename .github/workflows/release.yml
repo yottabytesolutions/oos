@@ -1,6 +1,7 @@
 # A SemVer tag vX.Y.Z on main: the image, the unsigned image and build id for offline signing, a changelog from the
 # Conventional Commit subjects (cliff.toml), build provenance, and a draft GitHub release. No signing key here:
 # the maintainer signs the update package offline (boot/sign-dev-image.sh --key) and attaches it before publishing.
+# Production code is compared with the previous release (ADR 0035): growth needs a `Code growth:` paragraph.
 name: Release
 on:
   push:
@@ -13,7 +14,9 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
+    outputs:
+      code: ${{ steps.code.outputs.notes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -27,13 +30,34 @@ jobs:
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$TAG is not on main"; exit 1; }
           versions=$(grep -h '^version = ' core/Cargo.toml dsp/Cargo.toml fpgad/Cargo.toml hal/Cargo.toml ui/Cargo.toml xtask/Cargo.toml | sort -u)
           [ "$versions" = "version = \"${TAG#v}\"" ] || { echo "::error::$TAG does not match the crate versions: $versions"; exit 1; }
+      - name: Pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - name: Production code since the previous release, growth explained
+        id: code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          # the highest final release vX.Y.Z before this commit; no rc or build suffixes
+          prev=$(git tag --merged "$GITHUB_SHA^" --sort=-v:refname | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' | sed -n 1p || true)
+          compare=()
+          if [ -n "$prev" ]; then compare=(--compare "$prev"); fi
+          cargo xtask loc "${compare[@]}" --json > "$RUNNER_TEMP/loc.json"
+          cargo xtask loc "${compare[@]}" > "$RUNNER_TEMP/loc.md"
+          # the annotation from the API: the checkout may hold the tag as a lightweight one
+          obj=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object | select(.type == "tag") | .sha')
+          if [ -n "$obj" ]; then gh api "repos/$GITHUB_REPOSITORY/git/tags/$obj" --jq .message; fi > "$RUNNER_TEMP/tag.txt"
+          python3 -I tools/ci/code_growth.py --loc "$RUNNER_TEMP/loc.json" --table "$RUNNER_TEMP/loc.md" \
+            --tag-message "$RUNNER_TEMP/tag.txt" --changelog CHANGELOG.md --version "${TAG#v}" > "$RUNNER_TEMP/notes.md"
+          { echo 'notes<<CODE_NOTES_END'; cat "$RUNNER_TEMP/notes.md"; echo 'CODE_NOTES_END'; } >> "$GITHUB_OUTPUT"
 
   image:
     needs: verify
     uses: ./.github/workflows/image.yml
 
   release:
-    needs: image
+    needs: [verify, image]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -65,8 +89,12 @@ jobs:
       - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         with:
           tool: git-cliff@2.14.2
-      - name: Changelog
-        run: git-cliff --config cliff.toml --latest --strip header --output dist/CHANGELOG.md
+      - name: Changelog and production code
+        env:
+          CODE: ${{ needs.verify.outputs.code }}
+        run: |
+          git-cliff --config cliff.toml --latest --strip header --output dist/CHANGELOG.md
+          printf '\n%s\n' "$CODE" >> dist/CHANGELOG.md
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/oos-*

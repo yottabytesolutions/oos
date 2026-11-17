@@ -78,6 +78,7 @@ pub(crate) const CHECKS: &[Check] = &[
     ),
     entry!("test-time", "test timing", "test source timing ratchet", "sources", Fast, [], crate::test_time::check),
     entry!("links", "links", "links in README, wiki/ and docs/ resolve", "Git", Fast, [], crate::links::check),
+    entry!("text", "text files", "ADR 0019 file rules over git ls-files", "Git", Fast, [], crate::text::check),
     entry!("doctor-base", "doctor-base", "doctor", "tools/bootstrap.sh; no Docker", Host, [], crate::doctor::check),
     entry!(
         "doctor",
@@ -89,6 +90,15 @@ pub(crate) const CHECKS: &[Check] = &[
         steps::host::doctor
     ),
     entry!("clippy", "clippy", "cargo clippy --all-targets, host and ARM", "pinned toolchain", Rust, [], steps::clippy),
+    entry!(
+        "decoders",
+        "standalone decoders",
+        "cargo check --all-targets --no-default-features in ui; core only and each optional decoder alone",
+        "pinned toolchain",
+        Rust,
+        [],
+        steps::decoders::matrix
+    ),
     entry!("tests-debug", "tests (debug)", "cargo nextest run per crate", "pinned toolchain", Rust, [], |ctx, r| {
         steps::tests(ctx, r, false)
     }),

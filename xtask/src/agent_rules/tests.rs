@@ -77,14 +77,14 @@ fn current_pointers_trailer_and_aider_pass() {
 
 #[test]
 fn nul_inventory_preserves_paths_and_refuses_uncheckable_output() {
-    let paths = super::parse_inventory(b"nested/a\nline/AGENTS.md\0a space/GEMINI.md\0a space/GEMINI.md\0")
+    let paths = crate::repo::parse_paths(b"nested/a\nline/AGENTS.md\0a space/GEMINI.md\0a space/GEMINI.md\0")
         .expect("NUL inventory");
     assert_eq!(paths.len(), 2);
     assert!(paths.contains("nested/a\nline/AGENTS.md"));
     assert!(paths.contains("a space/GEMINI.md"));
-    assert!(super::parse_inventory(b"").expect("empty inventory").is_empty());
-    assert!(super::parse_inventory(b"AGENTS.md").is_err());
-    assert!(super::parse_inventory(b"\xff\0").is_err());
+    assert!(crate::repo::parse_paths(b"").expect("empty inventory").is_empty());
+    assert!(crate::repo::parse_paths(b"AGENTS.md").is_err());
+    assert!(crate::repo::parse_paths(b"\xff\0").is_err());
 }
 
 #[test]
@@ -371,7 +371,7 @@ fn both_gate_modes_dispatch_the_check_without_losing_g1_steps() {
         "known failures",
         "agent rules",
     ];
-    for (fast, coverage, count) in [(true, true, 10), (false, true, 15), (false, false, 14)] {
+    for (fast, coverage, count) in [(true, true, 11), (false, true, 17), (false, false, 16)] {
         let names: Vec<_> = check::plan(check::Options { fast, coverage }).into_iter().map(|(n, _)| n).collect();
         assert_eq!(names.len(), count);
         assert_eq!(&names[..8], &prefix);

@@ -58,7 +58,7 @@ jobs:
         with:
           shared-key: fast
           save-if: ${{ env.SAVE_CACHE }}
-      - name: Fast gate (fmt, size, architecture, statics, unsafe, ignores, agent rules, test time, links)
+      - name: Fast gate (fmt, size, architecture, statics, unsafe, ignores, agent rules, test time, links, text)
         if: steps.changes.outputs.run == 'true'
         run: cargo xtask check --fast
       # Host scripts stay POSIX sh for Linux, the BSDs and macOS; the runner image has shellcheck.
@@ -100,9 +100,9 @@ jobs:
         with:
           shared-key: clippy
           save-if: ${{ env.SAVE_CACHE }}
-      - name: Clippy ratchet, host and aarch64-unknown-linux-musl
+      - name: Clippy ratchet, host and aarch64-unknown-linux-musl; ui with the core decoders only
         if: steps.changes.outputs.run == 'true'
-        run: cargo xtask step clippy
+        run: cargo xtask step clippy decoders
 
   # Pull requests run the debug tests in three shards (cargo nextest --partition, xtask/src/testrun.rs). The merge
   # queue adds the release-profile tests, also sharded; main.yml runs them nightly.

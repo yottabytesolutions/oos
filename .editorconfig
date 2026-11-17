@@ -1,4 +1,5 @@
-# Editor settings for the tree (docs/adr/process/0019). tools/check.sh text checks the rules a tool can check.
+# Editor settings for the tree (docs/adr/process/0019). The gate's text step (xtask/src/text.rs) checks the rules
+# a tool can check.
 root = true
 
 [*]

@@ -56,6 +56,20 @@ class CommitTests(unittest.TestCase):
         self.assertIn("does not match", meta.check_commits([other], "someone").errors[0])
         self.assertEqual(meta.check_commits([], "someone").errors, ["no commits between base and head"])
 
+    def test_every_subject_is_a_finished_conventional_commit(self):
+        sign = f"\n\nSigned-off-by: Some One <{MAIL}>\n"
+        self.assertEqual(meta.check_commits([commit("fix(ui): keep the level" + sign)], "x").errors, [])
+        for subject in ("fixup! fix(ui): keep the level", "squash! fix: x", "amend! fix: x", "WIP", "wip: more",
+                        "[WIP] fix: x", "Keep the level", "fix: " + "x" * 68):
+            with self.subTest(subject=subject):
+                errors = meta.check_commits([commit(subject + sign)], "x").errors
+                self.assertEqual(len(errors), 1, errors)
+        self.assertIn("autosquash", meta.check_commits([commit("fixup! fix: x" + sign)], "x").errors[0])
+        self.assertEqual(meta.check_commits([commit("fix: wipe the cache" + sign)], "x").errors, [])
+        # Dependabot is exempt from the sign-off only: its subjects land on main too.
+        bot = commit("Bump x from 1 to 2\n", email="bot@users." + "noreply.github.com", name="dependabot[bot]")
+        self.assertEqual(len(meta.check_commits([bot], "dependabot[bot]").errors), 1)
+
     def test_dependabot_exempt_only_in_its_own_pr(self):
         bot = commit("build(deps): bump x\n", email="bot@users." + "noreply.github.com", name="dependabot[bot]")
         self.assertEqual(meta.check_commits([bot], "dependabot[bot]").errors, [])

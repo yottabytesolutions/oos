@@ -46,7 +46,7 @@ script; nothing here changes GitHub settings by itself.
 - Ruleset `.github/rulesets/main.json` (default branch): PR required, 0 approvals except code owner review on
   CODEOWNERS paths, review thread resolution, required checks fast, clippy, test, python, deny, pr-meta, privacy,
   codex-review (all from the GitHub Actions app, id 15368), linear history, no force push, no deletion, merge queue
-  (squash, all-green groups up to 5), merge methods squash and rebase. Bypass: repository admins, PR merges only.
+  (rebase, all-green groups up to 5), merge method rebase only (#29). Bypass: repository admins, PR merges only.
 - Repo settings: `tools/ci/apply-repo-settings.sh [--apply]` (dry run by default).
 - Releases: SemVer from v0.2.0. The tag must equal the crate versions; `release.yml` checks it.
 
@@ -68,7 +68,7 @@ Done (branch `ci/t0092-pipeline` on main 441adcb6, not pushed):
   issue forms, one PR template (`pull_request_template.md`; the upper-case copy is removed), labels.yml,
   labeler.yml, ruleset, settings script.
 - privacy.yml no longer fetches or excludes upstream (hard fork); its tests follow.
-- ADR 0019: commit subjects are `type(scope): imperative summary` (squash subject = PR title). ADR 0031: CI runs the
+- ADR 0019: commit subjects are `type(scope): imperative summary` (every commit lands on main by rebase, #29). ADR 0031: CI runs the
   inventory split by `cargo xtask step`. Dead ci.yml links in ADR 0017/0020 point at pr.yml.
 - Validated locally: actionlint (with shellcheck) clean, `cargo-deny check` passes, `git-cliff` renders, Python tests
   for the new scripts, fast gate, `codex_gate.py` against dekajoule/oos PR #38 (pending: Codex reviewed f617d62953,
@@ -154,8 +154,8 @@ cargo xtask check                  # before opening a PR
 - One issue, one branch, one PR. Branch: `<type>/<ref>-<slug>`, `type` one of feat, fix, perf, refactor, docs,
   test, ci, build, chore; `ref` the issue number or `t` plus the four-digit task id. Examples:
   `fix/123-trigger-holdoff`, `refactor/t0075-normal-trigger`.
-- PR title: Conventional Commits, `type(scope): summary`, at most 72 characters. It becomes the squash commit
-  subject and the changelog line.
+- PR title and every commit subject: Conventional Commits, `type(scope): summary`, at most 72 characters. Each
+  commit lands on main as it is and becomes a changelog line; no fixup or WIP commits.
 - Every commit carries `Signed-off-by:` (`git commit -s`) matching the author (DCO, ADR 0026). Use your GitHub
   noreply address: other email addresses are rejected by the privacy check.
 - Commits and PR texts carry no tool or session details: no session links, no `Agent:` or AI `Co-authored-by:`
@@ -164,7 +164,7 @@ cargo xtask check                  # before opening a PR
   reviewable on its own.
 - Link the issue (`Closes #NNN`) or the task file in the PR text. Fill in the template.
 - History is linear: rebase on main (`git pull --rebase`), force-push your own branch with `--force-with-lease`.
-  PRs merge through the merge queue as squash.
+  PRs merge through the merge queue by rebase.
 
 ### Review gate
 

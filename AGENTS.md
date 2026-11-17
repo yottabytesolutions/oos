@@ -146,7 +146,9 @@ to the document that explains it. When a rule and your task conflict, stop and a
   [ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)) with a GitHub
   noreply address. No tool, session or agent attribution and no co-author lines in commits or PR texts.
 - No em-dashes in commit messages, docs or comments.
-- Never rebase or amend commits that someone else has reviewed or merged.
+- Pull requests merge by rebase: every commit lands on main as it is. Each one is a Conventional, signed-off topic
+  commit; fold fix-ups in with `git rebase -i --autosquash` before marking the PR ready. After a review, fold a
+  fix in only with renewed review. Never rebase or amend commits that someone else has merged.
 - A fix the unit needs now branches from `dho804` as `fix/<name>` and is forward-ported to `main` as a test plus
   the fix in its target place ([Migration](docs/architecture/migration.md), Hotfix lane).
 - Only the coordinator pushes, and only with the owner's go, through the documented publish path. Other agents never push. Never change a remote or its push URL.

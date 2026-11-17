@@ -69,8 +69,10 @@ by agents, under one structure:
 - A contribution arrives as a pull request from a feature branch against `main`. One topic per pull request.
 - The gate (`cargo xtask check`, ADR 0031) passes in CI before a merge. CI runs on GitHub-hosted runners and is set up
   in a later phase; until then the maintainer runs the full gate locally on the candidate.
-- A pull request enters `main` squash-merged or rebase-merged: commits made from the reviewed state, with the author
-  and the sign-off kept, in the commit style of ADR 0019 as amended.
+- A pull request enters `main` rebase-merged, through the merge queue: its commits land as they are, with their
+  authors and sign-offs, in the commit style of ADR 0019 as amended. So every commit is a clean, signed-off topic
+  commit; fix-ups are folded in with `git rebase -i --autosquash` before the pull request is marked ready. Squash
+  merges are off: they made the merging account the author and added a `Co-authored-by:` trailer.
 - **Linear history.** `main` only moves by fast-forward. Rebasing is the default way to integrate. Merge commits are
   discouraged and allowed only where the second parent carries information, such as a long-lived import whose own
   history matters. Never merge `main` into a feature branch: rebase the branch onto `main`. Everyone pulls with

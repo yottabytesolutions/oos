@@ -64,7 +64,13 @@ and CI's parallel jobs sat idle while a laptop repeated them.
 - "Until Actions is enabled the local full gate is authoritative" and "the pre-push hook" in the full tier above no
   longer apply.
 
+## Note 2026-11-17: xtask is the home for Rust tooling
+
+ADR 0033 decides it: new project tooling and new checks written in Rust go into `xtask`, as steps of this gate or
+subcommands; small helpers stay POSIX shell or Python scripts in `tools/`. ADR 0020's rejection of `xtask` no longer
+applies.
+
 ## References
 
 `xtask/`, [docs/development.md](../../development.md) (Executable inventory, What each check enforces),
-`.githooks/`, `tools/check.sh`, ADR 0014, ADR 0019, ADR 0020 (superseded), ADR 0030, ADR 0032.
+`.githooks/`, `tools/check.sh`, ADR 0014, ADR 0019, ADR 0020 (superseded), ADR 0030, ADR 0032, ADR 0033.

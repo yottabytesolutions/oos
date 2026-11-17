@@ -57,6 +57,12 @@ Besides a desktop build, host-only development tools (the `xtask` gate) may use 
 amendment of ADR 0013. The check of the last bullet above is the gate's `architecture` step (ADR 0031), no longer
 `tools/check.sh target`.
 
+## Note 2026-11-17: native Windows
+
+Native Windows is no longer a development platform (ADR 0033). The Windows desktop build that this record names is
+not built by the gate or CI; its future is ADR 0033's open question. The rule for platform crates of a desktop build
+holds as written.
+
 ## References
 
 ADR 0013, `ui/Cargo.toml`, `tools/check.sh` (layer `target`), [fork/deps.md](../../fork/deps.md),

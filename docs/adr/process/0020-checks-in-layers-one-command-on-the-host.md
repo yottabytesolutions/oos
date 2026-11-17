@@ -66,8 +66,13 @@ The checks are named by layer. Each layer says what it can show and what not:
 - The unit layer stays the only one that sees the hardware. Many changes cannot be tried on a scope when they are
   made, so the pull request has to say which layers ran.
 
+## Note 2026-11-17
+
+The second alternative no longer holds. Native Windows is not a development platform (ADR 0033), so a missing `make`
+there is no argument, and `xtask` is the gate and the home for project tooling written in Rust (ADR 0031).
+
 ## References
 
 `tools/check.sh`, [.github/workflows/pr.yml](../../../.github/workflows/pr.yml), `ui/tools/layout-check.sh`,
 `tools/plan-matrix.sh`, `tools/perf-guard.sh`, `tools/device-test.py`, [CONTRIBUTING.md](../../../CONTRIBUTING.md),
-ADR 0014, ADR 0015, ADR 0016, ADR 0017, ADR 0018, ADR 0019, ADR 0021.
+ADR 0014, ADR 0015, ADR 0016, ADR 0017, ADR 0018, ADR 0019, ADR 0021, ADR 0031, ADR 0033.

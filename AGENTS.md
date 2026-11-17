@@ -33,8 +33,13 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Report the gate's result as printed, including failed steps. Read the command's exit code, not its tail.
   Never pipe the gate or `tools/perf-guard.sh` through `tail` or `grep` inside an `&&` chain. That hides failures.
 - Take commit hashes from `git log -1`. Never quote a hash from memory.
-- Only the coordinator pushes, and only with the owner's go, through the documented publish path. Other agents never push. Never change a remote or its push URL.
-- Never merge your own branch. The maintainer merges after review via the merge queue; the coordinator never merges.
+- Push your own feature branch early and often. Never push `main`. Never change a remote or its push URL.
+- Land your own pull request through the merge queue once the required checks are green and Codex has no
+  unresolved findings: enable auto-merge (`gh pr merge --auto --rebase`). Paths in CODEOWNERS also need the
+  maintainer's approval. A stack lands bottom up
+  ([ADR 0034](docs/adr/process/0034-multi-pr-work-lands-as-a-stack.md)); GitHub refuses auto-merge on stacks, so
+  enqueue the top with `gh api -X PUT repos/{owner}/{repo}/pulls/<n>/merge-async` (no merge parameters: the queue
+  sets the method), which takes the PRs below it along.
 - On the scope, stop at the first unexpected state. Report it. Do not repair it by hand.
 - No `rm -rf` outside your own worktree and scratch directories. Never force push `main`; a feature branch only
   with `--force-with-lease`. Never write partitions, run `dd` to block devices, or delete another contributor's
@@ -44,8 +49,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Every agent-authored change needs review by an agent from another vendor. Codex authors use Claude reviewers, and Claude authors use Codex reviewers. Other vendors pair across vendors too.
 - Human-authored changes need review by any reviewer who did not write the change.
 - History is linear: rebase onto `main`, never merge `main` into a branch; `main` only fast-forwards. Set
-  `git config pull.rebase true` and `rebase.autoStash true`. Conflict resolutions after review need renewed review. The author
-  never merges the change ([ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)).
+  `git config pull.rebase true` and `rebase.autoStash true`. Conflict resolutions after review need renewed review.
 - Follow the merge, acceptance and publication order in [integration](docs/process/integration.md#review-and-merge).
 - Record evidence in the task file's Status lines and the merge commit body. The PR template is the field list. Use it in the PR when one exists.
 - Fix unit regressions on the unit branch, then forward-port the failing regression test plus fix through review and the full gate.
@@ -152,7 +156,6 @@ to the document that explains it. When a rule and your task conflict, stop and a
   fix in only with renewed review. Never rebase or amend commits that someone else has merged.
 - A fix the unit needs now branches from `dho804` as `fix/<name>` and is forward-ported to `main` as a test plus
   the fix in its target place ([Migration](docs/architecture/migration.md), Hotfix lane).
-- Only the coordinator pushes, and only with the owner's go, through the documented publish path. Other agents never push. Never change a remote or its push URL.
 
 ## Docs
 

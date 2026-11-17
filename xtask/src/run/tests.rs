@@ -1,6 +1,7 @@
 use super::*;
 use std::{ffi::OsString, fs};
 
+mod git_env_tests;
 mod probe_tests;
 
 struct Fixture(PathBuf);

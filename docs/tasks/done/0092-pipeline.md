@@ -2,7 +2,7 @@
 id: 92
 title: Contribution structure and CI pipeline for the public repository
 kind: chore
-status: active
+status: done
 release: 0.2.0
 owner: maintainer
 depends: []
@@ -51,6 +51,13 @@ script; nothing here changes GitHub settings by itself.
 - Releases: SemVer from v0.2.0. The tag must equal the crate versions; `release.yml` checks it.
 
 ## Status
+
+2026-11-17: done. Steps 1 to 3 are done: the text is merged into CONTRIBUTING and AGENTS, the agent app exists,
+Actions and the `main` ruleset are active. Step 4: crate versions are 0.2.0; the `v0.2.0` tag and the kernel base
+asset follow as the release itself. Step 5 runs as the first pull request (`docs/t0094-community-health`); its
+findings go to new issues. Lasting facts moved to
+[docs/process/ci.md](../../process/ci.md) (workflows, Codex review gate, agent identity) and
+[docs/releases.md](../../releases.md#versioning) (versioning). The sections below stay as the record of the design.
 
 Done (branch `ci/t0092-pipeline` on main 441adcb6, not pushed):
 

@@ -35,6 +35,7 @@ SKIP_SUFFIXES: Final = (".md",)
 # Exceptions inside SKIP_DIRS: the workflow that defines these jobs, this script, and files Rust tests include.
 RUST_FILES: Final = frozenset({
     ".github/workflows/pr.yml",
+    ".github/workflows/main.yml",  # xtask plan-matrix tests cover the split nightly gate
     ".github/workflows/image.yml",  # fpgad/tests/explicit_signing.rs includes it
     "tools/ci/changes.py",
     # xtask/src/stack_ci.rs includes these: the required checks run on stacked pull requests (ADR 0034)

@@ -18,9 +18,11 @@ regressions before slow unit rounds. This record also incorporates architecture/
 - **Layout:** retain `ui/tools/layout-check.sh record` before a change and `check` after it until the goldens
   provably cover its scripts and all three text sizes. Then remove the manual check. Its temporary baseline is
   local (`target/layout-base`); scripts use fixed inputs and clocks, an empty storage directory and named menus.
-- **Analog path:** register sequences must stay unchanged unless the change intends otherwise. Move
-  `tools/plan-matrix.sh` into an xtask step comparing against a committed baseline. That step is being implemented
-  separately; until it lands, run the script before and after and report differences.
+- **Analog path:** register sequences must stay unchanged unless the change intends otherwise. The host
+  comparison runs in the `plan-matrix` Rust gate step against `xtask/data/plan-matrix.txt`, with standard defaults
+  and synthetic calibration. An intended change updates that baseline with `cargo xtask plan-matrix --update`
+  and explains the reviewed diff in the pull request. `tools/plan-matrix.sh` remains for calibrated comparisons
+  by the device tools.
 - **Values:** compare moved computations bit for bit over the same inputs.
 
 ## Consequences

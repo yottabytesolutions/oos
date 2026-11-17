@@ -10,6 +10,11 @@ Regenerate the seven stored containers and the adjacent `adc_expected.txt` and
 python3 tools/generate-test-cal.py
 ```
 
+`python3 tools/generate-test-cal.py --output /path/to/scratch` writes all eight
+containers, including the large vertical container, to a scratch directory without
+updating the stored fixtures or model expectations. The `plan-matrix` xtask step
+uses this mode under the selected target directory to cover the AFE cases.
+
 The generator uses only Python's standard library and the repository's independent
 ADC and AFE reference models. It overwrites their calibration-directory input
 before importing them. The large vertical container is generated in a temporary

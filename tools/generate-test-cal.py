@@ -7,6 +7,7 @@ All values below are invented. Never install these files on hardware.
 Run from any directory: python3 tools/generate-test-cal.py
 """
 
+import argparse
 import importlib.util
 import os
 import tempfile
@@ -25,10 +26,6 @@ def container(payload):
     return struct.pack("<2I", zlib.crc32(header), 20) + header + payload
 
 
-def save(name, payload):
-    (DEST / name).write_bytes(container(payload))
-
-
 def ladder():
     keys = []
     for decade in range(5):
@@ -39,8 +36,12 @@ def ladder():
     return keys + [10_000_000_000]
 
 
-def generate():
-    DEST.mkdir(parents=True, exist_ok=True)
+def generate(destination=DEST):
+    destination.mkdir(parents=True, exist_ok=True)
+
+    def save(name, payload):
+        (destination / name).write_bytes(container(payload))
+
     adc = bytearray(0x738)
     for mode in range(11):
         for core in range(8):
@@ -141,10 +142,17 @@ def expectations(cal_dir):
 
 
 if __name__ == "__main__":
-    vertical = generate()
-    with tempfile.TemporaryDirectory(prefix="oos-test-cal-") as tmp:
-        cal_dir = Path(tmp)
-        for source in DEST.glob("*.hex"):
-            (cal_dir / source.name).write_bytes(source.read_bytes())
-        (cal_dir / "cal_vertical.hex").write_bytes(vertical)
-        expectations(cal_dir)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, help="write all eight synthetic containers here, without updating reference expectations")
+    args = parser.parse_args()
+    if args.output is not None:
+        vertical = generate(args.output)
+        (args.output / "cal_vertical.hex").write_bytes(vertical)
+    else:
+        vertical = generate()
+        with tempfile.TemporaryDirectory(prefix="oos-test-cal-") as tmp:
+            cal_dir = Path(tmp)
+            for source in DEST.glob("*.hex"):
+                (cal_dir / source.name).write_bytes(source.read_bytes())
+            (cal_dir / "cal_vertical.hex").write_bytes(vertical)
+            expectations(cal_dir)

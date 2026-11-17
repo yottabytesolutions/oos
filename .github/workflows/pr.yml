@@ -102,9 +102,9 @@ jobs:
         with:
           shared-key: clippy
           save-if: ${{ env.SAVE_CACHE }}
-      - name: Clippy ratchet, host and aarch64-unknown-linux-musl; ui with the core decoders only
+      - name: Clippy ratchet, standalone decoders and register plan matrix
         if: steps.changes.outputs.run == 'true'
-        run: cargo xtask step clippy decoders
+        run: cargo xtask step clippy decoders plan-matrix
 
   # Pull requests run the debug tests in three shards (cargo nextest --partition, xtask/src/testrun.rs). The merge
   # queue adds the release-profile tests, also sharded; main.yml runs them nightly.

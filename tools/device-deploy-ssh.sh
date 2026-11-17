@@ -55,6 +55,7 @@ remote "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new) 2>/dev/null || true" 3
 send "$ui" oos-ui.new
 send "$fpgad" oos-fpgad.new
 send "$here/tools/plan-matrix.sh" plan-matrix.sh
+send "$here/tools/plan-matrix-cases.txt" plan-matrix-cases.txt
 remote "touch /tmp/oos-ui.off; kill \$(pidof oos-ui) 2>/dev/null || true" 3 >/dev/null
 remote "rm -f /tmp/oos-ui.off2" 1 >/dev/null
 loop /tmp/oos-ui.new /tmp/oos-ui.off2

@@ -2,6 +2,7 @@
 
 | Tool | Touches the scope? | Purpose |
 |---|---|---|
+| `plan-matrix.sh [oos-fpgad]` | prints plans only | calibrated before/after comparisons for device tools; the host gate uses `cargo xtask plan-matrix` and a committed baseline ([development](../docs/development.md#register-plan-baseline)) |
 | `release-sources.sh list / check TAG` | no | the source files a release carries next to its image, from `rootfs/deps.lock` and `kernel/base.sha256`; `check` compares a release on GitHub with the list ([THIRD-PARTY-LICENSES.md](../THIRD-PARTY-LICENSES.md)) |
 | `sdcard-clone.sh list / read / write / verify / fit` | card in a reader on macOS or Linux | clone the boot SD card to an image and onto the second card; refuses disks that are not SD or USB media, virtual disks and disks of the running system; `write` asks you to type the disk id |
 | `sdcard-layout.py IMAGE [--extract DIR] [--compare DIR]` | no (reads an image or `/dev/rdiskN`) | IDB, vendor storage (MAC), PARM partition table, partition contents |

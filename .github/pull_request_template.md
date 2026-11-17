@@ -9,7 +9,7 @@
 
 **Checks run:** <!-- e.g. cargo xtask check --fast; cargo xtask check; focused tests; --image -->
 
-**Register writes:** <!-- tools/plan-matrix.sh before and after: identical / they differ, because ... / not applicable -->
+**Register writes:** <!-- plan-matrix gate: unchanged / reviewed baseline updated, because ... / not applicable; calibrated unit comparison if run -->
 
 **Tested on a unit:** <!-- no / yes: model (e.g. DHO804), OOS build, what was exercised -->
 

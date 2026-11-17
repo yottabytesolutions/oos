@@ -26,8 +26,9 @@ that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
   verified on hardware". Keep that honest: a wrong "verified" costs someone else days.
 - **Be careful with other people's scopes.** OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and
   `parameter` partitions. Changes that would need any of this will not be accepted without a very good case.
-- **Keep the analog path unchanged unless that is the point.** `tools/plan-matrix.sh` prints the register sequences of a
-  fixed set of acquisitions. Run it before and after a change and compare the output. Say in your pull request whether they differ.
+- **Keep the analog path unchanged unless that is the point.** The `plan-matrix` step in `cargo xtask check` compares
+  65 acquisition plans with `xtask/data/plan-matrix.txt`. Run `cargo xtask plan-matrix` for a focused check. For an
+  intended register change, run `cargo xtask plan-matrix --update`, review the diff and explain it in the pull request.
 - **No personal data in issues or commits:** no serial numbers, MAC addresses or licence keys.
 
 ## A new protocol decoder
@@ -165,8 +166,10 @@ The bypass is for outages only, never to skip a finding.
 ## Risk tiers
 
 - **High, hardware:** hardware register writes (`hal/src/dho`, `fpgad`), calibration, update packages, signing,
-  kexec, boot, kernel, rootfs. Label `risk/hardware`, code owner review, `tools/plan-matrix.sh` before and after in
-  the pull request, and a run on a real unit before merge (`needs-unit` until then).
+  kexec, boot, kernel, rootfs. Label `risk/hardware`, code owner review, a passing `plan-matrix` gate step, and a run
+  on a real unit before merge (`needs-unit` until then). Intended register changes include the reviewed baseline
+  from `cargo xtask plan-matrix --update` and explain its diff in the pull request. The host baseline uses synthetic
+  calibration; `tools/plan-matrix.sh` remains available for calibrated before/after comparisons on the unit.
 - **Pipeline:** the gate and its tooling (`xtask/`, `tools/ci/`, `.githooks/`). No code owner review: such a change
   runs through the gate it changes, so the required checks and the Codex review guard it. The workflows, the
   rulesets and the privacy scanner (`.github/workflows/`, `.github/rulesets/`, `.github/CODEOWNERS`,

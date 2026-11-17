@@ -143,6 +143,7 @@ and the coverage margin of 0.5 percentage points are unchanged.
 | `doctor-base` | base doctor probes, including active toolchain identity | bootstrap; no Docker | full |
 | `doctor` | `--gpu --sim` doctor profiles | base doctor, bootstrap, Docker | `--image` |
 | `clippy` | host and ARM clippy per crate | musl std and clippy | full |
+| `plan-matrix` | host `oos-fpgad` build; 65 acquisition plans against `xtask/data/plan-matrix.txt` | pinned toolchain, Python, `diff`; synthetic calibration; no local OOS defaults | full, Rust tier |
 | `decoders` | `cargo check --all-targets --no-default-features` in `ui`: core only, then `--features dec-<name>` for each optional decoder alone | pinned toolchain | full |
 | `tests-debug` | Rust tests per crate | pinned toolchain | full |
 | `tests-release` | release Rust tests per crate | pinned toolchain | full |
@@ -198,6 +199,21 @@ time (`inventory::alone`): timing ratios and emulator time limits need a quiet m
 cargo-nextest, the default gate takes about 5 minutes on a 16-core laptop, bound by the golden pictures and coverage
 of `ui`; the fast gate takes a few seconds. The image tier can take hours on cold builders or emulated hosts. Retain
 actual timings and exit codes with coordinator evidence.
+
+### Register plan baseline
+
+`cargo xtask plan-matrix` runs the same check as `cargo xtask step plan-matrix`: build the host `oos-fpgad`,
+generate the 65 cases from `tools/plan-matrix.sh`, and compare their complete output with the committed
+`xtask/data/plan-matrix.txt`. A mismatch fails with a unified diff. An intended register change uses
+`cargo xtask plan-matrix --update`; review and explain that baseline diff in the same pull request.
+Missing baselines fail too; ordinary checks never rewrite them.
+
+The baseline uses standard host defaults and the existing synthetic calibration generator. The step overrides `OOS_CAL_DIR` and
+requires a host without `/oos/cal`, `/oos/limits.conf` or `/etc/oos/limits.conf`, because the CLI also searches
+those locations. It prints plans only and accesses no hardware. It stays outside `--fast` because building
+and running the CLI can take more than a second. The step reports its measured duration on every run.
+`tools/plan-matrix.sh` remains for the calibrated comparisons used by the device deployment and test tools.
+Host plan equality does not establish timing or calibrated behaviour on a unit (ADR 0014).
 
 ## Test time and completion
 

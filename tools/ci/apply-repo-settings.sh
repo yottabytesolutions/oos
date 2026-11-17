@@ -15,11 +15,11 @@ run() {
 	if [ "$apply" = true ]; then "$@"; fi
 }
 
-# Merge: squash and rebase only (linear history), squash subject = PR title, body = commit messages (keeps the
-# Signed-off-by trailers), branches deleted after merge, auto-merge allowed, DCO sign-off for web commits.
+# Merge: rebase only (linear history). Every commit of a PR lands on main as it is, with its own author and
+# sign-off; a squash would make the merging account the author and add a Co-authored-by trailer. Branches deleted
+# after merge, auto-merge allowed, DCO sign-off for web commits.
 run gh api -X PATCH "repos/$repo" \
-	-F allow_squash_merge=true -F allow_rebase_merge=true -F allow_merge_commit=false \
-	-f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=COMMIT_MESSAGES \
+	-F allow_squash_merge=false -F allow_rebase_merge=true -F allow_merge_commit=false \
 	-F delete_branch_on_merge=true -F allow_auto_merge=true -F allow_update_branch=true \
 	-F web_commit_signoff_required=true
 

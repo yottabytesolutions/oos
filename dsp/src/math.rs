@@ -45,8 +45,9 @@ fn biquad(notch: bool, f0: f64, bw: f64, dt: f64) -> [f64; 5] {
 }
 
 /// Biquad forward then backward (zero phase); the start is primed with the first sample to avoid a step.
-fn filtfilt(k: [f64; 5], a: &[f32]) -> Vec<f32> {
-    let run = |x: &mut Vec<f64>| {
+/// Coefficients are `(b0, b1, b2, a1, a2)` with `a0 = 1`.
+pub(crate) fn filtfilt(k: [f64; 5], x: &mut [f64]) {
+    let run = |x: &mut [f64]| {
         let x0 = x.first().copied().unwrap_or(0.0);
         // steady state for a constant input x0: y = x0 * dc gain
         let g = (k[0] + k[1] + k[2]) / (1.0 + k[3] + k[4]);
@@ -57,11 +58,15 @@ fn filtfilt(k: [f64; 5], a: &[f32]) -> Vec<f32> {
             *v = y;
         }
     };
+    run(x);
+    x.reverse();
+    run(x);
+    x.reverse();
+}
+
+fn zero_phase(k: [f64; 5], a: &[f32]) -> Vec<f32> {
     let mut x: Vec<f64> = a.iter().map(|&v| v as f64).collect();
-    run(&mut x);
-    x.reverse();
-    run(&mut x);
-    x.reverse();
+    filtfilt(k, &mut x);
     x.into_iter().map(|v| v as f32).collect()
 }
 
@@ -135,8 +140,8 @@ pub fn unary(op: Op1, a: &[f32], dt: f64) -> Vec<f32> {
                 })
                 .collect()
         }
-        Op1::Bandpass(f0, bw) => filtfilt(biquad(false, f0, bw, dt), a),
-        Op1::Bandstop(f0, bw) => filtfilt(biquad(true, f0, bw, dt), a),
+        Op1::Bandpass(f0, bw) => zero_phase(biquad(false, f0, bw, dt), a),
+        Op1::Bandstop(f0, bw) => zero_phase(biquad(true, f0, bw, dt), a),
     }
 }
 
@@ -265,6 +270,36 @@ pub fn peaks(spec: &[f64], count: usize) -> Vec<(usize, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The copy-out filter `math` ran before it shared the in-place `filtfilt` with `hss`.
+    fn copy_filtfilt(k: [f64; 5], a: &[f32]) -> Vec<f32> {
+        let run = |x: &mut Vec<f64>| {
+            let x0 = x.first().copied().unwrap_or(0.0);
+            let g = (k[0] + k[1] + k[2]) / (1.0 + k[3] + k[4]);
+            let (mut x1, mut x2, mut y1, mut y2) = (x0, x0, x0 * g, x0 * g);
+            for v in x.iter_mut() {
+                let y = k[0] * *v + k[1] * x1 + k[2] * x2 - k[3] * y1 - k[4] * y2;
+                (x2, x1, y2, y1) = (x1, *v, y1, y);
+                *v = y;
+            }
+        };
+        let mut x: Vec<f64> = a.iter().map(|&v| v as f64).collect();
+        run(&mut x);
+        x.reverse();
+        run(&mut x);
+        x.reverse();
+        x.into_iter().map(|v| v as f32).collect()
+    }
+
+    #[test]
+    fn zero_phase_matches_the_copy_out_filter() {
+        let a: Vec<f32> = (0..500).map(|i| ((i * 37 % 101) as f32 - 50.0) * 0.01).chain([f32::NAN, 1.0]).collect();
+        for k in [biquad(false, 1e3, 200.0, 1e-5), biquad(true, 5e3, 1e3, 1e-5)] {
+            let same = zero_phase(k, &a).iter().zip(copy_filtfilt(k, &a)).all(|(x, y)| x.to_bits() == y.to_bits());
+            assert!(same);
+        }
+        assert!(zero_phase(biquad(false, 1e3, 200.0, 1e-5), &[]).is_empty());
+    }
 
     #[test]
     fn band_pass_and_stop() {

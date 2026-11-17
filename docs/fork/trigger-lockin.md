@@ -180,21 +180,18 @@ Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = 
 - On the unit (running build, never cleared): 0x11d2 with the level above the signal, 0x11c2 and others while
   triggering. Bits 6 and 7 set in both: sticky, as traced.
 
-Implementation: `trig.hw_status = on` in system.conf (or OOS_TRIG_HW_STATUS=1). After every batch the
-acquisition thread reads 0x4034, writes the stock clear (`scu::clear_status`: the read value with bits 31:30
+Implementation: after every batch the acquisition thread reads 0x4034, writes the stock clear (`scu::clear_status`: the read value with bits 31:30
 set, then clear) before the next arm, and reports TPU fired / forced only / nothing. The UI shows Trig'd or
-Auto from it whenever frames came. On by default since the unit check below passed (2026-11-13);
-`trig.hw_status = off` (or OOS_TRIG_HW_STATUS=0) takes the status from the software refinement (fix 4).
+Auto from it whenever frames came. Verified on the unit 2026-11-13. The configuration switch and its software
+status off path were removed on 2026-11-17 (#124).
 
 Verification on the unit, before turning it on by default:
-1. Add `trig.hw_status = on` to /oos/system.conf, restart oos-ui. CH1 on the probe-comp output, edge rising,
-   AUTO sweep, 500 us/div.
+1. CH1 on the probe-comp output, edge rising, AUTO sweep, 500 us/div.
 2. Level 0.15 V (inside the signal): `:TRIGger:STATus?` must read TD, continuously.
 3. Level 0.6 V (above the signal): it must read AUTO, continuously; the frames come at the auto rate.
 4. NORMAL sweep with level 0.6 V: no frames, WAIT.
 5. `oos-fpgad rd 0x4034` a few times in case 2 and 3: bit 6 and 7 must now come and go (cleared after
    every batch) instead of staying set.
-6. Remove the key afterwards unless all of 2-5 hold; if they hold, make it the default.
 
 ## Autoset levels from the measure unit (FPGA use)
 
@@ -275,12 +272,11 @@ Several channels:
 - The CH1 + CH3 trigger level of 1.37 V was not reproduced; its log line went with the restart. It ran the
   measure-unit path with two channels and the wrong slot table: CH1's levels came from the cores of CH3 (open).
 
-Trigger status from the SCU (`trig.hw_status = on`, oos-ui restarted, CH1 probe-comp, 500 us/div, 10 reads of
+Trigger status from the SCU (oos-ui restarted, CH1 probe-comp, 500 us/div, 10 reads of
 `:TRIGger:STATus?` each): Auto sweep level 0.15 V TD 10/10 (74 frames/s); level 0.6 V AUTO 10/10 (6 frames/s);
 Normal sweep level 0.6 V WAIT 10/10 (0 frames/s); Normal 0.15 V TD. 0x4034 now changes: 0x0c2/0xcd2 while
 triggering (bits 6 and 7), 0x012 then 0x492 while auto-firing (bit 7 without bit 6), as traced. All verification
-steps hold: the branch makes it the default (`trig.hw_status = off` restores the software status). system.conf was
-restored afterwards.
+steps hold: the branch made it the default. system.conf was restored afterwards.
 
 Fix (branch fix/autoset-multich): the measure unit only with one channel on; the deep record at 100 k points with
 more than one channel (0.8 MB at 4 channels; 100 k points at 2 ms/div give 2.5 MSa/s after `hz::prep`, 20 samples a

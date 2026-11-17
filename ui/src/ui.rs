@@ -2644,7 +2644,7 @@ impl Ui {
             && self.seg_pos.is_none()
             && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| {
                 crate::compress::live(&r.frame)
-                    || (crate::deepmeas::want(m, self.switches()).is_some() && crate::deepmeas::deep_pairs(&r.frame))
+                    || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame))
             })
     }
 
@@ -2881,7 +2881,7 @@ impl Ui {
             // the newest raw deep record of this step (deepmeas.rs): with one frame per batch (2 ms/div and up at
             // 10 M) the next pair frame is often queued behind it, which drew it on the fast path or replaced it as
             // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
-            let deep_raw = crate::deepmeas::want(&self.m, &sw).is_some();
+            let deep_raw = crate::deepmeas::want(&self.m).is_some();
             let mut raw_rec: Option<Record> = None;
             // fast display path (fastdraw.rs): every queued frame but the newest straight into the phosphor map
             if fast {
@@ -3110,7 +3110,7 @@ impl Ui {
             // 1.5 record lengths at slow time bases (a 1 s record at 100 ms/div comes once per second), or 2.5 usual
             // record intervals (a 125 M record takes ~1 s to read)
             let wait_after = 0.5f64.max(1.5 * HDIV as f64 * self.m.time_per_div() as f64).max(2.5 * self.rec_iv);
-            // `trig.hw_status = on`: the SCU says whether the TPU fired or the auto timeout forced the batch; it
+            // The SCU says whether the TPU fired or the auto timeout forced the batch; it
             // overrides what the software refinement concluded (docs/fork/trigger-lockin.md)
             if got > 0 {
                 if let Some((_, Some(tpu))) = self.src.hw_trig_fired() {
@@ -3150,8 +3150,8 @@ impl Ui {
             // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
             // measurement stays that of the last raw record
             let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
-            let hold = crate::deepmeas::hold(&self.m, &sw, shown, self.src.hw_deep_ok())
-                || crate::compress::hold(&self.m, shown);
+            let hold =
+                crate::deepmeas::hold(&self.m, shown, self.src.hw_deep_ok()) || crate::compress::hold(&self.m, shown);
             if got > 0 {
                 let p0 = std::time::Instant::now();
                 if hold {
@@ -3175,7 +3175,7 @@ impl Ui {
                         .as_ref()
                         .and_then(|r| r.raw.as_ref())
                         .is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame));
-                    if raw_deep && crate::deepmeas::want(&self.m, &sw).is_some() {
+                    if raw_deep && crate::deepmeas::want(&self.m).is_some() {
                         self.meas_pending = self.last[0].clone();
                     }
                 } else {
@@ -6986,8 +6986,7 @@ impl Ui {
             return;
         }
         // a held pair record (deepmeas.rs) is never measured: the measurement stays that of the last raw one
-        let sw = self.switches();
-        if crate::deepmeas::hold(&self.m, sw, rec.raw.as_ref().map(|r| &*r.frame), self.src.hw_deep_ok()) {
+        if crate::deepmeas::hold(&self.m, rec.raw.as_ref().map(|r| &*r.frame), self.src.hw_deep_ok()) {
             return;
         }
         let env: [bool; NCH] = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
@@ -12442,7 +12441,7 @@ mod tests {
 
     use super::axis_label;
 
-    // Break it catches (unit 2026-11-13, 1 ms/div 10 M, meas.deep_raw = on): the background measurement measuring the
+    // Break it catches (unit 2026-11-13, 1 ms/div 10 M, raw deep reads): the background measurement measuring the
     // newest record when the worker gets free. Raw deep records come once a second between pair records (held), so it
     // measured a pair record: Mean stayed NaN live. The raw record waiting for the worker is the one measured.
     #[test]
@@ -12454,7 +12453,6 @@ mod tests {
 
     fn live_raw_at(tdiv: f64) {
         use super::*;
-        crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
         shared.lock().unwrap().deep_ok = true;
@@ -12507,7 +12505,6 @@ mod tests {
             let avg = ui.meas(0, Meas::Vavg);
             assert!((avg - high as f64 / 4.0).abs() < 0.03, "Mean live at {} s/div, round {}: {}", tdiv, round, avg);
         }
-        crate::deepmeas::force(None);
     }
 
     // Break it catches: Clear keeping the raw deep record that waits for the busy worker. The next record asked for a
@@ -12516,7 +12513,6 @@ mod tests {
     #[test]
     fn clear_drops_the_record_waiting_for_the_worker() {
         use super::*;
-        crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
         shared.lock().unwrap().deep_ok = true;
@@ -12562,66 +12558,6 @@ mod tests {
         wait(&mut ui);
         let avg = ui.meas(0, Meas::Vavg);
         assert!((avg - 1.0).abs() < 0.03, "Mean held after the Clear: {}", avg);
-        crate::deepmeas::force(None);
-    }
-
-    // Break it catches: Mean, RMS and Std dev shown from min/max pairs (a deep record read through the FPGA
-    // compression), or Max/Min/Pk-pk lost with them
-    #[test]
-    fn measurements_on_min_max_pairs_leave_out_the_mean_type() {
-        use super::*;
-        // without the raw reads of deepmeas.rs (meas.deep_raw = off)
-        crate::deepmeas::force(Some(false));
-        let shared: crate::board::HwShared = Default::default();
-        let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
-        ui.m.run = RunState::Run;
-        for c in 1..NCH {
-            ui.m.ch[c].on = false;
-        }
-        let window = ui.m.time_per_div() as f64 * HDIV as f64;
-        let n = 40_000usize;
-        let v: Vec<f32> = (0..n)
-            .map(|i| {
-                if (i / 2) % 50 < 10 {
-                    1.0
-                } else if i % 2 == 0 {
-                    -1.0
-                } else {
-                    -0.98
-                }
-            })
-            .collect();
-        for (seq, envelope) in [(1u64, true), (2, false), (3, true)] {
-            // a deep record (above 1 M points): pairs of the live compression are held instead (compress::hold)
-            shared.lock().unwrap().queue.push_back(
-                crate::board::Frame {
-                    seq,
-                    dt: window * 1.2 / n as f64,
-                    pre: n / 2,
-                    ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
-                    envelope,
-                    acq: (1e9, 10_000_000),
-                    ..Default::default()
-                }
-                .into(),
-            );
-            for _ in 0..3 {
-                ui.producer_step(0.02);
-            }
-            let (avg, rms, max, pp) =
-                (ui.meas(0, Meas::Vavg), ui.meas(0, Meas::Vrms), ui.meas(0, Meas::Vmax), ui.meas(0, Meas::Vpp));
-            assert_eq!(avg.is_nan() && rms.is_nan(), envelope, "envelope {}: mean {} rms {}", envelope, avg, rms);
-            assert!(
-                (max - 1.0).abs() < 0.05 && (pp - 2.0).abs() < 0.05,
-                "envelope {}: max {} pk-pk {}",
-                envelope,
-                max,
-                pp
-            );
-            let row = ui.meas_rows().into_iter().find(|r| r.name == Meas::Vavg.name()).map(|r| r.v);
-            assert!(row.is_none_or(|x| x.is_nan() == envelope));
-        }
-        crate::deepmeas::force(None);
     }
 
     // Break it catches (compress.rs, raw newest frame every RAW_PERIOD): live-compression pair records measured between
@@ -12711,7 +12647,6 @@ mod tests {
     #[test]
     fn stop_shows_the_final_raw_frame_of_a_deep_record() {
         use super::*;
-        crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
@@ -12792,7 +12727,6 @@ mod tests {
         ui.m.run = RunState::Stop;
         steps(&mut ui, 1);
         assert!(ui.stop_final.is_none() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 2);
-        crate::deepmeas::force(None);
     }
 
     // Break it catches: the cheap measurement (sums only) for a deep raw window while something shown needs the full
@@ -12848,7 +12782,6 @@ mod tests {
     #[test]
     fn deep_raw_records_carry_the_measurements_between_pair_records() {
         use super::*;
-        crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
         shared.lock().unwrap().deep_ok = true;
@@ -12900,12 +12833,6 @@ mod tests {
             assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
         }
         assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
-        // off: pair records are measured (mean-type NaN, max of the pairs)
-        crate::deepmeas::force(Some(false));
-        push(6, true, pairs(1.5));
-        step(&mut ui);
-        assert!(ui.meas(0, Meas::Vavg).is_nan() && (ui.meas(0, Meas::Vmax) - 1.5).abs() < 0.02);
-        crate::deepmeas::force(None);
     }
 
     // Break it catches: the newest frame of a picture drawn another way than the others (record points instead of the
@@ -13136,7 +13063,7 @@ mod tests {
             ui.producer_step(0.02);
             ui.m.status
         };
-        // off (no reading): the software finds the edge at the hardware point
+        // No status reading yet: the software finds the edge at the hardware point
         assert_eq!(run(&mut ui, None), TrigStatus::Triggered);
         assert_eq!(run(&mut ui, Some((1, Some(false)))), TrigStatus::Auto);
         assert_eq!(run(&mut ui, Some((2, Some(true)))), TrigStatus::Triggered);
@@ -14698,7 +14625,6 @@ mod tests {
     #[test]
     fn statistics_of_the_fast_path_leave_out_what_pairs_cannot_give() {
         use super::*;
-        crate::deepmeas::force(Some(false));
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
@@ -14734,7 +14660,6 @@ mod tests {
         shared.lock().unwrap().queue.extend((12..=21).map(|s| frame(s, true, n)).map(std::sync::Arc::new));
         ui.producer_step(0.05);
         assert_eq!(counts(&ui), [1, 1, 1], "values of live-compression pairs counted");
-        crate::deepmeas::force(None);
     }
 
     // Break it catches: the stored record read again in STOP (`stop_replay`) counted as a new record in the statistics,
@@ -14742,7 +14667,6 @@ mod tests {
     #[test]
     fn stop_reads_the_record_again_without_counting_it() {
         use super::*;
-        crate::deepmeas::force(Some(false));
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         // frames carry the identity the acquisition had when it read them (our generation filter)
@@ -14791,7 +14715,6 @@ mod tests {
             assert!((ui.meas(0, Meas::Vmax) - top as f64).abs() < 1e-3, "Vmax {}", ui.meas(0, Meas::Vmax));
             assert!(ui.mstat.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
         }
-        crate::deepmeas::force(None);
     }
 
     // Break it catches (docs/fork/stop-exact.md): after the final raw frame of a deep record the view read again in
@@ -14801,7 +14724,6 @@ mod tests {
     #[test]
     fn stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs() {
         use super::*;
-        crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         // frames carry the identity the acquisition had when it read them (our generation filter)
@@ -14909,7 +14831,6 @@ mod tests {
         push(&ui, frame(7, true, pairs.clone()));
         steps(&mut ui, 2);
         assert!(ui.stop_raw.is_none() && ui.stop_picture().is_none());
-        crate::deepmeas::force(None);
     }
 
     // Break it catches: Clear in STOP releasing the hold (the hold asked for a record shown): the thread armed while
@@ -14918,7 +14839,6 @@ mod tests {
     #[test]
     fn clear_in_stop_keeps_the_hardware_held() {
         use super::*;
-        crate::deepmeas::force(Some(false));
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         // frames carry the identity the acquisition had when it read them (our generation filter)
@@ -14957,7 +14877,6 @@ mod tests {
         ui.m.run = RunState::Run;
         ui.step(0.05);
         assert!(!shared.lock().unwrap().hold);
-        crate::deepmeas::force(None);
     }
 
     // Break it catches: RUN after STOP taking a frame queued before the RUN (the batch in progress at the STOP) as the
@@ -14965,7 +14884,6 @@ mod tests {
     #[test]
     fn run_after_stop_takes_no_frame_from_before() {
         use super::*;
-        crate::deepmeas::force(Some(false));
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         // frames carry the identity the acquisition had when it read them (our generation filter)
@@ -15005,7 +14923,6 @@ mod tests {
         push(&ui, frame(3));
         ui.step(0.05);
         assert_eq!(seq(&ui), Some(3));
-        crate::deepmeas::force(None);
     }
 
     /// The fast path takes what fits into its time budget: the newest frames, the older ones are counted as dropped.

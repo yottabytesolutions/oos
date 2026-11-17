@@ -30,10 +30,12 @@ The keys on 2026-11-15, as read by the code (`crate::drawpipe::conf_value`; the 
 | `perf.place = on` | the threads and the DMA interrupts on fixed cores | off by default |
 | `trig.serial_hw = on` | the UART protocol trigger in the FPGA's receiver | off by default |
 | `autoset.levels = unit` | auto set-up levels from the FPGA's measurement unit | off by default; failed on the unit 2026-11-15 |
-| `trig.hw_status = off` | trigger status read from the FPGA | on by default since it was verified on the unit 2026-11-13 |
-| `meas.deep_raw = off` | mean-type measurements from raw deep reads | on by default since it was verified on the unit 2026-11-15 |
 
 A verified key keeps its `off` for a while as the way back; it is removed with the old path.
+
+2026-11-17 (#124): removed `trig.hw_status` and `meas.deep_raw` with their off paths. Trigger status from the FPGA
+was verified on the unit 2026-11-13; raw deep measurements were verified on the unit 2026-11-15. Both now always use
+the verified path.
 
 ## Consequences
 

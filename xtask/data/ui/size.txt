@@ -15,7 +15,7 @@
 516 file ui/src/measures/standard.rs
 4840 file ui/src/scpi.rs
 3048 file ui/src/store.rs
-11349 file ui/src/ui.rs
+11348 file ui/src/ui.rs
 1747 file ui/src/ui/analysis.rs
 608 file ui/src/ui/autoset.rs
 992 file ui/src/ui/bode.rs
@@ -35,7 +35,7 @@
 902 file ui/src/ui/sim.rs
 416 file ui/src/ui/startup.rs
 563 file ui/src/ui/time.rs
-1291 file ui/src/ui/tools.rs
+1290 file ui/src/ui/tools.rs
 807 file ui/src/ui/wlan.rs
 655 file ui/src/ui/workflow.rs
 804 file ui/src/ui/workspace.rs

@@ -458,7 +458,7 @@ pub struct Shared {
     /// the FPGA's zone trigger: wanted by the UI (None: off), the latest reading
     pub zone_want: Option<ZoneWant>,
     pub zone: Option<ZoneRead>,
-    /// `trig.hw_status = on`: what triggered the last batch, from the SCU status (number of the reading; Some(true)
+    /// What triggered the last batch, from the SCU status (number of the reading; Some(true)
     /// the TPU fired, Some(false) only forced acquisitions (auto timeout), None nothing accepted)
     pub trig_fired: Option<(u64, Option<bool>)>,
     /// signal levels from the FPGA's measure unit, for the auto set-up: wanted (request number, the settings stamp

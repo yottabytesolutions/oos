@@ -203,7 +203,7 @@ fn queued_raw_before_pair_keeps_measurement_sample_identity() {
         join: std::thread::spawn(|| {}),
     });
     assert!(ui.fast_ok());
-    assert!(crate::deepmeas::want(&ui.m, ui.switches()).is_some());
+    assert!(crate::deepmeas::want(&ui.m).is_some());
     {
         let mut g = lock(&shared);
         g.frame = pair.clone();

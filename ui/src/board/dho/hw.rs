@@ -2272,7 +2272,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     fresh = Some(super::replay::Read::new(b.clone(), p, count, raw_frame.is_some(), identity));
                     // trigger status of this batch from the SCU's sticky bits, then the stock status clear, before the next
                     // arm (prearm below) can record anything
-                    if switches.board.trig_hw_status {
+                    {
                         let v = bar.rd(0x4034);
                         bar.apply(&oos_hal::dho::scu::clear_status(v));
                         let f = match oos_hal::dho::scu::fired(v) {
@@ -3330,7 +3330,6 @@ mod tests {
     // the UI held for a raw record that never came and showed `----`.
     fn deep_record_gives_vavg_from_the_raw_window() {
         use crate::wave::Source;
-        crate::deepmeas::force(Some(true));
         let shared: crate::board::HwShared = Default::default();
         let mut ui = crate::ui::Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         let m = &mut ui.m;
@@ -3375,7 +3374,6 @@ mod tests {
         // the pair frames after it keep the raw value
         step(&mut ui, pairs);
         assert_eq!(ui.meas(1, Meas::Vavg), v);
-        crate::deepmeas::force(None);
     }
 
     #[test]

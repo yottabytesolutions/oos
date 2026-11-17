@@ -53,6 +53,17 @@ Decided by the owner on 2026-11-17 (#47, #50).
 - The size of the image grows by what the crates add. Worth a second look if that becomes a problem on the card.
 - ADR 0013 keeps only the vendor rule.
 
+## Amendment 2026-11-18
+
+The owner accepts M15a now for its behaviour gain. Results verified on the unit: B holds >= 26 fps under a
+stalled client (main 0.2 fps), delivers 628-1038 exchanges/s (main 30-34), and frame p50/p99 stays
+<= 2.2/6.5 ms on both. CPU, wakeups and RSS are within noise; picture loss is <= 3 %.
+Host measurements after the gate fix show +685 production LOC, +2.86 % aarch64 binary size and +9 dependencies.
+
+Judge size after M15b, once all transports use netio and the old raw IO code is deleted. If the total still adds
+production lines or binary size beyond noise, replace tokio with a `poll(2)` IO thread keeping the same architecture.
+This deferred size gate is an M15b acceptance criterion.
+
 ## References
 
 ADR 0013 (rewritten), ADR 0021 (superseded), ADR 0022, ADR 0024, ADR 0025, `deny.toml`, `xtask/data/architecture.txt`,

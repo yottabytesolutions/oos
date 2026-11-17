@@ -9,8 +9,7 @@ impl Scpi {
     /// An in-process interpreter with no transport or listener.
     pub fn disconnected() -> Self {
         Self {
-            l: None,
-            clients: Vec::new(),
+            transport: Default::default(),
             wav_src: WaveId::Ch(0),
             wav_fmt: 0,
             wav_mode: 0,
@@ -22,7 +21,6 @@ impl Scpi {
             last_error: None,
             opc_events: Vec::new(),
             acl: crate::netacl::Shared::default(),
-            acl_seen: 0,
         }
     }
 
@@ -67,15 +65,56 @@ impl Scpi {
         }
     }
 
-    pub(super) fn append_program_reply(&mut self, program: &mut Program, response: &[u8]) -> bool {
+    pub(super) fn logic_block(&mut self, words: &[u16]) -> Option<Vec<u8>> {
+        let capacity = words.len().saturating_mul(2).saturating_add(11);
+        if capacity > self.transport.reply_limit {
+            self.push_err("-363,\"Output capacity exhausted\"".into());
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(capacity);
+        bytes.extend_from_slice(format!("#9{:09}", words.len() * 2).as_bytes());
+        for word in words {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        Some(bytes)
+    }
+
+    pub(super) fn prepare_program_output(&mut self, program: &mut Program, command: &str, cv: &Canvas) -> bool {
+        let remaining = program.output.as_ref().map_or(RESP_MAX, |output| output.remaining());
+        let header = command.split_whitespace().next().unwrap_or("");
+        let nodes: Vec<_> = header.trim_start_matches(':').split(':').collect();
+        let display = nodes.len() == 2 && kw(nodes[0], "DISPlay") && kw(nodes[1].trim_end_matches('?'), "DATA");
+        let waveform = nodes.len() == 2 && kw(nodes[0], "WAVeform") && kw(nodes[1].trim_end_matches('?'), "DATA");
+        // PNG's raw, deflate and container buffers overlap; BMP may reallocate its block header.
+        let scratch = if display {
+            cv.px.len().saturating_mul(24).saturating_add(1 << 20)
+        } else if waveform {
+            256
+        } else {
+            8 << 20
+        };
+        if program.output.is_some() && header.ends_with('?') && remaining < scratch {
+            self.push_err("-363,\"Output capacity exhausted; remaining commands dropped\"".into());
+            program.commands.clear();
+            return false;
+        }
+        self.transport.reply_limit = if program.output.is_some() { remaining.saturating_sub(128) } else { remaining };
+        true
+    }
+
+    pub(super) fn append_program_reply(&mut self, program: &mut Program, response: Vec<u8>) -> bool {
         let separator = usize::from(program.has_reply);
-        if response.len() > RESP_MAX.saturating_sub(program.out.len().saturating_add(separator)) {
+        let remaining = program.output.as_ref().map_or_else(
+            || RESP_MAX.saturating_sub(program.out.len().saturating_add(separator)),
+            |output| output.remaining().saturating_sub(separator + 64),
+        );
+        let bytes = if program.output.is_some() { response.capacity() } else { response.len() };
+        if bytes > remaining {
             self.push_err("-363,\"Output buffer overrun; remaining commands dropped\"".into());
             program.commands.clear();
             return false;
         }
-        program.append(response);
-        true
+        program.append(response)
     }
 
     pub(super) fn normalize_errors(&mut self) {

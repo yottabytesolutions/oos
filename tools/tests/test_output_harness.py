@@ -44,6 +44,34 @@ class Outputs(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "stale"):
                     output.verify(binary)
 
+    def test_build_fetches_locked_dependencies_unless_offline_requested(self):
+        binary = self.root / "oos-fpgad"
+        cache = self.root / "dependencies"
+
+        def launch(args, **kwargs):
+            self.assertIn("--locked", args)
+            if not cache.exists() and "--offline" in args:
+                return Mock(stdout=[], wait=Mock(return_value=1))
+            cache.mkdir(exist_ok=True)
+            binary.write_bytes(b"built executable")
+            event = json.dumps({"reason": "compiler-artifact", "executable": str(binary)})
+            return Mock(stdout=[event], wait=Mock(return_value=0))
+
+        with patch.object(sys, "argv", ["output.py", "build", "-p", "oos-fpgad", "--offline"]), \
+                patch.dict(os.environ, CARGO_TARGET_DIR="target"), \
+                patch.object(output, "ROOT", self.root), \
+                patch.object(output, "revision", return_value="tree"), \
+                patch.object(output, "compiler_identity", return_value="compiler"), \
+                patch.object(output.subprocess, "Popen", side_effect=launch):
+            with self.assertRaisesRegex(ValueError, "Cargo build failed; no receipts written"):
+                output.main()
+            self.assertFalse(cache.exists())
+            self.assertFalse(output.receipt(binary).exists())
+            sys.argv.pop()
+            output.main()
+            self.assertTrue(cache.is_dir())
+            output.verify(binary)
+
     def test_receipts_reject_replaced_payload_source_and_missing_stamp(self):
         binary = self.root / "program"
         binary.write_bytes(b"first build")

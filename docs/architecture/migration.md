@@ -374,8 +374,11 @@ Use the same build profile, workload and unit; no host ratio substitutes for uni
 Retain the [target budgets](README.md#performance-budgets): frame p50 <= 8 ms / p99 <= 15 ms,
 remote enqueue p99 <= 3 ms, >= 500 exchanges/s and picture-rate loss <= 10%.
 The report must show the blocking write removed and justify any resource/code growth before broader adoption.
-These are experiment acceptance requirements, not new measurements or an amendment to ADR 0037.
-If the gate fails, stop rollout and bring the measurements to the owner; do not spread an unaccepted runtime.
+Owner decision 2026-11-18 ([ADR 0037 amendment](../adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md#amendment-2026-11-18)):
+accept M15a for the behaviour gain verified on the unit; defer the size criteria to M15b acceptance, after all
+transports use netio and the old raw IO code is deleted. M15a's host size cost is +685 production LOC,
++2.86 % aarch64 binary size and +9 dependencies after the gate fix. The unit and host measurements are recorded
+in [task 0016](../tasks/0016-m15-remote-adapters.md#measurements).
 
 **M15b, remaining network transports, one per package.** Scope: VXI-11, HiSLIP, HTTP/MCP, then mDNS reuse the
 accepted request/reply/runtime seam; remove replaced accept/read/send/poll loops. Keep switches, ACLs, payload limits,
@@ -383,7 +386,10 @@ error codes, binary/text encoding and pending-program semantics.
 Files: each transport and its helpers, `system/device/remote.rs`, `main.rs`, `netio/` and shared port types.
 Acceptance: existing RPC/HTTP/discovery fixtures plus M15a application-route, FIFO/Cmd and separate signed-upload
 contracts, stalled-client/cancellation/limit cases through the new IO;
-repeat M15a load measurements. Expected delta: -100..-400 per transport, measured after deletion.
+repeat M15a load measurements. Acceptance also includes the deferred size gate from ADR 0037: after all
+transports use netio and the old raw IO code is deleted, judge the total production LOC and binary size against
+the pre-M15a baseline. If the total still adds production lines or binary size beyond noise, replace tokio with
+a `poll(2)` IO thread keeping the same architecture. Expected delta: -100..-400 per transport, measured after deletion.
 Risk: medium. Depends: M15a gate. Parallel: disjoint transport internals after the shared API lands;
 serialize runtime registration/wiring. Encoding stays on CPU workers, not the IO executor.
 

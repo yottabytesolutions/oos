@@ -92,11 +92,14 @@ impl<T> Port<T> {
         self.wake.notify();
     }
 
+    pub fn wake_handle(&self) -> Arc<Wake> {
+        self.wake.clone()
+    }
+
     pub fn wake(&self) -> &Wake {
         &self.wake
     }
 
-    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         oos_hal::sync::lock(&self.state).queue.is_empty()
     }

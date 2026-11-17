@@ -86,6 +86,6 @@ mod tests {
         u.hdmi_out = Some((1920, 1080));
         u.m.hdmi = HdmiMode::Layout;
         let st = String::from_utf8(scpi.exec_line(&mut u, &cv, ":SYST:STAT?")).unwrap();
-        assert!(st.ends_with("hdmi 1920x1080 Layout"), "{}", st);
+        assert!(st.contains("hdmi 1920x1080 Layout"), "{}", st);
     }
 }

@@ -384,7 +384,7 @@ impl Server {
                                 .unwrap_or(MAX_PAYLOAD);
                             let reply = Reply { msgid: peer.msgid, payload: response, max_payload: max };
                             for message in reply.messages() {
-                                if !crate::scpi::send(&mut self.conns[i].s, &message) {
+                                if !crate::net::send(&mut self.conns[i].s, &message) {
                                     closed = true;
                                     break;
                                 }
@@ -408,7 +408,7 @@ impl Server {
                     Ok(Some(m)) => m,
                     Ok(None) => break,
                     Err(()) => {
-                        let _ = crate::scpi::send(&mut self.conns[i].s, &encode(FATAL_ERROR, FATAL_BAD_HEADER, 0, b""));
+                        let _ = crate::net::send(&mut self.conns[i].s, &encode(FATAL_ERROR, FATAL_BAD_HEADER, 0, b""));
                         closed = true;
                         break;
                     }
@@ -427,7 +427,7 @@ impl Server {
                 }
                 let replies = out.reply.iter().flat_map(Reply::messages);
                 for m in out.msgs.into_iter().chain(replies) {
-                    if !crate::scpi::send(&mut self.conns[i].s, &m) {
+                    if !crate::net::send(&mut self.conns[i].s, &m) {
                         closed = true;
                         break;
                     }

@@ -6,7 +6,7 @@ crate oos-dsp ->
 crate oos-hal -> libc ed25519-dalek miniz_oxide sha2 curve25519-dalek
 # oos-core comes with the migration (ADR 0014, architecture.md "Enforcement")
 crate oos-core -> oos-dsp
-crate oos-ui -> libc oos-hal oos-dsp oos-core
+crate oos-ui -> libc oos-hal oos-dsp oos-core tokio
 crate oos-fpgad -> libc oos-hal
 crate xtask -> proc-macro2 pulldown-cmark quote serde serde_json syn yaml-rust2
 #
@@ -67,3 +67,7 @@ layer core decode ->
 layer core zone ->
 layer core la ->
 layer core protocols ->
+
+# M15a raw transport: synchronous application ports, never interpreter or settings.
+confine ui tokio -> netio
+layer ui netio -> netport net6 netacl

@@ -56,6 +56,22 @@ impl Operations {
     }
 }
 impl Ui {
+    /// The interpreter encodes this frame-owned view before returning to intake; IO receives owned bytes only.
+    pub(crate) fn scpi_wave_samples(&self, source: WaveId, memory: bool) -> &[f32] {
+        match source {
+            WaveId::Ch(channel) => {
+                self.channel_view(channel, memory).map(|(samples, _, _)| samples).unwrap_or_default()
+            }
+            WaveId::Ref(slot) => self
+                .refs
+                .get(slot)
+                .and_then(Option::as_ref)
+                .filter(|record| record.v.len() >= 2 && record.dt > 0.0)
+                .map(|record| record.v.as_slice())
+                .unwrap_or_default(),
+        }
+    }
+
     pub(super) fn scpi_finish_operation(&mut self, token: OperationToken) {
         // Receipts are metadata only, bounded independently of waveform history.
         // An expired fence is interrupted rather than falsely completed.

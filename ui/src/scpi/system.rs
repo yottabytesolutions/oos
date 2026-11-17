@@ -74,7 +74,11 @@ fn settings(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str
         return Some(text_reply(&v.unwrap_or_default()));
     }
     if kw(nodes[1], "STATe") && query {
-        return Some(text_reply(crate::cmd::stat_text(ui).trim()));
+        let mut text = crate::cmd::stat_text(ui).trim().to_string();
+        if let Some(raw) = &scpi.transport.io {
+            text.push_str(&raw.ports().enqueue().text());
+        }
+        return Some(text_reply(&text));
     }
     // Acquire > Draw path: FRAMes (the fast path, default) or BATCh (PR #7's pipeline); the `pipe` part of
     // :SYSTem:STATe? says which runs

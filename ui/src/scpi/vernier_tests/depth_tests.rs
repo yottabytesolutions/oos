@@ -20,22 +20,7 @@ impl Fixture {
             ui: Ui::new(Source::Hw { shared: shared.clone(), seen: 0 }, crate::ui::host::Host::fixture()),
             shared,
             cv: super::panel_canvas(),
-            scpi: Scpi {
-                l: None,
-                clients: Vec::new(),
-                wav_src: WaveId::Ch(0),
-                wav_fmt: 0,
-                wav_mode: 0,
-                wav_start: 1,
-                wav_stop: 0,
-                err: Vec::new(),
-                acl: crate::netacl::Shared::default(),
-                acl_seen: 0,
-                event_status: 0,
-                error_serial: 0,
-                last_error: None,
-                opc_events: Vec::new(),
-            },
+            scpi: Scpi::disconnected(),
         }
     }
 

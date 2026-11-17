@@ -13,7 +13,7 @@
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
-3398 file ui/src/scpi.rs
+3308 file ui/src/scpi.rs
 1464 file ui/src/store.rs
 8877 file ui/src/ui.rs
 1747 file ui/src/ui/analysis.rs
@@ -78,7 +78,6 @@
 104 fn ui/src/scpi.rs Scpi::mask_cmd
 241 fn ui/src/scpi.rs Scpi::math_cmd
 84 fn ui/src/scpi.rs Scpi::meas_stat_cmd
-81 fn ui/src/scpi.rs Scpi::poll
 187 fn ui/src/scpi.rs Scpi::ref_cmd
 146 fn ui/src/scpi.rs Scpi::sim_cmd
 171 fn ui/src/scpi.rs Scpi::timebase_more
@@ -186,7 +185,6 @@
 20 struct ui/src/http.rs ShotState
 26 struct ui/src/measures/jitter.rs EyeSnap
 14 struct ui/src/pacing.rs State
-14 struct ui/src/scpi.rs Scpi
 19 struct ui/src/sysconf.rs SysConf
 13 struct ui/src/ui.rs TouchState
 215 struct ui/src/ui.rs Ui

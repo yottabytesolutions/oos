@@ -3,6 +3,10 @@
 use super::*;
 
 impl Http {
+    pub fn wake_handle(&self) -> Arc<crate::system::intake::Wake> {
+        self.inbox.port.wake_handle()
+    }
+
     pub(super) fn start(&mut self, port: impl Into<crate::net6::Port>, v6: bool) {
         let Some(l) = crate::net6::tcp(port, v6) else { return };
         let Ok(addr) = l.local_addr() else { return };

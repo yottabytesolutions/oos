@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Isolated unittest discovery, execution counts and skip evidence for every registered root.
-use super::{host, Outcome};
+use super::Outcome;
 use crate::run::{self, Context};
 use std::path::Path;
 
@@ -98,10 +98,7 @@ fn tests(ctx: &Context, root: &Path, directory: &str) -> Outcome {
 
 pub(crate) fn run(ctx: &Context, root: &Path) -> Outcome {
     validate_roots(ctx, root).map_err(|e| vec![e])?;
-    let mut lines = host::command(ctx, root, "python3", &["-I", "tools/output.py", "build", "-p", "oos-ui"])?;
-    let target = host::target(ctx, root)?;
-    let binary = target.join("debug/oos-ui");
-    lines.extend(host::command(ctx, root, "python3", &["-I", "tools/output.py", "verify", &binary.to_string_lossy()])?);
+    let mut lines = Vec::new();
     for directory in ROOTS {
         match tests(ctx, root, directory) {
             Ok(result) => lines.extend(result),

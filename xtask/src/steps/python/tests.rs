@@ -44,19 +44,13 @@ fn discovery_rejects_unregistered_tests_and_ignores_deleted_files() {
 const PASS: &str = "import unittest\nclass Tests(unittest.TestCase):\n    def test_pass(self): pass\n";
 
 #[test]
-fn isolated_roots_with_matching_module_names_run_after_a_verified_build() {
+fn isolated_roots_with_matching_module_names_run_without_a_ui_build() {
     let f = Fixture::new("python-run");
-    f.output("");
     for directory in ROOTS {
         f.write(&format!("{directory}/test_fixture.py"), PASS);
     }
     let lines = run(&Default::default(), &f.0).unwrap();
     assert_eq!(lines.iter().filter(|l| *l == "python-tests: 1 executed; 0 skipped").count(), ROOTS.len());
-    let commands = std::fs::read_to_string(f.0.join("commands")).unwrap();
-    assert!(commands.starts_with("build -p oos-ui\ntarget\nverify "));
-    assert!(commands.contains("selected target/debug/oos-ui"));
-    f.output("verify");
-    assert!(run(&Default::default(), &f.0).is_err());
 }
 
 #[test]

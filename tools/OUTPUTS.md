@@ -78,13 +78,12 @@ child before removing its private directory. Test reports remain in unique
 `host-results-*` directories. SSH/firewall/USB/WLAN/GEL and DTB simulations also use private temporary
 directories. No hardware access is needed for these host runs.
 
-Verification commands (the socket suite needs an unrestricted host):
+Verification commands (the socket test needs an unrestricted host):
 
 ```sh
 python3 -I -m unittest discover -s tools/tests -p test_output_harness.py
 python3 -I -m unittest discover -s tools/tests -p test_image_outputs.py
-python3 tools/output.py build -p oos-ui
-python3 -I -m unittest discover -s tools/tests -p test_host_sockets.py
+cargo test -p oos-ui --test host_sockets
 ```
 
 

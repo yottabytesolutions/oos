@@ -1,7 +1,7 @@
-# Code owner review is required only for these paths (.github/rulesets/main.json). Everything else, the pipeline,
-# the gate and the tooling included, merges on the required checks and codex-review alone: those changes are tested
-# by the pipeline itself. Risk paths: anything that writes hardware registers, touches calibration, or signs,
-# verifies or boots an update.
+# Code owner review is required only for these paths (.github/rulesets/main.json). Everything else, the gate and the
+# tooling included, merges on the required checks and codex-review alone: those changes are tested by the pipeline
+# itself. Risk paths: the workflows that report the required checks, anything that writes hardware registers,
+# touches calibration, or signs, verifies or boots an update.
 
 # Hardware register writes and the board model (FPGA, AFE, ADC, clocks, triggers, sequencer), including the
 # unit-specific calibration (calfile, selfcal, coretrim), which cannot be regenerated.
@@ -18,3 +18,10 @@
 /boot/ @ichnograph
 /kernel/ @ichnograph
 /rootfs/ @ichnograph
+
+# The workflows and the privacy scanner. A pull request runs its own head workflow, so a change here could turn a
+# required check into a no-op that still reports success (tools/privacy/README.md).
+/.github/CODEOWNERS @ichnograph
+/.github/workflows/ @ichnograph
+/.github/rulesets/ @ichnograph
+/tools/privacy/ @ichnograph

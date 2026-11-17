@@ -112,9 +112,11 @@ The bypass is for outages only, never to skip a finding.
 - **High, hardware:** hardware register writes (`hal/src/dho`, `fpgad`), calibration, update packages, signing,
   kexec, boot, kernel, rootfs. Label `risk/hardware`, code owner review, `tools/plan-matrix.sh` before and after in
   the pull request, and a run on a real unit before merge (`needs-unit` until then).
-- **Pipeline:** the workflows, the gate, the review rules and their settings (`.github/`, `xtask/`, `tools/ci/`,
-  `tools/privacy/`, `.githooks/`). No code owner review: such a change runs through the pipeline it changes, so the
-  required checks and the Codex review guard it. Auto-merge once both are green.
+- **Pipeline:** the gate and its tooling (`xtask/`, `tools/ci/`, `.githooks/`). No code owner review: such a change
+  runs through the gate it changes, so the required checks and the Codex review guard it. The workflows, the
+  rulesets and the privacy scanner (`.github/workflows/`, `.github/rulesets/`, `.github/CODEOWNERS`,
+  `tools/privacy/`) need code owner review: a pull request runs its own head workflow and could turn a required check
+  into a no-op.
 - **Medium:** behaviour visible on the scope (UI, SCPI, DSP results). Golden pictures and tests; a unit run when the
   change touches acquisition timing.
 - **Low:** host-only tooling, docs, tests.

@@ -70,6 +70,7 @@ mod shutdown;
 const SEND_TIMEOUT_S: u64 = 30;
 static SENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+use crate::placement::lower_priority;
 use shutdown::send_in_background;
 
 /// Which instrument addresses the identification page lists. The default is the scope: VXI-11 and the SCPI socket.
@@ -90,103 +91,6 @@ fn busy_answer(s: &TcpStream) {
     let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
     let msg = "busy, try again";
     let _ = (&*s).write_all(format!("HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", msg.len(), msg).as_bytes());
-}
-
-/// Nice value of the threads of the web remote (Linux; a thread's own value), where `SCHED_IDLE` is not to be had.
-const WEB_NICE: i32 = 10;
-
-/// The threads of the web remote (encoder, senders) run only on what the scope leaves over: scheduling class
-/// `SCHED_IDLE` (they get a core only while nothing else wants it), and only on the slower cores of a big.LITTLE SoC
-/// (RK3399: the four A53 in `little`, `Cores::little`; the frame loop keeps the two A72 for itself). Nice 10 where
-/// that fails.
-fn lower_priority(little: u64) {
-    // not in the tests: with every core busy with tests in parallel (CI), a thread at SCHED_IDLE got no time for
-    // seconds, and a viewer waiting for a picture got 304 or 503 instead
-    #[cfg(target_os = "linux")]
-    if !cfg!(test) {
-        // SAFETY: plain system calls on the calling thread; the parameter and the CPU set are local values.
-        unsafe {
-            let tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
-            // priority 0, the only one SCHED_IDLE takes (musl's struct has more fields)
-            let p: libc::sched_param = std::mem::zeroed();
-            // the system call itself: musl's sched_setscheduler() is a stub that always fails
-            if libc::syscall(libc::SYS_sched_setscheduler, tid, libc::SCHED_IDLE, &p as *const libc::sched_param) != 0 {
-                libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, WEB_NICE);
-            }
-            if little != 0 {
-                let mut set: libc::cpu_set_t = std::mem::zeroed();
-                for c in crate::placement::cpus(little) {
-                    libc::CPU_SET(c, &mut set);
-                }
-                libc::sched_setaffinity(tid, std::mem::size_of::<libc::cpu_set_t>(), &set);
-            }
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = little;
-}
-
-/// The slower cores of a big.LITTLE SoC (RK3399: 0-3), empty where the cores are all alike.
-pub fn little_core_list() -> Vec<usize> {
-    crate::placement::cpus(crate::placement::Cores::read().little)
-}
-
-/// The calling thread onto `cores` (nothing when it is empty).
-pub fn pin_to(cores: &[usize]) {
-    #[cfg(target_os = "linux")]
-    if !cores.is_empty() {
-        // SAFETY: a local CPU set for the calling thread
-        unsafe {
-            let mut set: libc::cpu_set_t = std::mem::zeroed();
-            for &c in cores {
-                libc::CPU_SET(c, &mut set);
-            }
-            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = cores;
-}
-
-/// The calling thread onto the slower cores of a big.LITTLE SoC (`little`, `Cores::little`; RK3399: the four A53), at
-/// normal priority: the measurements in the background (`ui::MeasWorker`); the threads it starts after this stay
-/// there too. Nothing without little cores.
-pub fn to_little_cores(little: u64) {
-    #[cfg(target_os = "linux")]
-    {
-        if little == 0 {
-            return;
-        }
-        // SAFETY: a local CPU set for the calling thread
-        unsafe {
-            let mut set: libc::cpu_set_t = std::mem::zeroed();
-            for c in crate::placement::cpus(little) {
-                libc::CPU_SET(c, &mut set);
-            }
-            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = little;
-}
-
-/// The calling thread onto the fastest cores (RK3399: the two A72), and the processes it starts after this with it.
-/// System > Graphics = GPU: the frame loop and the GPU helper compare and send the layers there (on an A53 a
-/// frame's compare took three times as long).
-#[cfg(target_os = "linux")]
-pub fn pin_to_big_cores(cores: crate::placement::Cores) {
-    let big = crate::placement::cpus(cores.big);
-    if big.is_empty() || cores.little == 0 {
-        return;
-    }
-    // SAFETY: a local CPU set for the calling thread
-    unsafe {
-        let mut set: libc::cpu_set_t = std::mem::zeroed();
-        for c in big {
-            libc::CPU_SET(c, &mut set);
-        }
-        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-    }
 }
 
 /// The fastest the live picture is made: 20 a second.

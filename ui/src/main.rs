@@ -91,7 +91,7 @@ fn source(args: &[String], switches: &sysconf::Switches) -> Source {
         let cal_dir = arg(args, "--cal").unwrap_or_else(|| "/rigol/data".into());
         eprintln!("oos-ui: board {}", board::board().name());
         // on the unit the frame loop and the acquisition thread keep the two A72 for themselves
-        http::pin_to_big_cores(switches.cores);
+        placement::pin_to_big_cores(switches.cores);
         placement::place(placement::Role::Ui, switches);
         let program_afe = args.iter().any(|a| a == "--afe");
         let o = board::Spawn { mask, program_afe, cal_dir, start_up: arg(args, "--start-up") };
@@ -369,7 +369,7 @@ const HDMI_BG: u32 = 0x0d1117;
 /// The GPU helper with the panel's scan-out buffers as targets 0 to 2 (the monitor's follow them, up to the helper's 8).
 #[cfg(target_os = "linux")]
 fn start_gpu(disp: &drm::Display, sw: &sysconf::Switches) -> Result<gpu::Gpu, String> {
-    http::pin_to_big_cores(sw.cores);
+    placement::pin_to_big_cores(sw.cores);
     placement::place(placement::Role::Ui, sw);
     let mut g = gpu::Gpu::start(gpu::HELPER)?;
     for i in 0..disp.buffers() {

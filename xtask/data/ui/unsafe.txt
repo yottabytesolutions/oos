@@ -5,13 +5,10 @@
 1 unsafe ui/src/ethlink.rs
 3 unsafe ui/src/fastdraw.rs
 19 unsafe ui/src/gpu.rs
-4 unsafe ui/src/http.rs
 2 unsafe ui/src/main.rs
 8 unsafe ui/src/mdns.rs
 1 unsafe ui/src/net.rs
-1 unsafe ui/src/placement.rs
-2 unsafe ui/src/sntp.rs
+1 unsafe ui/src/sntp.rs
 1 unsafe ui/src/store.rs
-2 unsafe ui/src/ui/sysinfo.rs
 1 unsafe ui/src/usbtmc.rs
 11 unsafe ui/src/vpu.rs

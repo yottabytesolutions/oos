@@ -30,6 +30,12 @@ coverage tools and the pinned Rust host/ARM toolchain. Syntax checking does not 
 Only the explicit `--image` tier needs Docker with arm64 execution, QEMU, kernel source and the
 locked GPU/simulation/image profiles. Prepare it with `tools/bootstrap.sh --image`.
 Missing prerequisites fail in the tier that requires them.
+
+Host scripts are POSIX `sh` and run on Linux, the BSDs and macOS. Where the systems differ (SHA-256 tools, file
+sizes) they source `tools/lib/portable.sh`. `python3 -I tools/ci/host_scripts.py check` runs shellcheck as `sh` on
+every script that runs on a host; the PR fast job runs it. Scripts that run only on the scope or inside a Linux
+container are not host scripts (`SCOPE` in that file).
+
 Then run:
 
 ```sh

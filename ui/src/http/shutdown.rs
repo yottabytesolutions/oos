@@ -88,6 +88,7 @@ impl super::Http {
 
     pub fn shutdown(&mut self, deadline: Instant) -> usize {
         self.inbox.quit.store(true, std::sync::atomic::Ordering::Release);
+        self.inbox.port.clear(true);
         self.set_open(None, false);
         {
             let mut state = self.shots.lock();
@@ -131,22 +132,19 @@ pub(super) fn send_in_background(
 
 pub(super) fn queue_request(s: TcpStream, inbox: &super::Inbox, text: String, body: Vec<u8>, lim: super::Limits) {
     use super::{answer, Req};
-    let id = inbox.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let id = crate::system::intake::Id::new(inbox.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst), 0);
     let Ok(sc) = s.try_clone() else { return };
-    let mut q = inbox.lock();
+    let (taken, reply) = std::sync::mpsc::sync_channel(1);
+    let bytes = text.capacity() + body.capacity();
     if inbox.quit.load(std::sync::atomic::Ordering::Acquire) {
         return;
     }
-    q.push_back(Req { id, s: sc, head: text, body });
-    let until = Instant::now() + lim.take;
-    while q.iter().any(|r| r.id == id) {
-        let now = Instant::now();
-        if now >= until {
-            q.retain(|r| r.id != id);
-            drop(q);
-            return answer(&s, "503 Service Unavailable", "busy, try again");
-        }
-        q = inbox.taken.wait_timeout(q, until - now).map(|x| x.0).unwrap_or_else(|e| e.into_inner().0);
+    if inbox.port.submit(id, Req { taken, s: sc, head: text, body }, bytes).is_err() {
+        return answer(&s, "503 Service Unavailable", "busy, try again");
+    }
+    if matches!(reply.recv_timeout(lim.take), Err(std::sync::mpsc::RecvTimeoutError::Timeout)) && inbox.port.cancel(id)
+    {
+        answer(&s, "503 Service Unavailable", "busy, try again");
     }
 }
 

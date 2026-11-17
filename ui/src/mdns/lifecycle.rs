@@ -1,38 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Bounded responder teardown.
 use super::*;
+use crate::system::wake::Wake;
 
 pub(super) fn flush(r: &mut Responder) {
     for line in r.log.drain(..) {
         eprintln!("oos-ui: {}", line);
-    }
-}
-
-/// A coalescing control wakeup, polled beside the network sockets.
-pub(super) struct Wake {
-    socket: std::os::unix::net::UnixDatagram,
-}
-
-impl Wake {
-    pub(super) fn pair() -> std::io::Result<(Self, Self)> {
-        let (tx, rx) = std::os::unix::net::UnixDatagram::pair()?;
-        tx.set_nonblocking(true)?;
-        rx.set_nonblocking(true)?;
-        Ok((Self { socket: tx }, Self { socket: rx }))
-    }
-
-    pub(super) fn notify(&self) {
-        // A full socket already has a pending wakeup; the control channel owns the messages.
-        let _ = self.socket.send(&[1]);
-    }
-
-    pub(super) fn fd(&self) -> std::os::fd::RawFd {
-        use std::os::fd::AsRawFd;
-        self.socket.as_raw_fd()
-    }
-
-    pub(super) fn drain(&self) {
-        while self.socket.recv(&mut [0]).is_ok() {}
     }
 }
 
@@ -48,15 +21,16 @@ impl Mdns {
                 return;
             }
             let (tx, rx) = std::sync::mpsc::channel();
-            let (wake, receiver) = match lifecycle::Wake::pair() {
-                Ok(pair) => pair,
+            let wake = match Wake::new() {
+                Ok(wake) => std::sync::Arc::new(wake),
                 Err(e) => {
                     eprintln!("oos-ui: mDNS: control wakeup: {}", e);
                     return;
                 }
             };
+            let receiver = wake.clone();
             let only = self.only.clone();
-            match std::thread::Builder::new().name("mdns".into()).spawn(move || run(rx, only, receiver)) {
+            match std::thread::Builder::new().name("mdns".into()).spawn(move || run(rx, only, &receiver)) {
                 Ok(h) => {
                     self.tx = Some(tx);
                     self.th = Some(h);
@@ -103,7 +77,8 @@ mod tests {
     #[test]
     fn shutdown_wakes_network_wait_and_leaves_time_for_http() {
         let (tx, rx) = mpsc::channel();
-        let (wake, receiver) = Wake::pair().unwrap();
+        let wake = std::sync::Arc::new(Wake::new().unwrap());
+        let receiver = wake.clone();
         let (ready, waiting) = mpsc::channel();
         let stopped = Arc::new(AtomicBool::new(false));
         let finished = stopped.clone();

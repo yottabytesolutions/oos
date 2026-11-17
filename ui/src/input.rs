@@ -188,8 +188,8 @@ impl Inputs {
     }
 
     /// Waits up to `timeout_ms` for input and returns everything that arrived.
-    pub fn poll(&mut self, timeout_ms: i32) -> Vec<In> {
-        let mut fds = Vec::new();
+    pub fn poll(&mut self, timeout_ms: i32, wake: &crate::system::intake::Wake) -> Vec<In> {
+        let mut fds = vec![libc::pollfd { fd: wake.fd(), events: libc::POLLIN, revents: 0 }];
         if let Some(t) = &self.touch {
             fds.push(libc::pollfd { fd: t.fd, events: libc::POLLIN, revents: 0 });
         }
@@ -316,5 +316,34 @@ impl Inputs {
             let line: Vec<u8> = self.ctl_buf.drain(..=p).collect();
             out.push(In::Cmd(String::from_utf8_lossy(&line).trim().to_string()));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::system::intake::{Id, Port, Wake};
+    use crate::ui::lifecycle::test_wait::HANG_GUARD;
+    use std::sync::{mpsc, Arc};
+
+    #[test]
+    fn remote_request_wakes_input_poll_without_a_panel_event() {
+        let wake = Arc::new(Wake::new().unwrap());
+        let port = Arc::new(Port::new(1, 1, wake));
+        let worker = port.clone();
+        let (ready, waiting) = mpsc::channel();
+        let (done, completed) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let mut inputs = Inputs { touch: None, panel: -1, panel_buf: Vec::new(), ctl: -1, ctl_buf: Vec::new() };
+            ready.send(()).unwrap();
+            assert!(inputs.poll(-1, worker.wake()).is_empty());
+            worker.wake().drain();
+            assert_eq!(worker.take(1), vec![7]);
+            done.send(()).unwrap();
+        });
+        waiting.recv_timeout(HANG_GUARD).unwrap();
+        port.submit(Id::new(1, 0), 7, 1).unwrap();
+        completed.recv_timeout(HANG_GUARD).expect("remote request must wake input poll");
+        thread.join().unwrap();
     }
 }

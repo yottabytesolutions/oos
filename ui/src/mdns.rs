@@ -1272,7 +1272,7 @@ mod net {
                     std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
                 )
             } else {
-                opt(fd, libc::IPPROTO_IP, libc::IP_PKTINFO, 1)?;
+                dst::OPTS.iter().try_for_each(|&o| opt(fd, libc::IPPROTO_IP, o, 1))?;
                 let mut a: libc::sockaddr_in = std::mem::zeroed();
                 a.sin_family = libc::AF_INET as libc::sa_family_t;
                 a.sin_port = PORT.to_be();
@@ -1507,7 +1507,7 @@ mod net {
         }
     }
 
-    /// One packet with the interface it came in on and its destination (IP_PKTINFO / IPV6_PKTINFO).
+    /// One packet with the interface it came in on and its destination (dst.rs / IPV6_PKTINFO).
     fn recv_on(s: &UdpSocket, buf: &mut [u8]) -> Option<Got> {
         // SAFETY: recvmsg fills the buffers given; the control messages are read within the length it reports
         unsafe {
@@ -1545,10 +1545,9 @@ mod net {
             let mut c = libc::CMSG_FIRSTHDR(&mh);
             while !c.is_null() {
                 let h = &*c;
-                if h.cmsg_level == libc::IPPROTO_IP && h.cmsg_type == libc::IP_PKTINFO {
-                    let pi = std::ptr::read_unaligned(libc::CMSG_DATA(c) as *const libc::in_pktinfo);
-                    index = pi.ipi_ifindex as u32;
-                    group = Ipv4Addr::from(u32::from_be(pi.ipi_addr.s_addr)).is_multicast();
+                if h.cmsg_level == libc::IPPROTO_IP {
+                    let len = (h.cmsg_len as usize).saturating_sub(libc::CMSG_LEN(0) as usize);
+                    dst::v4(h.cmsg_type, std::slice::from_raw_parts(libc::CMSG_DATA(c), len), &mut index, &mut group);
                 } else if h.cmsg_level == libc::IPPROTO_IPV6 && h.cmsg_type == libc::IPV6_PKTINFO {
                     let pi = std::ptr::read_unaligned(libc::CMSG_DATA(c) as *const libc::in6_pktinfo);
                     index = pi.ipi6_ifindex as u32;
@@ -2314,4 +2313,5 @@ mod tests {
     }
 }
 
+mod dst;
 mod lifecycle;

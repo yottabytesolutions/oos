@@ -26,6 +26,10 @@ impl Wake {
         }
     }
 
+    pub fn receiver(&self) -> io::Result<UnixDatagram> {
+        self.receiver.try_clone()
+    }
+
     pub fn fd(&self) -> RawFd {
         self.receiver.as_raw_fd()
     }

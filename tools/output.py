@@ -153,7 +153,7 @@ def main():
         before = revision()
         compiler = compiler_identity()
         # Stream Cargo diagnostics while collecting only executable artifact paths.
-        proc = subprocess.Popen(["cargo", "build", "--offline", "--locked", "--message-format=json", *args],
+        proc = subprocess.Popen(["cargo", "build", "--locked", "--message-format=json", *args],
                                 cwd=ROOT, stdout=subprocess.PIPE, text=True)
         binaries = []
         for line in proc.stdout:

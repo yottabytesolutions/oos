@@ -35,10 +35,10 @@ fn data(scpi: &mut Scpi, cv: &Canvas, arg: &str) -> Option<Vec<u8>> {
     let kind = arg.split_whitespace().next().unwrap_or("").trim();
     let up = kind.to_ascii_uppercase();
     if up.starts_with("PNG") {
-        return Some(block(&crate::store::png_of(cv)));
+        return Some(block(crate::store::png_of(cv)));
     }
     if up.is_empty() || up.starts_with("BMP") {
-        return Some(block(&bmp(cv)));
+        return Some(block(bmp(cv)));
     }
     scpi.push_err(format!("-224,\"Illegal parameter value\" {}", kind));
     None

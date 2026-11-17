@@ -64,10 +64,13 @@ mod decode;
 mod dispatch;
 mod display;
 mod dpt;
+mod intake;
 mod inverter;
 mod magnetic;
 mod measure;
 mod message;
+#[cfg(test)]
+mod netio_tests;
 mod power;
 #[cfg(test)]
 mod segments_tests;
@@ -79,16 +82,18 @@ mod timebase;
 mod trigger;
 mod waveform;
 #[cfg(test)]
-use std::io::Read;
-use std::io::{ErrorKind, Write};
-use std::net::{TcpListener, TcpStream};
-use std::time::Duration;
+use std::io::Write;
+#[cfg(test)]
+use std::io::{ErrorKind, Read};
+#[cfg(test)]
+use std::net::TcpStream;
 
 /// One bounded SCPI message, retained by its transport while *OPC? is pending.
 #[derive(Default)]
 pub struct Program {
     commands: std::collections::VecDeque<(String, bool)>,
     out: Vec<u8>,
+    output: Option<crate::netport::Output>,
     waiting: Option<crate::ui::Operations>,
     separator: u8,
     pub bytes: usize,
@@ -114,13 +119,23 @@ impl Program {
         }
         Self { commands, separator: b';', bytes: text.len(), ..Self::default() }
     }
-    fn append(&mut self, reply: &[u8]) {
-        if self.has_reply {
-            self.out.push(self.separator);
+    fn append(&mut self, reply: Vec<u8>) -> bool {
+        if let Some(output) = &mut self.output {
+            if self.has_reply && output.push(vec![self.separator]).is_err() {
+                return false;
+            }
+            if output.push(reply).is_err() {
+                return false;
+            }
+        } else {
+            if self.has_reply {
+                self.out.push(self.separator);
+            }
+            self.out.extend_from_slice(&reply);
         }
-        self.out.extend_from_slice(reply);
         self.separator = b';';
         self.has_reply = true;
+        true
     }
     /// Adapter used by transport unit fixtures with a synchronous test interpreter.
     #[cfg(test)]
@@ -131,54 +146,22 @@ impl Program {
             }
             let reply = exec(&command);
             if !reply.is_empty() || command.split_whitespace().next().is_some_and(|header| header.ends_with('?')) {
-                self.append(&reply);
+                self.append(reply);
             }
         }
         std::mem::take(&mut self.out)
     }
 }
 
-struct Client {
-    s: TcpStream,
-    buf: Vec<u8>,
-    program: Option<Program>,
-}
-
 /// Longest command line (`:SOURce:ARB:DATA` with its samples is the longest there is); a client past it is dropped.
 const MAX_LINE: usize = 4 << 20;
-/// Connections at once.
-const MAX_CLIENTS: usize = 8;
 /// A message stops here: one answer may be a long record, ten thousand of them in one line may not.
 pub const RESP_MAX: usize = 64 << 20;
 const ERR_MAX: usize = 20;
 const ERR_LEN: usize = 256;
-/// A client that takes no data for this long, or not all of a response in `SEND_LIMIT`, is dropped: the server runs in
-/// the main loop, the screen and the keys wait while it writes.
-const SEND_STALL: Duration = Duration::from_secs(2);
-const SEND_LIMIT: Duration = Duration::from_secs(30);
-
-/// Writes `d` to a client; false when it was given up (the connection is then to be closed).
-pub fn send(s: &mut TcpStream, d: &[u8]) -> bool {
-    let end = std::time::Instant::now() + SEND_LIMIT;
-    let _ = s.set_write_timeout(Some(SEND_STALL));
-    let mut p = 0;
-    while p < d.len() {
-        if std::time::Instant::now() >= end {
-            return false;
-        }
-        match s.write(&d[p..]) {
-            Ok(0) => return false,
-            Ok(n) => p += n,
-            Err(e) if e.kind() == ErrorKind::Interrupted => {}
-            Err(_) => return false,
-        }
-    }
-    true
-}
 
 pub struct Scpi {
-    l: Option<TcpListener>,
-    clients: Vec<Client>,
+    transport: intake::Transport,
     /// :WAVeform:SOURce, a channel or a reference slot
     wav_src: WaveId,
     wav_fmt: u8, // 0 BYTE, 1 WORD, 2 ASCII
@@ -190,8 +173,6 @@ pub struct Scpi {
     err: Vec<String>,
     /// who may connect (`netacl`, net.allow; empty: everyone): new connections, and after a change those held
     pub acl: crate::netacl::Shared,
-    /// the changes of `acl` looked at (`netacl::Shared::changed`)
-    acl_seen: u64,
     event_status: u8,
     error_serial: u64,
     last_error: Option<String>,
@@ -735,14 +716,20 @@ fn e(v: f64) -> String {
 
 impl Scpi {
     pub fn open(port: impl Into<crate::net6::Port>, v6: bool) -> Scpi {
-        Self { l: Self::bind(port, v6), ..Self::disconnected() }
+        let mut scpi = Self::disconnected();
+        scpi.transport.io = crate::netio::Raw::open(port, v6, scpi.transport.wake.clone()).ok();
+        scpi
     }
 
-    fn bind(port: impl Into<crate::net6::Port>, v6: bool) -> Option<TcpListener> {
-        let l = crate::net6::tcp(port, v6)?;
-        l.set_nonblocking(true).ok()?;
-        eprintln!("oos-ui: SCPI on {}", l.local_addr().ok()?);
-        Some(l)
+    pub fn open_with_wake(
+        port: impl Into<crate::net6::Port>,
+        v6: bool,
+        wake: std::sync::Arc<crate::system::intake::Wake>,
+    ) -> Self {
+        let mut scpi = Self::disconnected();
+        scpi.transport.wake = wake;
+        scpi.transport.io = crate::netio::Raw::open(port, v6, scpi.transport.wake.clone()).ok();
+        scpi
     }
 
     /// Queue a SCPI error and latch the matching *ESR bit. A query that fails still answers with this text,
@@ -774,112 +761,33 @@ impl Scpi {
     }
 
     pub fn port(&self) -> Option<u16> {
-        self.l.as_ref().and_then(|l| l.local_addr().ok()).map(|a| a.port())
+        self.transport.io.as_ref().map(crate::netio::Raw::port)
     }
 
-    /// System > Network > Remote services: the port open (`Some`), or closed with its connections.
     pub fn set_open(&mut self, port: Option<u16>, v6: bool) {
         match port {
-            Some(p) if self.l.is_none() => self.l = Self::bind(p, v6),
+            Some(port) if self.transport.io.is_none() => {
+                self.transport.io = crate::netio::Raw::open(port, v6, self.transport.wake.clone()).ok();
+                self.transport.acl_seen = u64::MAX;
+            }
             Some(_) => {}
             None => {
-                if self.l.take().is_some() {
-                    eprintln!("oos-ui: SCPI off");
-                }
-                for client in &self.clients {
-                    let _ = client.s.shutdown(std::net::Shutdown::Both);
-                }
-                self.clients.clear();
+                self.transport.io = None;
+                self.transport.intake = Default::default();
             }
         }
     }
 
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
-        if let Some(l) = &self.l {
-            while let Ok((s, peer)) = l.accept() {
-                if !self.acl.permits_peer(Ok(peer)) {
-                    continue; // dropped: closes the connection
-                }
-                let _ = s.set_nonblocking(false);
-                let _ = s.set_nodelay(true);
-                // each connection costs a read per pass of the frame loop, one that does not wait (`net::read_now`)
-                if self.clients.len() < MAX_CLIENTS {
-                    self.clients.push(Client { s, buf: Vec::new(), program: None });
-                }
-            }
+        let Some(raw) = &self.transport.io else { return };
+        if self.acl.changed(&mut self.transport.acl_seen) {
+            raw.set_acl(self.acl.clone());
         }
-        // net.allow changed on the screen: a client the list now leaves out is closed, as at `accept`
-        if self.acl.changed(&mut self.acl_seen) {
-            let acl = &self.acl;
-            self.clients.retain(|c| acl.permits_peer(c.s.peer_addr()));
-        }
-        let mut i = 0;
-        while i < self.clients.len() {
-            let mut tmp = [0u8; 4096];
-            let mut closed = false;
-            // the client sent its last bytes (`echo "*IDN?" | nc host 5555` closes its side after the line): what came
-            // before is still answered, as in 0.1.12 and on the stock system
-            let mut eof = false;
-            let mut read_bytes = 0;
-            loop {
-                match crate::net::read_now(&self.clients[i].s, &mut tmp) {
-                    Ok(0) => {
-                        eof = true;
-                        break;
-                    }
-                    Ok(n) => {
-                        if self.clients[i].buf.len() + n > MAX_LINE {
-                            closed = true;
-                            break;
-                        }
-                        self.clients[i].buf.extend_from_slice(&tmp[..n]);
-                        read_bytes += n;
-                        if read_bytes >= 65536 {
-                            break;
-                        }
-                    }
-                    Err(e) if crate::net::later(&e) => break,
-                    Err(_) => {
-                        closed = true;
-                        break;
-                    }
-                }
-            }
-            // a program waiting for an operation (`*OPC?`) when the client went is not resumed: no later command of it runs
-            if eof && self.clients[i].program.is_some() {
-                closed = true;
-            }
-            while !closed {
-                if self.clients[i].program.is_none() {
-                    let Some(p) = self.clients[i].buf.iter().position(|&c| c == b'\n') else {
-                        break;
-                    };
-                    let line: Vec<u8> = self.clients[i].buf.drain(..=p).collect();
-                    self.clients[i].program = Some(Program::new(&String::from_utf8_lossy(&line)));
-                }
-                let mut program = self.clients[i].program.take().unwrap();
-                let Some(mut response) = self.poll_program(ui, cv, &mut program) else {
-                    // after the end of the input a program that would have to wait is dropped
-                    if !eof {
-                        self.clients[i].program = Some(program);
-                    }
-                    break;
-                };
-                if program.has_reply {
-                    response.push(b'\n');
-                    if !send(&mut self.clients[i].s, &response) {
-                        closed = true;
-                        break;
-                    }
-                }
-            }
-            closed |= eof || self.clients[i].buf.len() > MAX_LINE;
-            if closed {
-                self.clients.remove(i);
-            } else {
-                i += 1;
-            }
-        }
+        let ports = raw.ports();
+        let start = std::time::Instant::now();
+        let mut intake = std::mem::take(&mut self.transport.intake);
+        intake.poll(&ports, || start.elapsed(), |program| self.poll_program(ui, cv, program));
+        self.transport.intake = intake;
     }
 
     fn poll_events(&mut self, ui: &Ui) {
@@ -897,6 +805,7 @@ impl Scpi {
     /// The continuation owns its earlier replies and remaining commands: no write is replayed.
     pub fn poll_program(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
         let response = crate::ui::change::intake(ui, |ui| self.advance_program(ui, cv, program));
+        self.transport.reply_limit = RESP_MAX;
         self.normalize_errors();
         response
     }
@@ -912,7 +821,7 @@ impl Scpi {
                 crate::ui::OperationState::Pending => return None,
                 crate::ui::OperationState::Complete => {
                     program.waiting = None;
-                    if !self.append_program_reply(program, b"1") {
+                    if !self.append_program_reply(program, b"1".to_vec()) {
                         return Some(std::mem::take(&mut program.out));
                     }
                 }
@@ -920,6 +829,9 @@ impl Scpi {
                     self.push_err("-410,\"OPC query interrupted by cancelled operation\"".into());
                     program.commands.clear();
                     program.out.clear();
+                    if program.output.is_some() {
+                        program.output = Some(Default::default());
+                    }
                     program.has_reply = false;
                     program.waiting = None;
                     return Some(Vec::new());
@@ -935,6 +847,9 @@ impl Scpi {
                 program.commands.clear();
                 break;
             }
+            if !self.prepare_program_output(program, &command, cv) {
+                break;
+            }
             program.before(ui, &command);
             if command.eq_ignore_ascii_case("*OPC?") {
                 let fence = ui.scpi_operations();
@@ -942,15 +857,16 @@ impl Scpi {
                     program.waiting = Some(fence);
                     return None;
                 }
-                if !self.append_program_reply(program, b"1") {
+                if !self.append_program_reply(program, b"1".to_vec()) {
                     break;
                 }
             } else if let Some(response) = self.exec(ui, cv, &command) {
-                if !self.append_program_reply(program, &response) {
+                if !self.append_program_reply(program, response) {
                     break;
                 }
             }
         }
+        self.transport.reply_limit = RESP_MAX;
         program.settle(ui);
         Some(std::mem::take(&mut program.out))
     }
@@ -1851,7 +1767,7 @@ impl Scpi {
                 .filter(|line| line.split_once(',').is_some_and(|(_, rest)| rest.starts_with(&prefix)))
                 .collect::<Vec<_>>()
                 .join("\n");
-            return Some(block(format!("{}\n{}", proto_token(cfg.proto), rows).as_bytes()));
+            return Some(block(format!("{}\n{}", proto_token(cfg.proto), rows).into_bytes()));
         }
         if n.len() == 2 && kw(n0, "RS232") {
             return self.bus_rs232(ui, k, n[1], query, arg);
@@ -2824,20 +2740,6 @@ impl Scpi {
         }
     }
 
-    /// The page `:WAVeform:DATA?` returns, and the scale of the source.
-    fn wave_page(&self, ui: &Ui) -> (Vec<f32>, f64, f64, f64, f64) {
-        let (start, stop) = (self.wav_start.max(1), self.wav_stop);
-        match self.wav_src {
-            WaveId::Ch(c) => {
-                let ch = &ui.m.ch[c];
-                let (v, dt, t0) =
-                    ui.channel_page(c, self.wave_memory(ui), start, stop).unwrap_or((Vec::new(), 0.0, 0.0));
-                (v, dt, t0, ch.volts_per_div() as f64, ch.offset as f64)
-            }
-            WaveId::Ref(i) => ui.ref_page(i, start, stop).unwrap_or((Vec::new(), 0.0, 0.0, 1.0, 0.0)),
-        }
-    }
-
     /// `:LA:...` (Rigol's names where they exist): state, lines shown, pod thresholds, and the record of the last
     /// acquisition: `:LA:DATA?` is an IEEE block of u16 words, little endian, bit n = Dn, sample k at
     /// t0 + k dt from `:LA:PREamble?` (points,dt,t0).
@@ -2899,7 +2801,7 @@ impl Scpi {
         if n.len() == 1 && query && (kw(n[0], "POINts") || kw(n[0], "PREamble") || kw(n[0], "DATA")) {
             let Some(r) = ui.la_record() else {
                 self.push_err("-230,\"Data corrupt or stale\" no LA record".into());
-                return if kw(n[0], "DATA") { Some(block(&[])) } else { t("0".into()) };
+                return if kw(n[0], "DATA") { Some(block(Vec::new())) } else { t("0".into()) };
             };
             if kw(n[0], "POINts") {
                 return t(r.words.len().to_string());
@@ -2907,7 +2809,7 @@ impl Scpi {
             if kw(n[0], "PREamble") {
                 return t(format!("{},{:e},{:e}", r.words.len(), r.dt, r.t0));
             }
-            return Some(block(&r.words.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>()));
+            return self.logic_block(&r.words);
         }
         self.push_err(format!("-113,\"Undefined header\" :LA:{}", n.join(":")));
         None
@@ -3342,41 +3244,36 @@ impl Scpi {
             1 => 2,
             _ => 14,
         };
-        if self.page_count(ui).saturating_mul(width).saturating_add(11) > RESP_MAX as u64 {
+        if self.page_count(ui).saturating_mul(width).saturating_add(11) > self.transport.reply_limit as u64 {
             self.push_err("-223,\"Too much data; select a shorter waveform page\"".into());
             return None;
         }
         let (vpd, offset) = self.wave_scale(ui);
         let (yinc, yorg, yref) = self.y_codes(vpd, offset);
-        let (v, _, _, _, _) = self.wave_page(ui);
-        Some(match self.wav_fmt {
-            2 => {
-                use std::fmt::Write as _;
-                let mut text = String::with_capacity(v.len().saturating_mul(14));
-                for (index, value) in v.iter().enumerate() {
+        let samples = ui.scpi_wave_samples(self.wav_src, self.wave_memory(ui));
+        let start = (self.wav_start.max(1) - 1).min(samples.len() as u64) as usize;
+        let count = self.page_count(ui) as usize;
+        let v = samples.get(start..start + count).unwrap_or_default();
+        let mut bytes = Vec::with_capacity(v.len() * width as usize + 11);
+        bytes.resize(11, 0);
+        for (index, value) in v.iter().enumerate() {
+            match self.wav_fmt {
+                2 => {
                     if index != 0 {
-                        text.push(',');
+                        bytes.push(b',');
                     }
-                    let _ = write!(text, "{}", e(*value as f64));
+                    bytes.extend_from_slice(e(*value as f64).as_bytes());
                 }
-                block(text.as_bytes())
-            }
-            1 => {
-                // OOS wire policy: unsigned little-endian WORD, retained for existing clients.
-                // The Rigol guide specifies two bytes per point but does not specify their order.
-                let mut b = Vec::with_capacity(v.len() * 2);
-                for x in v {
-                    let code = ((x as f64 / yinc) + yorg + yref).round().clamp(0.0, 65535.0) as u16;
-                    b.extend_from_slice(&code.to_le_bytes());
+                1 => {
+                    let code = ((*value as f64 / yinc) + yorg + yref).round().clamp(0.0, 65535.0) as u16;
+                    bytes.extend_from_slice(&code.to_le_bytes());
                 }
-                block(&b)
+                _ => bytes.push(((*value as f64 / yinc) + yorg + yref).round().clamp(0.0, 255.0) as u8),
             }
-            _ => {
-                let b: Vec<u8> =
-                    v.iter().map(|&x| ((x as f64 / yinc) + yorg + yref).round().clamp(0.0, 255.0) as u8).collect();
-                block(&b)
-            }
-        })
+        }
+        let header = format!("#9{:09}", bytes.len() - 11);
+        bytes[..11].copy_from_slice(header.as_bytes());
+        Some(bytes)
     }
 
     /// :MEASure:ITEM? <item>[,CHANn|Rn[,src]]
@@ -3502,10 +3399,14 @@ fn meas_readout(ui: &Ui) -> String {
 }
 
 /// IEEE 488.2 definite-length block: #9 + 9 digits + data.
-fn block(d: &[u8]) -> Vec<u8> {
-    let mut o = format!("#9{:09}", d.len()).into_bytes();
-    o.extend_from_slice(d);
-    o
+fn block(mut data: Vec<u8>) -> Vec<u8> {
+    let length = data.len();
+    let header = format!("#9{:09}", length);
+    data.reserve_exact(11);
+    data.resize(length + 11, 0);
+    data.copy_within(..length, 11);
+    data[..11].copy_from_slice(header.as_bytes());
+    data
 }
 
 /// 24-bit BMP of the canvas (what :DISPlay:DATA? returns on the stock firmware).
@@ -3635,7 +3536,7 @@ mod vernier_tests {
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = Scpi::open(0, false);
-        let port = scpi.l.as_ref().expect("listener").local_addr().unwrap().port();
+        let port = scpi.port().expect("listener");
         let mut c = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
         let mut ask = |scpi: &mut Scpi, ui: &mut Ui, msg: &str| -> String {
             c.write_all(msg.as_bytes()).unwrap();
@@ -3919,7 +3820,7 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_raw_tcp_pending_opc_does_not_block_other_clients() {
+    fn compatibility_raw_tcp_pending_opc_preserves_program_ownership() {
         let (mut s, mut ui, cv) = reference_session();
         line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10");
         let mut waiting = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
@@ -3927,17 +3828,20 @@ mod tests {
         waiting.write_all(b":SINGLE;*OPC?;:TRIG:STAT?\n").unwrap();
         crate::ui::lifecycle::test_wait::until("raw SCPI pending operation", || {
             s.poll(&mut ui, &cv);
-            s.clients.iter().any(|client| client.program.as_ref().is_some_and(|p| p.waiting.is_some())).then_some(())
+            s.transport.intake.pending().then_some(())
         });
         ui.step(0.2);
         crate::ui::lifecycle::test_wait::until("raw SCPI pending operation", || {
             s.poll(&mut ui, &cv);
-            s.clients.iter().any(|client| client.program.as_ref().is_some_and(|p| p.waiting.is_some())).then_some(())
+            s.transport.intake.pending().then_some(())
         });
         let mut bytes = [0; 128];
         assert_eq!(waiting.read(&mut bytes).unwrap_err().kind(), ErrorKind::WouldBlock);
         let mut control = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
-        control.write_all(b":TRIG:FORC\n").unwrap();
+        control.write_all(b":WAV:FORM WORD;*OPC?\n").unwrap();
+        s.poll(&mut ui, &cv);
+        assert_eq!(s.wav_fmt, 0, "another program cannot interleave with the continuation");
+        line(&mut s, &mut ui, &cv, ":TRIG:FORC");
         let reply = test_io::line(&mut waiting, || {
             s.poll(&mut ui, &cv);
             ui.step(0.2);
@@ -4048,7 +3952,13 @@ mod tests {
         assert_eq!(read(&mut s, &mut held), None, "the connection held is closed");
         let mut new = TcpStream::connect(("127.0.0.1", port)).unwrap();
         assert_eq!(read(&mut s, &mut new), None, "a new connection is refused");
-        assert!(s.clients.is_empty());
+        assert!(s.transport.intake.active_is_empty());
+        s.set_open(None, false);
+        s.set_open(Some(0), false);
+        let port = s.port().unwrap();
+        let mut reopened = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        reopened.write_all(b"*IDN?\n").unwrap();
+        assert_eq!(read(&mut s, &mut reopened), None, "reopening must install the current ACL before admission");
         // a list with it: in again, without a restart
         acl.set(crate::netacl::Acl::parse("192.0.2.0/24 198.51.100.0/24").0);
         let mut again = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -4082,7 +3992,7 @@ mod tests {
         let answer = String::from_utf8(answer).unwrap();
         assert!(answer.starts_with("OOS,"), "{answer:?}");
         s.poll(&mut ui, &cv);
-        assert!(s.clients.is_empty(), "the session let the half-closed client go after its answer");
+        assert!(!s.transport.intake.pending(), "the session completed the half-closed client's answer");
     }
 
     #[test]
@@ -4093,20 +4003,18 @@ mod tests {
         client.write_all(b":SINGLE;*OPC?;:RUN\n").unwrap();
         crate::ui::lifecycle::test_wait::until("raw client pending program before disconnect", || {
             s.poll(&mut ui, &cv);
-            s.clients.first().is_some_and(|c| c.program.is_some()).then_some(())
+            s.transport.intake.pending().then_some(())
         });
-        assert!(s.clients[0].program.is_some());
+        assert!(s.transport.intake.pending());
         client.shutdown(std::net::Shutdown::Both).unwrap();
         drop(client);
-        // The close travels through the host's network stack and can reach the server socket after the next poll on
-        // a loaded machine; that poll would then resume the program. Wait until the server side can read the end.
-        let server = &s.clients[0].s;
-        server.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
-        assert_eq!(server.peek(&mut [0u8; 1]).expect("raw client close readable at the server"), 0);
+        crate::ui::lifecycle::test_wait::until("raw client close reaches IO", || {
+            s.transport.intake.cancelled().then_some(())
+        });
         line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
         ui.step(0.2);
         s.poll(&mut ui, &cv);
-        assert!(s.clients.is_empty());
+        assert!(s.transport.intake.active_is_empty());
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(captures(&ui), 1.0);
     }
@@ -4293,7 +4201,7 @@ mod tests {
         assert_eq!([ui.ref_volts(0), ui.ref_volts(1)], original);
     }
 
-    fn reference_session() -> (Scpi, Ui, Canvas) {
+    pub(super) fn reference_session() -> (Scpi, Ui, Canvas) {
         let (mut s, mut ui, cv) = session();
         // Import is additive in Live. These tests explicitly exercise stored
         // acquisition, rather than changing the live-import policy implicitly.
@@ -4332,11 +4240,13 @@ mod tests {
         s.wav_mode = 2;
         // An independently pending client request must not be consumed or
         // cancelled while another client polls configuration/status.
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let _peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (stream, _) = listener.accept().unwrap();
-        let pending = b":MEAS:ITEM? VPP,CHAN1".to_vec();
-        s.clients.push(Client { s: stream, buf: pending.clone(), program: None });
+        let ports = s.transport.io.as_ref().unwrap().ports();
+        let pending = ":MEAS:ITEM? VPP,CHAN1".to_string();
+        let request = crate::netport::Envelope::new(
+            crate::system::intake::Id::new(999, 1),
+            crate::netio::RemoteRequest::Program(pending.clone()),
+        );
+        assert!(ports.requests().submit(request.id(), request, pending.capacity()).is_ok());
         for query in [":TRIG:STAT?", ":TIM:SCAL?", ":CHAN1:DISP?", ":CHAN1:OFFS?", ":ACQ:SRAT?", ":ACQ:MDEP?"] {
             assert!(!line(&mut s, &mut ui, &cv, query).is_empty(), "{query} must return its existing reply");
             assert_eq!(
@@ -4348,8 +4258,7 @@ mod tests {
             assert_eq!(ui.workflow_state(), workflow, "{query} must not change acquisition/run state");
             assert_eq!(ui.m.hw_stamp, acquisition_stamp);
             assert_eq!(s.err, errors, "status reads must not consume queued errors");
-            assert_eq!(s.clients.len(), 1);
-            assert_eq!(s.clients[0].buf, pending);
+            assert!(!ports.requests().is_empty());
             assert_eq!((s.wav_src, s.wav_fmt, s.wav_mode), (WaveId::Ref(2), 1, 2));
         }
         line(&mut s, &mut ui, &cv, ":TIM:SCAL 0.000005");
@@ -4359,7 +4268,7 @@ mod tests {
         );
         assert!((ui.m.time_per_div() as f64 - 5e-6).abs() < 1e-12);
         assert_eq!(s.err, errors);
-        assert_eq!(s.clients[0].buf, pending);
+        assert!(!ports.requests().is_empty());
     }
 
     #[test]

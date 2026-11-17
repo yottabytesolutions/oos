@@ -24,7 +24,7 @@ impl Remote {
         let scpi_port = arg(args, "--scpi-port").and_then(|p| p.parse().ok()).unwrap_or(5555);
         let scope = on_scope();
         let mut web = http::Http::open(web_port, sw);
-        let mut scpi = scpi::Scpi::open(scpi_port, sw.ipv6);
+        let mut scpi = scpi::Scpi::open_with_wake(scpi_port, sw.ipv6, web.wake_handle());
         let mut vxi = if scope { vxi11::Server::open(sw.ipv6) } else { vxi11::Server::closed() };
         let hislip = if scope {
             hislip::Server::closed()

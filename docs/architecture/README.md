@@ -19,7 +19,7 @@ Keep the existing behaviour through small migrations. The accepted decisions are
 `oos-ui` uses `src/main.rs` for its binary and library module graph. `main` selects scripted execution,
 host `--serve`, or Linux device execution in `system/device.rs`. The browser is the host desktop view.
 There is no native Windows window in this crate. `oos-core` depends only on `oos-dsp`;
-`oos-ui` depends on core, DSP, HAL and libc. Tokio is not yet a dependency.
+`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI uses tokio; the remaining transports await M15b.
 DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their application bindings.
 
 ### Module map
@@ -31,7 +31,8 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 | `model.rs`, `model/` | core model exports, platform/capability bridge, protocol bindings and colours |
 | `scpi.rs`, `scpi/`, `cmd.rs` | shared SCPI interpreter and program continuations; script/FIFO command syntax |
 | `http.rs`, `http/`, `vxi11.rs`, `hislip.rs`, `mdns.rs` | web/MCP, instrument transports and discovery |
-| `remote.rs` | telnet/firewall helper, not the future network IO layer |
+| `netio/`, `netport.rs`, `netport/` | raw SCPI runtime, socket framing/output and owned bounded application ports |
+| `remote.rs` | telnet/firewall helper |
 | `store.rs`, `store/`, `sysconf.rs` | setup codec, waveform/image files, durable startup state, system settings |
 | `board/`, `board/dho/` | Board port, Shared exchange, hardware configuration/readout and publication |
 | `wave.rs`, `drawpipe.rs`, `drawpipe/`, `fastdraw.rs`, `sparse.rs`, `compress.rs` | records, phosphor maps, batch deposits and drawing kernels |
@@ -88,13 +89,14 @@ updates panes, and grades/halves the maps. Rendering is a separate call.
 flowchart LR
     subgraph frame["Synchronous frame thread"]
         input["Panel / touch / FIFO"] --> ui["Ui: Model, menus, records, views"]
-        transports["Raw SCPI / VXI-11 / HiSLIP polls"] --> scpi["One SCPI interpreter"]
+        transports["VXI-11 / HiSLIP polls"] --> scpi["One SCPI interpreter"]
         scpi -->|"setters and queries"| ui
         ui --> change["normalize / accept / reset / publish"]
         ui --> draw["record drawing + fast drawing + pipe merge"]
         draw --> maps["ph / phz, grade"]
         maps --> render["Canvas or GPU layers"]
     end
+    raw["Raw SCPI: netio IO thread"] -->|"bounded owned programs / replies + wake"| scpi
     http["HTTP accept/read/send threads"] -->|"inbox: MCP programs"| scpi
     http -->|"web actions"| ui
     change -->|"want + identity under mutex"| shared[("Shared")]
@@ -109,8 +111,9 @@ flowchart LR
     render --> display["DRM / GPU helper; HTTP snapshots"]
 ```
 
-Raw TCP writes call `scpi::send` on the frame thread: a 2 s write timeout and 30 s total limit.
-VXI-11 and HiSLIP `poll_async` mean resumable programs, not a tokio runtime.
+Raw TCP framing and writes run on one current-thread tokio runtime on the `netio` thread.
+IO owns credits until output completes and enforces 2 s without progress and 30 s total send limits.
+VXI-11 and HiSLIP still call the shared blocking send helper until M15b; their `poll_async` methods mean resumable programs, not a tokio runtime.
 HTTP has accept/read threads, background screenshot encoding and large-response senders;
 request dispatch and small responses still run during its frame-thread poll.
 MCP uses the same interpreter. The FIFO enters through `cmd`.
@@ -175,7 +178,7 @@ flowchart TB
 ```
 
 ADR 0037 permits only tokio `rt`, `net`, `time`, `sync`, `io-util` and `macros`.
-Its first implementation is the measured raw-SCPI experiment in [M15](migration.md#m15-remote-adapters-on-commands-and-queries).
+Its first implementation is the raw-SCPI experiment awaiting unit measurement in [M15](migration.md#m15-remote-adapters-on-commands-and-queries).
 Broader rollout waits for that gate. Blocking filesystem, usbfs and process calls must not run on the executor;
 use bounded blocking adapters. CPU work stays on the existing worker abstraction. WLAN, SNTP and Bode
 keep their existing threads; USBTMC stays blocking. Any later runtime move needs measured production-line reduction.
@@ -306,6 +309,19 @@ The admission plan includes request buffers (raw MAX_LINE is 4 MiB), snapshot co
 separate large upload/import bounds. Base + maps + acquisition + retained data + these remote bounds + explicit
 headroom must fit below the 768 MiB soft limit, counting retained replies once. M5b sweeps that total;
 M15a supplies measured fixed costs and rejects admission that cannot fit. The watchdog stays unchanged.
+
+M15a's raw port retains at most 32 MiB of framing buffers, 32 MiB of queued program text and
+4 MiB plus bounded command metadata for the active parsed program. One 64 MiB reservation covers all
+raw replies and overlapping encoder allocations; chunk capacities and their container are charged once.
+Waveform encoding borrows frame-owned samples, so it adds no waveform snapshot copy or retained record.
+Allow 16 MiB for metadata, malformed-text conversion, stacks and runtime overhead: the raw planning
+allowance is 148 MiB. Existing HTTP large-body admission is separate: one 128 MiB import or 70 MiB signed
+upload, plus eight 1 MiB small bodies and bounded headers. These are source bounds and planning allowances,
+not measured RSS. An illustrative planning envelope (not new acquisition limits) of 120 MiB base/maps,
+256 MiB acquisition, 64 MiB retained data,
+148 MiB raw, 136 MiB HTTP and 32 MiB headroom totals 756 MiB, below the unchanged 768 MiB soft limit.
+The unit gate must validate the fixed-cost allowance and acquisition/retained envelope before rollout;
+M5b still owns the complete acquisition memory sweep. Host tests prove the raw queue and response bounds.
 
 The other buffers do not depend on the acquisition and are bounded by their own constants, each next to its owner:
 the share maps (workers x 2 maps x plot pixels x 4 B), the accumulator (3 units of maps plus 2 persistence maps), the
@@ -556,11 +572,12 @@ M12 unit acceptance is still open; see [migration](migration.md).
 ## Enforcement
 
 Cargo enforces crate dependencies. `xtask/data/architecture.txt` confines HAL access to `board/dho`
-and sets core module layers. Broad target UI layers and tokio confinement are not yet installed.
+and sets core module layers. Broad target UI layers are not yet installed. M15a confines tokio to `netio`.
 M15a puts IO in top-level `ui/src/netio/` and adds `confine ui tokio -> netio` plus a `layer ui netio`
-allowlist for its owned port values only, excluding `ui`, settings and interpreter modules. The checker works on
+allowlist for `netport` owned values plus the existing `net6` and `netacl` helpers, excluding `ui`, settings and interpreter modules. The checker works on
 top-level modules; nesting IO under `remote` would not enforce this separation. Frame-side code receives a
-synchronous port; only netio constructs/polls the runtime. Current `remote.rs` remains the telnet/firewall helper.
+synchronous port; only netio constructs/polls the runtime. Current `remote.rs` remains the telnet/firewall helper. IPv6 ACL prefix-file reads use a single bounded
+blocking worker; they do not run on the IO executor.
 The gate is `cargo xtask check`; fast is a partial gate. Size/lint debt only shrinks.
 Authors run `cargo xtask ratchet` (`--move` for planned moves) under
 [ADR 0039](../adr/process/0039-format-lints-and-ratchets-the-author-tightens.md).

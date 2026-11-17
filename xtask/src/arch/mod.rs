@@ -5,6 +5,8 @@
 mod core_tests;
 mod deps;
 mod modules;
+#[cfg(test)]
+mod netio_tests;
 mod resolve;
 pub mod rules;
 mod shared_want;

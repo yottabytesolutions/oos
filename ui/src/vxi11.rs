@@ -419,7 +419,7 @@ impl Server {
                 };
                 let mut out = ((r.len() as u32) | 1 << 31).to_be_bytes().to_vec();
                 out.extend_from_slice(&r);
-                if !crate::scpi::send(&mut self.conns[i].s, &out) {
+                if !crate::net::send(&mut self.conns[i].s, &out) {
                     closed = true;
                     break;
                 }

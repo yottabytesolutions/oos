@@ -44,6 +44,8 @@ mod model;
 mod net;
 mod net6;
 mod netacl;
+pub mod netio;
+mod netport;
 mod pacing;
 mod perfguard;
 mod placement;
@@ -65,9 +67,7 @@ mod vxi11;
 mod wave;
 mod zone;
 
-pub use gfx::Canvas;
-pub use wave::Source;
-pub use {perfguard::StageTiming, ui::host::Host, ui::Ui};
+pub use {gfx::Canvas, perfguard::StageTiming, ui::host::Host, ui::Ui, wave::Source};
 
 fn arg(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())

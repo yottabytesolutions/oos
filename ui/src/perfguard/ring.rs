@@ -2,7 +2,7 @@
 
 /// The latest 256 observations, including zeros. Cursor and lifetime count are independent.
 #[derive(Clone, Debug)]
-pub(super) struct Ring {
+pub(crate) struct Ring {
     values: [u64; 256],
     next: usize,
     len: usize,
@@ -14,7 +14,7 @@ impl Default for Ring {
     }
 }
 impl Ring {
-    pub(super) fn add(&mut self, value: u64) {
+    pub(crate) fn add(&mut self, value: u64) {
         self.values[self.next] = value;
         self.next = (self.next + 1) % 256;
         self.len = (self.len + 1).min(256);
@@ -22,7 +22,7 @@ impl Ring {
     }
 
     /// Nearest-rank quantiles; a tail is pending until 50 observations exist.
-    pub(super) fn text(mut self, label: &str, unit: &str) -> String {
+    pub(crate) fn text(mut self, label: &str, unit: &str) -> String {
         self.values[..self.len].sort_unstable();
         let quantile = |percent: usize| {
             if self.len == 0 || (percent == 99 && self.len < 50) {

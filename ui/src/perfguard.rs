@@ -9,7 +9,7 @@ mod draw;
 mod intake;
 #[cfg(test)]
 pub(crate) mod latency;
-mod ring;
+pub(crate) mod ring;
 
 #[cfg(test)]
 use crate::system::perfguard as samples;
@@ -50,7 +50,7 @@ impl Clock {
     pub(crate) fn new(now: impl Fn() -> Instant + Send + Sync + 'static) -> Self {
         Self(Arc::new(now))
     }
-    fn now(&self) -> Instant {
+    pub(crate) fn now(&self) -> Instant {
         (self.0)()
     }
 }

@@ -1,0 +1,53 @@
+# The `codex-review` commit status (tools/ci/codex_gate.py): success only when the Codex summary marker reviewed the
+# PR head with no unresolved findings. The job publishes a commit status rather than being the check itself, because
+# the comment events run in the base repository context and must report on the PR head commit.
+# A fork PR's own events get a read-only token; Codex's comment edits (issue_comment) then publish the status.
+# The gate script always comes from the default branch, never from the PR.
+name: Codex review gate
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  issue_comment:
+    types: [created, edited, deleted]
+  merge_group:
+permissions:
+  contents: read
+concurrency:
+  group: codex-review-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  codex-gate:
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: tools/ci
+          persist-credentials: false
+      - name: Codex reviewed the head commit
+        if: github.event_name != 'merge_group'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 -I tools/ci/codex_gate.py pr --repo "$REPO" --pr "$PR" --publish --target-url "$RUN_URL"
+      # Queue entry required codex-review on the PR head; the group commit gets the same status.
+      - name: Merge queue group
+        if: github.event_name == 'merge_group'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.merge_group.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 -I tools/ci/codex_gate.py queue --repo "$REPO" --sha "$SHA" --publish --target-url "$RUN_URL"

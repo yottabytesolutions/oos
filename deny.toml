@@ -1,0 +1,41 @@
+# cargo-deny (the `deny` check in .github/workflows/pr.yml). OOS is GPL-2.0-or-later: every dependency must be usable
+# under GPLv2. Apache-2.0 alone is not GPLv2-compatible, so it is not allowed; dual "MIT OR Apache-2.0" crates pass
+# through MIT. Widening this list needs a licence note in the PR.
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+unused-allowed-license = "allow"
+allow = [
+    "GPL-2.0-or-later",
+    "LGPL-2.1-or-later",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "Unicode-3.0",
+]
+
+[bans]
+multiple-versions = "warn"
+# The workspace crates depend on each other by path; they are not published (no version on the path deps).
+wildcards = "warn"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

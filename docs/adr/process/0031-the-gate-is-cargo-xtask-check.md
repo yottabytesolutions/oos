@@ -31,8 +31,10 @@ ADR 0019) and `decoders` (the core-only build and every optional decoder alone).
 - The checks that need a baseline from before the change, a quiet machine or a scope stay outside the default gate
   and are named in the pull request when they ran: golden pictures and `ui/tools/layout-check.sh` (ADR 0014),
   `tools/plan-matrix.sh` before and after, `tools/device-test.py` on a unit with its owner's consent.
-- CI runs the same command on GitHub-hosted runners. It is set up in a later phase. Until then the local full gate
-  is authoritative.
+- CI runs the same inventory on GitHub-hosted runners, split into parallel jobs with `cargo xtask step <id>...`
+  ([pr.yml](../../../.github/workflows/pr.yml), task 0092): the step definitions stay in xtask. The perf guards
+  stay local (ratio guards are load-sensitive on shared runners). Until Actions is enabled the local full gate is
+  authoritative.
 
 ## Alternatives
 

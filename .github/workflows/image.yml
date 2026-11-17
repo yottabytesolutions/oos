@@ -1,40 +1,28 @@
-# The whole image on Linux, as a release is built: kernel, initramfs, boot image, update package, USB install file.
-# Twice: on an arm64 runner (natively, the same compiler as on an arm64 host) and on an x86-64 runner (cross
-# compiler for the kernel and oos-hw, QEMU for the arm64 containers). The last job compares what the two put into the
-# image (tools/image-manifest.py: kernel, DTB, every file of the initramfs) and fails when they differ, apart from
-# the programs built from the OOS source (see the job). The packages themselves hold the build time and differ always.
-# Signing explicitly selects the repository's public community development key (keys/).
+# The whole image as a release is built: kernel, initramfs, boot image, update package, USB install file. Natively on
+# a GitHub-hosted arm64 runner. Called by main.yml (nightly) and release.yml (tags); by hand from the Actions tab.
+# The update package and GEL are signed with the repository's public community development key (keys/): a
+# development artifact only. Releases publish the unsigned image and build id; the maintainer signs offline.
 name: Image
 on:
+  workflow_call:
   workflow_dispatch:
-  push:
-    tags: ['v*']
-    # by hand only works from the default branch: on any branch it runs when this file changes (tags ignore paths)
-    branches: ['**']
-    paths: ['.github/workflows/image.yml']
+permissions:
+  contents: read
 jobs:
   image:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04-arm, ubuntu-24.04]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
-    # x86-64: the arm64 containers (busybox, kexec-tools, Mesa for the GPU helper) run through QEMU, which takes hours
-    timeout-minutes: 300
     steps:
-      - uses: actions/checkout@v7
-      - name: QEMU for the arm64 containers
-        if: runner.arch != 'ARM64'
-        uses: docker/setup-qemu-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          platforms: arm64
-      - name: Rust
+          persist-credentials: false
+      - name: Rust (rust-toolchain.toml)
         run: |
-          command -v rustup >/dev/null || { curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; }
+          command -v rustup >/dev/null || { curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; }
           export PATH="$HOME/.cargo/bin:$PATH"
-          rustup toolchain install stable --profile minimal && rustup target add aarch64-unknown-linux-musl
+          rustup toolchain install
           cargo fetch --locked
       - name: Kernel source (from the latest release, kernel/base.sha256 checks it)
         env:
@@ -57,52 +45,22 @@ jobs:
             grep '  kernel/' "$CARGO_TARGET_DIR/image/manifest.txt"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: manifest-${{ runner.arch }}
-          path: ${{ env.CARGO_TARGET_DIR }}/image/manifest.txt
       - name: Validate release artifacts
         run: |
           test -s "$CARGO_TARGET_DIR/image/oos-dev.oosupd"
           test -s "$CARGO_TARGET_DIR/image/DHO800_DHO900_OOS_Install.GEL"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: oos-image-${{ runner.arch }}
+          name: oos-image
           path: |
             ${{ env.CARGO_TARGET_DIR }}/image/oos-dev.img
             ${{ env.CARGO_TARGET_DIR }}/image/oos-dev.img.sha256
+            ${{ env.CARGO_TARGET_DIR }}/image/oos-dev.build
+            ${{ env.CARGO_TARGET_DIR }}/image/oos-dev.unit
             ${{ env.CARGO_TARGET_DIR }}/image/oos-dev.oosupd
             ${{ env.CARGO_TARGET_DIR }}/image/*.GEL
             ${{ env.CARGO_TARGET_DIR }}/image/busybox.version
+            ${{ env.CARGO_TARGET_DIR }}/image/manifest.txt
             kernel/out/base/SHA256SUMS
             kernel/out/base/config
           if-no-files-found: error
-  compare:
-    needs: image
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: manifest-*
-      # Strict for everything the cross compiler and the containers make: kernel, DTB, modules, busybox,
-      # wpa_supplicant, e2fsck, scripts. The programs built from the OOS source only get a notice: Cargo mixes the host
-      # into its crate hashes (rustc -vV says "host: ..."), which ends up in the symbol names and the code layout, and
-      # Ubuntu's native gcc and its cross gcc are different builds with different C libraries (oos-hw).
-      - name: arm64 and x86-64 builds the same
-        run: |
-          own='  initramfs/bin/oos-(hw|ui|fpgad|update)$'
-          for a in ARM64 X64; do
-            grep -Ev "$own" manifest-$a/manifest.txt > strict-$a.txt
-            grep -E "$own" manifest-$a/manifest.txt > own-$a.txt || true
-          done
-          if ! diff -u own-ARM64.txt own-X64.txt > own.txt; then
-            { echo "### Own programs differ between the hosts (expected, not checked)"; echo '```diff'; cat own.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-            echo "::notice::the programs built from the OOS source differ between arm64 and x86-64 (host in the crate hashes, different gcc builds)"
-          fi
-          if diff -u strict-ARM64.txt strict-X64.txt > strict.txt; then
-            echo "arm64 and x86-64: kernel, DTB and all other files of the initramfs the same ($(wc -l < strict-ARM64.txt) entries)" >> "$GITHUB_STEP_SUMMARY"
-          else
-            { echo "### arm64 (-) and x86-64 (+) differ"; echo '```diff'; cat strict.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-            cat strict.txt
-            exit 1
-          fi

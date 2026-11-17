@@ -1,0 +1,92 @@
+# main after every merge, and nightly: the full host gate (with coverage, without perf: ratio guards are load
+# sensitive on shared runners and stay a local gate), Python, cargo-deny, and nightly the image. Also writes the Rust
+# caches the PR jobs restore: only trusted main code ever saves a cache.
+name: Main
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: main-${{ github.event_name }}
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  OOS_GATE_BASE: origin/main
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - name: Hooks path (doctor checks it)
+        run: git config core.hooksPath .githooks
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: main-gate
+      - name: Full host gate without perf guards
+        run: >-
+          cargo xtask step fmt size architecture mutable-statics unsafe method-exceptions known-failures agent-rules
+          test-time doctor-base clippy tests-debug tests-release coverage script-syntax python-tests
+
+  # Warm the caches under the keys the PR jobs restore.
+  cache:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - key: fast
+            run: cargo xtask check --fast
+          - key: clippy
+            run: cargo xtask step clippy
+          - key: test-debug
+            run: cargo xtask step tests-debug
+          - key: test-release
+            run: cargo xtask step tests-release
+          - key: python
+            run: cargo xtask step script-syntax python-tests
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ${{ matrix.key }}
+      - name: ${{ matrix.key }}
+        env:
+          RUN: ${{ matrix.run }}
+        run: sh -c "$RUN"
+
+  deny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --locked
+
+  image:
+    if: github.event_name != 'push'
+    uses: ./.github/workflows/image.yml

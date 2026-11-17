@@ -59,6 +59,13 @@ class Classifier(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unclassified'):
             image.classify('unclassified/input.config')
 
+    def test_process_files_are_no_image_inputs(self):
+        for path in ('.github/dependabot.yml', '.github/labels.yml', '.github/rulesets/main.json',
+                     '.github/ISSUE_TEMPLATE/bug.yml', 'tools/ci/codex_gate.py', 'deny.toml', 'cliff.toml'):
+            with self.subTest(path=path):
+                self.assertFalse(image.classify(path))
+        self.assertTrue(image.classify('.github/workflows/pr.yml'))
+
     def test_unavailable_bases_and_invalid_inventories_fail_closed(self):
         with self.assertRaises(subprocess.CalledProcessError):
             image.required(self.root, 'missing')

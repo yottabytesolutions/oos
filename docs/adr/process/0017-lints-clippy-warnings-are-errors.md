@@ -75,4 +75,4 @@ works) only help while the list is empty.
 ## References
 
 ADR 0014, ADR 0016, ADR 0020, `hal/Cargo.toml`, `dsp/Cargo.toml`, `ui/Cargo.toml`, `fpgad/Cargo.toml`,
-[.github/workflows/ci.yml](../../../.github/workflows/ci.yml).
+[.github/workflows/pr.yml](../../../.github/workflows/pr.yml).

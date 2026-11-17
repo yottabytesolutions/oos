@@ -68,6 +68,6 @@ The checks are named by layer. Each layer says what it can show and what not:
 
 ## References
 
-`tools/check.sh`, [.github/workflows/ci.yml](../../../.github/workflows/ci.yml), `ui/tools/layout-check.sh`,
+`tools/check.sh`, [.github/workflows/pr.yml](../../../.github/workflows/pr.yml), `ui/tools/layout-check.sh`,
 `tools/plan-matrix.sh`, `tools/perf-guard.sh`, `tools/device-test.py`, [CONTRIBUTING.md](../../../CONTRIBUTING.md),
 ADR 0014, ADR 0015, ADR 0016, ADR 0017, ADR 0018, ADR 0019, ADR 0021.

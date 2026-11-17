@@ -112,18 +112,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("::notice::", result.stdout)
         self.assertEqual(args, [])
 
-    def test_fetch_upstream_and_exclude_all_upstream_branches(self) -> None:
+    def test_hard_fork_fetches_nothing_and_excludes_no_remote(self) -> None:
         result, calls, args, _ = self.run_workflow()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("<fetch><--no-tags><https://github.com/deckerjulian/oos.git>"
-                      "<+refs/heads/*:refs/remotes/upstream/*>", calls)
-        self.assertEqual(args[-2:], ["--exclude-remotes", "upstream/*"])
-
-    def test_fetch_failure_fails_closed(self) -> None:
-        for adopted in ("0", "1"):
-            result, _, args, _ = self.run_workflow(FETCH_EXIT="1", ADOPTION_EXIT=adopted)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(args, [])
+        self.assertNotIn("<fetch>", calls)
+        self.assertNotIn("--exclude-remotes", args)
 
     def test_head_cannot_neuter_exported_scanner(self) -> None:
         result, calls, args, _ = self.run_workflow(PR_BASE="pr-base", SCAN_EXIT="1")
@@ -152,8 +145,7 @@ class WorkflowTests(unittest.TestCase):
                 self.assertNotIn("<archive><head>", calls)
                 self.assertEqual(args[args.index("--range") + 1:args.index("--range") + 3], ["fallback", "HEAD"])
                 self.assertEqual(policy.strip(), "[]")
-                self.assertIn("<rev-list><--reverse><--topo-order><fallback..HEAD>"
-                              "<--not><--remotes=upstream/*>", calls)
+                self.assertIn("<rev-list><--reverse><--topo-order><fallback..HEAD>\n", calls)
                 self.assertIn("<rev-list><HEAD><--not><--exclude=origin/topic>"
                               "<--exclude=origin/HEAD><--remotes=origin>", calls)
 

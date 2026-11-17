@@ -63,12 +63,11 @@ class WorkflowObjectTests(unittest.TestCase):
             git_input.git(root, "read-tree", "--reset", "-u", "HEAD")
             workflow = (ROOT / ".github/workflows/privacy.yml").read_text().split("        run: |\n", 1)[1]
             script = "\n".join(line[10:] for line in workflow.splitlines() if line.startswith("          "))
-            # Only the upstream fetch is stubbed; archive, range traversal and scanning are real.
-            wrapper = 'git() { if [ "$1" = fetch ]; then return 0; else command git "$@"; fi; }\n'
+            # Archive, range traversal and scanning are real; the workflow fetches nothing.
             environment = {**os.environ, "RUNNER_TEMP": directory, "PR_BASE": "" if fallback else base,
                            "PUSH_BASE": "0" * 40, "DEFAULT_BRANCH": "main",
                            "PUSH_REF": "refs/heads/" + pushed_ref}
-            return subprocess.run(["bash", "-c", wrapper + script], cwd=root, env=environment,
+            return subprocess.run(["bash", "-c", script], cwd=root, env=environment,
                                   text=True, capture_output=True, check=False)
 
     def test_pr_runs_base_modules_even_when_head_neuters_all_modules(self) -> None:

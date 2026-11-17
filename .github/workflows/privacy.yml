@@ -1,29 +1,31 @@
+# Required check `privacy` (.github/rulesets/main.json): the scanner and allowlist of the base revision scan every
+# incoming addition and commit message. Kept as its own workflow: tools/privacy/test_workflow*.py run its script.
 name: Privacy
 on:
   push:
   pull_request:
+  merge_group:
 permissions:
   contents: read
 jobs:
   privacy:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Incoming additions and commit messages
         env:
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           PUSH_BASE: ${{ github.event.before }}
           PUSH_REF: ${{ github.ref }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         shell: bash
         run: |
           set -euo pipefail
-          # Fetch upstream objects without adding or changing a configured remote.
-          git fetch --no-tags https://github.com/deckerjulian/oos.git '+refs/heads/*:refs/remotes/upstream/*'
           base="$PR_BASE"
           push_fallback=false
           if [ -z "$base" ]; then
@@ -43,7 +45,7 @@ jobs:
             if [ "$push_fallback" = true ]; then
               # Trust only adoption already reachable from another origin ref, never this push alone.
               pushed_only=$(git rev-list HEAD --not --exclude="origin/${PUSH_REF#refs/heads/}" --exclude=origin/HEAD --remotes=origin)
-              revisions=$(git rev-list --reverse --topo-order "$base..HEAD" --not --remotes='upstream/*')
+              revisions=$(git rev-list --reverse --topo-order "$base..HEAD")
               while IFS= read -r revision; do
                 [ -n "$revision" ] || continue
                 if grep -Fxq -- "$revision" <<< "$pushed_only"; then continue; fi
@@ -71,7 +73,7 @@ jobs:
           fi
           scanner_dir=$(mktemp -d "$RUNNER_TEMP/privacy-scanner.XXXXXX")
           git archive "$scanner_revision" tools/privacy | tar -xf - -C "$scanner_dir"
-          python3 "$scanner_dir/tools/privacy/scan.py" --allowlist "$policy" --range "$base" HEAD --exclude-remotes 'upstream/*'
+          python3 "$scanner_dir/tools/privacy/scan.py" --allowlist "$policy" --range "$base" HEAD
       - name: Scanner regression tests
         if: ${{ always() }}
         run: python3 -m unittest discover -s tools/privacy -p 'test_*.py' -v

@@ -1,0 +1,117 @@
+# The gate for every pull request and every merge-queue group, split into parallel jobs on GitHub-hosted runners.
+# Required checks (.github/rulesets/main.json): fast, clippy, test, python, deny. pr-meta, privacy and codex-review
+# come from their own workflows. No secrets; the token is read-only; the cache is written only by main (main.yml).
+name: PR
+on:
+  pull_request:
+  merge_group:
+permissions:
+  contents: read
+concurrency:
+  group: pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # the ratchet files are compared with the merge base of the target branch (xtask/src/base.rs)
+  OOS_GATE_BASE: origin/${{ github.event.pull_request.base.ref || 'main' }}
+jobs:
+  fast:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: fast
+          save-if: false
+      - name: Fast gate (fmt, size, architecture, statics, unsafe, ignores, agent rules, test time)
+        run: cargo xtask check --fast
+
+  clippy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: clippy
+          save-if: false
+      - name: Clippy ratchet, host and aarch64-unknown-linux-musl
+        run: cargo xtask step clippy
+
+  test-run:
+    name: test (${{ matrix.profile }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [debug, release]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: test-${{ matrix.profile }}
+          save-if: false
+      - name: Tests (${{ matrix.profile }})
+        env:
+          STEP: tests-${{ matrix.profile }}
+        run: cargo xtask step "$STEP"
+
+  # One required name for both profiles.
+  test:
+    needs: test-run
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Both profiles passed
+        env:
+          RESULT: ${{ needs.test-run.result }}
+        run: test "$RESULT" = success
+
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: python
+          save-if: false
+      - name: Script syntax and Python tests (tools/tests, tools/privacy, ui/tools)
+        run: cargo xtask step script-syntax python-tests
+
+  deny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Licences, advisories, bans, sources (deny.toml)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --locked

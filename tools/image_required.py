@@ -14,7 +14,10 @@ IMAGE_FILES = {'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.python-versi
                'tools/build-tools.json', 'tools/script_syntax.py', 'tools/check_inventory.py',
                'tools/image_required.py', 'tools/image_suite.py', 'tools/image_validate.py'}
 HOST_FILES = {'.gitignore', '.gitattributes', '.aider.conf.yml', 'rustfmt.toml', 'clippy.toml',
-              'LICENSE', 'COPYING', 'NOTICE', '.github/CODEOWNERS', '.cursor/rules/oos.mdc'}
+              'LICENSE', 'COPYING', 'NOTICE', '.github/CODEOWNERS', '.cursor/rules/oos.mdc',
+              'deny.toml', 'cliff.toml'}
+# Repository process files outside the workflows: templates, labels, rulesets, Dependabot.
+HOST_PREFIXES = ('.github/', 'tools/ci/')
 
 
 def classify(name):
@@ -23,6 +26,8 @@ def classify(name):
         return False
     if name.startswith(IMAGE_PREFIXES) or name in IMAGE_FILES or path.name in {'Cargo.toml', 'build.rs'}:
         return True
+    if name.startswith(HOST_PREFIXES) or name in HOST_FILES:
+        return False
     if name.startswith(('tools/output.', 'tools/build-', 'tools/build_', 'tools/')) and not name.startswith(('tools/tests/', 'tools/privacy/')):
         return True
     if name.endswith(('.md', '.rst')) or name in HOST_FILES:

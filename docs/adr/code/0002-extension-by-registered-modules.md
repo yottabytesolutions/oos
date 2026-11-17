@@ -30,7 +30,7 @@ change once released and are never given to something else, because setups, SCPI
 
 - Stand-alone analyser pages, like protocol and measurement modules: not done. The pages keep their menu rows as
   `Item`s and their state in `Ui`, as every other menu does; the registry takes only the wiring around a page.
-- Loading modules at run time: not looked at further. OOS is one static binary (ADR 0013).
+- Loading modules at run time: not looked at further. OOS is one static binary.
 
 ## Consequences
 

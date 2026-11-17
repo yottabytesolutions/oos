@@ -21,7 +21,7 @@ computer to recover.
 - Every build trusts a community key that is in the repository on purpose, so anyone can build an update that installs
   on any OOS scope. An owner who wants only their own builds replaces it with their own key.
 
-Ed25519 and SHA-2 are implemented in the tree (ADR 0013).
+Ed25519 and SHA-2 are implemented in the tree.
 
 ## Consequences
 

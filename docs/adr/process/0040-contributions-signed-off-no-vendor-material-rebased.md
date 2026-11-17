@@ -6,21 +6,16 @@
 
 ## Context
 
-The rules for what may enter the tree were spread over two records. ADR 0013 kept vendor code and data out and made
-`libc` the only dependency. ADR 0026 added the sign-off, extended the vendor rule to every text around the code, and
+The rules for a contribution were spread over records. ADR 0026 added the sign-off, extended the vendor rule to every text around the code, and
 described how a contribution from a fork entered upstream's `main` as squashed commits. Its 2026-11-17 amendment
 replaced that flow after the hard fork (ADR 0030) and left steps marked "a later phase" that are now done: CI runs
 the gate, the merge queue lands pull requests, the rulesets enforce the checks.
 
-The dependency rule of ADR 0013 is superseded by ADR 0037. This record carries the rest of both, as it holds now.
+This record carries them as they hold now. What may not enter the tree from the vendor's firmware is ADR 0013.
 
 ## Decision
 
-- **No vendor material.** No firmware images, no code or binaries from any stock or modified firmware, no
-  calibration files and no `vendor.bin` enter the tree, its history, pull request texts or issues. The hardware is
-  described as behaviour, in the contributor's own words, with how it is known (ADR 0015). Listings, copied tables,
-  strings and the names of the firmware's functions, classes and files stay out. What the vendor publishes for users
-  is fine: the command names of the programming guide, the manuals, the data sheets of the parts.
+- **No vendor material.** ADR 0013.
 - **Nothing private.** No serial numbers, MAC addresses, LAN addresses, licence keys or calibration data.
   `tools/privacy/scan.py` checks it in the pre-commit hook and in CI.
 - **Other projects.** Code or text taken from another project names its source and licence in the pull request, and
@@ -48,12 +43,11 @@ The dependency rule of ADR 0013 is superseded by ADR 0037. This record carries t
 
 ## Consequences
 
-- Contributions that copy from other firmware cannot be merged, however useful.
 - Every commit on `main` is a reviewed, signed-off topic commit in the style of ADR 0019.
 - A pull request or issue that breaks these rules is not merged, and its text is edited or removed.
 
 ## References
 
 [CONTRIBUTING.md](../../../CONTRIBUTING.md), [AGENTS.md](../../../AGENTS.md), `.github/CODEOWNERS`,
-`.github/rulesets/`, `tools/privacy/`, ADR 0013 and ADR 0026 (superseded), ADR 0015, ADR 0019, ADR 0030, ADR 0034,
+`.github/rulesets/`, `tools/privacy/`, ADR 0013, ADR 0026 (superseded), ADR 0015, ADR 0019, ADR 0030, ADR 0034,
 ADR 0037.

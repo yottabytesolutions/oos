@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+thread_local! {
+    // The calling thread's own share: requested bytes minus released bytes, and its allocation count. Exact
+    // assertions read these; the process-wide counters also see the test harness thread, which allocates its
+    // bookkeeping while the test thread already runs.
+    static OWN_LIVE: Cell<isize> = const { Cell::new(0) };
+    static OWN_ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
 
 pub struct Counting {
     live: AtomicUsize,
@@ -34,10 +43,16 @@ impl Counting {
         let result = f();
         (self.allocations() - before, result)
     }
+    /// Like `count`, but only the allocations of the calling thread.
+    pub fn count_own<T>(&self, f: impl FnOnce() -> T) -> (usize, T) {
+        let before = OWN_ALLOCATIONS.get();
+        let result = f();
+        (OWN_ALLOCATIONS.get() - before, result)
+    }
     pub fn allocated(&self, bytes: usize) {
         self.large.fetch_add(usize::from(bytes >= self.large_min.load(SeqCst)), SeqCst);
         self.added(bytes);
-        self.allocations.fetch_add(1, SeqCst);
+        self.counted();
     }
     pub fn freed(&self, bytes: usize) {
         self.removed(bytes);
@@ -50,10 +65,14 @@ impl Counting {
         } else {
             self.removed(old - new);
         }
-        self.allocations.fetch_add(1, SeqCst);
+        self.counted();
     }
     pub fn live(&self) -> usize {
         self.live.load(SeqCst)
+    }
+    /// Bytes the calling thread requested minus the bytes it released, of any thread's allocations.
+    pub fn own_live(&self) -> isize {
+        OWN_LIVE.get()
     }
     pub fn peak(&self) -> usize {
         self.peak.load(SeqCst)
@@ -70,11 +89,17 @@ impl Counting {
     pub fn frees(&self) -> usize {
         self.frees.load(SeqCst)
     }
+    fn counted(&self) {
+        self.allocations.fetch_add(1, SeqCst);
+        OWN_ALLOCATIONS.set(OWN_ALLOCATIONS.get().wrapping_add(1));
+    }
     fn added(&self, bytes: usize) {
         let live = self.live.fetch_add(bytes, SeqCst) + bytes;
         self.peak.fetch_max(live, SeqCst);
+        OWN_LIVE.set(OWN_LIVE.get().wrapping_add_unsigned(bytes));
     }
     fn removed(&self, bytes: usize) {
         self.live.fetch_sub(bytes, SeqCst);
+        OWN_LIVE.set(OWN_LIVE.get().wrapping_sub_unsigned(bytes));
     }
 }

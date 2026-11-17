@@ -54,26 +54,36 @@ fn retained_growth_and_freed_transients_are_distinguished() {
         command
             .args(["--exact", "retained_growth_and_freed_transients_are_distinguished", "--nocapture"])
             .env("OOS_SOAK_PROBE", "1");
-        assert!(support::run_command(&inputs, command, 120).status.success());
+        // Hang guard only: the child does a fixed amount of work and exits in milliseconds.
+        let out = support::run_command(&inputs, command, 120);
+        assert!(
+            out.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
         return;
     }
+    // The harness thread still allocates its bookkeeping while this thread runs (#24), so the exact accounting reads
+    // this thread's own share. The process-wide baseline only sizes the retained buffer against the soak limit.
     let baseline = HEAP.live();
+    let own = HEAP.own_live();
+    let grown = |bytes: usize| own + isize::try_from(bytes).expect("probe buffers fit in isize");
     let buffer = vec![0u8; baseline / 50 + 4096];
     std::hint::black_box(&buffer);
-    assert!(HEAP.live() > limit(baseline));
+    assert_eq!(HEAP.own_live(), grown(buffer.len()));
+    assert!(baseline + buffer.len() > limit(baseline), "retained growth must exceed the soak limit");
     drop(buffer);
-    assert_eq!(HEAP.live(), baseline);
+    assert_eq!(HEAP.own_live(), own);
     let mut buffer = vec![0u8; 4096];
-    let allocated = HEAP.live();
+    assert_eq!(HEAP.own_live(), grown(4096));
     buffer.reserve_exact(8192);
-    assert_eq!(HEAP.live(), allocated + buffer.capacity() - 4096);
-    let grown = HEAP.live();
-    let capacity = buffer.capacity();
+    assert_eq!(HEAP.own_live(), grown(buffer.capacity()));
     buffer.truncate(2048);
     buffer.shrink_to_fit();
-    assert_eq!(HEAP.live(), grown - capacity + 2048);
+    assert_eq!(HEAP.own_live(), grown(2048));
     drop(buffer);
-    assert_eq!(HEAP.live(), baseline);
+    assert_eq!(HEAP.own_live(), own);
 }
 
 pub mod support;

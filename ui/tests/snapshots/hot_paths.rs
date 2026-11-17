@@ -23,7 +23,8 @@ fn hot_paths_allocate_nothing_after_warmup() {
         return;
     }
     // Prove the observer sees freed transients, zeroed allocations and reallocations.
-    let (count, ()) = HEAP.count(|| {
+    // This thread's own count: the harness thread may still allocate its bookkeeping at this point (#24).
+    let (count, ()) = HEAP.count_own(|| {
         let mut v = Vec::<u8>::with_capacity(16);
         v.push(1);
         v.reserve_exact(4096);

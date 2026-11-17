@@ -158,8 +158,6 @@ class ImageOutputs(unittest.TestCase):
         shutil.copytree(REPO / "tools/build-env", self.root / "tools/build-env")
         lock_path = self.root / "tools/container-images.json"
         lock = json.loads(lock_path.read_text())
-        lock['bases']['ubuntu']['manifests']['linux/arm64'] = 'sha256:' + '1' * 64
-        lock_path.write_text(json.dumps(lock))
         key = self.run_python("tools/build_env.py", "identity", "gpu-build").stdout.strip()
         self.env['OOS_TEST_ENVIRONMENT'] = key
         docker = self.root / "bin/docker"
@@ -169,7 +167,7 @@ class ImageOutputs(unittest.TestCase):
             'key = os.environ["OOS_TEST_ENVIRONMENT"]\n'
             'if sys.argv[1:3] == ["image", "inspect"]:\n'
             '    if "@sha256:" in sys.argv[-1]:\n'
-            '        print(json.dumps([{"Os": "linux", "Architecture": "arm64", "RootFS": {"Layers": ["base"]}, "RepoDigests": ["ubuntu@sha256:" + "1" * 64]}])); sys.exit(0)\n'
+            '        print(json.dumps([{"Os": "linux", "Architecture": "arm64", "RootFS": {"Layers": ["base"]}, "RepoDigests": [sys.argv[-1]]}])); sys.exit(0)\n'
             '    print(json.dumps([{"Id": "sha256:" + "2" * 64, "Os": "linux", "Architecture": "arm64", "RootFS": {"Layers": ["base", "derived"]}, "Config": {"Labels": {"org.oos.environment": key}}}])); sys.exit(0)\n'
             'if "--network=none" in sys.argv:\n'
             '    print("zlib=1.3\\ngcc=15.1"); sys.exit(0)\n'

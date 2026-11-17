@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import textwrap
 import tomllib
 import unittest
 from unittest.mock import patch
@@ -52,6 +53,25 @@ class Wiring(unittest.TestCase):
         for name in ('fw', 'ssh'):
             self.assertIn('verify "$out/nft"', (ROOT / f'tools/{name}-sim.sh').read_text())
 
+    def test_image_workflow_requires_existing_rustup(self):
+        workflow = (ROOT / '.github/workflows/image.yml').read_text()
+        script = textwrap.dedent(workflow.split('        run: |\n', 1)[1].split('      - name:', 1)[0])
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            binaries = root / '.cargo/bin'
+            binaries.mkdir(parents=True)
+            variables = {'HOME': str(root), 'PATH': str(binaries)}
+            result = subprocess.run(['/bin/sh', '-ec', script], env=variables, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('rustup is required', result.stderr)
+            for name in ('rustup', 'cargo'):
+                binary = binaries / name
+                binary.write_text('#!/bin/sh\nprintf "%s\\n" "' + name + ' $*"\n')
+                binary.chmod(0o700)
+            result = subprocess.run(['/bin/sh', '-ec', script], env=variables, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(), ['rustup toolchain install', 'cargo fetch --locked'])
+
     def test_shared_pins_and_bootstrap(self):
         tools = json.loads((ROOT / 'tools/build-tools.json').read_text())
         rust = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']
@@ -66,10 +86,52 @@ class Wiring(unittest.TestCase):
         self.assertEqual(tools['python'], '3.12')
 
 
+class RecipePins(unittest.TestCase):
+    def test_all_recipes_supply_the_contract_base_for_both_platforms(self):
+        lock = env.load()
+        self.assertNotIn('bases', lock)
+        self.assertEqual(set(lock['roles']), {p.stem for p in (ROOT / 'tools/build-env').glob('*.Dockerfile')})
+        for role in lock['roles']:
+            recipe = (ROOT / f'tools/build-env/{role}.Dockerfile').read_text()
+            for platform in ('linux/arm64', 'linux/amd64'):
+                with self.subTest(role=role, platform=platform):
+                    contract, _, _ = env.identity(role, platform)
+                    name, index = recipe.splitlines()[0].removeprefix('FROM ').split('@')
+                    self.assertEqual(contract['base'], name + '@' + lock['manifests'][index][platform])
+                    self.assertTrue(env.digest(contract['base'].split('@')[1]))
+
+    def test_invalid_platform_manifests_are_rejected(self):
+        lock = env.load()
+        index = env.base_for('initramfs').split('@')[1]
+        for manifests in ({'linux/arm64': 'sha256:' + '1' * 64},
+                          {'linux/arm64': 'invalid', 'linux/amd64': 'sha256:' + '2' * 64},
+                          {'linux/arm64': 'sha256:' + '1' * 64, 'linux/riscv64': 'sha256:' + '2' * 64}):
+            with self.subTest(manifests=manifests):
+                lock['manifests'][index] = manifests
+                with patch.object(env.json, 'loads', return_value=lock):
+                    with self.assertRaisesRegex(env.Prerequisite, 'invalid base platform manifests'):
+                        env.load()
+
+    def test_unpinned_base_is_rejected_even_with_matching_recipe_hash(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            recipe = root / 'tools/build-env/test.Dockerfile'
+            recipe.parent.mkdir(parents=True)
+            for base in ('ubuntu:26.04', '@BASE@', 'alpine:3.22@sha256:invalid'):
+                with self.subTest(base=base):
+                    recipe.write_text('FROM ' + base + '\n')
+                    lock = {'schema': 1, 'roles': {'test': {
+                        'requested': ['gcc'], 'recipe_sha256': hashlib.sha256(recipe.read_bytes()).hexdigest()}}}
+                    lock_path = root / 'tools/container-images.json'
+                    lock_path.write_text(json.dumps(lock))
+                    with patch.object(env, 'ROOT', root), patch.object(env, 'LOCK', lock_path):
+                        with self.assertRaisesRegex(env.Prerequisite, 'digest-pinned base'):
+                            env.load()
+
+
 class Containers(unittest.TestCase):
     def setUp(self):
         self.lock = env.load()
-        self.lock['bases']['ubuntu']['manifests']['linux/arm64'] = 'sha256:' + '1' * 64
         self.lock['roles']['gpu-test']['requested'] = ['gcc']
         self.patcher = patch.object(env, 'load', return_value=self.lock)
         self.patcher.start()
@@ -77,7 +139,7 @@ class Containers(unittest.TestCase):
         self.contract, self.tag, self.key = env.identity('gpu-test', 'linux/arm64')
         self.info = {'Id': 'sha256:' + '2' * 64, 'Os': 'linux', 'Architecture': 'arm64',
                      'Config': {'Labels': {env.LABEL: self.key}}, 'RootFS': {'Layers': ['base', 'derived']}}
-        self.base_info = {'Os': 'linux', 'Architecture': 'arm64', 'RootFS': {'Layers': ['base']}, 'RepoDigests': ['ubuntu@sha256:' + '1' * 64]}
+        self.base_info = {'Os': 'linux', 'Architecture': 'arm64', 'RootFS': {'Layers': ['base']}, 'RepoDigests': [self.contract['base']]}
         self.calls = []
 
     def docker(self, *args, **kwargs):
@@ -135,12 +197,11 @@ class Containers(unittest.TestCase):
         with patch.object(env, 'docker', self.docker), self.assertRaisesRegex(ValueError, 'base digest'):
             env.resolve('gpu-test')
 
-    def test_offline_missing_daemon_and_unverified_lock_fail(self):
+    def test_offline_missing_daemon_and_unsupported_platform_fail(self):
         with patch.object(env, 'docker', side_effect=ValueError('offline')), self.assertRaises(ValueError):
             env.resolve('gpu-test')
-        self.lock['bases']['ubuntu']['manifests']['linux/arm64'] = None
-        with patch.object(env, 'docker') as fake, self.assertRaisesRegex(ValueError, 'unverified'):
-            env.resolve('gpu-test', 'linux/arm64')
+        with patch.object(env, 'docker') as fake, self.assertRaisesRegex(ValueError, 'unsupported'):
+            env.resolve('gpu-test', 'linux/riscv64')
         fake.assert_not_called()
 
     def test_identity_changes_for_package_requests_base_and_recipe(self):
@@ -149,7 +210,8 @@ class Containers(unittest.TestCase):
             self.lock['roles']['gpu-test'][change] = ('f' * 64 if change == 'recipe_sha256' else ['gcc', 'g++'])
             self.assertNotEqual(env.identity('gpu-test', 'linux/arm64')[2], self.key)
             self.lock['roles']['gpu-test'][change] = original
-        self.lock['bases']['ubuntu']['manifests']['linux/arm64'] = 'sha256:' + '3' * 64
+        index = env.base_for('gpu-test').split('@')[1]
+        self.lock['manifests'][index]['linux/arm64'] = 'sha256:' + '3' * 64
         self.assertNotEqual(env.identity('gpu-test', 'linux/arm64')[2], self.key)
 
     def test_alpine_inventory_preserves_package_names_and_revision(self):

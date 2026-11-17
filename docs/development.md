@@ -83,13 +83,16 @@ registration, sudo or a privileged container.
 
 ### Container bases, recipes and provenance
 
-`tools/container-images.json` records Ubuntu 26.04 and Alpine 3.22 per-platform manifest digests for linux/arm64
-and linux/amd64, resolved by the coordinator using `docker buildx imagetools inspect` on 2026-11-15. Index digests
-retain the resolution evidence; builds use the platform manifest digest. Each role also has a recipe SHA-256
-and a package request list. Kernel amd64 additionally requests the cross compiler packages.
+Each Dockerfile in `tools/build-env/` pins Ubuntu 26.04 or Alpine 3.22 directly by its multi-arch index digest,
+resolved by the coordinator using `docker buildx imagetools inspect` on 2026-11-15.
+`tools/container-images.json` maps each index to its arm64 and amd64 manifest digests and records each role's
+recipe SHA-256 and package request list. Kernel amd64
+additionally requests the cross compiler packages.
 
-`tools/build-env.sh prepare ROLE` explicitly pulls the platform-specific base into the local Docker store,
-then builds from that digest and the requested packages. Each `rootfs-<tool>` role requests only that builder's
+`tools/build-env.sh prepare ROLE` selects the platform manifest for the recipe's pinned index, explicitly pulls it
+into the local Docker store, then builds from that manifest digest and the requested packages. Distinct manifest
+references keep both architectures available for local verification in classic and multi-platform image stores.
+Each `rootfs-<tool>` role requests only that builder's
 packages. Simulation package scripts run normally; only the linux-lts installation skips scripts.
 `resolve ROLE` checks local base digest/layer ancestry, platform and recipe/request contract label, returning
 an immutable local image ID. Local tags are aliases only. Missing package version locks never reject setup:

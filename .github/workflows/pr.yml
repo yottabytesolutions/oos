@@ -87,8 +87,15 @@ jobs:
         include:
           - name: lints
             steps: clippy
-          - name: decoders
+          - name: decoders 1/3
             steps: decoders
+            decoder-partition: 1/3
+          - name: decoders 2/3
+            steps: decoders
+            decoder-partition: 2/3
+          - name: decoders 3/3
+            steps: decoders
+            decoder-partition: 3/3
           - name: plans
             steps: plan-matrix
     permissions:
@@ -119,6 +126,7 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         env:
           STEPS: ${{ matrix.steps }}
+          OOS_DECODER_PARTITION: ${{ matrix.decoder-partition }}
         shell: bash
         run: |
           read -ra ids <<< "$STEPS"
@@ -135,8 +143,8 @@ jobs:
           RESULT: ${{ needs.clippy-run.result }}
         run: test "$RESULT" = success
 
-  # Three hash shards exclude golden tests; a fourth runs golden alone (xtask/src/testrun.rs). The merge queue
-  # adds the release-profile tests, also sharded; main.yml runs them nightly.
+  # Three hash shards exclude the second-pane layout test and golden tests; each has a dedicated shard
+  # (xtask/src/testrun.rs). The merge queue adds release tests, also sharded; main.yml runs them nightly.
   # A push to main builds both profiles unsharded for the caches.
   test-run:
     name: test (${{ matrix.profile }} ${{ matrix.shard }})
@@ -150,7 +158,7 @@ jobs:
       fail-fast: false
       matrix:
         profile: ${{ fromJSON(github.event_name == 'pull_request' && '["debug"]' || '["debug","release"]') }}
-        shard: ${{ fromJSON(github.event_name == 'push' && '["build"]' || '["1/4","2/4","3/4","4/4"]') }}
+        shard: ${{ fromJSON(github.event_name == 'push' && '["build"]' || '["1/5","2/5","3/5","4/5","5/5"]') }}
     env:
       # xtask/src/testrun.rs: cargo-nextest runs the test binaries in parallel; doctests through cargo test.
       OOS_TEST_PARTITION: ${{ matrix.shard != 'build' && matrix.shard || '' }}

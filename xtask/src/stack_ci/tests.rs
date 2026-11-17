@@ -154,8 +154,12 @@ fn parallel_jobs_keep_every_check_and_fail_the_required_names() {
     let rows = doc["jobs"]["clippy-run"]["strategy"]["matrix"]["include"].as_vec().unwrap();
     let mut ids: Vec<_> = rows.iter().flat_map(|r| r["steps"].as_str().unwrap().split_whitespace()).collect();
     ids.sort_unstable();
-    assert_eq!(ids, ["clippy", "decoders", "plan-matrix"]);
-    assert_eq!(rows.len(), 3, "keep lints, decoder builds and register plans on independent runners");
+    assert_eq!(ids, ["clippy", "decoders", "decoders", "decoders", "plan-matrix"]);
+    let partitions: Vec<_> = rows.iter().filter_map(|r| r["decoder-partition"].as_str()).collect();
+    assert_eq!(partitions, ["1/3", "2/3", "3/3"]);
+    let steps = doc["jobs"]["clippy-run"]["steps"].as_vec().unwrap();
+    let run = steps.iter().find(|s| s["env"]["STEPS"].as_str().is_some()).unwrap();
+    assert_eq!(run["env"]["OOS_DECODER_PARTITION"].as_str(), Some("${{ matrix.decoder-partition }}"));
     assert_eq!(doc["jobs"]["clippy-run"]["strategy"]["fail-fast"].as_bool(), Some(false));
     for job in ["clippy", "test"] {
         assert_eq!(doc["jobs"][job]["needs"].as_str(), Some(format!("{job}-run").as_str()));
@@ -180,12 +184,12 @@ fn parallel_jobs_keep_every_check_and_fail_the_required_names() {
 }
 
 #[test]
-fn test_matrix_includes_the_dedicated_golden_shard_in_both_profiles() {
+fn test_matrix_includes_layout_and_golden_shards_in_both_profiles() {
     let doc = parse(workflow("pr.yml").unwrap()).unwrap();
     let job = &doc["jobs"]["test-run"];
     let matrix = &job["strategy"]["matrix"];
     let shards = matrix["shard"].as_str().unwrap();
-    assert!(shards.contains("'[\"1/4\",\"2/4\",\"3/4\",\"4/4\"]'"));
+    assert!(shards.contains("'[\"1/5\",\"2/5\",\"3/5\",\"4/5\",\"5/5\"]'"));
     assert!(shards.contains("github.event_name == 'push' && '[\"build\"]'"));
     assert_eq!(
         matrix["profile"].as_str(),

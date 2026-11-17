@@ -67,22 +67,15 @@ const SLOW_SECS: f64 = 60.0;
 /// binary. The perf guards keep the shipping `release` profile.
 const RELEASE_TESTS: &str = "test-release";
 
-/// The shard of `OOS_TEST_PARTITION=K/N` (CI). With multiple shards, the last runs only golden tests; the others
-/// hash the remaining tests across N-1 shards. None or 1/1 runs all tests.
-pub fn partition(value: Option<&str>) -> Result<Option<(u32, u32)>, String> {
-    let Some(value) = value.filter(|v| !v.is_empty()) else { return Ok(None) };
-    let bad = || format!("OOS_TEST_PARTITION={value}: expected K/N with 1 <= K <= N");
-    let (k, n) = value.split_once('/').ok_or_else(bad)?;
-    let (k, n): (u32, u32) = (k.parse().map_err(|_| bad())?, n.parse().map_err(|_| bad())?);
-    if k == 0 || k > n {
-        return Err(bad());
-    }
-    Ok(Some((k, n)))
-}
-
 fn golden_shard(shard: Option<(u32, u32)>) -> bool {
     shard.is_some_and(|(k, n)| n > 1 && k == n)
 }
+
+fn layout_shard(shard: Option<(u32, u32)>) -> bool {
+    shard.is_some_and(|(k, n)| n > 2 && k == n - 1)
+}
+
+const LAYOUT_TEST: &str = "test(=ui::lint::second_pane_fits_with_everything_else)";
 
 /// The cargo-nextest options for one crate, after `nextest run` or `llvm-cov nextest`. cargo-nextest runs every test
 /// in its own process and the tests of all binaries in parallel; the doctests it cannot run go through `cargo test`.
@@ -100,9 +93,20 @@ pub fn nextest_args(root: &Path, release: bool, shard: Option<(u32, u32)>) -> Re
     }
     if golden_shard(shard) {
         args.extend(["--test".to_string(), "golden".to_string()]);
+    } else if layout_shard(shard) {
+        args.extend(["--bin", "oos-ui", "-E", LAYOUT_TEST].map(String::from));
     } else if let Some((k, n)) = shard.filter(|(_, n)| *n > 1) {
-        args.extend(["-E".to_string(), "not binary_id(=oos-ui::golden)".to_string()]);
-        args.extend(["--partition".to_string(), format!("hash:{k}/{}", n - 1)]);
+        let filter = if n > 2 {
+            format!("not (binary_id(=oos-ui::golden) or {LAYOUT_TEST})")
+        } else {
+            "not binary_id(=oos-ui::golden)".to_string()
+        };
+        args.extend([
+            "-E".to_string(),
+            filter,
+            "--partition".to_string(),
+            format!("hash:{k}/{}", n - 1 - u32::from(n > 2)),
+        ]);
     }
     Ok(args)
 }
@@ -119,8 +123,8 @@ pub fn run(
     krate: &str,
     release: bool,
 ) -> Result<(Counts, Vec<String>), String> {
-    let shard = partition(std::env::var("OOS_TEST_PARTITION").ok().as_deref())?;
-    if golden_shard(shard) && krate != "ui" {
+    let shard = run::partition("OOS_TEST_PARTITION", std::env::var("OOS_TEST_PARTITION").ok().as_deref())?;
+    if (golden_shard(shard) || layout_shard(shard)) && krate != "ui" {
         return Ok((Counts::default(), Vec::new()));
     }
     let dir = root.join(krate);
@@ -176,36 +180,42 @@ mod tests {
     }
 
     #[test]
-    fn partition_takes_one_of_n_shards() {
-        assert_eq!(partition(None), Ok(None));
-        assert_eq!(partition(Some("")), Ok(None));
-        assert_eq!(partition(Some("2/3")), Ok(Some((2, 3))));
-        for bad in ["0/3", "4/3", "3", "a/3", "1/b", "1/0"] {
-            assert!(partition(Some(bad)).is_err(), "{bad}");
-        }
-        let args = nextest_args(Path::new("/path/to/oos"), true, Some((2, 3))).unwrap();
+    fn partition_args_keep_the_profile_and_two_shard_coverage() {
+        let args = nextest_args(Path::new("/path/to/oos"), true, Some((1, 2))).unwrap();
         assert!(args.windows(2).any(|a| a == ["--cargo-profile", "test-release"]));
-        assert_eq!(args[args.len() - 4..], ["-E", "not binary_id(=oos-ui::golden)", "--partition", "hash:2/2"]);
+        assert_eq!(args[args.len() - 4..], ["-E", "not binary_id(=oos-ui::golden)", "--partition", "hash:1/1"]);
         let debug = nextest_args(Path::new("/path/to/oos"), false, None).unwrap();
         assert!(!debug.iter().any(|a| a == "--partition" || a == "--cargo-profile"));
     }
 
     #[test]
-    fn golden_has_its_own_shard_while_single_shards_keep_every_test() {
+    fn layout_and_golden_have_disjoint_shards_while_unsharded_runs_keep_every_test() {
         for release in [false, true] {
             let root = Path::new("/path/to/oos");
             for k in 1..4 {
-                let args = nextest_args(root, release, Some((k, 4))).unwrap();
+                let args = nextest_args(root, release, Some((k, 5))).unwrap();
                 assert_eq!(
                     args[args.len() - 4..],
-                    ["-E", "not binary_id(=oos-ui::golden)", "--partition", &format!("hash:{k}/3")]
+                    [
+                        "-E",
+                        &format!("not (binary_id(=oos-ui::golden) or {LAYOUT_TEST})"),
+                        "--partition",
+                        &format!("hash:{k}/3")
+                    ]
                 );
             }
-            let golden = nextest_args(root, release, Some((4, 4))).unwrap();
+            let layout = nextest_args(root, release, Some((4, 5))).unwrap();
+            assert_eq!(layout[layout.len() - 4..], ["--bin", "oos-ui", "-E", LAYOUT_TEST]);
+            assert!(!layout.iter().any(|a| a == "--partition"));
+            let golden = nextest_args(root, release, Some((5, 5))).unwrap();
             assert_eq!(golden[golden.len() - 2..], ["--test", "golden"]);
             assert!(!golden.iter().any(|a| a == "--partition"));
-            let single = nextest_args(root, release, Some((1, 1))).unwrap();
-            assert!(!single.iter().any(|a| a == "--partition" || a == "-E" || a == "--test"));
+            for shard in [None, Some((1, 1))] {
+                let all = nextest_args(root, release, shard).unwrap();
+                assert!(!all.iter().any(|a| a == "--partition" || a == "-E" || a == "--test" || a == "--bin"));
+            }
+            let two = nextest_args(root, release, Some((2, 2))).unwrap();
+            assert_eq!(two[two.len() - 2..], ["--test", "golden"]);
         }
     }
 

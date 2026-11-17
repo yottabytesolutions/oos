@@ -311,3 +311,16 @@ fn test_thread_budgets_preserve_inherited_and_explicit_overrides() {
     assert_eq!(out.stdout, "7");
     assert_eq!(std::env::var_os("NEXTEST_TEST_THREADS"), before);
 }
+
+#[test]
+fn partition_errors_name_the_selected_matrix() {
+    for name in ["OOS_TEST_PARTITION", "OOS_DECODER_PARTITION"] {
+        assert_eq!(partition(name, None), Ok(None));
+        assert_eq!(partition(name, Some("")), Ok(None));
+        assert_eq!(partition(name, Some("2/3")), Ok(Some((2, 3))));
+        for bad in ["0/3", "4/3", "3", "a/3", "1/b", "1/0"] {
+            let error = partition(name, Some(bad)).unwrap_err();
+            assert!(error.starts_with(&format!("{name}={bad}:")), "{error}");
+        }
+    }
+}

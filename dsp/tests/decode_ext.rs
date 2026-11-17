@@ -612,7 +612,7 @@ fn can_fd_500k_2m_with_8_20_64_bytes() {
         .collect();
     let frames = [
         fd(0x123, false, true, d8.clone()),
-        fd(0x1234_567, true, true, d20.clone()),
+        fd(0x0123_4567, true, true, d20.clone()),
         fd(0x7ff, false, true, d64.clone()),
         FdFrame {
             id: 0x055,
@@ -638,7 +638,7 @@ fn can_fd_500k_2m_with_8_20_64_bytes() {
         ids(&p),
         vec![
             (0x123, false, false),
-            (0x1234_567, true, false),
+            (0x0123_4567, true, false),
             (0x7ff, false, false),
             (0x055, false, false),
             (0x0f0, false, false),
@@ -867,7 +867,7 @@ fn noise_and_garbage_never_panic() {
         while v.len() < n {
             let lvl = (r() % 1000) as f32 / 1000.0 * 4.0 - 0.5;
             let len = 1 + (r() % [3, 30, 300, 3000][round % 4]) as usize;
-            v.extend(std::iter::repeat(lvl).take(len));
+            v.extend(std::iter::repeat_n(lvl, len));
         }
         v.truncate(n);
         add_noise(&mut v, 0.3, round as u64 + 1);

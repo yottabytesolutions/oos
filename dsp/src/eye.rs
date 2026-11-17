@@ -332,7 +332,7 @@ pub fn norm_inv(p: f64) -> f64 {
         -3.969683028665376e1,
         2.209460984245205e2,
         -2.759285104469687e2,
-        1.383577518672690e2,
+        1.383_577_518_672_69e2,
         -3.066479806614716e1,
         2.506628277459239,
     ];
@@ -639,7 +639,6 @@ pub fn bathtub(s: &[f64], j: &Jitter, period: f64, points: usize) -> Bathtub {
         return b;
     }
     let n = s.len() as f64;
-    let modelled = j.tj_pp.is_finite();
     // probability that an edge lies more than `d` beyond its tail mean
     let beyond = |d: f64, sigma: f64| if sigma > 0.0 { q_tail(d / sigma) } else { (d < 0.0) as u8 as f64 };
     for k in 0..points {
@@ -649,14 +648,15 @@ pub fn bathtub(s: &[f64], j: &Jitter, period: f64, points: usize) -> Bathtub {
         let early = s.partition_point(|&x| x < t - period);
         b.ui.push(u as f32);
         b.measured.push(if late + early == 0 { f32::NAN } else { ((late + early) as f64 / n).min(1.0).log10() as f32 });
-        if modelled {
+        if j.tj_pp.is_finite() {
             // the right tail of the left crossing, the left tail of the right crossing
             let p = beyond(t - j.right.0, j.right.1) + beyond(j.left.0 + period - t, j.left.1);
+            #[allow(clippy::manual_clamp, reason = "min/max maps NaN to 1.0, clamp would propagate it")]
             b.model.push((p.min(1.0).max(1e-300).log10() as f32).max(BATHTUB_FLOOR));
         }
     }
     b.seen = (1.0 - j.pp / period).max(0.0);
-    if modelled {
+    if j.tj_pp.is_finite() {
         b.opening = (1.0 - j.tj_pp / period).max(0.0);
     }
     b

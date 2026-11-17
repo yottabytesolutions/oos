@@ -1,7 +1,7 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
 439 file dsp/src/bode.rs
-419 file dsp/src/dcc_yard.rs
+414 file dsp/src/dcc_yard.rs
 616 file dsp/src/decode.rs
 1526 file dsp/src/decode_ext.rs
 1687 file dsp/src/decode_ext2.rs
@@ -10,9 +10,9 @@
 1522 file dsp/src/eye.rs
 582 file dsp/src/hss.rs
 1138 file dsp/src/identify.rs
-409 file dsp/src/magnetic.rs
+407 file dsp/src/magnetic.rs
 967 file dsp/src/measure.rs
-630 file dsp/src/motor.rs
+625 file dsp/src/motor.rs
 721 file dsp/src/power.rs
 403 file dsp/src/serial.rs
 531 file dsp/src/sim.rs

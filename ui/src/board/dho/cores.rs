@@ -71,8 +71,8 @@ impl Window {
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Cores {
+    #[cfg(test)]
     /// Takes the core offsets off the words `w` of channel `key.1`. Returns the turn applied (word k had the offset
     /// of phase (k + turn) % 8 of the learnt pattern), None when the frame was left as it is.
     pub fn apply(&mut self, key: Key, w: &mut [u16]) -> Option<usize> {
@@ -118,8 +118,8 @@ impl Cores {
         (rest < reference).then(|| Correction::new(&e.l, turn))
     }
 
+    #[cfg(test)]
     /// The learnt pattern of `key` (codes, phase 0 first) and the samples it stands for.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn pattern(&self, key: Key) -> Option<([f64; P], f64)> {
         self.learnt.get(&key).map(|e| (e.l, e.n))
     }
@@ -142,12 +142,18 @@ impl Learnt {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Correction {
     offsets: [i32; P],
+    /// the turn `apply` reports to the tests
+    #[cfg(test)]
     turn: usize,
 }
 
 impl Correction {
     fn new(pattern: &[f64; P], turn: usize) -> Self {
-        Self { offsets: std::array::from_fn(|k| pattern[(k + turn) % P].round() as i32), turn }
+        Self {
+            offsets: std::array::from_fn(|k| pattern[(k + turn) % P].round() as i32),
+            #[cfg(test)]
+            turn,
+        }
     }
 
     pub(super) fn word(&self, i: usize, word: u16) -> u16 {
@@ -155,14 +161,15 @@ impl Correction {
     }
 }
 
+#[cfg(test)]
 /// A frame's own estimate of the pattern: the Hann-weighted mean of each phase k % 8 of the first `LOOK` words, less
 /// the mean of the 8 (a windowed DFT at the multiples of a 8th of the rate). With the samples it used; None for short
 /// frames.
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub fn estimate(w: &[u16]) -> Option<([f64; P], f64)> {
     estimate_with(w, &mut Window::default())
 }
 
+#[cfg(test)]
 /// `estimate` with a window kept from frame to frame: 8 words at a time, in f32 over blocks of 256 x 8 words.
 fn estimate_with(w: &[u16], win: &mut Window) -> Option<([f64; P], f64)> {
     estimate_at(w.len(), |i| w[i], win)

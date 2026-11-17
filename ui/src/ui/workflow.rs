@@ -592,7 +592,6 @@ impl Replay {
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     fn capture_statistics_context(&self) -> String {
         let refs: Vec<_> = self
@@ -761,7 +760,6 @@ impl Ui {
     }
 
     /// Native/tool Load adds a file without silently replacing the prior source.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn load_waveform_auto(&mut self, data: &[u8], name: &str) -> Result<(), String> {
         let traces = crate::store::parse_wave(data, name)?;
         self.commit_waveform_traces(traces, name, true)
@@ -1205,42 +1203,7 @@ impl Ui {
             .collect()
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub(super) fn draw_record_cards(&self, cv: &mut Canvas) {
-        for (slot, rect) in self.record_cards() {
-            let r = self.refs[slot].as_ref().unwrap();
-            let col = REF_COLORS[r.color.min(REF_COLORS.len() - 1)].1;
-            btn(cv, rect, BAR, if r.on { col } else { CARD_BORDER });
-            cv.set_clip(rect.inset(7));
-            cv.text(&self.fonts().sb, rect.x + 10, rect.y + 18, &format!("R{}", slot + 1), col);
-            cv.text(
-                &self.fonts().s,
-                rect.x + rect.w - 34,
-                rect.y + 18,
-                if r.on { "On" } else { "Off" },
-                if r.on { col } else { DIM },
-            );
-            let (scale, rate) = Self::ref_badge_readout(r);
-            cv.text(Self::card_font(&self.fonts(), &scale, rect.w - 24), rect.x + 10, rect.y + 42, &scale, TEXT);
-            let sub = if r.label.is_empty() { rate } else { format!("{}  \u{b7}  {}", rate, r.label) };
-            cv.text(&self.fonts().s, rect.x + 10, rect.y + 58, &sub, DIM);
-            cv.no_clip();
-        }
-    }
-
     pub(super) fn session_buttons(r: Rect) -> (Rect, Rect) {
         (Rect::new(r.x + 6, r.y + 22, r.w / 2 - 9, 40), Rect::new(r.x + r.w / 2 + 3, r.y + 22, r.w / 2 - 9, 40))
-    }
-
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub(super) fn draw_session_card(&self, cv: &mut Canvas, r: Rect) {
-        btn(cv, r, BAR, CARD_BORDER);
-        let title = if self.session_is_sim { "SIMULATION" } else { "STORED WAVEFORM" };
-        cv.text(&self.fonts().sb, r.x + 10, r.y + 16, title, ACCENT);
-        let (pause, exit) = Self::session_buttons(r);
-        btn(cv, pause, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts().sb, pause, 1, if self.m.run == RunState::Run { "Stop" } else { "Run" }, TEXT);
-        btn(cv, exit, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts().sb, exit, 1, "Live", TEXT);
     }
 }

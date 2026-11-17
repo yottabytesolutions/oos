@@ -15,7 +15,7 @@ pub(super) mod recovery;
 pub(in crate::ui) mod samples;
 
 use super::*;
-use crate::wave::{autoset_shown, flat_noise, mid_level, periodic, place, Stats};
+use crate::wave::{flat_noise, mid_level, periodic, place, Stats};
 use recovery::scale_for;
 
 /// Time bases of the search: one window of 12 divisions each covers about two decades of period.
@@ -532,83 +532,7 @@ impl Ui {
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-impl Ui {
-    /// Whether the separate Fit record action is working with stored references.
-    /// The hardware Auto action does not call this reference fitting path.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub(super) fn reference_autoset(&self) -> bool {
-        if self.sim_play {
-            return true;
-        }
-        let live = (0..n_ch()).any(|c| self.m.ch[c].on);
-        !live && self.refs.iter().any(|r| r.as_ref().is_some_and(|r| r.on && r.v.len() >= 4 && r.dt > 0.0))
-    }
-
-    /// Bounded Fit record helper: scale/position/time base from shown refs;
-    /// never called by hardware Auto and never turns an ADC channel on.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub(super) fn autoset_reference(&mut self) {
-        let shown: Vec<usize> = self
-            .refs
-            .iter()
-            .enumerate()
-            .filter_map(|(i, r)| {
-                let r = r.as_ref()?;
-                (r.on && r.v.len() >= 4 && r.dt.is_finite() && r.dt > 0.0).then_some(i)
-            })
-            .collect();
-        if shown.is_empty() {
-            self.toast("Fit record: no reference on");
-            return;
-        }
-        // Borrow the records: four 20M files must not create four extra 80MB vectors.
-        let waves: Vec<(&[f32], f64)> = shown
-            .iter()
-            .map(|&i| {
-                let r = self.refs[i].as_ref().unwrap();
-                (r.v.as_slice(), r.dt)
-            })
-            .collect();
-        let views = autoset_shown(&mut self.m, &waves);
-        let mut any = false;
-        let mut fitted = Vec::new();
-        for (&i, view) in shown.iter().zip(views) {
-            if let Some((vpd, offset)) = view {
-                if let Some(r) = &mut self.refs[i] {
-                    r.vpd = vpd;
-                    r.offset = offset;
-                    any = true;
-                    fitted.push(i);
-                }
-            }
-        }
-        if !any {
-            self.toast("Fit record: no signal found");
-            return;
-        }
-        // Keep the chosen time window in an actual record, including files whose
-        // first sample is far from zero. Prefer the user's selected shown source.
-        let selected = self.selected_workspace_source().and_then(|id| match id {
-            WaveId::Ref(i) if fitted.contains(&i) => Some(i),
-            _ => None,
-        });
-        if let Some(reference) = selected.or_else(|| fitted.first().copied()).and_then(|i| self.refs[i].as_ref()) {
-            let end = reference.t0 + reference.dt * reference.v.len().saturating_sub(1) as f64;
-            let half = self.m.time_per_div() as f64 * HDIV as f64 * 0.5;
-            let center = self.m.delay as f64;
-            if center + half < reference.t0 || center - half > end {
-                self.m.delay = (reference.t0 + 0.5 * (end - reference.t0)) as f32;
-            }
-        }
-        if self.m.zoom {
-            self.reset_zoom();
-        }
-        self.measure_refs();
-        change::mapping_observed(self, change::oracle::Row::Layout);
-        self.toast("Record fitted");
-    }
-}
+impl Ui {}
 
 /// What the bar after an auto set-up offers (drawn in the waveform window, `AUTO_BAR_S` s or until a tap elsewhere).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -802,23 +726,6 @@ fn auto_icon(cv: &mut Canvas, r: Rect, v: AutoView) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reference_autoset_reuses_samples_and_recenters_a_record_away_from_zero() {
-        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        ui.m.ch.iter_mut().for_each(|ch| ch.on = false);
-        ui.m.run = RunState::Stop;
-        ui.refs[0] = Some(sine_ref(2000, 10.0, 1e-7));
-        ui.refs[0].as_mut().unwrap().t0 = 0.123;
-        let pointer = ui.refs[0].as_ref().unwrap().v.as_ptr();
-        let trigger = (ui.m.trigger_wave(), ui.m.trig_level, ui.m.trig_mode);
-        ui.autoset_reference();
-        let record = ui.refs[0].as_ref().unwrap();
-        assert_eq!(record.v.as_ptr(), pointer);
-        assert!(ui.m.delay as f64 >= record.t0 && ui.m.delay as f64 <= record.t0 + record.dt * record.v.len() as f64);
-        assert_eq!((ui.m.trigger_wave(), ui.m.trig_level, ui.m.trig_mode), trigger);
-        assert_eq!((ui.m.run, ui.replay.captures), (RunState::Stop, 0));
-    }
 
     #[test]
     fn successful_hardware_autoset_restores_configured_memory_depth() {

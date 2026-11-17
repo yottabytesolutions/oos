@@ -59,11 +59,7 @@ struct Input {
     t0: f64,
     dt: f64,
 }
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Input {
-    fn values(&self) -> &[f32] {
-        &self.samples.values()[self.lo..self.hi]
-    }
     fn start(&self) -> f64 {
         self.t0 + self.lo as f64 * self.dt
     }

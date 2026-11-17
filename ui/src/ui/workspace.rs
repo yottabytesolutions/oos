@@ -29,7 +29,6 @@ struct Gesture {
     held: bool,
 }
 #[derive(Clone)]
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub(super) enum Action {
     Overlay,
     Stacked,
@@ -37,23 +36,18 @@ pub(super) enum Action {
     Source(WaveId),
     Trigger(WaveId),
     Menu(MenuId),
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     ZoomReset,
     ZoomClose,
     FitRecord,
-    Live,
     Single,
     Run,
-    Panel,
     EyeRight,
     EyeLeft,
     EyeBelow,
     EyeFloat,
     EyeClose,
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     MeasureFloat,
     MeasureDock(StripDock),
-    Close,
 }
 
 #[cfg(test)]
@@ -656,7 +650,6 @@ pub(super) struct Workspace {
     pub(super) popup: Option<Popup>,
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// Display/knob focus is independent of acquisition and measurement A/B.
     pub(super) fn selected_workspace_source(&self) -> Option<WaveId> {
@@ -793,15 +786,9 @@ impl Ui {
         self.relayout();
         change::mapping_observed(self, change::oracle::Row::Layout);
     }
-    pub(super) fn footer_rects(&self) -> (Rect, Rect, Rect, Rect, Option<Rect>, Option<Rect>, Rect) {
+    pub(super) fn footer_rects(&self) -> (Rect, Rect, Rect, Rect, Option<Rect>, Rect) {
         let y = BOTTOM.y + 3;
         let mut right = W - 4;
-        let panel = self.desktop_panel.map(|_| {
-            right -= 48;
-            let r = Rect::new(right, y, 46, 30);
-            right -= 4;
-            r
-        });
         let top_live = !self.full_on() && self.top_buttons().iter().any(|button| button.0 == TopBtn::Live);
         let live = (self.record_mode() && !top_live).then(|| {
             right -= 44;
@@ -816,7 +803,7 @@ impl Ui {
         right -= 124;
         let overlay = Rect::new(right, y, 58, 30);
         let stacked = Rect::new(right + 62, y, 58, 30);
-        (overlay, stacked, time, trigger, live, panel, Rect::new(126, y, (right - 132).max(0), 30))
+        (overlay, stacked, time, trigger, live, Rect::new(126, y, (right - 132).max(0), 30))
     }
     /// Sources that get a pill: every live channel and every loaded or selected reference.
     fn pill_sources(&self) -> Vec<WaveId> {
@@ -830,7 +817,7 @@ impl Ui {
     }
     /// How many pills fit, and whether the rest goes behind a "+N" pill.
     fn pill_count(&self, total: usize) -> (usize, bool) {
-        let fit = (self.footer_rects().6.w / 42).max(1) as usize;
+        let fit = (self.footer_rects().5.w / 42).max(1) as usize;
         if total > fit && fit > 1 {
             (fit - 1, true)
         } else {
@@ -838,7 +825,7 @@ impl Ui {
         }
     }
     pub(super) fn source_pills(&self) -> Vec<(WaveId, Rect)> {
-        let r = self.footer_rects().6;
+        let r = self.footer_rects().5;
         let mut sources = self.pill_sources();
         let (count, more) = self.pill_count(sources.len());
         let active = self.selected_workspace_source();
@@ -857,7 +844,7 @@ impl Ui {
     }
     /// The "+N" pill after the last source pill that opens the Sources popup, when not every source has a pill.
     pub(super) fn source_overflow(&self) -> Option<(usize, Rect)> {
-        let r = self.footer_rects().6;
+        let r = self.footer_rects().5;
         let total = self.pill_sources().len();
         let (count, more) = self.pill_count(total);
         if !more {
@@ -873,7 +860,7 @@ impl Ui {
                 ch[c] = rect;
             }
         }
-        let (_, _, time, trig, _, _, _) = self.footer_rects();
+        let (_, _, time, trig, _, _) = self.footer_rects();
         Cards { ch, la: None, gen: None, time, trig }
     }
     pub(super) fn draw_workspace_footer(&self, cv: &mut Canvas) {
@@ -898,7 +885,7 @@ impl Ui {
         if let Some((n, rect)) = self.source_overflow() {
             draw(cv, rect, &format!("+{n}"), false);
         }
-        let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
+        let (overlay, stacked, time, trigger, live, _) = self.footer_rects();
         draw(cv, overlay, "Overlay", !self.workspace.stacked);
         draw(cv, stacked, "Stacked", self.workspace.stacked);
         let (scale, _) = self.view();
@@ -906,9 +893,6 @@ impl Ui {
         self.draw_compact_trigger(cv, trigger);
         if let Some(r) = live {
             draw(cv, r, "Live", false);
-        }
-        if let Some(r) = panel {
-            draw(cv, r, "Panel", self.desktop_panel == Some(true));
         }
     }
     pub(super) fn workspace_footer_tap(&mut self, x: i32, y: i32) -> bool {
@@ -944,7 +928,7 @@ impl Ui {
                 return true;
             }
         }
-        let (overlay, stacked, time, trigger, live, panel, _) = self.footer_rects();
+        let (overlay, stacked, time, trigger, live, _) = self.footer_rects();
         if overlay.contains(x, y) {
             self.trace_mode(false);
         } else if stacked.contains(x, y) {
@@ -953,8 +937,6 @@ impl Ui {
             self.toggle_menu(MenuId::Horizontal);
         } else if live.is_some_and(|r| r.contains(x, y)) {
             self.return_to_live();
-        } else if panel.is_some_and(|r| r.contains(x, y)) {
-            self.desktop_panel = self.desktop_panel.map(|open| !open);
         } else {
             self.compact_trigger_tap(x, y, trigger);
         }
@@ -1118,10 +1100,8 @@ impl Ui {
             Action::FitRecord => {
                 self.fit_selected_record();
             }
-            Action::Live => self.return_to_live(),
             Action::Single => self.key(key::SINGLE),
             Action::Run => self.key(key::RUNSTOP),
-            Action::Panel => self.desktop_panel = self.desktop_panel.map(|open| !open),
             Action::EyeRight => {
                 self.workspace.eye_float = None;
                 self.workspace.eye_left = false;
@@ -1163,7 +1143,6 @@ impl Ui {
                 self.set_stats_shown(true);
                 self.relayout();
             }
-            Action::Close => {}
         }
     }
     pub(super) fn workspace_draw(&self, cv: &mut Canvas) {
@@ -1338,7 +1317,6 @@ impl Ui {
         }
     }
     /// Escape closes transient surfaces and leaves box/zoom modes immediately.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn dismiss_context(&mut self) {
         let was_drawing = self.zoom_arm;
         self.workspace.popup = None;

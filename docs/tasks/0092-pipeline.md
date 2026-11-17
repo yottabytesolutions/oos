@@ -121,8 +121,8 @@ comment. This is not a required check and needs no secret in any PR workflow; th
 ## Versioning
 
 - SemVer tags `vX.Y.Z` on main, annotated, starting at `v0.2.0` for the hard fork.
-- The version lives in the crate manifests (today 0.1.13 in core, dsp, fpgad, hal, ui). A release is one
-  `chore(release): vX.Y.Z` PR that sets all five, then the tag. `release.yml` refuses a tag that differs.
+- The version lives in the crate manifests (0.2.0 in core, dsp, fpgad, hal, ui and xtask). A release is one
+  `chore(release): vX.Y.Z` PR that sets all six, then the tag. `release.yml` refuses a tag that differs.
 - Binaries already report it: `oos-ui` uses `CARGO_PKG_VERSION` in `*IDN?`, the web UI and mDNS.
 - Proposed, not implemented (risk path, needs its own task and a unit test): the update package build id stays
   `YYYYMMDD-HHMMSS kernel <rel>` (the downgrade check compares it as text, date first). Add the version as a

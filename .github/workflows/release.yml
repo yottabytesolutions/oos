@@ -25,7 +25,7 @@ jobs:
         run: |
           set -eu
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$TAG is not on main"; exit 1; }
-          versions=$(grep -h '^version = ' core/Cargo.toml dsp/Cargo.toml fpgad/Cargo.toml hal/Cargo.toml ui/Cargo.toml | sort -u)
+          versions=$(grep -h '^version = ' core/Cargo.toml dsp/Cargo.toml fpgad/Cargo.toml hal/Cargo.toml ui/Cargo.toml xtask/Cargo.toml | sort -u)
           [ "$versions" = "version = \"${TAG#v}\"" ] || { echo "::error::$TAG does not match the crate versions: $versions"; exit 1; }
 
   image:

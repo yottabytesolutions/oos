@@ -22,18 +22,18 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "oos-core"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "oos-dsp",
 ]
 
 [[package]]
 name = "oos-dsp"
-version = "0.1.13"
+version = "0.2.0"
 
 [[package]]
 name = "oos-fpgad"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "libc",
  "oos-hal",
@@ -41,14 +41,14 @@ dependencies = [
 
 [[package]]
 name = "oos-hal"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "oos-ui"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "libc",
  "oos-core",
@@ -136,7 +136,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",

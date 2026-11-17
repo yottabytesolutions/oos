@@ -299,9 +299,7 @@ mod tests {
         assert!(!a.permits_with(ip("10.0.0.1"), || panic!("asked")));
         // onlink6 alone closes what is not on the link
         let (a, _) = Acl::parse("onlink6");
-        assert!(
-            !a.is_open() && !a.permits_with(ip("192.0.2.3"), link) && a.permits_with(ip("2001:db8:5:7::1"), link)
-        );
+        assert!(!a.is_open() && !a.permits_with(ip("192.0.2.3"), link) && a.permits_with(ip("2001:db8:5:7::1"), link));
     }
 
     #[test]

@@ -158,10 +158,7 @@ fn cli_refuses_foreign_units_and_logs_an_explicit_override() {
 #[test]
 fn pack_refuses_a_profile_that_the_plain_image_does_not_contain() {
     let f = Fixture::new();
-    refused(
-        &f.pack().args(["--community", "--unit", "dho804"]).output().expect("test setup"),
-        "image unit 'none'",
-    );
+    refused(&f.pack().args(["--community", "--unit", "dho804"]).output().expect("test setup"), "image unit 'none'");
     assert!(!f.path("package").exists());
 }
 

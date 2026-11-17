@@ -213,7 +213,7 @@ fn serve(mut ui: Ui, sw: &sysconf::Switches) {
     let mut vxi = net6::host_or_exit(vxi11::Server::host());
     let mut hislip = hislip::Server::open(net6::Port::Host);
     web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
-    net6::host_or_exit(net6::host_ready(web.port(), scpi.port(), vxi.ports()));
+    net6::host_or_exit(net6::host_ready(web.port(), scpi.port(), vxi.ports(), hislip.port()));
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     while !ui.quit {
         ui.step(0.04);

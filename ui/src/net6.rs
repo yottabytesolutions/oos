@@ -70,12 +70,32 @@ pub fn host_or_exit<T>(result: std::io::Result<T>) -> T {
     }
 }
 
-/// Publish only after every host listener is bound. The launcher owns the private run directory.
-pub fn host_ready(web: Option<u16>, scpi: Option<u16>, vxi: Option<(u16, u16, u16)>) -> std::io::Result<()> {
+/// What a person who started `oos-ui --serve` by hand reads: where to point the browser, the SCPI and HiSLIP clients
+/// and a VXI-11 client (its port mapper is not on 111, so the client needs the ports).
+fn serve_banner(web: u16, scpi: u16, hislip: Option<u16>, (tcp, udp, core): (u16, u16, u16)) -> String {
+    let hislip = hislip.map_or_else(|| "HiSLIP unavailable".to_string(), |p| format!("HiSLIP on 127.0.0.1:{p}"));
+    format!(
+        "oos-ui: open http://127.0.0.1:{web}/ in a browser; SCPI on 127.0.0.1:{scpi}; {hislip}; \
+         VXI-11 mapper TCP {tcp} UDP {udp}, core {core}"
+    )
+}
+
+/// Publish only after every host listener is bound. The launcher owns the private run directory. Without a launcher
+/// (`OOS_HARNESS_BUILD` unset) a person started the server: it prints where to connect instead.
+pub fn host_ready(
+    web: Option<u16>,
+    scpi: Option<u16>,
+    vxi: Option<(u16, u16, u16)>,
+    hislip: Option<u16>,
+) -> std::io::Result<()> {
     let (Some(web), Some(scpi), Some((tcp, udp, core))) = (web, scpi, vxi) else {
         return Err(std::io::Error::other("a host listener is unavailable; readiness was not published"));
     };
-    let build = std::env::var("OOS_HARNESS_BUILD").unwrap_or_default();
+    let Some(build) = std::env::var_os("OOS_HARNESS_BUILD") else {
+        println!("{}", serve_banner(web, scpi, hislip, (tcp, udp, core)));
+        return Ok(());
+    };
+    let build = build.into_string().unwrap_or_default();
     if build.is_empty() || !build.bytes().all(|c| c.is_ascii_hexdigit()) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -144,7 +164,7 @@ mod tests {
         // Give each child its own environment; parallel tests never mutate process-wide variables.
         if std::env::var_os("OOS_TEST_READY_CHILD").is_some() {
             let build = std::env::var("OOS_HARNESS_BUILD").unwrap();
-            let result = host_ready(Some(1001), Some(1002), Some((1003, 1004, 1005)));
+            let result = host_ready(Some(1001), Some(1002), Some((1003, 1004, 1005)), Some(1006));
             assert_eq!(result.is_ok(), !build.is_empty() && build.bytes().all(|b| b.is_ascii_hexdigit()));
             return;
         }
@@ -175,6 +195,16 @@ mod tests {
             assert!(!path.with_extension("pending").exists());
         }
         std::fs::remove_dir(run).unwrap();
+    }
+
+    #[test]
+    fn serve_banner_names_every_port_a_client_needs() {
+        assert_eq!(
+            serve_banner(40001, 40002, Some(40006), (40003, 40004, 40005)),
+            "oos-ui: open http://127.0.0.1:40001/ in a browser; SCPI on 127.0.0.1:40002; HiSLIP on 127.0.0.1:40006; \
+             VXI-11 mapper TCP 40003 UDP 40004, core 40005"
+        );
+        assert!(serve_banner(40001, 40002, None, (40003, 40004, 40005)).contains("HiSLIP unavailable"));
     }
 
     #[test]

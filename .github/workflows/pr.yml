@@ -61,6 +61,10 @@ jobs:
       - name: Fast gate (fmt, size, architecture, statics, unsafe, ignores, agent rules, test time)
         if: steps.changes.outputs.run == 'true'
         run: cargo xtask check --fast
+      # Host scripts stay POSIX sh for Linux, the BSDs and macOS; the runner image has shellcheck.
+      - name: Host scripts (shellcheck --shell=sh)
+        if: steps.changes.outputs.run == 'true'
+        run: python3 -I tools/ci/host_scripts.py check
 
   clippy:
     runs-on: ubuntu-24.04

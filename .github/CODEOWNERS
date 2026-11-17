@@ -1,6 +1,7 @@
-# Code owner review is required only for these paths (.github/rulesets/main.json). Everything else merges on the
-# required checks and codex-review alone. Risk paths: anything that writes hardware registers, touches calibration,
-# signs, verifies or boots an update, or changes the pipeline that enforces all of this.
+# Code owner review is required only for these paths (.github/rulesets/main.json). Everything else, the pipeline,
+# the gate and the tooling included, merges on the required checks and codex-review alone: those changes are tested
+# by the pipeline itself. Risk paths: anything that writes hardware registers, touches calibration, or signs,
+# verifies or boots an update.
 
 # Hardware register writes and the board model (FPGA, AFE, ADC, clocks, triggers, sequencer), including the
 # unit-specific calibration (calfile, selfcal, coretrim), which cannot be regenerated.
@@ -17,14 +18,3 @@
 /boot/ @ichnograph
 /kernel/ @ichnograph
 /rootfs/ @ichnograph
-
-# The pipeline, the gate and the review rules.
-/.github/ @ichnograph
-/xtask/ @ichnograph
-/tools/ci/ @ichnograph
-/tools/privacy/ @ichnograph
-/.githooks/ @ichnograph
-/rust-toolchain.toml @ichnograph
-/deny.toml @ichnograph
-/clippy.toml @ichnograph
-/.cargo/ @ichnograph

@@ -1480,7 +1480,7 @@ fn counter_tick(
 #[cfg(target_os = "linux")]
 pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwShared {
     use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
-    use oos_hal::dho::{adc, seq};
+    use oos_hal::dho::{adc, samples, seq};
     let shared: HwShared = Arc::new(Mutex::new(Shared::default()));
     let out = shared.clone();
     // named for `top -H` on the unit
@@ -2003,7 +2003,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                                 sweep[ch].clear();
                                 continue;
                             }
-                            scan_write(&mut sweep[ch], keep, cursor, &seq::volts(&w[ch], s.ch[ch].scale, s.ch[ch].offset));
+                            scan_write(&mut sweep[ch], keep, cursor, &samples::volts_f64(&w[ch], s.ch[ch].scale, s.ch[ch].offset));
                         }
                         cursor = (cursor + fresh) % keep;
                     } else {
@@ -2016,7 +2016,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                                 ring[ch].clear();
                                 continue;
                             }
-                            ring[ch].extend(seq::volts(&w[ch], s.ch[ch].scale, s.ch[ch].offset));
+                            ring[ch].extend(samples::volts_f64(&w[ch], s.ch[ch].scale, s.ch[ch].offset));
                             while ring[ch].len() > keep {
                                 ring[ch].pop_front();
                             }

@@ -38,6 +38,7 @@ pub mod mask;
 pub mod pairs;
 pub mod panel;
 pub mod roll;
+pub mod samples;
 pub mod scu;
 pub mod seg;
 pub mod selfcal;

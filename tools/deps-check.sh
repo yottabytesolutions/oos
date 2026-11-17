@@ -12,6 +12,13 @@ here=$(cd "$(dirname "$0")" && pwd)
 lock="$here/../rootfs/deps.lock"
 status=0
 esc() { printf '%s' "$1" | sed 's/[.[\*^$+?(){}|]/\\&/g'; }
+# the highest version on stdin: numbers compare as numbers (sort -V is not on OpenBSD or NetBSD)
+newest() {
+	python3 -I -c 'import re, sys
+v = set(sys.stdin.read().split())
+key = lambda s: [(0, int(x), "") if x.isdigit() else (1, 0, x) for x in re.findall(r"[0-9]+|[^0-9]+", s)]
+print(max(v, key=key) if v else "")'
+}
 printf '%-16s %-34s %-10s %-10s %s\n' name owner pinned latest note
 grep -v '^#' "$lock" | while read -r name owner ver sum url index; do
 	[ -n "$name" ] || continue
@@ -23,7 +30,7 @@ grep -v '^#' "$lock" | while read -r name owner ver sum url index; do
 	pre=${file%%"$ver"*}; suf=${file#*"$ver"}
 	listing=$(curl -fsSL -m 20 "${index:-$dir/}" 2>/dev/null)
 	latest=$(printf '%s' "$listing" | grep -oE "$(esc "$pre")[0-9][0-9A-Za-z.]*$(esc "$suf")" | sed "s|^$(esc "$pre")||" |
-		while read -r v; do printf '%s\n' "${v%"$suf"}"; done | sort -uV | tail -1)
+		while read -r v; do printf '%s\n' "${v%"$suf"}"; done | newest)
 	note=
 	if [ -z "$latest" ]; then
 		note="no listing"; latest=-

@@ -9,7 +9,7 @@
 #
 # The container sees rootfs/out as /wlan, so the hook stages its part there: rootfs/out/unit-hook/ with image.sh
 # (boot/unit-hook-image.sh), the unit's build.env and its *.conf under etc-oos/. Staged anew on every build.
-stage="$root/rootfs/out/unit-hook"
+stage="${root:?}/rootfs/out/unit-hook"
 rm -rf "$stage"
 mkdir -p "$stage/etc-oos"
 # Store the build profile even when no unit defaults were selected.
@@ -36,7 +36,7 @@ if [ -n "${OOS_UNIT:-}" ]; then
 	mac=$(OOS_CONF_FILES="$unit/system.conf" OOS_CID_FILE=/nonexistent sh "$root/rootfs/initramfs/bin/oos-mac" 2>/dev/null)
 	[ -n "$mac" ] && echo "$mac" > "$stage/dtb.mac"
 fi
-[ -f "$k/$OOS_KERNEL_DTB" ] || { echo "no $k/$OOS_KERNEL_DTB: run kernel/build-base.sh again" >&2; exit 1; }
+[ -f "${k:?}/$OOS_KERNEL_DTB" ] || { echo "no $k/$OOS_KERNEL_DTB: run kernel/build-base.sh again" >&2; exit 1; }
 # the fork's own builds from rootfs/deps.lock (docs/fork/deps.md): built again when missing, or when the manifest line
 # or the builder, deps.sh helper or build environment changed since (shared receipt/stamp inputs)
 DEPS_LOCK="$root/rootfs/deps.lock"

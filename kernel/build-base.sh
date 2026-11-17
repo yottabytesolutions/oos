@@ -19,6 +19,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 tarball="$here/src/linux-6.12.115-base.tar.xz"
 out="$here/out/base"
 root=$(cd "$here/.." && pwd)
+. "$root/tools/lib/portable.sh"
 image=$("$root/tools/build-env.sh" prepare kernel)
 platform=$("$root/tools/build-env.sh" platform kernel)
 environment=$("$root/tools/build-env.sh" identity kernel)
@@ -29,7 +30,7 @@ if [ "${1:-}" = image ]; then
 fi
 
 [ -f "$tarball" ] || { echo "missing $tarball (kernel/README.md says where it comes from)" >&2; exit 1; }
-(cd "$here" && shasum -a 256 -c base.sha256 >/dev/null 2>&1 || sha256sum -c base.sha256 >/dev/null) || { echo "$tarball: wrong checksum" >&2; exit 1; }
+(cd "$here" && sha256_check < base.sha256) || { echo "$tarball: wrong checksum" >&2; exit 1; }
 
 docker volume create "oos-kbuild-$workspace-$environment" >/dev/null
 mkdir -p "$out"

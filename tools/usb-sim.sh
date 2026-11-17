@@ -74,6 +74,7 @@ docker run --rm --pull=never --platform linux/arm64 -v "$w:/w" -v "$root/rootfs:
 accel="-cpu max"
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] && accel="-accel hvf -cpu host"
 disk() { printf -- '-drive if=none,id=%s,format=raw,file=%s -device scsi-hd,drive=%s,channel=0,scsi-id=0,lun=%s\n' "$1" "$2" "$1" "$3"; }
+# shellcheck disable=SC2046 # each disk is several qemu arguments, split on purpose
 qemu-system-aarch64 -M virt $accel -m 512 -smp 2 -nographic -no-reboot -kernel "$w/kernel" -initrd "$w/initramfs.gz" \
 	-append "console=ttyAMA0 rdinit=/init quiet panic=1" -device virtio-rng-pci -device virtio-scsi-pci \
 	$(disk a "$w/fat.img" 0) $(disk b "$w/exfat.img" 1) $(disk c "$w/empty.img" 2) > "$w/log" 2>&1 || { cat "$w/log"; exit 1; }

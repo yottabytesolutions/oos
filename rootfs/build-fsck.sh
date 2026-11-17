@@ -7,6 +7,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 root=$(cd "$here/.." && pwd)
+. "$root/tools/lib/portable.sh"
 image=$("$root/tools/build-env.sh" prepare rootfs-fsck)
 before=$(python3 "$root/tools/output.py" identity "$out/e2fsck")
 ver=1.47.2
@@ -14,7 +15,7 @@ sum=08242e64ca0e8194d9c1caad49762b19209a06318199b63ce74ae4ef2d74e63c
 mkdir -p "$out"
 tarball="$out/e2fsprogs-$ver.tar.xz"
 [ -f "$tarball" ] || curl -fsSL -o "$tarball" "https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v$ver/e2fsprogs-$ver.tar.xz"
-echo "$sum  $tarball" | { shasum -a 256 -c - 2>/dev/null || sha256sum -c -; } >/dev/null || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
+[ "$(sha256 "$tarball")" = "$sum" ] || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
 docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" "$image" sh -euc '
 	cd /tmp && tar -xJf /out/e2fsprogs-$VER.tar.xz && cd e2fsprogs-$VER

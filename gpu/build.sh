@@ -15,6 +15,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 . "$root/tools/output.sh"
+. "$root/tools/lib/portable.sh"
 out="$CARGO_TARGET_DIR/gpu"
 cache="$root/rootfs/out"
 case "$cache/mesa/" in "$CARGO_TARGET_DIR/"*) echo "select a target outside the Mesa cache (rootfs/out)" >&2; exit 1 ;; esac
@@ -32,7 +33,7 @@ if [ ! -f "$tarball" ]; then
 		cd /tmp && apt-get update >/dev/null && apt-get source --download-only mesa=$deb >/dev/null
 		cp mesa_$ver.orig.tar.xz /cache/ && chown \"\$OUT_OWNER\" /cache/mesa_$ver.orig.tar.xz"
 fi
-echo "$sum  $tarball" | { shasum -a 256 -c - 2>/dev/null || sha256sum -c -; } >/dev/null || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
+[ "$(sha256 "$tarball")" = "$sum" ] || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
 rm -rf "$out/gpu"
 mkdir -p "$out/gpu"
 docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -e ENVIRONMENT="$environment" -v "$out:/out" -v "$cache:/cache" -v "$here:/g:ro" $image sh -euc '

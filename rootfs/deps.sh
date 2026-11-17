@@ -7,14 +7,12 @@
 #                                      SCRIPT (its build options): boot/unit-hook.sh rebuilds it then
 #   dep_stamp ARTIFACT SCRIPT NAME...  record what ARTIFACT was built from (ARTIFACT.stamp), at the end of a build
 DEPS_LOCK="${DEPS_LOCK:-$here/deps.lock}"
+. "$(CDPATH='' cd -- "$(dirname -- "$DEPS_LOCK")/.." && pwd)/tools/lib/portable.sh"
 dep_line() {
 	awk -v n="$1" '!/^#/ && $1 == n { print; f = 1 } END { exit !f }' "$DEPS_LOCK" || { echo "deps.lock: no $1" >&2; return 1; }
 }
 dep_ver() { dep_line "$1" | awk '{ print $3 }'; }
-dep_sha256() {
-	sum=$(shasum -a 256 "$1" 2>/dev/null || sha256sum "$1") || return 1
-	printf '%s\n' "${sum%% *}"
-}
+dep_sha256() { sha256 "$1"; }
 dep_fetch() {
 	l=$(dep_line "$1") || return 1
 	sum=$(echo "$l" | awk '{ print $4 }'); url=$(echo "$l" | awk '{ print $5 }')
@@ -26,7 +24,7 @@ dep_fetch() {
 }
 dep_stamp_text() {
 	s=$2; shift 2
-	deps_root=$(CDPATH= cd -- "$(dirname -- "$DEPS_LOCK")/.." && pwd)
+	deps_root=$(CDPATH='' cd -- "$(dirname -- "$DEPS_LOCK")/.." && pwd)
 	script_sum=$(dep_sha256 "$s") || return 1
 	helper_sum=$(dep_sha256 "$deps_root/rootfs/deps.sh") || return 1
 	echo "script $script_sum"

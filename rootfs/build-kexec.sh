@@ -9,6 +9,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 root=$(cd "$here/.." && pwd)
+. "$root/tools/lib/portable.sh"
 image=$("$root/tools/build-env.sh" prepare rootfs-kexec)
 before=$(python3 "$root/tools/output.py" identity "$out/kexec")
 ver=2.0.32
@@ -17,7 +18,7 @@ sum=8f81422a5fd2362cf6cb001b511e535565ed0f32c2f4451fb5eb68fed6710a5d
 mkdir -p "$out"
 tarball="$out/kexec-tools-$ver.tar.xz"
 [ -f "$tarball" ] || curl -fsSL -o "$tarball" "https://mirrors.edge.kernel.org/pub/linux/utils/kernel/kexec/kexec-tools-$ver.tar.xz"
-echo "$sum  $tarball" | { shasum -a 256 -c - 2>/dev/null || sha256sum -c -; } >/dev/null || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
+[ "$(sha256 "$tarball")" = "$sum" ] || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
 docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" "$image" sh -euc '
 	cd /tmp && tar -xJf /out/kexec-tools-$VER.tar.xz && cd kexec-tools-$VER

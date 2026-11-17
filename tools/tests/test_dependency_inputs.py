@@ -20,7 +20,7 @@ class DependencyInputs(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         for name in ('rootfs/deps.sh', 'rootfs/deps.lock', 'tools/output.py', 'boot/unit-hook.sh',
-                     'boot/unit-hook-image.sh', 'boot/unit-hook-dtb.sh'):
+                     'boot/unit-hook-image.sh', 'boot/unit-hook-dtb.sh', 'tools/lib/portable.sh'):
             dest = self.root / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, dest)

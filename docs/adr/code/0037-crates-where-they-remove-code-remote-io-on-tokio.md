@@ -6,7 +6,7 @@
 
 ## Context
 
-ADR 0013 and ADR 0021 kept everything that runs on the scope on `libc` and the crates of the tree. The rule was
+ADR 0013 (before its rewrite) and ADR 0021 kept everything that runs on the scope on `libc` and the crates of the tree. The rule was
 written for a small static binary that anyone can read. It did not weigh what the tree pays for it: hand-written
 protocol servers, one accept loop copied per transport, and blocking socket code that reaches into the frame loop.
 The SCPI raw socket writes its answer from the frame loop and can stall it for up to 2 s, with a 30 s limit (#47,
@@ -51,9 +51,9 @@ Decided by the owner on 2026-11-17 (#47, #50).
 - Answers that wait (`*OPC?`) stay continuations in the frame loop (ADR 0022); the IO thread only holds the
   connection open.
 - The size of the image grows by what the crates add. Worth a second look if that becomes a problem on the card.
-- ADR 0013's vendor rule moves to ADR 0040, unchanged.
+- ADR 0013 keeps only the vendor rule.
 
 ## References
 
-ADR 0013 and ADR 0021 (superseded), ADR 0022, ADR 0024, ADR 0025, `deny.toml`, `xtask/data/architecture.txt`,
+ADR 0013 (rewritten), ADR 0021 (superseded), ADR 0022, ADR 0024, ADR 0025, `deny.toml`, `xtask/data/architecture.txt`,
 [fork/deps.md](../../fork/deps.md), issues #47 and #50.

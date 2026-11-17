@@ -12,8 +12,7 @@ raw socket on 5555. A computer finds instruments by DNS-SD (`_vxi-11._tcp`, `_sc
 `_hislip._tcp`) and reads the LXI identification XML.
 
 On the scope nothing else uses port 111. On a computer it is privileged (Linux, macOS) or taken by the system's own
-RPC services, and a second portmapper would clash with them. The image has no rpcbind and no avahi, and ADR 0013
-keeps further dependencies out of what runs on the scope.
+RPC services, and a second portmapper would clash with them. The image has no rpcbind and no avahi.
 
 ## Decision
 
@@ -30,8 +29,7 @@ keeps further dependencies out of what runs on the scope.
 - **VXI-11 everywhere:** on a computer it needs root or clashes with the system's portmapper.
 - **HiSLIP on the scope as well:** possible, but VXI-11 is what older VISA installations and LXI tools expect; two
   transports on the scope double what has to be checked on the unit. Open for a later record.
-- **rpcbind and avahi in the image:** two daemons and their libraries for a few hundred lines of protocol; against
-  ADR 0013.
+- **rpcbind and avahi in the image:** two daemons and their libraries for a few hundred lines of protocol.
 
 ## Consequences
 
@@ -47,4 +45,4 @@ keeps further dependencies out of what runs on the scope.
 ## References
 
 `ui/src/vxi11.rs`, `ui/src/hislip.rs`, `ui/src/mdns.rs`, `ui/src/announce.rs`, `ui/src/main.rs` (`lan_servers`,
-`mdns_services`), [network.md](../../network.md) 4 and 4.1, [scpi.md](../../scpi.md), ADR 0013, ADR 0022.
+`mdns_services`), [network.md](../../network.md) 4 and 4.1, [scpi.md](../../scpi.md), ADR 0022.

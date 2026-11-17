@@ -5613,6 +5613,11 @@ mod tests {
         assert!(s.clients[0].program.is_some());
         client.shutdown(std::net::Shutdown::Both).unwrap();
         drop(client);
+        // The close travels through the host's network stack and can reach the server socket after the next poll on
+        // a loaded machine; that poll would then resume the program. Wait until the server side can read the end.
+        let server = &s.clients[0].s;
+        server.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
+        assert_eq!(server.peek(&mut [0u8; 1]).expect("raw client close readable at the server"), 0);
         line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
         ui.step(0.2);
         s.poll(&mut ui, &cv);

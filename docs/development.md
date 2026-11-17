@@ -228,6 +228,13 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
 - The release tests in `pr.yml` run without LTO (`CARGO_PROFILE_RELEASE_LTO=false`, 16 codegen units): the same
   optimisation level and no debug assertions, without a fat-LTO link per test binary. CI builds use
   `CARGO_PROFILE_DEV_DEBUG=line-tables-only`.
+- CI sets `OOS_TEST_RUNNER=nextest`: the test steps run each crate's tests with cargo-nextest, which runs the test
+  binaries in parallel, and the doctests with `cargo test --doc`. Without the variable they run `cargo test`. The
+  counts differ slightly: `cargo test` also counts the summary lines of tests that run their own binary again.
+  `.config/nextest.toml` reports a test as slow after 60 s and ends it after 10 minutes (a hang guard); the step lists
+  every test that ran 60 s or longer. A test that leaves a process holding its output fails. Tests kill a process
+  group with `kill -KILL -- -<pgid>`: without `--`, the procps-ng `kill` of Ubuntu 24.04 signals the wrong group, or
+  every process of the user (#23).
 - A push to `main` runs `pr.yml` as the only writer of the Rust caches (one per job kind); its test jobs build the
   tests without running them, because the merge queue already ran them on that tree.
 - `.github/workflows/main.yml`, nightly and by hand: the whole default gate in parallel jobs, including the release

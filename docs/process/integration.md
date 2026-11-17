@@ -3,9 +3,8 @@
 ## Roles
 
 - **Owner:** the human responsible for direction, acceptance and permission for hardware installs and publication.
-- **Coordinator:** the agent session responsible for planning, assignments, integration and publication. Never
-  merges.
-- **Author:** whoever wrote the change. Never merges it.
+- **Coordinator:** the agent session responsible for planning, assignments, integration and publication.
+- **Author:** whoever wrote the change. Lands it through the merge queue once the required checks and Codex pass.
 - **Reviewer:** an agent of another vendor. For human-authored changes, any reviewer who did not write it.
 
 Use the [task claim](../tasks/README.md#claims) before editing. CODEOWNERS assigns reviewers, not edit rights.
@@ -69,19 +68,14 @@ The coordinator pauses a conflicting merge. The affected authors resolve textual
 Do not guess another area's intended behaviour.
 Review the resolution with the affected area reviewers before integration.
 
-The coordinator reruns the full `cargo xtask check` on the integrated result before it reports a pull request
-ready: the required CI checks do not run every step (the coverage floor runs only nightly in CI).
-Use neither `--fast` nor `--no-coverage`. Keep the complete output and exit code, including failed steps.
-Record the integrated revision, dirty state and result. Separate branch passes do not replace this run.
-The maintainer merges, through the merge queue, after cross-vendor review, the full gate, the green required checks
-and required unit evidence. A stack merges bottom up the same way
-([ADR 0034](../adr/process/0034-multi-pr-work-lands-as-a-stack.md)). The coordinator never merges; it reports when a
-pull request is ready.
-For human-authored changes, use the independent review defined in the roles above.
-After the merge, the owner accepts by giving the go to publish, or reverts the change.
-The coordinator then publishes with that go through the documented publish path.
-CODEOWNERS alone does not enforce approvals. The owner must configure required area approval and final CI
-in repository protection. Protection settings have not been verified here.
+The merge queue is the integration step. It re-runs the required checks on top of the current `main` and
+lands the pull request by rebase. The required checks do not run every step (the coverage floor runs only nightly),
+so the author runs the full `cargo xtask check` before marking a pull request ready. The author enables auto-merge
+once the required checks are green and Codex has no unresolved findings
+([CONTRIBUTING](../../CONTRIBUTING.md#review-gate)). A stack lands bottom up
+([ADR 0034](../adr/process/0034-multi-pr-work-lands-as-a-stack.md)). Paths in CODEOWNERS also need the owner's
+approval, which the ruleset enforces. Changes that need unit evidence carry `needs-unit` until the owner has seen
+it. After the merge, the owner accepts or reverts the change.
 
 ## Hotfix lane
 

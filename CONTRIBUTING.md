@@ -133,8 +133,8 @@ gh stack merge <stack>                         # maintainer: queue the layers bo
   on the stack's own branches, which is allowed.
 - A rebase gives the layers above a new head commit: comment `@codex review` on each of them afterwards, or their
   `codex-review` stays pending.
-- Agents keep to [AGENTS.md](AGENTS.md#working-together): only the coordinator runs the commands that push (`submit`,
-  `push`, `sync`, `link`), with the owner's go; only the maintainer runs `gh stack merge`; the coordinator never merges.
+- The author pushes the stack's branches (`submit`, `push`, `sync`, `link`) and lands it with `gh stack merge` once
+  every layer has green required checks and no unresolved Codex findings.
 - All layers live in this repository: GitHub does not support stacks across forks. Without push access, submit one
   layer at a time from your fork and open the next when the previous one merged, or ask the maintainer for push
   access or to recreate the stack from your fork's branches.
@@ -150,6 +150,12 @@ drafts may be skipped. After new commits, or to review a draft, comment `@codex 
 head exists, `codex-review` is pending, not failed. Fix or answer every finding and resolve every conversation.
 `codex-review` passes only for a completed review of the current head with no unresolved findings. Paths in
 [CODEOWNERS](.github/CODEOWNERS) also need the maintainer's approval.
+
+When the required checks are green and Codex has no unresolved findings, the author enables auto-merge
+(`gh pr merge --auto --rebase`) and the merge queue lands the pull request. The queue re-runs the checks on top of
+the current `main`, so it stays the gate. A stacked pull request cannot use auto-merge: enqueue the top of the
+stack with the asynchronous merge API (`PUT /repos/{owner}/{repo}/pulls/{n}/merge-async`, no merge parameters: the queue sets the method), which takes the pull
+requests below it along.
 
 When Codex is down, a repository admin merges through the ruleset bypass and states the reason in the pull request.
 The bypass is for outages only, never to skip a finding.

@@ -1,5 +1,15 @@
 # Releases
 
+## Versioning
+
+- Releases are annotated SemVer tags `vX.Y.Z` on `main`, starting at `v0.2.0` for the hard fork.
+- The version lives in the crate manifests of core, dsp, fpgad, hal, ui and xtask. A release is one
+  `chore(release): vX.Y.Z` pull request that sets all six, then the tag. `release.yml` refuses a tag that differs.
+- `oos-ui` reports it through `CARGO_PKG_VERSION` in `*IDN?`, the web UI and mDNS.
+- The update package build id stays `YYYYMMDD-HHMMSS kernel <rel>`; the downgrade check compares it as text. A
+  signed `version` field in the package is proposed, not implemented (risk path, needs its own task and a unit
+  test).
+
 ## 0.2.0
 
 Goal: ship a fast, responsive picture at the stable stop point after M12.

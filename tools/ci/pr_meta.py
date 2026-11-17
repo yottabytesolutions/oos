@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""PR metadata rules (docs/tasks/0092-pipeline.md). Errors fail the `pr-meta` check; warnings only annotate.
+"""PR metadata rules (docs/process/ci.md). Errors fail the `pr-meta` check; warnings only annotate.
 
   pr_meta.py pr        branch, title, DCO, runner labels, size, task link; reads the PR from the environment
   pr_meta.py runners   only the runner labels of .github/workflows (merge queue and push)

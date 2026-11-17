@@ -1,7 +1,8 @@
 #!/bin/sh
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-# check.sh - the host checks of OOS, layer by layer (docs/adr/process/0020). CI runs the same layers.
+# check.sh - the text and decoder layers the xtask gate does not run yet. Not the gate: that is `cargo xtask check`
+# (docs/adr/process/0031). Removed once xtask runs these layers; add no new layer here.
 #
 #   tools/check.sh                 every enforced layer, in order; stops at the first that fails
 #   tools/check.sh test target     only these layers

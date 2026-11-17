@@ -27,7 +27,7 @@ hardware" (written down or coded, never run on a scope).
 
 ## Hardware
 
-- [Hardware overview](https://deckerjulian.github.io/oos/hardware/overview.html): **start here.** A picture of the whole scope: components, signal paths,
+- [Hardware overview](https://yottabytesolutions.github.io/oos/hardware/overview.html): **start here.** A picture of the whole scope: components, signal paths,
   how the scope, the logic analyser and the generator work.
 - [hardware/README.md](hardware/README.md): buses and on-chip blocks of the RK3399 and what is attached to them.
 - [hardware/gpio-map.md](hardware/gpio-map.md): every GPIO with its pin, label and role.

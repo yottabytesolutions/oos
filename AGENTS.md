@@ -1,6 +1,6 @@
 # Rules for agents and contributors
 
-These rules apply to every change on this branch, by a human or an agent. They are short on purpose. Each rule points
+These rules apply to every change in this tree, by a human or an agent. They are short on purpose. Each rule points
 to the document that explains it. When a rule and your task conflict, stop and ask the owner; do not work around it.
 
 ## Read first
@@ -19,7 +19,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - [Extending OOS](docs/architecture/extending.md): follow the recipe for your change.
 - [Development](docs/development.md): the gate and ratchets.
 - [Migration](docs/architecture/migration.md): the relevant step is the specification.
-- [ADRs](docs/architecture/adr/README.md): do not reopen a decision without a new ADR.
+- [ADRs](docs/adr/README.md) and [architecture records](docs/architecture/adr/README.md): do not reopen a decision
+  without a new ADR. Cite `docs/adr/` records as `ADR NNNN`, the closed architecture series as `architecture/NNNN`.
 - [Tasks](docs/tasks/README.md) and [releases](docs/releases.md): claim work before starting.
 
 ## Working together
@@ -49,6 +50,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 
 ## The gate
 
+- The gate is `cargo xtask check` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)).
+  `tools/check.sh` is not the gate.
 - Set up the hooks once per clone: `git config core.hooksPath .githooks`.
 - Run `cargo xtask check` before every commit. pre-commit runs `cargo xtask check --fast`, pre-push the full gate.
 - Report a change as done only after the full gate (no `--fast`, no `--no-coverage`) passed on its final commit.
@@ -85,7 +88,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
 ## Tests
 
 - No test may pass or fail depending on machine speed. Inject elapsed time, wait on completion events,
-  and keep real duration assertions in perf-guard; see [ADR 0019](docs/architecture/adr/0019-test-time.md).
+  and keep real duration assertions in perf-guard; see [architecture/0019](docs/architecture/adr/0019-test-time.md).
 - Every change comes with tests. The gate's coverage floor must hold.
 - A bug fix comes with a test that fails before the fix and passes after.
 - A change to what is drawn comes with golden pictures (`ui/tests/golden/`). A changed reference needs a reason in
@@ -108,8 +111,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
   `unsafe` block or fn has a `// SAFETY:` comment that states the invariant it relies on. The gate enforces the
   placement (`unsafe` lines in `xtask/data/architecture.txt`); the `// SAFETY:` comments are reviewed
   ([Enforcement](docs/architecture/README.md#enforcement)).
-- No new dependency without a line in `xtask/data/architecture.txt` and the owner's agreement. OOS depends on `libc`
-  only.
+- No new dependency without a line in `xtask/data/architecture.txt` and the owner's agreement. What runs on the
+  scope depends on `libc` only; `xtask` may use its host-only crates (ADR 0013).
 
 ## Privacy
 
@@ -122,7 +125,10 @@ to the document that explains it. When a rule and your task conflict, stop and a
 ## Commits
 
 - One logical change per commit. Formatting and moves in their own commits.
-- Subject in the imperative mood, under 72 characters. The body says why, not what.
+- Subject in the imperative mood, under 72 characters. The body says why, not what
+  ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
+- Commits of a pull request are signed off (`git commit -s`,
+  [ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)).
 - No em-dashes in commit messages, docs or comments.
 - Never rebase or amend commits that someone else has reviewed or merged.
 - A fix the unit needs now branches from `dho804` as `fix/<name>` and is forward-ported to `main` as a test plus
@@ -139,29 +145,17 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - In the same merge that finishes the task, set `status: done`, add a dated Status line and move the file to
   `docs/tasks/done/`. Keep completed files and ids forever. Never reuse or delete an id.
 - Fold lasting facts into permanent docs when the change merges.
-- Any architectural decision gets an ADR in `docs/architecture/adr/` (from `docs/architecture/adr/0000-template.md`).
+- Any architectural decision gets an ADR in `docs/adr/<category>/` (from `docs/adr/template.md`, next number from
+  0030).
   The owner approves it before code.
 - Update `docs/architecture/README.md` when code matches it or when the target changes.
 - Statements about hardware say how they are known: verified on the unit, assumed, or not yet verified.
 
-## Work sent upstream
+## Upstream
 
-Upstream's records live in `docs/adr/` and their numbers collide with ours in `docs/architecture/adr/`. Cite every
-record by path, never by bare number. A branch or PR for upstream also follows:
-
-- [0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md): every commit signed off,
-  no vendor material in code, docs, commit messages or PR texts, one squashed commit per topic.
-- [0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md): SPDX line in each source file, subject
-  `Area: statement`, body says how it was tested, `CHANGELOG.md` entry for user-visible changes.
-- [0016](docs/adr/process/0016-rust-code-formatted-by-rustfmt.md),
-  [0017](docs/adr/process/0017-lints-clippy-warnings-are-errors.md),
-  [0020](docs/adr/process/0020-checks-in-layers-one-command-on-the-host.md): no layout-only hunks in existing files,
-  Clippy clean under upstream's table, `tools/check.sh` passes; the PR names the layers run and `tools/plan-matrix.sh`
-  before and after.
-- [0022](docs/adr/code/0022-one-scpi-interpreter-transports-only-frame.md),
-  [0023](docs/adr/code/0023-scpi-stock-names-first-oos-identifies-as-oos.md),
-  [0025](docs/adr/system/0025-remote-services-are-bench-lan-services.md): one SCPI interpreter, stock names first,
-  a switch and the `net.allow` check for every service that can change the scope.
+This tree is a hard fork of OOS ([ADR 0030](docs/adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)). `main` is
+the trunk. Upstream is not merged and gets no pull requests unless the owner asks. A single upstream change enters by
+cherry-pick: it keeps its author, carries `Cherry-picked-from: upstream <hash>` and passes the gate like any change.
 
 ## The scope
 

@@ -1,5 +1,9 @@
 # Contributing to OOS
 
+This tree is a hard fork of OOS with its own trunk, `main`, and its own rules
+([ADR 0030](docs/adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)). Contributions from people and from coding
+agents are welcome under the structure below.
+
 Reports, measurements and code are all welcome. The most useful thing right now is a test on hardware: OOS has run on
 a DHO924S and a DHO804 so far. A report from a DHO802/DHO812, a DHO914/DHO924 without generator or an EDU model makes
 that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
@@ -40,12 +44,18 @@ walks through it. An analyser page registers the same way ([docs/analyser-module
 
 ## Before a pull request
 
-Run `cargo xtask check --fast` and focused tests from the repository root. See the
-[check inventory](docs/development.md#executable-inventory-and-completion-evidence) for commands
-and prerequisites. The coordinator runs the Docker-free default `cargo xtask check` once per
-integration batch and `cargo xtask check --image` before unit rounds and releases. Repository CI
-is off until 0.2.0. Completion requires independent review and full-gate evidence for the same
-integrated candidate; partial and inventory-only runs cannot establish completion.
+A contribution is a pull request from a feature branch against `main`, one topic per pull request
+([ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)).
+
+The gate is `cargo xtask check` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)). Run
+`cargo xtask check --fast` and the tests of what you changed while you work, and the full `cargo xtask check` before
+you open the pull request. The [check inventory](docs/development.md#executable-inventory-and-completion-evidence)
+lists the steps and their prerequisites (`cargo xtask check --list`). `cargo xtask check --image` adds the Docker and
+emulation checks; the maintainers run it before unit rounds and releases.
+
+The gate must pass in CI before a merge. CI runs on GitHub-hosted runners and is set up in a later phase; until then
+the maintainers run the full gate on the candidate. A change is done when the full gate passed on its final commit
+and an independent review accepted it; partial and inventory-only runs do not count.
 
 Tests use synthetic inputs where possible. Tests that need private calibration files report their
 skips; no private calibration directory is required for the gate. [docs/architecture/README.md](docs/architecture/README.md)
@@ -53,9 +63,9 @@ is the place to start reading.
 
 Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.
 
-A pull request from a fork enters main squashed, one commit per topic, made from the state that was reviewed; your
-name and sign-off stay on it. Keep a pull request to one topic where you can, and link the branch of your fork when
-its history matters (ADR 0026).
+A pull request enters `main` squash-merged: one commit made from the reviewed state, with your name and sign-off on
+it. Branch names, release tags, the pull request template and the required checks are being set up and will be
+described here.
 
 ## Style
 
@@ -63,16 +73,17 @@ its history matters (ADR 0026).
 - Files: UTF-8, LF, a final newline, no trailing spaces, the `SPDX-License-Identifier: GPL-2.0-or-later` line in every
   source file. [.editorconfig](.editorconfig) sets this up in most editors.
 - Rust: `cargo fmt` with the tree's [rustfmt.toml](rustfmt.toml)
-  ([ADR 0016](docs/adr/process/0016-rust-code-formatted-by-rustfmt.md)); this branch is fully formatted. Clippy
-  findings follow the gate's ratchet ([docs/development.md](docs/development.md)); code sent upstream is Clippy clean
-  under upstream's allowed lints ([ADR 0017](docs/adr/process/0017-lints-clippy-warnings-are-errors.md)).
-- Commits on this branch follow [AGENTS.md](AGENTS.md#commits). Commits sent upstream: `Area: what changed, as a
-  statement`, one topic each, signed off, the body says why and how it was tested; formatting
-  and lint fixes in commits of their own. A change people would notice on the scope gets a `CHANGELOG.md` entry
-  ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
+  ([ADR 0016](docs/adr/process/0016-rust-code-formatted-by-rustfmt.md)); the tree is fully formatted. Lints are set
+  per crate and their findings may only go down
+  ([ADR 0032](docs/adr/process/0032-lints-and-limits-ratchet-down-only.md), [docs/development.md](docs/development.md)).
+- Commits follow [AGENTS.md](AGENTS.md#commits): subject in the imperative mood, under 72 characters; the body says
+  why; one topic each; formatting and moves in commits of their own; signed off. A change people would notice on the
+  scope gets a `CHANGELOG.md` entry ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
+- An upstream OOS change enters by cherry-pick with its author kept and the trailer
+  `Cherry-picked-from: upstream <hash>` (ADR 0030).
 
 A change that decides something others will build on (a structure, a rule of the screen, a way to treat the hardware)
-comes with a decision record: [docs/adr](docs/adr/README.md).
+comes with a decision record: [docs/adr](docs/adr/README.md), numbered from 0030 on.
 
 ## Working with a coding agent
 

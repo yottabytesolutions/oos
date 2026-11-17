@@ -187,6 +187,8 @@ labelled `flaky`; the gate rejects a bare `#[ignore]` and a `flaky:` reason with
 ## Style
 
 - Text and code comments are in English. Changes to the hardware knowledge go into `docs/`, in the same pull request.
+- The user guide is the wiki. Its source is [wiki/](wiki/Home.md), published to the GitHub wiki on every push to
+  `main` by `.github/workflows/wiki.yml`. Change it there; edits in the wiki's web interface are overwritten.
 - Files: UTF-8, LF, a final newline, no trailing spaces, the `SPDX-License-Identifier: GPL-2.0-or-later` line in every
   source file. [.editorconfig](.editorconfig) sets this up in most editors.
 - Rust: `cargo fmt` with the tree's [rustfmt.toml](rustfmt.toml)

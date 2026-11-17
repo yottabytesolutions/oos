@@ -1,7 +1,6 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
 498 file dsp/src/dpt.rs
-1340 file dsp/src/eye.rs
 487 file dsp/src/hss.rs
 1052 file dsp/src/identify.rs
 881 file dsp/src/measure.rs
@@ -22,7 +21,7 @@
 103 fn dsp/src/decode/usb.rs usb_packet
 80 fn dsp/src/dpt.rs diode
 129 fn dsp/src/dpt.rs measure
-88 fn dsp/src/eye.rs psij
+88 fn dsp/src/eye/psij.rs psij
 69 fn dsp/src/hss.rs apply_jitter
 66 fn dsp/src/identify.rs analog
 118 fn dsp/src/identify.rs find_spi

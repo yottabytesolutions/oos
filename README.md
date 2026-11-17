@@ -1,5 +1,10 @@
 # OOS: an open operating system for the Rigol DHO800/DHO900
 
+[![Main](https://github.com/yottabytesolutions/oos/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/yottabytesolutions/oos/actions/workflows/main.yml)
+[![Release](https://img.shields.io/github/v/release/yottabytesolutions/oos?sort=semver)](https://github.com/yottabytesolutions/oos/releases/latest)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/yottabytesolutions/oos/badge)](https://scorecard.dev/viewer/?uri=github.com/yottabytesolutions/oos)
+[![Licence: GPL-2.0-or-later](https://img.shields.io/badge/licence-GPL--2.0--or--later-blue)](LICENSE)
+
 OOS replaces the software of a Rigol DHO800/DHO900 oscilloscope with a Linux 6.12 kernel and a new scope application
 written in Rust. It runs from the scope's own SD card, next to the stock system, and you can switch back at any time.
 
@@ -59,6 +64,7 @@ Sources and licences of the kernel parts are listed in [kernel/README.md](kernel
 - [Going back to stock](#going-back-to-stock)
 - [Repository layout](#repository-layout)
 - [Development](#development)
+- [Contributing](#contributing)
 - [Licences](#licences)
 
 ## Disclaimer
@@ -907,6 +913,13 @@ The test `every_menu_fits` walks all menus and fails on text wider than its cont
 `qemu-system-aarch64` and one finished image build.
 
 Start with the [hardware overview](https://yottabytesolutions.github.io/oos/hardware/overview.html) and [docs/architecture/README.md](docs/architecture/README.md).
+
+## Contributing
+
+Reports, measurements and code are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how a change gets in,
+[SUPPORT.md](SUPPORT.md) where to ask questions and report bugs, and [SECURITY.md](SECURITY.md) how to report a
+vulnerability privately. [GOVERNANCE.md](GOVERNANCE.md) says who decides, and everyone follows the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Licences
 

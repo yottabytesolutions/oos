@@ -71,6 +71,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Required checks: fast, clippy, test, python, deny, pr-meta, privacy, codex-review. Fix or answer every Codex
   finding; never resolve a thread without either. `@codex review` after new commits. Outages: an admin merges via
   the ruleset bypass and states the reason in the PR.
+- Native Windows portability is out of scope for review findings; WSL counts as Linux ([ADR 0033](docs/adr/process/0033-development-platforms.md)).
 - Risk tiers ([CONTRIBUTING](CONTRIBUTING.md#risk-tiers)): CODEOWNERS paths need code owner review. The hardware
   ones also need `risk/hardware`, `tools/plan-matrix.sh` before and after, and a unit run (`needs-unit` until then).
 - State in the PR whether it ran on a unit, which model and build, or host only. Never claim an untested unit run.

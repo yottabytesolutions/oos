@@ -1122,12 +1122,21 @@ fn second_pane_fits_with_everything_else() {
     assert!(u.azr.spec.is_some());
 }
 
-/// Taps and knobs at random with everything new switched on: nothing may panic (a panic ends oos-ui).
+/// Taps and knobs at random with everything new switched on: nothing may panic (a panic ends oos-ui). One test per
+/// screen, so that the runner can run them at the same time.
 #[test]
-fn random_input_on_the_new_pages() {
-    for scr in SCREENS {
-        random_input_on(scr);
-    }
+fn random_input_on_the_new_pages_on_the_panel() {
+    random_input_on(SCREENS[0]);
+}
+
+#[test]
+fn random_input_on_the_new_pages_on_a_small_monitor() {
+    random_input_on(SCREENS[1]);
+}
+
+#[test]
+fn random_input_on_the_new_pages_on_a_large_monitor() {
+    random_input_on(SCREENS[2]);
 }
 
 fn random_input_on(scr: Screen) {
@@ -1159,7 +1168,7 @@ fn random_input_on(scr: Screen) {
         MenuId::Storage,
         MenuId::Bode,
     ];
-    u.store_dir = std::env::temp_dir().join(format!("oos-rand-{}", std::process::id()));
+    u.store_dir = std::env::temp_dir().join(format!("oos-rand-{}-{}", std::process::id(), scr.w));
     for i in 0..3_000 {
         if i % 40 == 0 {
             u.open_menu(pages[next() as usize % pages.len()]);

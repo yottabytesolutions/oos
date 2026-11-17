@@ -1,31 +1,27 @@
-OOS runs on a computer with simulated signals: as a desktop window on Windows, or scripted on macOS and Linux.
+OOS runs on a computer with simulated signals, with its screen in a browser or scripted without a display.
 
-## On Windows
+## In a browser
 
-With Rust installed, build and open the desktop window from PowerShell:
+With Rust installed, run this from the checkout on macOS or Linux. On Windows, run it in WSL 2 or a Linux virtual
+machine and open the browser on Windows:
 
-```powershell
-.\build-windows.ps1 -Run
+```sh
+cargo run --release -p oos-ui -- --serve
 ```
 
-The app is `ui\target\release\oos-ui.exe`. Mouse clicks and drags act as touch; Space toggles Run/Stop.
-Plain mouse wheel pans horizontally, and Ctrl+wheel zooms the time scale around the pointer.
-F12 saves a PNG in `Documents\OOS`. Use `--offline` to start
-with the analog channels off for stored waveforms. Keyboard controls are listed in [ui/src/desktop.rs](https://github.com/yottabytesolutions/oos/blob/main/ui/src/desktop.rs).
+Open the HTTP address it prints. The same line lists the SCPI, HiSLIP and VXI-11 ports for scripts.
+The server listens on loopback ports. Stop it with Ctrl+C in the terminal. Add `--offline` to start
+with the analog channels off for stored waveforms.
 
-For development, run the checkout and automatically restart after saving source changes:
+The native Windows window is maintained separately in
+[oos-desktop](https://github.com/yottabytesolutions/oos-desktop).
 
-```powershell
-.\run-windows.ps1 -Watch -Offline -WebPort 18080 -ScpiPort 5555 -HislipPort 14880
-```
-
-Rust compiles changed code automatically. The window includes front-panel buttons and knob controls.
-Use **Reference > Load file** or **Ctrl+O** to open CSV, OOS BIN, or WFM files; the web remote at `http://localhost:18080`
-also accepts file selection and drag-and-drop. Loaded sources appear as **R1–R10** cards.
+The browser UI accepts file selection and drag-and-drop for CSV, OOS BIN, or WFM files.
+Loaded sources appear as **R1–R10** cards.
 **SIM** (start menu, Analysis) starts a simulated reference; **Run/Stop**, **Single**, and trigger settings control its acquisitions.
 **Live** restores the live session. Measurements follow each captured window and recompute when a stopped
 reference is panned. **Measure** opens categorized choices with Source, Settings, and Selected; large readout
-lists have page controls. The Windows app announces its actual SCPI and HiSLIP listeners over mDNS.
+lists have page controls.
 
 **SIM > Advanced** adds SSC profile, deviation and modulation frequency, duty-cycle distortion, and
 correlated random jitter with its corner frequency. PRBS-13 is available alongside the other patterns.
@@ -58,7 +54,7 @@ deviation (0.005 means 0.5%). Configure them together, then start generation and
 :SYSTEM:ERROR?
 ```
 
-## On macOS and Linux
+## Scripted without a display
 
 OOS builds on macOS and Linux and can run scripted without hardware, with its simulated demo signals. It writes a
 screenshot in PPM format next to the script:
@@ -72,11 +68,3 @@ cd ui && cargo run -- --script /tmp/demo.txt
 ```
 
 The commands are listed at the top of [ui/src/cmd.rs](https://github.com/yottabytesolutions/oos/blob/main/ui/src/cmd.rs). Add `--model DHO804` to act as another model.
-
-To try the web remote with the same demo signals, run this and open `http://localhost:8080/`:
-
-```sh
-cd ui && cargo test web_demo -- --ignored --nocapture
-```
-
-It runs for 5 minutes.

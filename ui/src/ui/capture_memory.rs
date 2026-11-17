@@ -89,7 +89,6 @@ fn acquire_demo(job: DemoJob) -> DemoResult {
     DemoResult { key: job.key, time, record }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn cancel_demo_acquisition(&mut self) {
         if let Some(worker) = self.capture_views.borrow_mut().demo.as_mut() {
@@ -145,20 +144,13 @@ impl Ui {
         }
         None
     }
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    pub(super) fn is_basic_frame_row(&self, row: usize) -> bool {
-        self.m.meas.get(row).is_some_and(|(kind, source)| {
-            matches!(source, WaveId::Ch(_))
-                && matches!(kind, Meas::Vmax | Meas::Vmin | Meas::Vpp | Meas::Vavg | Meas::Vrms | Meas::StdDev)
-        })
-    }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     fn accumulate_basic_values(&mut self, channel: usize, values: &[f32]) {
         self.accumulate_basic_summary(channel, crate::board::BasicStats::of(values));
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub(super) fn accumulate_basic_summary(&mut self, channel: usize, values: crate::board::BasicStats) {
         if !values.valid {
             return;
@@ -184,7 +176,7 @@ impl Ui {
         }
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub(super) fn accumulate_record_basic(&mut self, record: &Record) {
         for c in 0..NCH {
             if !self.m.ch[c].on
@@ -210,7 +202,7 @@ impl Ui {
         }
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub(super) fn accumulate_fast_basic(&mut self, frame: &crate::board::Frame, trigger: f64) {
         let origin = -trigger * frame.dt;
         for c in 0..NCH {

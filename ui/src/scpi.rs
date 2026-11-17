@@ -711,7 +711,6 @@ fn e(v: f64) -> String {
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Scpi {
     pub fn open(port: impl Into<crate::net6::Port>, v6: bool) -> Scpi {
         Self { l: Self::bind(port, v6), ..Self::disconnected() }

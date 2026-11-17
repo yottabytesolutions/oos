@@ -178,10 +178,8 @@ pub trait Board: scripted::ScriptedBoard + Sync + 'static {
 
 /// Six inexpensive full-frame readings, prepared outside the UI event loop.
 #[derive(Clone, Copy, Debug, Default)]
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub struct BasicStats {
     pub valid: bool,
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub count: u64,
     /// Vmin, Vmax, Vpp, Vavg, Vrms (including DC), population StdDev.
     pub values: [f64; 6],

@@ -1393,7 +1393,7 @@ Delta vs e9f7c30b: **Added**. Constructor: `ui/src/ui.rs:5751`. Runtime order: t
 | menus-1566 | Compact: Time | submenu | Horizontal; read current detail/main time/div | bar_compact | plain value | change H1: inline Zoom state | `ui/src/ui/workspace.rs:914` | Added |
 | menus-1567 | Compact: Trigger | submenu | Trigger; shows source/type/sweep/levels, whole rect opens menu | bar_compact | accent labels and root border | keep; H1 summary applies | `ui/src/ui/trigger_controls.rs:177` | Added |
 | menus-1568 | Compact: Live | action | return_to_live; fallback when top Live absent | record_mode && no visible top Live | plain text | keep | `ui/src/ui/workspace.rs:796` | Added |
-| menus-1569 | Compact: Panel | toggle | `desktop_panel`; show/hide desktop front panel | desktop_panel is Some | accent border/text when open | change H1: active option fill | `ui/src/ui/workspace.rs:914` | Added |
+| menus-1569 | Compact: Panel | toggle | `desktop_panel`; show/hide desktop front panel | Removed from this surface: the front panel belonged to the native Windows window, which moved to oos-desktop (ADR 0036) | Not rendered at HEAD | drop: superseded control; retain this id as a tombstone | historical: `ui/src/ui/workspace.rs:914` | Dropped |
 
 ### Sources popup
 

@@ -36,15 +36,15 @@ impl Scpi {
         })
     }
 
+    #[cfg(test)]
     /// Immediate adapter for HTTP and in-process callers. Deferred barriers must use
     /// `poll_program`: returning 1 here while an operation is pending would be false.
     /// Commands before a pending barrier execute once; the remaining message is rejected.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn exec_line(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Vec<u8> {
         self.exec_line_checked(ui, cv, line).unwrap_or_default()
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+    #[cfg(test)]
     pub fn exec_line_checked(&mut self, ui: &mut Ui, cv: &Canvas, line: &str) -> Result<Vec<u8>, &'static str> {
         self.exec_message_checked(ui, cv, line).map(|(response, _)| response)
     }

@@ -111,11 +111,7 @@ pub const BOTTOM_H: i32 = 36;
 pub const W: i32 = PANEL_W;
 pub const H: i32 = PANEL_H;
 pub const TOP: Rect = Rect::new(0, 0, W, METRICS.top_h);
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-const PLOT_X: i32 = 0;
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-const PLOT_W: i32 = W;
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
+#[cfg(test)]
 const PLOT_Y: i32 = TOP.h;
 pub const BOTTOM: Rect = Rect::new(0, H - BOTTOM_H, W, BOTTOM_H);
 /// The normal text size's `Lay::results_w` and `Lay::strip_row`, for the same code.
@@ -1031,24 +1027,10 @@ enum Kind {
     Action,
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 pub enum Ev {
     Key(u8),
-    Touch {
-        id: i32,
-        phase: Phase,
-        x: i32,
-        y: i32,
-    },
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    Wheel {
-        x: i32,
-        y: i32,
-        steps: i32,
-        ctrl: bool,
-        shift: bool,
-        alt: bool,
-    },
+    Touch { id: i32, phase: Phase, x: i32, y: i32 },
+    Wheel { x: i32, y: i32, steps: i32, ctrl: bool, shift: bool, alt: bool },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1322,14 +1304,11 @@ pub struct Ui {
     bode: bode::State,
     /// SIM: Play is moving the timebase window through the selected record
     workspace: workspace::Workspace,
-    pub desktop_panel: Option<bool>,
     /// the analyser view the last frame had: a change of view analyses what is already there (a stopped record gets no new one)
     analyzed_view: AView,
     sim_play: bool,
     sim_generation: Option<sim::Generation>,
     sim_error: Option<String>,
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
-    sim_i: usize,
     /// Offline mode. Off, the live screen stays as it is.
     offline: bool,
     /// Take over, offline waveforms, or the live scope.
@@ -1551,7 +1530,6 @@ fn copy_page(v: &[f32], dt: f64, t0: f64, start: u64, stop: u64) -> (Vec<f32>, f
     (page, dt, t0 + lo as f64 * dt)
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     /// The fonts of the text size.
     pub fn fonts(&self) -> &'static Fonts {
@@ -1687,12 +1665,10 @@ impl Ui {
             start_up_last: None,
             bode: Default::default(),
             workspace: workspace::Workspace::default(),
-            desktop_panel: None,
             analyzed_view: AView::Scope,
             sim_play: false,
             sim_generation: None,
             sim_error: None,
-            sim_i: 0,
             offline: false,
             look: reflook::RefLook::Live,
             meas_own: std::collections::HashMap::new(),
@@ -2699,7 +2675,6 @@ impl Ui {
     }
 
     /// (points, dt, time of the first point relative to the trigger) of the last record of channel c.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn record_info(&self, c: usize) -> Option<(usize, f64, f64)> {
         let r = self.last[0].as_ref()?;
         if r.ch[c].is_empty() {
@@ -2731,7 +2706,6 @@ impl Ui {
     }
 
     /// The samples of `raw_info`.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn raw_volts(&self, c: usize) -> Option<Vec<f32>> {
         let r = self.last[0].as_ref()?.raw.as_ref()?;
         let v = r.frame.ch.get(c)?;
@@ -2779,8 +2753,8 @@ impl Ui {
         Some(copy_page(v, dt, t0, start, stop))
     }
 
+    #[cfg(test)]
     /// Samples of a reference slot, finite volts. Empty when that slot holds nothing.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub(crate) fn ref_volts(&self, slot: usize) -> Vec<f32> {
         self.ref_page(slot, 1, 0).map(|(v, _, _, _, _)| v).unwrap_or_default()
     }
@@ -4351,8 +4325,8 @@ impl Ui {
         }
     }
 
+    #[cfg(test)]
     /// Test/legacy adapter; production rendering reuses immutable timed results.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn math_source(&self, s: usize, below: usize) -> Vec<f32> {
         self.math_source_record(s, below).map_or_else(Vec::new, |w| w.v.to_vec())
     }
@@ -4365,6 +4339,7 @@ impl Ui {
         self.math_record(k).ok().flatten().map_or_else(Vec::new, |w| w.v.to_vec())
     }
 
+    #[cfg(test)]
     /// The waveform of the selected math channel.
     fn math_wave(&self) -> Vec<f32> {
         self.math_wave_of(self.m.math_sel)
@@ -5339,8 +5314,8 @@ impl Ui {
         Rect::new(x, y, STRIP_SIDE, h)
     }
 
+    #[cfg(test)]
     /// Where the strip is drawn. None when it has nothing to show.
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     fn strip_rect(&self) -> Option<Rect> {
         let rows = self.strip_rows();
         if rows == 0 {
@@ -5700,8 +5675,8 @@ impl Ui {
     /// The fork's compact bottom bar on the panel; `menu_btn` follows the frame on other screens.
     const MENU_BTN: Rect = Rect::new(4, H - BOTTOM_H + 3, 46, 30);
     const SINGLE_BTN: Rect = Rect::new(104, 5, 54, 30);
+    #[cfg(test)]
     /// Run state pill at the panel's normal text size (`run_pill` grows with the text).
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     const RUN_PILL: Rect = Rect::new(8, 6, 92, 28);
     fn menu_btn(&self) -> Rect {
         self.frame().menu_btn
@@ -10575,7 +10550,6 @@ impl Ui {
     // ------------------------------------------------------------------ input
 
     /// A menu is on the screen (the desktop window turns Multi 1 with the wheel only then).
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn menu_is_open(&self) -> bool {
         self.menu_open
     }

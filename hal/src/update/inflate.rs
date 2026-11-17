@@ -4,192 +4,34 @@
 //! gzip (RFC 1952) and deflate (RFC 1951) unpacking, for reading a file out of an image's initramfs: the build of the
 //! image on the card (`image_build`), which the install from a USB stick compares with its own.
 
-struct Bits<'a> {
-    b: &'a [u8],
-    at: usize,
-    bit: u32,
-    n: u32,
-}
-
-impl<'a> Bits<'a> {
-    fn need(&mut self, k: u32) -> Result<(), String> {
-        while self.n < k {
-            let byte = *self.b.get(self.at).ok_or("deflate: data cut short")?;
-            self.at += 1;
-            self.bit |= (byte as u32) << self.n;
-            self.n += 8;
-        }
-        Ok(())
-    }
-
-    fn get(&mut self, k: u32) -> Result<u32, String> {
-        if k == 0 {
-            return Ok(0);
-        }
-        self.need(k)?;
-        let v = self.bit & ((1u32 << k) - 1);
-        self.bit >>= k;
-        self.n -= k;
-        Ok(v)
-    }
-
-    fn align(&mut self) {
-        self.bit = 0;
-        self.n = 0;
-    }
-}
-
-/// A canonical Huffman code: the count of codes per length, the symbols in code order.
-struct Huff {
-    count: [u16; 16],
-    sym: Vec<u16>,
-}
-
-impl Huff {
-    fn new(lens: &[u8]) -> Result<Huff, String> {
-        let mut count = [0u16; 16];
-        for &l in lens {
-            count[l as usize] += 1;
-        }
-        count[0] = 0;
-        let mut offs = [0u16; 16];
-        for i in 1..16 {
-            offs[i] = offs[i - 1] + count[i - 1];
-        }
-        let mut sym = vec![0u16; lens.len()];
-        for (s, &l) in lens.iter().enumerate() {
-            if l != 0 {
-                sym[offs[l as usize] as usize] = s as u16;
-                offs[l as usize] += 1;
-            }
-        }
-        Ok(Huff { count, sym })
-    }
-
-    fn decode(&self, bits: &mut Bits) -> Result<u16, String> {
-        let (mut code, mut first, mut index) = (0i32, 0i32, 0i32);
-        for len in 1..16 {
-            code |= bits.get(1)? as i32;
-            let count = self.count[len] as i32;
-            if code - count < first {
-                return Ok(self.sym[(index + (code - first)) as usize]);
-            }
-            index += count;
-            first += count;
-            first <<= 1;
-            code <<= 1;
-        }
-        Err("deflate: bad code".into())
-    }
-}
-
-const LBASE: [u16; 29] =
-    [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
-const LEXT: [u8; 29] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
-const DBASE: [u16; 30] = [
-    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
-    8193, 12289, 16385, 24577,
-];
-const DEXT: [u8; 30] =
-    [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
-
-fn codes(bits: &mut Bits, out: &mut Vec<u8>, lit: &Huff, dist: &Huff, limit: usize) -> Result<(), String> {
-    loop {
-        let s = lit.decode(bits)? as usize;
-        if s < 256 {
-            out.push(s as u8);
-        } else if s == 256 {
-            return Ok(());
-        } else {
-            let s = s - 257;
-            if s >= 29 {
-                return Err("deflate: bad length".into());
-            }
-            let len = LBASE[s] as usize + bits.get(LEXT[s] as u32)? as usize;
-            let d = dist.decode(bits)? as usize;
-            if d >= 30 {
-                return Err("deflate: bad distance".into());
-            }
-            let back = DBASE[d] as usize + bits.get(DEXT[d] as u32)? as usize;
-            if back > out.len() {
-                return Err("deflate: distance too far".into());
-            }
-            let from = out.len() - back;
-            for i in 0..len {
-                let c = out[from + i];
-                out.push(c);
-            }
-        }
-        if out.len() > limit {
-            return Err("deflate: more data than allowed".into());
-        }
-    }
-}
+use miniz_oxide::inflate::{
+    core::{decompress, inflate_flags::TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF, DecompressorOxide},
+    TINFLStatus,
+};
 
 /// Raw deflate data, at most `limit` bytes out. Also the number of input bytes it took.
 pub fn inflate(b: &[u8], limit: usize) -> Result<(Vec<u8>, usize), String> {
-    let mut bits = Bits { b, at: 0, bit: 0, n: 0 };
-    let mut out = Vec::new();
+    let mut decoder = Box::<DecompressorOxide>::default();
+    let mut out = vec![0; b.len().saturating_mul(2).max(1).min(limit)];
+    let (mut read, mut written) = (0, 0);
     loop {
-        let last = bits.get(1)?;
-        match bits.get(2)? {
-            0 => {
-                bits.align();
-                let at = bits.at;
-                let h = b.get(at..at + 4).ok_or("deflate: stored block cut short")?;
-                let (len, nlen) = (u16::from_le_bytes([h[0], h[1]]), u16::from_le_bytes([h[2], h[3]]));
-                if len != !nlen {
-                    return Err("deflate: stored block length".into());
-                }
-                let d = b.get(at + 4..at + 4 + len as usize).ok_or("deflate: stored block cut short")?;
-                out.extend_from_slice(d);
-                bits.at = at + 4 + len as usize;
+        let (status, consumed, produced) =
+            decompress(&mut decoder, &b[read..], &mut out, written, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+        read += consumed;
+        written += produced;
+        match status {
+            TINFLStatus::Done => {
+                out.truncate(written);
+                return Ok((out, read));
             }
-            1 => {
-                let mut l = [0u8; 288];
-                l[..144].fill(8);
-                l[144..256].fill(9);
-                l[256..280].fill(7);
-                l[280..].fill(8);
-                codes(&mut bits, &mut out, &Huff::new(&l)?, &Huff::new(&[5u8; 30])?, limit)?;
+            TINFLStatus::HasMoreOutput if out.len() < limit => {
+                out.resize(out.len().saturating_mul(2).min(limit), 0);
             }
-            2 => {
-                let (nlen, ndist, ncode) =
-                    (bits.get(5)? as usize + 257, bits.get(5)? as usize + 1, bits.get(4)? as usize + 4);
-                const ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
-                let mut cl = [0u8; 19];
-                for &o in ORDER.iter().take(ncode) {
-                    cl[o] = bits.get(3)? as u8;
-                }
-                let ch = Huff::new(&cl)?;
-                let mut lens = vec![0u8; nlen + ndist];
-                let mut i = 0;
-                while i < nlen + ndist {
-                    let s = ch.decode(&mut bits)?;
-                    let (v, rep) = match s {
-                        0..=15 => (s as u8, 1),
-                        16 => (
-                            *lens.get(i.wrapping_sub(1)).ok_or("deflate: repeat of nothing")?,
-                            3 + bits.get(2)? as usize,
-                        ),
-                        17 => (0, 3 + bits.get(3)? as usize),
-                        _ => (0, 11 + bits.get(7)? as usize),
-                    };
-                    if i + rep > lens.len() {
-                        return Err("deflate: too many lengths".into());
-                    }
-                    lens[i..i + rep].fill(v);
-                    i += rep;
-                }
-                codes(&mut bits, &mut out, &Huff::new(&lens[..nlen])?, &Huff::new(&lens[nlen..])?, limit)?;
+            TINFLStatus::HasMoreOutput => return Err("deflate: more data than allowed".into()),
+            TINFLStatus::FailedCannotMakeProgress | TINFLStatus::NeedsMoreInput => {
+                return Err("deflate: data cut short".into());
             }
-            _ => return Err("deflate: bad block type".into()),
-        }
-        if out.len() > limit {
-            return Err("deflate: more data than allowed".into());
-        }
-        if last == 1 {
-            return Ok((out, bits.at));
+            _ => return Err("deflate: invalid data".into()),
         }
     }
 }
@@ -269,6 +111,28 @@ pub mod tests {
         let d: Vec<u8> = (0..200_000u32).map(|i| (i * 7) as u8).collect();
         assert_eq!(gunzip(&gzip_stored(&d), 1 << 20).unwrap(), d);
         assert!(gunzip(&gzip_stored(&d), 1000).is_err());
+    }
+
+    #[test]
+    fn raw_stream_boundaries_and_limits() {
+        for data in [&b""[..], &b"a"[..], &b"hello"[..]] {
+            let gzip = gzip_stored(data);
+            let raw = &gzip[10..];
+            let (out, consumed) = inflate(raw, data.len()).unwrap();
+            assert_eq!(out, data);
+            assert_eq!(consumed, raw.len() - 8, "leave the gzip trailer unread");
+            assert_eq!(inflate(&raw[..consumed], data.len()).unwrap(), (out, consumed));
+            assert!(inflate(&raw[..consumed - 1], data.len()).is_err());
+            if !data.is_empty() {
+                assert!(inflate(raw, data.len() - 1).is_err());
+            }
+        }
+        assert!(inflate(&[], 10).is_err());
+        assert!(inflate(&[7], 10).is_err(), "reserved block type");
+        let fixed = [203, 72, 205, 201, 201, 87, 200, 64, 39, 185, 0];
+        assert_eq!(inflate(&fixed, 24).unwrap(), (b"hello hello hello hello\n".to_vec(), fixed.len()));
+        assert!(inflate(&fixed, 23).is_err());
+        assert_eq!(inflate(&[3, 0], 0).unwrap(), (Vec::new(), 2));
     }
 
     #[test]

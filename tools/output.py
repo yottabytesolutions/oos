@@ -60,22 +60,23 @@ def revision(root=None):
     return h.hexdigest()
 
 
+# the native rootfs tools: their builder (rootfs/build-<builder>.sh) and their rootfs/deps.lock lines
+NATIVE_TOOLS = {
+    "e2fsck": ("fsck", "e2fsprogs"),
+    "kexec": ("kexec", "kexec-tools"),
+    "wpa_supplicant": ("wlan-tools", "wpa_supplicant", "libnl", "libnl-musl-patch"),
+    "wpa_cli": ("wlan-tools", "wpa_supplicant", "libnl", "libnl-musl-patch"),
+    "nft": ("nft", "libmnl", "libnftnl", "nftables"),
+    "dropbearmulti": ("dropbear", "dropbear"),
+    "sftp-server": ("sftp-server", "openssh"),
+}
+
+
 def source_identity(path):
     """Native rootfs tools depend only on their builder, dependencies and environment."""
-    tools = {"e2fsck": ("fsck", []), "kexec": ("kexec", []),
-             "wpa_supplicant": ("wlan-tools", []), "wpa_cli": ("wlan-tools", []),
-             "nft": ("nft", ["libmnl", "libnftnl", "nftables"]),
-             "dropbearmulti": ("dropbear", ["dropbear"]), "sftp-server": ("sftp-server", ["openssh"])}
-    if path.resolve().parent != (ROOT / "rootfs/out").resolve() or path.name not in tools:
+    if path.resolve().parent != (ROOT / "rootfs/out").resolve() or path.name not in NATIVE_TOOLS:
         return revision()
-    tool, dependencies = tools[path.name]
-    if dependencies:
-        return hashlib.sha256(dependency_inputs(path.name)).hexdigest()
-    inputs = {"builder": digest(ROOT / f"rootfs/build-{tool}.sh")}
-    inputs["environment"] = subprocess.check_output(
-        [str(ROOT / "tools/build-env.sh"), "identity", "rootfs-" + tool],
-        cwd=ROOT, text=True).strip()
-    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(dependency_inputs(path.name)).hexdigest()
 
 
 def receipt(path):
@@ -93,12 +94,7 @@ def compiler_identity():
 
 def dependency_inputs(name):
     # Use the very same input description as unit-hook's dep_stale/dep_stamp decision.
-    dependencies = {
-        "nft": ("nft", "libmnl", "libnftnl", "nftables"),
-        "dropbearmulti": ("dropbear", "dropbear"),
-        "sftp-server": ("sftp-server", "openssh"),
-    }
-    builder, *names = dependencies[name]
+    builder, *names = NATIVE_TOOLS[name]
     env = {**os.environ, "DEPS_LOCK": str(ROOT / "rootfs/deps.lock")}
     return subprocess.check_output(
         ["sh", "-eu", "-c", '. "$1"; shift; dep_stamp_text "$@"', "dependency-inputs",

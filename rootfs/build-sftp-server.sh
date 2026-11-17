@@ -14,10 +14,11 @@ image=$("$root/tools/build-env.sh" prepare rootfs-sftp-server)
 before=$(python3 "$root/tools/output.py" identity "$out/sftp-server")
 . "$here/deps.sh"
 ver=$(dep_ver openssh)
-dep_fetch openssh "$out" >/dev/null
+dep_fetch openssh >/dev/null
+mkdir -p "$out"
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" "$image" sh -euc '
-	cd /tmp && tar -xzf /out/openssh-$VER.tar.gz && cd openssh-$VER
+docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" -v "$DEPS_SOURCES:/src:ro" "$image" sh -euc '
+	cd /tmp && tar -xzf /src/openssh-$VER.tar.gz && cd openssh-$VER
 	./configure --without-openssl --without-zlib --without-pam --without-selinux --without-kerberos5 \
 		--without-libedit --without-security-key-builtin --disable-lastlog --disable-utmp --disable-utmpx \
 		--disable-wtmp --disable-wtmpx LDFLAGS=-static >/tmp/configure.log 2>&1 || { tail -30 /tmp/configure.log; exit 1; }

@@ -8,26 +8,22 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 root=$(cd "$here/.." && pwd)
-. "$root/tools/lib/portable.sh"
 image=$("$root/tools/build-env.sh" prepare rootfs-wlan-tools)
 before=$(python3 "$root/tools/output.py" identity "$out/wpa_supplicant")
-ver=2.11
-sum=912ea06f74e30a8e36fbb68064d6cdff218d8d591db0fc5d75dee6c81ac7fc0a
+. "$here/deps.sh"
+ver=$(dep_ver wpa_supplicant)
+dep_fetch wpa_supplicant >/dev/null
 mkdir -p "$out"
-tarball="$out/wpa_supplicant-$ver.tar.gz"
-[ -f "$tarball" ] || curl -fsSL -o "$tarball" "https://w1.fi/releases/wpa_supplicant-$ver.tar.gz"
-[ "$(sha256 "$tarball")" = "$sum" ] || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
 # libnl comes from Alpine's libnl3-static and is linked in (LGPL-2.1-or-later): its source goes with a release
 # (THIRD-PARTY-LICENSES.md). Alpine builds the package from these two files; the build stops below when the package
 # Alpine installs is another version than the one fetched here (then rootfs/deps.lock follows).
-. "$here/deps.sh"
 libnl=$(dep_ver libnl)
-dep_fetch libnl "$out" >/dev/null
-dep_fetch libnl-musl-patch "$out" >/dev/null
+dep_fetch libnl >/dev/null
+dep_fetch libnl-musl-patch >/dev/null
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -e LIBNL="$libnl" -v "$out:/out" "$image" sh -euc '
+docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -e LIBNL="$libnl" -v "$out:/out" -v "$DEPS_SOURCES:/src:ro" "$image" sh -euc '
 	apk list -I libnl3-static 2>/dev/null | grep -q "^libnl3-static-$LIBNL-r" || { echo "libnl3-static of this Alpine is not $LIBNL (rootfs/deps.lock): $(apk list -I libnl3-static 2>/dev/null)" >&2; exit 1; }
-	cd /tmp && tar -xzf /out/wpa_supplicant-$VER.tar.gz && cd wpa_supplicant-$VER/wpa_supplicant
+	cd /tmp && tar -xzf /src/wpa_supplicant-$VER.tar.gz && cd wpa_supplicant-$VER/wpa_supplicant
 	cat > .config <<CFG
 CONFIG_DRIVER_NL80211=y
 CONFIG_LIBNL32=y

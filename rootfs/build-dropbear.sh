@@ -14,10 +14,11 @@ image=$("$root/tools/build-env.sh" prepare rootfs-dropbear)
 before=$(python3 "$root/tools/output.py" identity "$out/dropbearmulti")
 . "$here/deps.sh"
 ver=$(dep_ver dropbear)
-dep_fetch dropbear "$out" >/dev/null
+dep_fetch dropbear >/dev/null
+mkdir -p "$out"
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
-docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" "$image" sh -euc '
-	cd /tmp && tar -xjf /out/dropbear-$VER.tar.bz2 && cd dropbear-$VER
+docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -v "$out:/out" -v "$DEPS_SOURCES:/src:ro" "$image" sh -euc '
+	cd /tmp && tar -xjf /src/dropbear-$VER.tar.bz2 && cd dropbear-$VER
 	cat > localoptions.h <<-EOF
 	#define DROPBEAR_SFTPSERVER 1
 	#define SFTPSERVER_PATH "/bin/sftp-server"

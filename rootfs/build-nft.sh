@@ -12,16 +12,17 @@ root=$(cd "$here/.." && pwd)
 image=$("$root/tools/build-env.sh" prepare rootfs-nft)
 before=$(python3 "$root/tools/output.py" identity "$out/nft")
 . "$here/deps.sh"
-for d in libmnl libnftnl nftables; do dep_fetch $d "$out" >/dev/null; done
+for d in libmnl libnftnl nftables; do dep_fetch $d >/dev/null; done
+mkdir -p "$out"
 # arm64 containers: on an x86-64 host through QEMU (boot/build-dev-image.sh says how); the results belong to the caller
 docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e MNL="$(dep_ver libmnl)" -e NFTNL="$(dep_ver libnftnl)" \
-	-e NFT="$(dep_ver nftables)" -v "$out:/out" "$image" sh -euc '
+	-e NFT="$(dep_ver nftables)" -v "$out:/out" -v "$DEPS_SOURCES:/src:ro" "$image" sh -euc '
 	p=/tmp/prefix; mkdir -p $p
 	export PKG_CONFIG_PATH=$p/lib/pkgconfig CFLAGS="-Os -ffunction-sections -fdata-sections"
 	cd /tmp
-	tar -xjf /out/libmnl-$MNL.tar.bz2 && (cd libmnl-$MNL && ./configure --prefix=$p --enable-static --disable-shared >/dev/null && make -j"$(nproc)" install >/dev/null)
-	tar -xJf /out/libnftnl-$NFTNL.tar.xz && (cd libnftnl-$NFTNL && ./configure --prefix=$p --enable-static --disable-shared >/dev/null && make -j"$(nproc)" install >/dev/null)
-	tar -xJf /out/nftables-$NFT.tar.xz && cd nftables-$NFT
+	tar -xjf /src/libmnl-$MNL.tar.bz2 && (cd libmnl-$MNL && ./configure --prefix=$p --enable-static --disable-shared >/dev/null && make -j"$(nproc)" install >/dev/null)
+	tar -xJf /src/libnftnl-$NFTNL.tar.xz && (cd libnftnl-$NFTNL && ./configure --prefix=$p --enable-static --disable-shared >/dev/null && make -j"$(nproc)" install >/dev/null)
+	tar -xJf /src/nftables-$NFT.tar.xz && cd nftables-$NFT
 	./configure --prefix=$p --enable-static --disable-shared --with-mini-gmp --without-cli --without-json --without-xtables --disable-man-doc >/dev/null
 	make -j"$(nproc)" LDFLAGS="-all-static -Wl,--gc-sections" >/tmp/build.log 2>&1 || { tail -30 /tmp/build.log; exit 1; }
 	strip -o /out/nft src/nft

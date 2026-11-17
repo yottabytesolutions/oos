@@ -30,6 +30,12 @@ jobs:
         run: tools/ci/kernel-base.sh download
       - name: Kernel
         run: kernel/build-base.sh
+      # an older cache is fine: dep_fetch checks every file against deps.lock and fetches what is missing
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: rootfs/out/sources
+          key: build-sources-${{ hashFiles('rootfs/deps.lock') }}
+          restore-keys: build-sources-
       - name: Image
         run: boot/build-dev-image.sh
       - name: Sign update

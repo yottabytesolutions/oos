@@ -87,19 +87,13 @@ pub(crate) const CHECKS: &[Check] = &[
         steps::host::doctor
     ),
     entry!("clippy", "clippy", "cargo clippy --all-targets, host and ARM", "pinned toolchain", Rust, [], steps::clippy),
-    entry!(
-        "tests-debug",
-        "tests (debug)",
-        "cargo test per crate",
-        "pinned toolchain",
-        Rust,
-        [],
-        |ctx, r| steps::tests(ctx, r, false)
-    ),
+    entry!("tests-debug", "tests (debug)", "cargo nextest run per crate", "pinned toolchain", Rust, [], |ctx, r| {
+        steps::tests(ctx, r, false)
+    }),
     entry!(
         "tests-release",
         "tests (release)",
-        "cargo test --release per crate",
+        "cargo nextest run --cargo-profile test-release per crate",
         "pinned toolchain",
         Rust,
         [],
@@ -109,7 +103,7 @@ pub(crate) const CHECKS: &[Check] = &[
     entry!(
         "coverage",
         "coverage",
-        "cargo llvm-cov per crate",
+        "cargo llvm-cov nextest per crate",
         "cargo-llvm-cov, llvm-tools",
         Coverage,
         [],

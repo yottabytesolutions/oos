@@ -38,22 +38,19 @@ pub fn installed(ctx: &crate::run::Context, root: &Path) -> bool {
     run::available(ctx, root, "cargo", &["llvm-cov", "--version"])
 }
 
-/// Line coverage of the crate in `root/krate`, in tenths of a percent. Runs the tests once more, instrumented.
+/// Line coverage of the crate in `root/krate`, in tenths of a percent. Runs the tests once more, instrumented, under
+/// cargo-nextest.
 pub fn measure(ctx: &crate::run::Context, root: &Path, krate: &str) -> Result<u64, String> {
     let target = run::capture(ctx, root, "python3", &["-I", "tools/output.py", "target"])?;
     if !target.ok {
         return Err(target.stderr);
     }
     let dir = coverage_dir(Path::new(target.stdout.trim()), krate);
-    // Under nextest the instrumented tests run in parallel, as in the test steps. The covered lines are the same.
-    let mut args: Vec<String> = ["llvm-cov", "--json", "--summary-only"].map(String::from).into();
-    if crate::testrun::nextest(ctx, root) {
-        args.insert(1, "nextest".into());
-        args.extend(crate::testrun::nextest_args(root, &[], None)?);
-    } else {
-        args.push("--locked".into());
-    }
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let args = crate::testrun::nextest_args(root, false, None)?;
+    let args: Vec<&str> = ["llvm-cov", "nextest", "--json", "--summary-only"]
+        .into_iter()
+        .chain(args.iter().map(String::as_str))
+        .collect();
     let out = run::capture_env(ctx, &root.join(krate), "cargo", &args, &[("CARGO_TARGET_DIR", dir.as_os_str())])?;
     if !out.ok {
         return Err(run::tail(&out.stderr, 20));

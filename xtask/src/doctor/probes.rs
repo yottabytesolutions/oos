@@ -49,10 +49,8 @@ impl<'a> Inventory<'a> {
         let setup = "tools/bootstrap.sh";
         self.version("rustc", &["--version"], &pins.rust, setup);
         self.version("cargo", &["--version"], &pins.rust, setup);
-        let coverage = self.output("cargo", &["llvm-cov", "--version"]);
-        let actual = coverage.as_deref().and_then(|s| s.strip_prefix("cargo-llvm-cov ")).unwrap_or("unavailable");
-        let actual = if actual.bytes().all(|b| b.is_ascii_digit() || b == b'.') { actual } else { "unrecognized" };
-        self.check("cargo-llvm-cov", actual == pins.tools.coverage, &pins.tools.coverage, actual, setup);
+        self.cargo_tool("llvm-cov", &pins.tools.coverage, setup);
+        self.cargo_tool("nextest", &pins.tools.nextest, setup);
         self.python(&pins.tools.python);
         self.active_toolchain(pins);
         self.components(pins);
@@ -72,6 +70,17 @@ impl<'a> Inventory<'a> {
             &["-I", "tools/build_env.py", "output"],
             "unset CARGO_TARGET_DIR; python3 tools/output.py target",
         );
+    }
+
+    /// The Cargo subcommand `cargo-<tool>` at the pinned version: the word after its name in `cargo <tool> --version`
+    /// (`cargo-nextest 0.9.150 (d225b1daf 2026-10-26)` and more lines).
+    fn cargo_tool(&mut self, tool: &str, expected: &str, remedy: &str) {
+        let name = format!("cargo-{tool}");
+        let out = self.output("cargo", &[tool, "--version"]);
+        let mut words = out.as_deref().unwrap_or_default().split_whitespace();
+        let actual = if words.next() == Some(name.as_str()) { words.next() } else { None }.unwrap_or("unavailable");
+        let actual = if actual.bytes().all(|b| b.is_ascii_digit() || b == b'.') { actual } else { "unrecognized" };
+        self.check(&name, actual == expected, expected, actual, remedy);
     }
 
     fn active_toolchain(&mut self, pins: &Pins) {

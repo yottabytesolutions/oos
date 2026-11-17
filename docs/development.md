@@ -52,7 +52,7 @@ cargo xtask doctor --image
 ```
 
 `rust-toolchain.toml` is authoritative for Rust 1.99.1, components and musl std. `tools/build-tools.json` requires
-Python >=3.12 and pins cargo-llvm-cov 0.9.1; bootstrap installs coverage with `--version =0.9.1 --locked` and fetches
+Python >=3.12 and pins cargo-llvm-cov 0.9.1 and cargo-nextest 0.9.150; bootstrap installs both with `--version =X --locked` and fetches
 locked Cargo dependencies. The numbered distribution still needs a real setup run on this macOS arm64 host. Linux x86-64 runner
 validation is unavailable here and explicitly untested, without blocking this release scope.
 Do not replace a missing distribution/component with floating stable. An explicit override can defeat the file;
@@ -230,14 +230,12 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
   `--partition hash:K/N`; the doctests run in shard 1). A shard's skipped count includes the other shards' tests.
   Pull requests run the debug tests only; the merge queue adds the release tests. The required `test` check sums
   up every shard.
-- The release tests in `pr.yml` run without LTO (`CARGO_PROFILE_RELEASE_LTO=false`, 16 codegen units): the same
-  optimisation level and no debug assertions, without a fat-LTO link per test binary. CI builds use
-  `CARGO_PROFILE_DEV_DEBUG=line-tables-only`.
-- The test and coverage steps run each crate's tests with cargo-nextest when it is installed: every test in its own
-  process, all binaries in parallel, and the doctests with `cargo test --doc` (`cargo llvm-cov nextest` for
-  coverage, which measures the same lines). CI sets `OOS_TEST_RUNNER=nextest`, which requires it. Without nextest
-  they run `cargo test`. The counts differ slightly: `cargo test` also counts the summary lines of tests that run
-  their own binary again.
+- The release tests, locally and in CI, build with the Cargo profile `test-release`: the release optimisation level
+  and no debug assertions, without a fat-LTO link per test binary (16 codegen units). The perf guards and the scope
+  build keep the shipping `release` profile. CI builds use `CARGO_PROFILE_DEV_DEBUG=line-tables-only`.
+- The test and coverage steps run each crate's tests with cargo-nextest (pinned in `tools/build-tools.json`, installed
+  by bootstrap, checked by the doctor): every test in its own process, all binaries in parallel, and the doctests
+  with `cargo test --doc` (`cargo llvm-cov nextest` for coverage).
   `.config/nextest.toml` reports a test as slow after 60 s and ends it after 10 minutes (a hang guard); the step lists
   every test that ran 60 s or longer. A test that leaves a process holding its output fails. Tests kill a process
   group with `kill -KILL -- -<pgid>`: without `--`, the procps-ng `kill` of Ubuntu 24.04 signals the wrong group, or
@@ -245,7 +243,7 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
 - A push to `main` runs `pr.yml` as the only writer of the Rust caches (one per job kind); its test jobs build the
   tests without running them, because the merge queue already ran them on that tree.
 - `.github/workflows/main.yml`, nightly and by hand: the whole default gate in parallel jobs, including the release
-  tests with LTO, coverage and the base doctor, plus cargo-deny with the day's advisories and the image.
+  tests, coverage and the base doctor, plus cargo-deny with the day's advisories and the image.
 - The image job downloads the kernel base from the pre-release `kernel-base-<version>`
   (`tools/ci/kernel-base.sh download`); `tools/ci/kernel-base.sh publish` creates it for a new `kernel/base.sha256`.
 - Each run ends with a `timings` job: job and step durations in the run summary (`tools/ci/run_summary.py`).
@@ -326,7 +324,7 @@ function; a file reached both as test and as production code is production code.
 | agent rules | exact loader templates and Git path inventory | the five checked client entry files load root `AGENTS.md`; additional recognized entries fail | universal rules stay in one place |
 | architecture | `cargo metadata`, syntax walk | `xtask/data/architecture.txt`: allowed crate dependencies; module rules inside a crate | the layers cannot erode by accident |
 | clippy | `cargo clippy --all-targets`, for the host and for `aarch64-unknown-linux-musl` | the `[lints]` table of each crate and `clippy.toml`; the scope build compiles | correctness, idiom, size and complexity, also in Linux-only code |
-| tests (debug, release) | `cargo test`, `cargo test --release` | every test passes in both profiles, full counts | release-only bugs (overflow checks, timing) show |
+| tests (debug, release) | `cargo nextest run`, `--cargo-profile test-release` | every test passes in both profiles, full counts | release-only bugs (overflow checks, timing) show |
 | perf guards | `tools/perf-guard.sh` | the fork's allocation counts and timing ratios; its exit code decides | the fast paths stay fast |
 | coverage | `cargo llvm-cov` per crate | line coverage per crate ≥ the floor in `xtask/data/coverage.txt` | coverage does not fall |
 

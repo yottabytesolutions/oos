@@ -1,6 +1,6 @@
 # Nightly and by hand: the whole default gate on main (without perf: ratio guards are load sensitive on shared
 # runners and stay a local gate), split into parallel jobs with `cargo xtask step <id>` so the wall time is the
-# slowest job: the release-profile tests with LTO, coverage and the base doctor run only here; cargo-deny with the
+# slowest job: the release-profile tests, coverage and the base doctor run only here; cargo-deny with the
 # day's advisories; a FreeBSD cross check; the image. A push to main runs no gate here: the merge queue already ran
 # pr.yml on that tree, and pr.yml's push run only warms the PR caches.
 name: Main
@@ -41,6 +41,7 @@ jobs:
             mksh: true
           - name: coverage
             steps: doctor-base coverage
+            nextest: nextest
             llvm-cov: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,7 +77,6 @@ jobs:
       - name: cargo xtask step ${{ matrix.steps }}
         env:
           STEPS: ${{ matrix.steps }}
-          OOS_TEST_RUNNER: ${{ matrix.nextest }}
         shell: bash
         run: |
           read -ra ids <<< "$STEPS"

@@ -22,6 +22,13 @@ lto = false
 codegen-units = 16
 panic = "unwind"
 
+# The release tests (`cargo xtask check`, CI): release optimisation and no debug assertions, without a fat-LTO link per
+# test binary (xtask/src/testrun.rs).
+[profile.test-release]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 # Upstream (PR 8): long-reference DSP and Eye analysis stay responsive in a debug build; the UI keeps the fast
 # incremental development build.
 [profile.dev.package.oos-dsp]

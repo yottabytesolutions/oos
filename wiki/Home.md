@@ -31,6 +31,7 @@ Read the [[Disclaimer]] before you install. Installing OOS means you accept its 
 | [[Building OOS]] | The kernel, the signing key and the image |
 | [[Development]] | Where contributors start |
 | [[FAQ]] | Short answers to common questions |
+| [[Thanks and licences]] | The projects OOS builds on, and the licences |
 
 ## Where this wiki comes from
 

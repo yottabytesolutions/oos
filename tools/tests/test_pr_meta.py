@@ -74,12 +74,23 @@ class CommitTests(unittest.TestCase):
 
 class RunnerTests(unittest.TestCase):
     def test_only_literal_hosted_labels(self):
-        ok = "jobs:\n  a:\n    runs-on: ubuntu-24.04\n  b:\n    runs-on: 'ubuntu-24.04-arm'  # native\n"
+        ok = ("jobs:\n  a:\n    runs-on: ubuntu-24.04\n  b:\n    runs-on: 'ubuntu-24.04-arm'  # native\n"
+              "  c:\n    runs-on: ubuntu-latest\n")
         self.assertEqual(meta.check_runners({"w.yml": ok}), [])
         for bad in ("runs-on: self-hosted", "runs-on: [self-hosted, linux]", "runs-on: ${{ matrix.os }}",
-                    "runs-on: proxmox", "runs-on: ubuntu-latest", "  - runs-on: macos-15"):
+                    "runs-on: proxmox", "  - runs-on: macos-15", "runs-on: ubuntu-22.04", "runs-on: windows-latest"):
             with self.subTest(bad=bad):
                 self.assertEqual(len(meta.check_runners({"w.yml": f"jobs:\n  a:\n    {bad}\n"})), 1)
+
+    def test_larger_runners_are_rejected(self):
+        for label in ("ubuntu-24.04-16core", "ubuntu-latest-4-cores", "ubuntu-24.04-arm-8core", "ubuntu-24.04-gpu",
+                      "macos-latest-xlarge", "macos-15-large", "linux-arm64-64core"):
+            with self.subTest(label=label):
+                errors = meta.check_runners({"w.yml": f"jobs:\n  a:\n    runs-on: {label}\n"})
+                self.assertEqual(len(errors), 1)
+                self.assertIn("no larger or self-hosted runners", errors[0])
+        group = "jobs:\n  a:\n    runs-on:\n      group: larger\n      labels: ubuntu-24.04-16core\n"
+        self.assertEqual(len(meta.check_runners({"w.yml": group})), 1)
 
     def test_repository_workflows_pass(self):
         self.assertEqual(meta.check_runners(meta.workflows(ROOT)), [])

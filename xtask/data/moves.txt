@@ -8,3 +8,6 @@ fn ui/src/store.rs parse_ag -> fn ui/src/store/import.rs parse_ag
 ui ui/src/store.rs clippy::cognitive_complexity -> ui ui/src/store/codec_tests/legacy.rs clippy::cognitive_complexity
 ui ui/src/store.rs clippy::manual_pattern_char_comparison -> ui ui/src/store/import.rs clippy::manual_pattern_char_comparison
 ui ui/src/store.rs clippy::manual_range_patterns -> ui ui/src/store/import.rs clippy::manual_range_patterns
+fn ui/src/ui.rs Ui::adjust -> fn ui/src/ui/menu/trigger.rs adjust
+fn ui/src/ui.rs Ui::trigger_items -> fn ui/src/ui/menu/trigger/rows.rs trigger_items
+fn ui/src/ui.rs Ui::value -> fn ui/src/ui/menu/trigger.rs value

@@ -15,7 +15,7 @@
 516 file ui/src/measures/standard.rs
 3398 file ui/src/scpi.rs
 1507 file ui/src/store.rs
-11348 file ui/src/ui.rs
+8919 file ui/src/ui.rs
 1747 file ui/src/ui/analysis.rs
 608 file ui/src/ui/autoset.rs
 992 file ui/src/ui/bode.rs
@@ -84,8 +84,6 @@
 171 fn ui/src/scpi.rs Scpi::timebase_more
 223 fn ui/src/scpi/ser.rs trig
 67 fn ui/src/sysconf.rs SysConf::parse_over
-353 fn ui/src/ui.rs Ui::activate
-594 fn ui/src/ui.rs Ui::adjust
 62 fn ui/src/ui.rs Ui::cursor_values
 73 fn ui/src/ui.rs Ui::dlg_layout
 73 fn ui/src/ui.rs Ui::draw_axes
@@ -100,14 +98,10 @@
 73 fn ui/src/ui.rs Ui::draw_top
 83 fn ui/src/ui.rs Ui::fast_draw_all
 161 fn ui/src/ui.rs Ui::key
-128 fn ui/src/ui.rs Ui::kind
 117 fn ui/src/ui.rs Ui::knob
-293 fn ui/src/ui.rs Ui::label
-330 fn ui/src/ui.rs Ui::menu_items
 76 fn ui/src/ui.rs Ui::menu_title
 100 fn ui/src/ui.rs Ui::multi_touch
 253 fn ui/src/ui.rs Ui::new
-179 fn ui/src/ui.rs Ui::options
 76 fn ui/src/ui.rs Ui::pointer_wheel_motion
 135 fn ui/src/ui.rs Ui::render_layers
 121 fn ui/src/ui.rs Ui::set_dec_proto
@@ -116,8 +110,6 @@
 214 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 409 fn ui/src/ui.rs Ui::touch_in
-89 fn ui/src/ui.rs Ui::trigger_items
-324 fn ui/src/ui.rs Ui::value
 62 fn ui/src/ui.rs fast_plan
 66 fn ui/src/ui.rs packet_text
 121 fn ui/src/ui/analysis.rs Ui::ana_adjust

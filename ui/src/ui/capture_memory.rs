@@ -3,9 +3,10 @@
 
 //! The retained acquisition is independent of the screen's interpolated points.
 use super::*;
+use crate::ui::lifecycle::worker::Worker;
 use std::{
     hash::{Hash, Hasher},
-    sync::{mpsc, Arc},
+    sync::Arc,
 };
 
 #[derive(Default)]
@@ -30,85 +31,72 @@ struct DemoResult {
     record: Option<Record>,
 }
 struct DemoWorker {
-    tx: mpsc::SyncSender<DemoJob>,
-    rx: crate::ui::lifecycle::worker_result::Receiver<DemoResult>,
-    busy: bool,
+    thread: Worker<DemoJob, DemoResult>,
     cancelled: bool,
 }
 impl DemoWorker {
     fn new() -> Self {
-        let (tx, input) = mpsc::sync_channel::<DemoJob>(1);
-        let (output, rx) = crate::ui::lifecycle::worker_result::channel();
-        std::thread::Builder::new()
-            .name("full-depth-demo".into())
-            .spawn(move || {
-                while let Ok(job) = input.recv() {
-                    let mut source = Source::Demo { t: job.time };
-                    let mut rng = Rng::new(job.seed);
-                    let record =
-                        source.acquire_full_demo(&job.model, job.elapsed, &mut rng, &job.switches).map(|mut rec| {
-                            // Retain the signal that was acquired, at native dt. Display,
-                            // math and measurements must share this same conditioning.
-                            for c in 0..NCH {
-                                condition(&job.model, c, &mut rec.ch[c], rec.dt);
-                            }
-                            let basic = std::array::from_fn(|c| crate::board::BasicStats::of(&rec.ch[c]));
-                            let points = rec.ch.iter().map(Vec::len).max().unwrap_or(0);
-                            let origin = rec.t0;
-                            let ti = -origin / rec.dt;
-                            let frame = Arc::new(crate::board::Frame {
-                                seq: job.seed,
-                                dt: rec.dt,
-                                pre: ti.round().clamp(0.0, points.saturating_sub(1) as f64) as usize,
-                                ch: std::mem::take(&mut rec.ch),
-                                roll: false,
-                                envelope: false,
-                                scan: false,
-                                partial: false,
-                                acq: (1.0 / rec.dt, points),
-                                stamp: job.identity.1,
-                                cfg: job.identity.0,
-                                pre_exact: false,
-                                basic,
-                                la: rec.la.take(),
-                                fixed_ti: None,
-                                hw_avg: false,
-                            });
-                            let window = job.model.time_per_div() as f64 * HDIV as f64;
-                            crate::board::resample_record(
-                                &frame,
-                                &job.model,
-                                3600,
-                                window,
-                                job.model.delay as f64 - window * 0.5,
-                                ti,
-                                rec.triggered,
-                            )
-                        });
-                    let time = match source {
-                        Source::Demo { t } => t,
-                        _ => job.time,
-                    };
-                    if output.send(DemoResult { key: job.key, time, record }).is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("start bounded full-memory demo worker");
-        Self { tx, rx, busy: false, cancelled: false }
+        let thread = Worker::spawn("full-depth-demo", acquire_demo).expect("start bounded full-memory demo worker");
+        Self { thread, cancelled: false }
     }
+}
+fn acquire_demo(job: DemoJob) -> DemoResult {
+    let mut source = Source::Demo { t: job.time };
+    let mut rng = Rng::new(job.seed);
+    let record = source.acquire_full_demo(&job.model, job.elapsed, &mut rng, &job.switches).map(|mut rec| {
+        // Retain the signal that was acquired, at native dt. Display,
+        // math and measurements must share this same conditioning.
+        for c in 0..NCH {
+            condition(&job.model, c, &mut rec.ch[c], rec.dt);
+        }
+        let basic = std::array::from_fn(|c| crate::board::BasicStats::of(&rec.ch[c]));
+        let points = rec.ch.iter().map(Vec::len).max().unwrap_or(0);
+        let origin = rec.t0;
+        let ti = -origin / rec.dt;
+        let frame = Arc::new(crate::board::Frame {
+            seq: job.seed,
+            dt: rec.dt,
+            pre: ti.round().clamp(0.0, points.saturating_sub(1) as f64) as usize,
+            ch: std::mem::take(&mut rec.ch),
+            roll: false,
+            envelope: false,
+            scan: false,
+            partial: false,
+            acq: (1.0 / rec.dt, points),
+            stamp: job.identity.1,
+            cfg: job.identity.0,
+            pre_exact: false,
+            basic,
+            la: rec.la.take(),
+            fixed_ti: None,
+            hw_avg: false,
+        });
+        let window = job.model.time_per_div() as f64 * HDIV as f64;
+        crate::board::resample_record(
+            &frame,
+            &job.model,
+            3600,
+            window,
+            job.model.delay as f64 - window * 0.5,
+            ti,
+            rec.triggered,
+        )
+    });
+    let time = match source {
+        Source::Demo { t } => t,
+        _ => job.time,
+    };
+    DemoResult { key: job.key, time, record }
 }
 
 #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
 impl Ui {
     pub(super) fn cancel_demo_acquisition(&mut self) {
         if let Some(worker) = self.capture_views.borrow_mut().demo.as_mut() {
-            if worker.busy {
+            if worker.thread.busy() {
                 worker.cancelled = true;
             }
-            if worker.rx.try_recv().is_ok() {
-                worker.busy = false;
-            }
+            let _ = worker.thread.poll();
         }
     }
 
@@ -128,13 +116,12 @@ impl Ui {
         {
             let mut state = self.capture_views.borrow_mut();
             let worker = state.demo.get_or_insert_with(DemoWorker::new);
-            if let Ok(result) = worker.rx.try_recv() {
-                worker.busy = false;
+            if let Ok(result) = worker.thread.poll() {
                 if result.key == key && !worker.cancelled {
                     answer = Some(result);
                 }
             }
-            if answer.is_none() && !worker.busy {
+            if answer.is_none() && !worker.thread.busy() {
                 let id = change::acquisition::identity(self);
                 let job = DemoJob {
                     key,
@@ -145,8 +132,7 @@ impl Ui {
                     switches: *self.switches(),
                     identity: (id.gen(), id.epoch()),
                 };
-                if worker.tx.try_send(job).is_ok() {
-                    worker.busy = true;
+                if worker.thread.submit(job).is_ok() {
                     worker.cancelled = false;
                 }
             }
@@ -313,9 +299,7 @@ mod tests {
     impl Ui {
         pub(in crate::ui) fn wait_demo_event(&self) {
             if let Some(worker) = self.capture_views.borrow().demo.as_ref() {
-                if worker.busy {
-                    worker.rx.wait_ready("demo worker completion");
-                }
+                worker.thread.wait_ready("demo worker completion");
             }
         }
     }

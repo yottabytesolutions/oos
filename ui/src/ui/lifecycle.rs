@@ -4,6 +4,7 @@
 mod query_time;
 #[cfg(test)]
 pub(crate) mod test_wait;
+pub(in crate::ui) mod worker;
 pub(crate) mod worker_result;
 
 use super::*;

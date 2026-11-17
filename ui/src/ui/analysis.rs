@@ -13,13 +13,14 @@ pub(super) mod window;
 
 use super::magnetic::missing_wave;
 use super::*;
+use crate::ui::lifecycle::worker::Worker;
 
 pub(super) const RESETS_ON: oos_core::change::Classes =
     oos_core::change::Classes::MATH.union(oos_core::change::Classes::VIEW);
 use oos_dsp::{eye, identify, power, spectrum};
 use std::{
     cell::{Cell, RefCell},
-    sync::{mpsc, Arc},
+    sync::Arc,
 };
 
 pub(super) const BACKGROUND_MEASUREMENT_POINTS: usize = 262_144;
@@ -129,40 +130,39 @@ struct RefMeasureResult {
 
 /// One worker, one in-flight input copy. Waiting sources keep metadata only.
 struct RefMeasureWorker {
-    input: mpsc::SyncSender<RefMeasureJob>,
-    output: crate::ui::lifecycle::worker_result::Receiver<RefMeasureResult>,
-    busy: bool,
+    thread: Worker<RefMeasureJob, RefMeasureResult>,
     submitted: usize,
     own_turn: bool,
 }
 
 impl RefMeasureWorker {
     fn open() -> Self {
-        let (input, requests) = mpsc::sync_channel::<RefMeasureJob>(1);
-        let (results, output) = crate::ui::lifecycle::worker_result::channel();
-        std::thread::Builder::new()
-            .name("reference-measurements".into())
-            .spawn(move || {
-                while let Ok(job) = requests.recv() {
-                    let analysis = job.analysis.unwrap_or_else(|| {
-                        Arc::new(if job.key.basic {
-                            basic_analysis(crate::board::BasicStats::of(job.samples.slice()))
-                        } else {
-                            oos_dsp::measure::analyze_refs(job.samples.slice(), job.dt, job.min_amp, job.low, job.high)
-                        })
-                    });
-                    let readings = scalar_readings(&analysis, job.key);
-                    if results
-                        .send(RefMeasureResult { source: job.source, key: job.key, analysis, readings, own: job.own })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })
+        let thread = Worker::spawn("reference-measurements", measure_reference)
             .expect("start bounded reference measurement worker");
-        Self { input, output, busy: false, submitted: 0, own_turn: true }
+        Self { thread, submitted: 0, own_turn: true }
     }
+
+    fn busy(&self) -> bool {
+        self.thread.busy()
+    }
+
+    fn submit(&mut self, job: RefMeasureJob) {
+        if self.thread.submit(job).is_ok() {
+            self.submitted += 1;
+        }
+    }
+}
+
+fn measure_reference(job: RefMeasureJob) -> RefMeasureResult {
+    let analysis = job.analysis.unwrap_or_else(|| {
+        Arc::new(if job.key.basic {
+            basic_analysis(crate::board::BasicStats::of(job.samples.slice()))
+        } else {
+            oos_dsp::measure::analyze_refs(job.samples.slice(), job.dt, job.min_amp, job.low, job.high)
+        })
+    });
+    let readings = scalar_readings(&analysis, job.key);
+    RefMeasureResult { source: job.source, key: job.key, analysis, readings, own: job.own }
 }
 
 /// Analyser state kept between records.
@@ -457,7 +457,7 @@ impl Ui {
             self.azr.ref_measure_pending[slot].set(Some(key));
             let mut worker = self.azr.ref_measure_worker.borrow_mut();
             let worker = worker.get_or_insert_with(RefMeasureWorker::open);
-            if !worker.busy {
+            if !worker.busy() {
                 let job = RefMeasureJob {
                     source: WaveId::Ref(slot),
                     key,
@@ -469,10 +469,7 @@ impl Ui {
                     own: false,
                     analysis: None,
                 };
-                if worker.input.try_send(job).is_ok() {
-                    worker.busy = true;
-                    worker.submitted += 1;
-                }
+                worker.submit(job);
             }
             return None;
         }
@@ -637,7 +634,7 @@ impl Ui {
             self.azr.ch_measure_pending[channel].set(Some(key));
             let mut worker = self.azr.ref_measure_worker.borrow_mut();
             let worker = worker.get_or_insert_with(RefMeasureWorker::open);
-            if !worker.busy {
+            if !worker.busy() {
                 let input = if let Some(raw) = &record.raw {
                     let values = &raw.frame.ch[channel];
                     let offset = (samples.as_ptr() as usize).checked_sub(values.as_ptr() as usize)?;
@@ -660,10 +657,7 @@ impl Ui {
                     own: false,
                     analysis: None,
                 };
-                if worker.input.try_send(job).is_ok() {
-                    worker.busy = true;
-                    worker.submitted += 1;
-                }
+                worker.submit(job);
             }
             return None;
         }
@@ -786,8 +780,7 @@ impl Ui {
     pub(super) fn poll_reference_measurements(&mut self) {
         let mut completed = Vec::new();
         if let Some(worker) = self.azr.ref_measure_worker.borrow_mut().as_mut() {
-            while let Ok(result) = worker.output.try_recv() {
-                worker.busy = false;
+            while let Ok(result) = worker.thread.poll() {
                 worker.own_turn = !result.own;
                 completed.push(result);
             }
@@ -1840,9 +1833,7 @@ mod measurement_gate_tests {
     impl Ui {
         pub(in crate::ui) fn wait_reference_measurement_event(&self) {
             if let Some(worker) = self.azr.ref_measure_worker.borrow().as_ref() {
-                if worker.busy {
-                    worker.output.wait_ready("reference measurement worker completion");
-                }
+                worker.thread.wait_ready("reference measurement worker completion");
             }
         }
     }
@@ -2099,7 +2090,8 @@ mod measurement_gate_tests {
         let wait = crate::ui::lifecycle::test_wait::Wait::new("reference measurement completion");
         loop {
             ui.step(0.0);
-            if !ui.azr.ref_measure_worker.borrow().as_ref().is_some_and(|worker| worker.busy) && !ui.measurement_busy()
+            if !ui.azr.ref_measure_worker.borrow().as_ref().is_some_and(RefMeasureWorker::busy)
+                && !ui.measurement_busy()
             {
                 break;
             }

@@ -6,11 +6,9 @@
 //! not a new physical SIM capture.
 
 use super::*;
+use crate::ui::lifecycle::worker::Worker;
 use oos_dsp::serial::{self, Lane, LANES};
-use std::sync::{
-    mpsc::{self, Sender},
-    Arc,
-};
+use std::sync::{mpsc, Arc};
 
 mod generated;
 
@@ -43,36 +41,22 @@ struct Generated {
 /// One worker per UI. Knob changes replace queued requests, never spawn a
 /// parallel set of multi-million-sample generators. Only the latest reply wins.
 pub(super) struct Generation {
-    requests: Sender<Request>,
-    results: crate::ui::lifecycle::worker_result::Receiver<(Request, Result<Generated, String>)>,
+    thread: Worker<Request, (Request, Result<Generated, String>)>,
     next: u64,
     active: Option<u64>,
     run: bool,
-    in_flight: bool,
     queued: Option<Request>,
     pending: Option<(Request, Generated)>,
 }
 
 impl Generation {
     fn new() -> Result<Self, String> {
-        let (requests, input) = mpsc::channel::<Request>();
-        let (output, results) = crate::ui::lifecycle::worker_result::channel();
-        std::thread::Builder::new()
-            .name("oos-sim".into())
-            .spawn(move || {
-                while let Ok(mut request) = input.recv() {
-                    while let Ok(newer) = input.try_recv() {
-                        request = newer;
-                    }
-                    let generated =
-                        serial::try_generate(&request.lane).map(|samples| Generated::evaluate(&request, samples));
-                    if output.send((request, generated)).is_err() {
-                        break;
-                    }
-                }
-            })
-            .map_err(|error| format!("Could not start SIM generator: {error}"))?;
-        Ok(Self { requests, results, next: 0, active: None, run: false, in_flight: false, queued: None, pending: None })
+        let thread = Worker::spawn("oos-sim", |request: Request| {
+            let generated = serial::try_generate(&request.lane).map(|samples| Generated::evaluate(&request, samples));
+            (request, generated)
+        })
+        .map_err(|error| format!("Could not start SIM generator: {error}"))?;
+        Ok(Self { thread, next: 0, active: None, run: false, queued: None, pending: None })
     }
 
     fn submit(&mut self, mut request: Request) -> Result<(), String> {
@@ -80,20 +64,18 @@ impl Generation {
         request.id = self.next;
         self.active = Some(request.id);
         self.run = request.run;
-        if self.in_flight {
+        if self.thread.busy() {
             self.queued = Some(request);
             return Ok(());
         }
-        self.in_flight = true;
-        self.requests.send(request).map_err(|_| {
+        self.thread.submit(request).map_err(|_| {
             self.active = None;
-            self.in_flight = false;
             "SIM generator stopped; return to Live and try again".into()
         })
     }
 
     fn advance_queue(&mut self) -> Result<(), String> {
-        if self.in_flight {
+        if self.thread.busy() {
             return Ok(());
         }
         let Some(request) = self.queued.take() else {
@@ -102,9 +84,7 @@ impl Generation {
         if self.active != Some(request.id) {
             return Ok(());
         }
-        self.in_flight = true;
-        self.requests.send(request).map_err(|_| {
-            self.in_flight = false;
+        self.thread.submit(request).map_err(|_| {
             self.active = None;
             "SIM generator stopped".into()
         })
@@ -571,9 +551,8 @@ impl Ui {
         }
         loop {
             let Some(generation) = &mut self.sim_generation else { return };
-            match generation.results.try_recv() {
+            match generation.thread.poll() {
                 Ok((request, result)) => {
-                    generation.in_flight = false;
                     if generation.active != Some(request.id) {
                         if let Err(error) = generation.advance_queue() {
                             self.sim_error = Some(error);
@@ -615,7 +594,10 @@ impl Ui {
     #[cfg(test)]
     fn wait_sim_worker(&mut self) {
         let deadline = crate::ui::lifecycle::test_wait::Wait::new("wait_sim_worker");
-        while self.sim_generation.as_ref().is_some_and(|generation| generation.in_flight || generation.queued.is_some())
+        while self
+            .sim_generation
+            .as_ref()
+            .is_some_and(|generation| generation.thread.busy() || generation.queued.is_some())
         {
             self.sim_poll();
             deadline.check();
@@ -992,9 +974,7 @@ mod tests {
     impl Ui {
         pub(in crate::ui) fn wait_sim_event(&self) {
             if let Some(worker) = self.sim_generation.as_ref() {
-                if worker.in_flight {
-                    worker.results.wait_ready("sim worker completion");
-                }
+                worker.thread.wait_ready("sim worker completion");
             }
         }
     }

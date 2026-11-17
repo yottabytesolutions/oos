@@ -2,7 +2,7 @@
 
 //! Selected-source Eye setup and bounded immutable-reference analysis.
 use super::*;
-use std::sync::mpsc;
+use crate::ui::lifecycle::worker::Worker;
 
 pub(in crate::ui) const RESETS_ON: oos_core::change::Classes = oos_core::change::Classes::NONE;
 const BACKGROUND_POINTS: usize = 262_144;
@@ -90,30 +90,6 @@ impl Job {
     }
 }
 
-struct Worker {
-    send: mpsc::SyncSender<Job>,
-    receive: crate::ui::lifecycle::worker_result::Receiver<Finished>,
-    busy: bool,
-}
-
-impl Worker {
-    fn new() -> Self {
-        let (send, requests) = mpsc::sync_channel::<Job>(1);
-        let (results, receive) = crate::ui::lifecycle::worker_result::channel();
-        std::thread::Builder::new()
-            .name("reference-eye".into())
-            .spawn(move || {
-                while let Ok(job) = requests.recv() {
-                    if results.send(job.finish()).is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("start reference Eye worker");
-        Self { send, receive, busy: false }
-    }
-}
-
 #[derive(Default)]
 pub(in crate::ui) struct State {
     pub enabled: bool,
@@ -125,7 +101,7 @@ pub(in crate::ui) struct State {
     completed_captures: Vec<CaptureTag>,
     updating: bool,
     failed: bool,
-    worker: Option<Worker>,
+    worker: Option<Worker<Job, Finished>>,
     pub submitted: usize,
     pub applied_results: usize,
 }
@@ -512,13 +488,7 @@ impl Ui {
     }
 
     pub(in crate::ui) fn eye_auto_poll(&mut self) {
-        let finished = self.azr.eye_auto.worker.as_mut().and_then(|worker| match worker.receive.try_recv() {
-            Ok(result) => {
-                worker.busy = false;
-                Some(result)
-            }
-            Err(_) => None,
-        });
+        let finished = self.azr.eye_auto.worker.as_mut().and_then(|worker| worker.poll().ok());
         let Some(finished) = finished else { return };
         let active = self.azr.eye_auto.enabled || self.auto_eye_large();
         if self.azr.eye_auto.wanted.is_none() || !self.eye_open() || !active {
@@ -588,10 +558,10 @@ impl Ui {
         let requested = (!self.m.eye_from_record && self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
         if large {
             let captures = self.auto_eye_captures();
-            if self.azr.eye_auto.worker.is_none() {
-                self.azr.eye_auto.worker = Some(Worker::new());
-            }
-            if self.azr.eye_auto.worker.as_ref().unwrap().busy {
+            let worker = self.azr.eye_auto.worker.get_or_insert_with(|| {
+                Worker::spawn("reference-eye", |job: Job| job.finish()).expect("start reference Eye worker")
+            });
+            if worker.busy() {
                 self.auto_eye_waiting(&context, &captures);
                 return true;
             }
@@ -609,9 +579,7 @@ impl Ui {
                 requested_rate: requested,
                 settings: FactSettings::from(&self.m),
             };
-            let worker = self.azr.eye_auto.worker.as_mut().unwrap();
-            if worker.send.try_send(job).is_ok() {
-                worker.busy = true;
+            if self.azr.eye_auto.worker.as_mut().is_some_and(|worker| worker.submit(job).is_ok()) {
                 self.azr.eye_auto.submitted += 1;
             }
             self.auto_eye_waiting(&context, &captures);
@@ -661,14 +629,13 @@ mod performance_and_timing_tests {
     impl Ui {
         pub(in crate::ui) fn wait_eye_event(&self) {
             if let Some(worker) = self.azr.eye_auto.worker.as_ref() {
-                if worker.busy {
-                    worker.receive.wait_ready("eye worker completion");
-                }
+                worker.wait_ready("eye worker completion");
             }
         }
     }
 
     use super::*;
+    use std::sync::mpsc;
 
     fn reference(values: Vec<f32>, dt: f64, t0: f64) -> RefWave {
         RefWave {
@@ -684,7 +651,7 @@ mod performance_and_timing_tests {
         }
     }
 
-    fn controlled(sim_slot: usize) -> (Ui, mpsc::Receiver<Job>, mpsc::Sender<Finished>) {
+    fn controlled(sim_slot: usize) -> (Ui, mpsc::Receiver<Job>, mpsc::SyncSender<Finished>) {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.set_offline(true);
         ui.session_is_sim = true;
@@ -697,9 +664,8 @@ mod performance_and_timing_tests {
         ui.m.meas2.clear();
         ui.select_workspace_source(WaveId::Ref(0));
         ui.m.eye_src = WaveId::Ref(0);
-        let (send, requests) = mpsc::sync_channel(1);
-        let (results, receive) = crate::ui::lifecycle::worker_result::channel();
-        ui.azr.eye_auto.worker = Some(Worker { send, receive, busy: false });
+        let (worker, requests, results) = Worker::manual();
+        ui.azr.eye_auto.worker = Some(worker);
         (ui, requests, results)
     }
 
@@ -867,9 +833,8 @@ mod performance_and_timing_tests {
         let sampled = ui.eye_samples(ui.last[0].as_ref().unwrap(), WaveId::Ch(0)).unwrap();
         assert_eq!((sampled.v.len(), sampled.dt), (NATIVE_POINTS, 5e-12));
         assert!((sampled.t0 - (origin - 2e-12)).abs() < 1e-21);
-        let (send, requests) = mpsc::sync_channel(1);
-        let (results, receive) = crate::ui::lifecycle::worker_result::channel();
-        ui.azr.eye_auto.worker = Some(Worker { send, receive, busy: false });
+        let (worker, requests, results) = Worker::manual();
+        ui.azr.eye_auto.worker = Some(worker);
         ui.eye_make();
         let job = requests.try_recv().unwrap();
         assert_eq!((job.data.v.len(), job.data.dt), (NATIVE_POINTS, 5e-12));

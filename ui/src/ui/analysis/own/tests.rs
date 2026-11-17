@@ -132,10 +132,8 @@ fn evicting_edge_arrays_preserves_scalar_values_without_rescanning() {
 #[test]
 fn unfinished_query_expires_with_its_value_unavailable() {
     let mut ui = reference(600_000);
-    let (input, _jobs) = mpsc::sync_channel(1);
-    let (_results, output) = crate::ui::lifecycle::worker_result::channel();
-    *ui.azr.ref_measure_worker.borrow_mut() =
-        Some(RefMeasureWorker { input, output, busy: false, submitted: 0, own_turn: false });
+    let (thread, _jobs, _results) = crate::ui::lifecycle::worker::Worker::manual();
+    *ui.azr.ref_measure_worker.borrow_mut() = Some(RefMeasureWorker { thread, submitted: 0, own_turn: false });
     custom(&mut ui, Meas::Rise, 0.1, 0.9);
     assert!(ui.meas_number(WaveId::Ref(0), Meas::Rise).is_nan());
     let start = std::time::Instant::now();

@@ -64,7 +64,7 @@ is the place to start reading.
 Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.
 
 Work is tracked in GitHub issues; an issue labelled `agent-ready` has acceptance criteria an agent can work from. Every
-commit is signed off; a commit an agent wrote also carries `Agent: <tool>/<model>`
+commit is signed off. Commits and pull request texts carry no tool or agent attribution and no co-author lines
 ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)). Pull requests that touch a risk path
 (boot, update, kernel, FPGA, acquisition) need the maintainer's approval; others merge on green CI and a Codex review.
 

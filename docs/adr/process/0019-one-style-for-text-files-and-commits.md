@@ -84,9 +84,10 @@ After the hard fork (ADR 0030) the commit rules above change; the file and docum
 - One topic per commit; formatting and moves in commits of their own.
 - A cherry-picked upstream change keeps its author and carries `Cherry-picked-from: upstream <hash>` (ADR 0030).
   A squashed pull request keeps its author and sign-off (ADR 0026).
-- Trailers: every commit carries `Signed-off-by:` (ADR 0026). A commit an agent wrote carries
-  `Agent: <tool>/<model>` (`Agent: claude-code/claude-opus-5-5`, `Agent: codex/<model>`). It replaces links to agent
-  sessions, which are not public and do not go into commits.
+- Trailers: every commit carries the DCO `Signed-off-by:` line (ADR 0026). Commits and pull request texts carry no
+  tool or agent attribution and no co-author lines: no session links, no agent or model trailers, no
+  `Co-authored-by:`. The person who signs off is responsible for the change, whoever wrote it.
+- The line above on `Co-Authored-By:` for commits written with an agent no longer applies.
 - The `CHANGELOG.md` and SPDX rules are unchanged.
 
 ## References

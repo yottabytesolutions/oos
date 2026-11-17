@@ -333,8 +333,9 @@ function; a file reached both as test and as production code is production code.
 The limits have no exemptions (ADR 0010): a record over 12 fields groups its fields into sub-structs.
 
 A function's size is its code lines from `fn` to the closing brace: lines with a token on them, so blank lines,
-comments and doc comments do not count (ADR 0010). A file's size is its physical lines outside test code. Test code is
-exempt.
+comments and doc comments do not count (ADR 0010). A file's size is its lines outside test code without comment lines,
+doc comments included, so documentation never competes with code for space; blank lines count (ADR 0035). Test code
+is exempt.
 Clippy's `too_many_lines` (60 code lines, `clippy.toml`) covers test code too.
 
 The lint set (identical in every crate, `[lints]` in its `Cargo.toml`): `clippy::all`, plus `too_many_lines`,

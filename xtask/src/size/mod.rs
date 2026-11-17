@@ -10,7 +10,7 @@ use crate::ratchet::Ratchet;
 use crate::sources::Source;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Lines of a source file outside `#[cfg(test)]` items.
+/// Lines of a source file outside `#[cfg(test)]` items, comment lines left out (ADR 0035).
 pub const FILE_LINES: u64 = 400;
 /// Code lines of a function, from `fn` to its closing brace: no blank and no comment lines (ADR 0010).
 pub const FN_LINES: u64 = 60;
@@ -67,8 +67,8 @@ pub fn measure(krate: &str, sources: &[Source]) -> Measured {
     for src in sources {
         let rel = &src.rel;
         let total = src.text.lines().count() as u64;
-        let found = visit::walk_file(&src.file, total, src.test);
-        let lines = total.saturating_sub(found.test_lines);
+        let found = visit::walk_file(&src.file, &src.text, src.test);
+        let lines = total.saturating_sub(found.test_lines + found.comment_lines);
         over(&mut now, format!("file {}", rel), lines, FILE_LINES);
         for (name, n) in found.fns {
             over(&mut now, format!("fn {} {}", rel, name), n, FN_LINES);

@@ -64,7 +64,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
   owner has approved. Adding a module rule that the tree meets is not loosening.
 - No `#[allow(...)]` without a reason comment on the same item.
 
-## Pull requests
+## Code Review Rules
 
 - One issue, one branch, one PR. Keep it small (about 400 changed lines without goldens and fixtures); split
   refactors into stacked PRs. Link the issue (`Closes #NNN`) or task file and fill in the template.

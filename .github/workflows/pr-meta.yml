@@ -1,4 +1,5 @@
-# PR metadata (tools/ci/pr_meta.py): branch name, Conventional Commit title, DCO sign-off on every commit, GitHub-hosted
+# PR metadata (tools/ci/pr_meta.py): branch name, Conventional Commit title and commit subjects (no fixup or WIP
+# commits: each lands on main as it is), DCO sign-off on every commit, GitHub-hosted
 # runner labels only; size, task link and agent-label warnings as annotations. Own workflow so that a title or label
 # edit reruns only this check, not the whole gate.
 name: PR meta

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """PR metadata rules (docs/process/ci.md). Errors fail the `pr-meta` check; warnings only annotate.
 
-  pr_meta.py pr        branch, title, DCO, runner labels, size, task link; reads the PR from the environment
+  pr_meta.py pr        branch, title, commit subjects, DCO, runner labels, size, task link; reads the PR from env
   pr_meta.py runners   only the runner labels of .github/workflows (merge queue and push)
 
 Environment for `pr`: PR_HEAD_REF, PR_TITLE, PR_BODY, PR_BASE_SHA, PR_HEAD_SHA, PR_AUTHOR, PR_LABELS (JSON list of
@@ -21,6 +21,8 @@ TYPES: Final = ("feat", "fix", "perf", "refactor", "docs", "test", "ci", "build"
 BRANCH: Final = re.compile(rf"(?:{'|'.join(TYPES)})/(?:\d+|t\d{{4}})-[a-z0-9]+(?:-[a-z0-9]+)*")
 TITLE: Final = re.compile(rf"(?:{'|'.join(TYPES)})(?:\([a-z0-9][a-z0-9._/-]*\))?!?: \S.*")
 TITLE_MAX: Final = 72
+# Commits that are meant to be folded into another one before review (`git rebase -i --autosquash`).
+UNFINISHED: Final = re.compile(r"^(?:fixup!|squash!|amend!|\[?wip\]?\b)", re.IGNORECASE)
 SIZE_WARN: Final = 400
 # Generated or recorded test data: reviewed by its own diff tooling, not by line count.
 SIZE_EXEMPT_DIRS: Final = ("golden", "fixtures")
@@ -66,8 +68,17 @@ def check_title(title: str) -> list[str]:
         errors.append(f"title {title!r}: expected Conventional Commits 'type(scope): summary', "
                       f"type one of {', '.join(TYPES)}")
     if len(title) > TITLE_MAX:
-        errors.append(f"title is {len(title)} characters, at most {TITLE_MAX}: it becomes the squash commit subject")
+        errors.append(f"title is {len(title)} characters, at most {TITLE_MAX}")
     return errors
+
+
+def check_subject(sha: str, subject: str) -> list[str]:
+    """Every commit lands on main as it is (rebase merge): its subject follows the title rules."""
+    short = sha[:10]
+    if UNFINISHED.match(subject):
+        return [f"{short}: {subject!r} is a fixup, squash or WIP commit; fold it into its topic commit with "
+                "`git rebase -i --autosquash` before review"]
+    return [f"{short}: " + e.replace("title", "subject", 1) for e in check_title(subject)]
 
 
 def check_commits(commits: list[Commit], pr_author: str) -> Result:
@@ -77,6 +88,7 @@ def check_commits(commits: list[Commit], pr_author: str) -> Result:
         r.errors.append("no commits between base and head")
     for c in commits:
         short = c.sha[:10]
+        r.errors += check_subject(c.sha, c.message.split("\n", 1)[0])
         if pr_author == DEPENDABOT and c.author_name == DEPENDABOT:
             continue
         emails = [e.lower() for e in SIGNOFF.findall(c.message)]

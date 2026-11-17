@@ -100,7 +100,6 @@ impl DepositView {
 }
 
 pub(super) fn channel_fields(a: &Model, b: &Model, emit: &mut impl FnMut(FieldDiff)) {
-    emit(FieldDiff::new(0, "ch", a.ch != b.ch, Classes::NONE));
     for i in 0..NCH {
         channel_diff(i, &a.ch[i], &b.ch[i], emit);
     }

@@ -18,7 +18,7 @@ pub(super) fn config(channels: usize) -> crate::config::Config {
 #[test]
 fn every_field_has_a_group() {
     let m = Model::default();
-    fields::FIELD_GROUPS(&m);
+    flat::assert_exhaustive(&m);
     let mut indexes = Vec::new();
     fields(&m, &m, |f| {
         if !MEMBER_FIELDS.contains(&f.index()) {
@@ -145,7 +145,7 @@ mod nested;
 mod normalization;
 mod requests;
 
-mod fields;
+mod table;
 
 #[test]
 fn allocation_free_time_ladder_is_bit_identical_to_the_legacy_ladder() {

@@ -329,7 +329,7 @@ fn eye_folds_data_on_a_strobe_clock() {
         let t = i as f64 * dt;
         let k = ((t + 0.5 * ui) / ui).floor() as usize;
         dq.push(if bits[k.min(bits.len() - 1)] { 1.0 } else { 0.0 });
-        dqs.push(if (t / ui).floor() as usize % 2 == 0 { 1.0 } else { 0.0 });
+        dqs.push(if ((t / ui).floor() as usize).is_multiple_of(2) { 1.0 } else { 0.0 });
     }
     let clk = eye::recover_clock(&dqs, dt, 0.5, 0.1, None).unwrap();
     assert!(close(clk.period, ui, ui * 1e-6), "{}", clk.period);
@@ -644,9 +644,11 @@ fn power_rl_load_phase_and_reactive_power() {
     let q = power::quality(&v, &i, dt, Some(50.0));
     let s = 325.0 / 2f64.sqrt() * ip / 2f64.sqrt();
     assert!(close(q.phase_deg, 45.0, 0.2), "{:?}", q);
-    assert!(close(q.pf, 0.70711, 0.003), "{:?}", q);
+    assert!(close(q.pf, std::f64::consts::FRAC_1_SQRT_2, 0.003), "{:?}", q);
     assert!(
-        close(q.s_apparent, s, 0.5) && close(q.p_real, s * 0.70711, 2.0) && close(q.q_reactive, s * 0.70711, 2.0),
+        close(q.s_apparent, s, 0.5)
+            && close(q.p_real, s * std::f64::consts::FRAC_1_SQRT_2, 2.0)
+            && close(q.q_reactive, s * std::f64::consts::FRAC_1_SQRT_2, 2.0),
         "{:?}",
         q
     );

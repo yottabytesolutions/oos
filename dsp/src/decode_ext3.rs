@@ -207,7 +207,7 @@ pub fn sent(v: &[f32], dt: f64, tick: Option<f64>, nibbles: usize, thr: f32, hys
             i += 1;
             continue;
         }
-        let tick_ok = nom.map_or(true, |t| (tk / t - 1.0).abs() <= 0.2);
+        let tick_ok = nom.is_none_or(|t| (tk / t - 1.0).abs() <= 0.2);
         out.push(pk(Kind::Field("SYNC"), f[i], f[i + 1], (tk * dt * 1e9).round() as u32, None, tick_ok));
         if let Some(k) = bad {
             out.push(tag("!ERR", f[i + 1 + k], f[i + 2 + k], false));
@@ -357,7 +357,7 @@ impl UsbBus {
         let n = self.segs.len();
         k < n
             && n - k < 7
-            && (k..n).all(|q| self.segs[q].1 == if (q - k) % 2 == 0 { Ls::K } else { Ls::J })
+            && (k..n).all(|q| self.segs[q].1 == if (q - k).is_multiple_of(2) { Ls::K } else { Ls::J })
             && (k..n).all(|q| self.dur(q) <= 1.4 * bit && (q + 1 == n || self.dur(q) >= 0.6 * bit))
     }
     /// D+ alone: whether the line after `te` (the end of a candidate packet) looks like the EOP (D+ low for two bit
@@ -449,7 +449,7 @@ fn usb_bus(dp: &[f32], dm: Option<&[f32]>, dt: f64, speed: UsbSpeed, thr: f32, h
             _ => Ls::K,
         };
         let t = mid.take().unwrap_or(t);
-        if segs.last().map_or(true, |s| s.1 != st) {
+        if segs.last().is_none_or(|s| s.1 != st) {
             segs.push((t, st));
         }
     }
@@ -590,7 +590,7 @@ fn usb_packet(bus: &UsbBus, i: usize, bit: f64, kbit: u32, reset: f64, out: &mut
                 tm.iter().take_while(|&&x| x < segs[j].0 - 2.0 * bit).count() / 8 * 8
             } else {
                 let n1 = edge_bits + edge_data as usize;
-                if n1 % 8 == 0 {
+                if n1.is_multiple_of(8) {
                     n1
                 } else if n1 % 8 >= 2 {
                     n1 + 8 - n1 % 8
@@ -647,7 +647,7 @@ fn usb_packet(bus: &UsbBus, i: usize, bit: f64, kbit: u32, reset: f64, out: &mut
 /// the length of its PID / a matching CRC16 when an EOP follows; the segment to go on from.
 fn usb_end(bus: &UsbBus, b: &[bool], te: f64, bit: f64) -> Option<(usize, bool)> {
     let l = b.len();
-    if l < 16 || l % 8 != 0 || b[..7].iter().any(|&x| x) || !b[7] {
+    if l < 16 || !l.is_multiple_of(8) || b[..7].iter().any(|&x| x) || !b[7] {
         return None;
     }
     let byte = |k: usize| (0..8).fold(0u8, |a, q| a | (b[8 * k + q] as u8) << q);
@@ -1121,7 +1121,7 @@ pub mod gen {
         }
         // the end of the traffic
         for l in [&mut dp, &mut dm] {
-            let last = l.seg.last().map_or(false, |s| s.1);
+            let last = l.seg.last().is_some_and(|s| s.1);
             l.seg.push((t, last));
         }
         (dp, dm)

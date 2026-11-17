@@ -54,8 +54,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 
 - The gate is `cargo xtask check` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)).
 - Set up once per clone: `tools/bootstrap.sh` (pinned toolchain), `git config core.hooksPath .githooks`.
-- Run `cargo xtask check --fast` before every commit (pre-commit runs it) and the full gate before a PR (pre-push).
-- Report a change as done only after the full gate (no `--fast`, no `--no-coverage`) passed on its final commit.
+- Run `cargo xtask check --fast` before every commit and push (the hooks run it). Push early; CI runs the full gate.
+- Report a change as done only after the required CI checks passed on its final commit.
 - Never bypass a hook (`--no-verify`, `core.hooksPath` changes, editing `.githooks/`).
 - Never edit a ratchet file (`xtask/data/size.txt`, `clippy.txt`, `statics.txt`, `unsafe.txt`, `coverage.txt`). Fix
   the finding. The integrator runs `cargo xtask ratchet` (and `--move` for planned moves) at merge. A step that moves

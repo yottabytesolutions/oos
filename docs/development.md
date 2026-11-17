@@ -101,8 +101,8 @@ Task 0033 (0.3.0) owns complete per-role package manifest locks and the binfmt i
 retained package sources, source timestamps and end-to-end payload reproducibility. Real builder runs on this
 macOS arm64 host remain untested in the sandbox; Linux x86-64 validation is also untested and is not a hold here.
 
-- Hooks, once per clone: `git config core.hooksPath .githooks`. pre-commit runs `check --fast`, pre-push the full
-  gate.
+- Hooks, once per clone: `git config core.hooksPath .githooks`. pre-commit and pre-push run `check --fast`. The
+  full gate runs in CI as the required checks (ADR 0031); run it locally for an early signal.
 - The ratchet files are compared with the base branch `main` (or `origin/main`): the clone needs it
   (`git fetch origin main`).
 - Every cargo call that resolves dependencies uses `--locked` (the `cargo xtask` alias, clippy, tests, metadata,

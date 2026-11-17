@@ -50,15 +50,16 @@ tools/bootstrap.sh                 # installs the pinned toolchain from rust-too
 git config core.hooksPath .githooks
 git config pull.rebase true
 git config rebase.autoStash true
-cargo xtask check --fast           # before every commit (the pre-commit hook runs it)
-cargo xtask check                  # before opening a pull request
+cargo xtask check --fast           # before every commit and push (the hooks run it)
+cargo xtask check                  # the full gate, optional: CI runs it on every pull request
 ```
 
 The gate is `cargo xtask check` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)). The
 [check inventory](docs/development.md#executable-inventory-and-completion-evidence) lists the steps and their
 prerequisites (`cargo xtask check --list`); `cargo xtask step <name>` runs single steps. `cargo xtask check --image`
-adds the Docker and emulation checks; the maintainers run it before unit rounds and releases. A change is done when
-the full gate passed on its final commit and the review accepted it; partial and inventory-only runs do not count.
+adds the Docker and emulation checks; the maintainers run it before unit rounds and releases. The hooks run
+the fast tier; the full gate runs in CI as the required checks. Run it locally only when you want an early signal. A
+change is done when the required checks passed on its final commit and the review accepted it.
 
 Tests use synthetic inputs where possible. Tests that need private calibration files report their skips; no private
 calibration directory is required for the gate. [docs/architecture/README.md](docs/architecture/README.md) is the
@@ -147,8 +148,8 @@ its owner asked for it ([ADR 0018](docs/adr/process/0018-one-agents-md-for-peopl
 - Agents push and open pull requests only as the GitHub App `yottabyte-oos-agent[bot]`, never with a maintainer's
   credentials. Its pull requests get the `agent` label and pass the same checks; the app has no ruleset bypass.
 - Agents do not touch high-risk paths unless the issue carries `risk/hardware` and says so.
-- Agents run `cargo xtask check --fast` before every commit and `cargo xtask check` before the pull request, and
-  report what ran.
+- Agents run `cargo xtask check --fast` before every commit and push, push early, and report what ran locally and
+  in CI.
 - Agents answer Codex findings by fixing them or by a reply with the reason; they never resolve a thread without
   either.
 

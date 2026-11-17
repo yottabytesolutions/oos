@@ -1,6 +1,6 @@
 # ADR 0031: The gate is `cargo xtask check`
 
-- Status: accepted
+- Status: accepted, amended 2026-11-17 (the full gate runs in CI, the hooks run the fast tier)
 - Date: 2026-11-17
 - Category: process
 
@@ -50,6 +50,19 @@ ADR 0019) and `decoders` (the core-only build and every optional decoder alone).
 - `xtask` is a workspace crate with host-only dependencies (ADR 0013, ADR 0021 amendments).
 - A new kind of check becomes an xtask step with its inventory line, not a script to remember.
 - The default gate takes tens of minutes on a laptop; `--fast` is for the edit loop.
+
+## Amendment 2026-11-17: the full gate runs in CI
+
+Actions is enabled. The full gate on the pre-push hook took tens of minutes per push, so branches were pushed late
+and CI's parallel jobs sat idle while a laptop repeated them.
+
+- The pre-commit and pre-push hooks run `cargo xtask check --fast`.
+- The full gate is the required CI checks of a pull request (`fast`, `clippy`, `test`, `python`, `deny`, with
+  `pr-meta`, `privacy` and `codex-review`) and the `main` workflow after the merge. A change is done when the
+  required checks passed on its final commit and the review accepted it.
+- Run `cargo xtask check` locally when an early signal helps. `--image` and the perf guards stay local, as above.
+- "Until Actions is enabled the local full gate is authoritative" and "the pre-push hook" in the full tier above no
+  longer apply.
 
 ## References
 

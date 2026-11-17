@@ -154,8 +154,8 @@ pub fn measure(v: &[f32], i: &[f32], dt: f64, geom: Geom) -> Magnetic {
         out.kept += 1;
         energies.push(integrate(&p, t0, t1, dt));
         psi_peak = psi_peak.max(peak);
-        for k in k0..=k1 {
-            let y = i[k] as f64;
+        for &y in &i[k0..=k1] {
+            let y = y as f64;
             if y.is_finite() {
                 i2 += y * y;
                 i_n += 1;

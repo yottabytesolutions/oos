@@ -465,7 +465,7 @@ fn render(edges: &[f64], levels: &[f64], dt: f64, n: usize, rise: f64, v_low: f6
         return wave;
     }
     let mut e = 0usize;
-    for i in 0..n {
+    for (i, w) in wave.iter_mut().enumerate() {
         let t = i as f64 * dt;
         while e + 1 < edges.len() && edges[e + 1] <= t {
             e += 1;
@@ -473,7 +473,7 @@ fn render(edges: &[f64], levels: &[f64], dt: f64, n: usize, rise: f64, v_low: f6
         while e > 0 && edges[e] > t {
             e -= 1;
         }
-        wave[i] = levels[e.min(levels.len() - 1)];
+        *w = levels[e.min(levels.len() - 1)];
     }
     if rise > 0.0 {
         let tau = rise / (2.0 * 0.6f64.atanh());
@@ -489,12 +489,12 @@ fn render(edges: &[f64], levels: &[f64], dt: f64, n: usize, rise: f64, v_low: f6
                 continue;
             }
             let i1 = (((te + window) / dt).ceil() as usize).saturating_add(1).min(n);
-            for i in i0..i1 {
+            for (i, w) in wave.iter_mut().enumerate().take(i1).skip(i0) {
                 let t = i as f64 * dt;
                 let x = (t - te) / tau;
                 let tanh_step = 0.5 * (1.0 + x.tanh());
                 let ideal = if t >= te { 1.0 } else { 0.0 };
-                wave[i] += dv * (tanh_step - ideal);
+                *w += dv * (tanh_step - ideal);
             }
         }
     }

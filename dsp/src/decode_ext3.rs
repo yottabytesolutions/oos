@@ -336,12 +336,9 @@ impl UsbBus {
     }
 }
 
-fn usb_bus(dp: &[f32], dm: Option<&[f32]>, dt: f64, speed: UsbSpeed, thr: f32, hyst: f32) -> UsbBus {
-    let len = dm.map_or(dp.len(), |m| m.len().min(dp.len()));
-    let n = len as f64;
-    let (fs, ls) = (1.0 / USB_FULL / dt, 1.0 / USB_LOW / dt);
-    // line code: bit 0 = D+, bit 1 = D-; with D+ alone D- is taken as its inverse
-    let lines: Vec<&[f32]> = std::iter::once(&dp[..len]).chain(dm.map(|m| &m[..len])).collect();
+/// The line code at every change, (time, code): bit 0 = D+, bit 1 = D-; with D+ alone D- is taken as its inverse.
+fn usb_line_codes(dp: &[f32], dm: Option<&[f32]>, thr: f32, hyst: f32) -> Vec<(f64, u8)> {
+    let lines: Vec<&[f32]> = std::iter::once(dp).chain(dm).collect();
     let single = |c: u8| {
         if dm.is_some() {
             c
@@ -371,6 +368,14 @@ fn usb_bus(dp: &[f32], dm: Option<&[f32]>, dt: f64, speed: UsbSpeed, thr: f32, h
             raw.push((t, code));
         }
     }
+    raw
+}
+
+fn usb_bus(dp: &[f32], dm: Option<&[f32]>, dt: f64, speed: UsbSpeed, thr: f32, hyst: f32) -> UsbBus {
+    let len = dm.map_or(dp.len(), |m| m.len().min(dp.len()));
+    let n = len as f64;
+    let (fs, ls) = (1.0 / USB_FULL / dt, 1.0 / USB_LOW / dt);
+    let raw = usb_line_codes(&dp[..len], dm.map(|m| &m[..len]), thr, hyst);
     let rdur = |k: usize| raw.get(k + 1).map_or(n, |s| s.0) - raw[k].0;
     // J: the idle state = the longest D+ / D- high segment
     let jc = match speed {

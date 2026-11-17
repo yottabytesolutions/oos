@@ -449,16 +449,70 @@ pub fn qspi_opcode_cfg(op: u8, qpi: bool, addr_bytes: u8, qpi_dummy: u32) -> Opt
 /// EN4B/EX4B and entering/leaving QPI (0x35/0x38 without data, 0xF5/0xFF); `cfg` gives the start state (cmd_lines 4 =
 /// QPI, addr_bytes) and the QPI read dummy cycles.
 pub fn qspi(cs: &[f32], sck: &[f32], io: &[&[f32]], cfg: &QspiCfg, auto: bool, thr: f32, hyst: f32) -> Vec<Packet> {
-    let lines = |n: u8| -> u32 {
-        match n {
-            2 => 2,
-            4 => 4,
-            _ => 1,
-        }
-    };
     let ios: Vec<Vec<Option<bool>>> = io.iter().take(4).map(|v| states(v, thr, hyst)).collect();
     let clk = rising(sck, thr, hyst);
-    // CS-low frames
+    let mut out = Vec::new();
+    let (mut qpi, mut ab4) = (cfg.cmd_lines == 4, cfg.addr_bytes == 4);
+    for (fs, fe) in cs_frames(cs, thr, hyst) {
+        let a = clk.partition_point(|&t| t <= fs);
+        let b = clk.partition_point(|&t| t < fe);
+        let bus = |t: f64| ios.iter().enumerate().fold(0u32, |v, (k, s)| v | (at(s, t).unwrap_or(false) as u32) << k);
+        let mut c = QspiCycles { cyc: clk[a..b].iter().map(|&t| (t, bus(t))).collect(), k: 0 };
+        let cmd_l = match (auto, qpi) {
+            (true, true) => 4,
+            (true, false) => 1,
+            (false, _) => qspi_lines(cfg.cmd_lines),
+        };
+        let Some((op, t0, t1)) = c.take(cmd_l, 8) else { continue };
+        let op = op as u8;
+        out.push(Packet::field("CMD", t0, t1, op as u32, true));
+        let f = if auto {
+            qspi_opcode_cfg(op, qpi, if ab4 { 4 } else { 3 }, cfg.dummy_cycles).unwrap_or(*cfg)
+        } else {
+            *cfg
+        };
+        if auto {
+            let only_cmd = c.k == c.cyc.len();
+            match op {
+                0xb7 => ab4 = true,
+                0xe9 => ab4 = false,
+                0x35 | 0x38 if only_cmd && !qpi => qpi = true,
+                0xf5 | 0xff if qpi => qpi = false,
+                _ => {}
+            }
+            if only_cmd {
+                continue;
+            }
+        }
+        let al = qspi_lines(f.addr_lines);
+        if f.addr_bytes > 0 {
+            let Some((v, t0, t1)) = c.take(al, f.addr_bytes.min(4) as u32 * 8) else { continue };
+            out.push(Packet::field("ADDR", t0, t1, v, true));
+        }
+        if f.mode {
+            let Some((v, t0, t1)) = c.take(al, 8) else { continue };
+            out.push(Packet::field("MODE", t0, t1, v, true));
+        }
+        if f.dummy_cycles > 0 {
+            let Some((_, t0, t1)) = c.take(1, f.dummy_cycles) else { continue };
+            out.push(Packet::field("DUMMY", t0, t1, f.dummy_cycles, true));
+        }
+        c.data(qspi_lines(f.data_lines), &mut out);
+    }
+    out
+}
+
+/// Lines of a phase: 1, 2 or 4.
+fn qspi_lines(n: u8) -> u32 {
+    if n == 2 || n == 4 {
+        n as u32
+    } else {
+        1
+    }
+}
+
+/// The CS-low frames (start, end); a frame open at the record end ends at infinity.
+fn cs_frames(cs: &[f32], thr: f32, hyst: f32) -> Vec<(f64, f64)> {
     let mut frames = Vec::new();
     let mut open = if states(cs, thr, hyst).iter().flatten().next() == Some(&false) { Some(0.0) } else { None };
     for e in edges(cs, thr, hyst) {
@@ -471,90 +525,45 @@ pub fn qspi(cs: &[f32], sck: &[f32], io: &[&[f32]], cfg: &QspiCfg, auto: bool, t
     if let Some(s) = open {
         frames.push((s, f64::INFINITY));
     }
-    let mut out = Vec::new();
-    let (mut qpi, mut ab4) = (cfg.cmd_lines == 4, cfg.addr_bytes == 4);
-    for (fs, fe) in frames {
-        let a = clk.partition_point(|&t| t <= fs);
-        let b = clk.partition_point(|&t| t < fe);
-        let cyc: Vec<(f64, u32)> = clk[a..b]
-            .iter()
-            .map(|&t| (t, ios.iter().enumerate().fold(0u32, |v, (k, s)| v | (at(s, t).unwrap_or(false) as u32) << k)))
-            .collect();
-        let mut k = 0;
-        // `nbits` bits on `l` lines -> (value, t0, t1)
-        let take = |l: u32, nbits: u32, k: &mut usize| -> Option<(u32, f64, f64)> {
-            let n = nbits.div_ceil(l) as usize;
-            if n == 0 || *k + n > cyc.len() {
-                return None;
-            }
-            let mask = (1u32 << l) - 1;
-            let v = cyc[*k..*k + n].iter().fold(0u32, |v, c| v.wrapping_shl(l) | (c.1 & mask));
-            let r = (v, cyc[*k].0, cyc[*k + n - 1].0);
-            *k += n;
-            Some(r)
-        };
-        let cmd_l = if auto {
-            if qpi {
-                4
-            } else {
-                1
-            }
-        } else {
-            lines(cfg.cmd_lines)
-        };
-        let Some((op, t0, t1)) = take(cmd_l, 8, &mut k) else { continue };
-        let op = op as u8;
-        out.push(Packet::field("CMD", t0, t1, op as u32, true));
-        let f = if auto {
-            qspi_opcode_cfg(op, qpi, if ab4 { 4 } else { 3 }, cfg.dummy_cycles).unwrap_or(*cfg)
-        } else {
-            *cfg
-        };
-        if auto {
-            let only_cmd = k == cyc.len();
-            match op {
-                0xb7 => ab4 = true,
-                0xe9 => ab4 = false,
-                0x35 | 0x38 if only_cmd && !qpi => qpi = true,
-                0xf5 | 0xff if qpi => qpi = false,
-                _ => {}
-            }
-            if only_cmd {
-                continue;
-            }
+    frames
+}
+
+/// The clock cycles of one frame, (time, IO lines with IO0 as bit 0), read from cycle `k` on.
+struct QspiCycles {
+    cyc: Vec<(f64, u32)>,
+    k: usize,
+}
+
+impl QspiCycles {
+    /// `nbits` bits on `l` lines: (value, t0, t1); None when the frame ends first.
+    fn take(&mut self, l: u32, nbits: u32) -> Option<(u32, f64, f64)> {
+        let n = nbits.div_ceil(l) as usize;
+        if n == 0 || self.k + n > self.cyc.len() {
+            return None;
         }
-        let (al, dl) = (lines(f.addr_lines), lines(f.data_lines));
-        if f.addr_bytes > 0 {
-            let Some((v, t0, t1)) = take(al, f.addr_bytes.min(4) as u32 * 8, &mut k) else { continue };
-            out.push(Packet::field("ADDR", t0, t1, v, true));
-        }
-        if f.mode {
-            let Some((v, t0, t1)) = take(al, 8, &mut k) else { continue };
-            out.push(Packet::field("MODE", t0, t1, v, true));
-        }
-        if f.dummy_cycles > 0 {
-            let n = f.dummy_cycles as usize;
-            if k + n > cyc.len() {
-                continue;
-            }
-            out.push(Packet::field("DUMMY", cyc[k].0, cyc[k + n - 1].0, f.dummy_cycles, true));
-            k += n;
-        }
-        if dl == 1 {
-            while k + 8 <= cyc.len() {
-                let c = &cyc[k..k + 8];
-                let mo = c.iter().fold(0u32, |v, x| v << 1 | (x.1 & 1));
-                let mi = c.iter().fold(0u32, |v, x| v << 1 | (x.1 >> 1 & 1));
-                out.push(Packet::new(Kind::Data, c[0].0, c[7].0, mo, true).with_value2(mi));
-                k += 8;
-            }
-        } else {
-            while let Some((v, t0, t1)) = take(dl, 8, &mut k) {
+        let mask = (1u32 << l) - 1;
+        let c = &self.cyc[self.k..self.k + n];
+        let r = (c.iter().fold(0u32, |v, c| v.wrapping_shl(l) | (c.1 & mask)), c[0].0, c[n - 1].0);
+        self.k += n;
+        Some(r)
+    }
+
+    /// The data bytes on `l` lines; on one line value = IO0 (MOSI), value2 = IO1 (MISO).
+    fn data(&mut self, l: u32, out: &mut Vec<Packet>) {
+        if l != 1 {
+            while let Some((v, t0, t1)) = self.take(l, 8) {
                 out.push(Packet::new(Kind::Data, t0, t1, v, true));
             }
+            return;
+        }
+        while self.k + 8 <= self.cyc.len() {
+            let c = &self.cyc[self.k..self.k + 8];
+            let mo = c.iter().fold(0u32, |v, x| v << 1 | (x.1 & 1));
+            let mi = c.iter().fold(0u32, |v, x| v << 1 | (x.1 >> 1 & 1));
+            out.push(Packet::new(Kind::Data, c[0].0, c[7].0, mo, true).with_value2(mi));
+            self.k += 8;
         }
     }
-    out
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -606,16 +615,21 @@ pub fn i3c_ccc_name(code: u8) -> &'static str {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum I3cPh {
+    #[default]
     Idle,
     Addr,
     Ccc,
-    Bytes { read: bool, i3c: bool },
+    Bytes {
+        read: bool,
+        i3c: bool,
+    },
     Pid,
     Da,
 }
 
+#[derive(Default)]
 struct I3c {
     out: Vec<Packet>,
     ph: I3cPh,
@@ -630,22 +644,6 @@ struct I3c {
 }
 
 impl I3c {
-    /// Bus idle; `addrs` = the dynamic addresses known before the record.
-    fn new(addrs: &[u8]) -> I3c {
-        I3c {
-            out: Vec::new(),
-            ph: I3cPh::Idle,
-            buf: Vec::new(),
-            in_frame: false,
-            after_start: false,
-            daa: false,
-            ccc: None,
-            known: addrs.to_vec(),
-            user: addrs.to_vec(),
-            hdr: false,
-        }
-    }
-
     fn bit(&mut self, t: f64, b: bool) {
         let need = match self.ph {
             I3cPh::Idle => return,
@@ -663,30 +661,7 @@ impl I3c {
         let t_odd = (v8.count_ones() + ninth as u32) % 2 == 1;
         match self.ph {
             I3cPh::Idle => {}
-            I3cPh::Addr => {
-                let (addr, rnw, ack) = (v8 >> 1, v8 & 1 == 1, !ninth);
-                let known = self.known.contains(&(addr as u8));
-                if addr == 0x7e && rnw && self.daa {
-                    self.out.push(Packet::new(Kind::Addr { read: true }, t0, t1, addr, ack));
-                    self.ph = if ack { I3cPh::Pid } else { I3cPh::Idle };
-                } else if addr == 0x7e && !rnw {
-                    self.out.push(Packet::new(Kind::Addr { read: false }, t0, t1, addr, ack));
-                    self.ccc = None;
-                    self.daa = false;
-                    self.ph = if ack { I3cPh::Ccc } else { I3cPh::Idle };
-                } else if self.after_start && rnw && known {
-                    // a target's in-band interrupt request won the address arbitration after START
-                    self.out.push(Packet::field("IBI", t0, t1, addr, ack));
-                    self.ph = if ack { I3cPh::Bytes { read: true, i3c: true } } else { I3cPh::Idle };
-                } else {
-                    let i3c = known || self.ccc.is_some_and(|c| c >= 0x80);
-                    self.out.push(Packet::new(Kind::Addr { read: rnw }, t0, t1, addr, ack));
-                    self.ph = if ack || i3c { I3cPh::Bytes { read: rnw, i3c } } else { I3cPh::Idle };
-                    if !ack && i3c {
-                        self.ph = I3cPh::Idle;
-                    }
-                }
-            }
+            I3cPh::Addr => self.address(t0, t1, v8, ninth),
             I3cPh::Ccc => {
                 self.out.push(Packet::field("CCC", t0, t1, v8, t_odd));
                 self.ccc = Some(v8 as u8);
@@ -702,27 +677,7 @@ impl I3c {
                     _ => {}
                 }
             }
-            I3cPh::Bytes { read, i3c } => {
-                if !i3c {
-                    self.out.push(Packet::new(Kind::Data, t0, t1, v8, !ninth));
-                } else if read {
-                    self.out.push(Packet::new(Kind::Data, t0, t1, v8, true));
-                    if !ninth {
-                        // T-bit low: the target ends the read
-                        self.out.push(Packet::tag("!EOD", t1, t1, true));
-                        self.ph = I3cPh::Idle;
-                    }
-                } else if matches!(self.ccc, Some(0x87 | 0x88)) {
-                    // SETDASA / SETNEWDA: the new dynamic address
-                    let da = v8 >> 1;
-                    self.out.push(Packet::field("DA", t0, t1, da, t_odd));
-                    if t_odd && !self.known.contains(&(da as u8)) {
-                        self.known.push(da as u8);
-                    }
-                } else {
-                    self.out.push(Packet::new(Kind::Data, t0, t1, v8, t_odd));
-                }
-            }
+            I3cPh::Bytes { read, i3c } => self.byte(read, i3c, t0, t1, v8, ninth),
             I3cPh::Pid => {
                 let pid = msb(&u[..48]);
                 self.out.push(Packet::field("PID", t0, u[47].0, pid as u32, true).with_value2((pid >> 32) as u32));
@@ -735,11 +690,68 @@ impl I3c {
                 let da = v8 >> 1;
                 let ok = (v8.count_ones() % 2 == 1) && !ninth;
                 self.out.push(Packet::field("DA", t0, t1, da, ok));
-                if ok && !self.known.contains(&(da as u8)) {
-                    self.known.push(da as u8);
+                if ok {
+                    self.learn(da);
                 }
                 self.ph = I3cPh::Idle;
             }
+        }
+    }
+
+    /// The address byte after START or Sr (`ninth` = the ACK bit, low = acknowledged).
+    fn address(&mut self, t0: f64, t1: f64, v8: u32, ninth: bool) {
+        let (addr, rnw, ack) = (v8 >> 1, v8 & 1 == 1, !ninth);
+        let known = self.known.contains(&(addr as u8));
+        if addr == 0x7e && rnw && self.daa {
+            self.out.push(Packet::new(Kind::Addr { read: true }, t0, t1, addr, ack));
+            self.ph = if ack { I3cPh::Pid } else { I3cPh::Idle };
+        } else if addr == 0x7e && !rnw {
+            self.out.push(Packet::new(Kind::Addr { read: false }, t0, t1, addr, ack));
+            self.ccc = None;
+            self.daa = false;
+            self.ph = if ack { I3cPh::Ccc } else { I3cPh::Idle };
+        } else if self.after_start && rnw && known {
+            // a target's in-band interrupt request won the address arbitration after START
+            self.out.push(Packet::field("IBI", t0, t1, addr, ack));
+            self.ph = if ack { I3cPh::Bytes { read: true, i3c: true } } else { I3cPh::Idle };
+        } else {
+            let i3c = known || self.ccc.is_some_and(|c| c >= 0x80);
+            self.out.push(Packet::new(Kind::Addr { read: rnw }, t0, t1, addr, ack));
+            self.ph = if ack || i3c { I3cPh::Bytes { read: rnw, i3c } } else { I3cPh::Idle };
+            if !ack && i3c {
+                self.ph = I3cPh::Idle;
+            }
+        }
+    }
+
+    /// A data byte of a transfer (`ninth` = ACK bit (I2C) or T-bit (I3C)).
+    fn byte(&mut self, read: bool, i3c: bool, t0: f64, t1: f64, v8: u32, ninth: bool) {
+        let t_odd = (v8.count_ones() + ninth as u32) % 2 == 1;
+        if !i3c {
+            self.out.push(Packet::new(Kind::Data, t0, t1, v8, !ninth));
+        } else if read {
+            self.out.push(Packet::new(Kind::Data, t0, t1, v8, true));
+            if !ninth {
+                // T-bit low: the target ends the read
+                self.out.push(Packet::tag("!EOD", t1, t1, true));
+                self.ph = I3cPh::Idle;
+            }
+        } else if matches!(self.ccc, Some(0x87 | 0x88)) {
+            // SETDASA / SETNEWDA: the new dynamic address
+            let da = v8 >> 1;
+            self.out.push(Packet::field("DA", t0, t1, da, t_odd));
+            if t_odd && !self.known.contains(&(da as u8)) {
+                self.known.push(da as u8);
+            }
+        } else {
+            self.out.push(Packet::new(Kind::Data, t0, t1, v8, t_odd));
+        }
+    }
+
+    /// A newly assigned dynamic address: its transfers decode as I3C.
+    fn learn(&mut self, da: u32) {
+        if !self.known.contains(&(da as u8)) {
+            self.known.push(da as u8);
         }
     }
 }
@@ -764,7 +776,7 @@ pub fn i3c(sda: &[f32], scl: &[f32], i3c_addrs: &[u8], thr: f32, hyst: f32) -> V
     ev.extend(edges(sda, thr, hyst).iter().map(|e| (e.t, if e.rising { 2 } else { 1 })));
     ev.sort_by(|a, b| a.0.total_cmp(&b.0));
     let high = |s: &[Option<bool>], t: f64| at(s, t).unwrap_or(true);
-    let mut d = I3c::new(i3c_addrs);
+    let mut d = I3c { known: i3c_addrs.to_vec(), user: i3c_addrs.to_vec(), ..I3c::default() };
     let mut exit_cnt = 0;
     for (t, k) in ev {
         if d.hdr {

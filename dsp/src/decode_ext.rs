@@ -623,17 +623,8 @@ enum DsPend {
 
 type DsTransfer = (bool, f64, Vec<(u8, f64, f64)>); // (read, t0, bytes)
 
-/// 1-Wire through a DS2482-100/-800 I2C bridge: interprets the command stream (packets from `decode::i2c`, device
-/// addresses 0x18..0x1F) as 1-Wire activity and decodes it like `onewire` (Field "!RESET", "!PRESENCE", "ROM", "FAM",
-/// "SER", Crc, Data). Device reset gives Field("!DRST"), Write Configuration Field("CFG") (value = config nibble,
-/// `ok` = the complement nibble is right), Channel Select Field("CH") (value = channel 0..7). Results of 1-Wire
-/// reset / single bit / triplet come from the next status read with 1WB = 0 (presence = PPD and not SD); a read
-/// byte from the following read of the read data register (pointer 0xE1). Unpolled commands complete at the next command.
-pub fn ds2482(i2c: &[Packet]) -> Vec<Packet> {
-    let mut net = OwNet::new(false);
-    let mut ptr = DS_STATUS;
-    let mut pend: Option<DsPend> = None;
-    let mut read_ready: Option<f64> = None;
+/// The I2C transfers to a DS2482 (device addresses 0x18..0x1F) in `decode::i2c` packets.
+fn ds2482_transfers(i2c: &[Packet]) -> Vec<DsTransfer> {
     let mut xfers: Vec<DsTransfer> = Vec::new();
     let mut cur: Option<DsTransfer> = None;
     for p in i2c {
@@ -654,101 +645,122 @@ pub fn ds2482(i2c: &[Packet]) -> Vec<Packet> {
         }
     }
     xfers.extend(cur.take());
-    // completes a pending 1-Wire command (status = the status byte that showed 1WB = 0, if polled)
-    let finish = |net: &mut OwNet, pend: DsPend, status: Option<u8>, t1: f64, read_ready: &mut Option<f64>| match pend {
-        DsPend::Reset(t0) => {
-            net.reset(t0, t1);
-            if let Some(s) = status {
-                net.presence(t0, t1, s & 0x02 != 0 && s & 0x04 == 0);
-            }
-        }
-        DsPend::Bit(b, t0) => net.bit(status.map_or(b, |s| s & 0x20 != 0), t0, t1),
-        DsPend::Triplet(dir, t0) => {
-            let (id, cmp, d) = status.map_or((dir, !dir, dir), |s| (s & 0x20 != 0, s & 0x40 != 0, s & 0x80 != 0));
-            net.bit(id, t0, t1);
-            net.bit(cmp, t0, t1);
-            net.bit(d, t0, t1);
-        }
-        DsPend::Read(t0) => *read_ready = Some(t0),
-    };
-    for (read, t0, b) in xfers {
-        let t1 = b.last().map_or(t0, |x| x.2);
-        if read {
-            for &(v, _, bt1) in &b {
-                match ptr {
-                    DS_STATUS if v & 0x01 == 0 => {
-                        if let Some(pd) = pend.take() {
-                            finish(&mut net, pd, Some(v), bt1, &mut read_ready);
-                        }
-                    }
-                    DS_DATA => {
-                        let s = match pend {
-                            Some(DsPend::Read(s)) => {
-                                pend = None;
-                                Some(s)
-                            }
-                            _ => read_ready.take(),
-                        };
-                        if let Some(s) = s {
-                            net.byte(v, s, bt1);
-                        }
-                    }
-                    _ => {}
+    xfers
+}
+
+/// The DS2482 command interpreter above the 1-Wire network layer.
+struct Ds2482 {
+    net: OwNet,
+    /// the register the read pointer selects
+    ptr: u8,
+    /// the 1-Wire command waiting for its result
+    pend: Option<DsPend>,
+    /// start of a 1-Wire read byte whose value the next read of the read data register gives
+    read_ready: Option<f64>,
+}
+
+impl Ds2482 {
+    /// Completes the pending 1-Wire command; `status` = the status byte that showed 1WB = 0, if polled.
+    fn finish(&mut self, status: Option<u8>, t1: f64) {
+        let Some(pend) = self.pend.take() else { return };
+        let net = &mut self.net;
+        match pend {
+            DsPend::Reset(t0) => {
+                net.reset(t0, t1);
+                if let Some(s) = status {
+                    net.presence(t0, t1, s & 0x02 != 0 && s & 0x04 == 0);
                 }
             }
-            continue;
+            DsPend::Bit(b, t0) => net.bit(status.map_or(b, |s| s & 0x20 != 0), t0, t1),
+            DsPend::Triplet(dir, t0) => {
+                let (id, cmp, d) = status.map_or((dir, !dir, dir), |s| (s & 0x20 != 0, s & 0x40 != 0, s & 0x80 != 0));
+                net.bit(id, t0, t1);
+                net.bit(cmp, t0, t1);
+                net.bit(d, t0, t1);
+            }
+            DsPend::Read(t0) => self.read_ready = Some(t0),
         }
-        let Some(&(cmd, _, _)) = b.first() else { continue };
-        let par = b.get(1).map(|x| x.0);
-        // a new 1-Wire or device command completes the previous one (not Set Read Pointer, used for polling)
-        if cmd != 0xe1 {
-            if let Some(pd) = pend.take() {
-                finish(&mut net, pd, None, t0, &mut read_ready);
-            }
-        }
-        match (cmd, par) {
-            (0xf0, _) => {
-                ptr = DS_STATUS;
-                net.out.push(Packet::tag("!DRST", t0, t1, true));
-            }
-            (0xe1, Some(p)) => ptr = p,
-            (0xd2, Some(c)) => {
-                ptr = 0xc3;
-                net.out.push(Packet::field("CFG", t0, t1, (c & 0x0f) as u32, c >> 4 == !c & 0x0f));
-            }
-            (0xc3, Some(c)) => {
-                ptr = 0xd2;
-                let ch = [0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87].iter().position(|&x| x == c);
-                net.out.push(Packet::field("CH", t0, t1, ch.unwrap_or(0) as u32, ch.is_some()));
-            }
-            (0xb4, _) => {
-                ptr = DS_STATUS;
-                pend = Some(DsPend::Reset(t0));
-            }
-            (0x87, Some(x)) => {
-                ptr = DS_STATUS;
-                pend = Some(DsPend::Bit(x & 0x80 != 0, t0));
-            }
-            (0xa5, Some(x)) => {
-                ptr = DS_STATUS;
-                net.byte(x, t0, t1);
-            }
-            (0x96, _) => {
-                ptr = DS_STATUS;
-                pend = Some(DsPend::Read(t0));
-            }
-            (0x78, Some(x)) => {
-                ptr = DS_STATUS;
-                pend = Some(DsPend::Triplet(x & 0x80 != 0, t0));
+    }
+
+    /// One byte read from the register the read pointer selects.
+    fn read(&mut self, v: u8, t1: f64) {
+        match self.ptr {
+            DS_STATUS if v & 0x01 == 0 => self.finish(Some(v), t1),
+            DS_DATA => {
+                let start = match self.pend {
+                    Some(DsPend::Read(s)) => {
+                        self.pend = None;
+                        Some(s)
+                    }
+                    _ => self.read_ready.take(),
+                };
+                if let Some(s) = start {
+                    self.net.byte(v, s, t1);
+                }
             }
             _ => {}
         }
     }
-    if let Some(pd) = pend.take() {
-        let t = net.out.last().map_or(0.0, |p| p.t1);
-        finish(&mut net, pd, None, t, &mut read_ready);
+
+    /// A 1-Wire command: it runs until a status read shows it done.
+    fn start(&mut self, pend: DsPend) {
+        self.ptr = DS_STATUS;
+        self.pend = Some(pend);
     }
-    net.out
+
+    /// A command byte with its parameter byte.
+    fn command(&mut self, cmd: u8, par: Option<u8>, t0: f64, t1: f64) {
+        // a new 1-Wire or device command completes the previous one (not Set Read Pointer, used for polling)
+        if cmd != 0xe1 {
+            self.finish(None, t0);
+        }
+        match (cmd, par) {
+            (0xf0, _) => {
+                self.ptr = DS_STATUS;
+                self.net.out.push(Packet::tag("!DRST", t0, t1, true));
+            }
+            (0xe1, Some(p)) => self.ptr = p,
+            (0xd2, Some(c)) => {
+                self.ptr = 0xc3;
+                self.net.out.push(Packet::field("CFG", t0, t1, (c & 0x0f) as u32, c >> 4 == !c & 0x0f));
+            }
+            (0xc3, Some(c)) => {
+                self.ptr = 0xd2;
+                let ch = [0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87].iter().position(|&x| x == c);
+                self.net.out.push(Packet::field("CH", t0, t1, ch.unwrap_or(0) as u32, ch.is_some()));
+            }
+            (0xb4, _) => self.start(DsPend::Reset(t0)),
+            (0x87, Some(x)) => self.start(DsPend::Bit(x & 0x80 != 0, t0)),
+            (0xa5, Some(x)) => {
+                self.ptr = DS_STATUS;
+                self.net.byte(x, t0, t1);
+            }
+            (0x96, _) => self.start(DsPend::Read(t0)),
+            (0x78, Some(x)) => self.start(DsPend::Triplet(x & 0x80 != 0, t0)),
+            _ => {}
+        }
+    }
+}
+
+/// 1-Wire through a DS2482-100/-800 I2C bridge: interprets the command stream (packets from `decode::i2c`, device
+/// addresses 0x18..0x1F) as 1-Wire activity and decodes it like `onewire` (Field "!RESET", "!PRESENCE", "ROM", "FAM",
+/// "SER", Crc, Data). Device reset gives Field("!DRST"), Write Configuration Field("CFG") (value = config nibble,
+/// `ok` = the complement nibble is right), Channel Select Field("CH") (value = channel 0..7). Results of 1-Wire
+/// reset / single bit / triplet come from the next status read with 1WB = 0 (presence = PPD and not SD); a read
+/// byte from the following read of the read data register (pointer 0xE1). Unpolled commands complete at the next command.
+pub fn ds2482(i2c: &[Packet]) -> Vec<Packet> {
+    let mut ds = Ds2482 { net: OwNet::new(false), ptr: DS_STATUS, pend: None, read_ready: None };
+    for (read, t0, b) in ds2482_transfers(i2c) {
+        if read {
+            b.iter().for_each(|&(v, _, t1)| ds.read(v, t1));
+        } else if let Some(&(cmd, _, _)) = b.first() {
+            let t1 = b.last().map_or(t0, |x| x.2);
+            ds.command(cmd, b.get(1).map(|x| x.0), t0, t1);
+        }
+    }
+    let t = ds.net.out.last().map_or(0.0, |p| p.t1);
+    ds.finish(None, t);
+    ds.net.out
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1148,30 +1160,36 @@ pub mod gen {
         w.level(true, 50e-6);
     }
 
-    /// RDM request/response bytes (ANSI E1.20): start code .. parameter data, then the 16-bit checksum.
-    pub fn rdm_packet(
-        dst: u64,
-        src: u64,
-        tn: u8,
-        port: u8,
-        mc: u8,
-        subdev: u16,
-        cc: u8,
-        pid: u16,
-        pd: &[u8],
-    ) -> Vec<u8> {
-        let mut b = vec![RDM_SC, 0x01, (24 + pd.len()) as u8];
-        b.extend_from_slice(&dst.to_be_bytes()[2..]);
-        b.extend_from_slice(&src.to_be_bytes()[2..]);
-        b.extend([tn, port, mc]);
-        b.extend(subdev.to_be_bytes());
-        b.push(cc);
-        b.extend(pid.to_be_bytes());
-        b.push(pd.len() as u8);
-        b.extend_from_slice(pd);
-        let sum = b.iter().map(|&x| x as u32).sum::<u32>() as u16;
-        b.extend(sum.to_be_bytes());
-        b
+    /// An RDM request or response (ANSI E1.20); `bytes` gives its slots, start code .. 16-bit checksum.
+    #[derive(Clone, Debug)]
+    pub struct RdmPacket {
+        pub dst: u64,
+        pub src: u64,
+        pub tn: u8,
+        pub port: u8,
+        pub mc: u8,
+        pub subdev: u16,
+        pub cc: u8,
+        pub pid: u16,
+        pub pd: Vec<u8>,
+    }
+
+    impl RdmPacket {
+        /// The slots of the message.
+        pub fn bytes(&self) -> Vec<u8> {
+            let mut b = vec![RDM_SC, 0x01, (24 + self.pd.len()) as u8];
+            b.extend_from_slice(&self.dst.to_be_bytes()[2..]);
+            b.extend_from_slice(&self.src.to_be_bytes()[2..]);
+            b.extend([self.tn, self.port, self.mc]);
+            b.extend(self.subdev.to_be_bytes());
+            b.push(self.cc);
+            b.extend(self.pid.to_be_bytes());
+            b.push(self.pd.len() as u8);
+            b.extend_from_slice(&self.pd);
+            let sum = b.iter().map(|&x| x as u32).sum::<u32>() as u16;
+            b.extend(sum.to_be_bytes());
+            b
+        }
     }
 
     /// Modbus RTU frame: address, PDU, CRC (low byte first).
@@ -1268,46 +1286,7 @@ pub mod gen {
     /// intermission, data phase at `data_rate` when BRS is set (switch at `FD_SP` of the BRS bit / CRC delimiter).
     pub fn can_fd_bits(f: &FdFrame, nominal: f64, data_rate: f64) -> Vec<(bool, f64)> {
         let (tn, td) = (1.0 / nominal, 1.0 / data_rate);
-        let push = |h: &mut Vec<bool>, v: u32, n: u32| (0..n).rev().for_each(|i| h.push((v >> i) & 1 == 1));
-        let dlc = if f.fd {
-            FD_LEN.iter().position(|&l| l >= f.data.len()).unwrap_or(15) as u32
-        } else {
-            f.data.len().min(8) as u32
-        };
-        let nb = if f.fd { FD_LEN[dlc as usize] } else { dlc as usize };
-        let mut h = vec![false];
-        if f.ext {
-            push(&mut h, f.id >> 18 & 0x7ff, 11);
-            h.push(true); // SRR
-            h.push(true); // IDE
-            push(&mut h, f.id & 0x3ffff, 18);
-            h.push(false); // RTR / RRS
-        } else {
-            push(&mut h, f.id & 0x7ff, 11);
-            h.push(false); // RTR / RRS
-            h.push(false); // IDE
-        }
-        let mut brs_at = usize::MAX;
-        if f.fd {
-            h.push(true); // FDF
-            h.push(false); // res
-            brs_at = h.len();
-            h.push(f.brs);
-            h.push(f.esi);
-        } else {
-            if f.ext {
-                h.push(false); // r1
-            }
-            h.push(false); // r0
-        }
-        push(&mut h, dlc, 4);
-        for i in 0..nb {
-            push(&mut h, *f.data.get(i).unwrap_or(&0xcc) as u32, 8);
-        }
-        if !f.fd {
-            let c = can_crc15(&h) as u32;
-            push(&mut h, c, 15);
-        }
+        let (h, brs_at, nb) = can_fd_unstuffed(f);
         let fast = f.fd && f.brs;
         let brs_len = FD_SP * tn + (1.0 - FD_SP) * td;
         let del_len = FD_SP * td + (1.0 - FD_SP) * tn;
@@ -1343,12 +1322,12 @@ pub mod gen {
         if f.fd {
             let g = (cnt % 8) ^ (cnt % 8) >> 1;
             let mut seq = Vec::new();
-            push(&mut seq, g, 3);
+            push_msb(&mut seq, g, 3);
             seq.push(g.count_ones() % 2 == 1);
             let crc_len = if nb > 16 { 21 } else { 17 };
             let mut input = raw.clone();
             input.extend(&seq);
-            push(&mut seq, can_fd_crc(&input, crc_len), crc_len);
+            push_msb(&mut seq, can_fd_crc(&input, crc_len), crc_len);
             let mut prev = *raw.last().expect("a frame starts with its SOF bit");
             for (i, &b) in seq.iter().enumerate() {
                 if i % 4 == 0 {
@@ -1363,6 +1342,56 @@ pub mod gen {
         out.push((true, tn)); // ACK delimiter
         out.push((true, 10.0 * tn)); // EOF + intermission
         out
+    }
+
+    /// `n` bits of `v`, MSB first.
+    fn push_msb(h: &mut Vec<bool>, v: u32, n: u32) {
+        (0..n).rev().for_each(|i| h.push((v >> i) & 1 == 1));
+    }
+
+    /// The unstuffed bits SOF .. data field (classic frames: .. CRC), the index of the BRS bit (`usize::MAX`
+    /// without) and the payload length.
+    fn can_fd_unstuffed(f: &FdFrame) -> (Vec<bool>, usize, usize) {
+        let dlc = if f.fd {
+            FD_LEN.iter().position(|&l| l >= f.data.len()).unwrap_or(15) as u32
+        } else {
+            f.data.len().min(8) as u32
+        };
+        let nb = if f.fd { FD_LEN[dlc as usize] } else { dlc as usize };
+        let mut h = vec![false];
+        if f.ext {
+            push_msb(&mut h, f.id >> 18 & 0x7ff, 11);
+            h.push(true); // SRR
+            h.push(true); // IDE
+            push_msb(&mut h, f.id & 0x3ffff, 18);
+            h.push(false); // RTR / RRS
+        } else {
+            push_msb(&mut h, f.id & 0x7ff, 11);
+            h.push(false); // RTR / RRS
+            h.push(false); // IDE
+        }
+        let mut brs_at = usize::MAX;
+        if f.fd {
+            h.push(true); // FDF
+            h.push(false); // res
+            brs_at = h.len();
+            h.push(f.brs);
+            h.push(f.esi);
+        } else {
+            if f.ext {
+                h.push(false); // r1
+            }
+            h.push(false); // r0
+        }
+        push_msb(&mut h, dlc, 4);
+        for i in 0..nb {
+            push_msb(&mut h, *f.data.get(i).unwrap_or(&0xcc) as u32, 8);
+        }
+        if !f.fd {
+            let c = can_crc15(&h) as u32;
+            push_msb(&mut h, c, 15);
+        }
+        (h, brs_at, nb)
     }
 
     /// CAN / CAN FD frames as a logic waveform (dominant = `lo`), 12 idle bits before the first.

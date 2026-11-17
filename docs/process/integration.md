@@ -3,7 +3,8 @@
 ## Roles
 
 - **Owner:** the human responsible for direction, acceptance and permission for hardware installs and publication.
-- **Coordinator:** the agent session responsible for planning, assignments, integration and publication.
+- **Coordinator:** the agent session responsible for planning, assignments, integration and publication. Never
+  merges.
 - **Author:** whoever wrote the change. Never merges it.
 - **Reviewer:** an agent of another vendor. For human-authored changes, any reviewer who did not write it.
 
@@ -68,10 +69,14 @@ The coordinator pauses a conflicting merge. The affected authors resolve textual
 Do not guess another area's intended behaviour.
 Review the resolution with the affected area reviewers before integration.
 
-The coordinator reruns the full `cargo xtask check` on the integrated result before merging it.
+The coordinator reruns the full `cargo xtask check` on the integrated result before it reports a pull request
+ready: the required CI checks do not run every step (the coverage floor runs only nightly in CI).
 Use neither `--fast` nor `--no-coverage`. Keep the complete output and exit code, including failed steps.
 Record the integrated revision, dirty state and result. Separate branch passes do not replace this run.
-The coordinator merges after cross-vendor review, the full gate and required unit evidence.
+The maintainer merges, through the merge queue, after cross-vendor review, the full gate, the green required checks
+and required unit evidence. A stack merges bottom up the same way
+([ADR 0034](../adr/process/0034-multi-pr-work-lands-as-a-stack.md)). The coordinator never merges; it reports when a
+pull request is ready.
 For human-authored changes, use the independent review defined in the roles above.
 After the merge, the owner accepts by giving the go to publish, or reverts the change.
 The coordinator then publishes with that go through the documented publish path.

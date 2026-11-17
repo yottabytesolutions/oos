@@ -133,7 +133,7 @@ gh stack merge <stack>                         # maintainer: queue the layers bo
 - A rebase gives the layers above a new head commit: comment `@codex review` on each of them afterwards, or their
   `codex-review` stays pending.
 - Agents keep to [AGENTS.md](AGENTS.md#working-together): only the coordinator runs the commands that push (`submit`,
-  `push`, `sync`, `link`), with the owner's go; only the maintainer runs `gh stack merge`.
+  `push`, `sync`, `link`), with the owner's go; only the maintainer runs `gh stack merge`; the coordinator never merges.
 - All layers live in this repository: GitHub does not support stacks across forks. Without push access, submit one
   layer at a time from your fork and open the next when the previous one merged, or ask the maintainer for push
   access or to recreate the stack from your fork's branches.

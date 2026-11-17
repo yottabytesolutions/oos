@@ -129,8 +129,9 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - One logical change per commit. Formatting and moves in their own commits.
 - Subject in the imperative mood, under 72 characters. The body says why, not what
   ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
-- Commits of a pull request are signed off (`git commit -s`,
-  [ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)).
+- Every commit is signed off (`git commit -s`,
+  [ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)). An agent's commit
+  carries `Agent: <tool>/<model>`; no session links in commits.
 - No em-dashes in commit messages, docs or comments.
 - Never rebase or amend commits that someone else has reviewed or merged.
 - A fix the unit needs now branches from `dho804` as `fix/<name>` and is forward-ported to `main` as a test plus
@@ -139,7 +140,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 
 ## Docs
 
-- Create or claim a numbered task before work. Follow [the task format](docs/tasks/README.md).
+- Work comes from GitHub issues labelled `agent-ready`, with acceptance criteria (ADR 0026). A multi-step design gets
+  a task file. Create or claim a numbered task before such work. Follow [the task format](docs/tasks/README.md).
   Set `status: active` and `owner`. Record the branch and reserved paths. Name the branch
   `<type>/t<NNNN>-<slug>` (`feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`; ADR 0026).
 - Serialize ids and claims on the integration branch. Do not start work on an unaccepted or overlapping claim.

@@ -63,6 +63,11 @@ is the place to start reading.
 
 Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.
 
+Work is tracked in GitHub issues; an issue labelled `agent-ready` has acceptance criteria an agent can work from. Every
+commit is signed off; a commit an agent wrote also carries `Agent: <tool>/<model>`
+([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)). Pull requests that touch a risk path
+(boot, update, kernel, FPGA, acquisition) need the maintainer's approval; others merge on green CI and a Codex review.
+
 Name your branch `<type>/<ref>-<slug>`: `type` is one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`,
 `build`, `chore`; `ref` is the GitHub issue number or a task id `t<NNNN>`; `slug` is lower case with `-`
 (`fix/42-trigger-holdoff`). `main` is the only long-lived branch.

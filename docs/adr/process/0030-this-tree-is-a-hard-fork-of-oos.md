@@ -32,6 +32,8 @@ The owner decided on 2026-11-17 to fork hard.
   enter by cherry-pick: the commit keeps its author and carries the trailer `Cherry-picked-from: upstream <hash>`
   with the full upstream hash. It then passes the gate like any other change; nothing is rebaselined for it.
 - No pull requests to upstream unless the owner asks for one.
+- After one last scrubbed publish, the public repository `yottabytesolutions/oos` is the single source of truth for
+  this tree (ADR 0026).
 - The licence stays GPL-2.0-or-later. Copyright lines, `LICENSE`, the authorship in the history and the attribution in
   `README.md` stay. Files written for this fork carry the SPDX line like the rest (ADR 0019).
 - The tree's own rules are the official ones: the gate is `cargo xtask check` (ADR 0031), lints and ratchets follow

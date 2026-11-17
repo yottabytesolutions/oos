@@ -54,6 +54,18 @@ it is known. Both were written for the files of the tree. Within one week pull r
 After the hard fork (ADR 0030) `main` of this tree is the trunk, and it welcomes outside contributions, by people and
 by agents, under one structure:
 
+- **One repository.** After one last scrubbed publish, the public repository `yottabytesolutions/oos` is the single
+  source of truth. Development then happens on it directly, through feature branches and pull requests. The private
+  tree and its scrub and publish step are retired after that switch.
+- **Nothing private enters the tree.** Unit-specific data (serial numbers, MAC addresses, LAN addresses, calibration
+  files) and material derived from Rigol's firmware never enter the tree, its history or its pull request texts. The
+  privacy check (`tools/privacy/scan.py`) enforces it in the pre-commit hook and in CI.
+- **Work queue.** GitHub issues are the work queue. An issue ready for an agent carries the label `agent-ready` and
+  its acceptance criteria. `docs/tasks/` holds only multi-step designs.
+- **Maintainer and review.** The sole maintainer is GitHub user `ichnograph`. A pull request that touches a risk path
+  (boot, update, kernel, FPGA, acquisition, anything that can damage a unit; listed in `.github/CODEOWNERS`) needs the
+  maintainer's approval. Any other pull request merges on green CI and an OK from a Codex review.
+
 - A contribution arrives as a pull request from a feature branch against `main`. One topic per pull request.
 - The gate (`cargo xtask check`, ADR 0031) passes in CI before a merge. CI runs on GitHub-hosted runners and is set up
   in a later phase; until then the maintainer runs the full gate locally on the candidate.
@@ -70,8 +82,8 @@ by agents, under one structure:
   words joined by `-`. Example: `fix/t0091-trigger-holdoff`, `feat/42-uart-decoder`.
 - `main` is the only long-lived branch. The old `overhaul` branch is retired; it becomes the annotated tag
   `archive/overhaul`.
-- The sign-off (DCO) stays: every commit of a pull request carries `Signed-off-by:`. The maintainers' own integration
-  commits made before the pull request flow is in place are not signed off.
+- The sign-off (DCO) stays and is required on every commit, by the person who submits it. Commits made before the
+  switch to the public repository keep their history as it is.
 - The vendor-material and other-project rules above are unchanged.
 - CI enforcement of branch names and linear history, release tags, pull request templates and required checks follow
   in a later phase and amend this record.

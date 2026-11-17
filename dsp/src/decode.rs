@@ -7,6 +7,9 @@
 
 use crate::edges::{edges, states};
 
+pub(crate) mod crc;
+pub use crc::can_crc15;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// UART character / SPI word / I2C data byte
@@ -263,19 +266,6 @@ pub fn spi(
         }
     }
     out
-}
-
-/// CRC-15/CAN (polynomial 0x4599) over a bit stream (SOF .. last data bit, unstuffed).
-pub fn can_crc15(bits: &[bool]) -> u16 {
-    let mut crc: u16 = 0;
-    for &b in bits {
-        let top = (crc >> 14) & 1 == 1;
-        crc = (crc << 1) & 0x7fff;
-        if top != b {
-            crc ^= 0x4599;
-        }
-    }
-    crc
 }
 
 /// CAN 2.0A/B data and remote frames at `bitrate`. `invert` = false: logic level as on the RX/TX pin (dominant low,

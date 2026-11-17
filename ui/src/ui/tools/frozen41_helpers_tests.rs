@@ -212,6 +212,7 @@ fn statistics_reset_keeps_rows_and_pending_single_but_rejects_old_deferred_count
     let fence = ui.scpi_operations();
     let selection = ui.m.meas.clone();
     ui.stats_reset();
+    change::begin_step(&mut ui, 0.04).unwrap();
     while ui.measurement_busy() {
         ui.poll_reference_measurements();
         end.check();

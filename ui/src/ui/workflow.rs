@@ -242,6 +242,30 @@ mod tests {
     }
 
     #[test]
+    fn playback_frames_accumulate_and_user_delay_resets_statistics_once() {
+        let mut u = replay();
+        u.key(key::RUNSTOP);
+        for n in 1..=8 {
+            u.step(0.2);
+            assert_eq!(u.replay.captures, n);
+            assert_eq!(u.mstat[0].n, n, "each presented frame contributes once");
+        }
+        let identity = change::acquisition::identity(&u);
+        // A user edit follows the driver's still-pending presentation request.
+        u.adjust(Item::HDelay, 1);
+        u.step(0.2);
+        assert_eq!(u.mstat[0].n, 1, "the user delay resets before the next capture");
+        let changed = change::acquisition::identity(&u);
+        assert_eq!(changed.stats_gen(), identity.stats_gen() + 1);
+        assert_eq!(changed.gen(), identity.gen() + 1);
+        for n in 2..=5 {
+            u.step(0.2);
+            assert_eq!(u.mstat[0].n, n, "playback resumes accumulation after one reset");
+            assert_eq!(change::acquisition::identity(&u).stats_gen(), changed.stats_gen());
+        }
+    }
+
+    #[test]
     fn panning_a_stopped_reference_recomputes_the_visible_measurement_window() {
         let mut u = replay();
         u.m.delay = 1e-6;
@@ -764,7 +788,7 @@ impl Ui {
         self.select_workspace_source(WaveId::Ch(self.m.active));
         self.close_menu();
         self.relayout();
-        self.settings_changed();
+        change::edited(self);
         self.toast("Returned to live acquisition");
     }
 
@@ -969,7 +993,7 @@ impl Ui {
             }
         }
         if reference_session {
-            change::stats_clear(self);
+            change::stats_reset(self);
         }
         self.meas_src = WaveId::Ref(first);
         if self.look == reflook::RefLook::TakeOver {
@@ -1131,7 +1155,11 @@ impl Ui {
     }
 
     pub(super) fn replay_acquire(&mut self, _dt_wall: f64) {
-        if self.m.run != RunState::Run || !self.sim_play || self.now < self.replay.next {
+        if self.m.run != RunState::Run
+            || !self.sim_play
+            || self.now < self.replay.next
+            || !change::observations::playback_ready(self)
+        {
             return;
         }
         self.replay.next = self.now + 0.1;
@@ -1170,11 +1198,7 @@ impl Ui {
             self.replay.sim_revision = self.replay.sim_revision.wrapping_add(1);
             self.replay.fresh_sim = false;
         }
-        if self.m.zoom {
-            self.m.zdelay = centre as f32;
-        } else {
-            self.m.delay = centre as f32;
-        }
+        change::observations::playback_position(self, centre as f32);
         self.replay.viewport = Some((slot, self.view().0, self.view().1));
         self.m.status = if hit.is_some() { TrigStatus::Triggered } else { TrigStatus::Auto };
         if self.m.trig_mode == TrigMode::Single {
@@ -1184,7 +1208,6 @@ impl Ui {
         }
         if self.replay.sim_config_change {
             self.invalidate_reference_eye();
-            change::stats_clear(self);
             self.replay.sim_config_change = false;
         }
         self.measure_refs();

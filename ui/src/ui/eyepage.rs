@@ -14,9 +14,17 @@
 
 use super::magnetic::{missing_wave, WaveSamp};
 use super::*;
+
 use oos_dsp::eye::{self, Bathtub, EdgeMeans, Jitter, JitterFit};
 
 pub(super) mod automatic;
+mod raster;
+pub(super) mod reset;
+use raster::blit_hits;
+
+pub(super) const EYE_RESETS_ON: oos_core::change::Classes =
+    oos_core::change::Classes::MAPPING.union(oos_core::change::Classes::VIEW);
+pub(super) const REFERENCE_RESETS_ON: oos_core::change::Classes = oos_core::change::Classes::VIEW;
 
 /// Seconds between refreshes of the page.
 const REFRESH: f64 = 0.2;
@@ -1206,9 +1214,6 @@ impl Ui {
         if self.m.eye_place == previous {
             return;
         }
-        if !self.azr.eye_auto.enabled && !self.auto_eye_large() {
-            self.azr.eye = None;
-        }
         self.relayout();
         self.analyzer_update();
     }
@@ -1932,28 +1937,6 @@ fn eye_on_grid(mut source: WaveSamp, t0: f64, dt: f64, n: usize) -> Vec<f32> {
         .collect()
 }
 
-/// The coloured hits into `r`. Same size is copied; a column that is mid-slide is scaled so the eye stays put. Both go
-/// through `Canvas::image` (0 is transparent), so a recording canvas (GPU drawing) gets them too.
-fn blit_hits(cv: &mut Canvas, r: Rect, img: &[u32], iw: usize) {
-    if iw == 0 || r.w <= 0 || r.h <= 0 || img.len() < iw {
-        return;
-    }
-    let ih = img.len() / iw;
-    let (w, h) = (r.w as usize, r.h as usize);
-    if iw == w && ih == h {
-        return cv.image(r, &img[..iw * ih], true);
-    }
-    let mut px = vec![0u32; w * h];
-    for (y, row) in px.chunks_exact_mut(w).enumerate() {
-        let sy = (y * ih / h).min(ih - 1);
-        let src = &img[sy * iw..(sy + 1) * iw];
-        for (x, d) in row.iter_mut().enumerate() {
-            *d = src[(x * iw / w).min(iw - 1)];
-        }
-    }
-    cv.image(r, &px, true);
-}
-
 /// The eye page (eye diagram, jitter, the charts).
 pub(super) struct EyePage;
 
@@ -2437,6 +2420,7 @@ mod tests {
         let mut ui = page(CLEAN, 5);
         assert!(!ui.azr.page.img.is_empty());
         ui.activate(Item::EyeClear);
+        change::begin_step(&mut ui, 0.04).unwrap();
         assert_eq!(ui.m.view, AView::Eye);
         assert!(ui.azr.eye.is_none() && ui.azr.page.pool.is_empty() && ui.azr.page.img.is_empty());
         ui.render(&mut Canvas::new(PANEL_W, PANEL_H));
@@ -2879,5 +2863,28 @@ mod automatic_setup_tests {
         assert!(ui.azr.eye_res.is_some(), "{:?}", ui.azr.page.status);
         assert_eq!(ui.azr.page.records, 1);
         assert!(ui.azr.page.title.contains("fixed full record"));
+    }
+
+    // An Eye source edit is reset at its acceptance; the page then pools from the first record after the edit. The record
+    // shown when the source was changed belongs to the old settings and is not pooled (before M2.3e the edit handler
+    // built it in immediately).
+    #[test]
+    fn an_eye_source_edit_pools_from_the_first_record_after_it() {
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+        ui.step(1.0 / 30.0);
+        ui.m.ch[1].on = true;
+        ui.m.tscale = crate::model::tscales().iter().position(|&t| (t as f64 - 2e-3).abs() < 1e-9).expect("2 ms/div");
+        ui.m.view = AView::Eye;
+        ui.m.eye_src = WaveId::Ch(1);
+        for _ in 0..6 {
+            ui.step(1.0 / 30.0);
+        }
+        assert!(ui.azr.page.records > 0, "CH2 pooled");
+        ui.select_option(Item::EyeSrc, "CH1");
+        assert_eq!(ui.m.eye_src, WaveId::Ch(0));
+        for steps in 1..=4 {
+            ui.step(1.0 / 30.0);
+            assert_eq!(ui.azr.page.records, steps, "only records after the edit");
+        }
     }
 }

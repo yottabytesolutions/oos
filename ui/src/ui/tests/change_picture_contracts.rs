@@ -4,13 +4,13 @@ use super::super::*;
 use change::{acquisition, counters, reset, timing};
 
 #[test]
-fn settings_marked_has_exact_reviewed_oracle_deltas() {
+fn steady_step_preserves_retired_oracle_counters() {
     let mut ui = Ui::new(Source::Demo { t: 0.0 }, host::Host::headless());
     ui.step(0.04);
     reset(&mut ui);
-    ui.settings_marked();
+
     ui.step(0.04);
-    assert_eq!(counters(&ui), ([0, 1, 0, 1, 0, 0, 0, 0, 0, 0], 0, 0, 0, 0));
+    assert_eq!(counters(&ui), ([0; 10], 0, 0, 0, 0));
 }
 
 #[test]
@@ -23,7 +23,6 @@ fn picture_consumer_has_its_own_timing_samples_and_state_counter() {
     for i in 1..=120 {
         if i % 2 == 0 {
             ui.m.delay = (i / 2 % 2) as f32 * ui.m.time_per_div();
-            ui.settings_marked();
         }
         ui.step(0.04);
     }

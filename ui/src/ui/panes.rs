@@ -8,6 +8,9 @@
 mod spectrum_view;
 
 use super::*;
+
+pub(super) const TREND_RESETS_ON: oos_core::change::Classes =
+    oos_core::change::Classes::STATS.union(oos_core::change::Classes::ACQ);
 use oos_dsp::spectrum;
 use std::collections::VecDeque;
 
@@ -554,11 +557,8 @@ impl Trend {
 }
 
 impl Ui {
-    /// New measurement values for the trends; `fresh` means the list changed or was reset.
-    pub(super) fn trend_update(&mut self, fresh: bool, rows: &[tools::MeasRow]) {
-        if fresh {
-            self.trend.clear();
-        }
+    /// Append new values. Accepted change classes own resets before record processing.
+    pub(super) fn trend_update(&mut self, rows: &[tools::MeasRow]) {
         self.trend.resize(rows.len(), Trend::default());
         for (t, r) in self.trend.iter_mut().zip(rows) {
             t.push(self.now, r.v);

@@ -13,6 +13,9 @@ pub(super) mod window;
 
 use super::magnetic::missing_wave;
 use super::*;
+
+pub(super) const RESETS_ON: oos_core::change::Classes =
+    oos_core::change::Classes::MATH.union(oos_core::change::Classes::VIEW);
 use oos_dsp::{eye, identify, power, spectrum};
 use std::{
     cell::{Cell, RefCell},
@@ -357,9 +360,8 @@ impl Ui {
                 pending.set(None);
             }
         }
-        change::stats_clear(self);
         self.measure_last();
-        self.mark_changed();
+        change::edited(self);
     }
 
     pub(super) fn measurement_gate_label(&self) -> &'static str {
@@ -876,12 +878,11 @@ impl Ui {
         self.measure_last();
     }
 
-    /// Remote view changes must refresh stopped references too: there may be no
-    /// next acquisition to build the newly opened analyser's results.
+    /// A remote view change records the view. Its acceptance resets the held results and then builds the page
+    /// (`change::analyze_switched_view`), so a stopped reference is analysed without another acquisition.
     pub(crate) fn set_analysis_view(&mut self, view: AView) {
         self.m.view = view;
         self.relayout();
-        self.analyzer_update();
     }
 
     pub(super) fn ana_kind(it: Item) -> Option<Kind> {
@@ -1140,16 +1141,11 @@ impl Ui {
                     if self.m.eye_from_record {
                         self.m.eye_rate = self.waveform_bit_rate(next).unwrap_or(0.0);
                     }
-                    self.azr.eye = None;
-                    self.azr.eye_ref = None;
-                    self.azr.eye_res = None;
-                    self.azr.page = super::eyepage::Page::default();
                 }
                 Item::PowV => self.m.pw_v = next,
                 _ => self.m.pw_i = next,
             }
             change::observations::analyzer_reset(self);
-            self.analyzer_update();
             return true;
         }
         if matches!(it, Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk) {
@@ -1167,7 +1163,6 @@ impl Ui {
                 _ => self.m.pw_clk = next,
             }
             change::observations::analyzer_reset(self);
-            self.analyzer_update();
             return true;
         }
         let cyc = |i: usize, n: usize| (i as i32 + d).rem_euclid(n as i32) as usize;
@@ -1229,7 +1224,6 @@ impl Ui {
         }
         // the averaging/waterfall/eye restart on any analyser change
         change::observations::analyzer_reset(self);
-        self.analyzer_update();
         true
     }
 
@@ -1257,14 +1251,10 @@ impl Ui {
                     if self.m.spec_span == 0.0 {
                         self.m.spec_span = (p.f / 5.0).max(1.0);
                     }
-                    self.azr.spec_avg = None;
                 }
             }
             Item::EyeClear => {
-                self.azr.work.invalidate();
-                self.azr.eye = None;
-                self.azr.eye_res = None;
-                self.azr.page = Default::default();
+                change::request(self, oos_core::change::Request::ViewReset, change::oracle::Row::Analyzer);
             }
             Item::EyeAct => {
                 self.eye_make();

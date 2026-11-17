@@ -57,6 +57,37 @@ impl Scpi {
         program.append(response);
         true
     }
+
+    pub(super) fn normalize_errors(&mut self) {
+        // a client that never asks for its errors, or sends megabytes of nonsense, must not fill the memory
+        for e in &mut self.err {
+            if e.len() > ERR_LEN {
+                *e = e.chars().take(ERR_LEN).collect();
+            }
+        }
+        if self.err.len() > ERR_MAX {
+            self.err.truncate(ERR_MAX - 1);
+            self.push_err("-350,\"Queue overflow\"".into());
+        }
+    }
+}
+
+/// SCPI is sequential (IEEE 488.2): a query sees the settings and resets of every command before it, and a
+/// program message's commands are accepted by its end. A message of queries alone accepts nothing.
+impl Program {
+    pub(super) fn before(&mut self, ui: &mut Ui, command: &str) {
+        if command.split_whitespace().next().unwrap_or("").ends_with('?') {
+            self.settle(ui);
+        } else {
+            self.unsettled = true;
+        }
+    }
+
+    pub(super) fn settle(&mut self, ui: &mut Ui) {
+        if std::mem::take(&mut self.unsettled) {
+            change::settle(ui);
+        }
+    }
 }
 
 /// A measurement query (`:MEASure...?`) of a large record waits, bounded, for its background measurement

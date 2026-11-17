@@ -49,6 +49,7 @@ fn unrelated_channel_changes_and_single_arms_preserve_spectrum_history() {
             let mut ui = fixture(AView::Spectrum, 10_000, 1e-7, |k| (k as f32 * 0.1).sin());
             ui.m.spec_trace = trace;
             ui.m.spec_wf = true;
+            change::reset(&mut ui);
             calculate(&mut ui);
             ui.ana_activate(Item::SpecLimitSet);
             let mut history = None;
@@ -75,6 +76,7 @@ fn unrelated_channel_changes_and_single_arms_preserve_spectrum_history() {
 #[test]
 fn eye_hits_pool_across_single_stamps_but_clear_restarts_them() {
     let mut ui = fixture(AView::Eye, 10_000, 2e-7, |k| if k % 86 < 43 { -1.0 } else { 1.0 });
+    change::reset(&mut ui);
     let mut history = None;
     let done = run(prepare(&ui, AView::Eye, false).unwrap(), &mut history);
     assert!(accept(&mut ui, done));
@@ -84,6 +86,7 @@ fn eye_hits_pool_across_single_stamps_but_clear_restarts_them() {
     assert!(accept(&mut ui, done));
     assert_eq!(ui.azr.eye.as_ref().unwrap().hits, hits.iter().map(|n| n * 2).collect::<Vec<_>>());
     ui.ana_activate(Item::EyeClear);
+    change::begin_step(&mut ui, 0.04).unwrap();
     let done = run(prepare(&ui, AView::Eye, false).unwrap(), &mut history);
     assert!(accept(&mut ui, done));
     assert_eq!(ui.azr.eye.as_ref().unwrap().hits, hits);

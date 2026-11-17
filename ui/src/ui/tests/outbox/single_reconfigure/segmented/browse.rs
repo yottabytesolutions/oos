@@ -30,7 +30,7 @@ fn segmented_stop_browse_survives_clear_and_mask_source_with_pending_request() {
             ui.key(key::CLEAR);
         } else {
             ui.m.mask_src = 1;
-            ui.settings_changed();
+            crate::ui::change::edited(&mut ui);
         }
         ui.step(0.04);
         let id = change::acquisition::identity(&ui);
@@ -65,7 +65,7 @@ fn segmented_stop_hardware_reconfigure_cancels_browse_and_clears_ui_history() {
         } else {
             ui.m.tscale += 1;
         }
-        ui.settings_changed();
+        crate::ui::change::edited(&mut ui);
         ui.step(0.04);
         worker.tick(&shared);
         {

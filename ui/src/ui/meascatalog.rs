@@ -601,7 +601,6 @@ impl Ui {
                     self.m.cat.push(row);
                     self.toast(&format!("{} added", c.name));
                 }
-                change::stats_clear(self);
             }
         }
     }
@@ -636,8 +635,7 @@ impl Ui {
             }
         }
         if added > 0 {
-            change::stats_clear(self);
-            self.settings_changed();
+            change::edited(self);
         }
         added
     }

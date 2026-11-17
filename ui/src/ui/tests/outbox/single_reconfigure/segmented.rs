@@ -25,7 +25,7 @@ fn segmented_setup_of(segments: usize) -> (Ui, crate::board::HwShared) {
     // The unit finding enabled segments after a setup change during Normal RUN.
     ui.m.seg_hw = true;
     ui.m.segments = segments;
-    ui.settings_changed();
+    crate::ui::change::edited(&mut ui);
     ui.step(0.04);
     (ui, shared)
 }
@@ -78,7 +78,7 @@ fn segmented_statistics_change_keeps_the_recording_pair() {
     let old = change::acquisition::identity(&ui);
     let run = lock(&shared).seg.run;
     ui.m.meas.push((oos_dsp::measure::Meas::Vpp, crate::model::WaveId::Ch(1)));
-    ui.settings_changed();
+    crate::ui::change::edited(&mut ui);
     ui.step(0.04);
     let id = change::acquisition::identity(&ui);
     assert_eq!((id.gen(), id.epoch()), (old.gen(), old.epoch()));
@@ -164,7 +164,7 @@ fn segmented_setup_change_during_run_cannot_finish_from_old_done_state() {
         g.seg.phase = crate::board::SegPhase::Done;
     }
     ui.m.mask_src = 1;
-    ui.settings_changed();
+    crate::ui::change::edited(&mut ui);
     ui.step(0.04);
     assert!(lock(&shared).seg.run > old_run, "a new pair needs fresh segment status");
     assert!(!change::proposals::stopping(&ui));
@@ -219,7 +219,7 @@ fn check_segment_boundary(phase: crate::board::SegPhase, boundary: &str) {
         "configure" => ui.m.tscale += 1,
         _ => unreachable!(),
     }
-    ui.settings_changed();
+    crate::ui::change::edited(&mut ui);
     ui.step(0.04);
     let id = change::acquisition::identity(&ui);
     assert_ne!(id, old);
@@ -266,7 +266,7 @@ fn segmented_worker_restarts_pair_without_a_new_ui_run() {
                 ui.key(key::CLEAR);
             } else {
                 ui.m.mask_src = 1;
-                ui.settings_changed();
+                crate::ui::change::edited(&mut ui);
             }
             ui.step(0.04);
             let new_run = lock(&shared).seg.run;

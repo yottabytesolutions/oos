@@ -5,6 +5,8 @@
 //! random PRBS payloads, native GUI, or live SCPI endpoint are involved.
 use super::*;
 use crate::wave::Source;
+
+mod hold;
 use oos_dsp::{
     decode::Kind as PacketKind,
     sim::{i2c_logic, sample, I2cXfer},
@@ -192,13 +194,19 @@ impl Held {
 }
 
 #[test]
-#[ignore = "owner question (task 0066): SINGLE resets statistics at the change point (M2); upstream keeps them until the commit"]
 fn fresh_sim_i2c_qualifies_generated_sda_before_single_commit_and_preserves_physical_time() {
     let (mut ui, _old, fresh) = fixture();
     assert!(ui.search_events().is_empty(), "the installed 5A record contradicts the requested A5 match");
-    let before = Accepted::of(&ui);
+    let mut before = Accepted::of(&ui);
     ui.key(key::SINGLE);
     let clock = Arc::clone(&ui.refs[1].as_ref().unwrap().v);
+    // Task 0066 question 1, owner decision 2026-11-16: SINGLE resets
+    // statistics at the change point, while accepted samples and Eye stay held.
+    change::begin_step(&mut ui, 0.0).unwrap();
+    change::finish_step(&mut ui);
+    assert!(ui.measurement_statistics_snapshot_for_test().is_empty());
+    before.statistics.clear();
+    before.assert_held(&ui);
     let mut held = Held::submit(&mut ui);
     for _ in 0..5 {
         ui.step(0.0);
@@ -217,7 +225,7 @@ fn fresh_sim_i2c_qualifies_generated_sda_before_single_commit_and_preserves_phys
     assert_eq!(ui.m.run, RunState::Stop);
     assert!(!ui.sim_play);
     assert_eq!(ui.m.status, TrigStatus::Triggered);
-    assert_eq!(ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(), vec![2, 2]);
+    assert_eq!(ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(), vec![1, 1]);
     assert_eq!(eye_records(&ui), 2.0);
     let scans = ui.decoder_worker_state_for_test();
     let packets = ui.decode_packets_of(&ui.m).unwrap();
@@ -246,11 +254,17 @@ fn fresh_sim_i2c_qualifies_generated_sda_before_single_commit_and_preserves_phys
 }
 
 #[test]
-#[ignore = "owner question (task 0066): SINGLE resets statistics at the change point (M2); upstream keeps them until the commit"]
 fn sim_bus_miss_stop_and_force_keep_acceptance_statistics_and_eye_in_sync() {
     let (mut ui, old, fresh) = fixture();
+    let mut before = Accepted::of(&ui);
     ui.key(key::SINGLE);
-    let before = Accepted::of(&ui);
+    // Task 0066 question 1, owner decision 2026-11-16: SINGLE resets
+    // statistics at the change point, while accepted samples and Eye stay held.
+    change::begin_step(&mut ui, 0.0).unwrap();
+    change::finish_step(&mut ui);
+    assert!(ui.measurement_statistics_snapshot_for_test().is_empty());
+    before.statistics.clear();
+    before.assert_held(&ui);
     let mut miss = Held::submit(&mut ui);
     miss.finish(&mut ui, old.clone());
     before.assert_held(&ui);
@@ -275,7 +289,7 @@ fn sim_bus_miss_stop_and_force_keep_acceptance_statistics_and_eye_in_sync() {
     assert_eq!(ui.m.status, TrigStatus::Auto);
     assert_eq!(ui.replay.trigger_time, None);
     assert!(!ui.replay.force_requested());
-    assert_eq!(ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(), vec![2, 2]);
+    assert_eq!(ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(), vec![1, 1]);
     assert_eq!(eye_records(&ui), 2.0);
     let accepted = Accepted::of(&ui);
     for _ in 0..3 {
@@ -360,7 +374,7 @@ fn live_fixture(mode: TrigMode) -> (Ui, Vec<f32>, Vec<f32>) {
 fn first_sim_bus_normal_and_single_retry_a_miss_without_replacing_accepted_live_data() {
     for mode in [TrigMode::Normal, TrigMode::Single] {
         let (mut ui, old, fresh) = live_fixture(mode);
-        let before = Accepted::of(&ui);
+        let mut before = Accepted::of(&ui);
         let clock = ui.last[0].as_ref().unwrap().ch[0].as_ptr();
         let mut held = Held::arm_first(&mut ui);
         assert!(ui.replay.sim_initial_armed);
@@ -378,34 +392,42 @@ fn first_sim_bus_normal_and_single_retry_a_miss_without_replacing_accepted_live_
         // The main loop, rather than a second Play press, must schedule a fresh
         // initial request. It must not replay any old installed reference.
         ui.step(0.0);
+        // Task 0066 question 1, owner decision 2026-11-16: reset at
+        // the accepted change point (SINGLE or the initial SIM setup).
+        assert!(ui.measurement_statistics_snapshot_for_test().is_empty());
+        before.statistics.clear();
         held.receive_request();
         assert!(!held.request.as_ref().unwrap().continuing);
         before.assert_held(&ui);
         held.finish(&mut ui, fresh.clone());
-        assert_eq!(ui.replay.captures, 1);
-        assert_eq!(ui.replay.sim_revision, 1);
-        assert!(!ui.replay.sim_initial_armed);
-        assert_eq!(ui.refs[2].as_ref().unwrap().v.as_slice(), fresh.as_slice());
-        assert_eq!(ui.m.status, TrigStatus::Triggered);
-        assert_eq!(ui.m.run, if mode == TrigMode::Single { RunState::Stop } else { RunState::Run });
-        assert_eq!(
-            ui.last[0].as_ref().unwrap().ch[0].as_ptr(),
-            clock,
-            "required native clock must remain the accepted snapshot"
-        );
-        assert_eq!((ui.last[0].as_ref().unwrap().dt, ui.last[0].as_ref().unwrap().t0), (2.0 * DT, -4.0 * DT));
-        assert!(ui.m.ch[0].on, "the decoder cache key must retain a required CH auxiliary");
-        assert!(!ui.search_events().is_empty());
-        assert!(ui.decode_events_result().unwrap().contains("A5"));
-        assert!(ui.replay.trigger_time.unwrap() > 180e-6);
+        assert_first_bus_capture(&mut ui, &fresh, clock, mode);
     }
+}
+
+fn assert_first_bus_capture(ui: &mut Ui, fresh: &[f32], clock: *const f32, mode: TrigMode) {
+    assert_eq!(ui.replay.captures, 1);
+    assert_eq!(ui.replay.sim_revision, 1);
+    assert!(!ui.replay.sim_initial_armed);
+    assert_eq!(ui.refs[2].as_ref().unwrap().v.as_slice(), fresh);
+    assert_eq!(ui.m.status, TrigStatus::Triggered);
+    assert_eq!(ui.m.run, if mode == TrigMode::Single { RunState::Stop } else { RunState::Run });
+    assert_eq!(
+        ui.last[0].as_ref().unwrap().ch[0].as_ptr(),
+        clock,
+        "required native clock must remain the accepted snapshot"
+    );
+    assert_eq!((ui.last[0].as_ref().unwrap().dt, ui.last[0].as_ref().unwrap().t0), (2.0 * DT, -4.0 * DT));
+    assert!(ui.m.ch[0].on, "the decoder cache key must retain a required CH auxiliary");
+    assert!(!ui.search_events().is_empty());
+    assert!(ui.decode_events_result().unwrap().contains("A5"));
+    assert!(ui.replay.trigger_time.unwrap() > 180e-6);
 }
 
 #[test]
 fn first_sim_bus_stop_rearm_and_live_cancel_late_results_with_an_empty_target_slot() {
     let (mut ui, _old, fresh) = live_fixture(TrigMode::Single);
     let saved = ui.m.clone();
-    let before = Accepted::of(&ui);
+    let mut before = Accepted::of(&ui);
     let mut held = Held::arm_first(&mut ui);
     ui.key(key::RUNSTOP);
     assert_eq!(ui.m.run, RunState::Stop);
@@ -419,6 +441,10 @@ fn first_sim_bus_stop_rearm_and_live_cancel_late_results_with_an_empty_target_sl
     assert_eq!(ui.m.run, RunState::Run);
     assert!(ui.sim_play);
     ui.step(0.0);
+    // Task 0066 question 1, owner decision 2026-11-16: SINGLE resets
+    // statistics on rearm at the change point, even before a matching capture.
+    assert!(ui.measurement_statistics_snapshot_for_test().is_empty());
+    before.statistics.clear();
     held.receive_request();
     assert!(!held.request.as_ref().unwrap().continuing);
     assert!(ui.sim_activate(Item::SimPlay));
@@ -559,7 +585,7 @@ fn large_stored_and_native_clock_snapshots_are_shared_without_ui_scans_and_keep_
 #[test]
 fn opc_single_waits_after_a_completed_no_hit_generation_until_the_matching_retry_commits() {
     let (mut ui, old, fresh) = live_fixture(TrigMode::Single);
-    let before = Accepted::of(&ui);
+    let mut before = Accepted::of(&ui);
     let mut held = Held::arm_first(&mut ui);
     let request = held.request.as_ref().unwrap();
     let completed_generation = OperationToken::Sim(ui.workflow_epoch, request.id);
@@ -579,6 +605,11 @@ fn opc_single_waits_after_a_completed_no_hit_generation_until_the_matching_retry
     assert_eq!(fence.state(&ui), OperationState::Pending, "Single still needs its own accepted-capture receipt");
     assert!(scpi.poll_program(&mut ui, &cv, &mut query).is_none());
     ui.step(0.0);
+    // Task 0066 question 1, owner decision 2026-11-16: accepting SINGLE
+    // resets statistics while its operation receipt still waits for a capture.
+    assert!(ui.measurement_statistics_snapshot_for_test().is_empty());
+    before.statistics.clear();
+    before.assert_held(&ui);
     held.receive_request();
     assert_ne!(
         held.request.as_ref().unwrap().id,
@@ -594,6 +625,10 @@ fn opc_single_waits_after_a_completed_no_hit_generation_until_the_matching_retry
     assert_eq!(ui.refs[2].as_ref().unwrap().v.as_slice(), fresh.as_slice());
     assert_eq!(fence.state(&ui), OperationState::Complete);
     assert_eq!(scpi.poll_program(&mut ui, &cv, &mut query), Some(b"1;STOP".to_vec()));
+    // The successful initial SIM installs a source setup. Its deferred
+    // StatsReset also acts at the next change point, before the idle hold.
+    ui.step(0.0);
+    assert!(ui.measurement_statistics_snapshot_for_test().is_empty());
     let accepted = Accepted::of(&ui);
     for _ in 0..3 {
         ui.step(0.0);
@@ -614,8 +649,12 @@ fn opc_completed_generation_receipt_survives_the_next_periodic_request_without_w
     held.finish(&mut ui, fresh);
     assert_eq!(ui.replay.captures, 1);
     assert_eq!(fence.state(&ui), OperationState::Complete);
-    let accepted = Accepted::of(&ui);
+    let mut accepted = Accepted::of(&ui);
     ui.step(0.51);
+    // Task 0066 question 1, owner decision 2026-11-16: statistics reset
+    // at acceptance; here the initial SIM setup is accepted before the retry.
+    assert!(ui.measurement_statistics_snapshot_for_test().is_empty());
+    accepted.statistics.clear();
     held.receive_request();
     assert_ne!(held.request.as_ref().unwrap().id, first);
     assert!(held.request.as_ref().unwrap().fresh, "exercise a true periodic capture after initial acceptance");
@@ -624,4 +663,63 @@ fn opc_completed_generation_receipt_survives_the_next_periodic_request_without_w
     assert_eq!(fence.state(&ui), OperationState::Complete, "a later request must not extend the completed fence");
     assert_eq!(scpi.poll_program(&mut ui, &cv, &mut query), Some(b"1;1".to_vec()));
     ui.key(key::RUNSTOP);
+}
+
+fn finish_nonfresh(ui: &mut Ui, fresh: Vec<f32>, asynchronous: bool) -> Held {
+    let mut held = Held::channel(ui);
+    let request = ui.sim_capture_request(ui.sim_lane(), 0, true, false, true);
+    if asynchronous {
+        ui.sim_generation.as_mut().unwrap().submit(request).unwrap();
+        held.request = Some(held._requests.try_recv().unwrap());
+        // The real step accepts changes before polling the generation result.
+        change::begin_step(ui, 0.0).unwrap();
+        held.finish(ui, fresh);
+        change::finish_step(ui);
+    } else {
+        let generated = Generated::evaluate(&request, fresh);
+        ui.sim_finish(request, generated);
+    }
+    held
+}
+
+#[test]
+fn running_nonfresh_sim_configuration_resets_statistics_at_acceptance() {
+    for (hit, asynchronous) in [(true, false), (true, true), (false, false), (false, true)] {
+        let (mut ui, _old, fresh) = fixture();
+        ui.m.eye_rate = ui.sim_lane().bits_per_s;
+        if !hit {
+            ui.m.trig_type = TrigType::Edge;
+            ui.m.trig_level = 4.0;
+        }
+        change::reset(&mut ui);
+        let before = change::acquisition::identity(&ui).stats_gen();
+        let accepted = Accepted::of(&ui);
+        let _held = finish_nonfresh(&mut ui, fresh, asynchronous);
+        assert_eq!(ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(), vec![1, 1], "no mixed capture before acceptance");
+        accepted.assert_held(&ui);
+        ui.sim_poll();
+        accepted.assert_held(&ui);
+        change::begin_step(&mut ui, 0.0).unwrap();
+        assert_eq!(change::acquisition::identity(&ui).stats_gen(), before + u64::from(hit));
+        if hit {
+            assert!(ui.mstat.is_empty(), "a SIM payload change resets accumulated statistics");
+        } else {
+            accepted.assert_held(&ui);
+        }
+        ui.sim_poll();
+        assert_eq!(ui.replay.captures, 1 + u64::from(hit));
+        assert_eq!(
+            ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(),
+            vec![1, 1],
+            "fold only into the accepted generation"
+        );
+        if hit {
+            assert!(!Arc::ptr_eq(&accepted.samples, &ui.refs[0].as_ref().unwrap().v));
+        } else {
+            accepted.assert_held(&ui);
+        }
+        change::begin_step(&mut ui, 0.0).unwrap();
+        assert_eq!(change::acquisition::identity(&ui).stats_gen(), before + u64::from(hit), "consume once");
+        assert_eq!(ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>(), vec![1, 1]);
+    }
 }

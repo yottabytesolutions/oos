@@ -38,6 +38,16 @@ fn channel(ch: &Channel) -> ChannelMapping {
     ChannelMapping { on, vscale, vfine, bias, skew, offset, coupling, bw, probe, invert }
 }
 impl MappingKey {
+    pub(super) fn with_playback_position(mut self, a: &Model, b: &Model, requests: &[super::Request]) -> Self {
+        if super::presentation::matches(a, b, requests, false) {
+            self.timebase.2 = b.delay;
+        }
+        if super::presentation::matches(a, b, requests, true) {
+            self.timebase.5 = b.zdelay;
+        }
+        self
+    }
+
     pub fn of(m: &Model, layout: Layout) -> Self {
         Self {
             channels: std::array::from_fn(|i| channel(&m.ch[i])),

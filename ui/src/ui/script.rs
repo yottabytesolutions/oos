@@ -15,7 +15,7 @@ use super::*;
 
 impl Ui {
     /// Count observer allocations over warmed UI steps using the caller's isolated allocator.
-    pub fn scripted_change_census(steps: usize, count: fn() -> usize) -> [[usize; 2]; 5] {
+    pub fn scripted_change_census(steps: usize, count: fn() -> usize) -> [[usize; 2]; 6] {
         change::census::run(steps, count)
     }
 

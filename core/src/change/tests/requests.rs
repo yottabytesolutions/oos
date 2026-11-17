@@ -120,3 +120,69 @@ fn requested_normal_sweep_is_not_a_run_companion() {
     let changes = shadow.observe(&current, UiAcq::default(), &[Request::Run], &config(4)).unwrap();
     assert_eq!(changes.classes(), Classes::ACQ | Classes::STATS | Classes::HW_AVERAGE);
 }
+
+#[test]
+fn view_reset_is_repeatable_without_advancing_acquisition_or_statistics() {
+    let mut g = Generations::default();
+    for _ in 0..2 {
+        let c = g.resolve(Classes::NONE, &[Request::ViewReset]).unwrap();
+        assert_eq!(c.classes(), Classes::VIEW);
+        assert_eq!(c.identity(), crate::change::Identity::default());
+    }
+}
+
+#[test]
+fn playback_origin_classifies_only_the_exact_driver_position_delta() {
+    for zoom in [false, true] {
+        for user_edit in [0, 1, 2, 3] {
+            let initial = Model::default();
+            let mut shadow = Shadow::new(&initial, UiAcq::default(), &config(4)).unwrap();
+            let mut current = initial.clone();
+            let before = if zoom { initial.zdelay } else { initial.delay };
+            let request = Request::PlaybackPosition {
+                zoom,
+                before: (before + if user_edit == 1 { 0.0001 } else { 0.0 }).to_bits(),
+                after: (before + 0.0002).to_bits(),
+            };
+            if zoom {
+                current.zdelay = before + 0.0002;
+            } else {
+                current.delay = before + 0.0002;
+            }
+            if user_edit == 2 {
+                current.delay += 0.0003;
+            }
+            if user_edit == 3 {
+                current.ch[0].offset += 0.0001;
+            }
+            let changes = shadow.observe(&current, UiAcq::default(), &[request], &config(4)).unwrap();
+            if user_edit == 0 {
+                assert_eq!(changes.classes(), Classes::VIEW);
+                assert_eq!(changes.identity(), Identity::default());
+            } else {
+                assert!(changes.classes().contains(Classes::MAPPING));
+                if !zoom || user_edit != 1 {
+                    assert!(changes.classes().contains(Classes::ACQ | Classes::STATS));
+                    assert_eq!((changes.identity().gen(), changes.identity().stats_gen()), (1, 1));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn consecutive_playback_requests_preserve_statistics_and_expire_after_acceptance() {
+    let mut model = Model::default();
+    let mut shadow = Shadow::new(&model, UiAcq::default(), &config(4)).unwrap();
+    let requests = [
+        Request::PlaybackPosition { zoom: false, before: model.delay.to_bits(), after: 0.0001f32.to_bits() },
+        Request::PlaybackPosition { zoom: false, before: 0.0001f32.to_bits(), after: 0.0002f32.to_bits() },
+    ];
+    model.delay = 0.0002;
+    let changes = shadow.observe(&model, UiAcq::default(), &requests, &config(4)).unwrap();
+    assert_eq!(changes.classes(), Classes::VIEW);
+    model.delay = 0.0003;
+    let changes = shadow.observe(&model, UiAcq::default(), &[], &config(4)).unwrap();
+    assert!(changes.classes().contains(Classes::ACQ | Classes::STATS));
+    assert_eq!(changes.identity().stats_gen(), 1);
+}

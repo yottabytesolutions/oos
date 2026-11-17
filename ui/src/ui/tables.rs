@@ -345,7 +345,7 @@ impl Ui {
         if self.m.trig_ref.is_some() {
             self.refresh_stopped_reference();
         } else {
-            self.settings_changed();
+            change::edited(self);
         }
         self.toast(&format!("At {}", si(t, "s")));
     }

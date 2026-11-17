@@ -16,7 +16,8 @@ use crate::system::perfguard as samples;
 
 #[cfg(test)]
 pub use samples::ROUNDS;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 pub fn guard_pair(
@@ -36,9 +37,28 @@ pub fn guard_pair(
     pair.best
 }
 
+/// The time source of the intake, change, consumer, picture and shadow rings, supplied at construction (ADR 0019).
+#[derive(Clone)]
+pub(crate) struct Clock(Arc<dyn Fn() -> Instant + Send + Sync>);
+impl Default for Clock {
+    fn default() -> Self {
+        Self(Arc::new(Instant::now))
+    }
+}
+impl Clock {
+    #[cfg(test)]
+    pub(crate) fn new(now: impl Fn() -> Instant + Send + Sync + 'static) -> Self {
+        Self(Arc::new(now))
+    }
+    fn now(&self) -> Instant {
+        (self.0)()
+    }
+}
+
 /// Shared tail samples for intake/change budgets. A fixed ring avoids timing allocations in the UI.
 #[derive(Clone)]
 pub struct StageTiming {
+    clock: Clock,
     draw: draw::Timing,
     intake: [u64; 256],
     change: [u64; 256],
@@ -47,12 +67,34 @@ pub struct StageTiming {
     picture_count: usize,
     shadow: [u64; 256],
     split: intake::Timing,
-    queued_shadow: u64,
+    queued: QueuedTiming,
     current_shadow: Option<Duration>,
+    consumers: ConsumerTiming,
+}
+#[derive(Clone, Default)]
+struct QueuedTiming {
+    shadow: u64,
+    change: u64,
+}
+#[derive(Clone)]
+struct ConsumerTiming {
+    samples: [u64; 256],
+    count: usize,
+}
+impl Default for ConsumerTiming {
+    fn default() -> Self {
+        Self { samples: [0; 256], count: 0 }
+    }
 }
 impl Default for StageTiming {
     fn default() -> Self {
+        Self::with_clock(Clock::default())
+    }
+}
+impl StageTiming {
+    pub(crate) fn with_clock(clock: Clock) -> Self {
         Self {
+            clock,
             draw: draw::Timing::default(),
             intake: [0; 256],
             change: [0; 256],
@@ -61,12 +103,21 @@ impl Default for StageTiming {
             count: 0,
             picture_count: 0,
             split: intake::Timing::default(),
-            queued_shadow: 0,
+            queued: QueuedTiming::default(),
             current_shadow: None,
+            consumers: ConsumerTiming::default(),
         }
     }
 }
 impl StageTiming {
+    /// A sample of the rings' clock: the start or end of a timed region.
+    pub(crate) fn now(&self) -> Instant {
+        self.clock.now()
+    }
+    /// Time from `start` to now on the rings' clock.
+    pub(crate) fn since(&self, start: Instant) -> Duration {
+        self.now().saturating_duration_since(start)
+    }
     /// Disjoint per-step decay, fast, merge, records and grade durations, including skipped zeros.
     pub fn draw_step(&mut self, parts: [Duration; 5]) {
         self.draw.step(parts);
@@ -91,9 +142,9 @@ impl StageTiming {
     pub fn add(&mut self, intake: Duration, change: Duration) {
         let i = self.count % 256;
         self.intake[i] = self.split.finish(i, nanos(intake));
-        self.change[i] = nanos(change);
-        self.shadow[i] = self.queued_shadow;
-        self.queued_shadow = 0;
+        self.change[i] = nanos(change).saturating_add(self.queued.change);
+        self.shadow[i] = self.queued.shadow;
+        self.queued = QueuedTiming::default();
         self.count += 1;
     }
     #[cfg(test)]
@@ -101,18 +152,43 @@ impl StageTiming {
         !self.intake_active()
     }
     pub fn intake_begin(&mut self) {
-        self.split.begin();
+        let now = self.now();
+        self.split.begin_at(now);
     }
     pub fn intake_end(&mut self) {
-        self.split.end();
+        let now = self.now();
+        self.split.end_at(now);
+    }
+    /// Stop an open intake's clock for work charged to its own ring; returns whether to resume it.
+    pub(crate) fn intake_suspend(&mut self) -> bool {
+        let now = self.now();
+        self.split.suspend_at(now)
+    }
+    pub(crate) fn intake_resume(&mut self) {
+        let now = self.now();
+        self.split.resume_at(now);
+    }
+    /// Queued intake and change time and the totals of the consumer and picture rings, for attribution tests.
+    #[cfg(test)]
+    pub(crate) fn attributed_ns(&self) -> [u64; 4] {
+        let sum = |ring: &[u64; 256], count: usize| ring[..count.min(256)].iter().sum();
+        [
+            self.split.queued(),
+            self.queued.change,
+            sum(&self.consumers.samples, self.consumers.count),
+            sum(&self.picture, self.picture_count),
+        ]
     }
     #[cfg(test)]
     pub fn queue_intake(&mut self, duration: Duration) {
         self.split.queue(nanos(duration));
     }
+    pub fn queue_change(&mut self, duration: Duration) {
+        self.queued.change = self.queued.change.saturating_add(nanos(duration));
+    }
     pub fn queue_shadow(&mut self, duration: Duration) {
         if !self.intake_active() {
-            self.queued_shadow = self.queued_shadow.saturating_add(nanos(duration));
+            self.queued.shadow = self.queued.shadow.saturating_add(nanos(duration));
         }
     }
     pub fn shadow(&mut self, duration: Duration) {
@@ -127,6 +203,19 @@ impl StageTiming {
     pub fn picture(&mut self, duration: Duration) {
         self.picture[self.picture_count % 256] = nanos(duration);
         self.picture_count += 1;
+    }
+    pub fn consumers(&mut self, duration: Duration) {
+        self.consumers.samples[self.consumers.count % 256] = nanos(duration);
+        self.consumers.count += 1;
+    }
+    pub fn consumers_p99(&self) -> Option<u64> {
+        let n = self.consumers.count.min(256);
+        if n < 50 {
+            return None;
+        }
+        let mut values = self.consumers.samples;
+        values[..n].sort_unstable();
+        Some(values[(n * 99).div_ceil(100) - 1])
     }
     pub fn picture_p99(&self) -> Option<u64> {
         let n = self.picture_count.min(256);
@@ -185,9 +274,11 @@ impl StageTiming {
             None => format!(" stage intake n={} stage change n={} p99=pending", self.samples(), self.samples()),
         };
         format!(
-            "{stages} stage picture n={} {picture} max_ns={}",
+            "{stages} stage picture n={} {picture} max_ns={} stage consumers n={} p99_ns={}",
             self.picture_count.min(256),
-            self.picture_max().unwrap_or(0)
+            self.picture_max().unwrap_or(0),
+            self.consumers.count.min(256),
+            self.consumers_p99().unwrap_or(0)
         )
     }
     #[cfg(test)]
@@ -242,6 +333,24 @@ mod stage_tests {
         }
         assert_eq!(timing.picture_p99(), Some(0));
         assert!(timing.text().contains("stage picture n=256 p99_ns=0 max_ns=0"));
+    }
+
+    #[test]
+    fn scripted_detection_is_charged_and_idle_steps_do_not_hide_consumers() {
+        let mut timing = StageTiming::default();
+        for _ in 0..50 {
+            timing.queue_change(Duration::from_nanos(7));
+            timing.add(Duration::from_nanos(10), Duration::from_nanos(13));
+            timing.consumers(Duration::from_nanos(20));
+        }
+        assert_eq!(timing.p99(), Some([10, 20, 30]));
+        assert_eq!(timing.consumers_p99(), Some(20));
+        for _ in 0..300 {
+            timing.add(Duration::ZERO, Duration::ZERO);
+        }
+        assert_eq!(timing.p99(), Some([0; 3]));
+        assert_eq!(timing.consumers_p99(), Some(20));
+        assert!(timing.text().contains("stage consumers n=50 p99_ns=20"));
     }
 
     #[test]

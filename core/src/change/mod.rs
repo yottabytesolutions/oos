@@ -20,6 +20,7 @@ mod measure;
 mod measure1;
 mod normalize;
 mod patch;
+mod presentation;
 mod references;
 mod requests;
 mod shadow;
@@ -115,19 +116,21 @@ pub fn refresh(a: &mut Model, b: &Model) {
 }
 
 pub fn classify(a: &Model, b: &Model, old: UiAcq, new: UiAcq) -> Classes {
-    classify_boundary(a, b, old, new, false)
+    classify_boundary(a, b, old, new, &[])
 }
 
-fn classify_boundary(a: &Model, b: &Model, old: UiAcq, new: UiAcq, run_request: bool) -> Classes {
+fn classify_boundary(a: &Model, b: &Model, old: UiAcq, new: UiAcq, requests: &[Request]) -> Classes {
     let mut c = Classes::NONE;
+    let run_request = requests.iter().any(|r| matches!(r, Request::Run | Request::Single));
     let sweep_companion =
         run_request && a.trig_mode == crate::model::TrigMode::Single && b.trig_mode == crate::model::TrigMode::Auto;
-    fields(a, b, |f| {
+    presentation::fields(a, b, requests, |f| {
         if f.changed && !(sweep_companion && f.name == "trig_mode") {
             c |= f.classes;
         }
     });
-    if MappingKey::of(a, old.layout()) != MappingKey::of(b, new.layout()) {
+    let previous = MappingKey::of(a, old.layout()).with_playback_position(a, b, requests);
+    if previous != MappingKey::of(b, new.layout()) {
         c |= Classes::MAPPING;
     }
     if old.acquisition() != new.acquisition() {

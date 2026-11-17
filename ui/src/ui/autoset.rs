@@ -146,7 +146,7 @@ impl Ui {
         } else {
             autoset(&mut self.m, &self.src);
             change::mapping_observed(self, change::oracle::Row::Recall);
-            self.settings_changed();
+            change::edited(self);
             self.toast("Auto set-up");
         }
     }
@@ -726,7 +726,7 @@ impl Ui {
             self.m.slope = s;
         }
         change::mapping_observed(self, change::oracle::Row::Stage);
-        self.settings_changed();
+        change::edited(self);
         change::autoset_mark(self);
     }
 
@@ -1106,7 +1106,7 @@ mod tests {
             if ui.auto.is_some() {
                 continue;
             }
-            assert!(ui.mstat.is_empty(), "no pre-final measurement may fold after the terminal clear");
+            assert!(!ui.mstat.is_empty(), "the terminal settings wait until the next change point");
             let records = ui.records;
             oos_hal::sync::lock(&shared).queue.push_back(old.into());
             ui.step(0.04);

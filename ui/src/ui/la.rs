@@ -259,7 +259,7 @@ impl Ui {
         match it {
             Item::DecIn => {
                 self.m.dec_la_in = !self.m.dec_la_in;
-                self.settings_changed();
+                change::edited(self);
                 return true;
             }
             Item::TrigSrc if self.m.trig_la_ok() => {
@@ -272,7 +272,7 @@ impl Ui {
                 } else {
                     self.m.trig_la = Some((k - n) as u8);
                 }
-                self.settings_changed();
+                change::edited(self);
                 return true;
             }
             Item::DecSrc | Item::DecSrc2 | Item::DecCs | Item::DecSrc4 if self.m.dec_on_la() => {
@@ -316,7 +316,7 @@ impl Ui {
             Item::LaHeight => l.height = (l.height as i32 + d).clamp(0, HEIGHTS.len() as i32 - 1) as usize,
             _ => return false,
         }
-        self.settings_changed();
+        change::edited(self);
         true
     }
 
@@ -334,7 +334,7 @@ impl Ui {
         } else {
             self.open_menu(MenuId::La);
         }
-        self.settings_changed();
+        change::edited(self);
     }
 
     /// From `step`: the probe state the hardware thread read.
@@ -351,7 +351,7 @@ impl Ui {
     pub(super) fn la_probe_set(&mut self, p: Option<bool>) {
         if self.la_probe != Some(false) && p == Some(false) && self.m.la.on {
             self.m.la.on = false;
-            self.settings_changed();
+            change::edited(self);
             self.toast("No LA probe: LA off");
         }
         self.la_probe = p;

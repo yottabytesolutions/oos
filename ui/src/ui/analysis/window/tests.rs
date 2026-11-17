@@ -114,6 +114,7 @@ fn stale_results_are_dropped_after_each_invalidation() {
             }
             2 => {
                 ui.ana_activate(Item::EyeClear);
+                change::begin_step(&mut ui, 0.04).unwrap();
             }
             3 => ui.m.eye_src = WaveId::Ch(1),
             4 => ui.area.h -= 10,
@@ -178,6 +179,7 @@ fn a_raw_record_of_an_old_acquisition_generation_is_not_submitted() {
     ui.stop_workers(std::time::Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD);
 }
 
+mod m23e_deferred;
 mod review;
 
 #[test]
@@ -196,12 +198,8 @@ fn running_analyzer_source_step_snaps_before_submitting_without_broad_resets() {
         ui.ph.map[0][3] = 19;
         let picture = ui.ph.map.clone();
         ui.adjust(item, 1);
-        let submitted = ui.azr.work.accepted_key.as_ref().expect("intake submits synchronous job");
-        assert_eq!(
-            (submitted.eye.0, submitted.spectrum.0),
-            (WaveId::Ch(0), WaveId::Ch(0)),
-            "job must use an enabled source"
-        );
+        assert!(ui.azr.work.accepted_key.is_none(), "input cannot submit before normalization");
+        change::begin_step(&mut ui, 0.04).unwrap();
         assert_eq!((ui.m.eye_src, ui.m.spec_src), (WaveId::Ch(0), WaveId::Ch(0)));
         assert_eq!(ui.mstat[0].n, 7);
         change::begin_step(&mut ui, 0.04).unwrap();

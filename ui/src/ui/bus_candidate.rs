@@ -231,7 +231,7 @@ mod tests {
         ui.step(0.001);
         assert!(ui.bus_candidate_waiting());
         ui.m.trig_bus_val = 0x5a;
-        ui.mark_changed();
+        crate::ui::change::edited(&mut ui);
         assert!(!ui.bus_candidate_waiting());
         ui.step(0.001);
         assert_eq!(ui.records, before);

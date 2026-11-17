@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// The only acting M2.3a switch. Never copy shadow outputs into the live model.
+/// Normalize live settings before classification, with no reset notification bridge.
 pub(super) fn apply(ui: &mut Ui) {
     let sample = ui.host.runtime().change.census.begin();
     let config = crate::model::config();
@@ -19,8 +19,7 @@ pub(super) fn apply(ui: &mut Ui) {
     };
     observer.signals.normalized |= classes;
     if changed {
-        ui.settings_marked();
-        event(ui, Row::Normalize, C::NONE);
+        observer.signals.row = Row::Normalize;
     }
     sample.finish(&mut ui.host.runtime_mut().change.census, 4);
 }

@@ -120,15 +120,30 @@ pub(in crate::ui) fn script_prepare(ui: &mut Ui) -> Identity {
 
 pub(in crate::ui) fn script_prepare_route(ui: &mut Ui, records: bool) -> Identity {
     if ui.host.runtime().change.prepared.is_none() {
-        if !lifecycle::polls(ui) {
+        // the same split intake accounting as the live step: polls, external body and shared waits
+        ui.host.runtime_mut().change.timing.intake_begin();
+        let ready = lifecycle::polls(ui);
+        ui.host.runtime_mut().change.timing.intake_end();
+        if !ready {
             return identity(ui);
         }
+        let started = now(ui);
         legacy::intake_settings(ui);
+        let elapsed = since(ui, started);
+        ui.host.runtime_mut().change.timing.queue_change(elapsed);
     }
     if let Some(p) = &mut ui.host.runtime_mut().change.prepared {
         p.workers = !records;
     }
+    let started = now(ui);
+    if super::consumers::apply(ui) {
+        let elapsed = since(ui, started);
+        ui.host.runtime_mut().change.timing.consumers(elapsed);
+    }
+    let started = now(ui);
     publish(ui);
+    let elapsed = since(ui, started);
+    ui.host.runtime_mut().change.timing.queue_change(elapsed);
     identity(ui)
 }
 

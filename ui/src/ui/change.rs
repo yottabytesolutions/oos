@@ -4,8 +4,10 @@
 
 pub(crate) mod acquisition;
 pub(super) mod census;
+pub(super) mod consumers;
 mod diagnostics;
 mod intake;
+mod views;
 pub(crate) use intake::intake;
 pub(super) use intake::poll;
 mod legacy;
@@ -16,13 +18,16 @@ pub(super) mod oracle;
 mod picture;
 pub(super) mod proposals;
 mod recovery;
+mod settle;
+pub(super) use settle::analyze_switched_view;
+pub(crate) use settle::settle;
 pub(super) mod transitions;
 
 use super::*;
 use diagnostics::Diagnostics;
+use intake::{now, since};
 use oos_core::change::{ChangeSet, Classes as C, Command, Layout, Outbox, Request, Shadow, UiAcq};
 use oracle::Row;
-use std::time::Instant;
 
 #[derive(Clone, Copy)]
 struct Signals {
@@ -50,11 +55,16 @@ impl Default for Signals {
 struct Prepared {
     changes: ChangeSet,
     fields: [Option<oos_core::change::FieldDiff>; oos_core::change::FIELD_COUNT],
+    #[cfg(test)]
     signals: Signals,
     stopped: bool,
     run_edge: bool,
     single: bool,
+    clear: bool,
     workers: bool,
+    consumed: bool,
+    reset_views: bool,
+    reference_view: bool,
 }
 
 const _: () = assert!(std::mem::size_of::<Prepared>() < 16 * 1024);
@@ -129,25 +139,26 @@ pub(super) fn request(ui: &mut Ui, request: Request, row: Row) {
 
 pub(super) fn begin_step(ui: &mut Ui, dt: f64) -> Option<(bool, bool)> {
     ui.host.runtime_mut().change.executing = true;
-    let t = Instant::now();
+    let t = now(ui);
     if !lifecycle::begin_step(ui, dt) {
         ui.host.runtime_mut().change.executing = false;
         return None;
     }
-    let intake = t.elapsed();
+    let intake = since(ui, t);
     ui.host.runtime_mut().change.timing.begin_change();
-    let t = Instant::now();
+    let t = now(ui);
     legacy::settings(ui);
-    let final_done = transitions::apply(ui);
-    acquisition::publish(ui);
+    let (final_done, consumer_time) = settle::accept(ui);
+    let change = since(ui, t);
     let timing = &mut ui.host.runtime_mut().change.timing;
     let shadow = timing.end_change();
-    timing.add(intake, t.elapsed().saturating_sub(shadow));
+    timing.add(intake, change.saturating_sub(shadow).saturating_sub(consumer_time));
     timing.shadow(shadow);
-    let t = Instant::now();
+    let t = now(ui);
     let cleared = picture::apply(ui);
     if cleared {
-        ui.host.runtime_mut().change.timing.picture(t.elapsed());
+        let elapsed = since(ui, t);
+        ui.host.runtime_mut().change.timing.picture(elapsed);
     }
     observe(ui);
     Some((final_done, cleared))
@@ -155,12 +166,10 @@ pub(super) fn begin_step(ui: &mut Ui, dt: f64) -> Option<(bool, bool)> {
 
 pub(super) fn prepare(ui: &mut Ui) {
     let sample = ui.host.runtime().change.census.begin();
-    let started = Instant::now();
     prepare_inner(ui);
     proposals::prepared(ui);
     proposals::resolve(ui);
     let observer = &mut ui.host.runtime_mut().change;
-    observer.timing.record_shadow(started.elapsed());
     sample.finish(&mut observer.census, 0);
 }
 
@@ -207,33 +216,39 @@ fn prepare_inner(ui: &mut Ui) {
             observer.prepared = Some(Prepared {
                 changes: c,
                 fields: changed,
-                signals: std::mem::take(&mut observer.signals),
+                #[cfg(test)]
+                signals: observer.signals,
                 stopped,
                 run_edge,
                 workers: true,
+                consumed: false,
+                reset_views: requests[..n].iter().any(|r| matches!(r, Request::ViewReset | Request::Clear)),
+                reference_view: views::reference_view(&changed, &requests[..n]),
                 single: requests[..n].contains(&Request::Single),
+                clear: requests[..n].contains(&Request::Clear),
             })
         }
         Err(error) => recovery::reject(observer, error),
     }
+    observer.signals = Signals::default();
     // New legacy internal writers run after this point. Their tokens and observations stay queued until next step.
 }
 
 fn observe(ui: &mut Ui) {
     let sample = ui.host.runtime().change.census.begin();
-    let started = Instant::now();
+    let started = now(ui);
     let observer = &mut ui.host.runtime_mut().change;
     if let Some(prepared) = observer.prepared.take() {
-        compare(observer, prepared);
+        observer.last = Some(prepared.changes);
     }
-    observer.timing.shadow(started.elapsed());
+    observer.timing.shadow(observer.timing.since(started));
     sample.finish(&mut observer.census, 1);
 }
 
 pub(super) fn finish_step(ui: &mut Ui) {
     ui.host.runtime_mut().change.executing = false;
     let sample = ui.host.runtime().change.census.begin();
-    let started = Instant::now();
+    let started = now(ui);
     let observer = &mut ui.host.runtime_mut().change;
     if let Some(shadow) = &mut observer.shadow {
         observer.proposals.clear();
@@ -245,7 +260,7 @@ pub(super) fn finish_step(ui: &mut Ui) {
         }
         observer.proposals.clear();
     }
-    observer.timing.shadow(started.elapsed());
+    observer.timing.shadow(observer.timing.since(started));
     sample.finish(&mut observer.census, 2);
 }
 
@@ -260,6 +275,7 @@ pub(crate) fn text(ui: &Ui) -> String {
             let _ = write!(text, " resolved={:?}/{}/{}:{}", token.requester(), token.run(), token.stage(), epoch);
         }
     }
+    text.push_str(" legacy_observer=retired");
     text.push_str(&observer.timing.stage_text());
     text.push_str(&crate::drawpipe::counters().losses.text());
     text.push_str(&crate::drawpipe::counters().acquisition.text());
@@ -284,7 +300,7 @@ pub(super) fn single_key(ui: &mut Ui) {
     ui.m.run = RunState::Run;
 }
 pub(super) fn autoset_mark(ui: &mut Ui) {
-    ui.mark_changed();
+    crate::ui::change::edited(ui);
 }
 pub(super) fn autoset_stage(ui: &mut Ui) {
     stage(ui, oos_core::change::Requester::Autoset);
@@ -335,9 +351,9 @@ pub(super) fn bode_begin(ui: &mut Ui) {
 
 pub(super) fn mask_reset(ui: &mut Ui) {
     request(ui, Request::MaskReset, Row::Mask);
-    ui.mask_counts_reset();
 }
 
+#[cfg(test)]
 fn compare(observer: &mut Observer, prepared: Prepared) {
     let Prepared { changes, fields, signals, stopped, single, .. } = prepared;
     let geometry = fields.iter().flatten().any(|f| oracle::geometry_field(f.name()))
@@ -364,11 +380,6 @@ fn compare(observer: &mut Observer, prepared: Prepared) {
         }
     }
     observer.last = Some(changes);
-}
-
-pub(super) fn recall(ui: &mut Ui) {
-    ui.mstat.clear();
-    event(ui, Row::Recall, C::MAPPING | C::STATS);
 }
 
 fn compare_normalized(observer: &mut Observer, live: &Model) {
@@ -419,13 +430,16 @@ pub(super) fn pending_count(ui: &Ui) -> usize {
     ui.host.runtime().change.pending.entries().len()
 }
 
-pub(super) fn stats_clear(ui: &mut Ui) {
-    ui.clear_measurement_statistics();
-    event(ui, Row::Measurement, C::STATS);
-}
 pub(super) fn stats_reset(ui: &mut Ui) {
     request(ui, Request::StatsReset, Row::Measurement);
-    stats_clear(ui);
+}
+
+/// Statistics count from the moment their display goes on, on every path that switches it.
+pub(super) fn show_stats(ui: &mut Ui, on: bool) {
+    if on && !std::mem::replace(&mut ui.stats_on, on) {
+        stats_reset(ui);
+    }
+    ui.stats_on = on;
 }
 
 pub(super) fn replay(ui: &mut Ui) {
@@ -440,4 +454,25 @@ pub(super) fn mapping_observed(ui: &mut Ui, row: Row) {
 
 pub(super) fn is_prepared(ui: &Ui) -> bool {
     ui.host.runtime().change.prepared.is_some()
+}
+
+/// Input bookkeeping only. Accepted classes own every reset effect.
+pub(crate) fn edited(ui: &mut Ui) {
+    ui.cancel_bus_candidate(true);
+    if ui.m.trig_mode == TrigMode::Single && ui.m.run == RunState::Run {
+        ui.scpi_arm_operation();
+    }
+}
+
+#[cfg(test)]
+mod retained_oracle {
+    use super::*;
+    #[test]
+    fn historical_comparison_remains_available_until_acceptance() {
+        let mut ui = Ui::new(Source::Demo { t: 0.0 }, host::Host::headless());
+        prepare(&mut ui);
+        let observer = &mut ui.host.runtime_mut().change;
+        let prepared = observer.prepared.take().unwrap();
+        compare(observer, prepared);
+    }
 }

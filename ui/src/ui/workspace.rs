@@ -1075,7 +1075,7 @@ impl Ui {
                 }
                 if self.m.ch[c].on {
                     self.m.ch[c].on = false;
-                    self.settings_changed();
+                    change::edited(self);
                 } else if self.record_mode() {
                     self.activate_live_channel(c);
                 } else {
@@ -1085,7 +1085,7 @@ impl Ui {
                     if self.m.run == RunState::Run {
                         self.m.floor_live_tdiv();
                     }
-                    self.settings_changed();
+                    change::edited(self);
                 }
                 self.relayout();
             }
@@ -1152,7 +1152,7 @@ impl Ui {
             Action::MeasureFloat => {
                 self.workspace.measure_float = Some((W - RESULTS_W - 28, TOP.h + 32));
                 self.workspace.measure_docked = false;
-                self.stats_on = true;
+                self.set_stats_shown(true);
                 self.results_min = false;
                 self.relayout();
             }
@@ -1160,7 +1160,7 @@ impl Ui {
                 self.workspace.measure_float = None;
                 self.workspace.measure_docked = true;
                 self.m.strip_dock = dock;
-                self.stats_on = true;
+                self.set_stats_shown(true);
                 self.relayout();
             }
             Action::Close => {}

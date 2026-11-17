@@ -9,7 +9,7 @@ pub(super) fn apply(ui: &mut Ui) -> bool {
         // Keep servicing the last accepted run and any outstanding final read on rejection.
         // New run effects, average/history resets and final-read requests need acceptance.
         let final_done = ui.src.hw_hold(!ui.was_running && (ui.last[0].is_some() || ui.cleared), ui.final_req);
-        if ui.seg_hw_on() || ui.seg_view.is_some() {
+        if ui.seg_hw_on() || ui.seg_view.is_some() || ui.seg_pos.is_some() {
             ui.seg_poll(ui.was_running && ui.seg_hw_on());
         }
         if !ui.was_running {
@@ -27,13 +27,7 @@ pub(super) fn apply(ui: &mut Ui) -> bool {
         .as_ref()
         .is_none_or(|c| (c.identity().gen(), c.identity().epoch()) != (id.gen(), id.epoch()));
     let segment_boundary = running && ui.seg_hw_on() && (single || pair_changed);
-    let segment_history = segment_boundary && prepared.changes.classes().contains(C::HISTORY);
-    if run_edge || single {
-        restart_average(ui);
-    }
-    if (run_edge || segment_history) && ui.m.segments > 0 {
-        restart_history(ui);
-    } else if segment_boundary {
+    if segment_boundary || run_edge && ui.seg_hw_on() {
         restart_segments(ui);
     }
     if !running && ui.was_running && ui.stop_wants_final() {
@@ -42,7 +36,7 @@ pub(super) fn apply(ui: &mut Ui) -> bool {
     }
     let final_done = ui.src.hw_hold(!running && (ui.last[0].is_some() || ui.cleared), ui.final_req);
     ui.was_running = running;
-    if ui.seg_hw_on() || ui.seg_view.is_some() {
+    if ui.seg_hw_on() || ui.seg_view.is_some() || ui.seg_pos.is_some() {
         ui.seg_poll(running && ui.seg_hw_on());
     }
     // stopped: a full-depth demo capture still under way is dropped
@@ -52,34 +46,12 @@ pub(super) fn apply(ui: &mut Ui) -> bool {
     final_done
 }
 
-fn restart_average(ui: &mut Ui) {
-    // The other HW_AVERAGE consumers stay at their legacy seams until e.
-    if ui.src.is_hw() {
-        ui.m.hw_avg_clear += 1;
-        if let Some(p) = &mut ui.host.runtime_mut().change.prepared {
-            let row = if p.single { Row::Single } else { Row::Run };
-            p.signals.effects |= C::HW_AVERAGE;
-            p.signals.effects_by_row[row as usize] |= C::HW_AVERAGE;
-            p.signals.rows |= 1 << row as usize;
-        }
-    }
-}
-
-fn restart_history(ui: &mut Ui) {
-    if let Some(p) = &mut ui.host.runtime_mut().change.prepared {
-        p.signals.effects |= C::HISTORY;
-        p.signals.effects_by_row[Row::Run as usize] |= C::HISTORY;
-    }
-    ui.seg_n = 0;
-    ui.history.clear();
-    ui.hist_pos = None;
-    if ui.seg_hw_on() {
-        restart_segments(ui);
-    }
-}
-
 fn restart_segments(ui: &mut Ui) {
     ui.seg_run += 1;
+    // HISTORY already reset the stores before polling; pair-only restarts retain ordinary history.
+    if ui.host.runtime().change.prepared.as_ref().is_some_and(|p| p.changes.classes().contains(C::HISTORY)) {
+        return;
+    }
     ui.seg_n = 0;
     (ui.seg_pos, ui.seg_view) = (None, None);
     ui.seg_times.clear();

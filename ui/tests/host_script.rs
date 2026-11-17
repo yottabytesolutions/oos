@@ -35,14 +35,13 @@ fn child_preserves_steps_capture_names_and_quit() {
     let inputs = isolated_inputs();
     let output = run_host(&inputs, "frames 2\nshot one.ppm\nshot two.png\nstat state.txt\nquit\nshot late.ppm\n", &[]);
     assert_eq!(success(&output), "shot one.ppm\nshot two.png\n");
-    assert!(String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .any(|line| line == "oos-ui shadow: row=run class=hw_average old=false new=true difference=D4"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("oos-ui shadow: row="));
     rgb(&inputs, "one.ppm");
     assert!(std::fs::read(inputs.path("two.png")).unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
     assert!(!inputs.path("late.ppm").exists());
     assert!(inputs.path("two.png.meta").exists());
     let stat = std::fs::read_to_string(inputs.path("state.txt")).unwrap();
+    assert!(stat.contains("legacy_observer=retired"), "{stat}");
     assert!(stat.contains("frames 5 records 30"), "{}", stat);
     assert!(stat.contains("t 0.2 "), "{}", stat);
 }
@@ -58,14 +57,10 @@ fn repeated_shadow_events_stay_bounded_on_stderr() {
     assert_eq!(success(&output), "shot bounded.ppm\n");
     let diagnostics = String::from_utf8_lossy(&output.stderr);
     let run_events: Vec<_> = diagnostics.lines().filter(|line| line.starts_with("oos-ui shadow: row=run ")).collect();
-    assert_eq!(
-        run_events,
-        ["oos-ui shadow: row=run class=hw_average old=false new=true difference=D4"],
-        "{diagnostics}"
-    );
+    assert!(run_events.is_empty(), "retired observation must not emit events: {diagnostics}");
     assert_eq!(
         diagnostics.lines().filter(|line| line.starts_with("oos-ui shadow: first field=grid_bright ")).count(),
-        1
+        0
     );
     rgb(&inputs, "bounded.ppm");
 }

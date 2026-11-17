@@ -18,7 +18,7 @@ impl Ui {
         let all = AuxOut::choices(board().mask_hw(sw) || board().zone_hw(sw));
         let i = all.iter().position(|&a| a == self.m.aux_out).unwrap_or(0);
         self.m.aux_out = all[(i as i32 + d).rem_euclid(all.len() as i32) as usize];
-        self.settings_changed();
+        change::edited(self);
         true
     }
 
@@ -86,9 +86,7 @@ impl Ui {
     /// Clears the mask statistics, the hardware counters with them.
     pub(crate) fn mask_counts_reset(&mut self) {
         change::event(self, change::oracle::Row::Reset, oos_core::change::Classes::MASK);
-        self.mask_pass = 0;
-        self.mask_fail = 0;
-        self.mask_hw_clear += 1;
+        change::request(self, oos_core::change::Request::MaskReset, change::oracle::Row::Mask);
     }
 
     /// Fork, `:SYSTem:DEBug:MASK?`: the mask unit's raw counters and slot next to the software test and the frame
@@ -253,6 +251,7 @@ mod tests {
         assert!(!ui.mask_hw_active());
         assert_eq!(ui.mask_counts(), (7, 2));
         ui.mask_counts_reset();
+        change::begin_step(&mut ui, 0.04).unwrap();
         assert_eq!((ui.mask_counts(), ui.mask_hw_clear), ((0, 0), 1));
         assert!(ui.mask_debug_text().starts_with("ch=1,slot=0,ctrl=0x00000000,"), "{}", ui.mask_debug_text());
         ui.mask_hw = None;

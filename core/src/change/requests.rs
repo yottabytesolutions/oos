@@ -38,7 +38,14 @@ pub enum Request {
     CreateMask,
     MaskReset,
     StatsReset,
+    ViewReset,
     Replay,
+    /// Exact driver write, in float bits, so later or earlier user writes retain their settings classes.
+    PlaybackPosition {
+        zoom: bool,
+        before: u32,
+        after: u32,
+    },
     Epoch(Token),
 }
 impl Request {
@@ -50,6 +57,7 @@ impl Request {
             Self::Single => C::PHOSPHOR | C::STATS | C::HW_AVERAGE,
             Self::CreateMask | Self::MaskReset => C::MASK,
             Self::StatsReset => C::STATS,
+            Self::ViewReset | Self::PlaybackPosition { .. } => C::VIEW,
             Self::Replay => C::MAPPING,
             Self::Epoch(_) => C::NONE,
         }

@@ -143,7 +143,6 @@ impl Ui {
             return;
         }
         self.meas_cfg = None;
-        change::stats_clear(self);
         self.relayout();
     }
 
@@ -466,7 +465,6 @@ impl Ui {
             }
             self.m.meas2.push(e);
         }
-        change::stats_clear(self);
     }
 
     /// The hardware counter (on the unit): the set-up for the FPGA's counter, and a new reading into the statistics.
@@ -854,7 +852,7 @@ impl Ui {
         }
         self.m.meas.push(e);
         self.ensure_meas_own();
-        self.mark_changed();
+        change::edited(self);
         Ok(true)
     }
 
@@ -871,7 +869,7 @@ impl Ui {
             self.remove_measurement(0);
         }
         self.m.meas2.push(e);
-        self.mark_changed();
+        change::edited(self);
         Ok(true)
     }
 
@@ -885,7 +883,8 @@ impl Ui {
         self.m.cat.clear();
         self.meas_own.clear();
         self.meas_cfg = None;
-        self.mark_changed();
+        change::stats_reset(self);
+        change::edited(self);
         true
     }
 
@@ -894,12 +893,12 @@ impl Ui {
     }
 
     pub(crate) fn set_stats_shown(&mut self, on: bool) {
-        self.stats_on = on;
+        change::show_stats(self, on);
     }
 
     /// `:MEASure:STATistic:RESet`: the history, not the rows.
     pub(crate) fn stats_reset(&mut self) {
-        change::stats_clear(self);
+        change::stats_reset(self);
     }
 
     /// Count, current value, min, max, mean, and standard deviation of one strip row.

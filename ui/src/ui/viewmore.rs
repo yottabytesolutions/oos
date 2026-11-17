@@ -106,6 +106,7 @@ mod tests {
         assert_eq!(ui.view_more_items(), vec![Item::EyeClear, Item::ViewSettings, Item::ViewExit]);
         ui.azr.eye_res = None;
         ui.activate(Item::EyeClear);
+        crate::ui::change::begin_step(&mut ui, 0.04).unwrap();
         assert_eq!(ui.m.view, AView::Eye);
         assert!(ui.azr.eye.is_none());
     }

@@ -249,11 +249,12 @@ fn warmed_ui_observer_allocation_census() {
     }
     let rows = oos_ui::Ui::scripted_change_census(256, || HEAP.allocations());
     for (name, [calls, allocations]) in
-        ["prepare_keys", "compare", "finish_capture", "stage", "live_normalize_bridge"].into_iter().zip(rows)
+        ["prepare_keys", "compare", "finish_capture", "stage", "live_normalize", "consumers"].into_iter().zip(rows)
     {
         println!("UI observer census {name}: calls={calls} allocations={allocations}");
         assert_eq!(calls, 256);
     }
+    assert_eq!(rows[5][1], 0, "warmed reset consumers must not allocate");
     assert_eq!(rows[0][1], 0, "warmed UI keys, normalize and classify must not allocate");
     assert_eq!(rows[1][1], 0, "warmed compare must not allocate");
     assert_eq!(rows[2][1], 0, "warmed finish capture and proposals_agree must not allocate");

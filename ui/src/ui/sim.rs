@@ -12,6 +12,8 @@ use std::sync::{
     Arc,
 };
 
+mod generated;
+
 mod sim_bus_candidate;
 #[cfg(test)]
 mod sim_bus_tests;
@@ -26,6 +28,7 @@ struct Request {
     fresh: bool,
     run: bool,
     guard: String,
+    statistics: Option<u64>,
     trigger: Option<super::reference_search::SimTrigger>,
     bus_trigger: Option<Result<sim_bus_candidate::Plan, &'static str>>,
 }
@@ -35,31 +38,6 @@ struct Generated {
     hits: Option<(usize, Arc<Vec<f64>>)>,
     bus_decode: Option<sim_bus_candidate::Decoded>,
     error: Option<&'static str>,
-}
-
-impl Generated {
-    fn evaluate(request: &Request, samples: Vec<f32>) -> Self {
-        if let Some(plan) = &request.bus_trigger {
-            return match plan
-                .as_ref()
-                .map_err(|error| *error)
-                .and_then(|plan| plan.evaluate(&samples, serial::dt_of(&request.lane)))
-            {
-                Ok(decoded) => Self {
-                    samples,
-                    hits: Some((decoded.primary_slot, Arc::clone(&decoded.hits))),
-                    bus_decode: Some(decoded),
-                    error: None,
-                },
-                Err(error) => Self { samples, hits: None, bus_decode: None, error: Some(error) },
-            };
-        }
-        let hits = request
-            .trigger
-            .as_ref()
-            .map(|trigger| (trigger.primary_slot, trigger.evaluate(&samples, serial::dt_of(&request.lane))));
-        Self { samples, hits, bus_decode: None, error: None }
-    }
 }
 
 /// One worker per UI. Knob changes replace queued requests, never spawn a
@@ -495,6 +473,7 @@ impl Ui {
             fresh,
             run,
             guard: self.sim_trigger_guard(&lane, slot, continuing, run),
+            statistics: None,
             trigger: self.prepare_sim_trigger(&model, slot, vpd),
             bus_trigger: if self.m.trig_on_la() {
                 Some(Err("SIM qualification on logic-analyzer inputs is unavailable"))
@@ -692,7 +671,7 @@ impl Ui {
         if forced {
             self.replay.request_force();
         }
-        change::stats_clear(self);
+        change::observations::playback_setup(self);
         let n = v.len();
         let dt = serial::dt_of(&lane);
         let span = (lane.v_high - lane.v_low).abs().max(0.2);
@@ -902,36 +881,57 @@ impl Ui {
         }
     }
 
-    fn sim_finish_capture(&mut self, request: Request, generated: Generated) {
+    fn sim_finish_capture(&mut self, mut request: Request, generated: Generated) {
         if !self.session_is_sim || !self.sim_play || self.m.run != RunState::Run || request.slot != self.m.sim_slot {
             return;
         }
-        if generated.hits.is_none() {
+        let hits = if let Some((_, times)) = &generated.hits {
+            Some(Arc::clone(times))
+        } else {
             if !self.reference_search_supported() {
                 self.m.status = TrigStatus::Wait;
                 return;
             }
             let source = self.m.trig_ref.unwrap_or_else(|| self.active_reference());
-            if self.reference_trigger_hits(source).is_none() {
-                // The actual external trigger source has not finished scanning.
-                // Retain one candidate off-screen; polling never installs it.
-                if self.sim_generation.is_none() {
-                    match Generation::new() {
-                        Ok(worker) => self.sim_generation = Some(worker),
-                        Err(error) => {
-                            self.sim_error = Some(error);
-                            return;
-                        }
-                    }
-                }
-                let generation = self.sim_generation.as_mut().unwrap();
-                generation.active = Some(request.id);
-                generation.run = request.run;
-                generation.pending = Some((request, generated));
-                self.m.status = TrigStatus::Wait;
+            self.reference_trigger_hits(source)
+        };
+        let Some(hits) = hits else {
+            self.sim_hold_capture(request, generated);
+            return;
+        };
+        if !request.fresh && (!hits.is_empty() || self.m.trig_mode == TrigMode::Auto || self.replay.force_requested()) {
+            let statistics = change::acquisition::identity(self).stats_gen();
+            if request.statistics.is_none() {
+                request.statistics = Some(statistics);
+                change::stats_reset(self);
+            }
+            // Keep the qualified payload off-screen until its reset is accepted.
+            if request.statistics == Some(statistics) {
+                self.sim_hold_capture(request, generated);
                 return;
             }
         }
+        self.sim_install_capture(request, generated);
+    }
+
+    fn sim_hold_capture(&mut self, request: Request, generated: Generated) {
+        if self.sim_generation.is_none() {
+            match Generation::new() {
+                Ok(worker) => self.sim_generation = Some(worker),
+                Err(error) => {
+                    self.sim_error = Some(error);
+                    return;
+                }
+            }
+        }
+        let generation = self.sim_generation.as_mut().unwrap();
+        generation.active = Some(request.id);
+        generation.run = request.run;
+        generation.pending = Some((request, generated));
+        self.m.status = TrigStatus::Wait;
+    }
+
+    fn sim_install_capture(&mut self, request: Request, generated: Generated) {
         let Generated { samples, hits, bus_decode, .. } = generated;
         let previous = self.refs[request.slot].take();
         let dt = serial::dt_of(&request.lane);

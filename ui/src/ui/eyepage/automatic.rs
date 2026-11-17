@@ -4,6 +4,7 @@
 use super::*;
 use std::sync::mpsc;
 
+pub(in crate::ui) const RESETS_ON: oos_core::change::Classes = oos_core::change::Classes::NONE;
 const BACKGROUND_POINTS: usize = 262_144;
 const PROBE_POINTS: usize = 131_072;
 // Analysis resolution is independent of the pane's pixels. Every native sample
@@ -116,6 +117,7 @@ impl Worker {
 #[derive(Default)]
 pub(in crate::ui) struct State {
     pub enabled: bool,
+    revision: u64,
     pub summary: Option<Summary>,
     wanted: Option<Key>,
     applied: Option<Key>,
@@ -130,13 +132,10 @@ pub(in crate::ui) struct State {
 
 impl State {
     pub fn invalidate(&mut self) {
-        self.wanted = None;
-        self.applied = None;
-        self.applied_context = None;
+        self.revision += 1;
+        (self.wanted, self.applied, self.applied_context) = (None, None, None);
+        (self.updating, self.failed, self.summary) = (false, false, None);
         self.completed_captures.clear();
-        self.updating = false;
-        self.summary = None;
-        self.failed = false;
     }
 
     pub(in crate::ui) fn snapshot_caption(&self) -> Option<String> {
@@ -422,10 +421,6 @@ impl Ui {
         true
     }
 
-    fn auto_eye_key(&self) -> Option<Key> {
-        self.auto_eye_key_for(true)
-    }
-
     fn auto_eye_context_key(&self) -> Option<Key> {
         self.auto_eye_key_for(false)
     }
@@ -433,6 +428,7 @@ impl Ui {
     fn auto_eye_key_for(&self, snapshot: bool) -> Option<Key> {
         let mut key = vec![
             self.waveform_epoch(),
+            self.azr.eye_auto.revision,
             self.m.eye_from_record as u64,
             if self.m.eye_from_record { 0 } else { self.m.eye_rate.to_bits() },
         ];
@@ -460,7 +456,7 @@ impl Ui {
         Some(Key(key))
     }
 
-    pub(super) fn auto_eye_large(&self) -> bool {
+    pub(in crate::ui) fn auto_eye_large(&self) -> bool {
         self.auto_eye_inputs().any(|id| match id {
             WaveId::Ref(i) => self.refs.get(i).and_then(Option::as_ref).is_some_and(|r| r.v.len() > BACKGROUND_POINTS),
             WaveId::Ch(c) => self.last[0]
@@ -524,7 +520,8 @@ impl Ui {
             Err(_) => None,
         });
         let Some(finished) = finished else { return };
-        if !self.eye_open() || (!self.azr.eye_auto.enabled && !self.auto_eye_large()) {
+        let active = self.azr.eye_auto.enabled || self.auto_eye_large();
+        if self.azr.eye_auto.wanted.is_none() || !self.eye_open() || !active {
             return;
         }
         if self.auto_eye_context_key().as_ref() != Some(&finished.context) {
@@ -541,7 +538,7 @@ impl Ui {
             self.analyzer_update();
             return;
         }
-        let newer_capture = self.auto_eye_key().as_ref() != Some(&finished.key);
+        let newer_capture = self.auto_eye_key_for(true).as_ref() != Some(&finished.key);
         self.azr.eye_auto.applied = Some(finished.key);
         self.azr.eye_auto.applied_context = Some(finished.context);
         self.azr.eye_auto.completed_captures = finished.captures;
@@ -572,7 +569,7 @@ impl Ui {
             return false;
         }
         self.eye_auto_poll();
-        let Some(key) = self.auto_eye_key() else {
+        let Some(key) = self.auto_eye_key_for(true) else {
             self.auto_eye_failure("No samples on the selected source; choose a loaded or active source".into());
             return true;
         };
@@ -711,12 +708,12 @@ mod performance_and_timing_tests {
         let (mut ui, requests, results) = controlled(1);
         ui.eye_make();
         let job = requests.try_recv().unwrap();
-        let key = ui.auto_eye_key();
+        let key = ui.auto_eye_key_for(true);
         for revision in 2..40 {
             ui.replay.sim_revision = revision;
             std::sync::Arc::make_mut(&mut ui.refs[1].as_mut().unwrap().v)[0] = revision as f32;
             ui.step(0.01);
-            assert_eq!(ui.auto_eye_key(), key);
+            assert_eq!(ui.auto_eye_key_for(true), key);
             assert_eq!(ui.azr.eye_auto.submitted, 1);
             assert!(matches!(requests.try_recv(), Err(mpsc::TryRecvError::Empty)));
         }
@@ -821,8 +818,7 @@ mod performance_and_timing_tests {
         assert_eq!(ui.azr.eye_auto.submitted, 1);
     }
 
-    #[test]
-    fn native_channel_eye_uses_full_frame_and_ignores_interpolated_display_pan() {
+    fn native_channel_eye() -> (Ui, std::sync::Arc<crate::board::Frame>, usize, f64) {
         const NATIVE_POINTS: usize = 1_000_000;
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.run = RunState::Stop;
@@ -861,6 +857,13 @@ mod performance_and_timing_tests {
         ui.wfm_total = 17;
         ui.select_workspace_source(WaveId::Ch(0));
         ui.m.eye_src = WaveId::Ch(0);
+        (ui, frame, expected_edges, origin)
+    }
+
+    #[test]
+    fn native_channel_eye_uses_full_frame_and_ignores_interpolated_display_pan() {
+        const NATIVE_POINTS: usize = 1_000_000;
+        let (mut ui, frame, expected_edges, origin) = native_channel_eye();
         let sampled = ui.eye_samples(ui.last[0].as_ref().unwrap(), WaveId::Ch(0)).unwrap();
         assert_eq!((sampled.v.len(), sampled.dt), (NATIVE_POINTS, 5e-12));
         assert!((sampled.t0 - (origin - 2e-12)).abs() < 1e-21);
@@ -870,7 +873,7 @@ mod performance_and_timing_tests {
         ui.eye_make();
         let job = requests.try_recv().unwrap();
         assert_eq!((job.data.v.len(), job.data.dt), (NATIVE_POINTS, 5e-12));
-        let key = ui.auto_eye_key();
+        let key = ui.auto_eye_key_for(true);
         for pan in 0..20 {
             let screen = ui.last[0].as_mut().unwrap();
             screen.t0 += 1e-9;
@@ -881,7 +884,11 @@ mod performance_and_timing_tests {
             raw.i1 = raw.i0 + 4;
             raw.t0 = origin + raw.i0 as f64 * frame.dt;
             ui.step(0.01);
-            assert_eq!(ui.auto_eye_key(), key, "display buffers and gates cannot change native capture identity");
+            assert_eq!(
+                ui.auto_eye_key_for(true),
+                key,
+                "display buffers and gates cannot change native capture identity"
+            );
             assert_eq!(ui.azr.eye_auto.submitted, 1);
             assert!(matches!(requests.try_recv(), Err(mpsc::TryRecvError::Empty)));
         }
@@ -993,11 +1000,11 @@ mod performance_and_timing_tests {
         ui.refs[0] = Some(reference(values, 1e-12, -150e-9));
         ui.select_workspace_source(WaveId::Ref(0));
         ui.eye_make();
-        let key = ui.auto_eye_key();
+        let key = ui.auto_eye_key_for(true);
         assert_eq!(ui.azr.eye_auto.submitted, 1);
         ui.eye_set_place(EyePlace::Side);
         ui.eye_big = Some(3);
-        assert_eq!(ui.auto_eye_key(), key);
+        assert_eq!(ui.auto_eye_key_for(true), key);
         let deadline = crate::ui::lifecycle::test_wait::Wait::new(
             "long_reference_analysis_ignores_display_geometry_and_keeps_all_native_edges",
         );
@@ -1043,12 +1050,12 @@ mod performance_and_timing_tests {
         ui.m.eye_src = WaveId::Ref(0);
         ui.m.eye_b = Some(WaveId::Ref(1));
         ui.m.eye_rail = Some(WaveId::Ref(2));
-        let before = ui.auto_eye_key();
+        let before = ui.auto_eye_key_for(true);
         ui.m.deskew_ref[1] = 3e-9;
-        let clock_changed = ui.auto_eye_key();
+        let clock_changed = ui.auto_eye_key_for(true);
         assert_ne!(clock_changed, before);
         ui.m.deskew_ref[2] = 5e-9;
-        assert_ne!(ui.auto_eye_key(), clock_changed);
+        assert_ne!(ui.auto_eye_key_for(true), clock_changed);
         let blank = Ui::blank_record();
         let (data, clock, dt, t0) = ui.eye_pair(&blank, WaveId::Ref(0), WaveId::Ref(1)).unwrap();
         assert!((t0 - 11e-9).abs() < 1e-22 && (dt - 1e-9).abs() < 1e-22);

@@ -49,7 +49,7 @@ use crate::board::{board, Board};
 use crate::gfx::Canvas;
 use crate::math::{math_scales, MathCh, MathOp, Window, MATH_REF_BASE, NMATH};
 use crate::model::*;
-use crate::ui::Ui;
+use crate::ui::{change, Ui};
 
 mod actions;
 mod message;
@@ -73,6 +73,8 @@ pub struct Program {
     /// A completed query may legitimately produce zero payload bytes.
     pub has_reply: bool,
     invalid: bool,
+    /// a command ran since the last change point: the next query or the message end accepts it first
+    unsettled: bool,
 }
 impl Program {
     pub fn new(text: &str) -> Self {
@@ -235,7 +237,7 @@ fn with_bus(ui: &mut Ui, k: usize, f: impl FnOnce(&mut Model)) {
         ui.m.dec_select(was);
     }
     if k == was && ui.m.trig_type == TrigType::Bus {
-        ui.mark_changed();
+        change::edited(ui);
     }
 }
 
@@ -283,7 +285,7 @@ fn put_bus_wave(ui: &mut Ui, slot: usize, protocol: Proto, role: usize, source: 
         ui.m.dec_select(selected);
     }
     if ok && slot == selected && ui.m.trig_type == TrigType::Bus {
-        ui.mark_changed();
+        change::edited(ui);
     }
     ok
 }
@@ -358,7 +360,7 @@ fn put_math(ui: &mut Ui, k: usize, c: MathCh) {
         ui.m.fft_win = c.win;
     }
     ui.m.maths[k] = c;
-    ui.mark_changed();
+    change::edited(ui);
 }
 
 fn math_op_name(op: MathOp) -> &'static str {
@@ -927,6 +929,7 @@ impl Scpi {
                 program.commands.clear();
                 break;
             }
+            program.before(ui, &command);
             if command.eq_ignore_ascii_case("*OPC?") {
                 let fence = ui.scpi_operations();
                 if fence.state(ui) == crate::ui::OperationState::Pending {
@@ -942,6 +945,7 @@ impl Scpi {
                 }
             }
         }
+        program.settle(ui);
         Some(std::mem::take(&mut program.out))
     }
 
@@ -964,19 +968,6 @@ impl Scpi {
         };
         self.normalize_errors();
         r
-    }
-
-    fn normalize_errors(&mut self) {
-        // a client that never asks for its errors, or sends megabytes of nonsense, must not fill the memory
-        for e in &mut self.err {
-            if e.len() > ERR_LEN {
-                *e = e.chars().take(ERR_LEN).collect();
-            }
-        }
-        if self.err.len() > ERR_MAX {
-            self.err.truncate(ERR_MAX - 1);
-            self.push_err("-350,\"Queue overflow\"".into());
-        }
     }
 
     fn exec_cmd(&mut self, ui: &mut Ui, cv: &Canvas, cmd: &str) -> Option<Vec<u8>> {
@@ -1090,12 +1081,12 @@ impl Scpi {
             } else {
                 ui.key(crate::ui::key::FORCE);
             }
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if !query && nodes.len() == 1 && kw(nodes[0], "STOP") && ui.sim_generating() {
             let _ = ui.sim_play_set(false);
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         // A reference capture uses the same acquisition state as the screen.
@@ -1124,7 +1115,7 @@ impl Scpi {
             } else {
                 ui.record_key(crate::ui::key::SINGLE);
             }
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         // Reference trigger identities belong to the UI acquisition router, not
@@ -1150,7 +1141,7 @@ impl Scpi {
                     if !ui.set_trigger_source(id, secondary) {
                         self.push_err("-224,\"Trigger source is unavailable\"".into());
                     }
-                    ui.mark_changed();
+                    change::edited(ui);
                     return None;
                 }
                 // Leave D0..D15 to the existing LA source handler.
@@ -1200,7 +1191,7 @@ impl Scpi {
                 };
                 if let Some(kind) = kind {
                     ui.trigger_type_set(kind);
-                    ui.mark_changed();
+                    change::edited(ui);
                 } else {
                     self.push_err("-224,\"Invalid trigger type\"".into());
                 }
@@ -1228,7 +1219,7 @@ impl Scpi {
                         }
                         Some(number) => {
                             *value = number;
-                            ui.mark_changed();
+                            change::edited(ui);
                         }
                         None => self.push_err("-224,\"Invalid runt threshold\"".into()),
                     }
@@ -1710,7 +1701,7 @@ impl Scpi {
         })();
         if let Some(resp) = r {
             if !query {
-                ui.mark_changed();
+                change::edited(ui);
             }
             return resp;
         }
@@ -1739,7 +1730,7 @@ impl Scpi {
                 Some(v) => {
                     ui.m.meas_idle = v;
                     ui.measure_last();
-                    ui.mark_changed();
+                    change::edited(ui);
                 }
                 None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
             }
@@ -1764,7 +1755,7 @@ impl Scpi {
                 } else {
                     ui.set_meas_source(id);
                 }
-                ui.mark_changed();
+                change::edited(ui);
                 return None;
             }
         }
@@ -1808,7 +1799,7 @@ impl Scpi {
                 if let Some(b) = b {
                     ui.set_meas_source_b(b);
                 }
-                ui.mark_changed();
+                change::edited(ui);
                 return None;
             }
             if kw(n1, "CLEar") && !query {
@@ -1835,7 +1826,7 @@ impl Scpi {
                 ui.m.meas_lpct = lo;
                 ui.m.meas_hpct = hi;
                 ui.measure_last();
-                ui.mark_changed();
+                change::edited(ui);
                 return None;
             }
             if kw(n1, "INDicator") {
@@ -1856,7 +1847,7 @@ impl Scpi {
                         } else {
                             ui.m.meas_thold = v;
                         }
-                        ui.mark_changed();
+                        change::edited(ui);
                     }
                     None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
@@ -2127,7 +2118,7 @@ impl Scpi {
                 match MODES.iter().find(|(k, _)| kw(arg, k)) {
                     Some((_, m)) => {
                         ui.m.bode_mode = *m;
-                        ui.mark_changed();
+                        change::edited(ui);
                     }
                     None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
@@ -2323,7 +2314,7 @@ impl Scpi {
                     .ok_or("no '='".to_string())
                     .and_then(|(k, v)| crate::store::set(&mut ui.m, k.trim(), v.trim()));
                 match r {
-                    Ok(()) => ui.mark_changed(),
+                    Ok(()) => change::edited(ui),
                     Err(e) => self.push_err(format!("-224,\"Illegal parameter value\" {}", e)),
                 }
                 // a setup file may hold keys of newer versions, here a typo must not pass for a setting; the keys that
@@ -2395,7 +2386,7 @@ impl Scpi {
                 match want.filter(|a| a.offered(board().mask_hw(ui.switches()) || board().zone_hw(ui.switches()))) {
                     Some(a) => {
                         ui.m.aux_out = a;
-                        ui.mark_changed();
+                        change::edited(ui);
                     }
                     None => self.err.push(format!("-224,\"Illegal parameter value\" {}", arg)),
                 }
@@ -2433,7 +2424,7 @@ impl Scpi {
         {
             match board().mask_map(if query { None } else { Some(arg.trim()) }) {
                 Ok(s) if query => return t(&s),
-                Ok(_) => ui.mark_changed(),
+                Ok(_) => change::edited(ui),
                 Err(e) => self.err.push(format!("-224,\"Illegal parameter value\" {}", e)),
             }
             return None;
@@ -2529,7 +2520,7 @@ impl Scpi {
             ui.m.meas_lpct = frac;
         }
         ui.measure_last();
-        ui.mark_changed();
+        change::edited(ui);
         None
     }
 
@@ -2631,7 +2622,7 @@ impl Scpi {
                     if !on {
                         ui.m.tfine = 1.0;
                     }
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -2662,7 +2653,7 @@ impl Scpi {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             };
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 2 && kw(n0, "DELay") && kw(n[1], "ENABle") {
@@ -2672,7 +2663,7 @@ impl Scpi {
             return match parse_bool(arg) {
                 Some(on) => {
                     ui.zoom_set_remote(on);
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -2696,7 +2687,7 @@ impl Scpi {
             }
             ui.m.zscale = i;
             ui.zoom_clamp();
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 2 && kw(n0, "DELay") && (kw(n[1], "OFFSet") || kw(n[1], "POSition")) {
@@ -2709,7 +2700,7 @@ impl Scpi {
             };
             ui.m.zdelay = v;
             ui.zoom_clamp();
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 1 && kw(n0, "ROLL") {
@@ -2720,7 +2711,7 @@ impl Scpi {
             return match parse_bool(arg) {
                 Some(on) => {
                     ui.m.auto_roll = on;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -2743,7 +2734,7 @@ impl Scpi {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             }
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 2 && kw(n0, "XY") && kw(n[1], "ENABle") {
@@ -2753,7 +2744,7 @@ impl Scpi {
             return match parse_bool(arg) {
                 Some(on) => {
                     ui.xy_set(on);
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -2787,7 +2778,7 @@ impl Scpi {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             }
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         self.push_err(format!("-113,\"Undefined header\" :TIMebase:{}", n.join(":")));
@@ -3127,7 +3118,7 @@ impl Scpi {
                 return None;
             };
             ui.m.persist = i;
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 1 && kw(n0, "WBRightness") {
@@ -3139,7 +3130,7 @@ impl Scpi {
                 return None;
             };
             ui.m.intensity = v.clamp(10, 100);
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 1 && kw(n0, "GRID") {
@@ -3160,7 +3151,7 @@ impl Scpi {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             };
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 1 && kw(n0, "GBRightness") {
@@ -3173,7 +3164,7 @@ impl Scpi {
             };
             // The screen's grid brightness starts at 10, the same floor as the waveform brightness.
             ui.m.grid_bright = v.clamp(10, 100);
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 1 && kw(n0, "RULers") {
@@ -3183,7 +3174,7 @@ impl Scpi {
             return match parse_bool(arg) {
                 Some(on) => {
                     ui.m.grid_frame = on;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -3199,7 +3190,7 @@ impl Scpi {
             return match parse_bool(arg) {
                 Some(on) => {
                     ui.m.color_grade = on;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -3260,7 +3251,7 @@ impl Scpi {
             return None;
         }
         ui.measure_last();
-        ui.mark_changed();
+        change::edited(ui);
         None
     }
 
@@ -3273,7 +3264,7 @@ impl Scpi {
         match parse_bool(arg) {
             Some(on) => {
                 ui.m.meas_labels = on;
-                ui.mark_changed();
+                change::edited(ui);
                 None
             }
             None => {
@@ -3339,7 +3330,7 @@ impl Scpi {
             return match parse_bool(arg) {
                 Some(on) => {
                     ui.set_decode_table(on);
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -3782,7 +3773,7 @@ impl Scpi {
                     } else if !on {
                         ui.m.hist = Hist::Off;
                     }
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -3803,7 +3794,7 @@ impl Scpi {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             };
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 1 && kw(n0, "SOURce") {
@@ -3815,7 +3806,7 @@ impl Scpi {
                 Some(c) => {
                     ui.m.ch[c].on = true;
                     ui.set_meas_source(WaveId::Ch(c));
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -3857,7 +3848,7 @@ impl Scpi {
             return match parse_bool(arg) {
                 Some(on) => {
                     ui.m.mask_on = on;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -3873,7 +3864,7 @@ impl Scpi {
             return match parse_ch(arg) {
                 Some(c) => {
                     ui.m.mask_src = c;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -3893,7 +3884,7 @@ impl Scpi {
             };
             let ok = if horizontal { ui.mask_tolerance(Some(v), None) } else { ui.mask_tolerance(None, Some(v)) };
             if ok {
-                ui.mark_changed();
+                change::edited(ui);
             } else {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             }
@@ -3901,7 +3892,7 @@ impl Scpi {
         }
         if n.len() == 1 && kw(n0, "CREate") && !query {
             if ui.mask_create() {
-                ui.mark_changed();
+                change::edited(ui);
             } else {
                 self.push_err("-230,\"Data corrupt or stale\" source has no waveform".into());
             }
@@ -3909,7 +3900,7 @@ impl Scpi {
         }
         if n.len() == 1 && kw(n0, "RESet") && !query {
             ui.mask_counts_reset();
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 1 && kw(n0, "OPERate") {
@@ -3926,11 +3917,11 @@ impl Scpi {
                 if ui.m.trig_mode == TrigMode::Single {
                     ui.m.trig_mode = TrigMode::Auto;
                 }
-                ui.mark_changed();
+                change::edited(ui);
                 None
             } else if kw(a, "STOP") {
                 ui.m.run = RunState::Stop;
-                ui.mark_changed();
+                change::edited(ui);
                 None
             } else {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
@@ -3962,7 +3953,7 @@ impl Scpi {
             return match parse_bool(arg) {
                 Some(on) => {
                     ui.m.dvm_on = on;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -3978,7 +3969,7 @@ impl Scpi {
             return match parse_ch(arg) {
                 Some(c) => {
                     ui.m.dvm_src = c;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -4005,7 +3996,7 @@ impl Scpi {
             return match mode {
                 Some(m) => {
                     ui.m.dvm_mode = m;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -4031,7 +4022,7 @@ impl Scpi {
             return match parse_bool(arg) {
                 Some(on) => {
                     ui.m.cnt_on = on;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -4047,7 +4038,7 @@ impl Scpi {
             return match parse_ch(arg) {
                 Some(c) => {
                     ui.m.cnt_src = c;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -4074,7 +4065,7 @@ impl Scpi {
             return match mode {
                 Some(m) => {
                     ui.m.cnt_mode = m;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -4090,7 +4081,7 @@ impl Scpi {
             return match arg.trim().parse::<u32>().ok().filter(|d| (3..=7).contains(d)) {
                 Some(d) => {
                     ui.m.cnt_digits = d;
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -4169,7 +4160,7 @@ impl Scpi {
                     return illegal(self);
                 }
                 ui.m.dec_la[role] = source;
-                ui.mark_changed();
+                change::edited(ui);
                 return None;
             }
             let source = if arg.eq_ignore_ascii_case("NONE") {
@@ -4184,7 +4175,7 @@ impl Scpi {
             if !ui.configure_decoder_source(role, source) {
                 return illegal(self);
             }
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if kw(node, "PROTocol") || node.eq_ignore_ascii_case("PROTO") {
@@ -4204,7 +4195,7 @@ impl Scpi {
                 ui.m.dec_thr = 0.02;
                 ui.m.dec_la_in = false;
             }
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if kw(node, "STATe") {
@@ -4213,7 +4204,7 @@ impl Scpi {
             }
             let Some(on) = parse_bool(arg) else { return illegal(self) };
             ui.m.dec_on = on;
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if kw(node, "SELect") {
@@ -4232,7 +4223,7 @@ impl Scpi {
             }
             let Some(threshold) = num(arg) else { return illegal(self) };
             ui.m.dec_thr = threshold;
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if kw(node, "INPut") {
@@ -4246,7 +4237,7 @@ impl Scpi {
             } else {
                 return illegal(self);
             }
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         self.push_err(format!("-113,\"Undefined header\" DECode:{}", node));
@@ -4260,7 +4251,7 @@ impl Scpi {
         match crate::decode::parse_cphy_rate(arg) {
             Ok(rate) => {
                 ui.m.dec_cphy_rate = rate;
-                ui.mark_changed();
+                change::edited(ui);
             }
             Err(_) => self.push_err(format!("-224,\"Invalid C-PHY symbol rate\" {}", arg)),
         }
@@ -4387,7 +4378,7 @@ impl Scpi {
             match parse_bool(arg) {
                 Some(on) => {
                     ui.m.la.on = on;
-                    ui.mark_changed();
+                    change::edited(ui);
                     return None;
                 }
                 None => return bad(self),
@@ -4414,7 +4405,7 @@ impl Scpi {
             match arg.trim().parse::<f32>() {
                 Ok(v) if v.abs() <= la::THR_MAX => {
                     (ui.m.la.preset[pod], ui.m.la.user[pod]) = (la::USER, v);
-                    ui.mark_changed();
+                    change::edited(ui);
                     return None;
                 }
                 _ => return bad(self),
@@ -4517,7 +4508,7 @@ impl Scpi {
             return match parse_slot(arg) {
                 Some(i) => {
                     ui.ref_slot_set(i);
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -4534,7 +4525,7 @@ impl Scpi {
             }
             return match parse_bool(&rest) {
                 Some(on) if ui.ref_show_slot(slot, on) => {
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 _ => {
@@ -4549,7 +4540,7 @@ impl Scpi {
             }
             return match parse_slot(arg) {
                 Some(i) if ui.ref_slot_set(i) => {
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 _ => {
@@ -4566,7 +4557,7 @@ impl Scpi {
             }
             return match parse_ch(&rest) {
                 Some(c) if ui.ref_source_set(slot, c) => {
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 _ => {
@@ -4595,7 +4586,7 @@ impl Scpi {
             };
             let ok = if scale { ui.ref_vscale_set(slot, v) } else { ui.ref_voffset_set(slot, v) };
             if ok {
-                ui.mark_changed();
+                change::edited(ui);
             } else {
                 self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
             }
@@ -4614,7 +4605,7 @@ impl Scpi {
                 };
             }
             if ui.ref_label_set(slot, rest) {
-                ui.mark_changed();
+                change::edited(ui);
             } else {
                 self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
             }
@@ -4624,7 +4615,7 @@ impl Scpi {
             let (slot, _) = self.ref_pair(ui, arg);
             let Some(slot) = slot else { return None };
             if ui.ref_reset_scale(slot) {
-                ui.mark_changed();
+                change::edited(ui);
             } else {
                 self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
             }
@@ -4647,7 +4638,7 @@ impl Scpi {
                 return None;
             };
             if ui.ref_color_set(slot, i) {
-                ui.mark_changed();
+                change::edited(ui);
             } else {
                 self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
             }
@@ -4655,7 +4646,7 @@ impl Scpi {
         }
         if kw(n0, "CLEar") && !query {
             ui.ref_clear_all();
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if kw(n0, "SAVE") && !query {
@@ -4670,7 +4661,7 @@ impl Scpi {
             }
             return match ui.ref_save_slot() {
                 Ok(()) => {
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 Err(e) => {
@@ -4698,7 +4689,7 @@ impl Scpi {
     fn ref_loaded(&mut self, ui: &mut Ui, r: Result<(), String>) -> Option<Vec<u8>> {
         match r {
             Ok(()) => {
-                ui.mark_changed();
+                change::edited(ui);
                 None
             }
             Err(e) if e.starts_with("missing ") => {
@@ -4743,7 +4734,7 @@ impl Scpi {
                     return None;
                 }
             }
-            ui.mark_changed();
+            change::edited(ui);
             return None;
         }
         if n.len() == 2 && (kw(n0, "SSC") || kw(n0, "JITTer")) {
@@ -4775,7 +4766,7 @@ impl Scpi {
                         return None;
                     }
                 }
-                ui.mark_changed();
+                change::edited(ui);
                 return None;
             }
         }
@@ -4787,7 +4778,7 @@ impl Scpi {
             let order = a.strip_prefix("PRBS").unwrap_or(&a).trim_start_matches('-').parse::<u8>().ok();
             if let Some(p @ (7 | 9 | 13 | 15 | 23 | 31)) = order {
                 ui.m.sim_prbs = p;
-                ui.mark_changed();
+                change::edited(ui);
             } else {
                 self.push_err("-224,\"Illegal parameter value\" PRBS order".into());
             }
@@ -4798,7 +4789,7 @@ impl Scpi {
                 return t(ui.sim_preset_name());
             }
             return if ui.sim_preset_set(arg) {
-                ui.mark_changed();
+                change::edited(ui);
                 None
             } else {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
@@ -4812,7 +4803,7 @@ impl Scpi {
             return match parse_slot(arg) {
                 Some(i) => {
                     ui.sim_slot_set(i);
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 None => {
@@ -4829,7 +4820,7 @@ impl Scpi {
             return match on {
                 Some(on) => {
                     match ui.sim_play_set(on) {
-                        Ok(()) => ui.mark_changed(),
+                        Ok(()) => change::edited(ui),
                         Err(error) => self.push_err(format!("-224,\"Illegal parameter value\" {}", error)),
                     }
                     None
@@ -4846,7 +4837,7 @@ impl Scpi {
             }
             return match parse_bool(arg) {
                 Some(on) if ui.sim_show_set(on) => {
-                    ui.mark_changed();
+                    change::edited(ui);
                     None
                 }
                 _ => {
@@ -5795,7 +5786,7 @@ mod tests {
         ui.step(0.2);
         assert_eq!(captures(&ui), 0.0);
         assert!(scpi.poll_program(&mut ui, &cv, &mut old).is_none());
-        // Use the UI acquisition router directly: a SCPI mark_changed call here
+        // Use the UI acquisition router directly: an input edit notification here
         // would mask a missing operation-token hook on the actual source change.
         assert!(ui.set_trigger_source(WaveId::Ref(1), false));
         assert_eq!((ui.m.trig_mode, ui.m.run, ui.m.status), (TrigMode::Single, RunState::Run, TrigStatus::Wait));
@@ -6596,8 +6587,27 @@ mod tests {
         assert_eq!(scpi.exec_message_checked(&mut ui, &canvas, ":STOP"), Ok((Vec::new(), false)));
     }
 
+    const CURSOR_SETTERS: [&str; 16] = [
+        ":CURS:MODE MAN",
+        ":CURS:MAN:TYPE TIME",
+        ":CURS:MAN:SOUR CHAN1",
+        ":CURS:MAN:CAX 0",
+        ":CURS:MAN:CBX 1e-8",
+        ":CURS:MAN:TYPE AMPL",
+        ":CURS:MAN:CAY 0.2",
+        ":CURS:MAN:CBY -0.2",
+        ":CURS:MODE XY",
+        ":CURS:XY:AX 0",
+        ":CURS:XY:AY 0.1",
+        ":CURS:XY:BX 1e-8",
+        ":CURS:XY:BY -0.1",
+        ":CURS:MODE TRAC",
+        ":CURS:TRAC:SOUR2 CHAN1",
+        ":CURS:MODE OFF",
+    ];
+
     #[test]
-    fn cursor_setters_preserve_genuine_statistics_and_pending_single() {
+    fn cursor_setters_preserve_genuine_statistics() {
         let (mut scpi, mut ui, canvas) = session();
         for _ in 0..4 {
             ui.step(0.05);
@@ -6605,30 +6615,34 @@ mod tests {
         let statistics = ui.measurement_statistics_snapshot_for_test();
         assert!(statistics.iter().any(|&(count, _)| count >= 3));
         let record = ui.record_volts(0).to_vec();
+        let stamp = ui.m.hw_stamp;
+        for command in CURSOR_SETTERS {
+            line(&mut scpi, &mut ui, &canvas, command);
+            assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics, "{command}");
+            assert_eq!(ui.record_volts(0), record, "{command}");
+            assert_eq!(ui.m.hw_stamp, stamp, "{command}");
+        }
+        assert_eq!(line(&mut scpi, &mut ui, &canvas, ":SYST:ERR?"), "0,\"No error\"");
+    }
+
+    // The panel SINGLE is accepted by a step first: a SCPI message is a change point, and SINGLE resets the
+    // statistics when it is accepted (task 0066 question 1). The cursor setters then leave it pending.
+    #[test]
+    fn cursor_setters_preserve_a_pending_single() {
+        let (mut scpi, mut ui, canvas) = session();
+        for _ in 0..4 {
+            ui.step(0.05);
+        }
         ui.m.trig_level = 100.0;
         ui.key(crate::ui::key::SINGLE);
+        ui.step(0.05);
+        let statistics = ui.measurement_statistics_snapshot_for_test();
+        let record = ui.record_volts(0).to_vec();
         let stamp = ui.m.hw_stamp;
         let source = ui.m.trigger_wave();
         let mut waiting = Program::new("*OPC?;:RUN");
         assert!(scpi.poll_program(&mut ui, &canvas, &mut waiting).is_none());
-        for command in [
-            ":CURS:MODE MAN",
-            ":CURS:MAN:TYPE TIME",
-            ":CURS:MAN:SOUR CHAN1",
-            ":CURS:MAN:CAX 0",
-            ":CURS:MAN:CBX 1e-8",
-            ":CURS:MAN:TYPE AMPL",
-            ":CURS:MAN:CAY 0.2",
-            ":CURS:MAN:CBY -0.2",
-            ":CURS:MODE XY",
-            ":CURS:XY:AX 0",
-            ":CURS:XY:AY 0.1",
-            ":CURS:XY:BX 1e-8",
-            ":CURS:XY:BY -0.1",
-            ":CURS:MODE TRAC",
-            ":CURS:TRAC:SOUR2 CHAN1",
-            ":CURS:MODE OFF",
-        ] {
+        for command in CURSOR_SETTERS {
             line(&mut scpi, &mut ui, &canvas, command);
             assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics, "{command}");
             assert_eq!(ui.record_volts(0), record, "{command}");

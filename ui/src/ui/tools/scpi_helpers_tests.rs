@@ -268,6 +268,7 @@ fn remote_clear_cancels_deferred_statistics_before_same_row_is_readded() {
     assert_eq!(ui.mstat[0].n, 0);
     assert!(ui.meas_clear_remote());
     assert!(!ui.meas_clear_remote(), "clearing an empty selection is idempotent");
+    change::begin_step(&mut ui, 0.04).unwrap();
     assert!(ui.mstat.is_empty());
     assert_eq!(ui.meas_add(Meas::Period, WaveId::Ref(0)), Ok(true));
     let deadline = crate::ui::lifecycle::test_wait::Wait::new(

@@ -2,14 +2,16 @@
 
 //! Exclusive intake components paired with the existing completed-step ring.
 use super::{deep, nanos};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+/// The open segment of an outermost intake. `before` is the time of the segments closed by a suspension.
 #[derive(Clone)]
 struct External {
     start: Instant,
     wait: u64,
     polls: u64,
     poll_wait: u64,
+    before: Duration,
 }
 
 #[derive(Clone)]
@@ -19,49 +21,85 @@ pub(super) struct Timing {
     queued: u64,
     poll_wait: u64,
     external: Option<External>,
+    /// The time of the closed segments while an open intake is suspended.
+    suspended: Option<Duration>,
     depth: usize,
 }
 impl Default for Timing {
     fn default() -> Self {
-        Self { samples: [[0; 4]; 256], pending: [0; 3], queued: 0, poll_wait: 0, external: None, depth: 0 }
+        Self {
+            samples: [[0; 4]; 256],
+            pending: [0; 3],
+            queued: 0,
+            poll_wait: 0,
+            external: None,
+            suspended: None,
+            depth: 0,
+        }
     }
 }
 impl Timing {
     pub(super) fn active(&self) -> bool {
-        self.depth > 0
-    }
-    pub(super) fn begin(&mut self) {
-        self.begin_at(Instant::now());
+        self.depth > 0 && self.suspended.is_none()
     }
     pub(super) fn begin_at(&mut self, now: Instant) {
-        if !self.active() {
-            self.external = Some(External {
-                start: now,
-                wait: deep::counters().ui_wait(),
-                polls: self.pending[0],
-                poll_wait: self.poll_wait,
-            });
+        if self.depth == 0 {
+            self.external = Some(self.segment(now, Duration::ZERO));
         }
         self.depth += 1;
     }
-    pub(super) fn end(&mut self) {
-        self.end_at(Instant::now());
-    }
     pub(super) fn end_at(&mut self, now: Instant) {
         self.depth = self.depth.saturating_sub(1);
-        if self.active() {
+        if self.depth > 0 {
             return;
         }
-        if let Some(outer) = self.external.take() {
-            let elapsed = now.saturating_duration_since(outer.start);
-            let wait = deep::counters().ui_wait().wrapping_sub(outer.wait);
-            let polls = self.pending[0].saturating_sub(outer.polls);
-            let poll_wait = self.poll_wait.saturating_sub(outer.poll_wait);
-            self.pending[1] = self.pending[1].saturating_add(nanos(elapsed).saturating_sub(polls).saturating_sub(wait));
-            self.pending[2] = self.pending[2].saturating_add(wait.saturating_sub(poll_wait));
-            self.queue(nanos(elapsed));
-            deep::counters().poll(deep::Poll::External, elapsed);
+        let elapsed = match (self.external.take(), self.suspended.take()) {
+            (Some(outer), _) => self.close(outer, now),
+            (None, Some(before)) => before,
+            (None, None) => return,
+        };
+        deep::counters().poll(deep::Poll::External, elapsed);
+    }
+    /// Stop the clock of an open intake for work that has its own ring. Returns whether it was stopped.
+    pub(super) fn suspend_at(&mut self, now: Instant) -> bool {
+        if !self.active() {
+            return false;
         }
+        let elapsed = match self.external.take() {
+            Some(outer) => self.close(outer, now),
+            None => Duration::ZERO,
+        };
+        self.suspended = Some(elapsed);
+        true
+    }
+    pub(super) fn resume_at(&mut self, now: Instant) {
+        if let Some(before) = self.suspended.take() {
+            self.external = Some(self.segment(now, before));
+        }
+    }
+    fn segment(&self, now: Instant, before: Duration) -> External {
+        External {
+            start: now,
+            wait: deep::counters().ui_wait(),
+            polls: self.pending[0],
+            poll_wait: self.poll_wait,
+            before,
+        }
+    }
+    /// Queue a segment's time and its split; returns the intake time up to its end.
+    fn close(&mut self, outer: External, now: Instant) -> Duration {
+        let elapsed = now.saturating_duration_since(outer.start);
+        let wait = deep::counters().ui_wait().wrapping_sub(outer.wait);
+        let polls = self.pending[0].saturating_sub(outer.polls);
+        let poll_wait = self.poll_wait.saturating_sub(outer.poll_wait);
+        self.pending[1] = self.pending[1].saturating_add(nanos(elapsed).saturating_sub(polls).saturating_sub(wait));
+        self.pending[2] = self.pending[2].saturating_add(wait.saturating_sub(poll_wait));
+        self.queue(nanos(elapsed));
+        outer.before.saturating_add(elapsed)
+    }
+    #[cfg(test)]
+    pub(super) fn queued(&self) -> u64 {
+        self.queued
     }
     pub(super) fn queue(&mut self, elapsed: u64) {
         self.queued = self.queued.saturating_add(elapsed);

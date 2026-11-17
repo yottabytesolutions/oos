@@ -71,7 +71,7 @@ fn incomplete_single_reconfigures_before_late_old_pair_record() {
                 SingleWorker::deliver(&shared, old.clone());
             }
             ui.m.tscale += 1;
-            ui.settings_changed();
+            crate::ui::change::edited(&mut ui);
             ui.step(0.03);
             let id = change::acquisition::identity(&ui);
             assert_ne!(id.gen(), old.cfg);
@@ -104,7 +104,7 @@ fn completed_single_does_not_rearm_after_reconfigure() {
         assert!(change::proposals::stopping(&ui));
         let arms = event("acq_single_arm=");
         ui.m.tscale += 1;
-        ui.settings_changed();
+        crate::ui::change::edited(&mut ui);
         ui.step(0.04);
         assert!(lock(&shared).hold, "completion STOP is published before changed settings");
         for _ in 0..20 {
@@ -188,7 +188,7 @@ fn incomplete_single_survives_a_stream_mode_reconfigure() {
     let old = worker.read(&shared, &ui.m, ui.switches()).unwrap();
     let want = lock(&shared).want.clone();
     ui.m.auto_roll = true;
-    ui.settings_changed();
+    crate::ui::change::edited(&mut ui);
     ui.step(0.03);
     assert_eq!(lock(&shared).slow, crate::board::Slow::Roll);
     assert_eq!(change::counters(&ui).4, 0, "mode-only reconfiguration is an observed acquisition boundary");
@@ -207,7 +207,7 @@ fn incomplete_single_retries_a_gen_boundary_without_hardware_reconfigure() {
     let want = lock(&shared).want.clone();
     SingleWorker::deliver(&shared, old.clone());
     ui.m.mask_src = 1;
-    ui.settings_changed();
+    crate::ui::change::edited(&mut ui);
     ui.step(0.03);
     let id = change::acquisition::identity(&ui);
     assert_ne!(id.gen(), old.cfg);

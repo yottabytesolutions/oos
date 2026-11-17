@@ -20,7 +20,7 @@ const ORACLE_CASES: &[OracleCase] = &[
         RunState::Stop,
         |u| {
             u.m.ch[0].offset += 0.25;
-            u.mark_changed();
+            change::edited(u);
         },
         C::ACQ.union(C::MAPPING).union(C::STATS),
         [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -30,7 +30,7 @@ const ORACLE_CASES: &[OracleCase] = &[
         RunState::Run,
         |u| {
             u.m.ch[0].offset += 0.25;
-            u.mark_changed();
+            change::edited(u);
         },
         C::ACQ.union(C::MAPPING).union(C::STATS),
         [0; 10],
@@ -40,7 +40,7 @@ const ORACLE_CASES: &[OracleCase] = &[
         RunState::Run,
         |u| {
             u.m.grid_bright -= 10;
-            u.mark_changed();
+            change::edited(u);
         },
         C::NONE,
         [0, 1, 0, 1, 0, 0, 0, 0, 0, 0],
@@ -50,18 +50,18 @@ const ORACLE_CASES: &[OracleCase] = &[
         RunState::Stop,
         |u| {
             u.m.grid_bright -= 10;
-            u.mark_changed();
+            change::edited(u);
         },
         C::NONE,
         [0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
     ),
-    ("same value mark, D1", RunState::Run, |u| u.mark_changed(), C::NONE, [0, 1, 0, 1, 0, 0, 0, 0, 0, 0]),
+    ("same value mark, D1", RunState::Run, |u| change::edited(u), C::NONE, [0, 1, 0, 1, 0, 0, 0, 0, 0, 0]),
     (
         "trigger has no mapping",
         RunState::Stop,
         |u| {
             u.m.trig_level += 0.1;
-            u.mark_changed();
+            change::edited(u);
         },
         C::ACQ.union(C::STATS),
         [0; 10],
@@ -85,19 +85,16 @@ const ORACLE_CASES: &[OracleCase] = &[
 // Each fixture pins a union from the task oracle, independently of classify. Geometry is included explicitly.
 #[test]
 fn scripted_change_storm_matches_reviewed_oracle() {
-    for (name, run, apply, classes, raw) in ORACLE_CASES {
+    for (name, run, apply, classes, _raw) in ORACLE_CASES {
         let mut ui = base(*run);
         ui.mstat = vec![MStat { n: 7, ..Default::default() }];
         apply(&mut ui);
-        let unmarked = name.starts_with("unmarked");
-        assert_eq!(ui.mstat.is_empty(), !unmarked, "old statistics seam: {name}");
-        ui.step(0.04);
+        assert_eq!(ui.mstat[0].n, 7, "input defers statistics: {name}");
+        change::begin_step(&mut ui, 0.04).unwrap();
         assert_eq!(ui.host.runtime().change.last.as_ref().unwrap().classes(), *classes, "{name}");
-        if unmarked {
-            assert!(ui.mstat.is_empty(), "live normalization must notify legacy statistics");
-        }
+        assert_eq!(ui.mstat.is_empty(), classes.contains(C::STATS), "{name}");
         let (actual, _, outbox, errors, unreviewed) = change::counters(&ui);
-        assert_eq!(actual, *raw, "raw counters: {name}");
+        assert_eq!(actual, [0; 10], "retired legacy counters: {name}");
         assert_eq!((outbox, errors, unreviewed), (0, 0, 0), "{name}");
     }
 }
@@ -110,6 +107,8 @@ fn knob_scpi_web_command_and_setup_share_shadow_field_contract() {
     let mut scpi = base(RunState::Stop);
     let mut remote = crate::scpi::Scpi::open(0u16, false);
     remote.exec_line(&mut scpi, &Canvas::new(1, 1), &format!(":CHAN1:OFFS {offset}"));
+    // the end of the SCPI message is its change point; the other paths are accepted by their step
+    let scpi_classes = scpi.host.runtime().change.last.as_ref().unwrap().classes();
     let mut web = base(RunState::Stop);
     // HTTP /cmd uses this exact parser after authorization; it does not have a separate settings setter.
     crate::cmd::run(&mut web, "knob vpos +1");
@@ -121,14 +120,16 @@ fn knob_scpi_web_command_and_setup_share_shadow_field_contract() {
     std::fs::write(setup.setup_path(), text).unwrap();
     setup.recall_setup();
     std::fs::remove_dir_all(dir).unwrap();
-    for ui in [&mut knob, &mut scpi, &mut web, &mut setup] {
+    for ui in [&mut knob, &mut web, &mut setup] {
         ui.step(0.04);
     }
     let expected = C::ACQ | C::MAPPING | C::STATS;
-    for ui in [&knob, &scpi, &web, &setup] {
+    for ui in [&knob, &web, &setup] {
         assert_eq!(ui.m.ch[0].offset, offset);
         assert_eq!(ui.host.runtime().change.last.as_ref().unwrap().classes(), expected);
     }
+    assert_eq!(scpi.m.ch[0].offset, offset);
+    assert_eq!(scpi_classes, expected);
 }
 
 #[test]
@@ -166,7 +167,7 @@ fn same_settings_stage_retry_resolves_tokens_in_the_next_shadow_step() {
 fn shadow_counters_are_available_to_state_queries() {
     let mut ui = base(RunState::Stop);
     ui.m.grid_bright -= 10;
-    ui.mark_changed();
+    crate::ui::change::edited(&mut ui);
     ui.step(0.04);
     let text = crate::cmd::stat_text(&ui);
     for name in C::NAMES {
@@ -253,7 +254,7 @@ fn repeated_requests_keep_exact_oracle_counter_deltas() {
     run.step(0.04);
     let first = run.host.runtime().change.last.as_ref().unwrap().identity();
     assert_eq!(run.host.runtime().change.last.as_ref().unwrap().classes(), C::HW_AVERAGE);
-    assert_eq!(change::counters(&run).0, [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]);
+    assert_eq!(change::counters(&run).0, [0; 10]);
     run.key(key::RUNSTOP);
     run.step(0.04);
     assert_eq!(run.host.runtime().change.last.as_ref().unwrap().classes(), C::NONE);
@@ -263,11 +264,11 @@ fn repeated_requests_keep_exact_oracle_counter_deltas() {
     single.step(0.04);
     let first = single.host.runtime().change.last.as_ref().unwrap().identity();
     assert_eq!(single.host.runtime().change.last.as_ref().unwrap().classes(), C::PHOSPHOR | C::STATS | C::HW_AVERAGE);
-    assert_eq!(change::counters(&single).0, [0, 0, 0, 1, 0, 0, 1, 0, 0, 0]);
+    assert_eq!(change::counters(&single).0, [0; 10]);
     single.key(key::SINGLE);
     single.step(0.04);
     assert_eq!(single.host.runtime().change.last.as_ref().unwrap().identity().epoch(), first.epoch() + 1);
-    assert_eq!(change::counters(&single).0, [0, 0, 0, 2, 0, 0, 2, 0, 0, 0]);
+    assert_eq!(change::counters(&single).0, [0; 10]);
     assert_eq!(change::counters(&single).4, 0);
     let mut mask = base(RunState::Stop);
     mask.create_mask();
@@ -305,7 +306,7 @@ fn same_final_run_value_keeps_the_intake_epoch_request() {
     let changes = ui.host.runtime().change.last.as_ref().unwrap();
     assert_eq!(changes.classes(), C::HW_AVERAGE);
     assert_eq!(changes.identity().epoch(), 1);
-    assert_eq!(change::counters(&ui).0, [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]);
+    assert_eq!(change::counters(&ui).0, [0; 10]);
     assert_eq!(change::counters(&ui).4, 0);
 }
 
@@ -340,13 +341,14 @@ fn stopped_scpi_mark_keeps_its_oracle_row_after_a_panel_run() {
     let mut ui = base(RunState::Stop);
     let mut remote = crate::scpi::Scpi::open(0u16, false);
     remote.exec_line(&mut ui, &Canvas::new(1, 1), ":CHAN1:OFFS 0.25");
+    // the end of the SCPI message is its own change point; the panel RUN is the step's
+    let scpi = ui.host.runtime().change.last.as_ref().unwrap().classes();
+    assert_eq!(scpi, C::ACQ | C::MAPPING | C::STATS);
     ui.key(key::RUNSTOP);
     ui.step(0.04);
-    assert_eq!(
-        ui.host.runtime().change.last.as_ref().unwrap().classes(),
-        C::ACQ | C::MAPPING | C::STATS | C::HW_AVERAGE
-    );
-    assert_eq!(change::counters(&ui), ([0, 1, 0, 0, 0, 0, 1, 0, 0, 0], 0, 0, 0, 0));
+    let panel = ui.host.runtime().change.last.as_ref().unwrap().classes();
+    assert_eq!(scpi | panel, C::ACQ | C::MAPPING | C::STATS | C::HW_AVERAGE);
+    assert_eq!(change::counters(&ui), ([0; 10], 0, 0, 0, 0));
 }
 
 #[test]
@@ -358,7 +360,7 @@ fn zoom_clamp_has_a_producing_oracle_row() {
     ui.m.zdelay = 1e3;
     ui.step(0.04);
     assert!(ui.host.runtime().change.last.as_ref().unwrap().classes().contains(C::MAPPING));
-    assert_eq!(change::counters(&ui), ([0, 1, 0, 1, 0, 0, 0, 0, 0, 0], 0, 0, 0, 0));
+    assert_eq!(change::counters(&ui), ([0; 10], 0, 0, 0, 0));
 }
 
 #[test]
@@ -381,16 +383,14 @@ fn run_request_classes_preserve_the_source_specific_d4_difference() {
         assert_eq!(changes.identity().epoch(), 1);
         assert_eq!(changes.identity().gen(), 0, "RUN alone does not reconfigure acquisition");
         assert_eq!(ui.m.hw_avg_clear, before + u64::from(hardware));
-        let mut expected = [0; 10];
-        expected[6] = u64::from(!hardware);
-        assert_eq!(change::counters(&ui), (expected, 0, 0, 0, 0), "hardware={hardware}");
+        assert_eq!(change::counters(&ui), ([0; 10], 0, 0, 0, 0), "hardware={hardware}");
     }
 }
 
 #[test]
 fn average_restart_observes_only_hardware_effects() {
     let mut demo = base(RunState::Stop);
-    demo.hw_avg_restart();
+    change::run_request(&mut demo);
     demo.step(0.04);
     assert_eq!(change::counters(&demo), ([0; 10], 0, 0, 0, 0));
     let mut hw = Ui::new(Source::Hw { shared: Default::default(), seen: 0 }, host::Host::headless());
@@ -399,10 +399,10 @@ fn average_restart_observes_only_hardware_effects() {
     hw.step(0.04);
     change::reset(&mut hw);
     let before = hw.m.hw_avg_clear;
-    hw.hw_avg_restart();
+    change::run_request(&mut hw);
     hw.step(0.04);
     assert_eq!(hw.m.hw_avg_clear, before + 1);
-    assert_eq!(change::counters(&hw).0, [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]);
+    assert_eq!(change::counters(&hw).0, [0; 10]);
 }
 
 #[test]

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::oracle::{self, Row};
+#[cfg(test)]
+use super::oracle;
+use super::oracle::Row;
 use oos_core::change::{Classes, FieldDiff, FIELD_COUNT};
 use std::fmt::Write;
 
@@ -12,6 +14,7 @@ pub(in crate::ui) struct Diagnostics {
     pub(super) unreviewed: u64,
     error_counts: [u64; 5],
     first: [bool; FIELD_COUNT],
+    #[cfg(test)]
     event_first: [u16; oracle::ROW_COUNT],
 }
 impl Default for Diagnostics {
@@ -24,6 +27,7 @@ impl Default for Diagnostics {
             unreviewed: 0,
             error_counts: [0; 5],
             first: [false; FIELD_COUNT],
+            #[cfg(test)]
             event_first: [0; oracle::ROW_COUNT],
         }
     }
@@ -44,6 +48,7 @@ impl Diagnostics {
             eprintln!("oos-ui shadow: error={error:?}; requests quarantined, keeping last publication");
         }
     }
+    #[cfg(test)]
     pub(super) fn compare(
         &mut self,
         new: Classes,
@@ -112,6 +117,9 @@ impl Diagnostics {
             .zip(self.error_counts)
         {
             let _ = write!(s, " {name}={count}");
+        }
+        for difference in super::oracle::Difference::ALL {
+            let _ = write!(s, " difference_{}={}", difference.name(), difference.mask());
         }
         s
     }

@@ -153,7 +153,7 @@ impl Ui {
         change::mapping_observed(self, change::oracle::Row::Layout);
         self.replay.viewport = None;
         // Time is part of every downstream gate/search/math/decode key. Do not
-        // call settings_changed: this is calibration, not a new acquisition.
+        // notify a settings edit: calibration keeps the current acquisition.
     }
 }
 

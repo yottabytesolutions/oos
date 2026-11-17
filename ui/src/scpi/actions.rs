@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Legacy acquisition and measurement actions, using the UI's shared setters and reset paths.
+//! Acquisition and measurement requests retain explicit input operation receipts.
 use super::*;
 
 pub(super) fn meas_clear(scpi: &mut Scpi, ui: &mut Ui, arg: &str) {
@@ -12,7 +12,7 @@ pub(super) fn meas_clear(scpi: &mut Scpi, ui: &mut Ui, arg: &str) {
     let (k, i) = suffix(a);
     if let Some(i) = i.filter(|&i| kw(k, "ITEM") && i >= 1 && i <= ui.measurement_count()) {
         ui.remove_measurement(i - 1);
-        ui.mark_changed();
+        change::edited(ui);
     } else {
         scpi.push_err(format!("-224,\"Illegal parameter value\" {}", a));
     }
@@ -38,6 +38,6 @@ pub(super) fn run(ui: &mut Ui, name: &str, query: bool) -> bool {
     } else {
         return false;
     }
-    ui.mark_changed();
+    crate::ui::change::edited(ui);
     true
 }

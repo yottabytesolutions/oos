@@ -115,7 +115,7 @@ impl Ui {
                 _ => {}
             }
         }
-        self.settings_changed();
+        change::edited(self);
     }
 
     /// Shows view `j` (0-based); the one shown so far keeps its state.

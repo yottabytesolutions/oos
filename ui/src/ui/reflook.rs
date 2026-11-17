@@ -627,7 +627,7 @@ impl Ui {
         if let Some(own) = own {
             self.meas_own.insert((k, next), own);
         }
-        change::stats_clear(self);
+        change::stats_reset(self);
     }
 
     fn meas_sources(&self) -> Vec<WaveId> {
@@ -655,7 +655,7 @@ impl Ui {
             own.high = high;
             own.refs_set = true;
         }
-        change::stats_clear(self);
+        change::stats_reset(self);
     }
 
     fn meas_cfg_refs(&mut self) {
@@ -668,7 +668,7 @@ impl Ui {
             own.high = high;
             own.refs_set = true;
         }
-        change::stats_clear(self);
+        change::stats_reset(self);
     }
 
     fn meas_cfg_idle(&mut self, d: i32) {
@@ -686,7 +686,7 @@ impl Ui {
             own.idle = v;
             own.idle_set = true;
         }
-        change::stats_clear(self);
+        change::stats_reset(self);
     }
 
     fn meas_cfg_side(&mut self) {
@@ -703,7 +703,7 @@ impl Ui {
             own.side = v;
             own.side_set = true;
         }
-        change::stats_clear(self);
+        change::stats_reset(self);
     }
 
     fn meas_cfg_n(&mut self, d: i32) {
@@ -715,7 +715,7 @@ impl Ui {
             own.n = v;
             own.n_set = true;
         }
-        change::stats_clear(self);
+        change::stats_reset(self);
     }
 
     fn meas_cfg_edges(&mut self) {
@@ -729,7 +729,7 @@ impl Ui {
             own.data = !cur;
             own.data_set = true;
         }
-        change::stats_clear(self);
+        change::stats_reset(self);
     }
 }
 

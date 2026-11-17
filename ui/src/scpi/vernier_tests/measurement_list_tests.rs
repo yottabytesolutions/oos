@@ -70,3 +70,15 @@ fn meas_clear_empty_list_rejects_item_but_accepts_clear_all() {
         assert_eq!(query(&mut scpi, &mut ui, &cv, ":SYST:ERR?"), "0,\"No error\"");
     }
 }
+
+// Break it catches: a reset that only takes effect at the next step, so a query later on the same program line
+// still counts the old history. SCPI commands are sequential (IEEE 488.2).
+#[test]
+fn statistics_reset_is_seen_by_the_next_query_on_the_same_line() {
+    let (mut ui, cv, mut scpi) = meas_setup();
+    query(&mut scpi, &mut ui, &cv, ":MEAS:ITEM VPP,CHAN1");
+    q_steps(&mut ui, 30);
+    let count: f64 = query(&mut scpi, &mut ui, &cv, ":MEAS:STAT:ITEM? CNT,VPP,CHAN1").parse().expect("a count");
+    assert!(count >= 1.0, "{count}");
+    assert_eq!(query(&mut scpi, &mut ui, &cv, ":MEAS:STAT:RES;:MEAS:STAT:ITEM? CNT,VPP,CHAN1"), "0.000000E+00");
+}

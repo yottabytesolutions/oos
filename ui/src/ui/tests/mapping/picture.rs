@@ -48,7 +48,7 @@ fn mapping_and_phosphor_clear_at_the_change_point_without_a_mark() {
 }
 
 #[test]
-fn unrelated_and_trigger_marks_preserve_picture_but_clear_legacy_statistics() {
+fn unrelated_edits_preserve_picture_and_only_trigger_resets_statistics() {
     for batch in [false, true] {
         for edit in 0..3 {
             let mut ui = running(batch);
@@ -59,11 +59,11 @@ fn unrelated_and_trigger_marks_preserve_picture_but_clear_legacy_statistics() {
                 1 => ui.m.trig_level += 0.1,
                 _ => {}
             }
-            ui.mark_changed();
+            crate::ui::change::edited(&mut ui);
             ui.step(0.04);
             assert_eq!(ui.ph.map[0][0], 97, "broad marks no longer erase the picture: {edit}");
             assert_eq!(ui.phz.map[0][0], 97);
-            assert!(ui.mstat.is_empty(), "statistics bridge stays until e");
+            assert_eq!(ui.mstat.is_empty(), edit == 1, "only STATS edits clear statistics");
         }
     }
 }
@@ -140,7 +140,7 @@ fn mapping_phosphor_and_their_union_preserve_remaining_consumers() {
             let classes = ui.host.runtime().change.last.as_ref().unwrap().classes();
             assert_eq!(classes, C::PHOSPHOR | if geometry { C::MAPPING | C::ACQ | C::STATS } else { C::NONE });
             assert_eq!((ui.mask_pass, ui.mask_fail, ui.zone_drops), (11, 12, 13));
-            assert_eq!(ui.mstat[0].n, 7, "d does not switch the statistics consumer");
+            assert_eq!(ui.mstat.is_empty(), geometry, "STATS follows the effective union");
         }
     }
 }
@@ -203,7 +203,7 @@ fn perf_guard_picture_consumer_mapping_storm_budget() {
     for i in 0..300 {
         seed(&mut ui);
         ui.m.ch[0].offset = (1 + i % 2) as f32 * 0.1;
-        ui.settings_marked();
+
         ui.step(0.04);
         assert!(empty(&ui), "every edit exercises both map clears");
     }

@@ -2402,7 +2402,7 @@ setTimeout(() => {
         scpi.exec_line(&mut ui, &cv, ":TIM:OFFS 3e38");
         scpi.exec_line(&mut ui, &cv, ":CHAN1:OFFS -3e38");
         ui.key(crate::ui::key::CLEAR);
-        ui.mark_changed();
+        crate::ui::change::edited(&mut ui);
         for _ in 0..3 {
             ui.step(0.05);
         }

@@ -18,7 +18,7 @@ fn accepted_publication_refreshes_trigger_only_and_disables_standard() {
     let mapping = oos_core::change::MappingKey::of(&ui.m, Default::default());
     let before = oos_hal::sync::lock(&pipe.view).gen;
     ui.m.trig_level += 0.125;
-    ui.mark_changed();
+    crate::ui::change::edited(&mut ui);
     ui.step(0.04);
     assert_eq!(mapping, oos_core::change::MappingKey::of(&ui.m, Default::default()));
     {

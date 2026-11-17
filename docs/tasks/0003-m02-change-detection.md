@@ -16,6 +16,61 @@ Complete [migration M2](../architecture/migration.md#m2-one-change-detection-poi
 
 ## Plan
 
+M2.3e review round 4: keep the accepted claim and isolate the reference Eye
+from pure PlaybackPosition VIEW reclassification; all other reference-eye VIEW
+resets remain. Restore the upstream strict idle holds without an inserted step.
+Pin the running non-fresh SIM statistics immediately after synchronous finish
+and asynchronous poll, then gate installation until StatsReset acceptance while
+retaining trigger-miss holds. Correct consumer timing accounting and import order.
+Run focused debug/release tests with full SIM/eye/change/playback counts, the
+exact gate clippy step with a zero-new base comparison, and the fast gate.
+Report the known protected-base size/unsafe failures without changing ratchets.
+Update Status and the single plain-subject draft message. No commits or hardware.
+
+M2.3e review round 3: keep the accepted claim and fix all seven findings and
+optional cleanups. First pin STOP value/analysis/job retention and the running
+non-fresh SIM configuration reset with failing-before tests. Restore the strict
+SIM acceptance helper and express task 0066 question 1's owner decision locally
+in each affected test, including both ignored siblings. Keep transitions in G2
+and sample consumers alone. Restore documentation and readable assignments;
+move tests when size requires it. Record terminal autoset deferral and poll
+ordering in Status and the difference inventory. Run focused debug/release,
+soak/census, isolated timing, exact clippy (zero new findings) and the fast gate.
+Update the imperative draft message. No commits or hardware access.
+Additional reserved paths: `xtask/data/moves.txt`, `ui/src/ui/sim/` for review tests/test moves and
+`ui/src/ui/eyepage/` for reset cleanup and test moves.
+
+M2.3e coordinator follow-up: record playback position writes at their source as
+presentation requests carrying both endpoints through the change point. Classify
+only the matching driver delta as VIEW; user delay edits retain ACQ|STATS.
+Pin N-frame accumulation and one user reset during playback, keeping both
+upstream regressions unchanged. Trace Bode restoration and replace any fixed
+step/timing assumption with a bounded condition wait, retaining all assertions.
+Run Bode 30 times, focused debug/release, soak/census, isolated timing, exact
+clippy (zero new findings) and the fast gate. Update the single draft-message
+section. No commits. Additional reserved core paths: `core/src/change/{mod,shadow,mapping,presentation}.rs`;
+existing request contracts/tests and UI reservations cover the remaining edits.
+
+M2.3e claim: owner `codex-d`, branch `t0003-m23e`, base `11a8b2b9`, unit tier,
+under the owner's assignment. Inventory every former reset trigger against the
+accepted class table before edits. Switch statistics, history/segments, mask,
+zone, hardware average, math and declared views to one accepted consumer per
+effect; preserve run/completion and request semantics, keyed decode and the M4
+worker-view key. Remove legacy marks and normalization notification bridge.
+Retain independent shadow evidence until table/list acceptance is established.
+Pin changed behavior with failing-before tests and unchanged behavior explicitly.
+Render base and candidate scripted pictures directly; explain every difference.
+Keep detection in G2 and reset work in its own measured phase without budget
+changes. Run focused debug/release, soak/census, isolated timing, exact inherited
+clippy comparison, size comparison and fast gate. One draft-message section;
+no commits or hardware access.
+Reserved paths: `ui/src/ui.rs` explicitly; `ui/src/ui/change/`,
+`ui/src/ui/change.rs`, `ui/src/ui/tests/`, remaining mark callers under
+`ui/src/ui/`, `ui/src/{cmd,scpi}.rs`, `ui/src/scpi/`, `ui/src/perfguard.rs`,
+`docs/architecture/README.md`, this task and `target/COMMIT_MSG.txt`.
+Core class contracts and tests only if a missing former trigger is demonstrated;
+no dependency, ratchet, golden reference or upstream rebaseline edits.
+
 M2.3d claim: owner `codex-d`, branch `t0003-m23d`, base `d7418b0d`, unit tier,
 under the owner's assignment. Switch mapping/phosphor only. Remove dirty-map state
 and every writer (including upstream additions); retain observation-only legacy
@@ -527,7 +582,9 @@ the reviewed list**, including throughout M2.3.
   Epoch-only boundaries reject prearmed/queued old work without reconfiguration.
 - **D5, internal timing:** autoset/Bode and completion settings act on the next step via outbox, with settings
   and token resolved together. Align old proposals with next-step application; unresolved tokens accept nothing
-  and pending SINGLE STOP consumes no extra record.
+  and pending SINGLE STOP consumes no extra record. Terminal autoset keeps the
+  preceding statistics visible for one step, until terminal settings and their
+  STATS reset are accepted together; old-pair results cannot refill them.
 - **D6, stale work:** pair/stats_gen rejection prevents late old records, results or folds from refilling
   current state. Pin deliberately delayed work and its exact drop counts; do not attribute drops to all classes.
 
@@ -758,6 +815,424 @@ M4/M5/M9/M10 retain their specified conversion, channels, whole-batch ownership 
 Every candidate and conflict resolution needs independent cross-vendor review; the author never merges or pushes.
 
 ## Status
+
+- 2026-11-17: M2.3e round 4 committed and rebased onto integ-27 (`b582fa27`),
+  plus eleven follow-up commits: SCPI queries and message ends are accepted
+  change points (IEEE 488.2 sequential), a switched analysis page builds after
+  its resets, the Statistics switch requests StatsReset, integ-27's
+  `cancel_measurement` owns the waiting record, tests for the two-level
+  trigger repair and the dropped held SIM hit. Pane and eye-source goldens
+  re-blessed with reasons in their commits. Host: oos-ui debug 1364 and
+  release 1363 lib tests pass (45 ignored), goldens 263 cases pass in three
+  release runs (two under a CPU burner), oos-hal 376 per profile; gate clippy
+  step exits 0; plan-matrix identical to `b582fa27`. Not run: coverage and the
+  full gate (task 0088), unit smoke. Awaiting cross-vendor review.
+
+- 2026-11-17: a display layout change (Display > Windows, the lower pane) keeps
+  the measurement statistics and the trend. Before M2.3e the broad settings
+  mark reset them as a side effect; the change has no STATS class. Pane
+  goldens p2/p3/p4 re-blessed at all three sizes for that reason (count, σ,
+  min/max/mean and trend only). Test:
+  `a_pane_layout_change_keeps_the_statistics_count`.
+
+- 2026-11-16: e review round 4 final-source verification passes in debug and
+  release: SIM 35/35 (all 11 bus cases enabled), Eye 44/44 with two existing
+  ignored cases per profile, change 29/29, playback 12/12, timing-unit 8/8,
+  outbox 36/35 and core change 28/28. Full commands, counts, exits and logs
+  are in `target/m23e-r4-validation.json`; the Rust source receipt
+  `target/m23e-r4-final-source.json` remains unchanged throughout validation.
+  A fresh host/ARM clippy run on the saved HEAD source matches the prior base
+  findings exactly. All 585 Rust/Cargo source/configuration files in that copy
+  match `11a8b2b9` (`target/m23e-r4-base-verification.json`). Final candidate
+  clippy and size comparisons each show zero new/grown findings and zero
+  command errors across all six crates:
+  `target/m23e-r4-{clippy,size}-comparison.json`. The unchanged scratch runner
+  invokes the gate's exact `steps::clippy`; it exits 1 on inherited rebaseline
+  findings (`target/m23e-r4-exact-clippy.log`). The fast gate exits 1 and prints
+  exactly `gate FAILED in 33 s: size, unsafe` (`target/m23e-r4-fast.log`).
+  These are the known protected-base `d7418b0d` failures; no ratchet, assertion,
+  budget or golden was weakened, and no unrelated diff was changed. Final
+  audit `target/m23e-r4-final-audit.json` confirms only the eight review paths
+  changed, no staging, and zero added-text privacy findings; draft-message
+  privacy and `git diff --check` pass. The draft message remains one section with a plain imperative subject and `Task: 0003`.
+  Task stays active, uncommitted, awaiting independent review and coordinator
+  full/image integration gates. Hardware is unverified; no staging or commits.
+
+- 2026-11-16: e review round 4 retains the accepted `codex-d` claim on
+  `t0003-m23e`, uncommitted at `11a8b2b9`. Reproduced the restored upstream
+  strict Eye idle holds and immediate non-fresh SIM statistics failure against
+  round 3: 8 pass, 3 fail, exit 101 (`target/m23e-r4-before-tests.log`). The
+  final new Eye regression and extended SIM regression each independently
+  fail on the round-3 production paths (exit 101): Eye is absent instead of
+  retained, and SIM statistics are `[2, 2]` instead of `[1, 1]` immediately
+  after finish. Logs: `target/m23e-r4-{eye,sim}-regression-before.log`.
+  Pure PlaybackPosition reclassification now preserves only the reference Eye;
+  other VIEW fields and requests still reset it, including an ordinary VIEW
+  edit in the same accepted union. Both upstream strict idle holds retain two
+  Eye records without an inserted step. Task 0066 question 1 applies only to
+  SINGLE statistics. A qualified non-fresh running SIM capture now reuses the
+  single pending slot until its requested stats_gen boundary is accepted;
+  repeated polls retain old samples/statistics/Eye and queue the reset once.
+  The extended regression covers synchronous finish and asynchronous post-G2
+  poll, hit and miss, and one fold into the new generation. Misses queue no
+  reset. Consumer time is subtracted from G2 only when separately recorded;
+  the Eye reset constants follow the imports. No unrelated source paths changed.
+
+- 2026-11-16: e review round 3 worker handoff remains uncommitted on
+  `11a8b2b9`, active and awaiting independent review. The owner-requested seven
+  findings and optional cleanups are implemented. Focused debug/release checks
+  pass: change 28/28, SIM 35/35 (all 11 bus cases enabled), eye 44/44 plus two
+  existing ignored cases, analysis 25/25, autoset 21/21 plus two existing
+  ignored cases, outbox 36/35, timing-unit 8/8, playback 12/12 and core change
+  28/28. Broad UI passes 756 debug and 755 release, with 21 ignored and the
+  same two documented socket exclusions. Commands, exits and complete logs:
+  `target/m23e-r3-validation.json`, `target/m23e-r3-refresh.json` and final
+  focused verification `target/m23e-r3-verify.json`. The early source-snapshot
+  assertions were invalidated by subsequent test cleanup; they are superseded
+  by the unchanged final audit/verification receipt
+  `target/m23e-r3-final-source.json`. The final test-only split retains all
+  capture assertions while eliminating the new complexity finding. No shared
+  assertion, lint, ratchet, budget or golden reference was weakened.
+
+- 2026-11-16: final round-3 host scripts pass 14/14 and soak passes 11/11 in
+  debug and release. All six warmed census rows have 256 calls and zero
+  allocations in both profiles. Final isolated release G2 passes with paired
+  intake/change p99 92,751 ns; picture has 90 samples, p99/max 470,375 ns;
+  consumers have 81 samples and p99 7,500 ns. Mapping storm passes with paired
+  p99 35,291 ns; picture has 256 samples, p99 41,333 ns and max 56,875 ns;
+  consumers have 256 samples and p99 1,208 ns. Existing 500,000/750,000 ns
+  budgets are unchanged. The owner's round-3 A/B evidence attributes the
+  earlier timing/soak variation to host load and reports no picture/soak
+  regression; these final runs independently pass their existing guards.
+  Logs and commands are in `target/m23e-r3-refresh.json`.
+
+- 2026-11-16: final exact gate clippy step exits 1 on the inherited rebaseline
+  `Err` list (`target/m23e-r3-final-exact-clippy.log`). Host/ARM comparison
+  against the production candidate base shows zero new/grown findings and no
+  command errors in all six crates; size comparison also has zero new/grown
+  entries. Evidence: `target/m23e-r3-final-{clippy,size}-comparison.json` and
+  `target/m23e-r3-final-audit.json`. The final fast gate exits 1 and prints
+  exactly `gate FAILED in 33 s: size, unsafe`. Its protected base is now
+  `d7418b0d`, versus `856f5f74` in the earlier passing run's retained Git logs.
+  The current range contains no upstream merge for the pending-rebaseline
+  allowance, exposing inherited upstream size/unsafe findings. No unsafe syntax
+  is added or removed relative to HEAD; no ratchet or Git ref was changed.
+  This is a failed gate, not a pass. Full/image gates, coordinator integration
+  and independent review remain outstanding. One plain imperative draft in
+  `target/COMMIT_MSG.txt`; no staging, commits or hardware access.
+
+- 2026-11-16: e round 3 additionally pins a rejected non-fresh SIM capture.
+  A normal-trigger miss replaces no accepted record, so it must not queue
+  StatsReset. The expanded configuration regression fails against the initial
+  round-3 fix (exit 101, `target/m23e-r3-sim-miss-before.log`, stats_gen 1
+  instead of 0 on the miss). Queue StatsReset only after the capture count
+  advances; a hit still resets exactly once at the next change point. This
+  retains no-hit acceptance and the strict sample/statistics/Eye hold checks.
+
+- 2026-11-16: e review round 3 restores the eye module documentation and
+  ordinary assignments, moves the stateless reset declarations into their test
+  module and restores the MeasJob documentation. Page reset destructures every
+  field exhaustively and delegates chart-label reuse to a small helper. The
+  oversized eye/SIM files shed the unchanged raster-copy and generated-result
+  evaluation helpers into their own modules; moves are listed in
+  `xtask/data/moves.txt`, with no ratchet edits. The native-channel eye test
+  extracts its full-frame fixture, making the test shorter than before this
+  candidate. The two enabled SIM siblings accepted the capture-position VIEW
+  boundary by inserting a step and expecting a one-record reference Eye before
+  checking the idle hold. That masked the candidate's Eye policy regression:
+  driver navigation destroyed the accumulated pool. Round 4 supersedes
+  those expectations; task 0066 question 1 covers SINGLE statistics only.
+
+- 2026-11-16: e review round 3 implements task 0066 question 1's owner
+  decision of 2026-11-16: retain our SINGLE behavior, resetting accumulated
+  statistics at the accepted change point. Restore the original strict
+  `Accepted::assert_held`; each of the four affected upstream tests and both
+  previously ignored siblings asserts its reset locally, citing that decision.
+  Both siblings are enabled. The strict helper never skips statistics checks.
+  The two STOP regressions fail on the review candidate (11 pass, 2 fail,
+  exit 101, `target/m23e-r3-stats-before.log`); restoring the helper and enabling
+  siblings exposes six SIM expectation failures plus the new running non-fresh
+  reset regression (4 pass, 7 fail, exit 101, `target/m23e-r3-sim-before.log`).
+  STATS now resets accumulated state/notifications only; current values,
+  analysis, pending jobs and in-flight acceptance remain. CLEAR owns their
+  removal/cancellation. Non-fresh running SIM payload installation queues
+  StatsReset. Consumer timing ends before transitions, which remain in G2.
+
+- 2026-11-16: e review round 3 records two step-order consequences explicitly.
+  Terminal autoset intentionally leaves the previous accumulated statistics
+  visible until its terminal settings reach the next change point, one step
+  later; the existing terminal-autoset test pins retention followed by reset
+  and rejection of old-pair records. This is D5, also added to the difference
+  inventory. `begin_step` now precedes reference, catalog, SIM and eye polls.
+  Those polls do not run when the memory watchdog stops the step. This makes
+  accepted resets precede polling; it also suppresses polling under the
+  watchdog's resource stop. Hardware remains unverified; no commits.
+
+- 2026-11-16: e follow-up validation on unchanged HEAD `11a8b2b9`, still
+  uncommitted and active, not accepted or done. Final production/test source
+  receipt `target/m23e-decision-source.json` stays unchanged throughout final
+  checks. Focused debug/release pass: change 26/26, analysis 25/25, outbox 36/35
+  (one debug-only test), drawpipe 18/18 plus two explicitly ignored guards,
+  perfguard 8/8, playback 12/12, SIM 24/24, Bode 5/5 and core change 28/28.
+  Both upstream playback tests pass unchanged in both profiles. Broad UI is
+  green: debug 751, release 750 passed; 23 ignored and only the two previously
+  recorded local socket exclusions. Host scripts pass 14/14 per profile.
+  Commands, exact exits and complete logs: `target/m23e-decision-validation.json`
+  and final debug refresh `target/m23e-decision-refresh-debug.json`.
+  Final scripted renders are deterministic over two repetitions: debug 20
+  cases/44 captures; release 263/621. Pixels and metadata are identical to the
+  earlier candidate, so the existing base/candidate reasons below still apply
+  (three debug and 24 release differences, zero metadata differences).
+  Receipts: `target/m23e-decision-render.json`, `target/m23e-decision-picture-{debug,release}.json`
+  and `target/m23e-decision-picture-followup.json`. Golden references are unchanged.
+
+- 2026-11-16: follow-up soak/census and timing are not uniformly green.
+  Debug soak passes 11/11. The first release soak exits 101: raw's final
+  strict live-byte sample grows by 816 bytes, matching the earlier recorded
+  intermittent amount; its separate 1 % peak check passes. After all other
+  jobs drain, three unchanged release soak runs exit 0, 101, 0. Both passing
+  runs exercise all five modes for 1,000 steps each. The failed isolated run
+  repeats the same raw final samples `[30971275, 30971019, 30971275, 30971019, 30971019, 30971835]`
+  and additionally fails the allocator self-check at
+  `ui/tests/snapshots/hot_paths.rs:33` (4 allocations vs 3). All six change
+  census rows have 256 calls and zero allocations in every run, including
+  the failures. Evidence: `target/m23e-decision-isolated-soak.json` and logs;
+  the initial release failure is preserved in the validation receipt above.
+  The strict snapshot failures remain unresolved; passing retries do not
+  replace them and no bounds or assertions were changed.
+  Initial isolated G2 timing exits 101 at `ui/src/ui/tests/shadow.rs:201`:
+  raw picture p99/max 875,792 ns exceeds 750,000 ns; paired intake/change
+  106,500 ns remains below 500,000 ns. Initial mapping timing exits 0.
+  Ten further isolated rounds retain all results: G2 9/10 and mapping 10/10
+  pass. Raw picture worst p99/max is 3,721,500 ns in failing round 10;
+  paired intake/change always passes (repeat worst 88,666 ns). Mapping worst
+  picture p99 is 102,041 ns and max is 1,991,000 ns. Timing verification
+  remains unstable, not a clean pass. Receipts and full logs:
+  `target/m23e-decision-isolated-all.json` and `target/m23e-decision-timing-repeat.json`.
+  Detection/publication remain charged to G2 and consumers measured separately.
+
+- 2026-11-16: follow-up exact gate clippy step exits 1 with the inherited
+  rebaseline `Err` list in `target/m23e-decision-final-exact-clippy.log`.
+  The scratch runner invokes the unchanged `steps::clippy`; all its supporting
+  xtask modules were checked byte-for-byte against this tree. Host/ARM counts
+  for all six crates show zero new/grown findings and no command errors vs
+  production. Size comparison likewise has zero new/grown over-limit entries.
+  Receipts: `target/m23e-decision-final-audit.json` and
+  `target/m23e-decision-final-{clippy,size}-comparison.json`.
+  `cargo xtask check --fast` exits 0 and prints exactly
+  `partial gate passed (not done): 8 steps in 85 s`
+  (`target/m23e-decision-fast.log`). One updated draft-message section.
+  No staging, commits, ratchet/dependency/budget changes or hardware access.
+  Independent cross-vendor review, full/image gates and unit smoke remain
+  coordinator acceptance requirements; the soak/timing failures above also
+  remain visible acceptance limitations. The playback policy question and
+  intermittent Bode assertion are resolved by the follow-up below.
+
+- 2026-11-16: e coordinator follow-up implements the presentation decision below.
+  Replay/SIM records exact before/after main and zoom positions (including the
+  driver's zoom clamp) as `Request::PlaybackPosition`. The change point maps
+  only an uninterrupted matching driver delta to VIEW, including the mapping
+  comparison. User writes before or after it and unrelated concurrent changes
+  retain their ordinary classes. Requests expire at acceptance. The statistics
+  consumer is unchanged by this follow-up. The new UI regression accumulates
+  eight frames, resets once on a user knob delay edit, then accumulates again
+  with stable gen/stats_gen. Disabling the source tag reproduces count 1 vs 2
+  on its second frame (exit 101, `target/m23e-decision-playback-before.log`).
+  Core tests pin main/zoom origins, mixed user writes, chained requests and
+  expiration. Both upstream test bodies are byte-identical to HEAD; receipts:
+  `target/m23e-decision-upstream-tests.json`.
+  The unchanged full-record SIM test also exposed late source installation:
+  first capture was visible with ten old live statistics and an unfinished
+  reference measurement (`target/m23e-decision-sim-diagnostic.log`, exit 101).
+  Source setup now records its replay request and a late driver waits for the
+  next intake's setup/reset acceptance before presenting its first capture.
+  Synchronous intake presentation keeps its existing behavior. The unchanged
+  SIM test passes after this source-order correction.
+
+- 2026-11-16: Bode root cause is the fixture's observation boundary, not a
+  production timer defect. Full-depth demo results arrive asynchronously at
+  `ui/src/ui/capture_memory.rs:131`. `bode_finish` marks the sweep stopped,
+  while `change/proposals.rs:151` captures its restored settings as commands;
+  `change/proposals.rs:112` applies them at the next intake. Completion on
+  the old loop's 40th step exposed stopped-but-not-yet-restored settings to
+  its assertion. The deterministic `completed_free_bode_restores_settings_on_the_next_intake`
+  regression pins exactly that intermediate state and the following stable
+  restoration. The existing test now exercises the same two simulated seconds
+  and waits for the restoration condition with a 30-second deadline. Every
+  original assertion remains. Production Bode behavior retains the documented
+  next-intake boundary. Final Bode repetitions pass 30/30 debug and 30/30
+  release: `target/m23e-decision-final-bode-debug.json` and the release repeat
+  rows in `target/m23e-decision-validation.json`. This resolves the earlier
+  intermittent Bode entry without weakening its checks.
+
+- 2026-11-16: coordinator decision for e: replay/SIM playback stepping is
+  presentation, not a settings change. Source-tagged playback position changes
+  classify as VIEW only and statistics accumulate across frames. User delay
+  changes (knob, menu, SCPI, recall, autoset) retain ACQ|STATS, including during
+  playback. Implement at the driver/change point, never in the statistics
+  consumer. Resume the existing accepted claim and uncommitted candidate;
+  investigate Bode timing and validate as specified above. No commits.
+
+- 2026-11-16: e worker evidence on unchanged HEAD `11a8b2b9`, uncommitted;
+  task remains active, not accepted or done. Production/test source receipt
+  `target/m23e-final-source.json` remains unchanged across final validation.
+  Focused debug/release: change 26/26, analysis 25/25, outbox 35/34
+  (one debug-only case), drawpipe 18/18 with two explicit ignored timing tests,
+  perfguard unit 8/8 and core change 26/26 pass. Host scripts 14/14 and
+  soak/census 11/11 pass in each profile. Each standard soak mode runs 1,000
+  steps; every census row has 256 calls and zero allocations. Commands, exits
+  and complete logs: `target/m23e-final-validation.json` and its log paths.
+  An earlier release soak failed its strict plateau check by 816 bytes in
+  pairs' last cycle (`target/m23e-handoff-integrations-release.log`); the final
+  unmodified assertion passes. This is retained evidence, not a relaxed bound.
+  No extended 10,000-step soak, full debug golden/image gate, unit access or
+  independent review has been performed for e.
+  Broad UI: debug 747 passed, two failed, 23 ignored; initial release 745
+  passed, three failed, 23 ignored. Only the two known local socket tests are
+  excluded. Replay count and full-record SIM current-value failures are the
+  pending delay/STATS contract conflict below; both pass on production
+  `11a8b2b9` (`target/m23e-final-base-playback.json`). The third release failure
+  is `free_sweep_refuses_what_does_not_fit`, ending a capture without yet
+  observing restored settings. It does not recur in ten isolated runs per
+  version or three further broad release runs per version: base is green in
+  those runs and candidate fails only the same replay/SIM pair. See
+  `target/m23e-final-bode-repeat.json` and `target/m23e-final-ui-repeat.json`.
+  The intermittent Bode failure remains unresolved; no assertion was weakened.
+
+- 2026-11-16: e final scripted comparison against production `11a8b2b9`:
+  debug 20 cases/44 captures and release 263 cases/621 captures, each rendered
+  twice with identical pixels and metadata. No input, golden, manifest or
+  tolerance changes. Final binaries/receipts are recorded in
+  `target/m23e-final-render-{debug,release}.log`. Per-picture bounds, changed
+  pixel counts and reasons: `target/m23e-final-picture-{debug,release}.json`.
+  Metadata differences: zero. Picture differences: debug three, release 24.
+
+  | Affected pictures | Profiles/text sizes | Reason |
+  |---|---|---|
+  | menus/12-stats, 13-cursor, 14-drag-offset | Debug large; release normal/large/larger | Effective STATS resets replace broad marks; unrelated/equal menu and cursor edits retain accumulated statistics (D1). Counts and derived statistics change, not waveform geometry. |
+  | panes/p2-pane-results, p3-pane-results-cursor, p4-pane-trend | Release normal/large/larger | Pane/cursor changes retain measurement statistics and trend according to their declarations instead of blanket clearing. |
+  | refs/50-stats | Release normal/large/larger | Unrelated reference/menu edits retain statistics under D1. |
+  | eye/eye-source | Release normal/large/larger | Source reset and one refresh move from input to acceptance/analysis. Both versions show 13 records and 509 edges; the first pooled samples and derived jitter differ. The deferred-refresh regression pins the new phase and prevents duplicate accumulation. |
+
+- 2026-11-16: e isolated release timing, after all other test/render/build jobs
+  drained, passes both existing guards without budget changes. Raw storm:
+  paired intake/change n=256 p99=68,916 ns against 500,000 ns; picture n=90
+  p99/max=247,000 ns against 750,000 ns; consumer n=81 p99=237,542 ns.
+  Mapping storm: paired p99=20,750 ns; picture n=256 p99=31,125 ns,
+  max=102,792 ns; consumer n=256 p99=708 ns. Detection/normalization and
+  publication, including scripted preparation, remain charged to G2;
+  consumer work is measured in its separate actual-work ring. The provisional
+  unit picture budget remains 3 ms and is not unit verified. Commands/exits:
+  `target/m23e-final-timing.json`; complete guard output in its two logs.
+  Final fast gate exits 0 and prints exactly
+  `partial gate passed (not done): 8 steps in 97 s`
+  (`target/m23e-final-fast.log`). The exact clippy step exits 1 with the
+  inherited rebaseline `Err` list (`target/m23e-finalverified-exact-clippy.log`).
+  Independent measurements of all six crates using the unchanged gate
+  implementations show no new/grown host/ARM clippy finding, no command errors
+  and no new/grown size entry against the base. Comparisons:
+  `target/m23e-finalverified-{clippy,size}-comparison.json`. No ratchet,
+  dependency, hook, remote or budget changes. One draft-message section;
+  no staging or commits. Cross-vendor review, policy resolution, the unresolved
+  intermittent Bode check and unit smoke remain required before acceptance.
+
+- 2026-11-16: e reset ownership audit: HISTORY consumes before segment polling;
+  the transition owns `seg_run` and pair-only store resets, and skips stores
+  already cleared by HISTORY. CLEAR and CreateMask no longer queue a second
+  mask reset. Eye placement no longer clears a second copy of temporal state.
+  The deferred refresh regression fails on production `11a8b2b9` with the exact
+  final fixture (exit 101, `target/m23e-finalverified-deferred-before.log`) and
+  passes after the change. Computation follows acceptance in the analysis
+  phase, once; a second idle poll cannot count the retained record again.
+  Native reference eye declares VIEW and owns source/raster changes by key;
+  Auto Eye snapshots declare NONE and retain their complete source/settings
+  key. Explicit clear invalidates both work revisions, rejecting late results.
+  The generic live eye still declares MAPPING/VIEW. The class matrix exercises
+  both native modes as well as all ten generic classes and NONE.
+  The sixth census initially exposed 3,328 allocations in 256 resets, from
+  default Arc/page replacement. Reusing unique Arc values and page buffers
+  reduces all six rows to 256 calls and zero allocations. Logs:
+  `target/m23e-consumer-census-{before,after}.log`. No ratchet or budget changed.
+
+- 2026-11-16: additionally reserve `ui/tests/{host_script,soak}.rs` and
+  `ui/src/ui/script.rs` for retired-diagnostic assertions and a sixth warmed
+  allocation-census row covering the newly acting reset consumers. The original
+  five observation rows exclude consumer work and cannot establish its allocation
+  behavior. Script fixtures, golden references and all ratchets remain untouched.
+
+- 2026-11-16: e implementation is in progress, not a completed handoff.
+  Six initial consumer regressions fail on the old wiring (exit 101,
+  `target/m23e-before.log`) and pass after the cutover. The expanded ten-test
+  consumer suite passes debug (`target/m23e-consumers-once.log`), including all
+  ten classes, repeated equal requests and script preparation consuming once
+  before publication. Late measurements and folds retain b's independent
+  gen/epoch/stats_gen tests. The upstream-specific audit adds per-row local
+  measurement overrides and reference/SIM configuration changes: they use
+  explicit StatsReset because their payload lives outside Model.
+  A concrete contract decision is pending: replay/SIM playback changes delay,
+  whose ACQ|STATS classes now reset accumulated statistics during capture
+  advancement. The upstream accumulation/no-hit tests require retention. Do not
+  weaken their assertions or classify the internal presentation as unrelated.
+  The owner was asked whether presentation advances need mapping-only events or
+  should retain the literal delay reset contract. No answer/acceptance inferred.
+  Cursor-only layout changes retain temporal views under the existing accepted
+  cursor decision. Native Auto Eye snapshots retain source/settings key reuse;
+  explicit view resets get a revision so late snapshot completion cannot refill
+  a cleared page. The table/list bookkeeping remains in test fixtures and named
+  diagnostic metadata; legacy comparison is explicitly reported retired.
+  No hardware access or commits. Task remains active and review has not started.
+
+- 2026-11-16: e preserves the oracle tables, diagnostic counters and independent
+  normalization/outbox checks pending explicit table/list retirement acceptance.
+  The assigned row-9 deletion removes live legacy mark observation after the
+  consumer switch; historical oracle fixtures remain review evidence. Existing
+  external edit bookkeeping (bus-candidate cancellation and SINGLE operation
+  receipts) has no reset effect and remains an explicit intake operation.
+  Additional required caller reservations: `ui/src/http.rs`,
+  `ui/src/drawpipe/tests/publication.rs`, `ui/src/scpi/actions.rs` and
+  `core/src/change/{requests.rs,tests/requests.rs}` for an equal-settings explicit
+  view reset. No worker-view/decode key removal, no class-table waiver.
+
+- 2026-11-16: M2.3e former-trigger audit before production edits. The d table
+  above remains the complete picture/worker-key inventory. The remaining effects:
+
+  | Former trigger | Accepted class or explicit operation | Sole acting owner in e |
+  |---|---|---|
+  | Every screen/SCPI/HTTP mark, normalization repair, autoset/Bode mark, recall | Effective field union from exhaustive core fixtures; geometry/trigger/channel/acquisition/measurement changes carry STATS only where declared; unrelated/equal edits retain statistics (D1); repaired fields only (D3) | Accepted STATS consumer; no blanket notification bridge |
+  | Measurement list add/remove/clear, pair/catalog changes, measurement gate/period configuration | STATS for effective list/config diff; explicit statistics reset remains StatsReset at equal settings | Accepted STATS consumer |
+  | DEFAULT and Measure > Reset | Explicit StatsReset, including equal settings | Accepted STATS consumer |
+  | CLEAR, SINGLE | Request classes including STATS and HW_AVERAGE; CLEAR also MASK/ZONE/MATH/VIEW; CLEAR removes last record and search state, retains history | Accepted request consumers; once per union |
+  | STOP-to-RUN, repeated RUN request | HW_AVERAGE; HISTORY when restarting segments | Accepted class consumers; transition owns hold/final read only |
+  | Segments/seg_hw/seg_ivl changes | HISTORY, including disabling segments; running pair boundary still rearms hardware segments; STOP completed browse retains times on identity-only CLEAR/mask edits | HISTORY clears stores, transition owns recording restart |
+  | Create mask, load mask, MaskReset, mask enable/source/tolerance/invert | MASK request or field class; build mask stays construction, stop-on-failure stays outbox STOP | Accepted MASK resets software and hardware counters once |
+  | Zone changes and CLEAR | ZONE field/request class | Accepted ZONE clears drops and hardware counter id once |
+  | Acquisition mode, avg_count, avg_hw; RUN/SINGLE/CLEAR | HW_AVERAGE; includes previously missing acquisition-mode restart (D7) | Accepted HW_AVERAGE increments hardware clear id once |
+  | Analyzer adjustments, source repair | MATH/VIEW exact field contract; source snap moves to normalize only; equal/unrelated edits do not reset | Declared held-state consumers |
+  | Math operation/source/scale/filter/expression/FFT | MATH plus STATS; record math/FFT itself is stateless (D8) | No fabricated math buffer; held spectrum state reset explicitly |
+  | Trend fresh-list convention | STATS or ACQ | Declared trend consumer; acquisition of a value only appends |
+  | Live eye source/clock/rate/options and effective mapping | VIEW or MAPPING, except the accepted cursor-only layout contract | Declared eye consumer; data-driven range/UI adaptation remains computation |
+  | Native reference eye and Auto Eye snapshots | Reference declares VIEW; snapshot declares NONE, retaining source/settings keys; explicit Clear/ViewReset invalidates both | Declared eye consumer plus keyed native computation; scope navigation preserves full-record history |
+  | Spectrum average/waterfall, power/bandwidth/magnetic/motor/double-pulse results | MATH/VIEW as declared; late analyzer work revision rejects old completion | Declared held-state consumer, including hidden panes |
+  | Cursor and XY | Stateless rendering; cursor mode remains unrelated; timebase uses current mapping | Empty reset declaration, no invented buffer |
+  | Old meas_n cancellation, pending measurement, batch folds | Exact gen/epoch/stats_gen filters already landed in b; STATS drops pending notifications; current values/jobs remain held and identity filters reject stale results | Identity filter plus accepted statistics consumer |
+  | Terminal autoset statistics | D5: terminal settings and their STATS reset wait for the next change point; previous statistics remain visible for one step | Outbox plus accepted STATS consumer; terminal-autoset regression pins both sides |
+  | Bus-candidate cancellation and pending SINGLE operation after settings edits | Explicit effective-settings boundary, independent of resets | Detection/intake boundary, no mark wrapper |
+  | Lifecycle memory reset | Resource release, independent of settings classes | Existing lifecycle reset retained |
+  | Decode and worker-view caches | Record/config keyed decode; complete transitional WorkerViewKey through M4 | Existing keyed caches retained |
+
+  Hardware not verified. Required unit smoke: statistics reset on each class
+  (and retention on non-STATS classes); history/segments including STOP browse
+  and disable/restart; mask/zone stop and reset; hardware average restart;
+  math and every declared view including hidden state; both Standard and Batch
+  draw paths; RUN/STOP/SINGLE including repeated requests and final read. Retain
+  producer/c/d holds, lease/build provenance, record/arm/error/identity counters,
+  per-step captures and unchanged G2/picture timing budgets.
+
+- 2026-11-16: M2.3e claimed on clean `t0003-m23e` at `11a8b2b9` under
+  the owner's assignment. Read delivery, row 9, bridge rules and recorded review
+  decisions. Building the former-trigger coverage table before source changes.
+  Unit-tier review and coordinator integration/image/hardware holds remain.
+  No commits or hardware access.
 
 - 2026-11-16: M2.3d round 3 worker handoff, no commits, unchanged HEAD
   `d7418b0d`. All five requested items are addressed. Fresh picture evidence

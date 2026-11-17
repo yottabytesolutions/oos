@@ -523,7 +523,7 @@ impl Ui {
         self.m.tscale = ts.iter().position(|&t| t >= want * 0.999).unwrap_or(ts.len() - 1);
         self.bode.wait = 2;
         change::bode_epoch(self);
-        self.settings_changed();
+        change::edited(self);
     }
 
     pub(super) fn bode_begin(&mut self) {
@@ -609,7 +609,7 @@ impl Ui {
                 (s.tscale, s.delay, s.trig_type, s.trig_src, s.trig_la, s.trig_level, s.slope);
             (m.trig_mode, m.mdepth, m.auto_roll, m.acq, m.run) = (s.trig_mode, s.mdepth, s.auto_roll, s.acq, s.run);
             change::mapping_observed(self, change::oracle::Row::Stage);
-            self.settings_changed();
+            change::edited(self);
         }
         if let Some((on, f, a, o, w, md)) = self.bode.afg_saved.take() {
             (self.m.afg_wave, self.m.afg_mod) = (w, md);
@@ -617,7 +617,7 @@ impl Ui {
         }
         if let Some((ts, src, lvl)) = self.bode.saved.take() {
             (self.m.tscale, self.m.trig_src, self.m.trig_level) = (ts, src, lvl);
-            self.settings_changed();
+            change::edited(self);
         }
         self.toast(msg);
     }
@@ -749,7 +749,7 @@ impl Ui {
         self.bode.cursor = 0;
         (self.bode.running, self.bode.free, self.bode.capturing) = (true, true, false);
         change::mapping_observed(self, change::oracle::Row::Stage);
-        self.settings_changed();
+        change::edited(self);
         let slow = if plan.scan { " (slow time base: gain only)" } else { "" };
         self.toast(&format!("Waiting for the sync edge on CH{}: start the sweep{}", sync + 1, slow));
     }
@@ -1214,10 +1214,17 @@ mod tests {
         ui.m.bode_sw_time = 0.05;
         ui.activate(Item::BodeRun);
         assert!(ui.bode.running);
-        for _ in 0..40 {
+        // The full-depth demo result arrives asynchronously. A sweep that finishes queues
+        // restoration for the next intake, even if it finishes on the last observation.
+        let exercise_until = ui.now + 2.0;
+        let wait = crate::ui::lifecycle::test_wait::Wait::new("free sweep demo exercise and its restoration");
+        while ui.now < exercise_until || (!ui.bode.running && (ui.m.tscale != ts0 || ui.m.trig_mode != TrigMode::Auto))
+        {
+            wait.ui(&ui);
             ui.step(0.05);
             ui.render(&mut cv);
         }
+        assert!(ui.now >= exercise_until, "the demo exercise must reach its simulated horizon");
         assert!(ui.bode.running || (ui.m.tscale == ts0 && ui.m.trig_mode == TrigMode::Auto), "{:?}", ui.toast);
     }
 

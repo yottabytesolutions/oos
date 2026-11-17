@@ -14,7 +14,7 @@ fn base(run: RunState) -> Ui {
 }
 
 #[test]
-fn normalize_diff_notifies_remaining_legacy_consumers() {
+fn normalize_effective_classes_own_statistics_resets() {
     for run in [RunState::Run, RunState::Stop] {
         for repair in 0..3 {
             let mut ui = base(run);
@@ -30,7 +30,7 @@ fn normalize_diff_notifies_remaining_legacy_consumers() {
             }
             ui.mstat = vec![MStat { n: 7, ..Default::default() }];
             change::begin_step(&mut ui, 0.04).unwrap();
-            assert!(ui.mstat.is_empty(), "normalize must notify statistics: {run:?}, repair {repair}");
+            assert_eq!(ui.mstat.is_empty(), repair != 1, "only STATS repairs clear: {run:?}, repair {repair}");
             ui.mstat = vec![MStat { n: 9, ..Default::default() }];
             change::begin_step(&mut ui, 0.04).unwrap();
             assert_eq!(ui.mstat[0].n, 9, "idempotent normalize must not notify twice");
@@ -44,7 +44,7 @@ fn default_setup_deliberately_invalidates_previous_statistics() {
     for _ in 0..2 {
         ui.mstat = vec![MStat { n: 7, ..Default::default() }];
         ui.key(key::DEFAULT);
-        assert!(ui.mstat.is_empty(), "DEFAULT invalidates statistics even at equal settings");
+        assert_eq!(ui.mstat[0].n, 7, "input defers the reset to acceptance");
         change::begin_step(&mut ui, 0.04).unwrap();
         assert!(ui.host.runtime().change.last.as_ref().unwrap().classes().contains(C::STATS));
         assert_eq!(change::counters(&ui).4, 0);
@@ -62,7 +62,7 @@ fn cursor_mode_preserves_temporal_views() {
     eye.records = 7;
     eye.hits[3] = 19;
     ui.azr.eye = Some(eye);
-    ui.key(key::CURSOR);
+    ui.m.cursor = CursorMode::Time;
     change::begin_step(&mut ui, 0.04).unwrap();
     assert_eq!(ui.host.runtime().change.last.as_ref().unwrap().classes(), C::MAPPING);
     assert_eq!(ui.trend.len(), 1);
@@ -95,7 +95,7 @@ fn mask_toggle_only_advances_generation_for_an_effective_worker_route_change() {
         let stamp = ui.m.hw_stamp;
         let before = ui.fast_ok();
         ui.m.mask_on = true;
-        ui.mark_changed();
+        crate::ui::change::edited(&mut ui);
         ui.step(0.04);
         let after = ui.fast_ok();
         let c = ui.host.runtime().change.last.as_ref().unwrap();
@@ -121,11 +121,8 @@ fn acquisition_mode_observes_the_missing_legacy_average_reset_as_d7() {
             ui.host.runtime().change.last.as_ref().unwrap().classes(),
             C::ACQ | C::PHOSPHOR | C::STATS | C::HW_AVERAGE
         );
-        assert_eq!(ui.m.hw_avg_clear, clear, "average reset remains legacy until M2.3e");
-        let mut raw = [0; 10];
-        raw[2] = u64::from(run == RunState::Stop);
-        raw[6] = 1;
-        assert_eq!(change::counters(&ui), (raw, 0, 0, 0, 0), "{run:?}");
+        assert_eq!(ui.m.hw_avg_clear, clear + 1, "HW_AVERAGE acts once at acceptance");
+        assert_eq!(change::counters(&ui), ([0; 10], 0, 0, 0, 0), "{run:?}");
     }
 }
 
@@ -143,16 +140,16 @@ fn math_operation_observes_stateless_recomputation_as_d8() {
         pairs: false,
     });
     ui.m.math = MathOp::Add;
-    ui.mark_changed();
+    crate::ui::change::edited(&mut ui);
     change::begin_step(&mut ui, 0.04).unwrap();
     assert_eq!(ui.math_wave(), vec![-1.0, 5.0]);
     ui.m.math = MathOp::Sub;
-    ui.mark_changed();
+    crate::ui::change::edited(&mut ui);
     change::begin_step(&mut ui, 0.04).unwrap();
     assert_eq!(ui.math_wave(), vec![-3.0, 1.0]);
     assert_eq!(ui.last[0].as_ref().unwrap().ch[0], vec![-2.0, 3.0]);
     assert_eq!(ui.host.runtime().change.last.as_ref().unwrap().classes(), C::MATH | C::STATS);
-    assert_eq!(change::counters(&ui), ([0, 0, 0, 0, 0, 0, 0, 0, 2, 0], 0, 0, 0, 0));
+    assert_eq!(change::counters(&ui), ([0; 10], 0, 0, 0, 0));
 }
 
 #[test]
@@ -167,15 +164,16 @@ fn analyzer_edits_observe_the_actual_held_reset() {
     waterfall.rows.push_back(vec![1.0, 2.0]);
     ui.azr.wf = Some(waterfall);
     ui.adjust(Item::EyeSrc, 1);
+    assert!(ui.azr.spec_avg.is_some(), "input defers the held reset");
+    assert_eq!(ui.mstat[0].n, 7);
+    change::begin_step(&mut ui, 0.04).unwrap();
     assert!(ui.azr.spec_avg.is_none());
     assert!(ui.azr.wf.as_ref().unwrap().rows.is_empty());
-    assert_eq!(ui.mstat[0].n, 7, "this old reset affects analyzer results, not generic mstat");
-    change::begin_step(&mut ui, 0.04).unwrap();
     assert_eq!(ui.host.runtime().change.last.as_ref().unwrap().classes(), C::VIEW);
-    assert_eq!(change::counters(&ui), ([0, 0, 0, 0, 0, 0, 0, 0, 1, 0], 0, 0, 0, 0));
+    assert_eq!(change::counters(&ui), ([0; 10], 0, 0, 0, 0));
     ui.adjust(Item::EyeSrc, 0);
     change::begin_step(&mut ui, 0.04).unwrap();
-    assert_eq!(change::counters(&ui), ([0, 0, 0, 0, 0, 0, 0, 0, 2, 1], 0, 0, 0, 0));
+    assert_eq!(change::counters(&ui), ([0; 10], 0, 0, 0, 0));
 }
 
 #[test]
@@ -235,7 +233,7 @@ fn mask_source_advances_generation_once_and_requests_statistics_resets_as_d9() {
             let stamp = ui.m.hw_stamp;
             ui.mstat = vec![MStat { n: 7, ..Default::default() }];
             ui.m.mask_src = 1;
-            ui.mark_changed();
+            crate::ui::change::edited(&mut ui);
             change::begin_step(&mut ui, 0.04).unwrap();
             let c = ui.host.runtime().change.last.as_ref().unwrap();
             assert_eq!(c.classes(), C::ACQ | C::STATS | C::MASK, "mask counts require a reset");
@@ -243,17 +241,13 @@ fn mask_source_advances_generation_once_and_requests_statistics_resets_as_d9() {
             assert_eq!((id.gen(), id.epoch(), id.stats_gen()), (1, 0, 1));
             assert!(ui.mstat.is_empty());
             assert_eq!(ui.m.hw_stamp, stamp, "the acting legacy generation still does not advance");
-            let mut raw = [0; 10];
-            raw[0] = 1;
-            raw[1] = u64::from(run == RunState::Run);
-            raw[4] = 1;
-            assert_eq!(change::counters(&ui), (raw, 0, 0, 0, 0), "{run:?}, hardware={hardware}");
+            assert_eq!(change::counters(&ui), ([0; 10], 0, 0, 0, 0), "{run:?}, hardware={hardware}");
             for _ in 0..2 {
                 change::begin_step(&mut ui, 0.04).unwrap();
                 let c = ui.host.runtime().change.last.as_ref().unwrap();
                 assert_eq!(c.classes(), C::NONE, "same source must not reset mask counts again");
                 assert_eq!(c.identity(), id);
-                assert_eq!(change::counters(&ui), (raw, 0, 0, 0, 0));
+                assert_eq!(change::counters(&ui), ([0; 10], 0, 0, 0, 0));
             }
         }
     }

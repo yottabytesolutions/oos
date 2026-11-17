@@ -15,6 +15,7 @@ pub(in crate::ui) struct Work {
     samples: u64,
     queued_samples: u64,
     revision: u64,
+    eye_revision: u64,
     pub(in crate::ui) pending: bool,
     finished: Option<f64>,
     accepted_key: Option<Key>,
@@ -26,12 +27,21 @@ impl Work {
     }
 
     pub(in crate::ui) fn invalidate(&mut self) {
+        self.invalidate_analysis(true);
+    }
+
+    pub(in crate::ui) fn invalidate_analysis(&mut self, active: bool) {
         self.revision += 1;
-        self.pending = true;
+        self.pending |= active;
+    }
+
+    pub(in crate::ui) fn invalidate_eye(&mut self, active: bool) {
+        self.eye_revision += 1;
+        self.pending |= active;
     }
 
     pub(in crate::ui) fn reset(&mut self) {
-        *self = Self { revision: self.revision + 1, ..Default::default() };
+        *self = Self { revision: self.revision + 1, eye_revision: self.eye_revision + 1, ..Default::default() };
     }
 
     fn results_due(&mut self, now: f64, has_spectrum: bool) -> bool {
@@ -71,7 +81,10 @@ pub(in crate::ui) struct Key {
 fn key(ui: &Ui) -> Key {
     let m = &ui.m;
     Key {
-        generation: (change::acquisition::identity(ui), ui.azr.work.revision),
+        generation: (
+            change::acquisition::identity(ui),
+            if m.view == AView::Eye { ui.azr.work.eye_revision } else { ui.azr.work.revision },
+        ),
         acquisition: (m.acq, m.tscale, m.delay.to_bits(), m.mdepth),
         channels: m.ch.clone(),
         view: (m.view, m.pane),
@@ -176,8 +189,8 @@ pub(in crate::ui) fn poll(ui: &mut Ui) {
         }
         accept(ui, done);
     }
-    if ui.azr.work.pending && ui.meas_bg.as_ref().is_some_and(|w| !w.analysis_busy) {
-        update(ui);
+    if ui.azr.work.pending && ui.meas_bg.as_ref().is_none_or(|w| !w.analysis_busy) {
+        ui.analyzer_update();
     }
 }
 

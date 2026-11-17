@@ -284,6 +284,42 @@ without a MAPPING class. Remaining statistics/history/mask/zone/hardware-average
 math and view consumer switches and deletion of legacy observations belong to e.
 These contracts are host tested; unit smoke and independent review remain required.
 
+M2.3e candidate: accepted classes now own statistics, history/segments, mask/zone
+counters, hardware average and declared view resets. Script preparation consumes
+that union once before publication; the UI step cannot consume it again. The old
+settings marks and normalization notification bridge are removed. Input operation
+receipts and bus-candidate cancellation remain separate from reset effects. Local
+measurement overrides and reference/SIM payload changes, including running
+non-fresh SIM configuration captures, use explicit StatsReset. A qualified
+non-fresh capture stays off-screen until that reset is accepted; misses retain
+the previous capture and do not request a reset. An explicit view clear uses
+ViewReset without an acquisition/statistics boundary.
+
+Trend declares ACQ/STATS; temporal eye declares its mapping and VIEW; held analyzer
+results declare MATH/VIEW. Cursor-only scope layout changes retain temporal views.
+Native Auto Eye snapshots retain complete source/settings keys and ignore display
+geometry, while explicit resets advance their revision. Full-record reference eye
+pooling declares VIEW except pure driver PlaybackPosition reclassification;
+its source/raster key owns geometry, so scope navigation cannot destroy its
+accumulated record. Eye and spectrum worker history have separate reset revisions, so clearing hidden eye state cannot discard
+spectrum pooling. Stateless XY, cursors and record math declare empty reset sets.
+Analysis refresh waits for the analysis phase and happens once per pending change.
+Decode and the complete transitional worker-view key remain keyed through M4.
+
+Detection and publication, including scripted preparation, remain in G2 timing.
+Reset consumer work has a separate fixed actual-work ring (256 samples, 2 KiB plus
+one count), and a sixth warmed allocation-census row. Resetting empty eye/analysis
+state reuses its buffers. Legacy oracle fixtures and named diagnostic metadata
+remain for table/list review; state queries explicitly mark the live observer
+retired, so zero legacy counters do not claim agreement. Replay/SIM drivers record
+exact presentation-origin position requests, classified as VIEW, so playback
+advances retain accumulated statistics. User delay edits retain ACQ/STATS.
+STATS clears accumulated statistics and pending notifications; current values,
+analysis and pending measurement jobs remain held. CLEAR also removes those
+values and cancels measurement work. SINGLE resets statistics at the accepted
+change point (task 0066 question 1, owner decision 2026-11-16).
+This candidate has no unit or integration acceptance.
+
 Current Peak record batches use a bounded whole-batch queue: at most one UI
 count-budget step (48 records), derived from the shared `RECORDS_PER_STEP`
 limit, and the existing 32 Mi-sample bound (the newest frame alone may exceed
@@ -525,6 +561,11 @@ apply commands -> normalize -> ChangeSet = classify(previous Settings, current S
   `Request::Epoch(token)` from an autoset or Bode stage (also a retry with the same settings). SINGLE arm, CLEAR and
   RUN after STOP are seen in the change stage itself (from intake or the run transition) and get their epoch in the
   same step. Requests from later stages go through the outbox and resolve at the next step.
+- **Playback presentation.** Replay/SIM drivers record exact before/after position writes as
+  `Request::PlaybackPosition` through the change point. An uninterrupted matching driver delta
+  classifies as VIEW only, including its mapping-key position, so statistics accumulate across
+  played frames. A user delay edit retains ACQ|STATS even during playback; unmatched endpoints
+  and simultaneous changes keep their normal classes. Statistics consumers need no origin checks.
 - **`MappingKey`** is built by `classify` from exactly the fields of `Settings` and `UiAcq` it puts in the `mapping`
   class, in the same destructure. A field cannot be in the class and missing from the key.
 - **`UiAcq`:** UI state that changes what is acquired or drawn but is not a setting: the XY view, the protocol watch

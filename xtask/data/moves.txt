@@ -1,2 +1,4 @@
 # Planned moves of this branch: <old key or file> -> <new key or file> (docs/development.md).
 # The integrator applies them with `cargo xtask ratchet --move` at merge, which empties this file.
+fn ui/src/ui/eyepage.rs blit_hits -> fn ui/src/ui/eyepage/raster.rs blit_hits
+fn ui/src/ui/sim.rs Generated::evaluate -> fn ui/src/ui/sim/generated.rs Generated::evaluate

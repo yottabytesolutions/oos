@@ -211,7 +211,7 @@ impl Ui {
                 } else if want < lo {
                     self.toast(&format!("Lowest frequency: {}", si_short(lo, "Hz")));
                 }
-                self.mark_changed();
+                change::edited(self);
             }
             return self.close_picker();
         }

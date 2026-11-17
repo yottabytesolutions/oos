@@ -2,6 +2,7 @@
 
 //! Executable names for the reviewed task table. Rows describe old effects, never inferred class unions.
 
+#[cfg(test)]
 use oos_core::change::Classes as C;
 
 pub const ROW_COUNT: usize = 18;
@@ -28,6 +29,7 @@ pub enum Row {
     MaskSource,
 }
 impl Row {
+    #[cfg(test)]
     pub const ALL: [Self; ROW_COUNT] = [
         Self::Mark,
         Self::Layout,
@@ -86,6 +88,7 @@ pub enum Difference {
     D9 = 8,
 }
 impl Difference {
+    pub const ALL: [Self; 8] = [Self::D1, Self::D2, Self::D3, Self::D4, Self::D5, Self::D7, Self::D8, Self::D9];
     pub fn mask(self) -> u16 {
         1 << self as u8
     }
@@ -104,18 +107,21 @@ impl Difference {
 }
 
 /// Effective contracts are independent of the classifier output, so D1 cannot hide a missing clear.
+#[cfg(test)]
 #[derive(Clone, Copy, Default)]
 pub struct OracleContext {
     stopped: bool,
     repaired: C,
     required: C,
 }
+#[cfg(test)]
 impl OracleContext {
     pub fn new(stopped: bool, repaired: C, required: C) -> Self {
         Self { stopped, repaired, required }
     }
 }
 
+#[cfg(test)]
 pub fn difference(row: Row, class: C, old: bool, context: OracleContext) -> Option<Difference> {
     let OracleContext { stopped, repaired, required } = context;
     if old && required.contains(class) {
@@ -149,7 +155,9 @@ pub fn difference(row: Row, class: C, old: bool, context: OracleContext) -> Opti
     }
 }
 
+#[cfg(test)]
 struct RequestClasses;
+#[cfg(test)]
 impl RequestClasses {
     fn clear() -> C {
         C::PHOSPHOR | C::STATS | C::MASK | C::ZONE | C::HW_AVERAGE | C::MATH | C::VIEW
@@ -158,6 +166,7 @@ impl RequestClasses {
 
 /// A legacy dirty clear services both geometry and persistence consumers. Select its contracts from the
 /// effective fields, never from the classifier's output. Broad extra clears retain the mapping observation (D1).
+#[cfg(test)]
 pub fn dirty_contracts(old: C, geometry: bool, persistence: bool) -> C {
     let mapping = old.contains(C::MAPPING);
     let phosphor = old.contains(C::PHOSPHOR);
@@ -174,12 +183,15 @@ pub fn dirty_contracts(old: C, geometry: bool, persistence: bool) -> C {
     projected
 }
 
+#[cfg(test)]
 pub fn persistence_field(name: &str) -> bool {
     matches!(name, "persist" | "color_grade" | "acq" | "avg_count" | "avg_hw" | "draw_batch" | "deskew_ch")
 }
+#[cfg(test)]
 pub fn geometry_field(name: &str) -> bool {
     mapping_field(name) || matches!(name, "ref_win" | "density" | "strip_dock" | "split_pane")
 }
+#[cfg(test)]
 pub fn mapping_field(name: &str) -> bool {
     matches!(
         name,

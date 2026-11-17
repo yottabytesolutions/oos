@@ -16,13 +16,39 @@ pub(crate) fn intake<T>(ui: &mut Ui, f: impl FnOnce(&mut Ui) -> T) -> T {
     f(guard.0)
 }
 
+struct Outside<'a>(&'a mut Ui, bool);
+impl Drop for Outside<'_> {
+    fn drop(&mut self) {
+        if self.1 {
+            self.0.host.runtime_mut().change.timing.intake_resume();
+        }
+    }
+}
+
+/// Work inside an open intake that is charged to its own rings (change, consumers, picture): the intake clock stops
+/// for it, so no time enters two rings.
+pub(super) fn outside<T>(ui: &mut Ui, f: impl FnOnce(&mut Ui) -> T) -> T {
+    let suspended = ui.host.runtime_mut().change.timing.intake_suspend();
+    let guard = Outside(ui, suspended);
+    f(guard.0)
+}
+
+/// A sample of the timing rings' clock, which tests supply at construction (ADR 0019).
+pub(super) fn now(ui: &Ui) -> std::time::Instant {
+    ui.host.runtime().change.timing.now()
+}
+
+pub(super) fn since(ui: &Ui, start: std::time::Instant) -> std::time::Duration {
+    ui.host.runtime().change.timing.since(start)
+}
+
 /// One lifecycle invocation, including its lock waits and any service work.
 pub(in crate::ui) fn poll<T>(ui: &mut Ui, poll: crate::perfguard::deep::Poll, f: impl FnOnce(&mut Ui) -> T) -> T {
     let diagnostics = crate::perfguard::deep::counters();
     let wait = diagnostics.ui_wait();
-    let started = std::time::Instant::now();
+    let started = now(ui);
     let result = f(ui);
-    let elapsed = started.elapsed();
+    let elapsed = since(ui, started);
     let wait = diagnostics.ui_wait().wrapping_sub(wait);
     let stopped = ui.memory_stopped();
     let observer = &mut ui.host.runtime_mut().change;

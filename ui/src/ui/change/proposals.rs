@@ -40,7 +40,7 @@ pub(super) fn begin(ui: &mut Ui, requester: Requester) {
 /// Queue a unique stage token and defer late associated settings to the next change point.
 pub(super) fn stage(ui: &mut Ui, requester: Requester) {
     let sample = ui.host.runtime().change.census.begin();
-    let started = Instant::now();
+    let started = now(ui);
     let i = index(requester);
     let observer = &mut ui.host.runtime_mut().change;
     observer.stages.stages[i] += 1;
@@ -55,7 +55,7 @@ pub(super) fn stage(ui: &mut Ui, requester: Requester) {
     }
     observer.signals.row = Row::Stage;
     observer.signals.rows |= 1 << Row::Stage as usize;
-    observer.timing.record_shadow(started.elapsed());
+    observer.timing.record_shadow(observer.timing.since(started));
     sample.finish(&mut observer.census, 3);
 }
 

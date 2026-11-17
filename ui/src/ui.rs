@@ -2334,7 +2334,7 @@ impl Ui {
         self.m.zscale = self.m.zscale.min(self.m.tscale);
         self.m.zdelay = (anchor - divisions * tscales()[self.m.zscale] as f64) as f32;
         self.clamp_zoom();
-        self.settings_changed();
+        change::edited(self);
     }
 
     /// Plain wheel pans time; Ctrl-wheel zooms time around the pointer.
@@ -2626,7 +2626,7 @@ impl Ui {
         self.zoom_vcenter = 0.0;
         self.zoom_arm = false;
         self.clamp_zoom();
-        self.settings_changed();
+        change::edited(self);
     }
 
     fn eye_tap(&mut self, x: i32, y: i32) -> bool {
@@ -2643,11 +2643,6 @@ impl Ui {
     /// Logic analyser record of the last acquisition (SCPI).
     pub fn la_record(&self) -> Option<&la::LaRec> {
         self.last[0].as_ref().and_then(|r| r.la.as_ref())
-    }
-
-    /// Called after remote (SCPI) changes: same effect as a change on the screen.
-    pub fn mark_changed(&mut self) {
-        self.settings_changed();
     }
 
     #[cfg(test)]
@@ -2844,24 +2839,7 @@ impl Ui {
         self.last[0] = None;
         self.hist_pos = None;
         self.cleared = true;
-        self.stats = [Stats::default(); NCH];
-        // a measurement still out belongs to the record cleared away
-        change::acquisition::cancel_measurement(self);
-        self.meas_want = false;
-        self.ana = Default::default();
-        change::stats_clear(self);
-        self.mask_counts_reset();
-        (self.zone_drops, self.zone_hw_clear) = (0, self.zone_hw_clear + 1);
-        self.hw_avg_restart();
         self.toast("Display cleared");
-    }
-
-    /// The hardware average starts over (`Model::hw_avg_clear`); nothing changes for the other sources.
-    fn hw_avg_restart(&mut self) {
-        if self.src.is_hw() {
-            change::event(self, change::oracle::Row::Reset, oos_core::change::Classes::HW_AVERAGE);
-            self.m.hw_avg_clear += 1;
-        }
     }
 
     /// QUICK key and the Quick button of the top bar: the action chosen in System > Quick key.
@@ -2889,12 +2867,12 @@ impl Ui {
     pub fn step(&mut self, dt_wall: f64) {
         // System > Features: what is left out runs nothing
         self.features_enforce();
+        let Some((final_done, picture_cleared)) = change::begin_step(self, dt_wall) else { return };
         self.poll_reference_measurements();
         self.poll_catalog_measurements();
         self.math_fit_tick();
         self.sim_poll();
         self.eye_auto_poll();
-        let Some((final_done, picture_cleared)) = change::begin_step(self, dt_wall) else { return };
         let mut draw = [std::time::Duration::ZERO; 5];
         let hw_seg = self.seg_hw_on();
         let persist = PERSIST[self.m.persist].1;
@@ -3264,18 +3242,13 @@ impl Ui {
             step_draw::stopped(self);
             draw[3] += started.elapsed();
         }
-        if self.analyzed_view != self.m.view {
-            self.analyzed_view = self.m.view;
-            if self.m.view != AView::Scope {
-                self.analyzer_update();
-            }
-        }
+        change::analyze_switched_view(self);
         // the measurements of the newest record (in the background: when they are done, also after a stop)
         change::proposals::stopped(self);
         self.meas_poll();
         if std::mem::take(&mut self.meas_new) {
             let rows = self.meas_rows();
-            self.trend_update(self.mstat.is_empty(), &rows);
+            self.trend_update(&rows);
             self.mstat.resize(rows.len(), MStat::default());
             self.counter_update();
             for (i, row) in rows.iter().enumerate() {
@@ -4149,7 +4122,6 @@ impl Ui {
         self.mask_ref = Some(v);
         self.build_mask();
         self.m.mask_on = true;
-        self.mask_counts_reset();
         self.toast(&format!("Mask created from CH{}", c + 1));
     }
 
@@ -4162,8 +4134,7 @@ impl Ui {
         self.m.mask_src = r.src.min(NCH - 1);
         self.build_mask();
         self.m.mask_on = true;
-        self.mask_pass = 0;
-        self.mask_fail = 0;
+        change::request(self, oos_core::change::Request::CreateMask, change::oracle::Row::Mask);
         self.toast(&format!("Mask created from R{}", self.ref_sel + 1));
     }
 
@@ -8567,7 +8538,7 @@ impl Ui {
                 } else {
                     self.m.math_b = source;
                 }
-                self.settings_changed();
+                change::edited(self);
             }
             return;
         }
@@ -8977,7 +8948,7 @@ impl Ui {
                 let i = l.iter().position(|&x| x >= per * 0.999).unwrap_or(0);
                 m.math_fc = 1.0 / l[step(i, l.len(), -d)];
             }
-            Item::MeasStats => self.stats_on = !self.stats_on,
+            Item::MeasStats => self.set_stats_shown(!self.stats_on),
             Item::MeasLabels => self.m.meas_labels = !self.m.meas_labels,
             Item::StripDock => {
                 let all = StripDock::ALL;
@@ -9144,7 +9115,7 @@ impl Ui {
             self.relayout();
             return;
         }
-        self.settings_changed();
+        change::edited(self);
         if it == Item::Hdmi {
             self.sync_full();
         }
@@ -9154,33 +9125,6 @@ impl Ui {
         self.mstat.clear();
         self.replay.clear_deferred_statistics();
         self.reset_catalog_statistics();
-    }
-
-    /// A setting the user or a remote client changed: a pending bus candidate and a running SINGLE start over.
-    fn settings_changed(&mut self) {
-        self.cancel_bus_candidate(true);
-        // an incomplete SINGLE keeps its press: the new settings make a new generation of it, not a new arm (M2.3c);
-        // a waiting *OPC? waits for the capture with the new settings
-        if self.m.trig_mode == TrigMode::Single && self.m.run == RunState::Run {
-            self.scpi_arm_operation();
-        }
-        self.settings_marked();
-    }
-
-    /// The picture and statistics after a settings change, also for a repair of the change point (normalization),
-    /// which is no new request and so does not re-arm SINGLE.
-    pub(super) fn settings_marked(&mut self) {
-        change::event(
-            self,
-            change::oracle::Row::Mark,
-            oos_core::change::Classes::STATS
-                | if self.m.run == RunState::Run {
-                    oos_core::change::Classes::MAPPING
-                } else {
-                    oos_core::change::Classes::NONE
-                },
-        );
-        change::stats_clear(self);
     }
 
     fn activate(&mut self, it: Item) {
@@ -9245,7 +9189,7 @@ impl Ui {
                 }
                 Item::HZero => {
                     self.m.delay = 0.0;
-                    self.settings_changed();
+                    change::edited(self);
                 }
                 Item::AutoDeskew => self.auto_deskew(),
                 Item::ClearDeskew => self.clear_deskew(),
@@ -9329,7 +9273,6 @@ impl Ui {
                         } else if self.meas_cfg.is_some_and(|n| n as usize > index) {
                             self.meas_cfg = self.meas_cfg.map(|n| n - 1);
                         }
-                        change::stats_clear(self);
                         self.toast(&format!(
                             "{} {} removed",
                             meascatalog::meas_long_name(k),
@@ -9341,7 +9284,6 @@ impl Ui {
                             return;
                         }
                         self.m.meas.push(e);
-                        change::stats_clear(self);
                     }
                     if k == Meas::Burst && !(self.m.meas_idle > 0.0) {
                         if let Some((a, _)) = self.meas_analysis(self.meas_src) {
@@ -9535,7 +9477,7 @@ impl Ui {
                         self.m.ch[c].on = true;
                     }
                     self.focus = 0;
-                    self.settings_changed();
+                    change::edited(self);
                     let names: Vec<String> = v.iter().map(|c| format!("CH{}", c + 1)).collect();
                     self.toast(&format!("{} on", names.join(", ")));
                 }
@@ -9721,7 +9663,6 @@ impl Ui {
                 }
                 self.build_mask();
                 self.relayout();
-                change::recall(self);
                 match bad.first() {
                     None => self.toast(&format!("Recalled {}", crate::store::file_name(&p))),
                     Some(e) => self.toast(&format!(
@@ -9740,13 +9681,13 @@ impl Ui {
     fn level_50(&mut self) {
         if self.m.trig_ref.is_some() {
             self.fit_reference_trigger_levels();
-            self.settings_changed();
+            change::edited(self);
             return;
         }
         let s = self.stats[self.m.trig_src];
         if s.valid {
             self.m.trig_level = crate::wave::mid_level(&s);
-            self.settings_changed();
+            change::edited(self);
         }
     }
 
@@ -10114,7 +10055,7 @@ impl Ui {
                 crate::decode::CPHY_RATES.into_iter().find(|&rate| crate::decode::cphy_rate_label(rate) == want)
             {
                 self.m.dec_cphy_rate = rate;
-                self.settings_changed();
+                change::edited(self);
             }
             return;
         }
@@ -10753,7 +10694,7 @@ impl Ui {
         }
         self.m.ch[c].coupling = to;
         self.toast(&format!("CH{}: {} coupling", c + 1, to.name()));
-        self.settings_changed();
+        change::edited(self);
     }
 
     pub fn key(&mut self, k: u8) {
@@ -10834,7 +10775,7 @@ impl Ui {
                     self.open_menu(MenuId::Channel(c));
                 }
                 self.select_workspace_source(WaveId::Ch(if self.m.ch[c].on { c } else { self.m.active }));
-                self.settings_changed();
+                change::edited(self);
             }
             key::RUNSTOP => {
                 m.run = if m.run == RunState::Run { RunState::Stop } else { RunState::Run };
@@ -10868,7 +10809,6 @@ impl Ui {
                 self.m.meas = meas;
                 (self.m.quick, self.m.text_size) = (quick, text_size);
                 self.bus_auto = None;
-                change::stats_clear(self);
                 self.select_workspace_source(WaveId::Ch(self.m.active));
                 self.meas_own.clear();
                 self.meas_cfg = None;
@@ -10954,7 +10894,7 @@ impl Ui {
                 0x90 => {
                     if push {
                         self.refs[self.ref_sel].as_mut().unwrap().offset = 0.0;
-                        self.settings_changed();
+                        change::edited(self);
                     } else {
                         self.adjust(Item::RefOffset, dir * acc);
                     }
@@ -10979,7 +10919,7 @@ impl Ui {
             0x90 => {
                 if push {
                     self.m.ch[c].offset = 0.0;
-                    self.settings_changed();
+                    change::edited(self);
                 } else {
                     self.adjust(Item::ChOffset(c), dir * acc);
                 }
@@ -11001,7 +10941,7 @@ impl Ui {
                     } else {
                         self.m.delay = 0.0;
                     }
-                    self.settings_changed();
+                    change::edited(self);
                 } else if self.m.zoom {
                     self.adjust(Item::ZDelay, -dir * acc);
                 } else {
@@ -11446,7 +11386,7 @@ impl Ui {
                         let overview = Self::split_zoom(self.grid).0;
                         self.m.zdelay = t.start_delay + dx as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
                         self.clamp_zoom();
-                        self.settings_changed();
+                        change::edited(self);
                     }
                     Drag::ZoomLeft | Drag::ZoomRight => {
                         let overview = Self::split_zoom(self.grid).0;
@@ -11464,12 +11404,12 @@ impl Ui {
                         let half = tscales()[self.m.zscale] * HDIV * 0.5;
                         self.m.zdelay = if t.drag == Drag::ZoomLeft { t.start_cur - half } else { t.start_cur + half };
                         self.clamp_zoom();
-                        self.settings_changed();
+                        change::edited(self);
                     }
                     Drag::Offset(c) => {
                         let vpd = self.m.ch[c].volts_per_div();
                         self.m.ch[c].offset = t.start_offset - dy as f32 / ppy * vpd;
-                        self.settings_changed();
+                        change::edited(self);
                     }
                     Drag::Delay => {
                         if self.m.zoom {
@@ -11478,7 +11418,7 @@ impl Ui {
                         } else {
                             self.m.delay = t.start_delay - dx as f32 / ppx * self.m.time_per_div();
                         }
-                        self.settings_changed();
+                        change::edited(self);
                     }
                     Drag::Level | Drag::Level2 => {
                         let lower = t.drag == Drag::Level2;
@@ -11495,11 +11435,11 @@ impl Ui {
                         } else {
                             self.m.trig_level = if two { level.max(self.m.trig_level2) } else { level };
                         }
-                        self.settings_changed();
+                        change::edited(self);
                     }
                     Drag::Bus => {
                         self.m.bus.pos = (t.start_offset - dy as f32 / ppy).clamp(BUS_POS_MIN, BUS_POS_MAX);
-                        self.settings_changed();
+                        change::edited(self);
                     }
                     Drag::Zone(_) => {
                         let shape = self.zone_arm.map_or(false, |a| a.1);
@@ -11904,7 +11844,7 @@ impl Ui {
             if r.contains(x, y) {
                 if !self.m.ch[c].on {
                     self.m.ch[c].on = true;
-                    self.settings_changed();
+                    change::edited(self);
                 } else if self.m.n_on() > 1 && self.m.active != c {
                     // as the channel key: with several channels on, the first tap only selects; the next opens the
                     // menu. Another channel's menu would show the wrong channel: it closes.
@@ -12554,6 +12494,8 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     mod change;
+    mod change_consumers;
+    mod change_display_rules;
     mod change_picture_contracts;
     mod epochs;
     mod mapping;

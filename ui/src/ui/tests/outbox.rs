@@ -193,7 +193,7 @@ fn terminal_settings_without_a_stage_token_wait_for_intake() {
     change::proposals::defer(&mut ui, |ui| {
         ui.m.tscale += 1;
         ui.m.trig_level = 1.25;
-        ui.settings_changed();
+        crate::ui::change::edited(ui);
     });
     assert_eq!(ui.m.tscale, scale);
     assert_ne!(ui.m.trig_level, 1.25);
@@ -233,8 +233,9 @@ fn normal_sweep_with_run_retains_acquisition_and_stats() {
     ui.step(0.04);
     let mut remote = crate::scpi::Scpi::open(0u16, false);
     remote.exec_line(&mut ui, &Canvas::new(1, 1), ":STOP;:TRIG:SWE NORM;:RUN");
-    ui.step(0.04);
+    // the end of the SCPI message is its change point
     let classes = ui.host.runtime().change.last.as_ref().unwrap().classes();
+    ui.step(0.04);
     use oos_core::change::Classes as C;
     assert_eq!(ui.m.trig_mode, TrigMode::Normal);
     assert!(classes.contains(C::ACQ | C::STATS | C::HW_AVERAGE));
@@ -294,4 +295,48 @@ fn idle_writers_leave_unaccepted_edits_at_intake() {
     change::proposals::bode(&mut ui);
     ui.step(0.04);
     assert_eq!(ui.m.trig_level, 1.25);
+}
+
+#[test]
+fn completed_free_bode_restores_settings_on_the_next_intake() {
+    let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+    ui.m.bode_gen = super::super::bode::FREE;
+    ui.m.bode_sw_time = 0.05;
+    let initial = ui.m.clone();
+    ui.activate(Item::BodeRun);
+    assert!(ui.bode.running);
+    ui.step(0.001);
+    assert!(ui.bode.running);
+    let active = ui.m.clone();
+    assert_ne!(active.tscale, initial.tscale);
+    change::proposals::defer(&mut ui, |ui| ui.bode_finish("Test sweep complete"));
+    assert!(!ui.bode.running);
+    assert_eq!((ui.m.tscale, ui.m.trig_mode), (active.tscale, active.trig_mode), "restoration is deferred");
+    ui.step(0.001);
+    assert_eq!((ui.m.tscale, ui.m.trig_mode, ui.m.auto_roll), (initial.tscale, initial.trig_mode, initial.auto_roll));
+    ui.step(0.001);
+    assert_eq!((ui.m.tscale, ui.m.trig_mode), (initial.tscale, initial.trig_mode));
+}
+
+#[test]
+fn one_scpi_message_is_one_accepted_change_with_the_union_of_classes() {
+    use oos_core::change::Classes as C;
+    let accepted = |messages: &[&str]| {
+        let (mut ui, _) = hardware();
+        ui.m.trig_mode = TrigMode::Auto;
+        ui.m.run = RunState::Run;
+        ui.step(0.04);
+        let mut remote = crate::scpi::Scpi::open(0u16, false);
+        let mut union = C::NONE;
+        for message in messages {
+            remote.exec_line(&mut ui, &Canvas::new(1, 1), message);
+            union |= ui.host.runtime().change.last.as_ref().unwrap().classes();
+        }
+        (ui.host.runtime().change.last.as_ref().unwrap().classes(), union)
+    };
+    let (one, _) = accepted(&[":STOP;:TRIG:SWE NORM;:RUN"]);
+    assert_eq!(one, C::ACQ | C::STATS | C::HW_AVERAGE);
+    let (last, union) = accepted(&[":STOP", ":TRIG:SWE NORM", ":RUN"]);
+    assert_eq!(union, one, "three messages accept the same classes as three changes");
+    assert_ne!(last, one);
 }

@@ -793,6 +793,7 @@ mod tests {
             receive.try_recv().unwrap()
         };
         ui.clear_display();
+        change::begin_step(&mut ui, 0.04).unwrap();
         ui.wfm_total = 1;
         ui.queue_catalog_statistics(row(tile(measures::power::RIPPLE)), 1);
         let (send, receive) = crate::ui::lifecycle::worker_result::sync_channel(1);

@@ -73,7 +73,7 @@ lands the pull request by rebase. The required checks do not run every step (the
 so the author runs the full `cargo xtask check` before marking a pull request ready. The author enables auto-merge
 once the required checks are green and Codex has no unresolved findings
 ([CONTRIBUTING](../../CONTRIBUTING.md#review-gate)). A stack lands bottom up
-([ADR 0034](../adr/process/0034-multi-pr-work-lands-as-a-stack.md)). Paths in CODEOWNERS also need the owner's
+([ADR 0034](../adr/process/0034-multi-pr-work-may-be-a-stack.md)). Paths in CODEOWNERS also need the owner's
 approval, which the ruleset enforces. Changes that need unit evidence carry `needs-unit` until the owner has seen
 it. After the merge, the owner accepts or reverts the change.
 

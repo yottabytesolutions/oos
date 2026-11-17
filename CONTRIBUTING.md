@@ -76,7 +76,7 @@ place to start reading.
 
 ## Branches, commits, pull requests
 
-- One topic per branch and pull request; one issue per pull request, or per stack when the work spans several pull
+- One issue per pull request, or per stack when the work spans several pull
   requests ([ADR 0040](docs/adr/process/0040-contributions-signed-off-no-vendor-material-rebased.md)). Branch:
   `<type>/<ref>-<slug>`, `type` one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`;
   `ref` the issue number or `t` plus the four-digit task id; `slug` lower case with `-`. Examples:
@@ -90,8 +90,9 @@ place to start reading.
   addresses are rejected by the privacy check.
 - Commits and pull request texts carry no tool or session details: no session links, no `Agent:` and no AI
   `Co-authored-by:` trailers ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
-- Keep pull requests small: about 400 changed lines without goldens and fixtures. Work that needs more than one pull
-  request goes as a stack ([below](#stacked-pull-requests)).
+- Default to one pull request with several topic commits when needed; rebase merges keep them. Keep the review
+  about 400 changed lines without goldens and fixtures. Multi-PR work may use a stack
+  ([below](#stacked-pull-requests)).
 - Link the issue (`Closes #NNN`) or the task file in the pull request text. Fill in the template.
 - History is linear. Rebase onto `main` (`git pull --rebase`) instead of merging `main` into your branch, and
   force-push your own branch with `--force-with-lease`. `main` is never force-pushed and only moves by fast-forward:
@@ -99,9 +100,9 @@ place to start reading.
 
 ## Stacked pull requests
 
-Work that spans more than one pull request is a stack: a chain of pull requests where the bottom one targets `main`
-and each higher one targets the branch below it
-([ADR 0034](docs/adr/process/0034-multi-pr-work-lands-as-a-stack.md),
+Multi-PR work may use a stack when dependent topics benefit from separate review. A stack is a chain of pull
+requests where the bottom one targets `main` and each higher one targets the branch below it
+([ADR 0034](docs/adr/process/0034-multi-pr-work-may-be-a-stack.md),
 [GitHub's documentation](https://docs.github.com/en/pull-requests/get-started/about-stacked-prs)). Each layer is one
 topic, reviewable and green on its own, and keeps the branch scheme above; the layers share the `ref`. Lower layers
 link the issue with `Part of #NNN`; only the top layer says `Closes #NNN`, so the issue closes with the last merge.
@@ -210,7 +211,8 @@ the `fast` job's summary, for information. A release that grows says why in a `C
 `CHANGELOG.md` section or tag annotation. Tests and comments do not count, so never trim them to meet the goal.
 
 A change that decides something others will build on (a structure, a rule of the screen, a way to treat the hardware)
-comes with a decision record: [docs/adr](docs/adr/README.md), numbered from 0030 on.
+comes with a decision record: [docs/adr](docs/adr/README.md), numbered from 0030 on. Rewrite an existing record
+when its decision changes; git keeps the history.
 
 ## Working with a coding agent
 
@@ -220,7 +222,7 @@ what was tested on a unit, what only on the host, and what was not tested. An ag
 its owner asked for it ([ADR 0018](docs/adr/process/0018-one-agents-md-for-people-and-agents.md)).
 
 - Agents work only on issues labelled `agent-ready`, one pull request per issue, within the issue's acceptance
-  criteria and its out-of-scope list. Small pull requests; refactors and other multi-step work as a stack.
+  criteria and its out-of-scope list. Default to one pull request with topic commits; stacks are optional.
 - Agents push and open pull requests only as the GitHub App `yottabyte-oos-agent[bot]`, never with a maintainer's
   credentials. Its pull requests get the `agent` label and pass the same checks; the app has no ruleset bypass.
 - Agents do not touch high-risk paths unless the issue carries `risk/hardware` and says so.

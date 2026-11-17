@@ -21,7 +21,9 @@ computer to recover.
 - Every build trusts a community key that is in the repository on purpose, so anyone can build an update that installs
   on any OOS scope. An owner who wants only their own builds replaces it with their own key.
 
-Ed25519 and SHA-2 are implemented in the tree.
+Use vetted crates for cryptography: `ed25519-dalek` for Ed25519 and `sha2` for SHA-2, under ADR 0037's dependency
+policy. Replace the hand-written implementations; use a maintained inflate crate too if one fits. This is the
+decision for the update implementation, not a claim that those replacements have landed.
 
 ## Consequences
 

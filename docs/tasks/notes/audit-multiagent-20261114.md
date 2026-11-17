@@ -65,7 +65,7 @@ This was a static, read-only audit. No files changed, no builds or tests ran, an
     **Proposal:** use unique run directories, loopback listeners and dynamically allocated ports, including VXI-11 or its explicit disablement. Replace the startup sleep with a readiness handshake identifying the child process and build.
 
 12. **Land M1 golden pictures before drawing migrations. Effort: M.**\
-    **Already covered: partly, planned**: `O:docs/adr/0011-golden-pictures.md` and migration M1 specify committed references. `G:ui/tools/layout-check.sh` provides manual record/check comparison, but the inspected trees contain no `ui/tests/golden/`, and the gate does not run golden comparisons.\
+    **Already covered: partly, planned**: [ADR 0014](../../adr/process/0014-refactorings-keep-every-pixel.md) (incorporating the former golden-picture record) and migration M1 specify committed references. `G:ui/tools/layout-check.sh` provides manual record/check comparison, but the inspected trees contain no `ui/tests/golden/`, and the gate does not run golden comparisons.\
     **Problem:** refactors change pictures unnoticed, or references are first generated after the regression.\
     **Proposal:** capture the pre-M2 Demo and scripted-batch baselines, commit them and run comparisons in CI. Specify pixel tolerances, deterministic rendering inputs and an explicit update command; publish expected/actual/difference pictures for review.
 

@@ -1,87 +1,31 @@
-# ADR 0031: The gate is `cargo xtask check`
+# ADR 0031: The gate is cargo xtask check
 
-- Status: accepted, amended 2026-11-17 (the full gate runs in CI, the hooks run the fast tier; CI's python job
-  runs Python directly)
+- Status: accepted
 - Date: 2026-11-17
 - Category: process
 
 ## Context
 
-ADR 0020 made `tools/check.sh` the one command for the host checks and rejected `cargo xtask`. This tree has run
-`cargo xtask check` as its gate since the guardrails baseline (task 0041): formatting, size limits, architecture
-rules, statics, `unsafe`, method exceptions, known failures, agent rules, test timing, Clippy on host and target,
-tests in debug and release, performance guards, coverage, script syntax and the Python tests. `tools/check.sh` was
-kept for work sent upstream. After the hard fork (ADR 0030) there is no upstream to send work to, and two entry
-points describe two different gates.
-
-`tools/check.sh` still has two layers the xtask gate does not run: `text` (SPDX line, line ends, trailing spaces,
-ADR 0019) and `decoders` (the core-only build and every optional decoder alone).
+One inventory of checks keeps local feedback and CI consistent. Running the full gate in hooks delays pushes and
+repeats CI's work.
 
 ## Decision
 
-- `cargo xtask check` is the gate. It is the one command a person, an agent and CI run. Its tiers:
-  - `cargo xtask check --fast`: the seconds-long steps; the pre-commit hook.
-  - `cargo xtask check`: the full default gate; the pre-push hook and the done rule. A change is done when this
-    passes on its final commit.
-  - `cargo xtask check --image`: the default gate plus the Docker, emulation and image checks; run before unit
-    rounds and releases.
-  - `cargo xtask check --list` prints the steps, their tier and their prerequisites.
-- The ratchet files are compared with the protected base `main` (ADR 0039).
-- `tools/check.sh` is not a gate. It stays only for its `text` and `decoders` layers until the xtask gate runs them;
-  then it is removed. No new layer is added to it.
-- The checks that need a baseline from before the change, a quiet machine or a scope stay outside the default gate
-  and are named in the pull request when they ran: golden pictures and `ui/tools/layout-check.sh` (ADR 0014),
-  `tools/plan-matrix.sh` before and after, `tools/device-test.py` on a unit with its owner's consent.
-- CI runs the same inventory on GitHub-hosted runners, split into parallel jobs with `cargo xtask step <id>...`
-  ([pr.yml](../../../.github/workflows/pr.yml), task 0092): the step definitions stay in xtask. The perf guards
-  stay local (ratio guards are load-sensitive on shared runners). Until Actions is enabled the local full gate is
-  authoritative.
-
-## Alternatives
-
-- **Keep `tools/check.sh` as the entry:** a POSIX script cannot hold the ratchets, the move-aware size limits and
-  the architecture rules without becoming a second gate in shell.
-- **Make `tools/check.sh` a two-line wrapper now:** it would drop the `text` and `decoders` layers. They move into
-  xtask first.
-- **Remove `tools/check.sh` now:** same loss.
+- `cargo xtask check` is the full default gate. The pre-commit and pre-push hooks run `cargo xtask check --fast`.
+  Run the full gate locally when an early signal helps.
+- Required CI checks (`fast`, `clippy`, `test`, `python`, `deny`, `pr-meta`, `privacy`, `codex-review`) are the gate
+  for a pull request. Completion requires them to pass on its final commit and the review to accept it.
+- CI runs the xtask inventory as parallel jobs. Its `python` job runs the Python and shell commands directly,
+  without building Rust or xtask. The local `script-syntax` and `python-tests` steps run those same commands;
+  changes keep both entry points aligned.
+- `cargo xtask check --image` adds Docker, emulation and image checks before unit rounds and releases.
+  Performance guards stay local. `cargo xtask check --list` lists steps and prerequisites without running them.
+- Ratchets compare against the protected base `main` (ADR 0039). Screen proof belongs in the gate (ADR 0014);
+  unit checks still require the owner's authorization.
+- New Rust tooling and checks go into xtask as steps or subcommands (ADR 0033). Small helpers stay in `tools/`.
+  There is no `tools/check.sh` entry point.
 
 ## Consequences
 
-- `AGENTS.md`, `CONTRIBUTING.md` and `README.md` name `cargo xtask check`, not `tools/check.sh`.
-- `xtask` is a workspace crate with host-only dependencies (ADR 0037).
-- A new kind of check becomes an xtask step with its inventory line, not a script to remember.
-- The default gate takes tens of minutes on a laptop; `--fast` is for the edit loop.
-
-## Amendment 2026-11-17: the full gate runs in CI
-
-Actions is enabled. The full gate on the pre-push hook took tens of minutes per push, so branches were pushed late
-and CI's parallel jobs sat idle while a laptop repeated them.
-
-- The pre-commit and pre-push hooks run `cargo xtask check --fast`.
-- The full gate is the required CI checks of a pull request (`fast`, `clippy`, `test`, `python`, `deny`, with
-  `pr-meta`, `privacy` and `codex-review`) and the `main` workflow after the merge. A change is done when the
-  required checks passed on its final commit and the review accepted it.
-- Run `cargo xtask check` locally when an early signal helps. `--image` and the perf guards stay local, as above.
-- "Until Actions is enabled the local full gate is authoritative" and "the pre-push hook" in the full tier above no
-  longer apply.
-
-## Note 2026-11-17: xtask is the home for Rust tooling
-
-ADR 0033 decides it: new project tooling and new checks written in Rust go into `xtask`, as steps of this gate or
-subcommands; small helpers stay POSIX shell or Python scripts in `tools/`. ADR 0020's rejection of `xtask` no longer
-applies.
-
-## Amendment 2026-11-17: CI's python job runs Python directly
-
-Decided by the owner (#47, #50). The `python` job of CI built the pinned Rust toolchain and `xtask` only to run two
-steps that are Python and shell: `script-syntax` and `python-tests`. That cost about a minute per pull request.
-
-- CI's `python` job runs the commands of those two steps directly, without `xtask` and without a Rust toolchain.
-- The local gate still runs them as xtask steps, so `cargo xtask check` stays the one command. The step and the
-  job run the same commands; a change to one changes the other in the same pull request.
-- A Python test that needs a Rust build (the host-sockets test builds `oos-ui`) moves into Rust first (#47, Wave B).
-
-## References
-
-`xtask/`, [docs/development.md](../../development.md) (Executable inventory, What each check enforces),
-`.githooks/`, `tools/check.sh`, ADR 0014, ADR 0019, ADR 0020 (superseded), ADR 0030, ADR 0033, ADR 0039.
+Hooks provide fast feedback; CI decides whether the final commit passes. Check definitions and prerequisites are
+listed in [development.md](../../development.md#executable-inventory-and-completion-evidence).

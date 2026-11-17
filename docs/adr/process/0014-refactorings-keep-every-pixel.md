@@ -1,38 +1,34 @@
 # ADR 0014: A refactoring keeps every pixel and every register write
 
 - Status: accepted
-- Date: 2026-11-12 (layout check); the register comparison from the first public version
+- Date: 2026-11-17
 - Category: process
 
 ## Context
 
-Most changes cannot be tried on a scope when they are made. A change that is meant to alter nothing (moving code into
-modules, a faster drawing path, a new layout engine) is the kind that breaks something unnoticed: a row a few pixels
-lower, one register write more in the analog path.
+A refactoring must show that its screen, hardware writes and computed values stay the same. Host comparisons catch
+regressions before slow unit rounds. This record also incorporates architecture/0011.
 
 ## Decision
 
-A change that is not meant to change behaviour has to show that it does not, by comparison with the state before it:
-
-- **Screen:** `ui/tools/layout-check.sh record` before the change and `check` after it. It renders every script in
-  `ui/tests` at the three text sizes on the host and compares the pictures pixel by pixel; a pure refactoring reports
-  nothing. A change that is meant to be seen names the pictures that differ and records them again.
-- **Analog path:** `tools/plan-matrix.sh` prints the register sequences of a fixed set of acquisitions. It is run
-  before and after, and the pull request says whether the output differs.
-- **Values:** computations that move are compared bit for bit against the code before the move, over the same inputs.
+- **Screen:** golden-picture tests in the gate are the screen proof. They compose pictures from the Demo source and
+  fake board across display modes and time bases, comparing with committed references in `ui/tests/golden/` using
+  a per-pixel tolerance and a budget of differing pixels. A changed reference needs a reason in its commit.
+  `gpu/test-host.sh` compares CPU and GPU output.
+- **Layout:** retain `ui/tools/layout-check.sh record` before a change and `check` after it until the goldens
+  provably cover its scripts and all three text sizes. Then remove the manual check. Its temporary baseline is
+  local (`target/layout-base`); scripts use fixed inputs and clocks, an empty storage directory and named menus.
+- **Analog path:** register sequences must stay unchanged unless the change intends otherwise. Move
+  `tools/plan-matrix.sh` into an xtask step comparing against a committed baseline. That step is being implemented
+  separately; until it lands, run the script before and after and report differences.
+- **Values:** compare moved computations bit for bit over the same inputs.
 
 ## Consequences
 
-- Large moves became possible without a unit on the desk: the measurements as modules (same values, bit for bit), the
-  analyser registry and the border drawing for the GPU (same pixels) were merged on this evidence.
-- The layout scripts must be deterministic: an empty storage directory, a fixed clock, menus opened by name and not by
-  coordinates.
-- The recorded pictures are a local baseline (`target/layout-base`), not part of the tree: they are recorded from the
-  commit before the change.
-- Pixel equality on the host says nothing about timing on the unit; frame rate and load are held by
-  `tools/device-test.py` on a scope.
+Intentional screen or register changes explain and review their baseline changes. Golden references need care when
+fonts or LUTs change. Host equality does not prove timing on the unit; `tools/device-test.py` checks frame rate and
+load on a scope with its owner's authorization.
 
 ## References
 
-`ui/tools/layout-check.sh`, `tools/plan-matrix.sh`, [CONTRIBUTING.md](../../../CONTRIBUTING.md),
-[local-validation.md](../../local-validation.md).
+[local-validation.md](../../local-validation.md), [CONTRIBUTING.md](../../../CONTRIBUTING.md).

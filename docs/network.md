@@ -157,8 +157,11 @@ System > Network > Remote services has a switch for each service, next to where 
 | telnet | 23 | a shell **without password** (bring-up; use it on the bench LAN only) |
 | SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
 
-Web remote, SCPI, VXI-11 and telnet are on by default, SSH is off unless the image or the user switches it on. A
-service switched off closes its port at once, with the connections on it. Switching off the web remote also takes away
+Web remote, SCPI, VXI-11 and telnet are currently on by default. Without an image or user override, telnet exposes
+an unauthenticated root shell. SSH is off unless the image or the user switches it on.
+[ADR 0025](adr/system/0025-remote-services-are-bench-lan-services.md) calls for telnet to be off by default;
+that change is pending implementation in both `SysConf::default()` and `rcS`.
+A service switched off closes its port at once, with the connections on it. Switching off the web remote also takes away
 the update page: an update then comes from a USB stick. telnet and SSH are started by `rcS` at power-on (`telnetd`,
 `/bin/oos-ssh`), which reads `remote.telnet` and `remote.ssh` from `/oos/system.conf`; oos-ui starts or stops them
 when a switch changes. With SSH set up, switch telnet off: it is a shell for anyone on the network. The serial
@@ -255,13 +258,33 @@ eth.retry_10m = on
 remote.web = on
 remote.scpi = on
 remote.vxi11 = on
-remote.telnet = on
+remote.telnet = off
 remote.ssh = off
 ssh.password = on
 remote.mdns = on              # mDNS and DNS-SD (4.1)
 net.name = dho924s-204527     # the name on the network, written at the first start
 graphics = gpu                # System > Graphics: gpu or cpu (gpu/README.md)
 ```
+
+### Temporary hardware keys
+
+[ADR 0010](adr/hardware/0010-unverified-hardware-functions-are-opt-in.md) requires opt-in for unverified hardware
+functions and a removal issue for every temporary key. Creating the existing keys' issues is separate work.
+The FPGA measure-unit autoset path (`autoset.levels = unit`) is designated for removal; record-based levels are
+supported. The table excludes that rejected path. Defaults below are generic defaults; a unit image can override
+these (the DHO804 image enables compression).
+
+| Key | Function | State |
+|---|---|---|
+| `acq.pipeline = batch` | Batch draw path ([architecture/0013](architecture/adr/0013-one-batch-path.md)) | off by default; measure both paths at M12 |
+| `acq.prearm = on` | arm the next batch before decoding the current one | off by default; verification not recorded here |
+| `acq.compress = on` | FPGA min/max pairs instead of every sample, 1 us/div and slower | off by default; verified on DHO804 ([unit report](fork/unit-dho804.md)) |
+| `acq.interp = fast` | fast interpolation of sparse frames | off by default; verification not recorded here |
+| `perf.place = on` | fixed cores for threads and DMA interrupts | off by default; verification not recorded here |
+| `trig.serial_hw = on` | UART trigger in the FPGA receiver | off by default; verification not recorded here |
+
+A verified key keeps its fallback only until removal with the old path. Verification changes and removal issues
+belong with this inventory.
 
 ## 6. Firewall, remote access and the MAC address
 

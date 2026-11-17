@@ -124,6 +124,27 @@ class DecideTests(unittest.TestCase):
         env = {"EVENT": "merge_group", "BASE": "a" * 40, "QUEUE_REF": REF, "REPO": "o/r", "GITHUB_TOKEN": "t"}
         self.assertTrue(self.decide("all", env).run)
 
+    def test_a_read_timeout_is_retried_then_runs(self):
+        class Slow:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                raise TimeoutError("read timed out")
+
+        with mock.patch.object(changes.urllib.request, "urlopen", return_value=Slow()) as urlopen, \
+                mock.patch.object(changes.time, "sleep"):
+            with self.assertRaises(RuntimeError):
+                changes.get("/x", "t")
+        self.assertEqual(urlopen.call_count, changes.ATTEMPTS)
+        env = {"EVENT": "merge_group", "BASE": "a" * 40, "QUEUE_REF": REF, "REPO": "o/r", "GITHUB_TOKEN": "t"}
+        with mock.patch.object(changes, "git", return_value="core/src/lib.rs\n"), \
+                mock.patch.object(changes, "get", side_effect=TimeoutError("connect")):
+            self.assertTrue(changes.decide("all", "clippy", env).run)
+
     def test_queue_ref_parsing(self):
         self.assertEqual(changes.queue_pr(REF), 42)
         self.assertEqual(changes.queue_pr(f"refs/heads/gh-readonly-queue/release/x/pr-7-{'f' * 40}"), 7)

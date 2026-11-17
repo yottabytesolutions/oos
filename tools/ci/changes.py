@@ -92,7 +92,8 @@ def get(path: str, token: str) -> object:
             if e.code < 500:
                 raise RuntimeError(f"GET {path}: {e}") from e
             last = e
-        except urllib.error.URLError as e:
+        except (urllib.error.URLError, TimeoutError) as e:
+            # a read can time out after the connection succeeded: TimeoutError, not URLError
             last = e
         time.sleep(2 ** attempt)
     raise RuntimeError(f"GET {path}: {last}")
@@ -137,7 +138,7 @@ def decide(scope: str, check: str, env: dict[str, str]) -> Decision:
     if d.run and event == "merge_group":
         try:
             same = same_as_pr_head(env.get("REPO", ""), env.get("QUEUE_REF", ""), check, env.get("GITHUB_TOKEN", ""))
-        except (RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as e:
             return Decision(True, f"queue shortcut unavailable ({e}): running")
         if same:
             return same

@@ -123,7 +123,7 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     try:
         jobs = jobs_of(args.repo, args.run, args.attempt, os.environ.get("GITHUB_TOKEN", ""))
-    except RuntimeError as e:
+    except (RuntimeError, OSError, ValueError) as e:
         print(f"::warning::run summary unavailable: {e}")
         return 0
     text = "## Job and step durations\n\n" + markdown(parse(jobs, args.exclude))

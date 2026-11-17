@@ -36,14 +36,16 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Only the coordinator pushes, and only with the owner's go, through the documented publish path. Other agents never push. Never change a remote or its push URL.
 - Never merge your own branch. The coordinator merges after review.
 - On the scope, stop at the first unexpected state. Report it. Do not repair it by hand.
-- No `rm -rf` outside your own worktree and scratch directories. Never force push,
-  write partitions, run `dd` to block devices, or delete another contributor's
+- No `rm -rf` outside your own worktree and scratch directories. Never force push `main`; a feature branch only
+  with `--force-with-lease`. Never write partitions, run `dd` to block devices, or delete another contributor's
   worktrees or branches.
 - Follow [integration order and parallel claims](docs/process/integration.md) and the [review protocol](docs/process/review.md). Use the roles defined in [integration](docs/process/integration.md#roles).
 - Follow the pace in [delivery](docs/process/delivery.md): one job per task, review tier, fast gate for workers, batch integration.
 - Every agent-authored change needs review by an agent from another vendor. Codex authors use Claude reviewers, and Claude authors use Codex reviewers. Other vendors pair across vendors too.
 - Human-authored changes need review by any reviewer who did not write the change.
-- Merge reviewed branches. Rebase only private unreviewed work. Affected authors resolve conflicts and obtain renewed review. The author never merges the change.
+- History is linear: rebase onto `main`, never merge `main` into a branch; `main` only fast-forwards. Set
+  `git config pull.rebase true` and `rebase.autoStash true`. Conflict resolutions after review need renewed review. The author
+  never merges the change ([ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)).
 - Follow the merge, acceptance and publication order in [integration](docs/process/integration.md#review-and-merge).
 - Record evidence in the task file's Status lines and the merge commit body. The PR template is the field list. Use it in the PR when one exists.
 - Fix unit regressions on the unit branch, then forward-port the failing regression test plus fix through review and the full gate.
@@ -138,7 +140,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 ## Docs
 
 - Create or claim a numbered task before work. Follow [the task format](docs/tasks/README.md).
-  Set `status: active` and `owner`. Record the branch and reserved paths. Name the branch `tNNNN-slug`.
+  Set `status: active` and `owner`. Record the branch and reserved paths. Name the branch
+  `<type>/t<NNNN>-<slug>` (`feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`; ADR 0026).
 - Serialize ids and claims on the integration branch. Do not start work on an unaccepted or overlapping claim.
   Reserve hot files explicitly. Task commands and automatic claim checks are pending task 0040.
 - Write the Plan before code. Update Status after each step with dated lines, newest first.

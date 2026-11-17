@@ -63,8 +63,21 @@ is the place to start reading.
 
 Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.
 
-A pull request enters `main` squash-merged: one commit made from the reviewed state, with your name and sign-off on
-it. Branch names, release tags, the pull request template and the required checks are being set up and will be
+Name your branch `<type>/<ref>-<slug>`: `type` is one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`,
+`build`, `chore`; `ref` is the GitHub issue number or a task id `t<NNNN>`; `slug` is lower case with `-`
+(`fix/42-trigger-holdoff`). `main` is the only long-lived branch.
+
+History stays linear. Rebase your branch onto `main` instead of merging `main` into it, and pull with rebase:
+
+```sh
+git config pull.rebase true
+git config rebase.autoStash true
+```
+
+Force-pushing your feature branch with `--force-with-lease` is fine; `main` is never force-pushed. A pull request
+enters `main` squash-merged or rebase-merged from the reviewed state, with your name and sign-off kept, and `main`
+only moves by fast-forward. Merge commits are for the rare case where the second parent carries information, such as
+a long-lived import. Release tags, the pull request template and the required checks are being set up and will be
 described here.
 
 ## Style

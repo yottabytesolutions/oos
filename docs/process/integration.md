@@ -59,9 +59,10 @@ M3 parallel work waits until the crate creation part merges. M18 moves invalidat
 Follow the [review protocol](review.md) before merging.
 Record evidence in the task file's Status lines and the merge commit body.
 The [PR template](../../.github/pull_request_template.md) is the field list. Use it in the PR when one exists.
-Merge reviewed branches. Never rebase or amend reviewed or merged commits.
-Private, unreviewed work may be rebased. Update reviewed branches by merging the integration branch into them.
-Changes after review, including conflict resolutions, need renewed independent review.
+History is linear ([ADR 0026](../adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)):
+branches are rebased onto `main`, never updated by merging `main` into them, and `main` only fast-forwards.
+Never rewrite commits on `main`. Changes after review, including rebases with conflict resolutions, need renewed
+independent review.
 
 The coordinator pauses a conflicting merge. The affected authors resolve textual and semantic conflicts.
 Do not guess another area's intended behaviour.

@@ -26,7 +26,8 @@ The owner decided on 2026-11-17 to fork hard.
 
 - This tree is a hard fork of OOS. The fork point is tag `hard-fork-20261117` (`overhaul` c654b1f0). The last
   upstream commit merged in is 15b819e2.
-- `main` is the trunk. `overhaul` stays as a historical ref and receives no further commits.
+- `main` is the trunk and the only long-lived branch. `overhaul` is retired and becomes the annotated tag
+  `archive/overhaul` (ADR 0026).
 - No upstream merges, no bridge merges and no upstream intake. Upstream is not tracked. A single upstream change may
   enter by cherry-pick: the commit keeps its author and carries the trailer `Cherry-picked-from: upstream <hash>`
   with the full upstream hash. It then passes the gate like any other change; nothing is rebaselined for it.

@@ -57,13 +57,24 @@ by agents, under one structure:
 - A contribution arrives as a pull request from a feature branch against `main`. One topic per pull request.
 - The gate (`cargo xtask check`, ADR 0031) passes in CI before a merge. CI runs on GitHub-hosted runners and is set up
   in a later phase; until then the maintainer runs the full gate locally on the candidate.
-- A pull request enters `main` squash-merged: one commit made from the reviewed state, with the author and the
-  sign-off kept, in the commit style of ADR 0019 as amended.
+- A pull request enters `main` squash-merged or rebase-merged: commits made from the reviewed state, with the author
+  and the sign-off kept, in the commit style of ADR 0019 as amended.
+- **Linear history.** `main` only moves by fast-forward. Rebasing is the default way to integrate. Merge commits are
+  discouraged and allowed only where the second parent carries information, such as a long-lived import whose own
+  history matters. Never merge `main` into a feature branch: rebase the branch onto `main`. Everyone pulls with
+  rebase (`git pull --rebase`; `git config pull.rebase true` and `git config rebase.autoStash true` set it once).
+- **Force-push.** A feature branch may be force-pushed with `--force-with-lease`; that is what feature branches are
+  for. `main` is never force-pushed.
+- **Branch names.** `<type>/<ref>-<slug>`. `type` is one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`,
+  `build`, `chore`. `ref` is a GitHub issue number or a task id `t<NNNN>` from `docs/tasks/`. `slug` is lower case,
+  words joined by `-`. Example: `fix/t0091-trigger-holdoff`, `feat/42-uart-decoder`.
+- `main` is the only long-lived branch. The old `overhaul` branch is retired; it becomes the annotated tag
+  `archive/overhaul`.
 - The sign-off (DCO) stays: every commit of a pull request carries `Signed-off-by:`. The maintainers' own integration
   commits made before the pull request flow is in place are not signed off.
 - The vendor-material and other-project rules above are unchanged.
-- Branch names, release tags, pull request templates and required checks follow in a later phase and amend this
-  record.
+- CI enforcement of branch names and linear history, release tags, pull request templates and required checks follow
+  in a later phase and amend this record.
 
 The text above that speaks of "pull requests from forks" entering upstream's main is replaced by this section.
 

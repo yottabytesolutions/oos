@@ -1,7 +1,34 @@
 //! The syntax walk of one file: functions, structs and inherent impls outside test code, with their sizes.
 
+use proc_macro2::{TokenStream, TokenTree};
+use quote::ToTokens;
 use syn::visit::{self, Visit};
-use syn::{Attribute, Fields, ImplItemFn, ItemFn, ItemImpl, ItemMod, ItemStatic, ItemStruct, TraitItemFn, Type};
+use syn::{Attribute, Fields, ImplItemFn, ItemFn, ItemImpl, ItemStatic, ItemStruct, TraitItemFn, Type};
+
+/// The outer attributes at the front of an item's tokens.
+struct Outer(Vec<Attribute>);
+
+impl syn::parse::Parse for Outer {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let attrs = input.call(Attribute::parse_outer)?;
+        input.parse::<TokenStream>()?;
+        Ok(Outer(attrs))
+    }
+}
+
+/// The first and last line of `tokens`.
+fn extent(tokens: TokenStream) -> Option<(usize, usize)> {
+    let v: Vec<TokenTree> = tokens.into_iter().collect();
+    let start = match v.first()? {
+        TokenTree::Group(g) => g.span_open(),
+        t => t.span(),
+    };
+    let end = match v.last()? {
+        TokenTree::Group(g) => g.span_close(),
+        t => t.span(),
+    };
+    Some((start.start().line, end.end().line))
+}
 
 /// What one file contains, test code left out.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -12,8 +39,12 @@ pub struct Found {
     pub structs: Vec<(String, u64)>,
     /// self types of inherent impl blocks
     pub impls: Vec<String>,
-    /// lines inside `#[cfg(test)]` items and `#[test]` functions
+    /// lines inside `#[cfg(test)]` items and `#[test]` functions, their attributes included
     pub test_lines: u64,
+    /// production code lines: lines with a token on them outside test code (`codelines`)
+    pub code_lines: u64,
+    /// comment lines outside test code: not blank and without a token (doc comments included)
+    pub comment_lines: u64,
     /// every static outside tests: (`<enclosing fn>::NAME`, or `NAME` at module level; its type as token text)
     pub statics: Vec<(String, String)>,
     /// every struct and enum: (name, the token text of all its field types)
@@ -27,23 +58,15 @@ fn field_types<'a>(fields: impl Iterator<Item = &'a syn::Field>) -> String {
     fields.map(|f| quote_type(&f.ty)).collect::<Vec<_>>().join(" ")
 }
 
-/// `#[cfg(test)]` or `#[test]`.
+/// `#[test]`, or a `cfg` that requires test mode (`crate::sources::cfg_test`).
 fn is_test(attrs: &[Attribute]) -> bool {
-    attrs.iter().any(|a| {
-        a.path().is_ident("test")
-            || (a.path().is_ident("cfg") && a.meta.require_list().is_ok_and(|l| l.tokens.to_string().trim() == "test"))
-    })
+    attrs.iter().any(|a| a.path().is_ident("test")) || crate::sources::cfg_test(attrs)
 }
 
 /// The tokens of a type as text.
 fn quote_type(t: &Type) -> String {
     use quote::ToTokens;
     t.to_token_stream().to_string()
-}
-
-/// Lines from `start` to `end` inclusive.
-fn lines(start: proc_macro2::Span, end: proc_macro2::Span) -> u64 {
-    (end.end().line + 1).saturating_sub(start.start().line) as u64
 }
 
 /// The last path segment of a type: `Ui` for `crate::ui::Ui<T>`.
@@ -64,6 +87,8 @@ pub struct Walk {
     code: std::collections::BTreeSet<usize>,
     /// the qualified names of the enclosing functions
     fns: Vec<String>,
+    /// the lines of test items
+    test: std::collections::BTreeSet<usize>,
 }
 
 impl Walk {
@@ -79,27 +104,72 @@ impl Walk {
         self.code.range(start.start().line..=end.end().line).count() as u64
     }
 
-    fn skip(&mut self, attrs: &[Attribute], start: proc_macro2::Span, end: proc_macro2::Span) -> bool {
-        let t = is_test(attrs);
-        if t {
-            self.found.test_lines += lines(start, end);
+    /// An item of any kind under `#[cfg(test)]` or `#[test]`: its lines, attributes included, are test lines.
+    fn test_item(&mut self, item: &impl ToTokens) -> bool {
+        let tokens = item.to_token_stream();
+        let Ok(Outer(attrs)) = syn::parse2(tokens.clone()) else {
+            return false;
+        };
+        match extent(tokens).filter(|_| is_test(&attrs)) {
+            Some((start, end)) => {
+                self.test.extend(start..=end);
+                true
+            }
+            None => false,
         }
-        t
     }
 }
 
 impl<'a> Visit<'a> for Walk {
-    fn visit_item_mod(&mut self, m: &'a ItemMod) {
-        let end = m.content.as_ref().map_or(m.semi.map_or(m.ident.span(), |s| s.span), |(b, _)| b.span.close());
-        if !self.skip(&m.attrs, m.mod_token.span, end) {
-            visit::visit_item_mod(self, m);
+    fn visit_item(&mut self, i: &'a syn::Item) {
+        if !self.test_item(i) {
+            visit::visit_item(self, i);
+        }
+    }
+
+    fn visit_impl_item(&mut self, i: &'a syn::ImplItem) {
+        if !self.test_item(i) {
+            visit::visit_impl_item(self, i);
+        }
+    }
+
+    fn visit_trait_item(&mut self, i: &'a syn::TraitItem) {
+        if !self.test_item(i) {
+            visit::visit_trait_item(self, i);
+        }
+    }
+
+    fn visit_stmt(&mut self, i: &'a syn::Stmt) {
+        if !self.test_item(i) {
+            visit::visit_stmt(self, i);
+        }
+    }
+
+    fn visit_field(&mut self, i: &'a syn::Field) {
+        if !self.test_item(i) {
+            visit::visit_field(self, i);
+        }
+    }
+
+    fn visit_variant(&mut self, i: &'a syn::Variant) {
+        if !self.test_item(i) {
+            visit::visit_variant(self, i);
+        }
+    }
+
+    fn visit_arm(&mut self, i: &'a syn::Arm) {
+        if !self.test_item(i) {
+            visit::visit_arm(self, i);
+        }
+    }
+
+    fn visit_field_value(&mut self, i: &'a syn::FieldValue) {
+        if !self.test_item(i) {
+            visit::visit_field_value(self, i);
         }
     }
 
     fn visit_item_fn(&mut self, f: &'a ItemFn) {
-        if self.skip(&f.attrs, f.sig.fn_token.span, f.block.brace_token.span.close()) {
-            return;
-        }
         let n = self.code_lines(f.sig.fn_token.span, f.block.brace_token.span.close());
         let name = self.fn_name(&f.sig.ident);
         self.found.fns.push((name.clone(), n));
@@ -112,9 +182,6 @@ impl<'a> Visit<'a> for Walk {
     }
 
     fn visit_item_impl(&mut self, i: &'a ItemImpl) {
-        if self.skip(&i.attrs, i.impl_token.span, i.brace_token.span.close()) {
-            return;
-        }
         let ty = type_name(&i.self_ty);
         let owner = match &i.trait_ {
             Some((path, _)) => {
@@ -132,9 +199,6 @@ impl<'a> Visit<'a> for Walk {
     }
 
     fn visit_impl_item_fn(&mut self, f: &'a ImplItemFn) {
-        if self.skip(&f.attrs, f.sig.fn_token.span, f.block.brace_token.span.close()) {
-            return;
-        }
         let n = self.code_lines(f.sig.fn_token.span, f.block.brace_token.span.close());
         let name = self.fn_name(&f.sig.ident);
         self.found.fns.push((name.clone(), n));
@@ -160,9 +224,6 @@ impl<'a> Visit<'a> for Walk {
     }
 
     fn visit_item_static(&mut self, s: &'a ItemStatic) {
-        if is_test(&s.attrs) {
-            return;
-        }
         let name = match self.fns.last() {
             Some(f) => format!("{}::{}", f, s.ident),
             None => s.ident.to_string(),
@@ -190,9 +251,6 @@ impl<'a> Visit<'a> for Walk {
     }
 
     fn visit_item_struct(&mut self, s: &'a ItemStruct) {
-        if is_test(&s.attrs) {
-            return;
-        }
         let n = match &s.fields {
             Fields::Named(f) => f.named.len(),
             Fields::Unnamed(f) => f.unnamed.len(),
@@ -208,19 +266,28 @@ impl<'a> Visit<'a> for Walk {
 #[cfg(test)]
 pub fn walk(text: &str) -> Result<Found, String> {
     let file = syn::parse_file(text).map_err(|e| format!("line {}: {}", e.span().start().line, e))?;
-    Ok(walk_file(&file, text.lines().count() as u64, false))
+    Ok(walk_file(&file, text, false))
 }
 
-/// Walks a parsed file of `lines` lines; a file of test code (`test`) only has its `unsafe` counted.
-pub fn walk_file(file: &syn::File, lines: u64, test: bool) -> Found {
+/// Walks the parsed `file` of source `text`; a file of test code (`test`) only has its `unsafe` counted.
+pub fn walk_file(file: &syn::File, text: &str, test: bool) -> Found {
     let unsafes = super::unsafety::count(file);
     if test {
-        return Found { test_lines: lines, unsafes, ..Found::default() };
+        return Found { test_lines: text.lines().count() as u64, unsafes, ..Found::default() };
     }
     let mut w = Walk { code: super::codelines::of(file), ..Walk::default() };
     w.visit_file(file);
-    w.found.unsafes = unsafes;
-    w.found
+    let mut f = w.found;
+    f.unsafes = unsafes;
+    f.test_lines = w.test.len() as u64;
+    for (i, line) in text.lines().enumerate().filter(|(i, _)| !w.test.contains(&(i + 1))) {
+        if w.code.contains(&(i + 1)) {
+            f.code_lines += 1;
+        } else if !line.trim().is_empty() {
+            f.comment_lines += 1;
+        }
+    }
+    f
 }
 
 #[cfg(test)]
@@ -260,7 +327,7 @@ mod tests {
         assert_eq!(f.fns[0].1, 5);
         assert_eq!(f.structs, vec![("S".to_string(), 2)]);
         assert_eq!(f.impls, vec!["S".to_string()]);
-        assert_eq!(f.test_lines, 5);
+        assert_eq!(f.test_lines, 6);
     }
 
     #[test]
@@ -283,6 +350,30 @@ mod tests {
     fn a_test_function_outside_a_test_module_is_skipped() {
         let f = walk("fn a() {}\n#[test]\nfn b() {\n}\n").unwrap();
         assert_eq!(f.fns.len(), 1);
-        assert_eq!(f.test_lines, 2);
+        assert_eq!(f.test_lines, 3);
+    }
+
+    // The hole: a test-only const, struct or impl item was counted as production code.
+    #[test]
+    fn every_kind_of_test_item_is_test_code() {
+        let src = "#[cfg(test)]\nconst K: [u8; 2] = [\n    1, 2,\n];\n#[cfg(test)]\nstruct S;\nimpl T {\n    #[cfg(test)]\n    const C: u8 = 1;\n    fn f() {}\n}\n";
+        let f = walk(src).unwrap();
+        assert_eq!((f.test_lines, f.code_lines), (8, 3));
+        assert!(f.structs.is_empty());
+    }
+
+    // The holes: test-only fields, variants, statements, arms and compound cfgs counted as production code.
+    #[test]
+    fn test_gated_parts_and_compound_cfgs_are_test_code() {
+        let src = "struct S {\n    a: u8,\n    #[cfg(test)]\n    b: u8,\n}\nenum E {\n    #[cfg(test)]\n    T,\n    U,\n}\nfn f(x: u8) -> S {\n    #[cfg(test)]\n    g();\n    match x {\n        #[cfg(test)]\n        1 => {}\n        _ => {}\n    }\n    S {\n        a: 1,\n        #[cfg(test)]\n        b: 2,\n    }\n}\n#[cfg(all(test, unix))]\nmod m {}\n";
+        let f = walk(src).unwrap();
+        assert_eq!(f.test_lines, 12);
+    }
+
+    #[test]
+    fn code_and_comment_lines_leave_out_tests_and_blank_lines() {
+        let src = "//! module doc\n/// item doc\nfn a() {\n\n    // note\n    let s = \"x\n\n y\";\n}\n/* block\n   end */\n#[cfg(test)]\n// test note\nmod tests {\n    fn t() {}\n}\n";
+        let f = walk(src).unwrap();
+        assert_eq!((f.code_lines, f.comment_lines, f.test_lines), (5, 5, 5));
     }
 }

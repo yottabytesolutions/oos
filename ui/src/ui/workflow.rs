@@ -15,30 +15,6 @@ mod slot_loading_tests {
             label: label.into(),
         }
     }
-    fn tap(ui: &mut Ui, r: Rect) {
-        for phase in [Phase::Down, Phase::Up] {
-            ui.handle(Ev::Touch { id: 0, phase, x: r.x + r.w / 2, y: r.y + r.h / 2 });
-        }
-    }
-    #[test]
-    fn destination_choice_is_modal_and_cancel_changes_no_source_or_model() {
-        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        ui.m.meas.clear();
-        ui.ref_sel = 3;
-        let before = ui.m.clone();
-        ui.request_waveform();
-        assert!(ui.load_slot_ask && !ui.open_wave_request);
-        tap(&mut ui, Rect::new(Ui::load_slot_box().x, Ui::load_slot_box().y, 400, 45));
-        assert!(ui.load_slot_ask && !ui.open_wave_request, "the title is not a destination");
-        tap(&mut ui, Ui::load_slot_cancel());
-        assert!(!ui.load_slot_ask && !ui.open_wave_request && ui.waveform_destination().is_none());
-        assert_eq!(ui.m, before);
-        assert_eq!(ui.ref_sel, 3);
-        assert!(ui.refs.iter().all(Option::is_none));
-        ui.request_waveform();
-        ui.dismiss_context();
-        assert!(!ui.load_slot_ask && !ui.open_wave_request);
-    }
     #[test]
     fn chosen_async_destination_is_transactional_and_live_import_is_an_overlay() {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
@@ -48,11 +24,6 @@ mod slot_loading_tests {
         ui.m.delay = 6e-6;
         ui.ref_sel = 3;
         let before = ui.m.clone();
-        ui.request_waveform();
-        tap(&mut ui, Ui::load_slot_button(9));
-        assert_eq!(ui.waveform_destination(), Some(9));
-        assert!(ui.open_wave_request && !ui.load_slot_ask);
-        assert_eq!(ui.ref_sel, 3, "choosing a destination does not change focus before commit");
         assert!(ui.commit_waveform_traces_at(vec![trace("A"), trace("B")], "two", 9).is_err());
         assert_eq!(ui.m, before);
         assert_eq!(ui.ref_sel, 3);
@@ -470,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn a_file_waits_for_a_slot_and_lands_on_the_one_chosen() {
+    fn a_file_lands_in_the_slot_it_names() {
         let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         let kept: Vec<f32> = (0..40).map(|i| if i < 20 { -0.2 } else { 0.2 }).collect();
         u.refs[0] = Some(RefWave {
@@ -484,24 +455,11 @@ mod tests {
             offset: 0.0,
             on: true,
         });
-        u.request_waveform();
-        assert!(u.load_slot_ask && !u.open_wave_request);
-        let title = Ui::load_slot_box();
-        u.tap(title.x + 30, title.y + 24);
-        assert!(u.load_slot_ask && !u.open_wave_request, "a tap on the title loads nothing");
-        u.tap(Ui::load_slot_cancel().x + 4, Ui::load_slot_cancel().y + 4);
-        assert!(!u.load_slot_ask && !u.open_wave_request);
-        assert_eq!(u.refs[0].as_ref().unwrap().v.as_ref(), &kept);
-        u.request_waveform();
-        u.tap(Ui::load_slot_button(9).x + 4, Ui::load_slot_button(9).y + 4);
-        assert_eq!(u.waveform_destination(), Some(9));
-        assert_eq!(u.ref_slot(), 0, "slot choice does not redirect the current source before commit");
-        assert!(u.open_wave_request);
         let mut csv = String::from("Time (s),Volts\n");
         for k in 0..80 {
             csv.push_str(&format!("{},{}\n", k as f64 * 1e-9, if k < 40 { -0.4 } else { 0.4 }));
         }
-        u.load_waveform_bytes_at(csv.as_bytes(), "lane.csv", u.waveform_destination().unwrap()).unwrap();
+        u.load_waveform_bytes_at(csv.as_bytes(), "lane.csv", 9).unwrap();
         assert_eq!(u.refs[0].as_ref().unwrap().v.as_ref(), &kept);
         assert!(u.refs[9].is_some() && u.refs[1].is_none());
         assert_eq!(u.ref_slot(), 9);
@@ -790,78 +748,6 @@ impl Ui {
         self.relayout();
         change::edited(self);
         self.toast("Returned to live acquisition");
-    }
-
-    pub fn request_waveform(&mut self) {
-        self.cancel_bus_candidate(true);
-        self.workflow_epoch = self.workflow_epoch.wrapping_add(1);
-        self.close_menu();
-        self.open_wave_request = false;
-        self.load_destination = None;
-        self.load_slot_ask = true;
-        self.power_dlg = false;
-        self.dialog = None;
-        self.cancel_pointer();
-    }
-
-    #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the tests
-    pub fn waveform_destination(&self) -> Option<usize> {
-        self.load_destination
-    }
-
-    pub(super) fn load_slot_box() -> Rect {
-        Rect::new((W - 560) / 2, (H - 248) / 2, 560, 248)
-    }
-    pub(super) fn load_slot_button(slot: usize) -> Rect {
-        let r = Self::load_slot_box();
-        Rect::new(r.x + 20 + (slot % 5) as i32 * 106, r.y + 78 + (slot / 5) as i32 * 52, 98, 44)
-    }
-    pub(super) fn load_slot_cancel() -> Rect {
-        let r = Self::load_slot_box();
-        Rect::new(r.x + r.w / 2 - 70, r.y + r.h - 52, 140, 36)
-    }
-    pub(super) fn cancel_load_slot(&mut self) {
-        self.load_slot_ask = false;
-        self.load_destination = None;
-        self.open_wave_request = false;
-    }
-    pub(super) fn load_slot_tap(&mut self, x: i32, y: i32) -> bool {
-        if !self.load_slot_ask {
-            return false;
-        }
-        if let Some(slot) = (0..NREF).find(|&slot| Self::load_slot_button(slot).contains(x, y)) {
-            self.load_slot_ask = false;
-            self.load_destination = Some(slot);
-            self.open_wave_request = true;
-        } else if Self::load_slot_cancel().contains(x, y) || !Self::load_slot_box().contains(x, y) {
-            self.cancel_load_slot();
-        }
-        true
-    }
-    pub(super) fn draw_load_slot(&self, cv: &mut Canvas) {
-        if !self.load_slot_ask {
-            return;
-        }
-        cv.blend(Rect::new(0, 0, W, H), rgb(0, 0, 0), 150);
-        let r = Self::load_slot_box();
-        cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
-        cv.text_in(&self.fonts().lb, Rect::new(r.x, r.y + 16, r.w, 28), 1, "Load into", ACCENT);
-        cv.text_in(
-            &self.fonts().m,
-            Rect::new(r.x, r.y + 46, r.w, 22),
-            1,
-            "Choose a destination before opening the file.",
-            DIM,
-        );
-        for slot in 0..NREF {
-            let b = Self::load_slot_button(slot);
-            btn(cv, b, BTN, if self.refs[slot].is_some() { AMBER } else { BTN_BORDER });
-            let label = format!("R{}{}", slot + 1, if self.refs[slot].is_some() { " replace" } else { "" });
-            cv.text_in(&self.fonts().mb, b, 1, &label, TEXT);
-        }
-        let cancel = Self::load_slot_cancel();
-        btn(cv, cancel, BTN, BTN_BORDER);
-        cv.text_in(&self.fonts().mb, cancel, 1, "Cancel", TEXT);
     }
 
     pub fn load_waveform_bytes(&mut self, data: &[u8], name: &str) -> Result<(), String> {
@@ -1224,7 +1110,6 @@ impl Ui {
         match action {
             "live" => self.return_to_live(),
             "sim" => self.toggle_menu(MenuId::Sim),
-            "load" => self.request_waveform(),
             "measure" => self.open_meas_list(),
             "settings" => self.toggle_menu(MenuId::Measure),
             _ => {}

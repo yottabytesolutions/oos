@@ -1480,13 +1480,14 @@ Delta vs e9f7c30b: **Added**. Constructor: `ui/src/ui/reflook.rs:431`. Runtime o
 
 ### Load destination modal
 
-Path: **Reference > Load file**. Surface requirement: **menus-1618**, added; keep with H1/N1.
-Delta vs e9f7c30b: **Added**. Constructor: `ui/src/ui/workflow.rs:814`. Runtime order: R1..R10 in two rows of five; Cancel; then platform file chooser.
+Path: **Reference > Load file** in the native Windows window, and the `workflow load` command. Surface requirement:
+**menus-1618**, tombstone: the modal only fed the native file dialog, which moved to oos-desktop (ADR 0036); drop,
+retain the ids. Not rendered at HEAD.
 
 | ID | Item / label | Kind | Field or action; value set / step | Visibility / enable conditions | Highlight today | Disposition | Evidence | Delta vs e9f7c30b |
 |---|---|---|---|---|---|---|---|---|
-| menus-1619 | Rn / Rn replace | action | slot=0..9; set load_destination, clear ask flag and open file request; no source/model mutation until successful validated import | load_slot_ask; existing slot caption says replace | occupied slot amber border; no committed selection | keep | `ui/src/ui/workflow.rs:801`; `ui/src/ui/workflow.rs:814` | Added |
-| menus-1620 | Cancel / outside / physical key | action | cancel_load_slot; no source or model change; file request cancelled | load_slot_ask | neutral button | keep | `ui/src/ui/workflow.rs:796`; `ui/src/ui/workflow.rs:801` | Added |
+| menus-1619 | Rn / Rn replace | action | slot=0..9; set load_destination, clear ask flag and open file request | Removed from this surface: the modal fed the native file dialog, which moved to oos-desktop (ADR 0036) | Not rendered at HEAD | drop: superseded control; retain this id as a tombstone | historical: `ui/src/ui/workflow.rs:801` | Dropped |
+| menus-1620 | Cancel / outside / physical key | action | cancel_load_slot; no source or model change; file request cancelled | Removed from this surface: the modal fed the native file dialog, which moved to oos-desktop (ADR 0036) | Not rendered at HEAD | drop: superseded control; retain this id as a tombstone | historical: `ui/src/ui/workflow.rs:801` | Dropped |
 
 ### Eye header and auxiliary view controls
 
@@ -1637,5 +1638,6 @@ changes already accepted:
 - **menus-1907:** Engineering ladder E records exact emitted sets and the absolute 1 ps anchor tolerance, including
   bounds beyond helper arguments. These do not conflict with the owner's presentation/navigation rules, so their
   default disposition is keep. Any numerical correction needs a separately approved behaviour change.
-- **menus-1908:** Approve the N1 extension to catalogue tiles, category/group navigation, Selected paging, popups,
-  measurement configuration and load destination selection, whose generic Multi paths are incomplete today.
+- **menus-1908:** Approve the N1 extension to catalogue tiles, category/group navigation, Selected paging, popups
+  and measurement configuration, whose generic Multi paths are incomplete today. Load destination selection is no
+  longer part of it: its modal is the tombstone menus-1618.

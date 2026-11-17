@@ -1637,6 +1637,7 @@ mod tests {
         assert!(crate::cmd::remote_ok("workflow sim"));
         assert!(!crate::cmd::remote_ok("workflow quit"));
         assert!(!crate::cmd::remote_ok("workflow load C:/private/file"));
+        assert!(!crate::cmd::remote_ok("workflow load"));
     }
 
     /// Runs the opt-in page-script checks under Node with a stand-in browser.

@@ -33,9 +33,7 @@ pub enum Out {
 pub fn remote_ok(line: &str) -> bool {
     let words: Vec<&str> = line.split_whitespace().collect();
     matches!(words.first().copied(), Some("key" | "knob" | "tap" | "drag"))
-        || (words.len() == 2
-            && words[0] == "workflow"
-            && matches!(words[1], "live" | "sim" | "load" | "measure" | "settings"))
+        || (words.len() == 2 && words[0] == "workflow" && matches!(words[1], "live" | "sim" | "measure" | "settings"))
 }
 
 pub fn run(ui: &mut Ui, line: &str) -> Out {

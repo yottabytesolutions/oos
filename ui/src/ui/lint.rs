@@ -397,22 +397,6 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert_eq!(system[0], Item::Open(MenuId::Utility));
     assert!(u.main_groups().iter().any(|g| g.1.contains(&Item::Open(MenuId::Sim))));
     assert!(u.items(MenuId::Ref).contains(&Item::RefLoad));
-    // The destination dialog of the desktop's Ctrl+O.
-    u.request_waveform();
-    assert!(u.load_slot_ask && !u.open_wave_request && !u.menu_open);
-    u.dismiss_context();
-    assert!(!u.load_slot_ask && !u.open_wave_request);
-    assert!(u.refs.iter().all(Option::is_none));
-    u.request_waveform();
-    u.tap(8, 8);
-    assert!(!u.load_slot_ask && !u.open_wave_request, "an outside tap cancels without loading");
-    u.request_waveform();
-    let r3 = Ui::load_slot_button(2);
-    u.tap(r3.x + 4, r3.y + 4);
-    assert!(!u.load_slot_ask && u.open_wave_request);
-    assert_eq!(u.waveform_destination(), Some(2));
-    assert_eq!(u.ref_slot(), 0, "destination selection is separate from the current reference");
-    u.open_wave_request = false;
     // Measurement choices remain one tap away, without going through acquisition or another menu.
     let (_, _, r) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).unwrap();
     u.tap(r.x + 5, r.y + 5);
@@ -435,7 +419,6 @@ fn load_file_in_the_reference_menu_takes_a_file_from_storage() {
     u.activate(Item::RefLoad);
     let r = u.refs[2].as_ref().expect("R3");
     assert_eq!(*r.v, rec.ch[0]);
-    assert!(!u.load_slot_ask && !u.open_wave_request, "no file dialog on the scope");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

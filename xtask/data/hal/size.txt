@@ -8,11 +8,11 @@
 459 file hal/src/dho/mask.rs
 432 file hal/src/dho/seg.rs
 801 file hal/src/dho/selfcal.rs
-1501 file hal/src/dho/seq.rs
+1346 file hal/src/dho/seq.rs
 1027 file hal/src/dho/tpu.rs
 586 file hal/src/model.rs
 410 file hal/src/update/ed25519.rs
-723 file hal/src/update/mod.rs
+710 file hal/src/update/mod.rs
 66 fn hal/src/dho/acq.rs configure_la
 65 fn hal/src/dho/afg.rs Wave::table
 250 fn hal/src/dho/boot/mod.rs Ctx::run

@@ -1,7 +1,7 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
 645 file ui/src/announce.rs
-2508 file ui/src/board/dho/hw.rs
+2501 file ui/src/board/dho/hw.rs
 530 file ui/src/board/mod.rs
 934 file ui/src/drawpipe.rs
 609 file ui/src/drm.rs
@@ -9,7 +9,7 @@
 708 file ui/src/gfx.rs
 725 file ui/src/gpu.rs
 438 file ui/src/hislip.rs
-1280 file ui/src/http.rs
+1212 file ui/src/http.rs
 533 file ui/src/main.rs
 1686 file ui/src/mdns.rs
 471 file ui/src/measures/jitter.rs
@@ -19,20 +19,20 @@
 462 file ui/src/protocols/mod.rs
 5055 file ui/src/scpi.rs
 3203 file ui/src/store.rs
-12552 file ui/src/ui.rs
-1910 file ui/src/ui/analysis.rs
+12516 file ui/src/ui.rs
+1860 file ui/src/ui/analysis.rs
 804 file ui/src/ui/autoset.rs
 1076 file ui/src/ui/bode.rs
 518 file ui/src/ui/bus.rs
 2000 file ui/src/ui/eyepage.rs
-665 file ui/src/ui/eyepage/automatic.rs
+662 file ui/src/ui/eyepage/automatic.rs
 457 file ui/src/ui/facts.rs
 566 file ui/src/ui/la.rs
 571 file ui/src/ui/magnetic.rs
 687 file ui/src/ui/meascatalog.rs
 497 file ui/src/ui/meascatalog/backend.rs
 717 file ui/src/ui/motor.rs
-996 file ui/src/ui/panes.rs
+769 file ui/src/ui/panes.rs
 447 file ui/src/ui/reference_decode.rs
 736 file ui/src/ui/reflook.rs
 467 file ui/src/ui/remote.rs
@@ -45,7 +45,7 @@
 850 file ui/src/ui/workspace.rs
 489 file ui/src/usbtmc.rs
 406 file ui/src/vpu.rs
-474 file ui/src/vxi11.rs
+472 file ui/src/vxi11.rs
 1409 file ui/src/wave.rs
 138 fn ui/src/board/dho/fpga.rs spawn
 72 fn ui/src/board/dho/hw.rs hw_trigger
@@ -61,8 +61,8 @@
 64 fn ui/src/framestats.rs cheap_results
 237 fn ui/src/gpu.rs Gpu::submit
 125 fn ui/src/hislip.rs Server::poll_async
-94 fn ui/src/hislip.rs on_program_message
-130 fn ui/src/http.rs Http::poll
+85 fn ui/src/hislip.rs on_program_message
+124 fn ui/src/http.rs Http::poll
 88 fn ui/src/http.rs Shots::encoder
 75 fn ui/src/http.rs mcp
 73 fn ui/src/input.rs Inputs::read_touch
@@ -116,22 +116,22 @@
 166 fn ui/src/ui.rs Ui::key
 128 fn ui/src/ui.rs Ui::kind
 117 fn ui/src/ui.rs Ui::knob
-294 fn ui/src/ui.rs Ui::label
-331 fn ui/src/ui.rs Ui::menu_items
+293 fn ui/src/ui.rs Ui::label
+330 fn ui/src/ui.rs Ui::menu_items
 76 fn ui/src/ui.rs Ui::menu_title
 107 fn ui/src/ui.rs Ui::multi_touch
 260 fn ui/src/ui.rs Ui::new
-180 fn ui/src/ui.rs Ui::options
+179 fn ui/src/ui.rs Ui::options
 77 fn ui/src/ui.rs Ui::pointer_wheel_motion
-138 fn ui/src/ui.rs Ui::render_layers
+135 fn ui/src/ui.rs Ui::render_layers
 121 fn ui/src/ui.rs Ui::set_dec_proto
-134 fn ui/src/ui.rs Ui::set_trig_type
-411 fn ui/src/ui.rs Ui::step
+133 fn ui/src/ui.rs Ui::set_trig_type
+381 fn ui/src/ui.rs Ui::step
 217 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 409 fn ui/src/ui.rs Ui::touch_in
 89 fn ui/src/ui.rs Ui::trigger_items
-334 fn ui/src/ui.rs Ui::value
+327 fn ui/src/ui.rs Ui::value
 62 fn ui/src/ui.rs fast_plan
 66 fn ui/src/ui.rs packet_text
 128 fn ui/src/ui/analysis.rs Ui::ana_adjust
@@ -156,7 +156,7 @@
 115 fn ui/src/ui/eyepage.rs populate_eye_facts
 76 fn ui/src/ui/eyepage/automatic.rs Ui::auto_eye_identity
 79 fn ui/src/ui/eyepage/automatic.rs Ui::eye_auto_update
-108 fn ui/src/ui/eyepage/automatic.rs compute
+106 fn ui/src/ui/eyepage/automatic.rs compute
 126 fn ui/src/ui/facts.rs Ui::fact_power
 61 fn ui/src/ui/la.rs Ui::la_adjust
 109 fn ui/src/ui/magnetic.rs Ui::draw_magnetic

@@ -1,1 +1,2 @@
-# Test timing findings. Written by cargo xtask ratchet; values may only fall.
+# Test timing findings: <count> time <file> <function> <kind>.
+# Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.

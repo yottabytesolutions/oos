@@ -95,7 +95,6 @@ pub enum Source {
         yref: f64,
     },
     /// acquisitions of the board (`Board::spawn`)
-    #[allow(dead_code)]
     Hw {
         shared: crate::board::HwShared,
         seen: u64,
@@ -830,10 +829,7 @@ impl Phosphor {
             m.iter_mut().for_each(|x| *x = 0);
         }
     }
-    #[allow(dead_code)]
-    pub fn clear_ch(&mut self, c: usize) {
-        self.map[c].iter_mut().for_each(|x| *x = 0);
-    }
+
     /// Multiplies every count by f (0..1).
     pub fn decay(&mut self, f: f32) {
         let k = (f.clamp(0.0, 1.0) * 65536.0) as u32;
@@ -1031,17 +1027,16 @@ pub fn trace_columns(
     }
 }
 
+/// Autoset and level-50 estimates retain histogram bin edges; DSP refines levels to sample means.
 #[derive(Clone, Copy, Default)]
-#[allow(dead_code)] // the measurements come from oos-dsp; these serve auto set-up and level 50 %
 pub struct Stats {
     pub vmax: f32,
     pub vmin: f32,
+    #[cfg(test)]
     pub vavg: f32,
-    pub vrms: f32,
     pub top: f32,
     pub base: f32,
     pub period: f64,
-    pub pwidth: f64,
     pub rise: f64,
     pub fall: f64,
     pub valid: bool,
@@ -1061,9 +1056,8 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
     }
     let vmax = f.iter().copied().fold(f32::MIN, f32::max);
     let vmin = f.iter().copied().fold(f32::MAX, f32::min);
-    let n = f.len() as f32;
-    let vavg = f.iter().sum::<f32>() / n;
-    let vrms = (f.iter().map(|x| x * x).sum::<f32>() / n).sqrt();
+    #[cfg(test)]
+    let vavg = f.iter().sum::<f32>() / f.len() as f32;
     // top/base: histogram modes of the upper and lower 40 %
     let span = (vmax - vmin).max(1e-9);
     let mut hist = [0u32; 256];
@@ -1083,12 +1077,11 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
     let mut s = Stats {
         vmax,
         vmin,
+        #[cfg(test)]
         vavg,
-        vrms,
         top,
         base,
         period: f64::NAN,
-        pwidth: f64::NAN,
         rise: f64::NAN,
         fall: f64::NAN,
         valid: true,
@@ -1134,11 +1127,6 @@ pub fn stats(v: &[f32], dt: f64) -> Stats {
         s.period = (rises[rises.len() - 1] - rises[0]) / (rises.len() - 1) as f64 * dt;
     } else if falls.len() >= 2 {
         s.period = (falls[falls.len() - 1] - falls[0]) / (falls.len() - 1) as f64 * dt;
-    }
-    if let Some(&r) = rises.first() {
-        if let Some(&fl) = falls.iter().find(|&&x| x > r) {
-            s.pwidth = (fl - r) * dt;
-        }
     }
     // 10-90 % rise/fall around the first edges
     let l10 = base + amp * 0.1;
@@ -1383,14 +1371,19 @@ mod tests {
     }
     use super::*;
 
-    // Break it catches: level 50 % on the extremes, which a spike or overshoot pulls off the middle of the swing
-    #[test]
-    fn mid_level_ignores_spikes_on_a_square_and_takes_the_extremes_of_a_sine() {
+    fn spiked_square() -> Vec<f32> {
         let mut sq: Vec<f32> = (0..4000).map(|k| if (k / 500) % 2 == 0 { 0.0 } else { 5.0 }).collect();
         for k in [499, 1499, 2499] {
             sq[k + 1] = 9.0;
         }
         sq[1000] = -2.0;
+        sq
+    }
+
+    // Break it catches: level 50 % on the extremes, which a spike or overshoot pulls off the middle of the swing
+    #[test]
+    fn mid_level_ignores_spikes_on_a_square_and_takes_the_extremes_of_a_sine() {
+        let sq = spiked_square();
         let s = stats(&sq, 1e-6);
         assert_eq!((s.vmax + s.vmin) / 2.0, 3.5);
         assert!((mid_level(&s) - 2.5).abs() < 0.1, "{}", mid_level(&s));
@@ -1398,7 +1391,18 @@ mod tests {
         assert!((mid_level(&stats(&sine, 1e-6)) - 1.0).abs() < 0.01);
     }
 
-    // Break it catches: noise reject chosen for a clean sine (its halves spread by the signal) or missed on a noisy square
+    #[test]
+    fn autoset_levels_differ_from_dsp_on_the_spiked_square_fixture() {
+        let square = spiked_square();
+        let legacy = stats(&square, 1e-6);
+        let dsp = oos_dsp::measure::analyze(&square, 1e-6);
+        assert_eq!((legacy.vmin as f64, legacy.vmax as f64), (dsp.vmin, dsp.vmax));
+        assert_ne!(legacy.base as f64, dsp.base);
+        assert_ne!(legacy.top as f64, dsp.top);
+        assert_ne!(mid_level(&legacy) as f64, (dsp.top + dsp.base) / 2.0);
+    }
+
+    // Break it catches: noise reject chosen for a clean sine or missed on a noisy square.
     #[test]
     fn flat_noise_of_two_levels_only() {
         let mut x = 5u32;

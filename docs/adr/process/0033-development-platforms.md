@@ -51,7 +51,7 @@ feature or a tool because native Windows lacks it.
 
 - CONTRIBUTING points Windows users to WSL or a VM. Review findings about native Windows portability are out of
   scope ([AGENTS.md](../../../AGENTS.md)).
-- ADR 0021's allowance for platform crates of a desktop build stays as a rule.
+- ADR 0036 moves the native desktop window out of this tree; ADR 0037 governs dependencies.
 - Worth a second look when a maintainer develops on native Windows, or when a tool needs a host this record does not
   cover.
 
@@ -64,5 +64,5 @@ only a development path, and its future is decided separately. Until then nothin
 ## References
 
 Discussion [#9](https://github.com/yottabytesolutions/oos/discussions/9) (dropping the PowerShell build),
-ADR 0020 (superseded), ADR 0021, ADR 0031, [CONTRIBUTING.md](../../../CONTRIBUTING.md),
+ADR 0020 (superseded), ADR 0036, ADR 0037, ADR 0031, [CONTRIBUTING.md](../../../CONTRIBUTING.md),
 [development.md](../../development.md), `ui/src/desktop.rs`.

@@ -514,6 +514,7 @@ static DEFS: [Def; 60] = [
 pub struct Standard;
 
 impl MeasModule for Standard {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "standard"
     }

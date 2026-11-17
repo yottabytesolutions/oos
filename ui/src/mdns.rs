@@ -177,19 +177,11 @@ fn txt_bytes(t: &[String]) -> Vec<u8> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Data {
     A(Ipv4Addr),
-    /// not sent while the services listen on IPv4 only (`Responder::records`), kept for when they do
-    #[allow(dead_code)]
     Aaaa(Ipv6Addr),
     Ptr(Name),
-    Srv {
-        port: u16,
-        target: Name,
-    },
+    Srv { port: u16, target: Name },
     Txt(Vec<String>),
-    Nsec {
-        next: Name,
-        types: Vec<u16>,
-    },
+    Nsec { next: Name, types: Vec<u16> },
 }
 
 impl Data {
@@ -1201,14 +1193,7 @@ static STATUS: std::sync::Mutex<Status> = std::sync::Mutex::new(Status { state: 
 /// Every IPv4 address with its netmask of the interfaces that are up (not loopback), in the order the kernel lists
 /// them; an interface can have several (a DHCP or set address and a link-local one).
 pub fn ipv4_networks() -> Vec<(Ipv4Addr, Ipv4Addr)> {
-    #[cfg(unix)]
-    {
-        net::ipv4_all()
-    }
-    #[cfg(not(unix))]
-    {
-        Vec::new()
-    }
+    net::ipv4_all()
 }
 
 /// The responder's state, for the page (Off until it runs).
@@ -1222,7 +1207,6 @@ fn set_status(s: Status) {
     }
 }
 
-#[cfg(unix)]
 mod net {
     use super::*;
     use std::io;
@@ -1581,7 +1565,6 @@ pub struct Mdns {
 }
 
 /// The thread: sockets while on, a blocking wait between packets and timers.
-#[cfg(unix)]
 fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>, control_wake: lifecycle::Wake) {
     use std::sync::mpsc::TryRecvError;
     let t0 = std::time::Instant::now();
@@ -1676,9 +1659,6 @@ fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>, control_wa
         }
     }
 }
-
-#[cfg(not(unix))]
-fn run(_rx: std::sync::mpsc::Receiver<Ctl>, _only: Option<Vec<String>>, _wake: lifecycle::Wake) {}
 
 #[cfg(test)]
 mod tests {
@@ -2263,7 +2243,6 @@ mod tests {
     /// queries and the announcements do arrive on en0. Verified 2026-11-13 with dns-sd -G and -B.)
     #[test]
     #[ignore = "live multicast: set OOS_MDNS_IF"]
-    #[cfg(unix)]
     fn host_responder() {
         let only: Vec<String> =
             std::env::var("OOS_MDNS_IF").expect("set OOS_MDNS_IF").split(',').map(str::to_string).collect();

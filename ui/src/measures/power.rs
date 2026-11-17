@@ -34,6 +34,7 @@ static QUALITY_DEFS: [Def; 2] = [
 pub struct Quality;
 
 impl MeasModule for Quality {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "power_quality"
     }
@@ -81,6 +82,7 @@ static HARMONICS_DEFS: [Def; 1] = [module(
 pub struct Harmonics;
 
 impl MeasModule for Harmonics {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "harmonics"
     }
@@ -139,6 +141,7 @@ static INRUSH_DEFS: [Def; 1] = [module(
 pub struct Inrush;
 
 impl MeasModule for Inrush {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "inrush"
     }
@@ -179,6 +182,7 @@ static INPUT_C_DEFS: [Def; 1] = [module(
 pub struct InputC;
 
 impl MeasModule for InputC {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "input_capacitance"
     }
@@ -233,6 +237,7 @@ static TURN_DEFS: [Def; 2] = [
 pub struct Turn;
 
 impl MeasModule for Turn {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "turn_on_off"
     }
@@ -322,6 +327,7 @@ static SWITCHING_DEFS: [Def; 8] = [
 pub struct Switching;
 
 impl MeasModule for Switching {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "switching"
     }
@@ -364,6 +370,7 @@ static RIPPLE_DEFS: [Def; 1] =
 pub struct Ripple;
 
 impl MeasModule for Ripple {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "ripple"
     }
@@ -404,6 +411,7 @@ static LINE_RIPPLE_DEFS: [Def; 1] = [module(
 pub struct LineRipple;
 
 impl MeasModule for LineRipple {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "line_ripple"
     }
@@ -452,6 +460,7 @@ static SW_RIPPLE_DEFS: [Def; 1] = [module(
 pub struct SwRipple;
 
 impl MeasModule for SwRipple {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "switching_ripple"
     }
@@ -511,6 +520,7 @@ static RATIO_DEFS: [Def; 2] = [
 pub struct Ratio;
 
 impl MeasModule for Ratio {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "psrr_impedance"
     }

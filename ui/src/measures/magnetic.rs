@@ -44,6 +44,7 @@ static DEFS: [Def; 3] = [
 pub struct Magnetic;
 
 impl MeasModule for Magnetic {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "magnetics"
     }

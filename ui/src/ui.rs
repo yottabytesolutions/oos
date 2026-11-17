@@ -2665,15 +2665,6 @@ impl Ui {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn channel_stats(&self, c: usize) -> Option<Stats> {
-        if self.m.ch[c].on && self.stats[c].valid {
-            Some(self.stats[c])
-        } else {
-            None
-        }
-    }
-
     /// (points, dt, time of the first point relative to the trigger) of the last record of channel c.
     pub fn record_info(&self, c: usize) -> Option<(usize, f64, f64)> {
         let r = self.last[0].as_ref()?;

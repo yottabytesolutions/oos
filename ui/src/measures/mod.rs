@@ -272,7 +272,7 @@ pub const DERIVED: &str = "Derived from scaled source roles";
 /// `compute`.
 pub trait MeasModule: Sync {
     /// Stable name of the module (tests, docs): letters, digits and '_' only.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn key(&self) -> &'static str;
 
     /// Its measurements.
@@ -373,7 +373,7 @@ pub fn std_id(k: Meas) -> u16 {
 }
 
 /// The number of the tile of pair variant `k`.
-#[cfg_attr(not(test), allow(dead_code))] // the tests name pair tiles with it
+#[cfg(test)]
 pub fn pair_id(k: usize) -> u16 {
     all().find(|(_, d)| d.kind == Kind::Pair(k)).map_or(0, |(_, d)| d.id)
 }

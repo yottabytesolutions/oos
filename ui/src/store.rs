@@ -1329,7 +1329,7 @@ pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
 
 /// Parses a setup file on top of the default set-up (keys missing in the file keep their defaults). Errors name the
 /// line and the key; unknown keys are ignored.
-#[cfg_attr(not(test), allow(dead_code))] // the strict form, for the tests
+#[cfg(test)]
 pub fn parse_setup(text: &str) -> Result<Model, String> {
     let (m, bad) = parse_setup_lenient(text);
     match bad.into_iter().next() {
@@ -1382,7 +1382,6 @@ fn parse_lines(text: &str, bad: &mut Vec<String>) -> Model {
             arate: m.dec_arate,
             tick: m.dec_tick,
             nibbles: m.dec_nibbles,
-            uspeed: m.dec_uspeed,
         };
         if let Some(o) = crate::protocols::get(i).legacy(&old) {
             m.dec_opt = o.map(|x| x as u8);
@@ -3189,13 +3188,10 @@ pub fn png_of(cv: &Canvas) -> Vec<u8> {
     png(cv.w as u32, cv.h as u32, &cv.px)
 }
 
-/// Writes everything cached to the disks (a stick can be pulled, the scope switched off at the mains). Nothing to do
-/// on hosts without `sync(2)`; their files reach the disk on their own.
+/// Writes everything cached to the disks (a stick can be pulled, the scope switched off at the mains).
 pub fn sync_disks() {
-    #[cfg(unix)]
-    unsafe {
-        libc::sync()
-    };
+    // SAFETY: sync has no pointer arguments or memory preconditions.
+    unsafe { libc::sync() };
 }
 
 #[cfg(test)]
@@ -3213,7 +3209,6 @@ pub(crate) mod tests {
     use crate::math::{MathOp, Window};
 
     #[test]
-    #[cfg(unix)]
     fn a_save_does_not_follow_links_or_write_to_devices() {
         let d = std::env::temp_dir().join(format!("oos-link-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();

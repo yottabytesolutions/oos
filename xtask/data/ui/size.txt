@@ -17,19 +17,19 @@
 524 file ui/src/measures/standard.rs
 452 file ui/src/pacing.rs
 462 file ui/src/protocols/mod.rs
-5055 file ui/src/scpi.rs
+5046 file ui/src/scpi.rs
 3203 file ui/src/store.rs
-12515 file ui/src/ui.rs
-1847 file ui/src/ui/analysis.rs
+12455 file ui/src/ui.rs
+1837 file ui/src/ui/analysis.rs
 802 file ui/src/ui/autoset.rs
 1076 file ui/src/ui/bode.rs
 518 file ui/src/ui/bus.rs
-2000 file ui/src/ui/eyepage.rs
-662 file ui/src/ui/eyepage/automatic.rs
+1983 file ui/src/ui/eyepage.rs
+659 file ui/src/ui/eyepage/automatic.rs
 457 file ui/src/ui/facts.rs
 566 file ui/src/ui/la.rs
 571 file ui/src/ui/magnetic.rs
-687 file ui/src/ui/meascatalog.rs
+685 file ui/src/ui/meascatalog.rs
 497 file ui/src/ui/meascatalog/backend.rs
 717 file ui/src/ui/motor.rs
 769 file ui/src/ui/panes.rs
@@ -39,9 +39,9 @@
 972 file ui/src/ui/sim.rs
 461 file ui/src/ui/startup.rs
 626 file ui/src/ui/time.rs
-1430 file ui/src/ui/tools.rs
+1429 file ui/src/ui/tools.rs
 900 file ui/src/ui/wlan.rs
-802 file ui/src/ui/workflow.rs
+801 file ui/src/ui/workflow.rs
 850 file ui/src/ui/workspace.rs
 489 file ui/src/usbtmc.rs
 406 file ui/src/vpu.rs
@@ -98,7 +98,7 @@
 652 fn ui/src/store.rs set
 394 fn ui/src/store.rs setup_text
 67 fn ui/src/sysconf.rs SysConf::parse_over
-355 fn ui/src/ui.rs Ui::activate
+353 fn ui/src/ui.rs Ui::activate
 594 fn ui/src/ui.rs Ui::adjust
 62 fn ui/src/ui.rs Ui::cursor_values
 73 fn ui/src/ui.rs Ui::dlg_layout
@@ -113,7 +113,7 @@
 66 fn ui/src/ui.rs Ui::draw_strip_band
 73 fn ui/src/ui.rs Ui::draw_top
 83 fn ui/src/ui.rs Ui::fast_draw_all
-166 fn ui/src/ui.rs Ui::key
+165 fn ui/src/ui.rs Ui::key
 128 fn ui/src/ui.rs Ui::kind
 117 fn ui/src/ui.rs Ui::knob
 293 fn ui/src/ui.rs Ui::label
@@ -126,7 +126,7 @@
 135 fn ui/src/ui.rs Ui::render_layers
 121 fn ui/src/ui.rs Ui::set_dec_proto
 133 fn ui/src/ui.rs Ui::set_trig_type
-380 fn ui/src/ui.rs Ui::step
+375 fn ui/src/ui.rs Ui::step
 217 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 409 fn ui/src/ui.rs Ui::touch_in
@@ -134,7 +134,7 @@
 327 fn ui/src/ui.rs Ui::value
 62 fn ui/src/ui.rs fast_plan
 66 fn ui/src/ui.rs packet_text
-128 fn ui/src/ui/analysis.rs Ui::ana_adjust
+121 fn ui/src/ui/analysis.rs Ui::ana_adjust
 93 fn ui/src/ui/analysis.rs Ui::ana_value
 66 fn ui/src/ui/analysis.rs Ui::apply_finding
 81 fn ui/src/ui/analysis.rs Ui::channel_measurement
@@ -177,7 +177,6 @@
 68 fn ui/src/ui/reference_decode.rs decode_borrowed
 74 fn ui/src/ui/reference_search.rs Ui::reference_trigger_hits
 133 fn ui/src/ui/sim.rs Ui::sim_finish
-66 fn ui/src/ui/sim.rs Ui::sim_finish_capture
 63 fn ui/src/ui/sim/sim_bus_candidate.rs Ui::sim_bus_guard
 117 fn ui/src/ui/startup.rs Ui::draw_start_up
 66 fn ui/src/ui/sysinfo.rs Ui::draw_sysinfo
@@ -187,7 +186,7 @@
 64 fn ui/src/ui/wlan.rs Ui::osk_done
 93 fn ui/src/ui/workflow.rs Ui::commit_waveform_traces_to
 64 fn ui/src/ui/workflow.rs Ui::record_key
-75 fn ui/src/ui/workflow.rs Ui::replay_acquire
+74 fn ui/src/ui/workflow.rs Ui::replay_acquire
 102 fn ui/src/ui/workspace.rs Ui::workspace_action
 116 fn ui/src/ui/workspace.rs Ui::workspace_touch
 107 fn ui/src/vxi11.rs Server::poll_async

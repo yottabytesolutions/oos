@@ -14,7 +14,7 @@ python3 tools/output.py build --release --target aarch64-unknown-linux-musl -p o
 ```
 
 Cargo host and ARM artifacts use their normal layout under the selected directory.
-Coverage uses its `xtask-cov/` child. GPU builds use `gpu/` (bundle `gpu/gpu/`);
+Coverage uses its `xtask-cov/<crate>/` children. GPU builds use `gpu/` (bundle `gpu/gpu/`);
 GPU comparisons use unique `gpu-check.*` directories. Mesa's installed build cache
 and checked source tarball stay in worktree-local `rootfs/out/mesa/<environment>/` and
 `rootfs/out/mesa_*.orig.tar.xz`, outside the target, so `cargo clean` preserves them.

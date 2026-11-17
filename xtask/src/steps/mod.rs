@@ -34,11 +34,7 @@ pub(crate) fn outcome(ok: Vec<String>, bad: Vec<String>) -> Outcome {
 
 pub fn fmt(ctx: &crate::run::Context, root: &Path) -> Outcome {
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
-    let diffs: Vec<_> = std::thread::scope(|s| {
-        let runs: Vec<_> = CRATES.iter().map(|c| s.spawn(move || fmt::diff_lines(ctx, root, c.dir))).collect();
-        runs.into_iter().map(|r| r.join().unwrap_or_else(|_| Err("cargo fmt: the check panicked".into()))).collect()
-    });
-    for (c, diff) in CRATES.iter().zip(diffs) {
+    for (c, diff) in CRATES.iter().zip(repo::each(|c| fmt::diff_lines(ctx, root, c.dir))) {
         match diff {
             Ok(0) => ok.push(format!("{}: formatted", c.dir)),
             Ok(n) => bad.push(format!("{}: {} lines differ, run cargo fmt in {}", c.dir, n, c.dir)),
@@ -79,8 +75,8 @@ pub fn arch(ctx: &crate::run::Context, root: &Path) -> Outcome {
 
 pub fn tests(ctx: &crate::run::Context, root: &Path, release: bool) -> Outcome {
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
-    for c in CRATES {
-        match testrun::run(ctx, root, c.dir, release) {
+    for (c, run) in CRATES.iter().zip(repo::each(|c| testrun::run(ctx, root, c.dir, release))) {
+        match run {
             Ok((n, slow)) => {
                 ok.push(format!("{}: {}", c.dir, n));
                 ok.extend(slow.into_iter().map(|line| format!("{}: slow: {}", c.dir, line)));
@@ -105,11 +101,8 @@ pub fn perf(ctx: &crate::run::Context, root: &Path) -> Outcome {
 /// Current coverage of every crate, in tenths of a percent.
 pub fn coverage_now(ctx: &crate::run::Context, root: &Path) -> Result<Ratchet, Vec<String>> {
     let mut now = Ratchet::default();
-    for c in CRATES {
-        now.0.insert(
-            c.dir.to_string(),
-            coverage::measure(ctx, root, c.dir).map_err(|e| vec![format!("{}: {}", c.dir, e)])?,
-        );
+    for (c, measured) in CRATES.iter().zip(repo::each(|c| coverage::measure(ctx, root, c.dir))) {
+        now.0.insert(c.dir.to_string(), measured.map_err(|e| vec![format!("{}: {}", c.dir, e)])?);
     }
     Ok(now)
 }

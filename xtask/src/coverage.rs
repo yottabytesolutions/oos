@@ -44,7 +44,7 @@ pub fn measure(ctx: &crate::run::Context, root: &Path, krate: &str) -> Result<u6
     if !target.ok {
         return Err(target.stderr);
     }
-    let dir = coverage_dir(Path::new(target.stdout.trim()));
+    let dir = coverage_dir(Path::new(target.stdout.trim()), krate);
     // Under nextest the instrumented tests run in parallel, as in the test steps. The covered lines are the same.
     let mut args: Vec<String> = ["llvm-cov", "--json", "--summary-only"].map(String::from).into();
     if crate::testrun::nextest(ctx, root) {
@@ -61,8 +61,10 @@ pub fn measure(ctx: &crate::run::Context, root: &Path, krate: &str) -> Result<u6
     tenths(&out.stdout)
 }
 
-fn coverage_dir(target: &Path) -> std::path::PathBuf {
-    target.join("xtask-cov")
+/// A target directory per crate: cargo-llvm-cov empties its directory of the previous profiles, so the crates can
+/// only be measured at the same time in directories of their own.
+fn coverage_dir(target: &Path, krate: &str) -> std::path::PathBuf {
+    target.join("xtask-cov").join(krate)
 }
 
 #[cfg(test)]
@@ -80,6 +82,6 @@ mod tests {
     #[test]
     fn coverage_follows_the_selected_target() {
         let target = Path::new("/path/to/worktree/build");
-        assert_eq!(coverage_dir(target), target.join("xtask-cov"));
+        assert_eq!(coverage_dir(target, "ui"), target.join("xtask-cov/ui"));
     }
 }

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Render the Cargo-provided inventory twice; compare read-only unless --update."""
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 import hashlib
+from itertools import repeat
 import json
 import os
 from pathlib import Path
@@ -199,11 +201,13 @@ def main():
     reference = ROOT / 'ui/tests/golden'
     start = time.monotonic()
     captures, failures = [], []
-    for index, row in enumerate(rows):
-        added, failed = capture_case(row, args, out, candidate)
-        captures.extend(added)
-        failures.extend(failed)
-        print(f'{index + 1}/{len(rows)} {row[0]}: {len(added)} captures', flush=True)
+    # Cases are independent: each renders in its own directory. Processes, because the comparison is Python.
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as pool:
+        cases = pool.map(capture_case, rows, repeat(args), repeat(out), repeat(candidate))
+        for index, (row, (added, failed)) in enumerate(zip(rows, cases)):
+            captures.extend(added)
+            failures.extend(failed)
+            print(f'{index + 1}/{len(rows)} {row[0]}: {len(added)} captures', flush=True)
     by_path = {c['path']: c for c in captures}
     for capture in captures:
         if '/Auto-' in capture['path']:

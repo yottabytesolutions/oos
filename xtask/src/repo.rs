@@ -22,6 +22,15 @@ pub const CRATES: [Crate; 6] = [
     Crate { dir: "xtask", target: false },
 ];
 
+/// `f` for every crate, all at the same time; the results in `CRATES` order.
+pub fn each<T: Send>(f: impl Fn(Crate) -> T + Sync) -> Vec<T> {
+    let f = &f;
+    std::thread::scope(|s| {
+        let runs: Vec<_> = CRATES.iter().map(|c| s.spawn(move || f(*c))).collect();
+        runs.into_iter().map(|r| r.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))).collect()
+    })
+}
+
 /// The scope's target triple.
 pub const TARGET: &str = "aarch64-unknown-linux-musl";
 
@@ -44,5 +53,10 @@ mod tests {
         let r = root();
         assert!(CRATES.iter().all(|c| r.join(c.dir).join("Cargo.toml").exists()));
         assert!(CRATES.iter().any(|c| c.dir == "xtask" && !c.target));
+    }
+
+    #[test]
+    fn each_keeps_the_crate_order() {
+        assert_eq!(each(|c| c.dir), CRATES.map(|c| c.dir));
     }
 }

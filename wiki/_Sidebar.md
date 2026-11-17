@@ -24,3 +24,4 @@
 - [[Building OOS]]
 - [[Development]]
 - [[FAQ]]
+- [[Thanks and licences]]

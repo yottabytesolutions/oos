@@ -232,8 +232,8 @@ fn ui_running() -> bool {
         .unwrap_or(true)
 }
 
-/// The lines of `adc slots`: per slot the mean over all runs (16-bit measure scale), the lowest min and highest max
-/// (12-bit), and the mean's distance from the average of all slots in ADC steps (16 codes).
+/// `adc slots`: per slot the mean (16-bit scale), lowest min/highest max (12-bit), offset in ADC steps (16 codes).
+#[cfg(any(target_os = "linux", test))]
 fn slot_lines(runs: &[[oos_hal::dho::levels::Slot; 8]]) -> Vec<String> {
     let n = runs.len().max(1) as f64;
     let mean: [f64; 8] = std::array::from_fn(|k| runs.iter().map(|r| r[k].mean).sum::<f64>() / n);
@@ -1187,109 +1187,6 @@ fn tool(cmd: &str, a: &[String]) -> Result<(), String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_tool_command_is_routed() {
-        let src = include_str!("main.rs");
-        let body = &src[src.find("fn tool(cmd: &str").unwrap()..];
-        let body = &body[..body.find("\n}\n").unwrap()];
-        let arms: Vec<&str> = body
-            .lines()
-            .filter_map(|l| l.strip_prefix("            \"")?.split_once("\" => {").map(|(c, _)| c))
-            .collect();
-        assert!(arms.len() >= 6, "{:?}", arms);
-        for c in arms {
-            assert!(TOOL_CMDS.contains(&c), "tool arm {} missing from TOOL_CMDS", c);
-        }
-    }
-
-    #[test]
-    fn status_interpretation() {
-        let mut regs = std::collections::HashMap::from([
-            (0x4000u32, 0xe207_2115u32),
-            (0x4034, 0x2000),
-            (0x1008, 1 << 29),
-            (0x1210, 62500),
-        ]);
-        let l = status_lines(&mut |o| *regs.entry(o).or_insert(0));
-        assert!(
-            l[0].contains("expected") && l[1].contains("stopped") && l[2].contains("pass") && l[3].contains("locked")
-        );
-    }
-
-    #[test]
-    fn slot_lines_show_each_slot_against_the_average() {
-        use oos_hal::dho::levels::Slot;
-        let mut r = [Slot { min: 2040, max: 2056, mean: 32768.0 }; 8];
-        r[5].mean = 32768.0 + 7.0 * 16.0;
-        let l = slot_lines(&[r, r]);
-        assert!(l[5].ends_with("+6.12 steps"), "{}", l[5]);
-        assert!(l[0].ends_with("-0.88 steps") && l[0].contains("min 2040  max 2056"), "{}", l[0]);
-        let mut bad = std::collections::HashMap::from([(0x1210u32, 0u32)]);
-        assert!(status_lines(&mut |o| *bad.entry(o).or_insert(0))[3].contains("NOT locked"));
-    }
-
-    #[test]
-    fn pll_dry_run() {
-        let args = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        let s = pll_dry(&args(&["--freq", "1.5e9", "--dry"])).unwrap().unwrap();
-        assert!(s.contains("R38=002c") && s.contains("R45=0002") && s.contains("4500.000000 MHz"), "{}", s);
-        assert!(pll_dry(&args(&["--freq", "1500000000"])).unwrap_err().contains("only 1.25 GHz"));
-        assert_eq!(pll_dry(&args(&["--freq", "1.25e9"])).unwrap(), None);
-        assert_eq!(pll_dry(&args(&["--reset"])).unwrap(), None);
-        assert!(pll_dry(&args(&["--freq", "5e9", "--dry"])).is_err());
-    }
-
-    // Break it catches: a default that changes without a hardware check, or a value that puts more than the two known
-    // parameters on the insmod shell line.
-    #[test]
-    fn xdma_parameters_from_the_system_settings() {
-        assert_eq!(xdma_params(None).unwrap(), "poll_mode=1");
-        assert_eq!(xdma_params(Some(" \n")).unwrap(), "poll_mode=1");
-        assert_eq!(xdma_params(Some("poll_mode=0\n")).unwrap(), "poll_mode=0");
-        assert_eq!(xdma_params(Some("poll_mode=0   interrupt_mode=2")).unwrap(), "poll_mode=0 interrupt_mode=2");
-        for bad in [
-            "poll_mode=2",
-            "poll_mode=0; reboot",
-            "poll_mode=0 poll_mode=1",
-            "interrupt_mode=4",
-            "c2h_timeout=1",
-            "poll_mode=0 $(id)",
-        ] {
-            assert!(xdma_params(Some(bad)).is_err(), "{}", bad);
-        }
-    }
-
-    // Break it catches: a kexec start that loads xdma with MSI (round 21: every C2H read timed out), or an ordinary start
-    // that loses the setting.
-    #[test]
-    fn a_kexec_start_polls_whatever_the_setting() {
-        assert_eq!(xdma_params_for(Some("poll_mode=0"), false), ("poll_mode=0".to_string(), None));
-        let (v, why) = xdma_params_for(Some("poll_mode=0"), true);
-        assert_eq!(v, "poll_mode=1");
-        assert!(why.is_some_and(|w| w.contains("kexec") && w.contains("poll_mode=0")));
-        assert_eq!(xdma_params_for(Some("poll_mode=0 interrupt_mode=1"), true).0, "poll_mode=1");
-        // the default needs no note; a refused setting says why in both starts
-        assert_eq!(xdma_params_for(None, true), ("poll_mode=1".to_string(), None));
-        assert!(
-            xdma_params_for(Some("poll_mode=7"), true).1.is_some()
-                && xdma_params_for(Some("poll_mode=7"), false).1.is_some()
-        );
-    }
-
-    #[test]
-    fn options() {
-        let o = parse(&["--mask", "3", "--scale", "0.5", "--all"].map(String::from)).unwrap();
-        assert_eq!(o.s.mask, 3);
-        assert_eq!(o.s.ch[1].scale, 0.5);
-        assert!(o.s.window.is_none());
-        assert!(parse(&["--bogus".to_string()]).is_err());
-    }
-}
-
 /// The unit behind the self-calibration: AFE over the GPIO SPI bus, gear ioctl, FPGA ADC measure unit.
 #[cfg(target_os = "linux")]
 struct UnitHw {
@@ -1712,5 +1609,108 @@ fn afg_la(cmd: &str, a: &[String]) -> Result<(), String> {
             Ok(())
         }
         _ => Err("afg sine|off, la status|thr".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_tool_command_is_routed() {
+        let src = include_str!("main.rs");
+        let body = &src[src.find("fn tool(cmd: &str").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let arms: Vec<&str> = body
+            .lines()
+            .filter_map(|l| l.strip_prefix("            \"")?.split_once("\" => {").map(|(c, _)| c))
+            .collect();
+        assert!(arms.len() >= 6, "{:?}", arms);
+        for c in arms {
+            assert!(TOOL_CMDS.contains(&c), "tool arm {} missing from TOOL_CMDS", c);
+        }
+    }
+
+    #[test]
+    fn status_interpretation() {
+        let mut regs = std::collections::HashMap::from([
+            (0x4000u32, 0xe207_2115u32),
+            (0x4034, 0x2000),
+            (0x1008, 1 << 29),
+            (0x1210, 62500),
+        ]);
+        let l = status_lines(&mut |o| *regs.entry(o).or_insert(0));
+        assert!(
+            l[0].contains("expected") && l[1].contains("stopped") && l[2].contains("pass") && l[3].contains("locked")
+        );
+    }
+
+    #[test]
+    fn slot_lines_show_each_slot_against_the_average() {
+        use oos_hal::dho::levels::Slot;
+        let mut r = [Slot { min: 2040, max: 2056, mean: 32768.0 }; 8];
+        r[5].mean = 32768.0 + 7.0 * 16.0;
+        let l = slot_lines(&[r, r]);
+        assert!(l[5].ends_with("+6.12 steps"), "{}", l[5]);
+        assert!(l[0].ends_with("-0.88 steps") && l[0].contains("min 2040  max 2056"), "{}", l[0]);
+        let mut bad = std::collections::HashMap::from([(0x1210u32, 0u32)]);
+        assert!(status_lines(&mut |o| *bad.entry(o).or_insert(0))[3].contains("NOT locked"));
+    }
+
+    #[test]
+    fn pll_dry_run() {
+        let args = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let s = pll_dry(&args(&["--freq", "1.5e9", "--dry"])).unwrap().unwrap();
+        assert!(s.contains("R38=002c") && s.contains("R45=0002") && s.contains("4500.000000 MHz"), "{}", s);
+        assert!(pll_dry(&args(&["--freq", "1500000000"])).unwrap_err().contains("only 1.25 GHz"));
+        assert_eq!(pll_dry(&args(&["--freq", "1.25e9"])).unwrap(), None);
+        assert_eq!(pll_dry(&args(&["--reset"])).unwrap(), None);
+        assert!(pll_dry(&args(&["--freq", "5e9", "--dry"])).is_err());
+    }
+
+    // Break it catches: a default that changes without a hardware check, or a value that puts more than the two known
+    // parameters on the insmod shell line.
+    #[test]
+    fn xdma_parameters_from_the_system_settings() {
+        assert_eq!(xdma_params(None).unwrap(), "poll_mode=1");
+        assert_eq!(xdma_params(Some(" \n")).unwrap(), "poll_mode=1");
+        assert_eq!(xdma_params(Some("poll_mode=0\n")).unwrap(), "poll_mode=0");
+        assert_eq!(xdma_params(Some("poll_mode=0   interrupt_mode=2")).unwrap(), "poll_mode=0 interrupt_mode=2");
+        for bad in [
+            "poll_mode=2",
+            "poll_mode=0; reboot",
+            "poll_mode=0 poll_mode=1",
+            "interrupt_mode=4",
+            "c2h_timeout=1",
+            "poll_mode=0 $(id)",
+        ] {
+            assert!(xdma_params(Some(bad)).is_err(), "{}", bad);
+        }
+    }
+
+    // Break it catches: a kexec start that loads xdma with MSI (round 21: every C2H read timed out), or an ordinary start
+    // that loses the setting.
+    #[test]
+    fn a_kexec_start_polls_whatever_the_setting() {
+        assert_eq!(xdma_params_for(Some("poll_mode=0"), false), ("poll_mode=0".to_string(), None));
+        let (v, why) = xdma_params_for(Some("poll_mode=0"), true);
+        assert_eq!(v, "poll_mode=1");
+        assert!(why.is_some_and(|w| w.contains("kexec") && w.contains("poll_mode=0")));
+        assert_eq!(xdma_params_for(Some("poll_mode=0 interrupt_mode=1"), true).0, "poll_mode=1");
+        // the default needs no note; a refused setting says why in both starts
+        assert_eq!(xdma_params_for(None, true), ("poll_mode=1".to_string(), None));
+        assert!(
+            xdma_params_for(Some("poll_mode=7"), true).1.is_some()
+                && xdma_params_for(Some("poll_mode=7"), false).1.is_some()
+        );
+    }
+
+    #[test]
+    fn options() {
+        let o = parse(&["--mask", "3", "--scale", "0.5", "--all"].map(String::from)).unwrap();
+        assert_eq!(o.s.mask, 3);
+        assert_eq!(o.s.ch[1].scale, 0.5);
+        assert!(o.s.window.is_none());
+        assert!(parse(&["--bogus".to_string()]).is_err());
     }
 }

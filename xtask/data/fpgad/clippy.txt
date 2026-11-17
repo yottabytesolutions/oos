@@ -4,6 +4,4 @@
 6 fpgad fpgad/src/bin/oos-update.rs clippy::undocumented_unsafe_blocks
 1 fpgad fpgad/src/board.rs clippy::undocumented_unsafe_blocks
 1 fpgad fpgad/src/main.rs clippy::cognitive_complexity
-1 fpgad fpgad/src/main.rs clippy::items_after_test_module
 6 fpgad fpgad/src/main.rs clippy::too_many_lines
-1 fpgad fpgad/src/main.rs dead_code

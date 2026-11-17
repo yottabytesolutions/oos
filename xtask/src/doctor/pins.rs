@@ -9,6 +9,8 @@ pub(super) struct Tools {
     pub python: String,
     #[serde(rename = "cargo-llvm-cov")]
     pub coverage: String,
+    #[serde(rename = "cargo-nextest")]
+    pub nextest: String,
     pub stdlib: Vec<String>,
     pub profiles: BTreeMap<String, Vec<String>>,
 }
@@ -60,6 +62,7 @@ pub(super) fn load(root: &Path) -> Result<Pins, String> {
     if tools.schema != 1
         || !python_minimum(&tools.python)
         || !version(&tools.coverage)
+        || !version(&tools.nextest)
         || tools.stdlib.is_empty()
         || tools.profiles.keys().map(String::as_str).collect::<Vec<_>>() != ["gpu", "image", "sim"]
     {

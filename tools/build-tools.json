@@ -2,6 +2,7 @@
   "schema": 1,
   "python": "3.12",
   "cargo-llvm-cov": "0.9.1",
+  "cargo-nextest": "0.9.150",
   "stdlib": [
     "argparse",
     "hashlib",

@@ -6,8 +6,8 @@
 # its PR head skips the checks that already passed there. A push to main is the only run that saves the Rust caches,
 # one per job kind; PRs and groups only restore them. The merge queue already ran the gate on that tree, so the push
 # run builds the tests without running them; the other jobs are cheap or are their own warm-up (clippy).
-# Pull requests run the debug tests only. Release-profile tests run in the merge queue without LTO (same
-# optimisation level, no debug assertions); main.yml runs them with the full release profile nightly.
+# Pull requests run the debug tests only. Release-profile tests (Cargo profile test-release: no fat LTO, same
+# optimisation level, no debug assertions) run in the merge queue and in main.yml nightly.
 name: PR
 on:
   pull_request:
@@ -105,7 +105,7 @@ jobs:
         run: cargo xtask step clippy
 
   # Pull requests run the debug tests in three shards (cargo nextest --partition, xtask/src/testrun.rs). The merge
-  # queue adds the release-profile tests, also sharded; main.yml runs them nightly with the full release profile.
+  # queue adds the release-profile tests, also sharded; main.yml runs them nightly.
   # A push to main builds both profiles unsharded for the caches.
   test-run:
     name: test (${{ matrix.profile }} ${{ matrix.shard }})
@@ -121,11 +121,7 @@ jobs:
         profile: ${{ fromJSON(github.event_name == 'pull_request' && '["debug"]' || '["debug","release"]') }}
         shard: ${{ fromJSON(github.event_name == 'push' && '["build"]' || '["1/3","2/3","3/3"]') }}
     env:
-      # Release tests without LTO: a fat-LTO link per test binary dominated this job.
-      CARGO_PROFILE_RELEASE_LTO: 'false'
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
       # xtask/src/testrun.rs: cargo-nextest runs the test binaries in parallel; doctests through cargo test.
-      OOS_TEST_RUNNER: nextest
       OOS_TEST_PARTITION: ${{ matrix.shard != 'build' && matrix.shard || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -163,7 +159,7 @@ jobs:
         shell: bash
         run: |
           flags=(--locked --no-run)
-          if [ "$PROFILE" = release ]; then flags+=(--release); fi
+          if [ "$PROFILE" = release ]; then flags+=(--profile test-release); fi
           for crate in hal dsp core ui fpgad xtask; do
             (cd "$crate" && cargo test "${flags[@]}")
           done

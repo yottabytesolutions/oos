@@ -18,6 +18,8 @@ rust_pin=$(python3 -I -c 'import tomllib; print(tomllib.load(open("rust-toolchai
 rustup toolchain install "$rust_pin" --profile minimal --component rustfmt,clippy,llvm-tools-preview --target aarch64-unknown-linux-musl
 coverage_pin=$(python3 -I -c 'import json; print(json.load(open("tools/build-tools.json"))["cargo-llvm-cov"])')
 cargo install cargo-llvm-cov --version "=$coverage_pin" --locked
+nextest_pin=$(python3 -I -c 'import json; print(json.load(open("tools/build-tools.json"))["cargo-nextest"])')
+cargo install cargo-nextest --version "=$nextest_pin" --locked
 cargo fetch --locked
 for flag in "$@"; do
     roles=$(python3 -I -c 'import json,sys; p=json.load(open("tools/build-tools.json"))["profiles"]; names=[sys.argv[1][2:]]; names = ["gpu","sim","image"] if names == ["image"] else names; print(" ".join(dict.fromkeys(r for n in names for r in p[n])))' "$flag")

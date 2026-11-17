@@ -1,7 +1,7 @@
 # 0009: Formatting and lint are enforced
 
 Status: accepted. 2026-11-14. Amended 2026-11-17: enforcement and the ratchet model are
-[ADR 0032](../../adr/process/0032-lints-and-limits-ratchet-down-only.md).
+[ADR 0039](../../adr/process/0039-format-lints-and-ratchets-the-author-tightens.md).
 
 ## Context
 

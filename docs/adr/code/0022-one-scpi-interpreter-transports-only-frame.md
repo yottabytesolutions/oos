@@ -1,6 +1,6 @@
 # ADR 0022: One SCPI interpreter in the frame loop; every remote transport only frames its messages
 
-- Status: accepted
+- Status: accepted, amended by ADR 0037 (the transports run on an async IO thread)
 - Date: 2026-11-15
 - Category: code (touches system: the network services, ADR 0024 and 0025)
 
@@ -43,6 +43,12 @@ CHANGELOG 0.1.6). Since then every server reads without waiting.
   ([scpi.md](../../scpi.md)).
 - HiSLIP passes the payload through: no lock is kept, overlap mode is not run, remote/local is only acknowledged.
 - Worth a second look if a transport needs real session semantics (VXI-11 or HiSLIP locks between two controllers).
+
+## Amendment 2026-11-17: transports on an IO thread
+
+ADR 0037 moves the transports off the frame loop onto one async IO thread. The second bullet's "the servers read
+their sockets non-blocking from the same loop" no longer holds: the IO thread hands decoded programs to the frame
+loop over a channel. The interpreter, its place in the frame loop and the continuations are unchanged.
 
 ## References
 

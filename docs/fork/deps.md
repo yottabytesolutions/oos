@@ -26,9 +26,10 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
 
 ## Rust crates
 
-What runs on the scope, `oos-hal` and `oos-dsp` depend on `libc` and the crates of the tree only; `tools/check.sh
-target` fails otherwise ([ADR 0021](../adr/process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md)).
-A build that only runs on a computer may use its platform's crates; each is listed here:
+A crate from crates.io is added only where it removes code or blocking
+([ADR 0037](../adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md)). Each crate's allowed dependencies are its line in
+`xtask/data/architecture.txt`; cargo-deny (`deny.toml`) vets licences and advisories. Crates outside `xtask` are
+listed here:
 
 | Crate | Build | For | Versions |
 |---|---|---|---|

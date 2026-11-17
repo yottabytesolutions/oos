@@ -61,9 +61,9 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Run `cargo xtask check --fast` before every commit and push (the hooks run it). Push early; CI runs the full gate.
 - Report a change as done only after the required CI checks passed on its final commit.
 - Never bypass a hook (`--no-verify`, `core.hooksPath` changes, editing `.githooks/`).
-- Never edit a ratchet file (`xtask/data/size.txt`, `clippy.txt`, `statics.txt`, `unsafe.txt`, `coverage.txt`). Fix
-  the finding. The integrator runs `cargo xtask ratchet` (and `--move` for planned moves) at merge. A step that moves
-  code lists its moves in `xtask/data/moves.txt`; that file is part of the step, not a ratchet file.
+- Never edit a ratchet file (`xtask/data/<crate>/*.txt`, `coverage.txt`) by hand; fix the finding. A PR that lowers a
+  count commits `cargo xtask ratchet` (`--move` for planned moves; [ADR 0039](docs/adr/process/0039-format-lints-and-ratchets-the-author-tightens.md)).
+  Planned moves go in `xtask/data/moves.txt`, part of the step, not a ratchet file.
 - Never loosen a lint, a limit, `rustfmt.toml`, `clippy.toml` or `xtask/data/architecture.txt` without an ADR the
   owner has approved. Adding a module rule that the tree meets is not loosening.
 - No `#[allow(...)]` without a reason comment on the same item.
@@ -131,8 +131,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
   `unsafe` block or fn has a `// SAFETY:` comment that states the invariant it relies on. The gate enforces the
   placement (`unsafe` lines in `xtask/data/architecture.txt`); the `// SAFETY:` comments are reviewed
   ([Enforcement](docs/architecture/README.md#enforcement)).
-- No new dependency without a line in `xtask/data/architecture.txt` and the owner's agreement. What runs on the
-  scope depends on `libc` only; `xtask` may use its host-only crates (ADR 0013).
+- A new dependency only where it removes code or blocking: a line in `xtask/data/architecture.txt`, the reason in the
+  PR, cargo-deny clean. Remote IO is async on tokio; frame loop, domain and DSP stay sync ([ADR 0037](docs/adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md)).
 
 ## Privacy
 
@@ -148,7 +148,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Subject `type(scope): imperative summary` (Conventional Commits), under 72 characters. The body says why, not
   what ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
 - Every commit is signed off (`git commit -s`,
-  [ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)) with a GitHub
+  [ADR 0040](docs/adr/process/0040-contributions-signed-off-no-vendor-material-rebased.md)) with a GitHub
   noreply address. No tool, session or agent attribution and no co-author lines in commits or PR texts.
 - No em-dashes in commit messages, docs or comments.
 - Pull requests merge by rebase: every commit lands on main as it is. Each one is a Conventional, signed-off topic
@@ -159,10 +159,10 @@ to the document that explains it. When a rule and your task conflict, stop and a
 
 ## Docs
 
-- Work comes from GitHub issues labelled `agent-ready`, with acceptance criteria (ADR 0026). A multi-step design gets
+- Work comes from GitHub issues labelled `agent-ready`, with acceptance criteria (ADR 0040). A multi-step design gets
   a task file. Create or claim a numbered task before such work. Follow [the task format](docs/tasks/README.md).
   Set `status: active` and `owner`. Record the branch and reserved paths. Name the branch
-  `<type>/t<NNNN>-<slug>` (`feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`; ADR 0026).
+  `<type>/t<NNNN>-<slug>` (`feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`; ADR 0040).
 - Serialize ids and claims on the integration branch. Do not start work on an unaccepted or overlapping claim.
   Reserve hot files explicitly. Task commands and automatic claim checks are pending task 0040.
 - Write the Plan before code. Update Status after each step with dated lines, newest first.

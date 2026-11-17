@@ -48,7 +48,7 @@ The [task tracker](../tasks/README.md) carries guardrails, architecture review a
 - **Decoder modules.** The `Protocol` trait for decoder modules (`../protocol-modules.md`).
 - **The rest of the system.** Boot chain, kernel, update and the network services are unchanged
   (`system.md`).
-- **One dependency:** `libc`.
+- **Few dependencies:** `libc`, and crates where they remove code or blocking (ADR 0037).
 
 What changes is the inside of `oos-ui`.
 
@@ -863,7 +863,7 @@ Wake protocol, for every `eventfd` pair:
   everything rechecks the channel once after reading the `eventfd`.
 - **Seqlocks** only over fields that are atomics themselves; never over ordinary `Copy` fields, which is undefined
   behaviour in Rust.
-- **No ring crates.** Every primitive is in `oos_hal::sync`, on `std` and `libc` only (the one dependency).
+- **No ring crates.** Every primitive is in `oos_hal::sync`, on `std` and `libc` only.
 
 No lock is held across a copy of sample data, an allocation, a format or a sort. Summaries of metrics (`pacing.rs`
 362 sorts histories under its lock today) take a snapshot first and work outside the lock. The contention counters

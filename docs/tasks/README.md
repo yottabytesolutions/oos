@@ -35,7 +35,7 @@ Keep input material in `notes/`. Notes are not tasks.
 ## Claims
 
 Claim before work. Set `status: active` and `owner`. Name each branch `<type>/t<NNNN>-<slug>`
-([ADR 0026](../adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)).
+([ADR 0040](../adr/process/0040-contributions-signed-off-no-vendor-material-rebased.md)).
 In Plan, write a `Reserved paths:` line listing exact files or directory prefixes, or `none`.
 Record the contributor/session, branch and base commit in a dated Status line.
 Reserve `ui/src/ui.rs`, `ui/src/board/dho/hw.rs` and `ui/src/model.rs` explicitly when touched.

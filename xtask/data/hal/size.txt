@@ -5,7 +5,7 @@
 787 file hal/src/dho/boot/mod.rs
 492 file hal/src/dho/lmx2582.rs
 712 file hal/src/dho/selfcal.rs
-1133 file hal/src/dho/seq.rs
+1005 file hal/src/dho/seq.rs
 870 file hal/src/dho/tpu.rs
 488 file hal/src/model.rs
 604 file hal/src/update/mod.rs

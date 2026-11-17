@@ -113,6 +113,8 @@ jobs:
     env:
       CARGO_PROFILE_RELEASE_LTO: ${{ matrix.lto }}
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ matrix.codegen-units }}
+      # xtask/src/testrun.rs: cargo-nextest runs the test binaries in parallel; doctests through cargo test.
+      OOS_TEST_RUNNER: nextest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -132,6 +134,10 @@ jobs:
         with:
           shared-key: test-${{ matrix.profile }}
           save-if: ${{ env.SAVE_CACHE }}
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        if: steps.changes.outputs.run == 'true' && env.SAVE_CACHE != 'true'
+        with:
+          tool: cargo-nextest@0.9.150
       - name: Tests (${{ matrix.profile }})
         if: steps.changes.outputs.run == 'true' && env.SAVE_CACHE != 'true'
         env:

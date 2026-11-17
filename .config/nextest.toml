@@ -1,0 +1,7 @@
+# cargo-nextest, the CI test runner (xtask/src/testrun.rs, OOS_TEST_RUNNER=nextest).
+[profile.default]
+# A test running 60 s is reported as SLOW (xtask lists those that finished at 60 s or later). terminate-after is only
+# a hang guard, far above any real test: 10 periods.
+slow-timeout = { period = "60s", terminate-after = 10 }
+# Fail instead of passing when a test leaves a process behind that holds its output open.
+leak-timeout = { period = "1s", result = "fail" }

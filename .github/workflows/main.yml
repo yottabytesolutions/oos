@@ -32,8 +32,10 @@ jobs:
             steps: clippy
           - name: tests-debug
             steps: tests-debug
+            nextest: nextest
           - name: tests-release
             steps: tests-release
+            nextest: nextest
           - name: python
             steps: script-syntax python-tests
             mksh: true
@@ -47,6 +49,10 @@ jobs:
           persist-credentials: false
       - name: Pinned toolchain (rust-toolchain.toml)
         run: rustup toolchain install
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        if: matrix.nextest
+        with:
+          tool: cargo-nextest@0.9.150
       - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         if: matrix.llvm-cov
         with:
@@ -68,6 +74,7 @@ jobs:
       - name: cargo xtask step ${{ matrix.steps }}
         env:
           STEPS: ${{ matrix.steps }}
+          OOS_TEST_RUNNER: ${{ matrix.nextest }}
         shell: bash
         run: |
           read -ra ids <<< "$STEPS"

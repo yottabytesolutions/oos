@@ -3,7 +3,7 @@
 645 file ui/src/announce.rs
 2501 file ui/src/board/dho/hw.rs
 530 file ui/src/board/mod.rs
-934 file ui/src/drawpipe.rs
+892 file ui/src/drawpipe.rs
 609 file ui/src/drm.rs
 894 file ui/src/fastdraw.rs
 708 file ui/src/gfx.rs
@@ -19,9 +19,9 @@
 462 file ui/src/protocols/mod.rs
 5055 file ui/src/scpi.rs
 3203 file ui/src/store.rs
-12516 file ui/src/ui.rs
-1860 file ui/src/ui/analysis.rs
-804 file ui/src/ui/autoset.rs
+12515 file ui/src/ui.rs
+1847 file ui/src/ui/analysis.rs
+802 file ui/src/ui/autoset.rs
 1076 file ui/src/ui/bode.rs
 518 file ui/src/ui/bus.rs
 2000 file ui/src/ui/eyepage.rs
@@ -51,7 +51,7 @@
 72 fn ui/src/board/dho/hw.rs hw_trigger
 125 fn ui/src/board/dho/hw.rs settings
 860 fn ui/src/board/dho/hw.rs spawn
-91 fn ui/src/board/record.rs resample
+83 fn ui/src/board/record.rs resample
 103 fn ui/src/board/record.rs trigger_point
 91 fn ui/src/cmd.rs execute
 61 fn ui/src/desktop.rs PointerState::apply
@@ -112,7 +112,7 @@
 75 fn ui/src/ui.rs Ui::draw_refs_at
 66 fn ui/src/ui.rs Ui::draw_strip_band
 73 fn ui/src/ui.rs Ui::draw_top
-84 fn ui/src/ui.rs Ui::fast_draw_all
+83 fn ui/src/ui.rs Ui::fast_draw_all
 166 fn ui/src/ui.rs Ui::key
 128 fn ui/src/ui.rs Ui::kind
 117 fn ui/src/ui.rs Ui::knob
@@ -126,7 +126,7 @@
 135 fn ui/src/ui.rs Ui::render_layers
 121 fn ui/src/ui.rs Ui::set_dec_proto
 133 fn ui/src/ui.rs Ui::set_trig_type
-381 fn ui/src/ui.rs Ui::step
+380 fn ui/src/ui.rs Ui::step
 217 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 409 fn ui/src/ui.rs Ui::touch_in
@@ -140,7 +140,7 @@
 81 fn ui/src/ui/analysis.rs Ui::channel_measurement
 67 fn ui/src/ui/analysis.rs Ui::poll_reference_measurements
 117 fn ui/src/ui/analysis.rs Ui::power_update
-98 fn ui/src/ui/autoset.rs Ui::auto_step
+94 fn ui/src/ui/autoset.rs Ui::auto_step
 69 fn ui/src/ui/bode.rs Ui::bode_adjust
 69 fn ui/src/ui/bode.rs Ui::bode_begin
 155 fn ui/src/ui/bode.rs Ui::draw_bode

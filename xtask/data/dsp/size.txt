@@ -1,40 +1,25 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-556 file dsp/src/decode.rs
-1352 file dsp/src/decode_ext.rs
-1528 file dsp/src/decode_ext2.rs
-1003 file dsp/src/decode_ext3.rs
-543 file dsp/src/dpt.rs
+498 file dsp/src/dpt.rs
 1340 file dsp/src/eye.rs
-507 file dsp/src/hss.rs
+487 file dsp/src/hss.rs
 1052 file dsp/src/identify.rs
-894 file dsp/src/measure.rs
-585 file dsp/src/motor.rs
-639 file dsp/src/power.rs
+881 file dsp/src/measure.rs
+562 file dsp/src/motor.rs
+612 file dsp/src/power.rs
 480 file dsp/src/sim.rs
 737 file dsp/src/spectrum.rs
 480 file dsp/src/trigger.rs
 79 fn dsp/src/bandwidth.rs step_response
 105 fn dsp/src/cphy.rs decode
 103 fn dsp/src/dcc_yard.rs Yard::apply_loco
-88 fn dsp/src/decode.rs can_frame
-66 fn dsp/src/decode.rs i2c_at
-67 fn dsp/src/decode.rs uart
-97 fn dsp/src/decode_ext.rs can_fd_bits
-137 fn dsp/src/decode_ext.rs can_fd_frame
-119 fn dsp/src/decode_ext.rs ds2482
-99 fn dsp/src/decode_ext.rs flexray
-64 fn dsp/src/decode_ext.rs modbus_adu
-92 fn dsp/src/decode_ext2.rs I3c::bit
-64 fn dsp/src/decode_ext2.rs i3c
-62 fn dsp/src/decode_ext2.rs jtag_walk
-106 fn dsp/src/decode_ext2.rs qspi
-70 fn dsp/src/decode_ext2.rs spdif
-74 fn dsp/src/decode_ext2.rs usbpd_msg_name
-157 fn dsp/src/decode_ext3.rs dcc
-82 fn dsp/src/decode_ext3.rs sent
-67 fn dsp/src/decode_ext3.rs usb_bus
-103 fn dsp/src/decode_ext3.rs usb_packet
+98 fn dsp/src/decode/automotive.rs flexray
+81 fn dsp/src/decode/automotive.rs sent
+136 fn dsp/src/decode/can.rs can_fd_frame
+81 fn dsp/src/decode/can.rs can_frame
+157 fn dsp/src/decode/dcc.rs dcc
+62 fn dsp/src/decode/debug.rs jtag_walk
+103 fn dsp/src/decode/usb.rs usb_packet
 80 fn dsp/src/dpt.rs diode
 129 fn dsp/src/dpt.rs measure
 88 fn dsp/src/eye.rs psij
@@ -43,11 +28,11 @@
 118 fn dsp/src/identify.rs find_spi
 103 fn dsp/src/identify.rs periodic_logic
 109 fn dsp/src/identify.rs serial
-115 fn dsp/src/magnetic.rs measure
+112 fn dsp/src/magnetic.rs measure
 91 fn dsp/src/measure.rs Analysis::get
 64 fn dsp/src/measure.rs Meas::name
 137 fn dsp/src/measure.rs analyze_refs
-79 fn dsp/src/motor.rs shaft_hall
+78 fn dsp/src/motor.rs shaft_hall
 64 fn dsp/src/motor.rs shaft_quad
 77 fn dsp/src/power.rs rail
 77 fn dsp/src/power.rs switching

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Explicit host setup. Install Python >=3.12, rustup and Docker before running this.
 set -eu
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
 for flag in "$@"; do
     case "$flag" in --gpu|--sim|--image) ;; *) echo 'usage: tools/bootstrap.sh [--gpu] [--sim] [--image]' >&2; exit 2 ;; esac

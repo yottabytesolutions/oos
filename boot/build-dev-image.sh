@@ -17,6 +17,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 k="$root/kernel/out/base"
 . "$root/tools/output.sh"
+. "$root/tools/lib/portable.sh"
 out="$CARGO_TARGET_DIR/image"
 before=$(python3 "$root/tools/output.py" revision)
 # the board this image is for: rootfs/board/<OOS_BOARD>, the values come from its etc/oos-board
@@ -52,7 +53,6 @@ docker run --rm --pull=never --platform linux/arm64 "$probe_image" true >/dev/nu
 	echo "(or the distribution's qemu-user-static with binfmt-support)" >&2
 	exit 1
 }
-sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }
 owner="$(id -u):$(id -g)"
 ui="$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release"
 # always rebuild (incremental), so the image never carries a stale binary
@@ -153,7 +153,7 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS
 rm -f "$out/oos-dev.unit" "$out/oos-dev.build" "$out/oos-dev.oosupd" "$out/${OOS_GEL_STEM}_Install.GEL"
 python3 -I "$here/oos-bootimg.py" build --kernel "$k/Image" --dtb "$out/$OOS_IMAGE_NAME.dtb" \
 	--ramdisk "$out/initramfs.cpio.gz" --name "$OOS_IMAGE_NAME" --out "$out/oos-dev.img"
-(cd "$out" && sha256 oos-dev.img > oos-dev.img.sha256 && cat oos-dev.img.sha256)
+(cd "$out" && echo "$(sha256 oos-dev.img)  oos-dev.img" > oos-dev.img.sha256 && cat oos-dev.img.sha256)
 printf '%s\n' "$build_id" > "$out/oos-dev.build"
 "$root/tools/build-env.sh" provenance initramfs --image "$image" --output "$out/initramfs.packages.txt"
 python3 "$root/tools/output.py" stamp "$out/oos-dev.img" "$before"

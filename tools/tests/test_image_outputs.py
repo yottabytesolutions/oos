@@ -151,7 +151,8 @@ class ImageOutputs(unittest.TestCase):
         script = self.root / "gpu/build.sh"
         script.parent.mkdir()
         shutil.copyfile(REPO / "gpu/build.sh", script)
-        for name in ("build-env.sh", "build_env.py", "container-images.json"):
+        for name in ("build-env.sh", "build_env.py", "container-images.json", "lib/portable.sh"):
+            (self.root / "tools" / name).parent.mkdir(exist_ok=True)
             shutil.copyfile(REPO / "tools" / name, self.root / "tools" / name)
         (self.root / "tools/build-env.sh").chmod(0o700)
         shutil.copytree(REPO / "tools/build-env", self.root / "tools/build-env")
@@ -184,8 +185,10 @@ class ImageOutputs(unittest.TestCase):
             '    bundle.mkdir(exist_ok=True)\n'
             '    (bundle / "oos-gpu").write_bytes(marker.read_bytes())\n')
         docker.chmod(0o700)
-        checksum = self.root / "bin/shasum"
-        checksum.write_text('#!/bin/sh\ncat >/dev/null\n')
+        # the fixture tarball passes the pinned checksum: the hash tool answers with the pinned sum
+        pinned = next(line[4:] for line in script.read_text().splitlines() if line.startswith("sum="))
+        checksum = self.root / "bin/sha256sum"
+        checksum.write_text(f'#!/bin/sh\ncat "$@" >/dev/null\necho "{pinned}  -"\n')
         checksum.chmod(0o700)
         target = self.root / "selected target"
         self.env["CARGO_TARGET_DIR"] = str(target)

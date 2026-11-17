@@ -68,7 +68,7 @@ class CleanDocker(unittest.TestCase):
     def test_image_checks_daemon_before_querying_environment(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
-            for name in ('boot/build-dev-image.sh', 'tools/output.sh', 'tools/output.py',
+            for name in ('boot/build-dev-image.sh', 'tools/output.sh', 'tools/output.py', 'tools/lib/portable.sh',
                          'rootfs/board/dho/etc/oos-board'):
                 dest = root / name
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +103,7 @@ class RootfsReceipts(unittest.TestCase):
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name)
         for name in ['tools/build_env.py', 'tools/build-env.sh', 'tools/container-images.json',
-                     'rootfs/deps.sh', 'rootfs/deps.lock']:
+                     'rootfs/deps.sh', 'rootfs/deps.lock', 'tools/lib/portable.sh']:
             dest = self.root / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, dest)

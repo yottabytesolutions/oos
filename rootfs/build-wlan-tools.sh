@@ -8,6 +8,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 root=$(cd "$here/.." && pwd)
+. "$root/tools/lib/portable.sh"
 image=$("$root/tools/build-env.sh" prepare rootfs-wlan-tools)
 before=$(python3 "$root/tools/output.py" identity "$out/wpa_supplicant")
 ver=2.11
@@ -15,7 +16,7 @@ sum=912ea06f74e30a8e36fbb68064d6cdff218d8d591db0fc5d75dee6c81ac7fc0a
 mkdir -p "$out"
 tarball="$out/wpa_supplicant-$ver.tar.gz"
 [ -f "$tarball" ] || curl -fsSL -o "$tarball" "https://w1.fi/releases/wpa_supplicant-$ver.tar.gz"
-echo "$sum  $tarball" | { shasum -a 256 -c - 2>/dev/null || sha256sum -c -; } >/dev/null || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
+[ "$(sha256 "$tarball")" = "$sum" ] || { echo "wrong checksum: $tarball" >&2; rm -f "$tarball"; exit 1; }
 # libnl comes from Alpine's libnl3-static and is linked in (LGPL-2.1-or-later): its source goes with a release
 # (THIRD-PARTY-LICENSES.md). Alpine builds the package from these two files; the build stops below when the package
 # Alpine installs is another version than the one fetched here (then rootfs/deps.lock follows).

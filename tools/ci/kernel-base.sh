@@ -13,6 +13,7 @@
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
 sums="$root/kernel/base.sha256"
+. "$root/tools/lib/portable.sh"
 
 line=$(grep -E '^[0-9a-f]{64}  src/linux-[0-9.]+-base\.tar\.xz$' "$sums") ||
     { echo "$sums: no archive line" >&2; exit 2; }
@@ -22,12 +23,8 @@ version=${file#linux-}
 version=${version%-base.tar.xz}
 tag="kernel-base-$version"
 
-sha256() {
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
-}
-
 check() {
-    got=$(sha256 "$1")
+    got=$(sha256 "$1") || { echo "$1: cannot read" >&2; exit 1; }
     [ "$got" = "$sha" ] || { echo "$1: sha256 $got, kernel/base.sha256 says $sha" >&2; exit 1; }
 }
 

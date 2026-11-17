@@ -11,6 +11,7 @@
 # Build first: (cd ui && cargo build --release --target aarch64-unknown-linux-musl), same for fpgad.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
+. "$here/tools/lib/portable.sh"
 host=${1:?usage: device-deploy.sh <ip> [--restore]}
 port=${OOS_SSH_PORT:-22}
 ui=${OOS_DEPLOY_UI:-$here/ui/target/aarch64-unknown-linux-musl/release/oos-ui}
@@ -29,9 +30,7 @@ remote() {
 send() {
 	echo "sending $(basename "$1") -> /tmp/$2"
 	remote "umask 077; cat > /tmp/$2.part && mv /tmp/$2.part /tmp/$2" < "$1"
-	if command -v shasum >/dev/null 2>&1; then want=$(shasum -a 256 "$1" | cut -d' ' -f1)
-	else want=$(sha256sum "$1" | cut -d' ' -f1); fi
-	[ -n "$want" ] || { echo "error: no SHA256 tool" >&2; exit 1; }
+	want=$(sha256 "$1") || { echo "error: cannot hash $1" >&2; exit 1; }
 	remote "sha256sum /tmp/$2" | grep -q "^$want " || { echo "error: /tmp/$2 differs after the upload" >&2; exit 1; }
 	remote "chmod +x /tmp/$2" >/dev/null
 }

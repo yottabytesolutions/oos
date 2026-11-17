@@ -1011,7 +1011,7 @@ mod line_tests {
         // other lines are not this check's business
         assert!(line_allowed(&without, "LA_PROBE_DETECT", false).is_ok());
         // a DHO924S in vendor.bin with afg = no from the image: the lines stay alone
-        let p = Platform::build_unit(None, Some("afg = no\nla = no\n"), None, None);
+        let p = Platform::build(None, Some("afg = no\nla = no\n"), None);
         assert_eq!(p.caps.name, "DHO924S");
         assert!(LINES.iter().all(|n| line_allowed(&p.caps, n, false).is_err()));
     }

@@ -10,9 +10,9 @@ pub(super) enum Reply {
 
 /// A mismatch requires a separate request; no uploaded bytes are retained while the user decides.
 pub(super) fn confirmation(m: &pkg::Manifest, running: &str, any: bool) -> Result<Option<Reply>, String> {
-    let package = update::unit::package(m)?;
-    let running = update::unit::validate(running)?;
-    Ok((package != running && !any).then(|| Reply::Confirmation { package: package.into(), running: running.into() }))
+    let package = update::models::package(m)?;
+    let mismatch = update::models::check(m, running, true)?.is_some();
+    Ok((mismatch && !any).then(|| Reply::Confirmation { package: package.into(), running: running.into() }))
 }
 
 pub(super) fn reply(result: Result<Reply, String>) -> (bool, &'static str, Vec<u8>) {
@@ -21,8 +21,12 @@ pub(super) fn reply(result: Result<Reply, String>) -> (bool, &'static str, Vec<u
         Ok(Reply::Confirmation { package, running }) => (
             true,
             "application/json",
-            J::obj(&[("refused", J::Bool(true)), ("package_unit", J::s(&package)), ("running_unit", J::s(&running))])
-                .to_string(),
+            J::obj(&[
+                ("refused", J::Bool(true)),
+                ("package_models", J::s(&package)),
+                ("running_model", J::s(&running)),
+            ])
+            .to_string(),
         ),
         Ok(Reply::Accepted(text)) => (false, "text/plain", text),
         Err(e) => (true, "text/plain", format!("REFUSED: {}", e)),
@@ -52,20 +56,20 @@ pub(super) fn upload_store(body: &[u8], keys: &[[u8; 32]], path: &Path) -> Resul
     std::fs::write(path, body).map_err(|e| format!("{}: {}", path.display(), e))
 }
 
-/// Only an explicit, unique query option permits a foreign unit package.
-pub(super) fn any_unit(query: &str) -> Result<bool, String> {
-    let mut values = query.split('&').filter_map(|p| p.strip_prefix("any-unit="));
+/// Only an explicit, unique query option permits a foreign model package.
+pub(super) fn any_model(query: &str) -> Result<bool, String> {
+    let mut values = query.split('&').filter_map(|p| p.strip_prefix("any-model="));
     match (values.next(), values.next()) {
         (None, None) => Ok(false),
         (Some("1"), None) => Ok(true),
-        _ => Err("use a single any-unit=1 query option to override the unit check".into()),
+        _ => Err("use a single any-model=1 query option to override the unit check".into()),
     }
 }
 
-pub(super) fn install_args(any_unit: bool) -> Vec<&'static str> {
+pub(super) fn install_args(any_model: bool) -> Vec<&'static str> {
     let mut args = vec!["install", UPLOAD, "--execute"];
-    if any_unit {
-        args.push("--any-unit");
+    if any_model {
+        args.push("--any-model");
     }
     args
 }
@@ -119,12 +123,12 @@ const r=document.getElementById('r');const button=document.querySelector('button
 try{{r.textContent='uploading '+f.size+' bytes ...';
 let response=await fetch('/update',{{method:'POST',body:f}});
 if(response.status===409&&(response.headers.get('Content-Type')||'').includes('application/json')){{
-const units=await response.json();
-if(units.refused!==true)throw new Error('Invalid refusal response');
-const warning="Package unit '"+units.package_unit+"', running image unit '"+units.running_unit+"'.";
+const models=await response.json();
+if(models.refused!==true)throw new Error('Invalid refusal response');
+const warning="Package models '"+models.package_models+"', running device model '"+models.running_model+"'.";
 r.textContent=warning;
 if(!confirm(warning+' Install anyway? This override will be logged.')){{r.textContent+=' Cancelled; nothing installed.';return}}
-response=await fetch('/update?any-unit=1',{{method:'POST',body:f}});
+response=await fetch('/update?any-model=1',{{method:'POST',body:f}});
 }}
 r.textContent=await response.text();if(!response.ok)return;setTimeout(()=>location.reload(),15000);
 }}catch(e){{r.textContent='Upload failed: '+e.message}}finally{{button.disabled=false}}
@@ -145,26 +149,26 @@ mod tests {
 
     #[test]
     fn only_an_explicit_query_flag_reaches_the_install_child() {
-        assert!(!any_unit("").unwrap());
-        assert!(!any_unit("x=any-unit=1").unwrap());
-        assert!(!any_unit("any-unit").unwrap());
-        assert!(any_unit("any-unit=1").unwrap());
-        assert!(any_unit("x=1&any-unit=1").unwrap());
-        for query in ["any-unit=0", "any-unit=yes", "any-unit=1&any-unit=0", "any-unit=1&any-unit=1"] {
-            assert!(any_unit(query).is_err());
+        assert!(!any_model("").unwrap());
+        assert!(!any_model("x=any-model=1").unwrap());
+        assert!(!any_model("any-model").unwrap());
+        assert!(any_model("any-model=1").unwrap());
+        assert!(any_model("x=1&any-model=1").unwrap());
+        for query in ["any-model=0", "any-model=yes", "any-model=1&any-model=0", "any-model=1&any-model=1"] {
+            assert!(any_model(query).is_err());
         }
         assert_eq!(install_args(false), ["install", UPLOAD, "--execute"]);
-        assert_eq!(install_args(true), ["install", UPLOAD, "--execute", "--any-unit"]);
+        assert_eq!(install_args(true), ["install", UPLOAD, "--execute", "--any-model"]);
         let page = page("");
         assert!(page.contains("confirm(warning+"));
-        assert!(page.contains("units.package_unit") && page.contains("units.running_unit"));
+        assert!(page.contains("models.package_models") && page.contains("models.running_model"));
         assert!(!page.contains("type=\"checkbox\""));
-        assert!(page.contains("?any-unit=1"));
+        assert!(page.contains("?any-model=1"));
     }
 
     #[test]
     fn confirmation_names_both_units_and_requires_a_new_explicit_request() {
-        let body = pkg::build_with(&[9; 32], "b", "k", b"image", &[("unit", "other-unit")]).unwrap();
+        let body = pkg::build_with(&[9; 32], "b", "k", b"image", &[("models", "other-unit")]).unwrap();
         let h = upload_header(&body, &[update::ed25519::public_key(&[9; 32])]).unwrap();
         let decision = confirmation(&h.manifest, "this-unit", false).unwrap().unwrap();
         let (refused, kind, text) = reply(Ok(decision));
@@ -172,15 +176,15 @@ mod tests {
         assert_eq!(kind, "application/json");
         assert_eq!(
             String::from_utf8(text).unwrap(),
-            "{\"refused\":true,\"package_unit\":\"other-unit\",\"running_unit\":\"this-unit\"}"
+            "{\"refused\":true,\"package_models\":\"other-unit\",\"running_model\":\"this-unit\"}"
         );
         assert!(confirmation(&h.manifest, "other-unit", false).unwrap().is_none());
         assert!(confirmation(&h.manifest, "this-unit", true).unwrap().is_none());
         assert!(confirmation(&h.manifest, "invalid unit", true).is_err());
-        let warning = update::unit::check(&h.manifest, "this-unit", true).unwrap().unwrap();
+        let warning = update::models::check(&h.manifest, "this-unit", true).unwrap().unwrap();
         let (refused, _, text) = reply(Ok(Reply::Accepted(warning)));
         assert!(!refused);
         let text = String::from_utf8(text).unwrap();
-        assert!(text.contains("--any-unit") && text.contains("other-unit") && text.contains("this-unit"));
+        assert!(text.contains("--any-model") && text.contains("other-unit") && text.contains("this-unit"));
     }
 }

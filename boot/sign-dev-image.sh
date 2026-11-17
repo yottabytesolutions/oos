@@ -21,9 +21,9 @@ out="$CARGO_TARGET_DIR/image"
 before=$(python3 "$root/tools/output.py" revision)
 python3 "$root/tools/output.py" verify "$out/oos-dev.img"
 [ -f "$out/oos-dev.build" ] || { echo "run boot/build-dev-image.sh first" >&2; exit 1; }
-python3 "$root/tools/output.py" verify "$out/oos-dev.build" "$out/oos-dev.unit"
+python3 "$root/tools/output.py" verify "$out/oos-dev.build" "$out/oos-dev.models"
 cargo run --offline --locked --release --manifest-path "$root/fpgad/Cargo.toml" --bin oos-update -- pack \
 	--image "$out/oos-dev.img" --build "$(cat "$out/oos-dev.build")" \
-	--unit "$(cat "$out/oos-dev.unit")" --out "$out/oos-dev.oosupd" "$@"
-python3 "$root/tools/output.py" verify "$out/oos-dev.img" "$out/oos-dev.build" "$out/oos-dev.unit"
+	--models "$(cat "$out/oos-dev.models")" --out "$out/oos-dev.oosupd" "$@"
+python3 "$root/tools/output.py" verify "$out/oos-dev.img" "$out/oos-dev.build" "$out/oos-dev.models"
 python3 "$root/tools/output.py" stamp "$out/oos-dev.oosupd" "$before"

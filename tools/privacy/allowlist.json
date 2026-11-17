@@ -84,12 +84,6 @@
     "reason": "Generic allocation prefix documents the scanner policy, not a unit address."
   },
   {
-    "path": "docs/network.md",
-    "rule": "private-ipv6",
-    "sha256": "e971921fa3150f24ddd7e4a5c04da3b5ff87e067c6618e3c19dab3016d475a64",
-    "reason": "Generic unique-local allocation prefix illustrates firewall ACL syntax, not a unit address."
-  },
-  {
     "path": "tools/fw-sim.sh",
     "rule": "private-ipv6",
     "sha256": "bd7328ab82356b88ce9d05aa92a007a2ed58f5820416ce1b6b6c43d7011c78ff",

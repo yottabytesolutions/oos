@@ -2,7 +2,7 @@
 
 Switch: `acq.compress = on` in /oos/system.conf, or `OOS_COMPRESS=1` for oos-ui alone. Without the line the parser
 keeps it off (`compress::enabled_from`). The DHO804 unit image sets `acq.compress = on`
-(`rootfs/unit/dho804/system.conf`) since the procedure below passed in round 5 (`unit-dho804.md`).
+(`rootfs/initramfs/etc/oos/system.conf`) since the procedure below passed in round 5 (`unit-dho804.md`).
 
 ## What it does
 

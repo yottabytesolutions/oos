@@ -20,8 +20,8 @@ class DependencyInputs(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        for name in ('rootfs/deps.sh', 'rootfs/deps.lock', 'tools/output.py', 'boot/unit-hook.sh',
-                     'boot/unit-hook-image.sh', 'boot/unit-hook-dtb.sh', 'tools/lib/portable.sh'):
+        for name in ('rootfs/deps.sh', 'rootfs/deps.lock', 'tools/output.py', 'boot/build-dev-image.sh',
+                     'tools/lib/portable.sh'):
             dest = self.root / name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, dest)
@@ -39,7 +39,7 @@ class DependencyInputs(unittest.TestCase):
         self.builders = {'nft': ('nft', 'libmnl libnftnl nftables'),
                          'dropbearmulti': ('dropbear', 'dropbear'), 'sftp-server': ('sftp-server', 'openssh')}
         self.env = {**os.environ, 'CARGO_TARGET_DIR': str(self.root / 'target'),
-                    'DEPS_LOCK': str(self.root / 'rootfs/deps.lock'), 'OOS_UNIT': ''}
+                    'DEPS_LOCK': str(self.root / 'rootfs/deps.lock')}
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
         (self.root / '.gitignore').write_text('rootfs/out/\nrebuilds\ntarget/\n')
         for artifact, (builder, names) in self.builders.items():
@@ -57,9 +57,12 @@ class DependencyInputs(unittest.TestCase):
         (self.root / 'rebuilds').unlink()
 
     def hook(self):
+        build = (self.root / 'boot/build-dev-image.sh').read_text()
+        start = build.index('[ -f "${k:?}')
+        end = build.index('\npython3 ', start)
         result = subprocess.run(['sh', '-eu', '-c',
-                                 'root=$1; here=$root/boot; k=$root/kernel; OOS_KERNEL_DTB=fixture.dtb; '
-                                 '. "$root/boot/unit-hook.sh"', 'unit-hook', str(self.root)],
+                                 'root=$1; k=$root/kernel; OOS_KERNEL_DTB=fixture.dtb; ' + build[start:end],
+                                 'dependencies', str(self.root)],
                                 env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 

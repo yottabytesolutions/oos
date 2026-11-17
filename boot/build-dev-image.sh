@@ -80,22 +80,24 @@ python3 "$root/tools/output.py" verify "$root/rootfs/out/wpa_supplicant" "$root/
 # /oos is checked before it is mounted
 python3 "$root/tools/output.py" verify "$root/rootfs/out/e2fsck" || "$root/rootfs/build-fsck.sh"
 [ -x "$root/rootfs/out/e2fsck" ] || "$root/rootfs/build-fsck.sh"
-# SSH (Dropbear, built by boot/unit-hook.sh): trusted public keys can be built into the image
-# (OOS_SSH_AUTHORIZED_KEYS); host keys and the password are made once on each scope, on /oos.
-ssh_seed="$root/rootfs/out/ssh-seed"
-mkdir -p "$ssh_seed"
-rm -f "$ssh_seed/authorized_keys"
-if [ -n "${OOS_SSH_AUTHORIZED_KEYS:-}" ]; then
-	python3 -I "$root/tools/ssh-keys.py" validate "$OOS_SSH_AUTHORIZED_KEYS" --out "$ssh_seed/authorized_keys"
-fi
 # an update with another device tree is tried by kexec_load with that tree (docs/update.md)
 python3 "$root/tools/output.py" verify "$root/rootfs/out/kexec" || "$root/rootfs/build-kexec.sh"
 # System > Graphics = GPU: the helper oos-gpu and Mesa (gpu/README.md)
 # Receipts reject stale helpers, including changes beyond the C file.
 python3 "$root/tools/output.py" verify "$CARGO_TARGET_DIR/gpu/gpu" || "$root/gpu/build.sh"
 
-# the fork's unit defaults, firewall and build choices (docs/fork/sync-checklist.md)
-. "$here/unit-hook.sh"
+# Board-wide dependencies; device configuration never enters the image.
+[ -f "${k:?}/$OOS_KERNEL_DTB" ] || { echo "no $k/$OOS_KERNEL_DTB: run kernel/build-base.sh again" >&2; exit 1; }
+# the fork's own builds from rootfs/deps.lock (docs/fork/deps.md): built again when missing, or when the manifest line
+# or the builder, deps.sh helper or build environment changed since (shared receipt/stamp inputs)
+DEPS_LOCK="$root/rootfs/deps.lock"
+. "$root/rootfs/deps.sh"
+o="$root/rootfs/out"
+# the LAN-only firewall (net.allow, docs/network.md 6)
+if dep_stale "$o/nft" "$root/rootfs/build-nft.sh" libmnl libnftnl nftables; then "$root/rootfs/build-nft.sh"; fi
+# the SSH server and its SFTP subsystem (docs/network.md 7)
+if dep_stale "$o/dropbearmulti" "$root/rootfs/build-dropbear.sh" dropbear; then "$root/rootfs/build-dropbear.sh"; fi
+if dep_stale "$o/sftp-server" "$root/rootfs/build-sftp-server.sh" openssh; then "$root/rootfs/build-sftp-server.sh"; fi
 python3 "$root/tools/output.py" verify "$hw" "$ui/oos-ui" "$fpgad/oos-fpgad" "$fpgad/oos-update" "$CARGO_TARGET_DIR/gpu/gpu"
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
 docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$CARGO_TARGET_DIR/gpu/gpu:/gpu:ro" -v "$CARGO_TARGET_DIR/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
@@ -111,14 +113,20 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS
 	cp /fpgad/oos-fpgad $r/bin/oos-fpgad
 	cp /fpgad/oos-update $r/bin/oos-update
 	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck /wlan/kexec $r/bin/
-	if [ -s /wlan/ssh-seed/authorized_keys ]; then
-		mkdir -p $r/etc/oos-ssh; cp /wlan/ssh-seed/authorized_keys $r/etc/oos-ssh/authorized_keys
-		chmod 700 $r/etc/oos-ssh; chmod 600 $r/etc/oos-ssh/authorized_keys
-	fi
+
 	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck; cp /wlan/kexec.COPYING $r/etc/licenses/kexec-tools
 	# the GPU helper with Mesa and glibc (their own loader; oos-ui and the rest stay static)
 	cp -a /gpu/. $r/
-	. /wlan/unit-hook/image.sh
+	# the LAN-only firewall (net.allow, docs/network.md 6)
+	cp /wlan/nft $r/bin/
+	cp /wlan/nft.COPYING $r/etc/licenses/nftables
+	# the SSH server, started by rcS through oos-ssh (docs/network.md 7)
+	cp /wlan/dropbearmulti $r/bin/
+	for p in dropbear dropbearkey scp; do ln -sf dropbearmulti $r/bin/$p; done
+	cp /wlan/dropbear.COPYING $r/etc/licenses/dropbear
+	# its SFTP subsystem: Dropbear runs /bin/sftp-server (sftp, and scp without -O)
+	cp /wlan/sftp-server $r/bin/
+	cp /wlan/sftp-server.COPYING $r/etc/licenses/openssh-sftp-server
 	ln -sf busybox $r/bin/sh
 	echo "$BUILD_ID" > $r/etc/oos-build
 	# rcS brings the acquisition hardware up at boot (cold boot + oos-ui --hw --afe); OOS_NO_AUTOACQ=1 leaves it out
@@ -142,7 +150,6 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS
 	cp /k/$OOS_KERNEL_DTB /out/$OOS_IMAGE_NAME.dtb
 	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS"
 	fdtget /out/$OOS_IMAGE_NAME.dtb /chosen bootargs
-	. /wlan/unit-hook/dtb.sh
 	# the busybox package in the image, and the glibc it was built with and holds: their sources go with a release
 	# (tools/release-sources.sh names that glibc; it follows when this line changes)
 	dpkg-query -W -f "\${Package} \${Version}\nBuilt-Using: \${Built-Using}\n" busybox-static > /out/busybox.version
@@ -150,7 +157,7 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS
 	ls -la /out
 '
 # Invalidate metadata and install files before replacing the image. A failed build must not leave them usable.
-rm -f "$out/oos-dev.unit" "$out/oos-dev.build" "$out/oos-dev.oosupd" "$out/${OOS_GEL_STEM}_Install.GEL"
+rm -f "$out/oos-dev.models" "$out/oos-dev.build" "$out/oos-dev.oosupd" "$out/${OOS_GEL_STEM}_Install.GEL"
 python3 -I "$here/oos-bootimg.py" build --kernel "$k/Image" --dtb "$out/$OOS_IMAGE_NAME.dtb" \
 	--ramdisk "$out/initramfs.cpio.gz" --name "$OOS_IMAGE_NAME" --out "$out/oos-dev.img"
 (cd "$out" && echo "$(sha256 oos-dev.img)  oos-dev.img" > oos-dev.img.sha256 && cat oos-dev.img.sha256)
@@ -158,6 +165,6 @@ printf '%s\n' "$build_id" > "$out/oos-dev.build"
 "$root/tools/build-env.sh" provenance initramfs --image "$image" --output "$out/initramfs.packages.txt"
 python3 "$root/tools/output.py" stamp "$out/oos-dev.img" "$before"
 python3 "$root/tools/output.py" stamp "$out/oos-dev.build" "$before"
-cp "$root/rootfs/out/unit-hook/unit" "$out/oos-dev.unit"
-python3 "$root/tools/output.py" stamp "$out/oos-dev.unit" "$before"
+cp "$board/etc/oos-models" "$out/oos-dev.models"
+python3 "$root/tools/output.py" stamp "$out/oos-dev.models" "$before"
 echo "image built. Sign explicitly with boot/sign-dev-image.sh, then package with boot/build-gel.py (docs/update.md)."

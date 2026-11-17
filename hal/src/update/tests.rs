@@ -125,7 +125,7 @@ impl Drop for Fake {
 }
 
 const RUN: InstallOpt<'static> =
-    InstallOpt { running_unit: "none", execute: true, downgrade: false, force: false, any_unit: false };
+    InstallOpt { running_model: "none", execute: true, downgrade: false, force: false, any_model: false };
 
 #[test]
 fn image_check_matches_the_python_packer() {

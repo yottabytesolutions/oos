@@ -8,6 +8,8 @@ owner: codex-c
 depends: []
 ---
 
+> Historical unit-image references below are superseded by ADR 0041; use generic images and device state.
+
 ## Goal
 
 Resolve the six bounded review follow-ups assigned to this tooling/standard worker job.

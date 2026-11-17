@@ -1,29 +1,44 @@
 #!/bin/sh
-# Copyright (C) 2026 OOS contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
-# oos-mac: prints the MAC address rcS gives eth0 (docs/network.md 1), from `eth.mac` in the system settings (oos-conf):
-#   cid (default)       locally administered, fixed per SD card: `02:` and 5 bytes of the MD5 of the card's CID
-#   vendor              the unit's own LAN MAC (`oos-board mac`: vendor.bin), the one the stock system uses; cid if unreadable
-#   02:00:00:00:00:01   this address (unicast, not all zero); cid if it is not one
-# Nothing printed: no CID either, the kernel's random address stays.
+# Device identity: saved address, board storage, then the RK3399 CPU id. No image input or randomness.
+set -eu
 here=$(dirname "$0")
-log() { echo "oos-mac: $*" >&2; [ -w /dev/kmsg ] && echo "oos-mac: $*" > /dev/kmsg; }
+conf=${OOS_DEVICE_CONF:-/oos/system.conf}
 ok() {
 	echo "$1" | grep -Eq '^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$' || return 1
 	[ $((0x${1%%:*} & 1)) -eq 0 ] && [ "$(echo "$1" | tr -d ':0')" != "" ]
 }
-want=$("$here/oos-conf" eth.mac cid)
+legacy_cid() {
+    cid=$(cat "${OOS_CID_FILE:-/sys/block/mmcblk0/device/cid}" 2>/dev/null) || return 1
+    [ -n "$cid" ] || return 1
+    h=$(echo "$cid" | md5sum | cut -c1-10)
+    echo "02:$(echo "$h" | sed 's/../&:/g; s/:$//')"
+}
+want=$(OOS_CONF_FILES="$conf" "$here/oos-conf" eth.mac)
 case "$want" in
-cid|'') ;;
-vendor)
-	m=$("$here/oos-board" mac 2>/dev/null)
-	if ok "$m"; then echo "$m"; exit 0; fi
-	log "eth.mac = vendor: no usable MAC in vendor.bin (${m:--}), the one from the card's CID instead";;
-*)
-	if ok "$want"; then echo "$want"; exit 0; fi
-	log "eth.mac = $want is not a unicast MAC address, the one from the card's CID instead";;
+cid) legacy_cid; exit;;
+vendor) mac=$("$here/oos-board" mac 2>/dev/null) || mac=
+        if ok "$mac"; then echo "$mac"; else legacy_cid; fi; exit;;
+'') ;;
+*) ok "$want" || { echo "oos-mac: invalid saved eth.mac" >&2; exit 1; }
+   echo "$want"; exit 0;;
 esac
-cid=$(cat "${OOS_CID_FILE:-/sys/block/mmcblk0/device/cid}" 2>/dev/null)
-[ -n "$cid" ] || exit 0
-h=$(echo "$cid" | md5sum | cut -c1-10)
-echo "02:$(echo "$h" | sed 's/../&:/g; s/:$//')"
+mac=$("$here/oos-board" mac 2>/dev/null) || mac=
+if ! ok "$mac"; then
+	id=$(sed -n 's/^Serial[ 	]*:[ 	]*//p' "${OOS_CPUINFO:-/proc/cpuinfo}" 2>/dev/null) || id=
+	if ! echo "$id" | grep -Eq '^[0-9a-fA-F]{16}$' || [ -z "$(echo "$id" | tr -d 0)" ]; then
+		id=$(od -An -tx1 -j7 -N16 "${OOS_CPU_NVMEM:-/sys/bus/nvmem/devices/rockchip-efuse0/nvmem}" 2>/dev/null | tr -d ' \n') || id=
+        echo "$id" | grep -Eq '^[0-9a-fA-F]{32}$' || id=
+	fi
+	[ -n "$id" ] && [ -n "$(echo "$id" | tr -d 0)" ] || { echo "oos-mac: no hardware MAC or CPU id" >&2; exit 1; }
+	h=$(printf '%s' "$id" | tr A-F a-f | sha256sum | cut -c1-10)
+	mac="02:$(echo "$h" | sed 's/../&:/g; s/:$//')"
+fi
+# Only fill an absent key. Existing settings, including legacy selectors, are never rewritten.
+if [ "$(OOS_CONF_FILES="$conf" "$here/oos-conf" eth.mac __absent__)" = __absent__ ]; then
+	mkdir -p "$(dirname "$conf")"
+	[ -e "$conf" ] || printf '# OOS device identity and system overrides. Kept across updates.\n' > "$conf"
+	printf '\neth.mac = %s\n' "$mac" >> "$conf"
+	sync
+fi
+echo "$mac"

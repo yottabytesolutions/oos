@@ -23,7 +23,7 @@ class Selection(unittest.TestCase):
 
     def test_scope_and_container_scripts_are_out(self):
         for name in ('rootfs/initramfs/init', 'rootfs/initramfs/bin/oos-watchdog', 'boot/gel/do_extract.sh',
-                     'tools/platform-probe/probe.sh', 'kernel/tools/git', 'boot/unit-hook-dtb.sh'):
+                     'tools/platform-probe/probe.sh', 'kernel/tools/git'):
             self.assertNotIn(name, self.names)
         self.assertFalse([n for n in self.names if n.startswith(host_scripts.SCOPE)])
 

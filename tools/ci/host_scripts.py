@@ -21,8 +21,7 @@ import script_syntax  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 # Prefixes of scripts that never run on the host.
-SCOPE = ('rootfs/initramfs/', 'rootfs/board/', 'rootfs/out/', 'boot/gel/', 'tools/platform-probe/', 'kernel/tools/',
-         'boot/unit-hook-image.sh', 'boot/unit-hook-dtb.sh')
+SCOPE = ('rootfs/initramfs/', 'rootfs/board/', 'rootfs/out/', 'boot/gel/', 'tools/platform-probe/', 'kernel/tools/')
 
 
 def host_scripts(root):

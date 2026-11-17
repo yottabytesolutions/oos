@@ -135,6 +135,9 @@ queues the newest record. `fast_ok` selects eligible hardware views. `drawpipe::
 CPU rendering and GPU layer composition both exist. `Model::draw_batch` selects the hardware route;
 `draw.model` is absent from this checkout. M12 has not chosen which remaining routes to remove.
 
+Boot images contain shared model defaults; device identity and overrides stay in `/oos/system.conf`. Updates compare
+runtime hardware model detection with a signed model list and board target (ADR 0041). See [system](system.md).
+
 ## Layers
 
 Everything below is the target. New paths are planned destinations, not today's module tree.

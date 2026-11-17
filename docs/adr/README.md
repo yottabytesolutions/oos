@@ -67,6 +67,7 @@ and cited as `architecture/NNNN`.
 | [0039](process/0039-format-lints-and-ratchets-the-author-tightens.md) | process | rustfmt formats; lints and limits ratchet down; the author of a change tightens | accepted |
 | [0040](process/0040-contributions-signed-off-no-vendor-material-rebased.md) | process | A contribution is signed off, holds no vendor material and lands rebased through the merge queue | accepted |
 | [0041](system/0041-trust-only-the-project-release-key.md) | system | Builds trust only the project's release key for updates | accepted |
+| [0041](system/0041-images-are-generic-device-state-lives-on-device.md) | system | Images are generic; device state lives on the device | accepted |
 
 ## Reading order for agents
 

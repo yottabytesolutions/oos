@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class SshGuest(unittest.TestCase):
-    def test_service_refuses_missing_firewall_before_preparing_ssh(self):
+    def test_service_requires_opt_in_and_firewall_before_preparing_ssh(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
             service = root / 'oos-ssh'
@@ -24,20 +24,32 @@ class SshGuest(unittest.TestCase):
             nft.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$OOS_TEST_NFT_CALLS"\nexit 1\n')
             nft.chmod(0o700)
             conf, state, keys, calls = [root / name for name in ('conf', 'state', 'keys', 'calls')]
-            env = {**os.environ, 'OOS_CONF_FILES': str(conf), 'OOS_SSH_STATE': str(state),
+            image = root / 'image'
+            defaults = (ROOT / 'rootfs/initramfs/etc/oos/system.conf').read_text()
+            env = {**os.environ, 'OOS_CONF_FILES': f'{image} {conf}', 'OOS_SSH_STATE': str(state),
                    'OOS_SSH_DIR': str(keys), 'OOS_TEST_NFT_CALLS': str(calls)}
-            cases = [('# nothing\n', 0, 'off'),
-                     ('remote.ssh = on\n', 0, 'off: needs net.allow'),
-                     ('remote.ssh = on\nnet.allow = 192.0.2.0/24\n', 1, 'off: firewall not loaded')]
-            for config, status, message in cases:
-                with self.subTest(message=message):
-                    conf.write_text(config)
+            cases = [('', '# nothing\n', 0, 'off'),
+                     ('', 'remote.ssh = on\n', 0, 'off: needs net.allow'),
+                     ('', 'remote.ssh = on\nnet.allow = 192.0.2.0/24\n', 1, 'off: firewall not loaded'),
+                     (defaults, None, 0, 'off'),
+                     (defaults, '', 0, 'off'),
+                     (defaults, 'ntp = off\n', 0, 'off'),
+                     (defaults, 'remote.ssh = off\n', 0, 'off'),
+                     (defaults, 'remote.ssh =\n', 0, 'off'),
+                     (defaults, 'remote.ssh = on\n', 1, 'off: firewall not loaded')]
+            for shared, config, status, message in cases:
+                with self.subTest(shared=shared, config=config):
+                    image.write_text(shared)
+                    if config is None:
+                        conf.unlink(missing_ok=True)
+                    else:
+                        conf.write_text(config)
                     result = subprocess.run(['sh', str(service), 'start'], env=env,
                                             capture_output=True, text=True, timeout=10)
                     self.assertEqual(result.returncode, status, result.stderr)
                     self.assertEqual(state.read_text().strip(), message)
                     self.assertFalse(keys.exists(), 'a refused start must not prepare SSH credentials')
-            self.assertEqual(calls.read_text(), 'list table inet oos_fw\n')
+            self.assertEqual(calls.read_text(), 'list table inet oos_fw\n' * 2)
 
     def run_sim_case(self, status, state, listening=False, refusal=True):
         script = (ROOT / 'tools/ssh-sim.sh').read_text()

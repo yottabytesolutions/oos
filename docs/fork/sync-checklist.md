@@ -4,11 +4,8 @@ Every merge of an upstream release into `dho804`. Policy and history: private RE
 sync". Nothing here touches the unit.
 
 1. Branch `sync/<version>` from `dho804`; `git merge upstream/main` (no rebase).
-2. Conflicts in `boot/build-dev-image.sh`: keep upstream's file and re-add the one line
-   `. "$here/unit-hook.sh"` (before `build_id=`) and the two lines `. /wlan/unit-hook/image.sh` (before `ln -sf
-   busybox`) and `. /wlan/unit-hook/dtb.sh` (after the DTB's `fdtget ... bootargs`) in the container script. Everything
-   else of the unit build lives in `boot/unit-hook.sh`, `boot/unit-hook-image.sh` and `boot/unit-hook-dtb.sh`. If
-   upstream renamed the `rootfs/out:/wlan` mount, move the staging path in the hook.
+2. Image builds are generic (ADR 0041). Keep shared defaults and dependency assembly in `boot/build-dev-image.sh`;
+   device identity and overrides belong on the device. There are no per-unit build hooks to restore.
 3. SSH instead of telnet (docs/network.md 7): keep the fork's side. rcS step 3 starts `oos-ssh`, never `telnetd`;
    `ui/src/remote.rs` stays deleted (`crate::ssh` replaces it); in `ui/src/ui/remote.rs`, `ui/src/sysconf.rs` and the
    `remote_now` block of `ui/src/main.rs` the telnet item, key and call become the SSH ones. A new upstream use of

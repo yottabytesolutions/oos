@@ -28,7 +28,7 @@ pub use switches::Switches;
 
 /// On OOS's own data partition.
 pub const PATH: &str = "/oos/system.conf";
-/// The defaults of an image built for one unit (boot/build-dev-image.sh `OOS_UNIT`, docs/network.md 6); rcS reads
+/// The defaults of shared model defaults (docs/network.md 6); rcS reads
 /// it too (`oos-conf`).
 pub const IMAGE_PATH: &str = "/etc/oos/system.conf";
 /// Without the data partition: in RAM, lost at power-off.
@@ -550,11 +550,11 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    // an image built for one unit (`OOS_UNIT`, /etc/oos/system.conf): clock from NTP, server and zone of the DHCP
+    // shared model defaults (/etc/oos/system.conf): clock from NTP, server and zone of the DHCP
     // lease (CET without one) unless the settings name them
     #[test]
-    fn unit_image_takes_the_time_from_the_dhcp_server() {
-        let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/unit/dho804/system.conf"));
+    fn generic_image_takes_the_time_from_the_dhcp_server() {
+        let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/initramfs/etc/oos/system.conf"));
         assert!(bad.is_empty(), "{:?}", bad);
         assert!(
             base.ntp && base.tz == DHCP && base.tz_fallback == "CET-1CEST,M3.5.0,M10.5.0/3" && base.ntp_server == DHCP
@@ -586,17 +586,17 @@ mod tests {
         for text in ["", "remote.telnet = off\n", "remote.telnet =\n", "remote.telnet = invalid\n"] {
             assert!(!SysConf::parse(text).0.remote_telnet, "{:?}", text);
         }
-        let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/unit/dho804/system.conf"));
-        assert!(bad.is_empty() && !base.remote_telnet);
+        let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/initramfs/etc/oos/system.conf"));
+        assert!(bad.is_empty() && !base.remote_telnet && !base.remote_ssh);
         for value in ["on", "true", "1"] {
             let text = format!("remote.telnet = {}\n", value);
             let (generic, bad) = SysConf::parse(&text);
             assert!(bad.is_empty() && generic.remote_telnet && !generic.remote_ssh);
             let (enabled, bad) = SysConf::parse_over(base.clone(), &text);
-            assert!(bad.is_empty() && enabled.remote_telnet && enabled.remote_ssh);
+            assert!(bad.is_empty() && enabled.remote_telnet && !enabled.remote_ssh);
             assert!(SysConf::parse(&enabled.text()).0.remote_telnet);
             let (disabled, bad) = SysConf::parse_over(enabled, "remote.telnet = off\n");
-            assert!(bad.is_empty() && !disabled.remote_telnet && disabled.remote_ssh);
+            assert!(bad.is_empty() && !disabled.remote_telnet && !disabled.remote_ssh);
         }
     }
 

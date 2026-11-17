@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
-/// The image default of the system settings (an image built for one unit, boot/build-dev-image.sh `OOS_UNIT`).
+/// The image default of the system settings (shared model defaults).
 pub const IMAGE_CONF: &str = "/etc/oos/system.conf";
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -25,6 +25,7 @@ pub struct Acl {
     nets: Vec<(IpAddr, u8)>,
     /// `onlink6`: the IPv6 prefixes on the link too, read at each check
     onlink6: bool,
+    onlink: bool,
 }
 
 /// The `net.allow` word for the IPv6 prefixes on the link (`oos-firewall` has it too).
@@ -68,6 +69,10 @@ impl Acl {
         let mut acl = Acl::default();
         let mut bad = Vec::new();
         for w in s.split([' ', ',', '\t']).filter(|w| !w.is_empty()) {
+            if w == "onlink" {
+                acl.onlink = true;
+                continue;
+            }
             if w == ONLINK6 {
                 acl.onlink6 = true;
                 continue;
@@ -89,16 +94,26 @@ impl Acl {
 
     /// No list: everyone is allowed.
     pub fn is_open(&self) -> bool {
-        self.nets.is_empty() && !self.onlink6
+        self.nets.is_empty() && !self.onlink6 && !self.onlink
     }
 
     pub fn permits(&self, ip: IpAddr) -> bool {
-        self.permits_with(ip, crate::net6::onlink)
+        self.permits_onlinks(ip, crate::net6::onlink, crate::mdns::ipv4_networks)
     }
 
     /// `permits` with the prefixes on the link from `onlink` (asked only when `onlink6` is in the list and the address
     /// is IPv6).
+    #[cfg(test)]
     pub fn permits_with(&self, ip: IpAddr, onlink: impl FnOnce() -> Vec<(std::net::Ipv6Addr, u8)>) -> bool {
+        self.permits_onlinks(ip, onlink, Vec::new)
+    }
+
+    fn permits_onlinks(
+        &self,
+        ip: IpAddr,
+        onlink: impl FnOnce() -> Vec<(std::net::Ipv6Addr, u8)>,
+        v4: impl FnOnce() -> Vec<(Ipv4Addr, Ipv4Addr)>,
+    ) -> bool {
         let ip = match ip {
             IpAddr::V6(a) => a.to_ipv4_mapped().map_or(ip, IpAddr::V4),
             v4 => v4,
@@ -106,6 +121,12 @@ impl Acl {
         if self.is_open()
             || ip.is_loopback()
             || self.nets.iter().any(|&(net, n)| net.is_ipv4() == ip.is_ipv4() && masked(ip, n) == net)
+        {
+            return true;
+        }
+        if self.onlink
+            && ip.is_ipv4()
+            && v4().into_iter().any(|(a, mask)| lan_prefix(a, mask).is_some_and(|(net, n)| masked(ip, n) == net))
         {
             return true;
         }
@@ -222,12 +243,17 @@ pub fn canonical(s: &str) -> Result<String, String> {
 /// The network of the scope's IPv4 address `a` with its netmask, `192.0.2.0/24`: what Allowed offers. None for a
 /// mask that is no prefix or is empty (that would be everyone) and for loopback or no address.
 pub fn lan_of(a: Ipv4Addr, mask: Ipv4Addr) -> Option<String> {
+    let (net, bits) = lan_prefix(a, mask)?;
+    Some(format!("{net}/{bits}"))
+}
+
+fn lan_prefix(a: Ipv4Addr, mask: Ipv4Addr) -> Option<(IpAddr, u8)> {
     let m = u32::from(mask);
     let n = m.leading_ones();
     if n == 0 || m.count_ones() != n || a.is_loopback() || a.is_unspecified() {
         return None;
     }
-    Some(format!("{}/{}", masked(IpAddr::V4(a), n as u8), n))
+    Some((masked(IpAddr::V4(a), n as u8), n as u8))
 }
 
 /// The networks Allowed offers, from every IPv4 address of the scope with its netmask (`lan_of`), each once: the
@@ -250,6 +276,9 @@ pub fn lans(addrs: &[(Ipv4Addr, Ipv4Addr)]) -> Vec<String> {
 impl std::fmt::Display for Acl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut v: Vec<String> = self.nets.iter().map(|(a, n)| format!("{}/{}", a, n)).collect();
+        if self.onlink {
+            v.push("onlink".into());
+        }
         if self.onlink6 {
             v.push(ONLINK6.into());
         }
@@ -263,6 +292,20 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn onlink_follows_dhcp_addresses() {
+        let (acl, bad) = Acl::parse("onlink 169.254.0.0/16 fe80::/10 onlink6");
+        assert!(bad.is_empty() && !acl.is_open());
+        let old = || vec![("192.0.2.5".parse().unwrap(), "255.255.255.0".parse().unwrap())];
+        let new = || vec![("198.51.100.5".parse().unwrap(), "255.255.255.0".parse().unwrap())];
+        let peer = "::ffff:192.0.2.20".parse().unwrap();
+        assert!(acl.permits_onlinks(peer, Vec::new, old));
+        assert!(!acl.permits_onlinks(peer, Vec::new, new));
+        assert!(acl.permits_onlinks("198.51.100.20".parse().unwrap(), Vec::new, new));
+        assert!(!acl.permits_onlinks(peer, Vec::new, Vec::new));
+        assert_eq!(canonical("onlink,onlink6").unwrap(), "onlink onlink6");
     }
 
     #[test]

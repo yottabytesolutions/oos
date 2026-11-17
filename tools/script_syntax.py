@@ -12,9 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import output
 
 # These files are sourced by /bin/sh and intentionally have no shebang.
-FRAGMENTS = {'tools/output.sh', 'boot/unit-hook.sh', 'boot/unit-hook-dtb.sh', 'boot/unit-hook-image.sh', 'rootfs/deps.sh',
-             'tools/lib/portable.sh', 'rootfs/board/dho/etc/oos-board', 'rootfs/out/unit-hook/image.sh',
-             'rootfs/out/unit-hook/dtb.sh'}
+FRAGMENTS = {'tools/output.sh', 'rootfs/deps.sh',
+             'tools/lib/portable.sh', 'rootfs/board/dho/etc/oos-board'}
 SHELLS = {'sh', 'bash', 'dash', 'mksh', 'ksh', 'zsh'}
 
 

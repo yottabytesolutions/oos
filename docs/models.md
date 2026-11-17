@@ -169,30 +169,17 @@ A start with `adc.clock_hz` that does not reach its end sets the file aside at t
 Memory depths above 125 M need more entries in the depth list (`MDEPTHS` in ui/src/model.rs) and a check of the
 segment cap (`hal::dho::hz::MEM_BURSTS`).
 
-### 4.2 Unit defaults: `/etc/oos/limits.conf`
+### 4.2 Generic images and device state
 
-`/oos/limits.conf` only exists after the first start. A unit whose `vendor.bin` names other hardware than it has (e.g.
-no generator board, no LA connector) would start once as the model the file names: OOS
-opens the generator's relay and supply lines and looks for `cal_afg.hex`. An image built for such a unit carries
-`/etc/oos/limits.conf` (`model::UNIT_CONF`) with the capability keys of that unit:
+The image is identical for every unit of a supported model (ADR 0041). The DHO800/DHO900 family currently shares one
+image and common defaults in `/etc/oos/system.conf`; model capabilities come from the table in section 2, selected
+by HAL detection at boot. A normally identified DHO804 already has no generator or LA in the model table. A unit whose stored identity names
+hardware it does not physically have must keep its capability overrides in `/oos/limits.conf`. Before migrating such
+a unit, preserve the old image's `afg = no` and `la = no` there, without overwriting existing keys. Those values are
+device overrides, not model-wide defaults, and are now marked experimental like other device limits.
 
-```
-afg = no
-la = no
-```
-
-- Only `channels`, `la`, `afg` and `ext_trig`. Other keys are warnings: limits and `adc.clock_hz` stay in `/oos/limits.conf`,
-  where the start-up fallback of rcS sees them.
-- Order: vendor.bin, then this file, then `/oos/limits.conf`, then `model =` / `--model`. A forced model keeps the unit
-  defaults; `/oos/limits.conf` can switch a capability on again (`afg = yes` after a generator board is fitted).
-- Facts of the unit, not experimental: no toast, the identity (model name, serial, rated bandwidth, `*IDN?`) stays what
-  `vendor.bin` says. `oos-fpgad model` prints them as `unit`, System > System info as "Unit defaults".
-- Build: `OOS_UNIT=<name> boot/build-dev-image.sh` copies `rootfs/unit/<name>/*.conf` to `/etc/oos/`. Without `OOS_UNIT`
-  the image has no `/etc/oos` and behaves as before.
-
-Without a generator (model table or `afg = no`) nothing opens the generator lines (`afg_in1..5`, `FG_M2C_GPIO`):
-`afg::Io::open` refuses (`afg::line_allowed`), the acquisition thread never asks, `oos-fpgad afg` and
-`oos-fpgad gpio <generator line>` refuse without `--force`. Verified on the host (`hal` tests), not yet on hardware.
+Network identity is detected and persisted on the device, never supplied by a build profile. See
+[network.md](network.md) section 6 for MAC precedence and migration, and [update.md](update.md) for model matching.
 
 ## 5. Where OOS uses it
 

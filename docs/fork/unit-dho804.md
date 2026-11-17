@@ -17,65 +17,35 @@ values through local configuration; they are intentionally omitted from this pag
 
 | Area | What | Where |
 |---|---|---|
-| Capabilities | `/etc/oos/limits.conf` in the image: capability keys that apply from the first start, between vendor.bin and `/oos/limits.conf`. Not experimental; identity unchanged | `hal/src/model.rs` (`UNIT_CONF`, `Platform::build_unit`), docs/models.md 4.2 |
+| Capabilities | device overrides `afg = no`, `la = no` in `/oos/limits.conf`, required because the stored model names hardware this unit lacks; preserve them before migration | `hal/src/model.rs`, docs/models.md 4.2 |
 | Generator lines | `afg::Io::open` refuses without a generator; `oos-fpgad gpio` refuses `afg_in1..5` and `FG_M2C_GPIO` without `--force`; `oos-fpgad afg --force` uses `Io::open_forced` | `hal/src/dho/afg.rs` (`LINES`, `line_allowed`), `fpgad/src/main.rs` |
 | Boot card | opt-in device tree with `sd-uhs-sdr104`, `sd-uhs-sdr50`, `regulator-settling-time-down-us = <30000>` on `vccio_sd`, no `regulator-init-microvolt` | `kernel/dts/rk3399-rigol-dho900-uhs.dts`, `kernel/build-base.sh` copies every board DTB |
 | Firewall | `net.allow` prefixes: nftables ruleset before any service starts; static `nft` in the image | `rootfs/initramfs/bin/oos-firewall`, `rootfs/build-nft.sh`, rcS |
 | Remote ACL | the same prefixes in oos-ui: `POST /update`, `/mcp` get 403, SCPI and VXI-11 connections are closed | `ui/src/netacl.rs`, `http.rs`, `scpi.rs`, `vxi11.rs` |
-| SSH, no telnet | Dropbear on port 22 replaces telnet: rcS starts `oos-ssh` instead of `telnetd`, the telnet switch and `crate::remote` are gone. Generated root password and host keys in `/oos/ssh`, trusted keys from a USB stick, password login off only with a key. Listens only with `net.allow` and the firewall loaded. Keys `remote.ssh` (default off, unit image on), `ssh.password` (docs/network.md 7) | `rootfs/initramfs/bin/oos-ssh`, `rootfs/build-dropbear.sh`, rcS, `ui/src/ssh.rs`, `ui/src/ui/ssh.rs`, `ui/src/ui/remote.rs`, `tools/ssh-sim.sh` |
+| SSH, no telnet | Dropbear on port 22 replaces telnet: rcS starts `oos-ssh` instead of `telnetd`, the telnet switch and `crate::remote` are gone. Generated root password and host keys in `/oos/ssh`, trusted keys from a USB stick, password login off only with a key. Listens only with `net.allow` and the firewall loaded. Keys `remote.ssh` (generic image on), `ssh.password` (docs/network.md 7) | `rootfs/initramfs/bin/oos-ssh`, `rootfs/build-dropbear.sh`, rcS, `ui/src/ssh.rs`, `ui/src/ui/ssh.rs`, `ui/src/ui/remote.rs`, `tools/ssh-sim.sh` |
 | MAC | `eth.mac = cid / vendor / <address>` | `rootfs/initramfs/bin/oos-mac`, `oos-board mac`, rcS |
 | Settings lookup | `/etc/oos/system.conf` (image default), then `/oos/system.conf`; last line wins | `rootfs/initramfs/bin/oos-conf`, `netacl::Acl::from_texts` |
-| Unit files | `limits.conf` (`afg = no`, `la = no`), `system.conf` (network ACL, IPv6, SSH, MAC, time and acquisition keys), `build.env` (UHS DTB). The unit's `system.conf` deliberately keeps real values in the private tree; the owner's publish step scrubs them on publication. Examples on this page are placeholders, not that file's contents | `rootfs/unit/dho804/` |
+| Model defaults | shared system defaults; capabilities from runtime model detection; identity and overrides on the device | `rootfs/initramfs/etc/oos/system.conf`, `hal/src/model.rs` |
 | Fine V/div | upstream's Fine scale already walks the 801 rows of `cal_vertical` (the AFE is set per row, `afe::scale_index`); the fork adds `:CHANnel<n>:VERNier ON\|OFF` (one switch for all channels, as the menu) and `:CHANnel<n>:SCALe` taking any value with vernier on: the first row at or above it | `ui/src/scpi.rs` (`fine_scale`) |
-| Image build | the fork's part of `boot/build-dev-image.sh` (unit dir, `build.env`, DTB check, `nft`, unit `*.conf`, `OOS_BOOTARGS_EXTRA`, the fixed `eth.mac` as the GMAC's `local-mac-address` in the DTB) lives in three sourced hooks; upstream's script carries three lines. The hook stages its container part in `rootfs/out/unit-hook/` (mounted as `/wlan`). A bad `OOS_UNIT` now fails after the Rust builds | `boot/unit-hook.sh`, `boot/unit-hook-image.sh`, docs/fork/sync-checklist.md |
-
-Without `OOS_UNIT` the image behaves like upstream's apart from carrying `nft` (about 1 MB) and Dropbear (450 KB), and
-having no telnet. SSH stays off there: no `remote.ssh` and no `net.allow`.
+| Image build | generic DHO800/DHO900 image with firewall and SSH; no per-unit overlays or MAC in the DTB | `boot/build-dev-image.sh`, ADR 0041 |
 
 ## Building the image
 
-Needs Docker, rustup with `aarch64-unknown-linux-musl`, and the kernel base archive in `kernel/src/` (from an OOS
-release, `kernel/README.md`).
-
 ```sh
-kernel/build-base.sh                                   # kernel + rk3399-rigol-dho900{,-uhs}.dtb into kernel/out/base
-OOS_UNIT=dho804 boot/build-dev-image.sh        # target/image/oos-dev.img
-boot/sign-dev-image.sh --key /path/to/signing.key        # target/image/oos-dev.oosupd
-boot/build-gel.py                                      # GEL package
+boot/build-dev-image.sh
+boot/sign-dev-image.sh --community
 ```
 
-Check the result before it goes anywhere near the scope:
+The same image serves every supported model of the board family. This particular unit reports DHO924S, so before installation preserve `afg = no` and `la = no` in
+`/oos/limits.conf`, without overwriting existing keys. The generic image cannot infer absent hardware from that stored
+model name. A normally identified DHO804 gets these capabilities from the model table. The old per-unit build files and hooks are removed. The generic image uses the board's standard
+DTB; the UHS variant remains a separate diagnostic DTB, without a device profile selecting it.
 
-- `target/image/initramfs.cpio.gz` contains `etc/oos-unit`, `etc/oos/limits.conf`, `etc/oos/system.conf`, `bin/nft`, `bin/oos-firewall`,
-  `bin/oos-conf`, `bin/oos-mac`, `bin/oos-ssh`, `bin/dropbearmulti` with its `dropbear`, `dropbearkey`, `scp` links
-  (`gzip -dc ... | cpio -t`).
-- The DTB in the image is the UHS one: `fdtget -p target/image/oos-dho900.dtb /mmc@fe320000` lists `sd-uhs-sdr104`.
-
-The build records `dho804` in `/etc/oos-unit` and the receipted `target/image/oos-dev.unit` sidecar.
-The signing step uses the sidecar even in a fresh shell; it does not infer the unit from the current environment.
-The signed package must match the running image's unit before installation or a kexec start. Packages built without
-`OOS_UNIT`, including older packages without a unit line, mean `none` and are refused on this unit image. A planned
-change of unit profile needs the explicit logged `--any-unit` override (see [updates](../update.md)).
-
-The check belongs to the running image's `oos-update`. A pre-0050 image has no check, so the first install is
-unguarded and needs no `--any-unit`. Before uploading, manually verify that `target/image/oos-dev.unit` or the
-package manifest's `unit` line is `dho804`. Do not give `--any-unit` to the old parser: before `--execute`
-it silently turns the install into a dry run; at the end it errors. After the new image boots, `/etc/oos-unit`
-exists and mismatches are refused.
-
-The identity follows the last installed image. Overriding to a `none` build makes later `none` packages pass.
-Recover by rebuilding and signing with `OOS_UNIT=dho804`, manually checking the sidecar or signed
-manifest, and installing with the explicit logged `--any-unit` override. Verify `/etc/oos-unit` after boot before
-normal updates. For a pre-0050 running build, use the first-install procedure without the unsupported flag.
-The usual scope release, lease and install/reboot authorization still apply.
-Host tests cover these checks; this identity guard has not yet been verified on hardware.
-
-The GEL install accepts the model vendor.bin names (DHO924S), so the unit passes the model check. Install on the second SD card only
-(private RE notes `docs/oos-review.md`, "If we try it").
-
-When the AWG board is fitted: `afg = yes` in `/oos/limits.conf` (shows as experimental), or remove the line from
-`rootfs/unit/dho804/limits.conf` and rebuild. `cal_afg.hex` will be missing until the stock software
-calibrates the new board.
+Existing units keep a literal `eth.mac` in `/oos/system.conf`. If the current MAC came only from image defaults, write
+that exact address into the device file before installing this image. Never replace `/oos/net/ipv6.secret`.
+See [network migration](../network.md#6-firewall-remote-access-and-the-mac-address) and
+[updates](../update.md#use) for the old updater's one-time migration flag. Subsequent updates match detected models.
+The generic boot and kernel change are not yet verified on hardware.
 
 ## Verified on the host
 
@@ -148,7 +118,7 @@ with the baseline of spec 10 section 5 step 1 first.
      10 s and fails.
    - If MSI fails: `xdma.params = poll_mode=0 interrupt_mode=2` (legacy INTx, as stock), same checks.
    - To go back: remove the line (or `xdma.params = poll_mode=1`) and power-cycle.
-4. MaxPayload 256: uncomment `OOS_BOOTARGS_EXTRA="pci=pcie_bus_perf"` in `rootfs/unit/dho804/build.env`,
+4. MaxPayload 256: uncomment `OOS_BOOTARGS_EXTRA="pci=pcie_bus_perf"` in the diagnostic build arguments,
    rebuild, install on the second card only.
    - `/proc/cmdline` contains `pci=pcie_bus_perf`.
    - Device control, bits 7:5 = 1 (256 B) on both ends: endpoint `od -An -tx2 -j 104 -N2
@@ -249,7 +219,7 @@ start and confirmed itself; a warm reboot counts.
 | Switch | Verdict | Numbers (frames/s, 1 ch / 2 ch, Auto depth) |
 |---|---|---|
 | `acq.pipeline = batch` | default on | 100 ns/div 774 -> 785 / 767 -> 788; 10 us/div 385 -> 421 / 287 -> 313; 100 us/div 240 -> 267 / 177 -> 199. UI 30 fps at 10 us/div where frames mode falls to 2-6 fps. Screenshots equal |
-| `xdma.params = poll_mode=0` | default on (unit `system.conf`) | MSI on (0x4a = 0x0081), `ITS-PCI-MSI` IRQ counts, no `cmpl_status_th`; rates equal to poll within 2 %, one A53 5-20 points less busy; 20 min soak clean |
+| `xdma.params = poll_mode=0` | default on (shared `system.conf`) | MSI on (0x4a = 0x0081), `ITS-PCI-MSI` IRQ counts, no `cmpl_status_th`; rates equal to poll within 2 %, one A53 5-20 points less busy; 20 min soak clean |
 | `perf.place = on` | default on | +1 to +8 % over batch; main thread cpu4, hw thread cpu5, workers cpu0-3. `oos-irq-place` was broken on the unit (busybox awk without math): fixed on this branch |
 | `acq.prearm = on` | default on | +1 to +8 % over place (1 ch 100 ns/div 805, 100 us/div 294; 2 ch 100 us/div 228). Settings changes, STOP, SINGLE in Normal behave as without it. Drops at 2 ch 10 us/div 20/s (A53 workers at ~90 %) |
 | MPS256 | not run | needs a newer image; not measurable with a 1 kHz trigger |
@@ -371,7 +341,7 @@ What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
 - Network: upstream's link-local fallback (169.254.x.y/16, `arping -D`) replaces a fixed fallback address. It runs after the
   firewall and the fixed MAC. In the placeholder example `net.allow = 192.0.2.0/24`, a computer on a direct cable is dropped; add
   `169.254.0.0/16` for that case. Upstream's remote switches close web, SCPI and VXI-11 ports; the ACL still applies to
-  what stays open. The private unit `system.conf` retains real values; the owner's publish step scrubs them on
+  what stays open. The private shared `system.conf` retains real values; the owner's publish step scrubs them on
   publication. The fork's network section is now docs/network.md 6.
 - Acquisition: upstream's early end of a trigger wait (`seq::NEW_SETTINGS`) runs through the fork's generic
   `execute_bus_until`, so prearm, DmaBuf reuse and the host model keep working. Upstream's deep-memory screen window

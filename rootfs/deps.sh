@@ -5,7 +5,7 @@
 #   dep_fetch NAME                     download into $DEPS_SOURCES once (the url, then its mirrors), check the
 #                                      SHA-256, print the path
 #   dep_stale ARTIFACT SCRIPT NAME...  true when ARTIFACT is missing or was built from other manifest lines or another
-#                                      SCRIPT (its build options): boot/unit-hook.sh rebuilds it then
+#                                      SCRIPT (its build options): boot/build-dev-image.sh rebuilds it then
 #   dep_stamp ARTIFACT SCRIPT NAME...  record what ARTIFACT was built from (ARTIFACT.stamp), at the end of a build
 DEPS_LOCK="${DEPS_LOCK:-$here/deps.lock}"
 deps_root=$(CDPATH='' cd -- "$(dirname -- "$DEPS_LOCK")/.." && pwd)

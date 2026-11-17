@@ -6,7 +6,7 @@
 //! On the unit:
 //!   oos-update status [--quick]            what recovery and the rollback slot hold, trial state, boot mode
 //!                                          (--quick: headers only, no SHA-256 over the images)
-//!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force] [--any-unit] [--no-kexec | --new-dt]
+//!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force] [--any-model] [--no-kexec | --new-dt]
 //!                                          check the signature and the image (dry run without --execute), then start
 //!                                          the new image by kexec with nothing written; that start
 //!                                          installs it (rollback slot, recovery, read back, OOS armed),
@@ -36,7 +36,7 @@
 //!   oos-update verify FILE.oosupd [--keys FILE]   signature and image check, no card access
 //!   oos-update keygen --out FILE          new signing key outside the repository (mode 0600),
 //!                                          prints the public key line for oos/keys/update.pub
-//!   oos-update pack --image IMG --build ID [--kernel REL] [--unit NAME] [--key FILE] --out FILE.oosupd
+//!   oos-update pack --image IMG --build ID [--kernel REL] [--models LIST] [--key FILE] --out FILE.oosupd
 //!                                          or select a key with OOS_SIGNING_KEY; no automatic key discovery
 //!                                          --untrusted-ok permits a key not trusted by this build
 //!
@@ -267,8 +267,8 @@ fn install(a: &Args) {
     let p = read_file(f);
     let mut c = open_card(a, a.flag("--execute"));
     let test_card = c.is_test_file().unwrap_or_else(|e| die(&e.to_string()));
-    let running_unit = a.running_unit(test_card);
-    let opt = a.install_opt(&running_unit);
+    let running_model = a.running_model(test_card);
+    let opt = a.install_opt(&running_model);
     let keys = keys(a, test_card);
     let sp = state_path(a);
     let announced = pkg::verify_header(&p, &keys).is_ok_and(|h| kexec::announced(&h.manifest));
@@ -306,7 +306,7 @@ fn install(a: &Args) {
         Ok((r, Some(s))) => {
             r.lines.iter().for_each(|l| out!("{}", l));
             drop(p);
-            start_kexec(&sp, s, kexec::Flags { downgrade: opt.downgrade, force: opt.force, any_unit: opt.any_unit });
+            start_kexec(&sp, s, kexec::Flags { downgrade: opt.downgrade, force: opt.force, any_model: opt.any_model });
         }
     }
 }
@@ -552,7 +552,7 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
         keys.push(k);
     }
     let mut c = open_card(a, true);
-    let done = match update::install(&mut c, p, &pk, &keys, &Args::kexec_opt(f, &a.running_unit(false))) {
+    let done = match update::install(&mut c, p, &pk, &keys, &Args::kexec_opt(f, &a.running_model(false))) {
         Ok(r) => {
             r.lines.iter().for_each(|l| out!("{}", l));
             if r.written {

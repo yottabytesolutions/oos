@@ -50,6 +50,8 @@ class PathTests(unittest.TestCase):
         include = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"')
         found = 0
         for source in sources:
+            if not (ROOT / source).is_file():
+                continue
             text = (ROOT / source).read_text(encoding="utf-8", errors="replace")
             for target in include.findall(text):
                 path = (ROOT / source).parent.joinpath(target).resolve()

@@ -15,7 +15,8 @@ impl Args {
         while let Some(s) = it.next() {
             match s.as_str() {
                 "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec"
-                | "--new-dt" | "--any-unit" | "--untrusted-ok" => a.flags.push(s),
+                | "--new-dt" | "--untrusted-ok" => a.flags.push(s),
+                "--any-unit" => die("--any-unit was replaced by --any-model"),
                 _ if s.starts_with("--") => {
                     let v = it.next().unwrap_or_else(|| die(&format!("{} needs a value", s)));
                     a.vals.push((s, v));
@@ -25,34 +26,34 @@ impl Args {
         }
         a
     }
-    pub(crate) fn install_opt<'a>(&self, running_unit: &'a str) -> oos_hal::update::InstallOpt<'a> {
+    pub(crate) fn install_opt<'a>(&self, running_model: &'a str) -> oos_hal::update::InstallOpt<'a> {
         oos_hal::update::InstallOpt {
-            running_unit,
+            running_model,
             execute: self.flag("--execute"),
             downgrade: self.flag("--downgrade"),
             force: self.flag("--force"),
-            any_unit: self.flag("--any-unit"),
+            any_model: self.flag("--any-model"),
         }
     }
-    pub(crate) fn kexec_opt(f: oos_hal::update::kexec::Flags, running_unit: &str) -> oos_hal::update::InstallOpt<'_> {
+    pub(crate) fn kexec_opt(f: oos_hal::update::kexec::Flags, running_model: &str) -> oos_hal::update::InstallOpt<'_> {
         oos_hal::update::InstallOpt {
-            running_unit,
+            running_model,
             execute: true,
             downgrade: f.downgrade,
             force: f.force,
-            any_unit: f.any_unit,
+            any_model: f.any_model,
         }
     }
-    /// Only card-file installs may select a simulated identity; hardware uses the running image.
-    pub(crate) fn running_unit(&self, test_card: bool) -> String {
-        use oos_hal::update::unit;
+    /// Only card-file installs may select a simulated identity; hardware uses hardware detection.
+    pub(crate) fn running_model(&self, test_card: bool) -> String {
+        use oos_hal::update::models;
         if test_card {
-            return unit::validate(self.val("--unit").unwrap_or(unit::NONE)).unwrap_or_else(|e| die(&e)).into();
+            return models::validate(self.val("--model").unwrap_or(models::NONE)).unwrap_or_else(|e| die(&e)).into();
         }
-        if self.val("--unit").is_some() {
-            die("install --unit is for card-file tests only; use --any-unit for a deliberate profile change");
+        if self.val("--model").is_some() {
+            die("install --model is for card-file tests only; use --any-model for a deliberate model change");
         }
-        unit::running().unwrap_or_else(|e| die(&e))
+        models::running().unwrap_or_else(|e| die(&e))
     }
     pub(crate) fn command(&self) -> &str {
         let cmd = self.rest.first().map(String::as_str).unwrap_or("status");

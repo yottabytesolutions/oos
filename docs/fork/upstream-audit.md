@@ -66,8 +66,8 @@ measured on the unit.
 | Telnet | `remote.telnet` in `/oos/system.conf` | dropped own switch, uses upstream key, `oos-conf` adds `/etc/oos/system.conf` defaults | upstream adopted | `image_defaults_under_the_settings` | done |
 | Firewall vs link-local | link-local fallback 169.254/16 when DHCP fails | nftables drop-by-default from `net.allow`, runs before the network | conflict | direct-cable laptop is blocked by nft and by `netacl` | add `169.254.0.0/16` to the unit's `net.allow`: link-local is not routable, and any on-link host can already spoof a 192.0.2.x source, so the exposure does not grow |
 | MAC | from SD CID, in rcS | `oos-mac`: CID default, or `eth.mac` (stock or fixed) | fork superset | default unchanged | keep; unit `system.conf` holds the real MAC, remove before any publication |
-| Unit defaults | none | `/etc/oos/{limits,system}.conf` via `OOS_UNIT`, `build_unit` | fork | `unit_defaults_tests` | keep |
-| Image build | `build-dev-image.sh` | adds `OOS_UNIT`, `build.env`, `nft`, extra bootargs, all DTS variants | fork | conflicted in the 0.1.11 sync | move fork lines into one sourced hook (`rootfs/unit/hook.sh`) to shrink the conflict surface |
+| Unit defaults | none | runtime model capabilities and shared `/etc/oos/system.conf` (ADR 0041) | fork | model and device-identity tests | keep |
+| Image build | `build-dev-image.sh` | assembles generic model defaults, `nft` and board DTBs | fork | conflicted in the 0.1.11 sync | generic build assembly is in `boot/build-dev-image.sh` (ADR 0041) |
 
 ## Kept both paths: remove one
 
@@ -103,7 +103,7 @@ path is faster than its fork counterpart.
 
 - `decode_volts` `on: Vec`: done, fixed slot table. Then f32 decode (perf-plan item 8), see perf-plan.md Status.
 - `execute_into`: removed; `execute_until` kept as wrapper.
-- Image build hook: done as `boot/unit-hook.sh` + `boot/unit-hook-image.sh` (not `rootfs/unit/hook.sh`: the hook is
-  build logic, the unit directory stays data). Output identical on stub inputs.
+- Image assembly: generic builds replaced the former unit hooks (ADR 0041).
+
 - Guards 1, 3, 4: `hal/tests/alloc_batch.rs`, `hal/tests/early_trigger_end.rs`, `hal/tests/perf_ratio.rs`, run by
   `tools/perf-guard.sh` (docs/fork/sync-checklist.md). Guard 2 (ui `decode`) is the ui's.

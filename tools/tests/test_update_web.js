@@ -27,7 +27,7 @@ function browser(approve, mismatch = true) {
                 status: confirmation ? 409 : 200,
                 ok: !confirmation,
                 headers: { get: () => confirmation ? 'application/json' : 'text/plain' },
-                json: async () => ({ refused: true, package_unit: 'other-unit', running_unit: 'this-unit' }),
+                json: async () => ({ refused: true, package_models: 'other-unit', running_model: 'this-unit' }),
                 text: async () => 'accepted',
             };
         },
@@ -44,7 +44,7 @@ test('cancelling a mismatch names both units and sends no override', async () =>
     const b = browser(false);
     await b.context.up();
     assert.deepEqual(b.requests.map(r => r.url), ['/update']);
-    assert.match(b.prompts[0], /Package unit 'other-unit', running image unit 'this-unit'/);
+    assert.match(b.prompts[0], /Package models 'other-unit', running device model 'this-unit'/);
     assert.match(b.output.textContent, /Cancelled; nothing installed/);
     assert.equal(b.button.disabled, false);
     assert.equal(b.timers.length, 0);
@@ -53,7 +53,7 @@ test('cancelling a mismatch names both units and sends no override', async () =>
 test('confirmation resends the same file and consent is requested for every upload', async () => {
     const b = browser(true);
     await b.context.up();
-    assert.deepEqual(b.requests.map(r => r.url), ['/update', '/update?any-unit=1']);
+    assert.deepEqual(b.requests.map(r => r.url), ['/update', '/update?any-model=1']);
     assert.ok(b.requests.every(r => r.body === b.file));
     assert.match(b.prompts[0], /override will be logged/);
     await b.context.up();

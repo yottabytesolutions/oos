@@ -58,7 +58,6 @@
 1 hal hal/src/dho/zonegeom.rs clippy::type_complexity
 1 hal hal/src/model.rs clippy::chunks_exact_to_as_chunks
 2 hal hal/src/model.rs clippy::manual_is_multiple_of
-1 hal hal/src/model.rs clippy::too_many_lines
 2 hal hal/src/model.rs clippy::unwrap_used
 1 hal hal/src/target.rs missing_debug_implementations
 1 hal hal/src/update/card.rs clippy::undocumented_unsafe_blocks

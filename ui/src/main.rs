@@ -134,9 +134,6 @@ pub fn main() {
         arg(&args, "--model").as_deref(),
     );
     eprintln!("oos-ui: {} ({})", p.ident(), p.caps_line());
-    for u in &p.unit {
-        eprintln!("oos-ui: unit default {} ({})", u, oos_hal::model::UNIT_CONF);
-    }
     for o in &p.overrides {
         eprintln!("oos-ui: EXPERIMENTAL limit {}", o);
     }

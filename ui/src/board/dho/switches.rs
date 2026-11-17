@@ -4,8 +4,7 @@
 //! The DHO's switches in system.conf and the environment (`sysconf::Switches`), parsed once at start.
 
 use super::hw;
-use crate::drawpipe::conf_value;
-use crate::sysconf::switches::{flag, text, Env};
+use crate::sysconf::switches::{text, Env};
 
 /// The frame-header log (`OOS_FRAME_HEADER`, trigger.md 8): unset, set (every frame), or `off` (only the frames
 /// whose edge is off the trigger point, and a count of all frames every 10,000; docs/protocols/acquisition-start.md,
@@ -54,9 +53,6 @@ pub struct Switches {
     /// OOS_FRAME_HEADER set (trigger.md 8): frames are read with the 16-byte header of the stock live loop and their
     /// headers are logged to /tmp/oos-hdr.log next to where the edge actually is
     pub header_probe: HeaderProbe,
-    /// the trigger status from the SCU status bits (docs/fork/trigger-lockin.md); `trig.hw_status = off` or
-    /// OOS_TRIG_HW_STATUS=0 takes it from the software refinement instead
-    pub trig_hw_status: bool,
     /// `dvm.hw = on`: the DVM reads the FPGA's DVM block (docs/fork/dvm.md)
     pub dvm: bool,
     /// `mask.hw = on`: the mask test runs in the FPGA's mask unit (docs/fork/hwmask.md)
@@ -82,12 +78,10 @@ pub struct Switches {
 impl Switches {
     /// The switches from an environment lookup, the fork's system.conf text and the settings file alone.
     pub fn parse(env: Env, conf: &str, settings: &str) -> Self {
-        let status = flag(env, "OOS_TRIG_HW_STATUS");
         Switches {
             avg_hold: text(env, "OOS_HWAVG").is_some_and(|v| v == "hold"),
             core_offset_tight: hw::core_offset_from(conf),
             header_probe: HeaderProbe::of(env("OOS_FRAME_HEADER")),
-            trig_hw_status: conf_value(status, conf, "trig.hw_status").as_deref() != Some("off"),
             dvm: hw::dvm_hw_from(conf),
             mask: hw::mask_hw_from(conf),
             zone: hw::zone_hw_from(conf),

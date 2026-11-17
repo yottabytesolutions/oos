@@ -2,7 +2,7 @@
 
 //! Mean-type measurements of deep records from raw samples (fork, docs/fork/deep-meas.md). A record above 1 M points
 //! is read for the screen through the FPGA compression (min/max pairs), and Mean, RMS, Std dev, Area and their cycle
-//! variants cannot come from pairs (`framestats::needs_samples`). Unless `meas.deep_raw = off`, the acquisition thread
+//! variants cannot come from pairs (`framestats::needs_samples`). The acquisition thread
 //! reads the screen window of the newest frame once more, raw, at most once per `PERIOD` while running and for every
 //! batch in Single; that frame becomes the record of its batch. While such raw records come, the UI measures only
 //! them (`hold`): every value of a measurement then belongs to one raw record, and the statistics count each once.
@@ -60,40 +60,12 @@ pub struct Want {
     pub every: bool,
 }
 
-thread_local! {
-    /// tests: `enabled` for this thread
-    #[cfg(test)]
-    static FORCE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
-}
-
-/// Sets `enabled` for the calling thread (tests).
-#[cfg(test)]
-pub fn force(on: Option<bool>) {
-    FORCE.with(|f| f.set(on));
-}
-
-/// On unless `meas.deep_raw = off` in system.conf; OOS_DEEP_RAW overrides (empty or 0 off, anything else on). On by
-/// default since 2026-11-14: without it a mean-type measurement shows `----` above 1 M points while 1 M works.
-/// `Switches::deep_raw`, or the test override of this thread.
-pub fn enabled(sw: &crate::sysconf::Switches) -> bool {
-    #[cfg(test)]
-    if let Some(on) = FORCE.with(|f| f.get()) {
-        return on;
-    }
-    sw.deep_raw
-}
-
-/// `env` if set, else the `meas.deep_raw` line of `conf`; on unless `off`.
-pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
-    crate::drawpipe::conf_value(env, conf, "meas.deep_raw").as_deref() != Some("off")
-}
-
-/// The request for the model: on, and a shown measurement (or the software DVM) needs samples. Normal acquisition
+/// The request for the model: a shown measurement (or the software DVM) needs samples. Normal acquisition
 /// only: in Peak the memory holds peak pairs, not samples; Average and High res have their own records.
-pub fn want(m: &Model, sw: &crate::sysconf::Switches) -> Option<Want> {
+pub fn want(m: &Model) -> Option<Want> {
     let needs = m.meas.iter().any(|&(k, s)| s.ch().is_some_and(|c| m.ch[c].on) && crate::framestats::needs_samples(k))
         || (m.dvm_on && m.ch[m.dvm_src].on);
-    (enabled(sw) && needs && m.acq == AcqMode::Normal).then_some(Want { every: m.trig_mode == TrigMode::Single })
+    (needs && m.acq == AcqMode::Normal).then_some(Want { every: m.trig_mode == TrigMode::Single })
 }
 
 /// A frame of the deep-memory read through the compression (min/max pairs of a record above 1 M points).
@@ -111,8 +83,8 @@ pub fn deep_raw_frame(f: &Frame) -> bool {
 /// measurement shown then stays that of the last raw record (at most about `PERIOD` old). The plan judges, not an
 /// estimate here: the UI counted the channels it shows, the read counts the lanes acquired (a trigger source among
 /// them), and at 10 M, 1 ms/div, CH2 the UI held for a raw record the plan never read (unit 2026-11-14).
-pub fn hold(m: &Model, sw: &crate::sysconf::Switches, f: Option<&Frame>, planned: bool) -> bool {
-    f.is_some_and(deep_pairs) && planned && m.run == RunState::Run && want(m, sw).is_some_and(|w| !w.every)
+pub fn hold(m: &Model, f: Option<&Frame>, planned: bool) -> bool {
+    f.is_some_and(deep_pairs) && planned && m.run == RunState::Run && want(m).is_some_and(|w| !w.every)
 }
 
 /// Least time between two raw deep reads of `bytes`: `PERIOD` per `PERIOD_BYTES`, at least `PERIOD`.
@@ -140,68 +112,53 @@ mod tests {
     }
 
     #[test]
-    fn asked_for_only_when_on_and_a_measurement_needs_samples() {
-        assert!(enabled_from(None, ""), "on by default");
-        assert!(!enabled_from(None, "meas.deep_raw = off\n"));
-        assert!(enabled_from(None, "meas.deep_raw = on\n"));
-        assert!(!enabled_from(None, "ntp = off\nmeas.deep_raw = off   # opt out\n"));
-        assert!(!enabled_from(Some("off"), "meas.deep_raw = on\n"));
-        assert!(enabled_from(Some("on"), "meas.deep_raw = off\n"));
-        force(Some(true));
+    fn asked_for_only_when_a_measurement_needs_samples() {
         let mut m = Model::default();
         m.ch[0].on = true;
         m.meas = vec![(Meas::Vmax, crate::model::WaveId::Ch(0))];
-        assert_eq!(want(&m, &Default::default()), None, "max needs no samples");
+        assert_eq!(want(&m), None, "max needs no samples");
         m.meas.push((Meas::Vavg, crate::model::WaveId::Ch(0)));
-        assert_eq!(want(&m, &Default::default()), Some(Want { every: false }));
+        assert_eq!(want(&m), Some(Want { every: false }));
         m.trig_mode = TrigMode::Single;
-        assert_eq!(want(&m, &Default::default()), Some(Want { every: true }));
+        assert_eq!(want(&m), Some(Want { every: true }));
         m.acq = AcqMode::Peak;
-        assert_eq!(want(&m, &Default::default()), None);
+        assert_eq!(want(&m), None);
         m.acq = AcqMode::Normal;
         m.ch[0].on = false;
-        assert_eq!(want(&m, &Default::default()), None);
+        assert_eq!(want(&m), None);
         (m.ch[0].on, m.meas, m.dvm_on, m.dvm_src) = (true, Vec::new(), true, 0);
-        assert!(want(&m, &Default::default()).is_some(), "the software DVM reads the mean");
-        force(Some(false));
-        assert_eq!(want(&m, &Default::default()), None);
-        force(None);
+        assert!(want(&m).is_some(), "the software DVM reads the mean");
     }
 
     #[test]
     fn hold_while_running_on_pair_records_that_a_raw_read_can_replace() {
-        force(Some(true));
         let mut m = Model::default();
         m.ch[0].on = true;
         m.meas = vec![(Meas::Vrms, crate::model::WaveId::Ch(0))];
         m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
         // a deep record the plan reads raw (`Shared::deep_ok`)
-        assert!(hold(&m, &Default::default(), Some(&deep(true)), true));
+        assert!(hold(&m, Some(&deep(true)), true));
+        assert!(!hold(&m, Some(&deep(true)), false), "no raw read planned: the pair measurement stays");
+        assert!(!hold(&m, Some(&deep(false)), true), "a raw record is measured");
         assert!(
-            !hold(&m, &Default::default(), Some(&deep(true)), false),
-            "no raw read planned: the pair measurement stays"
-        );
-        assert!(!hold(&m, &Default::default(), Some(&deep(false)), true), "a raw record is measured");
-        assert!(
-            !hold(&m, &Default::default(), Some(&Frame { acq: (1.25e9, 1_000_000), ..deep(true) }), true),
+            !hold(&m, Some(&Frame { acq: (1.25e9, 1_000_000), ..deep(true) }), true),
             "live compression: the newest frame is raw anyway"
         );
-        assert!(!hold(&m, &Default::default(), None, true));
+        assert!(!hold(&m, None, true));
         // the LA on (upstream 1a457e30: no raw read came, statistics stood still): the hold follows the thread's plan,
         // not the UI's view of the LA
         if crate::ui::la::available() {
             m.la.on = true;
-            assert!(!hold(&m, &Default::default(), Some(&deep(true)), false), "LA on, no raw read planned");
-            assert!(hold(&m, &Default::default(), Some(&deep(true)), true), "LA on, a raw read planned");
+            assert!(!hold(&m, Some(&deep(true)), false), "LA on, no raw read planned");
+            assert!(hold(&m, Some(&deep(true)), true), "LA on, a raw read planned");
             m.la.on = false;
         }
         m.run = RunState::Stop;
-        assert!(!hold(&m, &Default::default(), Some(&deep(true)), true));
+        assert!(!hold(&m, Some(&deep(true)), true));
         m.run = RunState::Run;
         m.trig_mode = TrigMode::Single;
-        assert!(!hold(&m, &Default::default(), Some(&deep(true)), true), "Single: every batch is read raw");
+        assert!(!hold(&m, Some(&deep(true)), true), "Single: every batch is read raw");
         m.trig_mode = TrigMode::Auto;
-        force(None);
     }
 
     #[test]

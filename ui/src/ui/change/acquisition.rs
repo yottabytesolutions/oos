@@ -50,7 +50,7 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
     }
     g.want = Some(want(model, sw, needs.mixed_bus()));
     g.slow = board().slow_mode(model);
-    g.deep_raw = crate::deepmeas::want(model, sw);
+    g.deep_raw = crate::deepmeas::want(model);
     g.mask_want = ui.mask_hw_want();
     g.zone_want = ui.zone_hw_want();
     g.needs_raw = needs.raw();

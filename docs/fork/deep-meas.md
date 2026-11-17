@@ -1,8 +1,8 @@
 # Mean-type measurements of deep records from raw samples
 
-Branch `feat/deep-meas`, on top of `fix/envelope-stats`. On by default since 2026-11-14 (branch
-feat/deep-raw-default). Opt out with `meas.deep_raw = off` in /oos/system.conf. `OOS_DEEP_RAW` overrides for oos-ui
-alone (empty or 0 off).
+Raw deep measurements were verified on the unit 2026-11-15. The configuration switch and its off path were
+removed on 2026-11-17 (#124); Normal acquisition requests raw reads when a shown measurement or the software
+DVM needs samples.
 
 ## Problem
 
@@ -13,7 +13,7 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
 
 ## Design
 
-- The UI publishes `Shared::deep_raw` (`deepmeas::want`): on, Normal acquisition, and a shown measurement or the
+- The UI publishes `Shared::deep_raw` (`deepmeas::want`): Normal acquisition, and a shown measurement or the
   software DVM needs samples. `every` in Single.
 - After a compressed deep batch (`deep_raw_settings`: compression on, no window, record above 1 M, Normal, no LA) the
   acquisition thread reads the screen window of the newest frame once more, raw (`seq::read_raw_again` with a window),
@@ -35,7 +35,7 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
   path (or replaced it as the record) and the value stayed at the last raw record's for good (unit round 5). A raw
   record that comes while the background worker is busy waits for it (`meas_pending`); Clear drops it with the record
   it belongs to.
-- Off, in Peak (the memory holds peak pairs), above the budget, or with the deep screen-window read (short time base,
+- In Peak (the memory holds peak pairs), above the budget, or with the deep screen-window read (short time base,
   already raw): as before.
 
 ## What STOP shows
@@ -85,12 +85,12 @@ their values and the statistics count nothing more (docs/fork/stop-exact.md, "Vi
 
 ## On-unit verification
 
-Probe on the 1 kHz compensation output, CH1, 1 V/div. Baseline first with `meas.deep_raw = off` in /oos/system.conf
-and `OOS_DEEP_RAW` unset, then restart oos-ui. The key absent means on.
+Probe on the 1 kHz compensation output, CH1, 1 V/div. The historical baseline used the off path, which was
+removed on 2026-11-17.
 
 1. 10 M depth, 1 ms/div (10 periods on screen), Auto trigger. Measure Vavg, Vrms, Std dev,
-   Vmax. With `meas.deep_raw = off`: Vavg/Vrms/Std dev show NaN ("----"). Note wfm/s and `:SYSTem:STATe?` (acquired/s).
-2. Remove the line or set `meas.deep_raw = on`, restart oos-ui. Within about 1 s Vavg, Vrms and Std dev show values;
+   Vmax. The off-path baseline: Vavg/Vrms/Std dev show NaN ("----"). Note wfm/s and `:SYSTem:STATe?` (acquired/s).
+2. With raw deep reads, within about 1 s Vavg, Vrms and Std dev show values;
    Vavg about half the square's amplitude plus its low level, Vrms consistent with a 50 % square. Compare with the same
    measurements at 1 M depth (raw records, no compression): within 1 %.
 3. Rate: acquired/s against step 1. The 10 % target was not met: 11.41 -> 9.0/s, about -21 % ("Cost on the unit").

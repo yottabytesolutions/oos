@@ -28,8 +28,6 @@ pub struct Switches {
     pub fixed_time: Option<f64>,
     /// interpolation of sparse frames (`sparse::interp_from`)
     pub interp: Interp,
-    /// raw deep-record measurements (`deepmeas::enabled_from`)
-    pub deep_raw: bool,
     /// Thread/IRQ placement and reversible RUN clock floors.
     pub perf: Performance,
     /// IPv6 (`net6::enabled_from`)
@@ -79,7 +77,6 @@ impl Switches {
             cores,
             fixed_time: text(env, "OOS_FIXED_TIME").and_then(|v| v.parse().ok()),
             interp: crate::sparse::interp_from(text(env, "OOS_INTERP").as_deref(), conf),
-            deep_raw: crate::deepmeas::enabled_from(flag(env, "OOS_DEEP_RAW"), conf),
             perf: Performance {
                 place: conf_value(flag(env, "OOS_PLACE"), conf, "perf.place").as_deref() == Some("on"),
                 floors: crate::system::clocks::Config::parse(conf),
@@ -114,7 +111,7 @@ mod tests {
     fn empty_configuration_is_the_default() {
         let s = Switches::default();
         assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (0, false, Mode::Frames, Interp::Exact));
-        assert!(s.deep_raw && !s.perf.place() && !s.ipv6 && !s.autoset_unit_levels);
+        assert!(!s.perf.place() && !s.ipv6 && !s.autoset_unit_levels);
         assert_eq!(s.board, crate::board::BoardSwitches::parse(&|_| None, "", ""));
     }
 
@@ -123,16 +120,15 @@ mod tests {
         let env = |k: &str| match k {
             "OOS_DEMO_LOOP" => Some("15".into()),
             "OOS_COMPRESS" | "OOS_PLACE" => Some("1".into()),
-            "OOS_DEEP_RAW" => Some("0".into()),
             "OOS_PIPELINE" => Some("batch".into()),
             "OOS_FIXED_TIME" => Some("946684800".into()),
             _ => None,
         };
-        let conf = "net.ipv6 = on\nacq.interp = fast\nautoset.levels = records\nmeas.deep_raw = on\n";
+        let conf = "net.ipv6 = on\nacq.interp = fast\nautoset.levels = records\n";
         let cores = crate::placement::Cores { big: 0b11_0000, little: 0b1111 };
         let s = Switches::parse(&env, conf, "", cores);
         assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (15, true, Mode::Batch, Interp::Fast));
-        assert!(!s.deep_raw && s.perf.place() && s.ipv6 && !s.autoset_unit_levels);
+        assert!(s.perf.place() && s.ipv6 && !s.autoset_unit_levels);
         assert_eq!((s.cores, s.fixed_time), (cores, Some(946_684_800.0)));
     }
 

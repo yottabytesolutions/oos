@@ -189,11 +189,10 @@ impl Ui {
             // min/max pairs (Peak, a compressed deep record, roll and scan) hold no samples: Max, Min and Pk-pk come
             // from them, the mean-type measurements are not available (PR #7)
             if self.last[0].as_ref().is_some_and(|r| self.meas_on_pairs(r, channel)) {
-                // raw reads of a deep or compressed record (`meas.deep_raw`, `acq.compress`): the measurement stays
+                // raw reads of a deep or compressed record (`deepmeas`, `acq.compress`): the measurement stays
                 // that of the last raw record (`measure_rec` in the step's hold) between the pair records
                 let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
-                if crate::deepmeas::hold(&self.m, self.switches(), shown, self.src.hw_deep_ok())
-                    || crate::compress::hold(&self.m, shown)
+                if crate::deepmeas::hold(&self.m, shown, self.src.hw_deep_ok()) || crate::compress::hold(&self.m, shown)
                 {
                     // before the first raw record Max, Min and Pk-pk still come from the pairs
                     let held = self.ana_get(channel, k);

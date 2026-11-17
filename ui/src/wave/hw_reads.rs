@@ -87,7 +87,7 @@ impl Source {
         None
     }
 
-    /// Hardware source with `trig.hw_status = on`: the latest trigger status of a batch (`Shared::trig_fired`).
+    /// Hardware source: the latest trigger status of a batch (`Shared::trig_fired`).
     pub fn hw_trig_fired(&self) -> Option<(u64, Option<bool>)> {
         if let Source::Hw { shared, .. } = self {
             return crate::perfguard::deep::ui_lock(shared).trig_fired;

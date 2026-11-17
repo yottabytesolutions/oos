@@ -71,7 +71,7 @@ Single scan only).
    RUN; SINGLE still takes the first trigger after the press. CPU of oos-ui in STOP drops (`top -d 1`): nothing is
    read any more.
 2. Settings in STOP (V/div, time base, delay): as before (the record is redrawn, no new acquisition).
-3. `meas.deep_raw = on`, 10 M at 1 ms/div, probe comp on CH1, Vavg and Vrms on. STOP: the values belong to the record
+3. 10 M at 1 ms/div, probe comp on CH1, Vavg and Vrms on. STOP: the values belong to the record
    shown: `:WAV:MODE RAW;:WAV:DATA?` over the screen, mean computed on the host, equal to Vavg. Repeat 10 times at
    different moments. Check the final-frame answer and the measurement separately. Round 3 (unit-dho804.md): equal at
    2.3 s after STOP (4 of 4), still NaN or an older value at 0.8 s. A sub-second result is an unmet target.

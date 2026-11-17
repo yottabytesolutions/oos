@@ -348,13 +348,11 @@ mod tests {
             ("OOS_COMPRESS", "1"),
             ("OOS_PIPELINE", "batch"),
             ("OOS_INTERP", "fast"),
-            ("OOS_DEEP_RAW", "0"),
             ("OOS_PLACE", "1"),
             ("OOS_IPV6", "1"),
             ("OOS_AUTOSET_LEVELS", "records"),
             ("OOS_HWAVG", "hold"),
             ("OOS_FRAME_HEADER", "1"),
-            ("OOS_TRIG_HW_STATUS", "0"),
             ("OOS_PREARM", "1"),
             ("OOS_FIXED_TIME", "1"),
         ];

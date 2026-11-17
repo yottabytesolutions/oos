@@ -6,6 +6,7 @@
 //! `oos-dsp` has no logic-analyser type: quadrature and Hall arrive as boolean samples.
 
 use crate::power::{freq_of, whole_cycles};
+use crate::stats::{line_fit, mean_finite};
 use std::f64::consts::PI;
 
 /// Sign of the mean shaft speed. Stopped is below 1 rpm.
@@ -550,18 +551,7 @@ fn revolution_trend(rad: &[f64], dt: f64) -> Vec<(f64, f64)> {
 }
 
 fn slope_of(trend: &[(f64, f64)]) -> Option<f64> {
-    if trend.len() < 2 {
-        return None;
-    }
-    let n = trend.len() as f64;
-    let (mt, my) = (trend.iter().map(|p| p.0).sum::<f64>() / n, trend.iter().map(|p| p.1).sum::<f64>() / n);
-    let (mut var, mut cov) = (0.0, 0.0);
-    for &(t, y) in trend {
-        let d = t - mt;
-        var += d * d;
-        cov += d * (y - my);
-    }
-    (var > 1e-18).then_some(cov / var)
+    line_fit(trend.iter().copied())?.slope(1e-18)
 }
 
 fn quad_step(a0: bool, b0: bool, a1: bool, b1: bool, swap: bool) -> i32 {
@@ -599,17 +589,6 @@ fn hall_step(prev: u8, cur: u8) -> Option<i32> {
     } else {
         Some(0)
     }
-}
-
-fn mean_finite(x: &[f32]) -> Option<f64> {
-    let (mut s, mut n) = (0.0, 0usize);
-    for &v in x {
-        if v.is_finite() {
-            s += v as f64;
-            n += 1;
-        }
-    }
-    (n > 0).then_some(s / n as f64)
 }
 
 fn mean_product(v: &[f32], i: &[f32]) -> Option<f64> {

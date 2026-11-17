@@ -50,4 +50,5 @@ pub mod power;
 pub mod serial;
 pub mod sim;
 pub mod spectrum;
+mod stats;
 pub mod trigger;

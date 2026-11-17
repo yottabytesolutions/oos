@@ -328,7 +328,8 @@ file:
   methods (also inside `cfg_attr` and as `#![allow]`), so an adapter-level exception cannot spread unseen.
 - `known.txt`: `1 known <file> <test> <task>`, every test ignored as a known failure with
   `#[ignore = "known: task NNNN"]`. The task must be open (in `docs/tasks/`, not in `done/`); an `ignore` reason that
-  starts with `known` but names no task fails.
+  starts with `known` but names no task fails. Every `#[ignore]` carries a reason, and a `flaky:` reason names its
+  issue: `#[ignore = "flaky: #123 races the timer"]`. A bare `#[ignore]` or an untracked flaky test fails.
 
 `xtask/data/coverage.txt` holds the coverage floors, `<floor> <crate>` in tenths of a percent, for all crates.
 

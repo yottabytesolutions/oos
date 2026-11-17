@@ -36,9 +36,7 @@ pub fn known(ctx: &crate::run::Context, root: &Path) -> Outcome {
     let mut now = Vec::new();
     let mut bad = Vec::new();
     for (c, m) in measured(ctx, root).map_err(|e| vec![e])? {
-        bad.extend(
-            m.malformed.iter().map(|x| format!("{}: ignore reason \"known: task NNNN\" expected: {}", c.dir, x)),
-        );
+        bad.extend(m.malformed.iter().map(|x| format!("{}: ignore reason: {}", c.dir, x)));
         for k in m.known.0.keys() {
             let task = k.rsplit(' ').next().unwrap_or("");
             if !open_task(root, task) {

@@ -1,5 +1,6 @@
 //! Marks that may only become fewer: `#[allow]`/`#[expect]` of `clippy::disallowed_methods`, and known failures,
-//! tests ignored with `#[ignore = "known: task NNNN"]`. Test code included.
+//! tests ignored with `#[ignore = "known: task NNNN"]`. Test code included. Every `#[ignore]` carries a reason, and a
+//! `flaky:` reason names its issue (`#NNN`): a flaky test is tracked, never silently parked.
 
 use crate::attrs;
 use syn::visit::{self, Visit};
@@ -13,7 +14,7 @@ pub struct Marks {
     pub allows: u64,
     /// (test function, task number) of every known failure
     pub known: Vec<(String, u32)>,
-    /// `#[ignore = "known: ..."]` values that do not name a task
+    /// ignores without a reason, `known:` reasons without a task, `flaky:` reasons without an issue
     pub malformed: Vec<String>,
 }
 
@@ -22,16 +23,28 @@ fn task_of(reason: &str) -> Option<u32> {
     reason.strip_prefix("known: task ")?.trim().parse().ok()
 }
 
+/// Whether `reason` names an issue: `#` followed by digits.
+fn names_issue(reason: &str) -> bool {
+    reason.split('#').skip(1).any(|r| r.starts_with(|c: char| c.is_ascii_digit()))
+}
+
 impl Marks {
     fn attrs(&mut self, a: &[syn::Attribute], fn_name: Option<&syn::Ident>) {
         for x in a.iter().flat_map(attrs::applied) {
             if matches!(x.name.as_str(), "allow" | "expect") {
                 self.allows += attrs::list_paths(&x).iter().filter(|p| *p == DISALLOWED).count() as u64;
             }
-            let (Some(f), "ignore", Some(v)) = (fn_name, x.name.as_str(), attrs::string_value(&x)) else { continue };
+            let (Some(f), "ignore") = (fn_name, x.name.as_str()) else { continue };
+            let Some(v) = attrs::string_value(&x) else {
+                self.malformed.push(format!("{}: #[ignore] needs a reason: #[ignore = \"...\"]", f));
+                continue;
+            };
             match (v.starts_with("known"), task_of(&v)) {
                 (_, Some(t)) => self.known.push((f.to_string(), t)),
-                (true, None) => self.malformed.push(format!("{}: {:?}", f, v)),
+                (true, None) => self.malformed.push(format!("{}: {:?}: \"known: task NNNN\" expected", f, v)),
+                _ if v.starts_with("flaky") && !names_issue(&v) => {
+                    self.malformed.push(format!("{}: {:?}: \"flaky: #NNN ...\" expected", f, v))
+                }
                 _ => {}
             }
         }
@@ -76,6 +89,18 @@ mod tests {
         let m = scan(&syn::parse_file(src).expect("parses"));
         assert_eq!(m.allows, 2);
         assert_eq!(m.known, [("c".to_string(), 12)]);
-        assert_eq!(m.malformed.len(), 1);
+        assert_eq!(m.malformed.len(), 2);
+        assert!(m.malformed[0].starts_with("d: #[ignore] needs a reason"));
+    }
+
+    #[test]
+    fn flaky_ignores_name_an_issue() {
+        let src = "#[test]\n#[ignore = \"flaky: #123 races the timer\"]\nfn a() {}\n\
+                   #[test]\n#[ignore = \"flaky: races the timer\"]\nfn b() {}\n\
+                   #[test]\n#[ignore = \"flaky: see # later\"]\nfn c() {}\n\
+                   #[test]\n#[ignore = \"needs a unit\"]\nfn d() {}\n";
+        let m = scan(&syn::parse_file(src).expect("parses"));
+        let bad: Vec<_> = m.malformed.iter().map(|x| x.split(':').next().unwrap_or("")).collect();
+        assert_eq!(bad, ["b", "c"]);
     }
 }

@@ -45,6 +45,25 @@ pub fn run(root: &Path, o: Options, image: bool, list: bool) -> bool {
         inventory::list(o, image);
         return true;
     }
+    let tier = if image { "image" } else { "default" };
+    execute(root, |c| inventory::selected(c, o, image), o.fast || !o.coverage, tier)
+}
+
+/// An error naming every id that is not in the inventory.
+pub fn known(ids: &[&str]) -> Result<(), String> {
+    let unknown: Vec<&str> = ids.iter().copied().filter(|id| !inventory::CHECKS.iter().any(|c| c.id == *id)).collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    Err(format!("unknown step {:?}; `cargo xtask check --list` prints the ids", unknown))
+}
+
+/// `cargo xtask step`: the named steps in inventory order. Always a partial gate; prerequisites must be named too.
+pub fn steps(root: &Path, ids: &[&str]) -> bool {
+    execute(root, |c| ids.contains(&c.id), true, "default")
+}
+
+fn execute(root: &Path, wanted: impl Fn(&inventory::Check) -> bool, partial: bool, tier: &str) -> bool {
     let (ctx, log) = match crate::run::start_logs(root) {
         Ok(path) => path,
         Err(e) => {
@@ -56,7 +75,7 @@ pub fn run(root: &Path, o: Options, image: bool, list: bool) -> bool {
     let t = Instant::now();
     let mut results: Vec<Step> = Vec::new();
     for c in inventory::CHECKS {
-        if !inventory::selected(c, o, image) {
+        if !wanted(c) {
             println!("not-selected {} ({:?})", c.id, c.selection);
             continue;
         }
@@ -68,8 +87,7 @@ pub fn run(root: &Path, o: Options, image: bool, list: bool) -> bool {
             (c.run)(&ctx, root)
         }));
     }
-    let tier = if image { "image" } else { "default" };
-    let ok = report::summary(&results, t.elapsed().as_secs_f64(), o.fast || !o.coverage, tier);
+    let ok = report::summary(&results, t.elapsed().as_secs_f64(), partial, tier);
     if let Err(e) = std::fs::write(log.join("steps.log"), format!("{results:#?}\nexit={}\n", u8::from(!ok))) {
         eprintln!("cannot retain step results: {}", e);
         return false;

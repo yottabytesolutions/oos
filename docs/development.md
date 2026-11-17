@@ -8,6 +8,7 @@ cargo xtask check --fast           # partial: formatting, syntax rules, architec
 cargo xtask check --no-coverage    # partial: the full host gate without coverage
 cargo xtask check --list           # inventory only, does not run or pass the gate
 cargo xtask check --image          # default steps plus Docker/emulation/image suites
+cargo xtask step clippy tests-debug # partial: only the named inventory ids (CI runs the gate as parallel jobs)
 ```
 
 Until 0.2.0, repository CI is off and local evidence is authoritative. The coordinator runs

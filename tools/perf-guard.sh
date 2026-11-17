@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-# perf-guard.sh - the fork's performance guards, a step of every upstream sync (docs/fork/sync-checklist.md).
+# perf-guard.sh - the fork's performance guards, the `perf` step of the full gate (docs/development.md).
 #
 #   tools/perf-guard.sh
 #

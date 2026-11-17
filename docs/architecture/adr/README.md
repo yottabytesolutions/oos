@@ -1,7 +1,11 @@
 # Architecture decision records
 
-One file per decision, `NNNN-short-name.md`, from `0000-template.md`. A decision is changed by a new record that
-supersedes the old one. The target architecture is `../README.md`.
+One file per decision, `NNNN-short-name.md`. A decision is changed by a new record that supersedes the old one. The
+target architecture is `../README.md`.
+
+This series is closed to new records since the hard fork
+([ADR 0030](../../adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)). New records go into
+[docs/adr/](../../adr/README.md) from 0030 on. The records here stay valid; cite them as `architecture/NNNN` or by path.
 
 | ADR | Decision |
 |---|---|
@@ -22,5 +26,5 @@ supersedes the old one. The target architecture is `../README.md`.
 | [0015](0015-safe-start.md) | Safe start breaks restart loops |
 | [0016](0016-performance-principles.md) | Performance principles |
 | [0017](0017-hybrid-after-m12.md) | Migrate through M12, then rebuild menus and the SCPI parser spec-first |
-| [0018](0018-upstream-rebaseline.md) | Upstream merges rebaseline ratchets |
+| [0018](0018-upstream-rebaseline.md) | Upstream merges rebaseline ratchets (superseded by ADR 0030) |
 | [0019](0019-test-time.md) | Tests do not depend on machine speed |

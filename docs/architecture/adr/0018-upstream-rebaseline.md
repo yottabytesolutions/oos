@@ -1,6 +1,8 @@
 # 0018: Upstream merges rebaseline ratchets
 
-Status: accepted. 2026-11-16 (coordinator, on the owner's decision to merge upstream regularly).
+Status: superseded by [ADR 0030](../../adr/process/0030-this-tree-is-a-hard-fork-of-oos.md) (hard fork, no upstream
+intake), 2026-11-17. Accepted 2026-11-16 (coordinator, on the owner's decision to merge upstream regularly).
+The gate code this record describes (`xtask/src/rebaseline.rs`) is removed.
 
 ## Context
 

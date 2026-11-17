@@ -15,7 +15,6 @@ mod fmt;
 mod inventory;
 mod moves;
 mod ratchet;
-mod rebaseline;
 mod repo;
 mod report;
 mod run;

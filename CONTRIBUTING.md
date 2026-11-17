@@ -79,8 +79,10 @@ place to start reading.
   `<type>/<ref>-<slug>`, `type` one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`;
   `ref` the issue number or `t` plus the four-digit task id; `slug` lower case with `-`. Examples:
   `fix/123-trigger-holdoff`, `refactor/t0075-normal-trigger`. `main` is the only long-lived branch.
-- Pull request title: Conventional Commits, `type(scope): summary`, at most 72 characters. It becomes the squash
-  commit subject and the changelog line. Commit subjects follow the same form.
+- Pull request title and every commit subject: Conventional Commits, `type(scope): summary`, at most 72 characters.
+  Pull requests merge by rebase, so each commit lands on main as it is and its subject becomes a changelog line.
+  Fold `fixup!`, `squash!` and WIP commits into their topic commit (`git rebase -i --autosquash`) before you mark
+  the pull request ready; `pr-meta` rejects them.
 - Every commit carries `Signed-off-by:` (`git commit -s`) matching the author (DCO, ADR 0026). Use your GitHub
   noreply address (`<id>+<login>@users.noreply.github.com` or `<login>@users.noreply.github.com`): other email
   addresses are rejected by the privacy check.
@@ -91,7 +93,7 @@ place to start reading.
 - Link the issue (`Closes #NNN`) or the task file in the pull request text. Fill in the template.
 - History is linear. Rebase onto `main` (`git pull --rebase`) instead of merging `main` into your branch, and
   force-push your own branch with `--force-with-lease`. `main` is never force-pushed and only moves by fast-forward:
-  pull requests enter through the merge queue as squash (or rebase), with your name and sign-off kept.
+  pull requests enter through the merge queue by rebase, with your name and sign-off kept on every commit.
 
 ## Review gate
 

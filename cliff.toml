@@ -1,4 +1,4 @@
-# git-cliff: the release notes from the Conventional Commit subjects on main (squash merges: one subject per PR).
+# git-cliff: the release notes from the Conventional Commit subjects on main (rebase merges: every commit of a PR).
 # release.yml runs `git-cliff --latest`; locally: git-cliff --unreleased.
 [changelog]
 header = "# Changelog\n"

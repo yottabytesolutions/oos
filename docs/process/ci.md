@@ -1,13 +1,15 @@
 # CI pipeline
 
 Every pull request runs the gate on GitHub-hosted runners, needs a Codex review of its head commit and merges through
-the merge queue into a linear `main`. Settings live in Git as files and a script; nothing in the workflows changes
-GitHub settings. Task 0092 (`docs/tasks/done/0092-pipeline.md`) built it.
+the merge queue into a linear `main` by rebase: every commit of a PR lands on `main` as it is. Settings live in Git
+as files and a script; nothing in the workflows changes GitHub settings. Task 0092
+(`docs/tasks/done/0092-pipeline.md`) built it.
 
 ## Workflows
 
-All `runs-on` labels are literal `ubuntu-24.04` or `ubuntu-24.04-arm` (`pr-meta` checks it), top-level permissions
-are read-only, actions are pinned by commit SHA, every job has `timeout-minutes`, and no PR workflow uses a secret.
+All `runs-on` labels are literal `ubuntu-24.04`, `ubuntu-24.04-arm` or `ubuntu-latest` (`pr-meta` checks it),
+top-level permissions are read-only, actions are pinned by commit SHA, every job has `timeout-minutes`, and no PR
+workflow uses a secret.
 
 | Workflow | Trigger | Jobs (required checks in bold) |
 |---|---|---|
@@ -29,8 +31,9 @@ is these required checks. Every PR job reports its required name; `tools/ci/chan
 for changes to documents, GitHub settings or CI scripts, and in the merge queue for a tree that already passed on its
 PR head. A push to `main` only warms the caches. The timings jobs summarise job and step durations per run
 (`tools/ci/run_summary.py`). The rules of `pr-meta` are in
-`tools/ci/pr_meta.py`: branch name, title, DCO sign-off matching the author, runner labels; size, task link, tool
-details in commit messages and the agent label are warnings.
+`tools/ci/pr_meta.py`: branch name, title, every commit subject (Conventional, at most 72 characters, no `fixup!`,
+`squash!`, `amend!` or WIP commits), DCO sign-off matching the author, runner labels; size, task link, tool details
+in commit messages and the agent label are warnings.
 
 The ruleset is `.github/rulesets/main.json`; `tools/ci/apply-repo-settings.sh` applies it and the repository
 settings (dry run by default, `--apply` to write).
@@ -46,7 +49,8 @@ the bot's newest marker and sets the commit status `codex-review` on the PR head
 
 A new push makes the status pending until Codex reviews the new head (automatically, or after `@codex review`). In
 the merge queue the group commit gets success: a PR enters the queue only with a passing `codex-review`. When Codex
-is down, an admin merges through the ruleset bypass and states the reason in the PR.
+is down, an admin merges through the ruleset bypass and states the reason in the PR. The codex-gate runs of a PR are
+serialized and never cancelled (`queue: max`), so the last run publishes the current state.
 
 For risk-path PRs the maintainer may also ask the Claude GitHub app for a review in a PR comment. It is not a
 required check and needs no secret in any workflow.

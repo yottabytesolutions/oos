@@ -1,4 +1,5 @@
-<!-- Title: Conventional Commits, `type(scope): summary`, at most 72 characters. It becomes the squash commit. -->
+<!-- Title and every commit subject: Conventional Commits, `type(scope): summary`, at most 72 characters.
+     Each commit lands on main as it is (rebase merge). -->
 
 **Issue or task:** <!-- Closes #NNN, or docs/tasks/NNNN-name.md -->
 

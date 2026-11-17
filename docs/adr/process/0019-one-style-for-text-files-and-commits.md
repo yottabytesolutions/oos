@@ -79,14 +79,17 @@ After the hard fork (ADR 0030) the commit rules above change; the file and docum
 
 - Subject in Conventional Commits form, `type(scope): imperative summary`, at most 72 characters, without a full
   stop (`fix(ui): keep the trigger level when the probe ratio changes`). `type` is one of feat, fix, perf,
-  refactor, docs, test, ci, build, chore; the scope is optional and names a crate or area. Pull requests merge as
-  squash, so the subject on main is the PR title; `pr-meta` checks the title (tools/ci/pr_meta.py), and the release
-  notes are generated from these subjects (cliff.toml). A release commit is `chore(release): vX.Y.Z`.
+  refactor, docs, test, ci, build, chore; the scope is optional and names a crate or area. Pull requests merge by
+  rebase, so every commit subject of a PR lands on main as it is; `pr-meta` checks the title and every commit
+  subject (tools/ci/pr_meta.py), and the release notes are generated from these subjects (cliff.toml). A release
+  commit is `chore(release): vX.Y.Z`.
 - The body says why. How it was tested goes into the body when it is not obvious from the tests in the change
   (ADR 0015).
 - One topic per commit; formatting and moves in commits of their own.
 - A cherry-picked upstream change keeps its author and carries `Cherry-picked-from: upstream <hash>` (ADR 0030).
-  A squashed pull request keeps its author and sign-off (ADR 0026).
+  A rebased pull request keeps the author and sign-off of each commit (ADR 0026).
+- No `fixup!`, `squash!` or WIP commits reach main: fold them into their topic commit with
+  `git rebase -i --autosquash` before the pull request is marked ready.
 - Trailers: every commit carries the DCO `Signed-off-by:` line (ADR 0026). Commits and pull request texts carry no
   tool or agent attribution and no co-author lines: no session links, no agent or model trailers, no
   `Co-authored-by:`. The person who signs off is responsible for the change, whoever wrote it.

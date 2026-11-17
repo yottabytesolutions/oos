@@ -36,8 +36,8 @@ it for safety-relevant, medical, legal, commercial or compliance measurements.
 ## Is it safe to put the scope on my network?
 
 Only on a trusted bench network, never directly on the internet. Apart from SSH, OOS has no authentication: telnet,
-SCPI, VXI-11, the web remote and MCP are open to everyone who can reach the scope, and anyone there can install an
-update signed with the public community key.
+SCPI, VXI-11, the web remote and MCP are open to everyone who can reach the scope. Updates require a signature
+from this project's release key.
 
 ## Why did the stock system start instead of OOS?
 

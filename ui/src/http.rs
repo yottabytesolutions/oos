@@ -18,7 +18,7 @@
 //!                     (ui/update.rs: the header is checked here, the image off the frame loop, before anything is
 //!                     written). Requests are read by threads with time limits (`reader`, `Limits`); every limit
 //!                     ends in an answer (docs/update.md).
-//! Unauthenticated: bench LAN only (an update must carry a trusted signature, but the community key is public).
+//! Unauthenticated: bench LAN only (an update must carry a signature from this project's release key).
 //! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
 mod reader;

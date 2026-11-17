@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Host checks only. No card or network access. Every secret key lives in a temporary directory.
+// Host checks only. No card or network access. Signing uses test-only fixtures or keys generated in a temporary directory.
 use oos_hal::update::{card, hash, kexec, pkg};
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -12,6 +12,8 @@ impl Fixture {
         assert!(out.status.success());
         let f = Self(PathBuf::from(String::from_utf8(out.stdout).expect("test setup").trim()));
         std::fs::write(f.path("image"), image()).expect("test setup");
+        std::fs::write(f.path("test signing key"), include_str!("fixtures/test-signing.key")).expect("test setup");
+        std::fs::write(f.path("test public key"), hash::hex(&test_key())).expect("test setup");
         f
     }
 
@@ -29,6 +31,12 @@ impl Fixture {
         let mut c = self.command();
         c.args(["pack", "--image"]).arg(self.path("image"));
         c.args(["--build", "20261114-120000 kernel test", "--out"]).arg(self.path("package"));
+        c
+    }
+
+    fn test_pack(&self) -> Command {
+        let mut c = self.pack();
+        c.arg("--key").arg(self.path("test signing key")).arg("--untrusted-ok");
         c
     }
 
@@ -70,6 +78,10 @@ fn success(out: &Output) {
 fn refused(out: &Output, reason: &str) {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains(reason), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+fn test_key() -> [u8; 32] {
+    oos_hal::update::ed25519::public_key(&[9; 32])
 }
 
 fn image() -> Vec<u8> {
@@ -145,23 +157,10 @@ fn no_selection_ignores_home_and_legacy_environment() {
 }
 
 #[test]
-fn community_requires_opt_in_and_refuses_ambiguous_selection() {
+fn community_signing_mode_is_removed() {
     let f = Fixture::new();
-    let text = include_str!("../../keys/community-signing.key");
-    let seed: [u8; 32] = hash::unhex(text.lines().find(|s| !s.starts_with('#') && !s.is_empty()).expect("test setup"))
-        .expect("test setup")
-        .try_into()
-        .expect("test setup");
-    success(&f.pack().arg("--community").output().expect("test setup"));
-    f.verify(oos_hal::update::ed25519::public_key(&seed));
-    refused(
-        &f.pack().arg("--community").arg("--key").arg(f.path("missing")).output().expect("test setup"),
-        "cannot be combined",
-    );
-    refused(
-        &f.pack().arg("--community").env("OOS_SIGNING_KEY", f.path("missing")).output().expect("test setup"),
-        "cannot be combined",
-    );
+    refused(&f.pack().arg("--community").output().expect("test setup"), "--community needs a value");
+    assert!(!f.path("package").exists());
 }
 
 #[test]
@@ -204,11 +203,11 @@ impl Fixture {
         std::fs::write(&git, "#!/bin/sh\ncase \"$*\" in *rev-parse*) echo fixture;; *ls-files*) ;; *) exit 1;; esac\n")
             .expect("test setup");
         std::fs::set_permissions(git, std::fs::Permissions::from_mode(0o700)).expect("test setup");
-        // Skip Cargo's rebuild. Run the signer binary built for this host check.
+        // Skip Cargo's rebuild and permit the untrusted test key only in this isolated host fixture.
         let cargo = self.path("bin/cargo");
         std::fs::write(
             &cargo,
-            "#!/bin/sh\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$OOS_TEST_SIGNER\" \"$@\"\n",
+            "#!/bin/sh\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$OOS_TEST_SIGNER\" \"$@\" --untrusted-ok\n",
         )
         .expect("test setup");
         std::fs::set_permissions(cargo, std::fs::Permissions::from_mode(0o700)).expect("test setup");
@@ -259,10 +258,10 @@ impl Fixture {
 fn image_signing_script_uses_saved_build_id_and_output_name() {
     let f = Fixture::new();
     let mut cmd = f.script();
-    std::fs::write(f.path("private key"), include_str!("../../keys/community-signing.key")).expect("test setup");
+    std::fs::write(f.path("private key"), include_str!("fixtures/test-signing.key")).expect("test setup");
     success(&cmd.arg("--key").arg(f.path("private key")).output().expect("test setup"));
     let bytes = std::fs::read(f.path("selected target/image/oos-dev.oosupd")).expect("test setup");
-    let (header, payload) = pkg::verify(&bytes, &oos_hal::update::trusted_keys()).expect("test setup");
+    let (header, payload) = pkg::verify(&bytes, &[test_key()]).expect("test setup");
     assert_eq!(header.manifest.build, "20261114-120000 kernel test");
     assert_eq!(payload, image());
     assert!(f.path("selected target/image/oos-dev.oosupd.oos-build.json").exists());
@@ -300,12 +299,10 @@ fn untrusted_signing_keys_require_explicit_opt_in() {
 #[test]
 fn signing_flags_are_pack_only() {
     let f = Fixture::new();
-    for flag in ["--community", "--untrusted-ok"] {
-        for command in ["verify", "keygen", "status"] {
-            refused(&f.command().args([command, flag]).output().expect("test setup"), "only valid for pack");
-        }
-        refused(&f.command().arg(flag).output().expect("test setup"), "only valid for pack");
+    for command in ["verify", "keygen", "status"] {
+        refused(&f.command().args([command, "--untrusted-ok"]).output().expect("test setup"), "only valid for pack");
     }
+    refused(&f.command().arg("--untrusted-ok").output().expect("test setup"), "only valid for pack");
 }
 
 #[test]
@@ -313,22 +310,23 @@ fn image_signing_script_requires_saved_build_id() {
     let f = Fixture::new();
     let mut cmd = f.script();
     std::fs::remove_file(f.path("selected target/image/oos-dev.build")).expect("test setup");
-    refused(&cmd.arg("--community").output().expect("test setup"), "run boot/build-dev-image.sh first");
+    refused(
+        &cmd.env("OOS_SIGNING_KEY", f.path("test signing key")).output().expect("test setup"),
+        "run boot/build-dev-image.sh first",
+    );
     assert!(!f.path("selected target/image/oos-dev.oosupd").exists());
 }
 
 #[test]
-fn image_signing_script_accepts_community_and_environment() {
+fn image_signing_script_accepts_environment() {
     let f = Fixture::new();
     let mut cmd = f.script();
     refused(&cmd.output().expect("test setup"), "signing requires --key");
     assert!(!f.path("selected target/image/oos-dev.oosupd").exists());
-    std::fs::write(f.path("private key"), include_str!("../../keys/community-signing.key")).expect("test setup");
+    std::fs::write(f.path("private key"), include_str!("fixtures/test-signing.key")).expect("test setup");
     success(&cmd.env("OOS_SIGNING_KEY", f.path("private key")).output().expect("test setup"));
-    std::fs::remove_file(f.path("selected target/image/oos-dev.oosupd")).expect("test setup");
-    success(&cmd.env_remove("OOS_SIGNING_KEY").arg("--community").output().expect("test setup"));
     let bytes = std::fs::read(f.path("selected target/image/oos-dev.oosupd")).expect("test setup");
-    pkg::verify(&bytes, &oos_hal::update::trusted_keys()).expect("test setup");
+    pkg::verify(&bytes, &[test_key()]).expect("test setup");
 }
 
 #[test]
@@ -344,7 +342,8 @@ fn image_signing_script_refuses_extra_or_incomplete_arguments() {
         vec!["--build", "other"],
         vec!["--key"],
         vec!["--key", ""],
-        vec!["--community", "--untrusted-ok"],
+        vec!["--community"],
+        vec!["--untrusted-ok"],
         vec!["pack"],
     ] {
         let out = Command::new("sh")
@@ -359,21 +358,21 @@ fn image_signing_script_refuses_extra_or_incomplete_arguments() {
 }
 
 #[test]
-fn image_workflow_requires_signed_update_and_gel() {
+fn image_workflow_publishes_unsigned_image_for_offline_signing() {
     let workflow = include_str!("../../.github/workflows/image.yml");
     let build = workflow.find("run: boot/build-dev-image.sh").expect("test setup");
-    let sign = workflow.find("run: boot/sign-dev-image.sh --community").expect("test setup");
-    let gel = workflow.find("run: python3 -I boot/build-gel.py").expect("test setup");
+    assert!(!workflow.contains("boot/sign-dev-image.sh"));
+    assert!(!workflow.contains("boot/build-gel.py"));
     let check = workflow.find("      - name: Validate release artifacts\n        run: |\n").expect("test setup");
     let upload = workflow[check..].find("      - uses: actions/upload-artifact@").expect("test setup") + check;
-    assert!(build < sign && sign < gel && gel < check && check < upload);
+    assert!(build < check && check < upload);
     let script = workflow[check..upload].split_once("run: |\n").expect("test setup").1;
     let script =
         script.lines().map(|line| line.strip_prefix("          ").expect("test setup")).collect::<Vec<_>>().join("\n");
     let f = Fixture::new();
     std::fs::create_dir_all(f.path("selected target/image")).expect("test setup");
-    for (update, gel) in [(false, false), (true, false), (false, true), (true, true)] {
-        for (name, present) in [("oos-dev.oosupd", update), ("DHO800_DHO900_OOS_Install.GEL", gel)] {
+    for (image, build) in [(false, false), (true, false), (false, true), (true, true)] {
+        for (name, present) in [("oos-dev.img", image), ("oos-dev.build", build)] {
             let path = f.path("selected target/image").join(name);
             if present {
                 std::fs::write(path, "artifact").expect("test setup");
@@ -387,7 +386,7 @@ fn image_workflow_requires_signed_update_and_gel() {
             .env("CARGO_TARGET_DIR", f.path("selected target"))
             .output()
             .expect("test setup");
-        assert_eq!(out.status.success(), update && gel, "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(out.status.success(), image && build, "{}", String::from_utf8_lossy(&out.stderr));
     }
 }
 
@@ -403,7 +402,7 @@ fn image_signing_script_rejects_unverified_inputs() {
             } else {
                 std::fs::remove_file(input.with_file_name(format!("{name}.oos-build.json"))).expect("test setup");
             }
-            let out = cmd.arg("--community").output().expect("test setup");
+            let out = cmd.env("OOS_SIGNING_KEY", f.path("test signing key")).output().expect("test setup");
             refused(&out, if replace { "stale or replaced artifact" } else { "missing build receipt" });
             assert!(!f.path("selected target/image/oos-dev.oosupd").exists());
         }
@@ -423,7 +422,10 @@ fn image_signing_script_rechecks_inputs_after_pack() {
             ),
         )
         .expect("test setup");
-        refused(&cmd.arg("--community").output().expect("test setup"), "stale or replaced artifact");
+        refused(
+            &cmd.env("OOS_SIGNING_KEY", f.path("test signing key")).output().expect("test setup"),
+            "stale or replaced artifact",
+        );
         assert!(!f.path("selected target/image/oos-dev.oosupd.oos-build.json").exists());
     }
 }

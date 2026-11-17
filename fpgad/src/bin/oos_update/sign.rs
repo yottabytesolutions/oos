@@ -43,17 +43,7 @@ fn signing_seed(a: &Args) -> [u8; 32] {
         .val("--key")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("OOS_SIGNING_KEY").filter(|v| !v.is_empty()).map(PathBuf::from));
-    if a.flag("--community") {
-        if key.is_some() {
-            die("--community cannot be combined with --key or OOS_SIGNING_KEY");
-        }
-        // This public development fixture is intentionally shipped with the host signer.
-        return parse_seed(include_str!("../../../../keys/community-signing.key"))
-            .unwrap_or_else(|| die("invalid community development key"));
-    }
-    let key = key.unwrap_or_else(|| {
-        die("signing requires --key FILE or OOS_SIGNING_KEY; use --community for the public development key")
-    });
+    let key = key.unwrap_or_else(|| die("signing requires --key FILE or OOS_SIGNING_KEY"));
     load_seed(&key)
 }
 

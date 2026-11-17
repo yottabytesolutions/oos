@@ -23,13 +23,15 @@ class ImageTier(unittest.TestCase):
                     patch.object(image_suite, 'kernel_source', side_effect=lambda: seen.append('kernel-source')), \
                     patch.object(image_suite, 'run', side_effect=lambda c: seen.append(c)), \
                     patch.object(image_suite, 'validate', side_effect=lambda: seen.append('validate')), \
-                    patch.object(image_suite.subprocess, 'run') as manifest, patch.dict(os.environ):
+                    patch.object(image_suite.subprocess, 'run') as manifest, \
+                    patch.dict(os.environ, {'OOS_SIGNING_KEY': '/path/to/release.key'}):
                 image_suite.main()
+                self.assertEqual(os.environ['OOS_SIGNING_KEY'], '/path/to/release.key')
             self.assertEqual(seen[0], 'kernel-source')
             self.assertIn(['cargo', 'xtask', 'doctor', '--image'], seen)
             validation = seen.index('validate')
             for command in (['sh', 'kernel/build-base.sh'], ['sh', 'boot/build-dev-image.sh'],
-                            ['sh', 'boot/sign-dev-image.sh', '--community'], ['python3', '-I', 'boot/build-gel.py']):
+                            ['sh', 'boot/sign-dev-image.sh'], ['python3', '-I', 'boot/build-gel.py']):
                 self.assertLess(seen.index(command), validation)
             self.assertEqual(seen[validation + 1:], [['sh', f'tools/{name}.sh'] for name in
                              ('unit-dtb-check', 'gel-sim', 'usb-sim', 'wlan-sim')])

@@ -34,13 +34,13 @@ def kernel_source():
 def main():
     os.environ['CARGO_TARGET_DIR'] = str(output.target())
     # Validation must use public synthetic inputs even if an interactive shell has unit defaults set.
-    for name in ('OOS_CAL_DIR', 'OOS_UNIT', 'OOS_GEL_OLD', 'OOS_SIGNING_KEY', 'OOS_BOARD', 'OOS_KBASE', 'OOS_OUT',
+    for name in ('OOS_CAL_DIR', 'OOS_UNIT', 'OOS_GEL_OLD', 'OOS_BOARD', 'OOS_KBASE', 'OOS_OUT',
                  'OOS_NO_AUTOACQ'):
         os.environ.pop(name, None)
     kernel_source()
     run(['cargo', 'xtask', 'doctor', '--image'])
     for command in (['sh', 'kernel/build-base.sh'], ['sh', 'boot/build-dev-image.sh'],
-                    ['sh', 'boot/sign-dev-image.sh', '--community'], ['python3', '-I', 'boot/build-gel.py']):
+                    ['sh', 'boot/sign-dev-image.sh'], ['python3', '-I', 'boot/build-gel.py']):
         run(command)
     validate()
     image = output.target() / 'image'

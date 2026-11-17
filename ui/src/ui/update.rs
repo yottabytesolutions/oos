@@ -29,6 +29,8 @@ struct PendingUpload {
 #[derive(Default)]
 pub(super) struct UpdateUi {
     job: Option<(std::process::Child, String)>,
+    #[cfg(test)]
+    trusted_keys: Option<Vec<[u8; 32]>>,
     /// Immutable image identity, resolved once and injectable by host tests, including read errors.
     running_unit: Option<Result<String, String>>,
     /// an uploaded package being checked and stored (`upload_store`) before the install job starts; its build
@@ -162,6 +164,8 @@ impl Ui {
             return Err("an update job is running".into());
         }
         let keys = update::trusted_keys();
+        #[cfg(test)]
+        let keys = self.upd.trusted_keys.clone().unwrap_or(keys);
         let h = upload_header(&body, &keys)?;
         let running = self.upd.running_unit.get_or_insert_with(update::unit::running).clone()?;
         if let Some(confirmation) = upload::confirmation(&h.manifest, &running, any_unit)? {
@@ -313,9 +317,10 @@ mod tests {
     #[test]
     fn foreign_unit_upload_needs_confirmation_before_spawning_a_job() {
         let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
-        let seed_text = include_str!("../../../keys/community-signing.key");
+        let seed_text = include_str!("../../../fpgad/tests/fixtures/test-signing.key");
         let seed_line = seed_text.lines().find(|l| !l.trim().is_empty() && !l.starts_with('#')).unwrap();
         let seed: [u8; 32] = update::hash::unhex(seed_line.trim()).unwrap().try_into().unwrap();
+        u.upd.trusted_keys = Some(vec![update::ed25519::public_key(&seed)]);
         let body = pkg::build_with(&seed, "20261115-120000", "k", b"image", &[("unit", "other-unit")]).unwrap();
         u.upd.running_unit = Some(Ok("fake-unit".into()));
         let (refused, kind, reply) = u.update_upload_reply(body, "");
@@ -333,11 +338,12 @@ mod tests {
     fn unreadable_running_identity_refuses_even_an_overridden_upload() {
         let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         u.upd.running_unit = Some(Err("identity read failed".into()));
-        let text = include_str!("../../../keys/community-signing.key");
+        let text = include_str!("../../../fpgad/tests/fixtures/test-signing.key");
         let seed: [u8; 32] = update::hash::unhex(text.lines().find(|l| !l.is_empty() && !l.starts_with('#')).unwrap())
             .unwrap()
             .try_into()
             .unwrap();
+        u.upd.trusted_keys = Some(vec![update::ed25519::public_key(&seed)]);
         let body = pkg::build(&seed, "b", "k", b"image").unwrap();
         let (refused, kind, reply) = u.update_upload_reply(body, "any-unit=1");
         assert!(refused);

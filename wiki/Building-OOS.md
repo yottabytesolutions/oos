@@ -14,22 +14,13 @@ You only have to repeat this when the kernel changes.
 
 ## Signing key
 
-Update packages must be signed. To let everyone build updates for every OOS scope, the repository includes a **public
-community key**, `keys/community-signing.key`, and builds trust it by default. Signing requires explicit selection.
-The image build never signs. Select a private key with `--key` or `OOS_SIGNING_KEY`, or the public development fixture
-with `--community`.
+Update packages must be signed with this project's release key (id `5b293adb4389dc84`). Builds from this
+repository trust only that key, listed in `keys/update.pub`; the upstream maintainer and former public community
+keys are not trusted. The secret release key is kept outside the repository.
 
-The community key only protects against damaged packages. It says nothing about who built one, so **only install
-packages from people you trust.**
-
-If you want a scope to accept only your own builds, create your own key before you build:
-
-```sh
-cargo run --offline --release --manifest-path fpgad/Cargo.toml --bin oos-update -- keygen --out /path/to/signing.key
-```
-
-Replace all keys in `keys/update.pub` with the line it prints. Keep the secret key outside the repository.
-**Back it up and never publish it.** Details:
+The image build never signs. Select the secret seed with `--key FILE` or `OOS_SIGNING_KEY`; `--key` takes precedence.
+Signing requires one of these explicit selections. Keep the secret key outside the repository,
+**back it up and never publish it.** Details:
 [docs/update.md](https://github.com/yottabytesolutions/oos/blob/main/docs/update.md).
 
 ## Build the image
@@ -40,7 +31,7 @@ See [the output contract](https://github.com/yottabytesolutions/oos/blob/main/to
 
 ```sh
 boot/build-dev-image.sh
-boot/sign-dev-image.sh --key /path/to/signing.key # or --community for development
+boot/sign-dev-image.sh --key /path/to/signing.key
 boot/build-gel.py
 ```
 
@@ -79,5 +70,5 @@ boot/build-dev-image.sh
 The scripts say what is missing before they start: Docker not reachable, no rustup or no target, no arm64 containers.
 On x86-64 the first build takes longer than on arm64, mostly for wpa_supplicant and e2fsck under QEMU; they are built
 once. A finished build leaves the same files as on macOS. The workflow `.github/workflows/image.yml` builds on arm64
-and on x86-64 for every release and compares the kernel, the DTB and the files inside the image of the two. To install them on a second card from Linux, see
+and on x86-64 for every release and compares the kernel, the DTB and the files inside the image of the two. CI publishes unsigned images; sign and package them offline with the project release key. To install them on a second card from Linux, see
 [[Install on a second card]], with `/dev/sdX` for the card.

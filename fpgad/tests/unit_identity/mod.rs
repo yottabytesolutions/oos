@@ -47,7 +47,7 @@ fn pack_uses_the_image_unit_and_accepts_only_a_matching_explicit_unit() {
             let (h, _) = pkg::verify(&bytes, &[key]).expect("test setup");
             assert_eq!(oos_hal::update::unit::package(&h.manifest).expect("test setup"), unit.unwrap_or("none"));
         }
-        refused(&f.pack().args(["--community", "--unit", "other-unit"]).output().expect("test setup"), "refused");
+        refused(&f.test_pack().args(["--unit", "other-unit"]).output().expect("test setup"), "refused");
     }
 }
 
@@ -56,7 +56,7 @@ fn pack_refuses_invalid_or_unreadable_embedded_units() {
     let f = Fixture::new();
     for unit in ["", "two words", "../unit"] {
         std::fs::write(f.path("image"), image_unit(Some(unit))).expect("test setup");
-        refused(&f.pack().arg("--community").output().expect("test setup"), "unit must be");
+        refused(&f.test_pack().output().expect("test setup"), "unit must be");
         assert!(!f.path("package").exists());
     }
     let mut img = image_unit(Some("test-unit"));
@@ -73,7 +73,7 @@ fn pack_refuses_invalid_or_unreadable_embedded_units() {
     ]);
     img[576..596].copy_from_slice(&id);
     std::fs::write(f.path("image"), img).expect("test setup");
-    refused(&f.pack().arg("--community").output().expect("test setup"), "not gzip");
+    refused(&f.test_pack().output().expect("test setup"), "not gzip");
 }
 
 #[test]
@@ -84,9 +84,14 @@ fn signer_uses_the_receipted_build_unit_instead_of_the_current_environment() {
     std::fs::write(&sidecar, "built-unit\n").expect("test setup");
     std::fs::write(f.path("selected target/image/oos-dev.img"), image_unit(Some("built-unit"))).expect("test setup");
     f.stamp_image(cmd.get_envs().find(|(k, _)| k == &"PATH").expect("test setup").1.expect("test setup"));
-    success(&cmd.arg("--community").env("OOS_UNIT", "wrong-unit").output().expect("test setup"));
+    success(
+        &cmd.env("OOS_SIGNING_KEY", f.path("test signing key"))
+            .env("OOS_UNIT", "wrong-unit")
+            .output()
+            .expect("test setup"),
+    );
     let bytes = std::fs::read(f.path("selected target/image/oos-dev.oosupd")).expect("test setup");
-    let (h, _) = pkg::verify(&bytes, &oos_hal::update::trusted_keys()).expect("test setup");
+    let (h, _) = pkg::verify(&bytes, &[test_key()]).expect("test setup");
     assert_eq!(oos_hal::update::unit::package(&h.manifest).expect("test setup"), "built-unit");
 }
 
@@ -101,7 +106,7 @@ fn signer_refuses_missing_or_replaced_unit_sidecars() {
         } else {
             std::fs::write(sidecar, "other-unit\n").expect("test setup");
         }
-        refused(&cmd.arg("--community").output().expect("test setup"), "oos-dev.unit");
+        refused(&cmd.env("OOS_SIGNING_KEY", f.path("test signing key")).output().expect("test setup"), "oos-dev.unit");
         assert!(!f.path("selected target/image/oos-dev.oosupd").exists());
     }
 }
@@ -158,7 +163,7 @@ fn cli_refuses_foreign_units_and_logs_an_explicit_override() {
 #[test]
 fn pack_refuses_a_profile_that_the_plain_image_does_not_contain() {
     let f = Fixture::new();
-    refused(&f.pack().args(["--community", "--unit", "dho804"]).output().expect("test setup"), "image unit 'none'");
+    refused(&f.test_pack().args(["--unit", "dho804"]).output().expect("test setup"), "image unit 'none'");
     assert!(!f.path("package").exists());
 }
 
@@ -167,10 +172,17 @@ fn card_file_install_uses_its_explicit_simulated_unit() {
     let f = Fixture::new();
     simulated_card(&f);
     std::fs::write(f.path("image"), image_unit(Some("fake-unit"))).expect("test setup");
-    success(&f.pack().arg("--community").output().expect("test setup"));
+    success(&f.test_pack().output().expect("test setup"));
     let install = || {
         let mut c = f.command();
-        c.arg("install").arg(f.path("package")).arg("--card").arg(f.path("card")).arg("--state").arg(f.path("state"));
+        c.arg("install")
+            .arg(f.path("package"))
+            .arg("--keys")
+            .arg(f.path("test public key"))
+            .arg("--card")
+            .arg(f.path("card"))
+            .arg("--state")
+            .arg(f.path("state"));
         c
     };
     refused(&install().output().expect("test setup"), "running image unit 'none'");
@@ -218,12 +230,19 @@ fn regular_card_file_aliases_keep_simulation_and_unit_checks() {
     let f = Fixture::new();
     simulated_card(&f);
     std::fs::write(f.path("image"), image_unit(Some("fake-unit"))).expect("test setup");
-    success(&f.pack().arg("--community").output().expect("test setup"));
+    success(&f.test_pack().output().expect("test setup"));
     std::os::unix::fs::symlink(f.path("card"), f.path("card-link")).expect("file alias");
     for path in [f.path("./card"), f.path("card-link")] {
         let install = || {
             let mut c = f.command();
-            c.arg("install").arg(f.path("package")).arg("--card").arg(&path).arg("--state").arg(f.path("state"));
+            c.arg("install")
+                .arg(f.path("package"))
+                .arg("--keys")
+                .arg(f.path("test public key"))
+                .arg("--card")
+                .arg(&path)
+                .arg("--state")
+                .arg(f.path("state"));
             c
         };
         refused(&install().output().expect("CLI runs"), "running image unit 'none'");
@@ -235,10 +254,17 @@ fn regular_card_file_aliases_keep_simulation_and_unit_checks() {
 fn direct_cli_text_distinguishes_dry_run_installed_and_unchanged() {
     let f = Fixture::new();
     simulated_card(&f);
-    success(&f.pack().arg("--community").output().expect("test setup"));
+    success(&f.test_pack().output().expect("test setup"));
     let install = || {
         let mut c = f.command();
-        c.arg("install").arg(f.path("package")).arg("--card").arg(f.path("card")).arg("--state").arg(f.path("state"));
+        c.arg("install")
+            .arg(f.path("package"))
+            .arg("--keys")
+            .arg(f.path("test public key"))
+            .arg("--card")
+            .arg(f.path("card"))
+            .arg("--state")
+            .arg(f.path("state"));
         c
     };
     let dry = install().output().expect("dry run");

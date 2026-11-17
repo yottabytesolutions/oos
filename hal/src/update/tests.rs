@@ -365,12 +365,7 @@ fn mode_and_lock() {
     assert!(!f.st().persist);
 }
 
-#[test]
-fn trusted_keys_file_parses() {
-    // every line that is not a comment must be a key (a typo would silently drop it)
-    let lines = TRUSTED_KEYS.lines().filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#')).count();
-    assert_eq!(trusted_keys().len(), lines);
-}
+mod keys;
 
 /// Review of 2026-11-05: a power cut while `recovery` is written must leave a card that boots.
 #[test]

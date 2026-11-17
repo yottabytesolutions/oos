@@ -1,0 +1,22 @@
+name: Feature request
+description: Behaviour OOS should have
+labels: [type/feat]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you want to do on the scope and cannot, or only awkwardly.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: As the user sees it. The stock firmware may be described as behaviour, never by its code.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

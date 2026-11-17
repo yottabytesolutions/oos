@@ -93,4 +93,4 @@ The text above that speaks of "pull requests from forks" entering upstream's mai
 ## References
 
 [CONTRIBUTING.md](../../../CONTRIBUTING.md), [AGENTS.md](../../../AGENTS.md),
-`.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/`, ADR 0013, ADR 0015, ADR 0019.
+`.github/pull_request_template.md`, `.github/ISSUE_TEMPLATE/`, ADR 0013, ADR 0015, ADR 0019.

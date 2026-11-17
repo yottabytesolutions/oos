@@ -1,0 +1,27 @@
+# Area labels by path (.github/labeler.yml), and `agent` for PRs from the agent app. pull_request only (never
+# pull_request_target): a fork PR's token is read-only, so fork PRs are skipped and labelled by the maintainer.
+name: Labeler
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  label:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          sync-labels: false
+      - name: Agent label
+        if: github.event.pull_request.user.login == 'yottabyte-oos-agent[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr edit "$PR" --repo "$REPO" --add-label agent

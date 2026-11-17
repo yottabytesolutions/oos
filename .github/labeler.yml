@@ -1,0 +1,39 @@
+# Path labels for .github/workflows/labeler.yml (actions/labeler v5+ format). Labels are defined in labels.yml.
+area/hal:
+  - changed-files:
+      - any-glob-to-any-file: 'hal/**'
+area/fpgad:
+  - changed-files:
+      - any-glob-to-any-file: 'fpgad/**'
+area/dsp:
+  - changed-files:
+      - any-glob-to-any-file: 'dsp/**'
+area/core:
+  - changed-files:
+      - any-glob-to-any-file: 'core/**'
+area/ui:
+  - changed-files:
+      - any-glob-to-any-file: 'ui/**'
+area/boot:
+  - changed-files:
+      - any-glob-to-any-file: ['boot/**', 'kernel/**', 'rootfs/**']
+area/gpu:
+  - changed-files:
+      - any-glob-to-any-file: 'gpu/**'
+area/tooling:
+  - changed-files:
+      - any-glob-to-any-file: ['xtask/**', 'tools/**', '.githooks/**']
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file: ['.github/**', 'deny.toml', 'cliff.toml', 'rust-toolchain.toml']
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file: ['docs/**', '*.md']
+risk/hardware:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'hal/src/dho/**'
+          - 'hal/src/update/**'
+          - 'fpgad/**'
+          - 'boot/**'
+          - 'kernel/**'

@@ -1,0 +1,56 @@
+name: Task for an agent
+description: A specified, bounded change an agent (or a person) can implement in one PR
+labels: [agent-ready]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        One issue is one PR. Keep the scope small enough for a reviewable diff (about 400 changed lines without
+        goldens). Split larger work into issues that build on each other (stacked PRs).
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What changes and why, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable, testable conditions. One per line.
+      placeholder: |
+        - [ ] `:TRIG:MODE?` returns NORM after `:TRIG:MODE NORM`
+        - [ ] a test covers the reply
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      multiple: true
+      options: [hal, fpgad, dsp, core, ui, boot/kernel/rootfs, gpu, tooling, ci, docs]
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk tier
+      description: >-
+        High: register writes, calibration, update signing, kexec or boot (code owner review, unit test before
+        merge, label risk/hardware). Medium: behaviour visible on the scope. Low: host-only, docs, tests.
+      options: [Low, Medium, High]
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What the PR must not change.
+    validations:
+      required: true
+  - type: textarea
+    id: pointers
+    attributes:
+      label: Pointers
+      description: Files, ADRs, docs/tasks entries, earlier PRs.

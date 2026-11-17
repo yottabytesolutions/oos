@@ -1,0 +1,29 @@
+# Weekly, grouped dependency updates. Titles are Conventional Commits ("build(deps): ...") so pr-meta accepts them;
+# Dependabot's own branches and commits are exempt from the branch and DCO rules (tools/ci/pr_meta.py).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: build
+      include: scope
+    labels: [type/build, area/ci]
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: build
+      include: scope
+    labels: [type/build]
+    open-pull-requests-limit: 5
+    groups:
+      rust:
+        patterns: ['*']

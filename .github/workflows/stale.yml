@@ -1,0 +1,29 @@
+# Pull requests without activity for 14 days are marked stale and closed 7 days later. Issues are never touched.
+name: Stale
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  stale:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
+        with:
+          days-before-issue-stale: -1
+          days-before-issue-close: -1
+          days-before-pr-stale: 14
+          days-before-pr-close: 7
+          stale-pr-label: stale
+          exempt-pr-labels: needs-unit
+          stale-pr-message: >-
+            No activity for 14 days. This pull request closes in 7 days unless it is updated.
+          close-pr-message: >-
+            Closed after 21 days without activity. Reopen it, or open a new one from the branch, to continue.

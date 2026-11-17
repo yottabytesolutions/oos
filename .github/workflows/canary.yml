@@ -1,0 +1,60 @@
+# Weekly, non-blocking: clippy and the tests on the latest stable Rust instead of the pin, so a toolchain bump is
+# known before it is made. A failure opens (or comments on) one tracking issue; nothing else gets write access.
+name: Canary
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: canary
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTUP_TOOLCHAIN: stable
+jobs:
+  stable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Latest stable with clippy and the musl target
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup target add --toolchain stable aarch64-unknown-linux-musl
+          rustc --version
+      # Warnings are findings, not failures: the ratchet lives on the pin.
+      - name: Clippy
+        run: |
+          cargo clippy --locked --workspace --all-targets
+          cargo clippy --locked --workspace --all-targets --target aarch64-unknown-linux-musl --exclude xtask
+      - name: Tests
+        run: cargo test --locked --workspace
+
+  report:
+    needs: stable
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the canary issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          title="Canary: latest stable Rust fails"
+          body="The weekly canary on the latest stable toolchain failed: $RUN_URL"
+          number=$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$REPO" --body "$body"
+          else
+            gh issue create --repo "$REPO" --title "$title" --label type/build --body "$body"
+          fi

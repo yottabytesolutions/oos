@@ -1,0 +1,54 @@
+name: Bug report
+description: Something does not work on a scope or on the host
+labels: [type/fix]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Do not post serial numbers, MAC addresses, licence keys, calibration files or vendor.bin, and no code,
+        listings or files from the stock or a modified firmware. Describe what the scope does.
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model
+      options: [DHO802, DHO804, DHO812, DHO814, DHO914, DHO914S, DHO924, DHO924S, Host only, Other]
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware revision and stock firmware
+      description: Board revision if known, and the stock firmware version the unit came with (e.g. 00.01.05).
+  - type: input
+    id: version
+    attributes:
+      label: OOS version and build
+      description: System > About, or /etc/oos-build (e.g. v0.2.0, 20261117-101500 kernel 6.12.115).
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How OOS was installed
+      options: [Second card, USB stick (GEL), Update package (web or oos-update), Not installed (host)]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repeat
+    attributes:
+      label: How to repeat it
+      description: Settings, signal, steps.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: /tmp/oos-boot.status, /tmp/oos-ui.log, /tmp/oos-cold.log, /tmp/oos-update.log, as far as they matter.
+      render: text

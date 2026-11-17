@@ -1,0 +1,80 @@
+# Repository labels. tools/ci/apply-repo-settings.sh creates or updates them (tools/ci/sync_labels.py).
+# Format: one mapping per label with name, color (hex, no #) and description.
+- name: type/feat
+  color: 1d76db
+  description: New behaviour
+- name: type/fix
+  color: d73a4a
+  description: Bug fix
+- name: type/perf
+  color: 5319e7
+  description: Performance
+- name: type/refactor
+  color: c5def5
+  description: Structure change without behaviour change
+- name: type/docs
+  color: 0075ca
+  description: Documentation
+- name: type/test
+  color: bfd4f2
+  description: Tests only
+- name: type/ci
+  color: ededed
+  description: Pipeline and repository process
+- name: type/build
+  color: ededed
+  description: Build, toolchain and dependencies
+- name: type/chore
+  color: ededed
+  description: Maintenance
+- name: area/hal
+  color: fbca04
+  description: Hardware abstraction (hal/)
+- name: area/fpgad
+  color: fbca04
+  description: FPGA daemon and oos-update (fpgad/)
+- name: area/dsp
+  color: fbca04
+  description: Signal processing (dsp/)
+- name: area/core
+  color: fbca04
+  description: Settings and change detection (core/)
+- name: area/ui
+  color: fbca04
+  description: User interface, SCPI, network (ui/)
+- name: area/boot
+  color: fbca04
+  description: Boot, kernel, rootfs, update packages
+- name: area/gpu
+  color: fbca04
+  description: GPU helper (gpu/)
+- name: area/tooling
+  color: fbca04
+  description: Gate, scripts and host tools
+- name: area/ci
+  color: fbca04
+  description: GitHub workflows and repository settings
+- name: area/docs
+  color: fbca04
+  description: Documentation
+- name: risk/hardware
+  color: b60205
+  description: Writes registers, calibration, updates or boot; code owner review and a unit test
+- name: needs-unit
+  color: e99695
+  description: Must be verified on a real scope before merge
+- name: agent-ready
+  color: 0e8a16
+  description: Specified well enough for an agent to take
+- name: agent
+  color: 6f42c1
+  description: Opened by the agent app
+- name: good-first-issue
+  color: 7057ff
+  description: Small and self-contained
+- name: flaky
+  color: d93f0b
+  description: A test that fails intermittently; the ignore reason names this issue
+- name: stale
+  color: cccccc
+  description: No activity; closes automatically

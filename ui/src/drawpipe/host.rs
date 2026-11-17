@@ -22,6 +22,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn buffer_return_follows_decoder_cleanup() {
+        use crate::board::scripted::{self, Batch, BatchKind, BatchSource};
+        use std::sync::{Arc, Barrier};
+
+        struct Cleanup(Arc<Barrier>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                self.0.wait();
+                self.0.wait();
+            }
+        }
+
+        let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+        let mut source = scripted::source(BatchKind::Raw, 123);
+        let batch = source.next_batch(&Default::default(), &Default::default(), 3, None).unwrap();
+        let fb = batch.frame_bytes();
+        let barrier = Arc::new(Barrier::new(2));
+        let cleanup = Cleanup(barrier.clone());
+        let decode: super::super::DecodeInto = Arc::new(move |_, _| {
+            std::hint::black_box(&cleanup);
+        });
+        let batch = pipe.feed_batch(Box::new(batch.into_bytes()), fb, 0..3, (0, None), decode, None);
+        let worker = std::thread::spawn(move || drop(batch));
+        barrier.wait();
+        let returned_early = oos_hal::sync::lock(&pipe.pool).try_recv().is_ok();
+        barrier.wait();
+        worker.join().unwrap();
+        assert!(!returned_early, "the decoder's captured settings must be freed before the buffer returns");
+        assert!(oos_hal::sync::lock(&pipe.pool).try_recv().is_ok());
+    }
+
+    #[test]
     fn returned_buffer_precedes_delivery_until_merge() {
         use crate::board::scripted::{self, Batch, BatchKind, BatchSource, ScriptBytes};
         use crate::model::Model;

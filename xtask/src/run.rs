@@ -3,12 +3,38 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
+
+type SourceMeasurements = Result<Vec<(crate::repo::Crate, crate::size::Measured)>, String>;
 
 /// Immutable per-run environment and log destination. Default commands inherit their environment.
 #[derive(Debug, Default)]
 pub(crate) struct Context {
     target: Option<PathBuf>,
     logs: Option<PathBuf>,
+    root: Option<PathBuf>,
+    measurements: OnceLock<SourceMeasurements>,
+    test_threads: Option<usize>,
+}
+
+impl Context {
+    pub(crate) fn limit_test_threads(mut self, threads: Option<usize>) -> Self {
+        self.test_threads = threads;
+        self
+    }
+
+    /// Share one source walk among the ratchet checks of this run. Ad-hoc contexts always read fresh sources.
+    pub(crate) fn source_measurements(
+        &self,
+        root: &Path,
+        measure: impl FnOnce() -> SourceMeasurements,
+    ) -> SourceMeasurements {
+        if self.root.as_deref() == Some(root) {
+            self.measurements.get_or_init(measure).clone()
+        } else {
+            measure()
+        }
+    }
 }
 
 /// The output of a finished command.
@@ -89,6 +115,11 @@ fn execute(
     if let Some(logs) = &ctx.logs {
         command.env("OOS_CHECK_LOG_DIR", logs);
     }
+    if std::env::var_os("NEXTEST_TEST_THREADS").is_none() {
+        if let Some(threads) = ctx.test_threads {
+            command.env("NEXTEST_TEST_THREADS", threads.to_string());
+        }
+    }
     let result = command.envs(env.iter().copied()).output();
     if let Some(logs) = &ctx.logs {
         let stamp =
@@ -121,7 +152,15 @@ pub(crate) fn start_logs(root: &Path) -> Result<(Context, PathBuf), String> {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
     let logs = selected.join("check-logs").join(format!("{}-{}", std::process::id(), stamp));
     std::fs::create_dir_all(&logs).map_err(|e| e.to_string())?;
-    Ok((Context { target: Some(selected), logs: Some(logs.clone()) }, logs))
+    Ok((
+        Context {
+            target: Some(selected),
+            logs: Some(logs.clone()),
+            root: Some(root.to_path_buf()),
+            ..Default::default()
+        },
+        logs,
+    ))
 }
 
 /// Whether `program` can be started (a `--version` call succeeds).

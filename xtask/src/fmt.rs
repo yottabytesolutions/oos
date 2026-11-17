@@ -4,9 +4,9 @@
 use crate::run;
 use std::path::Path;
 
-/// The changed lines `cargo fmt` would make in the crate in `root/krate`.
-pub fn diff_lines(ctx: &crate::run::Context, root: &Path, krate: &str) -> Result<usize, String> {
-    let out = run::capture(ctx, &root.join(krate), "cargo", &["fmt", "--", "--check", "--color", "never"])?;
+/// The changed lines `cargo fmt --all` would make across the workspace.
+pub fn diff_lines(ctx: &crate::run::Context, root: &Path) -> Result<usize, String> {
+    let out = run::capture(ctx, root, "cargo", &["fmt", "--all", "--", "--check", "--color", "never"])?;
     verdict(out.ok, &out.stdout, &out.stderr)
 }
 

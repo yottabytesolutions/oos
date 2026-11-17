@@ -52,7 +52,7 @@ cargo xtask doctor --image
 ```
 
 `rust-toolchain.toml` is authoritative for Rust 1.99.1, components and musl std. `tools/build-tools.json` requires
-Python >=3.12 and pins cargo-llvm-cov 0.9.1 and cargo-nextest 0.9.150; bootstrap installs both with `--version =X --locked` and fetches
+Python >=3.12 and pins cargo-llvm-cov 0.9.1 and cargo-nextest 0.9.151; bootstrap installs both with `--version =X --locked` and fetches
 locked Cargo dependencies. The numbered distribution still needs a real setup run on this macOS arm64 host. Linux x86-64 runner
 validation is unavailable here and explicitly untested, without blocking this release scope.
 Do not replace a missing distribution/component with floating stable. An explicit override can defeat the file;
@@ -129,7 +129,7 @@ and the coverage margin of 0.5 percentage points are unchanged.
 
 | ID | Command or behavior | Prerequisite | Selection |
 |---|---|---|---|
-| `fmt` | format each crate and validate static pins | pinned tools | fast and full |
+| `fmt` | `cargo fmt --all --check` and validate static pins | pinned tools | fast and full |
 | `size` | syntax and move-aware size ratchets | workspace metadata | fast and full |
 | `architecture` | workspace completeness and crate/module rules | Cargo.lock | fast and full |
 | `mutable-statics` | syntax and per-crate ratchets | sources | fast and full |
@@ -147,6 +147,7 @@ and the coverage margin of 0.5 percentage points are unchanged.
 | `decoders` | `cargo check --all-targets --no-default-features` in `ui`: core only, then `--features dec-<name>` for each optional decoder alone | pinned toolchain | full |
 | `tests-debug` | Rust tests per crate | pinned toolchain | full |
 | `tests-release` | release Rust tests per crate | pinned toolchain | full |
+| `perf-build` | compile the performance guards without running them | pinned Rust | full |
 | `perf` | `sh tools/perf-guard.sh` | toolchain | full |
 | `coverage` | `cargo llvm-cov` per crate | llvm-tools, cargo-llvm-cov | full; omitted only by partial mode |
 | `script-syntax` | `python3 -I tools/script_syntax.py` | Git, Python, declared shells | full |
@@ -195,7 +196,12 @@ unit rounds and releases regardless of classification. Workflow files retain the
 no CI aggregate or matrix result is required while repository CI is off.
 
 The gate runs its checks at the same time, each as soon as its prerequisites passed, and prints each result when it
-ends; the closing summary keeps the inventory order. The perf guards and the image checks run afterwards, one at a
+ends; the closing summary keeps the inventory order. Formatting uses one workspace-wide Cargo invocation, including
+non-default members. The size, statics, unsafe, method-exception and known-failure checks share one source measurement
+per gate run, including any parse error. A later run reads fresh sources. `perf-build` prepares the guards' original
+profiles in `target/perf-build` concurrently, using a separate Cargo lock; their observation logs stay in `target/`.
+Concurrent debug/release/coverage runners divide the host's cores between them; `NEXTEST_TEST_THREADS` overrides
+that default. Single-step CI jobs retain nextest's defaults. The perf guards and the image checks run afterwards, one at a
 time (`inventory::alone`): timing ratios and emulator time limits need a quiet machine. On a warm cache with
 cargo-nextest, the default gate takes about 5 minutes on a 16-core laptop, bound by the golden pictures and coverage
 of `ui`; the fast gate takes a few seconds. The image tier can take hours on cold builders or emulated hosts. Retain
@@ -260,13 +266,17 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
   depends on changed: documents, `.github/` (except `pr.yml` and files a Rust test includes) and `tools/ci/` skip
   clippy, the tests and cargo-deny. A merge-queue group whose tree equals its PR head skips the checks that passed
   on that head. Skipped jobs still report success under their required name.
-- `pr.yml` runs the tests in three parallel shards per profile (`OOS_TEST_PARTITION=K/N`, nextest
-  `--partition hash:K/N`; the doctests run in shard 1). A shard's skipped count includes the other shards' tests.
+- `pr.yml` runs the tests in four parallel shards per profile (`OOS_TEST_PARTITION=K/N`). The last shard runs
+  the UI golden binary alone; the others exclude that binary and use nextest `--partition hash:K/(N-1)`.
+  This separates the golden comparison from the expensive layout tests that formerly shared hash shard 2/3.
+  Unsharded runs and 1/1 still run every test. The doctests run in shard 1. A shard's skipped count includes
+  tests excluded by its filter or partition.
   Pull requests run the debug tests only; the merge queue adds the release tests. The required `test` check sums
   up every shard.
 - The release tests, locally and in CI, build with the Cargo profile `test-release`: the release optimisation level
   and no debug assertions, without a fat-LTO link per test binary (16 codegen units). The perf guards and the scope
-  build keep the shipping `release` profile. CI builds use `CARGO_PROFILE_DEV_DEBUG=line-tables-only`.
+  build keep the shipping `release` profile. Host dev/test builds use line-table debug info for file/line backtraces;
+  full variable/type debug info is available with `CARGO_PROFILE_DEV_DEBUG=2`.
 - The test and coverage steps run each crate's tests with cargo-nextest (pinned in `tools/build-tools.json`, installed
   by bootstrap, checked by the doctor): every test in its own process, all binaries in parallel, and the doctests
   with `cargo test --doc` (`cargo llvm-cov nextest` for coverage).
@@ -274,8 +284,12 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
   every test that ran 60 s or longer. A test that leaves a process holding its output fails. Tests kill a process
   group with `kill -KILL -- -<pgid>`: without `--`, the procps-ng `kill` of Ubuntu 24.04 signals the wrong group, or
   every process of the user (#23).
-- A push to `main` runs `pr.yml` as the only writer of the Rust caches (one per job kind); its test jobs build the
-  tests without running them, because the merge queue already ran them on that tree.
+- Lints, register plans and standalone decoder configurations run in three independent PR jobs, each with its
+  own cache. The required `clippy` check fails unless all three succeed. Host/ARM lint findings are still counted
+  together once per place. Nightly also separates the decoder matrix from lints.
+- A push to `main` runs `pr.yml` as the only writer of the PR Rust caches (one per job kind); its test jobs build the
+  tests without running them, because the merge queue already ran them on that tree. Rust caches retain workspace
+  crates as well as dependencies, so those warm-up builds survive cleanup; PRs and queue groups only restore them.
 - `.github/workflows/main.yml`, nightly and by hand: the whole default gate in parallel jobs, including the release
   tests, coverage and the base doctor, plus cargo-deny with the day's advisories and the image.
 - The image job downloads the kernel base from the pre-release `kernel-base-<version>`

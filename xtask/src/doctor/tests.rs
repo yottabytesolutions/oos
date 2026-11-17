@@ -21,9 +21,7 @@ fn good(program: &str, args: &[&str]) -> Result<Output, String> {
         ("rustc", ["--version"]) => "rustc 1.99.1",
         ("cargo", ["--version"]) => "cargo 1.99.1",
         ("cargo", ["llvm-cov", "--version"]) => "cargo-llvm-cov 0.9.1",
-        ("cargo", ["nextest", "--version"]) => {
-            "cargo-nextest 0.9.150 (d225b1daf 2026-10-26)\nrelease: 0.9.150\nhost: aarch64-apple-darwin"
-        }
+        ("cargo", ["nextest", "--version"]) => "cargo-nextest 0.9.151\nrelease: 0.9.151\nhost: aarch64-apple-darwin",
         ("python3", ["--version"]) => "Python 3.14.10",
         ("rustup", ["show", "active-toolchain"]) => "1.99.1-aarch64-apple-darwin (overridden)",
         ("rustup", ["component", "list", "--installed"]) => {

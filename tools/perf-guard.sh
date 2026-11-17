@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # perf-guard.sh - the fork's performance guards, the `perf` step of the full gate (docs/development.md).
 #
-#   tools/perf-guard.sh
+#   tools/perf-guard.sh [--build-only]
 #
 # 1. Deterministic guards (they also run in the normal `cargo test`): allocation counts of the batch read and decode,
 #    the early trigger end on the generic batch path, and the equivalence tests of the fork's fast paths.
@@ -17,10 +17,20 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 . "$root/tools/output.sh"
 export PATH="$HOME/.cargo/bin:$PATH"
 
+case "${1-}" in
+    ''|--build-only) ;;
+    *) echo "usage: tools/perf-guard.sh [--build-only]" >&2; exit 2 ;;
+esac
+# Compilation can overlap other gate work; the timing guards still run alone. These profiles do not share build
+# artifacts with the debug and test-release steps, so a separate Cargo lock avoids serializing their builds.
+output=$CARGO_TARGET_DIR
+CARGO_TARGET_DIR="$output/perf-build"
+. "$root/tools/output.sh"
 # Preserve Cargo's real status without a pipeline; keep complete observations for the budget reader.
 mkdir -p "$CARGO_TARGET_DIR"
-log="$CARGO_TARGET_DIR/perf-guard.log"
-step_log="$CARGO_TARGET_DIR/perf-guard-step.log"
+log="$output/perf-guard.log"
+if [ "${1-}" = --build-only ]; then log="$output/perf-build.log"; fi
+step_log="$output/perf-guard-step.log"
 : > "$log"
 started=$(date +%s)
 run() {
@@ -35,6 +45,14 @@ run() {
     fi
 }
 cd "$root"
+
+if [ "${1-}" = --build-only ]; then
+    run cargo test --locked --profile perf --quiet --no-run -p oos-hal \
+        --lib --test alloc_batch --test early_trigger_end --test perf_ratio
+    run cargo test --locked --release --quiet --no-run -p oos-ui --test soak --bin oos-ui
+    echo "perf guards: built"
+    exit 0
+fi
 
 echo "== hal: deterministic guards"
 run cargo test --locked --profile perf --quiet -p oos-hal --test alloc_batch --test early_trigger_end

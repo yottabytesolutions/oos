@@ -71,6 +71,10 @@ no higher than the preceding three. Three-cycle windows cover the batch/storm sc
 small retained growth independently of the 1 % allowance. Output is streamed and six samples are kept
 in a fixed array before warm-up.
 
+The buffer return follows cleanup of the batch's decoder and delivery captures. Returning it earlier lets
+the observer sample captured settings while their worker is still freeing them. A destructor barrier regression
+pins this ordering without elapsed-time assertions; the one-channel-block trend allowance stays unchanged.
+
 Raw and average use 200 ns/div; codes use 5 us/div for direct-code eligibility; live pairs use 200 us/div
 at 100 k depth and deep pairs 1 ms/div at 10 M depth. Probe tests reject retained growth, verify transient
 frees/realloc and reject a 1-byte end-of-cycle trend. Logs under

@@ -67,8 +67,8 @@ const SLOW_SECS: f64 = 60.0;
 /// binary. The perf guards keep the shipping `release` profile.
 const RELEASE_TESTS: &str = "test-release";
 
-/// The shard of `OOS_TEST_PARTITION=K/N` (CI): this job runs the K-th of N parts of every crate's tests, chosen by
-/// nextest's hash of the test name, so every test runs in exactly one shard. None runs all tests.
+/// The shard of `OOS_TEST_PARTITION=K/N` (CI). With multiple shards, the last runs only golden tests; the others
+/// hash the remaining tests across N-1 shards. None or 1/1 runs all tests.
 pub fn partition(value: Option<&str>) -> Result<Option<(u32, u32)>, String> {
     let Some(value) = value.filter(|v| !v.is_empty()) else { return Ok(None) };
     let bad = || format!("OOS_TEST_PARTITION={value}: expected K/N with 1 <= K <= N");
@@ -78,6 +78,10 @@ pub fn partition(value: Option<&str>) -> Result<Option<(u32, u32)>, String> {
         return Err(bad());
     }
     Ok(Some((k, n)))
+}
+
+fn golden_shard(shard: Option<(u32, u32)>) -> bool {
+    shard.is_some_and(|(k, n)| n > 1 && k == n)
 }
 
 /// The cargo-nextest options for one crate, after `nextest run` or `llvm-cov nextest`. cargo-nextest runs every test
@@ -94,8 +98,11 @@ pub fn nextest_args(root: &Path, release: bool, shard: Option<(u32, u32)>) -> Re
     if release {
         args.extend(["--cargo-profile".to_string(), RELEASE_TESTS.to_string()]);
     }
-    if let Some((k, n)) = shard {
-        args.extend(["--partition".to_string(), format!("hash:{k}/{n}")]);
+    if golden_shard(shard) {
+        args.extend(["--test".to_string(), "golden".to_string()]);
+    } else if let Some((k, n)) = shard.filter(|(_, n)| *n > 1) {
+        args.extend(["-E".to_string(), "not binary_id(=oos-ui::golden)".to_string()]);
+        args.extend(["--partition".to_string(), format!("hash:{k}/{}", n - 1)]);
     }
     Ok(args)
 }
@@ -112,8 +119,11 @@ pub fn run(
     krate: &str,
     release: bool,
 ) -> Result<(Counts, Vec<String>), String> {
-    let dir = root.join(krate);
     let shard = partition(std::env::var("OOS_TEST_PARTITION").ok().as_deref())?;
+    if golden_shard(shard) && krate != "ui" {
+        return Ok((Counts::default(), Vec::new()));
+    }
+    let dir = root.join(krate);
     let args = nextest_args(root, release, shard)?;
     let args: Vec<&str> = ["nextest", "run"].into_iter().chain(args.iter().map(String::as_str)).collect();
     let out = run::capture(ctx, &dir, "cargo", &args)?;
@@ -174,9 +184,29 @@ mod tests {
             assert!(partition(Some(bad)).is_err(), "{bad}");
         }
         let args = nextest_args(Path::new("/path/to/oos"), true, Some((2, 3))).unwrap();
-        assert_eq!(args[args.len() - 4..], ["--cargo-profile", "test-release", "--partition", "hash:2/3"]);
+        assert!(args.windows(2).any(|a| a == ["--cargo-profile", "test-release"]));
+        assert_eq!(args[args.len() - 4..], ["-E", "not binary_id(=oos-ui::golden)", "--partition", "hash:2/2"]);
         let debug = nextest_args(Path::new("/path/to/oos"), false, None).unwrap();
         assert!(!debug.iter().any(|a| a == "--partition" || a == "--cargo-profile"));
+    }
+
+    #[test]
+    fn golden_has_its_own_shard_while_single_shards_keep_every_test() {
+        for release in [false, true] {
+            let root = Path::new("/path/to/oos");
+            for k in 1..4 {
+                let args = nextest_args(root, release, Some((k, 4))).unwrap();
+                assert_eq!(
+                    args[args.len() - 4..],
+                    ["-E", "not binary_id(=oos-ui::golden)", "--partition", &format!("hash:{k}/3")]
+                );
+            }
+            let golden = nextest_args(root, release, Some((4, 4))).unwrap();
+            assert_eq!(golden[golden.len() - 2..], ["--test", "golden"]);
+            assert!(!golden.iter().any(|a| a == "--partition"));
+            let single = nextest_args(root, release, Some((1, 1))).unwrap();
+            assert!(!single.iter().any(|a| a == "--partition" || a == "-E" || a == "--test"));
+        }
     }
 
     #[test]

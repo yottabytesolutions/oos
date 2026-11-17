@@ -361,7 +361,6 @@ impl Drop for Lease {
 /// A batch with the workers: its frames are claimed a few at a time by whoever is free (the workers, and the
 /// acquisition thread while it waits for the next batch: `help`). Frames never claimed count as dropped.
 struct Batch {
-    lease: Lease,
     fb: usize,
     frames: usize,
     decode: decoder::Decoder,
@@ -380,6 +379,8 @@ struct Batch {
     /// stale frames) and when it was fed, right after its read (picture age)
     id: u64,
     fed: std::time::Instant,
+    // Return the buffer only after the decoder and delivery captures have been dropped.
+    lease: Lease,
 }
 
 /// Run by the UI after the merge that holds a batch's frames (`Pipe::feed_with`).

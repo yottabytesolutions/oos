@@ -75,7 +75,7 @@ fn the_ratchet_base_is_the_layer_below() {
         Some("${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}")
     );
     // origin/<layer> exists in the checkout only with the full history of every branch.
-    for job in ["fast", "clippy", "test-run", "python", "deny"] {
+    for job in ["fast", "clippy-run", "test-run", "python", "deny"] {
         assert_eq!(checkout(&doc, job, "fetch-depth"), Some(&Yaml::Integer(0)), "{job}");
     }
 }
@@ -126,4 +126,71 @@ fn required_jobs_run_on_every_pull_request() {
     assert!(mutated("codex-review.yml", codex, "github.base_ref == 'main'").is_err());
     assert!(mutated("pr.yml", "  test:\n    needs: test-run\n    if: always()\n", "  test:\n    needs: test-run\n")
         .is_err());
+}
+
+#[test]
+fn rust_caches_retain_the_workspace_artifacts_built_by_the_warm_up() {
+    for (name, text, jobs) in [
+        ("pr.yml", workflow("pr.yml").unwrap(), &["fast", "clippy-run", "test-run"][..]),
+        ("main.yml", include_str!("../../../.github/workflows/main.yml"), &["gate"][..]),
+    ] {
+        let doc = parse(text).unwrap();
+        for job in jobs {
+            let steps = doc["jobs"][*job]["steps"].as_vec().unwrap();
+            let cache = steps
+                .iter()
+                .find(|s| s["uses"].as_str().is_some_and(|a| a.starts_with("Swatinem/rust-cache@")))
+                .unwrap();
+            assert_eq!(cache["with"]["cache-workspace-crates"].as_bool(), Some(true), "{name}: {job}");
+            assert!(cache["with"]["shared-key"].as_str().is_some(), "{name}: {job}");
+            assert!(cache["with"]["save-if"].as_str().is_some(), "{name}: {job}");
+        }
+    }
+}
+
+#[test]
+fn parallel_jobs_keep_every_check_and_fail_the_required_names() {
+    let doc = parse(workflow("pr.yml").unwrap()).unwrap();
+    let rows = doc["jobs"]["clippy-run"]["strategy"]["matrix"]["include"].as_vec().unwrap();
+    let mut ids: Vec<_> = rows.iter().flat_map(|r| r["steps"].as_str().unwrap().split_whitespace()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["clippy", "decoders", "plan-matrix"]);
+    assert_eq!(rows.len(), 3, "keep lints, decoder builds and register plans on independent runners");
+    assert_eq!(doc["jobs"]["clippy-run"]["strategy"]["fail-fast"].as_bool(), Some(false));
+    for job in ["clippy", "test"] {
+        assert_eq!(doc["jobs"][job]["needs"].as_str(), Some(format!("{job}-run").as_str()));
+        assert_eq!(doc["jobs"][job]["if"].as_str(), Some("always()"));
+        let step = &doc["jobs"][job]["steps"][0];
+        assert_eq!(step["env"]["RESULT"].as_str(), Some(format!("${{{{ needs.{job}-run.result }}}}").as_str()));
+        for result in ["success", "failure", "cancelled", "skipped"] {
+            let status = std::process::Command::new("sh")
+                .args(["-c", step["run"].as_str().unwrap()])
+                .env("RESULT", result)
+                .status()
+                .unwrap();
+            assert_eq!(status.success(), result == "success", "{job}: {result}");
+        }
+    }
+    assert!(mutated(
+        "pr.yml",
+        "  clippy:\n    needs: clippy-run\n    if: always()\n",
+        "  clippy:\n    needs: clippy-run\n"
+    )
+    .is_err());
+}
+
+#[test]
+fn test_matrix_includes_the_dedicated_golden_shard_in_both_profiles() {
+    let doc = parse(workflow("pr.yml").unwrap()).unwrap();
+    let job = &doc["jobs"]["test-run"];
+    let matrix = &job["strategy"]["matrix"];
+    let shards = matrix["shard"].as_str().unwrap();
+    assert!(shards.contains("'[\"1/4\",\"2/4\",\"3/4\",\"4/4\"]'"));
+    assert!(shards.contains("github.event_name == 'push' && '[\"build\"]'"));
+    assert_eq!(
+        matrix["profile"].as_str(),
+        Some("${{ fromJSON(github.event_name == 'pull_request' && '[\"debug\"]' || '[\"debug\",\"release\"]') }}")
+    );
+    assert_eq!(job["env"]["OOS_TEST_PARTITION"].as_str(), Some("${{ matrix.shard != 'build' && matrix.shard || '' }}"));
+    assert_eq!(job["strategy"]["fail-fast"].as_bool(), Some(false));
 }

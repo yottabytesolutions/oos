@@ -32,7 +32,9 @@ jobs:
           - name: fast
             steps: fmt size architecture mutable-statics unsafe method-exceptions known-failures agent-rules test-time links text
           - name: clippy
-            steps: clippy decoders plan-matrix
+            steps: clippy plan-matrix
+          - name: decoders
+            steps: decoders
           - name: tests-debug
             steps: tests-debug
             nextest: nextest
@@ -53,7 +55,7 @@ jobs:
       - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         if: matrix.nextest
         with:
-          tool: cargo-nextest@0.9.150
+          tool: cargo-nextest@0.9.151
       - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         if: matrix.llvm-cov
         with:
@@ -62,6 +64,7 @@ jobs:
         run: git config core.hooksPath .githooks
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          cache-workspace-crates: true
           shared-key: nightly-${{ matrix.name }}
           # a dispatch on another branch must not fill the cache storage
           save-if: ${{ github.ref == 'refs/heads/main' }}

@@ -28,6 +28,7 @@ fn default_gate_never_selects_docker_or_image_prerequisites() {
             "decoders",
             "tests-debug",
             "tests-release",
+            "perf-build",
             "perf",
             "coverage",
             "script-syntax",
@@ -126,6 +127,7 @@ fn checks_run_together_only_after_checks_that_run_together() {
         }
     }
     assert!(CHECKS.iter().any(|c| c.id == "perf" && alone(c)));
+    assert!(CHECKS.iter().any(|c| c.id == "perf-build" && !alone(c)));
 }
 
 #[test]

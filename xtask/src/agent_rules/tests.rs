@@ -371,7 +371,7 @@ fn both_gate_modes_dispatch_the_check_without_losing_g1_steps() {
         "known failures",
         "agent rules",
     ];
-    for (fast, coverage, count) in [(true, true, 11), (false, true, 18), (false, false, 17)] {
+    for (fast, coverage, count) in [(true, true, 11), (false, true, 19), (false, false, 18)] {
         let names: Vec<_> = check::plan(check::Options { fast, coverage }).into_iter().map(|(n, _)| n).collect();
         assert_eq!(names.len(), count);
         assert_eq!(&names[..8], &prefix);

@@ -114,7 +114,7 @@ same 28 writes byte for byte) with no reboot in between: RUN, STOP, the middle 4
 Result (verified on the unit): all three direct reads are identical to the SCPI read, 4000/4000 words, and to each
 other. So the samples are not altered on the SCPI path. The outliers appear between capture and read, during the warm
 reboot into OOS: the acquisition memory is not stable across a reboot. For OOS this matters little, because OOS captures
-itself. `tools/frame-check.py` filters such outliers when it compares frames.
+itself. A frame comparison filters such outliers with a median of five neighbouring words.
 
 ### What the 9 outliers are: single raw-ADC bits that fell from 1 to 0
 

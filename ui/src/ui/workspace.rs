@@ -1220,7 +1220,7 @@ impl Ui {
     pub(super) fn workspace_touch(&mut self, phase: Phase, x: i32, y: i32) -> bool {
         // Menus and dialogs own the pointer before anything behind them can
         // fold, drag or open a context menu on a panel header.
-        if self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+        if self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
             self.workspace.gesture = None;
             return false;
         }
@@ -1340,10 +1340,6 @@ impl Ui {
     /// Escape closes transient surfaces and leaves box/zoom modes immediately.
     #[cfg_attr(target_os = "linux", allow(dead_code))] // used by the desktop build and the tests
     pub fn dismiss_context(&mut self) {
-        if self.load_slot_ask {
-            self.cancel_load_slot();
-            return;
-        }
         let was_drawing = self.zoom_arm;
         self.workspace.popup = None;
         self.workspace.gesture = None;

@@ -1187,9 +1187,6 @@ pub struct Ui {
     replay: workflow::Replay,
     workflow_epoch: u64,
     bus_candidate: bus_candidate::State,
-    pub open_wave_request: bool,
-    load_slot_ask: bool,
-    load_destination: Option<usize>,
     pub m: Model,
     pub src: Source,
     pub ph: Phosphor,
@@ -1593,9 +1590,6 @@ impl Ui {
             replay: workflow::Replay::default(),
             workflow_epoch: 0,
             bus_candidate: Default::default(),
-            open_wave_request: false,
-            load_slot_ask: false,
-            load_destination: None,
             m,
             src,
             ph: Phosphor::new(1, 1),
@@ -2341,8 +2335,7 @@ impl Ui {
         if self.eye_open() && self.eye_pane_rect().contains(x, y) {
             return false;
         }
-        if self.load_slot_ask
-            || self.menu_open
+        if self.menu_open
             || self.dialog.is_some()
             || self.power_dlg
             || self.m.touch_lock
@@ -10542,7 +10535,6 @@ impl Ui {
     }
 
     fn draw_overlay(&self, cv: &mut Canvas) {
-        self.draw_load_slot(cv);
         let f = self.fonts();
         self.draw_osk(cv);
         if self.power_dlg {
@@ -10695,10 +10687,6 @@ impl Ui {
         // a dialog or the keyboard takes the key, but not the force trigger
         if k == key::FORCE {
             self.force_trigger();
-        }
-        if self.load_slot_ask {
-            self.cancel_load_slot();
-            return;
         }
         if (k == key::RUNSTOP && self.m.run == RunState::Run)
             || k == key::SINGLE
@@ -10987,12 +10975,6 @@ impl Ui {
 
     /// Two fingers in the grid: horizontal spread = time/div, vertical spread = V/div of the active channel.
     fn multi_touch(&mut self, id: i32, ph: Phase, x: i32, y: i32) {
-        if self.load_slot_ask {
-            if id == 0 && ph == Phase::Up {
-                self.load_slot_tap(x, y);
-            }
-            return;
-        }
         if self.eye_open() && self.eye_pane_rect().contains(x, y) {
             if id == 0 {
                 self.touch_ev(ph, x, y);
@@ -11006,8 +10988,7 @@ impl Ui {
             return;
         }
         let map = self.zoom_drag_map(self.touch.x, self.touch.y);
-        let modal =
-            self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some();
+        let modal = self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some();
         let p = &mut self.pinch;
         if id == 1 {
             match ph {
@@ -11681,9 +11662,6 @@ impl Ui {
     }
 
     pub fn tap(&mut self, x: i32, y: i32) {
-        if self.load_slot_tap(x, y) {
-            return;
-        }
         let box_button =
             self.m.zoom && self.zoom_controls().iter().any(|(rect, text)| *text == "Box" && rect.contains(x, y));
         if !box_button {

@@ -42,48 +42,80 @@ Measurements come as a measurement module: a file in `ui/src/measures` with thei
 line to register it, the signal processing usually in `oos-dsp`. [docs/measurement-modules.md](docs/measurement-modules.md)
 walks through it. An analyser page registers the same way ([docs/analyser-modules.md](docs/analyser-modules.md)).
 
-## Before a pull request
-
-A contribution is a pull request from a feature branch against `main`, one topic per pull request
-([ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)).
-
-The gate is `cargo xtask check` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)). Run
-`cargo xtask check --fast` and the tests of what you changed while you work, and the full `cargo xtask check` before
-you open the pull request. The [check inventory](docs/development.md#executable-inventory-and-completion-evidence)
-lists the steps and their prerequisites (`cargo xtask check --list`). `cargo xtask check --image` adds the Docker and
-emulation checks; the maintainers run it before unit rounds and releases.
-
-The gate must pass in CI before a merge. CI runs on GitHub-hosted runners and is set up in a later phase; until then
-the maintainers run the full gate on the candidate. A change is done when the full gate passed on its final commit
-and an independent review accepted it; partial and inventory-only runs do not count.
-
-Tests use synthetic inputs where possible. Tests that need private calibration files report their
-skips; no private calibration directory is required for the gate. [docs/architecture/README.md](docs/architecture/README.md)
-is the place to start reading.
-
-Say in the pull request which checks ran and where: on a unit (which model), only on the host, or not at all.
-
-Work is tracked in GitHub issues; an issue labelled `agent-ready` has acceptance criteria an agent can work from. Every
-commit is signed off. Commits and pull request texts carry no tool or agent attribution and no co-author lines
-([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)). Pull requests that touch a risk path
-(boot, update, kernel, FPGA, acquisition) need the maintainer's approval; others merge on green CI and a Codex review.
-
-Name your branch `<type>/<ref>-<slug>`: `type` is one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`,
-`build`, `chore`; `ref` is the GitHub issue number or a task id `t<NNNN>`; `slug` is lower case with `-`
-(`fix/42-trigger-holdoff`). `main` is the only long-lived branch.
-
-History stays linear. Rebase your branch onto `main` instead of merging `main` into it, and pull with rebase:
+## Quick start
 
 ```sh
+git clone https://github.com/yottabytesolutions/oos && cd oos
+tools/bootstrap.sh                 # installs the pinned toolchain from rust-toolchain.toml and the host tools
+git config core.hooksPath .githooks
 git config pull.rebase true
 git config rebase.autoStash true
+cargo xtask check --fast           # before every commit (the pre-commit hook runs it)
+cargo xtask check                  # before opening a pull request
 ```
 
-Force-pushing your feature branch with `--force-with-lease` is fine; `main` is never force-pushed. A pull request
-enters `main` squash-merged or rebase-merged from the reviewed state, with your name and sign-off kept, and `main`
-only moves by fast-forward. Merge commits are for the rare case where the second parent carries information, such as
-a long-lived import. Release tags, the pull request template and the required checks are being set up and will be
-described here.
+The gate is `cargo xtask check` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)). The
+[check inventory](docs/development.md#executable-inventory-and-completion-evidence) lists the steps and their
+prerequisites (`cargo xtask check --list`); `cargo xtask step <name>` runs single steps. `cargo xtask check --image`
+adds the Docker and emulation checks; the maintainers run it before unit rounds and releases. A change is done when
+the full gate passed on its final commit and the review accepted it; partial and inventory-only runs do not count.
+
+Tests use synthetic inputs where possible. Tests that need private calibration files report their skips; no private
+calibration directory is required for the gate. [docs/architecture/README.md](docs/architecture/README.md) is the
+place to start reading.
+
+## Branches, commits, pull requests
+
+- One issue, one branch, one pull request, one topic
+  ([ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)). Branch:
+  `<type>/<ref>-<slug>`, `type` one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`;
+  `ref` the issue number or `t` plus the four-digit task id; `slug` lower case with `-`. Examples:
+  `fix/123-trigger-holdoff`, `refactor/t0075-normal-trigger`. `main` is the only long-lived branch.
+- Pull request title: Conventional Commits, `type(scope): summary`, at most 72 characters. It becomes the squash
+  commit subject and the changelog line. Commit subjects follow the same form.
+- Every commit carries `Signed-off-by:` (`git commit -s`) matching the author (DCO, ADR 0026). Use your GitHub
+  noreply address (`<id>+<login>@users.noreply.github.com` or `<login>@users.noreply.github.com`): other email
+  addresses are rejected by the privacy check.
+- Commits and pull request texts carry no tool or session details: no session links, no `Agent:` and no AI
+  `Co-authored-by:` trailers ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
+- Keep pull requests small: about 400 changed lines without goldens and fixtures. Larger refactors go as stacked
+  pull requests, each reviewable on its own.
+- Link the issue (`Closes #NNN`) or the task file in the pull request text. Fill in the template.
+- History is linear. Rebase onto `main` (`git pull --rebase`) instead of merging `main` into your branch, and
+  force-push your own branch with `--force-with-lease`. `main` is never force-pushed and only moves by fast-forward:
+  pull requests enter through the merge queue as squash (or rebase), with your name and sign-off kept.
+
+## Review gate
+
+A pull request merges when all required checks pass: `fast`, `clippy`, `test`, `python`, `deny`, `pr-meta`,
+`privacy` and `codex-review`. Codex reviews automatically when the pull request opens; after new commits comment
+`@codex review`. Fix or answer every finding and resolve every conversation. `codex-review` passes only for a
+completed review of the current head with no unresolved findings. Paths in [CODEOWNERS](.github/CODEOWNERS) also need
+the maintainer's approval.
+
+When Codex is down, a repository admin merges through the ruleset bypass and states the reason in the pull request.
+The bypass is for outages only, never to skip a finding.
+
+## Risk tiers
+
+- **High:** hardware register writes (`hal/src/dho`, `fpgad`), calibration, update packages, signing, kexec, boot,
+  kernel, rootfs, the pipeline itself. These are the CODEOWNERS paths. Label `risk/hardware`, code owner review,
+  `tools/plan-matrix.sh` before and after in the pull request, and a run on a real unit before merge (`needs-unit`
+  until then).
+- **Medium:** behaviour visible on the scope (UI, SCPI, DSP results). Golden pictures and tests; a unit run when the
+  change touches acquisition timing.
+- **Low:** host-only tooling, docs, tests.
+
+## Unit testing
+
+Say in the pull request whether it ran on a unit, which model, which build and what was exercised. Host-only is a
+valid answer for medium and low risk. A change that still needs a unit run carries the `needs-unit` label until
+someone with a unit reports it. Never claim a unit test that did not happen.
+
+## Flaky tests
+
+A flaky test is fixed, not retried. It may be ignored only with `#[ignore = "flaky: #NNN reason"]` and an open issue
+labelled `flaky`; the gate rejects a bare `#[ignore]` and a `flaky:` reason without an issue number.
 
 ## Style
 
@@ -109,6 +141,16 @@ Most code here is written with one. [AGENTS.md](AGENTS.md) holds the instruction
 it); point your tool to it if it does not read it by itself. The agent's report counts like yours: it says
 what was tested on a unit, what only on the host, and what was not tested. An agent does not write to a scope unless
 its owner asked for it ([ADR 0018](docs/adr/process/0018-one-agents-md-for-people-and-agents.md)).
+
+- Agents work only on issues labelled `agent-ready`, one pull request per issue, within the issue's acceptance
+  criteria and its out-of-scope list. Small pull requests; refactors as stacked pull requests.
+- Agents push and open pull requests only as the GitHub App `yottabyte-oos-agent[bot]`, never with a maintainer's
+  credentials. Its pull requests get the `agent` label and pass the same checks; the app has no ruleset bypass.
+- Agents do not touch high-risk paths unless the issue carries `risk/hardware` and says so.
+- Agents run `cargo xtask check --fast` before every commit and `cargo xtask check` before the pull request, and
+  report what ran.
+- Agents answer Codex findings by fixing them or by a reply with the reason; they never resolve a thread without
+  either.
 
 ## Licence
 

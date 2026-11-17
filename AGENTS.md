@@ -53,9 +53,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 ## The gate
 
 - The gate is `cargo xtask check` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)).
-  `tools/check.sh` is not the gate.
-- Set up the hooks once per clone: `git config core.hooksPath .githooks`.
-- Run `cargo xtask check` before every commit. pre-commit runs `cargo xtask check --fast`, pre-push the full gate.
+- Set up once per clone: `tools/bootstrap.sh` (pinned toolchain), `git config core.hooksPath .githooks`.
+- Run `cargo xtask check --fast` before every commit (pre-commit runs it) and the full gate before a PR (pre-push).
 - Report a change as done only after the full gate (no `--fast`, no `--no-coverage`) passed on its final commit.
 - Never bypass a hook (`--no-verify`, `core.hooksPath` changes, editing `.githooks/`).
 - Never edit a ratchet file (`xtask/data/size.txt`, `clippy.txt`, `statics.txt`, `unsafe.txt`, `coverage.txt`). Fix
@@ -64,6 +63,20 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Never loosen a lint, a limit, `rustfmt.toml`, `clippy.toml` or `xtask/data/architecture.txt` without an ADR the
   owner has approved. Adding a module rule that the tree meets is not loosening.
 - No `#[allow(...)]` without a reason comment on the same item.
+
+## Pull requests
+
+- One issue, one branch, one PR. Keep it small (about 400 changed lines without goldens and fixtures); split
+  refactors into stacked PRs. Link the issue (`Closes #NNN`) or task file and fill in the template.
+- Required checks: fast, clippy, test, python, deny, pr-meta, privacy, codex-review. Fix or answer every Codex
+  finding; never resolve a thread without either. `@codex review` after new commits. Outages: an admin merges via
+  the ruleset bypass and states the reason in the PR.
+- Risk tiers ([CONTRIBUTING](CONTRIBUTING.md#risk-tiers)): CODEOWNERS paths are high risk and need `risk/hardware`,
+  code owner review, `tools/plan-matrix.sh` before and after, and a unit run (`needs-unit` until then).
+- State in the PR whether it ran on a unit, which model and build, or host only. Never claim an untested unit run.
+- Flaky tests are fixed. Ignore one only with `#[ignore = "flaky: #NNN reason"]` and an open `flaky` issue.
+- Agents take only `agent-ready` issues, stay within acceptance criteria and out of scope, avoid high-risk paths
+  unless the issue says so, and push only as `yottabyte-oos-agent[bot]`, never with a maintainer's credentials.
 
 ## Where code goes
 
@@ -127,11 +140,11 @@ to the document that explains it. When a rule and your task conflict, stop and a
 ## Commits
 
 - One logical change per commit. Formatting and moves in their own commits.
-- Subject in the imperative mood, under 72 characters. The body says why, not what
-  ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
+- Subject `type(scope): imperative summary` (Conventional Commits), under 72 characters. The body says why, not
+  what ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
 - Every commit is signed off (`git commit -s`,
-  [ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)). No tool or agent
-  attribution and no co-author lines in commits or pull request texts.
+  [ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)) with a GitHub
+  noreply address. No tool, session or agent attribution and no co-author lines in commits or PR texts.
 - No em-dashes in commit messages, docs or comments.
 - Never rebase or amend commits that someone else has reviewed or merged.
 - A fix the unit needs now branches from `dho804` as `fix/<name>` and is forward-ported to `main` as a test plus

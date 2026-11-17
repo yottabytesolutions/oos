@@ -19,7 +19,10 @@ the two give the same bits is not checked yet (the summaries of `.github/workflo
 
 Licences: kernel and patches GPL-2.0, device tree GPL-2.0+ OR MIT, `xdma` as in its files, `firmware/` as in `firmware/LICENSE.wireless-regdb`.
 
-The archive is too large for the repository: it is a file of each [release](https://github.com/yottabytesolutions/oos/releases).
+The archive is too large for the repository: it is the asset of the pre-release
+[`kernel-base-6.12.115`](https://github.com/yottabytesolutions/oos/releases/tag/kernel-base-6.12.115).
+`tools/ci/kernel-base.sh download` fetches and checks it; `tools/ci/kernel-base.sh publish` makes the release for a
+new `base.sha256`.
 
 Whoever passes on an image must offer this source, the archive in `src/` included.
 

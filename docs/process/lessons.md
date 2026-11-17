@@ -13,6 +13,12 @@ pull request that fixes a mistake: what happened, then the rule.
 - Git hooks export `GIT_DIR`. Test fixtures that ran `git` inherited it and rewrote the real clone's config
   (`core.bare=true`). Clear the `GIT_*` variables in every test that runs git.
 - The global `fetch.pruneTags` setting deleted local release tags. The clone sets `fetch.pruneTags=false`.
+- An agent ran `git checkout --detach` in the shared clone instead of its worktree. Never check out in the shared
+  clone; use `git -C <worktree>` or `git show`.
+- The Codex sandbox could not write the shared `.git` (`index.lock`) and refused a worktree path through a symlink.
+  Let the runner commit, and use real worktree paths.
+- After a rebase stopped on conflicts and the resolver failed, the rebase continued with conflict markers. Abort
+  the rebase when conflicts are not resolved, and check for markers before continuing.
 
 ## Merging
 
@@ -33,6 +39,8 @@ pull request that fixes a mistake: what happened, then the rule.
   directory.
 - A rule change that contradicted an accepted ADR was flagged in review. Add a superseding or amending ADR in the
   same pull request, or leave the rule alone.
+- `AGENTS.md` changed while a pull request was open (ratchet ownership, ADR 0039), and an agent followed the old
+  rule. Re-read `AGENTS.md` on `origin/main` after every rebase.
 
 ## Tests and CI
 
@@ -44,3 +52,9 @@ pull request that fixes a mistake: what happened, then the rule.
   the event (a blocking `peek` with a hang guard), never on timing.
 - The nightly image build fetched a patch from a host that answered HTTP 418 to CI. Fetch build inputs from a
   mirror that CI can reach.
+- A wait loop watched only the CI checks, leaving a Codex finding unseen for an hour. Watch the `codex-review`
+  status together with the checks.
+- Runners started from a login bash got the system `python3` (3.9) and no `cargo`, so the fast gate failed. Scripts
+  that run the gate set `PATH` explicitly.
+- Runners were restarted while busy because a shell check compared a newline-separated list. Check each worker's
+  own job file, never a joined list.

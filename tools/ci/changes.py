@@ -37,6 +37,12 @@ RUST_FILES: Final = frozenset({
     ".github/workflows/pr.yml",
     ".github/workflows/image.yml",  # fpgad/tests/explicit_signing.rs includes it
     "tools/ci/changes.py",
+    # xtask/src/stack_ci.rs includes these: the required checks run on stacked pull requests (ADR 0034)
+    ".github/workflows/pr-meta.yml",
+    ".github/workflows/privacy.yml",
+    ".github/workflows/codex-review.yml",
+    ".github/rulesets/main.json",
+    "tools/ci/codex_gate.py",
 })
 QUEUE_REF: Final = re.compile(r"^refs/heads/gh-readonly-queue/[^/]+(?:/[^/]+)*/pr-(\d+)-[0-9a-f]{40}$")
 API: Final = "https://api.github.com"

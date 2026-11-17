@@ -29,3 +29,7 @@ quote = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 syn = { version = "3", features = ["full", "visit"] }
+
+[dev-dependencies]
+# Test-only: the workflows are YAML (src/stack_ci.rs). No default features: no encoding detection.
+yaml-rust2 = { version = "0.13", default-features = false }

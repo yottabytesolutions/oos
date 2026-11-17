@@ -25,6 +25,8 @@ mod report;
 mod run;
 mod size;
 mod sources;
+#[cfg(test)]
+mod stack_ci;
 mod steps;
 mod store;
 mod target;

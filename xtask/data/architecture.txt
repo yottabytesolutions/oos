@@ -8,7 +8,7 @@ crate oos-hal -> libc
 crate oos-core -> oos-dsp
 crate oos-ui -> libc oos-hal oos-dsp oos-core
 crate oos-fpgad -> libc oos-hal
-crate xtask -> proc-macro2 pulldown-cmark quote serde serde_json syn
+crate xtask -> proc-macro2 pulldown-cmark quote serde serde_json syn yaml-rust2
 #
 # gpu is C (gpu/oos-gpu.c): no crate, no rule.
 #

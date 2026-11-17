@@ -22,12 +22,7 @@ pub mod clock;
 pub mod coretrim;
 pub mod counter;
 pub mod dvm;
-#[cfg(unix)]
 pub mod gpio;
-#[cfg(not(unix))]
-pub mod gpio_none;
-#[cfg(not(unix))]
-pub use gpio_none as gpio;
 pub mod hz;
 #[cfg(unix)]
 mod ioctl;

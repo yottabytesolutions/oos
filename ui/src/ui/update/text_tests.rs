@@ -81,7 +81,9 @@ fn panel_trial_guidance_matches_golden_pictures() {
         ui.draw_overlay(&mut cv);
         let png = crate::store::png_of(&cv);
         std::fs::write(output.join(format!("{}.png", name)), &png).unwrap();
-        let expected = std::fs::read(root.join(format!("tests/golden/update/{}.png.ref", name))).unwrap_or_default();
+        let reference = root.join(format!("tests/golden/update/{}.png.ref", name));
+        let expected = std::fs::read(&reference)
+            .unwrap_or_else(|err| panic!("cannot read update golden reference {}: {}", reference.display(), err));
         matched &= png == expected;
     }
     assert!(matched, "update panel pictures differ; inspect the actual images in update-golden");

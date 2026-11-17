@@ -7,6 +7,8 @@
 //! full-record background analysis (`window`) and the drawing.
 
 mod compute;
+pub(super) mod peaks;
+mod spectrum_view;
 pub(super) mod window;
 
 use super::magnetic::missing_wave;
@@ -1277,18 +1279,21 @@ impl Ui {
         true
     }
 
+    pub(super) fn peaks_sort(&mut self) {
+        spectrum_view::peaks_sort(self);
+    }
+
+    pub(super) fn track_peaks(&mut self) {
+        spectrum_view::track_peaks(self);
+    }
+
+    fn spectrum_update(&mut self, rec: &Record, pane: bool) {
+        spectrum_view::spectrum_update(self, rec, pane);
+    }
+
     /// The strongest spectral line above DC.
     pub(super) fn strongest_line(&self) -> Option<spectrum::Marker> {
         self.azr.peaks.iter().copied().max_by(|a, b| a.dbv.total_cmp(&b.dbv))
-    }
-
-    /// Puts the lines into the order of the table: by frequency or by level.
-    pub(super) fn peaks_sort(&mut self) {
-        if self.m.spec_sort == 0 {
-            self.azr.peaks.sort_by(|a, b| a.f.total_cmp(&b.f));
-        } else {
-            self.azr.peaks.sort_by(|a, b| b.dbv.total_cmp(&a.dbv));
-        }
     }
 
     /// The source exists: a channel that is on, or a ref that holds samples.
@@ -1315,61 +1320,6 @@ impl Ui {
         }
         let Some(s) = self.wave_samples(rec, id) else { return f64::NAN };
         oos_dsp::measure::analyze_min(&s.v, s.dt, 0.4 * self.wave_vpd(id)).get(Meas::Freq)
-    }
-
-    /// The spectrum of the source from the record: the view, or `pane` beside the waveform.
-    fn spectrum_update(&mut self, rec: &Record, pane: bool) {
-        let id = self.m.spec_src;
-        let Some(s) = self.wave_samples(rec, id) else {
-            self.azr.spec = None;
-            self.azr.peaks.clear();
-            return;
-        };
-        let (v, dt) = (s.v, s.dt);
-        let f1 = self.wave_freq(rec, id);
-        let (mut center, mut span) = (self.m.spec_center, self.m.spec_span);
-        if window::follows(self) {
-            // no frequency this record: the span stays
-            self.azr.spec_stop =
-                spectrum::auto_stop(f1, PANE_HARMS[self.m.spec_harm.min(PANE_HARMS.len() - 1)], self.azr.spec_stop);
-            (center, span) = (self.azr.spec_stop / 2.0, self.azr.spec_stop);
-        }
-        let area = if pane { self.pane_rect() } else { self.area };
-        // Auto RBW: the finest the record allows (window ENBW / record time)
-        let finest = spectrum::enbw(self.m.spec_win) / (v.len().max(1) as f64 * dt);
-        let s = spectrum::Settings {
-            center,
-            span,
-            rbw: if self.m.spec_rbw > 0.0 { self.m.spec_rbw } else { finest },
-            window: self.m.spec_win,
-            averaging: 16,
-            trace: [
-                spectrum::Trace::Normal,
-                spectrum::Trace::Average,
-                spectrum::Trace::MaxHold,
-                spectrum::Trace::MinHold,
-            ][self.m.spec_trace.min(3)],
-            detector: spectrum::Detector::Peak,
-            points: self.spec_box(area, pane).plot.w.max(100) as usize,
-            ref_level_dbv: self.m.spec_ref as f64,
-        };
-        let sp = spectrum::analyze(&v, dt, &s, &mut self.azr.spec_avg);
-        self.azr.peaks = spectrum::rank_lines(&sp, Some(f1), panes::PEAKS_MAX);
-        self.peaks_sort();
-        if self.m.spec_wf && !pane {
-            self.azr.wf.get_or_insert_with(|| spectrum::Waterfall::new(120)).push(&sp);
-        }
-        self.azr.dist = if self.m.spec_dist && !pane { spectrum::distortion(&v, dt, None, 10) } else { None };
-        if let Some(l) = &self.azr.limit {
-            self.azr.limit_n += 1;
-            if let Some(w) = spectrum::limit_check(&sp, l) {
-                self.azr.limit_over += 1;
-                if self.azr.limit_worst.is_none_or(|x| w.1 > x.1) {
-                    self.azr.limit_worst = Some(w);
-                }
-            }
-        }
-        self.azr.spec = Some(sp);
     }
 
     pub(super) fn identify_items(&self) -> Vec<Item> {

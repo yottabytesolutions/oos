@@ -5,6 +5,8 @@
 //! and the trend charts. Everything that takes time happens per record or per trend point, the drawing only reads it.
 //! A pane is as high as its content; what is left over goes to the plot.
 
+mod spectrum_view;
+
 use super::*;
 use oos_dsp::spectrum;
 use std::collections::VecDeque;
@@ -14,7 +16,7 @@ pub const PANE_HARMS: [usize; 5] = [0, 5, 10, 20, 50];
 /// Values of `Model::trend_sel`: by the list, off, one per measurement.
 pub const TREND_SEL_N: usize = tools::MEAS_MAX + 2;
 /// Lines in the peak list and on the trace.
-pub(super) const PEAKS_MAX: usize = 8;
+pub(super) const PEAKS_MAX: usize = super::analysis::peaks::MAX;
 pub(super) const DB_PER_DIV: f32 = 10.0;
 
 /// Peak list width; left axis; title line and frequency labels of the spectrum.
@@ -100,207 +102,6 @@ fn fit_font<'a>(fonts: &[&'a Font], w: i32, texts: impl Iterator<Item = &'a str>
 // ---------------------------------------------------------------------------------------------------------------
 // spectrum
 
-impl Ui {
-    /// Height of the waterfall under the spectrum.
-    pub(super) fn spec_wf_h(&self, a: Rect, pane: bool) -> i32 {
-        if self.m.spec_wf && !pane {
-            a.h * 2 / 5
-        } else {
-            0
-        }
-    }
-
-    /// Layout of the spectrum in `a`. In the full view the list starts under the overflow button, in the pane the close
-    /// button sits beside the sort button.
-    pub(super) fn spec_box(&self, a: Rect, pane: bool) -> SpecBox {
-        let col_x = a.x + a.w - PEAK_W;
-        let title = Rect::new(a.x + AXIS_W, a.y, a.w - AXIS_W - PEAK_W - 8, TITLE_H);
-        let plot = Rect::new(title.x, a.y + TITLE_H, title.w, a.h - self.spec_wf_h(a, pane) - TITLE_H - XLABEL_H);
-        // the full view: under the full-screen and zoom buttons, which sit at the top of this column
-        let below = (self.zoom_btn().1.bottom() + 2).max(a.y + 46);
-        let sort =
-            if pane { Rect::new(col_x, a.y + 2, PEAK_W - 50, 36) } else { Rect::new(col_x, below, PEAK_W - 6, 36) };
-        let y = sort.y + sort.h + 2;
-        SpecBox { title, plot, sort, list: Rect::new(col_x, y, PEAK_W - 6, a.y + a.h - y) }
-    }
-
-    /// Lines shown on the trace and in the list: the numbers must match, so no more than the list has room for.
-    fn peaks_shown(&self, b: &SpecBox) -> usize {
-        self.azr.peaks.len().min((b.list.h / 18).max(0) as usize)
-    }
-
-    fn sort_name(&self) -> &'static str {
-        if self.m.spec_sort == 0 {
-            "Peaks by frequency"
-        } else {
-            "Peaks by level"
-        }
-    }
-
-    pub(super) fn sort_toggle(&mut self) {
-        self.m.spec_sort = 1 - self.m.spec_sort.min(1);
-        self.peaks_sort();
-    }
-
-    /// Title, grid and axis labels.
-    pub(super) fn draw_spec_frame(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum) {
-        let f = self.fonts();
-        let g = b.plot;
-        let src = self.m.spec_src;
-        let name = match src {
-            WaveId::Ch(c) => self.ch_name(c),
-            WaveId::Ref(i) => format!("R{}", i + 1),
-        };
-        let x = cv.text(&f.sb, b.title.x, b.title.y + 14, &name, self.wave_color(src));
-        let mut t = format!(
-            "{:.0} dB/div  \u{b7}  Ref {:.0} dBV  \u{b7}  RBW {}",
-            DB_PER_DIV,
-            self.m.spec_ref,
-            si_short(sp.rbw, "Hz")
-        );
-        if self.azr.limit.is_some() {
-            t.push_str(&format!("  \u{b7}  Limit: {} of {} over", self.azr.limit_over, self.azr.limit_n));
-        }
-        cv.text(&f.s, x + 10, b.title.y + 14, &t, LABEL);
-        chart_grid(cv, g, HDIV as i32, VDIV as i32);
-        // every division while the labels have room
-        let every = if g.h as f32 / VDIV < (f.s.size + 2) as f32 { 2 } else { 1 };
-        for j in (0..=VDIV as i32).step_by(every) {
-            let s = format!("{:.0}", self.m.spec_ref - j as f32 * DB_PER_DIV);
-            let y = (g.y + j * (g.h - 1) / VDIV as i32 + 4).clamp(g.y + 9, g.y + g.h);
-            cv.text(&f.s, g.x - 5 - f.s.width(&s), y, &s, AXIS_TEXT);
-        }
-        let (f0, f1) = (sp.f0, sp.freq(sp.dbv.len().saturating_sub(1)));
-        // from the right, so the end of the band always has its label; one that would touch the last is left out
-        let mut free = g.x + g.w;
-        for i in (0..=HDIV as i32).rev() {
-            let s = si_short(f0 + (f1 - f0) * i as f64 / HDIV as f64, "Hz");
-            let w = f.s.width(&s);
-            let x = (g.x + i * (g.w - 1) / HDIV as i32 - w / 2).clamp(g.x - AXIS_W + 2, g.x + g.w - w);
-            if x + w + 10 <= free || i == HDIV as i32 {
-                cv.text(&f.s, x, g.y + g.h + 13, &s, AXIS_TEXT);
-                free = x;
-            }
-        }
-    }
-
-    /// Numbered tags on the trace, the same numbers as in the list. Tags that would collide move up.
-    pub(super) fn draw_spec_marks(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum, top: f32) {
-        let f = self.fonts();
-        let g = b.plot;
-        let span = sp.df * (sp.dbv.len().max(2) - 1) as f64;
-        if !(span > 0.0) {
-            return;
-        }
-        cv.set_clip(Rect::new(g.x, g.y, g.w + 8, g.h));
-        let mut placed: Vec<Rect> = Vec::new();
-        for (k, m) in self.azr.peaks.iter().take(self.peaks_shown(b)).enumerate() {
-            let x = g.x + ((m.f - sp.f0) / span * (g.w - 1) as f64).round() as i32;
-            let y = (g.y as f32 + (top - m.dbv as f32) / DB_PER_DIV * (g.h as f32 / VDIV)) as i32;
-            let mut r = Rect::new(x - 7, (y - 20).max(g.y + 1), 15, 14);
-            while placed.iter().any(|p| overlaps(*p, r)) {
-                r.y += 15;
-            }
-            placed.push(r);
-            cv.vline(x, r.y + r.h, y.max(r.y + r.h), ACCENT);
-            cv.round(r, 3, ACCENT, 255);
-            cv.text_in(&f.sb, r, 1, &format!("{}", k + 1), DARK_TEXT);
-        }
-        cv.no_clip();
-    }
-
-    /// Facts beside the peaks in the list: first what the view would otherwise not say.
-    fn spec_facts(&self, sp: &spectrum::Spectrum) -> Vec<(String, String)> {
-        let db = |x: f64, u: &str| format!("{:.1} {}", x, u);
-        let mut v = Vec::new();
-        if self.azr.limit.is_some() {
-            v.push(("Limit".to_string(), format!("{} of {} over", self.azr.limit_over, self.azr.limit_n)));
-            if let Some((hz, over)) = self.azr.limit_worst {
-                v.push(("Worst".to_string(), format!("+{:.1} dB {}", over, si_short(hz, "Hz"))));
-            }
-        }
-        if let Some(d) = &self.azr.dist {
-            v.push(("f1".to_string(), format!("{} {}", si(d.f1, "Hz"), db(d.a1_dbv, "dBV"))));
-            v.push(("THD".to_string(), format!("{} ({:.3} %)", db(d.thd_db, "dB"), d.thd_pct)));
-            v.push(("THD+N".to_string(), db(d.thdn_db, "dB")));
-            v.push(("SNR".to_string(), db(d.snr_db, "dB")));
-            v.push(("SINAD".to_string(), db(d.sinad_db, "dB")));
-            v.push(("SFDR".to_string(), db(d.sfdr_dbc, "dBc")));
-            v.push(("ENOB".to_string(), format!("{:.2} bit", d.enob)));
-        }
-        let ac = spectrum::acpr(sp, self.m.spec_acpr_w, self.m.spec_acpr_s);
-        let dbn = |x: f64| if x.is_finite() { format!("{:.1} dB", x) } else { "-".into() };
-        v.push(("ACPR".to_string(), if ac.ratio.is_finite() { format!("{:.3}", ac.ratio) } else { "-".into() }));
-        v.push(("ACPR lo".to_string(), dbn(ac.lower_db)));
-        v.push(("ACPR hi".to_string(), dbn(ac.upper_db)));
-        v.push(("Noise floor".to_string(), db(sp.floor_dbv, "dBV")));
-        let stop = sp.freq(sp.dbv.len().saturating_sub(1));
-        v.push(("Band".to_string(), format!("{} to {}", si_short(sp.f0, "Hz"), si_short(stop, "Hz"))));
-        v.push(("Window".to_string(), self.m.spec_win.name().to_string()));
-        v.push((
-            "Trace".to_string(),
-            ["Normal", "Average", "Max hold", "Min hold"][self.m.spec_trace.min(3)].to_string(),
-        ));
-        v
-    }
-
-    /// The list: sort button, one row per line with a bar for its height over the noise, facts in what is left. The rows
-    /// share the whole height, so a short list is a large one, not a gap.
-    pub(super) fn draw_peaks(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum, pane: bool) {
-        let f = self.fonts();
-        btn(cv, b.sort, BTN, BTN_BORDER);
-        cv.text_in(
-            super::fit_font(&[&f.mb, &f.sb, &crate::font::Fonts::get(0).mb], b.sort.w - 8, self.sort_name()),
-            b.sort,
-            1,
-            self.sort_name(),
-            TEXT,
-        );
-        let r = b.list;
-        let n = self.peaks_shown(b) as i32;
-        let facts = self.spec_facts(sp);
-        let nf = (facts.len() as i32).min((r.h - n * 20) / 17).max(0);
-        // a line gets up to two text rows, the facts the rest
-        let pitch = if n > 0 { ((r.h - nf * 17) / n).min(if nf < facts.len() as i32 { r.h } else { 46 }) } else { 0 };
-        let top = self.azr.peaks.iter().take(n as usize).map(|m| m.dbv).fold(f64::MIN, f64::max);
-        let strongest = self.azr.peaks.iter().map(|m| m.dbv).fold(f64::MIN, f64::max);
-        for (k, m) in self.azr.peaks.iter().take(n as usize).enumerate() {
-            let y = r.y + k as i32 * pitch;
-            let row = Rect::new(r.x, y, r.w, pitch);
-            if k % 2 == 1 {
-                cv.fill(row, ROW_ALT);
-            }
-            let tag = Rect::new(r.x + 2, y + (pitch.min(20) - 14) / 2, 15, 14);
-            cv.round(tag, 3, ACCENT, 255);
-            cv.text_in(&f.sb, tag, 1, &format!("{}", k + 1), DARK_TEXT);
-            let ty = tag.y + 12;
-            cv.text(&f.sb, r.x + 22, ty, &si_digits(m.f, "Hz", 5), TEXT);
-            let s = format!("{:.1} dBV", m.dbv);
-            cv.text(&f.s, r.x + r.w - 4 - f.s.width(&s), ty, &s, LABEL);
-            // height over the noise on the scale of the list
-            let span = (top - sp.floor_dbv).max(1.0);
-            let w = (((m.dbv - sp.floor_dbv) / span).clamp(0.0, 1.0) * (r.w - 26) as f64) as i32;
-            if pitch >= 36 {
-                let s =
-                    if m.dbv == strongest { "strongest".to_string() } else { format!("{:.1} dBc", m.dbv - strongest) };
-                cv.text(&f.s, r.x + 22, ty + 15, &s, DIM);
-            }
-            cv.fill(Rect::new(r.x + 22, y + pitch - 3, w, 2), scale(ACCENT, 150));
-        }
-        if n == 0 {
-            cv.text(&f.s, r.x + 4, r.y + 14, "No lines above the noise", DIM);
-        }
-        let y0 = r.y + n * pitch + if n == 0 { 20 } else { 0 };
-        let room = r.y + r.h - y0;
-        let step = if nf > 0 { (room / nf).min(if pane { 40 } else { 24 }) } else { 0 };
-        for (k, (l, v)) in facts.iter().take(nf as usize).enumerate() {
-            let y = y0 + k as i32 * step + (step + 9) / 2;
-            cv.text(&f.s, r.x + 4, y, l, DIM);
-            cv.text(&f.s, r.x + r.w - 4 - f.s.width(v), y, v, LABEL);
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // results
 
@@ -346,6 +147,38 @@ struct ResultRow {
 }
 
 impl Ui {
+    pub(super) fn spec_wf_h(&self, a: Rect, pane: bool) -> i32 {
+        spectrum_view::spec_wf_h(self, a, pane)
+    }
+
+    pub(super) fn spec_box(&self, a: Rect, pane: bool) -> SpecBox {
+        spectrum_view::spec_box(self, a, pane)
+    }
+
+    fn peaks_shown(&self, b: &SpecBox) -> usize {
+        spectrum_view::peaks_shown(self, b)
+    }
+
+    pub(super) fn sort_toggle(&mut self) {
+        spectrum_view::sort_toggle(self);
+    }
+
+    pub(super) fn draw_spec_frame(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum) {
+        spectrum_view::draw_spec_frame(self, cv, b, sp);
+    }
+
+    pub(super) fn draw_spec_marks(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum, top: f32) {
+        spectrum_view::draw_spec_marks(self, cv, b, sp, top);
+    }
+
+    pub(super) fn draw_peaks(&self, cv: &mut Canvas, b: &SpecBox, sp: &spectrum::Spectrum, pane: bool) {
+        spectrum_view::draw_peaks(self, cv, b, sp, pane);
+    }
+
+    fn draw_results_side(&self, cv: &mut Canvas, s: Rect) {
+        spectrum_view::draw_results_side(self, cv, s);
+    }
+
     /// Rows of the side column of the Results pane: cursors, peak list.
     fn results_side_rows(&self) -> i32 {
         let cur = match self.m.cursor {
@@ -570,66 +403,6 @@ impl Ui {
         if w.hi > w.lo && w.now.is_finite() {
             let x = b.x + (((w.now - w.lo) / (w.hi - w.lo)).clamp(0.0, 1.0) * (b.w - 3) as f64) as i32;
             cv.fill(Rect::new(x, b.y - 1, 3, b.h + 2), col);
-        }
-    }
-
-    /// Cursor read-out and peak list beside the table; their rows share the height.
-    fn draw_results_side(&self, cv: &mut Canvas, s: Rect) {
-        let f = self.fonts();
-        let cur = self.cursor_values();
-        let peaks = self.azr.spec.as_ref().map(|_| &self.azr.peaks);
-        let cur_rows = if cur.is_empty() { 0 } else { 1 + cur.len().div_ceil(2) as i32 };
-        let peak_rows = peaks.map_or(0, |p| 1 + (p.len().div_ceil(2) as i32).max(1));
-        let rows = cur_rows + peak_rows;
-        if rows == 0 {
-            return;
-        }
-        let pitch = s.h / rows;
-        let half = s.w / 2;
-        let line = |k: i32| s.y + k * pitch + (pitch + 9) / 2;
-        if !cur.is_empty() {
-            let mode = match self.m.cursor {
-                CursorMode::Volt => "Volt",
-                CursorMode::Track => "Track",
-                CursorMode::Xy => "XY",
-                _ => "Time",
-            };
-            cv.text(
-                &f.sb,
-                s.x,
-                line(0),
-                &format!(
-                    "Cursors  \u{b7}  {}  \u{b7}  {}",
-                    mode,
-                    self.cursor_badge().map_or("No source".into(), |(label, _)| label)
-                ),
-                TEXT,
-            );
-            for (i, (l, v)) in cur.iter().enumerate() {
-                let (x, y) = (s.x + (i as i32 % 2) * half, line(1 + i as i32 / 2));
-                cv.text(&f.s, x, y, l, DIM);
-                cv.text(&f.sb, x + half - 8 - f.sb.width(v), y, v, TEXT);
-            }
-        }
-        let Some(p) = peaks else { return };
-        let y0 = cur_rows;
-        let spec = match self.m.spec_src {
-            WaveId::Ch(c) => self.ch_name(c),
-            WaveId::Ref(i) => format!("R{}", i + 1),
-        };
-        cv.text(&f.sb, s.x, line(y0), &format!("Peaks  \u{b7}  {}  \u{b7}  dBV", spec), TEXT);
-        if p.is_empty() {
-            cv.text(&f.s, s.x, line(y0 + 1), "No lines above the noise", DIM);
-        }
-        let per = p.len().div_ceil(2).max(1);
-        for (i, m) in p.iter().enumerate() {
-            let (x, y) = (s.x + (i / per) as i32 * half, line(y0 + 1 + (i % per) as i32));
-            let tag = Rect::new(x, y - 11, 15, 14);
-            cv.round(tag, 3, ACCENT, 255);
-            cv.text_in(&f.sb, tag, 1, &format!("{}", i + 1), DARK_TEXT);
-            cv.text(&f.s, x + 19, y, &si_digits(m.f, "Hz", 4), LABEL);
-            let v = format!("{:.1}", m.dbv);
-            cv.text(&f.sb, x + half - 8 - f.sb.width(&v), y, &v, TEXT);
         }
     }
 }

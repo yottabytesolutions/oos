@@ -1,5 +1,6 @@
 """Comparator regression tests, invoked by the Cargo golden integration test."""
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +14,30 @@ from golden import (SIGNATURE, compare_rgb, read_png, require_captures, write_di
 class GoldenTests(unittest.TestCase):
     def image(self, n=1000, value=40):
         return n, 1, bytes([value] * n * 3)
+
+    def test_publish_preserves_foreign_subtrees_and_replaces_owned_captures(self):
+        from golden_run import publish
+        with tempfile.TemporaryDirectory() as d:
+            reference, candidate = Path(d) / 'golden', Path(d) / 'candidate'
+            foreign = {'README.md': b'guide', 'update/README.md': b'update guide',
+                       'update/pending.png.ref': b'updater', 'demo/foreign/keep.txt': b'foreign'}
+            old = {'demo/case/current.png': b'old', 'demo/case/current.meta': b'old metadata',
+                   'demo/retired/old.png': b'retired', 'demo/retired/old.meta': b'retired metadata'}
+            new = {'demo/case/current.png': b'new', 'demo/case/current.meta': b'new metadata',
+                   'demo/new/added.png': b'added', 'demo/new/added.meta': b'added metadata'}
+            for tree, files in ((reference, foreign | old), (candidate, new)):
+                for name, data in files.items():
+                    path = tree / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
+                captures = [{'path': name} for name in files if name.endswith('.png')]
+                (tree / 'manifest.txt').write_text(json.dumps({'captures': captures}))
+            publish(candidate, reference)
+            expected = foreign | new | {'manifest.txt': (candidate / 'manifest.txt').read_bytes()}
+            actual = {str(p.relative_to(reference)): p.read_bytes() for p in reference.rglob('*') if p.is_file()}
+            self.assertEqual(actual, expected)
+            self.assertFalse(reference.with_name('golden.pending').exists())
+            self.assertFalse(reference.with_name('golden.previous').exists())
 
     def test_threshold_and_floor_per_region(self):
         a = self.image()

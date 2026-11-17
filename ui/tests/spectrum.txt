@@ -1,0 +1,9 @@
+# Full spectrum summary reserves all peak rows before and after qualification.
+menu Spectrum
+set View = On
+set THD / SNR = On
+close
+frames 2
+shot $S/s0-spectrum-qualifying.ppm
+frames 35
+shot $S/s1-spectrum-tracked.ppm

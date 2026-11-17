@@ -701,7 +701,7 @@
           288
         ]
       ],
-      "rgb_sha256": "73b74cda27cf39e6685b6181a06f15444d035a1f35e2d52afb59cd1084d588ae",
+      "rgb_sha256": "60d82172b7c51ed4415dbc2c3ef83de2c4cac66a09eb6c8cc7d2650ae5222526",
       "script_sha256": "e5ca30e750ea890eb68830c07c10fc30d0575974640c53e4c7800efd383ef1d9",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=32 records=192 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -721,7 +721,7 @@
           288
         ]
       ],
-      "rgb_sha256": "2914fc6314437b0d63b32e21bbb873fdb653702f70ff98648c922365a6083364",
+      "rgb_sha256": "43205e893df7d62a157d73373f98c8724011fe4ef74728b4f15afd7c7fda251d",
       "script_sha256": "e5ca30e750ea890eb68830c07c10fc30d0575974640c53e4c7800efd383ef1d9",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=35 records=210 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -741,7 +741,7 @@
           288
         ]
       ],
-      "rgb_sha256": "eefb95709f058f80a6f3307ee15711c3334c3afe9a452fad61b39450e646b7a6",
+      "rgb_sha256": "d49a1d7f5fb0244a67541e557da2b4466c4428cdb107d2eac1e02fceb2582a19",
       "script_sha256": "e5ca30e750ea890eb68830c07c10fc30d0575974640c53e4c7800efd383ef1d9",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=66 records=396 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -761,7 +761,7 @@
           288
         ]
       ],
-      "rgb_sha256": "7dac9d05b720ad62d2911d064bb06cf86a2c9b98ce455399e514d11931d82271",
+      "rgb_sha256": "c9e5ef6a8915939ad24d665a33c10a72b1fdb5efd454e2b500ead88514401485",
       "script_sha256": "e5ca30e750ea890eb68830c07c10fc30d0575974640c53e4c7800efd383ef1d9",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=77 records=462 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -1151,6 +1151,46 @@
       "rgb_sha256": "276c2c41696c2e22ce427ef045b172f6d44f663ae60900630f742540dec28d92",
       "script_sha256": "481e053f691766dfd5b401eabdd2012474c8f192e66461401ecb72980b6e1bf4",
       "settings": "settings dots=Auto channels=3 tdiv=0.001 persist=0 grade=false zoom=false acquisition=Normal run=Stop frames=61 records=140 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/normal/spectrum/s0-spectrum-qualifying.png",
+      "provenance": "script=spectrum.txt;text=normal;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "12cb1c3e6081c992126b59c871ed88349543e919674334e512e72a1a9edc1e3e",
+      "script_sha256": "e77d500c22bbc723626376696074ee0e04d4499b91ae6a868d04efd4542e789f",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=4 records=24 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/normal/spectrum/s1-spectrum-tracked.png",
+      "provenance": "script=spectrum.txt;text=normal;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "34f18c98bb8233d6532373e90b8238287e5ed5bdf85e3f66fed48242fedd89ff",
+      "script_sha256": "e77d500c22bbc723626376696074ee0e04d4499b91ae6a868d04efd4542e789f",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=40 records=240 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },
@@ -2602,7 +2642,7 @@
           288
         ]
       ],
-      "rgb_sha256": "69a19b5b305968d85e2496de4ec727e99ba886f05319d35be90d998db1d80a16",
+      "rgb_sha256": "d706b90b2f1393ea1f306f1606e3474f8aa5ea6d37645e0f5f91d4ee835bdd14",
       "script_sha256": "2a5103c47548e4024f8bc3eed8c40c66a874d94e25e8b67bebc00996cd012cde",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=32 records=192 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -2622,7 +2662,7 @@
           288
         ]
       ],
-      "rgb_sha256": "45076aebffeb64a20ff4f8a2fa2254507ba7812d2d16c7129db1fb23032701a5",
+      "rgb_sha256": "2935cdad281242b128b9eabae49ba30459d80ecab0e0d4198d41669e1706d403",
       "script_sha256": "2a5103c47548e4024f8bc3eed8c40c66a874d94e25e8b67bebc00996cd012cde",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=35 records=210 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -2642,7 +2682,7 @@
           288
         ]
       ],
-      "rgb_sha256": "dfcf6ba132753825afb22e9b13efca43a124bbd35bc505a3b6a46b3916332104",
+      "rgb_sha256": "50debe8057f7ea914b55980fb86eee9ec9fa269ba4c0dff635216faade80f628",
       "script_sha256": "2a5103c47548e4024f8bc3eed8c40c66a874d94e25e8b67bebc00996cd012cde",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=66 records=396 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -2662,7 +2702,7 @@
           288
         ]
       ],
-      "rgb_sha256": "bf3b73b82ae4104eb8df2f9afa22ef03b670dd4529c08f2803ccf297f2bb671d",
+      "rgb_sha256": "760d28762ad0b877f45273b63468054c1b88affd11080b3cfea3964fc1a0ff7d",
       "script_sha256": "2a5103c47548e4024f8bc3eed8c40c66a874d94e25e8b67bebc00996cd012cde",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=77 records=462 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -3052,6 +3092,46 @@
       "rgb_sha256": "35ed29b4600d50319b6daecd10769e7b7814e305ac214b0b363a650518f6d2b6",
       "script_sha256": "663cf89b225a87ff84ed11aa03ff9aec34adb689b5a177fa84e3ca597cab85c2",
       "settings": "settings dots=Auto channels=3 tdiv=0.001 persist=0 grade=false zoom=false acquisition=Normal run=Stop frames=61 records=140 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/large/spectrum/s0-spectrum-qualifying.png",
+      "provenance": "script=spectrum.txt;text=large;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "a50e8d94e0cfac802103975e53a78df79e0cc88ba131ab193afe914f691a040d",
+      "script_sha256": "c1e224bbe13775062c798aada395afc90e018ba5c2fd7d08a2466baaf2210dfa",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=4 records=24 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/large/spectrum/s1-spectrum-tracked.png",
+      "provenance": "script=spectrum.txt;text=large;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "f758e3e65b6809cc0c016807d1358274c5502883c758b16b7cdbca39b28cee35",
+      "script_sha256": "c1e224bbe13775062c798aada395afc90e018ba5c2fd7d08a2466baaf2210dfa",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=40 records=240 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },
@@ -4503,7 +4583,7 @@
           288
         ]
       ],
-      "rgb_sha256": "f2c801f024d2229dac0e1f735cc3167b16d655f707df5a529fc7af31f793fd68",
+      "rgb_sha256": "bcca0e57f915252348e8d288c273a7f597a510d4ccfe236ebcf168014b08fab1",
       "script_sha256": "683642fa1c73d3c63139330db6b2e8a9d80476b21c630a4cc475bba09cad3b32",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=32 records=192 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -4523,7 +4603,7 @@
           288
         ]
       ],
-      "rgb_sha256": "437a31e3552c4b2ce80ff61269f564bd4ccf664ae66bb60e02e8720150e88569",
+      "rgb_sha256": "4e1792831ecb2ceddea50bd5643fbef1cdf281313d427d107315ef60ba0025a5",
       "script_sha256": "683642fa1c73d3c63139330db6b2e8a9d80476b21c630a4cc475bba09cad3b32",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=35 records=210 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -4543,7 +4623,7 @@
           288
         ]
       ],
-      "rgb_sha256": "2216828a66b5cb1c3a27e66186b748882f67ca9544bcf909fc4f3585babd7ac8",
+      "rgb_sha256": "f7380b5990e846b43988008ac0e2700140bb8c2ba7755eb247e012218216df2f",
       "script_sha256": "683642fa1c73d3c63139330db6b2e8a9d80476b21c630a4cc475bba09cad3b32",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=66 records=396 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -4563,7 +4643,7 @@
           288
         ]
       ],
-      "rgb_sha256": "10625c4bdaab640dcfc717554fd563b381c204fc194945374a9534e15e522968",
+      "rgb_sha256": "058838870b1145a5d6d3375eb0220d7d866f17d46734052e4f9ada7babd06c7b",
       "script_sha256": "683642fa1c73d3c63139330db6b2e8a9d80476b21c630a4cc475bba09cad3b32",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=77 records=462 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -4953,6 +5033,46 @@
       "rgb_sha256": "862b6b894cf3fb8a3265e3da916afe6b9423b5721c0736812320c0942eeb564a",
       "script_sha256": "74c28aec3d6c772360f1cd118dbf7398edabb1dca325bb01f78746552576a053",
       "settings": "settings dots=Auto channels=3 tdiv=0.001 persist=0 grade=false zoom=false acquisition=Normal run=Stop frames=61 records=140 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/larger/spectrum/s0-spectrum-qualifying.png",
+      "provenance": "script=spectrum.txt;text=larger;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "2459a1be1f3536af552d8ed5cd5c281ed803d7da19a9ed0e6c89978e60b27908",
+      "script_sha256": "25eadaee9ce04f98c11f178dd96b8a734a0fbdc2269e92cefa0730c8466826a7",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=4 records=24 menu_open=false Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/larger/spectrum/s1-spectrum-tracked.png",
+      "provenance": "script=spectrum.txt;text=larger;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "8325b704b27b34da582f06115ca9564c38d0f3e1b09d3850baee40eb78f3c285",
+      "script_sha256": "25eadaee9ce04f98c11f178dd96b8a734a0fbdc2269e92cefa0730c8466826a7",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=40 records=240 menu_open=false Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },

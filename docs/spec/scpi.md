@@ -958,6 +958,24 @@ record can also return sentinel without an error. Preserve that ordering.
 | DPT: VPEAK, IPEAK, EON, EOFF, TDON, TR, TON, TDOFF, TF, TOFF, DVDT, DIDT, TDT, TRR, QRR, ERR, IRRM, DDIDT, QOSS | 0,2,3; dpt_v/i/g; configured fourth input retained | peak V/A, energies J, times s, slew V/s or A/s, charges C, reverse current A; dpt_pct thresholds |
 | BAND: RISE, BW, OVER | 0 or 1; Ch(bw_src) | step_response rise s, bw_from_rise Hz, overshoot %; bw_hint/bw_bins determine fold |
 
+Spectrum display tracking (task 0087) is UI-only. There is no numbered
+peak-table query in this command inventory. `:SPECtrum:ITEM? F1` and the
+distortion, ACPR and floor items above continue to calculate from the selected
+raw waveform; they do not report held or tracked display values. Auto-centre
+also uses the current raw ranked lines. The peak table and trace markers
+reserve eight rows, qualify a new line for 1 s and retain an absent line for
+1 s, dimmed at its last value. Matching uses max(2 display bins, 0.5 actual RBW).
+Frequency order changes only when the qualified set changes or the sort is
+explicitly changed; frequency-mode numbers are reassigned only on a set change.
+Level order swaps adjacent rows only when the lower row has a 1 dB advantage,
+and preserves marker identities, including across explicit sort changes.
+Displayed values are unsmoothed so real amplitude changes remain immediate. The
+UI clock drives both holds. Tracking resets on source, window, trace or
+frequency-grid/RBW changes, analyser lifecycle reset, and when no spectrum is
+available. Tracking uses fixed storage for eight visible tracks plus eight
+candidates; it adds no per-frame allocation to the existing FFT/measurement
+pipeline.
+
 **scpi-323 (added): simulation presets.** All 12 serial::LANES names are
 case-insensitive whole-name matches, optional outer double quotes:
 PCIe 1.0, PCIe 2.0, PCIe 3.0, PCIe 4.0, PCIe 5.0, USB 2.0 HS,

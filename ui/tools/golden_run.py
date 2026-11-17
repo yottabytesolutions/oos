@@ -138,9 +138,18 @@ def publish(candidate, reference):
     backup = reference.with_name('golden.previous')
     if pending.exists() or backup.exists():
         raise ValueError('unfinished reference transaction; preserve and inspect it')
-    shutil.copytree(candidate, pending)
-    if (reference / 'README.md').exists():
-        shutil.copyfile(reference / 'README.md', pending / 'README.md')
+    if reference.exists():
+        shutil.copytree(reference, pending)
+        previous = reference / 'manifest.txt'
+        if previous.exists():
+            # Only the manifest's captures and their metadata belong to this runner.
+            for capture in json.loads(previous.read_text())['captures']:
+                path = Path(capture['path'])
+                if path.is_absolute() or '..' in path.parts or path.suffix != '.png':
+                    raise ValueError('invalid owned capture path')
+                (pending / path).unlink(missing_ok=True)
+                (pending / path.with_suffix('.meta')).unlink(missing_ok=True)
+    shutil.copytree(candidate, pending, dirs_exist_ok=True)
     if reference.exists():
         reference.rename(backup)
     try:

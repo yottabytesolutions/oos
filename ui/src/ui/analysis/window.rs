@@ -9,6 +9,7 @@ type SpectrumKey = (WaveId, f64, f64, f64, Window, usize, usize, bool, bool, usi
 
 #[derive(Clone, Default)]
 pub(in crate::ui) struct Work {
+    pub(in crate::ui) peak_table: super::peaks::Table,
     spec_t: f64,
     /// Samples copied for synchronous offline analysis. Background DSP never increments this on main.
     samples: u64,
@@ -162,10 +163,12 @@ fn accept(ui: &mut Ui, done: Done) -> bool {
     state.watch_seen = std::mem::take(&mut ui.azr.watch_seen);
     state.watch_t = ui.azr.watch_t;
     ui.azr = state;
+    ui.track_peaks();
     true
 }
 
 pub(in crate::ui) fn poll(ui: &mut Ui) {
+    ui.azr.work.peak_table.tick(ui.now, ui.m.spec_sort != 0);
     let done = ui.meas_bg.as_mut().and_then(|w| w.analysis_rx.try_recv().ok());
     if let Some(done) = done {
         if let Some(w) = ui.meas_bg.as_mut() {
@@ -271,6 +274,7 @@ fn synchronous(ui: &mut Ui, mut job: Job) {
     ui.azr = job.context.azr;
     ui.azr.work.finished = Some(ui.now);
     ui.azr.work.accepted_key = Some(job.key);
+    ui.track_peaks();
 }
 
 pub(in crate::ui) fn updating(ui: &Ui) -> bool {
@@ -297,3 +301,6 @@ pub(super) fn span(ui: &Ui, center: f64, requested: f64) -> f64 {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod peak_tests;

@@ -148,5 +148,17 @@
     "rule": "private-ipv6",
     "sha256": "aa0766e50e80b2e96b2335313e04063392e50d6ada623bf400bdeff3ef3990ec",
     "reason": "Invented unique-local prefix in the Allowed test: the row's width check needs this short IPv6 form; no real device address."
+  },
+  {
+    "path": "ui/tests/golden/demo/larger/spectrum/s1-spectrum-tracked.png",
+    "rule": "global-ipv6",
+    "sha256": "899f3cea2819357ef0ee9c9304a35c09a9bb3a08bcacb8a8d61387e519d4ed4f",
+    "reason": "Compressed PNG bytes of a golden picture that happen to match the address pattern; no address."
+  },
+  {
+    "path": "ui/tests/golden/demo/normal/spectrum/s1-spectrum-tracked.png",
+    "rule": "email",
+    "sha256": "52b55505de4358a3e0989a6b84324d35676673c79c7c49171736a217e65d3244",
+    "reason": "Compressed PNG bytes of a golden picture that happen to match the address pattern; no address."
   }
 ]

@@ -1,273 +1,57 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Bounded, typed flat-model proposals for the transitional internal outbox.
-use crate::model::Model;
-mod acquire0;
-mod analysis0;
-mod analysis1;
-mod analysis2;
-mod analysis3;
-mod analysis4;
-mod analysis4_p0;
-mod analysis4_p1;
-mod analysis5;
-mod analysis5_p0;
-mod analysis5_p1;
-mod analysis5_p2;
-mod analysis5_p3;
-mod analysis6;
-mod channels0;
-mod display0;
-mod display1;
-mod display2_p0;
-mod interfaces0;
-mod interfaces1;
-mod measure0;
-mod measure1;
-mod measure1_p0;
-mod references_p0;
-mod references_p1;
-mod sim_p0;
-mod sim_p1;
-mod timebase0;
-mod trigger0;
-mod trigger1;
-mod trigger2;
+use super::storage::{apply, bytes, capture, refresh, reuse};
+use crate::math::{MathOp, Window};
+use crate::model::*;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Patch {
-    Channels0(channels0::Channels0),
-    Timebase0(timebase0::Timebase0),
-    Trigger0(trigger0::Trigger0),
-    Trigger1(trigger1::Trigger1),
-    Trigger2(trigger2::Trigger2),
-    Acquire0(acquire0::Acquire0),
-    Display0(display0::Display0),
-    Display1(display1::Display1),
-    Measure0(measure0::Measure0),
-    Measure1(measure1::Measure1),
-    Analysis0(analysis0::Analysis0),
-    Analysis1(analysis1::Analysis1),
-    Analysis2(analysis2::Analysis2),
-    Analysis3(analysis3::Analysis3),
-    Analysis4(analysis4::Analysis4),
-    Analysis5(analysis5::Analysis5),
-    Analysis6(analysis6::Analysis6),
-    Interfaces0(interfaces0::Interfaces0),
-    Interfaces1(interfaces1::Interfaces1),
-    ReferencesP0(references_p0::ReferencesP0),
-    ReferencesP1(references_p1::ReferencesP1),
-    Analysis4P0(analysis4_p0::Analysis4P0),
-    Analysis4P1(analysis4_p1::Analysis4P1),
-    Measure1P0(measure1_p0::Measure1P0),
-    Analysis5P0(analysis5_p0::Analysis5P0),
-    Analysis5P1(analysis5_p1::Analysis5P1),
-    Analysis5P2(analysis5_p2::Analysis5P2),
-    Analysis5P3(analysis5_p3::Analysis5P3),
-    SimP0(sim_p0::SimP0),
-    SimP1(sim_p1::SimP1),
-    Display2P0(display2_p0::Display2P0),
+macro_rules! define_patch {
+    ($($(#[$attribute:meta])* $group:ident $module:ident {
+        $($index:literal $variant:ident($field:ident: $ty:ty) $policy:ident [$($class:tt)*];)*
+    })*) => {
+        $(mod $module {
+            use super::*;
+            $(#[$attribute])*
+            #[derive(Clone, Debug, PartialEq)]
+            pub enum $group { $($variant($ty),)* }
+            impl $group {
+                pub(super) fn apply(&self, m: &mut Model) {
+                    match self { $(Self::$variant(value) => {
+                        apply!($policy, &mut m.$field, value);
+                    },)* }
+                }
+                pub(super) fn reuse(&mut self, m: &Model) {
+                    match self { $(Self::$variant(value) => {
+                        reuse!($policy, value, &m.$field);
+                    },)* }
+                }
+                pub(super) fn bytes(&self) -> usize {
+                    match self { $(Self::$variant(_value) => bytes!($policy, _value),)* }
+                }
+            }
+        })*
+        #[derive(Clone, Debug, PartialEq)]
+        pub enum Patch { $($group($module::$group),)* }
+        impl Patch {
+            pub(super) fn capture(index: usize, m: &Model) -> Option<Self> {
+                Some(match index {
+                    $($($index => Self::$group($module::$group::$variant(capture!($policy, &m.$field))),)*)*
+                    _ => return None,
+                })
+            }
+            pub(super) fn index(&self) -> usize {
+                match self { $($(Self::$group($module::$group::$variant(_)) => $index,)*)* }
+            }
+            pub(super) fn apply(&self, m: &mut Model) {
+                match self { $(Self::$group(p) => p.apply(m),)* }
+            }
+            pub(super) fn reuse(&mut self, m: &Model) {
+                match self { $(Self::$group(p) => p.reuse(m),)* }
+            }
+            pub(super) fn bytes(&self) -> usize {
+                match self { $(Self::$group(p) => p.bytes(),)* }
+            }
+        }
+    };
 }
-
-impl Patch {
-    pub(super) fn capture(index: usize, m: &Model) -> Option<Self> {
-        match index {
-            0 | 1 | 59 | 67 | 70 => channels0::Channels0::capture(index, m).map(Self::Channels0),
-            2 | 3 | 68 | 69 | 71 | 117 | 119 | 120 | 118 => {
-                timebase0::Timebase0::capture(index, m).map(Self::Timebase0)
-            }
-            4..=15 => trigger0::Trigger0::capture(index, m).map(Self::Trigger0),
-            16..=27 => trigger1::Trigger1::capture(index, m).map(Self::Trigger1),
-            28 | 29 | 30 | 31 | 105 | 106 | 107 | 164 => trigger2::Trigger2::capture(index, m).map(Self::Trigger2),
-            32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 40 | 162 | 163 | 193 | 243 => {
-                acquire0::Acquire0::capture(index, m).map(Self::Acquire0)
-            }
-            41 | 42 | 43 | 44 | 45 | 46 | 47 | 48 | 49 | 88 | 65 | 121 => {
-                display0::Display0::capture(index, m).map(Self::Display0)
-            }
-            122 | 123 | 124 | 125 | 126 | 127 | 128 | 129 | 192 => {
-                display1::Display1::capture(index, m).map(Self::Display1)
-            }
-            50 | 51 | 52 | 53 | 54 | 55 | 56 | 57 | 58 | 60 | 61 | 62 => {
-                measure0::Measure0::capture(index, m).map(Self::Measure0)
-            }
-            63 | 64 | 89 | 90 | 79 => measure1::Measure1::capture(index, m).map(Self::Measure1),
-            72 | 73 | 74 | 75 | 76 | 77 | 78 | 80 | 81 | 82 | 83 | 84 => {
-                analysis0::Analysis0::capture(index, m).map(Self::Analysis0)
-            }
-            85 | 86 | 87 | 91 | 92 | 93 | 94 | 95 | 96 | 97 | 98 | 99 => {
-                analysis1::Analysis1::capture(index, m).map(Self::Analysis1)
-            }
-            100 | 101 | 102 | 103 | 104 | 108 | 109 | 110 | 111 | 112 | 113 | 114 => {
-                analysis2::Analysis2::capture(index, m).map(Self::Analysis2)
-            }
-            115 | 116 | 130 | 131 | 132 | 133 | 134 | 135 | 136 | 137 | 138 | 139 => {
-                analysis3::Analysis3::capture(index, m).map(Self::Analysis3)
-            }
-            140..=151 => analysis4::Analysis4::capture(index, m).map(Self::Analysis4),
-            152 | 153 | 154 | 155 | 156 | 157 | 158 | 159 | 160 | 161 | 165 | 166 => {
-                analysis5::Analysis5::capture(index, m).map(Self::Analysis5)
-            }
-            167 | 185 | 186 | 187 | 188 | 189 | 190 => analysis6::Analysis6::capture(index, m).map(Self::Analysis6),
-            66 | 168 | 169 | 170 | 171 | 172 | 173 | 174 | 175 | 176 | 177 | 178 => {
-                interfaces0::Interfaces0::capture(index, m).map(Self::Interfaces0)
-            }
-            179 | 180 | 181 | 182 | 183 | 184 | 191 => {
-                interfaces1::Interfaces1::capture(index, m).map(Self::Interfaces1)
-            }
-            244..=255 => references_p0::ReferencesP0::capture(index, m).map(Self::ReferencesP0),
-            256..=256 => references_p1::ReferencesP1::capture(index, m).map(Self::ReferencesP1),
-            257..=268 => analysis4_p0::Analysis4P0::capture(index, m).map(Self::Analysis4P0),
-            269..=274 => analysis4_p1::Analysis4P1::capture(index, m).map(Self::Analysis4P1),
-            275..=283 => measure1_p0::Measure1P0::capture(index, m).map(Self::Measure1P0),
-            284..=295 => analysis5_p0::Analysis5P0::capture(index, m).map(Self::Analysis5P0),
-            296..=307 => analysis5_p1::Analysis5P1::capture(index, m).map(Self::Analysis5P1),
-            308..=319 => analysis5_p2::Analysis5P2::capture(index, m).map(Self::Analysis5P2),
-            320..=321 => analysis5_p3::Analysis5P3::capture(index, m).map(Self::Analysis5P3),
-            322..=333 => sim_p0::SimP0::capture(index, m).map(Self::SimP0),
-            334..=341 => sim_p1::SimP1::capture(index, m).map(Self::SimP1),
-            342..=344 => display2_p0::Display2P0::capture(index, m).map(Self::Display2P0),
-            _ => None,
-        }
-    }
-    pub(super) fn index(&self) -> usize {
-        match self {
-            Self::Channels0(p) => p.index(),
-            Self::Timebase0(p) => p.index(),
-            Self::Trigger0(p) => p.index(),
-            Self::Trigger1(p) => p.index(),
-            Self::Trigger2(p) => p.index(),
-            Self::Acquire0(p) => p.index(),
-            Self::Display0(p) => p.index(),
-            Self::Display1(p) => p.index(),
-            Self::Measure0(p) => p.index(),
-            Self::Measure1(p) => p.index(),
-            Self::Analysis0(p) => p.index(),
-            Self::Analysis1(p) => p.index(),
-            Self::Analysis2(p) => p.index(),
-            Self::Analysis3(p) => p.index(),
-            Self::Analysis4(p) => p.index(),
-            Self::Analysis5(p) => p.index(),
-            Self::Analysis6(p) => p.index(),
-            Self::Interfaces0(p) => p.index(),
-            Self::Interfaces1(p) => p.index(),
-            Self::ReferencesP0(p) => p.index(),
-            Self::ReferencesP1(p) => p.index(),
-            Self::Analysis4P0(p) => p.index(),
-            Self::Analysis4P1(p) => p.index(),
-            Self::Measure1P0(p) => p.index(),
-            Self::Analysis5P0(p) => p.index(),
-            Self::Analysis5P1(p) => p.index(),
-            Self::Analysis5P2(p) => p.index(),
-            Self::Analysis5P3(p) => p.index(),
-            Self::SimP0(p) => p.index(),
-            Self::SimP1(p) => p.index(),
-            Self::Display2P0(p) => p.index(),
-        }
-    }
-    pub(super) fn apply(&self, m: &mut Model) {
-        match self {
-            Self::Channels0(p) => p.apply(m),
-            Self::Timebase0(p) => p.apply(m),
-            Self::Trigger0(p) => p.apply(m),
-            Self::Trigger1(p) => p.apply(m),
-            Self::Trigger2(p) => p.apply(m),
-            Self::Acquire0(p) => p.apply(m),
-            Self::Display0(p) => p.apply(m),
-            Self::Display1(p) => p.apply(m),
-            Self::Measure0(p) => p.apply(m),
-            Self::Measure1(p) => p.apply(m),
-            Self::Analysis0(p) => p.apply(m),
-            Self::Analysis1(p) => p.apply(m),
-            Self::Analysis2(p) => p.apply(m),
-            Self::Analysis3(p) => p.apply(m),
-            Self::Analysis4(p) => p.apply(m),
-            Self::Analysis5(p) => p.apply(m),
-            Self::Analysis6(p) => p.apply(m),
-            Self::Interfaces0(p) => p.apply(m),
-            Self::Interfaces1(p) => p.apply(m),
-            Self::ReferencesP0(p) => p.apply(m),
-            Self::ReferencesP1(p) => p.apply(m),
-            Self::Analysis4P0(p) => p.apply(m),
-            Self::Analysis4P1(p) => p.apply(m),
-            Self::Measure1P0(p) => p.apply(m),
-            Self::Analysis5P0(p) => p.apply(m),
-            Self::Analysis5P1(p) => p.apply(m),
-            Self::Analysis5P2(p) => p.apply(m),
-            Self::Analysis5P3(p) => p.apply(m),
-            Self::SimP0(p) => p.apply(m),
-            Self::SimP1(p) => p.apply(m),
-            Self::Display2P0(p) => p.apply(m),
-        }
-    }
-    pub(super) fn reuse(&mut self, m: &Model) {
-        match self {
-            Self::Channels0(p) => p.reuse(m),
-            Self::Timebase0(p) => p.reuse(m),
-            Self::Trigger0(p) => p.reuse(m),
-            Self::Trigger1(p) => p.reuse(m),
-            Self::Trigger2(p) => p.reuse(m),
-            Self::Acquire0(p) => p.reuse(m),
-            Self::Display0(p) => p.reuse(m),
-            Self::Display1(p) => p.reuse(m),
-            Self::Measure0(p) => p.reuse(m),
-            Self::Measure1(p) => p.reuse(m),
-            Self::Analysis0(p) => p.reuse(m),
-            Self::Analysis1(p) => p.reuse(m),
-            Self::Analysis2(p) => p.reuse(m),
-            Self::Analysis3(p) => p.reuse(m),
-            Self::Analysis4(p) => p.reuse(m),
-            Self::Analysis5(p) => p.reuse(m),
-            Self::Analysis6(p) => p.reuse(m),
-            Self::Interfaces0(p) => p.reuse(m),
-            Self::Interfaces1(p) => p.reuse(m),
-            Self::ReferencesP0(p) => p.reuse(m),
-            Self::ReferencesP1(p) => p.reuse(m),
-            Self::Analysis4P0(p) => p.reuse(m),
-            Self::Analysis4P1(p) => p.reuse(m),
-            Self::Measure1P0(p) => p.reuse(m),
-            Self::Analysis5P0(p) => p.reuse(m),
-            Self::Analysis5P1(p) => p.reuse(m),
-            Self::Analysis5P2(p) => p.reuse(m),
-            Self::Analysis5P3(p) => p.reuse(m),
-            Self::SimP0(p) => p.reuse(m),
-            Self::SimP1(p) => p.reuse(m),
-            Self::Display2P0(p) => p.reuse(m),
-        }
-    }
-    pub(super) fn bytes(&self) -> usize {
-        match self {
-            Self::Channels0(p) => p.bytes(),
-            Self::Timebase0(p) => p.bytes(),
-            Self::Trigger0(p) => p.bytes(),
-            Self::Trigger1(p) => p.bytes(),
-            Self::Trigger2(p) => p.bytes(),
-            Self::Acquire0(p) => p.bytes(),
-            Self::Display0(p) => p.bytes(),
-            Self::Display1(p) => p.bytes(),
-            Self::Measure0(p) => p.bytes(),
-            Self::Measure1(p) => p.bytes(),
-            Self::Analysis0(p) => p.bytes(),
-            Self::Analysis1(p) => p.bytes(),
-            Self::Analysis2(p) => p.bytes(),
-            Self::Analysis3(p) => p.bytes(),
-            Self::Analysis4(p) => p.bytes(),
-            Self::Analysis5(p) => p.bytes(),
-            Self::Analysis6(p) => p.bytes(),
-            Self::Interfaces0(p) => p.bytes(),
-            Self::Interfaces1(p) => p.bytes(),
-            Self::ReferencesP0(p) => p.bytes(),
-            Self::ReferencesP1(p) => p.bytes(),
-            Self::Analysis4P0(p) => p.bytes(),
-            Self::Analysis4P1(p) => p.bytes(),
-            Self::Measure1P0(p) => p.bytes(),
-            Self::Analysis5P0(p) => p.bytes(),
-            Self::Analysis5P1(p) => p.bytes(),
-            Self::Analysis5P2(p) => p.bytes(),
-            Self::Analysis5P3(p) => p.bytes(),
-            Self::SimP0(p) => p.bytes(),
-            Self::SimP1(p) => p.bytes(),
-            Self::Display2P0(p) => p.bytes(),
-        }
-    }
-}
+super::field_table::field_table!(define_patch);

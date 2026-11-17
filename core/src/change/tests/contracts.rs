@@ -21,7 +21,7 @@ mod timebase;
 mod trigger;
 type Case = (&'static str, fn(&mut Model), C);
 
-fn all() -> impl Iterator<Item = &'static Case> {
+pub(super) fn all() -> impl Iterator<Item = &'static Case> {
     [
         acquire::CASES,
         analysis0::CASES,

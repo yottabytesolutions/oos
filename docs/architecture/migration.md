@@ -226,12 +226,16 @@ upstreamarch's review:
 Classes: `acq`, `mapping`, `phosphor`, `stats`, `mask`, `zone`, `hw_average`, `history`, `math`, `view`. Measurement state
 (the analysis results, statistics and `meas_n`) is in `stats`. No `decode` class: the decode cache is keyed.
 
-`classify` is split per future settings group from the start, each under 60 lines: one or more per group, each
-destructuring its own fields of today's flat `Model`. One declarative field table may generate them when tests cover
-every generated item ([ADR 0038](../adr/code/0038-one-table-may-generate-per-field-code.md)). One destructuring of
-`Model` without `..` checks at compile time that every field belongs to a group. It lives in a `#[test]` function,
-which the size limit exempts, so its length (178 fields) is not a size violation. M13 then moves the fields without
-reclassifying.
+The flat `Model` fields are listed once in `core/src/change/field_table.rs`, grouped to preserve the public
+`Patch` variants. The table generates typed patch capture/application/reuse and payload accounting, field diffs
+and snapshot refresh ([ADR 0038](../adr/code/0038-one-table-may-generate-per-field-code.md)). Storage policies keep
+boxed values and capacity-reusing copies of nested strings and zone points. Stable diagnostic indexes, emission
+order and conditional decoder/sweep classes retain their existing meaning; derived channel and LA member diffs
+stay beside their projections. The generated exhaustive `Model` destructuring in test code rejects an omitted
+field. Tests walk every row using independently maintained field mutations and class contracts, including patch
+round trips, combined changes, a seeded sequence and heap growth/shrink. Before deleting the handwritten code,
+old/new differential tests passed for all 296 fields alone and cumulatively, a 256-step seeded sequence and heap
+growth/shrink in debug and release. M13 moves the fields without reclassifying.
 
 Tests, failing before:
 - every class: changing a representative field resets exactly its consumers;

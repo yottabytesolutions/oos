@@ -630,6 +630,22 @@ struct I3c {
 }
 
 impl I3c {
+    /// Bus idle; `addrs` = the dynamic addresses known before the record.
+    fn new(addrs: &[u8]) -> I3c {
+        I3c {
+            out: Vec::new(),
+            ph: I3cPh::Idle,
+            buf: Vec::new(),
+            in_frame: false,
+            after_start: false,
+            daa: false,
+            ccc: None,
+            known: addrs.to_vec(),
+            user: addrs.to_vec(),
+            hdr: false,
+        }
+    }
+
     fn bit(&mut self, t: f64, b: bool) {
         let need = match self.ph {
             I3cPh::Idle => return,
@@ -748,18 +764,7 @@ pub fn i3c(sda: &[f32], scl: &[f32], i3c_addrs: &[u8], thr: f32, hyst: f32) -> V
     ev.extend(edges(sda, thr, hyst).iter().map(|e| (e.t, if e.rising { 2 } else { 1 })));
     ev.sort_by(|a, b| a.0.total_cmp(&b.0));
     let high = |s: &[Option<bool>], t: f64| at(s, t).unwrap_or(true);
-    let mut d = I3c {
-        out: Vec::new(),
-        ph: I3cPh::Idle,
-        buf: Vec::new(),
-        in_frame: false,
-        after_start: false,
-        daa: false,
-        ccc: None,
-        known: i3c_addrs.to_vec(),
-        user: i3c_addrs.to_vec(),
-        hdr: false,
-    };
+    let mut d = I3c::new(i3c_addrs);
     let mut exit_cnt = 0;
     for (t, k) in ev {
         if d.hdr {
@@ -828,24 +833,7 @@ pub fn spdif(v: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
         return out;
     }
     let d: Vec<f64> = e.windows(2).map(|w| w[1] - w[0]).collect();
-    let mut s = d.clone();
-    s.sort_by(|a, b| a.total_cmp(b));
-    let cand = s[s.len() / 200];
-    let near: Vec<f64> = s.iter().copied().filter(|&x| x >= 0.7 * cand && x <= 1.35 * cand).collect();
-    let ui = near.iter().sum::<f64>() / near.len().max(1) as f64;
-    if ui.is_nan() || ui <= 0.0 {
-        return out;
-    }
-    let u: Vec<u8> = d
-        .iter()
-        .map(|&x| match x / ui {
-            r if r < 0.5 => 0,
-            r if r < 1.5 => 1,
-            r if r < 2.5 => 2,
-            r if r < 3.5 => 3,
-            _ => 0,
-        })
-        .collect();
+    let Some(u) = unit_intervals(&d) else { return out };
     let mut blk = 0;
     let mut i = 0;
     while i + 4 <= u.len() {
@@ -886,6 +874,27 @@ pub fn spdif(v: &[f32], thr: f32, hyst: f32) -> Vec<Packet> {
         i = j;
     }
     out
+}
+
+/// Edge intervals in unit intervals (1..3, else 0), the unit interval estimated from the shortest intervals; None
+/// without an estimate.
+fn unit_intervals(d: &[f64]) -> Option<Vec<u8>> {
+    let mut s = d.to_vec();
+    s.sort_by(|a, b| a.total_cmp(b));
+    let cand = s[s.len() / 200];
+    let near: Vec<f64> = s.iter().copied().filter(|&x| x >= 0.7 * cand && x <= 1.35 * cand).collect();
+    let ui = near.iter().sum::<f64>() / near.len().max(1) as f64;
+    if ui.is_nan() || ui <= 0.0 {
+        return None;
+    }
+    let units = |x: f64| match x / ui {
+        r if r < 0.5 => 0,
+        r if r < 1.5 => 1,
+        r if r < 2.5 => 2,
+        r if r < 3.5 => 3,
+        _ => 0,
+    };
+    Some(d.iter().map(|&x| units(x)).collect())
 }
 
 /// The 192 channel-status bits (channel A) of the first complete block in `spdif` packets: bit n in byte n / 8, bit
@@ -960,78 +969,82 @@ const PD_SETS: [(&str, [u8; 4]); 7] = [
 /// Message type name from a USB PD message header (r3.1 tables 6-5 control, 6-6 data, 6-53 extended).
 pub fn usbpd_msg_name(hdr: u16) -> &'static str {
     let t = hdr & 0x1f;
-    let ndo = hdr >> 12 & 7;
-    if hdr & 0x8000 != 0 {
-        return match t {
-            1 => "Source_Capabilities_Extended",
-            2 => "Status",
-            3 => "Get_Battery_Cap",
-            4 => "Get_Battery_Status",
-            5 => "Battery_Capabilities",
-            6 => "Get_Manufacturer_Info",
-            7 => "Manufacturer_Info",
-            8 => "Security_Request",
-            9 => "Security_Response",
-            10 => "Firmware_Update_Request",
-            11 => "Firmware_Update_Response",
-            12 => "PPS_Status",
-            13 => "Country_Info",
-            14 => "Country_Codes",
-            15 => "Sink_Capabilities_Extended",
-            16 => "Extended_Control",
-            17 => "EPR_Source_Capabilities",
-            18 => "EPR_Sink_Capabilities",
-            30 => "Vendor_Defined_Extended",
-            _ => "Reserved",
-        };
-    }
-    if ndo == 0 {
-        match t {
-            1 => "GoodCRC",
-            2 => "GotoMin",
-            3 => "Accept",
-            4 => "Reject",
-            5 => "Ping",
-            6 => "PS_RDY",
-            7 => "Get_Source_Cap",
-            8 => "Get_Sink_Cap",
-            9 => "DR_Swap",
-            10 => "PR_Swap",
-            11 => "VCONN_Swap",
-            12 => "Wait",
-            13 => "Soft_Reset",
-            14 => "Data_Reset",
-            15 => "Data_Reset_Complete",
-            16 => "Not_Supported",
-            17 => "Get_Source_Cap_Extended",
-            18 => "Get_Status",
-            19 => "FR_Swap",
-            20 => "Get_PPS_Status",
-            21 => "Get_Country_Codes",
-            22 => "Get_Sink_Cap_Extended",
-            23 => "Get_Source_Info",
-            24 => "Get_Revision",
-            _ => "Reserved",
-        }
-    } else {
-        match t {
-            1 => "Source_Capabilities",
-            2 => "Request",
-            3 => "BIST",
-            4 => "Sink_Capabilities",
-            5 => "Battery_Status",
-            6 => "Alert",
-            7 => "Get_Country_Info",
-            8 => "Enter_USB",
-            9 => "EPR_Request",
-            10 => "EPR_Mode",
-            11 => "Source_Info",
-            12 => "Revision",
-            15 => "Vendor_Defined",
-            _ => "Reserved",
-        }
-    }
+    let names: &[&'static str] = match (hdr & 0x8000 != 0, hdr >> 12 & 7) {
+        (true, _) if t == 30 => return "Vendor_Defined_Extended",
+        (true, _) => &PD_EXTENDED,
+        (false, 0) => &PD_CONTROL,
+        (false, _) => &PD_DATA,
+    };
+    names.get(t as usize).copied().unwrap_or("Reserved")
 }
+
+/// USB PD message names by message type: extended (without 30, Vendor_Defined_Extended), control and data messages.
+const PD_EXTENDED: [&str; 19] = [
+    "Reserved",
+    "Source_Capabilities_Extended",
+    "Status",
+    "Get_Battery_Cap",
+    "Get_Battery_Status",
+    "Battery_Capabilities",
+    "Get_Manufacturer_Info",
+    "Manufacturer_Info",
+    "Security_Request",
+    "Security_Response",
+    "Firmware_Update_Request",
+    "Firmware_Update_Response",
+    "PPS_Status",
+    "Country_Info",
+    "Country_Codes",
+    "Sink_Capabilities_Extended",
+    "Extended_Control",
+    "EPR_Source_Capabilities",
+    "EPR_Sink_Capabilities",
+];
+const PD_CONTROL: [&str; 25] = [
+    "Reserved",
+    "GoodCRC",
+    "GotoMin",
+    "Accept",
+    "Reject",
+    "Ping",
+    "PS_RDY",
+    "Get_Source_Cap",
+    "Get_Sink_Cap",
+    "DR_Swap",
+    "PR_Swap",
+    "VCONN_Swap",
+    "Wait",
+    "Soft_Reset",
+    "Data_Reset",
+    "Data_Reset_Complete",
+    "Not_Supported",
+    "Get_Source_Cap_Extended",
+    "Get_Status",
+    "FR_Swap",
+    "Get_PPS_Status",
+    "Get_Country_Codes",
+    "Get_Sink_Cap_Extended",
+    "Get_Source_Info",
+    "Get_Revision",
+];
+const PD_DATA: [&str; 16] = [
+    "Reserved",
+    "Source_Capabilities",
+    "Request",
+    "BIST",
+    "Sink_Capabilities",
+    "Battery_Status",
+    "Alert",
+    "Get_Country_Info",
+    "Enter_USB",
+    "EPR_Request",
+    "EPR_Mode",
+    "Source_Info",
+    "Revision",
+    "Reserved",
+    "Reserved",
+    "Vendor_Defined",
+];
 
 /// A decoded power data object (USB PD r3.1 section 6.4.1).
 #[derive(Clone, Copy, Debug, PartialEq)]

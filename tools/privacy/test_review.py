@@ -44,18 +44,36 @@ class ScannerReviewTests(unittest.TestCase):
         self.assertEqual(list(scan.findings([("commit-message", 1, trailer, True)], set(), [url])),
                          [("commit-message", 1, "local-literal")])
 
-    def test_only_noreply_signoff_trailer_email_is_exempt_in_messages(self) -> None:
-        noreply = "1234+someone@users." + "noreply.github.com"
-        for trailer in ("Signed-off-by: Some One <" + noreply + ">", "Co-authored-by: Some One <" + noreply + ">"):
-            with self.subTest(trailer=trailer):
-                self.assertEqual(list(scan.findings([("commit-message", 1, trailer, True)], set(), [])), [])
-                self.assertEqual(list(scan.findings([("fixture.txt", 1, trailer, False)], set(), [])),
-                                 [("fixture.txt", 1, "email")])
-        for line in ("Signed-off-by: Some One <someone@" + "mail.test>", "Signed-off-by: x <" + noreply + "> extra",
-                     " Signed-off-by: Some One <" + noreply + ">", "Reported-by: Some One <" + noreply + ">"):
-            with self.subTest(line=line):
-                self.assertEqual(list(scan.findings([("commit-message", 1, line, True)], set(), [])),
-                                 [("commit-message", 1, "email")])
+    def test_github_noreply_email_is_exempt_everywhere(self) -> None:
+        for address in ("1234+some-one@users." + "noreply.github.com",
+                        "some-one@users." + "noreply.github.com",
+                        "1234+Some-One@USERS." + "NOREPLY.GITHUB.COM",
+                        "Some-One@USERS." + "NOREPLY.GITHUB.COM"):
+            for text in (address, "Contact <" + address + ">.", 'email = "' + address + '"',
+                         "Signed-off-by: Some One <" + address + ">",
+                         "Co-authored-by: Some One <" + address + ">"):
+                with self.subTest(text=text):
+                    self.assertNotIn("email", rules(text))
+                    for name, is_message in (("fixture.txt", False), ("commit-message", True),
+                                             ("commit:synthetic", True)):
+                        self.assertEqual(list(scan.findings([(name, 1, text, is_message)], set(), [])), [])
+
+    def test_other_email_addresses_remain_rejected(self) -> None:
+        for address in ("someone@" + "mail.test", "someone@users." + "noreply.github.com.evil.example",
+                        "1234+someone@users." + "noreply.github.com.evil.example",
+                        "someone@" + "sub.users.noreply.github.com", "someone@" + "noreply.github.com",
+                        "someone@users." + "noreply.github.com-evil.test",
+                        "someone@u\u017fers." + "noreply.github.com",
+                        "someone@users." + "noreply.g\u0131thub.com",
+                        "someone@users." + "noreply.g\u0130thub.com",
+                        "name+someone@users." + "noreply.github.com",
+                        "some.one@users." + "noreply.github.com"):
+            for text in (address, "Signed-off-by: Some One <" + address + ">"):
+                with self.subTest(text=text):
+                    self.assertIn("email", rules(text))
+                    for name, is_message in (("fixture.txt", False), ("commit-message", True)):
+                        self.assertEqual(list(scan.findings([(name, 1, text, is_message)], set(), [])),
+                                         [(name, 1, "email")])
 
     def test_private_ipv4_at_sentence_end(self) -> None:
         address = "10" + ".1.2.3"

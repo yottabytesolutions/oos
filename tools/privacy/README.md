@@ -41,6 +41,7 @@ loopback, link-local addresses without embedded MACs, reserved example MACs, exa
 device paths are supported. A generic scanner
 cannot recognize arbitrary secrets, encoded data or every personal hostname: add exact local literals and review
 the diff. Very broad network prefixes can trigger the global IPv6 rule and need an explained exception.
+GitHub noreply addresses (`<login>@users.noreply.github.com`, optionally prefixed by `<id>+`) are exempt everywhere; other email addresses remain subject to the email rule.
 
 Session URLs are flagged in every source. Only commit messages exempt an exact line of the form
 `Claude-Session: https://claude.ai/code/session_<id>`; the id contains letters, digits, underscores or hyphens.

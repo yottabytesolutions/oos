@@ -30,6 +30,7 @@ that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
   65 acquisition plans with `xtask/data/plan-matrix.txt`. Run `cargo xtask plan-matrix` for a focused check. For an
   intended register change, run `cargo xtask plan-matrix --update`, review the diff and explain it in the pull request.
 - **No personal data in issues or commits:** no serial numbers, MAC addresses or licence keys.
+  GitHub noreply addresses (`<login>@users.noreply.github.com`, optionally prefixed by `<id>+`) are allowed everywhere; other email addresses remain rejected by the privacy check.
 
 ## A new protocol decoder
 

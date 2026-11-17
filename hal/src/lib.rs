@@ -4,7 +4,7 @@
 //! OOS hardware layer.
 //!
 //! The crate root holds what does not depend on one board: the model and its limits (`model`), the vendor file keys
-//! (`vendorkeys`), signed updates (`update`), WLAN (`wlan`) and the start-up status file (`bootstatus`). Everything of
+//! (`vendorkeys`), signed updates (`update`), WLAN (`wlan`), OS calls (`system`) and the start-up status file (`bootstatus`). Everything of
 //! the DHO800/DHO900 board (RK3399 + Zynq FPGA over PCIe/XDMA) is in `dho`; a port to another board family adds a
 //! module next to it (docs/porting.md).
 //!
@@ -15,6 +15,7 @@
 pub mod bootstatus;
 pub mod model;
 pub mod sync;
+pub mod system;
 pub mod target;
 pub mod update;
 pub mod vendorkeys;

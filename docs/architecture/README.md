@@ -871,7 +871,9 @@ show in `:SYSTem:STATe?` (`lock <name> waits=N p99=us`).
 
 ### Placement
 
-Placement currently comes from `placement` (`perf.place`), with cores read from `cpu_capacity`. Startup
+Placement policy lives in `placement` (`perf.place`). Board-independent core discovery and safe OS calls
+(affinity, idle priority, filesystem statistics and realtime clock setting) live in `oos_hal::system`,
+with cores read from `cpu_capacity`. Startup
 refines the rootfs XDMA affinity with the explicit IRQ plan above. Web accept uses the same A53
 SCHED_IDLE helper as PNG and send; reader threads inherit it. No thread runs a real-time policy: a stuck real-time thread on this SoC stalls
 the panel, and the budgets hold without it.

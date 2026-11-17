@@ -143,18 +143,8 @@ pub fn query(server: &str, now: fn() -> f64) -> Result<Sample, String> {
 }
 
 /// Sets the system clock to `unix` seconds.
-#[cfg(target_os = "linux")]
 pub fn set_clock(unix: f64) -> Result<(), String> {
-    let ts = libc::timespec { tv_sec: unix.floor() as _, tv_nsec: ((unix - unix.floor()) * 1e9) as _ };
-    if unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) } != 0 {
-        return Err(std::io::Error::last_os_error().to_string());
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn set_clock(_: f64) -> Result<(), String> {
-    Err("the clock is only set on the unit".into())
+    oos_hal::system::set_realtime_clock(unix).map_err(|e| e.to_string())
 }
 
 /// Moves the system clock by `offset` seconds (nothing below `STEP_MIN`).

@@ -24,7 +24,7 @@ impl Pipe {
             let mail: Arc<Mutex<Mail>> = Default::default();
             let (v, m) = (view.clone(), mail.clone());
             match std::thread::Builder::new().name(format!("deposit{}", k)).spawn(move || {
-                crate::http::to_little_cores(little);
+                crate::placement::to_little_cores(little);
                 work(rx, &v, &m)
             }) {
                 Ok(handle) => {

@@ -54,24 +54,9 @@ fn memory(text: Option<String>) -> Option<(u64, u64)> {
     Some((get("MemAvailable:")?, get("MemTotal:")?))
 }
 
-/// (free, total) bytes of the file system holding `path` (none without `statvfs`, on Windows).
-#[cfg(not(unix))]
-pub(super) fn disk(_path: &str) -> Option<(u64, u64)> {
-    None
-}
-
 /// (free, total) bytes of the file system holding `path`.
-#[cfg(unix)]
 pub(super) fn disk(path: &str) -> Option<(u64, u64)> {
-    let c = std::ffi::CString::new(path).ok()?;
-    // SAFETY: statvfs is a C output record and the pointer remains live for the call.
-    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
-    // SAFETY: c is NUL terminated and s is a writable statvfs record.
-    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
-        return None;
-    }
-    let fr = s.f_frsize as u64;
-    Some((s.f_bavail as u64 * fr, s.f_blocks as u64 * fr))
+    oos_hal::system::fs_stats(path).ok()
 }
 
 /// CPU clock in Hz from cpufreq's kHz text.

@@ -7,7 +7,7 @@
 649 file ui/src/gfx.rs
 650 file ui/src/gpu.rs
 406 file ui/src/hislip.rs
-1042 file ui/src/http.rs
+967 file ui/src/http.rs
 464 file ui/src/main.rs
 1531 file ui/src/mdns.rs
 463 file ui/src/measures/jitter.rs

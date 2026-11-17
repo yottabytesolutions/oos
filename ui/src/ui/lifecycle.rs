@@ -192,7 +192,7 @@ impl MeasWorker {
         let join = std::thread::Builder::new()
             .name("measure".into())
             .spawn(move || {
-                crate::http::to_little_cores(little);
+                crate::placement::to_little_cores(little);
                 let mut previous = None;
                 while let Ok(job) = jobs.recv() {
                     let (n, cheap, work) = match job {

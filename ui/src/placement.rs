@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Thread placement on a big.LITTLE SoC (fork, docs/fork/perf-plan.md item 6). Without it the frame loop, the GPU
-//! helper and the acquisition thread share both A72 of the RK3399 (`http::pin_to_big_cores`). With `perf.place = on`:
+//! helper and the acquisition thread share both A72 of the RK3399 (`pin_to_big_cores`). With `perf.place = on`:
 //! the frame loop (and the GPU helper it starts) on the first big core, the acquisition thread on the second. Workers
-//! already go to the little cores (`http::to_little_cores`). Opt-in until measured on the unit; Linux only, a no-op elsewhere and on SoCs whose cores are
+//! already go to the little cores (`to_little_cores`). Opt-in until measured on the unit; Linux only, a no-op elsewhere and on SoCs whose cores are
 //! all alike. IRQ policy and procfs application live in `irq`.
 
 pub mod irq;
 
-use std::path::Path;
+#[cfg(test)]
+pub use oos_hal::system::capacities;
+use oos_hal::system::pin_current_thread;
+pub use oos_hal::system::{cpus, Cores};
 
 /// What a thread does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,60 +38,13 @@ impl Plan {
     }
 }
 
-/// (cpu, capacity) of every CPU under `root` (`/sys/devices/system/cpu`) that has a `cpu_capacity` file.
-pub fn capacities(root: &Path) -> Vec<(usize, u32)> {
-    (0..64)
-        .filter_map(|c| {
-            std::fs::read_to_string(root.join(format!("cpu{}/cpu_capacity", c)))
-                .ok()
-                .and_then(|v| v.trim().parse().ok())
-                .map(|v| (c, v))
-        })
-        .collect()
-}
-
-/// The CPUs of a big.LITTLE SoC as bit masks (bit n: CPU n), read once at start (`Switches::cores`): `little` the
-/// cores below the largest `cpu_capacity`, `big` those at it. Both empty where the cores are all alike or the files
-/// are missing.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Cores {
-    pub big: u64,
-    pub little: u64,
-}
-
-impl Cores {
-    /// From (cpu, `cpu_capacity`) pairs.
-    pub fn of(cap: &[(usize, u32)]) -> Cores {
-        let Some(max) = cap.iter().map(|x| x.1).max() else { return Cores::default() };
-        let mask = |big: bool| cap.iter().filter(|x| x.0 < 64 && (x.1 == max) == big).fold(0, |m, x| m | 1u64 << x.0);
-        match mask(false) {
-            0 => Cores::default(),
-            little => Cores { big: mask(true), little },
-        }
-    }
-
-    /// The cores of this machine (`/sys/devices/system/cpu`).
-    pub fn read() -> Cores {
-        Self::of(&capacities(Path::new("/sys/devices/system/cpu")))
-    }
-
-    /// The number of little cores: the deposit workers of the batch pipeline, one per little core.
-    pub fn little_count(&self) -> Option<usize> {
-        (self.little != 0).then(|| self.little.count_ones() as usize)
-    }
-
-    /// The CPUs of each role: None without two kinds of core. One big core: the frame loop and the acquisition share
-    /// it, as without a plan.
-    pub fn plan(&self) -> Option<Plan> {
-        let big = cpus(self.big);
-        let first = *big.first().filter(|_| self.little != 0)?;
-        Some(Plan { ui: vec![first], hw: vec![big.get(1).copied().unwrap_or(first)] })
-    }
-}
-
-/// The CPU numbers of a mask, ascending.
-pub fn cpus(mask: u64) -> Vec<usize> {
-    (0..64).filter(|c| mask >> c & 1 == 1).collect()
+/// The CPUs of each role: None without two kinds of core. One big core: the frame loop and the acquisition share
+/// it, as without a plan.
+#[cfg(any(target_os = "linux", test))]
+fn plan(cores: Cores) -> Option<Plan> {
+    let big = cpus(cores.big);
+    let first = *big.first().filter(|_| cores.little != 0)?;
+    Some(Plan { ui: vec![first], hw: vec![big.get(1).copied().unwrap_or(first)] })
 }
 
 /// The calling thread (and the threads and processes it starts after this) onto the CPUs of `r`, when placement is on
@@ -100,22 +56,40 @@ pub fn place(r: Role, sw: &crate::sysconf::Switches) {
     }
     #[cfg(target_os = "linux")]
     {
-        let Some(plan) = sw.cores.plan() else { return };
+        let Some(plan) = plan(sw.cores) else { return };
         let cpus = plan.cpus(r);
-        // SAFETY: a local CPU set for the calling thread
-        let rc = unsafe {
-            let mut set: libc::cpu_set_t = std::mem::zeroed();
-            for &c in cpus {
-                libc::CPU_SET(c, &mut set);
-            }
-            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set)
-        };
-        if rc != 0 {
-            eprintln!("oos-ui: placement {:?} on {:?}: {}", r, cpus, std::io::Error::last_os_error());
+        if let Err(error) = pin_current_thread(cpus) {
+            eprintln!("oos-ui: placement {:?} on {:?}: {}", r, cpus, error);
         }
     }
     #[cfg(not(target_os = "linux"))]
     let _ = r;
+}
+
+/// Web workers run at SCHED_IDLE, with nice 10 as fallback, on the little cores.
+pub fn lower_priority(little: u64) {
+    // Test workers must keep normal priority so busy parallel tests can make progress.
+    if !cfg!(test) {
+        let _ = oos_hal::system::idle_current_thread(&cpus(little));
+    }
+}
+
+/// The slower cores, empty where all cores are alike.
+pub fn little_core_list() -> Vec<usize> {
+    cpus(Cores::read().little)
+}
+
+/// The calling thread onto the slower cores at normal priority.
+pub fn to_little_cores(little: u64) {
+    let _ = pin_current_thread(&cpus(little));
+}
+
+/// The calling thread and its future children onto the fastest cores.
+#[cfg(target_os = "linux")]
+pub fn pin_to_big_cores(cores: Cores) {
+    if cores.little != 0 {
+        let _ = pin_current_thread(&cpus(cores.big));
+    }
 }
 
 #[cfg(test)]
@@ -146,7 +120,7 @@ mod tests {
         let root = fake_sysfs(&[(0, 485), (1, 485), (2, 485), (3, 485), (4, 1024), (5, 1024)]);
         let c = Cores::of(&capacities(&root));
         assert_eq!(c, Cores { big: 0b11_0000, little: 0b1111 });
-        let p = c.plan().unwrap();
+        let p = plan(c).unwrap();
         assert_eq!((p.cpus(Role::Ui), p.cpus(Role::Hw)), (&[4][..], &[5][..]));
         assert_eq!(c.little_count(), Some(4));
         std::fs::remove_dir_all(&root).unwrap();
@@ -155,9 +129,9 @@ mod tests {
         assert_eq!(Cores::of(&capacities(&root)), Cores::default());
         assert_eq!(Cores::of(&capacities(&root)).little_count(), None);
         std::fs::remove_dir_all(&root).unwrap();
-        assert_eq!(Cores::of(&[]).plan(), None);
+        assert_eq!(plan(Cores::of(&[])), None);
         // one big core: the frame loop and the acquisition share it; the order of the files does not matter
-        let p = Cores::of(&[(3, 1024), (2, 400), (0, 400), (1, 400)]).plan().unwrap();
+        let p = plan(Cores::of(&[(3, 1024), (2, 400), (0, 400), (1, 400)])).unwrap();
         assert_eq!((p.ui.clone(), p.hw.clone()), (vec![3], vec![3]));
     }
 }

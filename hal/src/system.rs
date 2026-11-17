@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//! Safe OS calls shared by system services and worker threads.
+
+mod cores;
+pub use cores::{capacities, cpus, Cores};
+
+use std::io;
+use std::path::Path;
+
+/// Pins the calling thread and its future children to `cores`.
+/// An empty set, or a platform other than Linux, leaves affinity unchanged.
+#[cfg(target_os = "linux")]
+pub fn pin_current_thread(cores: &[usize]) -> io::Result<()> {
+    pin_thread(0, cores)
+}
+
+#[cfg(target_os = "linux")]
+fn pin_thread(tid: libc::pid_t, cores: &[usize]) -> io::Result<()> {
+    if cores.is_empty() {
+        return Ok(());
+    }
+    if cores.iter().any(|&c| c >= libc::CPU_SETSIZE as usize) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "CPU index exceeds affinity set"));
+    }
+    // SAFETY: zero is a valid empty CPU set, every index fits it, and the kernel
+    // reads the local set only during the call with its exact size.
+    let rc = unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        for &c in cores {
+            libc::CPU_SET(c, &mut set);
+        }
+        libc::sched_setaffinity(tid, std::mem::size_of::<libc::cpu_set_t>(), &set)
+    };
+    status(rc)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn pin_current_thread(_: &[usize]) -> io::Result<()> {
+    Ok(())
+}
+
+/// Gives the calling thread SCHED_IDLE priority (nice 10 if unavailable), then
+/// pins it to `cores`. Priority failures are best effort; affinity errors return.
+#[cfg(target_os = "linux")]
+pub fn idle_current_thread(cores: &[usize]) -> io::Result<()> {
+    // SAFETY: gettid has no pointer arguments. Zero initializes all sched_param
+    // fields (including musl's extra fields); priority 0 is valid for SCHED_IDLE.
+    // The scheduler reads the local parameter only during the syscall.
+    let tid = unsafe {
+        let tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
+        let p: libc::sched_param = std::mem::zeroed();
+        // musl's sched_setscheduler wrapper is a stub, so keep the direct syscall.
+        if libc::syscall(libc::SYS_sched_setscheduler, tid, libc::SCHED_IDLE, &p as *const libc::sched_param) != 0 {
+            libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, 10);
+        }
+        tid
+    };
+    pin_thread(tid, cores)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn idle_current_thread(_: &[usize]) -> io::Result<()> {
+    Ok(())
+}
+
+/// Available and total bytes of the filesystem holding `path`.
+#[cfg(unix)]
+pub fn fs_stats(path: impl AsRef<Path>) -> io::Result<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_ref().as_os_str().as_bytes())?;
+    // SAFETY: statvfs is a C output record for which zero is valid. The path is
+    // NUL terminated and both local values remain live throughout the call.
+    let s = unsafe {
+        let mut s: libc::statvfs = std::mem::zeroed();
+        status(libc::statvfs(path.as_ptr(), &mut s))?;
+        s
+    };
+    let fr = s.f_frsize as u64;
+    Ok((s.f_bavail as u64 * fr, s.f_blocks as u64 * fr))
+}
+
+#[cfg(not(unix))]
+pub fn fs_stats(_: impl AsRef<Path>) -> io::Result<(u64, u64)> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "filesystem statistics require Unix"))
+}
+
+/// Sets CLOCK_REALTIME to Unix seconds, preserving fractional nanoseconds.
+#[cfg(target_os = "linux")]
+pub fn set_realtime_clock(unix: f64) -> io::Result<()> {
+    let ts = realtime_spec(unix);
+    // SAFETY: ts is an initialized timespec that stays live throughout the call.
+    // The kernel validates its values and CLOCK_REALTIME accepts this record.
+    status(unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn realtime_spec(unix: f64) -> libc::timespec {
+    libc::timespec { tv_sec: unix.floor() as _, tv_nsec: ((unix - unix.floor()) * 1e9) as _ }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn set_realtime_clock(_: f64) -> io::Result<()> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "the clock is only set on the unit"))
+}
+
+#[cfg(any(unix, test))]
+fn status(rc: libc::c_int) -> io::Result<()> {
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -2,3 +2,9 @@
 # The integrator applies them with `cargo xtask ratchet --move` at merge, which empties this file.
 fn ui/src/scpi.rs Scpi::exec_cmd -> fn ui/src/scpi/dispatch.rs exec
 ui ui/src/scpi.rs clippy::unnecessary_cast -> ui ui/src/scpi/trigger.rs clippy::unnecessary_cast
+fn ui/src/store.rs parse_wfm -> fn ui/src/store/import.rs parse_wfm
+fn ui/src/store.rs parse_isf -> fn ui/src/store/import.rs parse_isf
+fn ui/src/store.rs parse_ag -> fn ui/src/store/import.rs parse_ag
+ui ui/src/store.rs clippy::cognitive_complexity -> ui ui/src/store/codec_tests/legacy.rs clippy::cognitive_complexity
+ui ui/src/store.rs clippy::manual_pattern_char_comparison -> ui ui/src/store/import.rs clippy::manual_pattern_char_comparison
+ui ui/src/store.rs clippy::manual_range_patterns -> ui ui/src/store/import.rs clippy::manual_range_patterns

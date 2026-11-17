@@ -14,7 +14,7 @@
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
 3398 file ui/src/scpi.rs
-3048 file ui/src/store.rs
+1507 file ui/src/store.rs
 11348 file ui/src/ui.rs
 1747 file ui/src/ui/analysis.rs
 608 file ui/src/ui/autoset.rs
@@ -83,11 +83,6 @@
 146 fn ui/src/scpi.rs Scpi::sim_cmd
 171 fn ui/src/scpi.rs Scpi::timebase_more
 223 fn ui/src/scpi/ser.rs trig
-62 fn ui/src/store.rs parse_ag
-149 fn ui/src/store.rs parse_isf
-131 fn ui/src/store.rs parse_wfm
-652 fn ui/src/store.rs set
-394 fn ui/src/store.rs setup_text
 67 fn ui/src/sysconf.rs SysConf::parse_over
 353 fn ui/src/ui.rs Ui::activate
 594 fn ui/src/ui.rs Ui::adjust

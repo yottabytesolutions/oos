@@ -1,4 +1,4 @@
-# cargo-nextest, the CI test runner (xtask/src/testrun.rs, OOS_TEST_RUNNER=nextest).
+# cargo-nextest, the gate's test runner when installed; CI requires it (xtask/src/testrun.rs, OOS_TEST_RUNNER=nextest).
 [profile.default]
 # A test running 60 s is reported as SLOW (xtask lists those that finished at 60 s or later). terminate-after is only
 # a hang guard, far above any real test: 10 periods.

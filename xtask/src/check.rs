@@ -5,6 +5,7 @@ use crate::inventory::Selection;
 use crate::report::{self, Step};
 use crate::steps;
 use std::path::Path;
+use std::sync::{Condvar, Mutex};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +64,9 @@ pub fn steps(root: &Path, ids: &[&str]) -> bool {
     execute(root, |c| ids.contains(&c.id), true, "default")
 }
 
+/// Runs the wanted checks: each one starts as soon as its prerequisites have passed, all at once, except the checks
+/// that must run alone (`inventory::alone`), which follow one by one when the others have finished. The results keep
+/// the inventory order.
 fn execute(root: &Path, wanted: impl Fn(&inventory::Check) -> bool, partial: bool, tier: &str) -> bool {
     let (ctx, log) = match crate::run::start_logs(root) {
         Ok(path) => path,
@@ -73,24 +77,60 @@ fn execute(root: &Path, wanted: impl Fn(&inventory::Check) -> bool, partial: boo
     };
     println!("complete logs: {}", log.display());
     let t = Instant::now();
-    let mut results: Vec<Step> = Vec::new();
+    let mut chosen = Vec::new();
     for c in inventory::CHECKS {
-        if !wanted(c) {
+        if wanted(c) {
+            chosen.push(c);
+        } else {
             println!("not-selected {} ({:?})", c.id, c.selection);
-            continue;
         }
-        let missing: Vec<_> = c.after.iter().filter(|id| !results.iter().any(|s| s.name == **id && s.ok)).collect();
-        results.push(report::step(c.id, || {
+    }
+    let ids: Vec<&str> = chosen.iter().map(|c| c.id).collect();
+    let done: Mutex<Vec<Step>> = Mutex::new(Vec::new());
+    let changed = Condvar::new();
+    let run = |c: &inventory::Check| {
+        let missing = wait_for(c, &ids, &done, &changed);
+        let step = report::step(c.id, || {
             if !missing.is_empty() {
                 return Err(vec![format!("missing prerequisite results: {:?}", missing)]);
             }
             (c.run)(&ctx, root)
-        }));
-    }
+        });
+        lock(&done).push(step);
+        changed.notify_all();
+    };
+    let (alone, together): (Vec<_>, Vec<_>) = chosen.iter().partition(|c| inventory::alone(c));
+    std::thread::scope(|s| {
+        for c in together {
+            let run = &run;
+            s.spawn(move || run(c));
+        }
+    });
+    alone.into_iter().for_each(run);
+    let mut results = done.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
+    results.sort_by_key(|s| chosen.iter().position(|c| c.id == s.name));
     let ok = report::summary(&results, t.elapsed().as_secs_f64(), partial, tier);
     if let Err(e) = std::fs::write(log.join("steps.log"), format!("{results:#?}\nexit={}\n", u8::from(!ok))) {
         eprintln!("cannot retain step results: {}", e);
         return false;
     }
     ok
+}
+
+fn lock(done: &Mutex<Vec<Step>>) -> std::sync::MutexGuard<'_, Vec<Step>> {
+    done.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Waits until every prerequisite of `c` among the `chosen` checks has a result; returns the prerequisites that did
+/// not pass. One that was not chosen never gets a result and counts as missing at once.
+fn wait_for(c: &inventory::Check, chosen: &[&str], done: &Mutex<Vec<Step>>, changed: &Condvar) -> Vec<&'static str> {
+    let mut steps = lock(done);
+    loop {
+        let result = |id: &str| steps.iter().find(|s| s.name == id).map(|s| s.ok);
+        let pending = c.after.iter().any(|id| result(id).is_none() && chosen.contains(id));
+        if !pending {
+            return c.after.iter().copied().filter(|id| result(id) != Some(true)).collect();
+        }
+        steps = changed.wait(steps).unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
 }

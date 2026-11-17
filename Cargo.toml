@@ -26,3 +26,11 @@ panic = "unwind"
 # incremental development build.
 [profile.dev.package.oos-dsp]
 opt-level = 2
+
+# The gate parses every source file with syn on each run (`cargo xtask check`); unoptimized that takes 5 s. xtask
+# itself stays unoptimized: its coverage is measured on the dev build.
+[profile.dev.package.syn]
+opt-level = 2
+
+[profile.dev.package.proc-macro2]
+opt-level = 2

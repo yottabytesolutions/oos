@@ -189,6 +189,12 @@ pub(crate) const CHECKS: &[Check] = &[
     ),
 ];
 
+/// Checks the gate runs one at a time after all others: the perf guards measure timing ratios, which other work on
+/// the machine would disturb, and the image checks drive Docker and QEMU with their own time limits.
+pub(crate) fn alone(c: &Check) -> bool {
+    c.id == "perf" || c.selection == Selection::Image
+}
+
 pub(crate) fn selected(c: &Check, options: check::Options, image: bool) -> bool {
     match c.selection {
         Selection::Fast => true,

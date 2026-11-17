@@ -185,11 +185,12 @@ the default gate or changes that gate's completion result. The coordinator runs 
 unit rounds and releases regardless of classification. Workflow files retain their base versions;
 no CI aggregate or matrix result is required while repository CI is off.
 
-Expected warm default-gate duration is roughly 5-10 minutes, dominated by Rust tests and coverage;
-cold builds take longer. This is an estimate from the earlier 506-second sandbox run, which had
-prerequisite/socket failures, not a successful timing measurement of this tier. The fast gate is
-roughly one minute. The image tier can take hours on cold builders or emulated hosts. Retain actual
-timings and exit codes with coordinator evidence.
+The gate runs its checks at the same time, each as soon as its prerequisites passed, and prints each result when it
+ends; the closing summary keeps the inventory order. The perf guards and the image checks run afterwards, one at a
+time (`inventory::alone`): timing ratios and emulator time limits need a quiet machine. On a warm cache with
+cargo-nextest, the default gate takes about 5 minutes on a 16-core laptop, bound by the golden pictures and coverage
+of `ui`; the fast gate takes a few seconds. The image tier can take hours on cold builders or emulated hosts. Retain
+actual timings and exit codes with coordinator evidence.
 
 ## Test time and completion
 
@@ -232,9 +233,11 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
 - The release tests in `pr.yml` run without LTO (`CARGO_PROFILE_RELEASE_LTO=false`, 16 codegen units): the same
   optimisation level and no debug assertions, without a fat-LTO link per test binary. CI builds use
   `CARGO_PROFILE_DEV_DEBUG=line-tables-only`.
-- CI sets `OOS_TEST_RUNNER=nextest`: the test steps run each crate's tests with cargo-nextest, which runs the test
-  binaries in parallel, and the doctests with `cargo test --doc`. Without the variable they run `cargo test`. The
-  counts differ slightly: `cargo test` also counts the summary lines of tests that run their own binary again.
+- The test and coverage steps run each crate's tests with cargo-nextest when it is installed: every test in its own
+  process, all binaries in parallel, and the doctests with `cargo test --doc` (`cargo llvm-cov nextest` for
+  coverage, which measures the same lines). CI sets `OOS_TEST_RUNNER=nextest`, which requires it. Without nextest
+  they run `cargo test`. The counts differ slightly: `cargo test` also counts the summary lines of tests that run
+  their own binary again.
   `.config/nextest.toml` reports a test as slow after 60 s and ends it after 10 minutes (a hang guard); the step lists
   every test that ran 60 s or longer. A test that leaves a process holding its output fails. Tests kill a process
   group with `kill -KILL -- -<pgid>`: without `--`, the procps-ng `kill` of Ubuntu 24.04 signals the wrong group, or

@@ -24,13 +24,13 @@ pub fn step(name: &str, f: impl FnOnce() -> Result<Vec<String>, Vec<String>>) ->
     s
 }
 
+/// One write per step: steps that run at the same time do not interleave their lines.
 fn print(s: &Step) {
-    println!("{:<4} {} ({:.1} s)", if s.ok { "ok" } else { "FAIL" }, s.name, s.secs);
-    for l in &s.lines {
-        for part in l.lines() {
-            println!("       {}", part);
-        }
+    let mut text = format!("{:<4} {} ({:.1} s)\n", if s.ok { "ok" } else { "FAIL" }, s.name, s.secs);
+    for part in s.lines.iter().flat_map(|l| l.lines()) {
+        text.push_str(&format!("       {}\n", part));
     }
+    print!("{}", text);
 }
 
 /// The closing line; true when every step passed. A subset (`partial`) never says the gate passed: the done rule is

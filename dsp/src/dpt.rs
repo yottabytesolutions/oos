@@ -7,7 +7,8 @@
 
 use crate::edges::edges;
 use crate::measure::analyze;
-use crate::power::{crossing, integrate};
+use crate::power::integrate;
+use crate::stats::{at_extended, crossing, line_fit, median};
 
 /// The optional fourth probe.
 pub enum Fourth<'a> {
@@ -225,7 +226,7 @@ pub fn measure(vds: &[f32], id: &[f32], vgs: Option<&[f32]>, fourth: Fourth<'_>,
                     if (t90 - t10) <= 1.0 {
                         out.sample_limit = true;
                     }
-                    let (i_at_10, i_at_90) = (at(&id, t10), at(&id, t90));
+                    let (i_at_10, i_at_90) = (at_extended(&id, t10), at_extended(&id, t90));
                     if i_at_10.is_finite() && i_at_90.is_finite() && t90 > t10 {
                         out.didt = Some((i_at_90 - i_at_10) / ((t90 - t10) * dt));
                     }
@@ -320,46 +321,9 @@ fn current_at(x: &[f32], t0: f64, t1: f64) -> f64 {
     let e = bound(t1).min(x.len());
     let w = ((0.05 * (t1 - t0)).ceil() as usize).max(8);
     let s = e.saturating_sub(w).max(bound(t0)).min(e);
-    let pts: Vec<(f64, f64)> = (s..e).filter(|&k| x[k].is_finite()).map(|k| (k as f64, x[k] as f64)).collect();
-    if pts.len() < 2 {
-        return median(&x[s..e]);
-    }
-    let m = pts.len() as f64;
-    let (mt, my) = (pts.iter().map(|p| p.0).sum::<f64>() / m, pts.iter().map(|p| p.1).sum::<f64>() / m);
-    let (mut num, mut den) = (0.0, 0.0);
-    for &(t, y) in &pts {
-        num += (t - mt) * (y - my);
-        den += (t - mt) * (t - mt);
-    }
-    let slope = if den > 0.0 { num / den } else { 0.0 };
-    my + slope * (t1 - mt)
-}
-
-fn median(x: &[f32]) -> f64 {
-    let mut v: Vec<f64> = x.iter().copied().filter(|z| z.is_finite()).map(|z| z as f64).collect();
-    if v.is_empty() {
-        return f64::NAN;
-    }
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let n = v.len();
-    if n % 2 == 1 {
-        v[n / 2]
-    } else {
-        0.5 * (v[n / 2 - 1] + v[n / 2])
-    }
-}
-
-fn at(x: &[f32], t: f64) -> f64 {
-    if x.len() < 2 {
-        return x.first().map(|v| *v as f64).unwrap_or(f64::NAN);
-    }
-    let k = (t.floor() as usize).min(x.len() - 2);
-    let (p, q) = (x[k] as f64, x[k + 1] as f64);
-    if p.is_finite() && q.is_finite() {
-        p + (q - p) * (t - k as f64)
-    } else {
-        f64::NAN
-    }
+    let pts = (s..e).filter(|&k| x[k].is_finite()).map(|k| (k as f64, x[k] as f64));
+    let Some(fit) = line_fit(pts) else { return median(&x[s..e]) };
+    fit.mean_y + fit.slope(0.0).unwrap_or(0.0) * (t1 - fit.mean_x)
 }
 
 fn max_in(x: &[f32], t0: f64, t1: f64) -> Option<(f64, f64)> {
@@ -405,7 +369,7 @@ fn qoss(out: &mut Pulse, id: &[f32], il: f64, t10: f64, t90: f64, dt: f64) {
     let q = integrate(&p, t10, t90, dt);
     if q > 0.0 {
         out.qoss = Some(q);
-        let i_end = at(id, t90);
+        let i_end = at_extended(id, t90);
         if i_end.is_finite() && (i_end - il).abs() > 0.1 * il.abs() {
             out.qoss_approx = true;
         }
@@ -456,7 +420,7 @@ fn diode(
         crossing(id, a, b, il, true)
     } else {
         // diode current crossing zero downward, into reverse: -i crosses 0 upward
-        crossing_f(&rev, a, b, 0.0, true)
+        crossing(&rev, a, b, 0.0, true)
     };
     let Some(t0) = t0 else { return };
     let i1 = bound(t1w).min(rev.len());
@@ -473,7 +437,7 @@ fn diode(
         return;
     }
     out.irrm = Some(peak);
-    let tend = crossing_f(&rev, bound(t_peak), i1, 0.1 * peak, false);
+    let tend = crossing(&rev, bound(t_peak), i1, 0.1 * peak, false);
     let Some(tend) = tend else { return };
     if !(tend > t0) {
         return;
@@ -508,15 +472,6 @@ fn diode(
         })
         .collect();
     out.err = Some(integrate(&prod, t0, tend, dt));
-}
-
-fn crossing_f(x: &[f64], a: usize, b: usize, level: f64, up: bool) -> Option<f64> {
-    let b = b.min(x.len());
-    (a.max(1)..b).find_map(|k| {
-        let (p, q) = (x[k - 1], x[k]);
-        let hit = if up { p < level && q >= level } else { p > level && q <= level };
-        (hit && p.is_finite() && q.is_finite() && q != p).then(|| (k - 1) as f64 + (level - p) / (q - p))
-    })
 }
 
 fn dead_time(out: &mut Pulse, low: &[f32], high: &[f32], pct: f64, dt: f64) {

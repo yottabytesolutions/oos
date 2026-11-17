@@ -322,19 +322,6 @@ fn refs(lpct: f64, hpct: f64) -> (f64, f64) {
     }
 }
 
-fn median_samples(f: &[f32]) -> f64 {
-    let mut s = f.to_vec();
-    s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let n = s.len();
-    if n == 0 {
-        f64::NAN
-    } else if n % 2 == 1 {
-        s[n / 2] as f64
-    } else {
-        (s[n / 2 - 1] as f64 + s[n / 2] as f64) / 2.0
-    }
-}
-
 fn hist_mode(f: &[f32], vmin: f32, vmax: f32) -> f64 {
     let span = (vmax - vmin).max(1e-12);
     let mut hist = [0u32; 256];
@@ -490,7 +477,7 @@ pub fn analyze_refs(v: &[f32], dt: f64, min_amp: f64, lpct: f64, hpct: f64) -> A
         lpct,
         hpct,
         est_ui: f64::NAN,
-        median: median_samples(f),
+        median: crate::stats::median(f),
         mode: hist_mode(f, vmin, vmax),
         lin_slope,
         lin_int,

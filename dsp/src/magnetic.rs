@@ -6,6 +6,7 @@
 
 use crate::edges::edges;
 use crate::power::{integrate, quality};
+use crate::stats::{at_held, line_fit, mean_finite};
 use std::f64::consts::{PI, SQRT_2};
 
 /// Permeability of free space, H/m.
@@ -128,10 +129,7 @@ pub fn measure(v: &[f32], i: &[f32], dt: f64, geom: Geom) -> Magnetic {
         if k1 <= k0 {
             continue;
         }
-        let mean = mean_finite(&v[k0..=k1]);
-        if !mean.is_finite() {
-            continue;
-        }
+        let Some(mean) = mean_finite(&v[k0..=k1]) else { continue };
         let k_lo = (t0.floor() as usize).min(n - 1);
         let k_hi = (t1.ceil() as usize).min(n - 1);
         for k in k_lo..=k_hi {
@@ -237,44 +235,12 @@ fn voltage_cycles(v: &[f32], dt: f64) -> Option<(f64, Vec<f64>)> {
     (freq > 0.0).then_some((freq, r))
 }
 
-fn mean_finite(x: &[f32]) -> f64 {
-    let (mut s, mut n) = (0.0, 0usize);
-    for &v in x {
-        if v.is_finite() {
-            s += v as f64;
-            n += 1;
-        }
-    }
-    if n == 0 {
-        f64::NAN
-    } else {
-        s / n as f64
-    }
-}
-
-fn at(x: &[f32], t: f64) -> f64 {
-    if x.is_empty() {
-        return f64::NAN;
-    }
-    let k = (t.floor() as usize).min(x.len() - 1);
-    let v = x[k] as f64;
-    if t.fract() == 0.0 || k + 1 >= x.len() {
-        return v;
-    }
-    let w = x[k + 1] as f64;
-    if v.is_finite() && w.is_finite() {
-        v + (w - v) * (t - k as f64)
-    } else {
-        f64::NAN
-    }
-}
-
 /// (ψ, i) from t0 to t1, ψ at t1, and the peak |ψ|. NaN voltage holds ψ; NaN current is left out of the trace.
 fn flux_loop(v: &[f32], i: &[f32], mean: f64, t0: f64, t1: f64, dt: f64) -> (Vec<(f64, f64)>, f64, f64) {
     let n = v.len().min(i.len());
     let mut psi = 0.0f64;
     let mut peak = 0.0f64;
-    let mut prev: Option<(f64, f64)> = Some((t0, at(v, t0) - mean));
+    let mut prev: Option<(f64, f64)> = Some((t0, at_held(v, t0) - mean));
     let mut pts = Vec::new();
     let k0 = (t0.ceil() as usize).min(n);
     let k1 = (t1.floor() as usize).min(n.saturating_sub(1));
@@ -299,7 +265,7 @@ fn flux_loop(v: &[f32], i: &[f32], mean: f64, t0: f64, t1: f64, dt: f64) -> (Vec
         }
     }
     if let Some((pt, pv)) = prev {
-        let vend = at(v, t1) - mean;
+        let vend = at_held(v, t1) - mean;
         if pv.is_finite() && vend.is_finite() && t1 > pt {
             psi += 0.5 * (pv + vend) * (t1 - pt) * dt;
         }
@@ -309,11 +275,7 @@ fn flux_loop(v: &[f32], i: &[f32], mean: f64, t0: f64, t1: f64, dt: f64) -> (Vec
 }
 
 fn partial_loop(v: &[f32], i: &[f32], dt: f64) -> Loop {
-    let _ = dt;
-    let mean = mean_finite(v);
-    if !mean.is_finite() {
-        return Vec::new();
-    }
+    let Some(mean) = mean_finite(v) else { return Vec::new() };
     let (pts, _, _) = flux_loop(v, i, mean, 0.0, (v.len().saturating_sub(1)) as f64, dt);
     stride(&pts, 2000)
 }
@@ -351,19 +313,10 @@ fn branch_fit(pts: &[(f64, f64)], i_peak_hint: f64) -> Option<(f64, f64, f64, bo
     if win.len() < 8 {
         return None;
     }
-    let slope = lin_slope(&win.iter().map(|p| p.1).collect::<Vec<_>>(), &win.iter().map(|p| p.0).collect::<Vec<_>>())?;
+    let i_psi = win.iter().map(|&(psi, y)| (y, psi));
+    let slope = lin_slope(i_psi.clone())?;
     let mid = 0.5 * (lo + hi);
-    let (mut xl, mut yl, mut xu, mut yu) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for &(psi, y) in &win {
-        if y <= mid {
-            xl.push(y);
-            yl.push(psi);
-        } else {
-            xu.push(y);
-            yu.push(psi);
-        }
-    }
-    let sat = matches!((lin_slope(&xl, &yl), lin_slope(&xu, &yu)),
+    let sat = matches!((lin_slope(i_psi.clone().filter(|p| p.0 <= mid)), lin_slope(i_psi.filter(|p| p.0 > mid))),
         (Some(a), Some(b)) if a > 0.0 && b > 0.0 && (b > 2.0 * a || a > 2.0 * b));
     Some((slope, lo, hi, sat))
 }
@@ -383,19 +336,8 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 }
 
 /// Least-squares slope of y against x.
-fn lin_slope(x: &[f64], y: &[f64]) -> Option<f64> {
-    let n = x.len().min(y.len());
-    if n < 2 {
-        return None;
-    }
-    let (mx, my) = (x.iter().take(n).sum::<f64>() / n as f64, y.iter().take(n).sum::<f64>() / n as f64);
-    let (mut var, mut cov) = (0.0, 0.0);
-    for k in 0..n {
-        let d = x[k] - mx;
-        var += d * d;
-        cov += d * (y[k] - my);
-    }
-    (var > 1e-30).then_some(cov / var)
+fn lin_slope(pts: impl Iterator<Item = (f64, f64)> + Clone) -> Option<f64> {
+    line_fit(pts)?.slope(1e-30)
 }
 
 fn stride(pts: &[(f64, f64)], max: usize) -> Vec<(f64, f64)> {

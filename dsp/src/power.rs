@@ -5,6 +5,7 @@
 //! class A, switching loss, ripple, inrush, efficiency, safe operating area and the PWM duty trend.
 use crate::edges::edges;
 use crate::measure::analyze;
+use crate::stats::{crossing, line_fit};
 use std::f64::consts::PI;
 
 /// Power quality over whole line cycles.
@@ -198,15 +199,6 @@ pub struct Switching {
     pub transitions: Vec<Transition>,
 }
 
-/// First crossing of `level` in direction `up` within samples [a, b) (fractional index).
-pub(crate) fn crossing(x: &[f32], a: usize, b: usize, level: f64, up: bool) -> Option<f64> {
-    (a.max(1)..b.min(x.len())).find_map(|k| {
-        let (p, q) = (x[k - 1] as f64, x[k] as f64);
-        let hit = if up { p < level && q >= level } else { p > level && q <= level };
-        (hit && p.is_finite() && q.is_finite()).then(|| (k - 1) as f64 + (level - p) / (q - p))
-    })
-}
-
 /// ∫ p dt between fractional sample indices a and b (trapezoid, linear interpolation at the ends).
 pub(crate) fn integrate(p: &[f64], a: f64, b: f64, dt: f64) -> f64 {
     if !(b > a) || p.len() < 2 {
@@ -356,28 +348,8 @@ fn ls_slope(x: &[f32], dt: f64, t0: f64, t1: f64) -> Option<f64> {
     if i1 <= i0 {
         return None;
     }
-    let mut n = 0.0;
-    let (mut st, mut sy) = (0.0, 0.0);
-    for i in i0..=i1 {
-        if x[i].is_finite() {
-            st += i as f64 * dt;
-            sy += x[i] as f64;
-            n += 1.0;
-        }
-    }
-    if n < 2.0 {
-        return None;
-    }
-    let (mt, my) = (st / n, sy / n);
-    let (mut num, mut den) = (0.0, 0.0);
-    for i in i0..=i1 {
-        if x[i].is_finite() {
-            let t = i as f64 * dt - mt;
-            num += t * (x[i] as f64 - my);
-            den += t * t;
-        }
-    }
-    (den > 0.0).then_some(num / den)
+    let pts = (i0..).zip(&x[i0..=i1]).filter(|(_, y)| y.is_finite()).map(|(i, &y)| (i as f64 * dt, y as f64));
+    line_fit(pts)?.slope(0.0)
 }
 
 /// Mean voltage over mean current on a conduction interval. Skips a current under 10 % of the amplitude.

@@ -59,6 +59,7 @@ and cited as `architecture/NNNN`.
 | [0031](process/0031-the-gate-is-cargo-xtask-check.md) | process | The gate is `cargo xtask check` | accepted |
 | [0032](process/0032-lints-and-limits-ratchet-down-only.md) | process | Lints and limits are per crate and ratchet down only | accepted |
 | [0033](process/0033-development-platforms.md) | process | Development runs on Linux, the BSDs and macOS; Windows users develop in WSL or a Linux VM; Rust tooling goes into `xtask` | accepted |
+| [0034](process/0034-multi-pr-work-lands-as-a-stack.md) | process | Work that spans more than one pull request lands as a stack | proposed |
 
 ## Reading order for agents
 

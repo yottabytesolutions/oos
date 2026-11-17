@@ -66,8 +66,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 
 ## Code Review Rules
 
-- One issue, one branch, one PR. Keep it small (about 400 changed lines without goldens and fixtures); split
-  refactors into stacked PRs. Link the issue (`Closes #NNN`) or task file and fill in the template.
+- One topic per PR, about 400 changed lines without goldens and fixtures; link the issue or task file, use the template.
+  Multi-PR work (refactors) is a `gh stack`, one green topic per layer ([ADR 0034](docs/adr/process/0034-multi-pr-work-lands-as-a-stack.md)).
 - Required checks: fast, clippy, test, python, deny, pr-meta, privacy, codex-review. Fix or answer every Codex
   finding; never resolve a thread without either. `@codex review` after new commits. Outages: an admin merges via
   the ruleset bypass and states the reason in the PR.

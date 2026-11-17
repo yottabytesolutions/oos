@@ -29,3 +29,5 @@ fn dsp/src/eye.rs psij -> fn dsp/src/eye/psij.rs psij
 dsp dsp/src/eye.rs clippy::too_many_arguments -> dsp dsp/src/eye/psij.rs clippy::too_many_arguments
 dsp dsp/src/eye.rs clippy::too_many_lines -> dsp dsp/src/eye/psij.rs clippy::too_many_lines
 dsp dsp/src/eye.rs clippy::unwrap_used -> dsp dsp/src/eye/signal.rs clippy::unwrap_used
+dsp dsp/tests/decode_ext.rs clippy::too_many_lines -> dsp dsp/tests/decode/garbage.rs clippy::too_many_lines
+dsp dsp/tests/decode_ext2.rs clippy::too_many_lines -> dsp dsp/tests/decode/i3c.rs clippy::too_many_lines

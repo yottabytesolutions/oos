@@ -157,15 +157,17 @@ System > Network > Remote services has a switch for each service, next to where 
 | telnet | 23 | a shell **without password** (bring-up; use it on the bench LAN only) |
 | SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
 
-Web remote, SCPI, VXI-11 and telnet are currently on by default. Without an image or user override, telnet exposes
-an unauthenticated root shell. SSH is off unless the image or the user switches it on.
-[ADR 0025](adr/system/0025-remote-services-are-bench-lan-services.md) calls for telnet to be off by default;
-that change is pending implementation in both `SysConf::default()` and `rcS`.
-A service switched off closes its port at once, with the connections on it. Switching off the web remote also takes away
+Web remote, SCPI and VXI-11 are on by default; telnet and SSH are off unless the image or the user switches them on. A
+service switched off closes its port at once, with the connections on it. Switching off the web remote also takes away
 the update page: an update then comes from a USB stick. telnet and SSH are started by `rcS` at power-on (`telnetd`,
 `/bin/oos-ssh`), which reads `remote.telnet` and `remote.ssh` from `/oos/system.conf`; oos-ui starts or stops them
-when a switch changes. With SSH set up, switch telnet off: it is a shell for anyone on the network. The serial
+when a switch changes. Enable telnet only for bench bring-up: it is a shell for anyone on the network. The serial
 console (UART2) keeps its shell without a login.
+
+Telnet stays off on first boot and with a missing configuration or `remote.telnet` key, including the DHO804 unit
+image. An explicit `remote.telnet = on` setting is kept across updates. The Default key resets the measurement
+setup, leaving these system settings unchanged. The default and menu switch are tested on the host; this change
+is not yet verified on hardware. See [ADR 0025](adr/system/0025-remote-services-are-bench-lan-services.md).
 
 The last row: **Allowed**, the addresses that may reach the scope (`net.allow`, section 6), and **Firewall** beside it,
 which shows the state in force: `on`, `off: everyone`, `applying` while a change is being put in force, `failed: see

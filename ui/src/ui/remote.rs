@@ -4,7 +4,7 @@
 //! System > Network > Remote services: which of the network services run, each switch next to the line that says
 //! where to reach it. The choice is a setting of the scope (`/oos/system.conf`, `remote.*`); `main.rs` opens and closes
 //! the ports from it, `crate::ssh` the SSH server, whose page is ui/ssh.rs. Web, SCPI and VXI-11 are on by default,
-//! telnet (a shell without password, for bring-up on the bench LAN) is on by default as before; SSH, the
+//! telnet (a shell without password, for bring-up on the bench LAN) is off by default; SSH, the
 //! authenticated shell, is off unless the image or the user switches it on.
 //!
 //! The last row: the mDNS responder (`crate::mdns`, on by default: it answers on the local link only) next to the
@@ -499,8 +499,15 @@ mod tests {
     #[test]
     fn a_service_switched_off_says_so() {
         let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
-        assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11 && u.sys.remote_telnet, "on by default");
-        assert!(!u.sys.remote_ssh, "SSH off by default");
+        assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11, "on by default");
+        assert!(!u.sys.remote_telnet && !u.sys.remote_ssh, "shells off by default");
+        assert_eq!(u.value(Item::RemTelnetInfo), "off");
+        u.select_option(Item::RemTelnet, "On");
+        assert!(u.sys.remote_telnet);
+        assert_eq!(u.value(Item::RemTelnetInfo), "23, a shell without password");
+        u.select_option(Item::RemTelnet, "Off");
+        assert!(!u.sys.remote_telnet);
+        assert_eq!(u.value(Item::RemTelnetInfo), "off");
         u.net = "192.168.1.9".into();
         assert_eq!(u.value(Item::NetWeb), "http://192.168.1.9:8080");
         u.select_option(Item::RemWeb, "Off");

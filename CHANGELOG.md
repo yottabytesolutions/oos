@@ -30,6 +30,8 @@ Added:
 Changed:
 
 - Removed the failed autoset measure-unit option. Auto set-up always reads signal levels from records (ADR 0010).
+- Telnet is off by default at boot and in the system settings. System > Network > Remote services > telnet still
+  enables it for bench bring-up; an existing explicit `remote.telnet = on` setting is kept.
 - SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
   clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
   clock first gets swapped results now. These are OOS items; the stock programming guide has none.

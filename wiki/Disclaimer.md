@@ -29,8 +29,8 @@ Installing OOS means that you accept in particular the following risks:
   you know how to do this safely.
 - **Network security.** Apart from SSH (password or key,
   [docs/network.md](https://github.com/yottabytesolutions/oos/blob/main/docs/network.md#7-ssh) section 7) OOS has no
-  authentication: telnet (on by default, a shell without password), SCPI, VXI-11, HiSLIP (on a computer), the web
-  remote and MCP are open to everyone who can reach the scope. Updates require a signature from this project's
+  authentication: telnet (off by default, a shell without password when enabled), SCPI, VXI-11, HiSLIP (on a computer),
+  the web remote and MCP are open to everyone who can reach the scope. Updates require a signature from this project's
   release key. The open services are reachable over WLAN as well. **Connect the scope to a trusted bench network
   only, never directly to the internet.**
 - **Experimental settings.** System > Overclock and `/oos/limits.conf` can change the sample clock, `limits.conf` can

@@ -64,7 +64,7 @@ pub struct SysConf {
     pub remote_web: bool,
     pub remote_scpi: bool,
     pub remote_vxi11: bool,
-    /// the telnet shell (23, read by rcS too): on by default as before, a shell without password
+    /// the telnet shell (23, read by rcS too): off by default, a shell without password when enabled
     pub remote_telnet: bool,
     pub remote_ssh: bool,
     /// SSH login with the generated password as well as with a trusted key (`/bin/oos-ssh`)
@@ -101,7 +101,7 @@ impl Default for SysConf {
             remote_web: true,
             remote_scpi: true,
             remote_vxi11: true,
-            remote_telnet: true,
+            remote_telnet: false,
             remote_ssh: false,
             ssh_password: true,
             remote_mdns: true,
@@ -409,8 +409,8 @@ mod tests {
         assert_eq!(c.ntp_server, "dhcp");
         assert_eq!(c.zone(), Tz::utc());
         assert!(c.eth_retry_10m);
-        // no shell on the network unless an image or the user switches SSH on
-        assert!(!c.remote_ssh && c.ssh_password);
+        // no shell on the network unless an image or the user switches it on
+        assert!(!c.remote_telnet && !c.remote_ssh && c.ssh_password);
         assert_eq!(SysConf::parse("").0, c);
     }
 
@@ -422,7 +422,7 @@ mod tests {
         c.tz = "CET-1CEST,M3.5.0,M10.5.0/3".into();
         c.eth_retry_10m = false;
         (c.remote_web, c.remote_telnet, c.remote_ssh, c.ssh_password, c.remote_mdns) =
-            (false, false, true, false, false);
+            (false, true, true, false, false);
         c.net_name = "lab-scope-3".into();
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
@@ -578,10 +578,26 @@ mod tests {
         assert!(c.ntp && c.remote_ssh);
         let (c, _) = SysConf::parse_over(base, "remote.ssh = off\nssh.password = off\n");
         assert!(!c.remote_ssh && !c.ssh_password);
-        // telnet and SSH are separate switches: telnet stays on by default, SSH off
-        let (c, bad) = SysConf::parse("remote.telnet = off\n");
-        assert!(bad.is_empty() && !c.remote_telnet && !c.remote_ssh);
-        assert!(SysConf::default().remote_telnet);
+        assert!(!SysConf::default().remote_telnet);
+    }
+
+    #[test]
+    fn telnet_requires_an_explicit_opt_in() {
+        for text in ["", "remote.telnet = off\n", "remote.telnet =\n", "remote.telnet = invalid\n"] {
+            assert!(!SysConf::parse(text).0.remote_telnet, "{:?}", text);
+        }
+        let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/unit/dho804/system.conf"));
+        assert!(bad.is_empty() && !base.remote_telnet);
+        for value in ["on", "true", "1"] {
+            let text = format!("remote.telnet = {}\n", value);
+            let (generic, bad) = SysConf::parse(&text);
+            assert!(bad.is_empty() && generic.remote_telnet && !generic.remote_ssh);
+            let (enabled, bad) = SysConf::parse_over(base.clone(), &text);
+            assert!(bad.is_empty() && enabled.remote_telnet && enabled.remote_ssh);
+            assert!(SysConf::parse(&enabled.text()).0.remote_telnet);
+            let (disabled, bad) = SysConf::parse_over(enabled, "remote.telnet = off\n");
+            assert!(bad.is_empty() && !disabled.remote_telnet && disabled.remote_ssh);
+        }
     }
 
     // Break it catches: Remote services > Allowed showing or writing another list than rcS and netacl use (the image's

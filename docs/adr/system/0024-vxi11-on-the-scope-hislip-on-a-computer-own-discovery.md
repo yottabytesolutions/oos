@@ -1,6 +1,6 @@
 # ADR 0024: VXI-11 on the scope, HiSLIP on a computer; found by mDNS / DNS-SD and LXI identification
 
-- Status: accepted
+- Status: accepted, amended 2026-11-17 (no announcer on a computer, ADR 0036)
 - Date: 2026-11-15
 - Category: system (touches code: ADR 0022)
 
@@ -42,7 +42,13 @@ RPC services, and a second portmapper would clash with them. The image has no rp
 - Worth a second look if HiSLIP becomes the transport VISA prefers, or if port 111 is needed for something else on the
   scope.
 
+## Note 2026-11-17: no announcer on a computer
+
+The desktop build and its DNS-SD announcer (`ui/src/announce.rs`) left this tree with the native Windows window
+(ADR 0036, yottabytesolutions/oos-desktop). On a computer `oos-ui --serve` serves HiSLIP, the raw socket and the web
+remote on loopback ports and announces nothing; it prints its ports instead. The scope's mDNS responder is unchanged.
+
 ## References
 
-`ui/src/vxi11.rs`, `ui/src/hislip.rs`, `ui/src/mdns.rs`, `ui/src/announce.rs`, `ui/src/main.rs` (`lan_servers`,
+`ui/src/vxi11.rs`, `ui/src/hislip.rs`, `ui/src/mdns.rs`, `ui/src/main.rs` (`lan_servers`,
 `mdns_services`), [network.md](../../network.md) 4 and 4.1, [scpi.md](../../scpi.md), ADR 0022.

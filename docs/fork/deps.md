@@ -36,12 +36,8 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
 A crate from crates.io is added only where it removes code or blocking
 ([ADR 0037](../adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md)). Each crate's allowed dependencies are its line in
 `xtask/data/architecture.txt`; cargo-deny (`deny.toml`) vets licences and advisories. Crates outside `xtask` are
-listed here:
-
-| Crate | Build | For | Versions |
-|---|---|---|---|
-| `minifb` | Windows desktop (`cfg(windows)`) | the window and its keyboard and mouse input (`ui/src/desktop.rs`) | `ui/Cargo.toml`, `ui/Cargo.lock` |
-| `windows-sys` | Windows desktop (`cfg(windows)`) | network interfaces, sockets, file dialogs (`ui/src/announce/windows.rs`, `ui/src/desktop/`) | `ui/Cargo.toml`, `ui/Cargo.lock` |
+listed here. There are none: the Windows desktop window and its crates moved to
+[oos-desktop](https://github.com/yottabytesolutions/oos-desktop) (ADR 0036).
 
 ## Checking for updates
 

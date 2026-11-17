@@ -10,16 +10,10 @@ This reference describes the repository implementation. Primary Rigol syntax was
 | --- | --- | --- |
 | Raw TCP SCPI | TCP 5555 | Recommended for scripts. Newline-terminated program messages; newline-terminated replies. |
 | HiSLIP | TCP 4880 | Same interpreter, with HiSLIP framing. Basic sessions; full locking/overlap semantics are not implemented. A reply is split into messages of the client's maximum message size, but of at least 4 KiB of data. |
-| VXI-11 | Linux scope service | Same interpreter, partial RPC transport. Pending operation reads have the limitation described below. Not advertised by the Windows app. |
+| VXI-11 | Linux scope service | Same interpreter, partial RPC transport. Pending operation reads have the limitation described below. |
 | HTTP/MCP adapter | HTTP web port | `POST /mcp`, JSON-RPC `tools/call` with tool name `scpi`. This is not a VISA interface. `/cmd` uses a separate front-panel command language. |
 
-The source launcher can use different ports. For example:
-
-```powershell
-.\run-windows.ps1 -Watch -Offline -WebPort 18080 -ScpiPort 5555 -HislipPort 14880
-```
-
-For that launcher, use `TCPIP0::127.0.0.1::5555::SOCKET`, or HiSLIP resource `TCPIP0::127.0.0.1::hislip0,14880::INSTR`. On another computer, substitute the PC's LAN address. These services are unauthenticated bench interfaces. The desktop app does not require or start an SSH server; [scope-image SSH](ssh.md) is separate.
+On a computer, `oos-ui --serve` runs the same interpreter with the demo source on free loopback ports and prints them ([README](../README.md#try-it-without-a-scope)). With SCPI on port 40002, use `TCPIP0::127.0.0.1::40002::SOCKET`; it also prints the HiSLIP port and the VXI-11 mapper and core ports. The host server listens on `127.0.0.1` only. These services are unauthenticated bench interfaces. The desktop app does not require or start an SSH server; [scope-image SSH](ssh.md) is separate.
 
 Keywords are case-insensitive. The capitalized part in a mixed-case spelling is the short form: `:TRIG:EDGE:SOUR?` and `:TRIGger:EDGE:SOURce?` are equivalent. Use either the complete long form or its documented short form. Intermediate abbreviations are not generally accepted.
 
@@ -143,7 +137,7 @@ BYTE uses unsigned 8-bit samples. WORD uses unsigned **little-endian** 16-bit sa
 
 A block is `#<N><N decimal length digits><payload>`, followed by the response newline. Read the announced byte length; never use newline splitting inside a binary payload. Use `:WAV:STARt`/`:WAV:STOP` for smaller pages; preamble origin is the time of the page's first point. Metadata borrows the record without copying samples. Before copying DATA, the server rejects pages whose worst-case encoded size exceeds 64 MiB with -223; ASCII uses a conservative 14 bytes per sample bound. Long pages still encode on the main-loop path and slow receivers can stall it within existing send timeouts. WORD generally uses less memory than ASCII.
 
-Minimal standard-library Python reader for the running Windows app:
+Minimal standard-library Python reader for a running OOS:
 
 ```python
 import socket
@@ -308,7 +302,7 @@ A file load is not an ADC acquisition. Multi-trace imports validate capacity bef
 :WAV:PRE?
 ```
 
-The exact path is an example from this Windows checkout; it is not valid on a Linux scope unless that file exists there. Load paths are not file uploads. For remote files use the UI/browser's explicit-slot upload workflow.
+The path is an example; use a path that exists where `oos-ui` runs. Load paths are not file uploads. For remote files use the UI/browser's explicit-slot upload workflow.
 
 ## Generator, logic and diagnostic extensions
 

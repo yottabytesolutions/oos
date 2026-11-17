@@ -1,18 +1,14 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-890 file hal/src/dho/afe.rs
-722 file hal/src/dho/afg.rs
-900 file hal/src/dho/boot/mod.rs
-407 file hal/src/dho/coretrim.rs
-594 file hal/src/dho/lmx2582.rs
-459 file hal/src/dho/mask.rs
-432 file hal/src/dho/seg.rs
-801 file hal/src/dho/selfcal.rs
-1346 file hal/src/dho/seq.rs
-1027 file hal/src/dho/tpu.rs
-586 file hal/src/model.rs
-410 file hal/src/update/ed25519.rs
-710 file hal/src/update/mod.rs
+802 file hal/src/dho/afe.rs
+619 file hal/src/dho/afg.rs
+787 file hal/src/dho/boot/mod.rs
+492 file hal/src/dho/lmx2582.rs
+712 file hal/src/dho/selfcal.rs
+1133 file hal/src/dho/seq.rs
+870 file hal/src/dho/tpu.rs
+488 file hal/src/model.rs
+604 file hal/src/update/mod.rs
 66 fn hal/src/dho/acq.rs configure_la
 65 fn hal/src/dho/afg.rs Wave::table
 250 fn hal/src/dho/boot/mod.rs Ctx::run

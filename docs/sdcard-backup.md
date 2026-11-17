@@ -2,8 +2,8 @@
 
 For the card route (`README.md`, On a second card, steps 1 and 2): an image of the scope's original boot card, and a
 clone of it on the second card. Any tool that copies a whole disk sector by sector does the job. Tested here:
-`tools/sdcard-clone.sh` on macOS. The Windows tools and `dd` on Linux are common ways that users named or that do the
-same thing; they have not been run against a scope's card here.
+`tools/sdcard-clone.sh` on macOS. The same script on Linux, the Windows tools and `dd` on Linux are common ways that
+users named or that do the same thing; they have not been run against a scope's card here.
 
 ## Before you start
 
@@ -77,5 +77,6 @@ sudo dd if=sd-original.img of=/dev/sdY bs=4M status=progress conv=fsync
 sudo cmp -n "$(stat -c %s sd-original.img)" sd-original.img /dev/sdY && echo same
 ```
 
-`tools/sdcard-clone.sh` needs macOS for `list`, `read`, `write` and `verify`; its `fit` (a copy of the image for a
-smaller card) works on Linux with the card's size in bytes (`lsblk -bdno SIZE /dev/sdY`).
+`tools/sdcard-clone.sh` does the same on Linux with the disk name instead of `diskN` (`tools/sdcard-clone.sh list`,
+then `read sdX sd-original.img`, `write sd-original.img sdY`, `verify` and `fit`). It takes only SD cards and USB
+media and refuses a disk with a mount outside `/media` or `/run/media`. Not yet run against a scope's card.

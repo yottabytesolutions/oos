@@ -404,9 +404,9 @@ ADB needs steps 3 to 5 to build the image.
 
 ### On a second card
 
-The steps below use macOS, where they were developed. `tools/sdcard-clone.sh` needs macOS; on Linux, use `dd` for the
-clone and `/dev/sdX` instead of `/dev/rdiskN`. That path is untested. Steps 1 and 2 on Windows and Linux, with the
-tools to use and what to watch out for: [docs/sdcard-backup.md](docs/sdcard-backup.md).
+The steps below use macOS, where they were developed. `tools/sdcard-clone.sh` also runs on Linux, where the disk is
+`sdX` or `mmcblkN` instead of `diskN`; that path has not yet been run against a scope's card. Steps 1 and 2 on Windows
+and Linux, with the tools to use and what to watch out for: [docs/sdcard-backup.md](docs/sdcard-backup.md).
 
 **You will need for the second card**
 

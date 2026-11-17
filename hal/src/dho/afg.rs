@@ -695,7 +695,7 @@ impl Io {
     }
     /// The current relay code (bit n = afg_in(n+1)).
     pub fn relays(&self) -> u8 {
-        self.relays.iter().enumerate().fold(0, |c, (n, l)| c | (l.get() as u8) << n)
+        self.relays.iter().enumerate().fold(0, |c, (n, l)| c | (crate::dho::gpio::best_effort(l.get()) as u8) << n)
     }
     pub fn apply(&mut self, bar: &mut dyn crate::dho::bus::Bus, ops: &[Op]) {
         for op in ops {
@@ -703,10 +703,10 @@ impl Io {
                 Op::Bar1 { off, val } => bar.wr(off, val),
                 Op::Gpio(code) => {
                     for (n, l) in self.relays.iter().enumerate() {
-                        l.set(code >> n & 1 == 1);
+                        crate::dho::gpio::best_effort(l.set(code >> n & 1 == 1));
                     }
                 }
-                Op::Power(on) => self.power.set(on),
+                Op::Power(on) => crate::dho::gpio::best_effort(self.power.set(on)),
                 Op::SleepMs(ms) => std::thread::sleep(std::time::Duration::from_millis(ms as u64)),
             }
         }

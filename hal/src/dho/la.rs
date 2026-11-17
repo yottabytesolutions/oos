@@ -64,7 +64,7 @@ pub fn lines(r: u32) -> [bool; 16] {
 /// Probe plugged in (GPIO `LA_PROBE_DETECT` reads 1).
 #[cfg(target_os = "linux")]
 pub fn probe_present() -> std::io::Result<bool> {
-    Ok(crate::dho::gpio::Line::input("LA_PROBE_DETECT")?.get())
+    crate::dho::gpio::Line::input("LA_PROBE_DETECT")?.get()
 }
 
 // ---------------------------------------------------------------------------------------------- acquisition

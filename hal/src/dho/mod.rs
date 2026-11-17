@@ -29,6 +29,8 @@ pub mod gpio_none;
 #[cfg(not(unix))]
 pub use gpio_none as gpio;
 pub mod hz;
+#[cfg(unix)]
+mod ioctl;
 pub mod la;
 pub mod levels;
 pub mod lmx2582;

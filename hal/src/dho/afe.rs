@@ -755,7 +755,7 @@ impl GpioAfe {
         }
     }
     fn set(l: &crate::dho::gpio::Line, v: bool) {
-        l.set(v);
+        crate::dho::gpio::best_effort(l.set(v));
         Self::half();
     }
     fn byte_out(&self, v: u8) {
@@ -773,7 +773,7 @@ impl GpioAfe {
         for _ in 0..8 {
             Self::set(&self.sclk, false);
             Self::set(&self.sclk, true);
-            v = (v << 1) | self.miso.get() as u8;
+            v = (v << 1) | crate::dho::gpio::best_effort(self.miso.get()) as u8;
         }
         Self::set(&self.sclk, false);
         v
@@ -804,13 +804,12 @@ impl AfeBus for GpioAfe {
 /// (`gpiod_set_raw_value`); the line handle is kept open for the life of the process.
 #[cfg(target_os = "linux")]
 pub fn set_gear(ch: usize, gear: u8) -> std::io::Result<()> {
-    use std::os::unix::io::AsRawFd;
     if !std::path::Path::new("/dev/dac_gear_change").exists() {
         use std::sync::Mutex;
         static LINES: Mutex<Vec<(usize, crate::dho::gpio::Line)>> = Mutex::new(Vec::new());
         let mut lines = LINES.lock().unwrap();
         if let Some((_, l)) = lines.iter().find(|(c, _)| *c == ch) {
-            l.set(gear & 1 != 0);
+            return l.set(gear & 1 != 0);
         } else {
             lines.push((ch, crate::dho::gpio::Line::output(&format!("afe{}", ch + 1), gear & 1 != 0)?));
         }
@@ -818,10 +817,8 @@ pub fn set_gear(ch: usize, gear: u8) -> std::io::Result<()> {
     }
     let f = std::fs::OpenOptions::new().read(true).write(true).open("/dev/dac_gear_change")?;
     let mut b: u8 = ch as u8 | gear << 4;
-    if unsafe { libc::ioctl(f.as_raw_fd(), 0x7801 as _, &mut b) } < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
+    // SAFETY: the gear ioctl reads one initialized byte without retaining it or closing f.
+    unsafe { crate::dho::ioctl::ioctl(&f, 0x7801, &mut b) }
 }
 
 /// The two ADC words every band-limit change sends to FPGA 0x1034 first.

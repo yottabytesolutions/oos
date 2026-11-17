@@ -102,11 +102,11 @@ The maintainer cannot approve his own PRs, so agents work under their own identi
 `yottabyte-oos-agent` (preferred over a machine user: no seat, scoped, short-lived tokens).
 
 1. Organisation settings > Developer settings > GitHub Apps > New. Name `yottabyte-oos-agent`, no webhook.
-   Repository permissions: Contents read/write, Pull requests read/write, Issues read/write, Metadata read.
-   Nothing else (no Actions, Administration, Workflows). Install on `oos` only.
+   Repository permissions: Contents read/write, Pull requests read/write, Issues read/write, Workflows read/write,
+   Checks, Statuses and Actions read, Metadata read. No Administration. Install on `oos` only.
 2. Do not give the app bypass in the ruleset. Its PRs pass the same checks; risk paths still need @ichnograph.
-3. Without the Workflows permission the app cannot change `.github/workflows/`; such changes go through the
-   maintainer.
+3. With the Workflows permission the app can push changes to `.github/workflows/`; they are CODEOWNERS paths and
+   still need the maintainer's approval.
 4. Agents get an installation token per session (`gh` with a token from the app's private key, kept in the local
    secret store, never in the repository or in Actions). Commits carry the DCO sign-off of the person responsible
    for the agent run; author is the app's noreply identity.

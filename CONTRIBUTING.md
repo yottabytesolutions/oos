@@ -89,20 +89,22 @@ place to start reading.
 ## Review gate
 
 A pull request merges when all required checks pass: `fast`, `clippy`, `test`, `python`, `deny`, `pr-meta`,
-`privacy` and `codex-review`. Codex reviews automatically when the pull request opens; after new commits comment
-`@codex review`. Fix or answer every finding and resolve every conversation. `codex-review` passes only for a
-completed review of the current head with no unresolved findings. Paths in [CODEOWNERS](.github/CODEOWNERS) also need
-the maintainer's approval.
+`privacy` and `codex-review`. Codex reviews automatically when a pull request is opened or marked ready for review;
+drafts may be skipped. After new commits, or to review a draft, comment `@codex review`. Until a review of the
+head exists, `codex-review` is pending, not failed. Fix or answer every finding and resolve every conversation.
+`codex-review` passes only for a completed review of the current head with no unresolved findings. Paths in
+[CODEOWNERS](.github/CODEOWNERS) also need the maintainer's approval.
 
 When Codex is down, a repository admin merges through the ruleset bypass and states the reason in the pull request.
 The bypass is for outages only, never to skip a finding.
 
 ## Risk tiers
 
-- **High:** hardware register writes (`hal/src/dho`, `fpgad`), calibration, update packages, signing, kexec, boot,
-  kernel, rootfs, the pipeline itself. These are the CODEOWNERS paths. Label `risk/hardware`, code owner review,
-  `tools/plan-matrix.sh` before and after in the pull request, and a run on a real unit before merge (`needs-unit`
-  until then).
+- **High, hardware:** hardware register writes (`hal/src/dho`, `fpgad`), calibration, update packages, signing,
+  kexec, boot, kernel, rootfs. Label `risk/hardware`, code owner review, `tools/plan-matrix.sh` before and after in
+  the pull request, and a run on a real unit before merge (`needs-unit` until then).
+- **High, pipeline:** the workflows, the gate, the review rules and their settings (`.github/`, `xtask/`,
+  `tools/ci/`, `tools/privacy/`, `.githooks/`). Code owner review; no `risk/hardware` label and no unit run.
 - **Medium:** behaviour visible on the scope (UI, SCPI, DSP results). Golden pictures and tests; a unit run when the
   change touches acquisition timing.
 - **Low:** host-only tooling, docs, tests.

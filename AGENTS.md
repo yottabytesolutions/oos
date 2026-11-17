@@ -71,8 +71,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Required checks: fast, clippy, test, python, deny, pr-meta, privacy, codex-review. Fix or answer every Codex
   finding; never resolve a thread without either. `@codex review` after new commits. Outages: an admin merges via
   the ruleset bypass and states the reason in the PR.
-- Risk tiers ([CONTRIBUTING](CONTRIBUTING.md#risk-tiers)): CODEOWNERS paths are high risk and need `risk/hardware`,
-  code owner review, `tools/plan-matrix.sh` before and after, and a unit run (`needs-unit` until then).
+- Risk tiers ([CONTRIBUTING](CONTRIBUTING.md#risk-tiers)): CODEOWNERS paths need code owner review. The hardware
+  ones also need `risk/hardware`, `tools/plan-matrix.sh` before and after, and a unit run (`needs-unit` until then).
 - State in the PR whether it ran on a unit, which model and build, or host only. Never claim an untested unit run.
 - Flaky tests are fixed. Ignore one only with `#[ignore = "flaky: #NNN reason"]` and an open `flaky` issue.
 - Agents take only `agent-ready` issues, stay within acceptance criteria and out of scope, avoid high-risk paths

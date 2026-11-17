@@ -58,13 +58,15 @@ and cited as `architecture/NNNN`.
 | [0030](process/0030-this-tree-is-a-hard-fork-of-oos.md) | process | This tree is a hard fork of OOS; upstream enters only by cherry-pick | accepted |
 | [0031](process/0031-the-gate-is-cargo-xtask-check.md) | process | The gate is `cargo xtask check` | accepted |
 | [0032](process/0032-lints-and-limits-ratchet-down-only.md) | process | Lints and limits are per crate and ratchet down only | accepted |
+| [0033](process/0033-development-platforms.md) | process | Development runs on Linux, the BSDs and macOS; Windows users develop in WSL or a Linux VM; Rust tooling goes into `xtask` | accepted |
 
 ## Reading order for agents
 
 An agent (or a new contributor) reads [AGENTS.md](../../AGENTS.md) first, then this index, then the records that
 touch the change: ADR 0009, 0010, 0013, 0015 and 0021 for anything near the hardware or the dependencies, ADR 0014 and
 0031 for how to show that a change is safe, ADR 0016, 0018, 0019 and 0032 for how code and text look,
-ADR 0022 to 0025 for SCPI, VXI-11, HiSLIP and the other network services, ADR 0030 for what this tree is. The records are short on purpose; reading the ones that apply costs
+ADR 0022 to 0025 for SCPI, VXI-11, HiSLIP and the other network services, ADR 0030 for what this tree is, ADR 0033 for the
+hosts development runs on. The records are short on purpose; reading the ones that apply costs
 minutes and saves a review round.
 
 ## Writing one

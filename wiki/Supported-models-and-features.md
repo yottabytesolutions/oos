@@ -122,10 +122,9 @@ S models.
 |---|---|---|
 | SCPI over TCP | 5555 | [SCPI manual](https://github.com/yottabytesolutions/oos/blob/main/docs/scpi.md): DHO800/DHO900 subset and OOS extensions; RAW reads retained native CH memory, and references retain their own native timing |
 | VXI-11 | 111, 9009 | on the scope, where port 111 is free: `TCPIP::<ip>::INSTR` |
-| HiSLIP | 4880 | on a computer: the payload is the same SCPI interpreter; `TCPIP::<ip>::hislip0::INSTR` |
 | Web remote | 8080 | live screen, keys, knobs, touch in the browser; saves screenshots and CSV to your computer |
 | LXI identification | 8080 | `/lxi/identification` |
-| LAN announcement | 5353 | mDNS of the SCPI socket, VXI-11 and HiSLIP; the HTTP record's path is `/lxi/identification` |
+| LAN announcement | 5353 | mDNS of the SCPI socket and VXI-11; the HTTP record's path is `/lxi/identification` |
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
 | SSH | 22 | root shell with the scope's own password or a trusted key, off by default ([docs/network.md](https://github.com/yottabytesolutions/oos/blob/main/docs/network.md) 7) |
 | mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-xxxxxx.local:8080`, and its services for browsing ([docs/network.md](https://github.com/yottabytesolutions/oos/blob/main/docs/network.md)) |

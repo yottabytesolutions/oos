@@ -29,7 +29,7 @@ Installing OOS means that you accept in particular the following risks:
   you know how to do this safely.
 - **Network security.** Apart from SSH (password or key,
   [docs/network.md](https://github.com/yottabytesolutions/oos/blob/main/docs/network.md#7-ssh) section 7) OOS has no
-  authentication: telnet (on by default, a shell without password), SCPI, VXI-11, HiSLIP (on a computer), the web
+  authentication: telnet (on by default, a shell without password), SCPI, VXI-11, the web
   remote and MCP are open to everyone who can reach the scope. The community signing key is public, so anyone on the
   network can also install an update. This holds for WLAN as well. **Connect the scope to a trusted bench network
   only, never directly to the internet.**

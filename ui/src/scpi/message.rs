@@ -59,7 +59,7 @@ impl Scpi {
         match self.poll_program(ui, cv, &mut program) {
             Some(response) => Ok((response, program.has_reply)),
             None => {
-                let error = "Operation pending; use raw TCP or HiSLIP for *OPC?";
+                let error = "Operation pending; use raw TCP for *OPC?";
                 self.push_err(format!("-221,\"{}\"", error));
                 self.normalize_errors();
                 Err(error)

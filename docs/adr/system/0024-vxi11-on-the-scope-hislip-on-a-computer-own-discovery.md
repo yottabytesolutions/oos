@@ -1,6 +1,6 @@
 # ADR 0024: VXI-11 on the scope, HiSLIP on a computer; found by mDNS / DNS-SD and LXI identification
 
-- Status: accepted, amended 2026-11-17 (no announcer on a computer, ADR 0036)
+- Status: accepted, amended 2026-11-17 (no announcer on a computer, ADR 0036; HiSLIP removed by owner decision)
 - Date: 2026-11-15
 - Category: system (touches code: ADR 0022)
 
@@ -47,6 +47,14 @@ RPC services, and a second portmapper would clash with them. The image has no rp
 The desktop build and its DNS-SD announcer (`ui/src/announce.rs`) left this tree with the native Windows window
 (ADR 0036, yottabytesolutions/oos-desktop). On a computer `oos-ui --serve` serves HiSLIP, the raw socket and the web
 remote on loopback ports and announces nothing; it prints its ports instead. The scope's mDNS responder is unchanged.
+
+## Note 2026-11-17: remove HiSLIP
+
+The owner decided to remove HiSLIP from this tree, including its host listener, discovery and LXI identification.
+The scope continues to serve raw SCPI on TCP 5555 and VXI-11 with its portmapper on TCP/UDP 111 and core on TCP 9009.
+The host harness continues to serve raw SCPI and VXI-11 with its portmapper on private loopback ports. This replaces
+the host transport choice above; the earlier notes record the original decision. Verification for the removal is
+host-only; no unit was accessed.
 
 ## References
 

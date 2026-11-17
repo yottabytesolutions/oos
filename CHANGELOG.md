@@ -23,12 +23,13 @@ Added:
   every network the scope is on, and Other opens the keyboard. A wrong entry is refused with a message and not
   stored. A change takes effect at once, without a restart:
   - the firewall is reloaded;
-  - SCPI, VXI-11 and HiSLIP close the connections the new list leaves out, and the web remote checks every request;
+  - SCPI and VXI-11 close the connections the new list leaves out, and the web remote checks every request;
   - SSH starts or stops with the list.
   The Firewall row shows the state in force (host-tested; the earlier build of the row ran on a unit).
 
 Changed:
 
+- HiSLIP is removed from the host build. Raw SCPI and VXI-11 with its portmapper remain available.
 - SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
   clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
   clock first gets swapped results now. These are OOS items; the stock programming guide has none.

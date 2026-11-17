@@ -9,7 +9,7 @@ machine and open the browser on Windows:
 cargo run --release -p oos-ui -- --serve
 ```
 
-Open the HTTP address it prints. The same line lists the SCPI, HiSLIP and VXI-11 ports for scripts.
+Open the HTTP address it prints. The same line lists the SCPI and VXI-11 ports for scripts.
 The server listens on loopback ports. Stop it with Ctrl+C in the terminal. Add `--offline` to start
 with the analog channels off for stored waveforms.
 

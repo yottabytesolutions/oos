@@ -77,12 +77,11 @@ use shutdown::send_in_background;
 pub struct Offer {
     pub scpi_port: Option<u16>,
     pub vxi11: bool,
-    pub hislip_port: Option<u16>,
 }
 
 impl Default for Offer {
     fn default() -> Offer {
-        Offer { scpi_port: Some(5555), vxi11: true, hislip_port: None }
+        Offer { scpi_port: Some(5555), vxi11: true }
     }
 }
 
@@ -1067,10 +1066,6 @@ fn lxi_identification(o: &Offer) -> String {
     }
     if let Some(p) = o.scpi_port {
         addrs.push_str(&format!("<InstrumentAddressString>TCPIP::{p}::SOCKET</InstrumentAddressString>\n"));
-    }
-    if let Some(port) = o.hislip_port {
-        let device = if port == crate::hislip::PORT { "hislip0".into() } else { format!("hislip0,{port}") };
-        addrs.push_str(&format!("<InstrumentAddressString>TCPIP::{device}::INSTR</InstrumentAddressString>\n"));
     }
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -2185,23 +2180,24 @@ setTimeout(() => {
     #[test]
     fn identification_names_the_listeners() {
         let mut h = open_test(0, &Default::default());
-        h.offer(Offer { scpi_port: Some(5555), vxi11: false, hislip_port: Some(crate::hislip::PORT) });
+        h.offer(Offer { scpi_port: Some(5555), vxi11: false });
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::W, crate::ui::H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
         let r = request(&mut h, &mut ui, &cv, &mut scpi, b"GET /lxi/identification HTTP/1.1\r\n\r\n".to_vec());
-        assert!(r.contains("TCPIP::hislip0::INSTR"), "{}", r);
+        assert_eq!(r.matches("<InstrumentAddressString>").count(), 1, "{r}");
         assert!(r.contains("TCPIP::5555::SOCKET"), "{}", r);
         assert!(!r.contains("TCPIP::INSTR<"), "{}", r);
         assert!(r.contains("<IdentificationURL>/lxi/identification</IdentificationURL>"), "{}", r);
     }
 
     #[test]
-    fn identification_names_custom_hislip_port_without_advertising_the_default() {
-        let xml = lxi_identification(&Offer { scpi_port: Some(5555), vxi11: false, hislip_port: Some(14880) });
-        assert!(xml.contains("TCPIP::hislip0,14880::INSTR"), "{xml}");
-        assert!(!xml.contains("TCPIP::hislip0::INSTR"), "{xml}");
-        let closed = lxi_identification(&Offer { scpi_port: None, vxi11: false, hislip_port: None });
+    fn identification_names_only_offered_scpi_and_vxi11_listeners() {
+        let xml = lxi_identification(&Offer::default());
+        assert!(xml.contains("TCPIP::5555::SOCKET"), "{xml}");
+        assert!(xml.contains("TCPIP::INSTR<"), "{xml}");
+        assert_eq!(xml.matches("<InstrumentAddressString>").count(), 2, "{xml}");
+        let closed = lxi_identification(&Offer { scpi_port: None, vxi11: false });
         assert!(!closed.contains("InstrumentAddressString"), "{closed}");
     }
 

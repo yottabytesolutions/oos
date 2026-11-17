@@ -296,7 +296,7 @@ The link-local fallback address (169.254.x.y) is only reachable from a listed pr
 **oos-ui** reads `net.allow` at the start; its servers share that list with Allowed, which sets it after a change
 (`netacl::Shared`). They apply it a second time per connection: `POST /update` and `/mcp` answer 403 to others as soon
 as the request head is in (the body is not read; each request is checked, so a change counts from the next one), SCPI,
-VXI-11 and HiSLIP (on a computer) close the connection. After a change they also close the connections they hold from
+VXI-11 close the connection. After a change they also close the connections they hold from
 an address the new list leaves out. The page, the live picture, `/cmd`, the downloads and `POST /waveform` (a
 reference upload, nothing written to storage) stay open to the firewall's prefixes. Loopback is always allowed.
 

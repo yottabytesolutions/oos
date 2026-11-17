@@ -73,7 +73,7 @@ and cited as `architecture/NNNN`.
 An agent (or a new contributor) reads [AGENTS.md](../../AGENTS.md) first, then this index, then the records that
 touch the change: ADR 0009, 0010 and 0015 for anything near the hardware, ADR 0014 and 0031 for how to show that a
 change is safe, ADR 0039 for formatting, lints and ratchets, ADR 0018 and 0019 for how code and text look, ADR 0013
-and ADR 0040 for what may enter the tree, ADR 0037 for dependencies and remote IO, ADR 0022 to 0025 for SCPI, VXI-11, HiSLIP and
+and ADR 0040 for what may enter the tree, ADR 0037 for dependencies and remote IO, ADR 0022 to 0025 for SCPI, VXI-11 and
 the other network services, ADR 0030 for what this tree is, ADR 0033 for the hosts development runs on. The records
 are short on purpose; reading the ones that apply costs minutes and saves a review round.
 

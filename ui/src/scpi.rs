@@ -5259,7 +5259,7 @@ mod aux_out_tests {
 
 #[cfg(test)]
 pub(crate) mod test_io {
-    //! Test clients of the raw socket and HiSLIP servers. Loopback delivery is asynchronous on some hosts (macOS):
+    //! Test clients of the raw socket server. Loopback delivery is asynchronous on some hosts (macOS):
     //! a reply is awaited with the server driven between reads, bounded, instead of one immediate read.
 
     use std::io::{ErrorKind, Read};
@@ -5301,13 +5301,6 @@ pub(crate) mod test_io {
     /// Exactly `n` bytes (a test that expects more than one reply).
     pub(crate) fn bytes(socket: &mut TcpStream, drive: impl FnMut(), n: usize) -> Vec<u8> {
         read_until(socket, drive, |b| b.len() >= n)
-    }
-
-    /// One complete HiSLIP message.
-    pub(crate) fn hislip(socket: &mut TcpStream, drive: impl FnMut()) -> crate::hislip::Message {
-        let mut b =
-            read_until(socket, drive, |b| crate::hislip::take_message(&mut b.to_vec()).is_ok_and(|m| m.is_some()));
-        crate::hislip::take_message(&mut b).ok().flatten().expect("a complete HiSLIP message")
     }
 }
 
@@ -5467,48 +5460,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn compatibility_hislip_defers_entire_multiline_payload_with_original_message_id() {
-        let (mut s, mut ui, cv) = reference_session();
-        line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10");
-        let mut server = crate::hislip::Server::open(0);
-        let mut client = TcpStream::connect(("127.0.0.1", server.port().unwrap())).unwrap();
-        client.set_nonblocking(true).unwrap();
-        client.write_all(&crate::hislip::encode(0, 0, 0x0100_0000, b"hislip0")).unwrap();
-        let init = test_io::hislip(&mut client, || server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p)));
-        assert_eq!(init.typ, 1);
-        let mut bytes = [0; 1024];
-        client.write_all(&crate::hislip::encode(7, 0, 77, b":SINGLE;:TRIG:STAT?;*OPC?\n:TRIG:STAT?\n")).unwrap();
-        crate::ui::lifecycle::test_wait::until("HiSLIP pending operation", || {
-            let mut pending = false;
-            server.poll_async(&mut |p| {
-                let result = s.poll_program(&mut ui, &cv, p);
-                pending |= p.waiting.is_some();
-                result
-            });
-            pending.then_some(())
-        });
-        ui.step(0.2);
-        crate::ui::lifecycle::test_wait::until("HiSLIP pending operation", || {
-            let mut pending = false;
-            server.poll_async(&mut |p| {
-                let result = s.poll_program(&mut ui, &cv, p);
-                pending |= p.waiting.is_some();
-                result
-            });
-            pending.then_some(())
-        });
-        assert_eq!(client.read(&mut bytes).unwrap_err().kind(), ErrorKind::WouldBlock);
-        line(&mut s, &mut ui, &cv, ":TRIG:FORC");
-        ui.step(0.2);
-        let response = test_io::hislip(&mut client, || {
-            server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
-            ui.step(0.2);
-        });
-        assert_eq!((response.typ, response.param), (7, 77));
-        assert_eq!(response.data, b"WAIT;1\nSTOP\n");
-    }
-
     // Break it catches: SCPI keeping the net.allow of its start (a list changed on the screen counted only after a
     // restart of oos-ui), or a client the new list leaves out kept on its open connection
     #[test]
@@ -5660,54 +5611,6 @@ mod tests {
         assert_eq!(s.poll_program(&mut ui, &cv, &mut old), Some(Vec::new()));
         assert!(line(&mut s, &mut ui, &cv, ":SYST:ERR?").starts_with("-410,"));
         assert_eq!(ui.m.run, RunState::Stop);
-    }
-
-    #[test]
-    fn compatibility_hislip_sync_and_async_clear_discard_pending_tail_without_stale_reply() {
-        for asynchronous in [false, true] {
-            let (mut scpi, mut ui, cv) = reference_session();
-            line(&mut scpi, &mut ui, &cv, ":TRIG:EDGE:LEV 10");
-            let mut server = crate::hislip::Server::open(0);
-            let port = server.port().unwrap();
-            let mut sync = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            sync.set_nonblocking(true).unwrap();
-            sync.write_all(&crate::hislip::encode(0, 0, 0x0100_0000, b"hislip0")).unwrap();
-            let session = test_io::hislip(&mut sync, || server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p)))
-                .param as u16;
-            sync.write_all(&crate::hislip::encode(7, 0, 42, b":SINGLE;*OPC?;:RUN\n")).unwrap();
-            crate::ui::lifecycle::test_wait::until("HiSLIP pending operation before clear", || {
-                let mut pending = false;
-                server.poll_async(&mut |p| {
-                    let result = scpi.poll_program(&mut ui, &cv, p);
-                    pending |= p.waiting.is_some();
-                    result
-                });
-                pending.then_some(())
-            });
-            if asynchronous {
-                let mut control = TcpStream::connect(("127.0.0.1", port)).unwrap();
-                control.set_nonblocking(true).unwrap();
-                control.write_all(&crate::hislip::encode(17, 0, session as u32, b"")).unwrap();
-                let drive = || server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
-                assert_eq!(test_io::hislip(&mut control, drive).typ, 18);
-                control.write_all(&crate::hislip::encode(19, 0, 0, b"")).unwrap();
-                let drive = || server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
-                assert_eq!(test_io::hislip(&mut control, drive).typ, 23);
-            } else {
-                sync.write_all(&crate::hislip::encode(8, 0, 0, b"")).unwrap();
-                let drive = || server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
-                assert_eq!(test_io::hislip(&mut sync, drive).typ, 9);
-            }
-            line(&mut scpi, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
-            ui.step(0.2);
-            server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
-            assert_eq!(ui.m.run, RunState::Stop);
-            let mut b = [0; 128];
-            assert_eq!(sync.read(&mut b).unwrap_err().kind(), ErrorKind::WouldBlock);
-            sync.write_all(&crate::hislip::encode(7, 0, 44, b"*IDN?\n")).unwrap();
-            let drive = || server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
-            assert!(test_io::hislip(&mut sync, drive).data.starts_with(b"OOS,"));
-        }
     }
 
     #[test]

@@ -9,11 +9,10 @@ This reference describes the repository implementation. Primary Rigol syntax was
 | Interface | Default | Implementation |
 | --- | --- | --- |
 | Raw TCP SCPI | TCP 5555 | Recommended for scripts. Newline-terminated program messages; newline-terminated replies. |
-| HiSLIP | TCP 4880 | Same interpreter, with HiSLIP framing. Basic sessions; full locking/overlap semantics are not implemented. A reply is split into messages of the client's maximum message size, but of at least 4 KiB of data. |
 | VXI-11 | Linux scope service | Same interpreter, partial RPC transport. Pending operation reads have the limitation described below. |
 | HTTP/MCP adapter | HTTP web port | `POST /mcp`, JSON-RPC `tools/call` with tool name `scpi`. This is not a VISA interface. `/cmd` uses a separate front-panel command language. |
 
-On a computer, `oos-ui --serve` runs the same interpreter with the demo source on free loopback ports and prints them ([Try it without a scope](../wiki/Try-it-without-a-scope.md)). With SCPI on port 40002, use `TCPIP0::127.0.0.1::40002::SOCKET`; it also prints the HiSLIP port and the VXI-11 mapper and core ports. The host server listens on `127.0.0.1` only. These services are unauthenticated bench interfaces. The desktop app does not require or start an SSH server; [scope-image SSH](ssh.md) is separate.
+On a computer, `oos-ui --serve` runs the same interpreter with the demo source on free loopback ports and prints them ([Try it without a scope](../wiki/Try-it-without-a-scope.md)). With SCPI on port 40002, use `TCPIP0::127.0.0.1::40002::SOCKET`; it also prints the VXI-11 mapper and core ports. The host server listens on `127.0.0.1` only. These services are unauthenticated bench interfaces. The desktop app does not require or start an SSH server; [scope-image SSH](ssh.md) is separate.
 
 Keywords are case-insensitive. The capitalized part in a mixed-case spelling is the short form: `:TRIG:EDGE:SOUR?` and `:TRIGger:EDGE:SOURce?` are equivalent. Use either the complete long form or its documented short form. Intermediate abbreviations are not generally accepted.
 
@@ -47,11 +46,11 @@ Stored Run searches successive qualifying windows through the immutable record a
 
 `*OPC?` fences the finite operation current at the barrier: Autoset, a submitted SIM generation, and an armed Single. Continuous Run and background measurement/Math/decode/Eye calculations are not drained by OPC. Use their readiness/value interfaces separately. Operation completion is not a statement that a result is valid; inspect the error queue and trigger status.
 
-Raw TCP and HiSLIP retain a bounded per-client continuation while waiting, allowing UI progress and other clients. Commands after the barrier execute after it completes; earlier writes are not repeated. A Single with no matching event can wait indefinitely, so choose a client timeout appropriate to the test. Cancellation/rearming invalidates the old operation rather than silently waiting on a newer arm. See the interpreter's cancellation errors in `:SYST:ERR?`.
+Raw TCP retains a bounded per-client continuation while waiting, allowing UI progress and other clients. Commands after the barrier execute after it completes; earlier writes are not repeated. A Single with no matching event can wait indefinitely, so choose a client timeout appropriate to the test. Cancellation/rearming invalidates the old operation rather than silently waiting on a newer arm. See the interpreter's cancellation errors in `:SYST:ERR?`.
 
 Cancellation or rearming interrupts a waiting query with error -410, emits no `1`, and discards its remaining commands. A cancelled `*OPC` event registration does not set the completion bit.
 
-The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports error -221 instead of returning a false `1` or `ok`. Commands preceding the rejected barrier have already executed; its remaining commands are discarded. VXI-11's legacy read path can return timeout error 15 immediately while output is pending, without honoring the requested read timeout. A VXI client must retry reads after completion; prefer raw TCP or HiSLIP for a waiting `*OPC?`. Full VISA synchronization equivalence is not claimed.
+The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports error -221 instead of returning a false `1` or `ok`. Commands preceding the rejected barrier have already executed; its remaining commands are discarded. VXI-11's legacy read path can return timeout error 15 immediately while output is pending, without honoring the requested read timeout. A VXI client must retry reads after completion; prefer raw TCP for a waiting `*OPC?`. Full VISA synchronization equivalence is not claimed.
 
 ## Channels, timebase and trigger
 
@@ -320,7 +319,7 @@ Read `:SYSTem:ERRor?` until `0,"No error"`. Each read removes one queued error. 
 
 A Rigol script commonly needs adjustments when it assumes stock `*IDN?`, big-endian WORD assumptions, vendor-specific setup files, a full status/SRQ system, arbitrary trigger-specific subtrees, or references as physical ADC inputs. Check errors and actual readbacks after configuration. TekScope's `REMOTE:RUNStop`, `REMOTE:ACQMethod`, DATA/WFMOutpre/CURVe dialect is not implemented by these Rigol-style headers.
 
-The canonical implementation is [scpi.rs](../ui/src/scpi.rs), with transport details in [hislip.rs](../ui/src/hislip.rs) and [vxi11.rs](../ui/src/vxi11.rs). This manual records the supported subset rather than treating a matching vendor header as proof of equivalent behavior.
+The canonical implementation is [scpi.rs](../ui/src/scpi.rs), with transport details in [vxi11.rs](../ui/src/vxi11.rs). This manual records the supported subset rather than treating a matching vendor header as proof of equivalent behavior.
 
 ## Scalar identifiers
 

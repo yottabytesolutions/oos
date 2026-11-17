@@ -34,9 +34,7 @@ Table conventions apply to every row:
 - **Errors** for every header row follow scpi-320's range/override map. Successful
   rows add no error unless that map or the row explicitly says otherwise.
 - **T/V/M**: TCP SCPI (default 5555), VXI-11 and MCP `scpi` tool.
-  **H**: HiSLIP (4880), also available for every accepted row. T/V/M in
-  inherited rows therefore means T/V/M/H at this baseline. All call the
-  same parser; MCP is a text wrapper and does not preserve arbitrary binary
+  All call the same parser; MCP is a text wrapper and does not preserve arbitrary binary
   replies. See transport rules below.
 - **B**: `ON`/`1`, `OFF`/`0`, reply `1` or `0`. **F**: finite Rust `f32` decimal
   or exponent without a unit suffix. **D**: finite `f64`. **E**: seven significant
@@ -719,7 +717,7 @@ see scpi-311. Evidence: `ui/src/scpi.rs:888`, `ui/src/scpi/message.rs:50`.
 **scpi-306 (changed; D1 implemented, earlier invalid-query target retained):
 empty replies.** Successful empty text is Some(empty), a real response slot:
 a lone query sends LF, and empty query then *IDN? begins with a semicolon.
-TCP, VXI-11 and HiSLIP preserve it; MCP returns empty text, reserving ok for
+TCP and VXI-11 preserve it; MCP returns empty text, reserving ok for
 command-only messages (`ui/src/scpi/message.rs:33`, `ui/src/http.rs:1203`).
 Examples include empty STRip/READout, BODE:DATA, IDENtify, DECode:EVENts,
 ACQ:SEGM:TIMes and SYST:GET. This incorporates the fork's framing fix and
@@ -791,23 +789,12 @@ error 4 invalid link. Output pumping stops/clears queued programs once buffered
 output is >=64 MiB; separate programs may take total link output past the cap.
 RPC errors do not enter the SCPI queue (`ui/src/vxi11.rs:113`, `ui/src/vxi11.rs:223`).
 
-HiSLIP uses TCP 4880 on the host; the device constructs a closed server
-(`ui/src/system/device/remote.rs`). Version 1.0 negotiation, HS header with
-big-endian 32-bit parameter and u64 length, max eight connections and 4 MiB
-assembled DATA/DATA_END payload. DATA_END submits the whole program; retained
-continuation resumes with original message id. Replies append LF and split at
-negotiated maximum message payload into DATA then DATA_END. Empty reply is LF,
-command-only emits no DATA_END. Sync/async device-clear drops pending program
-and tail without executing it; transport trigger is a no-op. Lock/local/status
-are acknowledgements/stubs, no exclusive lock or SCPI status implementation.
-See `ui/src/hislip.rs:163` and its compatibility tests in `ui/src/scpi.rs:5499`.
-
 MCP POST /mcp tools/call scpi arguments.command uses exec_message_checked.
 Immediate completion returns UTF-8 text, invalid UTF-8 `(binary response)`,
 empty successful query empty text, command-only ok. Pending OPC queues -221
-and returns isError=true with text `Operation pending; use raw TCP or HiSLIP
+and returns isError=true with text `Operation pending; use raw TCP
 for *OPC?`; earlier writes remain, remaining program is dropped. VXI-11 also
-supports pending programs despite that diagnostic mentioning only T/H.
+supports pending programs despite that diagnostic mentioning only TCP.
 The screenshot tool independently returns base64 PNG; HTTP envelope limits
 also apply (`ui/src/http.rs:1203`). All command rows use this same language.
 
@@ -1176,7 +1163,7 @@ No implementation or validator behavior was changed for this re-spec.
 | Display/views | Fork BMP with ignored args and five analyser choices; upstream PNG validation and analyser registry | Merged keeps fork DotsMode VECT/DOTS/AUTO (upstream was boolean VECT/DOTS), plus upstream PNG and MAG/INV/DPT. STEP target D5 still unimplemented; BAND fact query does not grant VIEW BANDwidth |
 | SYST SET/GET and PIPEline | Fork lacked cat key exception and pipeline header; upstream adds catalogue setup and draw path preference | Upstream wins for keys/header; both draw paths retained by merge decision. PIPEline query reports m.draw_batch preference; diagnostic pipeline prints startup switches.pipeline, not the effective draw_switches route |
 | IDN | Fork build/cached firmware identity versus upstream fixed package-version text | Fork firmware_version() retained; runtime build identity can differ from package version. Model/serial placeholders remain producer-owned |
-| Debug and transport adapters | Fork board/debug/capability APIs, IPv6 and accept ACL; upstream newer protocol handlers and program transports | Fork board abstraction/debug extensions retained. VXI queue and HiSLIP host continuation retained; immediate HTTP/MCP text transport uses checked adapter. AOUT/MASK map/DVM lane retain direct err.push ESR exception |
+| Debug and transport adapters | Fork board/debug/capability APIs, IPv6 and accept ACL; upstream newer protocol handlers and program transports | Fork board abstraction/debug extensions retained. VXI queue retained; immediate HTTP/MCP text transport uses checked adapter. AOUT/MASK map/DVM lane retain direct err.push ESR exception |
 | State diagnostics | Fork shadow/generation/loss/acquisition diagnostics versus upstream hardware fast-path suffix and HTTP workflow JSON | Both retained. Diagnostic 130 old positions +10 suffix fields; JSON has 8 separate keys. Global frames regex gets a third match when hardware suffix is present |
 | Measurement implementation | Fork generation-checked live measure_rec; upstream full-record/reference/deskew/native-HiRes paths | Both currently coexist for live channels (task 0070 ports to one worker path); references/SIM use upstream behavior. Two SIM tests differ on when SINGLE statistics reset (merge task 0066). This spec documents source, not unit acceptance |
 | Stopped settings and record identity | Fork identity/filter contract versus upstream deferred physical reconfigure while stopped and replay | Merge keeps upstream wait-until-RUN policy and fork captured-pair record tagging; no setter promises immediate hardware application. Do not substitute current settings for a frame's metadata |

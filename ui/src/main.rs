@@ -30,7 +30,6 @@ mod framecost;
 mod framestats;
 mod gfx;
 mod gpu;
-mod hislip;
 mod hostname;
 pub mod http;
 #[cfg(target_os = "linux")]
@@ -188,7 +187,7 @@ pub fn main() {
     }
 }
 
-/// No display and no hardware: the demo source behind SCPI, the web server, VXI-11 and HiSLIP, for
+/// No display and no hardware: the demo source behind SCPI, the web server and VXI-11, for
 /// tools/device-test.py on a host. Every listener is private (loopback, a free port, `net6::Port::Host`); the
 /// harness learns the ports from the readiness record. `OOS_DEMO_LOOP=<mask>` puts the generator on those channels,
 /// as a cable from the output would.
@@ -196,16 +195,14 @@ fn serve(mut ui: Ui, sw: &sysconf::Switches) {
     let mut web = http::Http::open(net6::Port::Host, sw);
     let mut scpi = scpi::Scpi::open(net6::Port::Host, false);
     let mut vxi = net6::host_or_exit(vxi11::Server::host());
-    let mut hislip = hislip::Server::open(net6::Port::Host);
-    web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
-    net6::host_or_exit(net6::host_ready(web.port(), scpi.port(), vxi.ports(), hislip.port()));
+    web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some() });
+    net6::host_or_exit(net6::host_ready(web.port(), scpi.port(), vxi.ports()));
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     while !ui.quit {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
         vxi.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
-        hislip.poll_async(&mut |program| scpi.poll_program(&mut ui, &cv, program));
         for c in web.poll(&mut ui, &cv, &mut scpi) {
             cmd::run(&mut ui, &c);
         }

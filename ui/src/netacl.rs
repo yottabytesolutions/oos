@@ -4,7 +4,7 @@
 //! Who may control the scope over the network: `net.allow` in `/oos/system.conf`, with the image default from
 //! `/etc/oos/system.conf` (docs/network.md 6). A list of address prefixes, `192.0.2.0/24 fd00::/8`. Empty or
 //! absent: everyone, as before. rcS builds the firewall from the same key (`oos-firewall`); this list is the second
-//! line behind it, for what can change the scope: `POST /update`, `/mcp`, SCPI, VXI-11 and HiSLIP. The scope itself
+//! line behind it, for what can change the scope: `POST /update`, `/mcp`, SCPI and VXI-11. The scope itself
 //! (loopback) is always allowed. `onlink6` stands for the IPv6 prefixes on the link (from the router's advertisements,
 //! `net6::PREFIX_FILE`), which change with the provider.
 //!
@@ -146,7 +146,7 @@ impl Acl {
     /// The list in the log, when there is one.
     pub fn log(&self) {
         if !self.is_open() {
-            eprintln!("oos-ui: update, MCP, SCPI, VXI-11 and HiSLIP only from {}", self);
+            eprintln!("oos-ui: update, MCP, SCPI and VXI-11 only from {}", self);
         }
     }
 }

@@ -19,7 +19,7 @@ To build an image yourself, see [[Building OOS]].
 |---|---|
 | `hal/` | Hardware layer: FPGA register sequences, front ends, ADC, PLL, cold boot, models, updates |
 | `dsp/` | Signal processing: triggers, measurements, maths, decoders, analysers |
-| `ui/` | `oos-ui`: scope screen, SCPI, VXI-11, HiSLIP, web remote, LAN announcement |
+| `ui/` | `oos-ui`: scope screen, SCPI, VXI-11, web remote, LAN announcement |
 | `fpgad/` | `oos-fpgad` bring-up tool and `oos-update` |
 | `boot/` | Boot image packer, image build, card installer, USB installer, stock/OOS switch |
 | `rootfs/initramfs/` | Init scripts and firmware of the image |

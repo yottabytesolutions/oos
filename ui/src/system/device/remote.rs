@@ -7,9 +7,7 @@ pub(super) struct Remote {
     pub(super) web: http::Http,
     scpi: scpi::Scpi,
     vxi: vxi11::Server,
-    /// HiSLIP: a computer only; the scope offers VXI-11 instead (port 111 is free there)
-    hislip: hislip::Server,
-    /// the scope (`on_scope`): VXI-11 follows its switch, HiSLIP stays closed
+    /// On the scope (`on_scope`), VXI-11 follows its switch.
     scope: bool,
     web_port: u16,
     scpi_port: u16,
@@ -26,12 +24,6 @@ impl Remote {
         let mut web = http::Http::open(web_port, sw);
         let mut scpi = scpi::Scpi::open(scpi_port, sw.ipv6);
         let mut vxi = if scope { vxi11::Server::open(sw.ipv6) } else { vxi11::Server::closed() };
-        let hislip = if scope {
-            hislip::Server::closed()
-        } else {
-            let port = arg(args, "--hislip-port").and_then(|p| p.parse().ok()).unwrap_or(hislip::PORT);
-            hislip::Server::open(port)
-        };
         // who may update or control the scope over the network: net.allow (docs/network.md 6), read here at the start;
         // the servers share the list with Remote services > Allowed, which sets it after a change
         let acl = ui.acl();
@@ -45,7 +37,6 @@ impl Remote {
             web,
             scpi,
             vxi,
-            hislip,
             scope,
             web_port,
             scpi_port,
@@ -59,11 +50,7 @@ impl Remote {
     }
     /// The identification page names the listeners that are really up.
     fn offer(&mut self) {
-        self.web.offer(http::Offer {
-            scpi_port: self.scpi.port(),
-            vxi11: self.vxi.service_port().is_some(),
-            hislip_port: self.hislip.port(),
-        });
+        self.web.offer(http::Offer { scpi_port: self.scpi.port(), vxi11: self.vxi.service_port().is_some() });
     }
     pub(super) fn poll(&mut self, ui: &mut Ui, cv: &Canvas, sw: &sysconf::Switches) {
         // the services follow their switches: the ports were opened above, SSH (oos-ssh) and telnet are started by rcS
@@ -98,12 +85,8 @@ impl Remote {
         }
         if self.mdns_t.is_none_or(|t| t.elapsed().as_secs() >= 1) {
             self.mdns_t = Some(Instant::now());
-            let c = mdns_services(
-                ui.mdns_config(self.web_port, self.scpi_port),
-                self.web.port(),
-                self.vxi.service_port(),
-                self.hislip.port(),
-            );
+            let c =
+                mdns_services(ui.mdns_config(self.web_port, self.scpi_port), self.web.port(), self.vxi.service_port());
             if self.mdns_now.as_ref() != Some(&c) {
                 if self.mdns_now.as_ref().is_none_or(|o| o.name != c.name) {
                     hostname::set(&c.name);
@@ -114,7 +97,6 @@ impl Remote {
         }
         self.scpi.poll(ui, cv);
         self.vxi.poll_async(&mut |program| self.scpi.poll_program(ui, cv, program));
-        self.hislip.poll_async(&mut |program| self.scpi.poll_program(ui, cv, program));
         for c in self.web.poll(ui, cv, &mut self.scpi) {
             if let cmd::Out::Shot(p) = cmd::run(ui, &c) {
                 ui.shot_request = Some(p);
@@ -129,32 +111,26 @@ impl Remote {
     pub(super) fn close(&mut self, deadline: Instant) {
         self.scpi.set_open(None, false);
         self.vxi.set_open(false, false);
-        self.hislip = hislip::Server::closed();
         self.mdns.shutdown(deadline);
         self.web.shutdown(deadline);
     }
 }
 
 /// The scope, where port 111 is free for VXI-11: the acquisition device is present, or the boot identity was read.
-/// A computer has neither, and accepts HiSLIP instead.
 fn on_scope() -> bool {
     std::path::Path::new("/dev/xdma0_bypass").exists()
         || matches!(oos_hal::model::platform().source, oos_hal::model::Source::Vendor)
 }
 
 /// The name responder's services as System > Network sets them, made to match the listeners that are really up:
-/// VXI-11 only where it listens, HiSLIP where it does, and LXI discovery (`_lxi._tcp`) beside the web server, both
-/// pointing at the identification page.
-fn mdns_services(mut c: mdns::Config, web: Option<u16>, vxi: Option<u16>, hislip: Option<u16>) -> mdns::Config {
+/// VXI-11 only where it listens, and LXI discovery (`_lxi._tcp`) beside the web server, pointing at the identification page.
+fn mdns_services(mut c: mdns::Config, web: Option<u16>, vxi: Option<u16>) -> mdns::Config {
     if vxi.is_none() {
         c.services.retain(|s| s.kind != "_vxi-11._tcp");
     }
     if let Some(p) = web.filter(|_| c.services.iter().any(|s| s.kind == "_http._tcp")) {
         let path = "path=/lxi/identification".to_string();
         c.services.push(mdns::Service { kind: "_lxi._tcp".into(), port: p, txt: vec![path] });
-    }
-    if let Some(p) = hislip {
-        c.services.push(mdns::Service { kind: "_hislip._tcp".into(), port: p, txt: Vec::new() });
     }
     c
 }

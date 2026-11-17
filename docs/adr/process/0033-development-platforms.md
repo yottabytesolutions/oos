@@ -26,7 +26,7 @@ any Linux computer (assumed; not yet run by a maintainer in WSL).
 
 ## Decision
 
-Development is supported on Linux, the BSDs and macOS. Windows users develop in WSL 2 or a Linux virtual machine,
+Development is supported on Linux and macOS, and on the BSDs as best effort. Windows users develop in WSL 2 or a Linux virtual machine,
 which count as Linux. The project does not add native Windows code paths or build scripts, and does not hold back a
 feature or a tool because native Windows lacks it.
 
@@ -35,8 +35,10 @@ feature or a tool because native Windows lacks it.
   written for a POSIX shell; a script that grows into a check moves into `xtask`.
 - Native Windows portability is not a review finding. A change may use POSIX paths, signals, sockets and shell tools.
 - Windows users are welcome. Documentation points them to WSL or a VM in a friendly way and does not lecture.
-- Verified hosts are the ones CI and the setup document name: Linux x86-64 and macOS arm64. The BSDs are supported in
-  the sense that a portable POSIX change is preferred and a BSD fix is accepted; the gate is not yet verified there.
+- Linux and macOS are supported. Verified hosts are the ones CI and the setup document name: Linux x86-64 and macOS
+  arm64.
+- The BSDs are best effort. The project does not guarantee them and CI does not run there, but tooling stays POSIX
+  and a reported BSD problem is picked up and fixed like any other bug.
 
 ## Alternatives
 

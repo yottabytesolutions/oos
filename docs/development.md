@@ -24,7 +24,7 @@ or `gate passed (image)`. Hooks use the same command. Missing Docker cannot fail
 ## Setup
 
 Install Git, rustup and Python >=3.12 as `python3` on macOS arm64 or Linux x86-64.
-Other Linux, BSD and macOS hosts are supported but not verified; on Windows use WSL 2 or a Linux VM (ADR 0033).
+Other Linux and macOS hosts are supported but not verified. The BSDs are best effort: not guaranteed, but reported problems get fixed; on Windows use WSL 2 or a Linux VM (ADR 0033).
 Doctor accepts newer Python versions and reports the interpreter actually used.
 The default gate needs the scripts' declared shells (including `mksh` for Android GEL syntax),
 coverage tools and the pinned Rust host/ARM toolchain. Syntax checking does not run the scripts.

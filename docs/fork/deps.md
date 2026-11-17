@@ -3,19 +3,26 @@
 Every source tarball the image builds from is listed once, in `rootfs/deps.lock`: name, owner, version, SHA-256, URL
 (and, where the URL's directory has no listing, a page that lists the releases).
 
-- The fork's own builds read it: `rootfs/build-dropbear.sh` (Dropbear), `rootfs/build-sftp-server.sh` (OpenSSH,
-  `sftp-server` only), `rootfs/build-nft.sh` (libmnl, libnftnl, nftables). They source `rootfs/deps.sh`, which
-  downloads once into `rootfs/out/`, refuses a file whose SHA-256 differs, and stamps each binary with the manifest
-  name/version/checksum fields, builder hash, `deps.sh` hash and per-tool `rootfs-<tool>` build-environment identity
-  (`<binary>.stamp`). Native binary receipts from `tools/output.py` hash this same input description.
-  `boot/unit-hook.sh` rebuilds a missing binary or one whose stamp no longer matches, so a version
-  bump, builder option or helper-only change takes effect at the next image build.
-- Upstream's builds (`rootfs/build-kexec.sh`, `rootfs/build-fsck.sh`, `rootfs/build-wlan-tools.sh`, `gpu/build.sh`)
-  keep their own `ver=` and `sum=`: changing them would conflict at every upstream sync. Their lines in the manifest
-  (`upstream:<script>`) document them, and `tools/deps-check.sh` reports when a script and its line differ.
+- The rootfs builds read it: `rootfs/build-dropbear.sh` (Dropbear), `rootfs/build-sftp-server.sh` (OpenSSH,
+  `sftp-server` only), `rootfs/build-nft.sh` (libmnl, libnftnl, nftables), `rootfs/build-kexec.sh` (kexec-tools),
+  `rootfs/build-fsck.sh` (e2fsprogs) and `rootfs/build-wlan-tools.sh` (wpa_supplicant, libnl). They source
+  `rootfs/deps.sh`, whose `dep_fetch` is the one way a source is downloaded: once into `rootfs/out/sources/`
+  (`DEPS_SOURCES` names another directory), from the line's URL and then the mirrors of its host (kernel.org: `cdn`,
+  `www`; OpenBSD: `ftp`; netfilter.org: `ftp.netfilter.org/pub`; Dropbear: `dropbear.nl`). Each host gets a 20 s
+  connect timeout and three retries with backoff. A file whose SHA-256 differs from the line stops the build and is
+  deleted. The containers mount the directory read-only as `/src`.
+- `deps.sh` also stamps each binary with the manifest name/version/checksum fields, builder hash, `deps.sh` hash and
+  per-tool `rootfs-<tool>` build-environment identity (`<binary>.stamp`). Native binary receipts from
+  `tools/output.py` hash this same input description. `boot/unit-hook.sh` rebuilds a missing binary or one whose
+  stamp no longer matches, so a version bump, builder option or helper-only change takes effect at the next image
+  build.
+- `gpu/build.sh` keeps its own `ver=` and `sum=` and takes Mesa from Ubuntu's source package. Its line in the manifest
+  (`upstream:gpu/build.sh`) documents it, and `tools/deps-check.sh` reports when the script and its line differ.
 - `libnl` and `libnl-musl-patch` (owner `alpine:3.22`) are not built: `wpa_supplicant` links the `libnl3-static` of the
   Alpine image. The two lines are the files Alpine builds that package from. `rootfs/build-wlan-tools.sh` fetches them
-  into `rootfs/out/` for the release and stops when Alpine installs another version.
+  for the release and stops when Alpine installs another version.
+- CI (`.github/workflows/image.yml`) caches `rootfs/out/sources/` keyed on the hash of `rootfs/deps.lock`. An older
+  cache may be restored: the checksum check still applies to every file.
 - What a release has to carry next to its image is listed by `tools/release-sources.sh list`, from this manifest and
   `kernel/base.sha256`; `tools/release-sources.sh check <tag>` compares a release on GitHub with it
   ([THIRD-PARTY-LICENSES.md](../../THIRD-PARTY-LICENSES.md)).
@@ -54,11 +61,10 @@ listing pages.
 6. Commit the manifest line (and a build script change, if the new version needs one) with the sources' release in
    the message.
 
-For an `upstream:` line: change it only to follow upstream's script after a sync, or bump the script in an upstream
-contribution.
+For the `upstream:` line: change `gpu/build.sh` and the line together.
 
 ## Pending updates (2026-11-13)
 
 `tools/deps-check.sh` found newer releases that were not taken in this round: libnftnl 1.2.9 -> 1.3.2, nftables
 1.1.3 -> 1.1.7 (fork, `rootfs/build-nft.sh`); e2fsprogs 1.47.2 -> 1.47.4, wpa_supplicant 2.11 -> 2.12, Mesa 26.0.8 ->
-26.3.0 (upstream's scripts: follow upstream). Dropbear, OpenSSH, libmnl and kexec-tools are current.
+26.3.0. Dropbear, OpenSSH, libmnl and kexec-tools are current.

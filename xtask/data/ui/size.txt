@@ -14,7 +14,7 @@
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
 3398 file ui/src/scpi.rs
-1507 file ui/src/store.rs
+1464 file ui/src/store.rs
 8919 file ui/src/ui.rs
 1747 file ui/src/ui/analysis.rs
 608 file ui/src/ui/autoset.rs

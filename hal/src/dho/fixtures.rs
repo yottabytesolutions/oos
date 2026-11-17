@@ -94,5 +94,5 @@ fn generated_vertical_matches_reference_container() {
     let bytes = vertical();
     assert_eq!(bytes.len(), 717724);
     // CRC of the Python reference generator's complete container.
-    assert_eq!(super::boot::cal::crc32(&bytes), 0x9dce7aed);
+    assert_eq!(crate::crc32(&bytes), 0x9dce7aed);
 }

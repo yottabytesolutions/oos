@@ -1250,8 +1250,11 @@ mod tests {
         assert!(st.status.connected() && st.signal.is_some(), "{:?}", st);
         wait("address over DHCP", 30, &|| link().1.status.ip.starts_with("192.168.50."));
         let file = std::fs::read_to_string(conf).unwrap();
-        println!("{}", file.replace(&wlan::hex(&wlan::psk("se\"cr#t p\\ss", b"OOS-Test")), "<the key>"));
-        assert!(file.contains(&wlan::hex(&wlan::psk("se\"cr#t p\\ss", b"OOS-Test"))));
+        println!(
+            "{}",
+            file.replace(&oos_hal::update::hash::hex(&wlan::psk("se\"cr#t p\\ss", b"OOS-Test")), "<the key>")
+        );
+        assert!(file.contains(&oos_hal::update::hash::hex(&wlan::psk("se\"cr#t p\\ss", b"OOS-Test"))));
         assert!(!file.contains("cr#t"), "the password itself must not be stored");
 
         // a second network, then back to the first without a password

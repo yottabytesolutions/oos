@@ -8,7 +8,7 @@
 //! Only the hexadecimal forms reach wpa_supplicant (SSID bytes, the 256-bit key derived here), so no name or password
 //! can break out of a command or of the saved file, and the password itself is never stored.
 
-use crate::update::hash::sha1;
+use crate::update::hash::{hex, sha1};
 use std::io;
 use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
@@ -222,10 +222,6 @@ pub fn psk(pass: &str, ssid: &[u8]) -> [u8; 32] {
         chunk.copy_from_slice(&t[..chunk.len()]);
     }
     out
-}
-
-pub fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{:02x}", x)).collect()
 }
 
 /// What is wrong with a password (printable ASCII of 8 to 63 characters), None when it is fine.

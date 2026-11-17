@@ -61,6 +61,7 @@ and cited as `architecture/NNNN`.
 | 0032 | process | Lints and limits are per crate and ratchet down only | superseded by ADR 0039 |
 | [0033](process/0033-development-platforms.md) | process | Development runs on Linux, the BSDs and macOS; Windows users develop in WSL or a Linux VM; Rust tooling goes into `xtask` | accepted |
 | [0034](process/0034-multi-pr-work-lands-as-a-stack.md) | process | Work that spans more than one pull request lands as a stack | proposed |
+| [0035](process/0035-each-release-has-less-production-code.md) | process | Each release strives for less production code than the one before | proposed |
 | [0037](code/0037-crates-where-they-remove-code-remote-io-on-tokio.md) | code | Crates where they remove code or blocking; remote IO runs async on tokio | accepted |
 | [0038](code/0038-one-table-may-generate-per-field-code.md) | code | One declarative table may generate per-field code when tests cover every item | accepted |
 | [0039](process/0039-format-lints-and-ratchets-the-author-tightens.md) | process | rustfmt formats; lints and limits ratchet down; the author of a change tightens | accepted |

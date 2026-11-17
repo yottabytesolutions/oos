@@ -43,6 +43,19 @@ class ScannerReviewTests(unittest.TestCase):
         self.assertEqual(list(scan.findings([("commit-message", 1, trailer, True)], set(), [url])),
                          [("commit-message", 1, "local-literal")])
 
+    def test_only_noreply_signoff_trailer_email_is_exempt_in_messages(self) -> None:
+        noreply = "1234+someone@users." + "noreply.github.com"
+        for trailer in ("Signed-off-by: Some One <" + noreply + ">", "Co-authored-by: Some One <" + noreply + ">"):
+            with self.subTest(trailer=trailer):
+                self.assertEqual(list(scan.findings([("commit-message", 1, trailer, True)], set(), [])), [])
+                self.assertEqual(list(scan.findings([("fixture.txt", 1, trailer, False)], set(), [])),
+                                 [("fixture.txt", 1, "email")])
+        for line in ("Signed-off-by: Some One <someone@" + "mail.test>", "Signed-off-by: x <" + noreply + "> extra",
+                     " Signed-off-by: Some One <" + noreply + ">", "Reported-by: Some One <" + noreply + ">"):
+            with self.subTest(line=line):
+                self.assertEqual(list(scan.findings([("commit-message", 1, line, True)], set(), [])),
+                                 [("commit-message", 1, "email")])
+
     def test_private_ipv4_at_sentence_end(self) -> None:
         address = "10" + ".1.2.3"
         for suffix in (".", ". Next sentence", ",", ":22"):

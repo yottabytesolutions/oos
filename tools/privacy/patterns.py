@@ -21,6 +21,8 @@ RULES = {
     ),
 }
 SESSION_TRAILER = re.compile(r"Claude-Session: https://claude\.ai/code/session_[A-Za-z0-9_-]+")
+# DCO sign-off (and co-author) trailers in commit messages, with a GitHub noreply address only.
+SIGNOFF_TRAILER = re.compile(r"(?:Signed-off-by|Co-authored-by): [^<>\n]+ <[\w.+-]+@users\.noreply\.github\.com>")
 IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?!\w|\.\d)")
 IPV6 = re.compile(r"(?<![\w:])(?:[0-9a-fA-F]{0,4}:){2,}[0-9a-fA-F:.]*(?![\w:])")
 MAC = re.compile(r"(?<!\w)(?:[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}|"

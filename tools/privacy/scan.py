@@ -10,7 +10,7 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from git_input import Record, git, incoming, staged, text_lines
-from patterns import SESSION_TRAILER, matches
+from patterns import SESSION_TRAILER, SIGNOFF_TRAILER, matches
 from policy import digest, load_allowlist, load_literals
 
 
@@ -19,6 +19,7 @@ def findings(records: Iterable[Record], allowed: set[tuple[str, str, str]],
     for name, number, line, is_message in records:
         rules = {rule for rule, value in matches(line)
                  if not (is_message and rule == "session-url" and SESSION_TRAILER.fullmatch(line))
+                 and not (is_message and rule == "email" and SIGNOFF_TRAILER.fullmatch(line))
                  and (is_message or (name, rule, digest(value)) not in allowed)}
         if any(literal in line for literal in literals):
             rules.add("local-literal")  # Private literals can never be allowlisted.

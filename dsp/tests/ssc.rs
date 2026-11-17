@@ -40,7 +40,8 @@ fn data_clock(modulated: bool) -> Clock {
     let edges = bits
         .windows(2)
         .enumerate()
-        .filter_map(|(i, bits)| (bits[0] != bits[1]).then(|| edge_time(i + 1, modulated)))
+        .filter(|&(_, bits)| bits[0] != bits[1])
+        .map(|(i, _)| edge_time(i + 1, modulated))
         .collect();
     clock(edges)
 }

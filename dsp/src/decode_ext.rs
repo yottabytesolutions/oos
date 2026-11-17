@@ -392,7 +392,7 @@ pub fn modbus_ascii(
         let body = &ch[i + 1..j];
         let mut bad = !body.len().is_multiple_of(2);
         let mut bytes: Vec<Byte> = Vec::new();
-        for p in body.chunks_exact(2) {
+        for p in body.as_chunks::<2>().0 {
             match (hex(p[0].value), hex(p[1].value)) {
                 (Some(h), Some(l)) => bytes.push(((h << 4 | l) as u8, p[0].t0, p[1].t1, p[0].ok && p[1].ok)),
                 _ => bad = true,
@@ -690,21 +690,21 @@ enum DsPend {
     Triplet(bool, f64),
 }
 
+type DsTransfer = (bool, f64, Vec<(u8, f64, f64)>); // (read, t0, bytes)
+
 /// 1-Wire through a DS2482-100/-800 I2C bridge: interprets the command stream (packets from `decode::i2c`, device
 /// addresses 0x18..0x1F) as 1-Wire activity and decodes it like `onewire` (Field "!RESET", "!PRESENCE", "ROM", "FAM",
 /// "SER", Crc, Data). Device reset gives Field("!DRST"), Write Configuration Field("CFG") (value = config nibble,
 /// `ok` = the complement nibble is right), Channel Select Field("CH") (value = channel 0..7). Results of 1-Wire
 /// reset / single bit / triplet come from the next status read with 1WB = 0 (presence = PPD and not SD); a read
-/// byte from the following read of the read data register (pointer 0xE1). Commands without a status poll are
-/// completed at the next command.
+/// byte from the following read of the read data register (pointer 0xE1). Unpolled commands complete at the next command.
 pub fn ds2482(i2c: &[Packet]) -> Vec<Packet> {
     let mut net = OwNet::new(false);
     let mut ptr = DS_STATUS;
     let mut pend: Option<DsPend> = None;
     let mut read_ready: Option<f64> = None;
-    // a transaction: (read, t0, bytes)
-    let mut xfers: Vec<(bool, f64, Vec<(u8, f64, f64)>)> = Vec::new();
-    let mut cur: Option<(bool, f64, Vec<(u8, f64, f64)>)> = None;
+    let mut xfers: Vec<DsTransfer> = Vec::new();
+    let mut cur: Option<DsTransfer> = None;
     for p in i2c {
         match p.kind {
             Kind::Addr { read } => {

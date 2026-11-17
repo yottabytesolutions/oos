@@ -70,7 +70,7 @@ impl Device {
         self.timers.startup_status(&mut self.ui);
         let elapsed = self.timers.last.elapsed().as_secs_f64();
         let wait_ms = ((1.0 / 30.0 - elapsed) * 1000.0).max(0.0) as i32;
-        for line_or_ev in self.inp.poll(wait_ms) {
+        for line_or_ev in self.inp.poll(wait_ms, self.remote.wake()) {
             match line_or_ev {
                 input::In::Ev(ev) => self.ui.handle(ev),
                 input::In::Cmd(line) => {

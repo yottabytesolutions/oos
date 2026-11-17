@@ -65,6 +65,9 @@ impl Remote {
             hislip_port: self.hislip.port(),
         });
     }
+    pub(super) fn wake(&self) -> &system::intake::Wake {
+        self.web.wake()
+    }
     pub(super) fn poll(&mut self, ui: &mut Ui, cv: &Canvas, sw: &sysconf::Switches) {
         // the services follow their switches: the ports were opened above, SSH (oos-ssh) and telnet are started by rcS
         let want = [

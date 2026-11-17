@@ -1388,7 +1388,7 @@ mod net {
     /// A received packet: length, sender, interface index, whether it went to the group.
     type Got = (usize, SocketAddr, u32, bool);
 
-    pub(super) fn wait(mut fds: Vec<libc::pollfd>, secs: f64, wake: &lifecycle::Wake) {
+    pub(super) fn wait(mut fds: Vec<libc::pollfd>, secs: f64, wake: &crate::system::wake::Wake) {
         fds.push(libc::pollfd { fd: wake.fd(), events: libc::POLLIN, revents: 0 });
         let ms = (secs * 1000.0).clamp(0.0, 60_000.0).ceil() as i32;
         // SAFETY: the array lives for the call and contains valid socket descriptors.
@@ -1440,7 +1440,7 @@ mod net {
         }
 
         /// Waits up to `secs` for a packet on either socket.
-        pub fn wait(&self, secs: f64, wake: &lifecycle::Wake) {
+        pub fn wait(&self, secs: f64, wake: &crate::system::wake::Wake) {
             let mut fds = vec![libc::pollfd { fd: self.s4.as_raw_fd(), events: libc::POLLIN, revents: 0 }];
             if let Some(s) = &self.s6 {
                 fds.push(libc::pollfd { fd: s.as_raw_fd(), events: libc::POLLIN, revents: 0 });
@@ -1559,13 +1559,13 @@ enum Ctl {
 pub struct Mdns {
     tx: Option<std::sync::mpsc::Sender<Ctl>>,
     th: Option<std::thread::JoinHandle<()>>,
-    wake: Option<lifecycle::Wake>,
+    wake: Option<std::sync::Arc<crate::system::wake::Wake>>,
     /// interface names to use (a host test), else all but loopback
     only: Option<Vec<String>>,
 }
 
 /// The thread: sockets while on, a blocking wait between packets and timers.
-fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>, control_wake: lifecycle::Wake) {
+fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>, control_wake: &crate::system::wake::Wake) {
     use std::sync::mpsc::TryRecvError;
     let t0 = std::time::Instant::now();
     let now = || t0.elapsed().as_secs_f64();
@@ -1655,7 +1655,7 @@ fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>, control_wa
         let t = now();
         let wake = r.next_wake().map_or(1.0, |w| w - t).min(if_t + 2.0 - t).clamp(0.0, 1.0);
         if !control {
-            s.wait(wake, &control_wake);
+            s.wait(wake, control_wake);
         }
     }
 }

@@ -470,6 +470,14 @@ Moves have near-zero production delta. Repeat unit load/soak against M12 evidenc
   moves use `cargo xtask ratchet --move`. Production delta: +471 lines of routing/extraction scaffolding.
   Full integrated gate and independent review remain pending. No hardware run is claimed.
 
+- 2026-11-17: M15a-0 implements bounded synchronous owned intake, identities, cancellation and a coalescing
+  pollable wake in device input polling and paced host intake. Replaces the HTTP inbox; raw transports remain for M15a.
+  Production delta: +150 lines. Host evidence: fast tier passes 11 steps; all 10 Linux acceptance fixtures pass;
+  UI debug passes 1486 tests, including goldens and layout lints. UI release passes 1484 tests and fails
+  `scripted_modes_reach_a_plateau` in pairs mode (816-byte final growth against a 752-byte allowance);
+  58 tests skipped in each profile. Isolated pairs runs pass on both the base and changed trees. Release
+  acceptance and independent review remain open; no hardware run claimed.
+
 - 2026-11-17: review fixes restore M3..M11 packages, add move-only dispatch and wake-intake prerequisites,
   specify bounded atomic remote/app handoffs and split menu read/write work. Implementation remains open.
 - 2026-11-17: source audit recorded implemented core change handling, field generation, generic Worker,

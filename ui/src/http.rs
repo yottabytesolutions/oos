@@ -21,6 +21,8 @@
 //! Unauthenticated: bench LAN only (an update must carry a trusted signature, but the community key is public).
 //! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
+mod intake;
+use intake::{Inbox, Req};
 mod reader;
 use reader::reader;
 
@@ -451,39 +453,12 @@ pub struct Http {
 
 impl Drop for Http {
     fn drop(&mut self) {
+        self.inbox.port.clear(true);
         self.shots.lock().quit = true;
         self.shots.wake.notify_all();
         if let Some((_, stop)) = self.open.take() {
             stop.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-    }
-}
-
-/// A complete request from a reader thread: its number, the connection, the head (as sent) and the body.
-struct Req {
-    id: u64,
-    s: TcpStream,
-    head: String,
-    body: Vec<u8>,
-}
-
-/// Requests read and waiting for the frame loop; the reader waits on `taken` until the frame loop took its request.
-#[derive(Default)]
-struct Inbox {
-    q: Mutex<std::collections::VecDeque<Req>>,
-    taken: Condvar,
-    next: std::sync::atomic::AtomicU64,
-    /// Permanent process shutdown also wakes readers waiting for main intake.
-    quit: std::sync::atomic::AtomicBool,
-    /// reader threads running
-    active: std::sync::atomic::AtomicUsize,
-    /// a reader holds the one large body (`LARGE_BODY`)
-    large: std::sync::atomic::AtomicBool,
-}
-
-impl Inbox {
-    fn lock(&self) -> MutexGuard<'_, std::collections::VecDeque<Req>> {
-        self.q.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -766,6 +741,10 @@ impl Http {
         h
     }
 
+    pub fn wake(&self) -> &crate::system::intake::Wake {
+        self.inbox.port.wake()
+    }
+
     /// The address the port is open on (tests).
     #[cfg(test)]
     fn addr(&self) -> std::net::SocketAddr {
@@ -788,8 +767,7 @@ impl Http {
                     eprintln!("oos-ui: web remote off");
                 }
                 // the readers waiting for the frame loop answer 503 when they give up
-                self.inbox.lock().clear();
-                self.inbox.taken.notify_all();
+                self.inbox.port.clear(false);
             }
         }
     }
@@ -829,11 +807,7 @@ impl Http {
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
         let mut cmds = Vec::new();
         self.shots.tick(cv);
-        let reqs: Vec<Req> = self.inbox.lock().drain(..).collect();
-        if !reqs.is_empty() {
-            self.inbox.taken.notify_all();
-        }
-        for Req { s, head: text, body, .. } in reqs {
+        for Req { s, head: text, body, .. } in self.inbox.take() {
             let s = &s;
             {
                 // only the header as text: the body may be a 31 MB binary package
@@ -1236,7 +1210,7 @@ mod tests {
         let h = quick(10_000, 120_000, 300);
         let r = talk(h.addr().port(), b"GET / HTTP/1.1\r\nHost: x\r\n\r\n");
         assert!(r.starts_with("HTTP/1.1 503"), "{}", r);
-        assert!(h.inbox.lock().is_empty(), "the request left the inbox");
+        assert!(h.inbox.port.is_empty(), "the request left the inbox");
     }
 
     // Break it catches: no answer to `Expect: 100-continue` (curl waits a second, other clients longer), the 100 sent

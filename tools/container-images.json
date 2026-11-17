@@ -1,28 +1,18 @@
 {
   "schema": 1,
-  "status": "base manifests resolved by coordinator on 2026-11-15; package locks deferred to task 0033",
-  "bases": {
-    "ubuntu": {
-      "name": "ubuntu:26.04",
-      "manifests": {
-        "linux/arm64": "sha256:7e7957462d7b6db141de67623f46135d82a6bc131bc2ff369aedfccfa91c0a1b",
-        "linux/amd64": "sha256:0d5255be560e2d2ddcfbfda88549e9e815ef29e7cd7fc62183d5709e6e2963c6"
-      },
-      "index": "sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96"
+  "manifests": {
+    "sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96": {
+      "linux/arm64": "sha256:7e7957462d7b6db141de67623f46135d82a6bc131bc2ff369aedfccfa91c0a1b",
+      "linux/amd64": "sha256:0d5255be560e2d2ddcfbfda88549e9e815ef29e7cd7fc62183d5709e6e2963c6"
     },
-    "alpine": {
-      "name": "alpine:3.22",
-      "manifests": {
-        "linux/arm64": "sha256:e233f2058b0628266762f745a2c17e623b418e0090f47d223909d1f9a7d4367e",
-        "linux/amd64": "sha256:9db2934886712d877c932e07249c75a59e6ca27adfbccc05261987a17bef2d63"
-      },
-      "index": "sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f"
+    "sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f": {
+      "linux/arm64": "sha256:e233f2058b0628266762f745a2c17e623b418e0090f47d223909d1f9a7d4367e",
+      "linux/amd64": "sha256:9db2934886712d877c932e07249c75a59e6ca27adfbccc05261987a17bef2d63"
     }
   },
   "roles": {
     "initramfs": {
-      "base": "ubuntu",
-      "recipe_sha256": "d5754696e8c0526579ac37a3abd62b42a93b6e5776a3497f52df3a3cc08eab91",
+      "recipe_sha256": "51f9439e98174752e83275eb8c63af7c7898c94419132a7f748aa49911c9e2dc",
       "requested": [
         "busybox-static",
         "cpio",
@@ -31,8 +21,7 @@
       ]
     },
     "gpu-build": {
-      "base": "ubuntu",
-      "recipe_sha256": "9f6a888450fa969603a1e7d2b918b7829d9d0eb9127ff1e2d472c20a83c55c04",
+      "recipe_sha256": "519abc00bb92b9d89b59ca6e380b9af5b517a7f7f8ad563cacee1cc04390e9be",
       "requested": [
         "ca-certificates",
         "dpkg-dev",
@@ -68,8 +57,7 @@
       ]
     },
     "gpu-test": {
-      "base": "ubuntu",
-      "recipe_sha256": "d5754696e8c0526579ac37a3abd62b42a93b6e5776a3497f52df3a3cc08eab91",
+      "recipe_sha256": "51f9439e98174752e83275eb8c63af7c7898c94419132a7f748aa49911c9e2dc",
       "requested": [
         "gcc",
         "libc6-dev",
@@ -82,8 +70,7 @@
       ]
     },
     "kernel": {
-      "base": "ubuntu",
-      "recipe_sha256": "d5754696e8c0526579ac37a3abd62b42a93b6e5776a3497f52df3a3cc08eab91",
+      "recipe_sha256": "51f9439e98174752e83275eb8c63af7c7898c94419132a7f748aa49911c9e2dc",
       "requested": [
         "make",
         "gcc",
@@ -112,30 +99,26 @@
       }
     },
     "sim-fw": {
-      "base": "alpine",
-      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "recipe_sha256": "672b7ede760e6a7ff51568de5d3b8a7f925c27f62eac931f585161e29e0f198b",
       "requested": [
         "nftables",
         "iproute2"
       ]
     },
     "sim-gel": {
-      "base": "ubuntu",
-      "recipe_sha256": "d5754696e8c0526579ac37a3abd62b42a93b6e5776a3497f52df3a3cc08eab91",
+      "recipe_sha256": "51f9439e98174752e83275eb8c63af7c7898c94419132a7f748aa49911c9e2dc",
       "requested": [
         "mksh"
       ]
     },
     "alpine": {
-      "base": "alpine",
-      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "recipe_sha256": "672b7ede760e6a7ff51568de5d3b8a7f925c27f62eac931f585161e29e0f198b",
       "requested": [
         "alpine-baselayout"
       ]
     },
     "sim-ssh": {
-      "base": "alpine",
-      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "recipe_sha256": "672b7ede760e6a7ff51568de5d3b8a7f925c27f62eac931f585161e29e0f198b",
       "requested": [
         "openssh-client",
         "openssh-keygen",
@@ -145,8 +128,7 @@
       ]
     },
     "sim-usb": {
-      "base": "alpine",
-      "recipe_sha256": "3ec0a3dc6b96edd854b591b368cfe482d4365b3780d4648249bdb56318299967",
+      "recipe_sha256": "44c8edf83ef8c13b9d958bd9a353275095b3c02724b21450d767ee2ddc671b3b",
       "requested": [
         "linux-firmware-none",
         "cpio",
@@ -158,8 +140,7 @@
       ]
     },
     "sim-wlan": {
-      "base": "alpine",
-      "recipe_sha256": "3ec0a3dc6b96edd854b591b368cfe482d4365b3780d4648249bdb56318299967",
+      "recipe_sha256": "44c8edf83ef8c13b9d958bd9a353275095b3c02724b21450d767ee2ddc671b3b",
       "requested": [
         "build-base",
         "linux-headers",
@@ -174,8 +155,7 @@
       ]
     },
     "rootfs-fsck": {
-      "base": "alpine",
-      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "recipe_sha256": "672b7ede760e6a7ff51568de5d3b8a7f925c27f62eac931f585161e29e0f198b",
       "requested": [
         "build-base",
         "linux-headers",
@@ -183,16 +163,14 @@
       ]
     },
     "rootfs-kexec": {
-      "base": "alpine",
-      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "recipe_sha256": "672b7ede760e6a7ff51568de5d3b8a7f925c27f62eac931f585161e29e0f198b",
       "requested": [
         "build-base",
         "linux-headers"
       ]
     },
     "rootfs-wlan-tools": {
-      "base": "alpine",
-      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "recipe_sha256": "672b7ede760e6a7ff51568de5d3b8a7f925c27f62eac931f585161e29e0f198b",
       "requested": [
         "build-base",
         "linux-headers",
@@ -202,8 +180,7 @@
       ]
     },
     "rootfs-nft": {
-      "base": "alpine",
-      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "recipe_sha256": "672b7ede760e6a7ff51568de5d3b8a7f925c27f62eac931f585161e29e0f198b",
       "requested": [
         "build-base",
         "linux-headers",
@@ -214,16 +191,14 @@
       ]
     },
     "rootfs-dropbear": {
-      "base": "alpine",
-      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "recipe_sha256": "672b7ede760e6a7ff51568de5d3b8a7f925c27f62eac931f585161e29e0f198b",
       "requested": [
         "build-base",
         "linux-headers"
       ]
     },
     "rootfs-sftp-server": {
-      "base": "alpine",
-      "recipe_sha256": "8e4c91e5fd90d6c92a468832db7c990e069e879d5d516cd4a24e953230785aaf",
+      "recipe_sha256": "672b7ede760e6a7ff51568de5d3b8a7f925c27f62eac931f585161e29e0f198b",
       "requested": [
         "build-base",
         "linux-headers"

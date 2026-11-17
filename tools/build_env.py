@@ -22,26 +22,32 @@ class Prerequisite(ValueError):
     """A diagnostic composed only from repository names and static instructions."""
 
 
+def base_for(role):
+    recipe = ROOT / "tools/build-env" / (role + ".Dockerfile")
+    match = re.fullmatch(r"FROM ((?:ubuntu|alpine):[0-9.]+@sha256:[a-f0-9]{64})", recipe.read_text().splitlines()[0])
+    if not match:
+        raise Prerequisite(f"{role}: recipe must start with a digest-pinned base")
+    return match[1]
+
+
 def load():
     lock = json.loads(LOCK.read_text())
-    if lock["schema"] != 1 or set(lock["bases"]) != {"ubuntu", "alpine"}:
+    if lock["schema"] != 1:
         raise Prerequisite("container lock: invalid schema")
-    for base in lock["bases"].values():
-        if not digest(base["index"]):
-            raise Prerequisite("container lock: invalid base index")
-        for platform, ref in base["manifests"].items():
-            if platform not in ("linux/arm64", "linux/amd64") or not digest(ref):
-                raise Prerequisite("container lock: invalid base manifest")
     for role, entry in lock["roles"].items():
         if not re.fullmatch(r"[a-z][a-z0-9-]*", role):
             raise Prerequisite("container lock: invalid role name")
         recipe = ROOT / "tools/build-env" / (role + ".Dockerfile")
         if hashlib.sha256(recipe.read_bytes()).hexdigest() != entry["recipe_sha256"]:
             raise Prerequisite(f"{role}: recipe hash changed; review and update the lock")
-        if entry["base"] not in lock["bases"] or not entry["requested"]:
-            raise Prerequisite(f"{role}: invalid base or package request")
+        index = base_for(role).split("@", 1)[1]
+        manifests = lock["manifests"][index]
+        if set(manifests) != {"linux/arm64", "linux/amd64"} or any(not digest(m) for m in manifests.values()):
+            raise Prerequisite(f"{role}: invalid base platform manifests")
+        if not entry["requested"]:
+            raise Prerequisite(f"{role}: invalid package request")
         extra = entry.get("platform_requested", {})
-        if any(p not in lock["bases"][entry["base"]]["manifests"] for p in extra):
+        if any(p not in ("linux/arm64", "linux/amd64") for p in extra):
             raise Prerequisite(f"{role}: invalid package request platform")
         for requested in [entry["requested"], *extra.values()]:
             if not isinstance(requested, list) or any(
@@ -66,12 +72,12 @@ def identity(role, platform=None):
     lock = load()
     entry = lock["roles"][role]
     platform = platform_for(role, platform)
-    base = lock["bases"][entry["base"]]
-    manifest = base["manifests"].get(platform)
-    if not manifest:
-        raise Prerequisite(f"{role} {platform}: unverified base manifest; coordinator must validate and record it")
+    if platform not in ("linux/arm64", "linux/amd64"):
+        raise Prerequisite(f"{role}: unsupported base platform")
     requested = entry["requested"] + entry.get("platform_requested", {}).get(platform, [])
-    contract = {"base": base["name"] + "@" + manifest, "platform": platform,
+    name, index = base_for(role).split("@", 1)
+    base = name + "@" + lock["manifests"][index][platform]
+    contract = {"base": base, "platform": platform,
                 "recipe": entry["recipe_sha256"], "requested": requested}
     key = hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest()
     return contract, "oos-env-" + role + ":" + key, key
@@ -85,15 +91,12 @@ def docker(*args, input=None):
     return result.stdout.strip()
 
 
-def package_command(role):
-    alpine = load()["roles"][role]["base"] == "alpine"
-    return "apk info -v | sort" if alpine else "dpkg-query -W -f '${Package}=${Version}\\n' | sort"
-
-
 def actual_packages(role, image, platform):
+    alpine = base_for(role).startswith("alpine:")
+    command = "apk info -v | sort" if alpine else "dpkg-query -W -f '${Package}=${Version}\\n' | sort"
     text = docker("run", "--rm", "--pull=never", "--network=none", "--platform", platform,
-                  image, "sh", "-ec", package_command(role))
-    if load()["roles"][role]["base"] == "alpine":
+                  image, "sh", "-ec", command)
+    if alpine:
         # apk info -v separates a name/version at the last '-<digit>'.
         return sorted(re.sub(r"^(.+)-(\d[^ ]*-r\d+)$", r"\1=\2", l) for l in text.splitlines())
     return sorted(text.splitlines())
@@ -127,7 +130,8 @@ def prepare(role, platform=None):
         pass
     packages = " ".join(contract["requested"])
     recipe = (ROOT / "tools/build-env" / (role + ".Dockerfile")).read_text()
-    recipe = recipe.replace("@BASE@", contract["base"]).replace("@PACKAGES@", packages)
+    recipe = recipe.replace(base_for(role), contract["base"], 1)
+    recipe = recipe.replace("@PACKAGES@", packages)
     recipe += f'\nLABEL {LABEL}="{key}"\n'
     docker("pull", "--platform", contract["platform"], contract["base"])
     docker("build", "--platform", contract["platform"], "--pull", "-t", tag, "-", input=recipe)

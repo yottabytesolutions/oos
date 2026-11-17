@@ -2,6 +2,7 @@
 import contextlib
 import importlib.util
 import io
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -13,6 +14,54 @@ import build_profiles as profiles
 
 
 class Profiles(unittest.TestCase):
+    def test_mixed_platform_profiles_remain_resolvable_in_both_image_stores(self):
+        selected = json.loads((ROOT / 'tools/build-tools.json').read_text())['profiles']
+        roles = list(dict.fromkeys(role for group in selected.values() for role in group))
+        for store in ('classic', 'multi-platform'):
+            with self.subTest(store=store):
+                local, contracts, calls = {}, {}, []
+
+                def docker(*args, **kwargs):
+                    calls.append(args)
+                    if args[0] == 'info':
+                        return 'x86_64'
+                    if args[0] == 'pull':
+                        arch = args[args.index('--platform') + 1].split('/')[1]
+                        base = {'Os': 'linux', 'Architecture': arch,
+                                'RootFS': {'Layers': [args[-1] + ':' + arch]},
+                                'RepoDigests': [args[-1]]}
+                        if store == 'classic':
+                            local[args[-1]] = {arch: base}
+                        else:
+                            local.setdefault(args[-1], {})[arch] = base
+                    elif args[0] == 'build':
+                        tag = args[args.index('-t') + 1]
+                        contract, key = contracts[tag]
+                        arch = contract['platform'].split('/')[1]
+                        reference = kwargs['input'].splitlines()[0].split()[1]
+                        base = local[reference][arch]
+                        local[tag] = {arch: dict(base, Id='sha256:' + key,
+                                                Config={'Labels': {profiles.build_env.LABEL: key}},
+                                                RootFS={'Layers': base['RootFS']['Layers'] + [tag]})}
+                    elif args[:2] == ('image', 'inspect'):
+                        if args[-1] not in local:
+                            raise profiles.build_env.Prerequisite('missing local image')
+                        variants = local[args[-1]]
+                        return json.dumps([variants.get('amd64', next(iter(variants.values())))])
+                    return ''
+
+                with patch.object(profiles.build_env, 'docker', docker), \
+                        patch.object(profiles, 'kernel_source'), patch.object(profiles, 'qemu'), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    for role in roles:
+                        contract, tag, key = profiles.build_env.identity(role)
+                        contracts[tag] = (contract, key)
+                        profiles.build_env.prepare(role)
+                    calls.clear()
+                    for profile in selected:
+                        self.assertEqual(profiles.inventory(profile), [])
+                    self.assertFalse(any(call[0] in ('pull', 'build') for call in calls))
+
     def test_gpu_runs_daemon_platform_software_egl_probe(self):
         calls = []
         fake = lambda *a, **k: calls.append((a, k)) or ('x86_64' if a[:2] == ('info', '--format') else '')

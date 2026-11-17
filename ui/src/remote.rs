@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The telnet shell of System > Network > Remote services. rcS starts busybox `telnetd` at power-on unless
-//! `remote.telnet = off`; a change while oos-ui runs ends it or starts it here. SSH (`crate::ssh`) is the
+//! The telnet shell of System > Network > Remote services. rcS starts busybox `telnetd` at power-on only with
+//! `remote.telnet = on`; a change while oos-ui runs ends it or starts it here. SSH (`crate::ssh`) is the
 //! authenticated alternative; the host name is `crate::hostname`.
 //!
 //! Also what a change of Remote services > Allowed (`net.allow`, ui/remote.rs) runs on the scope: the firewall built

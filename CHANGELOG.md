@@ -9,7 +9,7 @@ change may enter by cherry-pick, keeping its author. The licence stays GPL-2.0-o
 attribution stay as they were.
 
 - The gate is `cargo xtask check` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)). Lints and
-  limits only ratchet down ([ADR 0032](docs/adr/process/0032-lints-and-limits-ratchet-down-only.md)).
+  limits only ratchet down ([ADR 0039](docs/adr/process/0039-format-lints-and-ratchets-the-author-tightens.md)).
 - Pull requests run the gate on GitHub-hosted runners, with an automatic code review that must pass before a merge.
   History on `main` is linear. Releases are SemVer tags `vX.Y.Z` on `main`; this is the first.
 - All crates carry the version 0.2.0. `*IDN?`, the web UI and mDNS report it.

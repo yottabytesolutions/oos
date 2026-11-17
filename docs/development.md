@@ -373,7 +373,7 @@ file:
 
 The gate fails when a listed entry grows, when an entry appears that is not listed (a new oversized function, a new
 lint finding in a file), and when coverage falls more than 0.5 points below its floor: measurements move a little
-between runs, and the integrator raises the floors after the merge. An entry that shrank passes, and the gate says so.
+between runs, and the pull request that raised coverage raises the floor (`--coverage`). An entry that shrank passes, and the gate says so.
 Write the improvement back:
 
 ```sh
@@ -381,9 +381,10 @@ cargo xtask ratchet               # lower sizes and counts to the current values
 cargo xtask ratchet --coverage    # also raise the coverage floors to the current values
 ```
 
-`ratchet` never raises a size or count and never adds an entry: a new finding is fixed, not listed. Branches do not
-edit the ratchet and coverage files: the integrator runs `cargo xtask ratchet` at merge, so two branches never
-conflict on them ([migration rules](architecture/migration.md#rules-for-every-step), Shared ratchet files).
+`ratchet` never raises a size or count and never adds an entry: a new finding is fixed, not listed. The pull request
+that lowered a count runs `cargo xtask ratchet` and commits the result; nobody edits a ratchet file by hand
+([ADR 0039](adr/process/0039-format-lints-and-ratchets-the-author-tightens.md)). Two pull requests that tighten the same line conflict: the second rebases and runs
+`cargo xtask ratchet` again.
 `cargo xtask ratchet --init` writes the files from the current state; it only works where the base has no gate.
 
 There is no exception. The upstream rebaseline path is gone with the hard fork
@@ -404,7 +405,7 @@ that is not listed makes the entry new, and it fails. A move onto a key that alr
 moves onto one key: merged entries would share the larger allowance. Moves apply in the order listed. A moved entry
 may land in a new crate: it brings its allowance with it.
 
-The branch does not edit the ratchet files. At merge the integrator runs `cargo xtask ratchet --move`: it renames the
+The branch runs `cargo xtask ratchet --move` and commits the result (ADR 0039): it renames the
 entries in the ratchet files and keeps in `moves.txt` the moves that still rename an entry at the base. They are the
 evidence the integration commit needs against a base without them. A move that names no entry changes nothing, so a
 kept move is harmless; the next `ratchet` or `ratchet --move` whose base has the renamed entries drops it. A moved
@@ -420,10 +421,10 @@ removed or lowered coverage floor fails. Any git error fails. `--init` refuses a
 
 - A ratchet file absent at the base is legal only while the base has no `xtask`: the one merge that brings the gate
   in. After it, a missing ratchet file fails.
-- Until 0.2.0, the coordinator's local full gate is authoritative and trusts the `main` ref.
-  Setting `CI` or `OOS_GATE_BASE` by hand, or moving `main` to pass a check, breaks the rules.
-- On the integration branch, `HEAD^1` covers one commit. A push of several commits is not compared commit by commit:
-  the integrator runs the full gate on the branch before the fast-forward.
+- The required CI checks are authoritative (ADR 0031). Setting `CI` or `OOS_GATE_BASE` by hand, or moving a local
+  `main` to pass a check, breaks the rules.
+- On `main`, `HEAD^1` covers one commit. A push of several commits is not compared commit by commit: the merge
+  queue runs the required checks on the pull request's commits before `main` fast-forwards.
 
 Lint counts are per file, not per place: fixing one `unwrap` and adding another in the same file passes. That is the
 price of a ratchet that survives line moves. Size entries name the item, so they follow it through moves inside the

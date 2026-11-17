@@ -1,8 +1,9 @@
 # Architecture decision records
 
 One file per decision that shapes OOS: what was decided, why, and what follows from it. A record is short and stays as
-it was written. A decision that changes gets a new record that supersedes the old one; the old one keeps its text and
-gets the status "superseded by ADR NNNN".
+it was written. A decision that changes gets a new record that supersedes the old one. The old file is deleted; its
+line in the index stays with the record that replaced it, and its text stays in the history
+(`git log --diff-filter=D -- docs/adr/`).
 
 The other documents say how things work now. These records say why they are that way, so nobody has to find it out
 again from the history.
@@ -29,7 +30,7 @@ and cited as `architecture/NNNN`.
 
 | ADR | Category | Decision | Status |
 |---|---|---|---|
-| [0001](code/0001-three-crates-with-pure-hal-and-dsp.md) | code | Three crates; the hardware layer and the signal processing are pure functions | accepted |
+| [0001](code/0001-three-crates-with-pure-hal-and-dsp.md) | code | Three crates; the hardware layer and the signal processing are pure functions | accepted, amended by architecture/0014 |
 | [0002](code/0002-extension-by-registered-modules.md) | code | Decoders, measurements and analyser pages are modules behind one registration | accepted |
 | [0003](code/0003-gpu-drawing-in-a-helper-process.md) | code | The GPU draws from commands in a helper process; the CPU stays the fallback | accepted |
 | [0004](code/0004-standard-draw-path-by-default.md) | code | Two draw paths: Standard by default, Batch to choose | accepted, to be reviewed |
@@ -41,34 +42,38 @@ and cited as `architecture/NNNN`.
 | [0010](hardware/0010-unverified-hardware-functions-are-opt-in.md) | hardware | A hardware function that is not verified on a unit is off by default | accepted |
 | [0011](system/0011-oos-in-recovery-stock-stays-bootable.md) | system | OOS lives in `recovery`; the stock system stays on the card and bootable | accepted |
 | [0012](system/0012-signed-updates-with-trial-start-and-rollback.md) | system | Updates are signed, started on trial and rolled back when they fail | accepted |
-| [0013](process/0013-no-vendor-code-only-libc.md) | process | No vendor code or data in the tree; `libc` is the only dependency | accepted, amended by ADR 0021 and 2026-11-17 |
+| 0013 | process | No vendor code or data in the tree; `libc` is the only dependency | superseded by ADR 0037 and ADR 0040 |
 | [0014](process/0014-refactorings-keep-every-pixel.md) | process | A refactoring keeps every pixel and every register write | accepted |
 | [0015](process/0015-say-how-you-know.md) | process | Every statement about the hardware says how it is known | accepted |
-| [0016](process/0016-rust-code-formatted-by-rustfmt.md) | process | Rust code is formatted by rustfmt with the tree's settings, and CI checks it | accepted, amended 2026-11-17 |
-| [0017](process/0017-lints-clippy-warnings-are-errors.md) | process | Clippy runs in CI; its warnings are errors, with a short list of allowed lints | superseded by ADR 0032 |
+| 0016 | process | Rust code is formatted by rustfmt with the tree's settings | superseded by ADR 0039 |
+| 0017 | process | Clippy warnings are errors, with a short list of allowed lints | superseded by ADR 0039 |
 | [0018](process/0018-one-agents-md-for-people-and-agents.md) | process | One `AGENTS.md` holds the instructions for coding agents; it points to the rules | accepted, amended 2026-11-17 |
 | [0019](process/0019-one-style-for-text-files-and-commits.md) | process | One style for files, documents and commits, checked where a tool can | accepted, amended 2026-11-17 |
-| [0020](process/0020-checks-in-layers-one-command-on-the-host.md) | process | The checks come in layers; one command runs every host layer, the same as CI | superseded by ADR 0031 |
-| [0021](process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md) | process | What runs on the scope depends on `libc` only; a desktop build may use its platform's crates | accepted, amended 2026-11-17 |
-| [0022](code/0022-one-scpi-interpreter-transports-only-frame.md) | code | One SCPI interpreter in the frame loop; every remote transport only frames its messages | accepted |
+| 0020 | process | The checks come in layers; `tools/check.sh` runs every host layer | superseded by ADR 0031 |
+| 0021 | process | What runs on the scope depends on `libc` only; a desktop build may use its platform's crates | superseded by ADR 0037 |
+| [0022](code/0022-one-scpi-interpreter-transports-only-frame.md) | code | One SCPI interpreter in the frame loop; every remote transport only frames its messages | accepted, amended by ADR 0037 |
 | [0023](code/0023-scpi-stock-names-first-oos-identifies-as-oos.md) | code | SCPI follows the stock command names where they exist; OOS identifies itself as OOS | accepted |
 | [0024](system/0024-vxi11-on-the-scope-hislip-on-a-computer-own-discovery.md) | system | VXI-11 on the scope, HiSLIP on a computer; found by mDNS / DNS-SD and LXI identification | accepted |
 | [0025](system/0025-remote-services-are-bench-lan-services.md) | system | Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow` | accepted |
-| [0026](process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | accepted, amended 2026-11-17 |
+| 0026 | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | superseded by ADR 0040 |
 | [0030](process/0030-this-tree-is-a-hard-fork-of-oos.md) | process | This tree is a hard fork of OOS; upstream enters only by cherry-pick | accepted |
-| [0031](process/0031-the-gate-is-cargo-xtask-check.md) | process | The gate is `cargo xtask check` | accepted |
-| [0032](process/0032-lints-and-limits-ratchet-down-only.md) | process | Lints and limits are per crate and ratchet down only | accepted |
+| [0031](process/0031-the-gate-is-cargo-xtask-check.md) | process | The gate is `cargo xtask check` | accepted, amended 2026-11-17 |
+| 0032 | process | Lints and limits are per crate and ratchet down only | superseded by ADR 0039 |
 | [0033](process/0033-development-platforms.md) | process | Development runs on Linux, the BSDs and macOS; Windows users develop in WSL or a Linux VM; Rust tooling goes into `xtask` | accepted |
 | [0034](process/0034-multi-pr-work-lands-as-a-stack.md) | process | Work that spans more than one pull request lands as a stack | proposed |
+| [0037](code/0037-crates-where-they-remove-code-remote-io-on-tokio.md) | code | Crates where they remove code or blocking; remote IO runs async on tokio | accepted |
+| [0038](code/0038-one-table-may-generate-per-field-code.md) | code | One declarative table may generate per-field code when tests cover every item | accepted |
+| [0039](process/0039-format-lints-and-ratchets-the-author-tightens.md) | process | rustfmt formats; lints and limits ratchet down; the author of a change tightens | accepted |
+| [0040](process/0040-contributions-signed-off-no-vendor-material-rebased.md) | process | A contribution is signed off, holds no vendor material and lands rebased through the merge queue | accepted |
 
 ## Reading order for agents
 
 An agent (or a new contributor) reads [AGENTS.md](../../AGENTS.md) first, then this index, then the records that
-touch the change: ADR 0009, 0010, 0013, 0015 and 0021 for anything near the hardware or the dependencies, ADR 0014 and
-0031 for how to show that a change is safe, ADR 0016, 0018, 0019 and 0032 for how code and text look,
-ADR 0022 to 0025 for SCPI, VXI-11, HiSLIP and the other network services, ADR 0030 for what this tree is, ADR 0033 for the
-hosts development runs on. The records are short on purpose; reading the ones that apply costs
-minutes and saves a review round.
+touch the change: ADR 0009, 0010 and 0015 for anything near the hardware, ADR 0014 and 0031 for how to show that a
+change is safe, ADR 0039 for formatting, lints and ratchets, ADR 0018 and 0019 for how code and text look, ADR 0040
+for what may enter the tree, ADR 0037 for dependencies and remote IO, ADR 0022 to 0025 for SCPI, VXI-11, HiSLIP and
+the other network services, ADR 0030 for what this tree is, ADR 0033 for the hosts development runs on. The records
+are short on purpose; reading the ones that apply costs minutes and saves a review round.
 
 ## Writing one
 
@@ -80,7 +85,8 @@ minutes and saves a review round.
 
 Status values: `proposed` (under discussion), `accepted`, `accepted, to be reviewed` (with the condition for the review
 in the record), `accepted, amended by ADR NNNN` (it holds, with a limit or an exception that the newer record
-states), `superseded by ADR NNNN`, `rejected` (kept, so the idea is not tried a second time without new facts).
+states), `superseded by ADR NNNN` (file deleted, index line kept), `rejected` (kept, so the idea is not tried a
+second time without new facts).
 
 A record is not rewritten when the decision changes. Two kinds of change are made in place, with the date: a
 correction that leaves the decision as it was (a file that moved, a name that changed, a case the record missed while

@@ -20,12 +20,12 @@ keeps running until the new path replaces it, one small step per merge. This fil
   M3, M13 to M18) at their first commit. So the gate is move-aware before any moving step starts (G1): the branch
   lists its planned moves in `xtask/data/moves.txt` (`<old> -> <new>`, one per line, part of the step's plan, not a
   ratchet file), and the branch gate accepts a listed item at its new place if it is not larger than at the merge
-  base. A moving branch passes its own gate from its first commit. At merge the integrator runs
+  base. A moving branch passes its own gate from its first commit. Before merge the branch runs
   `cargo xtask ratchet --move`, which transfers the entries and keeps the moves the base still needs as evidence
   (`docs/development.md`, Moves).
-- **Shared ratchet files.** Branches do not edit the ratchet and coverage files. The integrator runs
-  `cargo xtask ratchet` at merge, so two branches never conflict on them. The coverage gate allows a margin of 0.5
-  points below the floor per branch; the integrator raises the floor after the merge. The ratchet files are split per
+- **Shared ratchet files.** The pull request that lowers a count or raises coverage commits `cargo xtask ratchet`
+  ([ADR 0039](../adr/process/0039-format-lints-and-ratchets-the-author-tightens.md)); nobody edits the files by hand. The coverage gate allows a margin of 0.5
+  points below the floor per branch. The ratchet files are split per
   crate so that unrelated merges touch different files. Implemented in G1. `docs/development.md` lives on
   `overhaul-guardrails`; its ratchet text is aligned with these rules when that branch merges (team-lead).
 - **Hotfix lane.** A fix the unit needs before the overhaul ships branches from `dho804` as `fix/<name>`, is merged to
@@ -50,7 +50,7 @@ the pre-commit hook. Migration steps start when the gate script exists.
 Owner: auxout. Lands before M2.1, because M2.1 is the first step that moves code. Each item is a gate change with its
 own tests in `xtask`:
 - move-aware validation: `xtask/data/moves.txt` on the branch, no growth against the merge base, and
-  `cargo xtask ratchet --move` for the integrator at merge;
+  `cargo xtask ratchet --move` on the branch before merge;
 - the coverage margin of 0.5 points per branch;
 - ratchet files split per crate;
 - the function limit counts code lines only (no comments, no blank lines; adr/0010);
@@ -226,11 +226,12 @@ upstreamarch's review:
 Classes: `acq`, `mapping`, `phosphor`, `stats`, `mask`, `zone`, `hw_average`, `history`, `math`, `view`. Measurement state
 (the analysis results, statistics and `meas_n`) is in `stats`. No `decode` class: the decode cache is keyed.
 
-`classify` is split per future settings group from the start, as hand-written functions, each under 60 lines: one
-or more per group, each destructuring its own fields of today's flat `Model`. No macro generates them (macro bodies
-are a blind spot of the gate). One destructuring of `Model` without `..` checks at compile time that every field
-belongs to a group. It lives in a `#[test]` function, which the size limit exempts, so its length (178 fields) is
-not a size violation. M13 then moves the fields without reclassifying.
+`classify` is split per future settings group from the start, each under 60 lines: one or more per group, each
+destructuring its own fields of today's flat `Model`. One declarative field table may generate them when tests cover
+every generated item ([ADR 0038](../adr/code/0038-one-table-may-generate-per-field-code.md)). One destructuring of
+`Model` without `..` checks at compile time that every field belongs to a group. It lives in a `#[test]` function,
+which the size limit exempts, so its length (178 fields) is not a size violation. M13 then moves the fields without
+reclassifying.
 
 Tests, failing before:
 - every class: changing a representative field resets exactly its consumers;

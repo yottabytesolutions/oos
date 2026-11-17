@@ -59,7 +59,7 @@ M3 parallel work waits until the crate creation part merges. M18 moves invalidat
 Follow the [review protocol](review.md) before merging.
 Record evidence in the task file's Status lines and the merge commit body.
 The [PR template](../../.github/pull_request_template.md) is the field list. Use it in the PR when one exists.
-History is linear ([ADR 0026](../adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)):
+History is linear ([ADR 0040](../adr/process/0040-contributions-signed-off-no-vendor-material-rebased.md)):
 branches are rebased onto `main`, never updated by merging `main` into them, and `main` only fast-forwards.
 Never rewrite commits on `main`. Changes after review, including rebases with conflict resolutions, need renewed
 independent review.

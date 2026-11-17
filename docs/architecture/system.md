@@ -54,7 +54,7 @@ the unit (dho804, 2026-11-15, verified on the unit):
                                      /dev/ttyS0 (panel MCU), /sys/class/thermal, /sys/class/pwm
 ```
 
-Rule for all crates: no vendor code is in the tree. Only dependency: `libc`.
+Rule for all crates: no vendor code is in the tree (ADR 0040). Dependencies follow ADR 0037.
 
 ### oos-hal: hardware layer
 

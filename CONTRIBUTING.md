@@ -11,14 +11,13 @@ that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
 ## Ground rules
 
 - **No vendor code or vendor data.** No firmware images, no code or binaries from any stock or modified firmware, no
-  calibration files, no `vendor.bin`. What runs on the scope only depends on `libc`, and it stays that way unless
-  there is a strong reason; a desktop-only build may use its platform's crates
-  ([ADR 0021](docs/adr/process/0021-libc-only-on-the-scope-platform-crates-on-the-desktop.md)).
+  calibration files, no `vendor.bin`. A crate from crates.io is added only where it removes code or
+  blocking, and cargo-deny vets its licence ([ADR 0037](docs/adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md)).
 - **No vendor material in the texts either.** Code, comments, documents, commit messages, pull request descriptions
   and issues describe the hardware as behaviour, in your own words: no listings, copied tables or strings from the
   stock or a modified firmware, and no names of its functions, classes or files. What the vendor publishes for users
   is fine: the command names of the programming guide, the manuals, the data sheets of the parts
-  ([ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)).
+  ([ADR 0040](docs/adr/process/0040-contributions-signed-off-no-vendor-material-rebased.md)).
 - **Sign your commits off.** `git commit -s` adds a `Signed-off-by:` line with your name. With it you state the
   [Developer Certificate of Origin](https://developercertificate.org): the work is your own or you have the right to
   submit it, under the licence of the project. This holds for work your agent wrote too. Code or text from another
@@ -76,7 +75,7 @@ place to start reading.
 ## Branches, commits, pull requests
 
 - One topic per branch and pull request; one issue per pull request, or per stack when the work spans several pull
-  requests ([ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)). Branch:
+  requests ([ADR 0040](docs/adr/process/0040-contributions-signed-off-no-vendor-material-rebased.md)). Branch:
   `<type>/<ref>-<slug>`, `type` one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`;
   `ref` the issue number or `t` plus the four-digit task id; `slug` lower case with `-`. Examples:
   `fix/123-trigger-holdoff`, `refactor/t0075-normal-trigger`. `main` is the only long-lived branch.
@@ -84,7 +83,7 @@ place to start reading.
   Pull requests merge by rebase, so each commit lands on main as it is and its subject becomes a changelog line.
   Fold `fixup!`, `squash!` and WIP commits into their topic commit (`git rebase -i --autosquash`) before you mark
   the pull request ready; `pr-meta` rejects them.
-- Every commit carries `Signed-off-by:` (`git commit -s`) matching the author (DCO, ADR 0026). Use your GitHub
+- Every commit carries `Signed-off-by:` (`git commit -s`) matching the author (DCO, ADR 0040). Use your GitHub
   noreply address (`<id>+<login>@users.noreply.github.com` or `<login>@users.noreply.github.com`): other email
   addresses are rejected by the privacy check.
 - Commits and pull request texts carry no tool or session details: no session links, no `Agent:` and no AI
@@ -191,9 +190,9 @@ labelled `flaky`; the gate rejects a bare `#[ignore]` and a `flaky:` reason with
 - Files: UTF-8, LF, a final newline, no trailing spaces, the `SPDX-License-Identifier: GPL-2.0-or-later` line in every
   source file. [.editorconfig](.editorconfig) sets this up in most editors.
 - Rust: `cargo fmt` with the tree's [rustfmt.toml](rustfmt.toml)
-  ([ADR 0016](docs/adr/process/0016-rust-code-formatted-by-rustfmt.md)); the tree is fully formatted. Lints are set
-  per crate and their findings may only go down
-  ([ADR 0032](docs/adr/process/0032-lints-and-limits-ratchet-down-only.md), [docs/development.md](docs/development.md)).
+  ([ADR 0039](docs/adr/process/0039-format-lints-and-ratchets-the-author-tightens.md)); the tree is fully formatted. Lints are set
+  per crate and their findings may only go down; a pull request that lowers a count commits `cargo xtask ratchet`
+  ([docs/development.md](docs/development.md)).
 - Commits follow [AGENTS.md](AGENTS.md#commits): subject in the imperative mood, under 72 characters; the body says
   why; one topic each; formatting and moves in commits of their own; signed off. A change people would notice on the
   scope gets a `CHANGELOG.md` entry ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).

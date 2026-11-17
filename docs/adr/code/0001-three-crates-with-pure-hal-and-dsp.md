@@ -1,6 +1,6 @@
 # ADR 0001: Three crates; the hardware layer and the signal processing are pure functions
 
-- Status: accepted
+- Status: accepted, amended by architecture/0014 (the domain is a fourth crate, `oos-core`)
 - Date: 2026-11-07 (first public version; in use before)
 - Category: code
 

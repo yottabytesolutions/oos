@@ -152,7 +152,7 @@ layer_target() {
         case $c in hal | dsp | core) t=all ;; *) t=aarch64-unknown-linux-musl ;; esac
         other=$(cd "$c" && cargo tree --locked --target "$t" -e normal --prefix none | awk '{print $1}' | sort -u |
             grep -v -e '^libc$' -e '^oos-') || true
-        [ -z "$other" ] || fail "target: $c depends on $(echo $other) (docs/adr/process/0021)"
+        [ -z "$other" ] || fail "target: $c depends on $(echo $other) (docs/adr/code/0037)"
     done
 }
 

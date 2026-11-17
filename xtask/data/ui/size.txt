@@ -17,23 +17,23 @@
 4856 file ui/src/scpi.rs
 3060 file ui/src/store.rs
 11441 file ui/src/ui.rs
-1759 file ui/src/ui/analysis.rs
+1752 file ui/src/ui/analysis.rs
 677 file ui/src/ui/autoset.rs
 992 file ui/src/ui/bode.rs
-503 file ui/src/ui/bus.rs
+480 file ui/src/ui/bus.rs
 1872 file ui/src/ui/eyepage.rs
-643 file ui/src/ui/eyepage/automatic.rs
+611 file ui/src/ui/eyepage/automatic.rs
 451 file ui/src/ui/facts.rs
 495 file ui/src/ui/la.rs
 554 file ui/src/ui/magnetic.rs
 648 file ui/src/ui/meascatalog.rs
-489 file ui/src/ui/meascatalog/backend.rs
+466 file ui/src/ui/meascatalog/backend.rs
 712 file ui/src/ui/motor.rs
 688 file ui/src/ui/panes.rs
-432 file ui/src/ui/reference_decode.rs
+407 file ui/src/ui/reference_decode.rs
 716 file ui/src/ui/reflook.rs
 402 file ui/src/ui/remote.rs
-932 file ui/src/ui/sim.rs
+911 file ui/src/ui/sim.rs
 416 file ui/src/ui/startup.rs
 563 file ui/src/ui/time.rs
 1324 file ui/src/ui/tools.rs
@@ -133,15 +133,14 @@
 121 fn ui/src/ui/analysis.rs Ui::ana_adjust
 93 fn ui/src/ui/analysis.rs Ui::ana_value
 66 fn ui/src/ui/analysis.rs Ui::apply_finding
-81 fn ui/src/ui/analysis.rs Ui::channel_measurement
-67 fn ui/src/ui/analysis.rs Ui::poll_reference_measurements
+78 fn ui/src/ui/analysis.rs Ui::channel_measurement
+66 fn ui/src/ui/analysis.rs Ui::poll_reference_measurements
 117 fn ui/src/ui/analysis.rs Ui::power_update
 94 fn ui/src/ui/autoset.rs Ui::auto_step
 69 fn ui/src/ui/bode.rs Ui::bode_adjust
 69 fn ui/src/ui/bode.rs Ui::bode_begin
 155 fn ui/src/ui/bode.rs Ui::draw_bode
 68 fn ui/src/ui/bode.rs Ui::free_analyse
-68 fn ui/src/ui/bus.rs Ui::bus_packets
 74 fn ui/src/ui/bus.rs Ui::draw_bus
 78 fn ui/src/ui/bwtest.rs Ui::draw_bw
 77 fn ui/src/ui/dpt.rs Ui::dpt_update
@@ -151,7 +150,7 @@
 61 fn ui/src/ui/eyepage.rs layout
 115 fn ui/src/ui/eyepage.rs populate_eye_facts
 76 fn ui/src/ui/eyepage/automatic.rs Ui::auto_eye_identity
-79 fn ui/src/ui/eyepage/automatic.rs Ui::eye_auto_update
+77 fn ui/src/ui/eyepage/automatic.rs Ui::eye_auto_update
 106 fn ui/src/ui/eyepage/automatic.rs compute
 126 fn ui/src/ui/facts.rs Ui::fact_power
 61 fn ui/src/ui/la.rs Ui::la_adjust
@@ -162,16 +161,15 @@
 116 fn ui/src/ui/meascatalog.rs Ui::draw_catalog
 67 fn ui/src/ui/meascatalog.rs Ui::draw_mark
 87 fn ui/src/ui/meascatalog/backend.rs Ui::catalog_input
-63 fn ui/src/ui/meascatalog/backend.rs Ui::poll_catalog_measurements
 73 fn ui/src/ui/measlabels.rs Ui::draw_meas_labels
 114 fn ui/src/ui/measurement_nav.rs Ui::draw_paged_measurement_strip
 61 fn ui/src/ui/motor.rs Ui::dq_update
 74 fn ui/src/ui/motor.rs Ui::draw_dq
 66 fn ui/src/ui/motor.rs Ui::inverter_adjust
 71 fn ui/src/ui/panes.rs Ui::draw_result_table
-73 fn ui/src/ui/reference_decode.rs Ui::reference_decode_packets_at
+66 fn ui/src/ui/reference_decode.rs Ui::reference_decode_packets_at
 68 fn ui/src/ui/reference_decode.rs decode_borrowed
-74 fn ui/src/ui/reference_search.rs Ui::reference_trigger_hits
+66 fn ui/src/ui/reference_search.rs Ui::reference_trigger_hits
 133 fn ui/src/ui/sim.rs Ui::sim_finish
 63 fn ui/src/ui/sim/sim_bus_candidate.rs Ui::sim_bus_guard
 117 fn ui/src/ui/startup.rs Ui::draw_start_up
@@ -194,7 +192,6 @@
 4 impls ui Job
 5 impls ui State
 61 impls ui Ui
-7 impls ui Worker
 16 struct ui/src/board/mod.rs Frame
 47 struct ui/src/board/mod.rs Shared
 13 struct ui/src/drawpipe.rs Batch

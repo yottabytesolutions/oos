@@ -11,6 +11,7 @@ use super::{
 };
 use crate::gfx::{mix, rgb, scale, Rgb};
 use crate::model::{n_ch, si, BusKind, WaveId};
+use crate::ui::lifecycle::worker::Worker;
 use oos_dsp::decode::{i2c_at, Kind as DecKind, Packet};
 
 /// The bus trace. Kept off the channel palette so the line stays its own colour.
@@ -24,7 +25,7 @@ const BUS_ERR_FILL: Rgb = rgb(0x70, 0x18, 0x18);
 pub(super) struct Cache {
     key: Option<String>,
     packets: Vec<Packet>,
-    worker: Option<Worker>,
+    worker: Option<Worker<Job, (String, Vec<Packet>)>>,
     scans: usize,
 }
 struct Job {
@@ -48,28 +49,12 @@ impl Job {
             .collect()
     }
 }
-struct Worker {
-    tx: std::sync::mpsc::SyncSender<Job>,
-    rx: crate::ui::lifecycle::worker_result::Receiver<(String, Vec<Packet>)>,
-    busy: bool,
-}
-impl Worker {
-    fn open() -> Self {
-        let (tx, input) = std::sync::mpsc::sync_channel::<Job>(1);
-        let (output, rx) = crate::ui::lifecycle::worker_result::channel();
-        std::thread::Builder::new()
-            .name("trace-bus".into())
-            .spawn(move || {
-                while let Ok(job) = input.recv() {
-                    let packets = job.run();
-                    if output.send((job.key, packets)).is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("start trace bus worker");
-        Self { tx, rx, busy: false }
-    }
+fn open_worker() -> Worker<Job, (String, Vec<Packet>)> {
+    Worker::spawn("trace-bus", |job: Job| {
+        let packets = job.run();
+        (job.key, packets)
+    })
+    .expect("start trace bus worker")
 }
 
 struct Src<'a> {
@@ -262,7 +247,7 @@ impl Ui {
             }
             x_prev = x1;
         }
-        if self.trace_bus.borrow().worker.as_ref().is_some_and(|worker| worker.busy) {
+        if self.trace_bus.borrow().worker.as_ref().is_some_and(Worker::busy) {
             cv.text(&f.s, left + 4, (y - 12).max(a.y + 12), "Computing", TEXT);
         }
         if self.touch.drag == super::Drag::Bus {
@@ -385,12 +370,7 @@ impl Ui {
             self.replay.sim_revision
         );
         let mut cache = self.trace_bus.borrow_mut();
-        let answer = cache.worker.as_mut().and_then(|w| {
-            w.rx.try_recv().ok().map(|answer| {
-                w.busy = false;
-                answer
-            })
-        });
+        let answer = cache.worker.as_mut().and_then(|worker| worker.poll().ok());
         if let Some((finished, packets)) = answer {
             if finished == key {
                 cache.key = Some(finished);
@@ -400,7 +380,7 @@ impl Ui {
         if cache.key.as_ref() == Some(&key) {
             return cache.packets.clone();
         }
-        if cache.worker.as_ref().is_some_and(|worker| worker.busy) {
+        if cache.worker.as_ref().is_some_and(Worker::busy) {
             return Vec::new();
         }
         let (Some(sd), Some(sc)) = (cut(data.t0, data.dt, data.v, lo, hi), cut(clk.t0, clk.dt, clk.v, lo, hi)) else {
@@ -416,10 +396,7 @@ impl Ui {
             Job { key: key.clone(), data: sda, clk: scl, t0, dt, thresholds: [data.thr, data.hyst, clk.thr, clk.hyst] };
         cache.scans += 1;
         if background {
-            let worker = cache.worker.get_or_insert_with(Worker::open);
-            if worker.tx.try_send(job).is_ok() {
-                worker.busy = true;
-            }
+            let _ = cache.worker.get_or_insert_with(open_worker).submit(job);
             Vec::new()
         } else {
             let packets = job.run();
@@ -520,9 +497,7 @@ mod tests {
     impl Ui {
         pub(in crate::ui) fn wait_bus_event(&self) {
             if let Some(worker) = self.trace_bus.borrow().worker.as_ref() {
-                if worker.busy {
-                    worker.rx.wait_ready("trace bus decode completion");
-                }
+                worker.wait_ready("trace bus decode completion");
             }
         }
     }
@@ -627,7 +602,7 @@ mod tests {
             Some(crate::wave::Raw { frame: frame.clone(), i0: 0, i1: frame.ch[0].len(), t0: 0.001, conditioned: true });
         u.m.delay = 0.0013;
         assert!(u.bus_packets().is_empty());
-        assert!(u.trace_bus.borrow().worker.as_ref().unwrap().busy);
+        assert!(u.trace_bus.borrow().worker.as_ref().unwrap().busy());
         // each wait bounded on its own: the bound only turns a hang into a failure, and the worker shares the CPUs with
         // the rest of the suite (a coverage build ran past one 5 s bound for both scans)
         let deadline = crate::ui::lifecycle::test_wait::Wait::new(
@@ -649,7 +624,7 @@ mod tests {
         let deadline = crate::ui::lifecycle::test_wait::Wait::new(
             "retained_native_bus_uses_a_bounded_worker_and_reuses_the_same_view_result completion",
         );
-        while u.trace_bus.borrow().worker.as_ref().unwrap().busy {
+        while u.trace_bus.borrow().worker.as_ref().unwrap().busy() {
             let _ = u.bus_packets();
             deadline.check();
             deadline.ui(&u);

@@ -34,9 +34,9 @@ Device-loop extraction uses ui/src/system/device.rs and ui/src/system/device/;
 main.rs retains only extraction and lifecycle wiring changes under the owner's extraction instruction.
 Held elsewhere: xtask/, ui/tests/golden*, ui/tests/soak.rs and tools/ golden tooling.
 
-Specification: [M1b](../architecture/migration.md#m1b-safe-start-and-exit),
-[ADR 0015](../architecture/adr/0015-safe-start.md),
-[safe start and exit](../architecture/README.md#safe-start-and-exit).
+Specification: [M1b](../../architecture/migration.md#m1b-safe-start-and-exit),
+[ADR 0015](../../architecture/adr/0015-safe-start.md),
+[safe start and exit](../../architecture/README.md#safe-start-and-exit).
 Branch `t0048-m1b-safe-start`, base `aac04cc`, contributor codex-b (Codex).
 No commits, pushes or device access in this job. Prepare review units and their messages/file lists in
 `target/COMMIT_MSG.txt`, separated by `-----`. Cross-vendor review and round 0 remain coordinator work.

@@ -38,7 +38,7 @@ Verify artifact revisions before consumption. Bind host harnesses to loopback wi
 temporary directories. Include VXI-11. Replace sleeps with a readiness handshake identifying the child and build.
 Audit items: 10, 11.
 
-Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
+Input: [multi-agent audit](../notes/audit-multiagent-20261114.md).
 
 ## Status
 

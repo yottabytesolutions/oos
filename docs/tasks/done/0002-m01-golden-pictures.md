@@ -12,7 +12,7 @@ depends: [41, 42]
 
 ## Goal
 
-Complete [migration M1](../architecture/migration.md#m1-golden-pictures-and-the-host-harness). The migration document is the specification.
+Complete [migration M1](../../architecture/migration.md#m1-golden-pictures-and-the-host-harness). The migration document is the specification.
 
 ## Plan
 
@@ -170,7 +170,7 @@ Touched legacy size entries must shrink or stay. Do not edit ratchet files, lint
    Real roll/scan/segments producer-loop coverage and the SINGLE roll memory case are explicitly M3.0.
    Cross-route brightness within 3 %, rare-pixel retention and zero partial merges remain later-step acceptance.
    Keep separate current references even where they expose today's different weights.
-   The hardware setups in [drawing acceptance](../architecture/drawing.md#acceptance-criteria-unitlab) inspire
+   The hardware setups in [drawing acceptance](../../architecture/drawing.md#acceptance-criteria-unitlab) inspire
    these inputs. They are synthetic host characterisations, not verified unit measurements.
 
 5. **Add the passing host allocation soak. Estimate: 0.75 day.**

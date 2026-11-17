@@ -33,4 +33,4 @@ The software is three Rust crates with one direction of dependency:
 
 ## References
 
-[architecture.md](../../architecture.md), [porting.md](../../porting.md), `hal/src/dho/bus.rs`.
+[architecture.md](../../architecture/README.md), [porting.md](../../porting.md), `hal/src/dho/bus.rs`.

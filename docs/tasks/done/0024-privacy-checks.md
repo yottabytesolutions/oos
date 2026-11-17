@@ -24,7 +24,7 @@ Before parallel migration, scan staged changes locally and incoming diffs and me
 Commit generic patterns. Keep private strings in an untracked local file. Use a reviewed allowlist for synthetic
 fixtures. Remove default device addresses. Audit item: 8.
 
-Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
+Input: [multi-agent audit](../notes/audit-multiagent-20261114.md).
 
 Implementation sequence: add a stdlib scanner and synthetic tests; scan staged additions and all incoming commits
 including messages; add a dedicated CI job; document local literals and reviewed exceptions; replace unit addresses

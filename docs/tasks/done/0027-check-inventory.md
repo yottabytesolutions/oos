@@ -130,7 +130,7 @@ Re-read G1's integrated result and retain subsequent `overhaul` privacy/isolatio
 
 Audit items: 14, 15.
 
-Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
+Input: [multi-agent audit](../notes/audit-multiagent-20261114.md).
 
 ## Status
 

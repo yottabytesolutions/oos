@@ -68,7 +68,7 @@ Do not change universal policy merely to make a fixture pass. Any needed policy 
 - Add a dispatch regression proving this step executes under both `check --fast` and the default full check.
   Run xtask tests in debug and release, then `cargo xtask check` without exclusions on the final candidate.
   Supply complete output and exit code, parent/candidate revisions and failing-before evidence for independent
-  Claude review under [the review protocol](../process/review.md). The coordinator integrates and reruns the gate.
+  Claude review under [the review protocol](../../process/review.md). The coordinator integrates and reruns the gate.
   No hardware is needed or verified.
 
 Estimate: 0.5-1 engineering day including tests and review fixes, excluding review availability.
@@ -76,7 +76,7 @@ Risks: exact templates deliberately require a reviewed update for harmless shim 
 conventions can change; G1 may change before merge. Re-read its integrated result before implementation and retain
 newer `overhaul` privacy/output-isolation changes when resolving documentation or gate wiring.
 
-Audit item: 1. Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
+Audit item: 1. Input: [multi-agent audit](../notes/audit-multiagent-20261114.md).
 
 ## Status
 

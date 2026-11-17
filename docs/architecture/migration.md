@@ -478,6 +478,19 @@ Moves have near-zero production delta. Repeat unit load/soak against M12 evidenc
   58 tests skipped in each profile. Isolated pairs runs pass on both the base and changed trees. Release
   acceptance and independent review remain open; no hardware run claimed.
 
+- 2026-11-17: E1a source extraction is implemented; acceptance remains open. One exhaustive area registration
+  routes the six item dispatches and menu rows; source visibility, trigger/decode rows and start-menu groups have
+  area owners. Host comparisons against the original dispatch pass for all 457 item variants and 48 menus across
+  decoder, trigger, offline and LA contexts, and for exercised adjustments in both directions.
+  `cargo test -p oos-ui` and `cargo test -p oos-ui --profile test-release` pass, including existing menu lint,
+  script, golden and SCPI tests. `cargo xtask check --fast`: partial gate passed (not done), 11 steps in 3 s.
+  `cargo xtask ratchet --move` applied the three size moves; `cargo xtask ratchet` tightened the changed UI entries.
+  Production delta: +1,250 lines for area routing and callbacks, above the near-zero estimate.
+  `cargo xtask step clippy`: gate FAILED in 2 s, 17 relocated findings. The one-to-one move format cannot split
+  inherited per-file lint counts across area files. Next action for the coordinator: provide that ratchet
+  prerequisite and review the routing overhead before integration. Independent review remains open.
+  No unit acceptance is claimed.
+
 - 2026-11-17: review fixes restore M3..M11 packages, add move-only dispatch and wake-intake prerequisites,
   specify bounded atomic remote/app handoffs and split menu read/write work. Implementation remains open.
 - 2026-11-17: source audit recorded implemented core change handling, field generation, generic Worker,

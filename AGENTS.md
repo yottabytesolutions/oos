@@ -34,7 +34,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
   Never pipe the gate or `tools/perf-guard.sh` through `tail` or `grep` inside an `&&` chain. That hides failures.
 - Take commit hashes from `git log -1`. Never quote a hash from memory.
 - Only the coordinator pushes, and only with the owner's go, through the documented publish path. Other agents never push. Never change a remote or its push URL.
-- Never merge your own branch. The coordinator merges after review.
+- Never merge your own branch. The maintainer merges after review via the merge queue; the coordinator never merges.
 - On the scope, stop at the first unexpected state. Report it. Do not repair it by hand.
 - No `rm -rf` outside your own worktree and scratch directories. Never force push `main`; a feature branch only
   with `--force-with-lease`. Never write partitions, run `dd` to block devices, or delete another contributor's

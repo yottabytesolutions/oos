@@ -30,12 +30,15 @@ Reserved paths: `.github/workflows/pr.yml`, `.github/workflows/main.yml`, `.gith
 - Kernel base as the pre-release `kernel-base-6.12.115` (`tools/ci/kernel-base.sh`).
 - Job and step durations in the run summary; before and after timings in the PR.
 
-Not done, with reasons: cargo-nextest (the test step and its counts are defined in xtask, ADR 0031; a runner change
-is a gate change); mold (the pinned toolchain already links with rust-lld on x86-64 Linux, and `RUSTFLAGS` would
+- Hooks: only the fast tier before a push; child commands of xtask never see the hook's `GIT_*` variables.
+
+Not done, with reasons: cargo-nextest (171 s instead of 252 s for the warm debug tests locally, but both test jobs
+hung in CI; follow-up #23); mold (the pinned toolchain already links with rust-lld on x86-64 Linux, and `RUSTFLAGS` would
 replace the scope target's flags in `.cargo/config.toml`); splitting clippy into host and aarch64 jobs (the clippy
 ratchet counts a finding seen on both targets once; split runs would need an xtask change of the ratchet).
 
 ## Status
 
+- 2026-11-17: nextest dropped from this branch after two CI runs hung (#23). Codex finding on API read timeouts fixed.
 - 2026-11-17: branch `ci/t0095-faster-pipeline` from main 9072ea2. Pre-release `kernel-base-6.12.115` published,
   asset sha256 matches `kernel/base.sha256`.

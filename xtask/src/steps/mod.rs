@@ -5,6 +5,7 @@ mod code;
 pub(crate) mod decoders;
 pub(crate) mod host;
 pub(crate) mod image;
+pub(crate) mod python;
 mod ratchets;
 pub(crate) mod scripts;
 

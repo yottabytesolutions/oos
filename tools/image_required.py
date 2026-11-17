@@ -12,7 +12,7 @@ IMAGE_PREFIXES = ('boot/', 'kernel/', 'rootfs/', 'gpu/', '.cargo/', 'xtask/', 't
                   'tools/build-env/', '.github/workflows/', '.githooks/')
 IMAGE_FILES = {'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.python-version', 'ui/build.sh',
                'tools/image-manifest.py', 'tools/bootstrap.sh', 'tools/container-images.json',
-               'tools/build-tools.json', 'tools/script_syntax.py', 'tools/check_inventory.py',
+               'tools/build-tools.json', 'tools/script_syntax.py',
                'tools/image_required.py', 'tools/image_suite.py', 'tools/image_validate.py'}
 HOST_FILES = {'.gitignore', '.gitattributes', '.aider.conf.yml', 'rustfmt.toml', 'clippy.toml',
               'LICENSE', 'COPYING', 'NOTICE', '.github/CODEOWNERS', '.cursor/rules/oos.mdc',

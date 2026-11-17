@@ -104,11 +104,11 @@ fn concurrent_inventory_steps_keep_their_own_targets_and_logs() {
     // Exercise the actual inventory runner, including its Python command capture.
     let script = "import os\nprint(os.environ['CARGO_TARGET_DIR'])\nprint(os.environ['OOS_CHECK_LOG_DIR'])\n";
     for fixture in [&a, &b] {
-        fs::write(fixture.0.join("tools/check_inventory.py"), script).unwrap();
+        fs::write(fixture.0.join("tools/script_syntax.py"), script).unwrap();
     }
     let contexts = [a.start(), b.start()];
     let barrier = std::sync::Barrier::new(2);
-    let run = crate::inventory::CHECKS.iter().find(|c| c.id == "python-tests").unwrap().run;
+    let run = crate::inventory::CHECKS.iter().find(|c| c.id == "script-syntax").unwrap().run;
     std::thread::scope(|scope| {
         for (fixture, ctx) in [&a, &b].into_iter().zip(&contexts) {
             let barrier = &barrier;
@@ -257,13 +257,12 @@ fn shell_and_image_inventory_runners_forward_the_context() {
     let fixture = Fixture::new();
     let ctx = fixture.start();
     let python = "import os\nprint(os.environ['CARGO_TARGET_DIR'])\nprint(os.environ['OOS_CHECK_LOG_DIR'])\n";
-    for file in ["script_syntax.py", "check_inventory.py", "image_required.py", "image_suite.py"] {
+    for file in ["script_syntax.py", "image_required.py", "image_suite.py"] {
         fs::write(fixture.0.join("tools").join(file), python).unwrap();
     }
     fs::create_dir(fixture.0.join("gpu")).unwrap();
     fs::write(fixture.0.join("gpu/test-host.sh"), ECHO_ENV).unwrap();
-    let ids =
-        ["script-syntax", "arm64-release-link", "ssh-sim", "firewall-sim", "gpu-host", "image-required", "image-suite"];
+    let ids = ["script-syntax", "gpu-host", "image-required", "image-suite"];
     for id in ids {
         let step = crate::inventory::CHECKS.iter().find(|c| c.id == id).unwrap();
         assert_eq!((step.run)(&ctx, &fixture.0).unwrap(), [expected(&ctx, ctx.target.as_ref().unwrap())]);

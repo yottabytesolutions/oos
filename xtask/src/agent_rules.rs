@@ -72,6 +72,11 @@ fn recognized(path: &str) -> bool {
                 || (parts.windows(2).any(|p| p == [".github", "instructions"]) && name.ends_with(".instructions.md"))))
 }
 
+/// Git supplies tracked and nonignored new paths as bytes separated by NUL, never quoted lines.
+pub(crate) fn inventory(ctx: &crate::run::Context, root: &Path) -> Result<std::collections::BTreeSet<String>, String> {
+    crate::repo::git_files(ctx, root, &["--cached", "--others", "--exclude-standard"])
+}
+
 /// Reject links even in the entry file's parent directories before reading through them.
 fn read(root: &Path, path: &str) -> Result<String, String> {
     let mut file = root.to_path_buf();

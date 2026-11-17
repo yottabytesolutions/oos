@@ -1,0 +1,44 @@
+# Backfill signed provenance for the checked archive already attached to kernel-base-<version>.
+name: Kernel base provenance
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  kernel-base-provenance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download and check the existing kernel base
+        id: kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tools/ci/kernel-base.sh download
+          read -r tag file < <(tools/ci/kernel-base.sh name)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "file=kernel/src/$file" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        id: provenance
+        with:
+          subject-path: ${{ steps.kernel.outputs.file }}
+      - name: Attach kernel-base attestation files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.kernel.outputs.tag }}
+          FILE: ${{ steps.kernel.outputs.file }}
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          set -eu
+          python3 -I tools/ci/attestation_assets.py "$BUNDLE" "$FILE"
+          assets=("$FILE.sigstore.json")
+          if [ -f "$FILE.intoto.jsonl" ]; then assets+=("$FILE.intoto.jsonl"); fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"

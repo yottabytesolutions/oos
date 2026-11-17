@@ -41,6 +41,16 @@ task 0086 timing tests to manual time, retaining transition, journal and logging
 one-second boundary. Run the fast gate, focused UI clocks tests in debug/release and exact gate Clippy.
 Prepare `target/COMMIT_MSG.txt`; no commits or unit access.
 
+### Landing perf-guard repair plan
+
+On the owner-assigned `integ-27-land` stack, preserve the uncommitted clock-test repair and rename its message
+to `target/COMMIT_MSG-clocktests.txt`. Reserve `ui/src/drawpipe.rs`, `ui/src/ui/script/host/soak.rs` and its
+regression test module under the existing claim. Await the deposit buffer-return channel inside timed regions,
+retaining the shared hang guard. Snapshot soak accounting and measurement counters before the loop, assert and
+report deltas, and add a demo-before-soak regression that fails on the previous accounting. Run the exact UI
+perf step twice, focused debug/release regressions, the fast gate and exact gate Clippy. Write
+`target/COMMIT_MSG.txt`; no commits or unit access.
+
 ### Failing-log tests converted
 
 All seven distinct tests named by `target/full1.log` and `target/full3.log` use event waits now:
@@ -335,6 +345,37 @@ active for the coordinator's unrestricted socket run, full default gate and rene
 push, rebase, remote change or unit access occurred.
 
 ## Status
+
+- 2026-11-17: Landing perf-guard repair prepared, uncommitted. Timed deposit rounds now await the real
+  buffer-return channel with the shared 120-second named hang guard; return follows worker publication and
+  the live-count decrement. Both the guarded one-worker path and reported two/four-worker paths avoid the
+  counter-poll sleep. Ordinary `Wait::poll()` is unchanged. Soak accounting snapshots acquired, used, dropped
+  and measured before its loop and checks/reports deltas. The regression runs a soak, a demo step and another
+  soak, verifying prior acquisition/drop/usage/measurement totals are excluded and planned drops still count.
+  Before the fix it exits 101 at the second soak's first step: `(1393, 1396, 3), planned 0`.
+  After the fix it passes in debug and release (1 passed each, exits 0).
+  Ran the exact requested command twice, sequentially:
+  `OOS_PERF_TESTS=1 cargo test --locked --release -p oos-ui --bin oos-ui -- --ignored --test-threads=1 perf_guard`.
+  Each run reports `22 passed; 1 failed; 0 ignored; 0 measured; 1429 filtered out` and exits 101
+  (41.60 s and 41.55 s). Both `perf_guard_deposit_worker_per_frame` and
+  `perf_guard_intake_change_shadow_budget` pass in both runs. The sole failure in each is
+  `net::tests::perf_guard_nonblocking_socket_reads`: the sandbox denies its loopback listener bind at
+  `ui/src/net.rs:72` with `PermissionDenied`, `Operation not permitted`, before any timing assertion.
+  `cargo xtask check --fast` exits 0 and prints `partial gate passed (not done): 9 steps in 43 s`;
+  all nine steps pass, including test-time with zero findings. Exact unchanged gate `steps::clippy`, through
+  the existing scratch runner verified against every unchanged xtask module, exits 0 for six host/five ARM
+  crates: hal 91 entries/174 total, dsp 115/265, core 3/46, ui 249/670, fpgad 7/19, xtask 0/0.
+  Logs and exits: `target/perf-repair-{regression-before,regression-debug,regression-release,perf-1,perf-2,fast,clippy}.{log,exit}`.
+  Clippy command logs: `target/clock-time-clippy-runner/build/check-logs/35745-1794884280859149000/`.
+  `git diff --check` passes. Saved source hashes in `target/perf-repair-source-sha256.json`; all five prior
+  clock-test source hashes and `target/COMMIT_MSG-clocktests.txt` match the preserved snapshot.
+  Wrote `target/COMMIT_MSG.txt`. No commits, unit access or ratchet changes. Task remains active for independent
+  review and the coordinator's full integration gate, including unrestricted socket validation.
+
+- 2026-11-17: Author Codex; owner assigned the perf-guard repair on existing branch `integ-27-land` under task
+  0088. Plan and paths recorded before implementation. Clock-test files preserved; their message renamed to
+  `target/COMMIT_MSG-clocktests.txt`. The buffer-return receiver is reachable from the timed deposit test;
+  soaking currently checks lifetime totals that include prior demo frames.
 
 - 2026-11-17: Landing clock-test repair prepared, uncommitted. The controller accepts one construction-time
   clock, defaulting to `Instant::now`; thermal sampling and restore retries use its samples in one shipped body.

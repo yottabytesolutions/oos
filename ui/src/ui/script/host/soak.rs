@@ -33,6 +33,9 @@ pub fn run_observed(mode: &str, steps: usize, mut sample: impl FnMut(usize, [u64
         ui.m.time_per_div()
     );
     let mut planned = 0;
+    // Process totals can include earlier host scripts and demo frames.
+    let before = drawpipe::counters().read();
+    let measured_before = drawpipe::counters().measured.load(Ordering::Relaxed);
     for step in 1..=steps {
         super::super::super::change::intake(&mut ui, |ui| storm(ui, (step - 1) % 100))?;
         host.render_step(&mut ui)?;
@@ -41,14 +44,12 @@ pub fn run_observed(mode: &str, steps: usize, mut sample: impl FnMut(usize, [u64
             planned += 3;
         }
         let (acquired, used, dropped) = drawpipe::counters().read();
+        let (acquired, used, dropped) = (acquired - before.0, used - before.1, dropped - before.2);
+        let measured = drawpipe::counters().measured.load(Ordering::Relaxed) - measured_before;
         if dropped != planned || acquired != used + dropped || ui.zone_drops != 0 {
             return Err(format!("soak step {} accounting: {:?}, planned {}", step, (acquired, used, dropped), planned));
         }
-        sample(
-            step,
-            [acquired, used, dropped, drawpipe::counters().measured.load(Ordering::Relaxed), planned, ui.zone_drops],
-            &ui,
-        );
+        sample(step, [acquired, used, dropped, measured, planned, ui.zone_drops], &ui);
     }
     Ok(())
 }
@@ -103,4 +104,40 @@ fn old_stamp(ui: &mut Ui) -> Result<(), String> {
         return Err(format!("planned old-stamp drop: {:?} -> {:?}", before, after));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn soak_reports_its_own_counters_after_a_demo_step() {
+        let _scope = drawpipe::test_scope::Scope::new();
+        // A preceding soak leaves nonzero acquisition, usage and planned-drop totals.
+        run("raw", 100, |_, _| {}).expect("the first scripted soak balances its own frames");
+        let mut demo = Ui::new(Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
+        demo.m.meas.clear();
+        demo.m.meas2.clear();
+        let before = drawpipe::counters().read();
+        demo.step(0.04);
+        let after = drawpipe::counters().read();
+        assert_eq!(after.0, before.0, "demo frames are not acquired hardware frames");
+        assert!(after.1 > before.1, "the demo step must draw a frame");
+        // Model measurements collected before this measurements-off soak.
+        drawpipe::Counters::add(&drawpipe::counters().measured, 7);
+        let mut samples = 0;
+        run_observed("raw", 100, |step, counters, _| {
+            samples += 1;
+            if step == 1 {
+                assert_eq!(counters, [27, 27, 0, 0, 0, 0]);
+            }
+            assert_eq!(counters[0], counters[1] + counters[2]);
+            assert_eq!(counters[2], if step == 100 { 3 } else { 0 });
+            assert_eq!(counters[3], 0, "measurements from before the soak must be excluded");
+            assert_eq!(counters[4], counters[2]);
+            assert_eq!(counters[5], 0);
+        })
+        .expect("the soak excludes accounting and measurements from before its start");
+        assert_eq!(samples, 100);
+    }
 }

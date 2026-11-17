@@ -1534,16 +1534,15 @@ mod tests {
         }
     }
 
-    /// Wait for the lease return too: the live count falls just before the buffer reaches the pool.
+    /// Buffer return follows publication and the live-count decrement. Await that event directly so timed
+    /// rounds include worker completion without the ordinary test counter poll's sleep granularity.
     fn recycled(p: &Pipe) -> Box<Bytes> {
-        let start = crate::ui::lifecycle::test_wait::Wait::new("deposit buffer returned to pool");
-        loop {
-            if let Some(raw) = p.take_buffer() {
-                return raw.downcast::<Bytes>().expect("the benchmark feeds Bytes buffers");
-            }
-            start.check();
-            start.poll();
-        }
+        oos_hal::sync::lock(&p.pool)
+            .recv_timeout(crate::ui::lifecycle::test_wait::HANG_GUARD)
+            .expect("deposit buffer returned to pool after all workers completed")
+            .into_any()
+            .downcast::<Bytes>()
+            .expect("the benchmark feeds Bytes buffers")
     }
 
     /// The frames mode for the same frames: `Ui::fast_draw` and the per-frame statistics on every frame.
@@ -1863,7 +1862,6 @@ mod tests {
                         0,
                         dec(&s, &p),
                     );
-                    settle(&one);
                     buffer = Some(recycled(&one));
                 },
             );
@@ -1874,7 +1872,7 @@ mod tests {
                 let t0 = std::time::Instant::now();
                 for _ in 0..3 {
                     pipe.feed(Box::new(Bytes(bytes.clone())), fb, frames, 0, dec(&s, &p));
-                    settle(&pipe);
+                    drop(recycled(&pipe));
                 }
                 per.push(t0.elapsed() / (3 * frames) as u32);
             }

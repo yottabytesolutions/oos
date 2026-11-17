@@ -137,7 +137,6 @@ mod tests {
     }
 
     // Break it catches: a presence switch read as text, so a value that is not UTF-8 counts as unset.
-    #[cfg(unix)]
     #[test]
     fn presence_switches_count_any_os_value() {
         use std::os::unix::ffi::OsStringExt;

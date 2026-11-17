@@ -46,6 +46,7 @@ static DEFS: [Def; 4] = [
 pub struct Rails;
 
 impl MeasModule for Rails {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "rails"
     }

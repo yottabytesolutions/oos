@@ -19,6 +19,7 @@ static DEFS: [Def; 2] = [
 pub struct Example;
 
 impl MeasModule for Example {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "example"
     }

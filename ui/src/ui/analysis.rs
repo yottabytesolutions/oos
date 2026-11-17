@@ -687,12 +687,11 @@ impl Ui {
                 valid: a.valid,
                 vmin: a.vmin as f32,
                 vmax: a.vmax as f32,
+                #[cfg(test)]
                 vavg: a.avg as f32,
-                vrms: a.rms as f32,
                 top: a.top as f32,
                 base: a.base as f32,
                 period: a.get(Meas::Period),
-                pwidth: self.cached_measurement_reading(WaveId::Ch(channel), Meas::PWidth, a).unwrap_or(f64::NAN),
                 rise: a.rise_time,
                 fall: a.fall_time,
             });
@@ -702,8 +701,8 @@ impl Ui {
                         valid: b.valid,
                         vmin: b.values[0] as f32,
                         vmax: b.values[1] as f32,
+                        #[cfg(test)]
                         vavg: b.values[3] as f32,
-                        vrms: b.values[4] as f32,
                         ..Stats::default()
                     })
                 })

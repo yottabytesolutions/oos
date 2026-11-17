@@ -156,12 +156,11 @@ pub fn cheap_results(v: &[f32]) -> Option<(crate::wave::Stats, oos_dsp::measure:
     let st = crate::wave::Stats {
         vmax: x.vmax as f32,
         vmin: x.vmin as f32,
+        #[cfg(test)]
         vavg: x.avg as f32,
-        vrms: x.rms as f32,
         top: f32::NAN,
         base: f32::NAN,
         period: nan,
-        pwidth: nan,
         rise: nan,
         fall: nan,
         valid: true,

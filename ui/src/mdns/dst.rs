@@ -3,7 +3,6 @@
 //! messages of `recvmsg`. Linux and macOS send both in one IP_PKTINFO message; FreeBSD, DragonFly, OpenBSD and
 //! NetBSD send the destination (IP_RECVDSTADDR) and the interface (IP_RECVIF, a `sockaddr_dl`) apart. The data is
 //! read as bytes at the offsets of the `libc` structs, so a short message is ignored instead of read past.
-#![cfg(unix)]
 use std::mem::offset_of;
 use std::net::Ipv4Addr;
 

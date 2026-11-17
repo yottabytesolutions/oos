@@ -17,6 +17,7 @@ static DEFS: [Def; 2] = [
 pub struct Rate;
 
 impl MeasModule for Rate {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "nrz_rate"
     }

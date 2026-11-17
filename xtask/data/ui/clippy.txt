@@ -101,7 +101,6 @@
 1 ui ui/src/store.rs clippy::manual_range_patterns
 1 ui ui/src/store.rs clippy::needless_range_loop
 5 ui ui/src/store.rs clippy::too_many_lines
-1 ui ui/src/store.rs clippy::undocumented_unsafe_blocks
 2 ui ui/src/store.rs clippy::unnecessary_map_or
 34 ui ui/src/store.rs clippy::unwrap_used
 1 ui ui/src/sysconf.rs clippy::double_ended_iterator_last

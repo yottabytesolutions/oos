@@ -166,6 +166,7 @@ static DEFS: [Def; 17] = [
 pub struct Pairs;
 
 impl MeasModule for Pairs {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "pairs"
     }

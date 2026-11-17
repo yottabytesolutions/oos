@@ -56,6 +56,7 @@ static MOTOR_DEFS: [Def; 5] = [
 pub struct Motor;
 
 impl MeasModule for Motor {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "motor"
     }
@@ -142,6 +143,7 @@ static MECHANICAL_DEFS: [Def; 3] = [
 pub struct Mechanical;
 
 impl MeasModule for Mechanical {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "motor_mechanical"
     }

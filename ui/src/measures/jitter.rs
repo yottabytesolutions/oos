@@ -283,6 +283,7 @@ const COMMON: [u16; 3] = [DC_COMMON, AC_COMMON, DIFF_CROSS];
 pub struct Jitter;
 
 impl MeasModule for Jitter {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "jitter_eye"
     }

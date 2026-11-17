@@ -10,36 +10,27 @@ pub(super) fn flush(r: &mut Responder) {
 
 /// A coalescing control wakeup, polled beside the network sockets.
 pub(super) struct Wake {
-    #[cfg(unix)]
     socket: std::os::unix::net::UnixDatagram,
 }
 
 impl Wake {
     pub(super) fn pair() -> std::io::Result<(Self, Self)> {
-        #[cfg(unix)]
-        {
-            let (tx, rx) = std::os::unix::net::UnixDatagram::pair()?;
-            tx.set_nonblocking(true)?;
-            rx.set_nonblocking(true)?;
-            Ok((Self { socket: tx }, Self { socket: rx }))
-        }
-        #[cfg(not(unix))]
-        Ok((Self {}, Self {}))
+        let (tx, rx) = std::os::unix::net::UnixDatagram::pair()?;
+        tx.set_nonblocking(true)?;
+        rx.set_nonblocking(true)?;
+        Ok((Self { socket: tx }, Self { socket: rx }))
     }
 
     pub(super) fn notify(&self) {
-        #[cfg(unix)]
         // A full socket already has a pending wakeup; the control channel owns the messages.
         let _ = self.socket.send(&[1]);
     }
 
-    #[cfg(unix)]
     pub(super) fn fd(&self) -> std::os::fd::RawFd {
         use std::os::fd::AsRawFd;
         self.socket.as_raw_fd()
     }
 
-    #[cfg(unix)]
     pub(super) fn drain(&self) {
         while self.socket.recv(&mut [0]).is_ok() {}
     }
@@ -86,7 +77,21 @@ impl Mdns {
     }
 }
 
-#[cfg(all(test, unix))]
+impl Mdns {
+    pub fn shutdown(&mut self, deadline: std::time::Instant) {
+        if let Some(tx) = self.tx.take() {
+            let _ = tx.send(Ctl::Stop);
+        }
+        if let Some(wake) = self.wake.take() {
+            wake.notify();
+        }
+        if let Some(h) = self.th.take() {
+            crate::system::shutdown::join(vec![h], deadline);
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::{
@@ -126,19 +131,5 @@ mod tests {
         assert!(mdns_stopped, "idle mDNS must exit within the remote budget");
         assert_eq!(http_pending, 0, "HTTP shares the remote deadline");
         mdns.shutdown(deadline);
-    }
-}
-
-impl Mdns {
-    pub fn shutdown(&mut self, deadline: std::time::Instant) {
-        if let Some(tx) = self.tx.take() {
-            let _ = tx.send(Ctl::Stop);
-        }
-        if let Some(wake) = self.wake.take() {
-            wake.notify();
-        }
-        if let Some(h) = self.th.take() {
-            crate::system::shutdown::join(vec![h], deadline);
-        }
     }
 }

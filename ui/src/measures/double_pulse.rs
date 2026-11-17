@@ -81,6 +81,7 @@ static DEFS: [Def; 17] = [
 pub struct DoublePulse;
 
 impl MeasModule for DoublePulse {
+    #[cfg(test)]
     fn key(&self) -> &'static str {
         "double_pulse"
     }

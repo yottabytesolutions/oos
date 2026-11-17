@@ -32,7 +32,7 @@ information. In roll this is the currently populated rolling buffer, including a
 uses the frame's acquisition depth, even when its display data is compressed. With no usable hardware frame, keep
 the model estimate. The Acquire menu remains the requested setting (Auto or fixed depth, with an existing cap
 annotation), not a query of the rolling buffer. Web MCP JSON wraps the same SCPI response; there is no separate
-web depth field in this checkout. See [the contract and evidence limits](../protocols/roll-mode.md#10-depth-readback-compatibility).
+web depth field in this checkout. See [the contract and evidence limits](../../protocols/roll-mode.md#10-depth-readback-compatibility).
 
 Reason: the matrix summary recorded when this task was seeded says the roll record was reported. The existing
 normal-query decision in `docs/fork/zoomout.md` deliberately aligns SCPI with actual acquisition metadata and the

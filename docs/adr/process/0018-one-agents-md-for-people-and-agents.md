@@ -22,7 +22,7 @@ the first change.
 - [AGENTS.md](../../../AGENTS.md) at the root of the tree is the one file of instructions for agents. It is written
   for people too: a new contributor reads the same page.
 - It is short, at most about 150 lines, and it **points** to the rules instead of repeating them: the order to read
-  in (this index, [architecture.md](../../architecture.md), [CONTRIBUTING.md](../../../CONTRIBUTING.md)), the rules
+  in (this index, [architecture.md](../../architecture/README.md), [CONTRIBUTING.md](../../../CONTRIBUTING.md)), the rules
   that must never be broken in one line each with their ADR, the commands to build and check, and how to report work.
 - Where `AGENTS.md` and an ADR differ, the ADR holds, and `AGENTS.md` is corrected in the same pull request.
 - `CLAUDE.md` contains only the line `@AGENTS.md` (Claude Code reads the other file through it). Files for other tools

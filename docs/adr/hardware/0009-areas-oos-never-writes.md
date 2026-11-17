@@ -29,5 +29,5 @@ with the image already in its flash (the BOOT command), and calibration results 
 
 ## References
 
-[CONTRIBUTING.md](../../../CONTRIBUTING.md) (ground rules), [architecture.md](../../architecture.md) (card layout),
+[CONTRIBUTING.md](../../../CONTRIBUTING.md) (ground rules), [architecture.md](../../architecture/README.md) (card layout),
 `tools/device-test.py`.

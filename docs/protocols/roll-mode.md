@@ -416,7 +416,7 @@ Verified on the unit: 100,000 LA words per sweep at 200 and 500 ms/div, 50 Hz on
 
 ## 10. Depth readback compatibility
 
-Decision for [task 0036](../tasks/0036-roll-depth-readback.md): preserve the acquired-record readback, in both roll
+Decision for [task 0036](../tasks/done/0036-roll-depth-readback.md): preserve the acquired-record readback, in both roll
 and normal acquisition. This pins existing OOS behavior; it does not change drawing or acquisition settings.
 
 | Surface | Roll | Normal acquisition |

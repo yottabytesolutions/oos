@@ -30,4 +30,4 @@ again unless OOS is chosen once more. System > Boot mode > Persist keeps OOS sel
 
 ## References
 
-[boot.md](../../boot.md), [install-usb.md](../../install-usb.md), [architecture.md](../../architecture.md).
+[boot.md](../../boot.md), [install-usb.md](../../install-usb.md), [architecture.md](../../architecture/README.md).

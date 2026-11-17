@@ -125,7 +125,7 @@ with later output/privacy work rather than replacing newer files wholesale.
 
 Audit item: 9, with container identity prerequisites for item 18/task 0033.
 
-Input: [multi-agent audit](notes/audit-multiagent-20261114.md).
+Input: [multi-agent audit](../notes/audit-multiagent-20261114.md).
 
 ## Status
 

@@ -24,10 +24,10 @@ jobs:
     # x86-64: the arm64 containers (busybox, kexec-tools, Mesa for the GPU helper) run through QEMU, which takes hours
     timeout-minutes: 300
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: QEMU for the arm64 containers
         if: runner.arch != 'ARM64'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
       - name: Rust
@@ -57,7 +57,7 @@ jobs:
             grep '  kernel/' "$CARGO_TARGET_DIR/image/manifest.txt"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: manifest-${{ runner.arch }}
           path: ${{ env.CARGO_TARGET_DIR }}/image/manifest.txt
@@ -65,7 +65,7 @@ jobs:
         run: |
           test -s "$CARGO_TARGET_DIR/image/oos-dev.oosupd"
           test -s "$CARGO_TARGET_DIR/image/DHO800_DHO900_OOS_Install.GEL"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: oos-image-${{ runner.arch }}
           path: |
@@ -81,7 +81,7 @@ jobs:
     needs: image
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: manifest-*
       # Strict for everything the cross compiler and the containers make: kernel, DTB, modules, busybox,

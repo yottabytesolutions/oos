@@ -158,6 +158,7 @@ fn plateau_child() {
     let mut ends = [0; 6];
     let mut summary = String::with_capacity(1024);
     let mut steps = 0;
+    let jitter = channel_block();
     let start = Instant::now();
     let result = oos_ui::Ui::scripted_soak(&mode, requested, |step, counters| {
         steps = step;
@@ -177,7 +178,8 @@ fn plateau_child() {
             peak = 0;
         }
     });
-    writeln!(summary, "final_six_cycle_ends={:?} no_growth={}", ends, no_growth(&ends)).unwrap();
+    let flat = no_growth(&ends, jitter);
+    writeln!(summary, "final_six_cycle_ends={:?} jitter={} no_growth={}", ends, jitter, flat).unwrap();
     write!(summary, "backend=counting-System; scope=Rust global-allocator requested live bytes including workers\nmode={} steps={} warmup={} cycle=100 baseline={} limit={} later_peak={} failed_cycles={} counters={:?} elapsed_ms={}\n",
         mode, steps, warmup, baseline, limit(baseline), worst, failures, previous, start.elapsed().as_millis()).unwrap();
     std::fs::write(out.join("summary.txt"), &summary).unwrap();
@@ -185,19 +187,48 @@ fn plateau_child() {
     assert!(result.is_ok(), "{}: {:?}", mode, result);
     assert_eq!(steps, requested, "every requested step was sampled");
     assert_eq!(previous[4], (requested / 100 * 3) as u64, "three deliberate old-stamp drops per cycle");
-    assert!(no_growth(&ends), "{}: final six cycle ends grew: {:?}", mode, ends);
+    assert!(flat, "{}: final six cycle ends grew more than one channel block ({} bytes): {:?}", mode, jitter, ends);
     assert_eq!(failures, 0, "{}: post-warm-up live bytes grew more than 1 %", mode);
 }
 
-fn no_growth(ends: &[usize; 6]) -> bool {
+/// Whether the last three cycle ends stay within `jitter` of the highest of the three before them.
+fn no_growth(ends: &[usize; 6], jitter: usize) -> bool {
     // Three cycles cover the 6-batch schedule against the 100-step storm, including STOP.
-    ends[3..].iter().max() <= ends[..3].iter().max()
+    let (earlier, later) = (ends[..3].iter().max(), ends[3..].iter().max());
+    later.zip(earlier).is_some_and(|(later, earlier)| *later <= earlier + jitter)
+}
+
+/// The bytes of one queue block of an unbounded std channel that carries a boxed trait object, measured on this
+/// thread. The draw pipe returns read-out buffers over such a channel. std allocates its queue in blocks and frees a
+/// block once the receiver has passed it, from whichever thread is last to touch it. So a cycle end can hold one
+/// block more or less than another, depending only on scheduling (#24). Retained growth beyond that is a leak.
+fn channel_block() -> usize {
+    let (tx, rx) = std::sync::mpsc::channel::<Box<dyn std::any::Any + Send>>();
+    let before = HEAP.own_live();
+    tx.send(Box::new(())).expect("the receiver is alive");
+    let block = HEAP.own_live() - before;
+    drop((tx, rx));
+    let block = usize::try_from(block).expect("the first send allocates the queue block");
+    assert!(block > 0, "the first send allocates the queue block");
+    block
 }
 
 #[test]
-fn cycle_end_trend_rejects_growth_below_one_percent() {
-    assert!(no_growth(&[1000, 1007, 1000, 1000, 1007, 1000]));
-    assert!(!no_growth(&[1000, 1000, 1000, 1001, 1001, 1001]));
+fn cycle_end_trend_rejects_growth_beyond_one_channel_block() {
+    assert!(no_growth(&[1000, 1007, 1000, 1000, 1007, 1000], 0));
+    assert!(!no_growth(&[1000, 1000, 1000, 1001, 1001, 1001], 0));
+    // CI: one cycle end held one extra block of the buffer return channel.
+    let block = 752;
+    assert!(no_growth(&[32083188, 32083188, 32083188, 32083188, 32083188, 32083188 + block], block));
+    assert!(no_growth(&[32083188, 32083188, 32083188, 32083188 + block, 32083188, 32083188], block));
+    assert!(!no_growth(&[32083188, 32083188, 32083188, 32083188 + block + 1, 32083188, 32083188], block));
+}
+
+#[test]
+fn channel_block_matches_the_draw_pipe_return_channel() {
+    // Box<dyn RawBatch> and Box<dyn Any + Send> are both two-word pointers, so the block layouts agree.
+    assert_eq!(size_of::<Box<dyn std::any::Any + Send>>(), 2 * size_of::<usize>());
+    assert!(channel_block() > 31 * size_of::<Box<dyn std::any::Any + Send>>());
 }
 
 fn cycle_row(

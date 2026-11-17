@@ -434,6 +434,24 @@ Lint counts are per file, not per place: fixing one `unwrap` and adding another 
 price of a ratchet that survives line moves. Size entries name the item, so they follow it through moves inside the
 file; a renamed or moved item counts as new unless `moves.txt` lists it.
 
+## Production code size
+
+Each release strives for less production code than the one before
+([ADR 0035](adr/process/0035-each-release-has-less-production-code.md)). Production code is the Rust of the crates
+built for the scope without blank lines, comments, test code and `@generated` files. `xtask` and the shell and Python
+scripts are reported beside it as tooling.
+
+```sh
+cargo xtask loc                      # per crate and in total, as Markdown tables
+cargo xtask loc --compare v0.2.0     # the change since a git ref, per crate
+cargo xtask loc --json               # the same numbers for a script
+```
+
+The `fast` job puts the change against the pull request's base into its summary; it never fails. The release
+workflow compares the tag with the previous `v*` tag, adds the table to the draft release notes, and fails when
+production code grew without a `Code growth:` paragraph in the tag annotation or the release's `CHANGELOG.md`
+section (`tools/ci/code_growth.py`).
+
 ## Changing a rule
 
 - A new crate: add it to `CRATES` in `xtask/src/repo.rs` and a `crate` line to `xtask/data/architecture.txt`. It has

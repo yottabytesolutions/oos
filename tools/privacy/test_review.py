@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Regression tests for review round 1, using invented values only."""
 
 import os

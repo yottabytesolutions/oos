@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 use super::*;
 
 fn close(actual: f64, expected: f64) {

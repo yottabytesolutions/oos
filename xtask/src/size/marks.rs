@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Marks that may only become fewer: `#[allow]`/`#[expect]` of `clippy::disallowed_methods`, and known failures,
 //! tests ignored with `#[ignore = "known: task NNNN"]`. Test code included. Every `#[ignore]` carries a reason, and a
 //! `flaky:` reason names its issue (`#NNN`): a flaky test is tracked, never silently parked.

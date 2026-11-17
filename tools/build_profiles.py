@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Read-only selected-profile probes. No pull, install, signing or device access."""
 import hashlib
 import contextlib

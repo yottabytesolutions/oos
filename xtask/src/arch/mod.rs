@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Architecture boundaries: crate dependency direction and module rules, both from `xtask/data/architecture.txt`.
 
 #[cfg(test)]

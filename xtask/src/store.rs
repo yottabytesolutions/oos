@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Where the ratchets live: one file per crate and kind, `xtask/data/<crate>/<kind>.txt`, so branches that touch
 //! different crates do not touch the same file. A base that predates the split has one file per kind
 //! (`xtask/data/<kind>.txt`); its entries of the crate are the crate's base then.

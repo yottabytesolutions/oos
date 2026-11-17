@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Default Python and explicit image runners. Exit status decides success, never printed PASS.
 use super::Outcome;
 use std::path::Path;

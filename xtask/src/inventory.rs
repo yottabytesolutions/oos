@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Ordered executable check registry. Listing and dispatch use these same records.
 use crate::{check, steps};
 use std::path::Path;

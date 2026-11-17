@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Strict RGB PNG comparison and self-contained review artifacts (stdlib only)."""
 import html
 import json

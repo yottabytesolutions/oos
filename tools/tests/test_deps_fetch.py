@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """rootfs/deps.sh dep_fetch: mirror fallback, checksum enforcement, no partial files; curl is a fake, no network."""
 import hashlib
 import os

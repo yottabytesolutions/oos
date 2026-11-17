@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """tools/frontpanel.py: how each system sets 1.5 Mbaud."""
 import importlib.util
 from pathlib import Path

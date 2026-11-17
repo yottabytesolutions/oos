@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Offline isolation regressions; no sockets, commits or Docker required."""
 import json
 import importlib.util

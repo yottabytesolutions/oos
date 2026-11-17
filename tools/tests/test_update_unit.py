@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Unit build identity staging, without Docker or hardware access."""
 import os
 from pathlib import Path

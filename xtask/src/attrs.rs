@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The names of the attributes on an item as the compiler applies them: `cfg_attr(pred, a, b)` contributes `a` and
 //! `b` (nested `cfg_attr` too), whatever its predicate, and raw identifiers count by their name (`r#path` is `path`).
 

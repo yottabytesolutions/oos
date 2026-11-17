@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """tools/ci/host_scripts.py: which scripts count as host scripts, and that shellcheck findings fail."""
 import importlib.util
 from pathlib import Path

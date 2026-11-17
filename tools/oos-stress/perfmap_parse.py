@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Pure Linux/STATe parsers for perfmap; no device access or third-party modules."""
 from __future__ import annotations
 

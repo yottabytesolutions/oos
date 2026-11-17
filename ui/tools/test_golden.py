@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Comparator regression tests, invoked by the Cargo golden integration test."""
 import os
 import json

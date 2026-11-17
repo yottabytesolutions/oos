@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Read-only process probes. Untrusted command output is never copied into diagnostics.
 use super::pins::Pins;
 use crate::run::Output;

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Review regressions for clean Docker hosts and scoped native-tool receipts."""
 import json
 import os

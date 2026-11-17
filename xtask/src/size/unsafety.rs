@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `unsafe` in a file: blocks, functions, impls, traits, extern blocks and unsafe attributes, test code included.
 
 use syn::visit::{self, Visit};

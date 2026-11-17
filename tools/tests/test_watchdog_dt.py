@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """The kexec watchdog must survive dw_wdt_stop: its DT node must have no reset line."""
 from pathlib import Path
 import re

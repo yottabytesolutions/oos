@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Which statics hold interior mutability: a lock, an atomic or a cell in the written type, or in the fields of a
 //! struct or enum of the crate that the type names (followed through further named types of the crate).
 //! `OnceLock`, `LazyLock` and `OnceCell` around plain data are set once and then read only: not mutable state.

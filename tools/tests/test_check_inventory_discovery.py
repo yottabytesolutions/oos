@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Discovery and artifact contracts, independent of Docker or private fixtures."""
 import importlib.util
 import io

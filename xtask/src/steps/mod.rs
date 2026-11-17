@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The gate's steps over every crate. Each returns its summary lines, or the failures.
 
 mod code;

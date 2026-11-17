@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The crates' tests, in debug and release, with full counts.
 
 use crate::run;

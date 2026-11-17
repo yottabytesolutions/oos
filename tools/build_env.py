@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Base and recipe identities with informational package provenance. Inventory never pulls; preparation is explicit."""
 import argparse
 import hashlib

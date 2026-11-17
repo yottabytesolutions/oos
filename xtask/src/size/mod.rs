@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Size limits: files, functions, structs and the spread of a type's impl blocks. Only test code is exempt.
 
 mod codelines;

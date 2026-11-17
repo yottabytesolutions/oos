@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """The host budget contract fails closed on missing and regressed observations."""
 import importlib.util
 from pathlib import Path

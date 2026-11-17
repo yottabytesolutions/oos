@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Check-inventory contracts use synthetic inputs and disposable Git histories."""
 from pathlib import Path
 import os

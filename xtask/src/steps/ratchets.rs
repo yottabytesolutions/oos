@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The comparison every ratchet step shares: the current entries of each crate against its ratchet file, after the
 //! planned moves, with the file itself checked against the base.
 

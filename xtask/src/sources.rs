@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The source files of a crate: every module reachable from its cargo targets, with its module path and whether it
 //! is test code (a test target, or below a `#[cfg(test)]` module). `#[path]` on a module fails: the gate would have
 //! to follow files anywhere. Only `cargo xtask loc` follows a plain `#[path = ".."]`, to measure old releases; it

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Module rules inside a crate: which modules a module may name. Every path counts (`use` trees, inline calls,
 //! types), resolved to one canonical form (`resolve`). The most specific `layer` rule owns a file. Test code is left
 //! out: tests may look behind a boundary.

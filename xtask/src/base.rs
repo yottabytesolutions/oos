@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The protected base: the ratchet files as committed at the merge base with the integration branch. A change may
 //! lower a ratchet or raise a coverage floor; it may not widen either. Without this, an edit of the ratchet file
 //! would authorize the violation it lists.

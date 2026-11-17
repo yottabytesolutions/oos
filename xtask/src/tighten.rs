@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `cargo xtask ratchet`: writes the ratchet files back after an improvement. Entries only shrink or go; the
 //! coverage floors only rise. `--move` applies the planned moves (the integrator, at merge) and keeps those the base
 //! still needs in the moves file. `--init` writes the

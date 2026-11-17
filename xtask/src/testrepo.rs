@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Test fixture: a git repository in a fresh temporary directory, with `main` as its first branch.
 
 use crate::run;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! M2.1 rules exercised on compiled, reachable modules, plus the actual domain tree.
 
 use super::{modules, rules};

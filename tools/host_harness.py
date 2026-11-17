@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Private host server lifecycle, with verified child/build readiness."""
 import json
 import os

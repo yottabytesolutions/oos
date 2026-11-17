@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The lines of a file that hold code: lines with a token on them. Comments are no tokens; doc comments become
 //! `#[doc]` attributes and are left out too. A token over several lines (a string literal) covers each of them.
 

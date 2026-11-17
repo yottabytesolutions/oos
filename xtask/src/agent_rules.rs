@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Client entry files must load the shared repository rules.
 
 use crate::steps::{outcome, Outcome};

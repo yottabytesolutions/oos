@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Line coverage per crate with cargo-llvm-cov, against a floor that can only rise (`xtask/data/coverage.txt`, in
 //! tenths of a percent).
 

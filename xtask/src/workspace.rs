@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The workspace from `cargo metadata`: its members, their dependencies and their cargo targets.
 
 use crate::repo::CRATES;

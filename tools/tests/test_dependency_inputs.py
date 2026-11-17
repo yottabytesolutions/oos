@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Native dependency receipts and the real unit hook share one rebuild decision; no Docker."""
 import hashlib
 import os

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Explicit image-tier checks, run by the coordinator before unit rounds and releases.
 use super::Outcome;
 use std::path::Path;

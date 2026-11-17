@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Deterministic Git script discovery; compile without running Python or shell bodies."""
 import os
 from pathlib import Path

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 #[test]
 fn cli_accepts_only_doctor_profiles() {
     let args = ["doctor", "--gpu", "--sim", "--image"].map(str::to_string);

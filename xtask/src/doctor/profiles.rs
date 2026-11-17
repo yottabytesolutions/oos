@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Structured selected-profile results contain names only, never process output.
 use super::probes::Inventory;
 use serde::Deserialize;

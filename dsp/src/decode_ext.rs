@@ -385,20 +385,6 @@ fn modbus_adu(b: &[Byte], out: &mut Vec<Packet>) {
     let func = f.0;
     out.push(Packet::field("FUNC", f.1, f.2, func as u32, f.3));
     let d = &b[2..];
-    let words = |out: &mut Vec<Packet>, from: usize| {
-        let mut i = from;
-        while i + 1 < d.len() {
-            out.push(Packet::new(
-                Kind::Data,
-                d[i].1,
-                d[i + 1].2,
-                (d[i].0 as u32) << 8 | d[i + 1].0 as u32,
-                d[i].3 && d[i + 1].3,
-            ));
-            i += 2;
-        }
-        bytes_from(out, d, i);
-    };
     if func & 0x80 != 0 {
         if field_be(out, d, "EXC", 0, 1, true) {
             bytes_from(out, d, 1);
@@ -408,38 +394,45 @@ fn modbus_adu(b: &[Byte], out: &mut Vec<Packet>) {
     let n = d.len();
     let cnt = |i: usize| d.get(i).map_or(usize::MAX, |x| x.0 as usize);
     match func {
-        1..=4 if n == 4 => {
+        1..=4 | 15 | 16 if n == 4 => {
             field_be(out, d, "REG", 0, 2, true);
             field_be(out, d, "QTY", 2, 2, true);
         }
         1..=4 if n >= 1 && n == 1 + cnt(0) => {
             field_be(out, d, "CNT", 0, 1, true);
             if func >= 3 {
-                words(out, 1)
+                words_from(out, d, 1)
             } else {
                 bytes_from(out, d, 1)
             }
         }
         5 | 6 if n == 4 => {
             field_be(out, d, "REG", 0, 2, true);
-            words(out, 2);
-        }
-        15 | 16 if n == 4 => {
-            field_be(out, d, "REG", 0, 2, true);
-            field_be(out, d, "QTY", 2, 2, true);
+            words_from(out, d, 2);
         }
         15 | 16 if n >= 5 && n == 5 + cnt(4) => {
             field_be(out, d, "REG", 0, 2, true);
             field_be(out, d, "QTY", 2, 2, true);
             field_be(out, d, "CNT", 4, 1, true);
             if func == 16 {
-                words(out, 5)
+                words_from(out, d, 5)
             } else {
                 bytes_from(out, d, 5)
             }
         }
         _ => bytes_from(out, d, 0),
     }
+}
+
+/// 16-bit big-endian words from `from` on; an odd last byte as a byte.
+fn words_from(out: &mut Vec<Packet>, d: &[Byte], from: usize) {
+    let mut i = from;
+    while i + 1 < d.len() {
+        let value = (d[i].0 as u32) << 8 | d[i + 1].0 as u32;
+        out.push(Packet::new(Kind::Data, d[i].1, d[i + 1].2, value, d[i].3 && d[i + 1].3));
+        i += 2;
+    }
+    bytes_from(out, d, i);
 }
 
 fn bytes_from(out: &mut Vec<Packet>, d: &[Byte], from: usize) {

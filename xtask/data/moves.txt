@@ -1,2 +1,27 @@
 # Planned moves of this branch: <old key or file> -> <new key or file> (docs/development.md).
 # The integrator applies them with `cargo xtask ratchet --move` at merge, which empties this file.
+fn dsp/src/decode.rs can_frame -> fn dsp/src/decode/can.rs can_frame
+fn dsp/src/decode.rs i2c_at -> fn dsp/src/decode/serial.rs i2c_at
+fn dsp/src/decode.rs uart -> fn dsp/src/decode/serial.rs uart
+fn dsp/src/decode_ext.rs can_fd_bits -> fn dsp/src/decode/gen/vehicle.rs can_fd_bits
+fn dsp/src/decode_ext.rs can_fd_frame -> fn dsp/src/decode/can.rs can_fd_frame
+fn dsp/src/decode_ext.rs ds2482 -> fn dsp/src/decode/onewire.rs ds2482
+fn dsp/src/decode_ext.rs flexray -> fn dsp/src/decode/automotive.rs flexray
+fn dsp/src/decode_ext.rs modbus_adu -> fn dsp/src/decode/modbus.rs modbus_adu
+fn dsp/src/decode_ext2.rs i3c -> fn dsp/src/decode/i3c.rs i3c
+fn dsp/src/decode_ext2.rs I3c::bit -> fn dsp/src/decode/i3c.rs I3c::bit
+fn dsp/src/decode_ext2.rs jtag_walk -> fn dsp/src/decode/debug.rs jtag_walk
+fn dsp/src/decode_ext2.rs qspi -> fn dsp/src/decode/qspi.rs qspi
+fn dsp/src/decode_ext2.rs spdif -> fn dsp/src/decode/audio.rs spdif
+fn dsp/src/decode_ext2.rs usbpd_msg_name -> fn dsp/src/decode/usbpd.rs usbpd_msg_name
+fn dsp/src/decode_ext3.rs dcc -> fn dsp/src/decode/dcc.rs dcc
+fn dsp/src/decode_ext3.rs sent -> fn dsp/src/decode/automotive.rs sent
+fn dsp/src/decode_ext3.rs usb_bus -> fn dsp/src/decode/usb_bus.rs usb_bus
+fn dsp/src/decode_ext3.rs usb_packet -> fn dsp/src/decode/usb.rs usb_packet
+dsp dsp/src/decode.rs clippy::too_many_arguments -> dsp dsp/src/decode/serial.rs clippy::too_many_arguments
+dsp dsp/src/decode.rs clippy::too_many_lines -> dsp dsp/src/decode/usb.rs clippy::too_many_lines
+dsp dsp/src/decode_ext.rs clippy::too_many_lines -> dsp dsp/src/decode/can.rs clippy::too_many_lines
+dsp dsp/src/decode_ext.rs clippy::cognitive_complexity -> dsp dsp/src/decode/can.rs clippy::cognitive_complexity
+dsp dsp/src/decode_ext.rs clippy::too_many_arguments -> dsp dsp/src/decode/modbus.rs clippy::too_many_arguments
+dsp dsp/src/decode_ext2.rs clippy::too_many_lines -> dsp dsp/src/decode/automotive.rs clippy::too_many_lines
+dsp dsp/src/decode_ext3.rs clippy::too_many_lines -> dsp dsp/src/decode/dcc.rs clippy::too_many_lines

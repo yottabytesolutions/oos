@@ -26,9 +26,10 @@ Only `key`, `name`, `bit_time` and `decode` are required. The defaults fit a sin
 ## Steps
 
 1. **The decoder** goes into `oos-dsp` when it is more than a few lines: a function from `&[f32]` samples (volts, fixed
-   `dt`) to `Vec<oos_dsp::decode::Packet>`, and a generator for its tests in the same file (`decode_ext*.rs` show the
-   pattern: `pub mod gen` with a function that returns an `oos_dsp::sim::Logic`). Packet times are fractional sample
-   indices; use `Kind::Field("NAME")` for protocol-specific fields, `ok: false` for a failed check.
+   `dt`) to `Vec<oos_dsp::decode::Packet>` in the file of its protocol family in `dsp/src/decode/`, and a generator
+   for its tests in `decode::gen` (a function that returns an `oos_dsp::sim::Logic`). Packet times are fractional
+   sample indices; build packets with `Packet::new`, `Packet::field("NAME", ..)` for protocol-specific fields and
+   `Packet::tag` for events, `ok: false` for a failed check. CRCs come from the engine in `decode/crc.rs`.
 2. **The module**: copy `ui/src/protocols/example.rs` to `ui/src/protocols/<name>.rs`. The example uses every hook.
    Small modules such as `dmx512.rs` or `usbpd.rs` show how little a plain protocol needs; `dcc.rs` is a complete one
    with labels, a bipolar demo and a view that collects the state of a model railway over the records.

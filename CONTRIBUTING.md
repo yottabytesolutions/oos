@@ -44,8 +44,9 @@ walks through it. An analyser page registers the same way ([docs/analyser-module
 
 ## Quick start
 
-Development runs on Linux, the BSDs and macOS. On Windows, work in WSL 2 or a Linux virtual machine: the gate, the
-hooks and the scripts in `tools/` expect a POSIX host and run there as on any Linux computer
+Development runs on Linux and macOS. The BSDs are best effort: not guaranteed, but reported problems get fixed. On
+Windows, work in WSL 2 or a Linux virtual machine: the gate, the hooks and the scripts in `tools/` expect a POSIX host
+and run there as on any Linux computer
 ([ADR 0033](docs/adr/process/0033-development-platforms.md)). Project tooling written in Rust goes into `xtask`, small
 helpers into `tools/` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)).
 In WSL, clone into the Linux file system (for example `~/oos`), not under `/mnt/c`: builds there are much slower,

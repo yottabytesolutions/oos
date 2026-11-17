@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The hardware source's readings and requests through the acquisition thread's `board::Shared`: counter, DVM,
-//! mask and zone units, levels, slots, board status, and the segment recorder. Other sources answer None or nothing.
+//! mask and zone units, slots, board status, and the segment recorder. Other sources answer None or nothing.
 
 use super::{Record, SegView, Source};
 use crate::model::{Model, HDIV};
@@ -58,20 +58,6 @@ impl Source {
             let mut g = crate::perfguard::deep::ui_lock(shared);
             g.dvm_want = want;
             return Some(g.dvm);
-        }
-        None
-    }
-
-    /// Hardware source: asks for measure-unit levels (`Shared::levels_want`) and returns the latest answer; None for
-    /// other sources.
-    pub fn hw_levels(
-        &self,
-        want: Option<(u64, u64, u32)>,
-    ) -> Option<Option<(u64, [Option<crate::board::ChLevels>; 4])>> {
-        if let Source::Hw { shared, .. } = self {
-            let mut g = crate::perfguard::deep::ui_lock(shared);
-            g.levels_want = want;
-            return Some(g.levels);
         }
         None
     }

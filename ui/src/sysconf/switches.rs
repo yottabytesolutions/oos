@@ -32,9 +32,6 @@ pub struct Switches {
     pub perf: Performance,
     /// IPv6 (`net6::enabled_from`)
     pub ipv6: bool,
-    /// the auto set-up reads levels with the measure unit, only with `autoset.levels = unit`: on the unit (DHO924S,
-    /// 2026-11-15) it answered every request with the levels of an earlier signal
-    pub autoset_unit_levels: bool,
     /// the board's own switches
     pub board: crate::board::BoardSwitches,
     pub memory: crate::system::memory::Limits,
@@ -69,7 +66,6 @@ impl Switches {
     /// The switches from an environment lookup, the fork's system.conf text (`fork_text`), the settings file alone
     /// and the cores.
     pub fn parse(env: Env, conf: &str, settings: &str, cores: crate::placement::Cores) -> Self {
-        let levels = conf_value(text(env, "OOS_AUTOSET_LEVELS").as_deref(), conf, "autoset.levels");
         Switches {
             demo_loop: text(env, "OOS_DEMO_LOOP").and_then(|v| v.parse().ok()).unwrap_or(0),
             compress: crate::compress::enabled_from(flag(env, "OOS_COMPRESS"), conf),
@@ -82,7 +78,6 @@ impl Switches {
                 floors: crate::system::clocks::Config::parse(conf),
             },
             ipv6: crate::net6::enabled_from(flag(env, "OOS_IPV6"), conf),
-            autoset_unit_levels: levels.as_deref() == Some("unit"),
             board: crate::board::BoardSwitches::parse(env, conf, settings),
             memory: crate::system::memory::Limits::parse(conf),
         }
@@ -111,7 +106,7 @@ mod tests {
     fn empty_configuration_is_the_default() {
         let s = Switches::default();
         assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (0, false, Mode::Frames, Interp::Exact));
-        assert!(!s.perf.place() && !s.ipv6 && !s.autoset_unit_levels);
+        assert!(!s.perf.place() && !s.ipv6);
         assert_eq!(s.board, crate::board::BoardSwitches::parse(&|_| None, "", ""));
     }
 
@@ -124,11 +119,11 @@ mod tests {
             "OOS_FIXED_TIME" => Some("946684800".into()),
             _ => None,
         };
-        let conf = "net.ipv6 = on\nacq.interp = fast\nautoset.levels = records\n";
+        let conf = "net.ipv6 = on\nacq.interp = fast\n";
         let cores = crate::placement::Cores { big: 0b11_0000, little: 0b1111 };
         let s = Switches::parse(&env, conf, "", cores);
         assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (15, true, Mode::Batch, Interp::Fast));
-        assert!(s.perf.place() && s.ipv6 && !s.autoset_unit_levels);
+        assert!(s.perf.place() && s.ipv6);
         assert_eq!((s.cores, s.fixed_time), (cores, Some(946_684_800.0)));
     }
 

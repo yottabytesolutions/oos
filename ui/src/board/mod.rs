@@ -461,10 +461,6 @@ pub struct Shared {
     /// What triggered the last batch, from the SCU status (number of the reading; Some(true)
     /// the TPU fired, Some(false) only forced acquisitions (auto timeout), None nothing accepted)
     pub trig_fired: Option<(u64, Option<bool>)>,
-    /// signal levels from the FPGA's measure unit, for the auto set-up: wanted (request number, the settings stamp
-    /// they need, runs of 1.7 ms) and the answer (request number, per channel; None where the unit gave nothing usable)
-    pub levels_want: Option<(u64, u64, u32)>,
-    pub levels: Option<(u64, [Option<ChLevels>; 4])>,
     /// debug (`:DEBug:SLOTs?`): one raw run of the measure unit, wanted (request number) and the answer (request
     /// number, per slot 0..7: 12-bit min, 12-bit max, mean on the 16-bit scale; None when the unit gave nothing)
     pub slots_want: Option<u64>,
@@ -473,16 +469,6 @@ pub struct Shared {
 
 /// A raw measure-unit run for `:DEBug:SLOTs?`: request number, per slot 12-bit min, 12-bit max, 16-bit mean.
 pub type SlotDump = (u64, Option<[[f32; 3]; 8]>);
-
-/// Levels of one channel from the measure unit, in volts as the records show them.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct ChLevels {
-    pub lo: f32,
-    pub hi: f32,
-    pub mean: f32,
-    /// the ADC range was reached: the scale is too small
-    pub clipped: bool,
-}
 
 /// Where a hardware segmented recording is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

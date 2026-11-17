@@ -26,6 +26,9 @@ levels from the FPGA measurement unit and chose the wrong scale.
 was verified on the unit 2026-11-13; raw deep measurements were verified on the unit 2026-11-15. Both now always use
 the verified path.
 
+2026-11-17: removed the failed autoset measure-unit path and its key. Autoset always takes levels from records.
+The [temporary key inventory](../../system-conf-keys.md) lists the remaining removal candidates and their defaults.
+
 ## Consequences
 
 The default behaviour is what ran on a unit. Temporary switches allow verification without changing other owners'

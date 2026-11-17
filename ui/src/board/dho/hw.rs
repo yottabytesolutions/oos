@@ -558,29 +558,6 @@ fn hw_trigger(m: &Model, serial_hw: bool) -> Trig {
     }
 }
 
-/// `runs` runs of the measure unit, folded into the levels of the channels of `s` (`oos_hal::dho::levels`), in the
-/// volts of the records.
-#[cfg(target_os = "linux")]
-fn levels_measure(
-    bar: &mut oos_hal::dho::bus::Bar1,
-    s: &Settings,
-    gain: &[f64; 4],
-    runs: u32,
-) -> [Option<crate::board::ChLevels>; 4] {
-    use oos_hal::dho::levels;
-    let mut got = Vec::with_capacity(runs as usize);
-    for _ in 0..runs {
-        match levels::run(bar, &mut |us| std::thread::sleep(std::time::Duration::from_micros(us as u64))) {
-            Some(r) => got.push(r),
-            None => return [None; 4],
-        }
-    }
-    let vert = std::array::from_fn(|c| levels::Vert { scale: s.ch[c].scale, offset: s.ch[c].offset, gain: gain[c] });
-    levels::channel_levels(&got, s.mask, &vert).map(|l| {
-        l.map(|l| crate::board::ChLevels { lo: l.lo as f32, hi: l.hi as f32, mean: l.mean as f32, clipped: l.clipped })
-    })
-}
-
 /// The `dvm.hw` line of system.conf; off unless `on`.
 pub(super) fn dvm_hw_from(conf: &str) -> bool {
     crate::drawpipe::conf_value(None, conf, "dvm.hw").as_deref() == Some("on")
@@ -1617,8 +1594,6 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         let mut configs = 0u64;
         // the mask/zone unit's stall guard
         let mut guard = UnitGuard::default();
-        // the last request of the measure-unit levels answered
-        let mut levels_done: Option<u64> = None;
         // `cal.core_offset = tight`: ADC modes whose core offsets were matched this session, and tries per mode
         let mut trim_done = [false; 11];
         let mut trim_tries = [0u8; 11];
@@ -1843,7 +1818,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             applied_pair = Some(pair);
             crate::pacing::APPLIED.store(want_gen, std::sync::atomic::Ordering::Relaxed);
             let (s, p) = current.clone().unwrap();
-            // a hardware segment recording in the FPGA: the measure unit (DVM, levels, slots) and the ADC core offsets
+            // a hardware segment recording in the FPGA: the measure unit (DVM, slots) and the ADC core offsets
             // wait until it has ended. `disarm` does not stop it, and a write in between would change the segments
             // still to come (H4 of the 0.1.13 review)
             let seg_recording = segrun.as_ref().is_some_and(SegRun::recording);
@@ -1875,17 +1850,6 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 if step != DvmStep::Idle {
                     dvm_run = key.map(|k| (k, std::time::Instant::now()));
                 }
-            }
-            // levels for the auto set-up from the measure unit, once the settings they ask for are applied; the unit
-            // is set up while nothing is armed (configuration crosses into the ADC clock without synchronisers)
-            let lw = crate::perfguard::deep::acq_lock(&out).levels_want;
-            if let Some((id, _, runs)) =
-                lw.filter(|w| mode == Slow::Off && !seg_recording && stamp == w.1 && levels_done != Some(w.0))
-            {
-                disarm(&mut armed, &mut state, &mut bar, &mut c2h);
-                let v = levels_measure(&mut bar, &s, &state.gain, runs);
-                crate::perfguard::deep::acq_lock(&out).levels = Some((id, v));
-                levels_done = Some(id);
             }
             // the core trim of the current configuration, with nothing armed
             if let Some(t) =

@@ -1,8 +1,8 @@
 # Nightly and by hand: the whole default gate on main (without perf: ratio guards are load sensitive on shared
 # runners and stay a local gate), split into parallel jobs with `cargo xtask step <id>` so the wall time is the
 # slowest job: the release-profile tests with LTO, coverage and the base doctor run only here; cargo-deny with the
-# day's advisories; the image. A push to main runs no gate here: the merge queue already ran pr.yml on that tree,
-# and pr.yml's push run only warms the PR caches.
+# day's advisories; a FreeBSD cross check; the image. A push to main runs no gate here: the merge queue already ran
+# pr.yml on that tree, and pr.yml's push run only warms the PR caches.
 name: Main
 on:
   schedule:
@@ -88,11 +88,30 @@ jobs:
           RUSTUP_TOOLCHAIN: stable
         run: cargo deny --locked check
 
+  # Host tooling builds on the BSDs too (issue 10): a cross check of every crate for FreeBSD, no FreeBSD runner.
+  freebsd:
+    name: freebsd (cross check)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pinned toolchain (rust-toolchain.toml) and the FreeBSD standard library
+        run: |
+          rustup toolchain install
+          rustup target add x86_64-unknown-freebsd
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: nightly-freebsd
+      - name: cargo check --target x86_64-unknown-freebsd
+        run: cargo check --locked --workspace --all-targets --target x86_64-unknown-freebsd
+
   image:
     uses: ./.github/workflows/image.yml
 
   timings:
-    needs: [gate, deny, image]
+    needs: [gate, deny, freebsd, image]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

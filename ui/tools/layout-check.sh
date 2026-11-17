@@ -9,8 +9,9 @@
 # Each script runs with an empty storage directory and a fixed clock (OOS_FIXED_TIME), so two runs of the same source
 # give the same pictures. Run `record` before a change and `check` after it: a pure refactoring must report nothing.
 set -e
-root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname "$0")/../.." && pwd)
 . "$root/tools/output.sh"
+. "$root/tools/lib/portable.sh"
 case ${1:-check} in
     golden-check|golden-update)
         cd "$root"
@@ -60,7 +61,7 @@ for ts in normal large larger; do
 		}
 	done
 done
-(cd "$out" && find . -name '*.ppm' | sort | xargs shasum) > "$out.sums"
+(cd "$out" && find . -name '*.ppm' | sort | while read -r f; do echo "$(sha256 "$f")  $f"; done) > "$out.sums"
 n=$(wc -l < "$out.sums" | tr -d ' ')
 if [ "$mode" = record ]; then
 	echo "recorded $n pictures in $out"

@@ -56,6 +56,11 @@ pub fn visit_for_test(text: &str) -> visit::Found {
     visit::walk(text).expect("parses")
 }
 
+/// The production code lines of `src`: none for test code (ADR 0035).
+pub fn code_lines(src: &Source) -> u64 {
+    visit::walk_file(&src.file, &src.text, src.test).code_lines
+}
+
 /// Walks the sources of crate `krate` (`sources::of_dir`).
 pub fn measure(krate: &str, sources: &[Source]) -> Measured {
     let mut now = Ratchet::default();

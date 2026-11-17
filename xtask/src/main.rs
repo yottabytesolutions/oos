@@ -3,6 +3,7 @@
 //!   cargo xtask check [--fast] [--no-coverage] [--list] [--image]   the gate; --fast includes syntax, architecture and agent rules
 //!   cargo xtask step <id>...   only the named inventory steps, in inventory order (CI splits the gate into jobs)
 //!   cargo xtask ratchet [--coverage] [--move] [--init]   write the ratchet files back after an improvement
+//!   cargo xtask loc [--json] [--compare <git-ref>]   production code lines per crate (ADR 0035)
 
 mod agent_rules;
 mod arch;
@@ -14,6 +15,7 @@ mod coverage;
 mod doctor;
 mod fmt;
 mod inventory;
+mod loc;
 mod moves;
 mod ratchet;
 mod repo;
@@ -34,7 +36,7 @@ mod workspace;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: cargo xtask doctor [--gpu] [--sim] [--image] | cargo xtask check [--fast] [--no-coverage] [--list] [--image] | cargo xtask step <id>... | cargo xtask ratchet [--coverage] [--move] [--init]";
+    "usage: cargo xtask doctor [--gpu] [--sim] [--image] | cargo xtask check [--fast] [--no-coverage] [--list] [--image] | cargo xtask step <id>... | cargo xtask ratchet [--coverage] [--move] [--init] | cargo xtask loc [--json] [--compare <git-ref>]";
 
 /// The command line: a command and its flags.
 fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
@@ -43,6 +45,7 @@ fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
     let allowed: &[&str] = match cmd.as_str() {
         "step" if flags.is_empty() => return Err(USAGE.into()),
         "step" => return check::known(&flags).map(|()| (cmd.as_str(), flags)),
+        "loc" => return loc::Options::parse(&flags).map(|_| (cmd.as_str(), flags)),
         "doctor" => &["--gpu", "--sim", "--image"],
         "check" => &["--fast", "--no-coverage", "--list", "--image"],
         "ratchet" => &["--init", "--coverage", "--move"],
@@ -74,6 +77,7 @@ fn main() -> ExitCode {
             check::run(&root, o, flags.contains(&"--image"), flags.contains(&"--list"))
         }
         "step" => check::steps(&root, &flags),
+        "loc" => loc::run(&root, &flags),
         _ => tighten::run(
             &root,
             tighten::Options {
@@ -109,5 +113,7 @@ mod cli {
         assert_eq!(parse(&a(&["step", "clippy", "fmt"])).unwrap(), ("step", vec!["clippy", "fmt"]));
         assert!(parse(&a(&["step"])).is_err());
         assert!(parse(&a(&["step", "nope"])).is_err());
+        assert_eq!(parse(&a(&["loc", "--compare", "v0.2.0"])).unwrap(), ("loc", vec!["--compare", "v0.2.0"]));
+        assert!(parse(&a(&["loc", "--compare"])).is_err() && parse(&a(&["loc", "--fast"])).is_err());
     }
 }

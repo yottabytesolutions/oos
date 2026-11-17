@@ -1,6 +1,7 @@
 //! The source files of a crate: every module reachable from its cargo targets, with its module path and whether it
 //! is test code (a test target, or below a `#[cfg(test)]` module). `#[path]` on a module fails: the gate would have
-//! to follow files anywhere.
+//! to follow files anywhere. Only `cargo xtask loc` follows a plain `#[path = ".."]`, to measure old releases; it
+//! takes the default file where `cfg_attr` sets a path.
 
 use crate::workspace::{Metadata, Package};
 use std::path::{Path, PathBuf};
@@ -62,11 +63,21 @@ fn path_attr(attrs: &[syn::Attribute]) -> bool {
     crate::attrs::any(attrs, &["path"])
 }
 
-/// A `mod x;` found in a file: the inline modules around it, its name, and whether it is test code.
+/// The file of a plain `#[path = "file"]`.
+fn path_value(attrs: &[syn::Attribute]) -> Option<String> {
+    attrs.iter().filter(|a| a.path().is_ident("path")).find_map(|a| match &a.meta.require_name_value().ok()?.value {
+        syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => Some(s.value()),
+        _ => None,
+    })
+}
+
+/// A `mod x;` found in a file: the inline modules around it, its name, whether it is test code, and its
+/// `#[path]` when followed.
 struct Decl {
     inline: Vec<String>,
     name: String,
     test: bool,
+    path: Option<String>,
 }
 
 /// Every `mod` in a file, in function bodies and impls too: the `mod x;` declarations to follow, or why the file is
@@ -78,11 +89,14 @@ struct Decls {
     depth: usize,
     out: Vec<Decl>,
     err: Option<String>,
+    /// follow a plain `#[path]` and ignore one in `cfg_attr` instead of refusing them
+    follow: bool,
 }
 
 impl<'a> Visit<'a> for Decls {
     fn visit_item_mod(&mut self, m: &'a ItemMod) {
-        if path_attr(&m.attrs) {
+        let path = if self.follow { path_value(&m.attrs) } else { None };
+        if path_attr(&m.attrs) && !self.follow {
             self.err.get_or_insert(format!(
                 "mod {}: #[path] is not allowed (the gate follows the default module files)",
                 m.ident
@@ -93,7 +107,7 @@ impl<'a> Visit<'a> for Decls {
             None if self.depth > 0 => {
                 self.err.get_or_insert(format!("mod {}; inside a function body", m.ident));
             }
-            None => self.out.push(Decl { inline: self.inline.clone(), name: m.ident.unraw().to_string(), test }),
+            None => self.out.push(Decl { inline: self.inline.clone(), name: m.ident.unraw().to_string(), test, path }),
             Some(_) => {
                 self.inline.push(m.ident.unraw().to_string());
                 self.test.push(test);
@@ -112,8 +126,8 @@ impl<'a> Visit<'a> for Decls {
 }
 
 /// The `mod x;` declarations of `file`; `test` is the file's own context.
-fn decls(file: &syn::File, test: bool) -> Result<Vec<Decl>, String> {
-    let mut d = Decls { test: vec![test], ..Decls::default() };
+fn decls(file: &syn::File, test: bool, follow: bool) -> Result<Vec<Decl>, String> {
+    let mut d = Decls { test: vec![test], follow, ..Decls::default() };
     d.visit_file(file);
     match d.err {
         Some(e) => Err(e),
@@ -135,7 +149,7 @@ fn child_dir(path: &Path, is_root: bool) -> PathBuf {
 
 /// Walks the module graph from one target root. A file reached as test code and as production code is production
 /// code: its children are walked again in that context.
-fn walk(root: &Path, start: &Path, test: bool, out: &mut Vec<Source>) -> Result<(), String> {
+fn walk(root: &Path, start: &Path, test: bool, follow: bool, out: &mut Vec<Source>) -> Result<(), String> {
     let mut todo = vec![(start.to_path_buf(), String::new(), test, true)];
     while let Some((path, module, test, is_root)) = todo.pop() {
         let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
@@ -149,12 +163,15 @@ fn walk(root: &Path, start: &Path, test: bool, out: &mut Vec<Source>) -> Result<
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", rel, e))?;
         let file = syn::parse_file(&text).map_err(|e| format!("{}: line {}: {}", rel, e.span().start().line, e))?;
         let dir = child_dir(&path, is_root);
-        for d in decls(&file, test).map_err(|e| format!("{}: {}", rel, e))? {
+        for d in decls(&file, test, follow).map_err(|e| format!("{}: {}", rel, e))? {
             let base = d.inline.iter().fold(dir.clone(), |p, s| p.join(s));
             let (flat, nested) = (base.join(format!("{}.rs", d.name)), base.join(&d.name).join("mod.rs"));
-            let child = match (flat.exists(), nested.exists()) {
-                (true, _) => flat,
-                (false, true) => nested,
+            let child = match (&d.path, flat.exists(), nested.exists()) {
+                // relative to the file's own directory, or to the inline modules' directory
+                (Some(p), ..) if d.inline.is_empty() => path.parent().unwrap_or(root).join(p),
+                (Some(p), ..) => base.join(p),
+                (None, true, _) => flat,
+                (None, false, true) => nested,
                 _ => return Err(format!("{}: mod {}: no {} or {}", rel, d.name, flat.display(), nested.display())),
             };
             let segs: Vec<&str> = [module.as_str()]
@@ -171,15 +188,15 @@ fn walk(root: &Path, start: &Path, test: bool, out: &mut Vec<Source>) -> Result<
 }
 
 /// Every source file of the package, from all its targets. A file reached from both a test target and the library
-/// counts as library code.
-pub fn of_package(meta: &Metadata, p: &Package) -> Result<Vec<Source>, String> {
+/// counts as library code. `follow`: follow a plain `#[path]` instead of failing on it.
+pub fn of_package(meta: &Metadata, p: &Package, follow: bool) -> Result<Vec<Source>, String> {
     let root = Path::new(&meta.workspace_root);
     let mut targets: Vec<&crate::workspace::Target> = p.targets.iter().collect();
     // library and binaries first, so a shared file is library code
     targets.sort_by_key(|t| t.is_test());
     let mut out = Vec::new();
     for t in targets {
-        walk(root, Path::new(&t.src_path), t.is_test(), &mut out)?;
+        walk(root, Path::new(&t.src_path), t.is_test(), follow, &mut out)?;
     }
     Ok(out)
 }
@@ -187,7 +204,7 @@ pub fn of_package(meta: &Metadata, p: &Package) -> Result<Vec<Source>, String> {
 /// The sources of the member in directory `dir`.
 pub fn of_dir(meta: &Metadata, dir: &str) -> Result<Vec<Source>, String> {
     let p = meta.member(dir).ok_or_else(|| format!("{}: no workspace member", dir))?;
-    of_package(meta, p)
+    of_package(meta, p, false)
 }
 
 #[cfg(test)]
@@ -283,6 +300,20 @@ mod tests {
     }
 
     #[test]
+    fn loc_follows_a_plain_path_attribute() {
+        let root = fixture("follow");
+        let src = root.join("p").join("src");
+        std::fs::write(src.join("lib.rs"), "#[path = \"other.rs\"]\nmod a;\n").expect("write");
+        std::fs::write(src.join("a.rs"), "#[path = \"x.rs\"]\nmod b;\n").expect("write");
+        std::fs::write(src.join("other.rs"), "fn o() {}\n").expect("write");
+        let m = meta(&root);
+        let s = of_package(&m, m.member("p").expect("member"), true).expect("sources");
+        std::fs::remove_dir_all(&root).expect("clean up");
+        let rels: Vec<&str> = s.iter().filter(|x| !x.test).map(|x| x.rel.as_str()).collect();
+        assert_eq!(rels, ["p/src/lib.rs", "p/src/other.rs"], "{:?}", s);
+    }
+
+    #[test]
     fn a_path_attribute_fails() {
         let root = fixture("path");
         std::fs::write(root.join("p").join("src").join("lib.rs"), "#[path = \"../x.rs\"]\nmod a;\n").expect("write");
@@ -299,7 +330,7 @@ mod compound_test_cfg {
     fn test_context_follows_external_compound_cfg_modules() {
         let file =
             syn::parse_file("#[cfg(all(test, unix))] mod only_tests; #[cfg(any(test, unix))] mod production;").unwrap();
-        let found = decls(&file, false).unwrap();
+        let found = decls(&file, false, false).unwrap();
         assert!(found[0].test);
         assert!(!found[1].test);
     }

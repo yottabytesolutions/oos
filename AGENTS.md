@@ -33,6 +33,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Report the gate's result as printed, including failed steps. Read the command's exit code, not its tail.
   Never pipe the gate or `tools/perf-guard.sh` through `tail` or `grep` inside an `&&` chain. That hides failures.
 - Take commit hashes from `git log -1`. Never quote a hash from memory.
+- Read [the lessons log](docs/process/lessons.md) before you start. Add an entry when you fix a mistake.
 - Push your own feature branch early and often. Never push `main`. Never change a remote or its push URL.
 - Land your own pull request through the merge queue once the required checks are green and Codex has no
   unresolved findings: enable auto-merge (`gh pr merge --auto --rebase`). Paths in CODEOWNERS also need the

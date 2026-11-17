@@ -1736,7 +1736,7 @@ fn parse_wave_csv(text: &str, name: &str) -> Result<Vec<WaveTrace>, String> {
 /// Version 001 uses an 88-byte reference block, 156-byte explicit dimensions,
 /// and 132-byte implicit dimensions. Later versions use 90/160/136 bytes.
 /// See Tektronix Reference Waveform File Format (077-0220-10/11).
-fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
+pub fn parse_wfm(b: &[u8]) -> Result<WaveTrace, String> {
     if b.len() < 78 {
         return Err("truncated WFM".into());
     }
@@ -1875,7 +1875,7 @@ fn looks_isf(b: &[u8]) -> bool {
 }
 
 /// Preamble `:WFMPRE:` and a `:CURVE` block. `Y = (code - YOFF) * YMULT + YZERO`, `t = XZERO + (i - PT_OFF) * XINCR`.
-fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
+pub fn parse_isf(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     let s = if b.starts_with(&[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };
     let curve = b[s..].windows(6).position(|w| w == b":CURVE").map(|p| s + p).ok_or("that file holds no waveform")?;
     let mut kv = std::collections::HashMap::<String, String>::new();
@@ -2140,7 +2140,7 @@ fn looks_ag(b: &[u8]) -> bool {
 }
 
 /// Cookie `AG`, then one header per waveform and a buffer of float32 samples. Little endian.
-fn parse_ag(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
+pub fn parse_ag(b: &[u8]) -> Result<Vec<WaveTrace>, String> {
     if !looks_ag(b) {
         return Err("that file is not a waveform".into());
     }

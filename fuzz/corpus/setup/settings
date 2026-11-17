@@ -1,0 +1,5 @@
+ch2.on = true
+aux_out = PassFail
+quick = Autoset
+dec_proto = Usb
+dec_uspeed = 1

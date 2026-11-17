@@ -7,11 +7,13 @@ name: Main
 on:
   schedule:
     - cron: '17 2 * * *'
+  pull_request:
+    paths: ['fuzz/**']
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: main-${{ github.event_name }}
+  group: main-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 env:
   CARGO_TERM_COLOR: always
@@ -19,6 +21,7 @@ env:
   OOS_GATE_BASE: origin/main
 jobs:
   gate:
+    if: github.event_name != 'pull_request'
     name: gate (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -83,6 +86,7 @@ jobs:
           cargo xtask step "${ids[@]}"
 
   deny:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -99,6 +103,7 @@ jobs:
 
   # Host tooling builds on the BSDs too (issue 10): a cross check of every crate for FreeBSD, no FreeBSD runner.
   freebsd:
+    if: github.event_name != 'pull_request'
     name: freebsd (cross check)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -117,11 +122,12 @@ jobs:
         run: cargo check --locked --workspace --all-targets --target x86_64-unknown-freebsd
 
   image:
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/image.yml
 
   timings:
     needs: [gate, deny, freebsd, image]
-    if: always()
+    if: always() && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -139,3 +145,41 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           ATTEMPT: ${{ github.run_attempt }}
         run: python3 -I tools/ci/run_summary.py --repo "$REPO" --run "$RUN_ID" --attempt "$ATTEMPT" --exclude timings
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pinned nightly (fuzz/rust-toolchain.toml)
+        working-directory: fuzz
+        run: rustup toolchain install
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        with:
+          tool: cargo-fuzz@0.13.1
+      - name: Locked fuzz dependencies
+        working-directory: fuzz
+        run: cargo fetch --locked
+      - name: Fuzz every parser for 60 seconds
+        working-directory: fuzz
+        shell: bash
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: |
+          failed=0
+          targets=$(cargo fuzz list)
+          for target in $targets; do
+            cargo fuzz run "$target" -- -max_total_time=60 || failed=1
+          done
+          exit "$failed"
+      - name: Preserve failing fuzz inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

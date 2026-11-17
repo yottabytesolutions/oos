@@ -14,7 +14,7 @@
 463 file ui/src/measures/jitter.rs
 544 file ui/src/measures/power.rs
 519 file ui/src/measures/standard.rs
-4856 file ui/src/scpi.rs
+4841 file ui/src/scpi.rs
 3060 file ui/src/store.rs
 11441 file ui/src/ui.rs
 1752 file ui/src/ui/analysis.rs

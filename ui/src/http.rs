@@ -615,7 +615,7 @@ fn answer_now(s: &TcpStream, status: &str, msg: &str) {
 
 /// The parts of a request head the reader needs (names without case).
 #[derive(Debug, PartialEq)]
-struct Head {
+pub struct Head {
     post: bool,
     route: String,
     /// Content-Length; None without one
@@ -624,7 +624,7 @@ struct Head {
     expect_continue: bool,
 }
 
-fn parse_head(text: &str) -> Head {
+pub fn parse_head(text: &str) -> Head {
     let mut words = text.split_whitespace();
     let post = words.next() == Some("POST");
     let path = words.next().unwrap_or("/");
@@ -636,7 +636,7 @@ fn parse_head(text: &str) -> Head {
 }
 
 /// Why a request is answered before its body is read: the status line and text, or None to read it.
-fn refuse_early(h: &Head, text: &str, peer_ok: bool) -> Option<(&'static str, &'static str)> {
+pub fn refuse_early(h: &Head, text: &str, peer_ok: bool) -> Option<(&'static str, &'static str)> {
     let limit = match (h.post, h.route.as_str()) {
         (true, "/update") => MAX_UPDATE,
         (true, "/waveform") => MAX_WAVEFORM,

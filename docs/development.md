@@ -218,6 +218,16 @@ it does not infer time through arbitrary helper APIs or every possible macro DSL
 boundaries too. Real duration budgets run only in ignored release `perf_guard` cases with `OOS_PERF_TESTS=1`.
 Task 0088 records the audit and validation limits.
 
+## Parser fuzzing
+
+Install `cargo install cargo-fuzz --version 0.13.1 --locked`, then run from `fuzz/`:
+`rustup toolchain install` (the pinned nightly) and
+`cargo fuzz run scpi -- -max_total_time=60`. Replace `scpi` with `isf`, `wfm`, `ag`,
+`setup`, `update`, `http` or `mdns`; `cargo fuzz list` lists them all.
+The excluded fuzz crate uses small synthetic fixture seeds and in-memory parser
+entry points. A crash is saved in `fuzz/artifacts/<target>/`; reproduce it with
+`cargo fuzz run <target> artifacts/<target>/<crash-file>` and add a regression test.
+
 ## CI
 
 GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask step <id>...` (ADR 0031):

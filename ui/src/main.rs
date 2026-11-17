@@ -38,13 +38,13 @@ mod gfx;
 mod gpu;
 mod hislip;
 mod hostname;
-mod http;
+pub mod http;
 #[cfg(target_os = "linux")]
 mod input;
 mod json;
 mod layout;
 mod math;
-mod mdns;
+pub mod mdns;
 mod measures;
 mod model;
 mod net;
@@ -55,11 +55,11 @@ mod perfguard;
 mod placement;
 mod protocols;
 mod remote;
-mod scpi;
+pub mod scpi;
 mod sntp;
 mod sparse;
 mod ssh;
-mod store;
+pub mod store;
 mod sysconf;
 mod system;
 mod trig;
@@ -71,9 +71,9 @@ mod vxi11;
 mod wave;
 mod zone;
 
-use gfx::Canvas;
-use wave::Source;
-pub use {perfguard::StageTiming, ui::Ui};
+pub use gfx::Canvas;
+pub use wave::Source;
+pub use {perfguard::StageTiming, ui::host::Host, ui::Ui};
 
 fn arg(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())

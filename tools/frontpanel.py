@@ -4,15 +4,16 @@
 """frontpanel.py: talk to the DHO800/DHO900 front-panel MCU over UART0 (protocol in docs/protocols/frontpanel.md).
 
 Run it ON THE SCOPE under OOS (Python 3, no extra modules). Do not run it under stock Android: there the Rigol
-Launcher reads /dev/ttyS0 and both readers would lose bytes.
+Launcher reads /dev/ttyS0 and both readers would lose bytes. On a host with a USB serial adapter on UART0, set
+FRONTPANEL_DEV; Linux, macOS and the BSDs can set 1.5 Mbaud, each in its own way (speed_plan).
 
     frontpanel.py dump                 print every frame (cmd, data) while you press keys and turn knobs
     frontpanel.py leds 0x0 0x0 0x0     set the LED bitmasks (LEDs 0-7, 8-15, 16-18)
     frontpanel.py selftest             CRC and framing self test (runs anywhere)
 """
-import os, sys, termios, tty
+import fcntl, os, platform, struct, sys, termios, tty
 
-DEV = "/dev/ttyS0"
+DEV = os.environ.get("FRONTPANEL_DEV", "/dev/ttyS0")
 
 # Key code = the frame's DATA byte (the stock reader ignores cmd). Release = data 0x00.
 # Source: DHO900 user guide 4.4.1; "?" = not yet confirmed on the unit.
@@ -32,6 +33,22 @@ KEYS = {
     0xf1: "CH1 overload", 0xf2: "CH2 overload", 0xf3: "CH3 overload", 0xf4: "CH4 overload",
 }
 BAUD = 1500000
+# macOS: _IOW('T', 2, speed_t) from <IOKit/serial/ioss.h>, speed_t is an unsigned long (8 bytes). Sets any rate.
+IOSSIOSPEED = 0x80085402
+# Their speed_t is the rate in bits per second, so termios takes 1500000 as it is (the driver may still refuse it).
+BSDS = ("FreeBSD", "OpenBSD", "NetBSD", "DragonFly")
+
+
+def speed_plan(system, tio):
+    """How this system sets BAUD: ("termios", speed) through tcsetattr, or ("ioctl", request) after it."""
+    code = getattr(tio, "B1500000", None)
+    if code is not None:
+        return "termios", code
+    if system == "Darwin":
+        return "ioctl", IOSSIOSPEED
+    if system in BSDS:
+        return "termios", BAUD
+    raise SystemExit(f"frontpanel.py: no known way to set {BAUD} baud on {system}")
 
 
 def crc7(cmd, data):
@@ -52,10 +69,12 @@ def open_port():
     fd = os.open(DEV, os.O_RDWR | os.O_NOCTTY)
     tty.setraw(fd)
     attrs = termios.tcgetattr(fd)
-    speed = getattr(termios, "B1500000", 0o010012)
-    attrs[4] = attrs[5] = speed
+    how, value = speed_plan(platform.system(), termios)
+    attrs[4] = attrs[5] = value if how == "termios" else termios.B9600
     attrs[2] = (attrs[2] & ~(termios.PARENB | termios.CSTOPB | termios.CSIZE | termios.CRTSCTS)) | termios.CS8 | termios.CREAD | termios.CLOCAL
     termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    if how == "ioctl":
+        fcntl.ioctl(fd, value, struct.pack("L", BAUD))
     return fd
 
 

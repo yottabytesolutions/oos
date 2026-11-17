@@ -1,6 +1,6 @@
 # ADR 0021: What runs on the scope depends on `libc` only; a desktop build may use its platform's crates
 
-- Status: accepted
+- Status: accepted, amended 2026-11-17 (host-only dev tooling, see ADR 0013)
 - Date: 2026-11-15
 - Category: process
 
@@ -50,6 +50,12 @@ was not written for it. They do not need the desktop build to be bare.
 - A new platform crate for a desktop build is a pull request that says why, and a line in `fork/deps.md`. A crate that
   would be compiled into the scope's build is still ADR 0013's case and needs a strong reason.
 - Worth a second look if a desktop build for another platform needs more than its window and network API.
+
+## Amendment 2026-11-17
+
+Besides a desktop build, host-only development tools (the `xtask` gate) may use the crates named in the 2026-11-17
+amendment of ADR 0013. The check of the last bullet above is the gate's `architecture` step (ADR 0031), no longer
+`tools/check.sh target`.
 
 ## References
 

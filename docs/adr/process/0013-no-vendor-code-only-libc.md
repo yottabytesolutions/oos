@@ -1,6 +1,7 @@
 # ADR 0013: No vendor code or data in the tree; `libc` is the only dependency
 
 - Status: accepted, amended by ADR 0021 (`libc` only holds for what runs on the scope, `oos-hal` and `oos-dsp`)
+  and by its own amendment of 2026-11-17 (host-only dev tooling)
 - Date: 2026-11-07 (first public version; the rule from the start)
 - Category: process
 
@@ -25,6 +26,14 @@ network of packages.
 - More code of our own to test: cryptography against the RFC and FIPS vectors, the renderer against pictures.
 - What needs a large library runs outside that binary: the GPU helper with Mesa is a separate process (ADR 0003).
 - Contributions that copy from other firmware cannot be merged, however useful.
+
+## Amendment 2026-11-17: host-only dev tooling
+
+After the hard fork (ADR 0030) the gate is the `xtask` crate (ADR 0031). It parses Rust sources and reads cargo's
+JSON output, and depends on `syn`, `quote`, `proc-macro2`, `serde` and `serde_json` for that. These crates are
+allowed in `xtask` and in other host-only development tools: they never build into anything that runs on the scope,
+and `Cargo.lock` pins them. The gate's `architecture` step keeps the scope crates on `libc` and the tree
+(ADR 0021). The vendor rules of this record are unchanged.
 
 ## References
 

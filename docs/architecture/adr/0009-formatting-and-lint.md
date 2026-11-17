@@ -1,6 +1,7 @@
 # 0009: Formatting and lint are enforced
 
-Status: accepted. 2026-11-14.
+Status: accepted. 2026-11-14. Amended 2026-11-17: enforcement and the ratchet model are
+[ADR 0032](../../adr/process/0032-lints-and-limits-ratchet-down-only.md).
 
 ## Context
 
@@ -20,5 +21,7 @@ No formatter or linter is enforced. Style differs by file and author, and review
 
 ## Consequences
 
-- The branch diverges from upstream in formatting. Accepted in [Why](../README.md#why).
-- Phase 1 owns the exact lint set. This ADR is updated when it changes.
+- The tree diverges from upstream in formatting. Since the hard fork
+  ([ADR 0030](../../adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)) that has no cost.
+- The exact lint set changes only through a record. The planned strict set comes with its own record that amends
+  ADR 0032 (one authorised baseline commit).

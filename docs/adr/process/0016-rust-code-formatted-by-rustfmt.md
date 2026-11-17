@@ -1,6 +1,6 @@
 # ADR 0016: Rust code is formatted by rustfmt with the tree's settings, and CI checks it
 
-- Status: proposed (accepted when the one formatting commit is in main, see Consequences)
+- Status: accepted (2026-11-17, for this tree; see the amendment)
 - Date: 2026-11-15
 - Category: process
 
@@ -69,6 +69,12 @@ says why. Nothing else is skipped.
 - Everyone, person or agent, runs `cargo fmt` before a commit. `tools/check.sh fmt` does it for all crates (ADR 0020).
 - Worth a second look when rustfmt's stable options change, or when the 120 columns read badly on the screens people
   review on.
+
+## Amendment 2026-11-17: accepted for this tree
+
+This tree is formatted: one format commit per crate with nothing else in it (architecture/0009). The gate's `fmt` step
+runs `cargo fmt --check` per crate (ADR 0031). The rollout steps above that name upstream's `main`, its open pull
+requests and `tools/check.sh fmt` do not apply after the hard fork (ADR 0030).
 
 ## References
 

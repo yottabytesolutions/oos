@@ -1,6 +1,6 @@
 # ADR 0019: One style for files, documents and commits, written down and checked where a tool can
 
-- Status: accepted
+- Status: accepted, amended 2026-11-17 (commit style)
 - Date: 2026-11-15
 - Category: process
 
@@ -72,6 +72,19 @@ What a tool can check is checked; the rest is written here once, so a review can
 - `LICENSE` is the GPL text as published and is left as it is, trailing spaces included.
 - The rules for commits are not checked by a tool. If they keep being missed, a commit-message check in CI is the next
   step, and a change of this record.
+
+## Amendment 2026-11-17: commit style of this tree
+
+After the hard fork (ADR 0030) the commit rules above change; the file and document rules stay.
+
+- Subject in the imperative mood, under 72 characters, without a full stop and without an area prefix
+  (`Keep the trigger level when the probe ratio changes`). A release commit is the bare version.
+- The body says why. How it was tested goes into the body when it is not obvious from the tests in the change
+  (ADR 0015).
+- One topic per commit; formatting and moves in commits of their own.
+- A cherry-picked upstream change keeps its author and carries `Cherry-picked-from: upstream <hash>` (ADR 0030).
+  A squashed pull request keeps its author and sign-off (ADR 0026).
+- The `CHANGELOG.md` and SPDX rules are unchanged.
 
 ## References
 

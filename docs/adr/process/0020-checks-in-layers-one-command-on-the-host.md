@@ -1,6 +1,6 @@
 # ADR 0020: The checks come in layers; one command runs every host layer, the same as CI
 
-- Status: accepted
+- Status: superseded by ADR 0031 (2026-11-17)
 - Date: 2026-11-15
 - Category: process
 

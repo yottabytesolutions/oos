@@ -1,6 +1,6 @@
 # ADR 0026: A contribution is signed off, holds no vendor material and enters main as reviewed commits
 
-- Status: accepted
+- Status: accepted, amended 2026-11-17 (how a contribution enters main)
 - Date: 2026-11-16
 - Category: process
 
@@ -48,6 +48,24 @@ it is known. Both were written for the files of the tree. Within one week pull r
   the fork it came from; the pull request links it.
 - The maintainer reads the commits and the texts of a pull request before taking it, not only the final diff.
 - The pull request and issue templates state the rules, so nobody has to find them first.
+
+## Amendment 2026-11-17: contributions to this fork
+
+After the hard fork (ADR 0030) `main` of this tree is the trunk, and it welcomes outside contributions, by people and
+by agents, under one structure:
+
+- A contribution arrives as a pull request from a feature branch against `main`. One topic per pull request.
+- The gate (`cargo xtask check`, ADR 0031) passes in CI before a merge. CI runs on GitHub-hosted runners and is set up
+  in a later phase; until then the maintainer runs the full gate locally on the candidate.
+- A pull request enters `main` squash-merged: one commit made from the reviewed state, with the author and the
+  sign-off kept, in the commit style of ADR 0019 as amended.
+- The sign-off (DCO) stays: every commit of a pull request carries `Signed-off-by:`. The maintainers' own integration
+  commits made before the pull request flow is in place are not signed off.
+- The vendor-material and other-project rules above are unchanged.
+- Branch names, release tags, pull request templates and required checks follow in a later phase and amend this
+  record.
+
+The text above that speaks of "pull requests from forks" entering upstream's main is replaced by this section.
 
 ## References
 

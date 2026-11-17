@@ -1,6 +1,6 @@
 # ADR 0018: One `AGENTS.md` holds the project's instructions for coding agents; it points to the rules, it does not repeat them
 
-- Status: accepted
+- Status: accepted, amended 2026-11-17 (length limit, paths, upstream section)
 - Date: 2026-11-15
 - Category: process
 
@@ -52,6 +52,15 @@ the first change.
 - The commands in `AGENTS.md` must work as written; `tools/check.sh` (ADR 0020) is the one an agent runs before it
   says it is done.
 - Worth a second look when the tools agree on another common file, or when `AGENTS.md` passes 150 lines.
+
+## Amendment 2026-11-17
+
+- `AGENTS.md` stays at most 200 lines. The tree's own rules (gate, ratchets, task files, the scope lease) need more
+  room than 150 lines, and they are still pointers, not content.
+- The architecture document is [docs/architecture/README.md](../../architecture/README.md); `architecture.md` moved
+  there.
+- The command an agent runs before it says it is done is `cargo xtask check` (ADR 0031), not `tools/check.sh`.
+- After the hard fork (ADR 0030) `AGENTS.md` has no section for work sent upstream.
 
 ## References
 

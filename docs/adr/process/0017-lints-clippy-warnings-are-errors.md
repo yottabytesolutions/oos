@@ -1,6 +1,6 @@
 # ADR 0017: Clippy runs in CI; its warnings are errors, with a short list of allowed lints that says why
 
-- Status: proposed (accepted when CI runs Clippy with `-D warnings`, see Consequences)
+- Status: superseded by ADR 0032 (2026-11-17)
 - Date: 2026-11-15
 - Category: process
 

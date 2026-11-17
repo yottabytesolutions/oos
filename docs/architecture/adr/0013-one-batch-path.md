@@ -33,7 +33,8 @@ anyway, and two composition paths are what the overhaul removes.
   per step avoids it.
 - The M9 gate has pass/fail perf-guard ratios against today's `draw_frame`, on the host and in frames mode: a
   one-frame unit with full `BatchMeta`, and a 48-frame step.
-- Merging back to upstream gets harder in this area. Accepted in [Why](../README.md#why).
+- Merging back to upstream gets harder in this area. Accepted in [Why](../README.md#why). Since the hard fork
+  ([ADR 0030](../../adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)) there is no merge-back.
 
 ## Amendment (2026-11-16, owner decision in task 0066)
 

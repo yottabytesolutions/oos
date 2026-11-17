@@ -26,7 +26,9 @@ the overhaul is in progress; fixes the unit needs go through the hotfix lane.
 
 Keep the crate split, the Board port and pure DSP and HAL code. Give settings and the picture one owner each.
 Use small stages, host tests and enforced boundaries to keep the UI responsive and safe to extend.
-Formatting and restructuring increase upstream divergence. Future upstream PRs are self-contained proposals.
+Formatting and restructuring diverge from upstream. Since the hard fork
+([ADR 0030](../adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)) that is no constraint: upstream changes enter
+only by cherry-pick.
 Acceptance is defined in [the drawing design](drawing.md#acceptance-criteria-unitlab).
 The [task tracker](../tasks/README.md) carries guardrails, architecture review and migration work.
 

@@ -26,12 +26,12 @@ pub(super) struct Guard {
     next: Instant,
 }
 impl Guard {
-    pub(super) fn discover(port: &dyn Port) -> Self {
+    pub(super) fn discover(port: &dyn Port, now: Instant) -> Self {
         let zones = Self::zones(port).unwrap_or_else(|error| {
             eprintln!("oos-ui: clock_thermal unavailable={error}; floors disabled");
             Vec::new()
         });
-        Self { zones, blocked: false, next: Instant::now() }
+        Self { zones, blocked: false, next: now }
     }
 
     fn zones(port: &dyn Port) -> io::Result<Vec<Zone>> {
@@ -67,11 +67,10 @@ impl Guard {
         Ok(zones)
     }
 
-    pub(super) fn allowed(&mut self, port: &dyn Port) -> bool {
+    pub(super) fn allowed(&mut self, port: &dyn Port, now: Instant) -> bool {
         if self.zones.is_empty() {
             return false;
         }
-        let now = Instant::now();
         if now < self.next {
             return !self.blocked;
         }

@@ -48,11 +48,13 @@ fn failed_restore_retries_once_per_second_and_logs_only_failure_then_success() {
 fn restore_retries(tree: &Tree) {
     let failures = Arc::new(Mutex::new(0));
     let port = Failing { inner: linux::Sysfs(tree.0.clone()), failures: failures.clone() };
-    let c = Handle::fixture(Controller::new(
+    let clock = ManualClock::new();
+    let c = Handle::fixture(Controller::with_clock(
         Box::new(port),
         Config::parse("perf.gpu_floor = off"),
         None,
         tree.0.join("saved"),
+        clock.source(),
     ));
     c.update(true);
     *oos_hal::sync::lock(&failures) = 3;
@@ -64,7 +66,10 @@ fn restore_retries(tree: &Tree) {
     }
     assert_eq!(*oos_hal::sync::lock(&failures), 2, "per-frame polls must not retry writes");
     assert!(tree.0.join("saved").exists());
-    std::thread::sleep(std::time::Duration::from_millis(1010));
+    clock.advance(Duration::from_secs(1) - Duration::from_nanos(1));
+    c.poll();
+    assert_eq!(*oos_hal::sync::lock(&failures), 2, "no retry before the deadline");
+    clock.advance(Duration::from_nanos(1));
     c.poll();
     assert_eq!(*oos_hal::sync::lock(&failures), 1, "retry at guard cadence");
     *oos_hal::sync::lock(&failures) = 0;
@@ -72,7 +77,11 @@ fn restore_retries(tree: &Tree) {
         c.poll();
     }
     assert_eq!(tree.minima().0, "1416000");
-    std::thread::sleep(std::time::Duration::from_millis(1010));
+    clock.advance(Duration::from_secs(1) - Duration::from_nanos(1));
+    c.poll();
+    assert_eq!(tree.minima().0, "1416000", "restoration must wait for the next deadline");
+    assert!(tree.0.join("saved").exists());
+    clock.advance(Duration::from_nanos(1));
     c.poll();
     assert_eq!(tree.minima().0, "408000");
     assert!(!tree.0.join("saved").exists());
@@ -92,17 +101,18 @@ fn thermal_transitions_log_zone_and_reading_or_read_error() {
 }
 
 fn thermal_transitions(tree: &Tree) {
-    let c = Handle::fixture(tree.controller(""));
+    let clock = ManualClock::new();
+    let c = Handle::fixture(tree.controller_with_clock(&clock));
     c.update(true);
     for (temp, raised) in [("65000", false), ("62000", false), ("59999", true), ("bad", false), ("45000", true)] {
         tree.set("class/thermal/thermal_zone2", "temp", temp);
-        std::thread::sleep(std::time::Duration::from_millis(1010));
+        clock.advance(Duration::from_secs(1));
         c.poll();
         c.poll();
         assert_eq!(tree.minima().0, if raised { "1416000" } else { "408000" });
     }
     std::fs::remove_file(tree.0.join("class/thermal/thermal_zone7/temp")).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(1010));
+    clock.advance(Duration::from_secs(1));
     c.poll();
     assert_eq!(tree.minima().0, "408000");
 }

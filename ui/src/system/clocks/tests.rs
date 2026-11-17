@@ -2,8 +2,23 @@
 use super::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 const CPU: &str = "devices/system/cpu/cpufreq/policy4";
 const GPU: &str = "class/devfreq/ff9a0000.gpu";
+
+struct ManualClock(Arc<Mutex<Instant>>);
+impl ManualClock {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new(Instant::now())))
+    }
+    fn advance(&self, duration: Duration) {
+        *oos_hal::sync::lock(&self.0) += duration;
+    }
+    fn source(&self) -> Box<dyn Fn() -> Instant + Send> {
+        let now = self.0.clone();
+        Box::new(move || *oos_hal::sync::lock(&now))
+    }
+}
 
 struct Tree(PathBuf);
 impl Tree {
@@ -40,6 +55,15 @@ impl Tree {
     }
     fn controller(&self, conf: &str) -> Controller {
         linux::controller(&self.0, &self.0.join("saved"), Config::parse(conf))
+    }
+    fn controller_with_clock(&self, clock: &ManualClock) -> Controller {
+        Controller::with_clock(
+            Box::new(linux::Sysfs(self.0.clone())),
+            Config::parse(""),
+            Some(GPU),
+            self.0.join("saved"),
+            clock.source(),
+        )
     }
 }
 impl Drop for Tree {

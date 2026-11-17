@@ -47,9 +47,21 @@ pub struct Controller {
     recovery_failed: bool,
     requested: bool,
     next_restore: Instant,
+    clock: Box<dyn Fn() -> Instant + Send>,
 }
 impl Controller {
     pub fn new(port: Box<dyn Port>, config: Config, gpu: Option<&str>, saved: std::path::PathBuf) -> Self {
+        Self::with_clock(port, config, gpu, saved, Box::new(Instant::now))
+    }
+
+    fn with_clock(
+        port: Box<dyn Port>,
+        config: Config,
+        gpu: Option<&str>,
+        saved: std::path::PathBuf,
+        clock: Box<dyn Fn() -> Instant + Send>,
+    ) -> Self {
+        let now = clock();
         let mut floors = vec![Floor::new(
             "cpu",
             "devices/system/cpu/cpufreq/policy4",
@@ -60,7 +72,7 @@ impl Controller {
         if let Some(gpu) = gpu {
             floors.push(Floor::new("gpu", gpu, "min_freq", "available_frequencies", 600_000_000));
         }
-        let thermal = thermal::Guard::discover(port.as_ref());
+        let thermal = thermal::Guard::discover(port.as_ref(), now);
         let mut me = Self {
             port,
             floors,
@@ -69,7 +81,8 @@ impl Controller {
             running: false,
             recovery_failed: false,
             requested: false,
-            next_restore: Instant::now(),
+            next_restore: now,
+            clock,
         };
         // Recover irrespective of current opt-outs, before reading any new previous minimum.
         if let Err(error) = me.recover() {
@@ -125,8 +138,8 @@ impl Controller {
         if self.recovery_failed {
             return;
         }
-        let allowed = running && !self.floors.is_empty() && self.thermal.allowed(self.port.as_ref());
-        let now = Instant::now();
+        let now = (self.clock)();
+        let allowed = running && !self.floors.is_empty() && self.thermal.allowed(self.port.as_ref(), now);
         if allowed == self.running
             && (allowed || self.floors.iter().all(|f| f.saved.is_none()) || now < self.next_restore)
         {

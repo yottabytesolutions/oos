@@ -73,14 +73,20 @@ fn thermal_drop_rearm_and_sensor_failure_work_during_continuous_run() {
     // Unrelated zones must not participate, regardless of their number.
     tree.set("class/thermal/thermal_zone0", "type", "other");
     tree.set("class/thermal/thermal_zone0", "temp", "99000");
-    let c = Handle::fixture(tree.controller(""));
+    let clock = ManualClock::new();
+    let c = Handle::fixture(tree.controller_with_clock(&clock));
     c.update(true);
     assert_eq!(tree.minima().0, "1416000");
     for (temp, raised) in [("65000", false), ("62000", false), ("59999", true), ("bad", false)] {
         tree.set("class/thermal/thermal_zone2", "temp", temp);
-        std::thread::sleep(std::time::Duration::from_millis(1010));
+        let previous = tree.minima();
+        clock.advance(Duration::from_secs(1) - Duration::from_nanos(1));
         c.poll();
-        assert_eq!(tree.minima().0, if raised { "1416000" } else { "408000" });
+        assert_eq!(tree.minima(), previous, "thermal sampling must wait for the guard cadence");
+        clock.advance(Duration::from_nanos(1));
+        c.poll();
+        let expected = if raised { ("1416000", "600000000") } else { ("408000", "400000000") };
+        assert_eq!(tree.minima(), (expected.0.into(), expected.1.into()));
         assert_eq!(tree.0.join("saved").exists(), raised);
     }
 }

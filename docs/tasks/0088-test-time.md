@@ -32,6 +32,15 @@ Apply all review findings on the existing claim. Share the shipped query and rec
 negative assertions, extend and store the timing ratchet, move duration budgets into perf-guard, and rerun the
 requested validation. Keep the task active for independent review and unrestricted socket validation.
 
+### Landing clock-test repair plan
+
+On the owner-assigned `integ-27-land` landing stack, extend the existing claim to
+`ui/src/system/clocks.rs` and `ui/src/system/clocks/`. Inject one construction-time clock into the shipped
+controller and pass its samples to thermal discovery/sampling and restore retry decisions. Convert the three
+task 0086 timing tests to manual time, retaining transition, journal and logging assertions and checking the
+one-second boundary. Run the fast gate, focused UI clocks tests in debug/release and exact gate Clippy.
+Prepare `target/COMMIT_MSG.txt`; no commits or unit access.
+
 ### Failing-log tests converted
 
 All seven distinct tests named by `target/full1.log` and `target/full3.log` use event waits now:
@@ -326,6 +335,28 @@ active for the coordinator's unrestricted socket run, full default gate and rene
 push, rebase, remote change or unit access occurred.
 
 ## Status
+
+- 2026-11-17: Landing clock-test repair prepared, uncommitted. The controller accepts one construction-time
+  clock, defaulting to `Instant::now`; thermal sampling and restore retries use its samples in one shipped body.
+  Removed all five sleep sites in the three task 0086 scenarios. Manual tests retain transition, sensor-error,
+  journal and log assertions, check both CPU/GPU minima on thermal transitions, and assert no action one
+  nanosecond before the literal one-second deadline and action exactly at it.
+  Final `cargo xtask check --fast` exits 0 and prints `partial gate passed (not done): 9 steps in 44 s`;
+  all nine steps pass, including test-time with zero findings. UI command
+  `cargo test --locked -p oos-ui --bin oos-ui clocks`, with and without `--release`, exits 0 in both profiles:
+  32 passed, 0 failed, 0 ignored each. Exact unchanged `steps::clippy`, invoked through a worktree-local
+  scratch runner, exits 0 across six host/five ARM crates against unchanged ratchets: hal 91 entries/174 total,
+  dsp 115/265, core 3/46, ui 249/670, fpgad 7/19, xtask 0/0.
+  Logs and exits: `target/clock-time-{fast,debug,release,clippy}.{log,exit}`; Clippy command logs are in
+  `target/check-logs/91616-1794882996525145000/`. Initial runner-only lockfile/module-path setup errors
+  are retained in `target/clock-time-clippy-runner-{lock,path}.log`. The runner copies unchanged xtask modules;
+  production gate sources were not edited. Five-file source hashes are in `target/clock-time-source-sha256.json`.
+  `git diff --check` passes. Prepared `target/COMMIT_MSG.txt`. No commits, unit access or ratchet changes.
+  Task remains active for independent review and the coordinator's full integration gate.
+
+- 2026-11-17: Author Codex; owner assigned the existing landing worktree on branch `integ-27-land`,
+  base `a0ff6d12`. Clock-test repair plan and paths recorded before implementation under this existing task.
+  Task 0086's older clock tests still contain five sleep sites across three test scenarios.
 
 - 2026-11-17: Coordinator validation on an unrestricted host. The rewritten half-closed SCPI client test hung in
   debug and coverage (one poll accepts, answers and drops the client) and passed in release; it now waits for the

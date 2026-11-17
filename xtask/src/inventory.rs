@@ -39,7 +39,7 @@ pub(crate) const CHECKS: &[Check] = &[
     entry!(
         "fmt",
         "fmt",
-        "cargo fmt --check per crate; static pins",
+        "cargo fmt --all --check; static pins",
         "pinned Rust/Python",
         Fast,
         [],
@@ -119,6 +119,15 @@ pub(crate) const CHECKS: &[Check] = &[
         Rust,
         [],
         |ctx, r| { steps::tests(ctx, r, true) }
+    ),
+    entry!(
+        "perf-build",
+        "perf guard builds",
+        "sh tools/perf-guard.sh --build-only",
+        "pinned toolchain",
+        Rust,
+        [],
+        steps::perf_build
     ),
     entry!("perf", "perf guards", "sh tools/perf-guard.sh", "pinned toolchain", Rust, [], steps::perf),
     entry!(

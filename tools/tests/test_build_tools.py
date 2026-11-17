@@ -86,6 +86,14 @@ class Wiring(unittest.TestCase):
         self.assertNotIn('--privileged', setup)
         self.assertEqual(tools['python'], '3.12')
 
+    def test_ci_nextest_install_matches_the_doctor_and_bootstrap_pin(self):
+        tools = json.loads((ROOT / 'tools/build-tools.json').read_text())
+        for name in ('pr', 'main'):
+            with self.subTest(workflow=name):
+                workflow = (ROOT / f'.github/workflows/{name}.yml').read_text()
+                installs = [line.strip() for line in workflow.splitlines() if 'tool: cargo-nextest@' in line]
+                self.assertEqual(installs, [f'tool: cargo-nextest@{tools["cargo-nextest"]}'])
+
 
 class RecipePins(unittest.TestCase):
     def test_all_recipes_supply_the_contract_base_for_both_platforms(self):
@@ -285,7 +293,8 @@ class Bootstrap(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             lines = log.read_text().splitlines()
             self.assertIn('cargo install cargo-llvm-cov --version =0.9.1 --locked', lines)
-            self.assertIn('cargo install cargo-nextest --version =0.9.150 --locked', lines)
+            tools = json.loads((ROOT / 'tools/build-tools.json').read_text())
+            self.assertIn(f'cargo install cargo-nextest --version ={tools["cargo-nextest"]} --locked', lines)
             self.assertIn('rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy,llvm-tools-preview --target aarch64-unknown-linux-musl', lines)
             self.assertIn('cargo fetch --locked', lines)
             self.assertEqual(lines[-1], 'cargo xtask doctor --image')

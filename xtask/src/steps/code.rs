@@ -10,8 +10,11 @@ use std::path::Path;
 
 /// Every crate with what the walk of its sources found.
 pub fn measured(ctx: &crate::run::Context, root: &Path) -> Result<Vec<(Crate, size::Measured)>, String> {
-    let meta = workspace::load(ctx, root)?;
-    CRATES.iter().map(|c| Ok((*c, size::measure(c.dir, &sources::of_dir(&meta, c.dir)?)))).collect()
+    ctx.source_measurements(root, || {
+        let meta = workspace::load(ctx, root)?;
+        let measured = crate::repo::each(|c| sources::of_dir(&meta, c.dir).map(|s| size::measure(c.dir, &s)));
+        CRATES.iter().zip(measured).map(|(c, m)| Ok((*c, m?))).collect()
+    })
 }
 
 pub fn size(ctx: &crate::run::Context, root: &Path) -> Outcome {

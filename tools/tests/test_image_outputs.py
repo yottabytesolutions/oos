@@ -136,23 +136,80 @@ class ImageOutputs(unittest.TestCase):
                     self.run_python("boot/build-gel.py", ok=False)
                     self.assertFalse((target / "image" / GEL).exists())
 
-    def test_perf_guard_exports_root_relative_target_before_changing_directory(self):
+    def run_guard(self, *args, fail=False):
         shutil.copyfile(REPO / "tools/perf-guard.sh", self.root / "tools/perf-guard.sh")
-        (self.root / "hal").mkdir()
-        (self.root / "ui").mkdir()
-        cargo = self.root / "bin/cargo"
-        cargo.write_text('#!/bin/sh\nprintf "%s\\n" "$CARGO_TARGET_DIR" >> "$OOS_TEST_LOG"\n')
-        cargo.chmod(0o700)
-        # perf-guard.sh ends with the budget reader (G2); this test only checks the target directory.
-        (self.root / "tools/perf-budgets.py").write_text("raise SystemExit(0)\n")
-        log = self.root / "cargo-targets"
-        self.env.update(HOME=str(self.root / "home"), CARGO_TARGET_DIR="selected target", OOS_TEST_LOG=str(log))
-        result = subprocess.run(["sh", str(self.root / "tools/perf-guard.sh")], cwd=self.root.parent,
-                                env=self.env, capture_output=True, text=True)
+        (self.root / "tools/perf-budgets.py").write_text(
+            "import os\nfrom pathlib import Path\nPath(os.environ['OOS_GUARD_BUDGET']).touch()\n")
+        (self.root / "record.py").write_text(
+            "import json, os, sys\n"
+            "with open(os.environ['OOS_GUARD_CALLS'], 'a') as out:\n"
+            " out.write(json.dumps([sys.argv[1:], os.environ['CARGO_TARGET_DIR'], "
+            "os.environ['OOS_PERF_TESTS']]) + '\\n')\n"
+            "sys.exit(int(os.environ['OOS_GUARD_EXIT']))\n")
+        calls = self.root / "guard-calls"
+        budget = self.root / "guard-budget"
+        calls.unlink(missing_ok=True)
+        budget.unlink(missing_ok=True)
+        self.env.update(CARGO_TARGET_DIR="selected target", OOS_GUARD_CALLS=str(calls),
+                        OOS_GUARD_BUDGET=str(budget), OOS_GUARD_EXIT="7" if fail else "0")
+        # A function substitutes Cargo even after the script prepends the real Cargo bin to PATH.
+        command = 'cargo() { python3 "$root/record.py" "$@"; }; . "$0"'
+        result = subprocess.run(["sh", "-c", command, str(self.root / "tools/perf-guard.sh"), *args],
+                                cwd=self.root.parent, env=self.env, capture_output=True, text=True)
+        records = [json.loads(line) for line in calls.read_text().splitlines()]
+        self.assertTrue(records)
+        for _, target, enabled in records:
+            self.assertEqual(Path(target), self.root / "selected target/perf-build")
+            self.assertEqual(enabled, "1")
+        return result, [r[0] for r in records], budget.exists()
+
+    def test_perf_guard_exports_root_relative_target_before_changing_directory(self):
+        result, _, _ = self.run_guard()
         self.assertEqual(result.returncode, 0, result.stderr)
-        targets = log.read_text().splitlines()
-        self.assertTrue(targets)
-        self.assertEqual(set(targets), {str(self.root / "selected target")})
+
+    @staticmethod
+    def targets(calls):
+        targets = set()
+        for args in calls:
+            profile = args[args.index("--profile") + 1] if "--profile" in args else ("release" if "--release" in args else "dev")
+            package = args[args.index("-p") + 1]
+            for index, arg in enumerate(args):
+                if arg in ("--test", "--bin"):
+                    targets.add((profile, package, arg, args[index + 1]))
+                elif arg == "--lib":
+                    targets.add((profile, package, arg, ""))
+        return targets
+
+    def test_preparation_only_compiles_every_target_used_by_the_guards(self):
+        built, builds, checked = self.run_guard("--build-only")
+        self.assertEqual(built.returncode, 0, built.stderr)
+        self.assertFalse(checked)
+        self.assertEqual(len(builds), 2)
+        self.assertTrue(all("--no-run" in args for args in builds))
+        ran, runs, checked = self.run_guard()
+        self.assertEqual(ran.returncode, 0, ran.stderr)
+        self.assertTrue(checked)
+        self.assertEqual(len(runs), 5)
+        self.assertFalse(any("--no-run" in args for args in runs))
+        self.assertEqual(self.targets(builds), self.targets(runs))
+        self.assertEqual(self.targets(runs), {
+            ("perf", "oos-hal", "--lib", ""),
+            ("perf", "oos-hal", "--test", "alloc_batch"),
+            ("perf", "oos-hal", "--test", "early_trigger_end"),
+            ("perf", "oos-hal", "--test", "perf_ratio"),
+            ("release", "oos-ui", "--test", "soak"),
+            ("release", "oos-ui", "--bin", "oos-ui"),
+        })
+        timing = [args for args in runs if "--ignored" in args]
+        self.assertEqual(len(timing), 2)
+        self.assertTrue(all("--test-threads=1" in args for args in timing))
+
+    def test_a_failed_build_fails_preparation_without_running_the_guards(self):
+        result, calls, checked = self.run_guard("--build-only", fail=True)
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(checked)
+
 
     @unittest.skipIf(os.environ.get("OOS_PYTHON_NO_RUST") == "1" or not shutil.which("cargo"),
                      "requires cargo clean to check GPU cache survival; unavailable in Python-only CI")

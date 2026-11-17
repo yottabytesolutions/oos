@@ -4,6 +4,7 @@ use std::{ffi::OsString, fs};
 
 mod git_env_tests;
 mod probe_tests;
+mod source_measurements;
 
 struct Fixture(PathBuf);
 
@@ -193,7 +194,7 @@ fn formatting_metadata_and_git_helpers_retain_logs_in_the_explicit_session() {
         "gate fixture",
     );
     let ctx = fixture.start();
-    assert_eq!(crate::fmt::diff_lines(&ctx, root, "xtask").unwrap(), 0);
+    assert_eq!(crate::fmt::diff_lines(&ctx, root).unwrap(), 0);
     assert!(!crate::workspace::load(&ctx, root).unwrap().packages.is_empty());
     assert!(crate::base::protected(&ctx, root).is_ok());
     let retained = logs(&ctx);
@@ -268,4 +269,45 @@ fn shell_and_image_inventory_runners_forward_the_context() {
         assert_eq!((step.run)(&ctx, &fixture.0).unwrap(), [expected(&ctx, ctx.target.as_ref().unwrap())]);
     }
     assert_eq!(logs(&ctx).len(), ids.len());
+}
+
+#[test]
+fn formatting_checks_non_default_workspace_members_too() {
+    let fixture = Fixture::new();
+    let root = &fixture.0;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"first\", \"second\"]\ndefault-members = [\"first\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    for name in ["first", "second"] {
+        fs::create_dir_all(root.join(name).join("src")).unwrap();
+        fs::write(
+            root.join(name).join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        )
+        .unwrap();
+        fs::write(root.join(name).join("src/lib.rs"), "pub fn formatted() {}\n").unwrap();
+    }
+    let ctx = fixture.start();
+    assert_eq!(crate::fmt::diff_lines(&ctx, root).unwrap(), 0);
+    fs::write(root.join("second/src/lib.rs"), "pub fn unformatted( ){}\n").unwrap();
+    assert!(crate::fmt::diff_lines(&ctx, root).unwrap() > 0);
+    assert!(logs(&ctx).iter().all(|text| text.starts_with("cargo [\"fmt\", \"--all\"")));
+}
+
+#[test]
+fn test_thread_budgets_preserve_inherited_and_explicit_overrides() {
+    let fixture = Fixture::new();
+    let ctx = fixture.start().limit_test_threads(Some(3));
+    let before = std::env::var_os("NEXTEST_TEST_THREADS");
+    let args = ["-c", "printf '%s' \"$NEXTEST_TEST_THREADS\""];
+    let out = capture(&ctx, &fixture.0, "sh", &args).unwrap();
+    assert!(out.ok);
+    assert_eq!(out.stdout, before.clone().unwrap_or_else(|| "3".into()).to_string_lossy());
+    let out =
+        capture_env(&ctx, &fixture.0, "sh", &args, &[("NEXTEST_TEST_THREADS", std::ffi::OsStr::new("7"))]).unwrap();
+    assert!(out.ok);
+    assert_eq!(out.stdout, "7");
+    assert_eq!(std::env::var_os("NEXTEST_TEST_THREADS"), before);
 }

@@ -35,7 +35,7 @@ fn over(now: &mut Ratchet, key: String, value: u64, limit: u64) {
 }
 
 /// What the walk of a crate found.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Measured {
     /// items over a limit, with their size
     pub sizes: Ratchet,

@@ -16,11 +16,14 @@ fn fixture(name: &str) -> std::path::PathBuf {
 #[test]
 fn split_ci_gates_check_register_plans() {
     let pr = crate::stack_ci::parse(include_str!("../../../.github/workflows/pr.yml")).unwrap();
-    assert!(crate::stack_ci::steps(&pr, "clippy").iter().any(|step| {
-        step["run"]
-            .as_str()
-            .and_then(|run| run.strip_prefix("cargo xtask step "))
-            .is_some_and(|ids| ids.split_whitespace().any(|id| id == "plan-matrix"))
+    assert!(pr["jobs"]["clippy-run"]["strategy"]["matrix"]["include"]
+        .as_vec()
+        .unwrap()
+        .iter()
+        .any(|job| { job["steps"].as_str().unwrap().split_whitespace().any(|id| id == "plan-matrix") }));
+    assert!(crate::stack_ci::steps(&pr, "clippy-run").iter().any(|step| {
+        step["env"]["STEPS"].as_str() == Some("${{ matrix.steps }}")
+            && step["run"].as_str().is_some_and(|run| run.contains("cargo xtask step \"${ids[@]}\""))
     }));
     let nightly = crate::stack_ci::parse(include_str!("../../../.github/workflows/main.yml")).unwrap();
     assert!(nightly["jobs"]["gate"]["strategy"]["matrix"]["include"].as_vec().unwrap().iter().any(|job| {

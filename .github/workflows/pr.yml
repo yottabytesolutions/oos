@@ -24,8 +24,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # No full debug info in CI builds: smaller target directories and caches, faster links; backtraces keep lines.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
   # the ratchet files are compared with the merge base of the target branch (xtask/src/base.rs)
   OOS_GATE_BASE: origin/${{ github.event.pull_request.base.ref || 'main' }}
   # tools/ci/changes.py
@@ -58,6 +56,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changes.outputs.run == 'true'
         with:
+          cache-workspace-crates: true
           shared-key: fast
           save-if: ${{ env.SAVE_CACHE }}
       - name: Fast gate (fmt, size, architecture, statics, unsafe, ignores, agent rules, test time, links, text)
@@ -77,9 +76,21 @@ jobs:
           printf '### Production code\n\nInformational (ADR 0035): the release, not each pull request, must shrink.\n\n%s\n' \
             "$table" >> "$GITHUB_STEP_SUMMARY"
 
-  clippy:
+  # Cargo serializes builds in a target directory. Keep decoder builds and register plans off the lints' critical path.
+  clippy-run:
+    name: clippy (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: lints
+            steps: clippy
+          - name: decoders
+            steps: decoders
+          - name: plans
+            steps: plan-matrix
     permissions:
       contents: read
       checks: read
@@ -93,21 +104,39 @@ jobs:
         id: changes
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 -I tools/ci/changes.py --scope rust --check clippy
+          CHECK: clippy (${{ matrix.name }})
+        run: python3 -I tools/ci/changes.py --scope rust --check "$CHECK"
       - name: Pinned toolchain (rust-toolchain.toml)
         if: steps.changes.outputs.run == 'true'
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changes.outputs.run == 'true'
         with:
-          shared-key: clippy
+          cache-workspace-crates: true
+          shared-key: clippy-${{ matrix.name }}
           save-if: ${{ env.SAVE_CACHE }}
-      - name: Clippy ratchet, standalone decoders and register plan matrix
+      - name: cargo xtask step ${{ matrix.steps }}
         if: steps.changes.outputs.run == 'true'
-        run: cargo xtask step clippy decoders plan-matrix
+        env:
+          STEPS: ${{ matrix.steps }}
+        shell: bash
+        run: |
+          read -ra ids <<< "$STEPS"
+          cargo xtask step "${ids[@]}"
 
-  # Pull requests run the debug tests in three shards (cargo nextest --partition, xtask/src/testrun.rs). The merge
-  # queue adds the release-profile tests, also sharded; main.yml runs them nightly.
+  clippy:
+    needs: clippy-run
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Lints, decoder configurations and register plans passed
+        env:
+          RESULT: ${{ needs.clippy-run.result }}
+        run: test "$RESULT" = success
+
+  # Three hash shards exclude golden tests; a fourth runs golden alone (xtask/src/testrun.rs). The merge queue
+  # adds the release-profile tests, also sharded; main.yml runs them nightly.
   # A push to main builds both profiles unsharded for the caches.
   test-run:
     name: test (${{ matrix.profile }} ${{ matrix.shard }})
@@ -121,7 +150,7 @@ jobs:
       fail-fast: false
       matrix:
         profile: ${{ fromJSON(github.event_name == 'pull_request' && '["debug"]' || '["debug","release"]') }}
-        shard: ${{ fromJSON(github.event_name == 'push' && '["build"]' || '["1/3","2/3","3/3"]') }}
+        shard: ${{ fromJSON(github.event_name == 'push' && '["build"]' || '["1/4","2/4","3/4","4/4"]') }}
     env:
       # xtask/src/testrun.rs: cargo-nextest runs the test binaries in parallel; doctests through cargo test.
       OOS_TEST_PARTITION: ${{ matrix.shard != 'build' && matrix.shard || '' }}
@@ -142,12 +171,13 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changes.outputs.run == 'true'
         with:
+          cache-workspace-crates: true
           shared-key: test-${{ matrix.profile }}
           save-if: ${{ env.SAVE_CACHE }}
       - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         if: steps.changes.outputs.run == 'true' && env.SAVE_CACHE != 'true'
         with:
-          tool: cargo-nextest@0.9.150
+          tool: cargo-nextest@0.9.151
       - name: Tests (${{ matrix.profile }} ${{ matrix.shard }})
         if: steps.changes.outputs.run == 'true' && env.SAVE_CACHE != 'true'
         env:
@@ -239,7 +269,7 @@ jobs:
 
   # Not required: where the time went, as the run's job summary.
   timings:
-    needs: [fast, clippy, test-run, test, python, deny]
+    needs: [fast, clippy-run, clippy, test-run, test, python, deny]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -86,6 +86,12 @@ fn execute(root: &Path, wanted: impl Fn(&inventory::Check) -> bool, partial: boo
             println!("not-selected {} ({:?})", c.id, c.selection);
         }
     }
+    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
+    let threads = test_threads(&chosen, cpus);
+    if let Some(threads) = threads {
+        println!("nextest default: {threads} test threads per runner (NEXTEST_TEST_THREADS overrides)");
+    }
+    let ctx = ctx.limit_test_threads(threads);
     let ids: Vec<&str> = chosen.iter().map(|c| c.id).collect();
     let done: Mutex<Vec<Step>> = Mutex::new(Vec::new());
     let changed = Condvar::new();
@@ -133,5 +139,29 @@ fn wait_for(c: &inventory::Check, chosen: &[&str], done: &Mutex<Vec<Step>>, chan
             return c.after.iter().copied().filter(|id| result(id) != Some(true)).collect();
         }
         steps = changed.wait(steps).unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+}
+
+/// UI tests run in debug, release and coverage concurrently. Divide the host among these runners rather than
+/// letting each one start a full machine's worth of test processes. Single-step CI jobs retain nextest's defaults.
+fn test_threads(chosen: &[&inventory::Check], cpus: usize) -> Option<usize> {
+    let runners = chosen.iter().filter(|c| matches!(c.id, "tests-debug" | "tests-release" | "coverage")).count();
+    (runners > 1).then(|| (cpus / runners).max(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parallel_test_profiles_share_the_host_without_limiting_single_jobs() {
+        let chosen = |ids: &[&str]| inventory::CHECKS.iter().filter(|c| ids.contains(&c.id)).collect::<Vec<_>>();
+        let all = chosen(&["tests-debug", "tests-release", "coverage"]);
+        assert_eq!(test_threads(&all, 16), Some(5));
+        assert_eq!(test_threads(&all, 2), Some(1));
+        assert_eq!(test_threads(&chosen(&["tests-debug", "tests-release"]), 16), Some(8));
+        assert_eq!(test_threads(&chosen(&["tests-debug"]), 16), None);
+        assert_eq!(test_threads(&chosen(&["coverage"]), 16), None);
+        assert_eq!(test_threads(&chosen(&["fmt"]), 16), None);
     }
 }

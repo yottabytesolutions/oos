@@ -36,15 +36,11 @@ pub(crate) fn outcome(ok: Vec<String>, bad: Vec<String>) -> Outcome {
 }
 
 pub fn fmt(ctx: &crate::run::Context, root: &Path) -> Outcome {
-    let (mut ok, mut bad) = (Vec::new(), Vec::new());
-    for (c, diff) in CRATES.iter().zip(repo::each(|c| fmt::diff_lines(ctx, root, c.dir))) {
-        match diff {
-            Ok(0) => ok.push(format!("{}: formatted", c.dir)),
-            Ok(n) => bad.push(format!("{}: {} lines differ, run cargo fmt in {}", c.dir, n, c.dir)),
-            Err(e) => bad.push(format!("{}: {}", c.dir, e)),
-        }
+    match fmt::diff_lines(ctx, root) {
+        Ok(0) => Ok(vec!["workspace: formatted".into()]),
+        Ok(n) => Err(vec![format!("workspace: {n} lines differ, run cargo fmt --all")]),
+        Err(e) => Err(vec![e]),
     }
-    outcome(ok, bad)
 }
 
 /// Clippy for the host and, for the scope's crates, for aarch64-unknown-linux-musl: this also checks that the scope
@@ -90,9 +86,18 @@ pub fn tests(ctx: &crate::run::Context, root: &Path, release: bool) -> Outcome {
     outcome(ok, bad)
 }
 
+/// Compile the performance guards while the other checks run; execute their timing tests only in `perf`.
+pub fn perf_build(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    perf_command(ctx, root, &["tools/perf-guard.sh", "--build-only"])
+}
+
 /// The fork's performance guards (`tools/perf-guard.sh`): its exit code decides, its output only explains.
 pub fn perf(ctx: &crate::run::Context, root: &Path) -> Outcome {
-    let out = crate::run::capture(ctx, root, "sh", &["tools/perf-guard.sh"]).map_err(|e| vec![e])?;
+    perf_command(ctx, root, &["tools/perf-guard.sh"])
+}
+
+fn perf_command(ctx: &crate::run::Context, root: &Path, args: &[&str]) -> Outcome {
+    let out = crate::run::capture(ctx, root, "sh", args).map_err(|e| vec![e])?;
     let text = format!("{}{}", out.stdout, out.stderr);
     if out.ok {
         Ok(vec![text.lines().last().unwrap_or("passed").to_string()])

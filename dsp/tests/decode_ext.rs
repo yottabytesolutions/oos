@@ -172,8 +172,10 @@ fn uart9_multidrop_on_rs485_pair() {
 #[test]
 fn dmx512_dimmer_frame_and_rdm() {
     let levels: Vec<u8> = (0..24).map(|i| (i * 11) as u8).collect();
-    let get = gen::rdm_packet(0x7a70_1234_5678, 0x4d41_0000_0001, 5, 1, 0, 0, 0x20, 0x0060, &[]);
-    let set = gen::rdm_packet(0x7a70_1234_5678, 0x4d41_0000_0001, 6, 1, 0, 3, 0x30, 0x00f0, &[0x00, 0x2a]);
+    let (dst, src) = (0x7a70_1234_5678, 0x4d41_0000_0001);
+    let get = gen::RdmPacket { dst, src, tn: 5, port: 1, mc: 0, subdev: 0, cc: 0x20, pid: 0x0060, pd: vec![] };
+    let set = gen::RdmPacket { tn: 6, subdev: 3, cc: 0x30, pid: 0x00f0, pd: vec![0x00, 0x2a], ..get.clone() }.bytes();
+    let get = get.bytes();
     let mut bad = set.clone();
     let n = bad.len();
     bad[n - 1] ^= 0x01;

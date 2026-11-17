@@ -68,8 +68,9 @@ docker run --rm --pull=never --platform "$platform" -e OUT_OWNER="$(id -u):$(id 
 	make -C "$O" ARCH=arm64 CROSS_COMPILE=$CROSS M="$X/xdma" modules > "$W/xdma.log" 2>&1 || { tail -n 20 "$W/xdma.log"; exit 1; }
 	make -C "$O" ARCH=arm64 CROSS_COMPILE=$CROSS M="$X/xdma" INSTALL_MOD_PATH="$W/modroot" INSTALL_MOD_STRIP=1 modules_install >/dev/null
 	grep -qx "CONFIG_PCIE_ROCKCHIP_HOST=m" "$O/.config"
+	grep -qx "CONFIG_DWMAC_ROCKCHIP=m" "$O/.config"
 	R=$(cat "$O/include/config/kernel.release"); M="$W/modroot/lib/modules/$R"
-	for m in kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko; do [ -f "$M/$m" ]; done
+	for m in kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko kernel/drivers/net/ethernet/stmicro/stmmac/dwmac-rockchip.ko; do [ -f "$M/$m" ]; done
 	cp "$O/arch/arm64/boot/Image" /out/Image
 	# the board and its opt-in variants (rk3399-rigol-dho900-uhs.dtb: boot card in UHS-I)
 	for d in /k/dts/*.dts; do cp "$O/arch/arm64/boot/dts/rockchip/$(basename "$d" .dts).dtb" /out; done

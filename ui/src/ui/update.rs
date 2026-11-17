@@ -23,7 +23,7 @@ use upload::{page, upload_header, upload_store};
 struct PendingUpload {
     thread: std::thread::JoinHandle<Result<(), String>>,
     build: String,
-    any_unit: bool,
+    any_model: bool,
 }
 
 #[derive(Default)]
@@ -32,7 +32,7 @@ pub(super) struct UpdateUi {
     #[cfg(test)]
     trusted_keys: Option<Vec<[u8; 32]>>,
     /// Immutable image identity, resolved once and injectable by host tests, including read errors.
-    running_unit: Option<Result<String, String>>,
+    running_model: Option<Result<String, String>>,
     /// an uploaded package being checked and stored (`upload_store`) before the install job starts; its build
     upload: Option<PendingUpload>,
     /// first tap on Roll back: the second must come before this time
@@ -155,11 +155,11 @@ impl Ui {
     /// ~31 MB), and `update_poll` starts the install job from there. Mismatch without override: ask for confirmation,
     /// nothing kept. Err: refused, nothing kept.
     pub fn update_upload_reply(&mut self, body: Vec<u8>, query: &str) -> (bool, &'static str, Vec<u8>) {
-        let result = upload::any_unit(query).and_then(|any| self.update_upload(body, any));
+        let result = upload::any_model(query).and_then(|any| self.update_upload(body, any));
         upload::reply(result)
     }
 
-    fn update_upload(&mut self, body: Vec<u8>, any_unit: bool) -> Result<upload::Reply, String> {
+    fn update_upload(&mut self, body: Vec<u8>, any_model: bool) -> Result<upload::Reply, String> {
         if self.update_busy() {
             return Err("an update job is running".into());
         }
@@ -167,17 +167,17 @@ impl Ui {
         #[cfg(test)]
         let keys = self.upd.trusted_keys.clone().unwrap_or(keys);
         let h = upload_header(&body, &keys)?;
-        let running = self.upd.running_unit.get_or_insert_with(update::unit::running).clone()?;
-        if let Some(confirmation) = upload::confirmation(&h.manifest, &running, any_unit)? {
+        let running = self.upd.running_model.get_or_insert_with(update::models::running).clone()?;
+        if let Some(confirmation) = upload::confirmation(&h.manifest, &running, any_model)? {
             return Ok(confirmation);
         }
-        let warning = update::unit::check(&h.manifest, &running, any_unit)?;
+        let warning = update::models::check(&h.manifest, &running, any_model)?;
         let b = update::short(&h.manifest.build).to_string();
         let t = std::thread::Builder::new()
             .name("update-check".into())
             .spawn(move || upload_store(&body, &keys, Path::new(UPLOAD)))
             .map_err(|e| format!("no thread for the check ({}), nothing installed", e))?;
-        self.upd.upload = Some(PendingUpload { thread: t, build: b.clone(), any_unit });
+        self.upd.upload = Some(PendingUpload { thread: t, build: b.clone(), any_model });
         self.upd.last = format!("package of build {} received, checking it", b);
         let accepted = upload::accepted(&h.manifest);
         Ok(upload::Reply::Accepted(warning.map_or(accepted.clone(), |w| format!("{}\n{}", w, accepted))))
@@ -224,10 +224,10 @@ impl Ui {
         }
         self.upd.next_check = self.now + 0.5;
         if self.upd.upload.as_ref().is_some_and(|u| u.thread.is_finished()) {
-            let Some(PendingUpload { thread: t, build: b, any_unit }) = self.upd.upload.take() else { return };
+            let Some(PendingUpload { thread: t, build: b, any_model }) = self.upd.upload.take() else { return };
             match t.join().unwrap_or_else(|_| Err("the package check stopped".into())) {
                 Ok(()) => {
-                    if !self.update_spawn(&upload::install_args(any_unit), "Install") {
+                    if !self.update_spawn(&upload::install_args(any_model), "Install") {
                         let _ = std::fs::remove_file(UPLOAD);
                         self.upd.last = format!("build {}: {} could not be started, nothing installed", b, BIN);
                     }
@@ -321,15 +321,15 @@ mod tests {
         let seed_line = seed_text.lines().find(|l| !l.trim().is_empty() && !l.starts_with('#')).unwrap();
         let seed: [u8; 32] = update::hash::unhex(seed_line.trim()).unwrap().try_into().unwrap();
         u.upd.trusted_keys = Some(vec![update::ed25519::public_key(&seed)]);
-        let body = pkg::build_with(&seed, "20261115-120000", "k", b"image", &[("unit", "other-unit")]).unwrap();
-        u.upd.running_unit = Some(Ok("fake-unit".into()));
+        let body = pkg::build_with(&seed, "20261115-120000", "k", b"image", &[("models", "other-unit")]).unwrap();
+        u.upd.running_model = Some(Ok("fake-unit".into()));
         let (refused, kind, reply) = u.update_upload_reply(body, "");
         assert!(refused);
         assert_eq!(kind, "application/json");
         let reply = String::from_utf8(reply).unwrap();
         let reply = crate::json::parse(&reply).unwrap();
-        assert_eq!(reply.get("package_unit").and_then(|v| v.str()), Some("other-unit"));
-        assert_eq!(reply.get("running_unit").and_then(|v| v.str()), Some("fake-unit"));
+        assert_eq!(reply.get("package_models").and_then(|v| v.str()), Some("other-unit"));
+        assert_eq!(reply.get("running_model").and_then(|v| v.str()), Some("fake-unit"));
         assert_eq!(reply.get("refused"), Some(&crate::json::J::Bool(true)));
         assert!(u.upd.upload.is_none() && u.upd.job.is_none());
     }
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn unreadable_running_identity_refuses_even_an_overridden_upload() {
         let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
-        u.upd.running_unit = Some(Err("identity read failed".into()));
+        u.upd.running_model = Some(Err("identity read failed".into()));
         let text = include_str!("../../../fpgad/tests/fixtures/test-signing.key");
         let seed: [u8; 32] = update::hash::unhex(text.lines().find(|l| !l.is_empty() && !l.starts_with('#')).unwrap())
             .unwrap()
@@ -345,7 +345,7 @@ mod tests {
             .unwrap();
         u.upd.trusted_keys = Some(vec![update::ed25519::public_key(&seed)]);
         let body = pkg::build(&seed, "b", "k", b"image").unwrap();
-        let (refused, kind, reply) = u.update_upload_reply(body, "any-unit=1");
+        let (refused, kind, reply) = u.update_upload_reply(body, "any-model=1");
         assert!(refused);
         assert_eq!(kind, "text/plain");
         assert!(String::from_utf8(reply).unwrap().contains("identity read failed"));

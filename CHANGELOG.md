@@ -14,6 +14,11 @@ attribution stay as they were.
   History on `main` is linear. Releases are SemVer tags `vX.Y.Z` on `main`; this is the first.
 - All crates carry the version 0.2.0. `*IDN?`, the web UI and mDNS report it.
 
+- Images are generic across units. Device MAC and IPv6 secrets survive updates; fresh devices detect and save their
+  MAC. Default access follows IPv4 and IPv6 LAN prefixes. Updates match detected models and board families.
+  Before migrating an image-only MAC, save it in `/oos/system.conf` (docs/network.md). Preserve capability overrides
+  for units whose stored model differs from their hardware in `/oos/limits.conf` (docs/models.md). Not yet verified on hardware.
+
 Fixes from a review of 0.1.13, and the forum's report on it. All of it is tested on the host. Marked "(unit)" where
 it also ran on a DHO924S (2026-11-16).
 

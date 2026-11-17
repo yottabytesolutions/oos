@@ -10,6 +10,8 @@ depends: []
 
 # Refuse updates built for another unit
 
+> Historical unit-image references below are superseded by ADR 0041; use generic images and device state.
+
 ## Goal
 
 An update package built without the unit's `OOS_UNIT` must not reach a kexec start on that unit by accident.

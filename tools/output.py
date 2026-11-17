@@ -94,7 +94,7 @@ def compiler_identity():
 
 
 def dependency_inputs(name):
-    # Use the very same input description as unit-hook's dep_stale/dep_stamp decision.
+    # Use the very same input description as build-dev-image's dep_stale/dep_stamp decision.
     builder, *names = NATIVE_TOOLS[name]
     env = {**os.environ, "DEPS_LOCK": str(ROOT / "rootfs/deps.lock")}
     return subprocess.check_output(

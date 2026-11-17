@@ -4,7 +4,7 @@
 # build-sftp-server.sh - OpenSSH's sftp-server alone, static, for the image (docs/network.md 7), in Docker, into
 # rootfs/out/. Dropbear runs it as /bin/sftp-server for the SFTP subsystem (build-dropbear.sh): `sftp`, and `scp`
 # without -O, which OpenSSH 9.0 and later use by default. Built without OpenSSL and zlib: the program does file
-# transfer over the channel Dropbear already encrypted. boot/unit-hook.sh runs it when it is missing or out of date.
+# transfer over the channel Dropbear already encrypted. boot/build-dev-image.sh runs it when it is missing or out of date.
 # Version and SHA-256: rootfs/deps.lock (10.6p2: checked against the base64 SHA256 in OpenSSH's release notes).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)

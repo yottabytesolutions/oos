@@ -15,9 +15,6 @@ pub(crate) fn run() {
         l.afg_max_hz.sine, l.afg_max_hz.square, l.afg_max_hz.ramp, l.afg_max_hz.pulse, l.afg_max_hz.noise
     );
     println!("clocks    ADC {} Hz, generator {} Hz", l.adc_clock_hz, l.afg_clock_hz);
-    for u in &p.unit {
-        println!("unit      {} ({})", u, oos_hal::model::UNIT_CONF);
-    }
     for o in &p.overrides {
         println!("EXPERIMENTAL  {}", o);
     }

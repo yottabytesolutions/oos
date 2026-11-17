@@ -2,9 +2,28 @@
 
 use super::*;
 
+#[test]
+fn model_command_reports_capabilities_without_an_image_unit() {
+    let f = Fixture::new();
+    std::fs::write(f.path("limits.conf"), "").expect("test setup");
+    for (model, caps) in [("DHO804", "70 MHz rated, 4 ch"), ("DHO924S", "250 MHz rated, 4 ch, LA, generator")] {
+        let out = Command::new(env!("CARGO_BIN_EXE_oos-fpgad"))
+            .env("OOS_CAL_DIR", &f.0)
+            .args(["model", "--model", model, "--limits"])
+            .arg(f.path("limits.conf"))
+            .output()
+            .expect("CLI runs");
+        success(&out);
+        let text = String::from_utf8(out.stdout).expect("CLI output is UTF-8");
+        assert!(text.contains(&format!("model     {model}  SN -  (forced)")), "{text}");
+        assert!(text.contains(&format!("caps      {caps}\n")), "{text}");
+        assert!(!text.lines().any(|line| line.starts_with("unit      ")), "{text}");
+    }
+}
+
 // A real gzip/newc ramdisk so the signer must inspect the payload, independent of the host.
 fn image_unit(unit: Option<&str>) -> Vec<u8> {
-    let fields: Vec<_> = unit.map(|u| ("etc/oos-unit", 0o100644, u.as_bytes())).into_iter().collect();
+    let fields: Vec<_> = unit.map(|u| ("etc/oos-models", 0o100644, u.as_bytes())).into_iter().collect();
     let archive = kexec::newc(&fields);
     let n = archive.len() as u16;
     let mut rd = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3, 1];
@@ -40,23 +59,23 @@ fn pack_uses_the_image_unit_and_accepts_only_a_matching_explicit_unit() {
             let mut c = f.pack();
             c.arg("--key").arg(f.path("private")).arg("--untrusted-ok");
             if explicit {
-                c.args(["--unit", unit.unwrap_or("none")]);
+                c.args(["--models", unit.unwrap_or("none")]);
             }
             success(&c.output().expect("test setup"));
             let bytes = std::fs::read(f.path("package")).expect("test setup");
             let (h, _) = pkg::verify(&bytes, &[key]).expect("test setup");
-            assert_eq!(oos_hal::update::unit::package(&h.manifest).expect("test setup"), unit.unwrap_or("none"));
+            assert_eq!(oos_hal::update::models::package(&h.manifest).expect("test setup"), unit.unwrap_or("none"));
         }
-        refused(&f.test_pack().args(["--unit", "other-unit"]).output().expect("test setup"), "refused");
+        refused(&f.test_pack().args(["--models", "other-unit"]).output().expect("test setup"), "refused");
     }
 }
 
 #[test]
 fn pack_refuses_invalid_or_unreadable_embedded_units() {
     let f = Fixture::new();
-    for unit in ["", "two words", "../unit"] {
+    for unit in ["", "two  words", "../unit"] {
         std::fs::write(f.path("image"), image_unit(Some(unit))).expect("test setup");
-        refused(&f.test_pack().output().expect("test setup"), "unit must be");
+        refused(&f.test_pack().output().expect("test setup"), "model must be");
         assert!(!f.path("package").exists());
     }
     let mut img = image_unit(Some("test-unit"));
@@ -80,7 +99,7 @@ fn pack_refuses_invalid_or_unreadable_embedded_units() {
 fn signer_uses_the_receipted_build_unit_instead_of_the_current_environment() {
     let f = Fixture::new();
     let mut cmd = f.script();
-    let sidecar = f.path("selected target/image/oos-dev.unit");
+    let sidecar = f.path("selected target/image/oos-dev.models");
     std::fs::write(&sidecar, "built-unit\n").expect("test setup");
     std::fs::write(f.path("selected target/image/oos-dev.img"), image_unit(Some("built-unit"))).expect("test setup");
     f.stamp_image(cmd.get_envs().find(|(k, _)| k == &"PATH").expect("test setup").1.expect("test setup"));
@@ -92,7 +111,7 @@ fn signer_uses_the_receipted_build_unit_instead_of_the_current_environment() {
     );
     let bytes = std::fs::read(f.path("selected target/image/oos-dev.oosupd")).expect("test setup");
     let (h, _) = pkg::verify(&bytes, &[test_key()]).expect("test setup");
-    assert_eq!(oos_hal::update::unit::package(&h.manifest).expect("test setup"), "built-unit");
+    assert_eq!(oos_hal::update::models::package(&h.manifest).expect("test setup"), "built-unit");
 }
 
 #[test]
@@ -100,13 +119,16 @@ fn signer_refuses_missing_or_replaced_unit_sidecars() {
     for missing in [false, true] {
         let f = Fixture::new();
         let mut cmd = f.script();
-        let sidecar = f.path("selected target/image/oos-dev.unit");
+        let sidecar = f.path("selected target/image/oos-dev.models");
         if missing {
             std::fs::remove_file(sidecar).expect("test setup");
         } else {
             std::fs::write(sidecar, "other-unit\n").expect("test setup");
         }
-        refused(&cmd.env("OOS_SIGNING_KEY", f.path("test signing key")).output().expect("test setup"), "oos-dev.unit");
+        refused(
+            &cmd.env("OOS_SIGNING_KEY", f.path("test signing key")).output().expect("test setup"),
+            "oos-dev.models",
+        );
         assert!(!f.path("selected target/image/oos-dev.oosupd").exists());
     }
 }
@@ -132,7 +154,7 @@ fn cli_refuses_foreign_units_and_logs_an_explicit_override() {
     std::fs::write(f.path("image"), &img).expect("test setup");
     success(
         &f.pack()
-            .args(["--unit", "other-unit", "--untrusted-ok", "--key"])
+            .args(["--models", "other-unit", "--untrusted-ok", "--key"])
             .arg(f.path("private"))
             .output()
             .expect("test setup"),
@@ -149,12 +171,12 @@ fn cli_refuses_foreign_units_and_logs_an_explicit_override() {
             .arg(f.path("public"));
         cmd
     };
-    refused(&install().arg("--execute").output().expect("test setup"), "--any-unit");
+    refused(&install().arg("--execute").output().expect("test setup"), "--any-model");
     assert!(!f.path("state").exists());
-    let output = install().args(["--execute", "--any-unit"]).output().expect("test setup");
+    let output = install().args(["--execute", "--any-model"]).output().expect("test setup");
     success(&output);
     let log = String::from_utf8(output.stdout).expect("test setup");
-    assert!(log.contains("--any-unit override") && log.contains("other-unit") && log.contains("none"));
+    assert!(log.contains("--any-model override") && log.contains("other-unit") && log.contains("none"));
     let mut c = card::Card::open(&f.path("card"), false).expect("test setup");
     assert_eq!(c.boot_magic().expect("test setup"), *b"OOSK");
     assert_eq!(c.read_image(card::Region::Recovery, img.len()).expect("test setup").0, img);
@@ -163,7 +185,7 @@ fn cli_refuses_foreign_units_and_logs_an_explicit_override() {
 #[test]
 fn pack_refuses_a_profile_that_the_plain_image_does_not_contain() {
     let f = Fixture::new();
-    refused(&f.test_pack().args(["--unit", "dho804"]).output().expect("test setup"), "image unit 'none'");
+    refused(&f.test_pack().args(["--models", "dho804"]).output().expect("test setup"), "image models 'none'");
     assert!(!f.path("package").exists());
 }
 
@@ -185,12 +207,12 @@ fn card_file_install_uses_its_explicit_simulated_unit() {
             .arg(f.path("state"));
         c
     };
-    refused(&install().output().expect("test setup"), "running image unit 'none'");
+    refused(&install().output().expect("test setup"), "running device model 'none'");
     refused(
-        &install().args(["--unit", "another-unit"]).output().expect("test setup"),
-        "running image unit 'another-unit'",
+        &install().args(["--model", "another-unit"]).output().expect("test setup"),
+        "running device model 'another-unit'",
     );
-    let out = install().args(["--unit", "fake-unit", "--execute"]).output().expect("test setup");
+    let out = install().args(["--model", "fake-unit", "--execute"]).output().expect("test setup");
     success(&out);
     let log = String::from_utf8(out.stdout).expect("test setup");
     assert!(!log.contains("override"));
@@ -209,7 +231,7 @@ fn device_aliases_never_accept_a_simulated_unit_or_extra_keys() {
             .arg(f.path("image"))
             .arg("--state")
             .arg(f.path("state"))
-            .args(["--unit", "fake-unit", "--card"])
+            .args(["--model", "fake-unit", "--card"])
             .arg(&path)
             .output()
             .expect("CLI runs");
@@ -245,9 +267,16 @@ fn regular_card_file_aliases_keep_simulation_and_unit_checks() {
                 .arg(f.path("state"));
             c
         };
-        refused(&install().output().expect("CLI runs"), "running image unit 'none'");
-        success(&install().args(["--unit", "fake-unit"]).output().expect("CLI runs"));
+        refused(&install().output().expect("CLI runs"), "running device model 'none'");
+        success(&install().args(["--model", "fake-unit"]).output().expect("CLI runs"));
     }
+}
+
+#[test]
+fn obsolete_unit_override_cannot_consume_the_execute_flag() {
+    let f = Fixture::new();
+    let result = f.command().args(["install", "image", "--any-unit", "--execute"]).output().expect("CLI runs");
+    refused(&result, "--any-unit was replaced by --any-model");
 }
 
 #[test]

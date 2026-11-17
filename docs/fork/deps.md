@@ -13,7 +13,7 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
   deleted. The containers mount the directory read-only as `/src`.
 - `deps.sh` also stamps each binary with the manifest name/version/checksum fields, builder hash, `deps.sh` hash and
   per-tool `rootfs-<tool>` build-environment identity (`<binary>.stamp`). Native binary receipts from
-  `tools/output.py` hash this same input description. `boot/unit-hook.sh` rebuilds a missing binary or one whose
+  `tools/output.py` hash this same input description. `boot/build-dev-image.sh` rebuilds a missing binary or one whose
   stamp no longer matches, so a version bump, builder option or helper-only change takes effect at the next image
   build.
 - `gpu/build.sh` keeps its own `ver=` and `sum=` and takes Mesa from Ubuntu's source package. Its line in the manifest

@@ -202,7 +202,6 @@
 1 ui ui/src/ui/startup.rs clippy::too_many_lines
 1 ui ui/src/ui/startup.rs clippy::unnecessary_lazy_evaluations
 2 ui ui/src/ui/startup.rs clippy::unwrap_used
-1 ui ui/src/ui/sysinfo.rs clippy::cognitive_complexity
 2 ui ui/src/ui/sysinfo.rs clippy::too_many_lines
 1 ui ui/src/ui/tables.rs clippy::too_many_lines
 2 ui ui/src/ui/tools.rs clippy::manual_contains

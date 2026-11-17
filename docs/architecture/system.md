@@ -36,6 +36,13 @@ the unit (dho804, 2026-11-15, verified on the unit):
 - **`/proc/uptime` is no boot identity.** After a watchdog reset it keeps counting from power-on instead of starting
   at 0. Code that has to tell a new boot from the same one uses `/proc/sys/kernel/random/boot_id`, not uptime.
 
+Images are generic for every supported model (ADR 0041). Shared system defaults live in `/etc/oos/system.conf`;
+runtime detection selects capabilities. `oos-mac` persists identity on the device and preserves existing keys.
+rcS resolves it before loading the Rockchip GMAC module, which registers the supplied MAC as permanent.
+IPv6 stable address hashing keeps using that permanent address; the boot path still needs the unit comparison
+in [network](../network.md).
+The IPv6 secret stays in `/oos/net/ipv6.secret` across updates. No build profile supplies device identity.
+
 ## Rust crates
 
 ```

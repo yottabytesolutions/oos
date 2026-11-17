@@ -29,9 +29,9 @@ pub mod first;
 pub mod hash;
 pub mod inflate;
 pub mod kexec;
+pub mod models;
 pub mod pkg;
 pub mod text;
-pub mod unit;
 pub use card::Card;
 use card::{check_image, Region};
 use hash::{hex, unhex};
@@ -163,15 +163,15 @@ pub fn short(build: &str) -> &str {
 
 #[derive(Clone, Copy, Debug)]
 pub struct InstallOpt<'a> {
-    /// Running image identity, resolved by the caller; card-file tests supply their own unit.
-    pub running_unit: &'a str,
+    /// Detected hardware model; card-file tests supply their simulated model.
+    pub running_model: &'a str,
     pub execute: bool,
     /// Allow an older build than the current one.
     pub downgrade: bool,
     /// Install even when `recovery` already holds this image.
     pub force: bool,
-    /// Allow a package built for another unit, with an override warning in the report.
-    pub any_unit: bool,
+    /// Allow a package built for another model, with an override warning in the report.
+    pub any_model: bool,
 }
 
 /// What `install` did or (dry run) would do.
@@ -214,7 +214,7 @@ pub fn install(
     keys: &[[u8; 32]],
     opt: &InstallOpt,
 ) -> Result<Report, String> {
-    let (h, img, mut r) = unit::checked_package(package, keys, opt)?;
+    let (h, img, mut r) = models::checked_package(package, keys, opt)?;
     let m = &h.manifest;
     let info = check_image(img)?;
     if info.len != img.len() {

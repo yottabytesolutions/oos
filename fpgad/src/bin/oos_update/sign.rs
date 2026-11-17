@@ -110,15 +110,14 @@ pub(crate) fn pack(a: &Args) {
     if info.len != img.len() {
         die(&format!("image is {} bytes, its sections end at {}", img.len(), info.len));
     }
-    let unit = update::unit::image(&img).unwrap_or_else(|e| die(&format!("image unit: {}", e)));
-    if let Some(selected) = a.val("--unit") {
-        update::unit::validate(selected).unwrap_or_else(|e| die(&e));
-        if selected != unit {
-            die(&format!("--unit '{}', image unit '{}': refused", selected, unit));
+    let models = update::models::image(&img).unwrap_or_else(|e| die(&format!("image models: {}", e)));
+    if let Some(selected) = a.val("--models") {
+        if selected != models {
+            die(&format!("--models '{}', image models '{}': refused", selected, models));
         }
     }
     // this tree's oos-update finishes a kexec start (update::kexec): the image says so in its package
-    let p = pkg::build_with(&seed, build, &kernel, &img, &[("unit", unit.as_str()), kexec::LINE])
+    let p = pkg::build_with(&seed, build, &kernel, &img, &[("models", models.as_str()), kexec::LINE])
         .unwrap_or_else(|e| die(&e));
     pkg::verify(&p, &[pk]).unwrap_or_else(|e| die(&format!("self-check: {}", e)));
     std::fs::write(out, &p).unwrap_or_else(|e| die(&format!("{}: {}", out, e)));

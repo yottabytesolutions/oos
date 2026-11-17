@@ -6,6 +6,7 @@
 #
 #   oos-board has-hardware       exit 0 when this image starts the acquisition hardware
 #   oos-board early STATUS       starts what takes long, while the rest of rcS runs: the BOOT command, the FPGA loads its image (~3 s)
+#   oos-board ethernet MAC       registers Ethernet with the resolved permanent MAC
 #   oos-board drivers            kernel modules of the board: touch panel, beeper (pwm-gpio on GPIO4_A3, used by `oos-fpgad beep`)
 #   oos-board ui-args STATUS     prints the arguments of oos-ui
 #   oos-board bring-up STATUS    in the background: FPGA wait, PCIe, PLL, AFE and ADC init, calibrations, start-up checks.
@@ -15,6 +16,9 @@ hw() { [ -e /etc/oos-autoacq ] && [ -x /bin/oos-fpgad ]; }
 case "$1" in
 has-hardware) hw;;
 early) hw || exit 0; exec /bin/oos-fpgad fpga-boot --progress "$2";;
+ethernet)
+	modprobe dwmac-rockchip macaddr="$2" || exit 1
+	[ "$(cat /sys/class/net/eth0/address 2>/dev/null)" = "$(printf '%s' "$2" | tr A-F a-f)" ];;
 drivers)
 	insmod /lib/modules/$(uname -r)/kernel/drivers/input/touchscreen/edt-ft5x06.ko 2>/dev/null
 	insmod /lib/modules/$(uname -r)/kernel/drivers/pwm/pwm-gpio.ko 2>/dev/null
@@ -26,5 +30,5 @@ bring-up)
 	[ -x /bin/oos-irq-place ] && /bin/oos-irq-place
 	exit 0;;
 mac) /bin/oos-fpgad model 2>/dev/null | sed -n 's/^mac  *//p';;
-*) echo "usage: oos-board has-hardware | early STATUS | drivers | ui-args STATUS | bring-up STATUS | mac" >&2; exit 2;;
+*) echo "usage: oos-board has-hardware | early STATUS | ethernet MAC | drivers | ui-args STATUS | bring-up STATUS | mac" >&2; exit 2;;
 esac

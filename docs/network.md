@@ -13,7 +13,7 @@ change them.
 | MAC | GMAC of the RK3399 (`fe300000`), RMII, 50 MHz reference clock into the MAC (`clock_in_out = "input"`) |
 | PHY | Motorcomm YT8512 at MDIO address 0, 10/100 Mbit/s, reset line GPIO3_B7 (`snps,reset-gpio`, 10 ms low, then 50 ms) |
 | Kernel | `dwmac-rk` + `stmmac`, PHY driver `motorcomm` (both built in), no PHY interrupt: phylib reads the PHY once a second |
-| MAC address | fixed per SD card: `02:` and 5 bytes of the MD5 of the card's CID (rcS, step 2, `oos-mac`); `eth.mac` (section 6) names another |
+| MAC address | saved per device in `/oos/system.conf`: explicit `eth.mac`, else stored board MAC, else `02:` and five SHA-256 bytes of the RK3399 CPU id (`oos-mac`, section 6) |
 | Address | none without a cable; with one DHCP (`udhcpc`, 5 tries), else a link-local address 169.254.x.y/16 (RFC 3927: from the MAC, checked with `arping -D`, another one if it is taken; the top bar says `LAN · local`). A computer on the same cable without DHCP takes such an address itself, so it reaches the scope without any set-up (with `net.allow` only if 169.254.0.0/16 is listed, section 6). A server that comes later still gives DHCP |
 
 System > Network shows the address of eth0 and the speed of the link (`192.0.2.20 · 100 Mbit/s`).
@@ -93,14 +93,14 @@ System > Date and time sets it from an NTP server or by hand.
 | Row | Default | What |
 |---|---|---|
 | Now | | local date and time, and the zone; "(not set)" until NTP or a hand entry set the clock in this boot |
-| Time from NTP | **Off** | On: the clock is set from the server once a network link is up |
+| Time from NTP | **On in generic images** | On: the clock is set from the server once a network link is up |
 | NTP server | **DHCP** | DHCP: the server the DHCP lease names (see below); the picker also lists a few public servers; Other takes a name or an address on the keyboard |
 | NTP state | | Off / Waiting for a network link / Asking the server / Synced at 14:30:05 (+0.03 s) / the last failure and the last sync. With DHCP: the server asked and where it came from, `Synced 14:30:05, 192.0.2.1 (DHCP)` or `no answer, pool.ntp.org (no DHCP)` |
 | Sync now | | asks the server at once |
-| Time zone | UTC | DHCP: the zone the DHCP lease names (see below), shown with its source, `CET (DHCP)` or `CET (no DHCP)`; 22 common zones with their daylight saving rules; Other takes a POSIX time zone string |
+| Time zone | DHCP in generic images | DHCP: the zone the DHCP lease names (see below), shown with its source, `CET (DHCP)` or `CET (no DHCP)`; 22 common zones with their daylight saving rules; Other takes a POSIX time zone string |
 | Set the clock | | the local date and time on the keyboard, `2026-11-11 14:30` |
 
-**Off by default.** With Time from NTP off, OOS sends nothing to the outside. On, it sends one UDP packet of 48 bytes to
+**On in generic images.** With Time from NTP off, OOS sends nothing to the outside. On, it sends one UDP packet of 48 bytes to
 port 123 of the server per sync (and a DNS request for its name to the server from DHCP), once after a link came up and
 then every hour.
 
@@ -109,7 +109,7 @@ ntpsrv`); `udhcpc.script` writes the servers of a lease, space separated, to `/t
 `/tmp/oos-dhcp-ntp.wlan0` and removes the file when the lease ends or names none. Each request takes the first server of
 eth0's file, else of wlan0's, and `pool.ntp.org` when there is neither; the files are read at the request, so a new
 lease counts from the next one. This is the default for a new settings file (`ntp.server = dhcp`); a file that names a
-server keeps it. Time from NTP stays off by default. In a lab whose DHCP server hands out its own NTP server the scope
+server keeps it. Generic images enable Time from NTP. In a lab whose DHCP server hands out its own NTP server the scope
 then asks that one and nothing outside. (A server whose name is the single word `dhcp` cannot be chosen.)
 
 **Time zone = DHCP** (`tz = dhcp`). The DHCP client also asks for option 100 (a POSIX `TZ` string, RFC 4833; `udhcpc
@@ -157,15 +157,16 @@ System > Network > Remote services has a switch for each service, next to where 
 | telnet | 23 | a shell **without password** (bring-up; use it on the bench LAN only) |
 | SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
 
-Web remote, SCPI and VXI-11 are on by default; telnet and SSH are off unless the image or the user switches them on. A
-service switched off closes its port at once, with the connections on it. Switching off the web remote also takes away
+Generic images enable web remote, SCPI, VXI-11 and SSH, restricted to the dynamic LAN list; telnet is off by default.
+The built-in SSH fallback without image defaults is off.
+A service switched off closes its port at once, with the connections on it. Switching off the web remote also takes away
 the update page: an update then comes from a USB stick. telnet and SSH are started by `rcS` at power-on (`telnetd`,
 `/bin/oos-ssh`), which reads `remote.telnet` and `remote.ssh` from `/oos/system.conf`; oos-ui starts or stops them
 when a switch changes. Enable telnet only for bench bring-up: it is a shell for anyone on the network. The serial
 console (UART2) keeps its shell without a login.
 
-Telnet stays off on first boot and with a missing configuration or `remote.telnet` key, including the DHO804 unit
-image. An explicit `remote.telnet = on` setting is kept across updates. The Default key resets the measurement
+Telnet stays off on first boot and with a missing configuration or `remote.telnet` key, including generic
+images. An explicit `remote.telnet = on` setting is kept across updates. The Default key resets the measurement
 setup, leaving these system settings unchanged. The default and menu switch are tested on the host; this change
 is not yet verified on hardware. See [ADR 0025](adr/system/0025-remote-services-are-bench-lan-services.md).
 
@@ -273,8 +274,8 @@ graphics = gpu                # System > Graphics: gpu or cpu (gpu/README.md)
 [ADR 0010](adr/hardware/0010-unverified-hardware-functions-are-opt-in.md) requires opt-in for unverified hardware
 functions and a removal issue for every temporary key. Creating the existing keys' issues is separate work.
 The FPGA measure-unit autoset path (`autoset.levels = unit`) is designated for removal; record-based levels are
-supported. The table excludes that rejected path. Defaults below are generic defaults; a unit image can override
-these (the DHO804 image enables compression).
+supported. The table excludes that rejected path. Defaults below are built-in fallbacks; the generic image layers
+shared model defaults over them, including compression.
 
 | Key | Function | State |
 |---|---|---|
@@ -290,18 +291,64 @@ belong with this inventory.
 
 ## 6. Firewall, remote access and the MAC address
 
-Three keys of the system settings that rcS reads before the network comes up (`oos-conf`). Each one is looked up in
-`/etc/oos/system.conf` first (the defaults of an image built for one unit: `OOS_UNIT`, docs/models.md 4.2), then in
-`/oos/system.conf`; the last line wins, also one with an empty value. oos-ui keeps these lines when it writes the file.
-Without `/etc/oos/system.conf` and without the keys everything is as before. The same image default applies to the keys
-of section 5 (oos-ui and rcS read it first), so a unit image can ship `remote.ssh = on`: SSH at power-on without a
-setting on the scope.
+rcS and oos-ui layer shared model defaults in `/etc/oos/system.conf` under device overrides in `/oos/system.conf`.
+The last line wins, including an empty value, and saving settings preserves unknown keys. Generic images contain
+no device identity or LAN-specific address prefixes ([ADR 0041](adr/system/0041-images-are-generic-device-state-lives-on-device.md)).
 
-| Key | Default | What |
+| Key | Generic image default | What |
 |---|---|---|
-| `net.allow` | (none) | address prefixes, `192.0.2.0/24 fd00::/8`, and the word `onlink6` for the IPv6 prefixes on the link (section 8). Firewall: inbound only from them; oos-ui: `POST /update`, `/mcp`, SCPI and VXI-11 only from them |
-| `net.ipv6` | `off` | `on`: stable IPv6 addresses, the services and mDNS on IPv6 too (section 8) |
-| `eth.mac` | `cid` | `cid`: from the card's CID as before; `vendor`: the LAN MAC in vendor.bin, as the stock system uses it; or an address `00:00:5e:00:53:04` |
+| `net.allow` | `onlink 169.254.0.0/16 fe80::/10 onlink6` | IPv4 subnets of the interfaces, IPv4 and IPv6 link-local, and IPv6 prefixes on the link. Explicit address prefixes are also accepted |
+| `net.ipv6` | `on` | Stable IPv6 addresses, services and mDNS on IPv6 |
+| `eth.mac` | detected on device | A saved literal MAC wins; otherwise the stored board MAC, then a deterministic locally administered unicast MAC from the RK3399 CPU id |
+
+**First boot and migration.** `oos-mac` creates `/oos/system.conf` with a header and the chosen `eth.mac` if the file
+is absent. In an existing file it only appends an absent identity key, preserving every existing key. Explicit legacy `cid` and `vendor` selectors retain their previous resolution; new devices save a literal address.
+A saved address
+always wins over hardware and derivation. The HAL's existing read-only identity decoder supplies the board MAC;
+if unavailable, `/proc/cpuinfo` Serial or the efuse nvmem CPU-id supplies a stable fallback. New devices use no SD-card identity or random address. If no stable MAC can be selected or registered, Ethernet stays
+down instead of using the driver's random fallback. Availability of board MAC and CPU-id paths on every model is not yet verified on hardware.
+
+Before updating a unit whose MAC came only from an old image default, read its current MAC (`cat
+/sys/class/net/eth0/address`) and write that exact value as `eth.mac = <current-address>` in `/oos/system.conf`.
+If the file already has a literal `eth.mac`, keep it unchanged. This one-time step preserves DHCP reservations
+and the IPv6 hash input. Keep `/oos/net/ipv6.secret` in place, byte for byte; neither migration nor updates moves,
+renames or regenerates it. Import SSH trust onto the device through USB or its data partition ([ssh.md](ssh.md)).
+
+**Permanent address before probe.** The generic DTB contains no device MAC. `CONFIG_DWMAC_ROCKCHIP=m` delays
+Ethernet probing until rcS has mounted the device data and resolved `oos-mac`. `oos-board ethernet` loads
+`dwmac-rockchip` with `macaddr=<resolved-address>`; the driver validates and supplies it to stmmac before network
+registration. rcS checks the registered address before configuring IPv6 and bringing eth0 up. The stmmac core and
+platform support remain built in; only the Rockchip glue needs deferred loading.
+
+This uses the same permanent-address input as the old `local-mac-address` DTB property. Stable IPv6 hashing remains
+unchanged and uses the permanent address, not a later `ip link set address`. A deferred probe fits cold boot as well
+as kexec: the stock loader cannot read the OOS settings file, and no signed image needs a device-specific rewrite.
+The module path is host tested; the following unit check is still required before integration.
+
+**Unit comparison, not yet performed for this change.** With the owner's release and required lease, record the
+old image's eth0 IPv6 addresses on a fixed advertised /64, its current MAC and the digest of
+`/oos/net/ipv6.secret`. Preserve that MAC as a literal `eth.mac` and keep the secret unchanged. After an authorized
+install, check each of two cold boots, and a kexec start that reaches network setup:
+
+```sh
+/bin/oos-conf eth.mac
+cat /sys/class/net/eth0/address
+cat /sys/class/net/eth0/addr_assign_type
+ethtool -P eth0
+sha256sum /oos/net/ipv6.secret
+ip -6 addr show dev eth0
+```
+
+Use a trusted `ethtool` in the test environment for the read-only permanent-address query. The configured, current
+and permanent MAC must match; `addr_assign_type` must be 0 (permanent) or 3 (explicitly set), with 0 expected here.
+The secret digest and link-local and SLAAC addresses must match the old DTB image for the same prefix. Record the
+model, build and boot route with the result; a kexec install that restarts before network setup does not test this
+path. Host tests verify MAC resolution and the probe bytes equal the old DTB input, not kernel-generated addresses.
+
+**Dynamic LAN access.** `onlink` admits IPv4 interface subnets. The firewall follows kernel connected routes every
+10 seconds; oos-ui reads current interface addresses and masks on each ACL check. A DHCP address change therefore
+removes the old subnet and admits the new one without editing settings. `onlink6` retains its IPv6 route behavior.
+A bare token is never an unrestricted wildcard when no interfaces have addresses.
 
 **Firewall** (`oos-firewall`, nftables, table `inet oos_fw`, before SSH and oos-ui start). Inbound passes: loopback,
 answers to what the scope sent (DHCP, DNS, NTP; connection tracking), IPv6 neighbour discovery, DHCP replies, and
@@ -309,9 +356,9 @@ anything from a listed prefix. The rest is dropped, on Ethernet and WLAN alike. 
 does not parse is left out and logged (`/tmp/oos-net.log`, kernel log): an IPv4 address of four numbers up to 255, an
 IPv6 address of up to eight groups of 1 to 4 hex digits with at most one `::`, each with an optional `/length`. A
 list of which nothing parses closes everything but loopback rather than opening it, and so does a ruleset nft refuses
-anyway. `oos-firewall reload` (oos-ui, after a change of Allowed) stops the `onlink6` watcher of the old list, applies
+anyway. `oos-firewall reload` (oos-ui, after a change of Allowed) stops the on-link watcher of the old list, applies
 the new one in one step (nft replaces the table whole) and starts a watcher as rcS does; it ends at once without
-`onlink6`. Without a list it removes the table and the prefix file, which leaves the scope as a start without the key.
+either on-link token. Without a list it removes the table and the prefix file, which leaves the scope as a start without the key.
 A connection that is open already keeps passing (connection tracking): a list without its address refuses only new
 ones; an SSH session from there stays until it ends, unless the list is removed, which ends SSH (section 7).
 `nft` is a static build in the image (`rootfs/build-nft.sh`, nftables 1.1.3).
@@ -329,10 +376,10 @@ reference upload, nothing written to storage) stay open to the firewall's prefix
 picker offers that list, every network the scope is on (each IPv4 address with its netmask, e.g. `192.0.2.0/24`
 for Ethernet and one for the WLAN; the link-local `169.254.0.0/16` only when there is no other) and Other on the
 keyboard, which starts with the list or, without one, with the first network. An entry is checked as oos-ui reads the
-key (`netacl`): every word must be an address prefix as above or `onlink6`, IPv6 without dotted IPv4. Anything else
+key (`netacl`): every word must be an address prefix as above, `onlink` or `onlink6`, IPv6 without dotted IPv4. Anything else
 is refused with a message on the keyboard and nothing is written. What is taken goes to `/oos/system.conf` in its
 plain form (`192.0.2.7/24` becomes `192.0.2.0/24`, a single address `/32` or `/128`); an empty entry removes the
-line, so the image default applies again (none on most images: everyone, no firewall, SSH stays off).
+line, so the image default applies again (the dynamic LAN list on generic images).
 
 A change takes effect at once. When it is saved, oos-ui's own list changes (connections from outside it are closed, as
 above); then a thread of its own runs `oos-firewall reload`, and with the SSH switch on `oos-ssh restart` (a list) or
@@ -369,8 +416,8 @@ Without `net.allow`, or when `nft` refused the ruleset, port 22 stays closed (st
 list (section 6) and SSH follows it at once when its switch is on: a list set starts the listener after the firewall
 is loaded, a changed one restarts it (sessions stay; the firewall refuses new connections from outside the list, an
 open session stays until it ends), a list removed ends the listener and every session. Built-in default: off. The
-DHO804 unit image sets `remote.ssh = on` together with its `net.allow`, so that unit has SSH from its first start: on
-a LAN that is already limited to one prefix, a random password is an acceptable first login, and it is what lets
+generic image sets `remote.ssh = on` together with its `net.allow`, so each unit has SSH from its first start:
+on its local LAN, a random password is an acceptable first login, and it is what lets
 `ssh-copy-id` add the first key.
 
 **First start.** The scope makes, once, in `/oos/ssh` on the data partition (kept over updates and power-offs; without
@@ -431,9 +478,7 @@ them. The rules and the page in `ui` tests (`ssh::tests`, `ui::ssh::tests`).
 
 ## 8. IPv6
 
-Off by default (`net.ipv6`, section 6): then the services listen on IPv4 only, as upstream, and the kernel makes its
-usual SLAAC addresses. The DHO804 unit image sets `net.ipv6 = on` and `net.allow = 192.0.2.0/24 169.254.0.0/16
-fe80::/10 onlink6`.
+Generic images enable `net.ipv6` and both on-link tokens in `net.allow`. An explicit device override still wins.
 
 **Addresses.** The kernel takes them from the router's advertisements (SLAAC; the firewall lets router advertisements
 in). With `net.ipv6 = on`, `oos-net6` sets before eth0 comes up: stable-privacy interface identifiers (RFC 7217,
@@ -443,13 +488,11 @@ MAC, so it can go into DNS. A new card or `rm /oos/net/ipv6.secret` gives a new 
 as soon as it is made: `/oos` is ext2 without a journal, and the first version left it in the page cache, so a reboot
 soon after the first start lost it and every start made new addresses. `/tmp/oos-net.log` says `secret made` or
 `secret kept`.
-The other input of the hash is the interface's permanent MAC address (`dev->perm_addr` in the kernel's addrconf), not
-the one `oos-mac` sets later with `ip link`. The RK3399 GMAC driver makes a random one at probe when the vendor storage
-has none (`rk_vendor_read eth mac address failed`), so the addresses still changed at every start. A unit image whose
-`eth.mac` is a fixed address therefore carries it in its DTB as `local-mac-address` of the Ethernet node
-(`boot/unit-hook-dtb.sh`, checked by `tools/unit-dtb-check.sh`); the driver takes that at probe and it becomes the
-permanent address. With `eth.mac = cid` or `vendor` (known only on the scope) the DTB stays as it is, and the IPv6
-addresses change per start. A WLAN stick gets the same mode.
+The other input of the hash is the selected runtime MAC. The kernel patch in `kernel/series` makes addrconf use
+that address rather than a random permanent address chosen at driver probe. rcS sets the MAC before enabling IPv6.
+This preserves the previous inputs for units whose MAC used to be embedded in their DTB, without embedding identity
+in a generic image. This kernel change still needs image-build validation and a unit round. A WLAN stick gets the
+same stable-privacy mode.
 There is no DHCPv6. `udhcpc.script` flushes only the IPv4 addresses of an interface: it used to flush all, which took
 the IPv6 link-local address with it (the kernel makes that one only when the link comes up), so the scope had no IPv6
 at all after its first DHCP lease.

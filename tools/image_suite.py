@@ -34,7 +34,7 @@ def kernel_source():
 def main():
     os.environ['CARGO_TARGET_DIR'] = str(output.target())
     # Validation must use public synthetic inputs even if an interactive shell has unit defaults set.
-    for name in ('OOS_CAL_DIR', 'OOS_UNIT', 'OOS_GEL_OLD', 'OOS_BOARD', 'OOS_KBASE', 'OOS_OUT',
+    for name in ('OOS_CAL_DIR', 'OOS_GEL_OLD', 'OOS_BOARD', 'OOS_KBASE', 'OOS_OUT',
                  'OOS_NO_AUTOACQ'):
         os.environ.pop(name, None)
     kernel_source()
@@ -48,7 +48,7 @@ def main():
         subprocess.run(['python3', '-I', 'tools/image-manifest.py', 'kernel/out/base/Image',
                         str(image / 'oos-dho900.dtb'), str(image / 'initramfs.cpio.gz')],
                        cwd=output.ROOT, stdout=manifest, check=True)
-    for script in ('unit-dtb-check', 'gel-sim', 'usb-sim', 'wlan-sim'):
+    for script in ('gel-sim', 'usb-sim', 'wlan-sim'):
         run(['sh', f'tools/{script}.sh'])
     print('local image suite passed; no hardware accessed')
 

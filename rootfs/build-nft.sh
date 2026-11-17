@@ -2,7 +2,7 @@
 # Copyright (C) 2026 OOS contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build-nft.sh - a static nft for the image (docs/network.md 6, the LAN-only firewall), in Docker, into rootfs/out/.
-# boot/unit-hook.sh runs it when it is missing or out of date (deps.sh). libmnl, libnftnl and nftables from
+# boot/build-dev-image.sh runs it when it is missing or out of date (deps.sh). libmnl, libnftnl and nftables from
 # netfilter.org, no JSON, no readline, mini-gmp. Versions and SHA-256: rootfs/deps.lock (the checksums of the first
 # versions were those of the tarballs Alpine 3.22 builds its packages from).
 set -eu

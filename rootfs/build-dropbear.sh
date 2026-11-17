@@ -2,7 +2,7 @@
 # Copyright (C) 2026 OOS contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build-dropbear.sh - a static Dropbear SSH server for the image (docs/network.md 7), in Docker, into rootfs/out/.
-# boot/unit-hook.sh runs it when it is missing or out of date (deps.sh). One multi-call binary with dropbear,
+# boot/build-dev-image.sh runs it when it is missing or out of date (deps.sh). One multi-call binary with dropbear,
 # dropbearkey and scp (the server side of `scp -O`); the SFTP subsystem runs /bin/sftp-server (build-sftp-server.sh),
 # which modern `scp` and `sftp` use. No zlib, no X11 or agent forwarding. Version and SHA-256: rootfs/deps.lock (the
 # SHA-512 of 2026.94 is the one Alpine's aports main/dropbear builds from; the SHA-256 was taken from that same file).

@@ -6,7 +6,7 @@ unit evidence and deleting the alternate path and its switch; this inventory doe
 Hardware verification is limited to the evidence linked here, not a new unit run.
 
 Defaults below are the parser defaults without environment overrides, image defaults or user configuration.
-The [DHO804 image](../rootfs/unit/dho804/system.conf) enables `acq.pipeline = batch`, `acq.prearm = on`,
+The [shared image defaults](../rootfs/initramfs/etc/oos/system.conf) enable `acq.pipeline = batch`, `acq.prearm = on`,
 `acq.compress = on` and `perf.place = on`. The user's system.conf wins over image defaults.
 `acq.frame0`, `trig.serial_hw`, `zone.batch` and `mask.map.*` are read only from the user's settings file;
 the other rows use the combined settings and image text. These switches are read at startup.

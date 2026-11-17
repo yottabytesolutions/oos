@@ -26,7 +26,7 @@ Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/s
 | Failure | What happens |
 |---|---|
 | package damaged in transfer, or not signed by a trusted key | refused before anything is written |
-| package unit differs from the running image, including `unit -> none` | refused before card writes or a kexec start unless explicitly overridden with `--any-unit` |
+| detected model is absent from the package model list | refused before card writes or kexec unless explicitly overridden with `--any-model`; the signed board target must always match |
 | image the stock loader would refuse (wrong SHA-1 id, section length not a multiple of 4) | refused before anything is written |
 | power lost while `recovery` is written | the boot magic is set to `KRNL` before the write and back to `OOSK` only after the read-back, so the next power-on starts the intact stock image in `boot`; the previous OOS image is still in the rollback slot. The stock copy in `backup` is not needed for this |
 | new kernel or initramfs hangs **before** rcS (panics, cannot find the card) | the new image is first started by kexec, with `recovery` untouched (below): power-cycle, and the previous OOS build starts again (stock in one-shot mode). The next OOS start reports it. A new device tree is tried too, from 0.1.7 on (below). Not covered for `--new-dt`, packages without `trial kexec` (older builds) and `--no-kexec` |
@@ -210,11 +210,11 @@ confirmation is claimed yet. Bounded legacy evidence and both preparation/jump t
 `oos-update kexec-check FILE` loads a package's kernel and initramfs and unloads them again, nothing written, no
 restart: it shows that the running kernel takes the image for a kexec start.
 
-Only opened regular card files may use a simulated `--unit`, extra `--keys` or the direct card-file install
+Only opened regular card files may use a simulated `--model`, extra `--keys` or the direct card-file install
 route. Device aliases are canonicalized; the opened block device number is resolved through sysfs and
 must name a whole disk on the board's SD controller. This also covers gel-install on stock Android,
 where the card can be named `/dev/block/mmcblk1`. Symlinks and paths containing `.` cannot turn hardware
-into a test file. Unit comparison and `--any-unit` retain their normal meaning for hardware.
+into a test file. Model comparison and `--any-model` retain their normal meaning for hardware.
 
 ## Card layout used
 
@@ -253,11 +253,10 @@ sig <Ed25519 over every byte above this line>
 The header is readable text. The signature covers the header, the header names the image's SHA-256. The `build`
 starts with the UTC build time; an older build than the installed one is refused unless `--downgrade`.
 
-The optional signed `unit` line names the build profile selected by `OOS_UNIT`; an older package without that
-line means `none`. The signature and canonical header checks are unchanged. A 0050 or later updater compares this
-value with `/etc/oos-unit` in the running image before direct installation or kexec staging. With this updater, a
-missing identity means `none`; unreadable or invalid identity refuses installation. A different device tree for
-the same unit is still accepted by the existing kexec tree checks.
+The signed `models` extension lists the models supported by the generic image. The signed board target must match
+this board family, and the detected hardware model must appear in that list. Detection uses the HAL reader without
+experimental overrides or an old image's unit-name file. A DTB change does not change hardware model identity.
+Legacy packages without a model list require an explicit `--any-model` override on a detected device.
 
 ## Keys
 
@@ -288,21 +287,20 @@ Build, sign and package are separate host steps. The paths below use the default
 ([output contract](../tools/OUTPUTS.md)). Receipts reject stale or replaced inputs.
 
 ```sh
-OOS_UNIT=dho804 boot/build-dev-image.sh # image, checksum, build id and unit; never signs
+boot/build-dev-image.sh                         # generic image, checksum, build id and models; never signs
 boot/sign-dev-image.sh --key /path/to/signing.key # target/image/oos-dev.oosupd
 boot/build-gel.py                               # target/image/DHO800_DHO900_OOS_Install.GEL
 ```
 
-Select `OOS_UNIT` when building the image, or leave it unset for `none`. The build embeds `/etc/oos-unit` and saves
-`target/image/oos-dev.unit` with its own output receipt. Signing uses that saved value, so running the signer in a
-new shell without `OOS_UNIT` preserves the image's unit. Missing, stale or replaced unit sidecars refuse signing;
-rebuild the image to create them. Setting `OOS_UNIT` only for signing does not change an existing image's identity.
+The build embeds `/etc/oos-models` and saves `target/image/oos-dev.models` with an output receipt. Signing checks
+the saved list against the image payload. Missing, stale or replaced sidecars refuse signing; rebuild the image.
+No device name, MAC, LAN prefix or SSH trust input participates in the build.
 
 For signing, `OOS_SIGNING_KEY=/path/to/signing.key boot/sign-dev-image.sh` also works.
 The signer uses `target/image/oos-dev.build`, saved with the image. It builds the host tool offline.
-`oos-update pack --image IMG --build ID [--unit NAME] [--key FILE] --out FILE.oosupd` is the direct signing step.
-It also accepts `OOS_SIGNING_KEY`. Direct `pack` reads `etc/oos-unit` from the image's initramfs and uses it when
-`--unit` is absent; a missing identity means `none`. An explicit `--unit` must match that embedded identity or
+`oos-update pack --image IMG --build ID [--models LIST] [--key FILE] --out FILE.oosupd` is the direct signing step.
+It also accepts `OOS_SIGNING_KEY`. Direct `pack` reads `etc/oos-models` from the image's initramfs and uses it when
+`--models` is absent; a missing identity means `none`. An explicit `--models` must match that embedded list or
 signing is refused. The package version and output names are unchanged.
 
 Install on a running OOS:
@@ -330,35 +328,26 @@ In a script, do not put a plain `nc` SCPI query (port 5555) before the curl: the
 open, and macOS `nc -w` does not exit on it, so the curl never runs (`nc -G 3 -w 3` or a script with a timeout does).
 - shell: upload the file to /tmp, `oos-update install /tmp/oos-dev.oosupd` (dry run), then `--execute`
 
-On `/update`, a mismatched upload first asks for separate confirmation naming the package and running unit profiles.
-The first reply is HTTP 409 with JSON containing `"refused": true`, `package_unit` and `running_unit`.
-Cancel leaves nothing staged or installed. Confirming uploads that same file again with the explicit override.
-For scripts, append `?any-unit=1` to the upload URL. The upload reply and `/tmp/oos-update.job` log the override and
-both unit profiles; the CLI also rechecks the package before installation. This is an explicit choice for each upload.
+On `/update`, an incompatible model first asks for separate confirmation naming the package model list and detected
+model. HTTP 409 JSON contains `"refused": true`, `package_models` and `running_model`. Cancel leaves nothing staged;
+confirm uploads the same file with `?any-model=1`. The reply, job log and CLI report the explicit override.
 
-A deliberate change of unit profile needs `oos-update install FILE --any-unit` (dry run), then the same command
-with `--execute`. A warning names the package and running profiles in the command's output. The override carries
-through the kexec handoff. It does not bypass the trusted key, signature, image hash, target, downgrade or loader
-checks.
+The CLI equivalent is `oos-update install FILE --any-model`, then `--execute`. The warning names both models and
+survives the kexec handoff. It never bypasses trusted keys, signatures, hashes, the board target, downgrade or loader
+checks. Card-file tests may select a simulated `--model`; actual devices always use hardware detection.
 
-The check runs in the **running image's** `oos-update`. A pre-0050 running image has no unit check: its first install
-of a 0050 image is unguarded and needs **no `--any-unit`**. Before uploading, manually verify that
-`target/image/oos-dev.unit` (or the package manifest's `unit` line) equals the intended unit profile, for example
-`dho804`. Do not pass the new flag to the old parser: `install FILE --any-unit --execute` silently becomes
-a dry run, while `install FILE --execute --any-unit` errors. After the new image boots, `/etc/oos-unit` exists and
-the running updater refuses mismatched packages. A running updater that has the check but no identity file treats
-its identity as `none` and needs the override to accept a named profile.
+**Migration from a unit-named image.** Save any MAC that exists only in image defaults into `/oos/system.conf` before
+installing, as in [network.md](network.md) section 6. If the old image supplied capability overrides for hardware
+that differs from its stored model, preserve those keys in `/oos/limits.conf` before installation (docs/models.md 4.2).
+Keep `/oos/net/ipv6.secret` unchanged. The new updater ignores
+`/etc/oos-unit` and accepts the generic package for the detected model without an override. An updater still running
+the old unit-profile guard cannot interpret the new model list: use its explicit logged `--any-unit` once for this
+migration, after verifying the generic image's signed board target and supported model list. That legacy flag is not
+accepted by the new updater; subsequent updates use model matching. Builds older than the unit guard need no such
+flag. Scope release, lease and install/reboot authorization still apply.
 
-This identity comes from whichever image is running after the last install, rather than detecting the physical
-unit. If an override installs a `none` build, that build's `/etc/oos-unit` is `none`, so later `none` packages pass.
-To recover the guard, rebuild and sign for the correct `OOS_UNIT`, manually verify the sidecar or signed manifest,
-then use the explicit `--any-unit` override to install it. Once it boots, check `/etc/oos-unit` contains the correct
-profile before resuming normal updates. If the installed build predates 0050, follow the unguarded first-install
-procedure above, without `--any-unit`. Scope release, lease and install/reboot authorization still apply.
-
-For host card-file tests, `install --card FILE --unit NAME` supplies the simulated running identity; without
-`--unit` it is `none`, independent of the host's `/etc/oos-unit`. Hardware installs always read the running image's
-identity and refuse this simulated-identity option.
+For host card-file tests, `install --card FILE --model NAME` supplies the simulated running identity; without
+`--model` it is `none`, independent of host identity files. Hardware installs always detect the model and refuse this simulated-identity option.
 
 The scope restarts into the new build by kexec, which installs itself (about a minute), then restarts once more into
 the trial start; System > Update shows the result. Do not restart by hand within the next minute: the trial start
@@ -369,7 +358,7 @@ write the image directly: then power-cycle to start it on trial.
 | command | |
 |---|---|
 | `oos-update status` | boot magic, recovery and slot (build, SHA-256, loader id), trial, mode, last event |
-| `oos-update install FILE [--execute] [--downgrade] [--force] [--any-unit] [--no-kexec \| --new-dt]` | see above |
+| `oos-update install FILE [--execute] [--downgrade] [--force] [--any-model] [--no-kexec \| --new-dt]` | see above |
 | `oos-update kexec-check FILE` | load and unload the package's kernel for a kexec start; nothing written |
 | `oos-update rollback [--execute]` | slot -> recovery (checked against its SHA-256 first), arm OOS |
 | `oos-update confirm` | end a trial by hand (after stopping oos-ui for development, `/tmp/oos-ui.off`) |

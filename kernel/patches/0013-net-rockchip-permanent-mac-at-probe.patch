@@ -1,0 +1,40 @@
+Subject: net: rockchip: require the resolved permanent MAC at probe
+
+Load the GMAC glue only after the initramfs has resolved device identity.
+Supply that address to stmmac before registration so its permanent address,
+and thus the IPv6 stable address hash input, equals the old DTB address.
+Reject missing or invalid identity before powering the MAC up.
+
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c
+@@ -3673,6 +3673,19 @@
+ 	dev_err(dev, "%s: mac address: %pM\n", __func__, addr);
+ }
+ 
++static char *macaddr;
++module_param(macaddr, charp, 0400);
++MODULE_PARM_DESC(macaddr, "Permanent MAC resolved by the initramfs");
++
++static int rk_gmac_set_mac(struct stmmac_resources *res)
++{
++	if (!macaddr || strlen(macaddr) != 17 ||
++	    !mac_pton(macaddr, res->mac) || !is_valid_ether_addr(res->mac))
++		return -EINVAL;
++
++	return 0;
++}
++
+ static int rk_gmac_probe(struct platform_device *pdev)
+ {
+ 	struct plat_stmmacenet_data *plat_dat;
+@@ -3693,6 +3706,10 @@
+ 	plat_dat = devm_stmmac_probe_config_dt(pdev, stmmac_res.mac);
+ 	if (IS_ERR(plat_dat))
+ 		return PTR_ERR(plat_dat);
++
++	ret = rk_gmac_set_mac(&stmmac_res);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "a valid macaddr is required\n");
+ 
+ 	/* If the stmmac is not already selected as gmac4,
+ 	 * then make sure we fallback to gmac.

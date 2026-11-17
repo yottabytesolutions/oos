@@ -16,11 +16,11 @@ class TelnetDefaults(unittest.TestCase):
         commands = [line for line in lines if line.startswith('case ') and 'remote.telnet' in line]
         self.assertEqual(len(commands), 1)
         command = commands[0].replace('/bin/oos-conf', shlex.quote(str(ROOT / 'rootfs/initramfs/bin/oos-conf')))
-        unit = (ROOT / 'rootfs/unit/dho804/system.conf').read_text()
+        defaults = (ROOT / 'rootfs/initramfs/etc/oos/system.conf').read_text()
         cases = [
             (None, None, False),
             ('', '', False),
-            (unit, None, False),
+            (defaults, None, False),
             ('', 'ntp = on\n', False),
             ('remote.telnet = on\n', 'remote.telnet = off\n', False),
             ('remote.telnet = off\n', 'remote.telnet = on\n', True),

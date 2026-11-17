@@ -154,10 +154,6 @@ impl Ui {
             oos_hal::model::Source::Forced => kvc("Identified", "forced (--model / limits.conf)", AMBER),
             oos_hal::model::Source::Assumed => kvc("Identified", "assumed (no vendor.bin)", AMBER),
         });
-        if !p.unit.is_empty() {
-            // capabilities of this unit from the image (/etc/oos/limits.conf), not experimental
-            a.push(kv("Unit defaults", p.unit.join(", ")));
-        }
         a.extend(software(self));
         a.push(match readings {
             Some((0, _)) => kvc("FPGA", "not reached", AMBER),

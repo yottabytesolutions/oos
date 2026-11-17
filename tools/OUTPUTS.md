@@ -26,7 +26,7 @@ Consumers with explicit image arguments must use the selected directory. Kernel 
 existing worktree-local locations; their builders record the selected environment and installed package inventory.
 
 Rootfs tool receipts use the specific builder script and its `rootfs-<tool>` environment identity.
-For builders using `deps.sh`, they hash the exact `dep_stamp_text` description consumed by unit-hook:
+For builders using `deps.sh`, they hash the exact `dep_stamp_text` description consumed by build-dev-image:
 builder hash, helper hash, per-tool environment identity and selected dependency name/version/checksum
 fields from `deps.lock`. URL-only edits leave both receipts and stamps current. Environment queries use
 `tools/build-env.sh` so callers can supply a fixture resolver. Inline source versions/checksums are

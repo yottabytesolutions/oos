@@ -7,7 +7,7 @@
 712 file hal/src/dho/selfcal.rs
 1005 file hal/src/dho/seq.rs
 870 file hal/src/dho/tpu.rs
-488 file hal/src/model.rs
+451 file hal/src/model.rs
 604 file hal/src/update/mod.rs
 66 fn hal/src/dho/acq.rs configure_la
 65 fn hal/src/dho/afg.rs Wave::table
@@ -20,7 +20,6 @@
 72 fn hal/src/dho/selfcal.rs run_all_with
 149 fn hal/src/dho/seq.rs State::configure
 83 fn hal/src/dho/seq.rs State::trigger
-89 fn hal/src/model.rs Platform::build_unit
 64 fn hal/src/update/fdt.rs Fdt::to_bytes
 117 fn hal/src/update/first.rs first_install
 123 fn hal/src/update/mod.rs install

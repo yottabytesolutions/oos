@@ -1,1 +1,8 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/yottabytesolutions/oos/discussions
+    about: Ask how-to questions, propose ideas and show your setup in Discussions (see SUPPORT.md).
+  - name: Security vulnerability
+    url: https://github.com/yottabytesolutions/oos/security/advisories/new
+    about: Report vulnerabilities and hardware-damaging behaviour privately, never in an issue (see SECURITY.md).

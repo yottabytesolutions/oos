@@ -2,9 +2,10 @@
 //! Process status and releasing the current buffer holders.
 
 mod query_time;
+pub(crate) mod storage;
 #[cfg(test)]
 pub(crate) mod test_wait;
-pub(in crate::ui) mod worker;
+pub(crate) mod worker;
 pub(crate) mod worker_result;
 
 use super::*;
@@ -15,6 +16,7 @@ pub(super) struct Runtime {
     pub(super) memory: crate::system::memory::Watchdog,
     pub(super) crash: Option<crate::store::startup::crash::Crash>,
     pub(super) clocks: Option<crate::system::clocks::Handle>,
+    pub(super) storage: Option<crate::store::startup::worker::Worker>,
     started: Instant,
     pub(in crate::ui) query_time: query_time::QueryTime,
     pub(super) gpu: String,
@@ -29,6 +31,7 @@ impl Runtime {
             memory: crate::system::memory::Watchdog::new(limits),
             crash: None,
             clocks: None,
+            storage: None,
             gpu: String::new(),
             persistence: true,
             retired: Vec::new(),
@@ -226,6 +229,7 @@ impl MeasWorker {
 
 pub(super) fn begin_step(ui: &mut Ui, dt_wall: f64) -> bool {
     ui.now += dt_wall;
+    let _ = storage::poll(ui, false);
     if ui.toast.as_ref().is_some_and(|(_, until)| ui.now > *until) {
         ui.toast = None;
     }

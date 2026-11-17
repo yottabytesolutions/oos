@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The persistence boundary shared by startup markers and automatic setups.
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
 
 pub(crate) trait Files {
+    fn prepare(&mut self, path: &Path) -> io::Result<()>;
     fn entries(&self, path: &Path) -> io::Result<Vec<std::path::PathBuf>>;
     fn read(&self, path: &Path) -> io::Result<String>;
+    fn read_limited(&self, path: &Path, limit: usize) -> io::Result<String>;
     fn write(&mut self, path: &Path, text: &str) -> io::Result<()>;
     fn sync_file(&mut self, path: &Path) -> io::Result<()>;
     fn rename(&mut self, from: &Path, to: &Path) -> io::Result<()>;
@@ -18,11 +20,26 @@ pub(crate) trait Files {
 pub(crate) struct Disk;
 
 impl Files for Disk {
+    fn prepare(&mut self, path: &Path) -> io::Result<()> {
+        super::check_target(path)?;
+        let mut temporary = path.as_os_str().to_os_string();
+        temporary.push(".new");
+        super::check_target(Path::new(&temporary))?;
+        std::fs::create_dir_all(parent(path)?)
+    }
     fn entries(&self, path: &Path) -> io::Result<Vec<std::path::PathBuf>> {
         std::fs::read_dir(path)?.map(|entry| entry.map(|e| e.path())).collect()
     }
     fn read(&self, path: &Path) -> io::Result<String> {
         std::fs::read_to_string(path)
+    }
+    fn read_limited(&self, path: &Path, limit: usize) -> io::Result<String> {
+        let mut text = String::new();
+        std::fs::File::open(path)?.take(limit as u64 + 1).read_to_string(&mut text)?;
+        if text.len() > limit {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "setup recall exceeds byte limit"));
+        }
+        Ok(text.into_boxed_str().into_string())
     }
     fn write(&mut self, path: &Path, text: &str) -> io::Result<()> {
         std::fs::File::create(path)?.write_all(text.as_bytes())

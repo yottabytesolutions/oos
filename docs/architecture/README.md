@@ -104,7 +104,8 @@ flowchart LR
     acq -->|"batch buffer + published view"| workers["Deposit workers / acquisition helper"]
     workers -->|"share maps + folds"| draw
     ui <-->|"jobs / results"| jobs["Measurement and analysis workers"]
-    ui -->|"synchronous writes / fsync"| store[("Setup and export storage")]
+    ui <-->|"owned setup snapshots / completions"| store[("Bounded setup storage worker")]
+    ui -->|"synchronous exports"| exports[("Waveform and image storage")]
     render --> display["DRM / GPU helper; HTTP snapshots"]
 ```
 
@@ -122,9 +123,11 @@ and analyser windows. WLAN and SNTP use their own job/report threads. Bode's ext
 owns blocking TCP or USBTMC IO. These are not users of a shared IO runtime.
 
 `store.rs` combines setup serialization, string setters, waveform parsing/exports and image encoding.
-Manual exports and saves can call synchronous file IO from UI actions.
-`Device::frame` calls `Startup::observe`; promotion uses write, file sync, rename and directory sync.
-The durable file abstraction is already present in `store/durable.rs`; disk waits still reach the frame loop.
+Manual setup saves and automatic promotion share one storage worker using `store/durable.rs`.
+Four outstanding requests, including unconsumed completions, each admit at most 64 KiB of setup text and
+a 4 KiB path. Full manual queues fail immediately; automatic observations retain only the latest candidate,
+with every edit restarting its stability interval. Shutdown drains accepted writes before marker cleanup.
+Manual exports and screenshots still call synchronous file IO from UI actions.
 
 The draw routes also remain distinct. Standard/Frames queues frames; Batch feeds deposit workers and
 queues the newest record. `fast_ok` selects eligible hardware views. `drawpipe::draw_frame` uses dense

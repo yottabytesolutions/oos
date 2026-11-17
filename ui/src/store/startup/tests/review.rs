@@ -57,11 +57,17 @@ struct DataFailure {
     failure: Option<i32>,
 }
 impl Files for DataFailure {
+    fn prepare(&mut self, p: &Path) -> io::Result<()> {
+        self.disk.prepare(p)
+    }
     fn entries(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
         self.disk.entries(path)
     }
     fn read(&self, p: &Path) -> io::Result<String> {
         self.disk.read(p)
+    }
+    fn read_limited(&self, p: &Path, limit: usize) -> io::Result<String> {
+        self.disk.read_limited(p, limit)
     }
     fn write(&mut self, p: &Path, t: &str) -> io::Result<()> {
         if p.starts_with("/data") {

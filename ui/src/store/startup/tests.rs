@@ -4,6 +4,8 @@
 use super::*;
 use std::collections::HashMap;
 
+mod worker;
+
 /// Models both inode data durability and directory-entry durability. A crash drops dirty data and
 /// unsynced renames/unlinks, including an acknowledged rename whose directory sync did not finish.
 #[derive(Clone, Default)]
@@ -47,11 +49,21 @@ impl Memory {
 }
 
 impl Files for Memory {
+    fn prepare(&mut self, _: &Path) -> io::Result<()> {
+        Ok(())
+    }
     fn entries(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
         Ok(self.files.keys().filter(|p| p.parent() == Some(path)).cloned().collect())
     }
     fn read(&self, path: &Path) -> io::Result<String> {
         self.files.get(path).map(|(_, text)| text.clone()).ok_or_else(|| io::ErrorKind::NotFound.into())
+    }
+    fn read_limited(&self, path: &Path, limit: usize) -> io::Result<String> {
+        let (_, text) = self.files.get(path).ok_or(io::ErrorKind::NotFound)?;
+        if text.len() > limit {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "setup recall exceeds byte limit"));
+        }
+        Ok(text.clone())
     }
     fn write(&mut self, path: &Path, text: &str) -> io::Result<()> {
         self.step()?;
@@ -196,11 +208,17 @@ fn cuts_never_mark_an_unwritten_setup_stable() {
 struct Shared(std::rc::Rc<std::cell::RefCell<Memory>>);
 
 impl Files for Shared {
+    fn prepare(&mut self, p: &Path) -> io::Result<()> {
+        self.0.borrow_mut().prepare(p)
+    }
     fn entries(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
         self.0.borrow().entries(path)
     }
     fn read(&self, p: &Path) -> io::Result<String> {
         self.0.borrow().read(p)
+    }
+    fn read_limited(&self, p: &Path, limit: usize) -> io::Result<String> {
+        self.0.borrow().read_limited(p, limit)
     }
     fn write(&mut self, p: &Path, text: &str) -> io::Result<()> {
         self.0.borrow_mut().write(p, text)

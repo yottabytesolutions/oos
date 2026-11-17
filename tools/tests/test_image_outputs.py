@@ -9,6 +9,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[2]
 GEL = "DHO800_DHO900_OOS_Install.GEL"
@@ -222,6 +223,32 @@ class ImageOutputs(unittest.TestCase):
         self.assertEqual(cache.stat().st_mtime_ns, before)
         self.assertTrue((self.root / "rootfs/out/mesa" / key / "built").exists())
 
+
+class ElfValidation(unittest.TestCase):
+    def test_shipped_binaries_use_xtask_and_propagate_validation_failure(self):
+        sys.path.insert(0, str(REPO / 'tools'))
+        import image_validate
+        with tempfile.TemporaryDirectory() as scratch:
+            target = Path(scratch)
+            sources = [target / 'aarch64-unknown-linux-musl/release' / name
+                       for name in ('oos-ui', 'oos-fpgad', 'oos-update')]
+            sources.append(target / 'hw/oos-hw')
+            (target / 'gpu/gpu').mkdir(parents=True)
+            entries = {name: (0o100755, b'fixture') for name in
+                       ('init', 'etc/rcS', 'bin/busybox', 'bin/oos-gpu', 'lib/ld-linux-aarch64.so.1')}
+            for source in sources:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes(b'fixture')
+                source.chmod(0o755)
+                entries[f'bin/{source.name}'] = (0o100755, b'fixture')
+            with patch.object(image_validate.output, 'verify'), patch.object(image_validate.subprocess, 'run') as run:
+                image_validate.shipped(entries, target)
+                self.assertEqual([call.args[0] for call in run.call_args_list],
+                                 [['cargo', 'xtask', 'elf-static', str(source)] for source in sources])
+                self.assertTrue(all(call.kwargs == {'cwd': REPO, 'check': True} for call in run.call_args_list))
+                run.side_effect = subprocess.CalledProcessError(1, ['cargo', 'xtask', 'elf-static'])
+                with self.assertRaises(subprocess.CalledProcessError):
+                    image_validate.shipped(entries, target)
 
 
 if __name__ == "__main__":

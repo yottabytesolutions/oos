@@ -12,7 +12,6 @@ import tarfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import output
-from check_inventory import elf_static
 
 ROOT = output.ROOT
 
@@ -83,7 +82,7 @@ def shipped(entries, target):
     for name, source in sources.items():
         if name.startswith('bin/oos-') and name != 'bin/oos-gpu':
             output.verify(source)
-            elf_static(source.read_bytes())
+            subprocess.run(['cargo', 'xtask', 'elf-static', str(source)], cwd=ROOT, check=True)
         mode, body = entries.get(name, (0, b''))
         if (mode & 0o170000 != 0o100000 or not body or body != source.read_bytes()
                 or mode & 0o777 != source.stat().st_mode & 0o777):

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Check-inventory contracts use synthetic inputs and disposable Git histories."""
+"""GPU comparison regressions use synthetic pictures and script shot lists."""
 from pathlib import Path
-import os
 import subprocess
 import sys
 import tempfile

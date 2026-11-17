@@ -15,6 +15,10 @@ import image_required as image
 
 class Classifier(unittest.TestCase):
     def setUp(self):
+        clean_env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+        environment = patch.dict(os.environ, clean_env, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

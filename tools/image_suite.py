@@ -9,8 +9,12 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import output
 import build_profiles
-from check_inventory import run
 from image_validate import validate
+
+
+def run(args):
+    print('+ ' + ' '.join(map(str, args)), flush=True)
+    subprocess.run(list(map(str, args)), cwd=output.ROOT, check=True)
 
 
 def kernel_source():

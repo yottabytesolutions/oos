@@ -133,16 +133,16 @@ pub(crate) const CHECKS: &[Check] = &[
     entry!(
         "python-tests",
         "python-tests",
-        "python3 -I tools/check_inventory.py python-tests",
+        "receipted UI build; isolated unittest discovery with count checks",
         "receipted host UI; tools/tests, tools/privacy and ui/tools",
         Host,
         [],
-        steps::host::python
+        steps::python::run
     ),
     entry!(
         "arm64-release-link",
         "arm64-release-link",
-        "python3 -I tools/check_inventory.py arm64-release-link",
+        "receipted ARM release build; static AArch64 ELF validation",
         "ARM musl std and rust-lld",
         Image,
         [],

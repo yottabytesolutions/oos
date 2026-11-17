@@ -209,6 +209,26 @@ it does not infer time through arbitrary helper APIs or every possible macro DSL
 boundaries too. Real duration budgets run only in ignored release `perf_guard` cases with `OOS_PERF_TESTS=1`.
 Task 0088 records the audit and validation limits.
 
+## CI
+
+GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask step <id>...` (ADR 0031):
+
+- `.github/workflows/pr.yml` on every pull request and merge-queue group: the required checks `fast`, `clippy`,
+  `test` (debug and release), `python` and `deny`. `tools/ci/changes.py` lets a job skip its build when nothing it
+  depends on changed: documents, `.github/` (except `pr.yml` and files a Rust test includes) and `tools/ci/` skip
+  clippy, the tests and cargo-deny. A merge-queue group whose tree equals its PR head skips the checks that passed
+  on that head. Skipped jobs still report success under their required name.
+- The release tests in `pr.yml` run without LTO (`CARGO_PROFILE_RELEASE_LTO=false`, 16 codegen units): the same
+  optimisation level and no debug assertions, without a fat-LTO link per test binary. CI builds use
+  `CARGO_PROFILE_DEV_DEBUG=line-tables-only`.
+- A push to `main` runs `pr.yml` as the only writer of the Rust caches (one per job kind); its test jobs build the
+  tests without running them, because the merge queue already ran them on that tree.
+- `.github/workflows/main.yml`, nightly and by hand: the whole default gate in parallel jobs, including the release
+  tests with LTO, coverage and the base doctor, plus cargo-deny with the day's advisories and the image.
+- The image job downloads the kernel base from the pre-release `kernel-base-<version>`
+  (`tools/ci/kernel-base.sh download`); `tools/ci/kernel-base.sh publish` creates it for a new `kernel/base.sha256`.
+- Each run ends with a `timings` job: job and step durations in the run summary (`tools/ci/run_summary.py`).
+
 ## Privacy checks
 
 Before committing, run `python3 tools/privacy/scan.py --staged` and

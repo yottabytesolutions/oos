@@ -1,10 +1,10 @@
-# main after every merge, and nightly: the full host gate (with coverage, without perf: ratio guards are load
-# sensitive on shared runners and stay a local gate), Python, cargo-deny, and nightly the image. Also writes the Rust
-# caches the PR jobs restore: only trusted main code ever saves a cache.
+# Nightly and by hand: the whole default gate on main (without perf: ratio guards are load sensitive on shared
+# runners and stay a local gate), split into parallel jobs with `cargo xtask step <id>` so the wall time is the
+# slowest job: the release-profile tests with LTO, coverage and the base doctor run only here; cargo-deny with the
+# day's advisories; the image. A push to main runs no gate here: the merge queue already ran pr.yml on that tree,
+# and pr.yml's push run only warms the PR caches.
 name: Main
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: '17 2 * * *'
   workflow_dispatch:
@@ -19,8 +19,26 @@ env:
   OOS_GATE_BASE: origin/main
 jobs:
   gate:
+    name: gate (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: fast
+            steps: fmt size architecture mutable-statics unsafe method-exceptions known-failures agent-rules test-time
+          - name: clippy
+            steps: clippy
+          - name: tests-debug
+            steps: tests-debug
+          - name: tests-release
+            steps: tests-release
+          - name: python
+            steps: script-syntax python-tests
+          - name: coverage
+            steps: doctor-base coverage
+            llvm-cov: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -29,51 +47,21 @@ jobs:
       - name: Pinned toolchain (rust-toolchain.toml)
         run: rustup toolchain install
       - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        if: matrix.llvm-cov
         with:
           tool: cargo-llvm-cov@0.9.1
       - name: Hooks path (doctor checks it)
         run: git config core.hooksPath .githooks
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: main-gate
-      - name: Full host gate without perf guards
-        run: >-
-          cargo xtask step fmt size architecture mutable-statics unsafe method-exceptions known-failures agent-rules
-          test-time doctor-base clippy tests-debug tests-release coverage script-syntax python-tests
-
-  # Warm the caches under the keys the PR jobs restore.
-  cache:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    if: github.event_name == 'push'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - key: fast
-            run: cargo xtask check --fast
-          - key: clippy
-            run: cargo xtask step clippy
-          - key: test-debug
-            run: cargo xtask step tests-debug
-          - key: test-release
-            run: cargo xtask step tests-release
-          - key: python
-            run: cargo xtask step script-syntax python-tests
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Pinned toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: ${{ matrix.key }}
-      - name: ${{ matrix.key }}
+          shared-key: nightly-${{ matrix.name }}
+      - name: cargo xtask step ${{ matrix.steps }}
         env:
-          RUN: ${{ matrix.run }}
-        run: sh -c "$RUN"
+          STEPS: ${{ matrix.steps }}
+        shell: bash
+        run: |
+          read -ra ids <<< "$STEPS"
+          cargo xtask step "${ids[@]}"
 
   deny:
     runs-on: ubuntu-24.04
@@ -82,11 +70,34 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         with:
-          command: check
-          arguments: --locked
+          tool: cargo-deny@0.20.2
+      - name: Licences, advisories, bans, sources (deny.toml)
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: cargo deny --locked check
 
   image:
-    if: github.event_name != 'push'
     uses: ./.github/workflows/image.yml
+
+  timings:
+    needs: [gate, deny, image]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: tools/ci
+          persist-credentials: false
+      - name: Job and step durations
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: python3 -I tools/ci/run_summary.py --repo "$REPO" --run "$RUN_ID" --attempt "$ATTEMPT" --exclude timings

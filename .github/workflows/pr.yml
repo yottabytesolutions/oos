@@ -1,78 +1,154 @@
 # The gate for every pull request and every merge-queue group, split into parallel jobs on GitHub-hosted runners.
 # Required checks (.github/rulesets/main.json): fast, clippy, test, python, deny. pr-meta, privacy and codex-review
-# come from their own workflows. No secrets; the token is read-only; the cache is written only by main (main.yml).
+# come from their own workflows. No secrets; the token is read-only.
+# Every job always reports its required name. tools/ci/changes.py decides whether its build steps run: a change to
+# documents, GitHub settings or CI scripts only skips clippy, the tests and deny; a merge-queue group with the tree of
+# its PR head skips the checks that already passed there. A push to main is the only run that saves the Rust caches,
+# one per job kind; PRs and groups only restore them. The merge queue already ran the gate on that tree, so the push
+# run builds the tests without running them; the other jobs are cheap or are their own warm-up (clippy).
+# Release-profile tests run here without LTO (same optimisation level, no debug assertions); main.yml runs them with
+# the full release profile nightly.
 name: PR
 on:
   pull_request:
   merge_group:
+  push:
+    branches: [main]
 permissions:
   contents: read
 concurrency:
   group: pr-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # No full debug info in CI builds: smaller target directories and caches, faster links; backtraces keep lines.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
   # the ratchet files are compared with the merge base of the target branch (xtask/src/base.rs)
   OOS_GATE_BASE: origin/${{ github.event.pull_request.base.ref || 'main' }}
+  # tools/ci/changes.py
+  EVENT: ${{ github.event_name }}
+  BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+  QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+  REPO: ${{ github.repository }}
+  SAVE_CACHE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 jobs:
   fast:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Changes
+        id: changes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I tools/ci/changes.py --scope all --check fast
       - name: Pinned toolchain (rust-toolchain.toml)
+        if: steps.changes.outputs.run == 'true'
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.changes.outputs.run == 'true'
         with:
           shared-key: fast
-          save-if: false
+          save-if: ${{ env.SAVE_CACHE }}
       - name: Fast gate (fmt, size, architecture, statics, unsafe, ignores, agent rules, test time)
+        if: steps.changes.outputs.run == 'true'
         run: cargo xtask check --fast
 
   clippy:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Changes
+        id: changes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I tools/ci/changes.py --scope rust --check clippy
       - name: Pinned toolchain (rust-toolchain.toml)
+        if: steps.changes.outputs.run == 'true'
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.changes.outputs.run == 'true'
         with:
           shared-key: clippy
-          save-if: false
+          save-if: ${{ env.SAVE_CACHE }}
       - name: Clippy ratchet, host and aarch64-unknown-linux-musl
+        if: steps.changes.outputs.run == 'true'
         run: cargo xtask step clippy
 
   test-run:
     name: test (${{ matrix.profile }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix:
-        profile: [debug, release]
+        include:
+          - profile: debug
+            lto: 'true'
+            codegen-units: '1'
+          # Without LTO: a fat-LTO link per test binary dominated this job.
+          - profile: release
+            lto: 'false'
+            codegen-units: '16'
+    env:
+      CARGO_PROFILE_RELEASE_LTO: ${{ matrix.lto }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ matrix.codegen-units }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Changes
+        id: changes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CHECK: test (${{ matrix.profile }})
+        run: python3 -I tools/ci/changes.py --scope rust --check "$CHECK"
       - name: Pinned toolchain (rust-toolchain.toml)
+        if: steps.changes.outputs.run == 'true'
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.changes.outputs.run == 'true'
         with:
           shared-key: test-${{ matrix.profile }}
-          save-if: false
+          save-if: ${{ env.SAVE_CACHE }}
       - name: Tests (${{ matrix.profile }})
+        if: steps.changes.outputs.run == 'true' && env.SAVE_CACHE != 'true'
         env:
           STEP: tests-${{ matrix.profile }}
         run: cargo xtask step "$STEP"
+      # The same per-crate builds as the tests step (crate list: xtask/src/repo.rs CRATES), without running them.
+      - name: Build the tests for the cache (push to main)
+        if: steps.changes.outputs.run == 'true' && env.SAVE_CACHE == 'true'
+        env:
+          PROFILE: ${{ matrix.profile }}
+        shell: bash
+        run: |
+          flags=(--locked --no-run)
+          if [ "$PROFILE" = release ]; then flags+=(--release); fi
+          for crate in hal dsp core ui fpgad xtask; do
+            (cd "$crate" && cargo test "${flags[@]}")
+          done
 
   # One required name for both profiles.
   test:
@@ -89,29 +165,77 @@ jobs:
   python:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Changes
+        id: changes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I tools/ci/changes.py --scope all --check python
       - name: Pinned toolchain (rust-toolchain.toml)
+        if: steps.changes.outputs.run == 'true'
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.changes.outputs.run == 'true'
         with:
           shared-key: python
-          save-if: false
+          save-if: ${{ env.SAVE_CACHE }}
       - name: Script syntax and Python tests (tools/tests, tools/privacy, ui/tools)
+        if: steps.changes.outputs.run == 'true'
         run: cargo xtask step script-syntax python-tests
 
   deny:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - name: Licences, advisories, bans, sources (deny.toml)
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - name: Changes
+        id: changes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I tools/ci/changes.py --scope rust --check deny
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        if: steps.changes.outputs.run == 'true'
         with:
-          command: check
-          arguments: --locked
+          tool: cargo-deny@0.20.2
+      # cargo-deny only reads the metadata: the runner's stable cargo does that, the pinned toolchain is not needed.
+      - name: Licences, advisories, bans, sources (deny.toml)
+        if: steps.changes.outputs.run == 'true'
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: cargo deny --locked check
+
+  # Not required: where the time went, as the run's job summary.
+  timings:
+    needs: [fast, clippy, test-run, test, python, deny]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: tools/ci
+          persist-credentials: false
+      - name: Job and step durations
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: python3 -I tools/ci/run_summary.py --repo "$REPO" --run "$RUN_ID" --attempt "$ATTEMPT" --exclude timings

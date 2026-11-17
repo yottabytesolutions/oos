@@ -349,7 +349,7 @@ Implementation follows [migration M2](../architecture/migration.md#m2-one-change
 [0002](../architecture/adr/0002-commands-per-area.md),
 [0003](../architecture/adr/0003-one-change-point.md),
 [0004](../architecture/adr/0004-explicit-stages.md),
-[0011](../architecture/adr/0011-golden-pictures.md) and
+[ADR 0014](../adr/process/0014-refactorings-keep-every-pixel.md) and
 [0014](../architecture/adr/0014-domain-crate.md). Source locations below refer to planning base
 `6291e7080f8c91d2702d453052bccb75e0b1faf6`; proposed destinations and test names do not exist yet.
 The original assignment was plan-only. Locations and claims are refreshed for M2.1 above; no commit is authorized.

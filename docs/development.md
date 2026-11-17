@@ -452,10 +452,26 @@ file; a renamed or moved item counts as new unless `moves.txt` lists it.
 ## Production code size
 
 Each release strives for less production code than the one before
-([ADR 0035](adr/process/0035-each-release-has-less-production-code.md)). Production code is the Rust of the crates
-built for the scope and this project's C (per directory; the vendored XDMA driver left out), without blank lines,
-comments, test code and `@generated` files. `xtask` and the shell and Python
-scripts are reported beside it as tooling.
+([ADR 0035](adr/process/0035-each-release-has-less-production-code.md)). The counting specification is:
+
+- Rust production lines contain a token in crates built for the scope (`target: true` in `CRATES`,
+  `xtask/src/repo.rs`). Count this project's C in `gpu/` and `tools/hw/` per directory as well, excluding lines that
+  contain only comments. Leave out the vendored Xilinx XDMA driver in `kernel/modules/xdma/`.
+- Exclude blank lines, comments and doc comments. Exclude test items, fields, variants, statements, match arms and
+  field values under `#[test]` or a `cfg` requiring `test`, with their attributes; files below a `#[cfg(test)]`
+  module; and test, bench and example targets (`tests/`, `benches/`, `examples/`).
+- Exclude files marked `@generated` in their first five lines. Goldens, fixtures and vendored data are not Rust
+  modules and are not reached by the count.
+- Report `xtask` (host-only Rust) and shell and Python scripts as tooling beside production code. Script lines count
+  unless blank or a `#` comment; test directories and test files are excluded. Python docstrings count. Scope
+  shell scripts in `rootfs/` are tooling too. Tooling is reported, not held to the release goal.
+- For releases before the root workspace (through v0.1.13), `cargo xtask loc` reads each top-level crate as its own
+  workspace and follows plain `#[path]`; this does not permit `#[path]` in the gate.
+
+Generated tables ([ADR 0038](adr/code/0038-one-table-may-generate-per-field-code.md)) can reduce the count without
+reducing complexity. Review the represented behaviour and reuse as well as the number. Tests and documentation must
+not be deleted to shrink the count. File-size limits separately exclude comments, including doc comments, while
+still counting blank lines.
 
 ```sh
 cargo xtask loc                      # per crate and in total, as Markdown tables

@@ -12,7 +12,7 @@ same way.
 
 ## Decision
 
-Each of the three kinds is added as a type that implements one trait, plus one line that registers it:
+Each kind uses a static registry: a type implements its trait and one line registers it:
 
 | Kind | Trait | Registered in |
 |---|---|---|
@@ -25,6 +25,10 @@ The tests walk the registry and check every entry the same way.
 
 Identifiers that are stored are stable: a protocol's key, a measurement's number and an analyser's feature id never
 change once released and are never given to something else, because setups, SCPI and `system.conf` hold them.
+
+The `Protocol` trait still combines several layers. Split it as one planned migration package: decoding and
+trigger matching go to `oos-dsp`, protocol metadata to `oos-core`, and presentation stays in `ui`. Keep the static
+registry and stored identifiers. This split is not implemented yet.
 
 ## Alternatives
 

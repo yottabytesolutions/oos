@@ -24,8 +24,9 @@ This record carries them as they hold now. What may not enter the tree from the 
   Developer Certificate of Origin 1.1. This holds for work an agent wrote: the person who submits it signs.
 - **Pull requests.** `yottabytesolutions/oos` is the single repository. GitHub issues are the work queue; an issue
   ready for an agent carries the label `agent-ready` and its acceptance criteria, and `docs/tasks/` holds only
-  multi-step designs. One topic per pull request, from a branch `<type>/<ref>-<slug>` against `main` (`ref`: an issue number or `t<NNNN>`). Work that
-  spans several pull requests is a stack (ADR 0034).
+  multi-step designs. One issue per pull request, or per stack when the work spans several pull requests. Branches use
+  `<type>/<ref>-<slug>` (`ref`: an issue number or `t<NNNN>`). A standalone pull request targets `main`;
+  one pull request with topic commits is the default, and stacks are optional (ADR 0034).
 - **Merging.** A pull request lands when the required checks pass and the Codex review has no unresolved finding.
   Paths in `.github/CODEOWNERS` (boot, update, kernel, FPGA, acquisition, the workflows) also need the maintainer's
   approval. The author enables auto-merge; the merge queue rebases the commits onto `main` as they are, with their

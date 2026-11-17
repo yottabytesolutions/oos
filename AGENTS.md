@@ -19,8 +19,9 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - [Extending OOS](docs/architecture/extending.md): follow the recipe for your change.
 - [Development](docs/development.md): the gate and ratchets.
 - [Migration](docs/architecture/migration.md): the relevant step is the specification.
-- [ADRs](docs/adr/README.md) and [architecture records](docs/architecture/adr/README.md): do not reopen a decision
-  without a new ADR. Cite `docs/adr/` records as `ADR NNNN`, the closed architecture series as `architecture/NNNN`.
+- [ADRs](docs/adr/README.md) and [architecture records](docs/architecture/adr/README.md): update the record in place
+  when an approved decision changes; git keeps its history. Cite `docs/adr/` records as `ADR NNNN`, the closed
+  architecture series as `architecture/NNNN`.
 - [Tasks](docs/tasks/README.md) and [releases](docs/releases.md): claim work before starting.
 
 ## Working together
@@ -38,7 +39,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Land your own pull request through the merge queue once the required checks are green and Codex has no
   unresolved findings: enable auto-merge (`gh pr merge --auto --rebase`). Paths in CODEOWNERS also need the
   maintainer's approval. A stack lands bottom up
-  ([ADR 0034](docs/adr/process/0034-multi-pr-work-lands-as-a-stack.md)); GitHub refuses auto-merge on stacks, so
+  ([ADR 0034](docs/adr/process/0034-multi-pr-work-may-be-a-stack.md)); GitHub refuses auto-merge on stacks, so
   enqueue the top with `gh api -X PUT repos/{owner}/{repo}/pulls/<n>/merge-async` (no merge parameters: the queue
   sets the method), which takes the PRs below it along.
 - On the scope, stop at the first unexpected state. Report it. Do not repair it by hand.
@@ -72,8 +73,9 @@ to the document that explains it. When a rule and your task conflict, stop and a
 
 ## Code Review Rules
 
-- One topic per PR, about 400 changed lines without goldens and fixtures; link the issue or task file, use the template.
-  Multi-PR work (refactors) is a `gh stack`, one green topic per layer ([ADR 0034](docs/adr/process/0034-multi-pr-work-lands-as-a-stack.md)).
+- Default to one PR with separate topic commits, about 400 changed lines without goldens and fixtures; link the issue
+  or task file and use the template. Multi-PR work may use a `gh stack`, one green topic per layer
+  ([ADR 0034](docs/adr/process/0034-multi-pr-work-may-be-a-stack.md)).
 - Required checks: fast, clippy, test, python, deny, pr-meta, privacy, codex-review. Fix or answer every Codex
   finding; never resolve a thread without either. `@codex review` after new commits. Outages: an admin merges via
   the ruleset bypass and states the reason in the PR.
@@ -171,9 +173,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - In the same merge that finishes the task, set `status: done`, add a dated Status line and move the file to
   `docs/tasks/done/`. Keep completed files and ids forever. Never reuse or delete an id.
 - Fold lasting facts into permanent docs when the change merges.
-- Any architectural decision gets an ADR in `docs/adr/<category>/` (from `docs/adr/template.md`, next number from
-  0030).
-  The owner approves it before code.
+- A new architectural decision gets an ADR in `docs/adr/<category>/` (from `docs/adr/template.md`, next number from
+  0030). Rewrite an existing record when its decision changes. The owner approves decisions before code.
 - Update `docs/architecture/README.md` when code matches it or when the target changes.
 - Statements about hardware say how they are known: verified on the unit, assumed, or not yet verified.
 

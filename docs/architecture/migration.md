@@ -43,6 +43,7 @@ Their presence does not prove whole-batch accumulation.
 ### M1: golden pictures and the host harness
 
 Implemented; [task 0002](../tasks/done/0002-m01-golden-pictures.md) is done.
+Golden comparisons follow [ADR 0014](../adr/process/0014-refactorings-keep-every-pixel.md).
 `ui/tests/golden.rs`, `host_script.rs` and `soak.rs` are the host regression harness.
 
 ### M1b: safe start and exit
@@ -204,8 +205,9 @@ read-only Picture. At 1/2 channels reduce shares by touched row bands; at 3/4 ch
 main adds at most three map sets. Files: `drawpipe*`, `ui.rs`, `picture/`, core window types.
 Acceptance: every merge contains whole batches including newest frame; route-equivalent content, one-frame/
 48-frame perf ratios, no reduction at 4 channels, no allocations/blocking in reduction. Keep Standard alongside
-Batch for M12's owner decision. Remove replaced Acc lists, Tally if present, Deliver, MERGE_WAIT_MAX,
-early help_done and duplicate newest-frame composition only where replaced; do not delete Standard here.
+Batch for M12's owner decision under [architecture/0013](adr/0013-one-batch-path.md).
+Remove replaced Acc lists, Tally if present, Deliver, MERGE_WAIT_MAX, early help_done and duplicate newest-frame
+composition only where replaced; do not delete Standard here.
 Delta: -100..-300. Depends: M7/M8. Parallel: serial on map ownership/publication. Unit round 3: partial=0 stress.
 
 ### M9b: GPU work proportional to change
@@ -248,22 +250,26 @@ Risk is low for docs, medium for observable UI/protocol behaviour; acquisition t
 
 ### M12: acceptance and removal (D9)
 
-**M12a, evidence and owner decision.** Scope: compare current Standard/Frames and Batch routes after M2..M11
+**M12a, evidence and owner selection.** Scope: compare current Standard/Frames and Batch routes after M2..M11
 prerequisites pass. Files: `ui/tests/`, `tools/perf-guard.sh`, drawing task evidence, `docs/architecture/drawing.md`.
 Acceptance: route-equivalent pictures/weights for raw, pairs, dots, zoom, deep reads, roll/scan, STOP/SINGLE and replay;
 full gate; authorized unit load/soak with frame, latency, drop and memory evidence.
+Under [architecture/0013](adr/0013-one-batch-path.md), do not delete Standard before the cause of Batch's
+drop to about 18 fps with four channels at 10 us/div is found.
 Expected delta: 0. Risk: medium, with unit timing evidence. Parallel: evidence preparation alongside IO baselining;
 final acceptance waits for the drawing prerequisites.
 
-**Open owner question:** retain both Acquire > Draw path choices, or remove one after those measurements?
+**Open owner question:** which of Standard/Frames and Batch survives after those measurements?
 `Model::draw_batch`, `drawpipe::Mode` and the fast/record routes still exist. `draw.model` does not exist in this
-checkout; there is no such switch to remove. This document does not decide the surviving route.
+checkout; there is no such switch to remove. M12 must keep one path and delete the loser under architecture/0013;
+the surviving route remains pending measurement and owner selection.
 
-**M12b, approved deletion.** Scope: remove only code made obsolete by the owner's decision.
+**M12b, approved deletion.** Scope: delete the losing path and code made obsolete by the owner's selection.
 Files: selected branches in `ui.rs`, `drawpipe*`, `fastdraw.rs`, `wave.rs`, `compress.rs`, `sysconf.rs` and core settings.
-Acceptance: M12a pictures/perf unchanged for the surviving behaviour, setup compatibility and full gate.
-Expected delta: <= 0, amount measured after the choice; 0 if both routes stay.
-Risk: medium. Parallel: no overlapping draw-path edits. M12 is complete only after evidence and decision.
+Acceptance: one surviving path, losing path and obsolete selectors removed, M12a pictures/perf unchanged for the
+surviving behaviour, setup compatibility and full gate.
+Expected delta: < 0, amount measured after the choice.
+Risk: medium. Parallel: no overlapping draw-path edits. M12 is complete only after evidence, selection and deletion.
 
 ### E1: dispatch extraction before parallel families
 

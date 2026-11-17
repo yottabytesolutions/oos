@@ -1,6 +1,6 @@
 # ADR 0033: Development runs on Linux, the BSDs and macOS; Windows users develop in WSL or a Linux VM
 
-- Status: accepted, amended by ADR 0036 (the open question: the window moved to oos-desktop)
+- Status: accepted
 - Date: 2026-11-17
 - Category: process
 
@@ -55,14 +55,8 @@ feature or a tool because native Windows lacks it.
 - Worth a second look when a maintainer develops on native Windows, or when a tool needs a host this record does not
   cover.
 
-## Open question
-
-The tree still holds a native Windows desktop window of the screen: `ui/src/desktop/`, `ui/src/announce/windows.rs`,
-`build-windows.ps1`, `run-windows.ps1` and the `cfg(windows)` branches of `oos-ui`. It is a product feature, not
-only a development path, and its future is decided separately. Until then nothing in the gate or CI builds it.
-
 ## References
 
 Discussion [#9](https://github.com/yottabytesolutions/oos/discussions/9) (dropping the PowerShell build),
 ADR 0020 (superseded), ADR 0036, ADR 0037, ADR 0031, [CONTRIBUTING.md](../../../CONTRIBUTING.md),
-[development.md](../../development.md), `ui/src/desktop.rs`.
+[development.md](../../development.md).

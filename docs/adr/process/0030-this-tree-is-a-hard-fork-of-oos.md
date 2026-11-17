@@ -16,8 +16,8 @@ they returned:
 - Upstream code does not follow the size and lint limits. Each intake needed a special ratchet rebaseline path in the
   gate ([architecture/0018](../../architecture/adr/0018-upstream-rebaseline.md)) and still failed the gate on a large
   intake (integration 30, aborted).
-- Work sent upstream had to be ported back to upstream's layout and rules (ADR 0017, ADR 0019, ADR 0020) and lost the
-  structure it was built for.
+- Work sent upstream had to be ported back to upstream's layout and rules (now ADR 0019, ADR 0031 and ADR 0039) and
+  lost the structure it was built for.
 - Two record series with colliding numbers (`docs/adr/` and `docs/architecture/adr/`) had to be cited by path.
 
 The owner decided on 2026-11-17 to fork hard.
@@ -27,17 +27,17 @@ The owner decided on 2026-11-17 to fork hard.
 - This tree is a hard fork of OOS. The fork point is tag `hard-fork-20261117` (`overhaul` c654b1f0). The last
   upstream commit merged in is 15b819e2.
 - `main` is the trunk and the only long-lived branch. `overhaul` is retired and becomes the annotated tag
-  `archive/overhaul` (ADR 0026).
+  `archive/overhaul`.
 - No upstream merges, no bridge merges and no upstream intake. Upstream is not tracked. A single upstream change may
   enter by cherry-pick: the commit keeps its author and carries the trailer `Cherry-picked-from: upstream <hash>`
   with the full upstream hash. It then passes the gate like any other change; nothing is rebaselined for it.
 - No pull requests to upstream unless the owner asks for one.
 - After one last scrubbed publish, the public repository `yottabytesolutions/oos` is the single source of truth for
-  this tree (ADR 0026).
+  this tree.
 - The licence stays GPL-2.0-or-later. Copyright lines, `LICENSE`, the authorship in the history and the attribution in
   `README.md` stay. Files written for this fork carry the SPDX line like the rest (ADR 0019).
 - The tree's own rules are the official ones: the gate is `cargo xtask check` (ADR 0031), lints and ratchets follow
-  ADR 0032. Where an upstream record conflicts with them, it is superseded or amended in place.
+  ADR 0039. Where an upstream record conflicts with them, it is superseded or amended in place.
 
 **Record series.** Both series stay where they are; they are not renumbered. A renumbering would rewrite about 150
 references, many of them bare numbers like `adr/0011` in finished task files whose series is only clear from
@@ -69,4 +69,4 @@ context. That is not a mechanical change, and finished task files are kept as wr
 ## References
 
 Tag `hard-fork-20261117`, [architecture/0018](../../architecture/adr/0018-upstream-rebaseline.md) (superseded),
-ADR 0026, ADR 0031, ADR 0032, [README.md](../../../README.md), [AGENTS.md](../../../AGENTS.md).
+ADR 0040, ADR 0031, ADR 0039, [README.md](../../../README.md), [AGENTS.md](../../../AGENTS.md).

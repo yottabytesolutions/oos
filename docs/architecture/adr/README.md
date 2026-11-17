@@ -1,7 +1,7 @@
 # Architecture decision records
 
-One file per decision, `NNNN-short-name.md`. A decision is changed by a new record that supersedes the old one. The
-target architecture is `../README.md`.
+One file per decision, `NNNN-short-name.md`. Rewrite an existing decision in place when it changes; git keeps the
+history, following the [ADR policy](../../adr/README.md). The target architecture is `../README.md`.
 
 This series is closed to new records since the hard fork
 ([ADR 0030](../../adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)). New records go into
@@ -19,9 +19,9 @@ This series is closed to new records since the hard fork
 | [0008](0008-ports-where-they-pay.md) | Ports and adapters where they pay |
 | [0009](0009-formatting-and-lint.md) | Formatting and lint are enforced |
 | [0010](0010-size-limits.md) | Size limits with a ratchet |
-| [0011](0011-golden-pictures.md) | Golden pictures pin the drawing |
+| [0011](../../adr/process/0014-refactorings-keep-every-pixel.md) | Golden pictures pin the drawing; merged into ADR 0014 |
 | [0012](0012-error-policy.md) | Error policy |
-| [0013](0013-one-batch-path.md) | Frames mode becomes the batch path |
+| [0013](0013-one-batch-path.md) | Measure both draw paths at M12 and keep one |
 | [0014](0014-domain-crate.md) | The domain is its own crate, oos-core |
 | [0015](0015-safe-start.md) | Safe start breaks restart loops |
 | [0016](0016-performance-principles.md) | Performance principles |

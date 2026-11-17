@@ -68,6 +68,46 @@ pub fn nextest() -> bool {
     std::env::var("OOS_TEST_RUNNER").is_ok_and(|v| v == "nextest")
 }
 
+/// The shard of `OOS_TEST_PARTITION=K/N` (CI): this job runs the K-th of N parts of every crate's tests, chosen by
+/// nextest's hash of the test name, so every test runs in exactly one shard. None runs all tests.
+pub fn partition(value: Option<&str>) -> Result<Option<(u32, u32)>, String> {
+    let Some(value) = value.filter(|v| !v.is_empty()) else { return Ok(None) };
+    let bad = || format!("OOS_TEST_PARTITION={value}: expected K/N with 1 <= K <= N");
+    let (k, n) = value.split_once('/').ok_or_else(bad)?;
+    let (k, n): (u32, u32) = (k.parse().map_err(|_| bad())?, n.parse().map_err(|_| bad())?);
+    if k == 0 || k > n {
+        return Err(bad());
+    }
+    Ok(Some((k, n)))
+}
+
+/// The cargo-nextest arguments for one crate.
+fn nextest_args(root: &Path, profile: &[&str], shard: Option<(u32, u32)>) -> Result<Vec<String>, String> {
+    // Plain text: CI sets CARGO_TERM_COLOR=always, and colour codes hide the summary from the parser. Each crate is
+    // its own Cargo workspace, so nextest would look for its configuration in the crate: name the repository's.
+    let config = root.join(".config/nextest.toml");
+    let config = config.to_str().ok_or("the repository path is not UTF-8")?;
+    let mut args: Vec<String> = [
+        "nextest",
+        "run",
+        "--locked",
+        "--no-fail-fast",
+        "--no-tests=pass",
+        "--color",
+        "never",
+        "--config-file",
+        config,
+    ]
+    .into_iter()
+    .chain(profile.iter().copied())
+    .map(str::to_string)
+    .collect();
+    if let Some((k, n)) = shard {
+        args.extend(["--partition".to_string(), format!("hash:{k}/{n}")]);
+    }
+    Ok(args)
+}
+
 fn fail(out: &run::Output) -> String {
     format!("{}\n{}", run::tail(&out.stdout, 30), run::tail(&out.stderr, 20))
 }
@@ -88,25 +128,9 @@ pub fn run(
         let c = counts(&out.stdout);
         return if !out.ok || c.failed > 0 { Err(fail(&out)) } else { Ok((c, Vec::new())) };
     }
-    // Plain text: CI sets CARGO_TERM_COLOR=always, and colour codes hide the summary from the parser. Each crate is
-    // its own Cargo workspace, so nextest would look for its configuration in the crate: name the repository's.
-    let config = root.join(".config/nextest.toml");
-    let config = config.to_str().ok_or("the repository path is not UTF-8")?;
-    let args = [
-        &[
-            "nextest",
-            "run",
-            "--locked",
-            "--no-fail-fast",
-            "--no-tests=pass",
-            "--color",
-            "never",
-            "--config-file",
-            config,
-        ],
-        profile,
-    ]
-    .concat();
+    let shard = partition(std::env::var("OOS_TEST_PARTITION").ok().as_deref())?;
+    let args = nextest_args(root, profile, shard)?;
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = run::capture(ctx, &dir, "cargo", &args)?;
     let text = format!("{}\n{}", out.stdout, out.stderr);
     let Some(mut c) = nextest_counts(&text) else {
@@ -115,7 +139,8 @@ pub fn run(
     if !out.ok || c.failed > 0 {
         return Err(fail(&out));
     }
-    if dir.join("src/lib.rs").is_file() {
+    // The doctests run once, in the first shard.
+    if dir.join("src/lib.rs").is_file() && shard.is_none_or(|(k, _)| k == 1) {
         let doc = run::capture(ctx, &dir, "cargo", &[&["test", "--locked", "--doc"], profile].concat())?;
         let d = counts(&doc.stdout);
         if !doc.ok || d.failed > 0 {
@@ -152,6 +177,19 @@ mod tests {
         assert_eq!(nextest_counts("no summary"), None);
         let coloured = "\u{1b}[1;32m     Summary\u{1b}[0m [ 1.0s] 3 tests run: 3 passed, 0 skipped\n";
         assert_eq!(nextest_counts(coloured), None, "colour hides the summary: the step asks for plain text");
+    }
+
+    #[test]
+    fn partition_takes_one_of_n_shards() {
+        assert_eq!(partition(None), Ok(None));
+        assert_eq!(partition(Some("")), Ok(None));
+        assert_eq!(partition(Some("2/3")), Ok(Some((2, 3))));
+        for bad in ["0/3", "4/3", "3", "a/3", "1/b", "1/0"] {
+            assert!(partition(Some(bad)).is_err(), "{bad}");
+        }
+        let args = nextest_args(Path::new("/path/to/oos"), &["--release"], Some((2, 3))).unwrap();
+        assert_eq!(args[args.len() - 3..], ["--release", "--partition", "hash:2/3"]);
+        assert!(!nextest_args(Path::new("/path/to/oos"), &[], None).unwrap().contains(&"--partition".to_string()));
     }
 
     #[test]

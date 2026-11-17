@@ -16,7 +16,7 @@ outputs.
 
 Today the UI and the thread share one `Shared` struct of about 40 fields under one mutex: settings, one-shot
 requests, outputs and readings side by side, each with its own counter convention (`stamp`, `avg_clear`,
-`final_req`/`final_ack`, `levels_want` ids, `rearm`, `force`). The target splits it by kind. Each kind has one writer.
+`final_req`/`final_ack`, `rearm`, `force`). The target splits it by kind. Each kind has one writer.
 
 | Kind | Writer | Reader | Shape |
 |---|---|---|---|
@@ -80,7 +80,7 @@ Bound to a `(gen, epoch)`, may be superseded:
 | `Rearm` (a SINGLE scan complete, SINGLE pressed again) | `halted`/`rearm` |
 | `Final(id)` (the STOP final raw read, stop-exact.md) | `final_req`/`final_ack` |
 | `Segments(run, want)`, `SegRead(k)` | `seg` |
-| `Levels(id, ..)`, `Slots(id)` (autoset, debug) | `levels_want`, `slots_want` |
+| `Slots(id)` (debug) | `slots_want` |
 
 Unbound, always served in order:
 
@@ -92,7 +92,7 @@ Unbound, always served in order:
 STOP and RUN are not commands: they are the `hold` level in `AcqWant` (today `Shared::hold`).
 
 Each command is taken once. The thread puts its id into `Readings::acked` when done. The answer to a request
-(levels, slots, cal result) is in `Readings` under the same id. No counter conventions per field.
+(slots, cal result) is in `Readings` under the same id. No counter conventions per field.
 
 Commands and the want are separate channels, so their order needs a rule:
 - **Bound to a pair.** Every bound command carries the `(gen, epoch)` it belongs to, taken from the `AcqIntent` of the step
@@ -128,7 +128,7 @@ struct that owns the state, and one function per phase. One pass:
 loop {
     service()            board readings, LA probe, self-calibration, generator
     apply()              take AcqWant; configure on change; drop what the old gen left
-    units()              DVM, measure-unit levels, core trim, slot dump: only with nothing armed
+    units()              DVM, core trim, slot dump: only with nothing armed
     match mode {
         Slow::Roll | Slow::Scan => stream(),
         _ if segments    => segments(),
@@ -145,7 +145,7 @@ loop {
 | `Buffers` | `dma`, `raw_dma`, `pool_made` |
 | `Stream` | `rolling`, `ring`, `ring_la`, `sweep`, `sweep_la`, `cursor`, `last_info`, `halted`, `done_seen`, `published` |
 | `BatchState` | `armed`, `paused`, `fresh`, `single_done`, `fill`, `cap`, `helper`, `help_cost`, `comp_last`, `deep_last`, `la_fails` |
-| `Units` | `avg`, `counting`, `dvm_run`, `guard`, `levels_done`, `slots_done`, trim state |
+| `Units` | `avg`, `counting`, `dvm_run`, `guard`, `slots_done`, trim state |
 | `Service` | `afg_io`, `afg_done`, `xadc_at` |
 
 ### `apply`
@@ -251,6 +251,6 @@ Today the loop is `cfg(target_os = "linux")` and has no host test. Target:
    existing hw tests and the counters stay equal.
 2. `AcqWant` with `gen`, `epoch` in `BatchMeta`, `apply` drops the old generation (with draw plan 1c).
 3. `AcqCmd` and `Readings` replace the remaining `Shared` fields, one group per merge (requests with ids first:
-   levels, slots, final; then the unit readings).
+   slots, final; then the unit readings).
 4. `MeasRead` as its own type (with draw plan step 2).
 5. The `Device` trait and the host tests of the loop.

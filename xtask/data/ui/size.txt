@@ -1,6 +1,6 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-2111 file ui/src/board/dho/hw.rs
+2080 file ui/src/board/dho/hw.rs
 745 file ui/src/drawpipe.rs
 568 file ui/src/drm.rs
 754 file ui/src/fastdraw.rs
@@ -17,7 +17,7 @@
 1464 file ui/src/store.rs
 8919 file ui/src/ui.rs
 1747 file ui/src/ui/analysis.rs
-608 file ui/src/ui/autoset.rs
+504 file ui/src/ui/autoset.rs
 992 file ui/src/ui/bode.rs
 475 file ui/src/ui/bus.rs
 1840 file ui/src/ui/eyepage.rs
@@ -44,7 +44,7 @@
 138 fn ui/src/board/dho/fpga.rs spawn
 72 fn ui/src/board/dho/hw.rs hw_trigger
 125 fn ui/src/board/dho/hw.rs settings
-860 fn ui/src/board/dho/hw.rs spawn
+850 fn ui/src/board/dho/hw.rs spawn
 83 fn ui/src/board/record.rs resample
 103 fn ui/src/board/record.rs trigger_point
 91 fn ui/src/cmd.rs execute
@@ -118,7 +118,7 @@
 78 fn ui/src/ui/analysis.rs Ui::channel_measurement
 66 fn ui/src/ui/analysis.rs Ui::poll_reference_measurements
 117 fn ui/src/ui/analysis.rs Ui::power_update
-94 fn ui/src/ui/autoset.rs Ui::auto_step
+83 fn ui/src/ui/autoset.rs Ui::auto_step
 69 fn ui/src/ui/bode.rs Ui::bode_adjust
 69 fn ui/src/ui/bode.rs Ui::bode_begin
 155 fn ui/src/ui/bode.rs Ui::draw_bode
@@ -175,7 +175,7 @@
 5 impls ui State
 61 impls ui Ui
 16 struct ui/src/board/mod.rs Frame
-47 struct ui/src/board/mod.rs Shared
+45 struct ui/src/board/mod.rs Shared
 13 struct ui/src/drawpipe.rs Batch
 14 struct ui/src/drm.rs Display
 16 struct ui/src/drm.rs GetConnector
@@ -192,7 +192,7 @@
 215 struct ui/src/ui.rs Ui
 19 struct ui/src/ui/analysis.rs RefMeasureKey
 49 struct ui/src/ui/analysis.rs State
-17 struct ui/src/ui/autoset.rs AutoRun
+16 struct ui/src/ui/autoset.rs AutoRun
 15 struct ui/src/ui/bode.rs State
 28 struct ui/src/ui/eyepage.rs Page
 15 struct ui/src/ui/meascatalog.rs Lay

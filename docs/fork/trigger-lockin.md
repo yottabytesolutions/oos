@@ -193,10 +193,11 @@ Verification on the unit, before turning it on by default:
 5. `oos-fpgad rd 0x4034` a few times in case 2 and 3: bit 6 and 7 must now come and go (cleared after
    every batch) instead of staying set.
 
-## Autoset levels from the measure unit (FPGA use)
+## ADC measure-unit diagnostics
 
-Measured on the unit with fixes 1-3 and 7: autoset 1.18-1.57 s on the probe-comp output; the two levels stages
-(Wide, Fit) take 0.6-0.7 s of it, each waiting for a 240 ms record at 20 ms/div.
+The autoset measure-unit experiment was removed under ADR 0010: on a DHO924S
+(2026-11-15), every request returned the levels of an earlier signal. Autoset uses records for its levels.
+Raw slot diagnostics and core-offset matching still use the measure unit.
 
 The FPGA's ADC measure unit ([../hardware/fpga.md](../hardware/fpga.md) "Measure unit", self-cal.md 2.4) gives every
 core's 12-bit minimum and maximum (0x1048) and its mean (0x1044, 16-bit scale) over 2^e samples, with no acquisition.
@@ -211,28 +212,7 @@ core's 12-bit minimum and maximum (0x1048) and its mean (0x1044, 16-bit scale) o
 - Codes to volts: the unit reads after the ADC x2 of 0x105c and before the Q10 read-path gain (self-cal.md 13:
   about 6970 codes per volt at 1 V/div, x1.077 = the 7500 per division of the records). So a 16-bit code c is the
   read-out word 32768 + (c - 32768) x dg (dg = the cal record's digital gain without the x2), and its volts follow
-  from `seq::volts`. Host test: the levels equal the record path's volts for the same codes at several gains,
-  scales and offsets.
-- Plausibility: a channel's slots must agree (means within a tenth of the swing plus 375 codes, 0.05 div; a wrong slot
-  mapping shows up there unless the channels carry the same signal). The floor was 64 codes: an open CH3 in 4-channel
-  mode was refused on the unit (round 8), its cores 4/6 apart by one ADC lane's DC offset (~175 codes, 0.024 div), and the mean must lie between the extremes. Codes 0 or
-  4095 mark clipping.
-
-The auto set-up (hardware source) asks the acquisition thread for 24 runs (about 40 ms of signal, the full swing
-from about 25 Hz) at the wide scale once that scale is applied, rescales on clipping or less than 0.4 div and asks
-once more, then fits and goes to the search. Fallback to the record stages: no answer within 0.5 s, a channel
-without a usable reading, or still out of range after the second request. The unit is opt-in: `autoset.levels =
-unit` in system.conf (or OOS_AUTOSET_LEVELS=unit); by default the record stages find the levels. On a DHO924S
-(2026-11-15) the unit answered every request with the levels of an earlier signal. The thread runs the unit while
-nothing is armed.
-
-Verification on the unit:
-1. CH1 alone on the probe-comp output, `:AUToscale`: the UI log (`oos-ui auto: measure-unit levels`) shows about
-   0..0.3 V, and the final 100 mV/div matches the record-based result (`autoset.levels = records`).
-2. Time it as before (8 runs): expected about 0.4-0.6 s less than 1.2-1.6 s.
-3. CH1 and CH2 on, a signal on CH1 only: CH2 must read flat and CH1 the swing (slot mapping of 2 channels); then all
-   four on (4-channel mapping). A refused channel logs `measure unit [..], records`.
-4. A 5 V signal: the first answer clips at 1 V/div, the second at 5 V/div fits.
+  from `seq::volts`. The DVM uses the same vertical scale and gain convention.
 
 ## Autoset search in fewer records
 
@@ -282,14 +262,12 @@ Fix (branch fix/autoset-multich): the measure unit only with one channel on; the
 more than one channel (0.8 MB at 4 channels; 100 k points at 2 ms/div give 2.5 MSa/s after `hz::prep`, 20 samples a
 period at 125 kHz). Open: whether an 8 MB read itself
 crashes the unit (a user-chosen 1 M depth with 4 channels takes the same read). The slot map came later from libscope
-(branch fix/meas-slots): the unit's observation fits it, and the measure unit is used with several channels again.
+(branch fix/meas-slots): the unit's observation fits it. These are historical results of the removed autoset path.
 
 ## Slot map cross-check (for unitlab)
 
 The slot table is in [../hardware/fpga.md](../hardware/fpga.md) "Channel to core and slot mapping"; since branch
-fix/meas-slots `hal::dho::levels::slots` follows it and the auto set-up uses the measure unit with any channel set again
-(a channel whose slots disagree still falls back to the records). This check confirms it on the unit without moving a
-cable.
+fix/meas-slots `hal::dho::levels::slots` follows it. This diagnostic check confirms it on the unit without moving a cable.
 `:DEBug:SLOTs?` runs the unit once (2^18 samples per core) and answers the previous query: `<request>;min,max,mean;...`
 for slots 0..7 (12-bit min and max, mean on the 16-bit scale). Send it twice about 0.3 s apart and use the second
 answer; repeat 3 times per case.
@@ -308,11 +286,6 @@ carry the square. Restore the user's settings afterwards.
 | 5 | CH1, CH2, CH3 | 0, 2 s; 1, 3 s+; 4, 6 f (4-channel mode; 5 and 7 are CH4's, off) |
 | 6 | CH1-CH4 | 0, 2 s; 1, 3 s+; 4-7 f |
 
-Then `:AUToscale` once per case 2, 5 and 6: the log line `oos-ui auto: measure-unit levels` (not `measure unit
-[..], records`), about 0..0.3 V for CH1 and CH2, flat for the open channels, and the same final scales as with
-`autoset.levels = records`. A case that differs: note the slots that swing, and set `autoset.levels = records` until
-the table is fixed.
-
 ## Status (feat/trigger)
 
 | Fix | State |
@@ -325,7 +298,7 @@ the table is fixed.
 | 8 autoset noise reject, opt-in (Trigger > Auto noise rej.) | done, 417a81c |
 | 5 status from 0x4034 | verified on the unit 2026-11-13; default on in fix/autoset-multich |
 | 6 counter for the time base | dropped (team-lead, 2026-11-13): after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
-| (a) autoset levels from the measure unit | done, opt-in (`autoset.levels = unit`, upstream): on the unit (2026-11-15) it answered with stale levels, so Auto missed a 5 MHz sine of 0.2 Vpp; the records are the default again. Earlier verified on the unit for CH1 alone (build d9800d9) and the slot map in all six cases (`unit-dho804.md`, round 8) |
+| (a) autoset levels from the measure unit | removed under ADR 0010 after stale readings on the DHO924S (2026-11-15) made Auto miss a 5 MHz sine of 0.2 Vpp |
 | autoset search in at most three records | done; timed on the unit for CH1 alone on the probe-comp output (build d9800d9) |
 | F1 flicker | done: at minimum persistence the picture is graded against the per-frame maximum times the frames in it (`picture_ref` in ui.rs), so equal frames give equal brightness whatever the batch size. F2 (fixed picture window) not needed |
 

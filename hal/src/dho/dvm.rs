@@ -43,7 +43,7 @@ pub const EXP: u32 = 28;
 const MID: f64 = 2048.0;
 const FULL: f64 = 4096.0;
 /// One stored code in read-out codes: the read-out word is the code shifted to 16 bits, then the read-path gain
-/// (`wpu.rs`, `levels::volts`).
+/// (`wpu.rs`).
 const READOUT_PER_CODE: f64 = 16.0;
 /// A mean below one code is not a reading: after STOP the block returns one window of (nearly) zero words.
 const MIN_MEAN: f64 = 1.0;
@@ -146,7 +146,7 @@ pub fn decode(r: &Raw, exp: u32) -> Option<Reading> {
 
 /// Volts per stored code for the vertical set-up `v`: the read-out's 7500 codes per division, through the read-path
 /// gain. A digital gain of 2 and more is split into the ADC x2 of 0x105c, which acts before the samples are stored,
-/// and the read-path rest (`levels::volts` does the same for the measure unit).
+/// and the read-path rest.
 fn volts_per_code(v: &Vert) -> f64 {
     let dg = if v.gain >= 2.0 { v.gain / 2.0 } else { v.gain };
     READOUT_PER_CODE * dg * v.scale / 7500.0

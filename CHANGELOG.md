@@ -29,6 +29,7 @@ Added:
 
 Changed:
 
+- Removed the failed autoset measure-unit option. Auto set-up always reads signal levels from records (ADR 0010).
 - SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
   clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
   clock first gets swapped results now. These are OOS items; the stock programming guide has none.
@@ -75,7 +76,7 @@ Fixed:
 - HiSLIP (desktop): a tiny maximum message size no longer splits a reply into one message per byte.
 - The zoom window no longer overflows at extreme delays.
 - The console banner and the Network page said SSH takes a provisioned key only. It takes the password or a key.
-- With hardware segments recording, the DVM, the levels and the ADC core trim wait for the recording to end.
+- With hardware segments recording, the DVM, slot diagnostics and ADC core trim wait for the recording to end.
 - STOP on a deep record (e.g. 10 M at 1 ms/div): the views read again as min/max pairs are drawn, while Mean, RMS,
   Std dev and the other readouts stay measured on the raw record of the STOP. Before, they turned to "----".
 - Reference > Clear also removes the readouts of the cleared slots. Before, an import's Vpp, Freq, RMS and Rise rows
@@ -159,9 +160,8 @@ New:
   Acquire says "Aliasing: above <half the rate>, Peak shows it" while the rate is below the ADC's.
 - Trigger level: no mark with AC or LF reject coupling; with DC a dashed line for 1.5 s after every change.
 - From PR #7 (opt-in through `/oos/system.conf` unless noted): hardware segments with trigger time stamps (Acquire >
-  HW segments), hardware averaging (Acquire > HW average), the trigger status from the SCU (default on), auto set-up
-  levels from the FPGA measure unit (`autoset.levels = unit`; it answered with the levels of an earlier signal on a
-  DHO924S, so Auto missed a 5 MHz sine of 0.2 Vpp), hardware DVM, hardware mask and zone tests, UART/SPI/I2C hardware
+  HW segments), hardware averaging (Acquire > HW average), the trigger status from the SCU (default on),
+  hardware DVM, hardware mask and zone tests, UART/SPI/I2C hardware
   triggers (Trigger > Bus), System > AUX out (trigger out, pass/fail), live min/max compression in the FPGA, deep-memory
   measurements from raw reads, an ADC core offset trim, `:CHANnel<n>:VERNier`, auto noise reject, batch pipeline,
   core placement, arming ahead, MSI for the DMA driver.

@@ -16,9 +16,13 @@ on:
   merge_group:
 permissions:
   contents: read
+# One run per PR at a time, every pending run kept (`queue: max`): parallel runs could read different review states
+# and an older one could publish last, and a cancelled run shows as a failed check next to the codex-review status.
+# Each run reads the review state when it starts, so the last one publishes the current verdict. (actionlint 1.7.12
+# does not know `queue` yet.)
 concurrency:
   group: codex-review-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
-  cancel-in-progress: true
+  queue: max
 jobs:
   codex-gate:
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request

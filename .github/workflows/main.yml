@@ -39,9 +39,6 @@ jobs:
           - name: tests-release
             steps: tests-release
             nextest: nextest
-          - name: python
-            steps: script-syntax python-tests
-            mksh: true
           - name: coverage
             steps: doctor-base coverage
             nextest: nextest
@@ -63,12 +60,6 @@ jobs:
           tool: cargo-llvm-cov@0.9.1
       - name: Hooks path (doctor checks it)
         run: git config core.hooksPath .githooks
-      # script-syntax checks the one mksh script with mksh.
-      - name: mksh
-        if: matrix.mksh
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends mksh
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: nightly-${{ matrix.name }}
@@ -84,6 +75,28 @@ jobs:
         run: |
           read -ra ids <<< "$STEPS"
           cargo xtask step "${ids[@]}"
+
+  python:
+    if: github.event_name != 'pull_request'
+    name: gate (python)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OOS_PYTHON_NO_RUST: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # script-syntax checks the one mksh script with mksh.
+      - name: mksh
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends mksh
+      - name: Script syntax and Python tests (tools/tests, tools/privacy, ui/tools)
+        run: |
+          python3 -I tools/script_syntax.py
+          python3 -I tools/python_tests.py
 
   deny:
     if: github.event_name != 'pull_request'
@@ -126,7 +139,7 @@ jobs:
     uses: ./.github/workflows/image.yml
 
   timings:
-    needs: [gate, deny, freebsd, image]
+    needs: [gate, python, deny, freebsd, image]
     if: always() && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5

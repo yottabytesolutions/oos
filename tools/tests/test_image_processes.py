@@ -22,6 +22,8 @@ class Processes(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn(b'PASS', result.stdout)
 
+    @unittest.skipIf(os.environ.get('OOS_PYTHON_NO_RUST') == '1' or not shutil.which('cargo'),
+                     'requires cargo and the pinned Rust toolchain for release linking; unavailable in Python-only CI')
     def test_cargo_check_is_not_a_release_link(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

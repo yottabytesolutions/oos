@@ -149,7 +149,7 @@ and the coverage margin of 0.5 percentage points are unchanged.
 | `perf` | `sh tools/perf-guard.sh` | toolchain | full |
 | `coverage` | `cargo llvm-cov` per crate | llvm-tools, cargo-llvm-cov | full; omitted only by partial mode |
 | `script-syntax` | `python3 -I tools/script_syntax.py` | Git, Python, declared shells | full |
-| `python-tests` | isolated unittest discovery in tools/tests, tools/privacy and ui/tools | Python | full |
+| `python-tests` | `python3 -I tools/python_tests.py`; isolated unittest discovery in tools/tests, tools/privacy and ui/tools, with count and skip checks | Git, Python; cargo-dependent tests skip without cargo or with `OOS_PYTHON_NO_RUST=1` in CI | full |
 | `arm64-release-link` | receipted release build with `--bins -p oos-ui -p oos-fpgad --target aarch64-unknown-linux-musl` | musl std, rust-lld | `--image` |
 | `gpu-host` | `sh gpu/test-host.sh` | ARM link and gpu-test profile | `--image` |
 | `ssh-sim` | prepare initramfs/rootfs and nft/Dropbear/SFTP; `sh tools/ssh-sim.sh` | simulation profile | `--image` |

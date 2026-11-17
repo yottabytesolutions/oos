@@ -24,12 +24,12 @@ run gh api -X PATCH "repos/$repo" \
 	-F web_commit_signoff_required=true
 
 # Actions: GitHub-owned actions plus the pinned third-party ones in .github/workflows, full-SHA pins required.
+# Tools (cargo-deny, git-cliff, cargo-llvm-cov) come through taiki-e/install-action, not an action of their own.
 run gh api -X PUT "repos/$repo/actions/permissions" -F enabled=true -f allowed_actions=selected \
 	-F sha_pinning_required=true
 run gh api -X PUT "repos/$repo/actions/permissions/selected-actions" --input - <<'JSON'
 {"github_owned_allowed": true, "verified_allowed": false,
- "patterns_allowed": ["Swatinem/rust-cache@*", "taiki-e/install-action@*", "EmbarkStudios/cargo-deny-action@*",
-                      "orhun/git-cliff-action@*"]}
+ "patterns_allowed": ["Swatinem/rust-cache@*", "taiki-e/install-action@*", "ossf/scorecard-action@*"]}
 JSON
 # The workflow token is read-only unless a job asks for more, and it never approves PRs.
 run gh api -X PUT "repos/$repo/actions/permissions/workflow" \

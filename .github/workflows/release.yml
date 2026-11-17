@@ -62,13 +62,11 @@ jobs:
           cp "$dir/oos-dev.unit" "dist/oos-$TAG.unit"
           cp "$dir/manifest.txt" "dist/oos-$TAG.manifest.txt"
           (cd dist && sha256sum -- * > SHA256SUMS)
-      - name: Changelog
-        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         with:
-          config: cliff.toml
-          args: --latest --strip header
-        env:
-          OUTPUT: dist/CHANGELOG.md
+          tool: git-cliff@2.14.2
+      - name: Changelog
+        run: git-cliff --config cliff.toml --latest --strip header --output dist/CHANGELOG.md
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/oos-*

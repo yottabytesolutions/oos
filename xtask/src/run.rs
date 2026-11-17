@@ -55,6 +55,21 @@ pub(crate) fn probe(ctx: &Context, root: &Path, program: &str, args: &[&str]) ->
     execute(ctx, root, program, args, &[], Command::new(program).env_remove("RUSTUP_TOOLCHAIN"))
 }
 
+/// Variables with which Git selects a repository. Git exports them to its hooks, so a gate started from a hook would
+/// pass them on: a child running `git` in a fixture repository would then write into the real clone. Every command
+/// finds its repository from its working directory instead.
+pub(crate) const GIT_REPOSITORY_VARS: [&str; 9] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_PREFIX",
+    "GIT_NAMESPACE",
+    "GIT_QUARANTINE_PATH",
+];
+
 fn execute(
     ctx: &Context,
     dir: &Path,
@@ -64,6 +79,9 @@ fn execute(
     command: &mut Command,
 ) -> Result<std::process::Output, String> {
     command.args(args).current_dir(dir);
+    for name in GIT_REPOSITORY_VARS {
+        command.env_remove(name);
+    }
     if let Some(target) = &ctx.target {
         command.env("CARGO_TARGET_DIR", target);
     }

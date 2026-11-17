@@ -24,10 +24,10 @@ jobs:
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup toolchain install
           cargo fetch --locked
-      - name: Kernel source (from the latest release, kernel/base.sha256 checks it)
+      - name: Kernel source (pre-release kernel-base-<version>, kernel/base.sha256 checks it)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download --repo "$GITHUB_REPOSITORY" --pattern 'linux-6.12.115-base.tar.xz' --dir kernel/src
+        run: tools/ci/kernel-base.sh download
       - name: Kernel
         run: kernel/build-base.sh
       - name: Image

@@ -26,7 +26,9 @@ SIZE_WARN: Final = 400
 SIZE_EXEMPT_DIRS: Final = ("golden", "fixtures")
 SIZE_EXEMPT_PREFIXES: Final = ("xtask/data/",)
 SIZE_EXEMPT_NAMES: Final = ("Cargo.lock",)
-RUNNERS: Final = frozenset({"ubuntu-24.04", "ubuntu-24.04-arm"})
+# Standard GitHub-hosted runners only: free for a public repository. Larger runners (`ubuntu-24.04-16core`,
+# `*-xlarge`, any custom label) are billed per minute even here, and self-hosted runners would run fork code.
+RUNNERS: Final = frozenset({"ubuntu-24.04", "ubuntu-24.04-arm", "ubuntu-latest"})
 DEPENDABOT: Final = "dependabot[bot]"
 AGENT_APP: Final = "yottabyte-oos-agent[bot]"
 SIGNOFF: Final = re.compile(r"^Signed-off-by: [^<>\n]+ <([^<>\s]+)>\s*$", re.MULTILINE)
@@ -89,7 +91,7 @@ def check_commits(commits: list[Commit], pr_author: str) -> Result:
 
 
 def check_runners(workflows: dict[str, str]) -> list[str]:
-    """Every `runs-on` is a literal GitHub-hosted label from RUNNERS: no expressions, lists or self-hosted labels."""
+    """Every `runs-on` is a literal label from RUNNERS: no expressions, lists, groups, larger or self-hosted runners."""
     errors = []
     for name, text in sorted(workflows.items()):
         for number, line in enumerate(text.splitlines(), 1):
@@ -99,7 +101,7 @@ def check_runners(workflows: dict[str, str]) -> list[str]:
             value = m.group(1).strip("'\"")
             if value not in RUNNERS:
                 errors.append(f"{name}:{number}: runs-on {m.group(1)!r}; only {', '.join(sorted(RUNNERS))} "
-                              "(GitHub-hosted) are allowed")
+                              "(standard GitHub-hosted) are allowed, no larger or self-hosted runners")
     return errors
 
 

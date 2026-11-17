@@ -208,6 +208,7 @@ pub fn run_script(
             cmd::Out::Shot(p) => host.capture(ui, &p)?,
             cmd::Out::None => {}
         }
+        let _ = super::super::lifecycle::storage::poll(ui, true);
         if ui.quit {
             break;
         }
@@ -218,6 +219,23 @@ pub fn run_script(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setup_save_completion_precedes_the_next_script_command() {
+        let root = std::env::temp_dir().join(format!("oos-script-storage-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let script = root.join("save.txt");
+        std::fs::write(&script, "menu Storage\ndo Save setup\n").unwrap();
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
+        ui.store_dir = root.clone();
+        ui.m.tscale = 12;
+        run_script(&mut ui, script.to_str().unwrap(), None, None, false).unwrap();
+        assert!(ui.toast.as_ref().unwrap().0.starts_with("Saved setup1.txt"));
+        ui.m.tscale = 14;
+        ui.script_do("Recall setup").unwrap();
+        assert_eq!(ui.m.tscale, 12);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn gpu_timing_output_appends_and_reports_open_and_write_errors() {

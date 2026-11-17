@@ -11,7 +11,6 @@ use std::time::Instant;
 struct Device {
     ui: Ui,
     sw: sysconf::Switches,
-    startup: Option<store::startup::Startup>,
     started: Instant,
     inp: input::Inputs,
     cv: Canvas,
@@ -34,6 +33,10 @@ pub fn run(mut ui: Ui, args: &[String], sw: sysconf::Switches, state: Option<sto
     eprintln!("oos-ui: display {}x{}", disp.width, disp.height);
     placement::irq::startup(&sw);
     let inp = startup::prepare(&mut ui, &mut disp, args, &state);
+    if let Err(error) = ui::lifecycle::storage::get(&mut ui, state) {
+        ui.persistence_status(false);
+        eprintln!("oos-ui: storage: {}", error);
+    }
     let started = Instant::now();
     let cv = Canvas::new(ui.scr.w, ui.scr.h);
     let remote = remote::Remote::new(args, &sw, &mut ui);
@@ -41,7 +44,6 @@ pub fn run(mut ui: Ui, args: &[String], sw: sysconf::Switches, state: Option<sto
     let mut device = Device {
         ui,
         sw,
-        startup: state,
         started,
         inp,
         cv,
@@ -128,36 +130,23 @@ impl Device {
         if self.power_request.is_some() || self.ui.exit_code() != 0 {
             return;
         }
-        if let Some(state) = self.startup.as_mut() {
-            if let Err(e) = state.observe(store::setup_text(self.ui.setup_model()), self.started.elapsed()) {
-                eprintln!("oos-ui: persist: {}", e);
-            }
+        let text = store::setup_text(self.ui.setup_model());
+        if let Err(e) = ui::lifecycle::storage::get(&mut self.ui, None)
+            .and_then(|worker| worker.observe(text, self.started.elapsed()))
+        {
+            eprintln!("oos-ui: persist: {}", e);
         }
         self.timers.network(&mut self.ui);
     }
 
     fn shutdown(&mut self) {
-        let Self { ui, startup, started, remote, graphics, outputs, inp, power_request, .. } = self;
+        let Self { ui, started, remote, graphics, outputs, inp, power_request, .. } = self;
         let result = super::shutdown::run(
             std::time::Instant::now(),
             ui,
             |deadline| remote.close(deadline),
             |ui, deadline| ui.stop_workers(deadline),
-            |ui| {
-                if ui.exit_code() != 0 {
-                    return Ok(());
-                }
-                if let Some(state) = startup.as_mut() {
-                    let text = store::setup_text(ui.setup_model());
-                    if power_request.is_some() {
-                        state.power_off(text, started.elapsed())
-                    } else {
-                        state.clean(text, started.elapsed(), false)
-                    }
-                } else {
-                    Ok(())
-                }
-            },
+            |ui| ui::lifecycle::storage::finish(ui, started.elapsed(), power_request.is_some()),
             |deadline| graphics.shutdown(deadline),
             || outputs.release(),
         );

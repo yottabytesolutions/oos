@@ -1,21 +1,33 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! A named background thread that computes one job at a time off the frame loop.
 //!
-//! The frame loop submits a job only while none is out and polls for its result without blocking. Dropping the
-//! worker closes its job channel: the thread finishes the job in hand, finds no receiver and ends.
+//! Admission counts outstanding jobs, including unconsumed results. Frame polls never block; shutdown drains do.
+//! Dropping the worker closes its channels: the thread finishes the job in hand, then exits.
 use super::worker_result;
 use std::sync::mpsc::{self, TryRecvError, TrySendError};
 
-pub(in crate::ui) struct Worker<J, R> {
+pub(crate) struct Worker<J, R> {
     jobs: mpsc::SyncSender<J>,
     results: worker_result::Receiver<R>,
-    busy: bool,
+    pending: usize,
+    capacity: usize,
 }
 
 impl<J: Send + 'static, R: Send + 'static> Worker<J, R> {
-    pub(in crate::ui) fn spawn(name: &str, mut run: impl FnMut(J) -> R + Send + 'static) -> std::io::Result<Self> {
-        let (jobs, requests) = mpsc::sync_channel::<J>(1);
-        let (finished, results) = worker_result::sync_channel(1);
+    pub(crate) fn spawn(name: &str, run: impl FnMut(J) -> R + Send + 'static) -> std::io::Result<Self> {
+        Self::bounded(name, 1, run)
+    }
+
+    pub(crate) fn bounded(
+        name: &str,
+        capacity: usize,
+        mut run: impl FnMut(J) -> R + Send + 'static,
+    ) -> std::io::Result<Self> {
+        if capacity == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "worker capacity must be positive"));
+        }
+        let (jobs, requests) = mpsc::sync_channel::<J>(capacity);
+        let (finished, results) = worker_result::sync_channel(capacity);
         std::thread::Builder::new().name(name.into()).spawn(move || {
             while let Ok(job) = requests.recv() {
                 if finished.send(run(job)).is_err() {
@@ -23,53 +35,102 @@ impl<J: Send + 'static, R: Send + 'static> Worker<J, R> {
                 }
             }
         })?;
-        Ok(Self { jobs, results, busy: false })
+        Ok(Self { jobs, results, pending: 0, capacity })
     }
 }
 
 impl<J, R> Worker<J, R> {
     /// A job is out and its result not yet polled.
-    pub(in crate::ui) fn busy(&self) -> bool {
-        self.busy
+    pub(crate) fn busy(&self) -> bool {
+        self.pending != 0
     }
 
-    /// Hands `job` to the thread, unless one is already out (`Full`) or the thread is gone (`Disconnected`).
-    pub(in crate::ui) fn submit(&mut self, job: J) -> Result<(), TrySendError<J>> {
-        if self.busy {
+    /// Hands `job` to the thread, unless capacity is exhausted (`Full`) or the thread is gone (`Disconnected`).
+    pub(crate) fn submit(&mut self, job: J) -> Result<(), TrySendError<J>> {
+        if self.pending == self.capacity {
             return Err(TrySendError::Full(job));
         }
         self.jobs.try_send(job)?;
-        self.busy = true;
+        self.pending += 1;
         Ok(())
     }
 
     /// The result of the job that is out, once it is done. Never blocks.
-    pub(in crate::ui) fn poll(&mut self) -> Result<R, TryRecvError> {
-        let result = self.results.try_recv()?;
-        self.busy = false;
-        Ok(result)
+    pub(crate) fn poll(&mut self) -> Result<R, TryRecvError> {
+        let result = self.results.try_recv();
+        if !matches!(result, Err(TryRecvError::Empty)) {
+            self.pending = self.pending.saturating_sub(1);
+        }
+        result
+    }
+
+    /// Consume all outstanding results in order, blocking until each is available.
+    pub(crate) fn drain(&mut self) -> impl Iterator<Item = Result<R, mpsc::RecvError>> + '_ {
+        std::iter::from_fn(|| {
+            if !self.busy() {
+                return None;
+            }
+            let result = self.results.recv();
+            self.pending -= 1;
+            Some(result)
+        })
     }
 
     /// Blocks until the job that is out is done; its result stays for the next `poll`.
     #[cfg(test)]
-    pub(in crate::ui) fn wait_ready(&self, event: &str) {
-        if self.busy {
+    pub(crate) fn wait_ready(&self, event: &str) {
+        if self.busy() {
             self.results.wait_ready(event);
         }
     }
 
     /// A worker whose thread is the test: it takes the jobs and sends the results.
     #[cfg(test)]
-    pub(in crate::ui) fn manual() -> (Self, mpsc::Receiver<J>, mpsc::SyncSender<R>) {
+    pub(crate) fn manual() -> (Self, mpsc::Receiver<J>, mpsc::SyncSender<R>) {
         let (jobs, requests) = mpsc::sync_channel(1);
         let (finished, results) = worker_result::sync_channel(1);
-        (Self { jobs, results, busy: false }, requests, finished)
+        (Self { jobs, results, pending: 0, capacity: 1 }, requests, finished)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_workers_count_unconsumed_results_and_drain_in_order() {
+        let mut worker = Worker::bounded("worker-bounded", 3, |n: u8| n * 2).unwrap();
+        for n in 1..=3 {
+            worker.submit(n).unwrap();
+        }
+        worker.wait_ready("first bounded result");
+        assert_eq!(worker.submit(4), Err(TrySendError::Full(4)));
+        assert_eq!(worker.drain().next(), Some(Ok(2)));
+        worker.submit(4).unwrap();
+        assert_eq!(worker.drain().collect::<Result<Vec<_>, _>>().unwrap(), [4, 6, 8]);
+        assert!(!worker.busy());
+        assert!(worker.drain().next().is_none());
+    }
+
+    #[test]
+    fn disconnected_results_release_credits_in_both_poll_and_drain() {
+        let (mut worker, jobs, results) = Worker::<u8, u8>::manual();
+        worker.submit(1).unwrap();
+        assert_eq!(jobs.recv(), Ok(1));
+        drop(results);
+        assert_eq!(worker.poll(), Err(TryRecvError::Disconnected));
+        assert!(!worker.busy());
+        worker.submit(2).unwrap();
+        assert!(worker.drain().next().unwrap().is_err());
+        assert!(!worker.busy());
+        drop(jobs);
+        assert_eq!(worker.submit(3), Err(TrySendError::Disconnected(3)));
+    }
+
+    #[test]
+    fn zero_outstanding_capacity_is_rejected() {
+        assert_eq!(Worker::bounded("worker-zero", 0, |()| ()).err().unwrap().kind(), std::io::ErrorKind::InvalidInput);
+    }
 
     #[test]
     fn one_job_is_out_until_its_result_is_polled() {

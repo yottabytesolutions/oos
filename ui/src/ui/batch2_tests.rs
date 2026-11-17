@@ -233,6 +233,7 @@ fn setup_save_and_recall_keep_how_a_ref_looks() {
     }
     let saved = (ref_look_state(&u, 0), ref_look_state(&u, 2));
     u.activate(Item::StoreSaveSetup);
+    lifecycle::storage::poll(&mut u, true).unwrap();
     {
         let r = u.refs[0].as_mut().unwrap();
         r.on = true;

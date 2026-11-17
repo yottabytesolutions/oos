@@ -13,6 +13,9 @@ impl<T> From<mpsc::Receiver<T>> for Receiver<T> {
     }
 }
 impl<T> Receiver<T> {
+    pub(crate) fn recv(&self) -> Result<T, mpsc::RecvError> {
+        self.ready.borrow_mut().take().map_or_else(|| self.inner.recv(), Ok)
+    }
     pub(crate) fn try_recv(&self) -> Result<T, mpsc::TryRecvError> {
         self.ready.borrow_mut().take().map_or_else(|| self.inner.try_recv(), Ok)
     }

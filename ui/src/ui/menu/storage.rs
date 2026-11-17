@@ -66,14 +66,7 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
             }
             None => ui.toast("No waveform to save"),
         },
-        Item::StoreSaveSetup => {
-            let p = ui.setup_path();
-            let r = crate::store::write(
-                &p,
-                format!("{}{}", crate::store::setup_text(&ui.m), ui.ref_setup_text()).as_bytes(),
-            );
-            ui.toast_saved(&p, r);
-        }
+        Item::StoreSaveSetup => crate::ui::lifecycle::storage::save(ui),
         Item::StoreRecall => ui.recall_setup(),
         Item::StoreCsv => match &ui.last[0] {
             Some(rec) => {
@@ -123,5 +116,23 @@ fn menu_items(_ui: &Ui, menu: MenuId) -> Vec<Item> {
             Item::StorePng,
         ],
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_area_save_uses_worker_admission_and_completion() {
+        let dir = std::env::temp_dir().join(format!("oos-storage-menu-{}", std::process::id()));
+        let mut ui = Ui::for_tests(crate::Source::Demo { t: 0.0 });
+        ui.store_dir = dir.clone();
+        let expected = format!("{}{}", crate::store::setup_text(&ui.m), ui.ref_setup_text());
+        assert!(activate(&mut ui, Item::StoreSaveSetup));
+        assert!(crate::ui::lifecycle::storage::get(&mut ui, None).unwrap().busy());
+        crate::ui::lifecycle::storage::poll(&mut ui, true).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("setup1.txt")).unwrap(), expected);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

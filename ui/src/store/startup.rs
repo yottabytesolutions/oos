@@ -12,6 +12,7 @@ mod tests;
 
 pub(crate) mod crash;
 mod quarantine;
+pub(crate) mod worker;
 
 const STABLE: Duration = Duration::from_secs(60);
 
@@ -161,7 +162,7 @@ impl<F: Files> Startup<F> {
     pub(crate) fn power_off(&mut self, text: String, now: Duration) -> io::Result<()> {
         let saved = self.clean(text, now, true);
         // Stop the supervisor even when the data partition cannot save or remove markers.
-        let stopped = self.fs.write(&self.paths.temporary.join("oos-ui.off"), "");
+        let stopped = self.stop_supervisor();
         saved.and(stopped)
     }
 
@@ -175,8 +176,19 @@ impl<F: Files> Startup<F> {
         } else {
             self.observe(text, now)?;
         }
+        self.clear_markers()
+    }
+
+    fn clear_markers(&mut self) -> io::Result<()> {
+        if self.disabled {
+            return Ok(());
+        }
         durable::remove(&mut self.fs, &self.paths.data.join("oos-ui.running"))?;
         durable::remove(&mut self.fs, &self.paths.data.join("oos-ui.stable"))
+    }
+
+    fn stop_supervisor(&mut self) -> io::Result<()> {
+        self.fs.write(&self.paths.temporary.join("oos-ui.off"), "")
     }
 }
 

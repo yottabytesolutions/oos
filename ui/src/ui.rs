@@ -7290,54 +7290,7 @@ impl Ui {
 
     /// Loads setup<slot>.txt of the storage directory; the acquisition state (run / stop) stays as it is.
     fn recall_setup(&mut self) {
-        let p = self.setup_path();
-        // what this build cannot take (a decoder it does not have, a key of a newer build) is left out and named
-        let text = std::fs::read_to_string(&p).map_err(|e| e.to_string());
-        let parsed = text.as_ref().map_err(|e| e.clone()).map(|t| crate::store::parse_setup_lenient(t));
-        match parsed {
-            Ok((mut m, bad)) => {
-                for e in &bad {
-                    eprintln!("oos-ui: recall {}: left out: {}", p.display(), e);
-                }
-                // a set-up is a live one, as with the Default key: a reference or SIM session ends first, so a Live
-                // afterwards does not bring back the set-up from before it over the recalled one
-                if self.record_mode() {
-                    self.leave_session();
-                }
-                if let Ok(t) = &text {
-                    self.apply_ref_looks(&crate::store::parse_ref_looks(t, NREF));
-                }
-                (m.run, m.status) = (self.m.run, self.m.status);
-                // the text size is a preference of this screen, not part of a set-up
-                m.text_size = self.m.text_size;
-                if m.mask_src != self.m.mask_src {
-                    self.mask = None;
-                    self.mask_ref = None;
-                }
-                self.m = m;
-                // what Bus switched on belongs to the set-up before: leaving Bus leaves the recalled one as it is
-                self.bus_auto = None;
-                self.math_state.borrow_mut().forget_fit();
-                self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
-                self.sync_full();
-                if self.mask.is_none() {
-                    self.m.mask_on = false;
-                }
-                self.build_mask();
-                self.relayout();
-                match bad.first() {
-                    None => self.toast(&format!("Recalled {}", crate::store::file_name(&p))),
-                    Some(e) => self.toast(&format!(
-                        "Recalled {}, {} line{} left out ({})",
-                        crate::store::file_name(&p),
-                        bad.len(),
-                        if bad.len() == 1 { "" } else { "s" },
-                        e
-                    )),
-                }
-            }
-            Err(e) => self.toast(&format!("Recall failed: {}", e)),
-        }
+        lifecycle::storage::recall(self);
     }
 
     fn level_50(&mut self) {
@@ -11741,6 +11694,7 @@ mod tests {
         ui.producer_step(0.033);
         let saved = ui.m.clone();
         ui.activate(Item::StoreSaveSetup);
+        lifecycle::storage::get(&mut ui, None).unwrap().flush().unwrap();
         ui.activate(Item::StoreCsv);
         let csv = std::fs::read_to_string(dir.join("sub/wave-001.csv")).unwrap();
         assert!(csv.starts_with("Time (s),CH1 (V),CH3 (V)\n"));
@@ -12954,6 +12908,7 @@ mod tests {
         ui.select_option(Item::QuickAct, "Save setup");
         assert_eq!(ui.m.quick, Quick::SaveSetup);
         ui.key(key::QUICK);
+        lifecycle::storage::poll(&mut ui, true).unwrap();
         assert!(dir.join("setup1.txt").exists());
         ui.m.quick = Quick::SaveCsv;
         ui.key(key::QUICK);

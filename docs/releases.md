@@ -1,5 +1,8 @@
 # Releases
 
+Verify a downloaded release asset with `gh attestation verify <file> -R yottabytesolutions/oos`.
+Its `<file>.sigstore.json` bundle and, when available, `<file>.intoto.jsonl` statement are attached to the release.
+
 ## Versioning
 
 - Releases are annotated SemVer tags `vX.Y.Z` on `main`, starting at `v0.2.0` for the hard fork.

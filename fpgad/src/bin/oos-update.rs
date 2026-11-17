@@ -36,7 +36,7 @@
 //!   oos-update verify FILE.oosupd [--keys FILE]   signature and image check, no card access
 //!   oos-update keygen --out FILE          new signing key outside the repository (mode 0600),
 //!                                          prints the public key line for oos/keys/update.pub
-//!   oos-update pack --image IMG --build ID [--kernel REL] [--unit NAME] [--key FILE | --community] --out FILE.oosupd
+//!   oos-update pack --image IMG --build ID [--kernel REL] [--unit NAME] [--key FILE] --out FILE.oosupd
 //!                                          or select a key with OOS_SIGNING_KEY; no automatic key discovery
 //!                                          --untrusted-ok permits a key not trusted by this build
 //!

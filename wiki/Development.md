@@ -24,7 +24,7 @@ To build an image yourself, see [[Building OOS]].
 | `boot/` | Boot image packer, image build, card installer, USB installer, stock/OOS switch |
 | `rootfs/initramfs/` | Init scripts and firmware of the image |
 | `rootfs/build-wlan-tools.sh`, `rootfs/build-fsck.sh` | Build wpa_supplicant and e2fsck in Docker |
-| `keys/` | Public keys trusted for updates, community signing key |
+| `keys/` | Project release public key trusted for updates |
 | `tools/` | Card cloning and analysis, device inventory, Python models ([README](https://github.com/yottabytesolutions/oos/blob/main/tools/README.md)) |
 | `kernel/` | Kernel source, own patches, device tree, configuration, build in Docker, licences ([README](https://github.com/yottabytesolutions/oos/blob/main/kernel/README.md)) |
 | `CHANGELOG.md` | What changed between releases |

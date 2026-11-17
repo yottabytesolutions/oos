@@ -75,7 +75,7 @@ the matched value, including its exact case and separators. Unrelated file edits
 a distinct matching value in the same file still fails, even on the same line. Review the context of every use
 of an exempt value. A header-only rule such as `private-key` cannot distinguish keys sharing that header. No exception
 is needed for the synthetic calibration containers under `hal/testdata/synthetic/`: their data contain no matching
-text. The signing fixture in `keys/community-signing.key` is intentionally public (see `docs/update.md`); any new
+text. The signing fixture in `fpgad/tests/fixtures/test-signing.key` is test-only and trusted by no build; any new
 matching key fixture still requires its own reviewed exception. Do not blanket-allow a directory.
 
 To add an invented fixture:

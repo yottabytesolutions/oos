@@ -40,7 +40,7 @@ and cited as `architecture/NNNN`.
 | [0009](hardware/0009-areas-oos-never-writes.md) | hardware | OOS never writes the FPGA flash, `/rigol/data`, `uboot`, `trust` or `parameter` | accepted |
 | [0010](hardware/0010-unverified-hardware-functions-are-opt-in.md) | hardware | A hardware function that is not verified on a unit is off by default | accepted |
 | [0011](system/0011-oos-in-recovery-stock-stays-bootable.md) | system | OOS lives in `recovery`; the stock system stays on the card and bootable | accepted |
-| [0012](system/0012-signed-updates-with-trial-start-and-rollback.md) | system | Updates are signed, started on trial and rolled back when they fail | accepted |
+| [0012](system/0012-signed-updates-with-trial-start-and-rollback.md) | system | Updates are signed, started on trial and rolled back when they fail | accepted, amended by ADR 0041 |
 | [0013](process/0013-no-vendor-material-in-the-tree.md) | process | No vendor material in the tree | accepted |
 | [0014](process/0014-refactorings-keep-every-pixel.md) | process | A refactoring keeps every pixel and every register write | accepted |
 | [0015](process/0015-say-how-you-know.md) | process | Every statement about the hardware says how it is known | accepted |
@@ -66,6 +66,7 @@ and cited as `architecture/NNNN`.
 | [0038](code/0038-one-table-may-generate-per-field-code.md) | code | One declarative table may generate per-field code when tests cover every item | accepted |
 | [0039](process/0039-format-lints-and-ratchets-the-author-tightens.md) | process | rustfmt formats; lints and limits ratchet down; the author of a change tightens | accepted |
 | [0040](process/0040-contributions-signed-off-no-vendor-material-rebased.md) | process | A contribution is signed off, holds no vendor material and lands rebased through the merge queue | accepted |
+| [0041](system/0041-trust-only-the-project-release-key.md) | system | Builds trust only the project's release key for updates | accepted |
 
 ## Reading order for agents
 

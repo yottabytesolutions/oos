@@ -25,7 +25,7 @@ Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/s
 
 | Failure | What happens |
 |---|---|
-| package damaged in transfer, or not signed by a trusted key (the community key is public, so this stops mistakes, not an attacker: see "Keys") | refused before anything is written |
+| package damaged in transfer, or not signed by a trusted key | refused before anything is written |
 | package unit differs from the running image, including `unit -> none` | refused before card writes or a kexec start unless explicitly overridden with `--any-unit` |
 | image the stock loader would refuse (wrong SHA-1 id, section length not a multiple of 4) | refused before anything is written |
 | power lost while `recovery` is written | the boot magic is set to `KRNL` before the write and back to `OOSK` only after the read-back, so the next power-on starts the intact stock image in `boot`; the previous OOS image is still in the rollback slot. The stock copy in `backup` is not needed for this |
@@ -261,29 +261,25 @@ the same unit is still accepted by the existing kexec tree checks.
 
 ## Keys
 
-- Community key: `keys/community-signing.key` is a public development fixture. Select it with `--community`.
-  Builds trust it by default. It proves nothing about who built a package.
-- Signing requires `--key FILE` or `OOS_SIGNING_KEY`. `--key` takes precedence. With neither, only `--community`
-  permits signing. Do not combine `--community` with a selected key. There is no home-directory discovery.
+- Builds from this repository trust only this project's release key: Ed25519 key id `5b293adb4389dc84`,
+  public key `f5f316e2b278b4c29a3724e711493ebb748f7f22d6c9eff265822110f4a4343d`.
+  `keys/update.pub` is compiled into every build (`oos_hal::update::TRUSTED_KEYS`). The release signing secret
+  is kept outside the tree. The upstream maintainer and former public community keys are not trusted.
+- Signing requires `--key FILE` or `OOS_SIGNING_KEY`. `--key` takes precedence. There is no built-in signing seed
+  or home-directory discovery.
 - A trusted public key cannot be used as a signing seed. The derived public key must be trusted by this build.
   For a deliberate key transition or host test, direct `oos-update pack` accepts `--untrusted-ok`.
-  This flag does not change which keys an installed build trusts.
+  This flag does not change which keys an installed build trusts. Test-only signing fixtures are trusted by no build.
 - A valid signature does not authorize installation on a shared unit. Installation needs the scope lease with
   install capability and the owner's go.
-- Own keys: `oos-update keygen --out FILE` creates one, mode 0600. Keep it outside the repository.
-  Back it up (password manager or an offline copy) and never publish it. Whoever wants only their own builds on a scope adds the public line of their key
-  to `keys/update.pub`, removes the community line and the other lines they do not want, and installs that build. From
-  then on that scope refuses community packages. If the own key is lost, a scope that trusts only this key needs an
-  image installed by hand (`card-install.py` on a host, or `dd` over an authenticated SSH session).
-- Public keys: `keys/update.pub`, compiled into every build (`oos_hal::update::TRUSTED_KEYS`). A second key (e.g. a CI
-  key) is added as another line; a key is retired by an update that no longer lists it.
+- `oos-update keygen --out FILE` creates a secret seed, mode 0600. Keep it outside the repository, back it up
+  (password manager or an offline copy) and never publish it. A replacement release key requires an update to
+  `keys/update.pub` and a build that trusts it. If the sole trusted signing key is lost, recovery requires a
+  hand-installed image.
 - Ed25519 and SHA-2 are implemented in the tree (no crates beyond libc): RFC 8032 test vectors, FIPS examples, and a
   cross-check against Python `cryptography` in both directions (Rust signs / Python verifies and the reverse).
 - The signature guards the install path only. The root shell over SSH takes the scope's password or a trusted key
   ([network.md](network.md) 7); SCPI and the web remote retain their existing unauthenticated bench-LAN interfaces.
-  With the community key trusted, anyone on the LAN can also sign and install a package. What the signature buys then:
-  a damaged package, or one not made for OOS, is never installed by the web page or the GUI. Keeping foreign packages
-  out takes a build without the community key.
 
 ## Use
 
@@ -303,9 +299,8 @@ new shell without `OOS_UNIT` preserves the image's unit. Missing, stale or repla
 rebuild the image to create them. Setting `OOS_UNIT` only for signing does not change an existing image's identity.
 
 For signing, `OOS_SIGNING_KEY=/path/to/signing.key boot/sign-dev-image.sh` also works.
-Use `boot/sign-dev-image.sh --community` only for the public development fixture.
 The signer uses `target/image/oos-dev.build`, saved with the image. It builds the host tool offline.
-`oos-update pack --image IMG --build ID [--unit NAME] [--key FILE | --community] --out FILE.oosupd` is the direct signing step.
+`oos-update pack --image IMG --build ID [--unit NAME] [--key FILE] --out FILE.oosupd` is the direct signing step.
 It also accepts `OOS_SIGNING_KEY`. Direct `pack` reads `etc/oos-unit` from the image's initramfs and uses it when
 `--unit` is absent; a missing identity means `none`. An explicit `--unit` must match that embedded identity or
 signing is refused. The package version and output names are unchanged.

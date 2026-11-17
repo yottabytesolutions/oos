@@ -15,7 +15,7 @@ impl Args {
         while let Some(s) = it.next() {
             match s.as_str() {
                 "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec"
-                | "--new-dt" | "--any-unit" | "--community" | "--untrusted-ok" => a.flags.push(s),
+                | "--new-dt" | "--any-unit" | "--untrusted-ok" => a.flags.push(s),
                 _ if s.starts_with("--") => {
                     let v = it.next().unwrap_or_else(|| die(&format!("{} needs a value", s)));
                     a.vals.push((s, v));
@@ -56,10 +56,8 @@ impl Args {
     }
     pub(crate) fn command(&self) -> &str {
         let cmd = self.rest.first().map(String::as_str).unwrap_or("status");
-        for flag in ["--community", "--untrusted-ok"] {
-            if self.flag(flag) && cmd != "pack" {
-                die(&format!("{} is only valid for pack", flag));
-            }
+        if self.flag("--untrusted-ok") && cmd != "pack" {
+            die("--untrusted-ok is only valid for pack");
         }
         cmd
     }

@@ -39,12 +39,12 @@ leave a unit unable to boot.
 
 **OOS has no authentication apart from SSH, by design for now.** SSH asks for the scope's own password or a trusted key; telnet gives a root shell without a password (switch it off
 once SSH is set up). SCPI, VXI-11, HiSLIP (on a computer), the web remote, the LAN announcement,
-MCP and the update page are open to everyone who can reach the scope, over Ethernet and over WLAN. The community signing key
-is public, so anyone on that network can also install an update. Keep the scope on a trusted bench network and never
+MCP and the update page are open to everyone who can reach the scope, over Ethernet and over WLAN. Updates require a signature from this project's
+release key. Keep the scope on a trusted bench network and never
 expose it to the internet. None of this is a vulnerability to report: it is listed in the
 [disclaimer](wiki/Disclaimer.md).
 
-Signed updates protect against damaged packages, not against an attacker: see [docs/update.md](docs/update.md).
+Signed updates refuse damaged packages and packages not signed by the project release key: see [docs/update.md](docs/update.md).
 
 Web pages on other sites are kept out: the web remote refuses a request whose `Host` is a foreign name, whose `Origin` is
 not the scope, or that the browser marks as cross-site. That needs a browser that sends `Sec-Fetch-Site` (all current
@@ -53,7 +53,7 @@ ones). It does nothing against someone on your network, which is the case above.
 USB sticks count as foreign data: they are mounted `nodev,nosuid,noexec`, and a save refuses links and anything that is not
 a regular file.
 
-Out of scope: the open services and the public community key above, the stock firmware, and attacks that need an
+Out of scope: the open services above, the stock firmware, and attacks that need an
 opened unit.
 
 ## What to expect

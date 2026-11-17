@@ -180,11 +180,12 @@ prerequisite and not-selected checks. Exit status decides success, including QEM
 commands that print PASS before failing. Keep these logs with review evidence.
 
 The image suite checks the pinned kernel source, builds `kernel/build-base.sh`, assembles with
-`boot/build-dev-image.sh`, signs explicitly with `boot/sign-dev-image.sh --community`, and packages
+`boot/build-dev-image.sh`, signs with `OOS_SIGNING_KEY` selected explicitly using `boot/sign-dev-image.sh`, and packages
 with `python3 -I boot/build-gel.py`. It validates boot sections/ID, DTB, cpio contents, checksums,
 receipts, update signature/payload and GEL contents, including the shipped `oos-hw` and GPU bundle.
 It runs unit-DTB, GEL, USB and WLAN simulations. It uses synthetic inputs and worktree-local
-builder caches; it performs no install, device access or private signing-key discovery.
+builder caches; it performs no install, device access or private signing-key discovery. Supply the project release
+signing key through `OOS_SIGNING_KEY` for this suite. CI publishes unsigned images for offline release signing.
 
 The `image-required` ID is retained in the image tier as advisory change classification. It compares
 with the protected `main` merge base plus working-tree inputs and examines both rename paths

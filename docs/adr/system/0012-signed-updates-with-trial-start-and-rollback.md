@@ -1,8 +1,12 @@
 # ADR 0012: Updates are signed, started on trial and rolled back when they fail
 
-- Status: accepted
+- Status: accepted, amended by ADR 0041
 - Date: 2026-11-07 (first public version); trial start by kexec with a new device tree from 0.1.7
 - Category: system
+
+Trust-policy amendment, 2026-11-17: [ADR 0041](0041-trust-only-the-project-release-key.md) supersedes the
+community-key requirement and its security consequence below. The signed-package, trial-start and rollback
+decisions remain accepted.
 
 ## Context
 

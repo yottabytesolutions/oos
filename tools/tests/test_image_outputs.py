@@ -30,6 +30,11 @@ class ImageOutputs(unittest.TestCase):
         git.parent.mkdir()
         git.write_text('#!/bin/sh\ncase "$*" in *rev-parse*) echo fixture;; *ls-files*) ;; *) exit 1;; esac\n')
         git.chmod(0o700)
+        # Packaging receipts need compiler identities, but these fixtures never compile Rust.
+        for name in ("cargo", "rustc"):
+            compiler = git.parent / name
+            compiler.write_text(f'#!/bin/sh\nprintf "{name} 1.99.1 fixture\\n"\n')
+            compiler.chmod(0o700)
         self.env = {**os.environ, "PATH": str(git.parent) + os.pathsep + os.environ["PATH"]}
         self.env.pop("CARGO_TARGET_DIR", None)
         self.env.pop("OOS_BOARD", None)
@@ -149,6 +154,8 @@ class ImageOutputs(unittest.TestCase):
         self.assertTrue(targets)
         self.assertEqual(set(targets), {str(self.root / "selected target")})
 
+    @unittest.skipIf(os.environ.get("OOS_PYTHON_NO_RUST") == "1" or not shutil.which("cargo"),
+                     "requires cargo clean to check GPU cache survival; unavailable in Python-only CI")
     def test_gpu_cache_survives_cargo_clean(self):
         script = self.root / "gpu/build.sh"
         script.parent.mkdir()
@@ -202,8 +209,8 @@ class ImageOutputs(unittest.TestCase):
         manifest = self.root / "Cargo.toml"
         manifest.write_text('[package]\nname="cache-check"\nversion="0.1.0"\n[[bin]]\nname="cache-check"\npath="main.rs"\n')
         (self.root / "main.rs").write_text("fn main() {}\n")
-        clean = subprocess.run(["cargo", "clean", "--manifest-path", str(manifest)],
-                               env=self.env, capture_output=True, text=True)
+        clean = subprocess.run([shutil.which("cargo"), "clean", "--manifest-path", str(manifest)],
+                               env={**self.env, "PATH": os.environ["PATH"]}, capture_output=True, text=True)
         self.assertEqual(clean.returncode, 0, clean.stderr)
         self.assertFalse((target / "gpu/gpu").exists())
         self.assertEqual(cache.stat().st_mtime_ns, before)

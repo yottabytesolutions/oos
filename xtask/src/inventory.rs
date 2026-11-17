@@ -133,8 +133,8 @@ pub(crate) const CHECKS: &[Check] = &[
     entry!(
         "python-tests",
         "python-tests",
-        "isolated unittest discovery with count checks",
-        "Python; tools/tests, tools/privacy and ui/tools",
+        "python3 -I tools/python_tests.py (isolated discovery with count checks)",
+        "Git, Python; tools/tests, tools/privacy and ui/tools",
         Host,
         [],
         steps::python::run

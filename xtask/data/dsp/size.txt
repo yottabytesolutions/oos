@@ -1,23 +1,19 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-439 file dsp/src/bode.rs
-414 file dsp/src/dcc_yard.rs
-616 file dsp/src/decode.rs
-1526 file dsp/src/decode_ext.rs
-1687 file dsp/src/decode_ext2.rs
-1180 file dsp/src/decode_ext3.rs
-579 file dsp/src/dpt.rs
-1522 file dsp/src/eye.rs
-582 file dsp/src/hss.rs
-1138 file dsp/src/identify.rs
-407 file dsp/src/magnetic.rs
-967 file dsp/src/measure.rs
-625 file dsp/src/motor.rs
-721 file dsp/src/power.rs
-403 file dsp/src/serial.rs
-531 file dsp/src/sim.rs
-868 file dsp/src/spectrum.rs
-507 file dsp/src/trigger.rs
+556 file dsp/src/decode.rs
+1352 file dsp/src/decode_ext.rs
+1528 file dsp/src/decode_ext2.rs
+1003 file dsp/src/decode_ext3.rs
+543 file dsp/src/dpt.rs
+1340 file dsp/src/eye.rs
+507 file dsp/src/hss.rs
+1052 file dsp/src/identify.rs
+894 file dsp/src/measure.rs
+585 file dsp/src/motor.rs
+639 file dsp/src/power.rs
+480 file dsp/src/sim.rs
+737 file dsp/src/spectrum.rs
+480 file dsp/src/trigger.rs
 79 fn dsp/src/bandwidth.rs step_response
 105 fn dsp/src/cphy.rs decode
 103 fn dsp/src/dcc_yard.rs Yard::apply_loco

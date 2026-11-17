@@ -143,17 +143,15 @@ pub fn pam4_levels(f: &[f32], vmin: f32, vmax: f32) -> [f64; 4] {
     for &x in f {
         hist[(((x - vmin) / span) * 255.0) as usize] += 1;
     }
-    let mut out = [0.0f64; 4];
-    for q in 0..4 {
+    std::array::from_fn(|q| {
         let (a, b) = (q * 64, (q + 1) * 64);
         let i = (a..b).max_by_key(|&i| hist[i]).unwrap_or(a);
-        out[q] = if hist[i] == 0 {
+        if hist[i] == 0 {
             f64::NAN
         } else {
             (vmin as f64 + span as f64 * (i as f64 + 0.5) / 255.0).clamp(vmin as f64, vmax as f64)
-        };
-    }
-    out
+        }
+    })
 }
 
 /// Weighted mean of 1-, 2- and 3-UI spacings (min spacing as the 1-UI seed).

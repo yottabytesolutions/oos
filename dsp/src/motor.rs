@@ -346,14 +346,14 @@ pub fn shaft_hall(a: &[bool], b: &[bool], c: &[bool], dt: f64, t0: f64, poles: u
     let mut trend = Vec::new();
     let mut step_acc = 0i32;
     let mut t_rev = 0.0;
-    for k in 1..n {
+    for (k, r) in rad.iter_mut().enumerate().skip(1) {
         let cur = code(k);
         if cur == 0 || cur == 7 {
             if !in_fault {
                 faults += 1;
                 in_fault = true;
             }
-            rad[k] = if have { acc } else { f64::NAN };
+            *r = if have { acc } else { f64::NAN };
             continue;
         }
         in_fault = false;
@@ -362,7 +362,7 @@ pub fn shaft_hall(a: &[bool], b: &[bool], c: &[bool], dt: f64, t0: f64, poles: u
             prev = cur;
             acc = hall_deg(cur).map_or(0.0, f64::to_radians);
             have = true;
-            rad[k] = acc;
+            *r = acc;
             continue;
         }
         if let Some(dir) = hall_step(prev, cur) {
@@ -370,7 +370,6 @@ pub fn shaft_hall(a: &[bool], b: &[bool], c: &[bool], dt: f64, t0: f64, poles: u
                 edges += 1;
                 steps += dir;
                 acc += dir as f64 * 60.0_f64.to_radians();
-                have = true;
                 step_acc += dir;
                 if step_acc.abs() >= 6 {
                     let t = k as f64 * dt;
@@ -382,7 +381,7 @@ pub fn shaft_hall(a: &[bool], b: &[bool], c: &[bool], dt: f64, t0: f64, poles: u
             }
             prev = cur;
         }
-        rad[k] = if have { acc } else { f64::NAN };
+        *r = if have { acc } else { f64::NAN };
     }
     // electrical to mechanical
     let poles = poles.max(1) as f64;
@@ -592,11 +591,10 @@ fn hall_step(prev: u8, cur: u8) -> Option<i32> {
 }
 
 fn mean_product(v: &[f32], i: &[f32]) -> Option<f64> {
-    let n = v.len().min(i.len());
     let (mut s, mut c) = (0.0, 0usize);
-    for k in 0..n {
-        if v[k].is_finite() && i[k].is_finite() {
-            s += v[k] as f64 * i[k] as f64;
+    for (&v, &i) in v.iter().zip(i) {
+        if v.is_finite() && i.is_finite() {
+            s += v as f64 * i as f64;
             c += 1;
         }
     }

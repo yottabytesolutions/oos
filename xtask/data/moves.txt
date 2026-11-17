@@ -11,3 +11,6 @@ ui ui/src/store.rs clippy::manual_range_patterns -> ui ui/src/store/import.rs cl
 fn ui/src/ui.rs Ui::adjust -> fn ui/src/ui/menu/trigger.rs adjust
 fn ui/src/ui.rs Ui::trigger_items -> fn ui/src/ui/menu/trigger/rows.rs trigger_items
 fn ui/src/ui.rs Ui::value -> fn ui/src/ui/menu/trigger.rs value
+fn fpgad/src/main.rs selfcal -> fn fpgad/src/cmd/selfcal.rs run
+fpgad fpgad/src/main.rs clippy::too_many_lines -> fpgad fpgad/src/cmd/selfcal.rs clippy::too_many_lines
+fpgad/src/board.rs -> fpgad/src/cmd/board.rs

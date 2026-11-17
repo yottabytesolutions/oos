@@ -105,6 +105,20 @@ class ApiShapeTests(unittest.TestCase):
                 (root / "pr.json").write_text("{}")
                 self.assertEqual(gate.main(["offline", "--dir", d]), 2)
 
+    def test_pending_review_fails_the_job_only_without_a_published_status(self):
+        def request(method, path, payload=None):
+            return {"head": {"sha": HEAD}} if method == "GET" else {}
+
+        with mock.patch("builtins.print"), mock.patch.object(gate.Api, "request", side_effect=request), \
+                mock.patch.object(gate.Api, "pages", return_value=[]):
+            self.assertEqual(gate.main(["pr", "--repo", "a/b", "--pr", "6", "--publish"]), 0)
+            self.assertEqual(gate.main(["pr", "--repo", "a/b", "--pr", "6"]), 1)
+        unresolved = [{"user": {"login": gate.BOT}, "updated_at": "2026-11-17T08:00:00Z",
+                       "body": marker(unresolved=True)}]
+        with mock.patch("builtins.print"), mock.patch.object(gate.Api, "request", side_effect=request), \
+                mock.patch.object(gate.Api, "pages", side_effect=[unresolved, []]):
+            self.assertEqual(gate.main(["pr", "--repo", "a/b", "--pr", "6", "--publish"]), 1)
+
     def test_queue_refuses_bad_input_without_network(self):
         with mock.patch("builtins.print"), mock.patch.object(gate.Api, "request") as request:
             self.assertEqual(gate.main(["queue", "--repo", "a/b", "--sha", "HEAD"]), 2)

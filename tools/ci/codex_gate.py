@@ -10,8 +10,8 @@ marker, a marker that does not parse, a review of another commit, a review still
   codex_gate.py offline --dir DIR          pr.json, issue_comments.json, reviews.json as the REST API returns them
   codex_gate.py queue --repo OWNER/NAME --sha SHA [--publish] [--target-url URL]
 
-`--publish` sets the commit status `codex-review` on the head commit (needs `statuses: write`). Exit status: 0 pass,
-1 not passing, 2 input or API error.
+`--publish` sets the commit status `codex-review` on the head commit (needs `statuses: write`). Exit status: 0 pass
+(with `--publish` also pending: the status carries it), 1 not passing, 2 input or API error.
 """
 import argparse
 from dataclasses import dataclass
@@ -189,10 +189,13 @@ def publish(api: Api, repo: str, sha: str, verdict: Verdict, target_url: str | N
     return True
 
 
-def report(sha: str, verdict: Verdict) -> int:
-    level = "notice" if verdict.passed else "error"
+def report(sha: str, verdict: Verdict, status: bool = False) -> int:
+    """Exit 0 on a pass. With `status` the commit status carries the verdict, so a pending review (none yet, or one
+    still running) is no failure of the job either: a draft PR would otherwise show a red job until Codex reviews."""
+    ok = verdict.passed or (status and verdict.state is State.PENDING)
+    level = "notice" if ok else "error"
     print(f"::{level}::{CONTEXT} {verdict.state.value} for {sha}: {verdict.message}")
-    return 0 if verdict.passed else 1
+    return 0 if ok else 1
 
 
 def load(path: Path) -> list[dict[str, object]]:
@@ -236,7 +239,7 @@ def main(argv: list[str]) -> int:
             verdict = decide(sha, comments)
         if a.publish:
             publish(api, a.repo, sha, verdict, a.target_url)
-        return report(sha, verdict)
+        return report(sha, verdict, status=a.publish)
     except (RuntimeError, OSError, ValueError, urllib.error.HTTPError) as e:
         print(f"::error::{CONTEXT}: {e}")
         return 2

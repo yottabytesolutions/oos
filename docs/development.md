@@ -225,6 +225,10 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
   depends on changed: documents, `.github/` (except `pr.yml` and files a Rust test includes) and `tools/ci/` skip
   clippy, the tests and cargo-deny. A merge-queue group whose tree equals its PR head skips the checks that passed
   on that head. Skipped jobs still report success under their required name.
+- `pr.yml` runs the tests in three parallel shards per profile (`OOS_TEST_PARTITION=K/N`, nextest
+  `--partition hash:K/N`; the doctests run in shard 1). A shard's skipped count includes the other shards' tests.
+  Pull requests run the debug tests only; the merge queue adds the release tests. The required `test` check sums
+  up every shard.
 - The release tests in `pr.yml` run without LTO (`CARGO_PROFILE_RELEASE_LTO=false`, 16 codegen units): the same
   optimisation level and no debug assertions, without a fat-LTO link per test binary. CI builds use
   `CARGO_PROFILE_DEV_DEBUG=line-tables-only`.

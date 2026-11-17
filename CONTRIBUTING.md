@@ -75,8 +75,8 @@ place to start reading.
 
 ## Branches, commits, pull requests
 
-- One issue, one branch, one pull request, one topic
-  ([ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)). Branch:
+- One topic per branch and pull request; one issue per pull request, or per stack when the work spans several pull
+  requests ([ADR 0026](docs/adr/process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md)). Branch:
   `<type>/<ref>-<slug>`, `type` one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`;
   `ref` the issue number or `t` plus the four-digit task id; `slug` lower case with `-`. Examples:
   `fix/123-trigger-holdoff`, `refactor/t0075-normal-trigger`. `main` is the only long-lived branch.
@@ -89,12 +89,58 @@ place to start reading.
   addresses are rejected by the privacy check.
 - Commits and pull request texts carry no tool or session details: no session links, no `Agent:` and no AI
   `Co-authored-by:` trailers ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
-- Keep pull requests small: about 400 changed lines without goldens and fixtures. Larger refactors go as stacked
-  pull requests, each reviewable on its own.
+- Keep pull requests small: about 400 changed lines without goldens and fixtures. Work that needs more than one pull
+  request goes as a stack ([below](#stacked-pull-requests)).
 - Link the issue (`Closes #NNN`) or the task file in the pull request text. Fill in the template.
 - History is linear. Rebase onto `main` (`git pull --rebase`) instead of merging `main` into your branch, and
   force-push your own branch with `--force-with-lease`. `main` is never force-pushed and only moves by fast-forward:
   pull requests enter through the merge queue by rebase, with your name and sign-off kept on every commit.
+
+## Stacked pull requests
+
+Work that spans more than one pull request is a stack: a chain of pull requests where the bottom one targets `main`
+and each higher one targets the branch below it
+([ADR 0034](docs/adr/process/0034-multi-pr-work-lands-as-a-stack.md),
+[GitHub's documentation](https://docs.github.com/en/pull-requests/get-started/about-stacked-prs)). Each layer is one
+topic, reviewable and green on its own, and keeps the branch scheme above; the layers share the `ref`. Lower layers
+link the issue with `Part of #NNN`; only the top layer says `Closes #NNN`, so the issue closes with the last merge.
+
+```sh
+gh extension install github/gh-stack           # once; needs gh 2.90 and Git 2.36 or later
+gh stack init refactor/42-split-bus            # bottom layer, based on main
+git commit -s ...                              # the first topic
+gh stack add test/42-bus-fakes                 # next layer on top of it
+git commit -s ...
+gh stack submit --auto                         # push every layer, open them as draft pull requests, one stack
+gh pr edit <number> --title 'type(scope): summary'   # each layer: --auto titles a multi-commit layer by branch
+gh stack view                                  # the layers, their pull requests and their state
+gh stack down; git commit -s ...; gh stack rebase --upstack; gh stack push   # fix a lower layer
+gh stack sync                                  # after main moved or a layer merged: rebase and push
+gh pr ready <number>                           # each layer once it is reviewed: a draft cannot merge
+gh stack merge <stack>                         # maintainer: queue the layers bottom up (stack number from the PR)
+```
+
+- Every layer runs every required check, as any pull request does. The ruleset of `main` applies to every layer of a
+  stack based on `main`.
+- A stack merges bottom up, through the merge queue, as rebase merges: every commit of a layer lands on `main` as it
+  is. Before the last review, fold the fix-ups into their topic commits, so each commit is one signed-off
+  Conventional Commit: `git commit -s --fixup=<topic commit>`, then `GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash
+  <base>` with the branch of the layer below (`main` for the bottom layer) as `<base>`, then
+  `gh stack rebase --upstack` and `gh stack push`.
+  When a layer merges, GitHub retargets the next one to `main` and rebases it. A layer removed or ejected from the
+  queue takes every layer above it out of the queue too.
+- Update a stack with `gh stack sync` or `gh stack rebase`, never by merging. Their pushes use `--force-with-lease`
+  on the stack's own branches, which is allowed.
+- A rebase gives the layers above a new head commit: comment `@codex review` on each of them afterwards, or their
+  `codex-review` stays pending.
+- Agents keep to [AGENTS.md](AGENTS.md#working-together): only the coordinator runs the commands that push (`submit`,
+  `push`, `sync`, `link`), with the owner's go; only the maintainer runs `gh stack merge`.
+- All layers live in this repository: GitHub does not support stacks across forks. Without push access, submit one
+  layer at a time from your fork and open the next when the previous one merged, or ask the maintainer for push
+  access or to recreate the stack from your fork's branches.
+- During a Codex outage the ruleset bypass works on the bottom layer only: GitHub merges a stack's bottom pull
+  request by bypass, never the whole stack, and `gh stack merge` cannot bypass at all. The admin bypass-merges each
+  bottom layer in turn from its pull request page (or `gh pr merge --admin --rebase`) and states the reason in it.
 
 ## Review gate
 
@@ -159,7 +205,7 @@ what was tested on a unit, what only on the host, and what was not tested. An ag
 its owner asked for it ([ADR 0018](docs/adr/process/0018-one-agents-md-for-people-and-agents.md)).
 
 - Agents work only on issues labelled `agent-ready`, one pull request per issue, within the issue's acceptance
-  criteria and its out-of-scope list. Small pull requests; refactors as stacked pull requests.
+  criteria and its out-of-scope list. Small pull requests; refactors and other multi-step work as a stack.
 - Agents push and open pull requests only as the GitHub App `yottabyte-oos-agent[bot]`, never with a maintainer's
   credentials. Its pull requests get the `agent` label and pass the same checks; the app has no ruleset bypass.
 - Agents do not touch high-risk paths unless the issue carries `risk/hardware` and says so.

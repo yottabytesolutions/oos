@@ -1,6 +1,6 @@
 # ADR 0019: One style for files, documents and commits, written down and checked where a tool can
 
-- Status: accepted, amended 2026-11-17 (commit style)
+- Status: accepted, amended 2026-11-17 (commit style, Conventional Commit subjects)
 - Date: 2026-11-15
 - Category: process
 
@@ -77,8 +77,11 @@ What a tool can check is checked; the rest is written here once, so a review can
 
 After the hard fork (ADR 0030) the commit rules above change; the file and document rules stay.
 
-- Subject in the imperative mood, under 72 characters, without a full stop and without an area prefix
-  (`Keep the trigger level when the probe ratio changes`). A release commit is the bare version.
+- Subject in Conventional Commits form, `type(scope): imperative summary`, at most 72 characters, without a full
+  stop (`fix(ui): keep the trigger level when the probe ratio changes`). `type` is one of feat, fix, perf,
+  refactor, docs, test, ci, build, chore; the scope is optional and names a crate or area. Pull requests merge as
+  squash, so the subject on main is the PR title; `pr-meta` checks the title (tools/ci/pr_meta.py), and the release
+  notes are generated from these subjects (cliff.toml). A release commit is `chore(release): vX.Y.Z`.
 - The body says why. How it was tested goes into the body when it is not obvious from the tests in the change
   (ADR 0015).
 - One topic per commit; formatting and moves in commits of their own.

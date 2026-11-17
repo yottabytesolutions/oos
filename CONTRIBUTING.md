@@ -199,6 +199,12 @@ labelled `flaky`; the gate rejects a bare `#[ignore]` and a `flaky:` reason with
 - An upstream OOS change enters by cherry-pick with its author kept and the trailer
   `Cherry-picked-from: upstream <hash>` (ADR 0030).
 
+Each release strives for less production code than the one before
+([ADR 0035](docs/adr/process/0035-each-release-has-less-production-code.md)). Reuse and extend what exists before
+adding a parallel version. `cargo xtask loc` counts production code per crate; every pull request shows its change in
+the `fast` job's summary, for information. A release that grows says why in a `Code growth:` paragraph in its
+`CHANGELOG.md` section or tag annotation. Tests and comments do not count, so never trim them to meet the goal.
+
 A change that decides something others will build on (a structure, a rule of the screen, a way to treat the hardware)
 comes with a decision record: [docs/adr](docs/adr/README.md), numbered from 0030 on.
 

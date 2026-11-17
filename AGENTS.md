@@ -49,6 +49,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Follow the pace in [delivery](docs/process/delivery.md): one job per task, review tier, fast gate for workers, batch integration.
 - Every agent-authored change needs review by an agent from another vendor. Codex authors use Claude reviewers, and Claude authors use Codex reviewers. Other vendors pair across vendors too.
 - Human-authored changes need review by any reviewer who did not write the change.
+- Reviewers flag duplicated logic, near-copies and missing reuse; extend an existing abstraction, not a parallel one ([ADR 0035](docs/adr/process/0035-each-release-has-less-production-code.md)).
 - History is linear: rebase onto `main`, never merge `main` into a branch; `main` only fast-forwards. Set
   `git config pull.rebase true` and `rebase.autoStash true`. Conflict resolutions after review need renewed review.
 - Follow the merge, acceptance and publication order in [integration](docs/process/integration.md#review-and-merge).

@@ -34,8 +34,12 @@ pub(crate) fn outcome(ok: Vec<String>, bad: Vec<String>) -> Outcome {
 
 pub fn fmt(ctx: &crate::run::Context, root: &Path) -> Outcome {
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
-    for c in CRATES {
-        match fmt::diff_lines(ctx, root, c.dir) {
+    let diffs: Vec<_> = std::thread::scope(|s| {
+        let runs: Vec<_> = CRATES.iter().map(|c| s.spawn(move || fmt::diff_lines(ctx, root, c.dir))).collect();
+        runs.into_iter().map(|r| r.join().unwrap_or_else(|_| Err("cargo fmt: the check panicked".into()))).collect()
+    });
+    for (c, diff) in CRATES.iter().zip(diffs) {
+        match diff {
             Ok(0) => ok.push(format!("{}: formatted", c.dir)),
             Ok(n) => bad.push(format!("{}: {} lines differ, run cargo fmt in {}", c.dir, n, c.dir)),
             Err(e) => bad.push(format!("{}: {}", c.dir, e)),

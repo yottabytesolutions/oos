@@ -102,6 +102,17 @@ fn registry_ids_are_unique_and_prerequisites_precede_consumers() {
 }
 
 #[test]
+fn checks_run_together_only_after_checks_that_run_together() {
+    for c in CHECKS.iter().filter(|c| !alone(c)) {
+        for id in c.after {
+            let dependency = CHECKS.iter().find(|d| d.id == *id).expect("known prerequisite");
+            assert!(!alone(dependency), "{} would wait for {}, which runs after it", c.id, id);
+        }
+    }
+    assert!(CHECKS.iter().any(|c| c.id == "perf" && alone(c)));
+}
+
+#[test]
 fn subprocess_status_is_independent_of_pass_text() {
     let root = crate::repo::root();
     let fail = steps::host::command(&Default::default(), &root, "sh", &["-c", "echo PASS; exit 7"]);

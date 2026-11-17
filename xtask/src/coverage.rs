@@ -45,13 +45,16 @@ pub fn measure(ctx: &crate::run::Context, root: &Path, krate: &str) -> Result<u6
         return Err(target.stderr);
     }
     let dir = coverage_dir(Path::new(target.stdout.trim()));
-    let out = run::capture_env(
-        ctx,
-        &root.join(krate),
-        "cargo",
-        &["llvm-cov", "--locked", "--json", "--summary-only"],
-        &[("CARGO_TARGET_DIR", dir.as_os_str())],
-    )?;
+    // Under nextest the instrumented tests run in parallel, as in the test steps. The covered lines are the same.
+    let mut args: Vec<String> = ["llvm-cov", "--json", "--summary-only"].map(String::from).into();
+    if crate::testrun::nextest(ctx, root) {
+        args.insert(1, "nextest".into());
+        args.extend(crate::testrun::nextest_args(root, &[], None)?);
+    } else {
+        args.push("--locked".into());
+    }
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = run::capture_env(ctx, &root.join(krate), "cargo", &args, &[("CARGO_TARGET_DIR", dir.as_os_str())])?;
     if !out.ok {
         return Err(run::tail(&out.stderr, 20));
     }

@@ -62,10 +62,12 @@ pub fn slow(out: &str) -> Vec<String> {
 /// Matches `slow-timeout` in `.config/nextest.toml`.
 const SLOW_SECS: f64 = 60.0;
 
-/// The test runner: `OOS_TEST_RUNNER=nextest` (CI) runs cargo-nextest, which runs the test binaries in parallel,
-/// plus the doctests it cannot run; anything else runs `cargo test`.
-pub fn nextest() -> bool {
+/// The test runner: cargo-nextest, which runs every test in its own process and the tests of all binaries in
+/// parallel, plus the doctests it cannot run. `OOS_TEST_RUNNER=nextest` (CI) requires it; otherwise it runs when
+/// installed, and `cargo test` when not.
+pub fn nextest(ctx: &crate::run::Context, root: &Path) -> bool {
     std::env::var("OOS_TEST_RUNNER").is_ok_and(|v| v == "nextest")
+        || run::available(ctx, root, "cargo", &["nextest", "--version"])
 }
 
 /// The shard of `OOS_TEST_PARTITION=K/N` (CI): this job runs the K-th of N parts of every crate's tests, chosen by
@@ -81,27 +83,18 @@ pub fn partition(value: Option<&str>) -> Result<Option<(u32, u32)>, String> {
     Ok(Some((k, n)))
 }
 
-/// The cargo-nextest arguments for one crate.
-fn nextest_args(root: &Path, profile: &[&str], shard: Option<(u32, u32)>) -> Result<Vec<String>, String> {
+/// The cargo-nextest options for one crate, after `nextest run` or `llvm-cov nextest`.
+pub fn nextest_args(root: &Path, profile: &[&str], shard: Option<(u32, u32)>) -> Result<Vec<String>, String> {
     // Plain text: CI sets CARGO_TERM_COLOR=always, and colour codes hide the summary from the parser. Each crate is
     // its own Cargo workspace, so nextest would look for its configuration in the crate: name the repository's.
     let config = root.join(".config/nextest.toml");
     let config = config.to_str().ok_or("the repository path is not UTF-8")?;
-    let mut args: Vec<String> = [
-        "nextest",
-        "run",
-        "--locked",
-        "--no-fail-fast",
-        "--no-tests=pass",
-        "--color",
-        "never",
-        "--config-file",
-        config,
-    ]
-    .into_iter()
-    .chain(profile.iter().copied())
-    .map(str::to_string)
-    .collect();
+    let mut args: Vec<String> =
+        ["--locked", "--no-fail-fast", "--no-tests=pass", "--color", "never", "--config-file", config]
+            .into_iter()
+            .chain(profile.iter().copied())
+            .map(str::to_string)
+            .collect();
     if let Some((k, n)) = shard {
         args.extend(["--partition".to_string(), format!("hash:{k}/{n}")]);
     }
@@ -123,14 +116,14 @@ pub fn run(
     let dir = root.join(krate);
     // the committed Cargo.lock, never a rewritten one
     let profile: &[&str] = if release { &["--release"] } else { &[] };
-    if !nextest() {
+    if !nextest(ctx, root) {
         let out = run::capture(ctx, &dir, "cargo", &[&["test", "--locked"], profile].concat())?;
         let c = counts(&out.stdout);
         return if !out.ok || c.failed > 0 { Err(fail(&out)) } else { Ok((c, Vec::new())) };
     }
     let shard = partition(std::env::var("OOS_TEST_PARTITION").ok().as_deref())?;
     let args = nextest_args(root, profile, shard)?;
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let args: Vec<&str> = ["nextest", "run"].into_iter().chain(args.iter().map(String::as_str)).collect();
     let out = run::capture(ctx, &dir, "cargo", &args)?;
     let text = format!("{}\n{}", out.stdout, out.stderr);
     let Some(mut c) = nextest_counts(&text) else {

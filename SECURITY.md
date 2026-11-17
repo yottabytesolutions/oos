@@ -42,7 +42,7 @@ once SSH is set up). SCPI, VXI-11, HiSLIP (on a computer), the web remote, the L
 MCP and the update page are open to everyone who can reach the scope, over Ethernet and over WLAN. The community signing key
 is public, so anyone on that network can also install an update. Keep the scope on a trusted bench network and never
 expose it to the internet. None of this is a vulnerability to report: it is listed in the
-[disclaimer](README.md#disclaimer).
+[disclaimer](wiki/Disclaimer.md).
 
 Signed updates protect against damaged packages, not against an attacker: see [docs/update.md](docs/update.md).
 

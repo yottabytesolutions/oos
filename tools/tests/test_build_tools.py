@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Host pins and container contracts, with fake Docker only."""
 import copy
 import hashlib

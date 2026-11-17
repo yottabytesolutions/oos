@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Planned moves (`xtask/data/moves.txt`): a branch that moves code lists `<old> -> <new>`, where both sides are
 //! ratchet keys (`fn ui/src/ui.rs Ui::step -> fn ui/src/step.rs Ui::step`) or file paths (`ui/src/model.rs ->
 //! core/src/model.rs`, which renames the path in every key and the crate word of the clippy keys). The gate then

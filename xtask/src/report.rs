@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The gate's report: one line per step, its time, and the details of a failure.
 
 use std::time::Instant;

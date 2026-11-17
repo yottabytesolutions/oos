@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Image applicability from synthetic Git histories; no workflows are changed."""
 import os
 from pathlib import Path

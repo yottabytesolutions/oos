@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Run the CI range shell against real disposable Git history, without fetch or commit commands."""
 
 import os

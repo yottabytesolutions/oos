@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Git-discovered Python and declared-shell syntax.
 use super::Outcome;
 use std::path::Path;

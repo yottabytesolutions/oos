@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """tools/lib/portable.sh with each hash tool alone on PATH, as on Linux, the BSDs and macOS."""
 import hashlib
 import os

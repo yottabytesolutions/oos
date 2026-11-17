@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Host-only P0 fixtures and transport contracts; never connects to a unit."""
 import copy
 import contextlib

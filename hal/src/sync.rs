@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Locking without `unwrap` (the gate denies new `unwrap` outside tests, docs/development.md).
 
 use std::sync::{Mutex, MutexGuard, PoisonError};

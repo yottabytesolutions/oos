@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Regenerate hal/testdata/synthetic and model expectations without unit data.
 
 Only standard-library modules and the in-tree ADC/AFE reference models are used.

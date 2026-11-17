@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The shared helpers against the copies they replaced, on random records with NaN, infinities, signed zeros and
 //! repeated values. Results must be bit-equal.
 

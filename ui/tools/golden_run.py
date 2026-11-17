@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Render the Cargo-provided inventory twice; compare read-only unless --update."""
 import argparse
 from concurrent.futures import ProcessPoolExecutor

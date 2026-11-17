@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Crate dependency direction, from `cargo metadata`.
 
 use super::rules::Rules;

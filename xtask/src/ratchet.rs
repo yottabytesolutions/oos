@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! A ratchet: findings that existed when a rule came in, each with its size or count. The gate fails when a listed
 //! entry grows or an entry appears that is not listed; an entry that shrank or went away may be written back
 //! (`cargo xtask ratchet`), never raised.

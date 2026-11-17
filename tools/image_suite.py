@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """The coordinator image suite used by check --image before unit rounds and releases. Never accesses a device."""
 import hashlib
 import os

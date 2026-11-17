@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Disposable profile execution uses only selected roles and never prepares images."""
 import contextlib
 import importlib.util

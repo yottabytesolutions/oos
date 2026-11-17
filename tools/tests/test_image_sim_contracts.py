@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Guest simulation contracts that must fail in the Docker-free default gate."""
 import json
 import os

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Execute the CI shell with fake Git and scanner commands, without network or commits."""
 
 import os

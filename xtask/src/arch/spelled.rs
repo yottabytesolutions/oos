@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The text backstop of the confinements: the paths spelled in a file's tokens outside test code, macro bodies
 //! included, which name resolution cannot see. Comments and literals are no tokens of a path.
 

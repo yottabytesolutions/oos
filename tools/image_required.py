@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Fail-closed image applicability from authoritative base and both sides of Git changes."""
 import argparse
 import json

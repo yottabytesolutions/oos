@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Synthetic scanner regressions. No network, hardware or Git commit is needed."""
 
 import contextlib

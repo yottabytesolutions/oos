@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Formatting: `cargo fmt --check` with the root rustfmt.toml.
 
 use crate::run;

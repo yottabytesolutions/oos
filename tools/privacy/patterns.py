@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Generic privacy patterns. Findings never contain the matched text."""
 
 import ipaddress

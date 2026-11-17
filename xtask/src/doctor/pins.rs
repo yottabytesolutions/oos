@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Parse the intentionally small pin-file format without adding a TOML dependency.
 use serde::Deserialize;
 use std::{collections::BTreeMap, fs, path::Path};

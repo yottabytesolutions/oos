@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Scan staged additions, commit messages, incoming commits or tracked files."""
 
 import argparse

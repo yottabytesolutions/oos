@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Explicit host setup. Install Python >=3.12, rustup and Docker before running this.
 set -eu
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)

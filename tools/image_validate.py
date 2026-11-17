@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Validate assembled content, relationships and receipts before counting image evidence."""
 import gzip
 import hashlib

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The architecture rules file (`xtask/data/architecture.txt`).
 
 use std::collections::{BTreeMap, BTreeSet};

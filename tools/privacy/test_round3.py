@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Review round 3 regressions; all private-looking values are constructed fixtures."""
 
 import tempfile

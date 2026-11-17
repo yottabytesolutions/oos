@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Clippy and rustc lints, counted per crate, file and lint for the ratchet.
 
 use crate::ratchet::Ratchet;

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Image packaging contract, using private files without Docker, sockets or Git commits."""
 import os
 import json

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `cargo xtask check`: execute the inventory and preserve incomplete evidence.
 use crate::inventory;
 #[cfg(test)]

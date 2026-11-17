@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Name resolution for the module rules: every path a file names, in every spelling the compiler accepts, as one
 //! canonical path. Crate paths from the crate root (`board::dho`), dependency paths under the package name
 //! (`oos_hal::dho`, also when Cargo renames it), raw identifiers as plain names.

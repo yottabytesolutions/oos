@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Run outside restricted sandboxes, after tools/output.py build -p oos-ui."""
 import json
 from pathlib import Path

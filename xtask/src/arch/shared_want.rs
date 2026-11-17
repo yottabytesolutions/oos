@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Direct acquisition-settings writes belong to the change point, including mutable borrows.
 //! This is a syntax fence, like the module rules, rather than Rust type inference.
 

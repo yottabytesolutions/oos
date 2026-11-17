@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Review round 2 regressions with disposable Git objects and invented values."""
 
 import contextlib

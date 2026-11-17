@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The syntax walk of one file: functions, structs and inherent impls outside test code, with their sizes.
 
 use proc_macro2::{TokenStream, TokenTree};

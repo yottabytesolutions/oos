@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Default Python and explicit image runners. Status, test counts and artifacts decide success."""
 import argparse
 import os

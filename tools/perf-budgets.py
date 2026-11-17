@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Check host observations against the architecture's measurable budget rows."""
 import argparse
 import math

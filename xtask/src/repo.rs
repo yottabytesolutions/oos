@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The repository: its root and the Rust crates the gate covers.
 
 use std::path::{Path, PathBuf};

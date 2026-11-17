@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Regression evidence from real subprocesses, with no container or hardware access."""
 import os
 from pathlib import Path

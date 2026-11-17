@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The scope's target: clippy checks the scope crates for aarch64-unknown-linux-musl on the host (`clippy::run`).
 //! It needs the target's standard library only: clippy does not link. The flags come from the root
 //! `.cargo/config.toml`, as for the image build.

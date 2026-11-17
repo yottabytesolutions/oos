@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """JSON row shapes for the read-only perfmap collector."""
 from typing import TypedDict
 

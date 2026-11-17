@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Build prerequisite inventory; never installs anything.
 mod pins;
 mod probes;

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Worktree-local outputs and content-checked build receipts. See OUTPUTS.md."""
 import hashlib
 import json

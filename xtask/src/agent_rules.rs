@@ -2,7 +2,6 @@
 //! Client entry files must load the shared repository rules.
 
 use crate::steps::{outcome, Outcome};
-use std::collections::BTreeSet;
 use std::path::Path;
 
 struct Pointer {
@@ -42,7 +41,7 @@ pub fn check(ctx: &crate::run::Context, root: &Path) -> Outcome {
     if let Err(e) = read(root, AIDER_PATH).and_then(|t| compare_template(AIDER_PATH, &normalize(&t), AIDER)) {
         bad.push(e);
     }
-    match inventory(ctx, root) {
+    match crate::repo::git_files(ctx, root, &["--cached", "--others", "--exclude-standard"]) {
         Ok(paths) => bad.extend(
             paths
                 .into_iter()
@@ -71,33 +70,6 @@ fn recognized(path: &str) -> bool {
         || (parts.contains(&".github")
             && (name == "copilot-instructions.md"
                 || (parts.windows(2).any(|p| p == [".github", "instructions"]) && name.ends_with(".instructions.md"))))
-}
-
-/// Git supplies tracked and nonignored new paths as bytes separated by NUL, never quoted lines.
-fn inventory(ctx: &crate::run::Context, root: &Path) -> Result<BTreeSet<String>, String> {
-    let out = crate::run::capture_raw(
-        ctx,
-        root,
-        "git",
-        &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-        &[],
-    )
-    .map_err(|e| format!("git ls-files: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("git ls-files failed: {}", String::from_utf8_lossy(&out.stderr)));
-    }
-    parse_inventory(&out.stdout)
-}
-
-fn parse_inventory(bytes: &[u8]) -> Result<BTreeSet<String>, String> {
-    if !bytes.is_empty() && !bytes.ends_with(&[0]) {
-        return Err("git ls-files: expected NUL-terminated paths".into());
-    }
-    bytes
-        .split(|b| *b == 0)
-        .filter(|p| !p.is_empty())
-        .map(|p| String::from_utf8(p.to_vec()).map_err(|_| "git ls-files: non-UTF-8 path cannot be checked".into()))
-        .collect()
 }
 
 /// Reject links even in the entry file's parent directories before reading through them.

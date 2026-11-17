@@ -122,7 +122,8 @@ macOS arm64 host remain untested in the sandbox; Linux x86-64 validation is also
 
 `xtask/src/inventory.rs` is the ordered executable registry. `cargo xtask check --list` prints its
 stable IDs, commands, prerequisites and selection. The seven G1 fast steps retain their order,
-followed by task 0020's agent rules. Static tool/container pin checks remain part of `fmt`.
+followed by task 0020's agent rules, the test timing, the links and the text rules. Static tool/container pin
+checks remain part of `fmt`.
 The existing workspace registry must still cover every Cargo member. Ratchets, planned moves
 and the coverage margin of 0.5 percentage points are unchanged.
 
@@ -138,9 +139,11 @@ and the coverage margin of 0.5 percentage points are unchanged.
 | `agent-rules` | exact loaders and Git inventory | root AGENTS.md | fast and full |
 | `test-time` | test sleep/deadline syntax and nonincreasing ratchet | sources | fast and full |
 | `links` | links in README.md, SECURITY.md, `wiki/` and `docs/` name existing paths, wiki pages and headings | Git | fast and full |
+| `text` | ADR 0019 file rules over `git ls-files`: line ends, final newline, SPDX line, Rust indentation, licence copies | Git | fast and full |
 | `doctor-base` | base doctor probes, including active toolchain identity | bootstrap; no Docker | full |
 | `doctor` | `--gpu --sim` doctor profiles | base doctor, bootstrap, Docker | `--image` |
 | `clippy` | host and ARM clippy per crate | musl std and clippy | full |
+| `decoders` | `cargo check --all-targets --no-default-features` in `ui`: core only, then `--features dec-<name>` for each optional decoder alone | pinned toolchain | full |
 | `tests-debug` | Rust tests per crate | pinned toolchain | full |
 | `tests-release` | release Rust tests per crate | pinned toolchain | full |
 | `perf` | `sh tools/perf-guard.sh` | toolchain | full |

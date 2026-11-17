@@ -2,6 +2,7 @@
 //! The gate's steps over every crate. Each returns its summary lines, or the failures.
 
 mod code;
+pub(crate) mod decoders;
 pub(crate) mod host;
 pub(crate) mod image;
 mod ratchets;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The repository: its root and the Rust crates the gate covers.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// A member of the root workspace; the gate runs its steps crate by crate for counts and reports per crate. A crate
@@ -43,6 +44,27 @@ pub fn root() -> PathBuf {
 /// Where the gate keeps its data files (ratchets, rules).
 pub fn data(root: &Path) -> PathBuf {
     root.join("xtask").join("data")
+}
+
+/// The paths `git ls-files -z <args>` names under `root`. Git separates them by NUL and never quotes them.
+pub fn git_files(ctx: &crate::run::Context, root: &Path, args: &[&str]) -> Result<BTreeSet<String>, String> {
+    let args: Vec<&str> = ["ls-files", "-z"].into_iter().chain(args.iter().copied()).collect();
+    let out = crate::run::capture_raw(ctx, root, "git", &args, &[]).map_err(|e| format!("git ls-files: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("git ls-files failed: {}", String::from_utf8_lossy(&out.stderr)));
+    }
+    parse_paths(&out.stdout)
+}
+
+pub(crate) fn parse_paths(bytes: &[u8]) -> Result<BTreeSet<String>, String> {
+    if !bytes.is_empty() && !bytes.ends_with(&[0]) {
+        return Err("git ls-files: expected NUL-terminated paths".into());
+    }
+    bytes
+        .split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .map(|p| String::from_utf8(p.to_vec()).map_err(|_| "git ls-files: non-UTF-8 path cannot be checked".into()))
+        .collect()
 }
 
 #[cfg(test)]

@@ -32,6 +32,7 @@ mod test_time;
 #[cfg(test)]
 mod testrepo;
 mod testrun;
+mod text;
 mod tighten;
 mod workspace;
 

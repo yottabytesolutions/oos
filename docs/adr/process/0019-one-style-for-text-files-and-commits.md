@@ -17,7 +17,7 @@ What a tool can check is checked; the rest is written here once, so a review can
 
 ## Decision
 
-**Files** ([.editorconfig](../../../.editorconfig) sets this for editors, `tools/check.sh text` checks it):
+**Files** ([.editorconfig](../../../.editorconfig) sets this for editors, the gate's `text` step checks it):
 
 - UTF-8, LF line ends, a newline at the end of the file, no spaces or tabs at the end of a line.
 - Rust and Python indent with 4 spaces, YAML with 2. Shell and C keep the indentation the file has (several use tabs);
@@ -98,5 +98,5 @@ After the hard fork (ADR 0030) the commit rules above change; the file and docum
 
 ## References
 
-[.editorconfig](../../../.editorconfig), [.gitattributes](../../../.gitattributes), `tools/check.sh`,
+[.editorconfig](../../../.editorconfig), [.gitattributes](../../../.gitattributes), `xtask/src/text.rs`,
 [CONTRIBUTING.md](../../../CONTRIBUTING.md), [CHANGELOG.md](../../../CHANGELOG.md), ADR 0015, ADR 0016, ADR 0017.

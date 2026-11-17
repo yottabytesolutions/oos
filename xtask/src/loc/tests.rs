@@ -26,8 +26,15 @@ fn scripts_are_known_by_extension_or_shebang_and_tests_are_left_out() {
 }
 
 #[test]
+fn c_lines_leave_out_comments_but_not_literals() {
+    let src = "// SPDX\n#include <x.h>\n\n/* block\n   still */ int a;\nconst char *s = \"/* no */\"; // tail\nchar q = '\\'';\n/** doc */\n";
+    assert_eq!(c::lines(src), 4);
+}
+
+#[test]
 fn an_extracted_tree_holds_sources_manifests_and_scripts_but_no_toolchain_pin() {
-    for kept in ["ui/src/lib.rs", "Cargo.toml", "Cargo.lock", "tools/a.py", "boot/b.sh", "rootfs/init"] {
+    for kept in ["gpu/oos-gpu.c", "ui/src/lib.rs", "Cargo.toml", "Cargo.lock", "tools/a.py", "boot/b.sh", "rootfs/init"]
+    {
         assert!(tree::needed(kept), "{}", kept);
     }
     for dropped in ["rust-toolchain.toml", "ui/tests/golden/a.png", "docs/x.md"] {
@@ -82,6 +89,8 @@ fn workspace(lib: &str, script: &str) -> Vec<(&'static str, String)> {
         ("xtask/src/main.rs", "fn main() {}\n".into()),
         ("tools/run", script.into()),
         ("tools/tests/test_run.py", "x = 1\n".into()),
+        ("gpu/g.c", "// note\nint g;\n".into()),
+        ("kernel/modules/xdma/v.c", "int v;\n".into()),
     ]
 }
 
@@ -99,6 +108,6 @@ fn a_ref_is_measured_like_the_working_tree() {
     let then = tree::at(&dir, "HEAD~1", measure);
     std::fs::remove_dir_all(&dir).expect("clean up");
     let (now, then) = (now.expect("now"), then.expect("then"));
-    assert_eq!(then, counts(&[("core", 4)], &[("python", 0), ("shell", 1), ("xtask", 1)]));
-    assert_eq!(now, counts(&[("core", 5)], &[("python", 2), ("shell", 0), ("xtask", 1)]));
+    assert_eq!(then, counts(&[("core", 4), ("gpu", 1)], &[("python", 0), ("shell", 1), ("xtask", 1)]));
+    assert_eq!(now, counts(&[("core", 5), ("gpu", 1)], &[("python", 2), ("shell", 0), ("xtask", 1)]));
 }

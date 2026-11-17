@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `cargo xtask loc`: production code lines per crate and in total, and the tooling lines beside them (ADR 0035).
-//! Production code is the Rust of the crates built for the scope, outside test code, without blank lines, comment
-//! lines and generated files. `--compare <ref>` measures `ref` as well and prints the change.
+//! Production code is the Rust of the crates built for the scope and this project's C, outside test code, without
+//! blank lines, comment lines and generated files. `--compare <ref>` measures `ref` as well and prints the change.
 
+mod c;
 mod report;
 #[cfg(test)]
 mod tests;
@@ -41,7 +42,7 @@ impl Options {
     }
 }
 
-/// Lines by name: crates for production code; `xtask`, `shell` and `python` for tooling.
+/// Lines by name: crates and C directories for production code; `xtask`, `shell` and `python` for tooling.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Counts {
     pub production: BTreeMap<String, u64>,
@@ -70,19 +71,20 @@ fn workspaces(files: &[String]) -> Vec<&str> {
 
 /// Counts the tree at `root`, whose tracked files are `files`.
 pub fn measure(root: &Path, files: &[String]) -> Result<Counts, String> {
-    let mut c = Counts::default();
+    let mut counts = Counts::default();
     for w in workspaces(files) {
         let meta = crate::workspace::load(&Default::default(), &root.join(w))?;
         for p in &meta.packages {
             let sources = crate::sources::of_package(&meta, p, true)?;
             let n = sources.iter().filter(|s| !s.test && !generated(&s.text)).map(crate::size::code_lines).sum();
             let dir = [w, &meta.dir(p)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("/");
-            let side = if production(&dir) { &mut c.production } else { &mut c.tooling };
+            let side = if production(&dir) { &mut counts.production } else { &mut counts.tooling };
             side.insert(dir, n);
         }
     }
-    c.tooling.extend(tooling::count(root, files)?.into_iter().map(|(k, n)| (k.to_string(), n)));
-    Ok(c)
+    counts.production.extend(c::count(root, files)?);
+    counts.tooling.extend(tooling::count(root, files)?.into_iter().map(|(k, n)| (k.to_string(), n)));
+    Ok(counts)
 }
 
 /// The report for `flags`, as printed.

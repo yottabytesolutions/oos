@@ -65,6 +65,15 @@ jobs:
       - name: Host scripts (shellcheck --shell=sh)
         if: steps.changes.outputs.run == 'true'
         run: python3 -I tools/ci/host_scripts.py check
+      # ADR 0035: informational, never fails. A pull request may add lines; a release that grows must say why.
+      - name: Production code change against the base
+        if: ${{ !cancelled() && steps.changes.outputs.run == 'true' && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        run: |
+          set -eu
+          table=$(cargo xtask loc --compare "$BASE")
+          printf '### Production code\n\nInformational (ADR 0035): the release, not each pull request, must shrink.\n\n%s\n' \
+            "$table" >> "$GITHUB_STEP_SUMMARY"
 
   clippy:
     runs-on: ubuntu-24.04

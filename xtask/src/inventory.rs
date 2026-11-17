@@ -91,6 +91,15 @@ pub(crate) const CHECKS: &[Check] = &[
     ),
     entry!("clippy", "clippy", "cargo clippy --all-targets, host and ARM", "pinned toolchain", Rust, [], steps::clippy),
     entry!(
+        "plan-matrix",
+        "register plan matrix",
+        "build host oos-fpgad; compare 65 plans with xtask/data/plan-matrix.txt",
+        "pinned toolchain, Python, diff; synthetic calibration, no local OOS defaults",
+        Rust,
+        [],
+        crate::plan_matrix::check
+    ),
+    entry!(
         "decoders",
         "standalone decoders",
         "cargo check --all-targets --no-default-features in ui; core only and each optional decoder alone",

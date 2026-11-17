@@ -14,24 +14,9 @@ run() {
     echo "### $*"
     "$f" plan "$@" 2>&1
 }
-for mask in 1 2 3 5 15; do
-    # the trigger source has to be on: CH2 for mask 2, else CH1
-    src=1
-    [ "$mask" = 2 ] && src=2
-    for tdiv in 1e-9 1e-8 1e-7 1e-6 2e-4 1e-3 5e-2; do
-        run --mask "$mask" --app-mask "$mask" --src "$src" --tdiv "$tdiv"
-    done
-    for depth in 1000 100000 1000000 10000000; do
-        run --mask "$mask" --app-mask "$mask" --src "$src" --tdiv 1e-3 --depth "$depth"
-    done
-done
-for slope in rise fall either; do
-    run --slope "$slope" --level 0.5
-done
-run --normal
-run --play-last
-run --frames 8
-run --compress 4
-run --afe --bw OFF
-run --afe --bw 20M
-run --afe --bw AUTO
+# One whitespace-separated argv per line, shared with the host gate. Disable globbing before splitting.
+set -f
+while IFS= read -r args; do
+    # shellcheck disable=SC2086 # Word splitting turns the shared case into arguments.
+    run $args
+done < "$(dirname "$0")/plan-matrix-cases.txt"

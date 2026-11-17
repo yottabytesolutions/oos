@@ -1,0 +1,65 @@
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-9
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-8
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-7
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-6
+--mask 1 --app-mask 1 --src 1 --tdiv 2e-4
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-3
+--mask 1 --app-mask 1 --src 1 --tdiv 5e-2
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-3 --depth 1000
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-3 --depth 100000
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-3 --depth 1000000
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-3 --depth 10000000
+--mask 2 --app-mask 2 --src 2 --tdiv 1e-9
+--mask 2 --app-mask 2 --src 2 --tdiv 1e-8
+--mask 2 --app-mask 2 --src 2 --tdiv 1e-7
+--mask 2 --app-mask 2 --src 2 --tdiv 1e-6
+--mask 2 --app-mask 2 --src 2 --tdiv 2e-4
+--mask 2 --app-mask 2 --src 2 --tdiv 1e-3
+--mask 2 --app-mask 2 --src 2 --tdiv 5e-2
+--mask 2 --app-mask 2 --src 2 --tdiv 1e-3 --depth 1000
+--mask 2 --app-mask 2 --src 2 --tdiv 1e-3 --depth 100000
+--mask 2 --app-mask 2 --src 2 --tdiv 1e-3 --depth 1000000
+--mask 2 --app-mask 2 --src 2 --tdiv 1e-3 --depth 10000000
+--mask 3 --app-mask 3 --src 1 --tdiv 1e-9
+--mask 3 --app-mask 3 --src 1 --tdiv 1e-8
+--mask 3 --app-mask 3 --src 1 --tdiv 1e-7
+--mask 3 --app-mask 3 --src 1 --tdiv 1e-6
+--mask 3 --app-mask 3 --src 1 --tdiv 2e-4
+--mask 3 --app-mask 3 --src 1 --tdiv 1e-3
+--mask 3 --app-mask 3 --src 1 --tdiv 5e-2
+--mask 3 --app-mask 3 --src 1 --tdiv 1e-3 --depth 1000
+--mask 3 --app-mask 3 --src 1 --tdiv 1e-3 --depth 100000
+--mask 3 --app-mask 3 --src 1 --tdiv 1e-3 --depth 1000000
+--mask 3 --app-mask 3 --src 1 --tdiv 1e-3 --depth 10000000
+--mask 5 --app-mask 5 --src 1 --tdiv 1e-9
+--mask 5 --app-mask 5 --src 1 --tdiv 1e-8
+--mask 5 --app-mask 5 --src 1 --tdiv 1e-7
+--mask 5 --app-mask 5 --src 1 --tdiv 1e-6
+--mask 5 --app-mask 5 --src 1 --tdiv 2e-4
+--mask 5 --app-mask 5 --src 1 --tdiv 1e-3
+--mask 5 --app-mask 5 --src 1 --tdiv 5e-2
+--mask 5 --app-mask 5 --src 1 --tdiv 1e-3 --depth 1000
+--mask 5 --app-mask 5 --src 1 --tdiv 1e-3 --depth 100000
+--mask 5 --app-mask 5 --src 1 --tdiv 1e-3 --depth 1000000
+--mask 5 --app-mask 5 --src 1 --tdiv 1e-3 --depth 10000000
+--mask 15 --app-mask 15 --src 1 --tdiv 1e-9
+--mask 15 --app-mask 15 --src 1 --tdiv 1e-8
+--mask 15 --app-mask 15 --src 1 --tdiv 1e-7
+--mask 15 --app-mask 15 --src 1 --tdiv 1e-6
+--mask 15 --app-mask 15 --src 1 --tdiv 2e-4
+--mask 15 --app-mask 15 --src 1 --tdiv 1e-3
+--mask 15 --app-mask 15 --src 1 --tdiv 5e-2
+--mask 15 --app-mask 15 --src 1 --tdiv 1e-3 --depth 1000
+--mask 15 --app-mask 15 --src 1 --tdiv 1e-3 --depth 100000
+--mask 15 --app-mask 15 --src 1 --tdiv 1e-3 --depth 1000000
+--mask 15 --app-mask 15 --src 1 --tdiv 1e-3 --depth 10000000
+--slope rise --level 0.5
+--slope fall --level 0.5
+--slope either --level 0.5
+--normal
+--play-last
+--frames 8
+--compress 4
+--afe --bw OFF
+--afe --bw 20M
+--afe --bw AUTO

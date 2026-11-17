@@ -81,7 +81,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
   the ruleset bypass and states the reason in the PR.
 - Native Windows portability is out of scope for review findings; WSL counts as Linux ([ADR 0033](docs/adr/process/0033-development-platforms.md)).
 - Risk tiers ([CONTRIBUTING](CONTRIBUTING.md#risk-tiers)): CODEOWNERS paths need code owner review. The hardware
-  ones also need `risk/hardware`, `tools/plan-matrix.sh` before and after, and a unit run (`needs-unit` until then).
+  ones also need `risk/hardware`, the `plan-matrix` gate step, and a unit run (`needs-unit` until then).
+  An intended register change includes a reviewed `cargo xtask plan-matrix --update` baseline.
 - State in the PR whether it ran on a unit, which model and build, or host only. Never claim an untested unit run.
 - Flaky tests are fixed. Ignore one only with `#[ignore = "flaky: #NNN reason"]` and an open `flaky` issue.
 - Agents take only `agent-ready` issues, stay within acceptance criteria and out of scope, avoid high-risk paths

@@ -69,6 +69,7 @@ tel "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new) 2>/dev/null" 3 >/dev/null
 send "$ui" oos-ui.new
 send "$fpgad" oos-fpgad.new
 send "$here/tools/plan-matrix.sh" plan-matrix.sh
+send "$here/tools/plan-matrix-cases.txt" plan-matrix-cases.txt
 tel "touch /tmp/oos-ui.off; kill \$(pidof oos-ui)" 3 >/dev/null
 tel "rm -f /tmp/oos-ui.off2" 1 >/dev/null
 loop /tmp/oos-ui.new /tmp/oos-ui.off2

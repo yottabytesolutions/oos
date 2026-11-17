@@ -20,6 +20,9 @@ repeats CI's work.
   changes keep both entry points aligned.
 - `cargo xtask check --image` adds Docker, emulation and image checks before unit rounds and releases.
   Performance guards stay local. `cargo xtask check --list` lists steps and prerequisites without running them.
+- The synthetically calibrated host plan matrix runs in the default gate's Rust tier against a committed
+  baseline; `cargo xtask plan-matrix --update` deliberately replaces it (ADR 0014). Calibrated
+  `tools/plan-matrix.sh` comparisons stay outside the default gate and are reported in the pull request.
 - Ratchets compare against the protected base `main` (ADR 0039). Screen proof belongs in the gate (ADR 0014);
   unit checks still require the owner's authorization.
 - New Rust tooling and checks go into xtask as steps or subcommands (ADR 0033). Small helpers stay in `tools/`.

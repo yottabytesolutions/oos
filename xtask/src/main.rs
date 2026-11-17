@@ -6,6 +6,7 @@
 //!   cargo xtask ratchet [--coverage] [--move] [--init]   write the ratchet files back after an improvement
 //!   cargo xtask elf-static <file>...   verify static AArch64 executables
 //!   cargo xtask loc [--json] [--compare <git-ref>]   production code lines per crate (ADR 0035)
+//!   cargo xtask plan-matrix [--update]   check or deliberately replace the register-plan baseline
 
 mod agent_rules;
 mod arch;
@@ -21,6 +22,7 @@ mod inventory;
 mod links;
 mod loc;
 mod moves;
+mod plan_matrix;
 mod ratchet;
 mod repo;
 mod report;
@@ -43,7 +45,7 @@ mod workspace;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: cargo xtask doctor [--gpu] [--sim] [--image] | cargo xtask check [--fast] [--no-coverage] [--list] [--image] | cargo xtask step <id>... | cargo xtask ratchet [--coverage] [--move] [--init] | cargo xtask elf-static <file>... | cargo xtask loc [--json] [--compare <git-ref>]";
+    "usage: cargo xtask doctor [--gpu] [--sim] [--image] | cargo xtask check [--fast] [--no-coverage] [--list] [--image] | cargo xtask step <id>... | cargo xtask ratchet [--coverage] [--move] [--init] | cargo xtask elf-static <file>... | cargo xtask loc [--json] [--compare <git-ref>] | cargo xtask plan-matrix [--update]";
 
 /// The command line: a command and its flags.
 fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
@@ -57,6 +59,7 @@ fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
         "doctor" => &["--gpu", "--sim", "--image"],
         "check" => &["--fast", "--no-coverage", "--list", "--image"],
         "ratchet" => &["--init", "--coverage", "--move"],
+        "plan-matrix" => &["--update"],
         _ => return Err(USAGE.into()),
     };
     if cmd == "check" && flags.contains(&"--image") && (flags.contains(&"--fast") || flags.contains(&"--no-coverage")) {
@@ -87,6 +90,7 @@ fn main() -> ExitCode {
         "step" => check::steps(&root, &flags),
         "elf-static" => elf::run(&flags),
         "loc" => loc::run(&root, &flags),
+        "plan-matrix" => plan_matrix::run(&root, flags.contains(&"--update")),
         _ => tighten::run(
             &root,
             tighten::Options {
@@ -117,6 +121,9 @@ mod cli {
     fn parses_commands_and_refuses_unknown_flags() {
         assert_eq!(parse(&a(&["check", "--fast"])).unwrap(), ("check", vec!["--fast"]));
         assert_eq!(parse(&a(&["ratchet"])).unwrap(), ("ratchet", vec![]));
+        assert_eq!(parse(&a(&["plan-matrix"])).unwrap(), ("plan-matrix", vec![]));
+        assert_eq!(parse(&a(&["plan-matrix", "--update"])).unwrap(), ("plan-matrix", vec!["--update"]));
+        assert!(parse(&a(&["plan-matrix", "--fast"])).is_err());
         assert!(parse(&a(&["check", "--init"])).is_err());
         assert!(parse(&a(&["build"])).is_err() && parse(&[]).is_err());
         assert_eq!(parse(&a(&["step", "clippy", "fmt"])).unwrap(), ("step", vec!["clippy", "fmt"]));

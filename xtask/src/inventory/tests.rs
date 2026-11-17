@@ -24,6 +24,7 @@ fn default_gate_never_selects_docker_or_image_prerequisites() {
             "text",
             "doctor-base",
             "clippy",
+            "plan-matrix",
             "decoders",
             "tests-debug",
             "tests-release",
@@ -40,6 +41,15 @@ fn default_doctor_uses_only_base_probes() {
     let check = CHECKS.iter().find(|c| c.id == "doctor-base").expect("required base doctor");
     assert_eq!(check.selection, Selection::Host);
     assert!(std::ptr::fn_addr_eq(check.run, crate::doctor::check as Runner));
+    assert!(ids(false, false, false).contains(&check.id));
+    assert!(!ids(true, true, false).contains(&check.id));
+}
+
+#[test]
+fn register_plans_are_a_required_rust_step_outside_fast() {
+    let check = CHECKS.iter().find(|c| c.id == "plan-matrix").expect("register plan guard");
+    assert_eq!(check.selection, Selection::Rust);
+    assert!(std::ptr::fn_addr_eq(check.run, crate::plan_matrix::check as Runner));
     assert!(ids(false, false, false).contains(&check.id));
     assert!(!ids(true, true, false).contains(&check.id));
 }

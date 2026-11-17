@@ -13,6 +13,8 @@
 //! port's offset-rail attenuation and normalized-frequency mistakes. SSC retains
 //! the source's small-signal convention: "down-spread" removes its DC term.
 
+use crate::math::filtfilt;
+
 /// Samples per line symbol when the record is rendered at the preset rate.
 pub const SAMPLES_PER_UI: usize = 8;
 
@@ -330,21 +332,18 @@ pub fn prbs_bits(order: u32, n: usize) -> Result<Vec<u8>, String> {
         31 => &[0, 3],
         _ => return Err(format!("unsupported PRBS order {order}")),
     };
-    if order >= 64 {
-        return Err("PRBS order does not fit a register".into());
-    }
+    Ok(lfsr(order, taps).take(n).map(u8::from).collect())
+}
+
+/// Fibonacci LFSR of `order` bits (below 64) from all ones: each step puts out bit 0, shifts right and feeds the XOR
+/// of the `taps` bits in at the top.
+pub(crate) fn lfsr(order: u32, taps: &[u32]) -> impl Iterator<Item = bool> + '_ {
     let mask = (1u64 << order) - 1;
-    let mut state = mask;
-    let mut bits = vec![0u8; n];
-    for b in &mut bits {
-        *b = (state & 1) as u8;
-        let mut feedback = 0u64;
-        for &t in taps {
-            feedback ^= (state >> t) & 1;
-        }
-        state = ((state >> 1) | (feedback << (order - 1))) & mask;
-    }
-    Ok(bits)
+    std::iter::successors(Some(mask), move |&state| {
+        let feedback = taps.iter().fold(0, |f, &t| f ^ ((state >> t) & 1));
+        Some(((state >> 1) | (feedback << (order - 1))) & mask)
+    })
+    .map(|state| state & 1 == 1)
 }
 
 /// `_ssc_edge_times`. `deviation` is a fraction (0.005 = 0.5%). `f_mod` is hertz.
@@ -538,24 +537,6 @@ fn butterworth_lowpass(order: usize, fc: f64, dt: f64, x: &[f64]) -> Vec<f64> {
     y
 }
 
-/// Biquad forward then backward. Coefficients are `(b0, b1, b2, a1, a2)` with `a0 = 1`.
-fn filtfilt(k: [f64; 5], x: &mut [f64]) {
-    let run = |x: &mut [f64]| {
-        let x0 = x.first().copied().unwrap_or(0.0);
-        let g = (k[0] + k[1] + k[2]) / (1.0 + k[3] + k[4]);
-        let (mut x1, mut x2, mut y1, mut y2) = (x0, x0, x0 * g, x0 * g);
-        for v in x.iter_mut() {
-            let y = k[0] * *v + k[1] * x1 + k[2] * x2 - k[3] * y1 - k[4] * y2;
-            (x2, x1, y2, y1) = (x1, *v, y1, y);
-            *v = y;
-        }
-    };
-    run(x);
-    x.reverse();
-    run(x);
-    x.reverse();
-}
-
 struct Rng(u64);
 
 impl Rng {
@@ -582,6 +563,33 @@ impl Rng {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The register `prbs_bits` ran before it shared `lfsr`.
+    fn register_bits(order: u32, taps: &[u32], n: usize) -> Vec<u8> {
+        let mask = (1u64 << order) - 1;
+        let mut state = mask;
+        let mut bits = vec![0u8; n];
+        for b in &mut bits {
+            *b = (state & 1) as u8;
+            let mut feedback = 0u64;
+            for &t in taps {
+                feedback ^= (state >> t) & 1;
+            }
+            state = ((state >> 1) | (feedback << (order - 1))) & mask;
+        }
+        bits
+    }
+
+    #[test]
+    fn prbs_bits_match_the_register() {
+        let orders: [(u32, &[u32]); 6] =
+            [(7, &[0, 1]), (9, &[0, 4]), (13, &[0, 1, 11, 12]), (15, &[0, 1]), (23, &[0, 5]), (31, &[0, 3])];
+        for (order, taps) in orders {
+            assert_eq!(prbs_bits(order, 10_000).unwrap(), register_bits(order, taps, 10_000), "order {order}");
+        }
+        assert_eq!(prbs_bits(7, 0).unwrap(), Vec::<u8>::new());
+        assert!(prbs_bits(11, 4).is_err());
+    }
 
     #[test]
     fn prbs7_is_maximal_and_prbs31_taps_match_the_polynomial() {

@@ -224,22 +224,9 @@ pub fn fold_rms(v: &[f32], dt: f64, ui: f64) -> f64 {
     }
 }
 
-/// PRBS of `width` bits, tap mask (x^width + taps + 1). PRBS-11 uses width 11, taps bit 9.
-pub fn prbs_bits(width: u32, tap_bit: u32, n: usize) -> Vec<bool> {
-    let mask = (1u32 << width) - 1;
-    let mut s = mask;
-    (0..n)
-        .map(|_| {
-            let b = (s >> (width - 1)) & 1;
-            let t = ((s >> (width - 1)) ^ (s >> (tap_bit - 1))) & 1;
-            s = ((s << 1) | t) & mask;
-            b != 0
-        })
-        .collect()
-}
-
+/// PRBS-11, x^11 + x^9 + 1.
 pub fn prbs11(n: usize) -> Vec<bool> {
-    prbs_bits(11, 9, n)
+    crate::hss::lfsr(11, &[0, 2]).take(n).collect()
 }
 
 pub fn mac_text(hi32: u32, lo16: u32) -> String {
@@ -456,6 +443,29 @@ mod tests {
         let b = prbs11(40);
         assert!(b.iter().any(|&x| x) && b.iter().any(|&x| !x));
         assert_eq!(b.len(), 40);
+    }
+
+    /// The MSB-first, left-shifting register `prbs11` used before it shared the LFSR of `hss`.
+    fn msb_first_prbs(width: u32, tap_bit: u32, n: usize) -> Vec<bool> {
+        let mask = (1u32 << width) - 1;
+        let mut s = mask;
+        (0..n)
+            .map(|_| {
+                let b = (s >> (width - 1)) & 1;
+                let t = ((s >> (width - 1)) ^ (s >> (tap_bit - 1))) & 1;
+                s = ((s << 1) | t) & mask;
+                b != 0
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_mirrored_lfsr_gives_the_msb_first_sequence() {
+        assert_eq!(prbs11(2 * 2047 + 5), msb_first_prbs(11, 9, 2 * 2047 + 5));
+        for (width, tap_bit) in [(7, 6), (9, 5), (15, 14), (23, 18), (31, 28)] {
+            let mirrored: Vec<bool> = crate::hss::lfsr(width, &[0, width - tap_bit]).take(5000).collect();
+            assert_eq!(mirrored, msb_first_prbs(width, tap_bit, 5000), "width {width}");
+        }
     }
 
     #[test]

@@ -102,8 +102,8 @@ macOS arm64 host remain untested in the sandbox; Linux x86-64 validation is also
 
 - Hooks, once per clone: `git config core.hooksPath .githooks`. pre-commit runs `check --fast`, pre-push the full
   gate.
-- The ratchet files are compared with the base branch `overhaul` (or `origin/overhaul`): the clone needs it
-  (`git fetch origin overhaul`).
+- The ratchet files are compared with the base branch `main` (or `origin/main`): the clone needs it
+  (`git fetch origin main`).
 - Every cargo call that resolves dependencies uses `--locked` (the `cargo xtask` alias, clippy, tests, metadata,
   coverage and `tools/perf-guard.sh`): a change of a dependency comes with its `Cargo.lock` change.
 
@@ -171,7 +171,7 @@ It runs unit-DTB, GEL, USB and WLAN simulations. It uses synthetic inputs and wo
 builder caches; it performs no install, device access or private signing-key discovery.
 
 The `image-required` ID is retained in the image tier as advisory change classification. It compares
-with the protected overhaul merge base plus working-tree inputs and examines both rename paths
+with the protected `main` merge base plus working-tree inputs and examines both rename paths
 and deletions. Missing bases and unclassified inputs fail closed in that tier. It never runs in
 the default gate or changes that gate's completion result. The coordinator runs `--image` before
 unit rounds and releases regardless of classification. Workflow files retain their base versions;
@@ -376,14 +376,14 @@ branch to both sides.
 
 ### Base trust
 
-The gate compares each ratchet file with its version at the merge base of `HEAD` and `overhaul` (`origin/overhaul`
-in a CI checkout), or `HEAD^1` when `HEAD` is on `overhaul` itself. An entry that is not there, a larger value, or a
+The gate compares each ratchet file with its version at the merge base of `HEAD` and `main` (`origin/main`
+in a CI checkout), or `HEAD^1` when `HEAD` is on `main` itself. An entry that is not there, a larger value, or a
 removed or lowered coverage floor fails. Any git error fails. `--init` refuses a ratchet file the base already has.
 
 - A ratchet file absent at the base is legal only while the base has no `xtask`: the one merge that brings the gate
   in. After it, a missing ratchet file fails.
-- Until 0.2.0, the coordinator's local full gate is authoritative and trusts the `overhaul` ref.
-  Setting `CI` or `OOS_GATE_BASE` by hand, or moving `overhaul` to pass a check, breaks the rules.
+- Until 0.2.0, the coordinator's local full gate is authoritative and trusts the `main` ref.
+  Setting `CI` or `OOS_GATE_BASE` by hand, or moving `main` to pass a check, breaks the rules.
 - On the integration branch, `HEAD^1` covers one commit. A push of several commits is not compared commit by commit:
   the integrator runs the full gate on the branch before the fast-forward.
 
@@ -447,6 +447,6 @@ Not enforced yet; each is a task.
   the same name merge.
 - Path dependencies are checked by package name only, not by source: a local fork of an allowed crate passes.
 - Types imported from another workspace crate, and associated types, are not followed by the statics check.
-- The base branch is the local `overhaul` ref; the coordinator validates it while repository CI is off.
+- The base branch is the local `main` ref; the coordinator validates it while repository CI is off.
 - pre-commit checks the working tree, not the staged index, and only the fast part. The done rule is the full gate
   on the final commit.

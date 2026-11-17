@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # the ratchet files are checked against the merge base with overhaul
+          # the ratchet files are checked against the merge base with main
           fetch-depth: 0
       - run: |
           rustup toolchain install stable --profile minimal --component rustfmt,clippy,llvm-tools-preview

@@ -88,7 +88,7 @@ decoders, mask test, signal generators for tests and the demo source. Waveforms 
 
 ### oos-ui: the scope screen
 
-Superseded by `README.md` on the `overhaul` branch. This section describes the code before the overhaul and
+Superseded by `README.md` on `main`. This section describes the code before the overhaul and
 is kept for the migration.
 
 One process, software renderer on DRM dumb buffers (`drm`, `gfx`, `font`), layout in `ui`, state in `model`.
@@ -125,7 +125,7 @@ A thin CLI over `hal`: prints any plan without hardware (`plan`, dry runs everyw
 checks the FPGA version before writing, refuses 0x1008 and the excluded FPGA slot. Board commands (`temp`, `beep`,
 `guard`). Meant to become the daemon that owns the FPGA once oos-ui and SCPI share one acquisition engine.
 
-On `overhaul` that plan is not followed. While oos-ui runs, its acquisition thread is the only owner of the
+On `main` that plan is not followed. While oos-ui runs, its acquisition thread is the only owner of the
 acquisition hardware (`acquisition.md`), and SCPI reaches the same engine through oos-ui's remote adapters. `oos-fpgad`
 stays the bring-up and service tool: cold boot before oos-ui starts, and service commands while oos-ui is stopped. It
 must not touch the acquisition registers while oos-ui runs.

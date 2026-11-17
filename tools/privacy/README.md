@@ -5,7 +5,7 @@ Python 3.10 or newer, standard library only. Run from the repository root:
 ```sh
 python3 tools/privacy/scan.py --staged
 python3 tools/privacy/scan.py --message target/COMMIT_MSG.txt
-python3 tools/privacy/scan.py --range overhaul HEAD
+python3 tools/privacy/scan.py --range main HEAD
 python3 tools/privacy/scan.py --tree
 python3 -m unittest discover -s tools/privacy -p 'test_*.py' -v
 ```

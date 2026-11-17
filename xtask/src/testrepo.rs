@@ -1,4 +1,4 @@
-//! Test fixture: a git repository in a fresh temporary directory, with `overhaul` as its first branch.
+//! Test fixture: a git repository in a fresh temporary directory, with `main` as its first branch.
 
 use crate::run;
 use std::path::{Path, PathBuf};
@@ -22,14 +22,14 @@ pub fn commit(dir: &Path, files: &[(&str, &str)], msg: &str) {
     git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", msg]);
 }
 
-/// A repository named `name` on branch `overhaul`, with `steps` of (files to write, commit message).
+/// A repository named `name` on branch `main`, with `steps` of (files to write, commit message).
 pub fn repo(name: &str, steps: &[(&[(&str, &str)], &str)]) -> PathBuf {
     let d = std::env::temp_dir().join(format!("xtask-repo-{}-{}", name, std::process::id()));
     if d.exists() {
         std::fs::remove_dir_all(&d).expect("clean up");
     }
     std::fs::create_dir_all(&d).expect("dir");
-    git(&d, &["init", "-q", "-b", "overhaul"]);
+    git(&d, &["init", "-q", "-b", "main"]);
     // Disposable synthetic histories must not depend on the host signing agent.
     git(&d, &["config", "commit.gpgsign", "false"]);
     for (files, msg) in steps {

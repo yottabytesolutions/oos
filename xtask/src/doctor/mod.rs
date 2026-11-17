@@ -32,7 +32,7 @@ pub(crate) fn inventory(ctx: &crate::run::Context, root: &Path, flags: &[&str]) 
         crate::base::protected(ctx, root).is_ok(),
         "G1 protected base",
         if crate::base::protected(ctx, root).is_ok() { "available" } else { "unavailable" },
-        "git fetch origin overhaul",
+        "git fetch origin main",
     );
     let config = std::fs::read_to_string(root.join(".cargo/config.toml")).unwrap_or_default();
     let table = pins::table(&config, "target.aarch64-unknown-linux-musl").unwrap_or_default();

@@ -29,7 +29,7 @@ keeps running until the new path replaces it, one small step per merge. This fil
   crate so that unrelated merges touch different files. Implemented in G1. `docs/development.md` lives on
   `overhaul-guardrails`; its ratchet text is aligned with these rules when that branch merges (team-lead).
 - **Hotfix lane.** A fix the unit needs before the overhaul ships branches from `dho804` as `fix/<name>`, is merged to
-  `dho804`, and is forward-ported to `overhaul` as a regression test plus the fix in its target place, not as a
+  `dho804`, and is forward-ported to `main` as a regression test plus the fix in its target place, not as a
   cherry-pick of the old code.
 - **Known failures.** A test that records a known bug before its fix is marked `#[ignore = "known: task NNNN"]`, with
   the task file that fixes it. The gate lists every known failure (from G1); the list may only shrink, and the fixing

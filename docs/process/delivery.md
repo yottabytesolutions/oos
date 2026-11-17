@@ -32,13 +32,13 @@ CI is switched off.
 
 ## Integration batches
 
-Reviewed branches collect on an integration branch from `overhaul`. One full gate covers the batch; on success
-`overhaul` fast-forwards to it. A failing batch is bisected and the failing branch goes back to its author.
+Reviewed branches collect on an integration branch from `main`. One full gate covers the batch; on success
+`main` fast-forwards to it. A failing batch is bisected and the failing branch goes back to its author.
 Task files move to `done/` in the batch. Worktrees of merged branches are removed with the batch.
 
 ## Publication and unit rounds
 
-The coordinator publishes `overhaul` once per batch through the scrub. Unit rounds follow the migration plan's
+The coordinator publishes `main` once per batch through the scrub. Unit rounds follow the migration plan's
 milestones; a change of the unit tier that the plan gives no round gets a short smoke round under a scope lease.
 
 Before a unit round or an M-step acceptance, the coordinator runs `cargo xtask check --image`

@@ -51,7 +51,7 @@ fn fixture_git_ignores_global_and_system_configuration() {
     const CHILD: &str = "OOS_GIT_CONFIG_CHILD";
     if let Some(root) = std::env::var_os(CHILD) {
         let root = PathBuf::from(root);
-        crate::testrepo::git(&root, &["init", "-q", "-b", "overhaul"]);
+        crate::testrepo::git(&root, &["init", "-q", "-b", "main"]);
         crate::testrepo::commit(&root, &[("README", "fixture")], "fixture");
         return;
     }

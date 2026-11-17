@@ -3,7 +3,7 @@ use crate::testrepo::{commit, git, repo};
 
 const SIZE: &str = "xtask/data/ui/size.txt";
 
-/// A base on `overhaul` with the gate, our file `ui/src/ours.rs` listed at 400; branch `integ` with our own change,
+/// A base on `main` with the gate, our file `ui/src/ours.rs` listed at 400; branch `integ` with our own change,
 /// then upstream's history (its own root, bridged with strategy ours), then a merge of upstream's change to
 /// `ui/src/up.rs`. Returns the repository and the upstream commit.
 fn integration(name: &str) -> (std::path::PathBuf, String) {
@@ -174,7 +174,7 @@ fn a_task_branch_merge_is_not_upstream() {
     let d = repo("rebaseline-task", &[(&[("xtask/Cargo.toml", "x"), (SIZE, "")], "base")]);
     git(&d, &["checkout", "-q", "-b", "t0001"]);
     commit(&d, &[("ui/src/task.rs", "ours")], "task work");
-    git(&d, &["checkout", "-q", "-b", "integ", "overhaul"]);
+    git(&d, &["checkout", "-q", "-b", "integ", "main"]);
     git(&d, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-ff", "-m", "merge task", "t0001"]);
     assert!(pending(&Default::default(), &d, &base_of(&d)).expect("pending").files.is_empty());
 }
@@ -210,7 +210,7 @@ fn a_carried_key_may_move_on_but_an_unrelated_key_move_carries_nothing() {
 #[test]
 fn a_second_upstream_merge_after_one_in_the_base_is_upstream() {
     let (d, _) = integration("rebaseline-second");
-    git(&d, &["checkout", "-q", "overhaul"]);
+    git(&d, &["checkout", "-q", "main"]);
     git(&d, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--ff-only", "integ"]);
     git(&d, &["checkout", "-q", "-b", "integ2"]);
     git(&d, &["checkout", "-q", "up"]);

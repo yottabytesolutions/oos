@@ -61,9 +61,9 @@ def base_revision(root, base=None, ci=False):
             if not base or set(base) == {'0'}:
                 raise ValueError('missing authoritative PR/push base')
         else:
-            refs = git(root, 'for-each-ref', '--format=%(refname)', 'refs/heads/overhaul', 'refs/remotes/origin/overhaul').decode().splitlines()
+            refs = git(root, 'for-each-ref', '--format=%(refname)', 'refs/heads/main', 'refs/remotes/origin/main').decode().splitlines()
             if not refs:
-                raise ValueError('missing protected base; fetch origin overhaul')
+                raise ValueError('missing protected base; fetch origin main')
             base = git(root, 'merge-base', 'HEAD', refs[0]).decode().strip()
     git(root, 'cat-file', '-e', base + '^{commit}')
     return base

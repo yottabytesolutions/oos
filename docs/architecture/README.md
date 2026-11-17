@@ -1,6 +1,6 @@
 # OOS architecture (target)
 
-This is the architecture OOS is moving to on the `overhaul` branch. Where the code still differs, the migration plan
+This is the architecture OOS is moving to on `main`, the trunk of this fork. Where the code still differs, the migration plan
 (`migration.md`) says which step closes the gap. Decisions and their reasons are in `adr/`. How to add things
 is in `extending.md`. Rules for humans and agents cite the headings of this file by anchor.
 

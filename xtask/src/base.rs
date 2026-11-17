@@ -2,22 +2,22 @@
 //! lower a ratchet or raise a coverage floor; it may not widen either. Without this, an edit of the ratchet file
 //! would authorize the violation it lists.
 //!
-//! The base is `overhaul` (or `origin/overhaul` in a CI checkout); `OOS_GATE_BASE` overrides it in CI only. On the
+//! The base is `main` (or `origin/main` in a CI checkout); `OOS_GATE_BASE` overrides it in CI only. On the
 //! base branch itself the merge base is `HEAD`, so the comparison takes `HEAD^1`. A git failure fails the check.
 
 use crate::ratchet::Ratchet;
 use crate::run;
 use std::path::Path;
 
-/// The ref to compare with: the CI override, else the first of `overhaul`, `origin/overhaul` that exists.
+/// The ref to compare with: the CI override, else the first of `main`, `origin/main` that exists.
 fn select(ci: bool, env: Option<&str>, exists: impl Fn(&str) -> bool) -> Result<String, String> {
     let named = env.filter(|_| ci);
     named
         .into_iter()
-        .chain(["overhaul", "origin/overhaul"])
+        .chain(["main", "origin/main"])
         .find(|r| exists(r))
         .map(str::to_string)
-        .ok_or_else(|| "no base branch: fetch overhaul (CI: fetch-depth 0)".to_string())
+        .ok_or_else(|| "no base branch: fetch main (CI: fetch-depth 0)".to_string())
 }
 
 fn git(ctx: &crate::run::Context, root: &Path, args: &[&str]) -> Result<String, String> {

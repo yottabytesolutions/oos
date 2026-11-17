@@ -27,9 +27,9 @@ fn coverage_floors_may_only_rise_against_the_base() {
 #[test]
 fn the_base_override_counts_only_in_ci() {
     let all = |_: &str| true;
-    assert_eq!(select(false, Some("HEAD"), all).expect("base"), "overhaul");
-    assert_eq!(select(true, Some("main"), all).expect("base"), "main");
-    assert_eq!(select(false, None, |r: &str| r == "origin/overhaul").expect("base"), "origin/overhaul");
+    assert_eq!(select(false, Some("HEAD"), all).expect("base"), "main");
+    assert_eq!(select(true, Some("release"), all).expect("base"), "release");
+    assert_eq!(select(false, None, |r: &str| r == "origin/main").expect("base"), "origin/main");
     assert!(select(false, None, |_: &str| false).is_err());
 }
 
@@ -47,7 +47,7 @@ fn the_base_is_the_parent_on_the_branch_and_a_lost_file_fails() {
             (&[("xtask/data/size.txt", "9 fn a.rs f\n")], "raise"),
         ],
     );
-    let c = commit(&Default::default(), &d, "overhaul").expect("commit");
+    let c = commit(&Default::default(), &d, "main").expect("commit");
     assert_eq!(
         text_at(&Default::default(), &d, &c, "xtask/data/size.txt").expect("text").as_deref(),
         Some("5 fn a.rs f")

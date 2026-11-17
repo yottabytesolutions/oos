@@ -177,7 +177,7 @@ fn selector_failure_does_not_create_a_session_or_change_the_environment() {
 fn formatting_metadata_and_git_helpers_retain_logs_in_the_explicit_session() {
     let fixture = Fixture::new();
     let root = &fixture.0;
-    crate::testrepo::git(root, &["init", "-q", "-b", "overhaul"]);
+    crate::testrepo::git(root, &["init", "-q", "-b", "main"]);
     crate::testrepo::git(root, &["config", "commit.gpgsign", "false"]);
     crate::testrepo::commit(root, &[("README", "fixture")], "before the gate");
     crate::testrepo::commit(

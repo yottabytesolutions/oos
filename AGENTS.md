@@ -125,7 +125,7 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Subject in the imperative mood, under 72 characters. The body says why, not what.
 - No em-dashes in commit messages, docs or comments.
 - Never rebase or amend commits that someone else has reviewed or merged.
-- A fix the unit needs now branches from `dho804` as `fix/<name>` and is forward-ported to `overhaul` as a test plus
+- A fix the unit needs now branches from `dho804` as `fix/<name>` and is forward-ported to `main` as a test plus
   the fix in its target place ([Migration](docs/architecture/migration.md), Hotfix lane).
 - Only the coordinator pushes, and only with the owner's go, through the documented publish path. Other agents never push. Never change a remote or its push URL.
 

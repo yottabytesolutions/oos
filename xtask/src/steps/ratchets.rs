@@ -177,9 +177,9 @@ mod tests {
         gate("the integration, before its commit");
         commit(&d, &[], "ratchet --move");
         gate("the integration commit");
-        git(&d, &["checkout", "-q", "overhaul"]);
+        git(&d, &["checkout", "-q", "main"]);
         git(&d, &["merge", "-q", "--ff-only", "step"]);
-        gate("overhaul after the fast-forward");
+        gate("main after the fast-forward");
         // the next step: the base has the renamed entry, so the move is no longer needed and goes
         git(&d, &["checkout", "-q", "-b", "next"]);
         commit(&d, &[("README", "next")], "next step");

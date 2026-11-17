@@ -31,14 +31,15 @@ def check_runs(name, conclusion="success", slug="github-actions"):
 class PathTests(unittest.TestCase):
     def test_documents_settings_and_ci_scripts_skip_rust(self):
         for path in ("docs/development.md", "README.md", "ui/README.md", "AGENTS.md", ".github/labeler.yml",
-                     ".github/workflows/stale.yml", ".github/rulesets/main.json", "tools/ci/pr_meta.py"):
+                     ".github/workflows/stale.yml", ".github/CODEOWNERS", "tools/ci/pr_meta.py"):
             with self.subTest(path=path):
                 self.assertFalse(changes.needs_rust(path))
 
     def test_code_manifests_and_own_inputs_need_rust(self):
         for path in ("ui/src/ui.rs", "Cargo.lock", "deny.toml", "rust-toolchain.toml", ".cargo/config.toml",
                      "rootfs/initramfs/bin/oos-watchdog", "tools/privacy/scan.py", "xtask/data/size.txt",
-                     ".github/workflows/pr.yml", ".github/workflows/image.yml", "tools/ci/changes.py"):
+                     ".github/workflows/pr.yml", ".github/workflows/image.yml", "tools/ci/changes.py",
+                     ".github/workflows/privacy.yml", ".github/rulesets/main.json", "tools/ci/codex_gate.py"):
             with self.subTest(path=path):
                 self.assertTrue(changes.needs_rust(path))
 

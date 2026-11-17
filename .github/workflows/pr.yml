@@ -1,6 +1,8 @@
 # The gate for every pull request and every merge-queue group, split into parallel jobs on GitHub-hosted runners.
 # Required checks (.github/rulesets/main.json): fast, clippy, test, python, deny. pr-meta, privacy and codex-review
 # come from their own workflows. No secrets; the token is read-only.
+# No branch or path filter on pull_request: a stacked layer targets the branch below it, not main (ADR 0034,
+# xtask/src/stack_ci.rs).
 # Every job always reports its required name. tools/ci/changes.py decides whether its build steps run: a change to
 # documents, GitHub settings or CI scripts only skips clippy, the tests and deny; a merge-queue group with the tree of
 # its PR head skips the checks that already passed there. A push to main is the only run that saves the Rust caches,

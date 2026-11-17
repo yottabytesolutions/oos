@@ -1374,12 +1374,12 @@ mod tests {
             inner(c, f)
         });
         pipe.feed(Box::new(Bytes(bytes)), fb, 20, 0, decode);
-        blocked.recv_timeout(std::time::Duration::from_secs(20)).expect("a worker in its first decode");
-        let t0 = std::time::Instant::now();
+        blocked.recv_timeout(crate::ui::lifecycle::test_wait::HANG_GUARD).expect("a worker in its first decode");
+        let t0 = crate::ui::lifecycle::test_wait::Wait::new("unblocked deposit worker publishes its frames");
         while pipe.mails.iter().map(|m| m.lock().unwrap().full.iter().map(|a| a.frames).sum::<u64>()).sum::<u64>() < 16
         {
-            assert!(t0.elapsed() < std::time::Duration::from_secs(20), "the other worker's share");
-            std::thread::yield_now();
+            t0.check();
+            t0.poll();
         }
         gate
     }
@@ -1390,8 +1390,7 @@ mod tests {
         pipe.set_view(Some(&model(1e-6, false, false)), 970, 448, Interp::Exact);
         let gate = one_worker_held(&pipe);
         let now = std::time::Instant::now();
-        assert!(shutdown::close(&pipe, now + std::time::Duration::from_millis(20)) >= 1);
-        assert!(now.elapsed() < std::time::Duration::from_millis(250));
+        assert!(shutdown::close(&pipe, now) >= 1);
         assert!(!pipe.accepting());
         // The detached worker still owns its Batch, view and mailbox after the
         // UI's pipe is gone. Releasing the gate lets that owner finish safely.
@@ -1428,11 +1427,12 @@ mod tests {
         let mut merge = |pipe: &Pipe| pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
         // whole: drawn, then merged once
         let (bytes, fb, s, p) = batch(20, 12_512, false);
+        let before_feed = std::time::Instant::now();
         pipe.feed(Box::new(Bytes(bytes)), fb, 20, 0, dec(&s, &p));
         settle(&pipe);
         let whole = merge(&pipe);
         assert_eq!(whole.frames, 20);
-        assert!(whole.newest.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(20)), "picture age");
+        assert!(whole.newest.is_some_and(|time| time >= before_feed), "picture age starts at feed");
         assert_eq!(pipe.partial.load(Ordering::Relaxed), 0);
         // in parts: 16 frames in one merge, the held worker's 4 in the next
         let gate = one_worker_held(&pipe);
@@ -1527,22 +1527,22 @@ mod tests {
 
     /// Until every batch fed is done (drawn and handed on, or dropped).
     fn settle(p: &Pipe) {
-        let t0 = std::time::Instant::now();
+        let t0 = crate::ui::lifecycle::test_wait::Wait::new("all submitted deposit batches completed");
         while p.live.load(Ordering::Acquire) > 0 {
-            assert!(t0.elapsed() < std::time::Duration::from_secs(20), "batches still open");
-            std::thread::sleep(std::time::Duration::from_micros(50));
+            t0.check();
+            t0.poll();
         }
     }
 
     /// Wait for the lease return too: the live count falls just before the buffer reaches the pool.
     fn recycled(p: &Pipe) -> Box<Bytes> {
-        let start = std::time::Instant::now();
+        let start = crate::ui::lifecycle::test_wait::Wait::new("deposit buffer returned to pool");
         loop {
             if let Some(raw) = p.take_buffer() {
                 return raw.downcast::<Bytes>().expect("the benchmark feeds Bytes buffers");
             }
-            assert!(start.elapsed() < std::time::Duration::from_secs(20), "buffer still leased");
-            std::thread::sleep(std::time::Duration::from_micros(50));
+            start.check();
+            start.poll();
         }
     }
 
@@ -1882,6 +1882,14 @@ mod tests {
             println!("{} s/div {} pt, frame statistics {}: frames mode {:?}/frame; one core in the pipeline {:?}/frame (ratio {:.2}); 1/2/4 workers {:.0}/{:.0}/{:.0} frames/s", tdiv, memsel, meas, old, per[0], r, 1.0 / per[0].as_secs_f64(), 1.0 / per[1].as_secs_f64(), 1.0 / per[2].as_secs_f64());
             assert!(meas || r <= 1.5, "a frame in the pipeline must not cost more than in the frames mode: {:.2}", r);
         }
+    }
+    #[test]
+    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
+    fn perf_guard_shutdown_retains_busy_workers_within_budget() {
+        crate::perfguard::latency::check(
+            std::time::Duration::from_millis(250),
+            shutdown_leaves_a_busy_deposit_workers_buffers_owned,
+        );
     }
 }
 

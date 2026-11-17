@@ -94,6 +94,7 @@ fn run_owned(inputs: &Inputs, mut command: Command, timeout: u64, group: bool) -
             break status;
         }
         if start.elapsed() > Duration::from_secs(timeout) {
+            eprintln!("hang guard: owned test child did not exit");
             #[cfg(unix)]
             if group {
                 let _ = Command::new("/bin/kill").args(["-KILL", &format!("-{}", child.id())]).status();

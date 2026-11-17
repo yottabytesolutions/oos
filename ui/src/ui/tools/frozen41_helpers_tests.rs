@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
-use std::{
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use std::sync::{Arc, Mutex};
 
 fn reference(v: Vec<f32>, dt: f64, t0: f64) -> RefWave {
     RefWave { src: 0, color: 0, label: "frozen41".into(), v: v.into(), dt, t0, vpd: 0.2, offset: 0.0, on: true }
@@ -67,11 +64,13 @@ fn force_after_completed_single_arms_a_fresh_receipt_in_live_and_stored_modes() 
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.key(key::SINGLE);
         let old = ui.scpi_operations();
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "force_after_completed_single_arms_a_fresh_receipt_in_live_and_stored_modes",
+        );
         while ui.m.run != RunState::Stop {
             ui.step(0.02);
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(1));
+            deadline.check();
+            deadline.ui(&ui);
         }
         assert_eq!(old.state(&ui), OperationState::Complete);
         let shared = Arc::new(Mutex::new(crate::board::Shared::default()));
@@ -200,11 +199,13 @@ fn statistics_reset_keeps_rows_and_pending_single_but_rejects_old_deferred_count
     ui.m.trig_mode = TrigMode::Single;
     ui.m.run = RunState::Run;
     ui.sim_play = true;
-    let end = Instant::now() + Duration::from_secs(10);
+    let end = crate::ui::lifecycle::test_wait::Wait::new(
+        "statistics_reset_keeps_rows_and_pending_single_but_rejects_old_deferred_counts",
+    );
     while ui.replay.captures == 0 {
         ui.step(0.02);
-        assert!(Instant::now() < end);
-        std::thread::sleep(Duration::from_millis(1));
+        end.check();
+        end.ui(&ui);
     }
     assert!(ui.measurement_busy());
     ui.key(key::SINGLE);
@@ -213,8 +214,8 @@ fn statistics_reset_keeps_rows_and_pending_single_but_rejects_old_deferred_count
     ui.stats_reset();
     while ui.measurement_busy() {
         ui.poll_reference_measurements();
-        assert!(Instant::now() < end);
-        std::thread::sleep(Duration::from_millis(2));
+        end.check();
+        end.ui(&ui);
     }
     ui.finish_deferred_capture_statistics();
     assert_eq!(ui.m.meas, selection);

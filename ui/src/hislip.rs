@@ -605,7 +605,7 @@ mod tests {
         // the deadlines only guard against a hang: a slow or busy computer must not fail the test
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+            c.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
             c.write_all(&encode(INITIALIZE, 0, 0x0200_4F53, b"hislip0")).unwrap();
             let mut buf = Vec::new();
             let resp = read_one(&mut c, &mut buf);
@@ -613,7 +613,7 @@ mod tests {
             assert_eq!(resp.param >> 16, VERSION as u32, "a newer client is answered at 1.0");
             let id = resp.param as u16;
             let mut a = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            a.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+            a.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
             a.write_all(&encode(ASYNC_INITIALIZE, 0, id as u32, b"")).unwrap();
             let mut abuf = Vec::new();
             assert_eq!(read_one(&mut a, &mut abuf).typ, ASYNC_INITIALIZE_RESPONSE);
@@ -621,18 +621,18 @@ mod tests {
             let data = read_one(&mut c, &mut buf);
             assert_eq!((data.typ, data.data.as_slice()), (DATA_END, &b"OOS,unit\n"[..]));
         });
-        let start = std::time::Instant::now();
+        let start = crate::ui::lifecycle::test_wait::Wait::new("HiSLIP IDN client completion");
         while !t.is_finished() {
-            assert!(start.elapsed() < Duration::from_secs(120), "no answer");
+            start.check();
             h.poll(&mut exec_idn);
-            std::thread::sleep(Duration::from_millis(5));
+            start.poll();
         }
         t.join().unwrap();
     }
 
     fn read_one(c: &mut TcpStream, buf: &mut Vec<u8>) -> Message {
         let mut tmp = [0u8; 256];
-        let start = std::time::Instant::now();
+        let start = crate::ui::lifecycle::test_wait::Wait::new("complete HiSLIP message");
         loop {
             if let Ok(Some(m)) = take_message(buf) {
                 return m;
@@ -641,9 +641,7 @@ mod tests {
                 Ok(0) => panic!("closed"),
                 Ok(n) => buf.extend_from_slice(&tmp[..n]),
                 Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
-                    if start.elapsed() > Duration::from_secs(60) {
-                        panic!("timeout");
-                    }
+                    start.poll();
                 }
                 Err(e) => panic!("{e}"),
             }

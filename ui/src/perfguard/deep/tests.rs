@@ -19,14 +19,10 @@ fn guard_records_both_sides_and_releases_shared_before_recording() {
         });
         rx.recv().unwrap();
         // Drop can block on the metric mutex, but must first release the application mutex.
-        let start = Instant::now();
-        loop {
-            if shared.try_lock().is_ok() {
-                break;
-            }
-            assert!(start.elapsed() < Duration::from_secs(5));
-            std::thread::yield_now();
-        }
+        // Taking Shared is the event: the worker must release it before waiting on samples.
+        drop(crate::ui::lifecycle::test_wait::until("application mutex released before metrics", || {
+            shared.try_lock().ok()
+        }));
         drop(samples);
     });
     *timed_lock(&shared, &diagnostics, 1) += 1;
@@ -152,37 +148,33 @@ fn median(text: &str, label: &str) -> u64 {
 fn blocked_mutex_records_wait_longer_than_held() {
     let diagnostics = Diagnostics::default();
     let shared = Mutex::new(());
-    std::thread::scope(|scope| {
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-        let (start_tx, start_rx) = std::sync::mpsc::channel();
-        let shared = &shared;
-        scope.spawn(move || {
-            let _guard = lock(shared);
-            ready_tx.send(()).unwrap();
-            start_rx.recv().unwrap();
-            std::thread::sleep(Duration::from_millis(75));
-        });
-        ready_rx.recv().unwrap();
-        start_tx.send(()).unwrap();
-        drop(timed_lock(shared, &diagnostics, 0));
+    let start = Instant::now();
+    let mut clock = [start, start + Duration::from_millis(75)].into_iter();
+    let mut sample = 0;
+    let mut guard = timed_lock_with(&shared, &diagnostics, 0, || {
+        assert_eq!(shared.try_lock().is_ok(), sample == 0, "lock order at sample {sample}");
+        sample += 1;
+        clock.next().unwrap()
     });
+    assert_eq!(sample, 2);
+    guard.record_at(start + Duration::from_millis(76));
+    drop(guard);
     let text = diagnostics.text();
-    let wait = median(&text, "lock.ui.wait");
-    let held = median(&text, "lock.ui.held");
-    assert!(wait >= 50_000_000 && held < wait, "wait={wait} held={held}");
+    assert_eq!(median(&text, "lock.ui.wait"), 75_000_000);
+    assert_eq!(median(&text, "lock.ui.held"), 1_000_000);
 }
 
 #[test]
 fn uncontended_mutex_records_held_longer_than_wait() {
     let diagnostics = Diagnostics::default();
     let shared = Mutex::new(());
-    let guard = timed_lock(&shared, &diagnostics, 0);
-    std::thread::sleep(Duration::from_millis(50));
+    let start = Instant::now();
+    let mut guard = timed_lock_with(&shared, &diagnostics, 0, || start);
+    guard.record_at(start + Duration::from_millis(50));
     drop(guard);
     let text = diagnostics.text();
-    let wait = median(&text, "lock.ui.wait");
-    let held = median(&text, "lock.ui.held");
-    assert!(held >= 50_000_000 && wait < held, "wait={wait} held={held}");
+    assert_eq!(median(&text, "lock.ui.wait"), 0);
+    assert_eq!(median(&text, "lock.ui.held"), 50_000_000);
 }
 
 #[test]

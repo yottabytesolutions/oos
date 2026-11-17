@@ -694,10 +694,10 @@ mod tests {
         assert_eq!(u.value(Item::RemFirewall), "off: everyone");
         // the answer also comes through the frame loop's poll
         assert!(u.allow_osk_done("192.0.2.0/24"));
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let until = crate::ui::lifecycle::test_wait::Wait::new("remote service configuration acknowledgement");
         while u.remote.job.is_some() {
-            assert!(std::time::Instant::now() < until, "no answer");
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            until.check();
+            until.ui(&u);
             u.allow_poll();
         }
         assert_eq!(u.value(Item::RemFirewall), "on");

@@ -8,7 +8,7 @@ use std::time::Duration;
 pub fn finish_batch(pipe: &Pipe, id: u64) -> Result<Box<dyn RawBatch>, String> {
     oos_hal::sync::lock(&pipe.pool).recv_timeout(Duration::from_secs(30)).map_err(|e| {
         format!(
-            "batch {}: buffer return failed: {}; counters {:?}, live {}",
+            "batch {}: worker batch completion missing at buffer return: {}; counters {:?}, live {}",
             id,
             e,
             pipe.counters.read(),

@@ -147,7 +147,7 @@ struct Held {
     request: Option<Request>,
     // Keep the input receiver alive; unexpected follow-up requests remain queued
     // instead of starting a random generator or failing a channel send.
-    _requests: Receiver<Request>,
+    _requests: mpsc::Receiver<Request>,
 }
 impl Held {
     fn channel(ui: &mut Ui) -> Self {
@@ -155,7 +155,7 @@ impl Held {
         let (reply, results) = mpsc::channel();
         ui.sim_generation = Some(Generation {
             requests,
-            results,
+            results: results.into(),
             next: 0,
             active: None,
             run: false,

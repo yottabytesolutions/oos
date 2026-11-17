@@ -2,11 +2,7 @@
 
 //! Explicit real-file acceptance. These tests open no native window or service.
 use super::*;
-use std::{
-    path::Path,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{path::Path, sync::Arc, time::Instant};
 
 fn output(ui: &mut Ui, name: &str) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../local/ref-integration/actual-backend");
@@ -34,13 +30,14 @@ fn actual_gen7_reference_math_zoom_and_automatic_eye_backend() {
     let dispatched = Instant::now();
     assert!(ui.math_record(0).unwrap().is_none());
     let dispatch_ms = dispatched.elapsed().as_secs_f64() * 1000.0;
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline =
+        crate::ui::lifecycle::test_wait::Wait::new("actual_gen7_reference_math_zoom_and_automatic_eye_backend");
     let math = loop {
         if let Some(w) = ui.math_record(0).unwrap() {
             break w;
         }
-        assert!(Instant::now() < deadline, "20M math did not complete");
-        std::thread::sleep(Duration::from_millis(2));
+        deadline.check();
+        deadline.ui(&ui);
     };
     assert_eq!(math.v.len(), 20_000_000);
     assert_eq!(math.dt, 5e-12);
@@ -69,22 +66,15 @@ fn actual_gen7_reference_math_zoom_and_automatic_eye_backend() {
     ui.workspace.stacked = false;
     ui.select_workspace_source(WaveId::Ref(1));
     ui.eye_make();
-    let eye_deadline = Instant::now() + Duration::from_secs(30);
+    let eye_deadline =
+        crate::ui::lifecycle::test_wait::Wait::new("actual_gen7_reference_math_zoom_and_automatic_eye_backend");
     while ui.azr.eye_auto.applied_results == 0 && ui.azr.eye_auto.summary.is_none() {
         ui.step(0.02);
         if ui.azr.page.title.contains("No eye") {
             break;
         }
-        assert!(
-            Instant::now() < eye_deadline,
-            "Auto Eye did not settle: submitted={} applied={} place={:?} page={:?} status={:?}",
-            ui.azr.eye_auto.submitted,
-            ui.azr.eye_auto.applied_results,
-            ui.m.eye_place,
-            ui.eye_page_rect(),
-            ui.azr.page.status
-        );
-        std::thread::sleep(Duration::from_millis(3));
+        eye_deadline.check();
+        eye_deadline.ui(&ui);
     }
     output(&mut ui, "03-gen7-auto-eye.png");
     assert_eq!(ui.m.eye_src, WaveId::Ref(1));

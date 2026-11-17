@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 /// The main loop has ended before entering this sequence. Storage errors still
 /// allow helper teardown and display release, while the final exit policy handles an explicit power request.
 pub fn run<T>(
+    start: Instant,
     context: &mut T,
     remote: impl FnOnce(Instant),
     workers: impl FnOnce(&mut T, Instant),
@@ -14,7 +15,6 @@ pub fn run<T>(
     helper: impl FnOnce(Instant) -> bool,
     release: impl FnOnce(),
 ) -> std::io::Result<()> {
-    let start = Instant::now();
     // Shared offsets prevent slow groups from each obtaining another full budget. Leave 100 ms
     // for the helper's kill/reap, and 300 ms below the updater's 2.5 s healthy-exit margin.
     let deadline = start + Duration::from_millis(2100);
@@ -79,22 +79,21 @@ mod tests {
     use std::sync::{mpsc, Arc};
 
     #[test]
-    fn total_shutdown_wait_stays_below_two_and_a_half_seconds() {
+    fn total_shutdown_deadlines_share_one_time_origin() {
         let start = Instant::now();
-        let wait = |deadline: Instant| std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
         run(
+            start,
             &mut (),
-            wait,
-            |_, deadline| wait(deadline),
+            |deadline| assert_eq!(deadline, start + Duration::from_millis(500)),
+            |_, deadline| assert_eq!(deadline, start + Duration::from_millis(1000)),
             |_| Ok(()),
             |deadline| {
-                wait(deadline + Duration::from_millis(100));
+                assert_eq!(deadline, start + Duration::from_millis(2100));
                 true
             },
             || {},
         )
         .unwrap();
-        assert!(start.elapsed() < Duration::from_millis(2500), "elapsed {:?}", start.elapsed());
     }
 
     #[test]
@@ -115,8 +114,7 @@ mod tests {
             assert_eq!(buffer[0], 42);
         });
         let start = Instant::now();
-        assert_eq!(join(vec![worker], start + Duration::from_millis(20)), 1);
-        assert!(start.elapsed() < Duration::from_millis(250));
+        assert_eq!(join(vec![worker], start), 1);
         assert!(weak.upgrade().is_some());
         tx.send(()).unwrap();
     }
@@ -124,13 +122,14 @@ mod tests {
     #[test]
     fn completed_workers_are_joined() {
         let worker = std::thread::spawn(|| {});
-        assert_eq!(join(vec![worker], Instant::now() + Duration::from_secs(1)), 0);
+        assert_eq!(join(vec![worker], Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD), 0);
     }
 
     #[test]
     fn existing_workers_stop_in_order_even_when_persistence_fails() {
         let events = std::cell::RefCell::new(vec!["main stopped"]);
         let result = run(
+            Instant::now(),
             &mut (),
             |_| events.borrow_mut().push("remote"),
             |_, _| events.borrow_mut().push("deposit and measure"),
@@ -146,5 +145,26 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(*events.borrow(), ["main stopped", "remote", "deposit and measure", "persist", "helper", "DRM"]);
+    }
+    #[test]
+    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
+    fn perf_guard_overrun_and_total_shutdown_budgets() {
+        crate::perfguard::latency::check(Duration::from_millis(250), overrun_continues_without_freeing_live_buffers);
+        crate::perfguard::latency::check(Duration::from_millis(2500), || {
+            let start = Instant::now();
+            run(
+                start,
+                &mut (),
+                crate::perfguard::latency::wait_until,
+                |_, deadline| crate::perfguard::latency::wait_until(deadline),
+                |_| Ok(()),
+                |deadline| {
+                    crate::perfguard::latency::wait_until(deadline + Duration::from_millis(100));
+                    true
+                },
+                || {},
+            )
+            .unwrap();
+        });
     }
 }

@@ -20,10 +20,7 @@ mod tests {
     mod change_point;
 
     use super::*;
-    use std::{
-        sync::{Arc, Mutex},
-        time::{Duration, Instant},
-    };
+    use std::sync::{Arc, Mutex};
 
     fn data(points: usize, byte: u8) -> Vec<f32> {
         let mut data = vec![0.0; points];
@@ -113,11 +110,11 @@ mod tests {
         state.queue.push_back((*frame).clone());
     }
     fn until(ui: &mut Ui, condition: impl Fn(&Ui) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new("until");
         while !condition(ui) {
-            assert!(Instant::now() < deadline, "bounded mixed Bus acquisition did not resolve");
+            deadline.check();
             ui.step(0.002);
-            std::thread::sleep(Duration::from_millis(1));
+            deadline.ui(ui);
         }
     }
 
@@ -276,7 +273,7 @@ mod tests {
         let statistics = ui.measurement_statistics_snapshot_for_test();
         let mut scpi = crate::scpi::Scpi::open(0, false);
         let mut socket = std::net::TcpStream::connect(("127.0.0.1", scpi.port().unwrap())).unwrap();
-        socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        socket.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
         socket.write_all(b":RUN;:TRIG:STAT?;:TIM:SCAL?;:CHAN1:DISP?\n").unwrap();
         let response = crate::scpi::test_io::line(&mut socket, || scpi.poll(&mut ui, &Canvas::new(W, H)));
         assert_eq!(response.trim().split(';').count(), 3);

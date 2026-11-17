@@ -130,12 +130,14 @@ fn background_completion_is_displayed_after_stop_without_main_dsp() {
     ui.measure_in_background();
     ui.analyzer_update();
     assert!(ui.azr.eye.is_none());
-    let done = ui.meas_bg.as_ref().unwrap().analysis_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+    let receiver = &ui.meas_bg.as_ref().unwrap().analysis_rx;
+    receiver.wait_ready("full-record analysis completion");
+    let done = receiver.try_recv().unwrap();
     ui.m.run = RunState::Stop;
     assert!(accept(&mut ui, done));
     assert!(ui.azr.eye_res.is_some());
     assert_eq!(ui.azr.work.samples(), 0);
-    ui.stop_workers(std::time::Instant::now() + std::time::Duration::from_secs(2));
+    ui.stop_workers(std::time::Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD);
 }
 
 #[test]
@@ -153,12 +155,14 @@ fn busy_updates_coalesce_to_the_newest_record_and_preserve_record_identity() {
     ui.meas_bg.as_mut().unwrap().analysis_busy = false;
     poll(&mut ui);
     assert!(!ui.azr.work.pending);
-    let done = ui.meas_bg.as_ref().unwrap().analysis_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+    let receiver = &ui.meas_bg.as_ref().unwrap().analysis_rx;
+    receiver.wait_ready("full-record analysis completion");
+    let done = receiver.try_recv().unwrap();
     assert_eq!(done.record, Some((41, (0, 0))));
     assert!(accept(&mut ui, done));
     ui.now += 0.6;
     assert!(updating(&ui), "an older finished result must indicate lag");
-    ui.stop_workers(std::time::Instant::now() + std::time::Duration::from_secs(2));
+    ui.stop_workers(std::time::Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD);
 }
 
 #[test]
@@ -171,7 +175,7 @@ fn a_raw_record_of_an_old_acquisition_generation_is_not_submitted() {
     ui.analyzer_update();
     assert!(!ui.meas_bg.as_ref().unwrap().analysis_busy);
     assert!(ui.azr.work.pending);
-    ui.stop_workers(std::time::Instant::now() + std::time::Duration::from_secs(2));
+    ui.stop_workers(std::time::Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD);
 }
 
 mod review;

@@ -8,7 +8,7 @@
 use super::*;
 use oos_dsp::serial::{self, Lane, LANES};
 use std::sync::{
-    mpsc::{self, Receiver, Sender},
+    mpsc::{self, Sender},
     Arc,
 };
 
@@ -66,7 +66,7 @@ impl Generated {
 /// parallel set of multi-million-sample generators. Only the latest reply wins.
 pub(super) struct Generation {
     requests: Sender<Request>,
-    results: Receiver<(Request, Result<Generated, String>)>,
+    results: crate::ui::lifecycle::worker_result::Receiver<(Request, Result<Generated, String>)>,
     next: u64,
     active: Option<u64>,
     run: bool,
@@ -78,7 +78,7 @@ pub(super) struct Generation {
 impl Generation {
     fn new() -> Result<Self, String> {
         let (requests, input) = mpsc::channel::<Request>();
-        let (output, results) = mpsc::channel();
+        let (output, results) = crate::ui::lifecycle::worker_result::channel();
         std::thread::Builder::new()
             .name("oos-sim".into())
             .spawn(move || {
@@ -625,22 +625,22 @@ impl Ui {
 
     #[cfg(test)]
     pub(crate) fn wait_sim_generation(&mut self) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new("wait_sim_generation");
         while self.sim_generating() {
             self.sim_poll();
-            assert!(std::time::Instant::now() < deadline, "SIM generation timed out");
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            deadline.check();
+            deadline.ui(self);
         }
     }
 
     #[cfg(test)]
     fn wait_sim_worker(&mut self) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new("wait_sim_worker");
         while self.sim_generation.as_ref().is_some_and(|generation| generation.in_flight || generation.queued.is_some())
         {
             self.sim_poll();
-            assert!(std::time::Instant::now() < deadline, "SIM worker did not finish");
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            deadline.check();
+            deadline.ui(self);
         }
     }
 
@@ -989,6 +989,16 @@ fn nearest_tscale(want: f64) -> usize {
 
 #[cfg(test)]
 mod tests {
+    impl Ui {
+        pub(in crate::ui) fn wait_sim_event(&self) {
+            if let Some(worker) = self.sim_generation.as_ref() {
+                if worker.in_flight {
+                    worker.results.wait_ready("sim worker completion");
+                }
+            }
+        }
+    }
+
     use super::*;
     use crate::wave::Source;
 
@@ -1495,10 +1505,12 @@ mod tests {
         let value = u.meas_at(WaveId::Ref(0), Meas::Vpp);
         let captures = u.replay.captures;
         let eye_records = records(&u);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while u.replay.captures < captures + 2 && std::time::Instant::now() < deadline {
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "main_loop_sim_changes_samples_measurements_and_eye_only_on_accepted_captures",
+        );
+        while u.replay.captures < captures + 2 {
             u.step(0.01);
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            deadline.ui(&u);
         }
         assert!(u.replay.captures >= captures + 2);
         assert_ne!(u.refs[0].as_ref().unwrap().v, before, "capture counters alone do not prove fresh acquisition");
@@ -1519,10 +1531,12 @@ mod tests {
         assert_eq!(u.replay.captures, held_count);
         assert_eq!(records(&u), held_eye);
         u.key(key::SINGLE);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while u.m.run != RunState::Stop && std::time::Instant::now() < deadline {
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "main_loop_sim_changes_samples_measurements_and_eye_only_on_accepted_captures",
+        );
+        while u.m.run != RunState::Stop {
             u.step(0.01);
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            deadline.ui(&u);
         }
         assert_eq!(u.m.run, RunState::Stop);
         assert_eq!(u.replay.captures, held_count + 1);
@@ -1530,11 +1544,11 @@ mod tests {
         assert_eq!(records(&u), held_eye + 1.0);
     }
 
-    fn drive_until(u: &mut Ui, done: impl Fn(&Ui) -> bool) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while !done(u) && std::time::Instant::now() < deadline {
+    fn drive_until(u: &mut Ui, event: &'static str, done: impl Fn(&Ui) -> bool) {
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(event);
+        while !done(u) {
             u.step(0.01);
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            deadline.ui(u);
         }
         assert!(done(u), "SIM main loop did not reach the expected capture/analysis state");
     }
@@ -1547,12 +1561,12 @@ mod tests {
         let count = serial::sample_count(&u.sim_lane()).unwrap();
         assert!(count > 3_000_000, "the actual default SSC record must exercise asynchronous triggering");
         u.sim_play_set(true).unwrap();
-        drive_until(&mut u, |u| u.replay.captures >= 1);
+        drive_until(&mut u, "first accepted SIM capture", |u| u.replay.captures >= 1);
         assert_eq!(u.refs[0].as_ref().unwrap().v.len(), count);
         assert!(!u.reference_search_busy(), "initial acceptance uses worker-computed hits");
         let first = u.refs[0].as_ref().unwrap().v[..8192].to_vec();
         let first_value = u.meas_at(WaveId::Ref(0), Meas::Vpp);
-        drive_until(&mut u, |u| u.replay.captures >= 2);
+        drive_until(&mut u, "second accepted SIM capture", |u| u.replay.captures >= 2);
         assert_ne!(u.refs[0].as_ref().unwrap().v[..8192], first);
         assert_ne!(u.meas_at(WaveId::Ref(0), Meas::Vpp), first_value);
         u.key(key::RUNSTOP);
@@ -1563,7 +1577,7 @@ mod tests {
         assert_eq!(u.replay.captures, held_count);
         assert_eq!(u.refs[0].as_ref().unwrap().v[..8192], held);
         u.key(key::SINGLE);
-        drive_until(&mut u, |u| u.m.run == RunState::Stop);
+        drive_until(&mut u, "SIM SINGLE completion applies STOP", |u| u.m.run == RunState::Stop);
         assert_eq!(u.replay.captures, held_count + 1);
         assert_ne!(u.refs[0].as_ref().unwrap().v[..8192], held);
         let waiting = u.refs[0].as_ref().unwrap().v[..8192].to_vec();
@@ -1571,7 +1585,7 @@ mod tests {
         u.m.trig_level = 10.0;
         u.key(key::SINGLE);
         let attempt = u.replay.sim_attempt;
-        drive_until(&mut u, |u| u.replay.sim_attempt >= attempt + 2);
+        drive_until(&mut u, "two SIM generation attempts", |u| u.replay.sim_attempt >= attempt + 2);
         assert_eq!(u.m.status, TrigStatus::Wait);
         assert_eq!(u.replay.captures, before);
         assert_eq!(
@@ -1580,7 +1594,7 @@ mod tests {
             "no-hit candidates never become the visible accepted record"
         );
         u.key(key::FORCE);
-        drive_until(&mut u, |u| u.m.run == RunState::Stop);
+        drive_until(&mut u, "SIM SINGLE completion applies STOP", |u| u.m.run == RunState::Stop);
         assert_eq!(u.replay.captures, before + 1);
         assert_ne!(u.refs[0].as_ref().unwrap().v[..8192], waiting);
         println!("default SSC: {count} samples; fresh captures, Stop, Single, WAIT and Force passed");
@@ -1592,13 +1606,13 @@ mod tests {
         assert!(serial::sample_count(&u.sim_lane()).unwrap() > 3_000_000);
         u.m.meas_full_record = true;
         u.sim_play_set(true).unwrap();
-        drive_until(&mut u, |u| u.replay.captures >= 1);
-        drive_until(&mut u, |u| u.mstat.first().is_some_and(|stat| stat.n >= 1));
+        drive_until(&mut u, "first accepted SIM capture", |u| u.replay.captures >= 1);
+        drive_until(&mut u, "first SIM statistics contribution", |u| u.mstat.first().is_some_and(|stat| stat.n >= 1));
         assert!(u.meas_at(WaveId::Ref(0), Meas::Vpp).is_finite());
         assert_eq!(u.m.run, RunState::Run, "Full record must become ready without stopping");
         let first = u.refs[0].as_ref().unwrap().v[..8192].to_vec();
         let value = u.meas_at(WaveId::Ref(0), Meas::Vpp);
-        drive_until(&mut u, |u| u.mstat.first().is_some_and(|stat| stat.n >= 2));
+        drive_until(&mut u, "second SIM statistics contribution", |u| u.mstat.first().is_some_and(|stat| stat.n >= 2));
         assert_eq!(u.mstat[0].n, u.replay.captures);
         assert_ne!(u.refs[0].as_ref().unwrap().v[..8192], first);
         assert_ne!(u.meas_at(WaveId::Ref(0), Meas::Vpp), value);
@@ -1719,10 +1733,11 @@ mod tests {
         // A fresh capture is generated off-thread. Advancing simulated time is
         // not evidence that the worker has run, particularly in the full suite and the
         // instrumented coverage build, where the worker can be starved for seconds.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while u.replay.captures == before && std::time::Instant::now() < deadline {
+        let deadline =
+            crate::ui::lifecycle::test_wait::Wait::new("loaded_sim_uses_run_stop_and_returns_to_live_explicitly");
+        while u.replay.captures == before {
             u.step(0.01);
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            deadline.ui(&u);
         }
         assert!(u.replay.captures > before && u.sim_play);
         assert!(u.last[0].is_none());

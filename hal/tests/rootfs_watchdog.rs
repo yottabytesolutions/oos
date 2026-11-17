@@ -3,12 +3,13 @@
 
 //! Exercise the real supervisor handshake on the host; the fake kicker logs a magic close on TERM, never on KILL.
 
+mod support;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
 
 struct Supervisor {
     root: PathBuf,
@@ -35,7 +36,7 @@ impl Supervisor {
         .expect("fake kicker written");
         fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).expect("fake kicker executable");
         let sleep = root.join("bin/sleep");
-        fs::write(&sleep, "#!/bin/sh\nif [ \"$1\" = 1 ]; then echo backoff > \"$OOS_WATCHDOG_CONTROL.sleep\"; exec /bin/sleep 8; fi\nexec /bin/sleep \"$@\"\n").expect("sleep shim");
+        fs::write(&sleep, "#!/bin/sh\nif [ \"$1\" = 1 ]; then echo backoff > \"$OOS_WATCHDOG_CONTROL.sleep\"; exec python3 -c 'import signal; signal.pause()'; fi\nif [ \"$1\" = 0.1 ]; then echo handoff-waiting; fi\nexec /bin/sleep \"$@\"\n").expect("sleep shim");
         fs::set_permissions(sleep, fs::Permissions::from_mode(0o755)).expect("sleep executable");
         let script = supervisor_script(&root, tag);
         let output = fs::File::create(root.join("log")).expect("log file");
@@ -64,14 +65,7 @@ impl Supervisor {
     }
 
     fn wait_for(&self, text: &str, count: usize) {
-        let deadline = Instant::now() + Duration::from_secs(15);
-        loop {
-            if self.log().matches(text).count() >= count {
-                return;
-            }
-            assert!(Instant::now() < deadline, "waiting for {text}: {}", self.log());
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        support::wait_for(text, || self.log().matches(text).count() >= count);
     }
 
     fn request(&self) {
@@ -101,10 +95,11 @@ impl Drop for Supervisor {
 fn handoff_reaps_without_magic_close_and_resumes_after_each_failed_jump() {
     let s = Supervisor::new("handoff");
     for attempt in 1..=2 {
+        let waiting = s.log().matches("handoff-waiting").count();
         s.request();
         s.wait_for("kexec handoff, kicker reaped", attempt);
+        s.wait_for("handoff-waiting", waiting + 1);
         // Holding the request models the updater's open handle (or its death). No competing reopen or magic close.
-        std::thread::sleep(Duration::from_millis(250));
         assert_eq!(s.log().matches("kicker ready").count(), attempt);
         assert!(!s.log().contains("MAGIC CLOSE"));
         s.resume();
@@ -130,20 +125,14 @@ fn crash(s: &Supervisor) {
 
 fn backoff(s: &Supervisor) {
     crash(s);
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while !s.root.join("control.sleep").exists() {
-        assert!(Instant::now() < deadline, "backoff did not start: {}", s.log());
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    support::wait_for("watchdog entered backoff", || s.root.join("control.sleep").exists());
 }
 
 fn acknowledged(s: &Supervisor) {
-    let deadline = Instant::now() + Duration::from_secs(2);
     let expected = format!("{}\n", std::process::id());
-    while fs::read_to_string(s.root.join("control.ack")).ok().as_ref() != Some(&expected) {
-        assert!(Instant::now() < deadline, "handoff not acknowledged during backoff: {}", s.log());
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    support::wait_for("watchdog acknowledged handoff", || {
+        fs::read_to_string(s.root.join("control.ack")).ok().as_ref() == Some(&expected)
+    });
 }
 
 #[test]
@@ -152,7 +141,7 @@ fn usr1_during_backoff_acknowledges_before_the_sleep_finishes() {
     backoff(&s);
     s.request();
     acknowledged(&s);
-    std::thread::sleep(Duration::from_millis(250));
+    s.wait_for("handoff-waiting", 1);
     assert_eq!(s.log().matches("kicker ready").count(), 1);
     assert!(!s.log().contains("MAGIC CLOSE"));
 }
@@ -164,11 +153,9 @@ fn kexec_failure_during_backoff_resumes_without_waiting_for_the_sleep() {
     s.request();
     acknowledged(&s);
     s.resume(); // returned reboot(KEXEC): close handle, then cancel request
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while s.log().matches("kicker ready").count() < 2 || s.root.join("control.ack").exists() {
-        assert!(Instant::now() < deadline, "kexec undo stranded the kicker in backoff: {}", s.log());
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    support::wait_for("watchdog resumed kicker after failed jump", || {
+        s.log().matches("kicker ready").count() >= 2 && !s.root.join("control.ack").exists()
+    });
     assert!(s.log().contains("kexec returned, resuming kicker"));
     assert!(!s.log().contains("MAGIC CLOSE"));
 }

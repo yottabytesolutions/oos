@@ -31,14 +31,14 @@ struct DemoResult {
 }
 struct DemoWorker {
     tx: mpsc::SyncSender<DemoJob>,
-    rx: mpsc::Receiver<DemoResult>,
+    rx: crate::ui::lifecycle::worker_result::Receiver<DemoResult>,
     busy: bool,
     cancelled: bool,
 }
 impl DemoWorker {
     fn new() -> Self {
         let (tx, input) = mpsc::sync_channel::<DemoJob>(1);
-        let (output, rx) = mpsc::channel();
+        let (output, rx) = crate::ui::lifecycle::worker_result::channel();
         std::thread::Builder::new()
             .name("full-depth-demo".into())
             .spawn(move || {
@@ -310,6 +310,16 @@ impl Ui {
 
 #[cfg(test)]
 mod tests {
+    impl Ui {
+        pub(in crate::ui) fn wait_demo_event(&self) {
+            if let Some(worker) = self.capture_views.borrow().demo.as_ref() {
+                if worker.busy {
+                    worker.rx.wait_ready("demo worker completion");
+                }
+            }
+        }
+    }
+
     use super::*;
     fn long_capture() -> Ui {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
@@ -408,13 +418,15 @@ mod tests {
         ui.m.mdepth = mdepths().iter().position(|d| d.1 >= 10_000 && d.1 <= 100_000).unwrap();
         let expected = ui.m.srate_depth().1 as usize;
         assert!(ui.acquire_display_record(0.02).is_none(), "full memory is prepared off the event thread");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "explicit_demo_memory_is_fully_filled_off_thread_and_survives_stop",
+        );
         let rec = loop {
             if let Some(rec) = ui.acquire_display_record(0.02) {
                 break rec;
             }
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            deadline.check();
+            deadline.ui(&ui);
         };
         assert_eq!(rec.raw.as_ref().unwrap().frame.ch[0].len(), expected);
         assert_eq!(rec.ch[0].len(), 3600);
@@ -440,13 +452,15 @@ mod tests {
             let mut source = Source::Demo { t: 0.0 };
             let mut expected = source.acquire_full_demo(&ui.m, 0.02, &mut Rng::new(seed), ui.switches()).unwrap();
             condition(&ui.m, 0, &mut expected.ch[0], expected.dt);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+                "full_demo_conditioning_is_native_once_and_shared_by_display_math_and_measurements",
+            );
             let record = loop {
                 if let Some(record) = ui.acquire_display_record(0.02) {
                     break record;
                 }
-                assert!(std::time::Instant::now() < deadline);
-                std::thread::sleep(std::time::Duration::from_millis(2));
+                deadline.check();
+                deadline.ui(&ui);
             };
             let native = record.raw.as_ref().unwrap();
             assert!(native.conditioned);
@@ -522,13 +536,15 @@ mod tests {
         let queued = change::acquisition::identity(&ui).epoch();
         // Single is valid even while already waiting; it starts a fresh arm (a new acquisition epoch).
         ui.key(key::SINGLE);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "every_single_press_rearms_and_rejects_a_queued_full_demo_from_before_the_press",
+        );
         let mut previous = queued;
         for captures in [1, 2] {
             while ui.records < captures {
                 ui.step(0.02);
-                assert!(std::time::Instant::now() < deadline);
-                std::thread::sleep(std::time::Duration::from_millis(2));
+                deadline.check();
+                deadline.ui(&ui);
             }
             // the completed SINGLE stops through the outbox: accepted on the next step (M2.3c)
             ui.step(0.02);

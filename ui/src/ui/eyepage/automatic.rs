@@ -91,14 +91,14 @@ impl Job {
 
 struct Worker {
     send: mpsc::SyncSender<Job>,
-    receive: mpsc::Receiver<Finished>,
+    receive: crate::ui::lifecycle::worker_result::Receiver<Finished>,
     busy: bool,
 }
 
 impl Worker {
     fn new() -> Self {
         let (send, requests) = mpsc::sync_channel::<Job>(1);
-        let (results, receive) = mpsc::channel();
+        let (results, receive) = crate::ui::lifecycle::worker_result::channel();
         std::thread::Builder::new()
             .name("reference-eye".into())
             .spawn(move || {
@@ -234,13 +234,11 @@ fn show_quality(page: &mut Page, summary: &Summary) {
 }
 
 fn compute(mut job: Job) -> Result<Computed, String> {
-    #[cfg(test)]
-    let profile_start = std::time::Instant::now();
+    let profile_start = std::env::var_os("OOS_EYE_PROFILE").map(|_| std::time::Instant::now());
     macro_rules! checkpoint {
         ($stage:expr) => {{
-            #[cfg(test)]
-            if std::env::var_os("OOS_EYE_PROFILE").is_some() {
-                eprintln!("Auto Eye profile {} cumulative={:?}", $stage, profile_start.elapsed());
+            if let Some(start) = profile_start {
+                eprintln!("Auto Eye profile {} cumulative={:?}", $stage, start.elapsed());
             }
         }};
     }
@@ -530,7 +528,6 @@ impl Ui {
             return;
         }
         if self.auto_eye_context_key().as_ref() != Some(&finished.context) {
-            #[cfg(test)]
             if std::env::var_os("OOS_EYE_PROFILE").is_some() {
                 eprintln!(
                     "Auto Eye profile stale completion submitted={} applied={} page={:?}",
@@ -664,6 +661,16 @@ impl Ui {
 
 #[cfg(test)]
 mod performance_and_timing_tests {
+    impl Ui {
+        pub(in crate::ui) fn wait_eye_event(&self) {
+            if let Some(worker) = self.azr.eye_auto.worker.as_ref() {
+                if worker.busy {
+                    worker.receive.wait_ready("eye worker completion");
+                }
+            }
+        }
+    }
+
     use super::*;
 
     fn reference(values: Vec<f32>, dt: f64, t0: f64) -> RefWave {
@@ -694,7 +701,7 @@ mod performance_and_timing_tests {
         ui.select_workspace_source(WaveId::Ref(0));
         ui.m.eye_src = WaveId::Ref(0);
         let (send, requests) = mpsc::sync_channel(1);
-        let (results, receive) = mpsc::channel();
+        let (results, receive) = crate::ui::lifecycle::worker_result::channel();
         ui.azr.eye_auto.worker = Some(Worker { send, receive, busy: false });
         (ui, requests, results)
     }
@@ -858,7 +865,7 @@ mod performance_and_timing_tests {
         assert_eq!((sampled.v.len(), sampled.dt), (NATIVE_POINTS, 5e-12));
         assert!((sampled.t0 - (origin - 2e-12)).abs() < 1e-21);
         let (send, requests) = mpsc::sync_channel(1);
-        let (results, receive) = mpsc::channel();
+        let (results, receive) = crate::ui::lifecycle::worker_result::channel();
         ui.azr.eye_auto.worker = Some(Worker { send, receive, busy: false });
         ui.eye_make();
         let job = requests.try_recv().unwrap();
@@ -991,11 +998,13 @@ mod performance_and_timing_tests {
         ui.eye_set_place(EyePlace::Side);
         ui.eye_big = Some(3);
         assert_eq!(ui.auto_eye_key(), key);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "long_reference_analysis_ignores_display_geometry_and_keeps_all_native_edges",
+        );
         while ui.azr.eye_auto.applied_results == 0 {
             ui.step(0.01);
-            assert!(std::time::Instant::now() < deadline, "{:?}", ui.azr.page.status);
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            deadline.check();
+            deadline.ui(&ui);
         }
         let eye = ui.azr.eye.as_ref().unwrap();
         assert_eq!((eye.w, eye.h), (DENSITY_WIDTH, DENSITY_HEIGHT));

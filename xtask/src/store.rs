@@ -15,10 +15,12 @@ pub enum Kind {
     Unsafe,
     Allow,
     Known,
+    TestTime,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [Kind::Clippy, Kind::Size, Kind::Statics, Kind::Unsafe, Kind::Allow, Kind::Known];
+    pub const ALL: [Kind; 7] =
+        [Kind::Clippy, Kind::Size, Kind::Statics, Kind::Unsafe, Kind::Allow, Kind::Known, Kind::TestTime];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -28,6 +30,7 @@ impl Kind {
             Kind::Unsafe => "unsafe",
             Kind::Allow => "allow",
             Kind::Known => "known",
+            Kind::TestTime => "test-time",
         }
     }
 
@@ -39,6 +42,7 @@ impl Kind {
             Kind::Statics => "Statics with interior mutability that are not metrics: 1 static <file> <name>.",
             Kind::Unsafe => "unsafe outside the allowed paths (architecture.txt): <count> unsafe <file>.",
             Kind::Allow => "#[allow] or #[expect] of clippy::disallowed_methods: <count> allow <file> <lint>.",
+            Kind::TestTime => "Test timing findings: <count> time <file> <function> <kind>.",
             Kind::Known => "Known failures, #[ignore = \"known: task NNNN\"]: 1 known <file> <test> <task>.",
         }
     }

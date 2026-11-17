@@ -194,32 +194,11 @@ fn io(what: &str) -> impl Fn(std::io::Error) -> String + '_ {
     move |e| format!("{}: {}", what, e)
 }
 
-/// Exclusive lock on the update state: rcS, the watcher, the GUI job and a shell call never interleave their
-/// read-modify-write of the state and the card (held until dropped).
-pub struct Lock(#[allow(dead_code)] std::fs::File);
+mod locking;
+pub use locking::{lock, Lock};
 
 /// `State::event` while the rollback slot is being written.
 const SLOT_WRITING: &str = "writing the rollback slot";
-
-pub fn lock(state_path: &Path) -> Result<Lock, String> {
-    if let Some(d) = state_path.parent() {
-        std::fs::create_dir_all(d).map_err(io("creating the update state directory"))?;
-    }
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(state_path.with_extension("lock"))
-        .map_err(io("opening the update lock"))?;
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd;
-        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
-            return Err(format!("locking the update state: {}", std::io::Error::last_os_error()));
-        }
-    }
-    Ok(Lock(f))
-}
 
 /// The build id of the running image (/etc/oos-build, the same text `pack --build` puts into the package).
 pub fn running_build() -> Option<String> {
@@ -674,7 +653,15 @@ pub fn confirm_running(state_path: &Path, expect: Option<[u8; 32]>, running: Opt
 
 /// Boot mode (persist = arm OOS after every confirmed start).
 pub fn set_mode(state_path: &Path, persist: bool) -> Result<(), String> {
-    let _l = lock(state_path)?;
+    set_mode_with(state_path, persist, lock)
+}
+
+fn set_mode_with(
+    state_path: &Path,
+    persist: bool,
+    acquire: impl FnOnce(&Path) -> Result<Lock, String>,
+) -> Result<(), String> {
+    let _l = acquire(state_path)?;
     let mut st = State::load(state_path).map_err(io("reading the update state"))?;
     st.persist = persist;
     st.save(state_path).map_err(io("writing the update state"))

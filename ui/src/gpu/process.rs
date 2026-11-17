@@ -40,9 +40,13 @@ mod tests {
     #[test]
     fn uncooperative_helper_is_killed_within_bound() {
         let mut child = std::process::Command::new("sh").args(["-c", "exec sleep 60"]).spawn().unwrap();
-        let start = Instant::now();
-        assert!(stop(&mut child, start + Duration::from_millis(20)));
-        assert!(start.elapsed() < Duration::from_millis(500));
-        assert!(!child.try_wait().unwrap().unwrap().success());
+        // An already-expired grace period deterministically requests a kill. Reaping is an event.
+        let _ = stop(&mut child, Instant::now());
+        assert!(!child.wait().unwrap().success());
+    }
+    #[test]
+    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
+    fn perf_guard_uncooperative_helper_stop() {
+        crate::perfguard::latency::check(Duration::from_millis(500), uncooperative_helper_is_killed_within_bound);
     }
 }

@@ -18,6 +18,7 @@ fn default_gate_never_selects_docker_or_image_prerequisites() {
             "method-exceptions",
             "known-failures",
             "agent-rules",
+            "test-time",
             "doctor-base",
             "clippy",
             "tests-debug",
@@ -73,7 +74,8 @@ fn selections_preserve_the_fast_prefix_and_conditional_checks() {
             "unsafe",
             "method-exceptions",
             "known-failures",
-            "agent-rules"
+            "agent-rules",
+            "test-time"
         ]
     );
     let full = ids(false, true, false);

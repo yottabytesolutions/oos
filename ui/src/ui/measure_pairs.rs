@@ -30,7 +30,7 @@ struct Job {
 }
 struct Worker {
     input: mpsc::SyncSender<Job>,
-    output: mpsc::Receiver<(Key, f64)>,
+    output: crate::ui::lifecycle::worker_result::Receiver<(Key, f64)>,
     busy: bool,
     submitted: usize,
 }
@@ -69,7 +69,7 @@ fn compute(job: &Job) -> f64 {
 impl Worker {
     fn open() -> Self {
         let (input, jobs) = mpsc::sync_channel::<Job>(1);
-        let (results, output) = mpsc::channel();
+        let (results, output) = crate::ui::lifecycle::worker_result::channel();
         std::thread::Builder::new()
             .name("measurement-pairs".into())
             .spawn(move || {
@@ -173,8 +173,18 @@ impl Ui {
 
 #[cfg(test)]
 mod tests {
+    impl Ui {
+        pub(in crate::ui) fn wait_pair_measurement_event(&self) {
+            if let Some(worker) = self.azr.measure_pairs.borrow().worker.as_ref() {
+                if worker.busy {
+                    worker.output.wait_ready("pair measurement worker completion");
+                }
+            }
+        }
+    }
+
     use super::*;
-    use std::time::{Duration, Instant};
+
     fn fixture() -> Ui {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.m.ch.iter_mut().for_each(|ch| ch.on = false);
@@ -196,40 +206,38 @@ mod tests {
                 on: true,
             });
         }
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new("reference analyses for pair measurement");
         loop {
             ui.measure_refs();
             ui.poll_reference_measurements();
             if ui.meas_analysis(WaveId::Ref(0)).is_some() && ui.meas_analysis(WaveId::Ref(1)).is_some() {
                 break;
             }
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(2));
+            deadline.check();
+            deadline.ui(&ui);
         }
         ui
     }
     fn wait(ui: &mut Ui, kind: usize) -> f64 {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new("pair measurement result");
         loop {
             ui.poll_reference_measurements();
             let value = ui.pair_at(kind, WaveId::Ref(0), WaveId::Ref(1));
             if !ui.pair_measurement_computing(kind, WaveId::Ref(0), WaveId::Ref(1)) && value.is_finite() {
                 return value;
             }
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(2));
+            deadline.check();
+            deadline.ui(ui);
         }
     }
     #[test]
     fn large_pair_is_background_cached_in_physical_time_and_full_pan_does_not_resubmit() {
         let mut ui = fixture();
         let before = ui.measurement_statistics_snapshot_for_test();
-        let start = Instant::now();
         assert!(ui.pair_at(0, WaveId::Ref(0), WaveId::Ref(1)).is_nan());
         for _ in 0..100 {
             assert!(ui.pair_at(0, WaveId::Ref(0), WaveId::Ref(1)).is_nan());
         }
-        assert!(start.elapsed() < Duration::from_millis(100));
         assert!(ui.measurement_busy());
         assert!(ui.meas_rows()[0].computing);
         assert_eq!(ui.azr.measure_pairs.borrow().worker.as_ref().unwrap().submitted, 1);
@@ -266,5 +274,16 @@ mod tests {
         assert_eq!(wait(&mut ui, 14), 0.0);
         ui.m.meas_tsetup = 4e-9;
         assert!(wait(&mut ui, 14) > 0.0);
+    }
+    #[test]
+    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
+    fn perf_guard_pair_dispatch_and_pending_reads() {
+        let ui = fixture();
+        crate::perfguard::latency::check(std::time::Duration::from_millis(100), || {
+            assert!(ui.pair_at(0, WaveId::Ref(0), WaveId::Ref(1)).is_nan());
+            for _ in 0..100 {
+                assert!(ui.pair_at(0, WaveId::Ref(0), WaveId::Ref(1)).is_nan());
+            }
+        });
     }
 }

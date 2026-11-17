@@ -347,14 +347,21 @@ fn mode_and_lock() {
     let l = lock(&f.state()).unwrap();
     // a second lock from another thread waits until the first is dropped
     let p = f.state();
-    let t = std::thread::spawn(move || {
-        let t0 = std::time::Instant::now();
-        set_mode(&p, false).unwrap();
-        t0.elapsed()
-    });
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    let probe = std::fs::OpenOptions::new().write(true).open(p.with_extension("lock")).unwrap();
+    use std::os::fd::AsRawFd;
+    // SAFETY: probe owns a live descriptor; this nonblocking call only tests lock exclusion.
+    assert_eq!(unsafe { libc::flock(probe.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, -1);
+    assert_eq!(std::io::Error::last_os_error().kind(), std::io::ErrorKind::WouldBlock);
+    let error = set_mode_with(&p, false, |path| {
+        assert_eq!(path, p, "set_mode must use the update state lock file");
+        locking::lock_with(path, true)
+    })
+    .unwrap_err();
+    assert!(error.starts_with("locking the update state:"), "{error}");
+    assert!(f.st().persist, "a contended mode change must not write state");
+    let t = std::thread::spawn(move || set_mode(&p, false).unwrap());
     drop(l);
-    assert!(t.join().unwrap() >= std::time::Duration::from_millis(150));
+    t.join().unwrap();
     assert!(!f.st().persist);
 }
 

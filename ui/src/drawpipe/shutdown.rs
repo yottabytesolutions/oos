@@ -76,14 +76,13 @@ pub fn reset(pipe: &Pipe) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn closing_idle_pipe_joins_workers_and_refuses_intake() {
         let pipe = Pipe::start(2, 0, Box::leak(Box::default()));
         pipe.set_view(Some(&Model::default()), 16, 16, Interp::Exact);
         assert!(pipe.accepting());
-        assert_eq!(close(&pipe, Instant::now() + Duration::from_secs(1)), 0);
+        assert_eq!(close(&pipe, Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD), 0);
         assert!(!pipe.accepting());
         assert_eq!(close(&pipe, Instant::now()), 0);
     }

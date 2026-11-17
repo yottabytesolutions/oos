@@ -2,10 +2,7 @@
 
 //! Integration of SCPI helper access with the native record and visible workspace.
 use super::*;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
 fn reference(values: Vec<f32>, dt: f64, t0: f64) -> RefWave {
     RefWave {
@@ -258,11 +255,13 @@ fn remote_clear_cancels_deferred_statistics_before_same_row_is_readded() {
     ui.m.trig_mode = TrigMode::Single;
     ui.m.run = RunState::Run;
     ui.sim_play = true;
-    let capture_deadline = Instant::now() + Duration::from_secs(10);
+    let capture_deadline = crate::ui::lifecycle::test_wait::Wait::new(
+        "remote_clear_cancels_deferred_statistics_before_same_row_is_readded",
+    );
     while ui.replay.captures == 0 {
         ui.step(0.02);
-        assert!(Instant::now() < capture_deadline);
-        std::thread::sleep(Duration::from_millis(1));
+        capture_deadline.check();
+        capture_deadline.ui(&ui);
     }
     assert_eq!(ui.replay.captures, 1);
     assert!(ui.measurement_busy());
@@ -271,11 +270,13 @@ fn remote_clear_cancels_deferred_statistics_before_same_row_is_readded() {
     assert!(!ui.meas_clear_remote(), "clearing an empty selection is idempotent");
     assert!(ui.mstat.is_empty());
     assert_eq!(ui.meas_add(Meas::Period, WaveId::Ref(0)), Ok(true));
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+        "remote_clear_cancels_deferred_statistics_before_same_row_is_readded",
+    );
     while ui.measurement_busy() {
         ui.poll_reference_measurements();
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(2));
+        deadline.check();
+        deadline.ui(&ui);
     }
     ui.finish_deferred_capture_statistics();
     assert!((ui.meas_number(WaveId::Ref(0), Meas::Period) - 20e-9).abs() < 1e-14);

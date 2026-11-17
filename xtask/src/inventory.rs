@@ -75,6 +75,7 @@ pub(crate) const CHECKS: &[Check] = &[
         [],
         crate::agent_rules::check
     ),
+    entry!("test-time", "test timing", "test source timing ratchet", "sources", Fast, [], crate::test_time::check),
     entry!("doctor-base", "doctor-base", "doctor", "tools/bootstrap.sh; no Docker", Host, [], crate::doctor::check),
     entry!(
         "doctor",

@@ -17,6 +17,7 @@ pub fn stop_server(
     vxi: &mut crate::vxi11::Server,
 ) {
     let _ = shutdown::run(
+        std::time::Instant::now(),
         ui,
         |deadline| {
             scpi.set_open(None, false);

@@ -4,3 +4,10 @@ static ui/src/drawpipe.rs Pipe::feed_batch::IDS -> static ui/src/drawpipe/feed.r
 struct core/src/model/mod.rs Model -> struct core/src/model/state.rs Model
 fn ui/src/board/dho/hw.rs seg_step -> fn ui/src/board/dho/hw/segmented.rs SegmentIo::step
 static ui/src/board/dho/hw.rs log_header::LINES -> static ui/src/board/dho/hw/header.rs log::LINES
+fn ui/src/http.rs reader -> fn ui/src/http/reader.rs reader_with_now
+fn hal/src/dho/seq.rs acquire_batch -> fn hal/src/dho/seq/execute.rs acquire_batch
+fn hal/src/dho/seq.rs acquire_batch_until -> fn hal/src/dho/seq/execute.rs acquire_batch_until
+fn hal/src/dho/seq.rs acquire_batch_idle -> fn hal/src/dho/seq/execute.rs acquire_batch_idle
+fn hal/src/dho/seq.rs execute_bus -> fn hal/src/dho/seq/execute.rs execute_bus
+fn hal/src/dho/seq.rs execute_bus_until -> fn hal/src/dho/seq/execute.rs execute_bus_until
+fn hal/src/dho/seq.rs plain_step -> fn hal/src/dho/seq/execute.rs plain_step

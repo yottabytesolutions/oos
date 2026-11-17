@@ -30,11 +30,31 @@ impl std::fmt::Debug for Source {
     }
 }
 
-/// `#[cfg(test)]`.
-fn cfg_test(attrs: &[syn::Attribute]) -> bool {
-    attrs
-        .iter()
-        .any(|a| a.path().is_ident("cfg") && a.meta.require_list().is_ok_and(|l| l.tokens.to_string().trim() == "test"))
+/// A cfg predicate that cannot be true without `test`.
+fn requires_test(meta: &syn::Meta) -> bool {
+    match meta {
+        syn::Meta::Path(path) => path.is_ident("test"),
+        syn::Meta::List(list) => {
+            use syn::parse::Parser;
+            let Ok(items) =
+                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated.parse2(list.tokens.clone())
+            else {
+                return false;
+            };
+            if list.path.is_ident("all") {
+                items.iter().any(requires_test)
+            } else if list.path.is_ident("any") {
+                !items.is_empty() && items.iter().all(requires_test)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+/// `#[cfg(test)]`, including compound predicates that require test mode.
+pub(crate) fn cfg_test(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| a.path().is_ident("cfg") && a.parse_args::<syn::Meta>().is_ok_and(|m| requires_test(&m)))
 }
 
 /// `#[path = ..]`, also inside `cfg_attr` (`crate::attrs`).
@@ -269,5 +289,18 @@ mod tests {
         let e = of_dir(&meta(&root), "p").expect_err("must fail");
         std::fs::remove_dir_all(&root).expect("clean up");
         assert!(e.contains("#[path] is not allowed"), "{}", e);
+    }
+}
+
+#[cfg(test)]
+mod compound_test_cfg {
+    use super::*;
+    #[test]
+    fn test_context_follows_external_compound_cfg_modules() {
+        let file =
+            syn::parse_file("#[cfg(all(test, unix))] mod only_tests; #[cfg(any(test, unix))] mod production;").unwrap();
+        let found = decls(&file, false).unwrap();
+        assert!(found[0].test);
+        assert!(!found[1].test);
     }
 }

@@ -44,6 +44,9 @@ fn current(root: &Path) -> Result<BTreeMap<(&'static str, &'static str), Ratchet
             out.insert((c.dir, kind.name()), r);
         }
     }
+    for (c, findings) in crate::test_time::current(root)? {
+        out.insert((c, Kind::TestTime.name()), findings);
+    }
     Ok(out)
 }
 
@@ -145,6 +148,13 @@ fn moves_pending(root: &Path, crates: &[&str]) -> Result<bool, String> {
     Ok(false)
 }
 
+fn write_current(root: &Path, c: &str, k: Kind, now: Ratchet, init: bool) -> Result<(), String> {
+    let r = if init { now } else { store::load(root, c, k)?.tightened(&now) };
+    save(root, c, k, &r)?;
+    println!("{}: {} entries", store::rel(c, k), r.0.len());
+    Ok(())
+}
+
 /// Runs `cargo xtask ratchet` with `o`.
 pub fn run(root: &Path, o: Options) -> Result<(), String> {
     let crates: Vec<&str> = CRATES.iter().map(|c| c.dir).collect();
@@ -161,9 +171,7 @@ pub fn run(root: &Path, o: Options) -> Result<(), String> {
     }
     for ((c, k), now) in current(root)? {
         let k = kind(k);
-        let r = if o.init { now } else { store::load(root, c, k)?.tightened(&now) };
-        save(root, c, k, &r)?;
-        println!("{}: {} entries", store::rel(c, k), r.0.len());
+        write_current(root, c, k, now, o.init)?;
     }
     if o.coverage {
         let path = steps::ratchet_path(root, "coverage.txt");
@@ -178,6 +186,27 @@ pub fn run(root: &Path, o: Options) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_time_moves_and_write_back_preserve_the_ratchet() {
+        use crate::testrepo::{commit, git, repo};
+        let d = repo(
+            "test-time",
+            &[(&[("xtask/Cargo.toml", "x"), ("xtask/data/ui/test-time.txt", "2 time ui/src/a.rs f sleep\n")], "base")],
+        );
+        git(&d, &["checkout", "-q", "-b", "step"]);
+        commit(&d, &[("xtask/data/moves.txt", "ui/src/a.rs -> ui/src/b.rs\n")], "move");
+        assert!(moves_pending(&d, &["ui"]).unwrap());
+        apply_moves_in(&d, &["ui"]).unwrap();
+        let now = Ratchet::parse("1 time ui/src/b.rs f sleep\n").unwrap();
+        assert!(steps::ratcheted(&Default::default(), &d, Kind::TestTime, &[("ui", now.clone())]).is_ok());
+        write_current(&d, "ui", Kind::TestTime, now.clone(), false).unwrap();
+        assert_eq!(store::load(&d, "ui", Kind::TestTime).unwrap(), now);
+        let grown = Ratchet::parse("3 time ui/src/b.rs f sleep\n1 time ui/src/new.rs g sleep\n").unwrap();
+        write_current(&d, "ui", Kind::TestTime, grown, false).unwrap();
+        assert_eq!(store::load(&d, "ui", Kind::TestTime).unwrap(), now);
+        std::fs::remove_dir_all(d).unwrap();
+    }
 
     #[test]
     fn floors_only_rise() {

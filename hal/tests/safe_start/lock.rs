@@ -1,20 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use super::*;
-use std::time::{Duration, Instant};
 
 fn wait(child: &mut std::process::Child) -> std::process::ExitStatus {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            return status;
-        }
-        if Instant::now() >= deadline {
-            child.kill().unwrap();
-            child.wait().unwrap();
-            panic!("ledger writer did not reclaim stale identity");
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    let mut result = None;
+    crate::support::wait_for("ledger writer completed", || {
+        result = child.try_wait().unwrap();
+        result.is_some()
+    });
+    result.unwrap()
 }
 
 #[test]
@@ -67,8 +60,14 @@ fn live_matching_identity_is_protected_until_released() {
     f.write(&format!("proc/{}/stat", pid), &format!("{} (live) S {} 22222 0\n", pid, "0 ".repeat(18)));
     let claim = f.p(&format!("tmp/oos-ui-exits.lock/{}.22222", pid));
     std::fs::create_dir_all(&claim).unwrap();
+    f.exec(
+        "host-bin/sleep",
+        r#"#!/bin/sh
+touch "$OOS_UI_TMP/lock-wait"
+"#,
+    );
     let mut writer = f.command("oos-ui-exits").args(["count", "fresh", "1", "fresh"]).spawn().unwrap();
-    std::thread::sleep(Duration::from_millis(150));
+    crate::support::wait_for("writer observed live lock owner", || f.p("tmp/lock-wait").exists());
     let protected = writer.try_wait().unwrap().is_none() && claim.exists();
     std::fs::remove_dir(&claim).unwrap();
     assert!(wait(&mut writer).success());

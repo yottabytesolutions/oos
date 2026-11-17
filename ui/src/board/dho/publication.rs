@@ -207,13 +207,15 @@ mod timing_tests {
             scope.spawn(move || {
                 let _samples = diagnostics.hold_copies_for_test();
                 ready_tx.send(()).unwrap();
-                let started = std::time::Instant::now();
+                let started = crate::ui::lifecycle::test_wait::Wait::new(
+                    "publication_releases_shared_before_waiting_to_record_copy completion",
+                );
                 loop {
                     if shared.try_lock().is_ok_and(|g| g.frame.seq == 7) {
                         break;
                     }
-                    assert!(started.elapsed() < std::time::Duration::from_secs(5));
-                    std::thread::yield_now();
+                    started.check();
+                    started.poll();
                 }
             });
             ready_rx.recv().unwrap();

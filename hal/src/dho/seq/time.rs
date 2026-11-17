@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//! Acquisition clock: real waits on the unit, explicitly advanced time in host fixtures.
+use std::time::{Duration, Instant};
+
+pub trait Clock {
+    fn now(&self) -> Instant;
+    fn wait(&self, duration: Duration);
+}
+#[derive(Debug)]
+pub struct Real;
+impl Clock for Real {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+    fn wait(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}

@@ -31,9 +31,12 @@ impl Timing {
         self.depth > 0
     }
     pub(super) fn begin(&mut self) {
+        self.begin_at(Instant::now());
+    }
+    pub(super) fn begin_at(&mut self, now: Instant) {
         if !self.active() {
             self.external = Some(External {
-                start: Instant::now(),
+                start: now,
                 wait: deep::counters().ui_wait(),
                 polls: self.pending[0],
                 poll_wait: self.poll_wait,
@@ -42,12 +45,15 @@ impl Timing {
         self.depth += 1;
     }
     pub(super) fn end(&mut self) {
+        self.end_at(Instant::now());
+    }
+    pub(super) fn end_at(&mut self, now: Instant) {
         self.depth = self.depth.saturating_sub(1);
         if self.active() {
             return;
         }
         if let Some(outer) = self.external.take() {
-            let elapsed = outer.start.elapsed();
+            let elapsed = now.saturating_duration_since(outer.start);
             let wait = deep::counters().ui_wait().wrapping_sub(outer.wait);
             let polls = self.pending[0].saturating_sub(outer.polls);
             let poll_wait = self.poll_wait.saturating_sub(outer.poll_wait);

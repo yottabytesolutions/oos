@@ -93,14 +93,14 @@ struct ResultSet {
 }
 struct Worker {
     input: mpsc::SyncSender<Job>,
-    output: mpsc::Receiver<ResultSet>,
+    output: crate::ui::lifecycle::worker_result::Receiver<ResultSet>,
     busy: bool,
 }
 
 impl Worker {
     fn open() -> Self {
         let (input, requests) = mpsc::sync_channel::<Job>(1);
-        let (results, output) = mpsc::channel();
+        let (results, output) = crate::ui::lifecycle::worker_result::channel();
         std::thread::Builder::new()
             .name("reference-search".into())
             .spawn(move || {
@@ -325,8 +325,17 @@ impl Ui {
 
 #[cfg(test)]
 mod tests {
+    impl Ui {
+        pub(in crate::ui) fn wait_reference_search_event(&self) {
+            if let Some(worker) = self.azr.reference_search.borrow().worker.as_ref() {
+                if worker.busy {
+                    worker.output.wait_ready("reference search worker completion");
+                }
+            }
+        }
+    }
+
     use super::*;
-    use std::time::{Duration, Instant};
 
     fn reference(dt: f64, t0: f64, samples: Vec<f32>) -> RefWave {
         RefWave {
@@ -357,13 +366,13 @@ mod tests {
     }
 
     fn wait(ui: &Ui) -> Arc<Vec<f64>> {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new("reference search hits");
         loop {
             if let Some(times) = ui.reference_trigger_hits(ui.m.trig_ref.unwrap()) {
                 return times;
             }
-            assert!(Instant::now() < deadline, "bounded reference search did not complete");
-            std::thread::sleep(Duration::from_millis(1));
+            deadline.check();
+            deadline.ui(ui);
         }
     }
 

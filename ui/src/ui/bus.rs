@@ -50,13 +50,13 @@ impl Job {
 }
 struct Worker {
     tx: std::sync::mpsc::SyncSender<Job>,
-    rx: std::sync::mpsc::Receiver<(String, Vec<Packet>)>,
+    rx: crate::ui::lifecycle::worker_result::Receiver<(String, Vec<Packet>)>,
     busy: bool,
 }
 impl Worker {
     fn open() -> Self {
         let (tx, input) = std::sync::mpsc::sync_channel::<Job>(1);
-        let (output, rx) = std::sync::mpsc::channel();
+        let (output, rx) = crate::ui::lifecycle::worker_result::channel();
         std::thread::Builder::new()
             .name("trace-bus".into())
             .spawn(move || {
@@ -517,6 +517,16 @@ fn nearest(t0: f64, dt: f64, v: &[f32], t: f64) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    impl Ui {
+        pub(in crate::ui) fn wait_bus_event(&self) {
+            if let Some(worker) = self.trace_bus.borrow().worker.as_ref() {
+                if worker.busy {
+                    worker.rx.wait_ready("trace bus decode completion");
+                }
+            }
+        }
+    }
+
     use super::{Item, MenuId, Ui, BUS};
     use crate::gfx::{Canvas, Rgb};
     use crate::model::{bus_label, n_ch, WaveId, NCH};
@@ -620,26 +630,29 @@ mod tests {
         assert!(u.trace_bus.borrow().worker.as_ref().unwrap().busy);
         // each wait bounded on its own: the bound only turns a hang into a failure, and the worker shares the CPUs with
         // the rest of the suite (a coverage build ran past one 5 s bound for both scans)
-        let bound = std::time::Duration::from_secs(30);
-        let deadline = std::time::Instant::now() + bound;
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "retained_native_bus_uses_a_bounded_worker_and_reuses_the_same_view_result completion",
+        );
         let packets = loop {
             let packets = u.bus_packets();
             if !packets.is_empty() {
                 break packets;
             }
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            deadline.check();
+            deadline.ui(&u);
         };
         assert!(packets.iter().all(|p| p.t0 >= 0.001));
         assert_eq!(u.bus_words(), ["50", "00", "12", "50", "AB", "CD"]);
         assert_eq!(u.trace_bus.borrow().scans, 1);
         u.m.bus.clk_thr = 5.0;
         assert!(u.bus_words().is_empty(), "old-threshold words must not leak");
-        let deadline = std::time::Instant::now() + bound;
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "retained_native_bus_uses_a_bounded_worker_and_reuses_the_same_view_result completion",
+        );
         while u.trace_bus.borrow().worker.as_ref().unwrap().busy {
             let _ = u.bus_packets();
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            deadline.check();
+            deadline.ui(&u);
         }
         assert!(u.bus_words().is_empty());
         assert_eq!(u.trace_bus.borrow().scans, 2);

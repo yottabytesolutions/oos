@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Process status and releasing the current buffer holders.
 
+mod query_time;
+#[cfg(test)]
+pub(crate) mod test_wait;
+pub(crate) mod worker_result;
+
 use super::*;
 use std::time::Instant;
 
@@ -9,6 +14,7 @@ pub(super) struct Runtime {
     pub(super) memory: crate::system::memory::Watchdog,
     pub(super) crash: Option<crate::store::startup::crash::Crash>,
     started: Instant,
+    pub(in crate::ui) query_time: query_time::QueryTime,
     pub(super) gpu: String,
     pub(super) persistence: bool,
     retired: Vec<std::thread::JoinHandle<()>>,
@@ -24,6 +30,7 @@ impl Runtime {
             persistence: true,
             retired: Vec::new(),
             started: Instant::now(),
+            query_time: Default::default(),
         }
     }
 
@@ -155,9 +162,9 @@ pub(super) enum WorkerJob {
 
 pub(super) struct MeasWorker {
     pub(super) tx: std::sync::mpsc::Sender<WorkerJob>,
-    pub(super) analysis_rx: std::sync::mpsc::Receiver<analysis::window::Done>,
+    pub(super) analysis_rx: crate::ui::lifecycle::worker_result::Receiver<analysis::window::Done>,
     pub(super) analysis_busy: bool,
-    pub(super) rx: std::sync::mpsc::Receiver<MeasDone>,
+    pub(super) rx: crate::ui::lifecycle::worker_result::Receiver<MeasDone>,
     /// a job is out
     pub(super) busy: bool,
     pub(super) accept: bool,
@@ -167,8 +174,8 @@ pub(super) struct MeasWorker {
 impl MeasWorker {
     pub(super) fn start(little: u64) -> Option<MeasWorker> {
         let (tx, jobs) = std::sync::mpsc::channel::<WorkerJob>();
-        let (analysis_done, analysis_rx) = std::sync::mpsc::channel();
-        let (done, rx) = std::sync::mpsc::channel::<MeasDone>();
+        let (analysis_done, analysis_rx) = crate::ui::lifecycle::worker_result::channel();
+        let (done, rx) = crate::ui::lifecycle::worker_result::channel::<MeasDone>();
         let join = std::thread::Builder::new()
             .name("measure".into())
             .spawn(move || {

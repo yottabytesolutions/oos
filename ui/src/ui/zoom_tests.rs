@@ -519,7 +519,7 @@ fn explicit_zoom_close_survives_pending_sim_setup_and_fresh_running_or_stopped_c
         assert!(!ui.m.zoom, "late initial generation reopened zoom");
         for _ in 0..6 {
             ui.step(0.2);
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            ui.wait_background();
             assert!(!ui.m.zoom);
         }
         assert_eq!(ui.m.run, if running { RunState::Run } else { RunState::Stop });

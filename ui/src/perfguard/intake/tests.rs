@@ -63,17 +63,17 @@ fn rank_selects_one_samples_components_instead_of_independent_quantiles() {
 fn external_nesting_excludes_its_polls_and_their_waits_once() {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let mut timing = Timing::default();
-    timing.begin();
-    timing.begin();
+    let now = Instant::now();
+    timing.begin_at(now);
+    timing.begin_at(now + Duration::from_nanos(10));
     // A synthetic 100 ns poll with 40 ns Shared wait occurs inside outer intake.
     timing.poll(100, 40);
     deep::counters().locked_for_test(40);
-    timing.end();
+    timing.end_at(now + Duration::from_nanos(200));
     assert_eq!(timing.queued, 0);
-    let before = timing.external.as_ref().unwrap().start.elapsed();
-    timing.end();
+    timing.end_at(now + Duration::from_nanos(500));
     let queued = timing.queued;
-    assert!(queued >= nanos(before));
+    assert_eq!(queued, 500);
     let total = timing.finish(0, 7);
     let [polls, external, wait, residual] = timing.samples[0];
     assert_eq!([polls, wait, residual], [60, 40, 7]);

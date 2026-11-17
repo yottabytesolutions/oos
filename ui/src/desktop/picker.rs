@@ -167,14 +167,16 @@ mod tests {
         let mut loader = Loader::new();
         loader.submit(path.clone(), 1, 0).unwrap();
         loader.submit(path.clone(), 2, 8).unwrap();
-        let until = Instant::now() + Duration::from_secs(5);
+        let until = crate::ui::lifecycle::test_wait::Wait::new(
+            "background_reader_commits_only_the_latest_choice_in_the_same_workflow completion",
+        );
         let (traces, name) = loop {
             if let Some((slot, result)) = loader.poll(2) {
                 assert_eq!(slot, 8);
                 break result.unwrap();
             }
-            assert!(Instant::now() < until);
-            std::thread::sleep(Duration::from_millis(2));
+            until.check();
+            until.poll();
         };
         assert_eq!(name, "clock.csv");
         assert_eq!(traces[0].v, [-1.0, 1.0, -1.0]);
@@ -182,8 +184,8 @@ mod tests {
         loader.submit(path.clone(), 2, 1).unwrap();
         while loader.busy() {
             assert!(loader.poll(3).is_none(), "a changed source workflow must reject the late load");
-            assert!(Instant::now() < until);
-            std::thread::sleep(Duration::from_millis(2));
+            until.check();
+            until.poll();
         }
         loader.submit(path.clone(), 3, 2).unwrap();
         loader.cancel();

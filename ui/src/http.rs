@@ -21,6 +21,9 @@
 //! Unauthenticated: bench LAN only (an update must carry a trusted signature, but the community key is public).
 //! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
+mod reader;
+use reader::reader;
+
 use crate::gfx::Canvas;
 use crate::ui::Ui;
 use std::io::Write;
@@ -315,12 +318,21 @@ impl Shots {
     /// Every frame: a copy for the encoder when the time has come and somebody waits, or asked within `SHOT_AHEAD` (the
     /// picture is then ready when the viewer's next request comes); 304 to whoever waited too long.
     fn tick(&self, cv: &Canvas) {
+        self.tick_with(cv, Instant::now);
+    }
+
+    #[cfg(test)]
+    fn tick_at(&self, cv: &Canvas, now: Instant) {
+        self.tick_with(cv, || now);
+    }
+
+    fn tick_with(&self, cv: &Canvas, now: impl Fn() -> Instant) {
         let mut st = self.lock();
-        let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
+        let watched = st.asked.is_some_and(|t| now().saturating_duration_since(t) < SHOT_AHEAD);
         if st.waiting.is_empty() && !watched {
             return;
         }
-        let now = Instant::now();
+        let now = now();
         #[cfg(test)]
         let long_poll = st.long_poll.unwrap_or(LONG_POLL);
         #[cfg(not(test))]
@@ -641,70 +653,6 @@ fn refuse_early(h: &Head, text: &str, peer_ok: bool) -> Option<(&'static str, &'
         return Some(("403 Forbidden", "refused"));
     }
     None
-}
-
-/// One connection: the head (`MAX_HEAD`), the early refusals, `100 Continue` when asked for, the body within the
-/// limits, then the request to the frame loop; 503 when the frame loop does not take it in `Limits::take`.
-fn reader(s: TcpStream, inbox: &Inbox, acl: &Mutex<crate::netacl::Shared>, lim: Limits) {
-    use std::io::Read;
-    let t0 = Instant::now();
-    let _ = s.set_nonblocking(false);
-    let _ = s.set_nodelay(true);
-    let (mut req, mut buf): (Vec<u8>, _) = (Vec::new(), [0u8; 65536]);
-    // one read, within the idle time and what is left of the deadline; Err: answered or gone
-    let read_some = |req: &mut Vec<u8>, buf: &mut [u8]| -> Result<(), ()> {
-        let left = lim.deadline.saturating_sub(t0.elapsed());
-        if left.is_zero() {
-            answer(&s, "408 Request Timeout", "request took too long");
-            return Err(());
-        }
-        let _ = s.set_read_timeout(Some(lim.idle.min(left)));
-        match (&s).read(buf) {
-            Ok(0) => Err(()),
-            Ok(n) => {
-                req.extend_from_slice(&buf[..n]);
-                Ok(())
-            }
-            Err(e) if crate::net::later(&e) => {
-                answer(&s, "408 Request Timeout", "request timed out");
-                Err(())
-            }
-            Err(_) => Err(()),
-        }
-    };
-    let end = loop {
-        if let Some(p) = req.windows(4).position(|w| w == b"\r\n\r\n") {
-            break p + 4;
-        }
-        if req.len() > MAX_HEAD {
-            return answer(&s, "431 Request Header Fields Too Large", "request head too long");
-        }
-        if read_some(&mut req, &mut buf).is_err() {
-            return;
-        }
-    };
-    let text = String::from_utf8_lossy(&req[..end]).into_owned();
-    let h = parse_head(&text);
-    let peer_ok = acl.lock().unwrap_or_else(|e| e.into_inner()).clone().permits_peer(s.peer_addr());
-    if let Some((status, msg)) = refuse_early(&h, &text, peer_ok) {
-        return answer(&s, status, msg);
-    }
-    let Some(_slot) = limits::LargeSlot::take(&h, &inbox.large) else {
-        return answer(&s, "503 Service Unavailable", "busy, try again");
-    };
-    let need = end + h.len.unwrap_or(0);
-    req.reserve_exact(need.saturating_sub(req.len())); // one allocation, not a doubling past it
-    if h.expect_continue && req.len() < need && !limits::send_continue(&s) {
-        return;
-    }
-    while req.len() < need {
-        if read_some(&mut req, &mut buf).is_err() {
-            return;
-        }
-    }
-    req.truncate(need);
-    let body = req.split_off(end);
-    shutdown::queue_request(s, inbox, text, body, lim);
 }
 
 /// The accept thread of an open port: a reader thread per connection, at most `MAX_PENDING` (503 beyond). Polls the
@@ -1282,6 +1230,25 @@ fn foreign(head: &str, route: &str, post: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shot_expiry_clock_is_sampled_under_state_lock() {
+        let shots = Shots::new(0);
+        let now = Instant::now();
+        shots.lock().asked = Some(now);
+        let sampled = std::cell::Cell::new(false);
+        shots.tick_with(&Canvas::new(1, 1), || {
+            assert!(shots.st.try_lock().is_err(), "sample after acquiring the snapshot state");
+            sampled.set(true);
+            now + SHOT_AHEAD
+        });
+        assert!(sampled.get());
+    }
+
+    fn open_test(port: impl Into<crate::net6::Port>, sw: &crate::sysconf::Switches) -> Http {
+        let guard = crate::ui::lifecycle::test_wait::HANG_GUARD;
+        Http::open_with(port, Limits { idle: guard, deadline: guard, take: guard }, sw)
+    }
+
     mod empty_tests;
     use super::*;
     use std::io::Read;
@@ -1335,10 +1302,11 @@ mod tests {
     }
 
     fn request_raw(h: &mut Http, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi, req: Vec<u8>) -> Vec<u8> {
+        let wait = crate::ui::lifecycle::test_wait::Wait::new("HTTP response reader thread");
         let addr = h.addr();
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", addr.port())).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            c.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
             let _ = c.write_all(&req);
             let mut out = Vec::new();
             let _ = c.read_to_end(&mut out);
@@ -1346,22 +1314,16 @@ mod tests {
         });
         while !t.is_finished() {
             h.poll(ui, cv, scpi);
-            std::thread::sleep(Duration::from_millis(1));
+            wait.poll();
         }
         t.join().unwrap()
     }
 
-    /// Sends `req` to `port` (in pieces of `pieces`, `gap` apart) and reads the answer until the server closes.
-    fn talk(port: u16, req: &[u8], pieces: usize, gap: Duration) -> String {
+    /// Sends `req` to `port` and reads the answer until the server closes.
+    fn talk(port: u16, req: &[u8]) -> String {
         let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        c.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
-        let n = req.len().div_ceil(pieces.max(1)).max(1);
-        for p in req.chunks(n) {
-            if c.write_all(p).is_err() {
-                break;
-            }
-            std::thread::sleep(gap);
-        }
+        c.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
+        let _ = c.write_all(req);
         let mut out = Vec::new();
         let _ = c.read_to_end(&mut out);
         String::from_utf8_lossy(&out).into_owned()
@@ -1381,7 +1343,7 @@ mod tests {
     #[test]
     fn a_request_the_frame_loop_does_not_take_gets_503() {
         let h = quick(10_000, 120_000, 300);
-        let r = talk(h.addr().port(), b"GET / HTTP/1.1\r\nHost: x\r\n\r\n", 1, Duration::ZERO);
+        let r = talk(h.addr().port(), b"GET / HTTP/1.1\r\nHost: x\r\n\r\n");
         assert!(r.starts_with("HTTP/1.1 503"), "{}", r);
         assert!(h.inbox.lock().is_empty(), "the request left the inbox");
     }
@@ -1390,7 +1352,10 @@ mod tests {
     // for a request that is refused anyway.
     #[test]
     fn expect_continue_is_answered_and_refusals_come_first() {
-        let mut h = Http::open(0, &Default::default());
+        let wait = crate::ui::lifecycle::test_wait::Wait::new(
+            "expect_continue_is_answered_and_refusals_come_first completion",
+        );
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
@@ -1398,7 +1363,7 @@ mod tests {
         let body = b"OOS-UPDATE 1\ntarget x\n\nxx".to_vec();
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+            c.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
             c.write_all(
                 format!(
                     "POST /update HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nExpect: 100-continue\r\n\r\n",
@@ -1416,7 +1381,7 @@ mod tests {
         });
         while !t.is_finished() {
             h.poll(&mut ui, &cv, &mut scpi);
-            std::thread::sleep(Duration::from_millis(1));
+            wait.poll();
         }
         let (first, rest) = t.join().unwrap();
         assert_eq!(first, "HTTP/1.1 100 Continue\r\n\r\n");
@@ -1429,12 +1394,10 @@ mod tests {
                 MAX_UPDATE + 1
             )
             .as_bytes(),
-            1,
-            Duration::ZERO,
         );
         assert!(r.starts_with("HTTP/1.1 413"), "{}", r);
         // (the address list always lets the scope's own loopback in, so a page elsewhere stands in for a refusal)
-        let r = talk(port, b"POST /update HTTP/1.1\r\nHost: x\r\nOrigin: https://evil.example\r\nContent-Length: 2\r\nExpect: 100-continue\r\n\r\n", 1, Duration::ZERO);
+        let r = talk(port, b"POST /update HTTP/1.1\r\nHost: x\r\nOrigin: https://evil.example\r\nContent-Length: 2\r\nExpect: 100-continue\r\n\r\n");
         assert!(r.starts_with("HTTP/1.1 403"), "{}", r);
     }
 
@@ -1472,12 +1435,12 @@ mod tests {
     // Break it catches: a POST without a length read as an empty body (a chunked upload was cut to nothing).
     #[test]
     fn a_body_without_content_length_gets_411() {
-        let h = Http::open(0, &Default::default());
+        let h = open_test(0, &Default::default());
         for req in [
             "POST /update HTTP/1.1\r\nHost: x\r\n\r\n",
             "POST /update HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
         ] {
-            let r = talk(h.addr().port(), req.as_bytes(), 1, Duration::ZERO);
+            let r = talk(h.addr().port(), req.as_bytes());
             assert!(r.starts_with("HTTP/1.1 411"), "{:?}: {}", req, r);
         }
     }
@@ -1488,28 +1451,43 @@ mod tests {
     fn every_limit_answers() {
         // idle: half a head, then nothing
         let h = quick(300, 120_000, 10_000);
-        let r = talk(h.addr().port(), b"GET / HTTP/1.1\r\nHo", 1, Duration::ZERO);
+        let r = talk(h.addr().port(), b"GET / HTTP/1.1\r\nHo");
         assert!(r.starts_with("HTTP/1.1 408"), "idle: {}", r);
-        // deadline: a byte every 100 ms keeps the idle time from running out
-        let h = quick(10_000, 600, 10_000);
-        let head = b"GET / HTTP/1.1\r\nHost: x\r\nX-Slow: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n";
-        let r = talk(h.addr().port(), head, head.len(), Duration::from_millis(100));
-        assert!(r.starts_with("HTTP/1.1 408"), "deadline: {}", r);
+        // A partial head keeps the idle read alive, but the next read must honor the total deadline.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
+        client.write_all(b"GET / HTTP/1.1\r\nHo").unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let worker = std::thread::spawn(move || {
+            let start = Instant::now();
+            let samples = std::cell::Cell::new(0u32);
+            let limits = Limits { idle: crate::ui::lifecycle::test_wait::HANG_GUARD, ..LIMITS };
+            reader::reader_with_now(server, &Inbox::default(), &Mutex::new(Default::default()), limits, || {
+                let n = samples.get();
+                samples.set(n + 1);
+                // Sample 0 starts the request, 1 permits the partial read, 2 expires the next read.
+                assert!(n <= 2, "deadline must stop the trickle before another read");
+                start + limits.deadline * n.saturating_sub(1)
+            });
+            assert_eq!(samples.get(), 3, "partial input must precede deadline expiry");
+        });
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        worker.join().unwrap();
+        assert!(response.starts_with("HTTP/1.1 408"), "deadline: {response}");
+        assert!(response.contains("request took too long"), "deadline body: {response}");
         // head too long
-        let h = Http::open(0, &Default::default());
-        let r = talk(
-            h.addr().port(),
-            format!("GET / HTTP/1.1\r\nX: {}", "a".repeat(MAX_HEAD + 100)).as_bytes(),
-            1,
-            Duration::ZERO,
-        );
+        let h = open_test(0, &Default::default());
+        let r = talk(h.addr().port(), format!("GET / HTTP/1.1\r\nX: {}", "a".repeat(MAX_HEAD + 100)).as_bytes());
         assert!(r.starts_with("HTTP/1.1 431"), "head: {}", r);
     }
 
     // Break it catches: more connections than `MAX_PENDING` closed without a word.
     #[test]
     fn too_many_connections_get_503() {
-        let h = Http::open(0, &Default::default());
+        let wait = crate::ui::lifecycle::test_wait::Wait::new("too_many_connections_get_503 completion");
+        let h = open_test(0, &Default::default());
         let port = h.addr().port();
         let held: Vec<TcpStream> = (0..MAX_PENDING)
             .map(|_| {
@@ -1518,11 +1496,12 @@ mod tests {
                 c
             })
             .collect();
-        let until = Instant::now() + Duration::from_secs(10);
-        while h.inbox.active.load(std::sync::atomic::Ordering::SeqCst) < MAX_PENDING && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(10));
+        let until = crate::ui::lifecycle::test_wait::Wait::new("too_many_connections_get_503 completion");
+        while h.inbox.active.load(std::sync::atomic::Ordering::SeqCst) < MAX_PENDING {
+            until.check();
+            wait.poll();
         }
-        let r = talk(port, b"GET / HTTP/1.1\r\nHost: x\r\n\r\n", 1, Duration::ZERO);
+        let r = talk(port, b"GET / HTTP/1.1\r\nHost: x\r\n\r\n");
         assert!(r.starts_with("HTTP/1.1 503"), "{}", r);
         drop(held);
     }
@@ -1535,7 +1514,7 @@ mod tests {
         let _: u64 =
             std::env::var("OOS_WEB_DEMO_S").expect("set OOS_WEB_DEMO_S").parse().expect("OOS_WEB_DEMO_S seconds");
         let var = |k: &str, d: u64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
-        let mut h = Http::open(var("OOS_WEB_DEMO_PORT", 8080) as u16, &Default::default());
+        let mut h = open_test(var("OOS_WEB_DEMO_PORT", 8080) as u16, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
@@ -1557,7 +1536,7 @@ mod tests {
     #[ignore = "Owned headless backend for explicit local SCPI acceptance"]
     fn scpi_validation_fixture() {
         let var = |name: &str, default: u64| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
-        let mut h = Http::open(var("OOS_VALIDATION_WEB_PORT", 18881) as u16, &Default::default());
+        let mut h = open_test(var("OOS_VALIDATION_WEB_PORT", 18881) as u16, &Default::default());
         let mut scpi = crate::scpi::Scpi::open(var("OOS_VALIDATION_SCPI_PORT", 15556) as u16, false);
         assert!(h.port().is_some() && scpi.port().is_some(), "private acceptance ports must bind");
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
@@ -1584,7 +1563,7 @@ mod tests {
 
     #[test]
     fn waveform_upload_loads_the_chosen_reference_and_preserves_it_on_error() {
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let store = std::env::temp_dir().join(format!("oos-http-no-write-{}", std::process::id()));
         ui.store_dir = store.clone();
@@ -1646,7 +1625,7 @@ mod tests {
     fn waveform_upload_has_its_own_limit_and_origin_protection() {
         assert_eq!(MAX_WAVEFORM, 128 << 20, "native and browser imports share the parser byte limit");
         assert!(PAGE.contains("up to 128 MiB") && PAGE.contains("file.size>128*1024*1024"));
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::W, crate::ui::H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
@@ -1743,7 +1722,7 @@ setTimeout(() => {
 
     #[test]
     fn page_lets_the_viewer_pick_png_or_bmp() {
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
@@ -1786,7 +1765,7 @@ setTimeout(() => {
     #[test]
     fn pages_and_downloads() {
         let _alone = senders_alone();
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
@@ -1821,9 +1800,10 @@ setTimeout(() => {
     /// Large answers leave the frame loop: the whole body arrives, also several at once, and the count goes back.
     #[test]
     fn large_answers_go_through_a_thread() {
+        let wait = crate::ui::lifecycle::test_wait::Wait::new("HTTP sender completion");
         let _alone = senders_alone();
         use std::sync::atomic::Ordering::SeqCst;
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         // a real screen: a blank canvas would be a few KB as a PNG, which is not a large answer
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
@@ -1833,7 +1813,7 @@ setTimeout(() => {
             let addr = h.addr();
             let t = std::thread::spawn(move || {
                 let mut c = TcpStream::connect(("127.0.0.1", addr.port())).unwrap();
-                c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+                c.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
                 c.write_all(format!("GET {} HTTP/1.1\r\nHost: x\r\n\r\n", path).as_bytes()).unwrap();
                 let mut out = Vec::new();
                 let _ = c.read_to_end(&mut out);
@@ -1841,7 +1821,7 @@ setTimeout(() => {
             });
             while !t.is_finished() {
                 h.poll(&mut ui, &cv, &mut scpi);
-                std::thread::sleep(Duration::from_millis(1));
+                wait.poll();
             }
             let out = t.join().unwrap();
             let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
@@ -1855,10 +1835,10 @@ setTimeout(() => {
             }
         }
         // the client has every byte, the sender only lets go of its place: a minute is a guard against a hang only
-        let until = Instant::now() + Duration::from_secs(60);
+        let until = crate::ui::lifecycle::test_wait::Wait::new("HTTP sender completion");
         while SENDERS.load(SeqCst) != 0 {
-            assert!(Instant::now() < until, "a sender did not finish");
-            std::thread::sleep(Duration::from_millis(5));
+            until.check();
+            wait.poll();
         }
     }
 
@@ -1879,7 +1859,8 @@ setTimeout(() => {
     }
 
     fn live_picture_hand_over(frames_first: bool) {
-        let mut h = Http::open(0, &Default::default());
+        let wait = crate::ui::lifecycle::test_wait::Wait::new("PNG encoder response after screen handover");
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
@@ -1906,7 +1887,7 @@ setTimeout(() => {
         }
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            c.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
             let _ = c.write_all(b"GET /screen.png HTTP/1.1\r\nHost: x\r\n\r\n");
             let mut out = Vec::new();
             let _ = c.read_to_end(&mut out);
@@ -1915,13 +1896,13 @@ setTimeout(() => {
         // the request is in before the next frame, whatever the load; the screen at that moment
         while h.shots.lock().waiting.is_empty() && !t.is_finished() {
             h.poll(&mut ui, &cv, &mut scpi);
-            std::thread::sleep(Duration::from_millis(1));
+            wait.poll();
         }
         let at_request = cv.px.clone();
         while !t.is_finished() {
             one_frame(&mut h, &mut cv, &mut shown);
             h.poll(&mut ui, &cv, &mut scpi);
-            std::thread::sleep(Duration::from_millis(5));
+            wait.poll();
         }
         let out = t.join().unwrap();
         let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
@@ -1952,15 +1933,16 @@ setTimeout(() => {
     /// and forth between the new and an older screen), and the picture is one that came back.
     #[test]
     fn live_picture_with_the_gpu_is_a_picture_read_back() {
+        let wait = crate::ui::lifecycle::test_wait::Wait::new("GPU screenshot response");
         let _alone = senders_alone();
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
         let port = h.addr().port();
         let t = std::thread::spawn(move || {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-            c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            c.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
             let _ = c.write_all(b"GET /screen.png HTTP/1.1\r\nHost: x\r\n\r\n");
             let mut out = Vec::new();
             let _ = c.read_to_end(&mut out);
@@ -1979,7 +1961,7 @@ setTimeout(() => {
                 read_back.push(cv.px.clone());
                 h.picture_read_back(&cv);
             }
-            std::thread::sleep(Duration::from_millis(5));
+            wait.poll();
         }
         let out = t.join().unwrap();
         let e = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
@@ -2006,7 +1988,7 @@ setTimeout(() => {
             }
             assert!(!same_pixels(&a, &a[..n.saturating_sub(1)]) || n == 0);
         }
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let mut cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         ui.render(&mut cv);
@@ -2021,29 +2003,41 @@ setTimeout(() => {
                     change: bool| {
             let inm = have.map_or(String::new(), |t| format!("If-None-Match: {}\r\n", t));
             let req = format!("GET /screen.png?t=1 HTTP/1.1\r\nHost: x\r\n{}\r\n", inm).into_bytes();
-            let t0 = Instant::now();
             let t = std::thread::spawn(move || {
                 let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-                c.set_read_timeout(Some(Duration::from_secs(120))).unwrap();
+                c.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
                 let _ = c.write_all(&req);
                 let mut out = Vec::new();
                 let _ = c.read_to_end(&mut out);
                 out
             });
             let mut changed = false;
+            let mut expired = false;
+            let wait = crate::ui::lifecycle::test_wait::Wait::new("screen long-poll reply");
             while !t.is_finished() {
-                if change && !changed && t0.elapsed() > Duration::from_millis(100) {
+                let pending = h.shots.lock().waiting.first().map(|request| request.2);
+                if !change && have.is_some() {
+                    if let Some(queued) = pending {
+                        assert!(!t.is_finished(), "unchanged viewer must wait for explicit expiry");
+                        expired = true;
+                        h.shots.tick_at(cv, queued + crate::ui::lifecycle::test_wait::HANG_GUARD);
+                    }
+                }
+                if change && !changed && pending.is_some() {
                     cv.fill(crate::gfx::Rect::new(10, 60, 300, 40), crate::gfx::rgb(30, 250, 30));
                     changed = true;
                 }
                 h.poll(ui, cv, scpi);
-                std::thread::sleep(Duration::from_millis(1));
+                wait.poll();
+            }
+            if !change && have.is_some() {
+                assert!(expired, "304 must follow the explicit long-poll deadline");
             }
             let out = t.join().unwrap();
             let e = out.windows(4).position(|w| w == b"\r\n\r\n").expect("a head") + 4;
             let head = String::from_utf8_lossy(&out[..e]).to_string();
             let tag = head.lines().find_map(|l| l.strip_prefix("ETag: ")).unwrap_or("").to_string();
-            (head, tag, out[e..].to_vec(), t0.elapsed())
+            (head, tag, out[e..].to_vec())
         };
         let encodes = |h: &Http| h.shots.lock().encodes;
         let png_of = |cv: &Canvas| crate::store::png(cv.w as u32, cv.h as u32, &cv.px);
@@ -2051,24 +2045,23 @@ setTimeout(() => {
         // waits twice its last encode before the next copy (`SHOT_DUTY`), so the test's one second could end before a
         // picture is made on a slow or busy computer (a viewer without a picture then got an empty one)
         let long_poll = |h: &Http, d: Duration| h.shots.lock().long_poll = Some(d);
-        long_poll(&h, Duration::from_secs(60));
-        let (head, tag1, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
+        long_poll(&h, Duration::MAX);
+        let (head, tag1, body) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
         assert!(head.starts_with("HTTP/1.1 200") && head.contains("Content-Type: image/png"), "{}", head);
         assert!(tag1.starts_with('"') && tag1.ends_with('"') && tag1.len() > 2, "{}", head);
         assert!(body == png_of(&cv), "the PNG of the screen");
         // the screen unchanged, the viewer has it: it waits the long poll out, then 304 without a body, no encode
-        long_poll(&h, LONG_POLL);
-        let (head, tag, body, took) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), false);
+        long_poll(&h, crate::ui::lifecycle::test_wait::HANG_GUARD);
+        let (head, tag, body) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), false);
         assert!(head.starts_with("HTTP/1.1 304") && body.is_empty() && tag == tag1, "{}", head);
-        assert!(took >= LONG_POLL, "answered after {:?}", took);
-        long_poll(&h, Duration::from_secs(60));
+        long_poll(&h, Duration::MAX);
         // a viewer without it gets the same picture, without a new encode
-        let (head, tag, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
+        let (head, tag, body) = shot(&mut h, &mut ui, &mut scpi, &mut cv, None, false);
         assert!(head.starts_with("HTTP/1.1 200") && tag == tag1 && body == png_of(&cv), "{}", head);
         assert_eq!(encodes(&h), 1);
         // the screen changes while the viewer waits: the new picture comes before the long poll ends (a 304 would come
         // after a minute)
-        let (head, tag2, body, _) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), true);
+        let (head, tag2, body) = shot(&mut h, &mut ui, &mut scpi, &mut cv, Some(&tag1), true);
         assert!(head.starts_with("HTTP/1.1 200") && tag2 != tag1 && body == png_of(&cv), "{}", head);
         assert_eq!(encodes(&h), 2);
         // a foreign page still gets nowhere
@@ -2084,7 +2077,7 @@ setTimeout(() => {
 
     #[test]
     fn update_upload_limits() {
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
@@ -2133,7 +2126,10 @@ setTimeout(() => {
     /// so the answer must not wait for a body.
     #[test]
     fn a_large_body_at_a_time_and_net_allow_before_the_body() {
-        let mut h = Http::open(0, &Default::default());
+        let wait = crate::ui::lifecycle::test_wait::Wait::new(
+            "a_large_body_at_a_time_and_net_allow_before_the_body completion",
+        );
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
@@ -2143,11 +2139,13 @@ setTimeout(() => {
         let mut first = TcpStream::connect(("127.0.0.1", port)).unwrap();
         first.write_all(head("/update", 8 << 20).as_bytes()).unwrap();
         first.write_all(&vec![0u8; 64 << 10]).unwrap();
-        let until = Instant::now() + Duration::from_secs(60);
+        let until = crate::ui::lifecycle::test_wait::Wait::new(
+            "a_large_body_at_a_time_and_net_allow_before_the_body completion",
+        );
         while !h.inbox.large.load(std::sync::atomic::Ordering::SeqCst) {
-            assert!(Instant::now() < until, "the first upload was not taken");
+            until.check();
             h.poll(&mut ui, &cv, &mut scpi);
-            std::thread::sleep(Duration::from_millis(1));
+            wait.poll();
         }
         for path in ["/waveform?slot=1", "/update"] {
             let r = request(&mut h, &mut ui, &cv, &mut scpi, head(path, 2 << 20).into_bytes());
@@ -2172,7 +2170,7 @@ setTimeout(() => {
     // (Remote services > Allowed) refused or let in an update only after a restart of oos-ui
     #[test]
     fn net_allow_follows_a_change_without_a_restart() {
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0, false);
@@ -2198,7 +2196,7 @@ setTimeout(() => {
 
     #[test]
     fn identification_names_the_listeners() {
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         h.offer(Offer { scpi_port: Some(5555), vxi11: false, hislip_port: Some(crate::hislip::PORT) });
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::W, crate::ui::H);
@@ -2221,7 +2219,7 @@ setTimeout(() => {
 
     #[test]
     fn cmd_takes_keys_knobs_and_touch_only() {
-        let mut h = Http::open(0, &Default::default());
+        let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = crate::scpi::Scpi::open(0, false);

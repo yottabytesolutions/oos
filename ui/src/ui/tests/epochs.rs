@@ -111,8 +111,8 @@ fn delayed_measurements_require_gen_epoch_and_stats_gen() {
         let (_analysis, analysis_rx) = std::sync::mpsc::channel();
         ui.meas_bg = Some(MeasWorker {
             tx,
-            rx,
-            analysis_rx,
+            rx: rx.into(),
+            analysis_rx: analysis_rx.into(),
             analysis_busy: false,
             busy: true,
             accept: true,

@@ -53,30 +53,29 @@ mod tests {
         let mut c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
         let (s, _) = l.accept().unwrap();
         let mut b = [0u8; 16];
-        let t = std::time::Instant::now();
         for _ in 0..100 {
             let e = read_now(&s, &mut b).unwrap_err();
-            assert!(later(&e), "{:?}", e);
+            assert_eq!(e.kind(), io::ErrorKind::WouldBlock);
         }
-        assert!(t.elapsed() < std::time::Duration::from_millis(50), "{:?} for 100 reads", t.elapsed());
+        s.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
         c.write_all(b"*IDN?\n").unwrap();
-        let t = std::time::Instant::now();
-        let n = loop {
-            match read_now(&s, &mut b) {
-                Ok(n) => break n,
-                Err(e) if later(&e) && t.elapsed().as_secs() < 2 => continue,
-                Err(e) => panic!("{:?}", e),
-            }
-        };
+        assert!(s.peek(&mut b).unwrap() > 0, "IDN request became readable");
+        let n = read_now(&s, &mut b).unwrap();
         assert_eq!(&b[..n], b"*IDN?\n");
         drop(c);
-        let t = std::time::Instant::now();
-        loop {
-            match read_now(&s, &mut b) {
-                Ok(0) => break,
-                Err(e) if later(&e) && t.elapsed().as_secs() < 2 => continue,
-                r => panic!("{:?}", r),
+        assert_eq!(s.peek(&mut b).unwrap(), 0, "client EOF became readable");
+        assert_eq!(read_now(&s, &mut b).unwrap(), 0);
+    }
+    #[test]
+    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
+    fn perf_guard_nonblocking_socket_reads() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        crate::perfguard::latency::check(std::time::Duration::from_millis(50), || {
+            for _ in 0..100 {
+                assert_eq!(read_now(&server, &mut [0; 16]).unwrap_err().kind(), io::ErrorKind::WouldBlock);
             }
-        }
+        });
     }
 }

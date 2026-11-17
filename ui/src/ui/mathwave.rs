@@ -32,7 +32,7 @@ struct Answer {
 }
 struct Worker {
     tx: mpsc::SyncSender<Job>,
-    rx: mpsc::Receiver<Answer>,
+    rx: crate::ui::lifecycle::worker_result::Receiver<Answer>,
     busy: bool,
 }
 #[derive(Default)]
@@ -54,7 +54,7 @@ impl State {
 impl Worker {
     fn new() -> Self {
         let (tx, input) = mpsc::sync_channel::<Job>(1);
-        let (output, rx) = mpsc::channel();
+        let (output, rx) = crate::ui::lifecycle::worker_result::channel();
         std::thread::Builder::new()
             .name("waveform-math".into())
             .spawn(move || {
@@ -372,6 +372,16 @@ impl Ui {
 
 #[cfg(test)]
 mod tests {
+    impl Ui {
+        pub(in crate::ui) fn wait_math_event(&self) {
+            if let Some(worker) = self.math_state.borrow().worker.as_ref() {
+                if worker.busy {
+                    worker.rx.wait_ready("math worker completion");
+                }
+            }
+        }
+    }
+
     use super::*;
     fn refs() -> Ui {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
@@ -454,13 +464,15 @@ mod tests {
         ui.m.math_lin = (2.0, 1.0);
         assert!(ui.math_record(0).unwrap().is_none());
         ui.m.math_lin = (3.0, 1.0);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "large_reference_math_is_background_cached_and_rejects_stale_settings",
+        );
         let w = loop {
             if let Some(w) = ui.math_record(0).unwrap() {
                 break w;
             }
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            deadline.check();
+            deadline.ui(&ui);
         };
         assert_eq!(w.v[0], 7.0);
         let cached = ui.math_record(0).unwrap().unwrap();
@@ -479,7 +491,9 @@ mod tests {
         }
         ui.m.math = MathOp::Conv;
         assert!(ui.math_record(0).unwrap().is_none());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "oversized_convolution_returns_bounded_error_and_does_not_block_next_math",
+        );
         loop {
             match ui.math_record(0) {
                 Err(message) => {
@@ -487,8 +501,8 @@ mod tests {
                     break;
                 }
                 Ok(None) => {
-                    assert!(std::time::Instant::now() < deadline);
-                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    deadline.check();
+                    deadline.ui(&ui);
                 }
                 Ok(Some(_)) => panic!("oversized quadratic work must not run"),
             }
@@ -499,8 +513,8 @@ mod tests {
             if let Some(value) = ui.math_record(0).unwrap() {
                 break value;
             }
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            deadline.check();
+            deadline.ui(&ui);
         };
         assert_eq!(value.v.len(), BACKGROUND + 1);
         assert!(value.v.iter().all(|&v| v == 7.0));

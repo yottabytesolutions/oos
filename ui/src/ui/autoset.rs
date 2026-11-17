@@ -851,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "local user-provided D-drive files; no app, window or services"]
+    #[ignore = "local waveform files; release with OOS_PERF_TESTS=1; no app, window or services"]
     fn actual_gen7_20m_reference_fit_is_bounded_and_keeps_native_records() {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         for path in ["D:/Gen7_65GB_CP_Q6_n_Ch2.wfm", "D:/Gen7_65GB_CP_Q6_p_Ch1.wfm"] {
@@ -862,16 +862,18 @@ mod tests {
         let acquisition =
             (ui.m.run, ui.m.trigger_wave(), ui.m.trig_mode, ui.m.trig_level, ui.records, ui.replay.captures);
         let start = std::time::Instant::now();
-        for slot in 0..2 {
-            let other = ui.refs[1 - slot].as_ref().map(|r| (r.vpd, r.offset));
-            ui.select_workspace_source(WaveId::Ref(slot));
-            assert!(ui.fit_selected_record());
-            assert_eq!(other, ui.refs[1 - slot].as_ref().map(|r| (r.vpd, r.offset)));
-            let record = ui.refs[slot].as_ref().unwrap();
-            let half = ui.m.time_per_div() as f64 * HDIV as f64 * 0.5;
-            assert!(ui.m.delay as f64 - half <= record.t0 + 1e-14);
-            assert!(ui.m.delay as f64 + half >= record.t0 + (record.v.len() - 1) as f64 * record.dt - 1e-14);
-        }
+        crate::perfguard::latency::check(std::time::Duration::from_secs(3), || {
+            for slot in 0..2 {
+                let other = ui.refs[1 - slot].as_ref().map(|r| (r.vpd, r.offset));
+                ui.select_workspace_source(WaveId::Ref(slot));
+                assert!(ui.fit_selected_record());
+                assert_eq!(other, ui.refs[1 - slot].as_ref().map(|r| (r.vpd, r.offset)));
+                let record = ui.refs[slot].as_ref().unwrap();
+                let half = ui.m.time_per_div() as f64 * HDIV as f64 * 0.5;
+                assert!(ui.m.delay as f64 - half <= record.t0 + 1e-14);
+                assert!(ui.m.delay as f64 + half >= record.t0 + (record.v.len() - 1) as f64 * record.dt - 1e-14);
+            }
+        });
         let elapsed = start.elapsed();
         assert_eq!(
             identity,
@@ -882,7 +884,6 @@ mod tests {
             (ui.m.run, ui.m.trigger_wave(), ui.m.trig_mode, ui.m.trig_level, ui.records, ui.replay.captures)
         );
         assert!(ui.refs.iter().flatten().all(|r| r.vpd > 0.0 && r.offset.is_finite()));
-        assert!(elapsed < std::time::Duration::from_secs(3), "bounded setup took {elapsed:?}");
         eprintln!("actual Gen7 two20M explicit selected-reference Fit: {elapsed:?}; native pointers/metadata, other refs and acquisition state unchanged");
     }
 

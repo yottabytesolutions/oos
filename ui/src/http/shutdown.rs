@@ -153,13 +153,12 @@ pub(super) fn queue_request(s: TcpStream, inbox: &super::Inbox, text: String, bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn shutdown_joins_workers_and_prevents_late_spawns() {
         let tasks = Tasks::default();
         tasks.spawn("finished", None, || {}).unwrap();
-        assert_eq!(tasks.close(Instant::now() + Duration::from_secs(1)), 0);
+        assert_eq!(tasks.close(Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD), 0);
         assert_eq!(tasks.spawn("late", None, || {}).unwrap_err().kind(), io::ErrorKind::Interrupted);
     }
 
@@ -172,14 +171,10 @@ mod tests {
         let worker = std::thread::spawn(move || {
             let _connection = Connection(own);
         });
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while !worker.is_finished() && Instant::now() < deadline {
-            std::thread::yield_now();
-        }
-        assert!(worker.is_finished());
+        // Joining waits for the connection's Drop, independent of scheduling.
+        worker.join().unwrap();
         assert!(weak.upgrade().is_none());
         assert!(oos_hal::sync::lock(&slot).is_none());
-        worker.join().unwrap();
     }
 
     #[test]

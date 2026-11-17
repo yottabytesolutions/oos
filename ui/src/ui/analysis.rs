@@ -125,7 +125,7 @@ struct RefMeasureResult {
 /// One worker, one in-flight input copy. Waiting sources keep metadata only.
 struct RefMeasureWorker {
     input: mpsc::SyncSender<RefMeasureJob>,
-    output: mpsc::Receiver<RefMeasureResult>,
+    output: crate::ui::lifecycle::worker_result::Receiver<RefMeasureResult>,
     busy: bool,
     submitted: usize,
     own_turn: bool,
@@ -134,7 +134,7 @@ struct RefMeasureWorker {
 impl RefMeasureWorker {
     fn open() -> Self {
         let (input, requests) = mpsc::sync_channel::<RefMeasureJob>(1);
-        let (results, output) = mpsc::channel();
+        let (results, output) = crate::ui::lifecycle::worker_result::channel();
         std::thread::Builder::new()
             .name("reference-measurements".into())
             .spawn(move || {
@@ -1910,6 +1910,16 @@ impl super::analysers::Analyser for PowerPage {
 
 #[cfg(test)]
 mod measurement_gate_tests {
+    impl Ui {
+        pub(in crate::ui) fn wait_reference_measurement_event(&self) {
+            if let Some(worker) = self.azr.ref_measure_worker.borrow().as_ref() {
+                if worker.busy {
+                    worker.output.wait_ready("reference measurement worker completion");
+                }
+            }
+        }
+    }
+
     use super::*;
 
     fn process_memory() -> Option<(usize, usize)> {
@@ -1955,12 +1965,12 @@ mod measurement_gate_tests {
         ui.set_measurement_full_record(true);
         let dispatch = scan.elapsed();
         let mut worst_tick = std::time::Duration::ZERO;
+        let wait = crate::ui::lifecycle::test_wait::Wait::new("manual full-record measurement completion");
         while ui.measurement_busy() {
             let tick = std::time::Instant::now();
             ui.step(0.0);
             worst_tick = worst_tick.max(tick.elapsed());
-            assert!(scan.elapsed().as_secs() < 60, "full record analysis did not finish within its local test bound");
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            wait.ui(&ui);
         }
         let full_scan = scan.elapsed();
         let (first, _) = ui.reference_measurement(0).unwrap();
@@ -2159,24 +2169,21 @@ mod measurement_gate_tests {
     }
 
     fn pump(ui: &mut Ui) {
-        let start = std::time::Instant::now();
+        let wait = crate::ui::lifecycle::test_wait::Wait::new("reference measurement completion");
         loop {
             ui.step(0.0);
             if !ui.azr.ref_measure_worker.borrow().as_ref().is_some_and(|worker| worker.busy) && !ui.measurement_busy()
             {
                 break;
             }
-            assert!(start.elapsed().as_secs() < 10, "bounded worker did not complete");
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            wait.ui(ui);
         }
     }
 
     #[test]
     fn large_full_measurements_are_nonblocking_and_use_one_worker_without_fake_captures() {
         let mut ui = large();
-        let start = std::time::Instant::now();
         ui.set_measurement_full_record(true);
-        assert!(start.elapsed().as_millis() < 500, "dispatch must not perform the full scan on the event thread");
         assert!(ui.measurement_busy());
         for _ in 0..100 {
             assert!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)).is_nan());
@@ -2245,9 +2252,7 @@ mod measurement_gate_tests {
         ui.m.tscale = tscales().iter().position(|&v| (v - 100e-6).abs() < 1e-10).unwrap();
         ui.m.delay = 400e-6;
         ui.m.meas_full_record = false;
-        let started = std::time::Instant::now();
         ui.measure_refs();
-        assert!(started.elapsed().as_millis() < 500, "a zoomed-out Screen gate must not scan on the event thread");
         assert!(ui.measurement_busy());
         assert!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)).is_nan());
         assert_eq!(ui.meas_rows()[0].text(), "Computing");
@@ -2263,5 +2268,18 @@ mod measurement_gate_tests {
         );
         assert_eq!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)), 2.0);
         assert_eq!(ui.replay.captures, 0);
+    }
+    #[test]
+    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
+    fn perf_guard_reference_full_and_screen_dispatch() {
+        let mut ui = large();
+        crate::perfguard::latency::check(std::time::Duration::from_millis(500), || {
+            ui.set_measurement_full_record(true)
+        });
+        pump(&mut ui);
+        ui.m.tscale = tscales().iter().position(|&v| (v - 100e-6).abs() < 1e-10).unwrap();
+        ui.m.delay = 400e-6;
+        ui.m.meas_full_record = false;
+        crate::perfguard::latency::check(std::time::Duration::from_millis(500), || ui.measure_refs());
     }
 }

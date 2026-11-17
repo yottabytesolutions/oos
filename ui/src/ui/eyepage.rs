@@ -2842,10 +2842,12 @@ mod automatic_setup_tests {
         assert_eq!(ui.azr.eye_auto.submitted, 1);
         ui.refs[0].as_mut().unwrap().v = square(300_000, 10).into();
         ui.eye_make();
-        let start = std::time::Instant::now();
-        while ui.azr.eye_res.is_none() && start.elapsed().as_secs() < 20 {
+        let start = crate::ui::lifecycle::test_wait::Wait::new(
+            "auto_eye_background_rejects_old_source_and_does_not_recount_pan completion",
+        );
+        while ui.azr.eye_res.is_none() {
             ui.step(0.01);
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            start.ui(&ui);
         }
         assert!(ui.azr.eye_res.is_some(), "{:?}", ui.azr.page.status);
         assert!((ui.m.eye_rate / 2e9 - 1.0).abs() < 0.01);
@@ -2867,10 +2869,12 @@ mod automatic_setup_tests {
         ui.eye_make();
         assert_eq!(ui.azr.eye_auto.submitted, 1);
         assert!(ui.azr.eye_res.is_none() && ui.azr.page.status[0].contains("Computing"));
-        let start = std::time::Instant::now();
-        while ui.azr.eye_res.is_none() && start.elapsed().as_secs() < 20 {
+        let start = crate::ui::lifecycle::test_wait::Wait::new(
+            "auto_eye_stored_reference_stays_background_when_another_slot_is_simulated completion",
+        );
+        while ui.azr.eye_res.is_none() {
             ui.eye_auto_poll();
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            start.ui(&ui);
         }
         assert!(ui.azr.eye_res.is_some(), "{:?}", ui.azr.page.status);
         assert_eq!(ui.azr.page.records, 1);

@@ -125,6 +125,7 @@ and the coverage margin of 0.5 percentage points are unchanged.
 | `method-exceptions` | disallowed-method exceptions | sources | fast and full |
 | `known-failures` | known failures and open tasks | sources | fast and full |
 | `agent-rules` | exact loaders and Git inventory | root AGENTS.md | fast and full |
+| `test-time` | test sleep/deadline syntax and nonincreasing ratchet | sources | fast and full |
 | `doctor-base` | base doctor probes, including active toolchain identity | bootstrap; no Docker | full |
 | `doctor` | `--gpu --sim` doctor profiles | base doctor, bootstrap, Docker | `--image` |
 | `clippy` | host and ARM clippy per crate | musl std and clippy | full |
@@ -181,6 +182,31 @@ cold builds take longer. This is an estimate from the earlier 506-second sandbox
 prerequisite/socket failures, not a successful timing measurement of this tier. The fast gate is
 roughly one minute. The image tier can take hours on cold builders or emulated hosts. Retain actual
 timings and exit codes with coordinator evidence.
+
+## Test time and completion
+
+[ADR 0019](architecture/adr/0019-test-time.md) requires tests to advance elapsed time explicitly and await
+worker completion events. Real duration assertions belong to the explicit perf-guard suite. A timeout in
+ordinary tests is only a named hang guard of at least 60 seconds; the shared host helper uses 120 seconds.
+
+The `test-time` fast step follows every Cargo target and test module, including compound test-only cfgs
+and cfg(test) statements or expressions inside production functions. It flags sleeps (including renamed
+imports and macro bodies), clock comparisons inside or outside loops, bound elapsed/now values, real duration
+assertions, and timeout calls shorter than the shared 120-second hang guard. Test-only clock reads inside
+production behavior branches are also rejected. Tests of elapsed behavior inject their clock at construction
+or use the same implementation through an explicit clock boundary.
+
+Only named functions implementing hang guards, ignored manual observation tools and ignored performance
+probes are exempt, in `xtask/src/test_time.rs`. Timestamp provenance checks compare against the feed origin,
+without real duration budgets. Production and test builds use the same buffered worker receiver and the same
+channel capacity. Test fixtures await the completion, retaining its value for the normal poll.
+
+`xtask/data/<crate>/test-time.txt` is a store kind alongside the other ratchets. Its keys use
+`time <file> <function> <finding>`. `cargo xtask ratchet` tightens it; `--move` applies `moves.txt` to it.
+The protected-base comparison rejects additions or increases. Do not add new entries. The check is syntactic:
+it does not infer time through arbitrary helper APIs or every possible macro DSL. Review must check those
+boundaries too. Real duration budgets run only in ignored release `perf_guard` cases with `OOS_PERF_TESTS=1`.
+Task 0088 records the audit and validation limits.
 
 ## Privacy checks
 

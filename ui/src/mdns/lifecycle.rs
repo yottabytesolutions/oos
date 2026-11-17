@@ -93,7 +93,7 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         mpsc, Arc,
     };
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     #[test]
     fn shutdown_wakes_network_wait_and_leaves_time_for_http() {
@@ -117,8 +117,8 @@ mod tests {
         let http = std::thread::spawn(move || {
             http_closed.recv().unwrap();
         });
-        waiting.recv_timeout(Duration::from_secs(1)).unwrap();
-        let deadline = Instant::now() + Duration::from_millis(500);
+        waiting.recv_timeout(crate::ui::lifecycle::test_wait::HANG_GUARD).expect("mDNS worker entering network wait");
+        let deadline = Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD;
         mdns.shutdown(deadline);
         let mdns_stopped = stopped.load(Ordering::Acquire);
         close_http.send(()).unwrap();

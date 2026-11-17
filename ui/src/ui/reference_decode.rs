@@ -29,13 +29,13 @@ struct Finished {
 }
 struct Worker {
     input: mpsc::SyncSender<Job>,
-    output: mpsc::Receiver<Finished>,
+    output: crate::ui::lifecycle::worker_result::Receiver<Finished>,
     busy: bool,
 }
 impl Worker {
     fn open() -> Self {
         let (input, requests) = mpsc::sync_channel::<Job>(1);
-        let (results, output) = mpsc::sync_channel(1);
+        let (results, output) = crate::ui::lifecycle::worker_result::sync_channel(1);
         std::thread::Builder::new()
             .name("reference-decode".into())
             .spawn(move || {
@@ -450,8 +450,17 @@ impl Ui {
 
 #[cfg(test)]
 mod tests {
+    impl Ui {
+        pub(in crate::ui) fn wait_reference_decode_event(&self) {
+            if let Some(worker) = self.azr.reference_decode.borrow().worker.as_ref() {
+                if worker.busy {
+                    worker.output.wait_ready("reference decode worker completion");
+                }
+            }
+        }
+    }
+
     use super::*;
-    use std::time::{Duration, Instant};
 
     fn reference(v: Vec<f32>, dt: f64, t0: f64, vpd: f32) -> RefWave {
         RefWave { src: 0, color: 0, label: "decoder fixture".into(), t0, dt, v: v.into(), vpd, offset: 0.0, on: true }
@@ -481,13 +490,13 @@ mod tests {
         ui
     }
     fn wait(ui: &Ui) -> Arc<Vec<Packet>> {
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new("reference decoder packets");
         loop {
             match ui.reference_decode_packets(&ui.m) {
                 Ok(packets) => return packets,
                 Err(COMPUTING) => {
-                    assert!(Instant::now() < deadline);
-                    std::thread::sleep(Duration::from_millis(1));
+                    deadline.check();
+                    deadline.ui(ui);
                 }
                 Err(error) => panic!("{error}"),
             }
@@ -642,9 +651,7 @@ mod tests {
     #[test]
     fn large_decode_is_nonblocking_single_worker_and_discards_changed_source_results() {
         let mut ui = uart_ui(BACKGROUND_POINTS + 1000);
-        let started = Instant::now();
         assert_eq!(ui.reference_decode_packets(&ui.m).unwrap_err(), COMPUTING);
-        assert!(started.elapsed() < Duration::from_millis(250), "UI only queues a bounded copy");
         assert_eq!(ui.azr.reference_decode.borrow().scans, 1);
         let (v, dt) = uart(0x5a, BACKGROUND_POINTS + 1000);
         ui.refs[1] = Some(reference(v, dt, -0.008, 0.5));
@@ -762,5 +769,13 @@ mod tests {
         assert_eq!(ui.m.dec_cphy_rate, 0.0, "the picker must also reset an arbitrary SCPI-provided rate");
         let mut canvas = Canvas::new(W, H);
         ui.render(&mut canvas);
+    }
+    #[test]
+    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
+    fn perf_guard_reference_decode_dispatch() {
+        let ui = uart_ui(BACKGROUND_POINTS + 1000);
+        crate::perfguard::latency::check(std::time::Duration::from_millis(250), || {
+            assert_eq!(ui.reference_decode_packets(&ui.m).unwrap_err(), COMPUTING);
+        });
     }
 }

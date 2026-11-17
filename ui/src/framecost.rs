@@ -29,7 +29,11 @@ static WIDES: AtomicU64 = AtomicU64::new(0);
 
 /// Adds the time since `t0` to `part`.
 pub fn add(part: Part, t0: Instant) {
-    let ns = t0.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+    add_at(part, t0, Instant::now());
+}
+
+fn add_at(part: Part, t0: Instant, now: Instant) {
+    let ns = now.saturating_duration_since(t0).as_nanos().min(u64::MAX as u128) as u64;
     NS[part as usize].fetch_add(ns, Ordering::Relaxed);
     match part {
         Part::Frame => FRAMES.fetch_add(1, Ordering::Relaxed),
@@ -61,9 +65,10 @@ mod tests {
             (w[2].parse().unwrap(), w[4].parse().unwrap(), w[7].split('/').map(|x| x.parse().unwrap()).collect())
         };
         let (f0, w0, a) = parse(&summary());
-        let t = Instant::now() - std::time::Duration::from_millis(5);
-        add(Part::Wide, t);
-        add(Part::Frame, t);
+        let now = Instant::now();
+        let t = now - std::time::Duration::from_millis(5);
+        add_at(Part::Wide, t, now);
+        add_at(Part::Frame, t, now);
         let (f1, w1, b) = parse(&summary());
         assert!(f1 > f0 && w1 > w0);
         assert!(b[3] >= a[3] + 5000 && b[4] >= a[4] + 5000);

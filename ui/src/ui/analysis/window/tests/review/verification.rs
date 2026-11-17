@@ -90,7 +90,7 @@ fn spectrum_level_change(item: Item) {
     assert_eq!(ui.azr.spec_avg.as_ref().unwrap().count(), 1);
     assert_eq!(ui.azr.wf.as_ref().unwrap().rows.len(), 1);
     assert_eq!(ui.azr.spec.as_ref().unwrap().ref_level_dbv, ui.m.spec_ref as f64);
-    ui.stop_workers(std::time::Instant::now() + std::time::Duration::from_secs(2));
+    ui.stop_workers(std::time::Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD);
 }
 
 #[test]

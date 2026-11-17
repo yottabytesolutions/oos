@@ -1494,9 +1494,7 @@ fn scpi_errors_and_answers_stay_bounded() {
 fn a_remote_knob_turn_has_a_limit() {
     let mut u = with_two_channels();
     let d0 = u.m.delay;
-    let t = std::time::Instant::now();
     crate::cmd::run(&mut u, "knob hpos 2000000000");
-    assert!(t.elapsed().as_secs() < 5);
     assert!(u.m.delay != d0);
 }
 
@@ -3339,4 +3337,10 @@ fn capped_depth_keeps_the_choice_for_the_picker() {
     );
     u.select_option(Item::AcqDepth, "10M");
     assert_eq!(u.value_shown(Item::AcqDepth), "10M");
+}
+
+#[test]
+#[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
+fn perf_guard_remote_knob_turn() {
+    crate::perfguard::latency::check(std::time::Duration::from_secs(5), a_remote_knob_turn_has_a_limit);
 }

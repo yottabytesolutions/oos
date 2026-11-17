@@ -138,6 +138,7 @@ impl Device {
     fn shutdown(&mut self) {
         let Self { ui, startup, started, remote, graphics, outputs, inp, power_request, .. } = self;
         let result = super::shutdown::run(
+            std::time::Instant::now(),
             ui,
             |deadline| remote.close(deadline),
             |ui, deadline| ui.stop_workers(deadline),

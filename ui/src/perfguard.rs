@@ -6,6 +6,8 @@
 
 pub(crate) mod deep;
 mod intake;
+#[cfg(test)]
+pub(crate) mod latency;
 mod ring;
 
 #[cfg(test)]

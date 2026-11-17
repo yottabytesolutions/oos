@@ -849,14 +849,12 @@ mod tests {
         c.set_nonblocking(true).unwrap();
         c.send_to(&q, destination).unwrap();
         let mut buf = [0u8; 2048];
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new("UDP discovery response");
         let n = loop {
             a.poll();
             match c.recv_from(&mut buf) {
                 Ok((n, _)) => break n,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(5))
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => deadline.poll(),
                 Err(error) => panic!("no discovery response: {error}"),
             }
         };

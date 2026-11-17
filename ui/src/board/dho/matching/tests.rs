@@ -213,11 +213,11 @@ fn batch_core_matching_keeps_rejected_frames_and_clamps_codes() {
 
 fn finish(pipe: &crate::drawpipe::Pipe) {
     let mut helper = crate::drawpipe::Helper::default();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = crate::ui::lifecycle::test_wait::Wait::new("batch workers return the completed buffer");
     while pipe.take_buffer().is_none() {
-        assert!(std::time::Instant::now() < deadline, "batch workers did not finish");
+        deadline.check();
         if !pipe.help(&mut helper) {
-            std::thread::yield_now();
+            deadline.poll();
         }
         pipe.help_done(&mut helper);
     }

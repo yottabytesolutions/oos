@@ -5,6 +5,8 @@
 //! pstore and a fake `/oos` whose `df` reports a 16 MiB partition, and the `oos-watchdog` wrapper with a kicker that
 //! exits at once. The scripts are POSIX sh; on the unit they run under busybox.
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
@@ -354,23 +356,11 @@ fn a_missing_boot_id_keeps_pstore() {
     assert_eq!((f.pstore(), f.committed().len()), (2, 0));
 }
 
-/// Polls the log until `want` shows or `limit` passes; returns the time it took.
-fn wait_for(log: &Path, want: &str, limit: Duration) -> Option<Duration> {
-    let t0 = std::time::Instant::now();
-    while t0.elapsed() < limit {
-        if std::fs::read_to_string(log).is_ok_and(|t| t.contains(want)) {
-            return Some(t0.elapsed());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    None
-}
-
-// Robust on a loaded host: it waits for the log lines (up to 60 s) instead of a fixed time, and checks the order and
-// the lower bounds of the backoff (the 1 s and 2 s sleeps must have passed), never an upper bound of the timing.
 #[test]
 fn the_watchdog_wrapper_restarts_an_exiting_kicker_with_growing_delays() {
     let f = Fake::new("wd");
+    // Record requested delays; advancing the fake sleep is immediate.
+    write_exec(&f.p("bin/sleep"), &format!("#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{}'\n", f.p("delays").display()));
     write_exec(&f.p("bin/watchdog"), "#!/bin/sh\nexit 3\n");
     let log_path = f.p("wd.log");
     let log = std::fs::File::create(&log_path).expect("log file");
@@ -379,17 +369,17 @@ fn the_watchdog_wrapper_restarts_an_exiting_kicker_with_growing_delays() {
     c.env("OOS_CMDLINE", "/dev/null").stdin(Stdio::null()).stdout(log).stderr(Stdio::null());
     f.env(&mut c);
     let mut child = c.spawn().expect("sh runs");
-    let first = wait_for(&log_path, "again in 1 s", Duration::from_secs(60));
-    let third = wait_for(&log_path, "again in 4 s", Duration::from_secs(60));
+    support::wait_for("watchdog requested third restart", || {
+        std::fs::read_to_string(&log_path).is_ok_and(|text| text.contains("again in 4 s"))
+    });
     child.kill().expect("the wrapper runs until killed");
     child.wait().expect("reaped");
     let text = std::fs::read_to_string(&log_path).expect("log");
-    let (first, third) = (first.expect("first restart logged"), third.expect("third restart logged"));
     assert!(text.contains("before open: hw unknown") && text.contains("exited (3)"), "{}", text);
     let at = |w: &str| text.find(w).unwrap_or(usize::MAX);
     assert!(at("again in 1 s") < at("again in 2 s") && at("again in 2 s") < at("again in 4 s"), "{}", text);
-    // timed from the first restart's line, which comes before its 1 s pause: the third one waited 1 s + 2 s
-    assert!(third >= Duration::from_millis(2900), "first {:?}, third {:?} later\n{}", first, third, text);
+    let delays = std::fs::read_to_string(f.p("delays")).unwrap();
+    assert_eq!(delays.lines().take(2).collect::<Vec<_>>(), ["1", "2"]);
 }
 
 fn exits(f: &Fake) -> usize {

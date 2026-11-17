@@ -122,16 +122,33 @@ impl<T> DerefMut for Guard<'_, T> {
 }
 impl<T> Drop for Guard<'_, T> {
     fn drop(&mut self) {
-        let held = nanos(self.acquired.elapsed());
-        drop(self.guard.take());
-        self.diagnostics.locked(self.side, self.wait, held);
+        self.record_at(Instant::now());
+    }
+}
+
+impl<T> Guard<'_, T> {
+    fn record_at(&mut self, now: Instant) {
+        if let Some(guard) = self.guard.take() {
+            let held = nanos(now.saturating_duration_since(self.acquired));
+            drop(guard);
+            self.diagnostics.locked(self.side, self.wait, held);
+        }
     }
 }
 
 fn timed_lock<'a, T>(mutex: &'a Mutex<T>, diagnostics: &'a Diagnostics, side: usize) -> Guard<'a, T> {
-    let started = Instant::now();
+    timed_lock_with(mutex, diagnostics, side, Instant::now)
+}
+
+fn timed_lock_with<'a, T>(
+    mutex: &'a Mutex<T>,
+    diagnostics: &'a Diagnostics,
+    side: usize,
+    mut now: impl FnMut() -> Instant,
+) -> Guard<'a, T> {
+    let started = now();
     let guard = lock(mutex);
-    let acquired = Instant::now();
+    let acquired = now();
     Guard { guard: Some(guard), diagnostics, side, wait: nanos(acquired - started), acquired }
 }
 

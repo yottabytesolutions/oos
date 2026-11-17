@@ -4,6 +4,7 @@
 //! Runs the actual rcS restart loop against an aborting UI stand-in. Set OOS_TEST_SHELL to the image's ash
 //! executable in the Linux runner; the host default is POSIX sh, never bash-specific script syntax.
 mod safe_start;
+mod support;
 use safe_start::Fake;
 
 fn aborting_ui(f: &Fake, rc: u32) {

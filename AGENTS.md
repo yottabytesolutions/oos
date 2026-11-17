@@ -84,6 +84,8 @@ to the document that explains it. When a rule and your task conflict, stop and a
 
 ## Tests
 
+- No test may pass or fail depending on machine speed. Inject elapsed time, wait on completion events,
+  and keep real duration assertions in perf-guard; see [ADR 0019](docs/architecture/adr/0019-test-time.md).
 - Every change comes with tests. The gate's coverage floor must hold.
 - A bug fix comes with a test that fails before the fix and passes after.
 - A change to what is drawn comes with golden pictures (`ui/tests/golden/`). A changed reference needs a reason in

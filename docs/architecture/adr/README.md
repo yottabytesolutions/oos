@@ -23,3 +23,4 @@ supersedes the old one. The target architecture is `../README.md`.
 | [0016](0016-performance-principles.md) | Performance principles |
 | [0017](0017-hybrid-after-m12.md) | Migrate through M12, then rebuild menus and the SCPI parser spec-first |
 | [0018](0018-upstream-rebaseline.md) | Upstream merges rebaseline ratchets |
+| [0019](0019-test-time.md) | Tests do not depend on machine speed |

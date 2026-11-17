@@ -10,7 +10,7 @@ pub use code::{allows, known, measured, size, statics, unsafe_now, unsafety};
 pub use ratchets::load_moves;
 
 use crate::store::Kind;
-use ratchets::ratcheted;
+pub(crate) use ratchets::ratcheted;
 
 use crate::ratchet::Ratchet;
 use crate::repo::{self, CRATES};

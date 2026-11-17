@@ -84,7 +84,7 @@ fn sim_eye(l: Layout, place: EyePlace) -> Ui {
     for _ in 0..300 {
         u.step(0.05);
         u.wait_sim_generation();
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        u.wait_background();
         if u.azr.eye.is_some() {
             break;
         }

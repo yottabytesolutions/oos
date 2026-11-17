@@ -98,13 +98,15 @@ exec "$OOS_REAL_SYNC" "$@"
         .env("OOS_REAL_SYNC", f.p("host-bin/sync"))
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !f.p("tmp/entered").exists() {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    crate::support::wait_for("first ledger writer reached commit", || f.p("tmp/entered").exists());
+    f.exec(
+        "host-bin/sleep",
+        r#"#!/bin/sh
+if [ "$1" = 1 ]; then touch "$OOS_UI_TMP/lock-wait"; fi
+"#,
+    );
     let mut second = f.command("oos-ui-exits").args(["count", "second", "1", "second"]).spawn().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    crate::support::wait_for("second ledger writer observed first writer's lock", || f.p("tmp/lock-wait").exists());
     let raced = second.try_wait().unwrap().is_some();
     f.write("tmp/release", "");
     assert!(first.wait().unwrap().success());

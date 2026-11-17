@@ -1491,6 +1491,10 @@ read from this section.
 
 ## Enforcement
 
+Tests use explicit time and completion events under [ADR 0019](adr/0019-test-time.md). The fast gate's
+`test-time` check prevents new test sleeps, wall-clock assertions and short timeouts outside named wait
+helpers and performance probes. Tests and production share their clock boundary and worker receiver.
+
 `cargo xtask check` is the gate (`../development.md`: the steps, the ratchets and how to change a rule). For the
 architecture it checks:
 - **crate dependencies** from cargo metadata. The domain's direction is enforced here, by the crate split. Target

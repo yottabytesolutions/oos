@@ -24,6 +24,7 @@ mod sources;
 mod steps;
 mod store;
 mod target;
+mod test_time;
 #[cfg(test)]
 mod testrepo;
 mod testrun;

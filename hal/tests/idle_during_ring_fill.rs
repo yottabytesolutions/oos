@@ -6,9 +6,11 @@
 //! although the caller has work. No assertion on wall time (ADR 0020): the model records a frame per look at the done
 //! flag, so the counts say what happened on any computer. A sleep between two calls with work does not show in them.
 
+mod support;
+
 use oos_hal::dho::bus::{Bus, DmaBuf};
 use oos_hal::dho::seg::sim::{engine, Engine};
-use oos_hal::dho::seq::{acquire_batch_idle, Settings, State};
+use oos_hal::dho::seq::{acquire_batch_with_clock, Settings, State};
 use std::time::{Duration, Instant};
 
 #[test]
@@ -19,9 +21,10 @@ fn idle_runs_while_the_ring_fills_and_never_after() {
     // a trigger every microsecond, one more frame recorded per look at the done flag (0x4080)
     let (eng, mut bar, mut c2h) = engine(Engine::new(0, 1_000_000_000, 1, p.ratio));
     let mut dma = DmaBuf::new();
+    let clock = support::clock::Manual::new(Instant::now());
     let (mut calls, mut full_at) = (0u32, None);
     // a wait of a minute: the batch ends when the ring is full, so a slow computer cannot end it first
-    let r = acquire_batch_idle(
+    let r = acquire_batch_with_clock(
         &mut st,
         &s,
         &p,
@@ -42,6 +45,7 @@ fn idle_runs_while_the_ring_fills_and_never_after() {
             }
             true
         },
+        &clock,
     );
     assert_eq!(r, Ok(10));
     // the arm's poll of the done flag recorded frame 1, each call one more: nine calls fill the ring of ten
@@ -59,8 +63,9 @@ fn without_work_the_wait_is_unchanged() {
     let (_eng, mut bar, mut c2h) = engine(Engine::new(0, 1_000_000_000, 1, p.ratio));
     let mut dma = DmaBuf::new();
     let mut calls = 0u32;
-    let t = Instant::now();
-    let r = acquire_batch_idle(
+    let clock = support::clock::Manual::new(Instant::now());
+    let t = clock.now();
+    let r = acquire_batch_with_clock(
         &mut st,
         &s,
         &p,
@@ -75,10 +80,12 @@ fn without_work_the_wait_is_unchanged() {
             calls += 1;
             false
         },
+        &clock,
     );
     // only the frame of the arm's poll: nothing looked at the done flag while waiting
     assert_eq!(r, Ok(1));
     assert!(calls > 0, "the hook was never called");
     // a lower bound only: the wait runs to its time-out however slow the computer is
-    assert!(t.elapsed() >= Duration::from_millis(25), "{:?}", t.elapsed());
+    use oos_hal::dho::seq::time::Clock;
+    assert!(clock.now() - t >= Duration::from_millis(25));
 }

@@ -7,9 +7,11 @@
 //! copy, so a settings change in NORMAL without a trigger waits the full 2 s again. The stop request is counted, not
 //! timed (ADR 0020).
 
+mod support;
+
 use oos_hal::dho::bus::DmaBuf;
 use oos_hal::dho::seg::sim::{engine, Engine};
-use oos_hal::dho::seq::{acquire_batch_until, Settings, State, NEW_SETTINGS};
+use oos_hal::dho::seq::{acquire_batch_with_clock, Settings, State, NEW_SETTINGS};
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 
@@ -27,7 +29,22 @@ fn the_trigger_wait_ends_for_new_settings() {
         asked.set(asked.get() + 1);
         asked.get() >= 3
     };
-    let r = acquire_batch_until(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 25, |_| {}, stop);
+    let now = Instant::now();
+    let clock = support::clock::Manual::new(now);
+    let r = acquire_batch_with_clock(
+        &mut st,
+        &s,
+        &p,
+        &mut bar,
+        &mut c2h,
+        &mut dma,
+        false,
+        25,
+        |_| {},
+        stop,
+        || false,
+        &clock,
+    );
     assert_eq!(r, Err(NEW_SETTINGS.to_string()));
     // the wait ended at the first yes, not at its 2 s time-out
     assert_eq!(asked.get(), 3);
@@ -41,8 +58,23 @@ fn without_new_settings_the_wait_runs_to_its_end() {
     let p = st.configure(&s, None, None).unwrap().1;
     let (_eng, mut bar, mut c2h) = engine(Engine::new(0, 1_000_000_000_000, 0, p.ratio));
     let mut dma = DmaBuf::new();
-    let t = Instant::now();
-    let r = acquire_batch_until(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 25, |_| {}, || false);
+    let clock = support::clock::Manual::new(Instant::now());
+    let t = clock.now();
+    let r = acquire_batch_with_clock(
+        &mut st,
+        &s,
+        &p,
+        &mut bar,
+        &mut c2h,
+        &mut dma,
+        false,
+        25,
+        |_| {},
+        || false,
+        || false,
+        &clock,
+    );
     assert!(matches!(&r, Err(e) if e != NEW_SETTINGS), "{:?}", r);
-    assert!(t.elapsed() >= Duration::from_millis(2000), "{:?}", t.elapsed());
+    use oos_hal::dho::seq::time::Clock;
+    assert!(clock.now() - t >= Duration::from_millis(2000));
 }

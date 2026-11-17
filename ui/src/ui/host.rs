@@ -127,7 +127,16 @@ impl Host {
 #[cfg(test)]
 impl super::Ui {
     pub(crate) fn for_tests(src: crate::wave::Source) -> Self {
-        Self::new(src, Host::fixture())
+        let mut ui = Self::new(src, Host::fixture());
+        let now = std::rc::Rc::new(std::cell::Cell::new(std::time::Instant::now()));
+        let read = now.clone();
+        let time = &mut ui.host.runtime_mut().query_time;
+        time.now = std::rc::Rc::new(move |_| read.get());
+        time.wait = std::rc::Rc::new(move |ui| {
+            super::lifecycle::test_wait::Wait::new("remote measurement query completion").ui(ui);
+            now.set(now.get() + std::time::Duration::from_millis(1));
+        });
+        ui
     }
 }
 
@@ -366,7 +375,7 @@ mod auto_timeout {
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::Duration;
 
-    const HANG_LIMIT: Duration = Duration::from_secs(30);
+    const HANG_LIMIT: Duration = crate::ui::lifecycle::test_wait::HANG_GUARD;
 
     fn hardware() -> (Ui, HwShared) {
         let shared: HwShared = Default::default();

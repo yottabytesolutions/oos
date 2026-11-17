@@ -34,7 +34,7 @@ mod fix_tests;
 pub mod host;
 mod hwmask;
 mod hwzone;
-mod lifecycle;
+pub(crate) mod lifecycle;
 mod logger;
 use lifecycle::MeasWorker;
 mod magnetic;
@@ -7045,7 +7045,7 @@ impl Ui {
         }
     }
 
-    /// From now on the measurements of new records are made in the background (the frame loop on the unit).
+    /// Stop background work using the shared shutdown deadline.
     pub fn stop_workers(&mut self, deadline: std::time::Instant) {
         lifecycle::stop_workers(self, deadline);
     }
@@ -12663,7 +12663,7 @@ mod tests {
             ui.meas_bg.as_mut().unwrap().busy = false;
             for _ in 0..50 {
                 ui.producer_step(0.02);
-                std::thread::sleep(std::time::Duration::from_millis(2));
+                ui.wait_background();
             }
             let avg = ui.meas(0, Meas::Vavg);
             assert!((avg - high as f64 / 4.0).abs() < 0.03, "Mean live at {} s/div, round {}: {}", tdiv, round, avg);
@@ -12699,13 +12699,13 @@ mod tests {
         };
         // steps until the worker has answered what the record asked for (however slow the computer)
         let wait = |ui: &mut Ui| {
-            let t = std::time::Instant::now();
+            let wait = crate::ui::lifecycle::test_wait::Wait::new("queued background measurement completion");
             loop {
                 ui.producer_step(0.02);
-                if (!ui.meas_bg.as_ref().unwrap().busy && !ui.meas_want) || t.elapsed().as_secs() > 20 {
+                if !ui.meas_bg.as_ref().unwrap().busy && !ui.meas_want {
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                wait.ui(ui);
             }
         };
         // a raw deep record waits for the busy worker
@@ -13356,7 +13356,7 @@ mod tests {
         let n = |u: &super::Ui| u.mstat.iter().map(|s| s.n).max().unwrap_or(0);
         for _ in 0..120 {
             u.step(1.0 / 30.0);
-            std::thread::sleep(std::time::Duration::from_millis(3));
+            u.wait_background();
         }
         assert!(n(&u) >= 20, "{} results taken in 120 frames", n(&u));
     }
@@ -14046,8 +14046,10 @@ mod tests {
         assert_eq!(ui.bode.points.len(), 5);
         ui.producer_step(0.05); // Apply the sweep completion commands.
         assert_eq!(ui.m.tscale, ts0, "time base restored");
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let cmds = got.lock().unwrap().clone();
+        let cmds = crate::ui::lifecycle::test_wait::until("generator receives final Bode frequency", || {
+            let cmds = got.lock().unwrap().clone();
+            cmds.contains(":SOUR1:APPL:SIN 100000").then_some(cmds)
+        });
         assert!(
             cmds.contains(":SOUR1:APPL:SIN 1000,1,0")
                 && cmds.contains(":OUTP1 ON")

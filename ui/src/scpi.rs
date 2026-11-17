@@ -5155,25 +5155,15 @@ mod vernier_tests {
     // two lines while `exec_line` joined them), a command-only message sending a line.
     #[test]
     fn compound_query_is_one_line_on_the_socket() {
-        use std::io::{BufRead, Write};
+        use std::io::Write;
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = Scpi::open(0, false);
         let port = scpi.l.as_ref().expect("listener").local_addr().unwrap().port();
         let mut c = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        c.set_read_timeout(Some(std::time::Duration::from_millis(50))).unwrap();
-        let mut r = std::io::BufReader::new(c.try_clone().unwrap());
         let mut ask = |scpi: &mut Scpi, ui: &mut Ui, msg: &str| -> String {
             c.write_all(msg.as_bytes()).unwrap();
-            let mut line = String::new();
-            for _ in 0..40 {
-                scpi.poll(ui, &cv);
-                match r.read_line(&mut line) {
-                    Ok(n) if n > 0 && line.ends_with('\n') => return line,
-                    _ => {}
-                }
-            }
-            line
+            test_io::line(&mut c, || scpi.poll(ui, &cv))
         };
         let idn = ask(&mut scpi, &mut ui, "*IDN?;*OPC?\n");
         assert!(idn.starts_with("OOS,") && idn.ends_with(";1\n") && idn.matches('\n').count() == 1, "{:?}", idn);
@@ -5299,7 +5289,6 @@ pub(crate) mod test_io {
 
     use std::io::{ErrorKind, Read};
     use std::net::TcpStream;
-    use std::time::{Duration, Instant};
 
     /// Reads until `complete` accepts the bytes so far, calling `drive` (server polls, steps) before every read.
     pub(crate) fn read_until(
@@ -5308,7 +5297,7 @@ pub(crate) mod test_io {
         complete: impl Fn(&[u8]) -> bool,
     ) -> Vec<u8> {
         socket.set_nonblocking(true).expect("non-blocking test client");
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new("complete SCPI socket reply");
         let mut got = Vec::new();
         let mut buf = [0u8; 4096];
         loop {
@@ -5324,8 +5313,8 @@ pub(crate) mod test_io {
                 Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
                 Err(e) => panic!("test client read: {e}"),
             }
-            assert!(Instant::now() < deadline, "no complete reply within 2 s: {:?}", String::from_utf8_lossy(&got));
-            std::thread::sleep(Duration::from_millis(1));
+            deadline.check();
+            deadline.poll();
         }
     }
 
@@ -5460,15 +5449,15 @@ mod tests {
         let mut waiting = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
         waiting.set_nonblocking(true).unwrap();
         waiting.write_all(b":SINGLE;*OPC?;:TRIG:STAT?\n").unwrap();
-        for _ in 0..25 {
+        crate::ui::lifecycle::test_wait::until("raw SCPI pending operation", || {
             s.poll(&mut ui, &cv);
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+            s.clients.iter().any(|client| client.program.as_ref().is_some_and(|p| p.waiting.is_some())).then_some(())
+        });
         ui.step(0.2);
-        for _ in 0..25 {
+        crate::ui::lifecycle::test_wait::until("raw SCPI pending operation", || {
             s.poll(&mut ui, &cv);
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+            s.clients.iter().any(|client| client.program.as_ref().is_some_and(|p| p.waiting.is_some())).then_some(())
+        });
         let mut bytes = [0; 128];
         assert_eq!(waiting.read(&mut bytes).unwrap_err().kind(), ErrorKind::WouldBlock);
         let mut control = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
@@ -5515,15 +5504,25 @@ mod tests {
         assert_eq!(init.typ, 1);
         let mut bytes = [0; 1024];
         client.write_all(&crate::hislip::encode(7, 0, 77, b":SINGLE;:TRIG:STAT?;*OPC?\n:TRIG:STAT?\n")).unwrap();
-        for _ in 0..25 {
-            server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        crate::ui::lifecycle::test_wait::until("HiSLIP pending operation", || {
+            let mut pending = false;
+            server.poll_async(&mut |p| {
+                let result = s.poll_program(&mut ui, &cv, p);
+                pending |= p.waiting.is_some();
+                result
+            });
+            pending.then_some(())
+        });
         ui.step(0.2);
-        for _ in 0..25 {
-            server.poll_async(&mut |p| s.poll_program(&mut ui, &cv, p));
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        crate::ui::lifecycle::test_wait::until("HiSLIP pending operation", || {
+            let mut pending = false;
+            server.poll_async(&mut |p| {
+                let result = s.poll_program(&mut ui, &cv, p);
+                pending |= p.waiting.is_some();
+                result
+            });
+            pending.then_some(())
+        });
         assert_eq!(client.read(&mut bytes).unwrap_err().kind(), ErrorKind::WouldBlock);
         line(&mut s, &mut ui, &cv, ":TRIG:FORC");
         ui.step(0.2);
@@ -5548,17 +5547,16 @@ mod tests {
         // what the client reads until it has a line (Some) or the server closed it (None)
         let mut read = |s: &mut Scpi, c: &mut TcpStream| -> Option<String> {
             c.set_nonblocking(true).unwrap();
-            let (mut got, until) = (Vec::new(), std::time::Instant::now() + Duration::from_secs(20));
+            let mut got = Vec::new();
+            let until = crate::ui::lifecycle::test_wait::Wait::new("SCPI access-policy response or disconnect");
             loop {
-                assert!(std::time::Instant::now() < until, "no answer and not closed");
+                until.check();
                 s.poll(&mut ui, &cv);
                 let mut b = [0u8; 256];
                 match c.read(&mut b) {
                     Ok(0) => return None,
                     Ok(n) => got.extend_from_slice(&b[..n]),
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(1))
-                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => until.poll(),
                     Err(_) => return None,
                 }
                 if got.ends_with(b"\n") {
@@ -5589,21 +5587,26 @@ mod tests {
         let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
         client.write_all(b"*IDN?\n").unwrap();
         client.shutdown(std::net::Shutdown::Write).unwrap();
-        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        // until the session has taken the client, answered and let it go (bounded: tests in parallel are slow to
-        // deliver the line and the end of the input)
-        let (deadline, mut seen) = (std::time::Instant::now() + Duration::from_secs(2), false);
-        while std::time::Instant::now() < deadline {
+        // One poll can take the client, answer and let it go. The events are the answer and the session's close,
+        // both observed at the client: collect without blocking until EOF.
+        client.set_nonblocking(true).unwrap();
+        let mut answer = Vec::new();
+        crate::ui::lifecycle::test_wait::until("SCPI answer and close of a half-closed client", || {
             s.poll(&mut ui, &cv);
-            seen |= !s.clients.is_empty();
-            if seen && s.clients.is_empty() {
-                break;
+            let mut buf = [0u8; 256];
+            loop {
+                match std::io::Read::read(&mut client, &mut buf) {
+                    Ok(0) => return Some(()),
+                    Ok(n) => answer.extend_from_slice(&buf[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return None,
+                    Err(e) => panic!("client read: {e}"),
+                }
             }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        let mut answer = String::new();
-        std::io::Read::read_to_string(&mut client, &mut answer).unwrap();
+        });
+        let answer = String::from_utf8(answer).unwrap();
         assert!(answer.starts_with("OOS,"), "{answer:?}");
+        s.poll(&mut ui, &cv);
+        assert!(s.clients.is_empty(), "the session let the half-closed client go after its answer");
     }
 
     #[test]
@@ -5612,13 +5615,10 @@ mod tests {
         line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 10");
         let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
         client.write_all(b":SINGLE;*OPC?;:RUN\n").unwrap();
-        for _ in 0..50 {
+        crate::ui::lifecycle::test_wait::until("raw client pending program before disconnect", || {
             s.poll(&mut ui, &cv);
-            if !s.clients.is_empty() && s.clients[0].program.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+            s.clients.first().is_some_and(|c| c.program.is_some()).then_some(())
+        });
         assert!(s.clients[0].program.is_some());
         client.shutdown(std::net::Shutdown::Both).unwrap();
         drop(client);
@@ -5646,14 +5646,16 @@ mod tests {
         let mut p = Program::new(":SIM:PLAY ON;*OPC?;:SIM:BUSY?");
         assert!(s.poll_program(&mut ui, &cv, &mut p).is_none());
         assert!(ui.sim_generating());
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "compatibility_opc_waits_for_actual_large_sim_generation_but_not_future_captures completion",
+        );
         let response = loop {
             ui.step(0.01);
             if let Some(response) = s.poll_program(&mut ui, &cv, &mut p) {
                 break response;
             }
-            assert!(std::time::Instant::now() < deadline, "SIM operation did not finish");
-            std::thread::sleep(Duration::from_millis(2));
+            deadline.check();
+            deadline.ui(&ui);
         };
         assert!(response.starts_with(b"1;"));
         assert!(ui.ref_info(0).unwrap().0 > 262_144, "exercise real background default SSC");
@@ -5693,10 +5695,15 @@ mod tests {
             let session = test_io::hislip(&mut sync, || server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p)))
                 .param as u16;
             sync.write_all(&crate::hislip::encode(7, 0, 42, b":SINGLE;*OPC?;:RUN\n")).unwrap();
-            for _ in 0..25 {
-                server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
-                std::thread::sleep(std::time::Duration::from_millis(2));
-            }
+            crate::ui::lifecycle::test_wait::until("HiSLIP pending operation before clear", || {
+                let mut pending = false;
+                server.poll_async(&mut |p| {
+                    let result = scpi.poll_program(&mut ui, &cv, p);
+                    pending |= p.waiting.is_some();
+                    result
+                });
+                pending.then_some(())
+            });
             if asynchronous {
                 let mut control = TcpStream::connect(("127.0.0.1", port)).unwrap();
                 control.set_nonblocking(true).unwrap();
@@ -5713,10 +5720,7 @@ mod tests {
             }
             line(&mut scpi, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
             ui.step(0.2);
-            for _ in 0..25 {
-                server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
-                std::thread::sleep(std::time::Duration::from_millis(2));
-            }
+            server.poll_async(&mut |p| scpi.poll_program(&mut ui, &cv, p));
             assert_eq!(ui.m.run, RunState::Stop);
             let mut b = [0; 128];
             assert_eq!(sync.read(&mut b).unwrap_err().kind(), ErrorKind::WouldBlock);
@@ -5978,10 +5982,12 @@ mod tests {
         decoded_reference_fixture(&mut ui, 300_000);
         line(&mut s, &mut ui, &cv, ":DEC:PROTO UART;:DEC:SOUR R1;:DEC:THR 1.65;:DEC:STAT ON;:SYST:SET dec_baud = 7");
         assert_eq!(line(&mut s, &mut ui, &cv, ":DEC:EVEN?"), "BUSY");
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+            "decoder_scpi_large_reference_reports_busy_then_fresh_events_without_acquisition completion",
+        );
         while line(&mut s, &mut ui, &cv, ":DEC:BUSY?") == "1" {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(1));
+            deadline.check();
+            deadline.ui(&ui);
         }
         let events = line(&mut s, &mut ui, &cv, ":DEC:EVEN?");
         assert!(events.contains("D1 UART R1") && events.contains("A5"), "{events}");
@@ -6119,7 +6125,9 @@ mod tests {
         ui.m.meas.clear();
         ui.m.meas2.clear();
         assert_eq!(line(&mut s, &mut ui, &cv, ":SYST:SET cat = 90:R1:R2:3:4;:SYST:ERR?"), "0,\"No error\"");
-        let end = std::time::Instant::now() + Duration::from_secs(10);
+        let end = crate::ui::lifecycle::test_wait::Wait::new(
+            "selected_catalog_rows_are_exported_and_setup_clear_accepts_an_empty_catalog completion",
+        );
         let answer = loop {
             let answer = line(&mut s, &mut ui, &cv, ":MEAS:STRIP?");
             let value = answer.rsplit(',').next().unwrap().parse::<f64>().unwrap();
@@ -6127,9 +6135,9 @@ mod tests {
                 assert!((value - 0.5).abs() < 0.01, "{answer}");
                 break answer;
             }
-            assert!(std::time::Instant::now() < end, "{answer}");
+            end.check();
             ui.step(0.0);
-            std::thread::sleep(Duration::from_millis(1));
+            end.ui(&ui);
         };
         assert!(answer.starts_with("CAT90,R1,R2,CHAN3,CHAN4,"), "{answer}");
         assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:READOUT?"), answer);
@@ -6254,7 +6262,7 @@ mod tests {
     fn raw_tcp_compound_queries_share_one_response_message() {
         let (mut s, mut ui, cv) = session();
         let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
-        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        client.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
         client.write_all(b"*IDN?;*OPC?\n").unwrap();
         let first = test_io::line(&mut client, || s.poll(&mut ui, &cv));
         assert!(first.starts_with("OOS,") && first.ends_with(";1\n"), "{first:?}");
@@ -6579,7 +6587,7 @@ mod tests {
         let (mut scpi, mut ui, canvas) = session();
         line(&mut scpi, &mut ui, &canvas, ":MEAS:CLEAR");
         let mut client = TcpStream::connect(("127.0.0.1", scpi.port().unwrap())).unwrap();
-        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        client.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
         client.write_all(b":MEAS:STRIP?\n").unwrap();
         assert_eq!(test_io::bytes(&mut client, || scpi.poll(&mut ui, &canvas), 1), b"\n");
         client.write_all(b":MEAS:STRIP?;*OPC?\n*ESR?\n").unwrap();

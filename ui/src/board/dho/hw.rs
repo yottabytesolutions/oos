@@ -3365,9 +3365,9 @@ mod tests {
         assert!(ui.meas(1, Meas::Vavg).is_nan(), "pairs alone: no mean");
         step(&mut ui, raw);
         // the raw window (10 M points) is measured by the background worker, not in the step: wait for it, bounded
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while ui.meas(1, Meas::Vavg).is_nan() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(2));
+        let deadline = crate::ui::lifecycle::test_wait::Wait::new("raw-window channel measurement result");
+        while ui.meas(1, Meas::Vavg).is_nan() {
+            deadline.ui(&ui);
             ui.step(0.02);
         }
         let v = ui.meas(1, Meas::Vavg);

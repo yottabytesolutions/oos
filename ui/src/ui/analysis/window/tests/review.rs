@@ -23,7 +23,7 @@ fn settings_changes_mark_the_accepted_result_stale_immediately() {
         assert!(updating(&ui), "dropping stale completion must retain the marker");
         calculate(&mut ui);
         assert!(!updating(&ui));
-        ui.stop_workers(std::time::Instant::now() + std::time::Duration::from_secs(2));
+        ui.stop_workers(std::time::Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD);
     }
 }
 

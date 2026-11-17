@@ -855,15 +855,15 @@ mod tests {
     }
 
     fn ready_rows(ui: &mut Ui) -> Vec<tools::MeasRow> {
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let end = crate::ui::lifecycle::test_wait::Wait::new("ready_rows");
         loop {
             ui.poll_catalog_measurements();
             let rows = ui.meas_rows();
             if rows.iter().all(|row| !row.computing) {
                 return rows;
             }
-            assert!(std::time::Instant::now() < end, "catalog rows did not complete");
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            end.check();
+            end.ui(ui);
         }
     }
 

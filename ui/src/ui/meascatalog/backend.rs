@@ -116,14 +116,14 @@ struct Finished {
 }
 struct Worker {
     send: mpsc::SyncSender<Job>,
-    receive: mpsc::Receiver<Finished>,
+    receive: crate::ui::lifecycle::worker_result::Receiver<Finished>,
     busy: bool,
     submitted: usize,
 }
 impl Worker {
     fn new() -> Self {
         let (send, requests) = mpsc::sync_channel::<Job>(1);
-        let (results, receive) = mpsc::sync_channel(1);
+        let (results, receive) = crate::ui::lifecycle::worker_result::sync_channel(1);
         std::thread::Builder::new()
             .name("catalog-measurements".into())
             .spawn(move || {
@@ -496,8 +496,18 @@ fn compute(job: &Job) -> Result<Batch, &'static str> {
 }
 #[cfg(test)]
 mod tests {
+    impl Ui {
+        pub(in crate::ui) fn wait_catalog_event(&self) {
+            if let Some(worker) = self.azr.catalog_measurements.borrow().worker.as_ref() {
+                if worker.busy {
+                    worker.receive.wait_ready("catalog worker completion");
+                }
+            }
+        }
+    }
+
     use super::*;
-    use std::time::{Duration, Instant};
+
     fn input(id: usize, t0: f64, dt: f64, v: Vec<f32>) -> Input {
         let hi = v.len();
         Input { id: WaveId::Ref(id), samples: Samples::Reference(Arc::new(v)), lo: 0, hi, t0, dt }
@@ -529,15 +539,15 @@ mod tests {
         (c.id, WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3))
     }
     fn wait(ui: &mut Ui, c: Cat) -> Reading {
-        let end = Instant::now() + Duration::from_secs(20);
+        let end = crate::ui::lifecycle::test_wait::Wait::new("catalog measurement values");
         loop {
             ui.poll_catalog_measurements();
             let r = ui.catalog_reading(c, [WaveId::Ref(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)]);
             if !r.computing {
                 return r;
             }
-            assert!(Instant::now() < end, "catalog never completed");
-            std::thread::sleep(Duration::from_millis(1));
+            end.check();
+            end.ui(ui);
         }
     }
     #[test]
@@ -583,7 +593,6 @@ mod tests {
         let mut ui = fixture();
         put(&mut ui, 0, (0..400_000).map(|i| if i % 40 < 20 { -0.5 } else { 0.5 }).collect(), 0.0, 1e-9);
         ui.m.cat = vec![row(tile(measures::jitter::EYE_HEIGHT)), row(tile(measures::jitter::TIE))];
-        let started = Instant::now();
         for _ in 0..100 {
             let _ = ui.cat_row(
                 row(tile(measures::jitter::EYE_HEIGHT)).0,
@@ -600,7 +609,7 @@ mod tests {
                 row(tile(measures::jitter::TIE)).4,
             );
         }
-        assert!(started.elapsed() < Duration::from_millis(500));
+
         assert_eq!(ui.azr.catalog_measurements.borrow().worker.as_ref().unwrap().submitted, 1);
         assert!(Arc::strong_count(&ui.refs[0].as_ref().unwrap().v) >= 2, "worker must hold the same immutable source");
         let height = wait(&mut ui, tile(measures::jitter::EYE_HEIGHT));
@@ -777,20 +786,16 @@ mod tests {
         let _ = ui.catalog_reading(tile(measures::power::RIPPLE), ids);
         ui.queue_catalog_statistics(row(tile(measures::power::RIPPLE)), 1);
         // Hold a finished answer before UI delivery, then clear and reuse sequence1.
-        let answer = ui
-            .azr
-            .catalog_measurements
-            .borrow()
-            .worker
-            .as_ref()
-            .unwrap()
-            .receive
-            .recv_timeout(Duration::from_secs(20))
-            .unwrap();
+        let answer = {
+            let state = ui.azr.catalog_measurements.borrow();
+            let receive = &state.worker.as_ref().unwrap().receive;
+            receive.wait_ready("catalog answer before Clear");
+            receive.try_recv().unwrap()
+        };
         ui.clear_display();
         ui.wfm_total = 1;
         ui.queue_catalog_statistics(row(tile(measures::power::RIPPLE)), 1);
-        let (send, receive) = mpsc::sync_channel(1);
+        let (send, receive) = crate::ui::lifecycle::worker_result::sync_channel(1);
         ui.azr.catalog_measurements.borrow_mut().worker.as_mut().unwrap().receive = receive;
         assert!(send.send(answer).is_ok());
         ui.poll_catalog_measurements();
@@ -819,15 +824,17 @@ mod tests {
         let ids = [WaveId::Ch(0), WaveId::Ref(1), WaveId::Ref(2), WaveId::Ref(3)];
         ui.m.cat = vec![(measures::power::RIPPLE, ids[0], ids[1], ids[2], ids[3])];
         let read = |ui: &mut Ui| {
-            let deadline = Instant::now() + Duration::from_secs(20);
+            let deadline = crate::ui::lifecycle::test_wait::Wait::new(
+                "processed_channel_reused_buffer_and_capture_after_clear_cannot_reuse_old_samples",
+            );
             loop {
                 ui.poll_catalog_measurements();
                 let r = ui.catalog_reading(tile(measures::power::RIPPLE), ids);
                 if !r.computing {
                     return r.value;
                 }
-                assert!(Instant::now() < deadline);
-                std::thread::sleep(Duration::from_millis(1));
+                deadline.check();
+                deadline.ui(ui);
             }
         };
         assert_eq!(read(&mut ui), 2.0);
@@ -952,5 +959,30 @@ mod tests {
             let r = wait(&mut ui, cat);
             assert!(r.value.is_nan() && r.reason.is_some());
         }
+    }
+    #[test]
+    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
+    fn perf_guard_catalog_dispatch_and_pending_reads() {
+        let mut ui = fixture();
+        put(&mut ui, 0, (0..400_000).map(|i| if i % 40 < 20 { -0.5 } else { 0.5 }).collect(), 0.0, 1e-9);
+        ui.m.cat = vec![row(tile(measures::jitter::EYE_HEIGHT)), row(tile(measures::jitter::TIE))];
+        crate::perfguard::latency::check(std::time::Duration::from_millis(500), || {
+            for _ in 0..100 {
+                let _ = ui.cat_row(
+                    row(tile(measures::jitter::EYE_HEIGHT)).0,
+                    row(tile(measures::jitter::EYE_HEIGHT)).1,
+                    row(tile(measures::jitter::EYE_HEIGHT)).2,
+                    row(tile(measures::jitter::EYE_HEIGHT)).3,
+                    row(tile(measures::jitter::EYE_HEIGHT)).4,
+                );
+                let _ = ui.cat_row(
+                    row(tile(measures::jitter::TIE)).0,
+                    row(tile(measures::jitter::TIE)).1,
+                    row(tile(measures::jitter::TIE)).2,
+                    row(tile(measures::jitter::TIE)).3,
+                    row(tile(measures::jitter::TIE)).4,
+                );
+            }
+        });
     }
 }

@@ -13,7 +13,7 @@
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
-4840 file ui/src/scpi.rs
+3398 file ui/src/scpi.rs
 3048 file ui/src/store.rs
 11348 file ui/src/ui.rs
 1747 file ui/src/ui/analysis.rs
@@ -73,7 +73,6 @@
 141 fn ui/src/scpi.rs Scpi::decode_cmd
 112 fn ui/src/scpi.rs Scpi::display_cmd
 68 fn ui/src/scpi.rs Scpi::dvm_cmd
-1467 fn ui/src/scpi.rs Scpi::exec_cmd
 78 fn ui/src/scpi.rs Scpi::hist_cmd
 71 fn ui/src/scpi.rs Scpi::la_cmd
 104 fn ui/src/scpi.rs Scpi::mask_cmd

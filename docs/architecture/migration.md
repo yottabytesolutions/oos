@@ -464,6 +464,12 @@ Moves have near-zero production delta. Repeat unit load/soak against M12 evidenc
 
 ## Status
 
+- 2026-11-17: E1b extracts SCPI branches into subsystem functions, preserving interpreter state,
+  branch operations and reply literals. Host UI tests pass in debug and `test-release`, including
+  `ui/lint.rs`, scripts, SCPI sessions/aliases/errors, goldens and soak. The fast gate and Clippy pass;
+  moves use `cargo xtask ratchet --move`. Production delta: +471 lines of routing/extraction scaffolding.
+  Full integrated gate and independent review remain pending. No hardware run is claimed.
+
 - 2026-11-17: review fixes restore M3..M11 packages, add move-only dispatch and wake-intake prerequisites,
   specify bounded atomic remote/app handoffs and split menu read/write work. Implementation remains open.
 - 2026-11-17: source audit recorded implemented core change handling, field generation, generic Worker,

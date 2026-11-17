@@ -6,19 +6,8 @@
 //! 20-byte header, u32 payload length, u32 crc32 (zlib/IEEE) of the payload, payload.
 //! Only `std::fs::read` is used here: nothing under /rigol/data is ever created or modified.
 
+use crate::crc32;
 use crate::dho::adc::CalAdc;
-
-/// CRC-32 (IEEE 802.3, reflected, as zlib.crc32).
-pub fn crc32(d: &[u8]) -> u32 {
-    let mut c = 0xffff_ffffu32;
-    for &b in d {
-        c ^= b as u32;
-        for _ in 0..8 {
-            c = if c & 1 != 0 { (c >> 1) ^ 0xedb8_8320 } else { c >> 1 };
-        }
-    }
-    !c
-}
 
 /// Payload of a cal container if the length and the crc32 are right.
 pub fn payload(d: &[u8]) -> Option<&[u8]> {
@@ -133,7 +122,6 @@ mod tests {
 
     #[test]
     fn crc_and_ddr_payload() {
-        assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
         let mut p = vec![0u8; 48];
         for (k, v) in [0x12u32, 0x4d6, 0x8a2, 0x924, 0x1ef, 0].iter().enumerate() {
             p[8 * k..8 * k + 4].copy_from_slice(&v.to_le_bytes());

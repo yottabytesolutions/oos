@@ -7,11 +7,10 @@
 //! data partition), atomically (temporary file, fsync, rename; the previous file kept as .bak). Paths under /rigol
 //! are refused.
 
+use crate::crc32;
+
 /// Directory of OOS's own calibration files.
 pub const OOS_CAL_DIR: &str = "/oos/cal";
-
-/// zlib / IEEE 802.3 CRC32 (also used by the neutral part of the crate).
-pub use crate::crc32;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {

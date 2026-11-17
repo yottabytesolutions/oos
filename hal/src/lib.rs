@@ -23,14 +23,5 @@ pub mod wlan;
 
 pub mod dho;
 
-/// zlib / IEEE 802.3 CRC32.
-pub fn crc32(d: &[u8]) -> u32 {
-    let mut c = !0u32;
-    for &b in d {
-        c ^= b as u32;
-        for _ in 0..8 {
-            c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
-        }
-    }
-    !c
-}
+mod crc;
+pub use crc::crc32;

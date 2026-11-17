@@ -111,11 +111,7 @@ pub fn sha1(parts: &[&[u8]]) -> [u8; 20] {
 
 /// Lower-case hex of a byte string.
 pub fn hex(b: &[u8]) -> String {
-    let mut s = String::with_capacity(2 * b.len());
-    for x in b {
-        s.push_str(&format!("{:02x}", x));
-    }
-    s
+    b.iter().map(|x| format!("{:02x}", x)).collect()
 }
 
 /// Bytes from hex (even length, no separators); None on anything else.

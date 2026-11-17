@@ -438,7 +438,8 @@ file; a renamed or moved item counts as new unless `moves.txt` lists it.
 
 Each release strives for less production code than the one before
 ([ADR 0035](adr/process/0035-each-release-has-less-production-code.md)). Production code is the Rust of the crates
-built for the scope without blank lines, comments, test code and `@generated` files. `xtask` and the shell and Python
+built for the scope and this project's C (per directory; the vendored XDMA driver left out), without blank lines,
+comments, test code and `@generated` files. `xtask` and the shell and Python
 scripts are reported beside it as tooling.
 
 ```sh

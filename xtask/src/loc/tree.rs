@@ -21,11 +21,11 @@ pub fn files(root: &Path, rev: Option<&str>) -> Result<Vec<String>, String> {
     Ok(git(root, args)?.split('\0').filter(|s| !s.is_empty()).map(String::from).collect())
 }
 
-/// The files a count reads: Rust sources, manifests, the lock file and scripts. Not the toolchain pin: cargo in the
+/// The files a count reads: Rust and C sources, manifests, the lock file and scripts. Not the toolchain pin: cargo in the
 /// extracted tree runs with the current toolchain instead of installing an old one.
 pub fn needed(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
-    let kept = [".rs", ".toml", ".lock", ".sh", ".py"];
+    let kept = [".rs", ".toml", ".lock", ".sh", ".py", ".c", ".h"];
     name != "rust-toolchain.toml" && (!name.contains('.') || kept.iter().any(|e| name.ends_with(e)))
 }
 

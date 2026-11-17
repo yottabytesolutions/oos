@@ -14,8 +14,8 @@ files, functions and structs one by one, so ten new files of 300 lines pass it.
 The file limit also counted comment lines. A file near 400 lines lost room for each line of documentation, so the
 limit pushed against the comments that keep code legible.
 
-On 2026-11-17 (`cargo xtask loc` on `ci/t0095-stabilize-main`) the production code is 111350 lines: core 7070,
-dsp 14120, fpgad 2658, hal 14419, ui 73083. Upstream v0.1.13 had 82085.
+On 2026-11-17 (`cargo xtask loc` on `main` after #6) the production code is 112519 lines: core 7070, dsp 14120,
+fpgad 2658, hal 14402, ui 72990, and the C in gpu 909 and tools/hw 370. Upstream v0.1.13 had 83327.
 
 ## Decision
 
@@ -24,12 +24,15 @@ dsp 14120, fpgad 2658, hal 14419, ui 73083. Upstream v0.1.13 had 82085.
 - A release that grows production code says why in a paragraph that starts with `Code growth:`, in the release tag's
   annotation or in its `CHANGELOG.md` section. The release workflow fails without it.
 - Production code lines are the lines with a Rust token on them in the crates built for the scope (`target: true` in
-  `CRATES`, `xtask/src/repo.rs`), outside test code. Not counted:
+  `CRATES`, `xtask/src/repo.rs`), outside test code, and the lines of this project's C (`gpu/`, `tools/hw/`; both
+  run on the scope) that hold more than comments, per directory. Not counted:
   - blank lines, comments and doc comments;
-  - test code: `#[cfg(test)]` items and `#[test]` functions with their attributes, files below a `#[cfg(test)]`
-    module, and the test, bench and example targets (`tests/`, `benches/`, `examples/`);
+  - test code: items, fields, variants, statements, match arms and field values under `#[test]` or a `cfg` that
+    requires `test`, with their attributes; files below a `#[cfg(test)]` module; the test, bench and example
+    targets (`tests/`, `benches/`, `examples/`);
   - generated files: a file with `@generated` in its first five lines;
-  - golden pictures, fixtures and vendored data: they are no Rust modules, so the count never reaches them.
+  - golden pictures, fixtures and vendored data: they are no Rust modules, so the count never reaches them;
+  - vendored C: the Xilinx XDMA driver in `kernel/modules/xdma/`.
 - `cargo xtask loc` prints the count per crate and in total. Beside it, as tooling: `xtask` (host-only Rust) and the
   shell and Python lines (neither blank nor a `#` comment) outside test directories and test files. Tooling is
   reported, not held to the goal. `--json` gives the same numbers for a script, `--compare <git-ref>` the change
@@ -60,8 +63,7 @@ dsp 14120, fpgad 2658, hal 14419, ui 73083. Upstream v0.1.13 had 82085.
 ## Consequences
 
 - The release notes carry the size of the product and its change; growth needs a reason a reader can judge.
-- Shell scripts that run on the scope (`rootfs/`) are reported as tooling with the other scripts. C code (`gpu/`)
-  is not counted.
+- Shell scripts that run on the scope (`rootfs/`) are reported as tooling with the other scripts.
 - Python docstrings are counted as Python lines; only `#` comments are left out.
 - To measure the releases before the root workspace (up to v0.1.13), `cargo xtask loc` reads each top-level crate as
   its own workspace and follows a plain `#[path]`; the gate still refuses `#[path]`.

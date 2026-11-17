@@ -23,7 +23,6 @@
 89 fn hal/src/model.rs Platform::build_unit
 64 fn hal/src/update/fdt.rs Fdt::to_bytes
 117 fn hal/src/update/first.rs first_install
-66 fn hal/src/update/inflate.rs inflate
 123 fn hal/src/update/mod.rs install
 74 fn hal/src/update/mod.rs kexec_stage
 65 fn hal/src/update/pkg.rs verify_header

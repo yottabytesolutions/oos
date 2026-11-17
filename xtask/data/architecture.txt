@@ -3,7 +3,7 @@
 # Crate dependencies, any kind (normal, build, dev): crate <package> -> <allowed packages...>
 # A package without a line fails, so a new crate or dependency is a decision written here.
 crate oos-dsp ->
-crate oos-hal -> libc
+crate oos-hal -> libc ed25519-dalek miniz_oxide sha2 curve25519-dalek
 # oos-core comes with the migration (ADR 0014, architecture.md "Enforcement")
 crate oos-core -> oos-dsp
 crate oos-ui -> libc oos-hal oos-dsp oos-core

@@ -27,4 +27,10 @@ undocumented_unsafe_blocks = "warn"
 missing_safety_doc = "warn"
 
 [dependencies]
+ed25519-dalek = { version = "2.2", default-features = false }
+miniz_oxide = { version = "0.8", default-features = false }
+sha2 = { version = "0.10", default-features = false }
 libc = "0.2"
+
+[dev-dependencies]
+curve25519-dalek = { version = "4.1", default-features = false }

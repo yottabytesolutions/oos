@@ -1,18 +1,14 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! WLAN through a USB stick (docs/wlan.md): the client side of wpa_supplicant's control socket and the parsers
-//! of its answers. `/bin/oos-wlan` loads the driver and runs wpa_supplicant and DHCP; this module asks it for networks
-//! and tells it which one to join. The configuration is wpa_supplicant's own file, written by its SAVE_CONFIG.
+//! WLAN through a USB stick (docs/wlan.md): wpa_supplicant response parsers and key derivation.
+//! `/bin/oos-wlan` runs the driver, supplicant and DHCP; the application's netio adapter owns control IO.
+//! The configuration is wpa_supplicant's own file, written by its SAVE_CONFIG.
 //!
 //! Only the hexadecimal forms reach wpa_supplicant (SSID bytes, the 256-bit key derived here), so no name or password
 //! can break out of a command or of the saved file, and the password itself is never stored.
 
-use crate::update::hash::{hex, sha1};
-use std::io;
-use std::os::unix::net::UnixDatagram;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use crate::update::hash::sha1;
 
 /// The interface the stick's driver creates.
 pub const IFACE: &str = "wlan0";
@@ -236,116 +232,10 @@ pub fn pass_problem(p: &str) -> Option<String> {
     None
 }
 
-/// One open control connection.
-pub struct Ctrl {
-    sock: UnixDatagram,
-    own: PathBuf,
-}
-
-impl Drop for Ctrl {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.own);
-    }
-}
-
-impl Ctrl {
-    pub fn open(path: &Path) -> io::Result<Ctrl> {
-        // wpa_supplicant answers to the sender's address, so this end needs a name of its own
-        let own = std::env::temp_dir().join(format!("oos-wlan-{}.sock", std::process::id()));
-        let _ = std::fs::remove_file(&own);
-        let sock = UnixDatagram::bind(&own)?;
-        let c = Ctrl { sock, own };
-        c.sock.connect(path)?;
-        c.sock.set_read_timeout(Some(Duration::from_secs(5)))?;
-        c.sock.set_write_timeout(Some(Duration::from_secs(5)))?;
-        Ok(c)
-    }
-
-    /// One command and its answer.
-    pub fn ask(&self, cmd: &str) -> io::Result<String> {
-        self.sock.send(cmd.as_bytes())?;
-        let mut b = vec![0u8; 16 * 1024];
-        let n = self.sock.recv(&mut b)?;
-        Ok(String::from_utf8_lossy(&b[..n]).into_owned())
-    }
-
-    /// A command that answers OK.
-    fn ok(&self, cmd: &str) -> Result<(), String> {
-        let word = cmd.split(' ').next().unwrap_or(cmd);
-        match self.ask(cmd) {
-            Ok(a) if a.trim() == "OK" => Ok(()),
-            Ok(a) => Err(format!("{}: {}", word, a.trim())),
-            Err(e) => Err(format!("{}: {}", word, e)),
-        }
-    }
-
-    pub fn status(&self) -> io::Result<Status> {
-        self.ask("STATUS").map(|t| parse_status(&t))
-    }
-
-    pub fn signal(&self) -> Option<i32> {
-        parse_signal(&self.ask("SIGNAL_POLL").ok()?)
-    }
-
-    /// Starts a scan (a running one is as good as a new one).
-    pub fn scan(&self) -> Result<(), String> {
-        match self.ask("SCAN") {
-            Ok(a) if matches!(a.trim(), "OK" | "FAIL-BUSY") => Ok(()),
-            Ok(a) => Err(format!("SCAN: {}", a.trim())),
-            Err(e) => Err(format!("SCAN: {}", e)),
-        }
-    }
-
-    pub fn scan_results(&self) -> io::Result<Vec<Net>> {
-        self.ask("SCAN_RESULTS").map(|t| parse_scan(&t))
-    }
-
-    pub fn networks(&self) -> io::Result<Vec<Saved>> {
-        self.ask("LIST_NETWORKS").map(|t| parse_networks(&t))
-    }
-
-    /// A new network, not saved yet and not selected; `key` None = open. Also found hidden.
-    pub fn add(&self, ssid: &[u8], key: Option<&[u8; 32]>) -> Result<u32, String> {
-        let a = self.ask("ADD_NETWORK").map_err(|e| e.to_string())?;
-        let id: u32 = a.trim().parse().map_err(|_| format!("ADD_NETWORK: {}", a.trim()))?;
-        let set = || -> Result<(), String> {
-            self.ok(&format!("SET_NETWORK {} ssid {}", id, hex(ssid)))?;
-            self.ok(&format!("SET_NETWORK {} scan_ssid 1", id))?;
-            match key {
-                Some(k) => self.ok(&format!("SET_NETWORK {} psk {}", id, hex(k))),
-                None => self.ok(&format!("SET_NETWORK {} key_mgmt NONE", id)),
-            }
-        };
-        if let Err(e) = set() {
-            let _ = self.remove(id);
-            return Err(e);
-        }
-        Ok(id)
-    }
-
-    /// Joins this network now (the others are left alone until `enable_all`).
-    pub fn select(&self, id: u32) -> Result<(), String> {
-        self.ok(&format!("SELECT_NETWORK {}", id))
-    }
-
-    /// After a selection: every saved network may be joined again, this one stays if it is connected.
-    pub fn enable_all(&self) -> Result<(), String> {
-        self.ok("ENABLE_NETWORK all")
-    }
-
-    pub fn remove(&self, id: u32) -> Result<(), String> {
-        self.ok(&format!("REMOVE_NETWORK {}", id))
-    }
-
-    /// Writes the networks to wpa_supplicant's file.
-    pub fn save(&self) -> Result<(), String> {
-        self.ok("SAVE_CONFIG")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::update::hash::hex;
 
     /// IEEE 802.11i H.4.3 test vectors.
     #[test]
@@ -421,37 +311,5 @@ mod tests {
         assert!(pass_problem(&"x".repeat(63)).is_none());
         assert!(pass_problem(&"x".repeat(64)).is_some());
         assert!(pass_problem("passwörter").is_some());
-    }
-
-    /// A fake wpa_supplicant on a socket: the commands a join sends, with only hex in them.
-    #[test]
-    fn join_commands() {
-        let dir = std::env::temp_dir().join(format!("oos-wlan-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("wlan0");
-        let srv = UnixDatagram::bind(&p).unwrap();
-        let t = std::thread::spawn(move || {
-            let mut seen = Vec::new();
-            let mut b = [0u8; 512];
-            loop {
-                let (n, from) = srv.recv_from(&mut b).unwrap();
-                let c = String::from_utf8_lossy(&b[..n]).into_owned();
-                let a = if c == "ADD_NETWORK" { "3\n" } else { "OK\n" };
-                srv.send_to(a.as_bytes(), from.as_pathname().unwrap()).unwrap();
-                let end = c == "SAVE_CONFIG";
-                seen.push(c);
-                if end {
-                    return seen;
-                }
-            }
-        });
-        let c = Ctrl::open(&p).unwrap();
-        let id = c.add(b"a b\"\n", Some(&[0xab; 32])).unwrap();
-        c.select(id).unwrap();
-        c.save().unwrap();
-        let seen = t.join().unwrap();
-        assert_eq!(seen[1], "SET_NETWORK 3 ssid 612062220a");
-        assert_eq!(seen[3], format!("SET_NETWORK 3 psk {}", "ab".repeat(32)));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

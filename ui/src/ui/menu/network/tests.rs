@@ -2,6 +2,7 @@
 
 use super::super::small_tests::{demo, read_rows, strings};
 use super::*;
+use crate::netport::wlan::Link;
 
 #[test]
 fn network_rows_and_picker_contexts_keep_their_read_contracts() {
@@ -40,15 +41,14 @@ fn network_rows_and_picker_contexts_keep_their_read_contracts() {
     assert_eq!(u.value(NetEth), "192.0.2.1 · 100 Mbit/s");
     u.host = host::Host::headless();
     assert_eq!(u.value(NetEth), "192.0.2.1 · no cable");
-    u.wlan.link.stick = true;
+    u.wlan.link = Link::new(true, false, Default::default(), None, vec![]);
     assert_eq!(u.value(NetWlan), "stick found, starting");
-    u.wlan.link.ctrl = true;
-    u.wlan.link.status.state = "DISCONNECTED".into();
+    let status = oos_hal::wlan::parse_status("wpa_state=DISCONNECTED\n");
+    u.wlan.link = Link::new(true, true, status, None, vec![]);
     assert_eq!(u.value(NetWlan), "not connected (disconnected)");
-    u.wlan.link.status.state = "COMPLETED".into();
-    u.wlan.link.status.ssid = b"Example".to_vec();
+    u.wlan.link = wlan::tests_link("Example", "");
     assert_eq!(u.value(NetWlan), "Example · waiting for an address");
-    u.wlan.link.status.ip = "192.0.2.2".into();
+    u.wlan.link = wlan::tests_link("Example", "192.0.2.2");
     assert_eq!(u.value(NetWlan), "Example · 192.0.2.2");
     assert_eq!(
         u.menu_items(MenuId::Network),
@@ -72,14 +72,10 @@ fn wlan_context_options_keep_scan_and_saved_network_order() {
         u.options(Item::WlanNet),
         ["Example 0  -40 dBm · open", "Example 1  -41 dBm", "Example 2  -42 dBm · WPA3", "Other network ..."]
     );
-    for i in 0..20 {
-        u.wlan.link.saved.push(Saved {
-            id: i,
-            ssid: format!("Example {i}").into_bytes(),
-            temp_disabled: false,
-            disabled: false,
-        });
-    }
+    let saved = (0..20)
+        .map(|i| Saved { id: i, ssid: format!("Example {i}").into_bytes(), temp_disabled: false, disabled: false })
+        .collect();
+    u.wlan.link = Link::new(false, false, Default::default(), None, saved);
     assert_eq!(u.options(Item::WlanForgetNet), (0..18).map(|i| format!("Example {i}")).collect::<Vec<_>>());
     assert_eq!(
         u.options(Item::WlanNet),

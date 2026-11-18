@@ -155,7 +155,30 @@ closed, and disconnect releases a slot for re-admission. Injected-time fixtures 
 30 s total output deadlines, release credits/reservations on cancellation and preserve bounded request,
 reply, snapshot and upload admission. The explicit loopback multicast responder test passes.
 
+WLAN control (#206): replace the dedicated control thread with a lazy bounded owned port on the shared netio
+runtime. Preserve scans, status polling, join deadlines, network cleanup and SAVE_CONFIG ordering. Move socket
+operations out of HAL, retain its parsers and key derivation, and keep filesystem work and PBKDF2 off the executor.
+Test timers with injected time, preserve menu pictures and report production LOC and same-profile ARM binary deltas.
+Additional reserved paths: `hal/src/wlan.rs`, `ui/src/ui/wlan.rs`, `ui/src/netio/wlan.rs`, `ui/src/netio/wlan/`,
+`ui/src/netport/wlan.rs`, `docs/wlan.md` and affected generated ratchets.
+
 ## Status
+
+- 2026-11-18: #206 implementation ready for independent review and batch integration. `cargo xtask check --fast`
+  exited 0: `partial gate passed (not done): 12 steps in 14 s`. The focused `clippy` step exited 0. Initial fast
+  failures in `size` and `architecture` were corrected; disk sync is supplied through the application port.
+  `cargo test -p oos-hal -p oos-ui` and the same command with `--profile test-release` exited 0, including unchanged
+  golden checks. Injected-time fixtures cover scan retry, join timeout and failure cleanup; socket fixtures cover
+  link changes, save ordering, backpressure, bounded job allocations and other IO progressing during a pending reply.
+- 2026-11-18: #206 measurements against base `dfd5892eab990dcf8bf419996f0e115d77ef8d1d`: production LOC +147
+  (UI +234, HAL -87). Identical `cargo build --release -p oos-ui --target aarch64-unknown-linux-musl` profiles:
+  7,368,984 -> 7,423,904 bytes, +54,920 (+0.745%). Removes the dedicated WLAN thread; no new dependency or unsafe code.
+  `cargo xtask ratchet` generated only the touched WLAN size and HAL debug-lint reductions; both are retained.
+- 2026-11-18: #206 privacy: added-line and new-file scan using the repository scanner found 0 findings. The whole-tree
+  audit exits 1 with 115 existing findings; all flagged lines are already present in the base. No unit or simulated
+  radio run was performed. Independent review and the coordinator's full integration gate remain open.
+
+- 2026-11-18: #206 assigned on `refactor/206-wlan-async`; plan above. Host implementation and checks in progress; no unit access.
 
 - 2026-11-18: PR #201 conflict-label and unsafe-placement fixes reserve the full u32
   conflict suffix budget at registration and move the unchanged LAN walk into HAL system.

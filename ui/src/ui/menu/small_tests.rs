@@ -279,7 +279,7 @@ pub(super) fn navigation(menu: MenuId, item: Item, change: fn(&mut Ui, usize)) {
             u.offline = offline;
             u.usb = offline;
             u.sys.remote_ssh = offline;
-            u.wlan.link.stick = offline;
+            u.wlan.link = crate::netport::wlan::Link::new(offline, false, Default::default(), None, vec![]);
             assert_eq!(u.menu_items(menu), expected);
         }
         u.open_menu(MenuId::Main);

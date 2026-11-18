@@ -203,8 +203,9 @@ ADR 0023 keeps non-blocking IO behind ports, preferably on one current-thread to
 The current Cargo features are rt, net, time, sync, macros and io-util. Raw SCPI, VXI-11, HiSLIP and HTTP/MCP
 use the netio executor. mDNS uses its crate-owned daemon behind a netio adapter (ADR 0023).
 The [IO layer design](io.md) specifies connection actors, one bounded frame inbox, oneshot replies,
-byte semaphores and cancellation. NTP and the update check remain later migration work.
-WLAN #219 is redone as a device task after the core cutover. USB bulk stays synchronous on its generator worker.
+byte semaphores and cancellation in one coherent replacement PR, including all transport cutovers, final deletion
+and the production-LOC check. NTP and the update check remain later migration work.
+WLAN #219 is redone as a device task after that replacement. USB bulk stays synchronous on its generator worker.
 Blocking filesystem, usbfs and process calls never run on the executor; use bounded blocking adapters.
 CPU work stays on CPU workers.
 
@@ -265,20 +266,27 @@ with owned application operations and opaque completions.
 
 - Each connection task owns its socket and one exchange through output completion. It publishes typed work to
   one bounded mpsc, with a unique oneshot reply. Program messages stay whole; pipelined bytes remain bounded.
+  VXI-11 completes one RPC at a time but accepted programs belong to link actors, with at most one submitted
+  program plus one side-effect-free preflight per link and 16 links server-wide; see the
+  [link bounds](io.md#retained-sources-and-vxi-11-plans).
   Cancellation drops the request's completion; there is no reply router or reusable connection id to retarget.
 - One frame-owned Scpi keeps shared `wav_src`, `wav_fmt`, error queue and ESR across connections. Preserve that
-  shared behaviour; do not silently make it per-client. Execute admitted program messages in FIFO admission order
-  without interleaving their commands, including continuations. `:WAV:SOUR;:WAV:DATA?` captures its own source
-  and format before another program can mutate them. Waiting programs retain identity/snapshots, not socket borrows.
-- Acquire byte permits before dispatch and carry them with the reply until written. Never split permits, park a
-  reply or rerun a setter to retry output. Bounded encoding windows prevent a stalled large reply from consuming
-  the whole budget. Retained source data has its own admission bound in the memory plan.
+  shared behaviour; do not silently make it per-client. Start admitted programs in FIFO execution-publication order
+  and serialize eligible turns. Pending OPC continuations are bounded per client/link and do not block the inbox
+  or HTTP. Save each program's cursor, results, operation identity and waveform selection/format across a yield;
+  its tail uses that saved selection while shared defaults reflect other clients' executed commands.
+- Acquire byte permits before dispatch. One unsplit window permit has shared lifetime ownership across reply,
+  writer, chunks and encoding jobs; release it only after the final write or cancellation and encoder cleanup.
+  Never park a reply or rerun a setter to retry output. Acquire channel space before scheduling bounded chunk
+  work, so stalled readers cannot occupy CPU workers. Retained sources/plans have the derived memory-plan
+  bound and pre-side-effect admission in [IO bounds](io.md#retained-sources-and-vxi-11-plans).
 - Per intake, visit at most 8 requests/continuations; stop taking work after 0.5 ms, checked between interpreter
-  turns. A turn is not preempted. Preserve program ownership when yielding; start programs in FIFO publication
-  order. Quota/ordering tests inject time; large-message/indivisible-command cost and due-frame latency
-  are checked by perf/unit evidence before rollout.
+  turns. A turn is not preempted. Alternate queued requests with pending owners in round-robin order, preserving
+  the cursor across quota yields. Preflights count as turns too. Quota/ordering tests inject time; large-message
+  and indivisible-command cost and due-frame latency are checked by perf/unit evidence before rollout.
 - IO timers enforce the existing 2 s without send progress and 30 s total send limits; timeout closes the
-  connection and releases its admitted work, reply bytes and snapshots. No frame-thread blocking write or timeout remains.
+  connection and cancels its admitted work. Release reply bytes and snapshots after encoder cleanup;
+  the frame never waits for it. No frame-thread blocking write or timeout remains.
 
 RemoteRequest also covers non-SCPI application operations: UiState, ImportWaveform (slot/name plus bounded owned
 payload handle), ExportWaveform (CSV/binary), ExportLogicCsv, Stamp, UpdateStatus and Cmd (ordered command list
@@ -329,7 +337,9 @@ Every target buffer and queue is bounded in bytes as well as count; the watchdog
 Current `RESP_MAX` is 64 MiB and `MAX_CLIENTS` is 8: per-client caps alone allow 512 MiB of replies,
 before acquisition/maps, against a 768 MiB soft watchdog. M15a's 64 MiB budget is global only to raw SCPI;
 VXI-11, HiSLIP and HTTP currently use separate budgets. The target [IO bounds](io.md#byte-bounds-without-blocking-another-client)
-replace full-response reservations with semaphore-backed windows and separately admitted immutable sources.
+replace full-response reservations with semaphore-backed windows and separately admitted immutable sources/plans.
+The [retained-data limit](io.md#retained-sources-and-vxi-11-plans) derives their global capacity from both
+`Config.mem_budget` and the remaining soft-watchdog envelope, with ownership acquired before side effects.
 Reserve before side effects; never duplicate unaccounted capacity or hold the whole pool for a stalled socket.
 Reply bytes are a separate class of the memory plan, not eight independent per-client allowances.
 The admission plan includes request buffers (raw MAX_LINE is 4 MiB), snapshot copies, encoder scratch and the
@@ -419,15 +429,15 @@ Every owner that keeps acquired data past its step has a byte limit and a releas
 | pending measure job | its own copy of one raw frame range per channel | a newer record replaces it, or a `stats_gen` or epoch change discards it |
 | ring chunk pins | 1 sweep, in-flight work only, at most one step | the step ends; longer holders copy |
 | history and segments | `HISTORY_MAX` screen records, no raw | the oldest entry drops out; the `history` class clears it |
-| waveform snapshots held by remote listeners | its own copy, one per connection, 2 over all connections | the answer is sent, the connection closes, or the send times out |
+| remote source snapshots and VXI-11 plans | immutable leases/copies under the [global retained bound](io.md#retained-sources-and-vxi-11-plans); at most 16 entries per VXI-11 link | last plan, unread suffix and encoding transfer release ownership |
 | picture snapshot leases (readback buffers at the encoder) | 2 x one picture (2.46 MB on the panel, 8.3 MB on HDMI) | the encoder returns the buffer; after 1 s the next snapshot is refused |
-| remote replies and output chunks | 64 MiB global capacity, counted once through every owner | send/completion, disconnect or IO timeout |
-| remote connections | 8 over SCPI, VXI-11, HTTP and MCP together | a ninth is refused at accept |
-| `RemoteRequest` | 1 in flight per connection, 8 globally; payloads bounded by route and total admission plan | reply sent or no-reply completion; disconnect cancels |
+| remote replies and output chunks | 64 MiB global window capacity, counted once through every owner | final write or cancellation, after all encoder buffers are released |
+| remote connections | 8 TCP per instrument service (HiSLIP counts both channels), 18 HTTP sessions and one UDP actor; 16 VXI-11 links server-wide | connection/link admission is released after pending completions and encoders stop |
+| `RemoteRequest` | one 32-entry frame queue; 1 queued/active per connection/session except VXI-11, 1 execution plus 1 preflight per link; payloads bounded by route and admission | completion or cancellation; VXI-11 accepted entries remain link-owned through later reads |
 | export (CSV, PNG, setup) | one at a time, from its own copy | the file is written |
 
-- A slow waveform client uses the IO-side 2 s stall/30 s total send limits. Closing releases the snapshot;
-  its owned copy never pins a DMA buffer.
+- A slow waveform client uses the IO-side 2 s stall/30 s total send limits. Closing cancels encoding;
+  release the snapshot only after the last encoder holder stops. Long-lived copies never pin a DMA buffer.
 - The sum of these limits is the retained term of the budget arithmetic.
 
 ### Queues
@@ -446,8 +456,8 @@ pipeline capacity.
 | segment read-back | 2 batches of segments, `segments` class | back-pressure: the read-back waits for space. Safe because acquisition is stopped during read-back |
 | `MeasRead` | latest-value cell per kind | replaced by the newer read |
 | `AcqCmd` | 16 | the sender gets an error; commands are never dropped silently; a superseded command is acknowledged as `Superseded` |
-| `RemoteRequest` | credit 1 per connection, 8 globally; raw text <= 4 MiB each, other bodies use route limits and admission bytes | stop admission/reading until credit and bytes are available; HTTP may return 503 before admission; never silently drop an admitted program |
-| remote replies | 64 MiB globally including parked replies and chunk capacity; <= RESP_MAX per program | reserve before execution; frame parks a completed reply on a full channel and retries nonblocking; IO sends chunks in order and closes on 2 s stall/30 s total timeout |
+| `RemoteRequest` | one 32-entry frame queue; 1 queued/active per connection/session except VXI-11, 1 execution plus 1 preflight per link; raw text <= 4 MiB, other bodies use route limits | acquire bytes before queue space; stop reading under backpressure; HTTP may return 503 before admission; VXI-11 rejects unaccepted writes with error 9/size 0 |
+| remote replies | 64 MiB global windows including chunk capacity; <= RESP_MAX per program; sources/plans under [derived retained bounds](io.md#retained-sources-and-vxi-11-plans) | admit before side effects; one oneshot completion, no parking; acquire channel space before chunk work; IO closes on 2 s stall/30 s total timeout and retains ownership through encoder cleanup |
 | `InputEvent` | 64 | knob steps coalesce (relative steps add up); keys are never dropped |
 | measure jobs | one running, one pending | the pending job is replaced by a newer record |
 

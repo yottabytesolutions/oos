@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(u.wfm_total, 0);
         assert!(u.last[0].is_none());
         assert!(u.m.ch.iter().all(|c| !c.on));
-        assert!(u.ph.map.iter().all(|m| m.iter().all(|&h| h == 0)));
+        assert!(u.ph.maps().iter().all(|m| m.iter().all(|&h| h == 0)));
         assert_eq!(u.run_caption().0, "STOP");
         let r = Ui::RUN_PILL;
         u.tap(r.x + 8, r.y + 8);

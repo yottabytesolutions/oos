@@ -14,6 +14,8 @@
 
 mod process;
 pub mod recovery;
+#[cfg(any(target_os = "linux", test))]
+mod upload;
 use crate::gfx::{Canvas, Rect};
 use crate::ui::TraceJob;
 use crate::wave::Phosphor;
@@ -152,9 +154,9 @@ fn differ(a: &[u8], b: &[u8]) -> bool {
     words != 0 || ra != rb
 }
 
-fn bytes<T>(v: &T) -> &[u8] {
-    // SAFETY: plain #[repr(C)] structs of integers, read as their bytes
-    unsafe { std::slice::from_raw_parts(v as *const T as *const u8, std::mem::size_of::<T>()) }
+fn bytes<T: ?Sized>(v: &T) -> &[u8] {
+    // SAFETY: callers pass plain #[repr(C)] integer messages or integer slices, with no uninitialized bytes
+    unsafe { std::slice::from_raw_parts(v as *const T as *const u8, std::mem::size_of_val(v)) }
 }
 
 /// A rectangle of a layer pair put into a rectangle of the target, with the traces of its plot windows.
@@ -218,6 +220,7 @@ mod imp {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
+    use upload::Source::{self, Channel, Pixels};
 
     pub struct Gpu {
         child: std::process::Child,
@@ -228,7 +231,7 @@ mod imp {
         targets: [Option<(i32, i32, bool)>; 8],
         /// the blocks of the last frame in each half of the arena (the panel's, the monitor's): while a frame has
         /// the same blocks, only the rows that changed are copied and uploaded
-        blocks: [Vec<(usize, usize)>; 2],
+        blocks: [Vec<upload::Block>; 2],
         /// the first of the monitor's targets: the panel's are below it (`monitor_targets_from`)
         monitor_from: usize,
         /// the fonts in the helper's glyph atlas (their alpha bytes, the byte of the atlas they start at) and its
@@ -491,57 +494,39 @@ mod imp {
                     img0 += r.img.len() as u32;
                 }
             }
-            let end = tail;
-            let mut blocks: Vec<(usize, usize)> = Vec::new();
-            // the blocks so far lie where they lay in the last frame of this half
-            let same = |blocks: &Vec<(usize, usize)>, prev: &Vec<(usize, usize)>| {
-                prev.len() >= blocks.len() && prev[..blocks.len()] == blocks[..]
-            };
+            let mut blocks = Vec::new();
+            let mut known = true;
             let prev = std::mem::take(&mut self.blocks[half]);
-            // a block of `rows` rows of `row` bytes: the rows that differ from the arena's copy are copied; the band
-            // of changed rows comes back (all of them for a new block)
-            let mut put = |src: *const u8,
-                           row: usize,
-                           rows: usize,
-                           blocks: &mut Vec<(usize, usize)>|
-             -> Result<(u32, i32, i32), String> {
+            // Copy the source's changed rows into the arena and return their band (all rows for a new block).
+            let mut put = |source: Source<'_>, blocks: &mut Vec<upload::Block>| -> Result<(u32, i32, i32), String> {
                 at = (at + 63) & !63;
-                let len = row * rows;
-                if at + len > end {
+                let len = source.bytes().len();
+                if at + len > tail {
                     return Err("frame too large for the arena".into());
                 }
-                blocks.push((at, len));
-                let known = same(blocks, &prev);
-                let (mut y0, mut y1) = (rows as i32, 0);
-                for r in 0..rows {
-                    // SAFETY: inside the mapping; the source has `rows` rows of `row` readable bytes
-                    let (a, b) = unsafe {
-                        (
-                            std::slice::from_raw_parts(base.add(at + r * row), row),
-                            std::slice::from_raw_parts(src.add(r * row), row),
-                        )
-                    };
-                    if !known || differ(a, b) {
-                        unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), base.add(at + r * row), row) };
-                        y0 = y0.min(r as i32);
-                        y1 = r as i32 + 1;
-                    }
-                }
+                let previous = prev.get(blocks.len());
+                known &= previous.is_some_and(|block| block.matches(at, len));
+                // SAFETY: the block fits the mapping.
+                // collect completed the previous frame using this output's half before submit.
+                let dst = unsafe { std::slice::from_raw_parts_mut(base.add(at), len) };
+                let (block, band) = upload::Block::publish(at, dst, source, previous.filter(|_| known));
+                blocks.push(block);
                 let o = at as u32;
                 at += len;
-                Ok((o, y0, y1.max(y0)))
+                Ok((o, band.start as i32, band.end as i32))
             };
             for (qi, q) in quads.iter().enumerate() {
-                let mut layer = |c: Option<&Canvas>,
-                                 blocks: &mut Vec<(usize, usize)>|
-                 -> Result<(u32, i32, i32), String> {
-                    match c {
-                        Some(c) if c.rec.is_some() => Ok((0, 0, 0)),
-                        Some(c) if !q.reuse => put(c.px.as_ptr() as *const u8, c.w as usize * 4, c.h as usize, blocks),
-                        Some(_) => Ok((0, 0, 0)),
-                        None => Ok((NONE, 0, 0)),
-                    }
-                };
+                let mut layer =
+                    |c: Option<&Canvas>, blocks: &mut Vec<upload::Block>| -> Result<(u32, i32, i32), String> {
+                        match c {
+                            Some(c) if c.rec.is_some() => Ok((0, 0, 0)),
+                            Some(c) if !q.reuse => {
+                                put(Pixels { bytes: bytes(c.px.as_slice()), row_bytes: c.w as usize * 4 }, blocks)
+                            }
+                            Some(_) => Ok((0, 0, 0)),
+                            None => Ok((NONE, 0, 0)),
+                        }
+                    };
                 let (uo, uy0, uy1) = layer(q.under, &mut blocks)?;
                 let (oo, oy0, oy1) = layer(q.over, &mut blocks)?;
                 let first = f.n_jobs;
@@ -567,7 +552,12 @@ mod imp {
                     };
                     for c in 0..NCH {
                         if job.show[c] && !q.reuse {
-                            let (o, y0, y1) = put(job.count_map(ph, c).as_ptr().cast(), ph.w * 2, ph.h, &mut blocks)?;
+                            let source = if ph.is_wide() {
+                                Pixels { bytes: bytes(job.count_map(ph, c)), row_bytes: ph.w * 2 }
+                            } else {
+                                Channel { phosphor: ph, channel: c }
+                            };
+                            let (o, y0, y1) = put(source, &mut blocks)?;
                             (j.map_off[c], j.map_y0[c], j.map_y1[c]) = (o, y0, y1);
                         } else if job.show[c] {
                             j.map_off[c] = 0;
@@ -575,9 +565,13 @@ mod imp {
                     }
                     if !q.reuse {
                         j.lut_off = if job.graded {
-                            put(job.colours.as_ptr() as *const u8, job.colours.len() * 4, 1, &mut blocks)?.0
+                            put(
+                                Pixels { bytes: bytes(job.colours.as_slice()), row_bytes: job.colours.len() * 4 },
+                                &mut blocks,
+                            )?
+                            .0
                         } else {
-                            put(job.alpha.as_ptr(), job.alpha.len(), 1, &mut blocks)?.0
+                            put(Pixels { bytes: &job.alpha, row_bytes: job.alpha.len() }, &mut blocks)?.0
                         };
                     }
                     f.j[f.n_jobs as usize] = j;
@@ -622,7 +616,7 @@ mod imp {
             // a memory target is always read back: its place in the arena is kept free
             if read || memory {
                 at = (at + 63) & !63;
-                if at + (tw * th * 4) as usize > end {
+                if at + (tw * th * 4) as usize > tail {
                     return Err("no room to read back".into());
                 }
                 f.readback = read as u32;

@@ -172,8 +172,8 @@ fn shadow_is_observe_only() {
     control.step(0.04);
     injected.step(0.04);
     assert_eq!(control.m, injected.m);
-    assert_eq!(control.ph.map, injected.ph.map);
-    assert_eq!(control.phz.map, injected.phz.map);
+    assert_eq!(control.ph.maps(), injected.ph.maps());
+    assert_eq!(control.phz.maps(), injected.phz.maps());
     assert_eq!((control.records, control.wfm_total), (injected.records, injected.wfm_total));
     assert_eq!(control.last[0].as_ref().unwrap().ch, injected.last[0].as_ref().unwrap().ch);
     assert_eq!(control.mstat.len(), injected.mstat.len());

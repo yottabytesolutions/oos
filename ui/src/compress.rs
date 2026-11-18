@@ -406,7 +406,7 @@ mod tests {
         let (w, h) = (ph.w, ph.h);
         (0..w)
             .map(|c| {
-                let rows: Vec<usize> = (0..h).filter(|&r| ph.map[0][r * w + c] > 0).collect();
+                let rows: Vec<usize> = (0..h).filter(|&r| ph.maps()[0][r * w + c] > 0).collect();
                 rows.first().map(|&f| (f, *rows.last().unwrap()))
             })
             .collect()

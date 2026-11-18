@@ -141,7 +141,7 @@ mod tests {
         ui.step(0.001); // establish the fresh hardware arm stamp
         let before = (ui.records, ui.wfm_total, ui.azr.eye.as_ref().unwrap().records);
         let statistics = ui.measurement_statistics_snapshot_for_test();
-        let picture = ui.ph.map.clone();
+        let picture = ui.ph.maps().clone();
         let old = Arc::clone(&ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame);
         push(&mut ui, &shared, points, 0xa5, 2);
         push(&mut ui, &shared, points, 0xa5, 3);
@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(ui.wfm_total, before.1);
         assert_eq!(ui.azr.eye.as_ref().unwrap().records, before.2);
         assert_eq!(ui.measurement_statistics_snapshot_for_test(), statistics);
-        assert_eq!(ui.ph.map, picture);
+        assert_eq!(ui.ph.maps(), &picture);
         assert!(Arc::ptr_eq(&old, &ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame));
         assert_eq!(shared.lock().unwrap().queue.len(), 1, "only one candidate may leave the FIFO while decoding");
         until(&mut ui, |ui| ui.records > before.0);

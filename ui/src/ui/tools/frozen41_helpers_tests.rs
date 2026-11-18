@@ -244,9 +244,9 @@ fn histogram_statistics_use_the_detail_lane_transform_and_horizontal_time_axis()
     let (top, bottom) = (h / 4, 3 * h / 4);
     ui.ph.clear();
     ui.phz.clear();
-    ui.ph.map[0][0] = 200;
-    ui.phz.map[0][top * w + w / 2] = 3;
-    ui.phz.map[0][bottom * w + w / 2] = 1;
+    ui.ph.channel_mut(0)[0] = 200;
+    ui.phz.channel_mut(0)[top * w + w / 2] = 3;
+    ui.phz.channel_mut(0)[bottom * w + w / 2] = 1;
     let stat = ui.hist_stat().unwrap();
     let scale = ui.m.ch[0].volts_per_div() as f64;
     let volts = |row: usize| (0.5 + (0.5 - row as f64 / h as f64) * VDIV as f64 / 4.0) * scale - 0.1f32 as f64;
@@ -257,8 +257,8 @@ fn histogram_statistics_use_the_detail_lane_transform_and_horizontal_time_axis()
     ui.phz.clear();
     ui.m.hist = Hist::Horizontal;
     ui.m.trig_level = 0.0;
-    ui.phz.map[0][h / 2 * w + w / 4] = 2;
-    ui.phz.map[0][h / 2 * w + 3 * w / 4] = 2;
+    ui.phz.channel_mut(0)[h / 2 * w + w / 4] = 2;
+    ui.phz.channel_mut(0)[h / 2 * w + 3 * w / 4] = 2;
     let stat = ui.hist_stat().unwrap();
     let (tdiv, delay) = ui.view();
     assert_eq!(stat.sum, 4);

@@ -175,7 +175,7 @@ fn batch_core_matching_workers_draw_the_standard_picture() {
         let mut got = Phosphor::new(128, 64);
         let n = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(n.frames, 10);
-        assert_eq!(got.map, want.map);
+        assert_eq!(got.maps(), want.maps());
         assert_eq!(pipe.take_waveform((128, 64)).unwrap().ch, last.ch);
     }
 }

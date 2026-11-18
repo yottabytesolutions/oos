@@ -38,13 +38,13 @@ fn clamped_offset_previews_last() {
     let value = -ui.m.ch[0].offset_max() + ui.m.ch[0].volts_per_div() * 0.5;
     ui.last[0].as_mut().unwrap().ch[0].fill(value);
     let last = ui.last[0].as_ref().unwrap().ch.clone();
-    let picture = ui.ph.map.clone();
+    let picture = ui.ph.maps().clone();
     ui.m.ch[0].offset = 1e6;
     ui.step(0.04);
     assert_eq!(ui.m.ch[0].offset, ui.m.ch[0].offset_max());
     assert_eq!(ui.last[0].as_ref().unwrap().ch, last);
-    assert_ne!(ui.ph.map, picture);
-    assert!(ui.ph.map[0].iter().any(|&v| v != 0));
+    assert_ne!(ui.ph.maps(), &picture);
+    assert!(ui.ph.maps()[0].iter().any(|&v| v != 0));
     assert!(ui.host.runtime().change.last.as_ref().unwrap().classes().contains(C::MAPPING));
     assert_eq!(change::counters(&ui).4, 0);
 }
@@ -64,7 +64,7 @@ fn stopped_mapping_redraws_last_without_blank() {
         ui.step(0.04);
         let rec = ui.last[0].as_ref().unwrap().ch.clone();
         for edit in 0..6 {
-            let picture = ui.ph.map.clone();
+            let picture = ui.ph.maps().clone();
             match edit {
                 0 => ui.m.ch[0].vscale += 1,
                 1 => ui.m.ch[0].offset += ui.m.ch[0].volts_per_div() * 0.5,
@@ -75,12 +75,12 @@ fn stopped_mapping_redraws_last_without_blank() {
             }
             ui.step(0.04);
             assert_eq!(ui.last[0].as_ref().unwrap().ch, rec, "no new record: {edit}");
-            assert!(ui.ph.map[0].iter().any(|&v| v != 0), "no blank main trace: {edit}");
+            assert!(ui.ph.maps()[0].iter().any(|&v| v != 0), "no blank main trace: {edit}");
             if ui.m.zoom {
-                assert!(ui.phz.map[0].iter().any(|&v| v != 0), "no blank zoom trace: {edit}");
+                assert!(ui.phz.maps()[0].iter().any(|&v| v != 0), "no blank zoom trace: {edit}");
             }
             if edit != 3 {
-                assert_ne!(ui.ph.map, picture, "effective mapping: {edit}");
+                assert_ne!(ui.ph.maps(), &picture, "effective mapping: {edit}");
             }
         }
     }

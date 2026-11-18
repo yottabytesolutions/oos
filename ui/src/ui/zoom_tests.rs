@@ -239,7 +239,7 @@ fn vertical_detail_phosphor_and_reference_pixels_follow_the_same_transform_as_ma
     let mut ph = Phosphor::new(area.w as usize, area.h as usize);
     ph.draw_ex(0, &model, (scale, delay), t0, dt, &values, 24, None, false);
     let channel_y = ui.y_of_volts(0, 0.1) - area.y;
-    assert!(ph.map[0][channel_y as usize * ph.w..(channel_y as usize + 1) * ph.w].iter().any(|&p| p > 0));
+    assert!(ph.maps()[0][channel_y as usize * ph.w..(channel_y as usize + 1) * ph.w].iter().any(|&p| p > 0));
     let reference = ui.refs[0].as_mut().unwrap();
     reference.t0 = t0;
     reference.dt = dt;
@@ -369,7 +369,7 @@ fn mixed_demo_reference_stacked_subnanosecond_detail_has_live_channel_pixels() {
     assert_eq!(ui.wins.len(), 3);
     for c in 0..2 {
         assert!(
-            ui.phz.map[c].iter().any(|&v| v > 0),
+            ui.phz.maps()[c].iter().any(|&v| v > 0),
             "CH{} detail blank, range {:?}, dt {:?}",
             c + 1,
             (ui.stats[c].vmin, ui.stats[c].vmax),
@@ -385,13 +385,13 @@ fn mixed_demo_reference_stacked_subnanosecond_detail_has_live_channel_pixels() {
     ui.zoom_vfactor = 8.0;
     ui.zoom_vcenter = 0.0;
     ui.step(0.02);
-    assert!(ui.ph.map[0].iter().any(|&v| v > 0));
-    assert!(ui.phz.map[0].iter().all(|&v| v == 0));
+    assert!(ui.ph.maps()[0].iter().any(|&v| v > 0));
+    assert!(ui.phz.maps()[0].iter().all(|&v| v == 0));
     let close = ui.zoom_close();
     tap(&mut ui, Rect::new(close.x - 76, close.y, 70, close.h));
     ui.step(0.02);
     assert!(
-        ui.phz.map[0].iter().any(|&v| v > 0),
+        ui.phz.maps()[0].iter().any(|&v| v > 0),
         "Reset must recover clipped detail without changing captured samples"
     );
     assert_eq!((ui.m.ch[0].vscale, ui.m.ch[0].offset), (15, -20.81701));

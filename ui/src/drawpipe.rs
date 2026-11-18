@@ -554,7 +554,7 @@ mod tests {
             assert_eq!((n_got.frames, n_got.triggered, edges), (9, trig, wedges), "mask {}", mask);
             assert!((off.0 - woff.0).abs() <= 1e-9 * woff.0.abs().max(1.0) && off.1 == woff.1);
             for c in 0..NCH {
-                assert!(got.map[c] == want.map[c], "mask {}: CH{} differs", mask, c + 1);
+                assert!(got.maps()[c] == want.maps()[c], "mask {}: CH{} differs", mask, c + 1);
             }
         }
     }
@@ -612,14 +612,14 @@ mod tests {
             settle(&pipe);
             let accepted = pipe.accept(&mut b, &mut false, &mut sb.0, &mut sb.1);
             assert_eq!((accepted.frames, accepted.triggered), (1, u64::from(ta)), "{name}");
-            assert!(a.map[0] == b.map[0] && sa == sb, "{name}: codes path differs");
+            assert!(a.maps()[0] == b.maps()[0] && sa == sb, "{name}: codes path differs");
             if near {
                 assert_eq!(sa.0, [0, 0, 0, 1], "{}", name);
-                assert!(a.map[0] == at_pre.map[0], "{}: not drawn at the hardware point", name);
+                assert!(a.maps()[0] == at_pre.maps()[0], "{}: not drawn at the hardware point", name);
             } else {
                 assert_eq!(sa.0, [0, 0, 1, 0], "{}", name);
                 assert!((sa.1 .1 - 10_000.0).abs() < 2.0, "{}: offset {:?}", name, sa.1);
-                assert!(a.map[0] != at_pre.map[0], "{}", name);
+                assert!(a.maps()[0] != at_pre.maps()[0], "{}", name);
             }
         }
         // a read at the full rate is exact, compressed too (to its pair); a decimated one is not, compressed or not
@@ -996,11 +996,11 @@ mod tests {
         let (want, trig, _, _, _) = reference(&bytes, fb, &s, &p, &m, w, h);
         if refresh {
             assert_eq!((result.frames, result.triggered), (13, trig));
-            assert!(got.map == want.map, "workers must match the new-level record path");
+            assert!(got.maps() == want.maps(), "workers must match the new-level record path");
         } else {
-            assert_ne!(got.map, want.map, "negative control must actually distinguish the levels");
+            assert_ne!(got.maps(), want.maps(), "negative control must actually distinguish the levels");
         }
-        got.map[0].clone()
+        got.maps()[0].clone()
     }
 
     // Break it catches: a batch picture that differs from the frames mode for the same frames (decode into kept
@@ -1031,7 +1031,7 @@ mod tests {
             pipe.feed(Box::new(Bytes(bytes[17 * fb..].to_vec())), fb, 24, 0, dec(&s, &p));
             settle(&pipe);
             let mut got = Phosphor::new(w, h);
-            got.map[0][0] = 7;
+            got.channel_mut(0)[0] = 7;
             let (mut clear, mut edges, mut off) = (true, [0u64; 4], (0.0, 0.0));
             let n = collect(&pipe, &mut got, &mut clear, &mut edges, &mut off);
             let (want, trig, wedges, woff, folds) = reference(&bytes, fb, &s, &p, &m, w, h);
@@ -1041,7 +1041,7 @@ mod tests {
             assert_eq!(edges, wedges, "{}", what);
             assert!((off.0 - woff.0).abs() <= 1e-9 * woff.0.abs().max(1.0) && off.1 == woff.1);
             for c in 0..NCH {
-                assert!(got.map[c] == want.map[c], "{}: CH{} differs", what, c + 1);
+                assert!(got.maps()[c] == want.maps()[c], "{}: CH{} differs", what, c + 1);
             }
             // per-frame statistics: the same frames counted, sums in another order
             assert_eq!(n.folds.len(), folds.len());
@@ -1096,7 +1096,7 @@ mod tests {
             let n = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
             let (want, trig, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
             assert_eq!((n.frames, n.triggered), (20, trig));
-            assert!(got.map == want.map);
+            assert!(got.maps() == want.maps());
         }
     }
 
@@ -1125,7 +1125,7 @@ mod tests {
         m.ch[0].offset = 0.5;
         pipe.set_view(Some(&m), w, h, Interp::Exact);
         assert_eq!(merge(&mut ph).frames, 0);
-        assert!(ph.map.iter().all(|x| x.iter().all(|&y| y == 0)));
+        assert!(ph.maps().iter().all(|x| x.iter().all(|&y| y == 0)));
         assert_eq!(c.read(), (0, 0, 20));
         // a change the drawing does not depend on keeps the maps
         pipe.feed(Box::new(Bytes(bytes.clone())), fb, 10, 3, dec(&s, &p));

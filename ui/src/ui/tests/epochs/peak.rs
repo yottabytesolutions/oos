@@ -24,7 +24,7 @@ fn peak_burst_reaches_records_picture_measurements_and_history_across_steps() {
         let got = ui.records - before;
         assert!((1..=crate::board::RECORDS_PER_STEP as u64).contains(&got), "the existing step bound must hold");
         assert_eq!(ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.seq, ui.records);
-        assert!(ui.ph.map.iter().flatten().any(|&v| v != 0));
+        assert!(ui.ph.maps().iter().flatten().any(|&v| v != 0));
         assert!(ui.stats[0].vavg.is_finite());
         steps += 1;
         assert!(steps <= 720);
@@ -88,7 +88,7 @@ fn peak_burst_matches_lossless_small_batch_picture_statistics_and_history() {
         burst.step(0.04);
     }
     assert_eq!((burst.records, reference.records), (720, 720));
-    assert_eq!(burst.ph.map, reference.ph.map, "the early transient must contribute to persistence");
+    assert_eq!(burst.ph.maps(), reference.ph.maps(), "the early transient must contribute to persistence");
     assert_eq!((burst.mstat[0].n, reference.mstat[0].n), (15, 15), "preserve the current per-step measurement cadence");
     assert_eq!(burst.mstat[0].sum, reference.mstat[0].sum);
     assert_eq!(burst.mstat[0].min, reference.mstat[0].min);

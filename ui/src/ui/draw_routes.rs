@@ -112,7 +112,7 @@ struct Picture {
 }
 
 fn picture(ui: &Ui) -> Picture {
-    Picture { main: ui.ph.map.clone(), zoom: ui.phz.map.clone(), frames: ui.batch_picture.frames }
+    Picture { main: ui.ph.maps().clone(), zoom: ui.phz.maps().clone(), frames: ui.batch_picture.frames }
 }
 
 fn weights(p: &Picture) -> [u64; NCH] {
@@ -308,7 +308,7 @@ fn draw_routes_raw_codes_pairs_dots_and_zoom() {
                 assert_eq!(r.ui.wfm_total, 3);
                 if zoom {
                     assert!(!r.ui.fast_ok(), "current zoom uses the shared record path");
-                    assert!(r.ui.phz.map[0].iter().any(|&v| v > 0));
+                    assert!(r.ui.phz.maps()[0].iter().any(|&v| v > 0));
                 }
                 let pic = picture(&r.ui);
                 if kind == BatchKind::LivePairs && !dots && !zoom && batch {
@@ -318,7 +318,7 @@ fn draw_routes_raw_codes_pairs_dots_and_zoom() {
                     for i in 0..3 {
                         drawpipe::draw_frame(&mut want, &r.ui.m, &b.frame(i, 0), r.ui.switches().interp, None);
                     }
-                    assert!(pic.main == want.map, "Batch pairs use one span per column per frame");
+                    assert!(&pic.main == want.maps(), "Batch pairs use one span per column per frame");
                 }
                 pic
             };

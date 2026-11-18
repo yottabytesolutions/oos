@@ -1,0 +1,166 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+use super::*;
+use crate::wave::Phosphor;
+
+#[test]
+fn consumers_keep_independent_bands_across_skipped_frames_and_replacements() {
+    let mut dirty = Dirty::new(16);
+    let (panel, all) = dirty.since(0, None);
+    let (monitor, _) = dirty.since(0, None);
+    assert_eq!(all, 0..16);
+    assert_eq!(dirty.since(0, Some(&panel)).1, 0..0);
+    dirty.mark(0, 2..4);
+    let (panel, band) = dirty.since(0, Some(&panel));
+    assert_eq!(band, 2..4);
+    dirty.mark(0, 12..14);
+    assert_eq!(dirty.since(0, Some(&panel)).1, 12..14);
+    assert_eq!(dirty.since(0, Some(&monitor)).1, 2..14);
+    assert_eq!(dirty.since(1, Some(&panel)).1, 0..16, "channel reordering invalidates the block");
+    assert_eq!(Dirty::new(16).since(0, Some(&panel)).1, 0..16);
+    dirty.revisions.get_mut().unwrap().revision = u64::MAX;
+    dirty.mark(0, 8..9);
+    assert_eq!(dirty.since(0, Some(&panel)).1, 0..16, "revision rollover invalidates old stamps");
+}
+
+fn take(ph: &Phosphor, previous: &mut Option<Stamp>, channel: usize) -> Range<usize> {
+    let (stamp, band) = ph.upload_rows(channel, previous.as_ref());
+    *previous = Some(stamp);
+    band
+}
+
+#[test]
+fn clear_decay_halve_and_merge_include_erased_and_new_rows() {
+    let mut ph = Phosphor::new(4, 16);
+    let mut stamp = None;
+    assert_eq!(take(&ph, &mut stamp, 0), 0..16);
+    let mut source = Phosphor::new(4, 16);
+    source.map[0][2 * 4] = 24;
+    ph.add_maps(&source, [true, false, false, false]);
+    assert_eq!(take(&ph, &mut stamp, 0), 2..3);
+    ph.decay(1.0);
+    assert_eq!(take(&ph, &mut stamp, 0), 0..0);
+    ph.decay(0.5);
+    assert_eq!(take(&ph, &mut stamp, 0), 2..3);
+    assert_eq!(ph.map[0][8], 12);
+    ph.halve();
+    assert_eq!(take(&ph, &mut stamp, 0), 2..3);
+    assert_eq!(ph.map[0][8], 6);
+    ph.clear();
+    source.clear();
+    source.map[0][12 * 4] = 24;
+    ph.add_maps(&source, [true, false, false, false]);
+    assert_eq!(take(&ph, &mut stamp, 0), 2..13, "cleared trace and new trace form one hull");
+    assert_eq!(ph.map[0][8], 0);
+    ph.clear();
+    take(&ph, &mut stamp, 0);
+    ph.clear();
+    assert_eq!(take(&ph, &mut stamp, 0), 0..0);
+}
+
+#[test]
+fn drawn_rows_cover_every_changed_pixel_in_dense_and_sparse_routes() {
+    use crate::{board::Frame, model::*, sparse::Interp};
+    let mut model = Model::default();
+    for ch in &mut model.ch {
+        ch.on = true;
+    }
+    for dt in [1e-9, 1e-3] {
+        for dots in [DotsMode::Off, DotsMode::On] {
+            model.dots = dots;
+            let mut ph = Phosphor::new(64, 32);
+            let mut stamps: [Option<Stamp>; 4] = std::array::from_fn(|_| None);
+            for (c, stamp) in stamps.iter_mut().enumerate() {
+                take(&ph, stamp, c);
+            }
+            let frame = Frame { dt, pre: 512, ch: std::array::from_fn(|_| vec![0.0; 1024]), ..Frame::default() };
+            crate::drawpipe::draw_frame(&mut ph, &model, &frame, Interp::Exact, None);
+            for (c, stamp) in stamps.iter_mut().enumerate() {
+                let band = take(&ph, stamp, c);
+                assert!(!band.is_empty());
+                assert!(band.end - band.start < ph.h, "a flat trace has a narrow band");
+                for (y, row) in ph.map[c].chunks(ph.w).enumerate() {
+                    assert!(row.iter().all(|&v| v == 0) || band.contains(&y));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn worker_mutations_need_no_upload_history_and_first_publication_is_complete() {
+    let mut dirty = Dirty::new(16);
+    for _ in 0..100 {
+        dirty.mark(0, 2..4);
+    }
+    assert!(dirty.revisions.get().is_none());
+    let (first, band) = dirty.since(0, None);
+    assert_eq!(band, 0..16);
+    dirty.mark(0, 8..9);
+    assert_eq!(dirty.since(0, Some(&first)).1, 8..9);
+}
+
+#[test]
+fn channel_mutations_record_rows_without_a_separate_mark() {
+    let mut ph = Phosphor::new(4, 16);
+    let mut stamps: [Option<Stamp>; NCH] = std::array::from_fn(|_| None);
+    for (c, stamp) in stamps.iter_mut().enumerate() {
+        take(&ph, stamp, c);
+    }
+    ph.edit_channel(1, |map| {
+        map[8] = 24;
+        2..3
+    });
+    assert_eq!(take(&ph, &mut stamps[0], 0), 0..0);
+    assert_eq!(take(&ph, &mut stamps[1], 1), 2..3);
+    ph.clear_channel(1);
+    assert_eq!(take(&ph, &mut stamps[1], 1), 0..16);
+    assert!(ph.maps()[1].iter().all(|&value| value == 0));
+    assert_eq!(take(&ph, &mut stamps[0], 0), 0..0);
+}
+
+#[test]
+fn merging_saturated_or_unused_channels_does_not_dirty_them() {
+    let mut ph = Phosphor::new(4, 16);
+    let mut source = Phosphor::new(4, 16);
+    ph.channel_mut(0)[8] = u16::MAX;
+    source.channel_mut(0)[8] = 24;
+    source.channel_mut(1)[8] = 24;
+    let mut stamp = None;
+    take(&ph, &mut stamp, 0);
+    ph.add_maps(&source, [true, false, false, false]);
+    assert_eq!(take(&ph, &mut stamp, 0), 0..0);
+    assert_eq!(ph.maps()[0][8], u16::MAX);
+    assert!(ph.maps()[1].iter().all(|&value| value == 0));
+}
+
+#[test]
+fn row_marks_clamp_to_the_map_height_without_advancing_empty_revisions() {
+    for height in [0, 16] {
+        let mut dirty = Dirty::new(height);
+        let (stamp, _) = dirty.since(0, None);
+        for rows in [height..height + 4, height + 2..height + 8, Range { start: 8, end: 4 }] {
+            dirty.mark(0, rows);
+            let (next, band) = dirty.since(0, Some(&stamp));
+            assert_eq!(band, 0..0);
+            assert_eq!(next.revision, stamp.revision);
+        }
+        dirty.mark(0, 2..height + 4);
+        assert_eq!(dirty.since(0, Some(&stamp)).1, if height == 0 { 0..0 } else { 2..height });
+    }
+}
+
+#[test]
+fn folding_rows_beyond_the_map_height_tracks_only_the_clipped_rows() {
+    let mut ph = Phosphor::new(4, 16);
+    let mut stamp = None;
+    take(&ph, &mut stamp, 0);
+    let mut accumulators = std::array::from_fn(|_| vec![0; 4 * 17]);
+    accumulators[0][12 * 4..13 * 4].fill(24);
+    ph.fold_rows(&mut accumulators, &[0], 4, [(12, 20); NCH]);
+    assert_eq!(take(&ph, &mut stamp, 0), 12..16);
+    assert!(ph.maps()[0][..12 * 4].iter().all(|&value| value == 0));
+    assert!(ph.maps()[0][12 * 4..].iter().all(|&value| value == 24));
+    ph.fold_rows(&mut accumulators, &[0], 4, [(20, 24); NCH]);
+    assert_eq!(take(&ph, &mut stamp, 0), 0..0);
+}

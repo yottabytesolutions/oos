@@ -469,17 +469,17 @@ mod auto_timeout {
         deliver(&shared, frame, false);
         ui.step(0.03125);
         assert_eq!((ui.records, ui.wfm_total, ui.m.status), (1, 1, TrigStatus::Auto));
-        let (map, zoom) = (ui.ph.map.clone(), ui.phz.map.clone());
+        let (map, zoom) = (ui.ph.maps().clone(), ui.phz.maps().clone());
         assert!(map[0].iter().any(|&v| v > 0));
         for _ in 0..2 {
             ui.step(0.25);
             assert_eq!((ui.records, ui.wfm_total, ui.m.status), (1, 1, TrigStatus::Auto));
-            assert_eq!((&ui.ph.map, &ui.phz.map), (&map, &zoom));
+            assert_eq!((ui.ph.maps(), ui.phz.maps()), (&map, &zoom));
         }
         assert_eq!(ui.now - ui.last_rec_t, 0.5, "WAIT starts strictly after the deadline");
         ui.step(1.0 / 1024.0);
         assert_eq!((ui.records, ui.wfm_total, ui.m.status), (1, 1, TrigStatus::Wait));
-        assert_eq!((&ui.ph.map, &ui.phz.map), (&map, &zoom));
+        assert_eq!((ui.ph.maps(), ui.phz.maps()), (&map, &zoom));
         assert_eq!(ui.now, 0.7822265625);
         deliver(&shared, crossing(&ui, 2), true);
         ui.step(0.03125);
@@ -555,7 +555,7 @@ mod auto_timeout {
 
     fn assert_picture(worker_map: &Phosphor, ui: &Ui, reference: &Ui, frames: usize) {
         for c in 0..crate::model::NCH {
-            assert_eq!(worker_map.map[c], reference.ph.map[c], "{} frames: CH{}", frames, c + 1);
+            assert_eq!(worker_map.maps()[c], reference.ph.maps()[c], "{} frames: CH{}", frames, c + 1);
             assert!(ui.last[0].is_some(), "the newest waveform reaches record readers");
         }
     }

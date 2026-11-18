@@ -3,47 +3,56 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area { sources, kind, label, value, adjust, activate, options, menu_items };
+pub(super) const AREA: Area = Area { descriptors: ROWS, sources, adjust, activate, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::CntDigits => Kind::Value,
-        Item::CntClear => Kind::Action,
-        _ => return None,
-    })
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    use Kind::*;
+    &[
+        Descriptor::new(Open(MenuId::Dvm), Action, "DVM / counter", |_| String::new(), |_| Vec::new(), |_| false),
+        Descriptor::new(DvmOn, Choice, "DVM", |u| onoff(u.m.dvm_on), toggles, |_| true),
+        Descriptor::new(DvmSrc, Choice, "DVM source", |u| source(u, DvmSrc, u.m.dvm_src), sources_options, |_| true),
+        Descriptor::new(
+            DvmMode,
+            Choice,
+            "DVM mode",
+            |u| tools::DVM_MODES[u.m.dvm_mode.min(2)].into(),
+            |_| strings(&tools::DVM_MODES),
+            |_| true,
+        ),
+        Descriptor::new(CntOn, Choice, "Counter", |u| onoff(u.m.cnt_on), toggles, |_| true),
+        Descriptor::new(CntSrc, Choice, "Count source", |u| source(u, CntSrc, u.m.cnt_src), sources_options, |_| true),
+        Descriptor::new(
+            CntMode,
+            Choice,
+            "Count mode",
+            |u| tools::CNT_MODES[u.m.cnt_mode.min(2)].into(),
+            |_| strings(&tools::CNT_MODES),
+            |_| true,
+        ),
+        Descriptor::new(CntDigits, Value, "Digits", |u| u.m.cnt_digits.to_string(), |_| Vec::new(), |_| true),
+        Descriptor::new(CntClear, Action, "Clear counter", |_| String::new(), |_| Vec::new(), |_| true),
+    ]
+};
+
+fn strings(labels: &[&str]) -> Vec<String> {
+    labels.iter().map(|s| (*s).into()).collect()
 }
 
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Dvm) => "DVM / counter",
-        Item::DvmOn => "DVM",
-        Item::DvmSrc => "DVM source",
-        Item::DvmMode => "DVM mode",
-        Item::CntOn => "Counter",
-        Item::CntSrc => "Count source",
-        Item::CntMode => "Count mode",
-        Item::CntDigits => "Digits",
-        Item::CntClear => "Clear counter",
-        _ => return None,
-    })
+fn toggles(_: &Ui) -> Vec<String> {
+    strings(&["Off", "On"])
 }
 
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    if let Some(v) = ui.offline_value(it) {
-        return Some(v);
-    }
-    let m = &ui.m;
-    let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-    Some(match it {
-        Item::DvmOn => onoff(m.dvm_on),
-        Item::DvmSrc => format!("CH{}", m.dvm_src + 1),
-        Item::DvmMode => tools::DVM_MODES[m.dvm_mode.min(2)].into(),
-        Item::CntOn => onoff(m.cnt_on),
-        Item::CntSrc => format!("CH{}", m.cnt_src + 1),
-        Item::CntMode => tools::CNT_MODES[m.cnt_mode.min(2)].into(),
-        Item::CntDigits => m.cnt_digits.to_string(),
-        _ => return None,
-    })
+fn onoff(on: bool) -> String {
+    if on { "On" } else { "Off" }.into()
+}
+
+fn source(ui: &Ui, it: Item, channel: usize) -> String {
+    ui.offline_value(it).unwrap_or_else(|| format!("CH{}", channel + 1))
+}
+
+fn sources_options(ui: &Ui) -> Vec<String> {
+    ui.offline_options(Item::DvmSrc).unwrap_or_else(ch_names)
 }
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
@@ -71,37 +80,6 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
     true
 }
 
-fn options(ui: &Ui, it: Item) -> Option<Vec<String>> {
-    if let Some(v) = ui.offline_options(it) {
-        return Some(v);
-    }
-    let v: &[&str] = match it {
-        Item::DvmSrc | Item::CntSrc => return Some((0..n_ch()).map(|c| format!("CH{}", c + 1)).collect()),
-        Item::DvmOn | Item::CntOn => &["Off", "On"],
-        Item::DvmMode => &tools::DVM_MODES,
-        Item::CntMode => &tools::CNT_MODES,
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(_ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Dvm => vec![
-            Item::DvmOn,
-            Item::DvmSrc,
-            Item::DvmMode,
-            Item::CntOn,
-            Item::CntSrc,
-            Item::CntMode,
-            Item::CntDigits,
-            Item::CntClear,
-        ],
-        // in the order of the groups of `measure_layout`
-        _ => Vec::new(),
-    }
-}
-
 fn sources(ui: &Ui, menu: MenuId) -> Vec<WaveId> {
     let m = &ui.m;
     let ch = WaveId::Ch;
@@ -113,3 +91,6 @@ fn sources(ui: &Ui, menu: MenuId) -> Vec<WaveId> {
         _ => Vec::new(),
     }
 }
+
+#[cfg(test)]
+mod tests;

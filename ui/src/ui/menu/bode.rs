@@ -12,6 +12,7 @@ pub(super) const AREA: Area = Area {
     activate: Ui::bode_activate,
     options: Ui::bode_options,
     menu_items: |ui, _| ui.bode_items(),
+    ..Area::EMPTY
 };
 
 fn sources(ui: &Ui, menu: MenuId) -> Vec<WaveId> {

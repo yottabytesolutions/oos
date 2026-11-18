@@ -1021,7 +1021,7 @@ enum Item {
     CatSourceD,
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {
     Choice,
     Value,

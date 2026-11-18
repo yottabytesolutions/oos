@@ -3,7 +3,31 @@
 
 use super::*;
 
+/// Read-only rows in display and navigation order. Visibility never changes option identity.
+pub(super) struct Descriptor {
+    item: Item,
+    kind: Kind,
+    label: &'static str,
+    value: fn(&Ui) -> String,
+    options: fn(&Ui) -> Vec<String>,
+    visible: fn(&Ui) -> bool,
+}
+
+impl Descriptor {
+    const fn new(
+        item: Item,
+        kind: Kind,
+        label: &'static str,
+        value: fn(&Ui) -> String,
+        options: fn(&Ui) -> Vec<String>,
+        visible: fn(&Ui) -> bool,
+    ) -> Self {
+        Self { item, kind, label, value, options, visible }
+    }
+}
+
 struct Area {
+    descriptors: &'static [Descriptor],
     sources: fn(&Ui, MenuId) -> Vec<WaveId>,
     kind: fn(Item) -> Option<Kind>,
     label: fn(Item) -> Option<&'static str>,
@@ -17,6 +41,7 @@ struct Area {
 
 impl Area {
     const EMPTY: Self = Self {
+        descriptors: &[],
         sources: |_, _| Vec::new(),
         kind: |_| None,
         label: |_| None,
@@ -142,7 +167,14 @@ areas! {
     offline { [Item::Offline], [] }
 }
 
+fn descriptor(it: Item) -> Option<&'static Descriptor> {
+    for_item(it).descriptors.iter().find(|row| row.item == it)
+}
+
 pub(super) fn kind(it: Item) -> Kind {
+    if let Some(row) = descriptor(it) {
+        return row.kind;
+    }
     if matches!(it, Item::Open(_)) {
         return Kind::Action;
     }
@@ -150,11 +182,11 @@ pub(super) fn kind(it: Item) -> Kind {
 }
 
 pub(super) fn label(it: Item) -> &'static str {
-    (for_item(it).label)(it).unwrap_or("")
+    descriptor(it).map_or_else(|| (for_item(it).label)(it).unwrap_or(""), |row| row.label)
 }
 
 pub(super) fn value(ui: &Ui, it: Item) -> String {
-    (for_item(it).value)(ui, it).unwrap_or_default()
+    descriptor(it).map_or_else(|| (for_item(it).value)(ui, it).unwrap_or_default(), |row| (row.value)(ui))
 }
 
 pub(super) fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
@@ -170,11 +202,16 @@ pub(super) fn activate(ui: &mut Ui, it: Item) {
 }
 
 pub(super) fn options(ui: &Ui, it: Item) -> Vec<String> {
-    (for_item(it).options)(ui, it).unwrap_or_default()
+    descriptor(it).map_or_else(|| (for_item(it).options)(ui, it).unwrap_or_default(), |row| (row.options)(ui))
 }
 
 pub(super) fn items(ui: &Ui, menu: MenuId) -> Vec<Item> {
-    (for_menu(menu).menu_items)(ui, menu)
+    let area = for_menu(menu);
+    if area.descriptors.is_empty() {
+        (area.menu_items)(ui, menu)
+    } else {
+        area.descriptors.iter().filter(|row| (row.visible)(ui)).map(|row| row.item).collect()
+    }
 }
 
 pub(super) use navigation::main_groups;

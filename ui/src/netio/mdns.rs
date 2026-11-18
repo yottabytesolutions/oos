@@ -1,14 +1,57 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Discovery lifecycle on the shared IO executor; the responder remains socket-free.
-pub(crate) mod socket;
+//! Owned discovery configuration on netio; mdns-sd owns the responder thread and sockets.
 use super::Runtime;
-use crate::mdns::{set_status, Config, Iface, Out, Responder, State, Status};
-pub(crate) use socket::{interfaces, ipv4_all};
+use crate::mdns::{set_status, Config, State, Status};
+use core::net::IpAddr;
+use mdns_sd::{DaemonEvent, DaemonStatus, IfKind, ServiceDaemon, ServiceInfo, TxtProperty};
 use std::{
+    collections::HashSet,
+    fmt,
     sync::mpsc,
     time::{Duration, Instant},
 };
 use tokio::sync::watch;
+
+const DAEMON_TIMEOUT: Duration = Duration::from_millis(500);
+const RETRY_DELAY: Duration = Duration::from_secs(2);
+// mdns-sd appends a u32 conflict counter without shortening the original label.
+const CONFLICT_DIGITS: usize = u32::MAX.ilog10() as usize + 1;
+
+#[derive(Debug)]
+enum DiscoveryError {
+    Daemon(mdns_sd::Error),
+    Timeout,
+    Closed,
+    NotRunning,
+}
+impl From<mdns_sd::Error> for DiscoveryError {
+    fn from(error: mdns_sd::Error) -> Self {
+        Self::Daemon(error)
+    }
+}
+impl From<tokio::time::error::Elapsed> for DiscoveryError {
+    fn from(_: tokio::time::error::Elapsed) -> Self {
+        Self::Timeout
+    }
+}
+impl fmt::Display for DiscoveryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Daemon(error) => error.fmt(f),
+            Self::Timeout => f.write_str("daemon reply timed out"),
+            Self::Closed => f.write_str("daemon channel closed"),
+            Self::NotRunning => f.write_str("daemon is not running"),
+        }
+    }
+}
+impl std::error::Error for DiscoveryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Daemon(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 pub struct Mdns {
     runtime: Runtime,
@@ -48,104 +91,231 @@ impl Drop for Mdns {
     }
 }
 
+fn label_prefix(label: &str, max: usize) -> &str {
+    &label[..label.floor_char_boundary(max)]
+}
+
+fn registration(cfg: &Config, service: &crate::mdns::Service) -> mdns_sd::Result<ServiceInfo> {
+    let host = label_prefix(&cfg.name, crate::mdns::NAME_MAX - CONFLICT_DIGITS - 1).trim_end_matches('-');
+    let instance = label_prefix(&cfg.instance, crate::mdns::NAME_MAX - CONFLICT_DIGITS - 3);
+    let properties: Vec<TxtProperty> = service
+        .txt
+        .iter()
+        .map(|(key, value)| match value {
+            Some(value) => (key, value).into(),
+            None => key.as_str().into(),
+        })
+        .collect();
+    ServiceInfo::new(
+        &format!("{}.local.", service.kind),
+        instance,
+        &format!("{host}.local."),
+        "",
+        service.port,
+        properties,
+    )
+    .map(ServiceInfo::enable_addr_auto)
+}
+
+// Called once on a fresh daemon. Config changes replace it, restoring default IPv6 selection.
+fn configure(daemon: &ServiceDaemon, cfg: &Config, only: Option<&[String]>) -> mdns_sd::Result<()> {
+    daemon.set_ip_check_interval(2)?;
+    if let Some(names) = only {
+        daemon.disable_interface(IfKind::All)?;
+        for name in names {
+            daemon.enable_interface(name.as_str())?;
+        }
+    } else {
+        daemon.disable_interface(vec![IfKind::LoopbackV4, IfKind::LoopbackV6])?;
+    }
+    if !cfg.v6 {
+        daemon.disable_interface(IfKind::IPv6)?;
+    }
+    for service in &cfg.services {
+        daemon.register(registration(cfg, service)?)?;
+    }
+    Ok(())
+}
+
 struct Discovery {
-    responder: Responder,
-    socket: Option<socket::Net>,
-    ifaces: Vec<Iface>,
-    refresh: f64,
+    name: String,
+    joined: HashSet<IpAddr>,
+    announced: bool,
 }
 impl Discovery {
-    fn configure(&mut self, now: f64, cfg: Config) {
-        if cfg.on && self.socket.is_none() {
-            match socket::Net::open() {
-                Ok(s) => {
-                    self.socket = Some(s);
-                    self.refresh = f64::NEG_INFINITY;
-                }
-                Err(e) => {
-                    eprintln!("oos-ui: mDNS: port 5353: {e}");
-                    set_status(Status { state: State::Failed, name: cfg.name });
-                    return;
-                }
-            }
-        }
-        let on = cfg.on;
-        let out = self.responder.set_config(now, cfg);
-        self.send(out);
-        if !on {
-            self.socket = None;
-            self.ifaces.clear();
-            self.responder.set_ifaces(now, Vec::new());
-        }
-        self.publish();
+    fn status(&self) -> Status {
+        let state = if self.joined.is_empty() {
+            State::NoNetwork
+        } else if self.announced {
+            State::Running
+        } else {
+            State::Probing
+        };
+        Status { state, name: self.name.clone() }
     }
-    fn send(&self, out: Vec<Out>) {
-        if let Some(s) = &self.socket {
-            for packet in out {
-                s.send(&packet, &self.ifaces);
-            }
+
+    fn update_addresses(&mut self, event: &DaemonEvent, mut joined: HashSet<IpAddr>) {
+        // Apply removal even when the snapshot still contains the address or earlier removals.
+        if let DaemonEvent::IpDel(ip) = event {
+            joined.retain(|addr| self.joined.contains(addr));
+            joined.remove(ip);
         }
+        if self.joined.is_empty() || joined.is_empty() {
+            self.announced = false;
+        }
+        self.joined = joined;
     }
-    fn tick(&mut self, now: f64, only: Option<&[String]>) {
-        if let Some(s) = &mut self.socket {
-            if now >= self.refresh {
-                self.refresh = now + 2.0;
-                let new = interfaces(only);
-                if new != self.ifaces {
-                    s.join(&new);
-                    self.ifaces = new;
-                    let out = self.responder.set_ifaces(now, self.ifaces.clone());
-                    self.send(out);
+
+    fn event(&mut self, event: DaemonEvent) -> Result<(), DiscoveryError> {
+        match event {
+            DaemonEvent::Announce(_, address) => {
+                if let Some(host) = announced_host(&address) {
+                    self.name = host.into();
                 }
+                self.announced = true;
             }
-            let out = self.responder.tick(now);
-            self.send(out);
-            self.publish();
+            DaemonEvent::NameChange(change) => {
+                if matches!(change.rr_type, mdns_sd::RRType::A | mdns_sd::RRType::AAAA) {
+                    self.name = host_label(&change.new_name).into();
+                }
+                self.announced = false;
+                eprintln!("oos-ui: mDNS: {} is taken, now {}", change.original, change.new_name);
+            }
+            DaemonEvent::Error(error) => return Err(error.into()),
+            _ => {}
         }
-    }
-    fn publish(&mut self) {
-        self.responder.flush_log();
-        set_status(Status { state: self.responder.state(), name: self.responder.host_label() });
+        Ok(())
     }
 }
 
-async fn run(mut changed: watch::Receiver<Config>, only: Option<Vec<String>>) {
-    let start = tokio::time::Instant::now();
-    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64)
-        ^ std::process::id() as u64;
-    let mut discovery =
-        Discovery { responder: Responder::new(seed), socket: None, ifaces: Vec::new(), refresh: f64::NEG_INFINITY };
-    let mut buf = [0; 9000];
+fn host_label(fqdn: &str) -> &str {
+    fqdn.strip_suffix(".local.").unwrap_or(fqdn)
+}
+
+/// Probe completion carries host:interface; immediate registration carries an address list.
+fn announced_host(address: &str) -> Option<&str> {
+    if address.starts_with('[') {
+        return None;
+    }
+    let (host, interface) = address.split_once(':')?;
+    (host.ends_with(".local.") && !interface.is_empty()).then(|| host_label(host))
+}
+
+async fn on_event(daemon: &ServiceDaemon, discovery: &mut Discovery, event: DaemonEvent) -> Result<(), DiscoveryError> {
+    if matches!(event, DaemonEvent::IpAdd(_) | DaemonEvent::IpDel(_)) {
+        discovery.update_addresses(&event, joined_addresses(daemon).await?);
+    }
+    discovery.event(event)
+}
+
+async fn daemon_reply<T>(reply: mdns_sd::Result<mdns_sd::Receiver<T>>) -> Result<T, DiscoveryError> {
+    tokio::time::timeout(DAEMON_TIMEOUT, reply?.recv_async()).await?.map_err(|_| DiscoveryError::Closed)
+}
+
+async fn joined_addresses(daemon: &ServiceDaemon) -> Result<HashSet<IpAddr>, DiscoveryError> {
+    match daemon_reply(daemon.status()).await? {
+        DaemonStatus::Running(state) => Ok(state
+            .enabled_intfs()
+            .iter()
+            .flat_map(|i| [i.ipv4(), i.ipv6()])
+            .flatten()
+            .filter(|m| m.is_joined())
+            .flat_map(|m| m.addrs().iter().copied())
+            .collect()),
+        _ => Err(DiscoveryError::NotRunning),
+    }
+}
+
+async fn advertise(
+    daemon: &ServiceDaemon,
+    cfg: &Config,
+    only: Option<&[String]>,
+    changed: &mut watch::Receiver<Config>,
+) -> Result<bool, DiscoveryError> {
+    let events = daemon.monitor()?;
+    configure(daemon, cfg, only)?;
+    until_changed(changed, observe(daemon, cfg, events)).await
+}
+
+async fn until_changed(
+    changed: &mut watch::Receiver<Config>,
+    discovery: impl std::future::Future<Output = Result<(), DiscoveryError>>,
+) -> Result<bool, DiscoveryError> {
+    tokio::select! {
+        update = changed.changed() => Ok(update.is_ok()),
+        result = discovery => result.map(|()| false),
+    }
+}
+
+async fn observe(
+    daemon: &ServiceDaemon,
+    cfg: &Config,
+    events: mdns_sd::Receiver<DaemonEvent>,
+) -> Result<(), DiscoveryError> {
+    let mut discovery = Discovery { name: cfg.name.clone(), joined: joined_addresses(daemon).await?, announced: false };
+    set_status(discovery.status());
+    loop {
+        let event = events.recv_async().await.map_err(|_| DiscoveryError::Closed)?;
+        on_event(daemon, &mut discovery, event).await?;
+        set_status(discovery.status());
+    }
+}
+
+async fn run(changed: watch::Receiver<Config>, only: Option<Vec<String>>) {
+    run_with(changed, only, ServiceDaemon::new, set_status).await;
+}
+
+async fn run_daemon(
+    daemon: ServiceDaemon,
+    cfg: &Config,
+    only: Option<&[String]>,
+    changed: &mut watch::Receiver<Config>,
+) -> Result<bool, DiscoveryError> {
+    let result = advertise(&daemon, cfg, only, changed).await;
+    // Shutdown withdraws all registrations before dropping the multicast sockets.
+    let _ = daemon_reply(daemon.shutdown()).await;
+    result
+}
+
+async fn retry(changed: &mut watch::Receiver<Config>) -> bool {
+    tokio::select! {
+        update = changed.changed() => update.is_ok(),
+        _ = tokio::time::sleep(RETRY_DELAY) => true,
+    }
+}
+
+async fn run_with(
+    mut changed: watch::Receiver<Config>,
+    only: Option<Vec<String>>,
+    mut create: impl FnMut() -> mdns_sd::Result<ServiceDaemon>,
+    mut publish: impl FnMut(Status),
+) {
     loop {
         let cfg = changed.borrow_and_update().clone();
-        discovery.configure(start.elapsed().as_secs_f64(), cfg);
-        loop {
-            let now = start.elapsed().as_secs_f64();
-            discovery.tick(now, only.as_deref());
-            let wake = discovery.responder.next_wake().unwrap_or(now + 1.0).min(discovery.refresh);
-            tokio::select! {
-                update = changed.changed() => {
-                    if update.is_err() {
-                        let out = discovery.responder.stop(start.elapsed().as_secs_f64());
-                        discovery.send(out);
-                        set_status(Status::default());
-                        return;
+        if cfg.on && !cfg.services.is_empty() {
+            let result = match create() {
+                Ok(daemon) => run_daemon(daemon, &cfg, only.as_deref(), &mut changed).await,
+                Err(error) => Err(error.into()),
+            };
+            match result {
+                Ok(true) => continue,
+                Ok(false) => break,
+                Err(error) => {
+                    eprintln!("oos-ui: mDNS: {error}");
+                    publish(Status { state: State::Failed, name: cfg.name });
+                    if !retry(&mut changed).await {
+                        break;
                     }
-                    break;
+                    continue;
                 }
-                packet = async {
-                    if let Some(s) = &discovery.socket { s.recv(&mut buf).await }
-                    else { std::future::pending().await }
-                } => {
-                    if let Ok((n, src, index, group)) = packet {
-                        let out = discovery.responder.receive(start.elapsed().as_secs_f64(), &buf[..n], src, index, group);
-                        discovery.send(out);
-                    }
-                }
-                _ = tokio::time::sleep(Duration::from_secs_f64((wake - now).clamp(0.0, 1.0))), if discovery.socket.is_some() => {}
             }
         }
+        publish(Status::default());
+        if changed.changed().await.is_err() {
+            break;
+        }
     }
+    publish(Status::default());
 }
 
 #[cfg(test)]

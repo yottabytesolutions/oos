@@ -200,60 +200,57 @@ client sends it (`udhcpc -x hostname:`), so a router lists the scope by it. A ne
 router from the next lease (the next start, or the next WLAN connection). Without `net.name` (the very first start)
 rcS uses `oos`. An SD card moved to another scope keeps its name: choose the one from model and serial in the picker.
 
-**What it answers.** oos-ui has its own responder (`ui/src/mdns.rs`, RFC 6762 and RFC 6763), in a thread of its own
-that sleeps in `poll` between packets; there is no avahi on the image. It listens on UDP port 5353 at 224.0.0.251 and,
-where the kernel has IPv6, at ff02::fb, on every interface that is up, has an address and takes multicast (eth0, wlan0),
-and looks at the interfaces every 2 s: a cable plugged in later, DHCP after the link-local address, a WLAN stick.
+**What it answers.** oos-ui uses mdns-sd 0.22.0 for mDNS and DNS service discovery (RFC 6762 and
+RFC 6763). The crate owns the responder thread, probing, conflict handling and multicast sockets;
+a small netio adapter passes owned configuration and status. There is no avahi on the image.
+It uses UDP port 5353 over IPv4 and, with `net.ipv6 = on`, IPv6, on multicast interfaces other than
+loopback. Interfaces are checked every 2 s, so registration follows DHCP, link-local addresses,
+IPv6 SLAAC, cable changes and WLAN interfaces that appear later.
 
 | name | type | data |
 |---|---|---|
-| `<name>.local` | A | the address of the interface the question came in on (no AAAA: the web remote, SCPI and VXI-11 listen on IPv4 only, and a computer would try the IPv6 address first) |
-| `y.x.254.169.in-addr.arpa` (the IPv4 address reversed) | PTR | `<name>.local` |
-| `_services._dns-sd._udp.local` | PTR | each service type below that is switched on |
+| `<name>.local` | A, AAAA | addresses of the interface; AAAA only with `net.ipv6 = on` |
+| `_services._dns-sd._udp.local` | PTR | each registered service type below |
 | `_http._tcp.local` | PTR, SRV, TXT | web remote: port 8080, `path=/` |
 | `_scpi-raw._tcp.local` | PTR, SRV, TXT | SCPI: port 5555 |
-| `_vxi-11._tcp.local` | PTR, SRV, TXT | VXI-11: port 111 |
-| `_ssh._tcp.local` | PTR, SRV, TXT | SSH (section 7): port 22, only while oos-ssh listens (`remote.ssh = on`, `net.allow` set, firewall loaded; looked at once a second, so it follows a change of Allowed) |
+| `_vxi-11._tcp.local` | PTR, SRV, TXT | VXI-11: port 111, only while its listener is open |
+| `_ssh._tcp.local` | PTR, SRV, TXT | SSH: port 22, only while oos-ssh listens (section 7) |
+| `_lxi._tcp.local` | PTR, SRV, TXT | web remote: port 8080, `path=/lxi/identification` |
+| `_hislip._tcp.local` | PTR, SRV, TXT | HiSLIP: port 4880, only while its listener is open (`remote.hislip` on the scope) |
 
-The instance name a computer lists is `Rigol DHO924S OOS (204527)` (with a name of its own: `Rigol DHO924S OOS
-(lab-scope-3)`). A service switched off is not announced; its records get a goodbye. A name of the scope without the
-type asked for is answered with an NSEC record of the types it has (A, so a question for AAAA gets a quick "none").
+The instance name a computer lists is `Rigol DHO924S OOS (204527)` (with a name of its own:
+`Rigol DHO924S OOS (lab-scope-3)`). Empty TXT records contain a single zero byte on the wire.
+A service switched off is withdrawn with a goodbye. The crate probes host and instance names before announcing them.
+Conflicts get a numbered suffix, such as `<name>-2` or `... (2)`. Registration limits the host label to
+52 bytes and the instance label to 50 bytes, reserving room for the crate's full conflict counter
+within the 63-byte DNS label limit. Shortening preserves UTF-8 boundaries and removes trailing host hyphens.
+Conflict events and announcements update discovery status; host conflicts also update the Name row.
+The saved setting stays unchanged.
+Names can differ between interfaces when conflicts differ; the row shows the latest announced host name.
 
-Before it answers, the responder probes for the name three times 250 ms apart and announces its records twice, a second
-apart (RFC 6762 §8). It does that again after each change of the name, the services or the interfaces. When another
-host already has the name, the scope takes `<name>-2`, `<name>-3` and so on, and the Name row shows the one in use
-(the setting stays; a conflict over the instance name gives `... (2)`). The log `/tmp/oos-ui.log` has a line when the
-records are announced and one for each conflict:
+The replacement deliberately drops three behaviours:
 
-```
-oos-ui: mDNS: dho924s-204527.local on eth0 wlan0, services _http._tcp _scpi-raw._tcp _vxi-11._tcp
-oos-ui: mDNS: dho924s-204527.local is taken (dho924s-204527.local type 1), now dho924s-204527-2.local
-```
+- Reverse PTR replies for the host's address.
+- Unicast replies to questions with the QU bit. Multicast replies remain available.
+- Publication of `<name>.local` when no service is registered. With all six services off,
+  discovery publishes no host records even if `remote.mdns = on`.
 
-Questions with the unicast-response bit get a unicast answer; a question from a port other than 5353 (a plain DNS
-resolver) gets a legacy unicast answer with its id and question and a TTL of at most 10 s, so these work as well:
+Browse with `dns-sd -B _scpi-raw._tcp` on macOS or `avahi-browse -r _scpi-raw._tcp` on Linux.
+With a service registered, `dns-sd -G v4v6 <name>.local` resolves the host addresses.
 
-```
-dig @224.0.0.251 -p 5353 dho924s-204527.local
-dig @224.0.0.251 -p 5353 -x 169.254.7.9
-dns-sd -B _scpi-raw._tcp            (macOS: browse; avahi-browse -r _scpi-raw._tcp on Linux)
-dns-sd -G v4v6 dho924s-204527.local
-```
+**Switching it off.** mDNS = Off (`remote.mdns = off`) withdraws the registered services and
+stops the daemon, closing its multicast sockets. Shutdown does the same. Discovery remains on
+by default because it is local to the link. Configuration changes withdraw the old registrations
+before starting the new set, including changes to the name, service switches and IPv6 setting.
 
-**Switching it off.** mDNS = Off (`remote.mdns = off`) sends a goodbye (TTL 0) for every record and closes port 5353;
-the scope then answers nothing on it. It is on by default because it only works on the local link: routers do not
-forward 224.0.0.251 and ff02::fb, and it sends nothing but the answers, the probes and the announcements. oos-ui also
-sends the goodbye when it ends.
+**With the firewall** (section 6): mDNS questions come from the asking computer's own address,
+so the same `net.allow` policy applies. IPv6 questions require their source prefix to be allowed.
+The web server accepts `.local` host names in its rebinding guard.
 
-**With the firewall** (section 6): mDNS questions come in from the asking computer's own address, so a
-computer inside `net.allow` reaches the responder and one outside does not, like every other service. Questions over
-IPv6 (from fe80:: addresses) are dropped unless `fe80::/10` is listed; computers ask over IPv4 as well, and the
-responder has no AAAA anyway. With mDNS the web remote is at `http://<name>.local:8080` (the web server's
-rebinding guard takes `.local` host names); the unit's name is `dho924s-<last six digits of the serial>`.
-
-**Verified on the host only** (macOS): the packets, compression, probing, conflicts, the answers (unit tests), and the
-responder on en0 with mDNSResponder (`dns-sd -G` and `-B` found the test name and its services). **Not verified on
-hardware:** the responder on the scope, the host name in the DHCP request.
+**Host tests:** registration names, ports, TXT records, automatic address tracking configuration,
+conflict status, cancellation and daemon shutdown. Live multicast discovery is an opt-in host test
+(`OOS_MDNS_IF`), including all six services and their withdrawal. **Not yet verified on hardware:**
+the mdns-sd responder on the scope, DHCP/link-local/SLAAC transitions and the DHCP host name.
 
 ## 5. `/oos/system.conf`
 

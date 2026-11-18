@@ -73,6 +73,30 @@ and reference-slot coverage into separate tests and extract the row-inventory se
 line and complexity limits without changing assertions. Run clippy, UI tests in debug and
 test-release, and the fast gate.
 
+mDNS crate replacement (#194), owner-approved 2026-11-18: use the latest mdns-sd release,
+retaining service names, TXT records, runtime switches and automatic IPv4/IPv6 address changes.
+Replace the responder and socket glue; document removal of reverse PTR, QU unicast replies and
+hostname publication without a registered service. Measure production LOC and matching ARM binaries,
+exercise discovery and UI tests, run cargo-deny and the fast gate, and retain changed-file ratchets only.
+Additional reserved paths: `docs/fork/deps.md`, `docs/network.md`, `CHANGELOG.md`.
+
+PR #201 fast-check fix: refresh `fuzz/Cargo.lock` for mdns-sd while preserving existing package
+versions. Remove the obsolete `fuzz/fuzz_targets/mdns.rs` parser target and its `fuzz/Cargo.toml`
+registration because mdns-sd now owns packet parsing; update the fuzz list in `docs/development.md`.
+Reproduce locked metadata and target compilation failures, then rerun those checks, discovery tests
+in debug and test-release, and the fast gate. These additional paths are reserved for this fix.
+
+PR #201 review fix: keep the existing claim on `refactor/194-mdns-crate`. Correct conflict
+status and network transitions, bound daemon replies, retry failed discovery, and test real daemon
+announcements and TXT wire bytes. Document fresh-daemon configuration and retain the shared lock
+helper required by AGENTS.md. Run UI tests in debug and test-release and the fast gate.
+
+PR #201 code-quality review fix: move address snapshots behind one event handler, name the
+announcement formats, preserve typed discovery failures, and separate retry waits while retaining
+Failed until a new attempt reports status. Move LAN interface enumeration to `netio/ifaddrs.rs`,
+use typed TXT entries, and document the first-service announcement approximation. Extend existing
+regressions, run UI tests in debug and test-release, tighten changed-file ratchets, and run fast checks.
+
 ## Measurements
 
 Owner-reported results, 2026-11-18, for PR #145's measurement section. Unit results are verified on the DHO804;
@@ -132,6 +156,114 @@ closed, and disconnect releases a slot for re-admission. Injected-time fixtures 
 reply, snapshot and upload admission. The explicit loopback multicast responder test passes.
 
 ## Status
+
+- 2026-11-18: PR #201 conflict-label and unsafe-placement fixes reserve the full u32
+  conflict suffix budget at registration and move the unchanged LAN walk into HAL system.
+  The maximum-label regression fails before the fix (exit 101); all three new regressions
+  pass afterward. The pointer warning is a false positive: successful allocation, null-checked
+  links and traversal before the single free preserve validity. A thread reply records this evidence.
+  `cargo test --locked -p oos-hal -p oos-ui` and the same command with `--profile test-release`
+  pass (exit 0), including integrations, goldens and allocation soaks. HAL has 408 passing unit
+  tests and 8 existing skips; UI has 1623/1622 passing unit tests and 58 existing skips per profile.
+  Initial fast printed `gate FAILED in 16 s: unsafe` (exit 1). Generated ratchet tightening
+  removes only the obsolete netio unsafe entry; the two unsafe moves are also removed.
+  Fast then prints `partial gate passed (not done): 12 steps in 52 s`; the CI-base invocation
+  prints `partial gate passed (not done): 12 steps in 43 s` (both exit 0).
+  Added-line privacy and diff checks pass. Production LOC increases by 7 (HAL +32, UI -25);
+  tooling is unchanged. Host only. Git synchronization, independent review and final CI remain
+  with the coordinator under the assigned restrictions.
+
+- 2026-11-18: PR #201 conflict-label and unsafe-placement review fix plan: reserve mDNS
+  host/instance suffix space at registration, retaining configured names and UTF-8 boundaries.
+  Move LAN enumeration into `oos_hal::system`, preserving its filtering and list lifetime;
+  assess the pointer warning against the successful `getifaddrs` ownership contract.
+  Additional reserved paths: `hal/src/system.rs`, `hal/src/system/ifaddrs.rs` and
+  `ui/src/ui/remote.rs`. Reuse discovery and ACL regressions, run HAL/UI debug and
+  test-release suites, generate changed-file ratchet reductions and run the fast gate.
+  The runner retains Git synchronization, review and integration.
+
+- 2026-11-18: PR #201 fast-check fix restores both unsafe moves, preserving the intermediate
+  socket path required by the current CI base. Before the fix, `CI=1 OOS_GATE_BASE=origin/main
+  cargo xtask check --fast` printed `gate FAILED in 36 s: unsafe` (exit 1), rejecting
+  `unsafe ui/src/netio/ifaddrs.rs` as a new ratchet entry. After the fix, the default fast gate
+  prints `partial gate passed (not done): 12 steps in 29 s`, and the same CI-base invocation
+  prints `partial gate passed (not done): 12 steps in 30 s` (both exit 0).
+  Complete xtask suites pass in debug and test-release: 242 tests each. Focused UI discovery
+  tests pass in both profiles: 25 passed and 1 existing live multicast skip per binary.
+  Locked fuzz metadata and host shell checks pass; `git diff --check` passes. Production
+  and tooling LOC deltas are zero; no ratchet counts changed or allowances increased.
+  Host only. No remote Git operations under the assigned restrictions; the coordinator retains
+  synchronization, independent review and the required CI rerun.
+
+- 2026-11-18: PR #201 fast-check fix plan: preserve the unsafe move chain from `mdns.rs`
+  through `netio/mdns/socket.rs` to `netio/ifaddrs.rs` in `xtask/data/moves.txt`.
+  The default local base passes, but `CI=1 OOS_GATE_BASE=origin/main` rejects the destination
+  as a new unsafe allowance because the intermediate move is missing. Recheck both bases,
+  locked fuzz metadata, host shell scripts and discovery tests in debug and test-release.
+  No production or runtime behaviour changes; Git updates remain with the coordinator.
+
+- 2026-11-18: PR #201 code-quality fixes put address snapshot refresh behind `on_event`,
+  extract announcement/host-label decoding, preserve typed daemon/timeout/closed/stopped errors,
+  and keep Failed across retry backoff. LAN enumeration now lives in `netio/ifaddrs.rs`, with
+  direct policy/menu callers and a generated unsafe ratchet move. TXT entries carry typed optional
+  values; Running explicitly means at least one service announced. Focused discovery tests pass
+  (23 passed, 1 live multicast test skipped), and added lines have zero privacy findings.
+  Full UI suites pass: debug 1663 tests, test-release 1662 tests, with 59 existing skips each
+  (exit 0). All-target UI Clippy exits 0; warnings in changed files match existing ratchet entries.
+  Fast prints `partial gate passed (not done): 12 steps in 47 s` (exit 0). No changed-file
+  ratchet counts fell; `cargo xtask ratchet --move` generated the unsafe relocation, retaining
+  unrelated move entries. Firmware production LOC increases by 56 versus the pre-fix commit;
+  tooling is unchanged. Host only. No fetch/reset under the assigned network/Git-write restrictions;
+  HEAD matches the cached remote-tracking branch. Independent review and integration remain with
+  the coordinator.
+
+- 2026-11-18: PR #201 review fixes centralize active discovery state, reflect instance conflicts,
+  strip one local suffix, bound daemon replies and shutdown to 500 ms, and retry errors after 2 s.
+  Configuration changes cancel pending status replies; configuration applies once per fresh daemon.
+  Real loopback daemon events and TXT wire bytes supplement virtual-time retry/timeout regressions.
+  The shared poison-tolerant lock helper remains as required by AGENTS.md. Fast prints
+  `partial gate passed (not done): 12 steps in 8 s` (exit 0); changed-file ratchets did not fall.
+  Firmware production LOC increases by 49; tooling is unchanged. Full UI debug and test-release suites
+  pass (exit 0), including integration and allocation tests. UI all-target Clippy exits 0 with no
+  findings in changed mDNS files. Added lines have zero privacy findings. Host only; fetch is
+  sandbox-blocked and HEAD matches the cached remote-tracking branch. Git refresh, independent review
+  and integration remain with the coordinator.
+
+- 2026-11-18: PR #201 fast-check failure reproduced locally: locked fuzz metadata rejected
+  the missing mdns-sd dependency graph. Regenerated the fuzz lockfile with all existing package
+  versions preserved. All remaining fuzz targets compile after removing the obsolete parser target;
+  the original target failed with E0425 for the removed `mdns::parse`. Locked metadata and all
+  39 host-script shellchecks pass. Focused debug and test-release discovery tests pass (7 passed,
+  1 live multicast test ignored per UI target/profile). Fast prints
+  `partial gate passed (not done): 12 steps in 22 s` (exit 0); `git diff --check` passes.
+  Firmware production LOC is unchanged, and no changed-file ratchets fell. Host only; fetch was
+  sandbox-blocked, and HEAD matches the cached remote-tracking branch. The coordinator retains
+  Git refresh, independent review and CI publication.
+
+- 2026-11-18: #194 privacy retry keeps the completed replacement. Synthetic serial fixtures now use
+  concatenated parts with identical values and assertions. Working-tree additions and the commit message
+  have zero privacy findings; the whole-tree audit still reports existing findings outside the additions.
+  UI debug and test-release suites, including integration and allocation plateau tests, passed (exit 0).
+  Fast gate passed all 12 selected steps (exit 0); production LOC and ARM binary measurements are unchanged.
+
+- 2026-11-18: #194 replaced the responder and packet/socket implementation with mdns-sd 0.22.0.
+  All six service definitions and switches remain; address refresh is automatic every 2 s.
+  The three approved removals are documented in network.md and the daemon exception in ADR 0023.
+  UI/total production LOC: 72,830/109,372 to 71,632/108,174 (-1,198); tooling unchanged.
+  Matching default-feature aarch64 musl release ELF: 7,368,984 to 7,780,824 bytes
+  (+411,840, +5.59%). Cargo.lock packages: 56 to 67 (+11).
+  Host UI suites passed in debug and test-release, including integration tests. Focused discovery
+  passed (7 tests, 1 opt-in test ignored); the opt-in loopback test then passed for all six
+  service types, individual withdrawal, restart and mDNS disable. Cargo-deny: advisories ok, bans ok, licenses ok, sources ok
+  against the cached advisory database. Clippy: `partial gate passed (not done): 1 steps in 23 s`.
+  Fast gate: `partial gate passed (not done): 12 steps in 8 s` (exit 0), after fixing the
+  initial size/unsafe failures with generated ratchet reductions for the replaced files only.
+  No hardware run. Independent review, CI and publication remain with the coordinator.
+
+- 2026-11-18: #194 implementation assigned on `refactor/194-mdns-crate`, based on
+  `a8eb80da3ca7e4974f3e1e085588b5fc77a7d4a9`.
+  Baseline UI/total production LOC is 72,830/109,372. The coordinator owns Git writes,
+  independent review, CI and publication. No hardware access is assigned.
 
 - 2026-11-18: PR #173 follow-up check fix: extracted simulation fixture setup and
   separated decorated-choice and reference-slot assertions into independent tests.

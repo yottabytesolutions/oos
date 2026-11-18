@@ -92,16 +92,16 @@ impl Ui {
         let s = &self.sys;
         let name = self.net_name();
         let mut services = Vec::new();
-        let mut add = |on: bool, kind: &str, port: u16, txt: &[&str]| {
+        let mut add = |on: bool, kind: &str, port: u16, txt: &[(&str, Option<&str>)]| {
             if on {
                 services.push(mdns::Service {
                     kind: kind.into(),
                     port,
-                    txt: txt.iter().map(|t| t.to_string()).collect(),
+                    txt: txt.iter().map(|(key, value)| (key.to_string(), value.map(str::to_string))).collect(),
                 });
             }
         };
-        add(s.remote_web, "_http._tcp", web_port, &["path=/"]);
+        add(s.remote_web, "_http._tcp", web_port, &[("path", Some("/"))]);
         add(s.remote_scpi, "_scpi-raw._tcp", scpi_port, &[]);
         add(s.instruments.vxi11, "_vxi-11._tcp", 111, &[]);
         // SSH (docs/network.md 7): announced only while oos-ssh would listen (it needs `net.allow` as well)
@@ -185,7 +185,7 @@ impl Ui {
 
     /// The network the scope is on, for the picker and the keyboard of Allowed (`RemoteUi::lan`).
     pub(super) fn allow_lan_read(&mut self) {
-        self.remote.lans = netacl::lans(&mdns::ipv4_networks());
+        self.remote.lans = netacl::lans(&oos_hal::system::ipv4_all());
     }
 
     /// The lines of Allowed's picker: the list in use (stays), the network the scope is on, Other on the keyboard.

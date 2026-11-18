@@ -36,8 +36,25 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
 A crate from crates.io is added only where it removes code or blocking
 ([ADR 0004](../adr/0004-dependencies.md)). Each crate's allowed dependencies are its line in
 `xtask/data/architecture.txt`; cargo-deny (`deny.toml`) vets licences and advisories. Crates outside `xtask` are
-listed here. There are none: the Windows desktop window and its crates moved to
+listed here. The Windows desktop window and its crates moved to
 [oos-desktop](https://github.com/yottabytesolutions/oos-desktop) (ADR 0027).
+
+### mDNS responder (#194)
+
+The owner selected mdns-sd after evaluating responder crates, then approved implementation on
+2026-11-18. Version 0.22.0 is the latest crates.io release checked for this change. Its
+`Apache-2.0 OR MIT` licence permits use through MIT. It replaces our DNS parser/writer, probing,
+conflict handling, multicast sockets and interface refresh, while retaining all six service
+registrations and their TXT records. It supports IPv4 and IPv6, automatic address updates and
+host/instance conflict renaming. A small netio adapter uses its dedicated daemon thread and
+asynchronous event receiver; logging and other default features are disabled.
+
+The complete responder and automatic interface lifecycle justify the small adapter and additional
+daemon thread. Reverse PTR, QU unicast replies and host publication without services
+are explicitly dropped; see [network.md](../network.md#4-remote-services). Cargo.lock adds 11 packages
+(56 to 67), reusing the existing mio and socket2 versions.
+The dependency closure is pinned, and cargo-deny checks licences, advisories and sources. Production LOC,
+ARM binary size and dependency deltas are recorded in [task 0016](../tasks/0016-m15-remote-adapters.md).
 
 ## Checking for updates
 

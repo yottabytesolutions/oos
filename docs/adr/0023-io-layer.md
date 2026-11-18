@@ -14,7 +14,7 @@ versus 30-34. The accepted host cost was +685 production LOC, +2.86% ARM binary 
 
 ## Decision
 
-Use tokio for network IO: raw SCPI, VXI-11, HiSLIP, HTTP, mDNS, NTP, update checks. USB bulk or WLAN control moves
+Use tokio for network IO: raw SCPI, VXI-11, HiSLIP, HTTP, NTP, update checks. USB bulk or WLAN control moves
 qualify when they remove a blocking call from the frame thread or remove a dedicated thread. Use one current-thread IO
 runtime in netio. Clean ports take priority over executor choice. Tokio types never cross the port; synchronous owned
 values and bounded channels do. The frame thread never awaits or waits on sockets; it drains its port and is woken by
@@ -22,6 +22,9 @@ eventfd. Send timers close after 2 seconds without progress or 30 seconds total.
 
 Synchronous exceptions are:
 
+- mDNS: owner-approved mdns-sd daemon thread (2026-11-18, #194) replaces the hand-written responder
+  and socket glue. Netio passes owned configuration and consumes asynchronous status events. The crate
+  owns IPv4/IPv6 sockets, probing, conflict handling and automatic address refresh.
 - Core and DSP computations: no waiting IO.
 - Pure HAL plans: no waiting IO.
 - Hardware register sequences behind Board: ordered operations and required hardware gaps.
@@ -42,7 +45,7 @@ USB/WLAN moves must demonstrate the criterion above. Other synchronous IO except
 
 Check: `architecture` confines tokio to netio and std::net to netio plus the named synchronous exceptions,
 including imports through aliases and re-exports. Pure address values use core::net. Transport fixtures cover
-cancellation and timers. Netio may name the socket-free mDNS responder, alongside the synchronous application ports.
+cancellation and timers. Netio may name the mDNS configuration and status port, alongside the synchronous application ports.
 
 ## Alternatives
 
@@ -52,5 +55,5 @@ the CPU-bound frame thread gains latency and no useful waiting concurrency.
 
 ## Consequences
 
-Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and mDNS use netio today. NTP, update checks and device-stream moves meeting the
-criterion above remain targets.
+Raw SCPI, VXI-11, HiSLIP and HTTP/MCP use the netio runtime today. mDNS uses a crate-owned daemon behind netio.
+NTP, update checks and device-stream moves meeting the criterion above remain targets.

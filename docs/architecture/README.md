@@ -22,7 +22,8 @@ Keep the existing behaviour through small migrations. The accepted decisions are
 `oos-ui` uses `src/main.rs` for its binary and library module graph. `main` selects scripted execution,
 host `--serve`, or Linux device execution in `system/device.rs`. The browser is the host desktop view.
 There is no native Windows window in this crate. `oos-core` depends only on `oos-dsp`;
-`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and mDNS share tokio on netio.
+`oos-ui` depends on core, DSP, HAL, libc, tokio and mdns-sd. Raw SCPI, VXI-11, HiSLIP and HTTP/MCP share tokio on netio;
+mdns-sd owns a discovery daemon behind a netio adapter.
 DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their application bindings.
 
 ### Module map
@@ -50,8 +51,7 @@ Largest source files, physical lines including tests, comments and blanks (`wc -
 | `ui/src/ui.rs` | 15,856 | `ui/src/scpi.rs` | 7,233 |
 | `ui/src/store.rs` | 4,551 | `ui/src/board/dho/hw.rs` | 3,938 |
 | `ui/src/ui/lint.rs` | 3,337 | `ui/src/ui/eyepage.rs` | 2,876 |
-| `ui/src/http.rs` | 2,445 | `ui/src/mdns.rs` | 2,317 |
-| `ui/src/ui/analysis.rs` | 2,181 | `ui/src/drawpipe.rs` | 1,857 |
+| `ui/src/http.rs` | 2,445 | `ui/src/ui/analysis.rs` | 2,181 |
 
 These are not production LOC. The size ratchet counts 375 code lines in `Ui::step`,
 1,467 in `Scpi::exec_cmd`, 652 in `store::set` and 860 in `hw::spawn`.
@@ -114,9 +114,11 @@ flowchart LR
     render --> display["DRM / GPU helper; HTTP snapshots"]
 ```
 
-Raw SCPI, VXI-11, HiSLIP, HTTP and mDNS TCP/UDP framing and writes share one current-thread tokio runtime on the `netio` thread.
-mDNS keeps its socket-free responder, multicast packet metadata and two-second interface refresh; switching off
-withdraws records and closes its sockets. Discovery shutdown leaves the shared executor available to other services.
+Raw SCPI, VXI-11, HiSLIP and HTTP TCP/UDP framing and writes share one current-thread tokio runtime on the `netio` thread.
+mDNS uses mdns-sd's daemon thread for packets, probing, conflict handling and two-second interface refresh.
+Its netio adapter passes owned service configuration and receives status events. Switching off withdraws
+registrations and closes the daemon sockets, leaving the shared executor available to other services.
+LAN access checks and the subnet picker share safe IPv4 interface enumeration in `oos_hal::system`.
 IO owns credits until output completes and enforces 2 s without progress and 30 s total send limits.
 VXI-11 links and HiSLIP sessions retain frame-owned resumable programs behind owned request/reply ports.
 HiSLIP shares the eight-connection limit, admission, cancellation and timed output machinery. Its reply budget
@@ -131,7 +133,7 @@ Static pages stay on IO; owned requests and socket-free reply handles cross boun
 shared timed output and reservations. Live-picture encoding stays on its CPU worker. Signed upload bytes remain
 on a separate worker; only its bounded header and job handle cross frame intake before verification is started.
 MCP uses the same interpreter. The FIFO enters through `cmd`.
-mDNS has its own control channel, wake descriptor, socket thread and timers.
+mDNS configuration uses a watch channel; mdns-sd owns its sockets and timers.
 
 `Worker<J, R>` shares bounded capacity-one job/result channels and nonblocking submit/poll across
 simulation, reference analysis/decode/search, math, bus, eye and measurement-catalog jobs.
@@ -197,8 +199,9 @@ flowchart TB
 ```
 
 ADR 0023 keeps non-blocking IO behind ports, preferably on one current-thread tokio runtime.
-The current Cargo features are rt, net, time, sync, macros and io-util. Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and mDNS
-use netio. NTP and the update check remain migration work. USB bulk and WLAN control also move behind
+The current Cargo features are rt, net, time, sync, macros and io-util. Raw SCPI, VXI-11, HiSLIP and HTTP/MCP
+use the netio executor. mDNS uses its crate-owned daemon behind a netio adapter (ADR 0023).
+NTP and the update check remain migration work. USB bulk and WLAN control also move behind
 non-blocking ports where async removes blocking. Blocking filesystem, usbfs and process calls never run on
 the executor; use bounded blocking adapters. CPU work stays on CPU workers.
 

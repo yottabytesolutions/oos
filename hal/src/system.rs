@@ -3,6 +3,8 @@
 
 mod cores;
 pub use cores::{capacities, cpus, Cores};
+mod ifaddrs;
+pub use ifaddrs::ipv4_all;
 
 use std::io;
 use std::path::Path;

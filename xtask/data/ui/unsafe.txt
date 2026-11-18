@@ -6,7 +6,6 @@
 3 unsafe ui/src/fastdraw.rs
 19 unsafe ui/src/gpu.rs
 2 unsafe ui/src/main.rs
-7 unsafe ui/src/netio/mdns/socket.rs
 1 unsafe ui/src/sntp.rs
 1 unsafe ui/src/store.rs
 1 unsafe ui/src/usbtmc.rs

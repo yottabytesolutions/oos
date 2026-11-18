@@ -287,8 +287,8 @@ checking and sleeping. Publication must not require another batch or a capacity 
 available after hand-off, wait for its return before starting another batch; keep the five-set bound.
 
 Batches coalesce when the UI is slow. The UI takes at most one deposit per step; coalescing never thins records.
-The pool needs two primitives with owned or `Arc` arguments: map over indices and each over owned tiles.
-They replace `fastdraw::together`, `par_map`, `par_each`, worker mailboxes and #186's `Reduction`, without `unsafe`.
+The pool maps jobs over record indices and owned tiles, with owned or `Arc` arguments.
+It replaces `fastdraw::together`, `par_map`, `par_each`, worker mailboxes and #186's `Reduction`, without `unsafe`.
 The acquisition helper is removed in the first cut. Stateless placement allows later measured helper work without
 private maps; it is not part of F0-F7.
 

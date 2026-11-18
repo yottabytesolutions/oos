@@ -46,8 +46,6 @@ pub struct CodeLayout {
     pub word: [Option<usize>; NCH],
     pub affine: [(f32, f32); NCH],
     pub volt: fn(u16, (f32, f32)) -> f32,
-    /// volts of samples a..b of one channel (bytes, stride, word, a, b, affine, out): the board's decode loop
-    pub volts: fn(&[u8], usize, usize, usize, usize, (f32, f32), &mut Vec<f32>),
 }
 
 impl CodeLayout {
@@ -69,106 +67,6 @@ impl CodeLayout {
 /// empty) as the decode would, and says where the channels are; None where only the decode will do (compressed or
 /// with a header).
 pub type CodesInto = Arc<dyn Fn(&[u8], &mut Frame) -> Option<CodeLayout> + Send + Sync>;
-
-/// The trigger refinement of frame `f` searches the near window only (`trignear::edge_near`), never wide
-/// (docs/fork/ac-trig.md, docs/fork/trig-gate.md). AC or LF-reject coupling: the hardware comparators see a
-/// high-passed signal the samples do not hold, so a farther crossing is not the one they fired on. An edge trigger
-/// on a frame whose `pre` is exact: the edge is at `pre` (or in its pair), within the near window when the column
-/// average blurs it; with noise reject and with a holdoff too (measured at the full rate, trig-gate.md). Kept wide:
-/// other trigger types (they fire at the end of a condition, possibly far from the edge).
-// not inlined: inlined into the codes path it cost the two-channel deposit 6-7 us a frame on the host (perf guard
-// ratio 0.76 -> 0.90), the same code at run time either way
-#[inline(never)]
-#[cfg(test)]
-fn near_only(m: &Model, f: &Frame) -> bool {
-    let filtered = !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject);
-    let exact = f.pre_exact && m.trig_type == TrigType::Edge;
-    filtered || exact
-}
-
-/// The near part of the dense path's trigger refinement on the source `v` (samples `base..` of `len`, covering
-/// `trignear::near_window`): with `near_only` it decides there alone (`trignear::edge_near`), else the near search of
-/// `trignear::edge_smooth_near`; None where the wide search (`fastdraw::edge_smooth`) must decide.
-#[allow(clippy::too_many_arguments)]
-#[cfg(test)]
-fn refine_near(
-    v: &[f32],
-    base: usize,
-    len: usize,
-    pre: usize,
-    near_only: bool,
-    level: f32,
-    hyst: f32,
-    rising: bool,
-    either: bool,
-    half: usize,
-    col: usize,
-) -> Option<(Option<f64>, Option<oos_dsp::edges::Edge>)> {
-    if near_only {
-        Some(crate::trignear::edge_near(v, base, len, pre, level, hyst, rising, either, half, col))
-    } else {
-        crate::trignear::edge_near_window(v, base, len, pre, level, hyst, rising, either, half, col, |_| true)
-    }
-}
-
-#[cfg(test)]
-thread_local! {
-    /// wide searches of the codes path (tests)
-    static WIDE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-thread_local! {
-    /// the trigger source's volts that the codes path decodes (the near window, or all of them for the wide search)
-    static TRIG: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// `draw_frame` straight from the read-out `bytes` of a frame (`lay`, meta data in `f`, whose channel vectors stay
-/// empty): the same picture and statistics without the f32 copy of every channel. The trigger source is decoded only
-/// around the hardware trigger point (the near search, `trignear::edge_near_window`), all of it only when the wide
-/// search is needed (never with `near_only`); a filtered trigger path (AC, LF reject) takes its level from
-/// `board::MEAN_SAMPLES` words of the source. None where this path does not apply (sparse, pairs, roll or scan, dots): then decode and call
-/// `draw_frame`.
-#[cfg(test)]
-pub(crate) fn codes_picture(
-    ph: &mut Phosphor,
-    m: &Model,
-    f: &Frame,
-    bytes: &[u8],
-    lay: &CodeLayout,
-    stats: Option<Stats>,
-) -> Option<bool> {
-    let (w, h) = (ph.w, ph.h);
-    let tdiv = m.time_per_div() as f64;
-    let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.dots_at(x_per_sample) {
-        return None;
-    }
-    let present: [bool; NCH] = std::array::from_fn(|c| lay.channel(bytes, c).n > 0);
-    let refine = |hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
-        use crate::fastdraw::Samples;
-        let src = lay.channel(bytes, m.trig_src);
-        let level = crate::board::sw_trig_level_of(m, src.n, |i| src.at(i));
-        let trigger = crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either };
-        TRIG.with(|t| {
-            let v = &mut *t.borrow_mut();
-            let (a, b) = crate::trignear::near_window(f.pre, src.n, col);
-            (lay.volts)(bytes, src.stride, src.word, a, b, src.affine, v);
-            if let Some(r) = refine_near(v, a, src.n, f.pre, near_only(m, f), level, hyst, rising, either, half, col) {
-                return r;
-            }
-            #[cfg(test)]
-            WIDE.with(|n| n.set(n.get() + 1));
-            (lay.volts)(bytes, src.stride, src.word, 0, src.n, src.affine, v);
-            crate::fastdraw::edge_smooth(v.as_slice(), f.pre, trigger, half, col, |_| true)
-        })
-    };
-    let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
-        crate::fastdraw::deposit_codes(map, w, h, &lay.channel(bytes, c), xm, 24)
-    };
-    let input = frame::ProjectedInput { x_per_sample, pairs: false, present };
-    Some(frame::draw_projected(ph, m, f, input, stats, refine, deposit))
-}
 
 /// Frames acquired, used (drawn into the picture) and dropped, since the start; in both modes.
 #[derive(Default)]
@@ -321,14 +219,8 @@ impl Pipe {
         let identity = state.identity;
         drop(state);
         let mut accepted = if valid {
-            let accepted = crate::picture::acc::Accumulator::accept(
-                &mut deposit,
-                ph,
-                clear,
-                Stats { edges, off },
-                identity,
-                self.counters,
-            );
+            let accepted =
+                crate::picture::fold_deposit(&mut deposit, ph, clear, Stats { edges, off }, identity, self.counters);
             if self.counters.diagnostics_enabled() {
                 self.counters.timing.picture(deposit.progress.sample, accepted.newest.map(|fed| fed.elapsed()));
             }
@@ -521,114 +413,6 @@ mod tests {
         }
     }
 
-    // Break it catches (`draw_frame_codes`): a picture or trigger statistics from the read-out words that differ from
-    // decoding the frame first (column extremes, join, interleaved channels, the near window, the wide fallback),
-    // or the codes path taken where it must not be.
-    #[test]
-    fn drawing_from_the_codes_equals_drawing_the_decoded_frame() {
-        let (w, h) = (970, 448);
-        let sine = |k: usize, c: usize, i: usize| {
-            0.9 * (((i as f64 - 50_000.0 + (k % 7) as f64 * 0.13) / 400.0)
-                * (1.0 + c as f64 * 0.5)
-                * std::f64::consts::TAU)
-                .sin()
-        };
-        let square = |k: usize, c: usize, i: usize| {
-            let x = i as f64 + 37.0 * k as f64 + 101.0 * c as f64;
-            (if (x / 9_000.0).fract() < 0.5 { 1.2 } else { -1.2 }) + 0.03 * ((i * 7919 + k * 31) % 101) as f64 / 101.0
-        };
-        let flat = |_k: usize, c: usize, i: usize| 0.2 + 0.001 * (i % 3) as f64 + c as f64 * 0.1;
-        let mut taken = 0;
-        let mut cases = 0;
-        for (mask, n, tdiv) in [
-            (1u32, 100_000u32, 1e-5),
-            (1, 12_512, 1e-6),
-            (3, 70_312, 1e-5),
-            (3, 12_512, 1e-6),
-            (15, 30_000, 1e-5),
-            (5, 25_000, 1e-5),
-            (1, 1408, 1e-7),
-        ] {
-            for (name, sig) in
-                [("sine", &sine as &dyn Fn(usize, usize, usize) -> f64), ("square", &square), ("flat", &flat)]
-            {
-                let (bytes, fb, s, p) = frames_of(mask, n, 6, sig);
-                // exact false: as a decimated read, where the wide search stays
-                for (src, dots, coup, exact) in [
-                    (0usize, false, TrigCoup::Dc, true),
-                    (1, false, TrigCoup::Dc, true),
-                    (0, true, TrigCoup::Dc, true),
-                    (0, false, TrigCoup::Ac, true),
-                    (0, false, TrigCoup::LfReject, true),
-                    (0, false, TrigCoup::HfReject, true),
-                    (0, false, TrigCoup::Dc, false),
-                    (1, false, TrigCoup::Dc, false),
-                    (0, false, TrigCoup::HfReject, false),
-                ] {
-                    let mut m = model(tdiv, false, dots);
-                    for c in 0..NCH {
-                        m.ch[c].on = mask & (1 << c) != 0;
-                    }
-                    m.trig_src = src;
-                    m.trig_coup = coup;
-                    let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
-                    let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
-                    let (mut ta, mut tb) = (0, 0);
-                    for chunk in bytes.chunks_exact(fb) {
-                        let mut f = crate::board::dho::hw::decode(chunk, &s, &p, 0);
-                        f.pre_exact &= exact;
-                        ta +=
-                            draw_frame(&mut a, &m, &f, Interp::Exact, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }))
-                                as u32;
-                        let mut g = Frame::default();
-                        let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut g).expect("raw frame");
-                        g.pre_exact &= exact;
-                        assert!(g.ch.iter().all(|v| v.is_empty()) && (g.dt, g.pre, g.acq) == (f.dt, f.pre, f.acq));
-                        match codes_picture(
-                            &mut b,
-                            &m,
-                            &g,
-                            chunk,
-                            &lay,
-                            Some(Stats { edges: &mut sb.0, off: &mut sb.1 }),
-                        ) {
-                            Some(t) => {
-                                tb += t as u32;
-                                taken += 1;
-                            }
-                            None => {
-                                assert!(
-                                    dots || f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64 > 0.5,
-                                    "{} {} codes path refused",
-                                    name,
-                                    mask
-                                );
-                                tb += draw_frame(
-                                    &mut b,
-                                    &m,
-                                    &f,
-                                    Interp::Exact,
-                                    Some(Stats { edges: &mut sb.0, off: &mut sb.1 }),
-                                ) as u32;
-                            }
-                        }
-                    }
-                    let what =
-                        format!("{} mask {} n {} src {} dots {} {:?} exact {}", name, mask, n, src, dots, coup, exact);
-                    assert_eq!((ta, sa.0), (tb, sb.0), "{}", what);
-                    assert!(sa.1 == sb.1, "{}: {:?} vs {:?}", what, sa.1, sb.1);
-                    for c in 0..NCH {
-                        assert!(a.map[c] == b.map[c], "{}: CH{} differs", what, c + 1);
-                    }
-                    cases += 1;
-                }
-            }
-        }
-        assert!(taken > 150, "codes path taken {} times in {} cases", taken, cases);
-        // the wide fallback was compared too
-        assert!(WIDE.with(|n| n.get()) > 5, "{} wide searches", WIDE.with(|n| n.get()));
-    }
-
     // Break it catches: a frame moved to an edge outside the near window where the search must stay near (AC, LF
     // reject; an edge trigger on an exact `pre`), on the decoded frame or from the words; a far edge no longer found
     // where the wide search must stay (decimated reads, other trigger types, noise reject, holdoff); a DC refinement
@@ -665,15 +449,24 @@ mod tests {
             let mut m = model(1e-5, false, false);
             m.trig_coup = coup;
             set(&mut m);
-            let (mut fe, mut g) = (f.clone(), g0.clone());
-            (fe.pre_exact, g.pre_exact) = (exact, exact);
+            let mut fe = f.clone();
+            fe.pre_exact = exact;
             let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
             let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
             let ta = draw_frame(&mut a, &m, &fe, Interp::Exact, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }));
-            let tb =
-                codes_picture(&mut b, &m, &g, &bytes[..fb], &lay, Some(Stats { edges: &mut sb.0, off: &mut sb.1 }))
-                    .expect("codes path");
-            assert!(ta == tb && a.map[0] == b.map[0] && sa == sb, "{}: codes path differs", name);
+            let mut meta = g0.clone();
+            meta.pre_exact = exact;
+            let codes = Arc::new(move |_: &[u8], f: &mut Frame| {
+                f.clone_from(&meta);
+                Some(lay)
+            });
+            let pipe = Pipe::start(1, 0, fresh());
+            pipe.set_view(Some(&m), w, h, Interp::Exact);
+            pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 1, 0, dec(&s, &p), Some(codes));
+            settle(&pipe);
+            let accepted = pipe.accept(&mut b, &mut false, &mut sb.0, &mut sb.1);
+            assert_eq!((accepted.frames, accepted.triggered), (1, u64::from(ta)), "{name}");
+            assert!(a.map[0] == b.map[0] && sa == sb, "{name}: codes path differs");
             if near {
                 assert_eq!(sa.0, [0, 0, 0, 1], "{}", name);
                 assert!(a.map[0] == at_pre.map[0], "{}: not drawn at the hardware point", name);
@@ -696,40 +489,6 @@ mod tests {
                 rate,
                 compress
             );
-        }
-        // DC: the composed near and wide refinement is `edge_smooth_near`, wherever the hardware point lies
-        let sine: Vec<f32> = (0..100_000)
-            .map(|i| {
-                (0.9 * (i as f64 / 3000.0 * std::f64::consts::TAU).sin() + 0.2 * ((i * 7919) % 17) as f64 / 17.0) as f32
-            })
-            .collect();
-        for v in [&f.ch[0], &sine] {
-            for pre in (1000..99_000).step_by(3331) {
-                for (col, half) in [(1, 600), (16, 9000), (128, 62_500)] {
-                    for level in [0.0f32, 0.5, -0.99] {
-                        let got = refine_near(v, 0, v.len(), pre, false, level, 0.1, true, false, half, col)
-                            .unwrap_or_else(|| {
-                                crate::fastdraw::edge_smooth(
-                                    v.as_slice(),
-                                    pre,
-                                    crate::fastdraw::EdgeSearch { level, hysteresis: 0.1, rising: true, either: false },
-                                    half,
-                                    col,
-                                    |_| true,
-                                )
-                            });
-                        let want =
-                            crate::trignear::edge_smooth_near(v, pre, level, 0.1, true, false, half, col, |_| true);
-                        assert!(
-                            got.0 == want.0 && got.1.map(|e| (e.t, e.rising)) == want.1.map(|e| (e.t, e.rising)),
-                            "pre {} col {} level {}",
-                            pre,
-                            col,
-                            level
-                        );
-                    }
-                }
-            }
         }
     }
 
@@ -923,54 +682,68 @@ mod tests {
     #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn perf_guard_codes_per_frame() {
         assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
-        let (w, h) = (970, 448);
-        let sig = |k: usize, c: usize, i: usize| {
-            0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin()
-        };
-        let mut worst: f64 = 0.0;
-        for (mask, n, tdiv, coup) in [
+        let worst = [
             (1u32, 100_000u32, 1e-5, TrigCoup::Dc),
             (3, 70_312, 1e-5, TrigCoup::Dc),
             (5, 50_000, 1e-5, TrigCoup::Dc),
             (1, 40_000, 2e-6, TrigCoup::Dc),
             (1, 100_000, 1e-5, TrigCoup::Ac),
-        ] {
-            let mut m = model(tdiv, false, false);
-            m.trig_coup = coup;
-            for c in 0..NCH {
-                m.ch[c].on = mask & (1 << c) != 0;
-            }
-            let frames = (2_000_000 / (n as usize * 2 * hz::ratio(mask) as usize)).clamp(4, 100);
-            let (bytes, fb, s, p) = frames_of(mask, n, frames, &sig);
-            let (mut pa, mut pb) = (Phosphor::new(w, h), Phosphor::new(w, h));
-            let (mut fa, mut fbm) = (Frame::default(), Frame::default());
-            // one round: every frame once (each round's time divided by the frames below)
-            let (old, new) = crate::perfguard::guard_pair(
-                0.9,
-                crate::perfguard::ROUNDS,
-                1,
-                || {
-                    for chunk in bytes.chunks_exact(fb) {
-                        crate::board::dho::hw::decode_into(chunk, &s, &p, 0, &mut fa);
-                        std::hint::black_box(draw_frame(&mut pa, &m, &fa, Interp::Exact, None));
-                    }
-                },
-                || {
-                    for chunk in bytes.chunks_exact(fb) {
-                        let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut fbm).unwrap();
-                        std::hint::black_box(codes_picture(&mut pb, &m, &fbm, chunk, &lay, None).unwrap());
-                    }
-                },
-            );
-            let (old, new) = (old / frames as u32, new / frames as u32);
-            let r = new.as_secs_f64() / old.as_secs_f64();
-            worst = worst.max(r);
-            println!(
-                "codes mask {:#x} {} pt {:?}: decode + draw {:?}/frame, from the codes {:?}/frame (ratio {:.2})",
-                mask, n, coup, old, new, r
-            );
-        }
+        ]
+        .into_iter()
+        .map(|(mask, n, tdiv, coup)| measure_codes_per_frame(mask, n, tdiv, coup))
+        .fold(0.0, f64::max);
         assert!(worst <= 0.9, "drawing from the codes must be cheaper: worst ratio {:.2}", worst);
+    }
+
+    fn measure_codes_per_frame(mask: u32, n: u32, tdiv: f64, coup: TrigCoup) -> f64 {
+        let (w, h) = (970, 448);
+        let sig = |k: usize, c: usize, i: usize| {
+            0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin()
+        };
+        let mut m = model(tdiv, false, false);
+        m.trig_coup = coup;
+        m.meas.clear();
+        m.meas2.clear();
+        for c in 0..NCH {
+            m.ch[c].on = mask & (1 << c) != 0;
+        }
+        let frames = (2_000_000 / (n as usize * 2 * hz::ratio(mask) as usize)).clamp(4, 100);
+        let (bytes, fb, s, p) = frames_of(mask, n, frames, &sig);
+        let mut ph = Phosphor::new(w, h);
+        let mut frame = Frame::default();
+        let pipe = Pipe::start(1, 0, fresh());
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
+        let cs = s.clone();
+        let codes: CodesInto = Arc::new(move |bytes, f| crate::board::dho::hw::codes_into(bytes, &cs, &p, 0, f));
+        let decode = dec(&s, &p);
+        let mut buffer = Some(Box::new(Bytes(bytes.clone())));
+        let mut draw_codes = || {
+            let bytes = buffer.take().expect("the previous round returned its buffer");
+            pipe.feed_codes(bytes, fb, frames, m.hw_stamp, decode.clone(), Some(codes.clone()));
+            buffer = Some(recycle_worker_round(&pipe, frames));
+        };
+        draw_codes();
+        // one round: every frame once (each round's time divided by the frames below)
+        let (old, new) = crate::perfguard::guard_pair(
+            0.9,
+            crate::perfguard::ROUNDS,
+            1,
+            || {
+                for chunk in bytes.chunks_exact(fb) {
+                    crate::board::dho::hw::decode_into(chunk, &s, &p, 0, &mut frame);
+                    std::hint::black_box(draw_frame(&mut ph, &m, &frame, Interp::Exact, None));
+                }
+            },
+            draw_codes,
+        );
+        assert_eq!(pipe.counters.read().2, 0);
+        let (old, new) = (old / frames as u32, new / frames as u32);
+        let r = new.as_secs_f64() / old.as_secs_f64();
+        println!(
+            "codes mask {:#x} {} pt {:?}: decode + draw {:?}/frame, from the codes {:?}/frame (ratio {:.2})",
+            mask, n, coup, old, new, r
+        );
+        r
     }
 
     /// Until every batch fed is done (drawn and handed on, or dropped).
@@ -1013,6 +786,15 @@ mod tests {
             .into_any()
             .downcast::<Bytes>()
             .expect("the benchmark feeds Bytes buffers")
+    }
+
+    fn recycle_worker_round(pipe: &Pipe, frames: usize) -> Box<Bytes> {
+        let buffer = recycled(pipe);
+        // The fixture has one batch in flight. Consume its handoff without timing the UI fold.
+        let deposit = pipe.slot.take().expect("worker published the deposit before returning the buffer");
+        assert_eq!(deposit.records, frames as u64);
+        pipe.slot.recycle(deposit);
+        buffer
     }
 
     /// The frames mode for the same frames: `Ui::fast_draw` and the per-frame statistics on every frame.
@@ -1277,9 +1059,10 @@ mod tests {
                         0,
                         dec(&s, &p),
                     );
-                    buffer = Some(recycled(&one));
+                    buffer = Some(recycle_worker_round(&one, frames));
                 },
             );
+            assert_eq!(one.counters.read().2, 0);
             let (old, mut per) = (old / frames as u32, vec![one_t / frames as u32]);
             for n in [2usize, 4] {
                 let pipe = Pipe::start(n, 0, fresh());
@@ -1287,9 +1070,10 @@ mod tests {
                 let t0 = std::time::Instant::now();
                 for _ in 0..3 {
                     pipe.feed(Box::new(Bytes(bytes.clone())), fb, frames, 0, dec(&s, &p));
-                    drop(recycled(&pipe));
+                    drop(recycle_worker_round(&pipe, frames));
                 }
                 per.push(t0.elapsed() / (3 * frames) as u32);
+                assert_eq!(pipe.counters.read().2, 0);
             }
             let r = per[0].as_secs_f64() / old.as_secs_f64();
             println!("{} s/div {} pt, frame statistics {}: frames mode {:?}/frame; one core in the pipeline {:?}/frame (ratio {:.2}); 1/2/4 workers {:.0}/{:.0}/{:.0} frames/s", tdiv, memsel, meas, old, per[0], r, 1.0 / per[0].as_secs_f64(), 1.0 / per[1].as_secs_f64(), 1.0 / per[2].as_secs_f64());

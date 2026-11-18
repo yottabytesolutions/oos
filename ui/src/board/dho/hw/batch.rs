@@ -70,8 +70,10 @@ impl<'a> Readout<'a> {
                     (self.settings.clone(), *self.params, probe),
                     matched,
                     keep.then(|| std::sync::Arc::new(newest)),
-                );
-                Vec::new()
+                )
+                .into_iter()
+                .map(std::sync::Arc::unwrap_or_clone)
+                .collect()
             }
             None => {
                 crate::drawpipe::Counters::add(&counters.dropped, avail as u64 - 1);

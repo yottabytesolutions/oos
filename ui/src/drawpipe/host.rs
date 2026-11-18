@@ -31,6 +31,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rejected_intake_returns_the_waveform_and_only_discards_its_neighbours() {
+        use super::super::{sync_channel, tests::Bytes, Counters, Message};
+        use std::sync::Arc;
+
+        for disconnected in [false, true] {
+            let counters = Box::leak(Box::<Counters>::default());
+            let pipe = Pipe::start(0, 0, counters);
+            let (tx, rx) = sync_channel(1);
+            assert!(tx.try_send(Message::Wake).is_ok());
+            let _receiver = (!disconnected).then_some(rx);
+            oos_hal::sync::lock(&pipe.workers).sender = Some(tx);
+            let waveform = Arc::new(crate::board::Frame { seq: 4, ..Default::default() });
+            for prepared in [false, true] {
+                let raw = Box::new(Bytes(vec![0; 4]));
+                let id = Default::default();
+                let newest = Some(waveform.clone());
+                let returned = if prepared {
+                    pipe.feed_prepared(raw, 1, 1..4, id, Arc::new(|_, _, _| unreachable!()), newest)
+                } else {
+                    pipe.feed_with(raw, 1, 1..4, id, Arc::new(|_, _| unreachable!()), None, newest)
+                };
+                assert!(Arc::ptr_eq(&returned.unwrap(), &waveform));
+                assert!(pipe.take_buffer().is_some());
+            }
+            assert_eq!(counters.read().2, 4);
+            assert!(counters.records_text().contains("lost.unclaimed=4"));
+        }
+    }
+
+    #[test]
     fn buffer_return_follows_decoder_cleanup() {
         use crate::board::scripted::{self, Batch, BatchKind, BatchSource};
         use std::sync::{Arc, Barrier};

@@ -146,3 +146,28 @@ fn acquisition_batch_buffer_exhaustion_learns_only_the_newest() {
         }
     }
 }
+
+#[test]
+fn unavailable_deposit_intake_falls_back_to_the_record_queue() {
+    use crate::board::dho::publication;
+
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let counters = crate::drawpipe::counters();
+    let pipe = Pipe::start(0, 0, counters);
+    let s = Settings { mask: 1, header: false, compress: 1, ..Settings::default() };
+    let p = hz::prep(s.mask, 1_000_000_000, 4096, 0);
+    let raw = record(p.memsel, 200);
+    let mut dma = Bytes(raw.repeat(3));
+    let identity = Identity::default();
+    publication::read(3, 3, 3);
+    let readout = Readout::new(&pipe, (&s, &p), (raw.len(), 3, false), (3, HeaderProbe::Off, None), identity);
+    let frames = readout.dispatch(&mut dma, Some(Bytes(Vec::new())), None, |frame| frame);
+    let shared = crate::board::HwShared::default();
+    publication::push_frames(&shared, frames, s.mode);
+    let shared = oos_hal::sync::lock(&shared);
+    assert_eq!(shared.queue.len(), 1);
+    assert_eq!((shared.queue[0].seq, shared.frame.seq), (3, 3));
+    assert_eq!(counters.read(), (3, 0, 2));
+    assert!(counters.records_text().contains("lost.unclaimed=2"));
+    assert!(pipe.take_buffer().is_some());
+}

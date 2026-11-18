@@ -99,7 +99,8 @@ fn requested_sweep_changes_are_companions_even_when_accepted_run_is_equal() {
     let mut shadow = Shadow::new(&initial, UiAcq::default(), &config(4)).unwrap();
     let mut current = initial.clone();
     current.trig_mode = TrigMode::Auto;
-    let changes = shadow.observe(&current, UiAcq::default(), &[Request::Run], &config(4)).unwrap();
+    let requests = [Request::Run, Request::ResumeSweep(TrigMode::Auto)];
+    let changes = shadow.observe(&current, UiAcq::default(), &requests, &config(4)).unwrap();
     assert_eq!(changes.classes(), Classes::HW_AVERAGE);
     assert_eq!((changes.identity().gen(), changes.identity().epoch()), (0, 1));
     current.trig_mode = TrigMode::Normal;
@@ -110,6 +111,31 @@ fn requested_sweep_changes_are_companions_even_when_accepted_run_is_equal() {
     current.trig_mode = TrigMode::Auto;
     let changes = shadow.observe(&current, UiAcq::default(), &[], &config(4)).unwrap();
     assert_eq!(changes.classes(), Classes::ACQ | Classes::STATS, "ordinary sweep changes retain their classes");
+}
+
+#[test]
+fn run_restores_either_single_sweep_without_reclassifying_settings() {
+    for mode in [TrigMode::Normal, TrigMode::Auto] {
+        let initial = Model { trig_mode: TrigMode::Single, ..Model::default() };
+        let mut shadow = Shadow::new(&initial, UiAcq::default(), &config(4)).unwrap();
+        let current = Model { trig_mode: mode, ..initial };
+        let requests = [Request::Run, Request::ResumeSweep(mode)];
+        let changes = shadow.observe(&current, UiAcq::default(), &requests, &config(4)).unwrap();
+        assert_eq!(changes.classes(), Classes::HW_AVERAGE);
+        assert_eq!((changes.identity().gen(), changes.identity().epoch()), (0, 1));
+    }
+}
+
+#[test]
+fn armed_single_restores_its_sweep_without_a_run_state_edge() {
+    for mode in [TrigMode::Normal, TrigMode::Auto] {
+        let initial = Model { trig_mode: TrigMode::Single, run: RunState::Run, ..Model::default() };
+        let mut shadow = Shadow::new(&initial, UiAcq::default(), &config(4)).unwrap();
+        let current = Model { trig_mode: mode, ..initial };
+        let changes = shadow.observe(&current, UiAcq::default(), &[Request::ResumeSweep(mode)], &config(4)).unwrap();
+        assert_eq!(changes.classes(), Classes::NONE);
+        assert_eq!(changes.identity(), Identity::default());
+    }
 }
 
 #[test]
@@ -185,4 +211,29 @@ fn consecutive_playback_requests_preserve_statistics_and_expire_after_acceptance
     let changes = shadow.observe(&model, UiAcq::default(), &[], &config(4)).unwrap();
     assert!(changes.classes().contains(Classes::ACQ | Classes::STATS));
     assert_eq!(changes.identity().stats_gen(), 1);
+}
+
+#[test]
+fn explicit_sweep_with_run_from_single_retains_its_classes() {
+    for mode in [TrigMode::Normal, TrigMode::Auto] {
+        let initial = Model { trig_mode: TrigMode::Single, ..Model::default() };
+        let mut shadow = Shadow::new(&initial, UiAcq::default(), &config(4)).unwrap();
+        let current = Model { trig_mode: mode, ..initial };
+        let changes = shadow.observe(&current, UiAcq::default(), &[Request::Run], &config(4)).unwrap();
+        assert_eq!(changes.classes(), Classes::ACQ | Classes::STATS | Classes::HW_AVERAGE);
+        assert_eq!((changes.identity().gen(), changes.identity().stats_gen()), (1, 1));
+    }
+}
+
+#[test]
+fn explicit_sweep_after_restoration_retains_its_classes() {
+    for (restored, selected) in [(TrigMode::Auto, TrigMode::Normal), (TrigMode::Normal, TrigMode::Auto)] {
+        let initial = Model { trig_mode: TrigMode::Single, ..Model::default() };
+        let mut shadow = Shadow::new(&initial, UiAcq::default(), &config(4)).unwrap();
+        let current = Model { trig_mode: selected, ..initial };
+        let requests = [Request::Run, Request::ResumeSweep(restored)];
+        let changes = shadow.observe(&current, UiAcq::default(), &requests, &config(4)).unwrap();
+        assert_eq!(changes.classes(), Classes::ACQ | Classes::STATS | Classes::HW_AVERAGE);
+        assert_eq!((changes.identity().gen(), changes.identity().stats_gen()), (1, 1));
+    }
 }

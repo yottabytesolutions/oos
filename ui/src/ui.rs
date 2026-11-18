@@ -1342,7 +1342,7 @@ pub struct Ui {
     /// what the second pane keeps between frames
     pn: panes::PaneState,
     log: logger::Logger,
-    single_armed: bool,
+    trigger: trigger_controls::SweepMemory,
     stats_on: bool,
     /// measurement results overlay folded to its header
     results_min: bool,
@@ -1692,7 +1692,7 @@ impl Ui {
             trend: Vec::new(),
             pn: Default::default(),
             log: logger::Logger::default(),
-            single_armed: false,
+            trigger: trigger_controls::SweepMemory::default(),
             stats_on: false,
             results_min: false,
             eye_from: 1.0,
@@ -6863,7 +6863,7 @@ impl Ui {
     pub(crate) fn force_trigger(&mut self) {
         if self.m.run == RunState::Stop && self.m.trig_mode == TrigMode::Single {
             self.scpi_arm_operation();
-            self.single_armed = false;
+            self.trigger.single_armed = false;
         }
         if self.record_mode() {
             self.record_key(key::FORCE);
@@ -8174,13 +8174,11 @@ impl Ui {
             }
             key::RUNSTOP => {
                 m.run = if m.run == RunState::Run { RunState::Stop } else { RunState::Run };
-                if m.run == RunState::Run && m.trig_mode == TrigMode::Single {
-                    m.trig_mode = TrigMode::Auto;
-                }
-                if m.run == RunState::Run && (m.n_on() > 0 || m.la_on()) {
-                    m.floor_live_tdiv();
-                }
                 if m.run == RunState::Run {
+                    self.resume_sweep(TrigMode::Auto);
+                    if self.m.n_on() > 0 || self.m.la_on() {
+                        self.m.floor_live_tdiv();
+                    }
                     change::run_request(self);
                 }
             }
@@ -9890,6 +9888,7 @@ mod tests {
     mod deep_intake;
     mod roll;
     mod shadow;
+    mod trigger_sweep;
 
     use super::axis_label;
 

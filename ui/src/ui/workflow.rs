@@ -77,6 +77,7 @@ mod slot_loading_tests {
 
 pub(super) struct LiveSession {
     model: Model,
+    previous_sweep: Option<TrigMode>,
     visible: [bool; NREF],
     /// what the Bus trigger of `model` switched on by itself (`Ui::bus_auto`)
     bus_auto: Option<([bool; NCH], bool)>,
@@ -693,7 +694,8 @@ impl Ui {
     pub(super) fn remember_live(&mut self) {
         if self.workflow_hold.is_none() && !self.record_mode() {
             let visible = std::array::from_fn(|i| self.refs[i].as_ref().is_some_and(|r| r.on));
-            self.workflow_hold = Some(LiveSession { model: self.m.clone(), visible, bus_auto: self.bus_auto });
+            let (model, previous_sweep) = (self.m.clone(), self.trigger.previous_sweep);
+            self.workflow_hold = Some(LiveSession { model, previous_sweep, visible, bus_auto: self.bus_auto });
         }
     }
 
@@ -713,12 +715,10 @@ impl Ui {
         let held = self.workflow_hold.take();
         let restored = held.is_some();
         if let Some(saved) = held {
-            self.m = saved.model;
-            self.bus_auto = saved.bus_auto;
+            (self.m, self.trigger.previous_sweep, self.bus_auto) = (saved.model, saved.previous_sweep, saved.bus_auto);
             for (i, r) in self.refs.iter_mut().enumerate() {
-                if let Some(r) = r {
-                    r.on = saved.visible[i];
-                }
+                let Some(r) = r else { continue };
+                r.on = saved.visible[i];
             }
         }
         self.m.floor_live_tdiv();
@@ -995,9 +995,7 @@ impl Ui {
                     self.sim_play = false;
                     self.m.status = TrigStatus::Stop;
                 } else {
-                    if self.m.trig_mode == TrigMode::Single {
-                        self.m.trig_mode = TrigMode::Normal;
-                    }
+                    self.resume_sweep(TrigMode::Normal);
                     self.m.run = RunState::Run;
                     self.sim_play = true;
                     self.m.status = TrigStatus::Wait;
@@ -1007,7 +1005,7 @@ impl Ui {
             key::SINGLE => {
                 self.operation_serial = self.operation_serial.wrapping_add(1);
                 self.single_operation = self.operation_serial;
-                self.m.trig_mode = TrigMode::Single;
+                self.single_sweep();
                 self.m.run = RunState::Run;
                 self.sim_play = true;
                 self.m.status = TrigStatus::Wait;

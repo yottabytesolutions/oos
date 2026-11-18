@@ -52,7 +52,7 @@ impl Keys {
         let mut b = other.want.clone();
         let (mut slow, mut old_slow) = (self.slow, other.slow);
         if transition && (self.run != other.run || b.single || (a.single && b.auto)) {
-            // Only run edges, SINGLE arms and Single-to-Auto companions suppress sweep invalidation.
+            // Only run edges, SINGLE arms and restored sweep companions suppress sweep invalidation.
             a.auto = false;
             b.auto = false;
             a.single = false;

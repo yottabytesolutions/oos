@@ -12,9 +12,9 @@
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
-3279 file ui/src/scpi.rs
+3277 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8840 file ui/src/ui.rs
+8838 file ui/src/ui.rs
 1513 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -33,7 +33,7 @@
 563 file ui/src/ui/time.rs
 1290 file ui/src/ui/tools.rs
 772 file ui/src/ui/wlan.rs
-655 file ui/src/ui/workflow.rs
+653 file ui/src/ui/workflow.rs
 804 file ui/src/ui/workspace.rs
 1221 file ui/src/wave.rs
 138 fn ui/src/board/dho/fpga.rs spawn
@@ -68,7 +68,7 @@
 68 fn ui/src/scpi.rs Scpi::dvm_cmd
 78 fn ui/src/scpi.rs Scpi::hist_cmd
 71 fn ui/src/scpi.rs Scpi::la_cmd
-104 fn ui/src/scpi.rs Scpi::mask_cmd
+102 fn ui/src/scpi.rs Scpi::mask_cmd
 241 fn ui/src/scpi.rs Scpi::math_cmd
 84 fn ui/src/scpi.rs Scpi::meas_stat_cmd
 187 fn ui/src/scpi.rs Scpi::ref_cmd
@@ -89,7 +89,7 @@
 66 fn ui/src/ui.rs Ui::draw_strip_band
 73 fn ui/src/ui.rs Ui::draw_top
 83 fn ui/src/ui.rs Ui::fast_draw_all
-161 fn ui/src/ui.rs Ui::key
+159 fn ui/src/ui.rs Ui::key
 117 fn ui/src/ui.rs Ui::knob
 76 fn ui/src/ui.rs Ui::menu_title
 100 fn ui/src/ui.rs Ui::multi_touch
@@ -152,7 +152,7 @@
 75 fn ui/src/ui/tools.rs Ui::hist_stat
 64 fn ui/src/ui/wlan.rs Ui::osk_done
 93 fn ui/src/ui/workflow.rs Ui::commit_waveform_traces_to
-64 fn ui/src/ui/workflow.rs Ui::record_key
+62 fn ui/src/ui/workflow.rs Ui::record_key
 74 fn ui/src/ui/workflow.rs Ui::replay_acquire
 99 fn ui/src/ui/workspace.rs Ui::workspace_action
 116 fn ui/src/ui/workspace.rs Ui::workspace_touch

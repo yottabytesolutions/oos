@@ -115,9 +115,7 @@ pub(super) fn ieee(scpi: &mut Scpi, ui: &mut Ui, query: bool, head: &str) -> Opt
 fn record_run(ui: &mut Ui, nodes: &[&str]) -> Option<Option<Vec<u8>>> {
     let key = crate::ui::key::RUNSTOP;
     if kw(nodes[0], "RUN") {
-        if ui.m.trig_mode == TrigMode::Single {
-            ui.m.trig_mode = TrigMode::Normal;
-        }
+        ui.resume_sweep(TrigMode::Normal);
         if ui.m.run != RunState::Run {
             ui.record_key(key);
         }

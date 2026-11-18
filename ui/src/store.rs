@@ -9,7 +9,7 @@ mod codec_tests;
 pub(crate) mod durable;
 mod setup;
 pub(crate) mod startup;
-pub use setup::{set, setup_text};
+pub use setup::{parse_sweep, set, setup_text};
 mod import;
 use crate::gfx::Canvas;
 use crate::model::*;

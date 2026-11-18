@@ -28,12 +28,12 @@ pub(super) fn intake_settings(ui: &mut Ui) {
     // SINGLE armed: from here on only what comes after the press counts.
     let single = ui.m.trig_mode == TrigMode::Single && ui.m.run == RunState::Run;
     if single
-        && !ui.single_armed
+        && !ui.trigger.single_armed
         && !ui.host.runtime().change.pending.entries().contains(&oos_core::change::Command::Request(Request::Single))
     {
         request(ui, Request::Single, Row::Single);
     }
-    ui.single_armed = single;
+    ui.trigger.single_armed = single;
     ui.bus_candidate_guard_tick();
     for source in [&mut ui.meas_src, &mut ui.meas_src_b] {
         if matches!(*source, WaveId::Ch(c) if c >= n_ch()) {

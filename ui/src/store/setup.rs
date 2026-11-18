@@ -54,6 +54,10 @@ mod parse;
 mod tests;
 use parse::*;
 
+pub fn parse_sweep(value: &str) -> Result<TrigMode, String> {
+    p_enum(value, &TRIG_MODES)
+}
+
 enum Section {
     Plain(&'static [Key]),
     Indexed { prefix: &'static str, count: usize, separator: &'static str, keys: &'static [Key] },

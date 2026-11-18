@@ -151,9 +151,10 @@ fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
         Item::TrigMode => {
             let all = [TrigMode::Auto, TrigMode::Normal, TrigMode::Single];
             let i = all.iter().position(|&x| x == m.trig_mode).expect("all trigger modes are listed");
-            m.trig_mode = all[cyc(i, 3, d)];
-            if m.trig_mode == TrigMode::Single {
-                m.run = RunState::Run;
+            let mode = all[cyc(i, 3, d)];
+            ui.set_sweep(mode);
+            if mode == TrigMode::Single {
+                ui.m.run = RunState::Run;
             }
         }
         Item::TrigType => {

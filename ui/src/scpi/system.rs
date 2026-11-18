@@ -114,10 +114,14 @@ fn mask_map(scpi: &mut Scpi, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<
 }
 
 fn set(scpi: &mut Scpi, ui: &mut Ui, arg: &str) -> Option<Option<Vec<u8>>> {
-    let r = arg
-        .split_once('=')
-        .ok_or("no '='".to_string())
-        .and_then(|(k, v)| crate::store::set(&mut ui.m, k.trim(), v.trim()));
+    let r = arg.split_once('=').ok_or("no '='".to_string()).and_then(|(k, v)| {
+        if k.trim() == "trig_mode" {
+            ui.set_sweep(crate::store::parse_sweep(v.trim())?);
+        } else {
+            crate::store::set(&mut ui.m, k.trim(), v.trim())?;
+        }
+        Ok(())
+    });
     match r {
         Ok(()) => change::edited(ui),
         Err(e) => scpi.push_err(format!("-224,\"Illegal parameter value\" {}", e)),

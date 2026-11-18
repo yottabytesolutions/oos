@@ -50,7 +50,7 @@ impl Shadow {
         }
         super::presentation::fields(&self.previous, &self.scratch, requests, &mut emit);
         // An external RUN can override queued completion before STOP becomes the accepted model.
-        // Only its Single-to-Auto sweep companion belongs to that request, even when run values are equal.
+        // Only its restored sweep companion belongs to that request, even when run values are equal.
         let mut classes = super::classify_boundary(&self.previous, &self.scratch, self.needs, needs, requests);
         if super::snapshot::projected_bytes(&self.previous, &self.scratch) >= 64 * 1024 {
             return Err(Error::SnapshotTooLarge);

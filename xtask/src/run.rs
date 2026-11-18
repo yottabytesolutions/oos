@@ -13,6 +13,7 @@ pub(crate) struct Context {
     target: Option<PathBuf>,
     logs: Option<PathBuf>,
     root: Option<PathBuf>,
+    incremental: Option<std::ffi::OsString>,
     measurements: OnceLock<SourceMeasurements>,
     test_threads: Option<usize>,
 }
@@ -115,6 +116,9 @@ fn execute(
     if let Some(logs) = &ctx.logs {
         command.env("OOS_CHECK_LOG_DIR", logs);
     }
+    if let Some(incremental) = &ctx.incremental {
+        command.env("CARGO_INCREMENTAL", incremental);
+    }
     if std::env::var_os("NEXTEST_TEST_THREADS").is_none() {
         if let Some(threads) = ctx.test_threads {
             command.env("NEXTEST_TEST_THREADS", threads.to_string());
@@ -157,6 +161,7 @@ pub(crate) fn start_logs(root: &Path) -> Result<(Context, PathBuf), String> {
             target: Some(selected),
             logs: Some(logs.clone()),
             root: Some(root.to_path_buf()),
+            incremental: Some(std::env::var_os("CARGO_INCREMENTAL").unwrap_or_else(|| "0".into())),
             ..Default::default()
         },
         logs,

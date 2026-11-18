@@ -324,3 +324,40 @@ fn partition_errors_name_the_selected_matrix() {
         }
     }
 }
+
+#[test]
+fn automated_commands_default_incremental_off_and_preserve_overrides() {
+    if std::env::var_os("OOS_INCREMENTAL_FIXTURE").is_none() {
+        for value in [None, Some("0"), Some("1"), Some("")] {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact", "run::tests::automated_commands_default_incremental_off_and_preserve_overrides"]);
+            command.env("OOS_INCREMENTAL_FIXTURE", "1").env_remove("CARGO_INCREMENTAL");
+            if let Some(value) = value {
+                command.env("CARGO_INCREMENTAL", value);
+            }
+            let out = command.output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        return;
+    }
+    let fixture = Fixture::new();
+    let before = std::env::var_os("CARGO_INCREMENTAL");
+    let ctx = fixture.start();
+    let args = ["-c", "printf '%s' \"${CARGO_INCREMENTAL-unset}\""];
+    let out = capture(&ctx, &fixture.0, "sh", &args).unwrap();
+    assert!(out.ok);
+    assert_eq!(out.stdout, before.clone().unwrap_or_else(|| "0".into()).to_string_lossy());
+    for value in ["0", "1", ""] {
+        let out = capture_env(&ctx, &fixture.0, "sh", &args, &[("CARGO_INCREMENTAL", value.as_ref())]).unwrap();
+        assert!(out.ok);
+        assert_eq!(out.stdout, value);
+    }
+    let out = capture(&Context::default(), &fixture.0, "sh", &args).unwrap();
+    assert_eq!(out.stdout, before.clone().unwrap_or_else(|| "unset".into()).to_string_lossy());
+    assert_eq!(std::env::var_os("CARGO_INCREMENTAL"), before);
+}

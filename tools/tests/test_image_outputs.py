@@ -37,6 +37,7 @@ class ImageOutputs(unittest.TestCase):
             compiler.chmod(0o700)
         self.env = {**os.environ, "PATH": str(git.parent) + os.pathsep + os.environ["PATH"]}
         self.env.pop("CARGO_TARGET_DIR", None)
+        self.env.pop("CARGO_INCREMENTAL", None)
         self.env.pop("OOS_BOARD", None)
 
     def run_python(self, script, *args, ok=True):
@@ -144,7 +145,7 @@ class ImageOutputs(unittest.TestCase):
             "import json, os, sys\n"
             "with open(os.environ['OOS_GUARD_CALLS'], 'a') as out:\n"
             " out.write(json.dumps([sys.argv[1:], os.environ['CARGO_TARGET_DIR'], "
-            "os.environ['OOS_PERF_TESTS']]) + '\\n')\n"
+            "os.environ['OOS_PERF_TESTS'], os.environ.get('CARGO_INCREMENTAL')]) + '\\n')\n"
             "sys.exit(int(os.environ['OOS_GUARD_EXIT']))\n")
         calls = self.root / "guard-calls"
         budget = self.root / "guard-budget"
@@ -158,14 +159,22 @@ class ImageOutputs(unittest.TestCase):
                                 cwd=self.root.parent, env=self.env, capture_output=True, text=True)
         records = [json.loads(line) for line in calls.read_text().splitlines()]
         self.assertTrue(records)
-        for _, target, enabled in records:
-            self.assertEqual(Path(target), self.root / "selected target/perf-build")
+        for _, target, enabled, incremental in records:
+            self.assertEqual(Path(target), self.root / "selected target")
             self.assertEqual(enabled, "1")
+            self.assertEqual(incremental, self.env.get("CARGO_INCREMENTAL", "0"))
         return result, [r[0] for r in records], budget.exists()
 
     def test_perf_guard_exports_root_relative_target_before_changing_directory(self):
         result, _, _ = self.run_guard()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_perf_guard_preserves_explicit_incremental_settings(self):
+        for value in ("0", "1", ""):
+            with self.subTest(value=value):
+                self.env["CARGO_INCREMENTAL"] = value
+                result, _, _ = self.run_guard("--build-only")
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     @staticmethod
     def targets(calls):
@@ -193,10 +202,10 @@ class ImageOutputs(unittest.TestCase):
         self.assertFalse(any("--no-run" in args for args in runs))
         self.assertEqual(self.targets(builds), self.targets(runs))
         self.assertEqual(self.targets(runs), {
-            ("perf", "oos-hal", "--lib", ""),
-            ("perf", "oos-hal", "--test", "alloc_batch"),
-            ("perf", "oos-hal", "--test", "early_trigger_end"),
-            ("perf", "oos-hal", "--test", "perf_ratio"),
+            ("test-release", "oos-hal", "--lib", ""),
+            ("test-release", "oos-hal", "--test", "alloc_batch"),
+            ("test-release", "oos-hal", "--test", "early_trigger_end"),
+            ("test-release", "oos-hal", "--test", "perf_ratio"),
             ("release", "oos-ui", "--test", "soak"),
             ("release", "oos-ui", "--bin", "oos-ui"),
         })

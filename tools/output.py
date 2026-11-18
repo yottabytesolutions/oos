@@ -148,6 +148,7 @@ def main():
     elif command == "stamp":
         stamp(Path(args[0]), args[1])
     elif command == "build":
+        os.environ.setdefault("CARGO_INCREMENTAL", "0")
         if any(a.startswith(("--target-dir", "--message-format", "--config")) for a in args):
             raise ValueError("select outputs with CARGO_TARGET_DIR; build output overrides are unsupported")
         before = revision()

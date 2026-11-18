@@ -14,17 +14,8 @@ codegen-units = 1
 panic = "abort"
 debug = false
 
-# The release profile hal had before the workspace (no LTO, default codegen units, unwinding). tools/perf-guard.sh
-# runs hal's timing guards with it: their ratios were measured there, and LTO changes them (1.5x instead of 2x for
-# the fused decode).
-[profile.perf]
-inherits = "release"
-lto = false
-codegen-units = 16
-panic = "unwind"
-
 # The release tests (`cargo xtask check`, CI): release optimisation and no debug assertions, without a fat-LTO link per
-# test binary (xtask/src/testrun.rs).
+# test binary (xtask/src/testrun.rs). HAL's timing guards use these same non-LTO, unwinding test artifacts.
 [profile.test-release]
 inherits = "release"
 lto = false
@@ -33,6 +24,10 @@ codegen-units = 16
 # Keep file/line backtraces without full variable/type debug info in host builds and tests.
 [profile.dev]
 debug = "line-tables-only"
+
+# Cargo applies this wildcard only to dependencies outside the workspace.
+[profile.dev.package."*"]
+debug = false
 
 # Upstream (PR 8): long-reference DSP and Eye analysis stay responsive in a debug build; the UI keeps the fast
 # incremental development build.

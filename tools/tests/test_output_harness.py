@@ -90,6 +90,23 @@ class Outputs(unittest.TestCase):
             with self.assertRaises(ValueError):
                 output.stamp(binary, "tree")
 
+    def test_builds_default_incremental_off_and_preserve_explicit_settings(self):
+        for value in (None, "0", "1", ""):
+            with self.subTest(value=value), patch.dict(os.environ, {}, clear=True), \
+                    patch.object(sys, "argv", ["output.py", "build"]), \
+                    patch.object(output, "ROOT", self.root), \
+                    patch.object(output, "revision", return_value="tree"), \
+                    patch.object(output, "compiler_identity", return_value="compiler"):
+                if value is not None:
+                    os.environ["CARGO_INCREMENTAL"] = value
+
+                def launch(*args, **kwargs):
+                    self.assertEqual(os.environ["CARGO_INCREMENTAL"], value if value is not None else "0")
+                    return Mock(stdout=[], wait=Mock(return_value=0))
+
+                with patch.object(output.subprocess, "Popen", side_effect=launch):
+                    output.main()
+
     def test_bundle_hash_covers_libraries_and_permissions(self):
         bundle = self.root / "bundle"
         bundle.mkdir()

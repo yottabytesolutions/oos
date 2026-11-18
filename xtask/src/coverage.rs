@@ -52,11 +52,24 @@ pub fn measure(ctx: &crate::run::Context, root: &Path, krate: &str) -> Result<u6
         .into_iter()
         .chain(args.iter().map(String::as_str))
         .collect();
-    let out = run::capture_env(ctx, &root.join(krate), "cargo", &args, &[("CARGO_TARGET_DIR", dir.as_os_str())])?;
+    let cargo = |args: &[&str]| {
+        run::capture_env(ctx, &root.join(krate), "cargo", args, &[("CARGO_TARGET_DIR", dir.as_os_str())])
+    };
+    let out = cargo(&args)?;
+    finish(&out, || cargo(&["llvm-cov", "clean", "--locked", "--profraw-only"]))
+}
+
+/// Raw profiles are redundant once merged. Keep binaries and profdata for reports, and failed runs for diagnosis.
+fn finish(out: &run::Output, clean: impl FnOnce() -> Result<run::Output, String>) -> Result<u64, String> {
     if !out.ok {
         return Err(run::tail(&out.stderr, 20));
     }
-    tenths(&out.stdout)
+    let covered = tenths(&out.stdout)?;
+    let cleaned = clean()?;
+    if !cleaned.ok {
+        return Err(format!("coverage profile cleanup failed: {}", cleaned.stderr));
+    }
+    Ok(covered)
 }
 
 /// A target directory per crate: cargo-llvm-cov empties its directory of the previous profiles, so the crates can
@@ -81,5 +94,25 @@ mod tests {
     fn coverage_follows_the_selected_target() {
         let target = Path::new("/path/to/worktree/build");
         assert_eq!(coverage_dir(target, "ui"), target.join("xtask-cov/ui"));
+    }
+
+    #[test]
+    fn raw_profiles_are_cleaned_only_after_a_valid_report() {
+        let report = |ok, stdout: &str| run::Output { ok, stdout: stdout.into(), stderr: "coverage failed".into() };
+        let valid = report(true, r#"{"data":[{"totals":{"lines":{"count":10,"covered":9}}}]}"#);
+        let cleaned = std::cell::Cell::new(false);
+        assert_eq!(
+            finish(&valid, || {
+                cleaned.set(true);
+                Ok(report(true, ""))
+            }),
+            Ok(900)
+        );
+        assert!(cleaned.get());
+        for invalid in [report(false, ""), report(true, "malformed report")] {
+            assert!(finish(&invalid, || panic!("keep failed coverage evidence")).is_err());
+        }
+        assert_eq!(finish(&valid, || Err("cannot start cleanup".into())), Err("cannot start cleanup".into()));
+        assert!(finish(&valid, || Ok(report(false, ""))).unwrap_err().contains("cleanup failed"));
     }
 }

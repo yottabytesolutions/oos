@@ -21,11 +21,9 @@ case "${1-}" in
     ''|--build-only) ;;
     *) echo "usage: tools/perf-guard.sh [--build-only]" >&2; exit 2 ;;
 esac
-# Compilation can overlap other gate work; the timing guards still run alone. These profiles do not share build
-# artifacts with the debug and test-release steps, so a separate Cargo lock avoids serializing their builds.
+# Compilation can overlap other gate work; the timing guards still run alone. HAL reuses test-release artifacts;
+# UI timing guards keep the shipping release profile. Both share the selected target with the other gate steps.
 output=$CARGO_TARGET_DIR
-CARGO_TARGET_DIR="$output/perf-build"
-. "$root/tools/output.sh"
 # Preserve Cargo's real status without a pipeline; keep complete observations for the budget reader.
 mkdir -p "$CARGO_TARGET_DIR"
 log="$output/perf-guard.log"
@@ -47,7 +45,7 @@ run() {
 cd "$root"
 
 if [ "${1-}" = --build-only ]; then
-    run cargo test --locked --profile perf --quiet --no-run -p oos-hal \
+    run cargo test --locked --profile test-release --quiet --no-run -p oos-hal \
         --lib --test alloc_batch --test early_trigger_end --test perf_ratio
     run cargo test --locked --release --quiet --no-run -p oos-ui --test soak --bin oos-ui
     echo "perf guards: built"
@@ -55,13 +53,13 @@ if [ "${1-}" = --build-only ]; then
 fi
 
 echo "== hal: deterministic guards"
-run cargo test --locked --profile perf --quiet -p oos-hal --test alloc_batch --test early_trigger_end
-run cargo test --locked --profile perf --quiet -p oos-hal --lib -- \
+run cargo test --locked --profile test-release --quiet -p oos-hal --test alloc_batch --test early_trigger_end
+run cargo test --locked --profile test-release --quiet -p oos-hal --lib -- \
     fused_decode_equals_deinterleave_and_volts decode_into_kept_vectors_equals_decode unpad_in_place_equals_unpad \
     prearm_writes_the_same_sequence_as_the_plain_batch_loop dma_buf_is_reused_aligned_and_exact_with_short_reads
 
 echo "== hal: timing guards (best and p99 ratios)"
-run cargo test --locked --profile perf --quiet -p oos-hal --test perf_ratio -- --ignored --nocapture --test-threads=1
+run cargo test --locked --profile test-release --quiet -p oos-hal --test perf_ratio -- --ignored --nocapture --test-threads=1
 
 echo "== ui: zero-allocation hot paths"
 run cargo test --locked --release --quiet -p oos-ui --test soak -- hot_paths_allocate_nothing_after_warmup --nocapture

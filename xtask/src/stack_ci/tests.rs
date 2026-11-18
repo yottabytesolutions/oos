@@ -149,6 +149,22 @@ fn rust_caches_retain_the_workspace_artifacts_built_by_the_warm_up() {
 }
 
 #[test]
+fn fast_jobs_keep_incremental_while_heavy_jobs_stay_lean() {
+    let pr = parse(workflow("pr.yml").unwrap()).unwrap();
+    assert_eq!(pr["env"]["CARGO_INCREMENTAL"].as_i64(), Some(0));
+    assert_eq!(pr["jobs"]["fast"]["env"]["CARGO_INCREMENTAL"].as_i64(), Some(1));
+    for job in ["clippy-run", "test-run"] {
+        assert!(pr["jobs"][job]["env"]["CARGO_INCREMENTAL"].is_badvalue());
+    }
+    let main = parse(include_str!("../../../.github/workflows/main.yml")).unwrap();
+    assert_eq!(main["env"]["CARGO_INCREMENTAL"].as_i64(), Some(0));
+    assert_eq!(
+        main["jobs"]["gate"]["env"]["CARGO_INCREMENTAL"].as_str(),
+        Some("${{ matrix.name == 'fast' && '1' || '0' }}")
+    );
+}
+
+#[test]
 fn parallel_jobs_keep_every_check_and_fail_the_required_names() {
     let doc = parse(workflow("pr.yml").unwrap()).unwrap();
     let rows = doc["jobs"]["clippy-run"]["strategy"]["matrix"]["include"].as_vec().unwrap();

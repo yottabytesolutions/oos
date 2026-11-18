@@ -200,8 +200,9 @@ no CI aggregate or matrix result is required while repository CI is off.
 The gate runs its checks at the same time, each as soon as its prerequisites passed, and prints each result when it
 ends; the closing summary keeps the inventory order. Formatting uses one workspace-wide Cargo invocation, including
 non-default members. The size, statics, unsafe, method-exception and known-failure checks share one source measurement
-per gate run, including any parse error. A later run reads fresh sources. `perf-build` prepares the guards' original
-profiles in `target/perf-build` concurrently, using a separate Cargo lock; their observation logs stay in `target/`.
+per gate run, including any parse error. A later run reads fresh sources. `perf-build` prepares the guards in the
+selected target: HAL shares `test-release` with the release tests; UI retains the shipping `release` profile.
+Cargo serializes builds that share its lock; timing guards still run alone after compilation ends.
 Concurrent debug/release/coverage runners divide the host's cores between them; `NEXTEST_TEST_THREADS` overrides
 that default. Single-step CI jobs retain nextest's defaults. The perf guards and the image checks run afterwards, one at a
 time (`inventory::alone`): timing ratios and emulator time limits need a quiet machine. On a warm cache with
@@ -278,9 +279,11 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
   Pull requests run the debug tests only; the merge queue adds the release tests. The required `test` check sums
   up every shard.
 - The release tests, locally and in CI, build with the Cargo profile `test-release`: the release optimisation level
-  and no debug assertions, without a fat-LTO link per test binary (16 codegen units). The perf guards and the scope
-  build keep the shipping `release` profile. Host dev/test builds use line-table debug info for file/line backtraces;
-  full variable/type debug info is available with `CARGO_PROFILE_DEV_DEBUG=2`.
+  and no debug assertions, without a fat-LTO link per test binary (16 codegen units). HAL's perf guards share this
+  profile: tests unwind, just as under the former `perf` profile. UI's perf guards and the scope
+  build keep the shipping `release` profile. Workspace host dev/test builds use line-table debug info for file/line backtraces;
+  dependencies outside the workspace have no debug info.
+  Full workspace variable/type debug info is available with `CARGO_PROFILE_DEV_DEBUG=2`.
 - The test and coverage steps run each crate's tests with cargo-nextest (pinned in `tools/build-tools.json`, installed
   by bootstrap, checked by the doctor): every test in its own process, all binaries in parallel, and the doctests
   with `cargo test --doc` (`cargo llvm-cov nextest` for coverage).
@@ -301,6 +304,188 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
 - The image job downloads the kernel base from the pre-release `kernel-base-<version>`
   (`tools/ci/kernel-base.sh download`); `tools/ci/kernel-base.sh publish` creates it for a new `kernel/base.sha256`.
 - Each run ends with a `timings` job: job and step durations in the run summary (`tools/ci/run_summary.py`).
+
+## Keeping build artifacts small
+
+`cargo xtask check` and `step` default `CARGO_INCREMENTAL` to `0` for all children,
+including shell/Python builders. Explicit developer settings take precedence.
+The receipted builder and scripts sourcing `tools/output.sh` use the same default.
+An interactive `cargo build` retains Cargo's default incremental behavior.
+Heavy Rust-building CI jobs set `CARGO_INCREMENTAL=0`, including tests, coverage,
+image and release jobs. PR and nightly fast jobs override it to `1` for xtask
+and their children. Interactive `cargo xtask check --fast` retains Cargo's
+incremental default for xtask; its children do not compile Rust. Explicit
+developer settings still take precedence locally. Changing a profile invalidates
+the relevant Cargo/cache fingerprints.
+
+The gate uses one target tree for ordinary builds. `test-release` avoids fat LTO
+for correctness tests and HAL timing guards; a separate `perf` profile no longer
+duplicates those dependencies. UI timing guards retain fat LTO because their
+ratios were qualified with it. Shipped binaries retain optimization level 3,
+`lto=true`, `codegen-units=1`, and `panic=abort`. All musl AArch64 Cargo builds
+inherit `target-cpu=cortex-a72`, static linking and `rust-lld` from
+`.cargo/config.toml`, including `oos-fpgad`, `oos-ui` and `oos-update`.
+
+Coverage keeps its per-crate directories: concurrent `cargo-llvm-cov` runs clean
+workspace artifacts, so sharing one would invalidate another run. After a valid
+report, the gate runs `cargo llvm-cov clean --locked --profraw-only` in that
+crate's selected target. Merged profdata, compiled binaries and captured JSON
+remain available; failed test commands or malformed reports keep their raw profiles too.
+
+For a long-lived checkout, Cargo's existing cleanup command removes stale
+profiles, old feature/toolchain artifacts and obsolete nested coverage/perf trees:
+
+```sh
+build_target=$(python3 -I tools/output.py target) && cargo clean --locked --target-dir "$build_target"
+```
+
+Run this only while the checkout's builds and tests are idle. It resets the whole
+selected target, including current artifacts, receipts and check logs, rather
+than guessing which Cargo fingerprints are live. Save needed evidence elsewhere
+first. The next build regenerates its artifacts and receipts. There is no age
+heuristic that can silently discard an active build's files.
+
+### Measured build costs (#152)
+
+Measured on 2026-11-18 on the same macOS arm64 host (16 logical CPUs), Rust
+1.99.1, using the default worktree-local `target/`. Cold means `cargo clean`
+first, with dependencies already downloaded; warm immediately repeats the same
+command. `CARGO_INCREMENTAL` was unset at entry for both versions, exercising
+Cargo's former default versus the gate's new child default. The outer
+`cargo xtask` invocation still uses Cargo's interactive default; that accounts
+for the remaining incremental data. Explicit `CARGO_INCREMENTAL=0` also disables incremental compilation of xtask,
+as in CI's heavy jobs.
+
+Wall times include building xtask. Load is the one-minute host load at start/end;
+the host was shared and heavily loaded, so these timings do not establish an
+isolated speedup. The first baseline cold full run failed only
+`support::group_kill_reaches_grandchildren_and_nothing_else` after 120 seconds;
+the immediate baseline warm run passed. The after cold gate passed all 22
+steps. The measured after warm run failed only the unchanged UI
+`perf_guard_batch_core_learning`: projected A72 p99 9.292 ms exceeded its
+9 ms bound. Its other 21 steps passed. These failures remain part of the
+measurements; no test or gate setting was changed. A final verification with
+`CARGO_INCREMENTAL=0` at entry took 258.5 s (load 6.5/24.2):
+`gate FAILED in 257 s: tests-release`. Its unchanged
+`warmed_ui_observer_allocation_census` observed three allocations instead of
+zero; all other steps, including perf, passed. The complete after cold gate
+above remains the passing full-gate run. The allocation failure remains outside
+this build-only change; the load-sensitive learning guard is discussed below. The final
+allocation failure passed when run alone with
+`cargo test --locked --profile test-release -p oos-ui --test soak warmed_ui_observer_allocation_census`.
+
+| Version / command | Cold wall (s) | Warm wall (s) | Cold load | Warm load | Cold target (MiB) | Warm target (MiB) |
+|---|---:|---:|---|---|---:|---:|
+| before, `check --fast` | 10.9 | 3.3 | 7.1/12.4 | 12.4/12.4 | 164.5 | 165.4 |
+| before, `check` | 627.0 | 248.2 | 29.6/11.8 | 11.8/19.8 | 12740.9 | 12901.2 |
+| after, `check --fast` | 22.0 | 5.3 | 77.5/107.6 | 107.6/111.6 | 133.2 | 134.1 |
+| after, `check` | 635.2 | 231.9 | 114.3/47.9 | 47.9/24.1 | 2847.2 | 3019.4 |
+
+Allocated disk after each full run (`du -sk`, MiB). The nested `deps`,
+`incremental` and raw-profile rows overlap the profile totals; do not add them.
+The total also includes retained command logs and script bytecode.
+
+| Target subtree | Before cold | Before warm | After cold | After warm |
+|---|---:|---:|---:|---:|
+| `debug` | 6195.8 | 6175.0 | 1029.7 | 1029.7 |
+| `test-release` | 329.8 | 328.4 | 329.1 | 329.1 |
+| `perf-build/perf` | 35.3 | 35.3 | 0.0 | 0.0 |
+| `perf-build/release` | 231.8 | 231.8 | 0.0 | 0.0 |
+| `release` | 0.0 | 0.0 | 232.7 | 232.1 |
+| `aarch64-unknown-linux-musl` | 423.0 | 422.5 | 31.8 | 31.7 |
+| `xtask-cov` | 5337.3 | 5335.4 | 1036.1 | 1023.9 |
+| `deps` | 2661.4 | 2654.0 | 2441.4 | 2418.2 |
+| `incremental` | 7811.0 | 7778.1 | 54.5 | 54.5 |
+| `profraw` | 2883.6 | 2883.6 | 0.0 | 0.0 |
+| Total | 12740.9 | 12901.2 | 2847.2 | 3019.4 |
+
+The former HAL `perf` and `test-release` settings produce the same test
+optimization/unwinding behavior; sharing `test-release` eliminates that extra
+build tree. UI timing guards still require the shipping `release` profile.
+Per-crate coverage targets remain separate because their cleanup invalidates
+workspace artifacts; successful raw profiles are discarded after merging.
+
+Elapsed gate steps below include compilation, tests and Cargo lock waits. Steps
+overlap, so their times are not additive or isolated compiler benchmarks.
+
+| Profile / consumer | Before cold (s) | Before warm (s) | Initial after cold (s) | Initial after warm (s) | Corrected cold (s) | Corrected warm (s) |
+|---|---:|---:|---:|---:|---:|---:|
+| debug tests | 379.7 | 149.3 | 421.6 | 136.1 | 265.7 | 155.8 |
+| test-release tests | 317.5 | 109.2 | 404.8 | 97.5 | 236.0 | 114.1 |
+| HAL/UI guard builds | 445.9 | 1.2 | 475.6 | 1.4 | 321.4 | 1.0 |
+| instrumented coverage | 350.5 | 192.0 | 401.8 | 171.4 | 243.9 | 191.9 |
+| host + ARM debug Clippy | 507.1 | 11.5 | 503.4 | 13.1 | 346.7 | 13.1 |
+| debug decoder feature matrix | 560.3 | 13.0 | 557.4 | 12.9 | 390.5 | 13.7 |
+
+macOS already defaults to unpacked split debug info: default and explicit
+`--config 'profile.dev.split-debuginfo="unpacked"'` builds reported every package
+fresh (0.064 s and 0.049 s), reusing identical fingerprints without adding disk
+usage. No redundant platform-specific override was added.
+
+The separate ARM release-link step verified receipts and static AArch64 ELFs for
+`oos-ui`, `oos-fpgad` and `oos-update`:
+
+| ARM release build | Cold wall (s) | Warm wall (s) | Cold load | Warm load |
+|---|---:|---:|---|---|
+| before | 102.7 | 2.6 | 10.4/4.9 | 4.9/4.7 |
+| after | 105.6 | 2.8 | 16.6/7.1 | 7.1/7.1 |
+
+All three shipped executables were byte-identical before/after (SHA-256),
+with the existing Cortex-A72 flags and full release optimization unchanged.
+No alternate release linker flags were introduced. Host builds only; no unit
+installation, reboot or hardware run was performed.
+
+### Regression checks (#158)
+
+The initial fast-gate timings above compared very different host loads. Adjacent
+reruns with the main and PR manifests, fresh targets and incremental xtask builds
+showed no fast-gate slowdown from the lean profiles:
+
+| Manifest / command | Cold wall (s) | Warm wall (s) | Cold load | Warm load |
+|---|---:|---:|---|---|
+| main, `check --fast` | 22.2 | 5.0 | 42.6/69.9 | 69.9/79.6 |
+| PR, `check --fast` | 14.0 | 3.5 | 79.6/91.6 | 91.6/91.6 |
+| corrected PR, `check --fast` | 7.9 | 2.1 | 40.7/36.1 | 36.1/36.1 |
+
+Separate warm PR runs took 2.05 s with `CARGO_INCREMENTAL=0` and 1.98 s with
+`CARGO_INCREMENTAL=1`. The former 10.9/3.3 s targets cannot be attributed to a
+profile regression when main also exceeds them under load. The corrected run
+meets both targets; different host loads prevent claiming an isolated speedup.
+Fast CI jobs now
+explicitly keep incremental compilation enabled; heavy builds remain lean.
+
+The main learning guard was built with the main manifest and unchanged main
+UI/HAL/core/DSP sources. It passed alone, then failed 2 of 5 adjacent loaded runs
+while the baseline full gate was building. Its fixed projected-A72 assertion
+reported 11.088 and 10.603 ms against 9 ms at host loads 167-169. This assertion
+predated the PR; HAL's shared `test-release` artifacts did not cause it.
+The projected-A72 p99 CPU assertion remains alongside best <= 1.0 and p99 CPU <= 1.5
+against Standard learning in the same run. Removing the provisional 9 ms limit
+requires an owner-approved ADR; shared-host load evidence alone does not authorize it.
+Deterministic regression tests accept the exact 9 ms projected boundary and reject
+an overrun even when both ratios pass. Separate cases reject candidate-only
+throughput and tail regressions within the absolute budget.
+The fast-job environment regression test also failed before its override was added.
+
+The unchanged PR passed the full gate using the existing target:
+`gate passed (default): 22 steps in 480 s` (480.6 s wall, load 37.5/28.8).
+
+The corrected full gate then ran cold in a fresh selected target and immediately
+repeated warm, with `CARGO_INCREMENTAL=0`. The fast pair used `1`, as in fast CI.
+All 22 steps passed both times, including perf, debug/release tests of every
+workspace crate, coverage and Python tests. No ratchet counts decreased in the
+changed files. The corrections add zero production Rust lines.
+
+| Corrected command | Cold wall (s) | Warm wall (s) | Cold load | Warm load | Cold target (MiB) | Warm target (MiB) |
+|---|---:|---:|---|---|---:|---:|
+| `check --fast` | 7.9 | 2.1 | 40.7/36.1 | 36.1/36.1 | 132.2 | 133.1 |
+| `check` | 454.3 | 250.1 | 36.1/10.1 | 10.1/19.8 | 2762.1 | 2955.5 |
+
+The full gate printed `gate passed (default): 22 steps in 449 s` cold and
+`gate passed (default): 22 steps in 250 s` warm. The lean target still occupies
+2.89 GiB warm. These are host-only measurements; no hardware was accessed.
+These cold/warm runs preceded review and used the ratio-only learning guard;
+they do not validate the restored projected-A72 assertion.
 
 ## Privacy checks
 

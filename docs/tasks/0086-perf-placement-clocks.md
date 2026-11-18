@@ -88,6 +88,11 @@ The owner's explicit task assignment authorizes this claim on the supplied base.
    failed writes and restoration against a fake filesystem, debug and release.
    Run the gate's exact clippy step and `cargo xtask check --fast`; preserve
    complete logs and exits. No ratchet edits or commits.
+12. Reconcile HTTP worker placement with the merged netio migration, the accepted
+    #222 design and #220 acceptance plan. Reserve only this task file for this
+    documentation job. Record the exact tested head and executor placement;
+    preserve the clock hold and any placement criterion without explicit
+    superseding authority. No product changes or scope access.
 
 Unit acceptance, coordinator under an owner-released scope lease:
 
@@ -137,6 +142,69 @@ Unit acceptance, coordinator under an owner-released scope lease:
   STOP baseline and confirm the tested web threads have A53 SCHED_IDLE. A real
   signed upload/install still requires the separate owner-approved procedure.
 
+### HTTP placement reconciliation (2026-11-18)
+
+The coordinator reports verified on the unit (DHO804, 2026-11-18) for the exact
+published [PR #197](https://github.com/yottabytesolutions/oos/pull/197) head
+`7dbe49f8`: clock RUN/STOP cycles, independent opt-outs, clean and unclean app
+exit recovery, and SDR104 thermal and HTTP qualification passed. Those results
+remain evidence for that revision. They do not close every task criterion or
+release the owner's clock hold. This job uses the supplied evidence report and
+local Git history; it neither re-runs hardware checks nor reads PR comments.
+
+The original web-thread names above predate the merged HTTP transport cutover:
+
+| Original role | Migration and current execution owner |
+|---|---|
+| `web-accept` | `ui/src/http/listener.rs` formerly called `lower_priority` before accepting. Commit `0ffe2315` replaced that thread with `netio::http::Service` and its async accept loop in `ui/src/netio/http.rs`. |
+| `web-read` | Spawned by the old accept loop, inheriting its placement. The same cutover moved request/header/body reads into netio connection tasks and `ui/src/netio/http/input.rs`. |
+| `web-send` | `http::shutdown::send_in_background` formerly called `lower_priority`. The cutover removed it; connection tasks now await replies and send through `ui/src/netio/output.rs`. |
+| `web-png` | Remains a separate encoder in `ui/src/http.rs`; `Shots::encoder` still calls `lower_priority`. It does not own HTTP socket IO. |
+
+The shared `Runtime` in `ui/src/netio/executor.rs` was extracted during the
+VXI-11 migration (`e846b2cf`), before the HTTP cutover (`0ffe2315`). Its one
+current-thread tokio runtime runs all these socket tasks on the `netio` OS
+thread alongside raw SCPI, VXI-11 and HiSLIP. It has no explicit affinity or
+background-policy call. Comparing `d2274e8c^` with `7dbe49f8` shows no change to
+that executor in PR #197; this placement gap predates the clock candidate.
+
+Measured placement reported with PR #197, for both baseline and candidate:
+
+| Execution owner | Reported placement | Original placement criterion |
+|---|---|---|
+| `netio` (HTTP accept/read/send and instrument IO) | CPU 4, SCHED_OTHER (policy 0) | **Open:** HTTP socket work was not on A53 SCHED_IDLE. |
+| Candidate `web-png` | A53, SCHED_IDLE (policy 5) | Met for this worker on the tested head. |
+
+The original names are no longer independent OS threads to inspect. Passing
+HTTP latency on CPU 4 does not demonstrate the requested background placement.
+The absence of those names also does not retire the work-placement requirement.
+
+Authority checked: the accepted [#222 design at `21a198b5`](https://github.com/yottabytesolutions/oos/blob/21a198b5/docs/architecture/io.md),
+its [ownership/admission clarification at `6dd02810`](https://github.com/yottabytesolutions/oos/blob/6dd02810/docs/architecture/io.md),
+and ADR 0023. The design supersedes M15 IO plumbing and retains one shared IO
+executor, separate CPU encoding and signed-update workers. Neither decision
+explicitly retires this task's A53 SCHED_IDLE criterion or authorizes CPU 4
+SCHED_OTHER as its replacement. Keep the criterion open here and on PR #197.
+
+Concrete corrective work, for a separately reviewed implementation: apply the
+existing A53 background-placement policy at the shared executor's thread entry,
+with its nice-10 fallback where SCHED_IDLE is refused, and cover placement setup
+with host fixtures. Preserve the single-executor design; changing only a service
+constructor cannot place individual async tasks. Because the executor also owns
+instrument IO, qualification must cover all its clients. An alternative placement
+requires an explicit owner-approved superseding decision before closing this row.
+
+Coordinate that work with the owning [#220](https://github.com/yottabytesolutions/oos/issues/220)
+test plan and #222's Implementation and acceptance section: retain stalled-reader
+versus healthy-client progress, pending-OPC independence, bounded resources,
+cancellation and HTTP/update boundaries. Under a fresh owner-released lease,
+capture executor/PNG affinity and scheduling policy, repeat this task's setup B
+HTTP/upload latency checks, and repeat the accepted instrument workload with
+at least 26 fps and other-client wait no worse than the supplied 36 ms reference.
+Record frame p50/p99, enqueue p99, throughput, RSS, CPU and wakeups on the exact
+candidate. These are future checks, not results of this documentation job.
+The coordinator retains issue/test-plan updates, review, integration and release
+of the clock hold; no issue or PR was changed here.
 
 Read-only unit command templates, after acquiring the required lease. Capture
 thread and IRQ snapshots before/after startup; run `clock_readback` before
@@ -197,6 +265,26 @@ done
 ```
 
 ## Status
+
+- 2026-11-18: HTTP placement reconciliation ready for coordinator review.
+  Recorded PR #197 head `7dbe49f8` and the coordinator-reported passing clock,
+  recovery, SDR104 thermal and HTTP qualification. Traced accept/read/send into
+  shared netio, measured CPU 4 SCHED_OTHER in baseline and candidate; candidate
+  PNG remains A53 SCHED_IDLE. No explicit retirement found in #222/ADR 0023;
+  placement remains open with corrective work and #220 regression checks above.
+  `cargo xtask check --fast` exits 0:
+  `partial gate passed (not done): 12 steps in 31 s`.
+  `git diff --check` passes. Documentation only; no crates touched, no crate
+  tests required and production line delta zero. No ratchet changes. Clock hold,
+  independent review, coordinator integration and future unit acceptance remain.
+  No scope access, product changes, Git writes or repository network operations.
+
+- 2026-11-18: HTTP placement reconciliation claimed on `fix/195-clock-floors`,
+  base `17a34c86`, under the owner's documentation-only assignment. Reserved
+  path: this task file. Trace merged worker roles and local #222/#220 design
+  authority, retain reported exact-head unit evidence and the open placement
+  criterion, then run the fast gate. Clock hold unchanged; no scope access,
+  product changes, Git writes or repository network operations.
 
 - 2026-11-18: PR #197 recovery follow-up ready for coordinator review.
   UI and supervisor recovery continue after per-device IO or verification

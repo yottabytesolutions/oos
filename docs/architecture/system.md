@@ -36,7 +36,7 @@ the unit (dho804, 2026-11-15, verified on the unit):
 - **`/proc/uptime` is no boot identity.** After a watchdog reset it keeps counting from power-on instead of starting
   at 0. Code that has to tell a new boot from the same one uses `/proc/sys/kernel/random/boot_id`, not uptime.
 
-Images are generic for every supported model (ADR 0041). Shared system defaults live in `/etc/oos/system.conf`;
+Images are generic for every supported model (ADR 0015). Shared system defaults live in `/etc/oos/system.conf`;
 runtime detection selects capabilities. `oos-mac` persists identity on the device and preserves existing keys.
 rcS resolves it before loading the Rockchip GMAC module, which registers the supplied MAC as permanent.
 IPv6 stable address hashing keeps using that permanent address; the boot path still needs the unit comparison
@@ -64,7 +64,7 @@ The IPv6 secret stays in `/oos/net/ipv6.secret` across updates. No build profile
                                      /dev/ttyS0 (panel MCU), /sys/class/thermal, /sys/class/pwm
 ```
 
-Rule for all crates: no vendor code is in the tree (ADR 0040). Dependencies follow ADR 0037.
+Rule for all crates: no vendor code is in the tree (ADR 0002). Dependencies follow ADR 0004.
 
 ### oos-hal: hardware layer
 
@@ -235,7 +235,7 @@ the boot reaches OOS's rcS before a power cut.
 | 9 | Persistent DMA mapping in xdma: one streaming mapping, mmapped, `dma_sync_single_for_cpu` over the bytes received, instead of pinning and mapping 1024 pages per 4 MB read (0.5 to 2 ms per 4 MB, inferred). Measured: at 4 channels, 10 M, the C2H read is about 282 ms per acquisition (3.1 acquired/s); the DMA read time, not the CPU, limits that mode, so this task and the link rate are where it can improve | driver task (after M5c) | `read()` wall time minus bytes / link rate; ftrace on `dma_map_sg_attrs` | per-read overhead below 0.2 ms; acquired/s at 4 x 10 M up |
 | 10 | GPU: `glFlush` plus a fence instead of `glFinish`; `glFinish` only on readback; Panfrost stays; GPU floor 400 MHz, 600 MHz optional | helper (M9b) | helper CPU and GPU time per composition; tearing under load | budgets met, no tearing |
 | 11 | HDMI scaling on the VOP win0 scaler (`DRM_IOCTL_MODE_SETPLANE`) instead of on the CPU, when the GPU path is off | display (later) | CPU per HDMI frame | about 8 MB less CPU writes per 1080p frame |
-| 12 | Allocator: pools on the hot paths (adr/0016 zero allocations); optionally `MADV_HUGEPAGE` on DMA and decode buffers with THP in `madvise` mode | `oos-ui` (data-path steps) | page faults per frame, TLB misses | 0 faults per frame after warm-up |
+| 12 | Allocator: pools on the hot paths (ADR 0031 zero allocations); optionally `MADV_HUGEPAGE` on DMA and decode buffers with THP in `madvise` mode | `oos-ui` (data-path steps) | page faults per frame, TLB misses | 0 faults per frame after warm-up |
 
 ### No change (verified)
 

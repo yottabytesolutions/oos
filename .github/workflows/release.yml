@@ -1,7 +1,7 @@
 # A SemVer tag vX.Y.Z on main: the image, the unsigned image and build id for offline signing, a changelog from the
 # Conventional Commit subjects (cliff.toml), build provenance, and a draft GitHub release. No signing key here:
 # the maintainer signs the update package offline (boot/sign-dev-image.sh --key) and attaches it before publishing.
-# Production code is compared with the previous release (ADR 0035): growth needs a `Code growth:` paragraph.
+# Production code is compared with the previous release (ADR 0007): growth needs a `Code growth:` paragraph.
 name: Release
 on:
   push:

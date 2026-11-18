@@ -1,27 +1,25 @@
-# ADR NNNN: the decision as a short sentence
+# Decision title
 
-- Status: proposed | accepted | accepted, to be reviewed | superseded by ADR NNNN | rejected
+- Number: NNNN
+- Category: policy / hardware / system / code
+- State: in force / target: migration step and follow-up
 - Date: YYYY-MM-DD
-- Category: code | ui-ux | hardware | system | process
 
 ## Context
 
-What forced a decision: the problem, the constraints, the measurements (with the unit, the build and the date they were
-taken on). For statements about the hardware: verified on the unit, assumed, or not yet verified on hardware.
+Give the concrete evidence that forced the choice: measurements, incidents or constraints.
 
 ## Decision
 
-What is done, in one or two sentences that still make sense when read alone.
+State short, testable rules. Distinguish existing rules from targets.
+
+Check: use backticks for executable inventory step IDs, plain text for test or CI check names and rulesets;
+use review only when no automated check exists.
 
 ## Alternatives
 
-What else was looked at, and why it lost. Leave the section out when there was no real alternative.
+Name the rejected alternatives and why they lost, in two to four lines.
 
 ## Consequences
 
-What follows: what gets easier, what gets harder, what has to be kept in mind from now on, and what would make this
-decision worth a second look.
-
-## References
-
-Code, documents, pull requests, commits.
+State the cost and limits of the choice. Keep procedures and plans in their owning documents.

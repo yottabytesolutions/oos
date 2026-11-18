@@ -42,8 +42,8 @@ Batch mode also uses route D:
 - When the pipe is not accepting, every frame of a batch is decoded into the queue.
 - When no read-out buffer is free (`take_buffer` None), the other frames are dropped and only the newest is queued.
 
-Both give batch-mode pictures of a different composition. `acq.pipeline` defaults to `frames` (`drawpipe::mode_from`):
-route D is upstream's path and every non-unit user's.
+Both give batch-mode pictures of a different composition. `acq.pipeline` defaults to `batch`
+(`drawpipe::mode_from`), matching the generic image. `frames` explicitly selects the legacy Standard path.
 
 Kernels in `draw_frame` (`drawpipe.rs:38`), weight 24:
 - `fastdraw::deposit` / `deposit_codes`: one min/max span per screen column.
@@ -369,7 +369,7 @@ system.conf for A/B on the unit; step 9 removes the flag and the old code after 
 | 2 | Measurement reads never draw (RAW_PERIOD raw newest, deep window); on `fast_ok` the UI takes only the newest record; off it, all records as before | 0.5 | a raw measurement read leaves the picture unchanged; mask counts, zones, average, Bus trigger, Single, segments unchanged off the fast path | probe comp 200 us dots/lines | `compress::hold` draw branch, `deepmeas` draw cases, `RECORDS_BUDGET` |
 | 3 | One lines kernel: spans for raw, codes, pairs, records (`draw_ex` lines; Z keeps its drawing; sparse per [weight model](#one-weight-model-per-display-mode)); behind `draw.model` | 4 | `pair_raw_mix_report` and `depth_mix_report` x1.000; record-path pictures alone within 3 % | screenshot pairs old/new per mode for the user's eye | `draw_ex` segment joining for lines (after step 9), deep-raw branch in `draw_frame` |
 | 4 | Dots: one count per sample, W_frame = samples per column | 2.5 | dots brightness within 3 % across raw/record frames; no dot lost at 100 samples per column over 40 rows | dots set | none |
-| 5 | `BatchUnit`: shares published together, row bounds; newest frame drawn by the pipe; route C gone; frames mode (default) makes each step's queued frames one batch | 2.5 | every merged picture holds whole batches; the newest frame in the same merge; frames and batch mode give the same picture | stress set, `partial` 0 | `Acc` lists, `Tally`, `Deliver`, `MERGE_WAIT_MAX`, the early `help_done` (the loop-end one stays), the `fast_ok` frame branch in `Ui::step` |
+| 5 | `BatchUnit`: shares published together, row bounds; newest frame drawn by the pipe; route C gone; explicit frames mode makes each step's queued frames one batch | 2.5 | every merged picture holds whole batches; the newest frame in the same merge; frames and batch mode give the same picture | stress set, `partial` 0 | `Acc` lists, `Tally`, `Deliver`, `MERGE_WAIT_MAX`, the early `help_done` (the loop-end one stays), the `fast_ok` frame branch in `Ui::step` |
 | 6 | Grading and records together: window at Min (C with the cap), u32 decay above, STOP freeze, persistence change; routes E/F as pseudo-batches with W; zoom and colour grade on W; GPU gets W as vmax. Behind `draw.model` | 4 | brightness within 3 % for 1..27 frames per picture; band pixel count within 2 % for 13/27 alternating; window age <= 67 ms; a drop from 27 to 1 frame per step leaves no batch older than the cap in the picture; single hit visible >= tau at 500 ms and 10 s; stopped picture constant over 100 steps; replay equals live; zoom brightness equals main; `gpu/test-host.sh` 0 differ | full acceptance set, screenshot pairs per mode | `picture_ref`, `per_frame*`, `pic_frames`, `vmax` follow, 24 x 6 redraw (after step 9) |
 | 7 | (cut: GPU needs no change, vmax = W, folded into 6) | 0 | | | |
 | 8 | Sparse-event pacing: fill shortened when rest + fill exceeds a frame | 1.5 | Fill plan with rest 24 ms yields a batch every <= 33.3 ms in the pacing tests | setup B at 5.1 V: empty <= 1 % | none |
@@ -396,9 +396,9 @@ Existing fixes:
 | near-only trigger gate, AC level | kept |
 | live compression, RAW_PERIOD read | kept for measurement, not drawn |
 
-Decisions: frames mode stays the default on `dho804` (the unit keeps `acq.pipeline = batch`); on `overhaul` frames
-mode becomes the batch path (adr/0013); Z input keeps its current drawing
-(team-lead). C with the cap at minimum persistence (user). Design approved 2026-11-14.
+Current default: Batch on main and in generic images. The M12 comparison in the migration plan chooses the
+surviving path; Standard remains until that evidence and selection. Z input keeps its current drawing.
+The minimum-persistence cap remains part of the drawing design approved on 2026-11-14.
 
 Not in scope: XY and LA (canvas), the auto timeout.
 
@@ -423,7 +423,7 @@ Not in scope: XY and LA (canvas), the auto timeout.
 
 Recommendation: retain Standard as the default and as the unit-comparison baseline. Owner selection and M12b
 remain open. Host equality does not establish the target weight/freeze contract or explain the historical DHO924S
-18.2 fps result in architecture/0013. No production behavior changes in this evidence step.
+18.2 fps result in ADR 0035. No production behavior changes in this evidence step.
 
 Reproduce the deterministic cases with `cargo test -p oos-ui --bin oos-ui draw_routes`. The tests live in
 `ui/src/ui/draw_routes.rs` because they inspect the actual UI maps and route selection. They use captured, seeded
@@ -507,7 +507,7 @@ only a marginal earlier benefit. No production fix is made.
 On the actual 14-frame plan the host routes are close (p50 6.52/6.41 ms Standard/Batch). The host does not
 reproduce or prove the cause of the historical 18.2 versus 26.1 fps unit observation. There are no acquired/displayed-fps measurements here. Host stage counters
 and the paired kernel experiment identify costs to test on A53/A72; external sampling was unavailable under the
-host sandbox. Keep architecture/0013's deletion hold until a matched unit profile establishes that cause.
+host sandbox. Keep ADR 0035's deletion hold until a matched unit profile establishes that cause.
 
 Unit measurements still required before selecting/deleting a route: reproduce the 100 kHz square setup and record
 actual rate/depth/decimation/compression/read size, worker placement and helper use for both routes; collect

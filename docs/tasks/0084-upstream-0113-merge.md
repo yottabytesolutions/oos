@@ -53,7 +53,7 @@ Reserved paths: whole tree on branch `integ-27-upstream` (integration merge), th
   only and every `remote.*` setting is written by the UI; it needs the system-settings migration. The merge keeps
   upstream's behaviour (shared list, firewall and SSH on a thread off the frame loop). Port 6 (session restore) is in
   the merge resolution itself (`leave_session` on `change::replay`). b19a56ad's two Ui fields stay for M2.3e.
-- 2026-11-16: merge committed d5dc0fa4 after ffcd48bd (adr/0018: an upstream merge is one whose merge base is off the
+- 2026-11-16: merge committed d5dc0fa4 after ffcd48bd (the retired upstream-rebaseline procedure (Git history): an upstream merge is one whose merge base is off the
   base's first-parent line; the second intake was not recognised). Privacy: upstream example addresses became
   documentation addresses, the allowlist admits the wireless-regdb licence emails and one ULA test prefix.
 - 2026-11-16: paused, disk full (925 MiB free). Merge of 15b819e2 resolved in the working tree, not committed

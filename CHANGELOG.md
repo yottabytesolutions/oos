@@ -3,13 +3,13 @@
 ## 0.2.0: Hard fork
 
 This tree is now a hard fork of OOS with its own trunk, `main`
-([ADR 0030](docs/adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)). The fork point is tag
+([ADR 0001](docs/adr/0001-hard-fork.md)). The fork point is tag
 `hard-fork-20261117`; the last upstream commit merged in is 15b819e2. Upstream is no longer merged. A single upstream
 change may enter by cherry-pick, keeping its author. The licence stays GPL-2.0-or-later and the authorship and
 attribution stay as they were.
 
-- The gate is `cargo xtask check` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)). Lints and
-  limits only ratchet down ([ADR 0039](docs/adr/process/0039-format-lints-and-ratchets-the-author-tightens.md)).
+- The gate is `cargo xtask check` ([ADR 0005](docs/adr/0005-the-gate.md)). Lints and
+  limits only ratchet down ([ADR 0006](docs/adr/0006-format-lints-and-ratchets.md)).
 - Pull requests run the gate on GitHub-hosted runners, with an automatic code review that must pass before a merge.
   History on `main` is linear. Releases are SemVer tags `vX.Y.Z` on `main`; this is the first.
 - All crates carry the version 0.2.0. `*IDN?`, the web UI and mDNS report it.
@@ -38,7 +38,7 @@ Changed:
   from the generic image and keeps HS for trial rollback. Device capability overrides are labelled as device
   overrides. Host-tested only; early voltage-switch failures still need owner recovery (docs/boot.md).
 
-- Removed the failed autoset measure-unit option. Auto set-up always reads signal levels from records (ADR 0010).
+- Removed the failed autoset measure-unit option. Auto set-up always reads signal levels from records (ADR 0012).
 - Telnet is off by default at boot and in the system settings. System > Network > Remote services > telnet still
   enables it for bench bring-up; an existing explicit `remote.telnet = on` setting is kept.
 - SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the

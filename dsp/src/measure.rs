@@ -998,7 +998,7 @@ mod tests {
         }
     }
 
-    // No wall-time limit (ADR 0020): a quadratic join of 400k edges is 1.6e11 steps and does not end in time, which
+    // No wall-time limit (ADR 0009): a quadratic join of 400k edges is 1.6e11 steps and does not end in time, which
     // shows a regression without a threshold that a loaded computer trips.
     #[test]
     fn complete_pulse_join_is_linear_on_a_large_sorted_record() {
@@ -1071,7 +1071,7 @@ mod tests {
 
     /// Seen on the unit: a deep record with many edges that seldom reach the 10 % and 90 % levels. Searching the
     /// record per edge held the main thread for half a minute there and takes minutes here. No wall-time limit
-    /// (ADR 0020).
+    /// (ADR 0009).
     #[test]
     fn edges_that_miss_the_levels_are_quick() {
         let n = 400_000;
@@ -1084,7 +1084,7 @@ mod tests {
         assert_eq!((a.rise_count, a.fall_count), (1, 0));
     }
 
-    /// One pass over the sorted edges; a pass per edge would not finish. No wall-time limit (ADR 0020).
+    /// One pass over the sorted edges; a pass per edge would not finish. No wall-time limit (ADR 0009).
     #[test]
     fn width_of_a_deep_record_is_quick() {
         let rises: Vec<f64> = (0..400_000).map(|i| i as f64).collect();

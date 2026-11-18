@@ -1,6 +1,6 @@
 # Specification gaps
 
-What [adr/0017](adr/0017-hybrid-after-m12.md) needs specified before its rebuilt parts start: the menu model, the
+What [ADR 0038](../adr/0038-menus-and-parser.md) needs specified before its rebuilt parts start: the menu model, the
 overview page, the SCPI parser, the setup keys M13 needs and the `:SYSTem:STATe?` schema. Settings, commands and
 views keep the migration's design (`migration.md`) and need no separate spec. Counts are from `overhaul` dca35ed,
 taken with grep; they size the legacy surface, they are not targets.

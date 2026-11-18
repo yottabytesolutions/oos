@@ -68,8 +68,8 @@ Done (branch `ci/t0092-pipeline` on main 441adcb6, not pushed):
   issue forms, one PR template (`pull_request_template.md`; the upper-case copy is removed), labels.yml,
   labeler.yml, ruleset, settings script.
 - privacy.yml no longer fetches or excludes upstream (hard fork); its tests follow.
-- ADR 0019: commit subjects are `type(scope): imperative summary` (every commit lands on main by rebase, #29). ADR 0031: CI runs the
-  inventory split by `cargo xtask step`. Dead ci.yml links in ADR 0017/0020 point at pr.yml.
+- CONTRIBUTING.md#style: commit subjects are `type(scope): imperative summary` (every commit lands on main by rebase, #29). ADR 0005: CI runs the
+  inventory split by `cargo xtask step`. Dead ci.yml links in the former lint and layered-check records point at pr.yml.
 - Validated locally: actionlint (with shellcheck) clean, `cargo-deny check` passes, `git-cliff` renders, Python tests
   for the new scripts, fast gate, `codex_gate.py` against dekajoule/oos PR #38 (pending: Codex reviewed f617d62953,
   head 5e683947b9).
@@ -156,7 +156,7 @@ cargo xtask check                  # before opening a PR
   `fix/123-trigger-holdoff`, `refactor/t0075-normal-trigger`.
 - PR title and every commit subject: Conventional Commits, `type(scope): summary`, at most 72 characters. Each
   commit lands on main as it is and becomes a changelog line; no fixup or WIP commits.
-- Every commit carries `Signed-off-by:` (`git commit -s`) matching the author (DCO, ADR 0026). Use your GitHub
+- Every commit carries `Signed-off-by:` (`git commit -s`) matching the author (DCO, ADR 0003). Use your GitHub
   noreply address: other email addresses are rejected by the privacy check.
 - Commits and PR texts carry no tool or session details: no session links, no `Agent:` or AI `Co-authored-by:`
   trailers.

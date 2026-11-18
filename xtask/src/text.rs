@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! The file rules of ADR 0019 a tool can check, over every tracked file: no trailing spaces or CR line ends, a
+//! The file rules of CONTRIBUTING.md a tool can check, over every tracked and new file: no trailing spaces or CR line ends, a
 //! newline at the end, an SPDX line at the top of our own sources, Rust indented with spaces, and the licence texts
 //! in the image tree equal to their originals.
+
+mod adr;
 
 use crate::steps::{outcome, Outcome};
 use std::path::Path;
@@ -116,7 +118,7 @@ fn broken(root: &Path, paths: &[&String]) -> Vec<String> {
 }
 
 pub fn check(ctx: &crate::run::Context, root: &Path) -> Outcome {
-    let paths = crate::repo::git_files(ctx, root, &[]).map_err(|e| vec![e])?;
+    let paths = crate::links::inventory(ctx, root).map_err(|e| vec![e])?;
     let paths: Vec<&String> = paths.iter().collect();
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
     let mut bad: Vec<String> = std::thread::scope(|s| {
@@ -125,10 +127,11 @@ pub fn check(ctx: &crate::run::Context, root: &Path) -> Outcome {
         runs.into_iter().flat_map(|r| r.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))).collect()
     });
     bad.extend(copies(root));
+    bad.extend(adr::check(root, &paths));
     if !bad.is_empty() {
-        bad.push("see docs/adr/process/0019-one-style-for-text-files-and-commits.md".into());
+        bad.push("see CONTRIBUTING.md#style".into());
     }
-    outcome(vec![format!("{} tracked files follow ADR 0019", paths.len())], bad)
+    outcome(vec![format!("{} files follow CONTRIBUTING.md and ADR references resolve", paths.len())], bad)
 }
 
 #[cfg(test)]

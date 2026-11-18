@@ -10,8 +10,7 @@ hardware" (written down or coded, never run on a scope).
 - [System](architecture/system.md): how the SD card, kernel, Rust crates and GUI fit together.
 - [development.md](development.md): the gate (`cargo xtask check`), what it enforces, the ratchets, hooks and CI.
 - [Tasks](tasks/README.md) and [releases](releases.md): planned work and release criteria.
-- [Upstream ADRs](adr/README.md): upstream's architecture decision records by category (code, ui-ux, hardware,
-  system, process); ours are in [architecture/adr](architecture/adr/).
+- [Architecture decision records](adr/README.md): one numbered set with categories and explicit current or target state.
 - [boot.md](boot.md): card layout, boot chain, the image format of the stock loader, OOS start-up order.
 - [install-usb.md](install-usb.md): installing OOS from a USB stick, without opening the scope.
 - [sdcard-backup.md](sdcard-backup.md): backing up and cloning the SD card on Windows, macOS and Linux (card route).

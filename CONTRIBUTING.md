@@ -1,7 +1,7 @@
 # Contributing to OOS
 
 This tree is a hard fork of OOS with its own trunk, `main`, and its own rules
-([ADR 0030](docs/adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)). Contributions from people and from coding
+([ADR 0001](docs/adr/0001-hard-fork.md)). Contributions from people and from coding
 agents are welcome under the structure below.
 
 Reports, measurements and code are all welcome. The most useful thing right now is a test on hardware: OOS has run on
@@ -11,21 +11,21 @@ that whole hardware variant verified ([docs/models.md](docs/models.md) 2.1).
 ## Ground rules
 
 - **No vendor code or vendor data.** No firmware images, no code or binaries from any stock or modified firmware, no
-  calibration files, no `vendor.bin`. A crate from crates.io is added only where it removes code or
-  blocking, and cargo-deny vets its licence ([ADR 0037](docs/adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md)).
+  calibration files, no `vendor.bin`. Direct dependencies are listed with their replacement rationale,
+  licence-checked and maintainer-approved ([ADR 0004](docs/adr/0004-dependencies.md)).
 - **No vendor material in the texts either.** Code, comments, documents, commit messages, pull request descriptions
   and issues describe the hardware as behaviour, in your own words: no listings, copied tables or strings from the
   stock or a modified firmware, and no names of its functions, classes or files. What the vendor publishes for users
   is fine: the command names of the programming guide, the manuals, the data sheets of the parts
-  ([ADR 0040](docs/adr/process/0040-contributions-signed-off-no-vendor-material-rebased.md)).
+  ([ADR 0002](docs/adr/0002-no-vendor-material.md)).
 - **Sign your commits off.** `git commit -s` adds a `Signed-off-by:` line with your name. With it you state the
   [Developer Certificate of Origin](https://developercertificate.org): the work is your own or you have the right to
   submit it, under the licence of the project. This holds for work your agent wrote too. Code or text from another
   project is named in the pull request with its source and licence.
 - **Say how you know.** A statement about the hardware in `docs/` is "verified on the unit", or "assumed", or "not yet
-  verified on hardware". Keep that honest: a wrong "verified" costs someone else days.
-- **Be careful with other people's scopes.** OOS never writes the FPGA flash, `/rigol/data`, or the `uboot`, `trust` and
-  `parameter` partitions. Changes that would need any of this will not be accepted without a very good case.
+  verified on hardware". A verified claim always records the model and date, including in work reports.
+- **Be careful with other people's scopes.** [ADR 0011](docs/adr/0011-protected-areas.md) lists the only card areas
+  OOS writes and protects the golden and stock FPGA slots. There is no informal exception to that list.
 - **Keep the analog path unchanged unless that is the point.** The `plan-matrix` step in `cargo xtask check` compares
   65 acquisition plans with `xtask/data/plan-matrix.txt`. Run `cargo xtask plan-matrix` for a focused check. For an
   intended register change, run `cargo xtask plan-matrix --update`, review the diff and explain it in the pull request.
@@ -48,8 +48,8 @@ walks through it. An analyser page registers the same way ([docs/analyser-module
 Development runs on Linux and macOS. The BSDs are best effort: not guaranteed, but reported problems get fixed. On
 Windows, work in WSL 2 or a Linux virtual machine: the gate, the hooks and the scripts in `tools/` expect a POSIX host
 and run there as on any Linux computer
-([ADR 0033](docs/adr/process/0033-development-platforms.md)). Project tooling written in Rust goes into `xtask`, small
-helpers into `tools/` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)).
+([ADR 0010](docs/adr/0010-development-platforms.md)). Project tooling written in Rust goes into `xtask`, small
+helpers into `tools/` ([ADR 0005](docs/adr/0005-the-gate.md)).
 In WSL, clone into the Linux file system (for example `~/oos`), not under `/mnt/c`: builds there are much slower,
 and file modes and line ends do not survive the Windows file system.
 To run OOS on your computer, `cargo run --release -p oos-ui -- --serve` and open the address it prints in a browser
@@ -65,7 +65,7 @@ cargo xtask check --fast           # before every commit and push (the hooks run
 cargo xtask check                  # the full gate, optional: CI runs it on every pull request
 ```
 
-The gate is `cargo xtask check` ([ADR 0031](docs/adr/process/0031-the-gate-is-cargo-xtask-check.md)). The
+The gate is `cargo xtask check` ([ADR 0005](docs/adr/0005-the-gate.md)). The
 [check inventory](docs/development.md#executable-inventory-and-completion-evidence) lists the steps and their
 prerequisites (`cargo xtask check --list`); `cargo xtask step <name>` runs single steps. `cargo xtask check --image`
 adds the Docker and emulation checks; the maintainers run it before unit rounds and releases. The hooks run
@@ -79,7 +79,7 @@ place to start reading.
 ## Branches, commits, pull requests
 
 - One issue per pull request, or per stack when the work spans several pull
-  requests ([ADR 0040](docs/adr/process/0040-contributions-signed-off-no-vendor-material-rebased.md)). Branch:
+  requests. Branch:
   `<type>/<ref>-<slug>`, `type` one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `ci`, `build`, `chore`;
   `ref` the issue number or `t` plus the four-digit task id; `slug` lower case with `-`. Examples:
   `fix/123-trigger-holdoff`, `refactor/t0075-normal-trigger`. `main` is the only long-lived branch.
@@ -87,11 +87,11 @@ place to start reading.
   Pull requests merge by rebase, so each commit lands on main as it is and its subject becomes a changelog line.
   Fold `fixup!`, `squash!` and WIP commits into their topic commit (`git rebase -i --autosquash`) before you mark
   the pull request ready; `pr-meta` rejects them.
-- Every commit carries `Signed-off-by:` (`git commit -s`) matching the author (DCO, ADR 0040). Use your GitHub
+- Every commit carries `Signed-off-by:` (`git commit -s`) matching the author (DCO, ADR 0003). Use your GitHub
   noreply address (`<id>+<login>@users.noreply.github.com` or `<login>@users.noreply.github.com`): other email
   addresses are rejected by the privacy check.
 - Commits and pull request texts carry no tool or session details: no session links, no `Agent:` and no AI
-  `Co-authored-by:` trailers ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
+  `Co-authored-by:` trailers ([contribution rules](CONTRIBUTING.md#style)).
 - Default to one pull request with several topic commits when needed; rebase merges keep them. Keep the review
   about 400 changed lines without goldens and fixtures. Multi-PR work may use a stack
   ([below](#stacked-pull-requests)).
@@ -104,7 +104,7 @@ place to start reading.
 
 Multi-PR work may use a stack when dependent topics benefit from separate review. A stack is a chain of pull
 requests where the bottom one targets `main` and each higher one targets the branch below it
-([ADR 0034](docs/adr/process/0034-multi-pr-work-may-be-a-stack.md),
+([stacked pull requests](CONTRIBUTING.md#stacked-pull-requests),
 [GitHub's documentation](https://docs.github.com/en/pull-requests/get-started/about-stacked-prs)). Each layer is one
 topic, reviewable and green on its own, and keeps the branch scheme above; the layers share the `ref`. Lower layers
 link the issue with `Part of #NNN`; only the top layer says `Closes #NNN`, so the issue closes with the last merge.
@@ -199,23 +199,23 @@ labelled `flaky`; the gate rejects a bare `#[ignore]` and a `flaky:` reason with
 - Files: UTF-8, LF, a final newline, no trailing spaces, the `SPDX-License-Identifier: GPL-2.0-or-later` line in every
   source file. [.editorconfig](.editorconfig) sets this up in most editors.
 - Rust: `cargo fmt` with the tree's [rustfmt.toml](rustfmt.toml)
-  ([ADR 0039](docs/adr/process/0039-format-lints-and-ratchets-the-author-tightens.md)); the tree is fully formatted. Lints are set
+  ([ADR 0006](docs/adr/0006-format-lints-and-ratchets.md)); the tree is fully formatted. Lints are set
   per crate and their findings may only go down; a pull request that lowers a count commits `cargo xtask ratchet`
   ([docs/development.md](docs/development.md)).
 - Commits follow [AGENTS.md](AGENTS.md#commits): subject in the imperative mood, under 72 characters; the body says
   why; one topic each; formatting and moves in commits of their own; signed off. A change people would notice on the
-  scope gets a `CHANGELOG.md` entry ([ADR 0019](docs/adr/process/0019-one-style-for-text-files-and-commits.md)).
+  scope gets a `CHANGELOG.md` entry ([contribution rules](CONTRIBUTING.md#style)).
 - An upstream OOS change enters by cherry-pick with its author kept and the trailer
-  `Cherry-picked-from: upstream <hash>` (ADR 0030).
+  `Cherry-picked-from: upstream <hash>` (ADR 0001).
 
-Each release strives for less production code than the one before
-([ADR 0035](docs/adr/process/0035-each-release-has-less-production-code.md)). Reuse and extend what exists before
+Each release has less production code than the one before
+([ADR 0007](docs/adr/0007-less-production-code.md)). Reuse and extend what exists before
 adding a parallel version. `cargo xtask loc` counts production code per crate; every pull request shows its change in
 the `fast` job's summary, for information. A release that grows says why in a `Code growth:` paragraph in its
-`CHANGELOG.md` section or tag annotation. Tests and comments do not count, so never trim them to meet the goal.
+`CHANGELOG.md` section, approved by the owner. Tests and comments do not count, so never trim them to meet the rule.
 
 A change that decides something others will build on (a structure, a rule of the screen, a way to treat the hardware)
-comes with a decision record: [docs/adr](docs/adr/README.md), numbered from 0030 on. Rewrite an existing record
+comes with a decision record: [docs/adr](docs/adr/README.md), in one flat numbered series. Rewrite an existing record
 when its decision changes; git keeps the history.
 
 ## Working with a coding agent
@@ -223,7 +223,7 @@ when its decision changes; git keeps the history.
 Most code here is written with one. [AGENTS.md](AGENTS.md) holds the instructions for all of them (`CLAUDE.md` points to
 it); point your tool to it if it does not read it by itself. The agent's report counts like yours: it says
 what was tested on a unit, what only on the host, and what was not tested. An agent does not write to a scope unless
-its owner asked for it ([ADR 0018](docs/adr/process/0018-one-agents-md-for-people-and-agents.md)).
+its owner asked for it ([scope rules](AGENTS.md#the-scope)).
 
 - Agents work only on issues labelled `agent-ready`, one pull request per issue, within the issue's acceptance
   criteria and its out-of-scope list. Default to one pull request with topic commits; stacks are optional.
@@ -239,3 +239,11 @@ its owner asked for it ([ADR 0018](docs/adr/process/0018-one-agents-md-for-peopl
 
 By contributing you agree that your work is published under the licence of the project,
 [GPL-2.0-or-later](LICENSE).
+
+### Writing and names
+
+Use plain English and short sentences. Names state their purpose; comments explain why or what a hardware value means.
+Test names state the behaviour they hold. Wrap prose at 120 columns; tables, links and code blocks can be longer.
+Use a space before SI units (`1.25 GHz`, `100 ns/div`, `4 MiB`), `Display > Bottom bar` for menu paths,
+and backticks for code and commands. Update docs in the same change as the code they describe.
+Review checks meaning, naming, units and these prose conventions; `text` checks file mechanics.

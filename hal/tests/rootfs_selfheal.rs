@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The image's self-heal scripts on the host (task 0045, ADR 0015 "Kernel panics"): `oos-crash-save` against a fake
+//! The image's self-heal scripts on the host (task 0045, ADR 0017 "Kernel panics"): `oos-crash-save` against a fake
 //! pstore and a fake `/oos` whose `df` reports a 16 MiB partition, and the `oos-watchdog` wrapper with a kicker that
 //! exits at once. The scripts are POSIX sh; on the unit they run under busybox.
 

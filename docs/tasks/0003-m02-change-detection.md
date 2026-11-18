@@ -345,12 +345,12 @@ hardware access, or edits to the assignment's held paths.
 
 Implementation follows [migration M2](../architecture/migration.md#m2-one-change-detection-point-d1a),
 [change detection](../architecture/README.md#change-detection), and ADRs
-[0001](../architecture/adr/0001-single-settings-owner.md),
-[0002](../architecture/adr/0002-commands-per-area.md),
-[0003](../architecture/adr/0003-one-change-point.md),
-[0004](../architecture/adr/0004-explicit-stages.md),
-[ADR 0014](../adr/process/0014-refactorings-keep-every-pixel.md) and
-[0014](../architecture/adr/0014-domain-crate.md). Source locations below refer to planning base
+[0032](../adr/0032-settings-owner.md),
+[0032](../adr/0032-settings-owner.md),
+[0033](../adr/0033-change-point.md),
+[0034](../adr/0034-step-pipeline.md),
+[ADR 0008](../adr/0008-behaviour-baselines.md) and
+[0020](../adr/0020-crates.md). Source locations below refer to planning base
 `6291e7080f8c91d2702d453052bccb75e0b1faf6`; proposed destinations and test names do not exist yet.
 The original assignment was plan-only. Locations and claims are refreshed for M2.1 above; no commit is authorized.
 This revision incorporates the coordinator's decisions after Fable 5.2's architecture review (approve with changes).
@@ -610,7 +610,7 @@ Each row is a proposed commit; M2.1 and M2.2 may contain the two listed commits 
 branch. M2.3 has five separately gated, cross-reviewed parts/branches, a through e. Each switches its writer
 and consumers together and merges only after independent Claude review and the full gate; do not bundle the
 five switches into one review. Hold M2.3c for M2.3b's producer unit smoke. Run the full gate before every commit.
-New or moved code meets ADR 0010; G1 permits only listed, non-growing legacy moves.
+New or moved code meets ADR 0006; G1 permits only listed, non-growing legacy moves.
 
 | Order / part | Commit intent | Deletes |
 |---|---|---|

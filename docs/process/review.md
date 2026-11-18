@@ -28,7 +28,7 @@ The reviewer reads the task, applicable [migration step](../architecture/migrati
 Challenge the ownership model and try to disprove the claimed behaviour with a counterexample.
 Flag duplicated logic, near-copies and missing reuse as findings. Ask for an existing abstraction to be extended
 instead of a parallel one, and for deleted tests or comments that only shrink the line count to be restored
-([ADR 0035](../adr/process/0035-each-release-has-less-production-code.md)).
+([ADR 0007](../adr/0007-less-production-code.md)).
 Check the evidence and reproduce relevant host tests. Record anything that could not be verified.
 
 Return findings first, ordered by severity. End with approve or request changes for the exact reviewed revision.

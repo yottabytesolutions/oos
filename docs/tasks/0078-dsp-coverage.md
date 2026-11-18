@@ -50,7 +50,7 @@ Reserved paths: `dsp/src/power.rs`, `dsp/src/linecode/behavior.rs`,
   `partial gate passed (not done): 8 steps in 198 s`. All eight selected steps
   passed: fmt, size, architecture, mutable-statics, unsafe, method-exceptions,
   known-failures and agent-rules. Size reported one existing DSP pending
-  upstream rebaseline under ADR 0018; no ratchet was edited. Complete output:
+  upstream rebaseline under the retired upstream-rebaseline procedure (Git history); no ratchet was edited. Complete output:
   `target/task0078-review/fast-gate.log`; command logs:
   `target/check-logs/60654-1794847160757186000/`.
   `git diff --check` passed. Seven tracked files intentionally remain modified;

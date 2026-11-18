@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copyright (C) 2026 Julian Decker
 # SPDX-License-Identifier: GPL-2.0-or-later
-# rcS child: archive/count before applying any setup, then supervise UI exits (ADR 0015).
+# rcS child: archive/count before applying any setup, then supervise UI exits (ADR 0017).
 # Trial bookkeeping is done by rcS before this script. During a trial the update watcher owns recovery.
 mnt=${OOS_UI_DATA:-/oos}
 tmp=${OOS_UI_TMP:-/tmp}

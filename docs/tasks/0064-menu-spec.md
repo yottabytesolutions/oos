@@ -13,7 +13,7 @@ depends: []
 ## Goal
 
 Specify the legacy menu surface and the owner's active-choice and overview requirements for M17 under
-[ADR 0017](../architecture/adr/0017-hybrid-after-m12.md). Review tier: standard. Docs only.
+[ADR 0038](../adr/0038-menus-and-parser.md). Review tier: standard. Docs only.
 
 ## Plan
 

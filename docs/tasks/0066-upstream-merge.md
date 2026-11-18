@@ -33,7 +33,7 @@ Reserved paths: whole tree on branch `integ-20-upstream` (integration merge), th
 Owner decisions applied:
 
 - Both draw paths stay: upstream's Standard (multi-core fast path, default) and our batch path, with upstream's
-  "Acquire > Draw path" setting. adr/0013 and migration M9/M12: removal superseded, M12 measures both on the unit.
+  "Acquire > Draw path" setting. The draw-path acceptance plan in migration M9/M12: removal superseded, M12 measures both on the unit.
 - Our acquisition correctness work stays (M2.x change detection and generation filter, kexec and watchdog, PCIe
   Gen1, self-heal, update hardening, SCPI empty reply and compound fixes). Where upstream fixed the same, one
   implementation stays; the Status names which.
@@ -60,7 +60,7 @@ Decisions (coordinator, 2026-11-16):
 
 - Windows-only dependencies of upstream's desktop window (`minifb`, `windows-sys`) stay out; `ui/src/desktop.rs`
   builds only with `cfg(windows)`. A new dependency needs the owner's agreement.
-- Ratchets: adr/0018 admits upstream findings in one rebaseline commit; crate keys (`impls ui Ui`) only where
+- Ratchets: the retired upstream-rebaseline procedure (Git history) admits upstream findings in one rebaseline commit; crate keys (`impls ui Ui`) only where
   upstream added an inherent impl of that type in that crate.
 - While a STOP view is shown, settings changes no longer reconfigure the acquisition until RUN (upstream behaviour,
   accepted).
@@ -106,7 +106,7 @@ Decisions (coordinator, 2026-11-16):
   crate keys `impls ui Ui` 33 -> 61, `impls ui Job` 4, `impls ui State` 5, `impls ui Worker` 7. Our own findings
   were fixed instead (core patch enums, a test cast). `cargo xtask ratchet` refuses while moves are listed: the
   integrator runs `cargo xtask ratchet --move` at the fast-forward.
-- 2026-11-16: adr/0018 refined: crate keys only for inherent impls upstream added; moves of the integration carry
+- 2026-11-16: the retired upstream-rebaseline procedure (Git history) refined: crate keys only for inherent impls upstream added; moves of the integration carry
   attribution for upstream files relocated to new files and for continued key moves; the pre-commit gate accepts the
   rebaseline commit itself; admitted entries join the base after its moves.
 - 2026-11-16: overhaul merged three times to its tip: 71f50eb8 (integ-19, integ-21), 0a09b4cf (integ-22, docs), 856f5f74
@@ -121,6 +121,6 @@ Decisions (coordinator, 2026-11-16):
 - 2026-11-16: step 1 (PR 7 merge 32be6a01) committed as merge plus `Model::cores` port; 12 files with real
   conflicts (38 hunks), 47 more formatting only. Upstream points are merged through copies formatted with our
   `rustfmt.toml`; each merge commit's second parent is the unformatted upstream commit.
-- 2026-11-16: adr/0018 and its gate exception committed before the first upstream merge.
+- 2026-11-16: the retired upstream-rebaseline procedure (Git history) and its gate exception committed before the first upstream merge.
 - 2026-11-16: bridge `-s ours` with upstream's PR 7 head bba435bc (scrubbed copy of b3539a34, already in overhaul).
 - 2026-11-16: claimed on `integ-20-upstream` from `overhaul` c6f1f98.

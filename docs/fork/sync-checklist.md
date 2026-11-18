@@ -4,7 +4,7 @@ Every merge of an upstream release into `dho804`. Policy and history: private RE
 sync". Nothing here touches the unit.
 
 1. Branch `sync/<version>` from `dho804`; `git merge upstream/main` (no rebase).
-2. Image builds are generic (ADR 0041). Keep shared defaults and dependency assembly in `boot/build-dev-image.sh`;
+2. Image builds are generic (ADR 0015). Keep shared defaults and dependency assembly in `boot/build-dev-image.sh`;
    device identity and overrides belong on the device. There are no per-unit build hooks to restore.
 3. SSH instead of telnet (docs/network.md 7): keep the fork's side. rcS step 3 starts `oos-ssh`, never `telnetd`;
    `ui/src/remote.rs` stays deleted (`crate::ssh` replaces it); in `ui/src/ui/remote.rs`, `ui/src/sysconf.rs` and the

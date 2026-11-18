@@ -12,7 +12,7 @@ depends: []
 
 ## Goal
 
-Publish what is known about the acquisition FPGA as interface facts with their evidence (ADR 0013, ADR 0015), so
+Publish what is known about the acquisition FPGA as interface facts with their evidence (ADR 0002, ADR 0012), so
 others can drive it and write more efficient host code. Review tier: standard.
 
 ## Plan

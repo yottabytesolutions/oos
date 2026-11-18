@@ -157,9 +157,10 @@ System > Network > Remote services has a switch for each service, next to where 
 | telnet | 23 | a shell **without password** (bring-up; use it on the bench LAN only) |
 | SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
 
-Generic images enable web remote, SCPI, VXI-11 and SSH, restricted to the dynamic LAN list; telnet is off by default.
-The built-in SSH fallback without image defaults is off.
-A service switched off closes its port at once, with the connections on it. Switching off the web remote also takes away
+Generic images enable the unauthenticated bench-LAN web remote, raw SCPI and VXI-11, restricted to the dynamic
+LAN list. SSH is authenticated and off on a fresh unit, enabled from the panel. Telnet is off by default and
+scheduled for removal in #139. HiSLIP scope enablement remains an off-until-verified M15b target.
+Switching off a service closes its listener and connections. ADR 0018 targets a tested one-second bound. Switching off the web remote also takes away
 the update page: an update then comes from a USB stick. telnet and SSH are started by `rcS` at power-on (`telnetd`,
 `/bin/oos-ssh`), which reads `remote.telnet` and `remote.ssh` from `/oos/system.conf`; oos-ui starts or stops them
 when a switch changes. Enable telnet only for bench bring-up: it is a shell for anyone on the network. The serial
@@ -168,7 +169,7 @@ console (UART2) keeps its shell without a login.
 Telnet stays off on first boot and with a missing configuration or `remote.telnet` key, including generic
 images. An explicit `remote.telnet = on` setting is kept across updates. The Default key resets the measurement
 setup, leaving these system settings unchanged. The default and menu switch are tested on the host; this change
-is not yet verified on hardware. See [ADR 0025](adr/system/0025-remote-services-are-bench-lan-services.md).
+is not yet verified on hardware. See [ADR 0018](adr/0018-bench-lan-services.md).
 
 The last row: **Allowed**, the addresses that may reach the scope (`net.allow`, section 6), and **Firewall** beside it,
 which shows the state in force: `on`, `off: everyone`, `applying` while a change is being put in force, `failed: see
@@ -271,29 +272,15 @@ graphics = gpu                # System > Graphics: gpu or cpu (gpu/README.md)
 
 ### Temporary hardware keys
 
-[ADR 0010](adr/hardware/0010-unverified-hardware-functions-are-opt-in.md) requires opt-in for unverified hardware
-functions and a removal issue for every temporary key. Creating the existing keys' issues is separate work.
-The FPGA measure-unit autoset path (`autoset.levels = unit`) is designated for removal; record-based levels are
-supported. The table excludes that rejected path. Defaults below are built-in fallbacks; the generic image layers
-shared model defaults over them, including compression.
-
-| Key | Function | State |
-|---|---|---|
-| `acq.pipeline = batch` | Batch draw path ([architecture/0013](architecture/adr/0013-one-batch-path.md)) | off by default; measure both paths at M12 |
-| `acq.prearm = on` | arm the next batch before decoding the current one | off by default; verification not recorded here |
-| `acq.compress = on` | FPGA min/max pairs instead of every sample, 1 us/div and slower | off by default; verified on DHO804 ([unit report](fork/unit-dho804.md)) |
-| `acq.interp = fast` | fast interpolation of sparse frames | off by default; verification not recorded here |
-| `perf.place = on` | fixed cores for threads and DMA interrupts | off by default; verification not recorded here |
-| `trig.serial_hw = on` | UART trigger in the FPGA receiver | off by default; verification not recorded here |
-
-A verified key keeps its fallback only until removal with the old path. Verification changes and removal issues
-belong with this inventory.
+[system-conf-keys.md](system-conf-keys.md) is the only inventory. Batch is the generic-image default; the parser
+defaults to Standard/Frames without configuration. Both remain selectable until the M12 comparison chooses one path.
+See ADR 0012 for verification policy.
 
 ## 6. Firewall, remote access and the MAC address
 
 rcS and oos-ui layer shared model defaults in `/etc/oos/system.conf` under device overrides in `/oos/system.conf`.
 The last line wins, including an empty value, and saving settings preserves unknown keys. Generic images contain
-no device identity or LAN-specific address prefixes ([ADR 0041](adr/system/0041-images-are-generic-device-state-lives-on-device.md)).
+no device identity or LAN-specific address prefixes ([ADR 0015](adr/0015-generic-images.md)).
 
 | Key | Generic image default | What |
 |---|---|---|
@@ -369,7 +356,7 @@ The link-local fallback address (169.254.x.y) is only reachable from a listed pr
 **oos-ui** reads `net.allow` at the start; its servers share that list with Allowed, which sets it after a change
 (`netacl::Shared`). They apply it a second time per connection: `POST /update` and `/mcp` answer 403 to others as soon
 as the request head is in (the body is not read; each request is checked, so a change counts from the next one), SCPI,
-VXI-11 and HiSLIP (on a computer) close the connection. After a change they also close the connections they hold from
+VXI-11 and HiSLIP close the connection. HiSLIP scope enablement remains M15b and off until unit verification. After a change they also close the connections they hold from
 an address the new list leaves out. The page, the live picture, `/cmd`, the downloads and `POST /waveform` (a
 reference upload, nothing written to storage) stay open to the firewall's prefixes. Loopback is always allowed.
 
@@ -530,3 +517,11 @@ a Linux kernel and kept up to date by `watch`, membership of on-link, routed and
 zone file, a DHCP lease that keeps the IPv6 addresses, a hostile option string that runs nothing, the secret
 (`tools/fw-sim.sh`, arm64 container with the image's busybox and `nft`); the zone's validation and source on the page,
 `onlink6` in oos-ui, AAAA records, dual-stack sockets and the web guard in `ui` tests.
+
+### Device MAC probe ordering
+
+The Rockchip GMAC glue is a module. rcS resolves the MAC before loading it and passes macaddr so stmmac
+registers it as permanent before IPv6 address configuration. It verifies the registered address before bringing
+eth0 up. This preserves the permanent-MAC input to stable IPv6 hashing without changing the stock loader.
+Existing eth.mac wins; absent values are appended without overwriting other settings. Shared image defaults
+never replace existing device identity. See ADR 0015; the new boot paths are not yet verified on hardware.

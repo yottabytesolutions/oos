@@ -59,7 +59,7 @@ M3 parallel work waits until the crate creation part merges. M18 moves invalidat
 Follow the [review protocol](review.md) before merging.
 Record evidence in the task file's Status lines and the merge commit body.
 The [PR template](../../.github/pull_request_template.md) is the field list. Use it in the PR when one exists.
-History is linear ([ADR 0040](../adr/process/0040-contributions-signed-off-no-vendor-material-rebased.md)):
+History is linear ([ADR 0003](../adr/0003-contributions.md)):
 branches are rebased onto `main`, never updated by merging `main` into them, and `main` only fast-forwards.
 Never rewrite commits on `main`. Changes after review, including rebases with conflict resolutions, need renewed
 independent review.
@@ -73,7 +73,7 @@ lands the pull request by rebase. The required checks do not run every step (the
 so the author runs the full `cargo xtask check` before marking a pull request ready. The author enables auto-merge
 once the required checks are green and Codex has no unresolved findings
 ([CONTRIBUTING](../../CONTRIBUTING.md#review-gate)). A stack lands bottom up
-([ADR 0034](../adr/process/0034-multi-pr-work-may-be-a-stack.md)). Paths in CODEOWNERS also need the owner's
+([stacked pull requests](../../CONTRIBUTING.md#stacked-pull-requests)). Paths in CODEOWNERS also need the owner's
 approval, which the ruleset enforces. Changes that need unit evidence carry `needs-unit` until the owner has seen
 it. After the merge, the owner accepts or reverts the change.
 

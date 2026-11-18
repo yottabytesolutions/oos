@@ -5,7 +5,7 @@
 //! (`acquire_batch_until` over `plain_step`), against the host model of the FPGA (docs/fork/upstream-audit.md, P3
 //! guard 3). Break it catches: a merge that edits upstream's Poll body and drops the `stop()` check from the fork's
 //! copy, so a settings change in NORMAL without a trigger waits the full 2 s again. The stop request is counted, not
-//! timed (ADR 0020).
+//! timed (ADR 0009).
 
 mod support;
 

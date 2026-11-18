@@ -27,7 +27,7 @@ values through local configuration; they are intentionally omitted from this pag
 | Settings lookup | `/etc/oos/system.conf` (image default), then `/oos/system.conf`; last line wins | `rootfs/initramfs/bin/oos-conf`, `netacl::Acl::from_texts` |
 | Model defaults | shared system defaults; capabilities from runtime model detection; identity and overrides on the device | `rootfs/initramfs/etc/oos/system.conf`, `hal/src/model.rs` |
 | Fine V/div | upstream's Fine scale already walks the 801 rows of `cal_vertical` (the AFE is set per row, `afe::scale_index`); the fork adds `:CHANnel<n>:VERNier ON\|OFF` (one switch for all channels, as the menu) and `:CHANnel<n>:SCALe` taking any value with vernier on: the first row at or above it | `ui/src/scpi.rs` (`fine_scale`) |
-| Image build | generic DHO800/DHO900 image with firewall and SSH; no per-unit overlays or MAC in the DTB | `boot/build-dev-image.sh`, ADR 0041 |
+| Image build | generic DHO800/DHO900 image with firewall and SSH; no per-unit overlays or MAC in the DTB | `boot/build-dev-image.sh`, ADR 0015 |
 
 ## Building the image
 

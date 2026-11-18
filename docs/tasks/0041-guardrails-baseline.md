@@ -21,8 +21,8 @@ Reserved paths: none. Reserve paths when claimed.
 Integrate the guardrails branch. Keep rustfmt setup and per-crate mechanical formatting separate from behavior
 changes. Enforce the lint set, size ratchets, coverage floors, architecture boundaries and debug/release tests.
 Provide cargo xtask check, hooks, CI and docs/development.md. Include ARM64 and performance checks in the required
-inventory. Follow the [formatting ADR](../architecture/adr/0009-formatting-and-lint.md) and
-[size ADR](../architecture/adr/0010-size-limits.md). This task preserves the former overhaul phase 1.
+inventory. Follow the [formatting ADR](../adr/0006-format-lints-and-ratchets.md) and
+[size ADR](../adr/0006-format-lints-and-ratchets.md). This task preserves the former overhaul phase 1.
 
 ## Status
 

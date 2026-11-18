@@ -56,7 +56,7 @@ in one number.
   SINGLE armed, CLEAR, RUN after STOP, an autoset or Bode stage, including a retry with identical settings. It
   replaces `hw_stamp`. Request resolution in the change point calls `new_epoch`. Autoset and Bode return
   `Request::Epoch(token)` and read their epoch from the next step's `ChangeSet` (today `autoset.rs` 180 stores the
-  stamp in the same call; the token replaces that, adr/0003). An epoch change is published as part of `AcqIntent`
+  stamp in the same call; the token replaces that, ADR 0033). An epoch change is published as part of `AcqIntent`
   and so of `AcqWant`, so the pair (`gen`, `epoch`) is always consistent.
 - Consumers compare the pair:
   - the picture uses the mapping key, not `gen` (picture.md);

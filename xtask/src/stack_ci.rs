@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Every required check runs on a stacked pull request (ADR 0034). A layer of a stack targets the branch below it,
+//! Every required check runs on a stacked pull request (CONTRIBUTING.md#stacked-pull-requests). A layer of a stack targets the branch below it,
 //! not `main`, and changes only some paths. The workflows of the required checks (`.github/rulesets/main.json`) must
 //! therefore run on every pull request, whatever its base and paths, and report the required name. Test-only: the
 //! workflows are read with a YAML 1.2 parser, so quoting, escapes, indentation and aliases read as GitHub reads them.

@@ -20,7 +20,7 @@ Reserved paths: `ui/Cargo.toml`, `Cargo.lock`, `ui/src/netio/`, `ui/src/netport.
 `ui/src/scpi.rs`, `ui/src/scpi/`, `ui/src/ui/graphics.rs`, `tools/tests/fixtures/perfmap/state.txt`, `ui/src/ui/scpi_operations.rs`, `ui/src/system/intake.rs`,
 `ui/src/system/wake.rs`, `ui/src/system/device/remote.rs`, `ui/src/system/serve.rs`, `ui/src/main.rs`,
 `ui/src/http/listener.rs`, `ui/src/net.rs`, `ui/src/vxi11.rs`, `ui/src/hislip.rs`, `ui/src/perfguard.rs`, `ui/src/perfguard/ring.rs`, `xtask/data/architecture.txt`, `xtask/src/arch/`, `docs/architecture/README.md`,
-`docs/adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md`, `docs/architecture/migration.md`,
+`docs/adr/0023-io-layer.md`, `docs/architecture/migration.md`,
 `docs/tasks/0016-m15-remote-adapters.md`.
 
 M15a (#138): extend the owned intake seam, implement raw framing/output on one current-thread runtime,
@@ -30,7 +30,7 @@ acceptance fixtures and record host measurement evidence. Other transports remai
 Follow [migration M15](../architecture/migration.md#m15-remote-adapters-on-commands-and-queries), including its tests, deletions, boundary rules and required unit round.
 Keep the tracker brief. Record evidence here as the step progresses.
 
-2026-11-18 gate-decision fix: record the owner's M15a acceptance and deferred M15b size criterion in ADR 0037
+2026-11-18 gate-decision fix: record the owner's M15a acceptance and deferred M15b size criterion in ADR 0023
 and the migration specification; collect the supplied unit and host measurements below, then run the fast gate.
 
 M15b HiSLIP (#151): retain framing, handshake, clear and acknowledgement behaviour behind owned requests.
@@ -54,7 +54,7 @@ host size measurements are after the gate fix. These are supplied results, not a
 | aarch64 binary size, host | Baseline | +2.86 % |
 | Dependencies, host | Baseline | +9 |
 
-The owner accepts M15a for the behaviour gain. ADR 0037 amendment 2026-11-18 (2) chooses tokio for all
+The owner accepts M15a for the behaviour gain. The IO runtime decision of 2026-11-18 chose tokio for all
 network IO and retires the deferred size gate and `poll(2)` fallback. Each transport still reports and
 minimises its production LOC and aarch64 binary size delta.
 
@@ -86,7 +86,7 @@ minimises its production LOC and aarch64 binary size delta.
   Host only; no hardware access or Git writes. Independent review, the integrated full gate and unit load
   measurements remain with the coordinator; the wider M15 task stays active.
 
-- 2026-11-18: M15b HiSLIP (#151) plan accepted through the assigned brief: amend ADR 0037 and M15a/M15b,
+- 2026-11-18: M15b HiSLIP (#151) plan accepted through the assigned brief: amend ADR 0023 and M15a/M15b,
   migrate sync/async channels to netio on `refactor/151-m15b-hislip`, preserve protocol fixtures,
   then run fast/debug/release checks and
   measure LOC/binary deltas. Base: `e846b2cf7080ce93d2713c18e644e3803a4289a1`. Coordinator owns Git,
@@ -139,7 +139,7 @@ minimises its production LOC and aarch64 binary size delta.
   to avoid reusing the archived baseline's shared-target fingerprint. Logs, source/binary
   measurements and the baseline executable remain in ignored `target/m15b-evidence/`.
   The expected negative LOC delta is unmet. Aggregate M15b size acceptance remains open
-  under ADR 0037. Host only; independent review, final CI and unit load measurements remain
+  under ADR 0023. Host only; independent review, final CI and unit load measurements remain
   with the coordinator. No Git writes or remote operations were performed.
 
 - 2026-11-18: M15b VXI-11 (#151) plan: reuse netio runtime, bounded request/reply ports,
@@ -150,7 +150,7 @@ minimises its production LOC and aarch64 binary size delta.
   integration and unit measurements. Additional reserved paths: `ui/src/vxi11/`,
   `ui/src/system/serve.rs`, `ui/src/scpi/intake.rs`, `docs/architecture/system.md`.
 
-- 2026-11-18: Recorded the owner's gate decision in ADR 0037, the M15a gate and M15b acceptance criterion,
+- 2026-11-18: Recorded the owner's gate decision in ADR 0023, the M15a gate and M15b acceptance criterion,
   with the supplied unit and host measurements above for the coordinator's PR update. Docs only;
   no production change or new unit run. `cargo xtask check --fast` printed
   `partial gate passed (not done): 11 steps in 2 s` (exit 0); no ratchet counts fell.

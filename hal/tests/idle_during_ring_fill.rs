@@ -3,7 +3,7 @@
 //! The idle hook of the ring-fill wait (`acquire_batch_idle`, fork: the UI's acquisition thread draws frames there,
 //! docs/fork/perf-plan.md item 1), against the host model of the FPGA. Break it catches: an idle call after the ring
 //! is full (the read waits for the caller's work), an idle hook never called, a wait that ends before the ring is full
-//! although the caller has work. No assertion on wall time (ADR 0020): the model records a frame per look at the done
+//! although the caller has work. No assertion on wall time (ADR 0009): the model records a frame per look at the done
 //! flag, so the counts say what happened on any computer. A sleep between two calls with work does not show in them.
 
 mod support;

@@ -36,8 +36,8 @@ A change from a fork comes back as a pull request against `main` under the rules
 ## Upstream
 
 This tree is a hard fork of [OOS](https://github.com/dekajoule/oos)
-([ADR 0030](docs/adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)). Upstream is not merged, and it gets no pull
-requests unless the maintainer asks for one. A single upstream change enters by cherry-pick, keeps its author,
+([ADR 0001](docs/adr/0001-hard-fork.md)). Upstream is neither merged nor tracked. No pull
+requests go upstream. A single upstream change enters by cherry-pick, keeps its author,
 carries `Cherry-picked-from: upstream <hash>` and passes the gate like any change.
 
 ## Conduct

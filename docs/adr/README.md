@@ -1,103 +1,65 @@
 # Architecture decision records
 
-One short file per decision that shapes OOS: the current decision, why it was made and what follows from it.
-Rewrite a record in place when its decision changes, folding amendments into the decision. Git keeps the history.
-When records are merged or retired, remove the old files, keep their index lines pointing to the replacement and
-update links across the repository.
+An ADR records a structural decision with a real alternative and a cost to reverse. Style, procedures and plans live in
+CONTRIBUTING.md, docs/development.md, docs/process/ and [the migration plan](../architecture/migration.md). This is one
+flat series. Every number has one file. Deleted records and former numbers remain in Git history; the index lists
+existing records only.
 
-Other documents explain how things work; these records explain why.
+Each record has Number, Category, State and Date, then Context, Decision, Alternatives and Consequences. Categories are
+policy, hardware, system and code. State is `in force` or `target: <migration step>`. A target names its follow-up in
+the migration plan and distinguishes the rules already in force. Date is the date of the current owner-approved
+decision. A Check line names the enforcing gate step, test, ruleset or review only; a proposed check is explicitly
+marked as a target. Backticks in Check paragraphs identify executable step IDs from the inventory; CI check names and
+individual test names use plain text.
 
-## Categories
+The owner approves decisions before implementation. Rewrite a record in place when its decision changes; Git keeps
+history. Do not append amendments, removal logs, progress counts or implementation plans. Hardware verification marks
+remain part of the record. A retired decision is deleted in the change that replaces it. Contribution instructions
+cannot override an owner-approved decision; report conflicts to the owner.
 
-| Folder | What belongs there |
-|---|---|
-| [code/](code/) | structure of the software: crates, modules, threads, processes, data paths |
-| [UI design](../ui-design.md) | screen layout, touch, keys, knobs and visual rules, kept outside the ADR series |
-| [hardware/](hardware/) | how OOS treats the scope's hardware: FPGA, front ends, storage, what it never touches |
-| [system/](system/) | boot, the card, updates, network, the image |
-| [process/](process/) | how the project works: tests, guards, what may enter the tree, documentation |
-
-A decision that touches two categories goes where its consequences are largest and names the other in its text.
-
-## Series
-
-This is the one series for new records. It continues at 0030; 0027 to 0029 are not used (ADR 0030). The
-records of the restructuring are in [docs/architecture/adr/](../architecture/adr/README.md), closed to new records,
-and cited as `architecture/NNNN`.
+New decisions take the number after the highest number issued in this series. Retired numbers are never reused. Cite
+them as `ADR NNNN` and link the file. The `text` gate rejects duplicate numbers, unresolved number citations and broken
+ADR paths across the repository. The `links` step also checks Markdown links and anchors.
 
 ## Index
 
-| ADR | Category | Decision | Status |
+| Number | Title | Category | State |
 |---|---|---|---|
-| [0001](code/0001-three-crates-with-pure-hal-and-dsp.md) | code | Three crates; the hardware layer and the signal processing are pure functions | accepted, amended by architecture/0014 |
-| [0002](code/0002-extension-by-registered-modules.md) | code | Decoders, measurements and analyser pages are modules behind one registration | accepted |
-| [0003](code/0003-gpu-drawing-in-a-helper-process.md) | code | The GPU draws from commands in a helper process; the CPU stays the fallback | accepted |
-| [0004](../architecture/adr/0013-one-batch-path.md) | code | Measure both draw paths at M12 and delete the loser | retired into architecture/0013 |
-| [0005](../ui-design.md) | ui-ux | One measurement page; one tap adds or removes | moved to UI design rules |
-| [0006](../ui-design.md) | ui-ux | Lists scroll by a scroll bar and by the finger, not by buttons | moved to UI design rules |
-| [0007](../ui-design.md) | ui-ux | The top bar holds four entries; everything else starts from the start menu | moved to UI design rules |
-| [0008](../ui-design.md) | ui-ux | An own look: neutral colours, white accent, round shapes, no empty areas | moved to UI design rules |
-| [0009](hardware/0009-areas-oos-never-writes.md) | hardware | OOS never writes the FPGA flash, `/rigol/data`, `uboot`, `trust` or `parameter` | accepted |
-| [0010](hardware/0010-unverified-hardware-functions-are-opt-in.md) | hardware | A hardware function that is not verified on a unit is off by default | accepted |
-| [0011](system/0011-oos-in-recovery-stock-stays-bootable.md) | system | OOS lives in `recovery`; the stock system stays on the card and bootable | accepted |
-| [0012](system/0012-signed-updates-with-trial-start-and-rollback.md) | system | Updates are signed, started on trial and rolled back when they fail | accepted, amended by ADR 0041 |
-| [0013](process/0013-no-vendor-material-in-the-tree.md) | process | No vendor material in the tree | accepted |
-| [0014](process/0014-refactorings-keep-every-pixel.md) | process | A refactoring keeps every pixel and every register write | accepted |
-| [0015](process/0015-say-how-you-know.md) | process | Every statement about the hardware says how it is known | accepted |
-| 0016 | process | Rust code is formatted by rustfmt with the tree's settings | superseded by ADR 0039 |
-| 0017 | process | Clippy warnings are errors, with a short list of allowed lints | superseded by ADR 0039 |
-| [0018](process/0018-one-agents-md-for-people-and-agents.md) | process | One `AGENTS.md` holds the instructions for coding agents; it points to the rules | accepted |
-| [0019](process/0019-one-style-for-text-files-and-commits.md) | process | One style for files, documents and commits, checked where a tool can | accepted |
-| 0020 | process | The checks come in layers; `tools/check.sh` runs every host layer | superseded by ADR 0031 |
-| 0021 | process | What runs on the scope depends on `libc` only; a desktop build may use its platform's crates | superseded by ADR 0037 |
-| [0022](code/0022-one-scpi-interpreter-transports-only-frame.md) | code | One SCPI interpreter in the frame loop; transport IO migration is planned | accepted |
-| [0023](code/0023-scpi-stock-names-first-oos-identifies-as-oos.md) | code | SCPI follows the stock command names where they exist; OOS identifies itself as OOS | accepted |
-| [0024](system/0024-raw-scpi-vxi11-and-discovery.md) | system | Raw SCPI, VXI-11 and HiSLIP on the scope, with mDNS / DNS-SD and LXI identification | accepted |
-| [0025](system/0025-remote-services-are-bench-lan-services.md) | system | Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow` | accepted |
-| 0026 | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | superseded by ADR 0040 |
-| [0030](process/0030-this-tree-is-a-hard-fork-of-oos.md) | process | This tree is a hard fork of OOS; upstream enters only by cherry-pick | accepted |
-| [0031](process/0031-the-gate-is-cargo-xtask-check.md) | process | The gate is `cargo xtask check` | accepted |
-| 0032 | process | Lints and limits are per crate and ratchet down only | superseded by ADR 0039 |
-| [0033](process/0033-development-platforms.md) | process | Development runs on Linux, the BSDs and macOS; Windows users develop in WSL or a Linux VM; Rust tooling goes into `xtask` | accepted |
-| [0034](process/0034-multi-pr-work-may-be-a-stack.md) | process | One PR with topic commits by default; multi-PR work may be a stack | accepted |
-| [0035](process/0035-each-release-has-less-production-code.md) | process | Each release strives for less production code than the one before | accepted |
-| [0036](code/0036-the-desktop-view-is-the-browser-ui.md) | code | The desktop view is the browser UI behind `oos-ui --serve`; the native Windows window is its own project | accepted |
-| [0037](code/0037-crates-where-they-remove-code-remote-io-on-tokio.md) | code | Crates where they remove code or blocking; remote IO runs async on tokio | accepted |
-| [0038](code/0038-one-table-may-generate-per-field-code.md) | code | One declarative table may generate per-field code when tests cover every item | accepted |
-| [0039](process/0039-format-lints-and-ratchets-the-author-tightens.md) | process | rustfmt formats; lints and limits ratchet down; the author of a change tightens | accepted |
-| [0040](process/0040-contributions-signed-off-no-vendor-material-rebased.md) | process | A contribution is signed off, holds no vendor material and lands rebased through the merge queue | accepted |
-| [0041](system/0041-trust-only-the-project-release-key.md) | system | Builds trust only the project's release key for updates | accepted |
-| [0041](system/0041-images-are-generic-device-state-lives-on-device.md) | system | Images are generic; device state lives on the device | accepted |
-
-## Reading order for agents
-
-An agent (or a new contributor) reads [AGENTS.md](../../AGENTS.md) first, then this index, then the records that
-touch the change: ADR 0009, 0010 and 0015 for anything near the hardware, ADR 0014 and 0031 for how to show that a
-change is safe, ADR 0039 for formatting, lints and ratchets, ADR 0018 and 0019 for how code and text look, ADR 0013
-and ADR 0040 for what may enter the tree, ADR 0037 for dependencies and remote IO, ADR 0022 to 0025 for SCPI, VXI-11 and
-the other network services, ADR 0030 for what this tree is, ADR 0033 for the hosts development runs on. The records
-are short on purpose; reading the ones that apply costs minutes and saves a review round.
-
-## Writing one
-
-1. Copy [template.md](template.md) into the category's folder as `NNNN-short-title.md`. `NNNN` is the next free number
-   over all categories, so a number names one record wherever it is filed.
-2. Fill it in: the context (what forced a decision, the measurements), the decision in one or two sentences, the
-   alternatives that were looked at and why they lost, the consequences (also the unwelcome ones).
-3. Add its line to the index above, in the same pull request as the change it belongs to.
-
-Status values: `proposed` (under discussion), `accepted`, `accepted, to be reviewed` (with a review condition),
-`superseded by ADR NNNN` or `retired into architecture/NNNN` (file deleted, index line linked to its replacement),
-`moved to UI design rules` (guidance moved out of the ADR series), and `rejected` (kept with the reason).
-
-When changing an existing decision, rewrite its context, decision and consequences together, with the date of the
-revision. Do not append amendments or leave contradictory rules in the record. New independent decisions get new
-records; git preserves previous versions.
-
-The rules of the tree hold here too ([CONTRIBUTING.md](../../CONTRIBUTING.md)): English, no vendor code or data, and
-for every statement about the hardware how it is known.
-
-A new rule that agents must follow gets one line in [AGENTS.md](../../AGENTS.md) that names its record (ADR 0018).
-
-To disagree with a record, open an issue or a pull request against it. A record that is `proposed` is the cheapest
-place to change course: nothing is built on it yet.
+| [0001](0001-hard-fork.md) | Hard fork; no upstream merges or pull requests | policy | in force |
+| [0002](0002-no-vendor-material.md) | No vendor material in the tree | policy | in force |
+| [0003](0003-contributions.md) | Contributions preserve authorship, privacy and linear history | policy | in force |
+| [0004](0004-dependencies.md) | Dependencies are listed, licence-checked and owner-approved | policy | in force |
+| [0005](0005-the-gate.md) | The gate is cargo xtask check | policy | in force |
+| [0006](0006-format-lints-and-ratchets.md) | Format, limits, unsafe and ratchets protect the code | policy | target: gate tightening follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0007](0007-less-production-code.md) | Each release has less production code | policy | in force |
+| [0008](0008-behaviour-baselines.md) | Behaviour-preserving changes prove equality against baselines | policy | target: exact CPU goldens and layout coverage; baseline follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0009](0009-test-time.md) | Tests do not depend on machine speed | policy | in force |
+| [0010](0010-development-platforms.md) | Development supports Linux and macOS; BSDs are best effort; Windows uses WSL or a VM | policy | in force |
+| [0011](0011-protected-areas.md) | OOS writes only named card areas and protects stock FPGA slots | hardware | target: protected-area evidence follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0012](0012-hardware-verification.md) | Unverified hardware functions are off by default | hardware | target: system.conf-only switches and off-until-verified defaults; hardware-key inventory follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0013](0013-recovery.md) | OOS lives in recovery and stock stays bootable | system | in force |
+| [0014](0014-kernel-and-device-tree.md) | OOS ships its kernel and device tree inside recovery | system | in force |
+| [0015](0015-generic-images.md) | One generic image per model keeps device state in oos | system | target: complete device-state manifest; device-state follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0016](0016-signed-updates.md) | Updates trust only the project key and use trial rollback | system | in force |
+| [0017](0017-safe-start.md) | Safe start breaks restart loops | system | in force |
+| [0018](0018-bench-lan-services.md) | Network services are for a bench LAN; SSH is the shell | system | target: telnet removal (#139), service switches and ACL completion; M15b and service-policy follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0019](0019-instrument-protocols.md) | Serve raw SCPI, VXI-11 and HiSLIP with live discovery | system | target: M15b scope HiSLIP enablement with remote.hislip and discovery lifecycle |
+| [0020](0020-crates.md) | Crates have one dependency direction | code | in force |
+| [0021](0021-static-programs.md) | Scope programs are static musl binaries and abort on panic | code | in force |
+| [0022](0022-frame-state.md) | The frame thread owns UI state without locks | code | in force |
+| [0023](0023-io-layer.md) | Non-blocking IO stays behind ports in one IO layer | code | target: M15b and IO-port follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0024](0024-scpi-interpreter.md) | One SCPI interpreter runs on the frame thread | code | in force |
+| [0025](0025-scpi-identity.md) | SCPI follows stock names and identifies as OOS | code | target: SCPI conformance follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0026](0026-gpu-helper.md) | GPU drawing uses a helper and the CPU path stays complete | code | in force |
+| [0027](0027-desktop-view.md) | The desktop view is the browser UI | code | in force |
+| [0028](0028-registered-modules.md) | Extensions use static registered modules | code | target: registry coverage follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0029](0029-table-generation.md) | One table can generate per-field code | code | in force |
+| [0030](0030-typed-errors.md) | Errors return to their sender and use typed values | code | target: typed-error follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0031](0031-performance.md) | Performance work is bounded, event-driven and measured | code | target: M3-M12 and performance-gate follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0032](0032-settings-owner.md) | Settings have one owner and change only through commands | code | target: M13, M14 |
+| [0033](0033-change-point.md) | One change point classifies settings and requests | code | target: M4, M13, M14 |
+| [0034](0034-step-pipeline.md) | The step is a fixed pipeline of stages | code | target: M16 |
+| [0035](0035-picture-owner.md) | One accumulator owns the picture and adds whole batches | code | target: M9 and host Batch-default alignment in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0036](0036-threads-and-channels.md) | Threads share named cells and bounded channels | code | target: M5 |
+| [0037](0037-ports.md) | Ports cover the IO the step depends on | code | target: M16 and IO-port follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0038](0038-menus-and-parser.md) | Menus are data and the SCPI parser comes from one table | code | target: M5, M15, M17 |

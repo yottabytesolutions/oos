@@ -123,7 +123,7 @@ fn split(url: &str) -> (&str, Option<&str>) {
     (rest.split('?').next().unwrap_or(""), fragment)
 }
 
-fn url_broken(tree: &Tree, file: &str, url: &str) -> Option<String> {
+pub(crate) fn url_broken(tree: &Tree, file: &str, url: &str) -> Option<String> {
     let (path, fragment) = split(url);
     if let Some(own) = own(path) {
         return match own {
@@ -221,7 +221,7 @@ fn decode(s: &str) -> String {
 }
 
 /// Tracked and new, not ignored files that exist in the work tree, as Git lists them.
-fn inventory(ctx: &crate::run::Context, root: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn inventory(ctx: &crate::run::Context, root: &Path) -> Result<Vec<String>, String> {
     let out = crate::run::capture_raw(
         ctx,
         root,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! C lines, counted as production code per directory (ADR 0035): the GPU helper and the bring-up tool run on the
+//! C lines, counted as production code per directory (ADR 0007): the GPU helper and the bring-up tool run on the
 //! scope. A line counts when it holds something outside a comment. Vendored code and tests do not count.
 
 use std::collections::BTreeMap;

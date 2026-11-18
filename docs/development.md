@@ -24,7 +24,7 @@ or `gate passed (image)`. Hooks use the same command. Missing Docker cannot fail
 ## Setup
 
 Install Git, rustup and Python >=3.12 as `python3` on macOS arm64 or Linux x86-64.
-Other Linux and macOS hosts are supported but not verified. The BSDs are best effort: not guaranteed, but reported problems get fixed; on Windows use WSL 2 or a Linux VM (ADR 0033).
+Other Linux and macOS hosts are supported but not verified. The BSDs are best effort: not guaranteed, but reported problems get fixed; on Windows use WSL 2 or a Linux VM (ADR 0010).
 Doctor accepts newer Python versions and reports the interpreter actually used.
 The default gate needs the scripts' declared shells (including `mksh` for Android GEL syntax),
 coverage tools and the pinned Rust host/ARM toolchain. Syntax checking does not run the scripts.
@@ -114,7 +114,7 @@ retained package sources, source timestamps and end-to-end payload reproducibili
 macOS arm64 host remain untested in the sandbox; Linux x86-64 validation is also untested and is not a hold here.
 
 - Hooks, once per clone: `git config core.hooksPath .githooks`. pre-commit and pre-push run `check --fast`. The
-  full gate runs in CI as the required checks (ADR 0031); run it locally for an early signal.
+  full gate runs in CI as the required checks (ADR 0005); run it locally for an early signal.
 - The ratchet files are compared with the base branch `main` (or `origin/main`): the clone needs it
   (`git fetch origin main`).
 - Every cargo call that resolves dependencies uses `--locked` (the `cargo xtask` alias, clippy, tests, metadata,
@@ -141,7 +141,7 @@ and the coverage margin of 0.5 percentage points are unchanged.
 | `agent-rules` | exact loaders and Git inventory | root AGENTS.md | fast and full |
 | `test-time` | test sleep/deadline syntax and nonincreasing ratchet | sources | fast and full |
 | `links` | links in README.md, SECURITY.md, `wiki/` and `docs/` name existing paths, wiki pages and headings | Git | fast and full |
-| `text` | ADR 0019 file rules over `git ls-files`: line ends, final newline, SPDX line, Rust indentation, licence copies | Git | fast and full |
+| `text` | File rules over tracked and new files: line ends, final newline, SPDX, indentation, licence copies; ADR numbers and paths resolve | Git | fast and full |
 | `doctor-base` | base doctor probes, including active toolchain identity | bootstrap; no Docker | full |
 | `doctor` | `--gpu --sim` doctor profiles | base doctor, bootstrap, Docker | `--image` |
 | `clippy` | host and ARM clippy per crate | musl std and clippy | full |
@@ -223,11 +223,11 @@ requires a host without `/oos/cal`, `/oos/limits.conf` or `/etc/oos/limits.conf`
 those locations. It prints plans only and accesses no hardware. It stays outside `--fast` because building
 and running the CLI can take more than a second. The step reports its measured duration on every run.
 `tools/plan-matrix.sh` remains for the calibrated comparisons used by the device deployment and test tools.
-Host plan equality does not establish timing or calibrated behaviour on a unit (ADR 0014).
+Host plan equality does not establish timing or calibrated behaviour on a unit (ADR 0008).
 
 ## Test time and completion
 
-[ADR 0019](architecture/adr/0019-test-time.md) requires tests to advance elapsed time explicitly and await
+[ADR 0009](adr/0009-test-time.md) requires tests to advance elapsed time explicitly and await
 worker completion events. Real duration assertions belong to the explicit perf-guard suite. A timeout in
 ordinary tests is only a named hang guard of at least 60 seconds; the shared host helper uses 120 seconds.
 
@@ -262,7 +262,7 @@ entry points. A crash is saved in `fuzz/artifacts/<target>/`; reproduce it with
 
 ## CI
 
-GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask step <id>...` (ADR 0031):
+GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask step <id>...` (ADR 0005):
 
 - `.github/workflows/pr.yml` on every pull request and merge-queue group: the required checks `fast`, `clippy`,
   `test` (debug and release), `python` and `deny`. `tools/ci/changes.py` lets a job skip its build when nothing it
@@ -536,7 +536,7 @@ prove that a client loaded or obeyed the rules.
 
 ## The crates
 
-One root workspace (`Cargo.toml`): `hal`, `dsp`, `ui`, `fpgad` and `xtask`, with one `Cargo.lock`, one `target/`
+One root workspace (`Cargo.toml`): `hal`, `dsp`, `core`, `ui`, `fpgad` and `xtask`, with one `Cargo.lock`, one `target/`
 and the release profile of the scope binaries. `gpu` is C (`gpu/oos-gpu.c`), built in its own container by
 `gpu/build.sh` and `gpu/test-host.sh`, so it is no member. The scope's binaries land in
 `target/aarch64-unknown-linux-musl/release/`; the target flags (rust-lld, static, Cortex-A72) are in the root
@@ -567,11 +567,11 @@ function; a file reached both as test and as production code is production code.
 | perf guards | `tools/perf-guard.sh` | the fork's allocation counts and timing ratios; its exit code decides | the fast paths stay fast |
 | coverage | `cargo llvm-cov` per crate | line coverage per crate ≥ the floor in `xtask/data/coverage.txt` | coverage does not fall |
 
-The limits have no exemptions (ADR 0010): a record over 12 fields groups its fields into sub-structs.
+The limits have no exemptions (ADR 0006): a record over 12 fields groups its fields into sub-structs.
 
 A function's size is its code lines from `fn` to the closing brace: lines with a token on them, so blank lines,
-comments and doc comments do not count (ADR 0010). A file's size is its lines outside test code without comment lines,
-doc comments included, so documentation never competes with code for space; blank lines count (ADR 0035). Test code
+comments and doc comments do not count (ADR 0006). A file's size is its lines outside test code without comment lines,
+doc comments included, so documentation never competes with code for space; blank lines count (ADR 0006). Test code
 is exempt.
 Clippy's `too_many_lines` (60 code lines, `clippy.toml`) covers test code too.
 
@@ -624,12 +624,12 @@ cargo xtask ratchet --coverage    # also raise the coverage floors to the curren
 
 `ratchet` never raises a size or count and never adds an entry: a new finding is fixed, not listed. The pull request
 that lowered a count runs `cargo xtask ratchet` and commits the result; nobody edits a ratchet file by hand
-([ADR 0039](adr/process/0039-format-lints-and-ratchets-the-author-tightens.md)). Two pull requests that tighten the same line conflict: the second rebases and runs
+([ADR 0006](adr/0006-format-lints-and-ratchets.md)). Two pull requests that tighten the same line conflict: the second rebases and runs
 `cargo xtask ratchet` again.
 `cargo xtask ratchet --init` writes the files from the current state; it only works where the base has no gate.
 
 There is no exception. The upstream rebaseline path is gone with the hard fork
-([ADR 0030](adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)); a cherry-picked upstream change passes the gate
+([ADR 0001](adr/0001-hard-fork.md)); a cherry-picked upstream change passes the gate
 like any other.
 
 ### Moves
@@ -646,7 +646,7 @@ that is not listed makes the entry new, and it fails. A move onto a key that alr
 moves onto one key: merged entries would share the larger allowance. Moves apply in the order listed. A moved entry
 may land in a new crate: it brings its allowance with it.
 
-The branch runs `cargo xtask ratchet --move` and commits the result (ADR 0039): it renames the
+The branch runs `cargo xtask ratchet --move` and commits the result (ADR 0006): it renames the
 entries in the ratchet files and keeps in `moves.txt` the moves that still rename an entry at the base. They are the
 evidence the integration commit needs against a base without them. A move that names no entry changes nothing, so a
 kept move is harmless; the next `ratchet` or `ratchet --move` whose base has the renamed entries drops it. A moved
@@ -662,7 +662,7 @@ removed or lowered coverage floor fails. Any git error fails. `--init` refuses a
 
 - A ratchet file absent at the base is legal only while the base has no `xtask`: the one merge that brings the gate
   in. After it, a missing ratchet file fails.
-- The required CI checks are authoritative (ADR 0031). Setting `CI` or `OOS_GATE_BASE` by hand, or moving a local
+- The required CI checks are authoritative (ADR 0005). Setting `CI` or `OOS_GATE_BASE` by hand, or moving a local
   `main` to pass a check, breaks the rules.
 - On `main`, `HEAD^1` covers one commit. A push of several commits is not compared commit by commit: the merge
   queue runs the required checks on the pull request's commits before `main` fast-forwards.
@@ -673,8 +673,8 @@ file; a renamed or moved item counts as new unless `moves.txt` lists it.
 
 ## Production code size
 
-Each release strives for less production code than the one before
-([ADR 0035](adr/process/0035-each-release-has-less-production-code.md)). The counting specification is:
+Each release has less production code than the one before
+([ADR 0007](adr/0007-less-production-code.md)). The counting specification is:
 
 - Rust production lines contain a token in crates built for the scope (`target: true` in `CRATES`,
   `xtask/src/repo.rs`). Count this project's C in `gpu/` and `tools/hw/` per directory as well, excluding lines that
@@ -690,7 +690,7 @@ Each release strives for less production code than the one before
 - For releases before the root workspace (through v0.1.13), `cargo xtask loc` reads each top-level crate as its own
   workspace and follows plain `#[path]`; this does not permit `#[path]` in the gate.
 
-Generated tables ([ADR 0038](adr/code/0038-one-table-may-generate-per-field-code.md)) can reduce the count without
+Generated tables ([ADR 0029](adr/0029-table-generation.md)) can reduce the count without
 reducing complexity. Review the represented behaviour and reuse as well as the number. Tests and documentation must
 not be deleted to shrink the count. File-size limits separately exclude comments, including doc comments, while
 still counting blank lines.
@@ -704,7 +704,7 @@ cargo xtask loc --json               # the same numbers for a script
 The `fast` job puts the change against the pull request's base into its summary; it never fails. The release
 workflow compares the tag with the previous `v*` tag, adds the table to the draft release notes, and fails when
 production code grew without a `Code growth:` paragraph in the tag annotation or the release's `CHANGELOG.md`
-section (`tools/ci/code_growth.py`).
+section (`tools/ci/code_growth.py`). Review requires owner approval of that paragraph.
 
 ## Changing a rule
 
@@ -765,3 +765,18 @@ Not enforced yet; each is a task.
 - The base branch is the local `main` ref; the coordinator validates it while repository CI is off.
 - pre-commit checks the working tree, not the staged index, and only the fast part. The done rule is the full gate
   on the final commit.
+
+## Layout baseline procedure
+
+For a behaviour-preserving layout change, run `ui/tools/layout-check.sh record` before editing and `check` after it.
+Keep those before/after artifacts with review evidence. Continue this procedure until golden tests cover each
+layout-check script and all three text sizes. The baseline follow-up in the migration plan owns the coverage
+check and removal of this temporary procedure. Golden changes still need a reason and maintainer approval (ADR 0008).
+
+## ADR reference check
+
+The `text` step inventories existing tracked and new files. It checks duplicate record numbers and every numeric
+ADR citation and ADR file path, including dotfiles, all source files, code comments and task history.
+Retired category paths are rejected even without a Markdown extension. Backticked step IDs in ADR Check paragraphs
+must exist in the executable check inventory. The flat record files are the source.
+`links` additionally validates Markdown link anchors. Historical task citations use the current numbers.

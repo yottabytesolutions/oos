@@ -2,7 +2,7 @@
 
 Source baseline: merged `overhaul` c59b71d5, 2026-11-16. This is a source-derived contract
 for the M15 rebuild, not a claim of hardware validation. No unit was accessed.
-[ADR 0017](../architecture/adr/0017-hybrid-after-m12.md) requires the legacy parser
+[ADR 0038](../adr/0038-menus-and-parser.md) requires the legacy parser
 as a host differential oracle. Dispositions are **keep** by default; **change**
 for the cited defects, with coordinator decisions and remaining proposals
 labelled. Current **changed** dispositions identify merged behavior relative to
@@ -1090,7 +1090,7 @@ fixture hashes. Add captured traffic from the three named clients when available
 this task specifies the corpus, it does not claim those recordings exist here.
 Run all cases against both parsers in M15; an unexplained difference fails.
 Retain golden session fixtures and approved decisions after the legacy oracle
-is removed with the old parser, as ADR 0017 requires.
+is removed with the old parser, as ADR 0038 requires.
 
 
 **scpi-319 (change still pending; D5): STEP view selection.** The new analyser

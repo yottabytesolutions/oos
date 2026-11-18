@@ -220,7 +220,7 @@ and is tested on the host only, not yet on the unit. The kexec path is not yet v
   a hang restores the selection: power-cycling can still retry the bad image, requiring a card reader
   (`boot/switch.py stock`). A kexec start carries an already-running hardware watchdog, which can still reset
   it before rcS; the installed image remains the fallback, as described in `update.md`.
-- Crash records (ADR 0015, "Kernel panics" in `architecture/README.md`): ramoops keeps the oops/panic record and the
+- Crash records (ADR 0017, "Kernel panics" in `architecture/README.md`): ramoops keeps the oops/panic record and the
   console across a warm reset, not across a power cut. rcS starts `oos-crash-save` in the background, so a slow write
   never delays oos-ui. Only a dmesg record whose header says Panic or Oops starts an archive; other dmesg records,
   console and pmsg records (there after every warm reboot) leave pstore as it is. `/oos/crash` holds at most 1 MiB,
@@ -234,6 +234,37 @@ and is tested on the host only, not yet on the unit. The kexec path is not yet v
   the one `.partial-<n>` (it replaces an older one). So `/oos/crash` exceeds 1 MiB by at most one archive and one
   partial. The start-up screen shows a `Crash record` warning; log `/tmp/oos-crash.log`; the last line names the
   reason (`panic` or `oops`). A watchdog reset leaves no dmesg record, so nothing is archived for it.
-- Still to come with M1b (ADR 0015): the abnormal-exit counter, which counts a panic or oops archive once (durably,
+- M1b supervision (ADR 0017) includes the abnormal-exit counter, which counts a panic or oops archive once (durably,
   between the archive and the pstore clear, idempotent by the archive name), the `oos-ui.running` markers and safe
   start in oos-ui.
+
+## Safe-start supervision details
+
+ADR 0017 holds the exit and persistence contract. The supervisor supplies a fresh boot-id/process/sequence run
+identity before each UI invocation. A same-boot stale running marker counts as an abort. Across boots it counts
+only with archived panic/oops evidence or a positive watchdog reset indication. Panic and marker receipts deduplicate
+one exit. A missing, zero or unreadable reset indication is no evidence; free-text warnings are not evidence.
+
+A clean requested power-off saves the current setup before teardown. The first quarantined setup is kept; later quarantines retain the two newest timestamped copies, at most three
+in total. Promotion retries after 1, 2, 4 seconds, doubling to 300. Candidate changes reset their own 60-second
+interval. Log the first persistence error until a complete promotion succeeds. Show
+`Persistence off: storage unavailable` on the waveform and System page. Requested power-off proceeds with clean
+teardown even if saving fails; attempt the temporary supervisor stop flag.
+
+Ledger mode reads filter without syncing. Explicit writes prune old entries. A positive parse failure selects safe
+once, moves a damaged ledger aside and starts a new one; retain at most two damaged copies. Revalidate under the
+writer lock. IO failures and timeouts preserve healthy history. Explicit clear does not require awk.
+Writers use a BusyBox-compatible mkdir lock with stale-PID reclamation. The counter outlives a timed-out archive
+parent. Run crash archiving under `timeout -s KILL 20` and each ledger operation under `timeout -s KILL 5`.
+Archive counter failure preserves pstore and signals the supervisor with a temporary flag. These bound processes,
+not blocked kernel IO. A failed operation selects safe once; update trials still belong to the update watcher.
+
+The RSS watchdog forces STOP and releases buffer-holding stages at its hard limit, then exits 75 if memory does
+not return. Shutdown is bounded; GPU helper death selects CPU rendering instead of exiting the UI.
+
+Reset-evidence limits: not yet verified on hardware for RK3399. The captured dw_wdt TOPs warning describes
+configuration, not a reset. The supervisor recognises WDIOF_CARDRESET (0x20) only if bootstatus supplies it.
+Source inspection of upstream Linux 6.12 dw_wdt found no bootstatus assignment or CARDRESET capability;
+that does not verify the pinned BSP or a live reset-reason interface. A prior watchdog reset left no panic dmesg.
+Archive pstore durably and idempotently by record id before clearing it. The confirmed-image pre-rcS panic limit
+remains documented in update.md.

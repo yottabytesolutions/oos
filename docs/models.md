@@ -171,7 +171,7 @@ segment cap (`hal::dho::hz::MEM_BURSTS`).
 
 ### 4.2 Generic images and device state
 
-The image is identical for every unit of a supported model (ADR 0041). The DHO800/DHO900 family currently shares one
+The image is identical for every unit of a supported model (ADR 0015). The DHO800/DHO900 family currently shares one
 image and common defaults in `/etc/oos/system.conf`; model capabilities come from the table in section 2, selected
 by HAL detection at boot. A normally identified DHO804 already has no generator or LA in the model table. A unit whose stored identity names
 hardware it does not physically have must keep its capability overrides in `/oos/limits.conf`. Before migrating such

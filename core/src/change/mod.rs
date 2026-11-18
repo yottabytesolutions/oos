@@ -73,9 +73,8 @@ pub fn classify(a: &Model, b: &Model, old: UiAcq, new: UiAcq) -> Classes {
 
 fn classify_boundary(a: &Model, b: &Model, old: UiAcq, new: UiAcq, requests: &[Request]) -> Classes {
     let mut c = Classes::NONE;
-    let run_request = requests.iter().any(|r| matches!(r, Request::Run | Request::Single));
     let sweep_companion =
-        run_request && a.trig_mode == crate::model::TrigMode::Single && b.trig_mode == crate::model::TrigMode::Auto;
+        a.trig_mode == crate::model::TrigMode::Single && requests.contains(&Request::ResumeSweep(b.trig_mode));
     presentation::fields(a, b, requests, |f| {
         if f.changed && !(sweep_companion && f.name == "trig_mode") {
             c |= f.classes;

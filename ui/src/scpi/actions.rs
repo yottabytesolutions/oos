@@ -24,16 +24,14 @@ pub(super) fn run(ui: &mut Ui, name: &str, query: bool) -> bool {
             crate::ui::change::run_request(ui);
         }
         ui.m.run = RunState::Run;
-        if ui.m.trig_mode == TrigMode::Single {
-            ui.m.trig_mode = TrigMode::Auto;
-        }
+        ui.resume_sweep(TrigMode::Auto);
     } else if kw(name, "STOP") {
         ui.m.run = RunState::Stop;
     } else if kw(name, "SINGle") {
         if !query {
             crate::ui::change::single(ui);
         }
-        ui.m.trig_mode = TrigMode::Single;
+        ui.single_sweep();
         ui.m.run = RunState::Run;
     } else {
         return false;

@@ -35,6 +35,8 @@ pub enum Request {
     Clear,
     Run,
     Single,
+    /// Exact sweep restored by RUN, so later explicit setters retain their settings classes.
+    ResumeSweep(crate::model::TrigMode),
     CreateMask,
     MaskReset,
     StatsReset,
@@ -59,7 +61,7 @@ impl Request {
             Self::StatsReset => C::STATS,
             Self::ViewReset | Self::PlaybackPosition { .. } => C::VIEW,
             Self::Replay => C::MAPPING,
-            Self::Epoch(_) => C::NONE,
+            Self::Epoch(_) | Self::ResumeSweep(_) => C::NONE,
         }
     }
     fn epoch(self) -> bool {

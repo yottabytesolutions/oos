@@ -45,7 +45,7 @@ pub(super) const ACQUISITION: &[Key] = keys! { m, _i, v;
     );
     "trig_level" => value(m.trig_level, p_f32(v)?);
     "slope" => named(m.slope, p_enum(v, &SLOPES)?);
-    "trig_mode" => named(m.trig_mode, p_enum(v, &TRIG_MODES)?);
+    "trig_mode" => named(m.trig_mode, parse_sweep(v)?);
     "holdoff" => value(m.holdoff, p_f32(v)?);
     "trig_type" => named(m.trig_type, p_enum(v, &TRIG_TYPES)?);
     "trig_level2" => value(m.trig_level2, p_f32(v)?);

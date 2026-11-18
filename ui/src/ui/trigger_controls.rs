@@ -2,7 +2,40 @@
 
 use super::*;
 
+#[derive(Default)]
+pub(super) struct SweepMemory {
+    pub(super) single_armed: bool,
+    pub(super) previous_sweep: Option<TrigMode>,
+}
+
 impl Ui {
+    pub(crate) fn single_sweep(&mut self) {
+        if self.m.trig_mode != TrigMode::Single {
+            self.trigger.previous_sweep = Some(self.m.trig_mode);
+        }
+        self.m.trig_mode = TrigMode::Single;
+    }
+
+    pub(crate) fn set_sweep(&mut self, mode: TrigMode) {
+        if mode == TrigMode::Single {
+            self.single_sweep();
+        } else {
+            self.trigger.previous_sweep = None;
+            self.m.trig_mode = mode;
+        }
+    }
+
+    pub(crate) fn resume_sweep(&mut self, fallback: TrigMode) {
+        if self.m.trig_mode == TrigMode::Single {
+            self.m.trig_mode = self.trigger.previous_sweep.take().unwrap_or(fallback);
+            change::request(self, oos_core::change::Request::ResumeSweep(self.m.trig_mode), change::oracle::Row::Run);
+        }
+    }
+
+    pub(super) fn reset_sweep_history(&mut self) {
+        self.trigger.previous_sweep = None;
+    }
+
     pub(super) fn trigger_source_label(&self) -> String {
         if self.m.trig_ref.is_none() {
             if let Some(line) = self.m.trig_line() {
@@ -59,7 +92,7 @@ impl Ui {
             self.sim_play = self.record_mode() && running;
             self.m.status = if running { TrigStatus::Wait } else { TrigStatus::Stop };
             if running && self.m.trig_mode == TrigMode::Single {
-                self.single_armed = false;
+                self.trigger.single_armed = false;
                 self.scpi_arm_operation();
             }
             if !running && previous_context && !self.record_mode() {
@@ -344,11 +377,11 @@ mod acquisition_source_tests {
     fn switching_source_while_single_is_armed_preserves_single_and_stops_on_one_hit() {
         let mut ui = fixture(true);
         ui.m.trig_mode = TrigMode::Single;
-        ui.single_armed = true;
+        ui.trigger.single_armed = true;
         assert!(ui.set_trigger_source(WaveId::Ref(0), false));
         assert_eq!(ui.m.trig_mode, TrigMode::Single);
         assert_eq!(ui.m.run, RunState::Run);
-        assert!(!ui.single_armed);
+        assert!(!ui.trigger.single_armed);
         ui.step(0.0);
         assert_eq!((ui.m.run, ui.replay.captures), (RunState::Stop, 1));
         ui.step(0.2);

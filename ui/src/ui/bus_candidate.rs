@@ -393,7 +393,7 @@ impl Ui {
             key::RUNSTOP => self.cancel_bus_candidate(false),
             key::SINGLE => {
                 self.cancel_bus_candidate(true);
-                self.single_armed = false;
+                self.trigger.single_armed = false;
                 self.m.status = TrigStatus::Wait;
             }
             key::FORCE => {
@@ -421,17 +421,15 @@ impl Ui {
                 if self.m.run != RunState::Run {
                     self.cancel_bus_candidate(false);
                 }
-                if self.m.trig_mode == TrigMode::Single {
-                    self.m.trig_mode = TrigMode::Normal;
-                }
+                self.resume_sweep(TrigMode::Normal);
                 self.m.run = RunState::Run;
                 self.m.status = TrigStatus::Wait;
             }
             2 => {
                 self.scpi_arm_operation();
                 self.cancel_bus_candidate(true);
-                self.single_armed = false;
-                self.m.trig_mode = TrigMode::Single;
+                self.trigger.single_armed = false;
+                self.single_sweep();
                 self.m.run = RunState::Run;
                 self.m.status = TrigStatus::Wait;
                 self.m.floor_live_tdiv();

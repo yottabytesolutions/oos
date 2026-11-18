@@ -92,6 +92,7 @@ fn apply_recalled_setup(ui: &mut Ui, p: &std::path::Path, text: std::io::Result<
                 ui.mask_ref = None;
             }
             ui.m = m;
+            ui.reset_sweep_history();
             // what Bus switched on belongs to the set-up before: leaving Bus leaves the recalled one as it is
             ui.bus_auto = None;
             ui.math_state.borrow_mut().forget_fit();
@@ -114,5 +115,26 @@ fn apply_recalled_setup(ui: &mut Ui, p: &std::path::Path, text: std::io::Result<
             }
         }
         Err(e) => ui.toast(&format!("Recall failed: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{RunState, TrigMode};
+    use crate::wave::Source;
+
+    #[test]
+    fn recalled_single_setup_does_not_restore_the_previous_sessions_sweep() {
+        for previous in [TrigMode::Normal, TrigMode::Auto] {
+            let mut ui = Ui::for_tests(Source::Hw { shared: Default::default(), seen: 0 });
+            ui.set_sweep(previous);
+            ui.single_sweep();
+            apply_recalled_setup(&mut ui, std::path::Path::new("single.setup"), Ok("trig_mode = Single\n".into()));
+            assert_eq!(ui.m.trig_mode, TrigMode::Single);
+            let mut remote = crate::scpi::Scpi::open(0u16, false);
+            remote.exec_line(&mut ui, &crate::gfx::Canvas::new(1, 1), ":RUN");
+            assert_eq!((ui.m.run, ui.m.trig_mode), (RunState::Run, TrigMode::Auto));
+        }
     }
 }

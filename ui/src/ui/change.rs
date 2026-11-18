@@ -296,7 +296,7 @@ pub(crate) fn single(ui: &mut Ui) {
 
 pub(super) fn single_key(ui: &mut Ui) {
     single(ui);
-    ui.m.trig_mode = TrigMode::Single;
+    ui.single_sweep();
     ui.m.run = RunState::Run;
 }
 pub(super) fn autoset_mark(ui: &mut Ui) {

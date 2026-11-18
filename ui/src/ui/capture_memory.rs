@@ -507,7 +507,7 @@ mod tests {
         ui.m.mdepth = mdepths().iter().position(|d| d.1 >= 10_000 && d.1 <= 100_000).unwrap();
         ui.m.trig_mode = TrigMode::Single;
         ui.m.run = RunState::Run;
-        ui.single_armed = true;
+        ui.trigger.single_armed = true;
         assert!(ui.acquire_display_record(0.02).is_none());
         let queued = change::acquisition::identity(&ui).epoch();
         // Single is valid even while already waiting; it starts a fresh arm (a new acquisition epoch).

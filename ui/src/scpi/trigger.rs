@@ -44,7 +44,7 @@ fn model(ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -> Option<Option<V
             return Some(None);
         }
         if nodes.len() == 2 && kw(last, "SWEep") {
-            return sweep(query, arg, m);
+            return sweep(query, arg, ui);
         }
         if nodes.len() == 3 && kw(nodes[1], "EDGE") {
             return edge(query, arg, m, last);
@@ -115,16 +115,16 @@ fn coupling(query: bool, arg: &str, m: &mut Model) -> Option<Option<Vec<u8>>> {
     Some(None)
 }
 
-fn sweep(query: bool, arg: &str, m: &mut Model) -> Option<Option<Vec<u8>>> {
+fn sweep(query: bool, arg: &str, ui: &mut Ui) -> Option<Option<Vec<u8>>> {
     if query {
-        return Some(text_reply(match m.trig_mode {
+        return Some(text_reply(match ui.m.trig_mode {
             TrigMode::Auto => "AUTO",
             TrigMode::Normal => "NORM",
             TrigMode::Single => "SING",
         }));
     }
     let a = arg.to_ascii_uppercase();
-    m.trig_mode = if a.starts_with("AUTO") {
+    let mode = if a.starts_with("AUTO") {
         TrigMode::Auto
     } else if a.starts_with("NORM") {
         TrigMode::Normal
@@ -133,6 +133,7 @@ fn sweep(query: bool, arg: &str, m: &mut Model) -> Option<Option<Vec<u8>>> {
     } else {
         return None;
     };
+    ui.set_sweep(mode);
     Some(None)
 }
 

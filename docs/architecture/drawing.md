@@ -418,3 +418,101 @@ Not in scope: XY and LA (canvas), the auto timeout.
     design's meaning of stale; this one is the baseline;
   - `partial`: batches merged in more than one picture.
   `preview` comes with step 1, which adds the preview.
+
+## M12a host draw-route evidence (2026-11-18, #157)
+
+Recommendation: retain Standard as the default and as the unit-comparison baseline. Owner selection and M12b
+remain open. Host equality does not establish the target weight/freeze contract or explain the historical DHO924S
+18.2 fps result in architecture/0013. No production behavior changes in this evidence step.
+
+Reproduce the deterministic cases with `cargo test -p oos-ui --bin oos-ui draw_routes`. The tests live in
+`ui/src/ui/draw_routes.rs` because they inspect the actual UI maps and route selection. They use captured, seeded
+board fixtures, injected step time, a fixed intake count and a buffer-return completion barrier. They compare
+all channel maps, zoom maps, total deposited counts and `pic_frames`. The current code has no explicit W yet;
+these counts are evidence about its existing weights, not a claim that M7/M9/M10 have landed.
+
+| Input / transition | Current result | Target-spec interpretation |
+|---|---|---|
+| Raw and codes, 1/2/4 channels; dots | Pixel/count equality | Route agreement; dots still use 24 per hit and brightest-pixel grading rather than sample-density W |
+| One frame and a 48-frame step at 10 us/div | Pixel/count equality | Guards single-frame delivery and step grouping, without one full-map merge per queued Standard frame |
+| Live pairs, 3 frames at 200 us/div, 1/2/4 channels | Different maps/weights: CH1 Standard 2,219,592 counts; Batch 1,743,384 (27.3 % excess in Standard) | Batch agrees with independent serial `draw_frame` deposits. Standard `fast_plan` turns older envelope frames into records, whose overlapping segments violate one span per column |
+| Deep pairs | Pixel/count equality | Both still use the record fallback; equality does not normalize its weight to a raw span frame |
+| Zoom | Main and zoom maps/counts equal | Both use the shared record path; target zoom stays on the span fast path |
+| Deep raw measurement window after pairs | Equal resulting maps; the live picture changes and `pic_frames` becomes 1 | Both violate the measurement-only rule; the live picture should stay on pairs |
+| Roll/scan snapshots | Equal maps/counts, including subsequent empty steps | Shared record path, rather than the target explicit `Replace { Sweep }` |
+| STOP, SINGLE done, history and software segment replay | Equal resulting maps/counts over subsequent steps | Shared stopped redraw; target freezes maps/W or draws one explicit replacement |
+
+The STOP negative control starts with three raw frames: CH1 has 1,535,112 live counts and 6,229,440 after STOP.
+`step_draw::stopped` clears and redraws the last record at `24 * 6`; it does not preserve the live picture.
+Replay tests select stored history and completed software segments. Hardware segment read-back and final STOP raw
+reads still need unit acceptance. None of these characterization assertions endorses the shared spec deviations.
+
+### Host cost and four-channel diagnosis
+
+Run `OOS_PERF_TESTS=1 cargo test -p oos-ui --release --bin oos-ui draw_routes -- --ignored --nocapture --test-threads=1`
+with other builds/tests idle. `tools/perf-guard.sh` includes these ignored probes. `DRAW_ROUTE` rows report best,
+p50 and nearest-rank p99 elapsed build time plus min/max process-wide allocation calls over 101 warmed steps.
+The existing soak counting allocator is shared with the unit probes; timing includes its instrumentation.
+There are no machine-speed assertions in the deterministic tests or new absolute performance thresholds.
+
+The source uses production `hw::settings`, `hz::prep` and `hw::batch_plan`, synthetic 100 kHz square-wave words and
+captured decoders. Compression is off. Rows cover 1/2/4 channels at 200 ns, 10 us and 200 us/div, with one frame
+and a 48-frame composition stress case, plus the plan's read count at 10 us/div. The 48-frame stress buffer may exceed one hardware
+read; it is explicitly a step/aggregation test, not a claim about ring or DMA batch size. Two host deposit workers,
+no acquisition helper, no DMA, ADC learning, GPU composition, present or real acquisition cadence are modeled.
+
+Observed on an unpinned macOS arm64 host with Rust 1.99.1, release optimization and the counting System allocator.
+Times below are best/p50/p99 **milliseconds per step**; allocation ranges count alloc/zeroed/realloc calls,
+including freed transients and worker calls. Elapsed tails include shared-host scheduling as well as work.
+All 42 emitted route rows passed pixel/count comparison. The table retains all 48-frame cases and the actual
+10 us/div read counts; the same log also reports single-frame rows.
+
+| Channels | Time/div | Frames/step | Standard ms | Batch ms | Standard allocations | Batch allocations |
+|---|---|---:|---|---|---|---|
+| 1 | 200 ns | 48 | 0.51/0.61/2.20 | 0.45/0.63/1.63 | 348-359 | 169-171 |
+| 1 | 10 us | 48 | 7.15/7.53/9.10 | 9.58/10.11/13.86 | 769-773 | 631-633 |
+| 1 | 10 us | 20 | 5.33/5.62/6.06 | 6.69/6.93/7.25 | 651-652 | 575-577 |
+| 1 | 200 us | 48 | 8.88/9.34/19.45 | 11.57/11.95/12.72 | 3988-3994 | 3851-3853 |
+| 2 | 200 ns | 48 | 1.85/1.94/2.14 | 2.35/2.44/2.53 | 568-572 | 468-470 |
+| 2 | 10 us | 48 | 9.38/9.78/11.46 | 7.37/7.58/7.92 | 1344-1350 | 1058-1060 |
+| 2 | 10 us | 14 | 7.22/7.52/11.47 | 6.65/6.83/7.08 | 1133-1136 | 1024-1026 |
+| 2 | 200 us | 48 | 13.21/13.59/14.28 | 15.38/16.00/16.43 | 7790-7791 | 7546-7548 |
+| 4 | 200 ns | 48 | 2.55/2.67/2.93 | 4.15/4.33/4.48 | 870-872 | 666-668 |
+| 4 | 10 us | 48 | 8.40/8.83/9.23 | 7.77/8.03/8.29 | 2401-2402 | 1914-1916 |
+| 4 | 10 us | 14 | 6.13/6.52/6.83 | 6.00/6.41/6.65 | 2050-2051 | 1880-1882 |
+| 4 | 200 us | 48 | 27.34/36.30/93.65 | 23.72/24.57/34.85 | 15361-15365 | 14926-14928 |
+
+`DRAW_ROUTE_PHASES` separates UI fast/merge/record work. `DRAW_ROUTE_COST` records worker decode/trigger/frame
+counters. `DRAW_DEPOSIT_PROFILE` alternates identical decoded inputs between per-frame pixel deposits and
+Standard's step difference-span accumulation, verifies equal maps, and reports best elapsed/p99 process CPU.
+The latter includes Standard's band parallelism; it is not a serial-kernel-only ratio.
+
+At four channels and 10 us/div the captured plan is 312.5 MSa/s, 35,160 samples/channel, k=1,
+281,280 bytes/frame and 14 frames/read. `CODES_MAX_STRIDE = 2` sends stride-4 frames through full decode.
+The measured worker hot path is `draw_range -> decode_into_probed -> draw_frame -> fastdraw::deposit_from`.
+Across 4,747 worker frames, counters show 174,543 us decoding, 17,061 us near-trigger work, zero wide searches,
+and 464,505 us total worker frame time (elapsed sums across workers). The remaining approximately 59 % includes
+span building/pixel deposit and orchestration; it is not a sampled CPU attribution. Main Batch merge p50 is
+0.208 ms versus 1.684 ms for Standard's queued-frame fast phase; newest-record p50 is 0.278/0.276 ms respectively.
+These phase rings include warm-up; build rows above exclude it and also include decoding/intake before `Ui::step`.
+
+The alternating deposit experiment on those same 48 decoded frames gives per-frame pixels / Standard step spans:
+best elapsed **2.739/1.551 ms**, p99 process CPU **3.692/9.540 ms**. Standard's parallelism saves elapsed time
+while costing more summed CPU. A candidate fix is to accumulate differences across a worker's batch, then fold once,
+reusing Standard's `diff_span`/`fold_t` machinery instead of painting every frame; retain touched-row bounds for
+merging. This crosses worker share/ownership and record/pair handling, so it is not a small local fix for this PR.
+Simply enabling stride-4 direct codes is not justified: the existing guard documents repeated read-out scans and
+only a marginal earlier benefit. No production fix is made.
+
+On the actual 14-frame plan the host routes are close (p50 6.52/6.41 ms Standard/Batch). The host does not
+reproduce or prove the cause of the historical 18.2 versus 26.1 fps unit observation. There are no acquired/displayed-fps measurements here. Host stage counters
+and the paired kernel experiment identify costs to test on A53/A72; external sampling was unavailable under the
+host sandbox. Keep architecture/0013's deletion hold until a matched unit profile establishes that cause.
+
+Unit measurements still required before selecting/deleting a route: reproduce the 100 kHz square setup and record
+actual rate/depth/decimation/compression/read size, worker placement and helper use for both routes; collect
+step/worker/merge/records/compose/present p50/p99, acquired/used/dropped/partial frames, input latency and RSS;
+repeat 1/2/4 channels at 10 us/div and neighboring timebases, then the specified load/soak. Check brightness and
+freeze/replacement behavior for the matrix above, including hardware segment replay and STOP final reads.
+These measurements are not yet verified on hardware. M12a full-gate/prerequisite acceptance and the owner's
+route decision remain with the coordinator; M12b and its deletions are not authorized by host results alone.

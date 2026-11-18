@@ -2,6 +2,8 @@
 
 //! Synthetic read-outs with the DHO layout and captured decode metadata. No device or calibration files.
 
+#[cfg(test)]
+pub(crate) mod evidence;
 mod records;
 
 use super::hw;

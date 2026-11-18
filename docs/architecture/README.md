@@ -6,6 +6,7 @@ shared `Worker`, field-table generation and DSP decoder moves. They are source e
 and [records](records.md) describe the detailed target, not completed implementations.
 The owner-approved [frame pipeline](frames.md) replaces worker-share maps and read-and-drop overload in that
 target. F0-F7 are planned work; F4 is M12b and F7 supplies M16b picture state.
+The [IO layer design](io.md) audits the current transport contracts and replaces the M15 port plumbing in the target.
 Sections from Layers onward describe the target unless explicitly marked as current source or measured evidence.
 
 ## Why
@@ -187,7 +188,7 @@ flowchart TB
         stages -->|"query results / continuations"| parser
     end
     io["IO thread: current-thread tokio runtime"] -->|"bounded RemoteRequest + wake"| parser
-    parser -->|"bounded replies keyed by request"| io
+    parser -->|"one oneshot reply per request"| io
     io <-->|"async framing / socket IO"| peers["SCPI / VXI-11 / HiSLIP / HTTP / mDNS peers"]
     stages -->|"owned AcqRequest / DepositView"| acq["Acquisition + deposit workers"]
     acq -->|"typed frames / batches / readings"| stages
@@ -201,9 +202,11 @@ flowchart TB
 ADR 0023 keeps non-blocking IO behind ports, preferably on one current-thread tokio runtime.
 The current Cargo features are rt, net, time, sync, macros and io-util. Raw SCPI, VXI-11, HiSLIP and HTTP/MCP
 use the netio executor. mDNS uses its crate-owned daemon behind a netio adapter (ADR 0023).
-NTP and the update check remain migration work. USB bulk and WLAN control also move behind
-non-blocking ports where async removes blocking. Blocking filesystem, usbfs and process calls never run on
-the executor; use bounded blocking adapters. CPU work stays on CPU workers.
+The [IO layer design](io.md) specifies connection actors, one bounded frame inbox, oneshot replies,
+byte semaphores and cancellation. NTP and the update check remain later migration work.
+WLAN #219 is redone as a device task after the core cutover. USB bulk stays synchronous on its generator worker.
+Blocking filesystem, usbfs and process calls never run on the executor; use bounded blocking adapters.
+CPU work stays on CPU workers.
 
 ## State and ownership
 
@@ -256,25 +259,26 @@ Extract stages around today's acceptance and publication seams before moving the
 ## Threads and messages
 
 Frame thread never awaits or waits for client/disk completion. Top-level `netio` owns sockets and timers;
-it never interprets settings or runs DSP. Its public port uses synchronous owned values, not tokio types.
+it never interprets settings or runs DSP. The [IO layer design](io.md#owners-and-messages) is the detailed target.
+Tokio channels, byte permits and cancellation tokens stay private to netio. The frame uses a synchronous facade
+with owned application operations and opaque completions.
 
-- The request unit is a complete program message, not a semicolon-delimited command. Each connection has one
-  credit from admission until the entire reply is sent (or a no-reply completion arrives). Stop reading/admitting
-  its next message until credit returns; keep pipelined bytes within framing limits and preserve FIFO order.
-  Envelopes carry connection incarnation and request id; disconnect cancels/releases them, never retargets replies.
+- Each connection task owns its socket and one exchange through output completion. It publishes typed work to
+  one bounded mpsc, with a unique oneshot reply. Program messages stay whole; pipelined bytes remain bounded.
+  Cancellation drops the request's completion; there is no reply router or reusable connection id to retarget.
 - One frame-owned Scpi keeps shared `wav_src`, `wav_fmt`, error queue and ESR across connections. Preserve that
   shared behaviour; do not silently make it per-client. Execute admitted program messages in FIFO admission order
   without interleaving their commands, including continuations. `:WAV:SOUR;:WAV:DATA?` captures its own source
   and format before another program can mutate them. Waiting programs retain identity/snapshots, not socket borrows.
-- Reserve reply capacity before interpretation; never rerun a setter to retry output. If the reply channel is full,
-  park the owned reply and its reservation on the frame side, retry with try-send on later intake, and continue
-  frames/input. Parked, queued and IO-held replies share the global byte budget below.
+- Acquire byte permits before dispatch and carry them with the reply until written. Never split permits, park a
+  reply or rerun a setter to retry output. Bounded encoding windows prevent a stalled large reply from consuming
+  the whole budget. Retained source data has its own admission bound in the memory plan.
 - Per intake, visit at most 8 requests/continuations; stop taking work after 0.5 ms, checked between interpreter
-  turns. A turn is not preempted. Preserve program ownership when yielding; rotate eligible connections in FIFO
-  admission order. Quota/ordering tests inject time; large-message/indivisible-command cost and due-frame latency
+  turns. A turn is not preempted. Preserve program ownership when yielding; start programs in FIFO publication
+  order. Quota/ordering tests inject time; large-message/indivisible-command cost and due-frame latency
   are checked by perf/unit evidence before rollout.
 - IO timers enforce the existing 2 s without send progress and 30 s total send limits; timeout closes the
-  connection and releases credit, reply bytes and snapshots. No frame-thread blocking write or timeout remains.
+  connection and releases its admitted work, reply bytes and snapshots. No frame-thread blocking write or timeout remains.
 
 RemoteRequest also covers non-SCPI application operations: UiState, ImportWaveform (slot/name plus bounded owned
 payload handle), ExportWaveform (CSV/binary), ExportLogicCsv, Stamp, UpdateStatus and Cmd (ordered command list
@@ -291,9 +295,9 @@ submit/poll. Storage accepts owned snapshots and returns completion/errors for t
 
 ### Waiting
 
-M15a-0 adds an eventfd to the frame loop's input pollfd set before the runtime experiment. Today libc::poll
-can wait up to 33 ms and remote is polled once per pass. Enqueue then signal; drain/recheck without lost wakes,
-including when a quota leaves queued work. IO reply-capacity/cancellation notifications also wake intake.
+Keep the existing pollable frame wake (`system/wake.rs`) beside input polling and paced host intake.
+Publish then signal; drain/recheck without lost wakes, including when a quota leaves runnable queued work.
+Cancellation also wakes intake. Tokio channels own IO waiter registration; no custom IO wake/router remains.
 Keep light intake separate from paced rendering; remote requests do not force a render.
 Acquisition/DMA waiting remains separate; tokio does not move into HAL or DSP.
 
@@ -320,18 +324,21 @@ Every target buffer and queue is bounded in bytes as well as count; the watchdog
 | `raw` | raw re-reads (deep window, `RAW_PERIOD`, STOP final) and the holders' copies of kept frame ranges (`last[0]`, measure jobs, remote snapshots, export) | one window per channel for rereads, plus each holder's limit in [Retaining owners](#retaining-owners) |
 | `ring` | the roll and scan ring, immutable chunks (`Arc<[Chunk]>`) | one screen: 10 x tdiv / dt points per channel, x 4 B (`f32`), plus the chunks a reader still pins |
 | `segments` | read-back segments in flight | the segment channel's bound |
-| remote replies | assembled, parked, queued, IO-held responses and encoding chunks | 64 MiB global allocated capacity; <= RESP_MAX per program |
+| remote replies | inline output, bounded encoding windows, scratch and framing | 64 MiB shared window capacity; <= RESP_MAX logical bytes per SCPI program; [IO bounds](io.md#byte-bounds-without-blocking-another-client) |
 
 Current `RESP_MAX` is 64 MiB and `MAX_CLIENTS` is 8: per-client caps alone allow 512 MiB of replies,
-before acquisition/maps, against a 768 MiB soft watchdog. M15a reserves from one 64 MiB global reply budget
-before execution (conservatively RESP_MAX when the reply size is unknown); lack of credit delays admission, not
-an already-applied setter. Transfer the reservation with replies/chunks; never duplicate unaccounted capacity.
+before acquisition/maps, against a 768 MiB soft watchdog. M15a's 64 MiB budget is global only to raw SCPI;
+VXI-11, HiSLIP and HTTP currently use separate budgets. The target [IO bounds](io.md#byte-bounds-without-blocking-another-client)
+replace full-response reservations with semaphore-backed windows and separately admitted immutable sources.
+Reserve before side effects; never duplicate unaccounted capacity or hold the whole pool for a stalled socket.
 Reply bytes are a separate class of the memory plan, not eight independent per-client allowances.
 The admission plan includes request buffers (raw MAX_LINE is 4 MiB), snapshot copies, encoder scratch and the
 separate large upload/import bounds. Base + maps + acquisition + retained data + these remote bounds + explicit
 headroom must fit below the 768 MiB soft limit, counting retained replies once. M5b sweeps that total;
 M15a supplies measured fixed costs and rejects admission that cannot fit. The watchdog stays unchanged.
 
+The following is the historical M15a planning envelope, not the replacement's implemented bound.
+The replacement must recompute it for all transports and source leases under [IO acceptance](io.md#implementation-and-acceptance).
 M15a's raw port retains at most 32 MiB of framing buffers, 32 MiB of queued program text and
 4 MiB plus bounded command metadata for the active parsed program. One 64 MiB reservation covers all
 raw replies and overlapping encoder allocations; chunk capacities and their container are charged once.

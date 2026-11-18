@@ -14,6 +14,14 @@ versus 30-34. The accepted host cost was +685 production LOC, +2.86% ARM binary 
 
 ## Decision
 
+The [IO layer design](../architecture/io.md) is the detailed target for #222 under #220.
+It audits current behaviour and replaces the bespoke M15 ports, credits, reservations, parked replies and router.
+Keep one frame-owned SCPI interpreter. Use one task per connection, one bounded frame mpsc and one oneshot
+reply per request. Acquire semaphore byte windows before dispatch and retain them through output without splitting.
+Use tokio send deadlines, one CancellationToken tree and the existing frame wake.
+The synchronous facade keeps runtime types private to netio. Frame intake drains without awaiting.
+The design defines bounds, HTTP upload isolation, VXI-11 UDP, deletions and boundary acceptance tests.
+
 Use tokio for network IO: raw SCPI, VXI-11, HiSLIP, HTTP, NTP, update checks. USB bulk or WLAN control moves
 qualify when they remove a blocking call from the frame thread or remove a dedicated thread. Use one current-thread IO
 runtime in netio. Clean ports take priority over executor choice. Tokio types never cross the port; synchronous owned
@@ -41,7 +49,8 @@ Synchronous exceptions are:
   in the application. This is a source assessment for issue #205, not yet verified on hardware.
 - GPU-helper shutdown: `std::net::Shutdown` selects a half-close of the existing Unix socket; no IP socket IO.
 
-USB/WLAN moves must demonstrate the criterion above. Other synchronous IO exceptions require a reason in this record.
+WLAN #219 is redone as the device task in the design after the IO core is accepted. USB bulk stays synchronous
+for the reason above. Other synchronous IO exceptions require a reason in this record.
 
 Check: `architecture` confines tokio to netio and std::net to netio plus the named synchronous exceptions,
 including imports through aliases and re-exports. Pure address values use core::net. Transport fixtures cover
@@ -57,3 +66,7 @@ the CPU-bound frame thread gains latency and no useful waiting concurrency.
 
 Raw SCPI, VXI-11, HiSLIP and HTTP/MCP use the netio runtime today. mDNS uses a crate-owned daemon behind netio.
 NTP, update checks and device-stream moves meeting the criterion above remain targets.
+The existing transport plumbing is current source, not the final architecture. Implement the core/raw cutover,
+then the remaining transports using the [implementation plan](../architecture/io.md#implementation-and-acceptance).
+Streaming windows and bounded source retention replace full-response reservation growth. No runtime behaviour
+changes in this documentation decision. Unit acceptance and dependency approval still precede implementation rollout.

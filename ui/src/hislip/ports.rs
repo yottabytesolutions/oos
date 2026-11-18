@@ -26,25 +26,32 @@ pub struct Server {
     parked: Option<crate::netport::Reply>,
 }
 impl Server {
+    #[cfg(test)]
     pub fn closed() -> Self {
-        Self {
-            endpoint: Default::default(),
-            conns: Vec::new(),
-            live: Vec::new(),
-            next: 1,
-            acl: Default::default(),
-            parked: None,
-        }
+        Self::with_endpoint(Default::default())
+    }
+    fn with_endpoint(endpoint: crate::netio::Endpoint) -> Self {
+        Self { endpoint, conns: Vec::new(), live: Vec::new(), next: 1, acl: Default::default(), parked: None }
     }
     pub fn open_with_runtime(
         port: impl Into<crate::net6::Port>,
         runtime: crate::netio::Runtime,
         wake: Arc<Wake>,
     ) -> Self {
-        let mut server = Self::closed();
-        server.endpoint = crate::netio::Endpoint::new(Some(runtime), wake);
-        server.endpoint.set_open(Some(port.into()), false, crate::netio::Protocol::Hislip);
+        let mut server = Self::closed_with_runtime(runtime, wake);
+        server.set_open(Some(port.into()), false);
         server
+    }
+    pub fn closed_with_runtime(runtime: crate::netio::Runtime, wake: Arc<Wake>) -> Self {
+        Self::with_endpoint(crate::netio::Endpoint::new(Some(runtime), wake))
+    }
+    pub fn set_open(&mut self, port: Option<crate::net6::Port>, v6: bool) {
+        self.endpoint.set_open(port, v6, crate::netio::Protocol::Hislip);
+        if port.is_none() {
+            self.conns.clear();
+            self.live.clear();
+            self.parked = None;
+        }
     }
     #[cfg(test)]
     pub fn open(port: impl Into<crate::net6::Port>) -> Self {

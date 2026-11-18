@@ -1,0 +1,10 @@
+# HiSLIP is an opt-in service beside the existing instrument transports.
+frames 10
+menu System
+do Network
+do Remote services
+frames 2
+shot $S/hislip-off.ppm
+set HiSLIP = On
+frames 2
+shot $S/hislip-on.ppm

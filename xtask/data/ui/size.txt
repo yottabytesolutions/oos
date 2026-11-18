@@ -14,7 +14,7 @@
 516 file ui/src/measures/standard.rs
 3279 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8877 file ui/src/ui.rs
+8858 file ui/src/ui.rs
 1715 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 992 file ui/src/ui/bode.rs
@@ -30,7 +30,6 @@
 688 file ui/src/ui/panes.rs
 407 file ui/src/ui/reference_decode.rs
 701 file ui/src/ui/reflook.rs
-402 file ui/src/ui/remote.rs
 737 file ui/src/ui/sim.rs
 416 file ui/src/ui/startup.rs
 563 file ui/src/ui/time.rs

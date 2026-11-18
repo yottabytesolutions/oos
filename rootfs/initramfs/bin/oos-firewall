@@ -112,6 +112,10 @@ rules() {
 	echo "	chain input {"
 	echo "		type filter hook input priority filter; policy drop;"
 	echo "		iif lo accept"
+	case "$("$(dirname "$0")/oos-conf" remote.hislip)" in
+		on|true|1) ;;
+		*) echo "		tcp dport 4880 drop";;
+	esac
 	echo "		ct state established,related accept"
 	echo "		ct state invalid drop"
 	echo "		icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } ip6 hoplimit 255 accept"

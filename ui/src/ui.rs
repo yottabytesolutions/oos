@@ -872,10 +872,12 @@ enum Item {
     RemWeb,
     RemScpi,
     RemVxi,
+    RemHislip,
     RemTelnet,
     RemSsh,
     RemScpiInfo,
     RemVxiInfo,
+    RemHislipInfo,
     RemTelnetInfo,
     /// System > Network > Remote services > SSH settings (ui/ssh.rs); `SshRemoveKey` is its picker
     SshState,
@@ -7440,7 +7442,7 @@ impl Ui {
                 | Item::NetWlan
                 | Item::AcqAlias
         ) || Self::time_text(it)
-            || Self::remote_text(it)
+            || menu::remote_text(it)
         {
             return Ctl::Text;
         }
@@ -7549,30 +7551,6 @@ impl Ui {
         }
     }
 
-    /// x centre of what opened the menu, and whether that is in the top bar (the dialog hangs below it) or a card
-    /// (the dialog sits above it).
-    fn menu_anchor(&self) -> (i32, bool) {
-        let (chs, tr, trg) = self.cards();
-        match self.menu_root() {
-            MenuId::Channel(c) | MenuId::ChMore(c) => (chs[c].x + chs[c].w / 2, false),
-            MenuId::Horizontal => (tr.x + tr.w / 2, false),
-            MenuId::Trigger => (trg.x + trg.w / 2, false),
-            MenuId::Main => (self.menu_btn().x, false),
-            MenuId::Network | MenuId::Remote | MenuId::Ssh => (self.net_box().x + self.net_box().w / 2, true),
-            MenuId::ViewMore => (self.scr.w, true),
-            MenuId::La | MenuId::LaLines | MenuId::LaPat => {
-                self.aux_cards().0.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false))
-            }
-            MenuId::Afg => self.aux_cards().1.map_or((self.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
-            // menus of front-panel keys (also opened from the start menu): centred above the cards
-            m => self
-                .top_buttons()
-                .iter()
-                .find(|t| t.0 == TopBtn::Menu(m))
-                .map_or((self.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
-        }
-    }
-
     fn dlg_layout(&self) -> Option<Dlg> {
         if !self.menu_open {
             return None;
@@ -7617,7 +7595,7 @@ impl Ui {
         let nrows = (n + cols - 1) / cols;
         let w = 24 + cols * cw + (cols - 1) * gap;
         let h = DLG_HEAD + nrows * rh + 6;
-        let (ax, top) = self.menu_anchor();
+        let (ax, top) = menu::anchor(self);
         let fr = self.frame();
         let x = (ax - w / 2).clamp(METRICS.edge, self.scr.w - METRICS.edge - w);
         let y = if top { fr.top.bottom() + 4 } else { (fr.bottom.y - 4 - h).max(fr.top.bottom() + 4) };
@@ -7701,7 +7679,7 @@ impl Ui {
         let gap = 16;
         let cw = l.dlg_col;
         let w = 24 + 2 * cw + gap;
-        let (ax, _) = self.menu_anchor();
+        let (ax, _) = menu::anchor(self);
         let x = (ax - w / 2).clamp(METRICS.edge, self.scr.w - METRICS.edge - w);
         let y = self.frame().top.bottom() + 4;
         let mut col_y = [y + DLG_HEAD - 8; 2];

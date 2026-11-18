@@ -1030,6 +1030,46 @@
     {
       "decode_route": "Demo records",
       "height": 600,
+      "path": "demo/normal/remote-services/hislip-off.png",
+      "provenance": "script=remote-services.txt;text=normal;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "d114b6508601146b238d8515af8350d603201b152d009ea7ba54c87e0f841159",
+      "script_sha256": "20618c2ab098d16e463d2c5585c9a238aecd27242d193233e95a94f18c6e1453",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=14 records=84 menu_open=true Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/normal/remote-services/hislip-on.png",
+      "provenance": "script=remote-services.txt;text=normal;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "9f7405990523160555c3d2f3a28b8fb405f0f5e12c79b49e2120cbe374aadc7e",
+      "script_sha256": "20618c2ab098d16e463d2c5585c9a238aecd27242d193233e95a94f18c6e1453",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=17 records=102 menu_open=true Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
       "path": "demo/normal/replay/21-replay.png",
       "provenance": "script=replay.txt;text=normal;acq.pipeline=batch;measurements=script",
       "regions": [
@@ -2971,6 +3011,46 @@
     {
       "decode_route": "Demo records",
       "height": 600,
+      "path": "demo/large/remote-services/hislip-off.png",
+      "provenance": "script=remote-services.txt;text=large;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "39eff6f8100f925aa63031f782c66787c35eaff4b8dce4e44987e1383e98ac12",
+      "script_sha256": "07755e86520729b11620320bcc06a13c19c90c4b704ff7ddb040cb175a61bb97",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=14 records=84 menu_open=true Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/large/remote-services/hislip-on.png",
+      "provenance": "script=remote-services.txt;text=large;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "11e3ff0efdcd964a4f40298defe5e9aa667ebfb3b1ebe40de5128d9b6d41aee4",
+      "script_sha256": "07755e86520729b11620320bcc06a13c19c90c4b704ff7ddb040cb175a61bb97",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=17 records=102 menu_open=true Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
       "path": "demo/large/replay/21-replay.png",
       "provenance": "script=replay.txt;text=large;acq.pipeline=batch;measurements=script",
       "regions": [
@@ -4906,6 +4986,46 @@
       "rgb_sha256": "7817ac700df37011af3962bfb46d478888b731325594aaa26971283af32c1178",
       "script_sha256": "4f110ba880581b4228965deb1a7a318f9a8f08a9e541ab01c1bdafcff4386f5f",
       "settings": "settings dots=Auto channels=2 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=59 records=354 menu_open=true Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/larger/remote-services/hislip-off.png",
+      "provenance": "script=remote-services.txt;text=larger;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "151512abd1d7aee715c1c0c479018ef07055e225200a75d82be6d21ffed6581b",
+      "script_sha256": "b6039cda94efb7a4bf463a3de09d2aafe00f6c5c0ff1364fc292c65731195ca1",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=14 records=84 menu_open=true Demo acq.pipeline=batch",
+      "source_route": "Demo records; acq.pipeline=batch",
+      "width": 1024
+    },
+    {
+      "decode_route": "Demo records",
+      "height": 600,
+      "path": "demo/larger/remote-services/hislip-on.png",
+      "provenance": "script=remote-services.txt;text=larger;acq.pipeline=batch;measurements=script",
+      "regions": [
+        [
+          "main0",
+          0,
+          40,
+          1024,
+          456
+        ]
+      ],
+      "rgb_sha256": "803bff2d30cd5b2644dabc3f1ac73d5664a883a94e2528e071753c07987f92c4",
+      "script_sha256": "b6039cda94efb7a4bf463a3de09d2aafe00f6c5c0ff1364fc292c65731195ca1",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=17 records=102 menu_open=true Demo acq.pipeline=batch",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },

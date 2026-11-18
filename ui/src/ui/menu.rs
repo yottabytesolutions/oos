@@ -186,7 +186,7 @@ areas! {
     system { [Item::About | Item::SysInfo | Item::Shot | Item::AuxOut | Item::Stock | Item::Update | Item::UpdateRollback | Item::BootMode | Item::Overclock | Item::QuickAct], [MenuId::Utility] }
     view_more { [Item::ViewExit | Item::ViewSettings], [MenuId::ViewMore] }
     network { [Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::WlanNet | Item::WlanForgetNet], [MenuId::Network] }
-    remote { [Item::NetWeb | Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemTelnet | Item::RemSsh | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo | Item::RemMdns | Item::RemName | Item::RemAllow | Item::RemFirewall], [MenuId::Remote] }
+    remote { [Item::NetWeb | Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemHislip | Item::RemTelnet | Item::RemSsh | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemHislipInfo | Item::RemTelnetInfo | Item::RemMdns | Item::RemName | Item::RemAllow | Item::RemFirewall], [MenuId::Remote] }
     ssh { [Item::SshState | Item::SshPassword | Item::SshShowPass | Item::SshHostKey | Item::SshKeys | Item::SshKeyList | Item::SshImport | Item::SshRemove | Item::SshRemoveKey], [MenuId::Ssh] }
     graphics { [Item::Graphics], [] }
     views { [Item::Views], [] }
@@ -267,6 +267,32 @@ pub(super) fn off_sources(ui: &Ui, menu: MenuId) -> Vec<usize> {
     v.dedup();
     v
 }
+
+/// x centre of what opened the menu, and whether that is in the top bar (the dialog hangs below it) or a card
+/// (the dialog sits above it).
+pub(super) fn anchor(ui: &Ui) -> (i32, bool) {
+    let (chs, tr, trg) = ui.cards();
+    match ui.menu_root() {
+        MenuId::Channel(c) | MenuId::ChMore(c) => (chs[c].x + chs[c].w / 2, false),
+        MenuId::Horizontal => (tr.x + tr.w / 2, false),
+        MenuId::Trigger => (trg.x + trg.w / 2, false),
+        MenuId::Main => (ui.menu_btn().x, false),
+        MenuId::Network | MenuId::Remote | MenuId::Ssh => (ui.net_box().x + ui.net_box().w / 2, true),
+        MenuId::ViewMore => (ui.scr.w, true),
+        MenuId::La | MenuId::LaLines | MenuId::LaPat => {
+            ui.aux_cards().0.map_or((ui.scr.w / 2, false), |r| (r.x + r.w / 2, false))
+        }
+        MenuId::Afg => ui.aux_cards().1.map_or((ui.scr.w / 2, false), |r| (r.x + r.w / 2, false)),
+        // menus of front-panel keys (also opened from the start menu): centred above the cards
+        m => ui
+            .top_buttons()
+            .iter()
+            .find(|t| t.0 == TopBtn::Menu(m))
+            .map_or((ui.scr.w / 2, false), |t| (t.2.x + t.2.w / 2, true)),
+    }
+}
+
+pub(super) use remote::{remote_kind, remote_text};
 
 #[cfg(test)]
 mod tests;

@@ -24,6 +24,9 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- System > Network > Remote services > HiSLIP enables TCP 4880 independently with `remote.hislip`. It is off by
+  default until verified on the unit. The listener, sessions, firewall and discovery follow the switch. Host-tested only.
+
 - System > Network > Remote services > **Allowed** sets `net.allow` from the scope's screen (unit). The picker offers
   every network the scope is on, and Other opens the keyboard. A wrong entry is refused with a message and not
   stored. A change takes effect at once, without a restart:

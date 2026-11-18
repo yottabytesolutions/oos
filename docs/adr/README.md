@@ -43,7 +43,7 @@ ADR paths across the repository. The `links` step also checks Markdown links and
 | [0016](0016-signed-updates.md) | Updates trust only the project key and use trial rollback | system | in force |
 | [0017](0017-safe-start.md) | Safe start breaks restart loops | system | in force |
 | [0018](0018-bench-lan-services.md) | Network services are for a bench LAN; SSH is the shell | system | target: telnet removal (#139), service switches and ACL completion; M15b and service-policy follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
-| [0019](0019-instrument-protocols.md) | Serve raw SCPI, VXI-11 and HiSLIP with live discovery | system | target: M15b scope HiSLIP enablement with remote.hislip and discovery lifecycle |
+| [0019](0019-instrument-protocols.md) | Serve raw SCPI, VXI-11 and HiSLIP with live discovery | system | in force |
 | [0020](0020-crates.md) | Crates have one dependency direction | code | in force |
 | [0021](0021-static-programs.md) | Scope programs are static musl binaries and abort on panic | code | in force |
 | [0022](0022-frame-state.md) | The frame thread owns UI state without locks | code | in force |

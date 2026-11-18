@@ -54,76 +54,6 @@ pub struct Stats<'a> {
     pub off: &'a mut (f64, f64),
 }
 
-/// The dense fast path of `draw_frame` for the frame `f` (its samples reached only through `refine`, the trigger
-/// refinement on the source channel, and `deposit`, one channel into its map): trigger statistics, mapping, channels.
-#[allow(clippy::too_many_arguments)]
-fn dense(
-    ph: &mut Phosphor,
-    m: &Model,
-    f: &Frame,
-    x_per_sample: f64,
-    pairs: bool,
-    present: [bool; NCH],
-    stats: Option<Stats>,
-    refine: impl FnOnce(f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>),
-    mut deposit: impl FnMut(usize, &mut [u16], &crate::fastdraw::Map),
-) -> bool {
-    let (w, h) = (ph.w, ph.h);
-    let tdiv = m.time_per_div() as f64;
-    // an LA line as the source: the hardware trigger point stands, the analog samples cannot refine it
-    let on_la = m.trig_on_la();
-    // the edge of the set direction nearest the hardware trigger point, up to half a screen away, on the signal smoothed
-    // to one screen column: at decimated rates the hardware point lands near the level on either edge (trigger.md 8)
-    let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
-    let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
-    let half = (tdiv * HDIV as f64 / 2.0 / f.dt) as usize;
-    let col = if pairs {
-        crate::compress::smooth_len(x_per_sample)
-    } else {
-        (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize
-    };
-    let edge = if on_la {
-        None
-    } else {
-        let (e, any) = refine(hyst, rising, either, half, col);
-        if let Some(s) = stats {
-            let k = match (e, any) {
-                (None, _) => 3,
-                (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => 0,
-                (Some(_), Some(n)) if !either && n.rising != rising => 1,
-                (Some(t), _) => {
-                    let d = (t - f.pre as f64).abs();
-                    *s.off = (s.off.0 + d, s.off.1.max(d));
-                    2
-                }
-            };
-            s.edges[k] += 1;
-        }
-        e
-    };
-    let ti = edge.unwrap_or(f.pre as f64);
-    let x0 = w as f64 / 2.0 - m.delay as f64 / tdiv * w as f64 / HDIV as f64;
-    let ppd_y = h as f32 / VDIV;
-    for c in 0..NCH {
-        let ch = &m.ch[c];
-        if !ch.on || !present[c] {
-            continue;
-        }
-        let vpd = ch.volts_per_div();
-        let sign = -1.0;
-        let xm = crate::fastdraw::Map {
-            ti,
-            x_per_sample,
-            x0,
-            y_per_volt: sign * ppd_y / vpd,
-            y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y,
-        };
-        deposit(c, &mut ph.map[c], &xm);
-    }
-    // a filtered trigger path (coupling): the hardware point stands where the samples show no crossing
-    edge.is_some() || on_la || m.trig_coupling() != TrigCoup::Dc
-}
-
 /// Smallest read-out the workers draw from its words (`draw_frame_codes`): 64 kB. Below it the f32 copy stays in the
 /// caches and decoding first was as fast or faster on the host (12.5 k points, 1 channel: 1.08x the time from the words).
 pub const CODES_MIN_BYTES: usize = 64 << 10;
@@ -238,6 +168,7 @@ pub fn draw_frame_codes(
         use crate::fastdraw::Samples;
         let src = lay.channel(bytes, m.trig_src);
         let level = crate::board::sw_trig_level_of(m, src.n, |i| src.at(i));
+        let trigger = crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either };
         TRIG.with(|t| {
             let v = &mut *t.borrow_mut();
             let (a, b) = crate::trignear::near_window(f.pre, src.n, col);
@@ -248,13 +179,14 @@ pub fn draw_frame_codes(
             #[cfg(test)]
             WIDE.with(|n| n.set(n.get() + 1));
             (lay.volts)(bytes, src.stride, src.word, 0, src.n, src.affine, v);
-            crate::fastdraw::edge_smooth(v, f.pre, level, hyst, rising, either, half, col, |_| true)
+            crate::fastdraw::edge_smooth(v.as_slice(), f.pre, trigger, half, col, |_| true)
         })
     };
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
         crate::fastdraw::deposit_codes(map, w, h, &lay.channel(bytes, c), xm, 24)
     };
-    Some(dense(ph, m, f, x_per_sample, false, present, stats, refine, deposit))
+    let input = frame::ProjectedInput { x_per_sample, pairs: false, present };
+    Some(frame::draw_projected(ph, m, f, input, stats, refine, deposit))
 }
 
 /// Frames acquired, used (drawn into the picture) and dropped, since the start; in both modes.
@@ -310,7 +242,7 @@ impl Drop for Lease {
 
 /// A batch with the workers: its frames are claimed a few at a time by whoever is free (the workers, and the
 /// acquisition thread while it waits for the next batch: `help`). Frames never claimed count as dropped.
-struct Batch {
+pub(crate) struct Batch {
     fb: usize,
     frames: usize,
     decode: decoder::Decoder,
@@ -408,11 +340,7 @@ impl Acc {
     }
     /// Empty again, keeping the maps' memory.
     fn reset(&mut self, gen: u64) {
-        for (m, u) in self.ph.map.iter_mut().zip(self.used) {
-            if u {
-                m.iter_mut().for_each(|x| *x = 0);
-            }
-        }
+        self.ph.clear();
         self.folds.clear();
         self.batches.clear();
         self.newest = None;
@@ -838,6 +766,40 @@ mod tests {
     use oos_hal::dho::hz;
     use oos_hal::dho::seq::Settings;
 
+    #[test]
+    fn reused_accumulators_release_disabled_planes_and_keep_enabled_buffers() {
+        let mut view = View { gen: 0, m: Model::default(), interp: Interp::Exact, w: 97, h: 48 };
+        let mut spare = None;
+        for channels in [4, 1, 2, 4, 0, 1] {
+            for (c, ch) in view.m.ch.iter_mut().enumerate() {
+                ch.on = c < channels;
+            }
+            view.gen += 1;
+            let kept = spare.as_ref().map(|a: &Acc| a.ph.map[0].as_ptr());
+            let was_on = spare.as_ref().is_some_and(|a| a.used[0]);
+            let mut a = fresh_acc(spare, &view);
+            if channels > 0 && was_on {
+                assert_eq!(Some(a.ph.map[0].as_ptr()), kept, "reuse across channel changes");
+            }
+            for (c, map) in a.ph.map.iter_mut().enumerate() {
+                if c < channels {
+                    assert_eq!(map.len(), view.w * view.h);
+                    assert!(map.iter().all(|&x| x == 0), "old picture must be cleared");
+                    map.fill(24);
+                } else {
+                    assert_eq!(map.capacity(), 0, "disabled channels must release their planes");
+                }
+            }
+            spare = Some(a);
+        }
+        view.w = 41;
+        view.h = 23;
+        let a = fresh_acc(spare, &view);
+        assert_eq!(a.ph.map[0].len(), view.w * view.h);
+        assert!(a.ph.map[0].iter().all(|&x| x == 0));
+        assert!(a.ph.map[1..].iter().all(|map| map.capacity() == 0));
+    }
+
     /// A read-out buffer for the tests.
     struct Bytes(Vec<u8>);
 
@@ -1166,7 +1128,14 @@ mod tests {
                     for level in [0.0f32, 0.5, -0.99] {
                         let got = refine_near(v, 0, v.len(), pre, false, level, 0.1, true, false, half, col)
                             .unwrap_or_else(|| {
-                                crate::fastdraw::edge_smooth(v, pre, level, 0.1, true, false, half, col, |_| true)
+                                crate::fastdraw::edge_smooth(
+                                    v.as_slice(),
+                                    pre,
+                                    crate::fastdraw::EdgeSearch { level, hysteresis: 0.1, rising: true, either: false },
+                                    half,
+                                    col,
+                                    |_| true,
+                                )
                             });
                         let want =
                             crate::trignear::edge_smooth_near(v, pre, level, 0.1, true, false, half, col, |_| true);

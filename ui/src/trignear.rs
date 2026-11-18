@@ -43,7 +43,7 @@ pub fn edge_smooth_near(
             return r;
         }
     }
-    edge_smooth(v, pre, level, hyst, rising, either, span, l, fits)
+    edge_smooth(v, pre, crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either }, span, l, fits)
 }
 
 /// Samples `edge_near_window` needs of a frame of `len` samples: `near_window(pre, len, l)` = start..end.
@@ -282,10 +282,11 @@ mod tests {
                         // -0.97: next to the low rail, where noise moves around the level but never arms a rising edge
                         for level in [0.0f32, 0.3, -0.5, -0.97] {
                             for (rising, either) in [(true, false), (false, false), (true, true)] {
+                                let trigger = crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either };
                                 let fits_all = |_: f64| true;
                                 let lo = pre as f64 - 50.0;
                                 let fits_some = |t: f64| t >= lo;
-                                let w = edge_smooth(&v, pre, level, hyst, rising, either, span, l, fits_all);
+                                let w = edge_smooth(v.as_slice(), pre, trigger, span, l, fits_all);
                                 let n = edge_smooth_near(&v, pre, level, hyst, rising, either, span, l, fits_all);
                                 assert!(
                                     same(w, n),
@@ -300,7 +301,7 @@ mod tests {
                                     w,
                                     n
                                 );
-                                let w = edge_smooth(&v, pre, level, hyst, rising, either, span, l, fits_some);
+                                let w = edge_smooth(v.as_slice(), pre, trigger, span, l, fits_some);
                                 let n = edge_smooth_near(&v, pre, level, hyst, rising, either, span, l, fits_some);
                                 assert!(same(w, n), "{} (fits) pre {} l {}: wide {:?} near {:?}", name, pre, l, w, n);
                                 cases += 2;
@@ -369,7 +370,14 @@ mod tests {
             })
             .collect();
         for (v, rising) in [(armed_before, false), (early, true)] {
-            let wide = edge_smooth(&v, pre, 0.0, 0.3, true, true, 4000, 1, |_| true);
+            let wide = edge_smooth(
+                v.as_slice(),
+                pre,
+                crate::fastdraw::EdgeSearch { level: 0.0, hysteresis: 0.3, rising: true, either: true },
+                4000,
+                1,
+                |_| true,
+            );
             assert!(wide.1.is_some_and(|e| e.rising == rising), "{:?}", wide);
             assert!(near_only(&v, 0, v.len(), pre, 0.0, 0.3, true, true, NEAR_COLS + NEAR_PAD, 1, &|_| true).is_none());
             assert!(same(wide, edge_smooth_near(&v, pre, 0.0, 0.3, true, true, 4000, 1, |_| true)));
@@ -396,7 +404,17 @@ mod tests {
                                     name, pre, l, hyst, level, rising, either
                                 );
                                 assert!(
-                                    same(r, edge_smooth(&v, pre, level, hyst, rising, either, near, l, |_| true)),
+                                    same(
+                                        r,
+                                        edge_smooth(
+                                            v.as_slice(),
+                                            pre,
+                                            crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either },
+                                            near,
+                                            l,
+                                            |_| true
+                                        )
+                                    ),
                                     "{}: {:?}",
                                     what,
                                     r
@@ -446,9 +464,16 @@ mod tests {
             let t0 = std::time::Instant::now();
             let mut acc = 0.0;
             for _ in 0..reps {
-                acc += edge_smooth(std::hint::black_box(&v), pre, 0.0, 0.06, true, false, span, l, |_| true)
-                    .0
-                    .unwrap_or(0.0);
+                acc += edge_smooth(
+                    std::hint::black_box(v.as_slice()),
+                    pre,
+                    crate::fastdraw::EdgeSearch { level: 0.0, hysteresis: 0.06, rising: true, either: false },
+                    span,
+                    l,
+                    |_| true,
+                )
+                .0
+                .unwrap_or(0.0);
             }
             let wide = t0.elapsed();
             let t0 = std::time::Instant::now();

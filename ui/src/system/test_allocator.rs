@@ -7,6 +7,7 @@ thread_local! {
     // The calling thread's own share: requested bytes minus released bytes, and its allocation count. Exact
     // assertions read these; the process-wide counters also see the test harness thread, which allocates its
     // bookkeeping while the test thread already runs.
+    static OWN_PEAK: Cell<isize> = const { Cell::new(0) };
     static OWN_LIVE: Cell<isize> = const { Cell::new(0) };
     static OWN_ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
 }
@@ -53,6 +54,14 @@ impl Counting {
     /// Like `count`, but only the allocations of the calling thread.
     pub fn count_own<T>(&self, f: impl FnOnce() -> T) -> (usize, T) {
         count_own(f)
+    }
+    /// Peak live bytes above entry on the calling thread, including freed transients.
+    pub fn own_high_water<T>(&self, f: impl FnOnce() -> T) -> (usize, T) {
+        let baseline = OWN_LIVE.get();
+        let previous = OWN_PEAK.replace(baseline);
+        let result = f();
+        let peak = OWN_PEAK.replace(previous.max(OWN_PEAK.get()));
+        ((peak - baseline) as usize, result)
     }
     pub fn allocated(&self, bytes: usize) {
         self.large.fetch_add(usize::from(bytes >= self.large_min.load(SeqCst)), SeqCst);
@@ -102,6 +111,7 @@ impl Counting {
         let live = self.live.fetch_add(bytes, SeqCst) + bytes;
         self.peak.fetch_max(live, SeqCst);
         OWN_LIVE.set(OWN_LIVE.get().wrapping_add_unsigned(bytes));
+        OWN_PEAK.set(OWN_PEAK.get().max(OWN_LIVE.get()));
     }
     fn removed(&self, bytes: usize) {
         self.live.fetch_sub(bytes, SeqCst);

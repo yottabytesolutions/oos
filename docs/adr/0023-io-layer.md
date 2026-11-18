@@ -68,7 +68,8 @@ the CPU-bound frame thread gains latency and no useful waiting concurrency.
 
 Raw SCPI, VXI-11, HiSLIP and HTTP/MCP use the netio runtime today. mDNS uses a crate-owned daemon behind netio.
 NTP, update checks and device-stream moves meeting the criterion above remain targets.
-The [implementation plan](../architecture/io.md#implementation-and-acceptance) calls for one PR with
-raw-first development, all transport cutovers, final deletion and the production-LOC check. Streaming windows
-and bounded source retention replace reservation growth in that target. Unit acceptance and dependency
-approval precede rollout.
+The existing transport plumbing is current source, not the final architecture. Use one coherent implementation
+PR for the replacement, with raw-first development, all transport cutovers, final deletion and the production-LOC
+check together under the [implementation plan](../architecture/io.md#implementation-and-acceptance).
+Streaming windows and bounded source retention replace full-response reservation growth. No runtime behaviour
+changes in this documentation decision. Unit acceptance and dependency approval still precede implementation rollout.

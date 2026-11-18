@@ -403,7 +403,7 @@ pub const KNOB_NAMES: [(&str, u8); 7] = [
     ("tlevel", 0xea),
 ];
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum MenuId {
     Main,
     Channel(usize),
@@ -526,7 +526,7 @@ struct RefWave {
     on: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Item {
     DecSel,
     DecTable,
@@ -6805,11 +6805,6 @@ impl Ui {
         change::mapping_observed(self, change::oracle::Row::Trigger);
     }
 
-    /// Trigger menu rows for the selected type.
-    fn trigger_items(&self) -> Vec<Item> {
-        menu::trigger_items(self)
-    }
-
     /// Row label, with the trigger rows named after their role in the selected trigger type.
     fn item_label(&self, it: Item) -> &'static str {
         if it == Item::SimPlay {
@@ -7426,10 +7421,7 @@ impl Ui {
             let cur = self.value(it);
             return Ctl::Seg(vec![cur], None);
         }
-        if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::AcqAlias)
-            || Self::time_text(it)
-            || menu::is_text_row(it)
-        {
+        if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::AcqAlias) || menu::is_text_row(it) {
             return Ctl::Text;
         }
         match Self::kind(it) {

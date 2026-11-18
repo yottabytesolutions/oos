@@ -3,56 +3,98 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area { kind, label, value, adjust, activate, options, menu_items, ..Area::EMPTY };
+pub(super) const AREA: Area = Area { descriptors: &ROWS, ordered_rows, adjust, activate, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::ChBias(_) | Item::ChSkew(_) => Kind::Value,
-        Item::ChScale(_) | Item::ChOffset(_) => Kind::Value,
-        Item::ChBiasZero(_) | Item::ChLabel(_) => Kind::Action,
-        _ => return None,
-    })
+const PROBES: [f32; 3] = [1.0, 10.0, 100.0];
+
+fn probe_label(probe: f32) -> String {
+    format!("{probe}x")
 }
 
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::ChMore(_)) => "More",
-        Item::ChOn(_) => "Display",
-        Item::ChCoupling(_) => "Coupling",
-        Item::ChBw(_) => "Bandwidth",
-        Item::ChProbe(_) => "Probe",
-        Item::ChInvert(_) => "Invert",
-        Item::ChScale(_) => "Scale",
-        Item::ChOffset(_) => "Offset",
-        Item::ChLabel(_) => "Name",
-        Item::ChFine => "Fine scale",
-        Item::ChUnit(_) => "Unit",
-        Item::ChBias(_) => "Zero bias",
-        Item::ChBiasZero(_) => "Zero this input",
-        Item::ChSkew(_) => "Deskew",
-        Item::ChExpand => "Expand around",
-        _ => return None,
-    })
+const SHARED: [Descriptor; 2] = [
+    Descriptor::choice(Item::ChFine, "Fine scale", |u| onoff(u.m.fine_v), toggles),
+    Descriptor::choice(
+        Item::ChExpand,
+        "Expand around",
+        |u| if u.m.v_expand_gnd { "Ground" } else { "Center" }.into(),
+        |_| ["Center", "Ground"].into_iter().map(String::from).collect(),
+    ),
+];
+
+const ROWS: [Descriptor; NCH * 13 + SHARED.len()] = {
+    let channels: [[Descriptor; 13]; NCH] = [channel::<0>(), channel::<1>(), channel::<2>(), channel::<3>()];
+    let mut rows = [SHARED[0]; NCH * 13 + SHARED.len()];
+    rows[1] = SHARED[1];
+    let mut c = 0;
+    while c < NCH {
+        let mut i = 0;
+        while i < channels[c].len() {
+            rows[SHARED.len() + c * channels[c].len() + i] = channels[c][i];
+            i += 1;
+        }
+        c += 1;
+    }
+    rows
+};
+
+fn ordered_rows(_: &Ui, menu: MenuId) -> Vec<&'static Descriptor> {
+    use Item::*;
+    let items: &[Item] = match menu {
+        MenuId::Channel(c) => &[
+            ChOn(c),
+            ChScale(c),
+            ChOffset(c),
+            ChCoupling(c),
+            ChBw(c),
+            ChProbe(c),
+            ChInvert(c),
+            ChFine,
+            ChLabel(c),
+            Open(MenuId::ChMore(c)),
+        ],
+        MenuId::ChMore(c) => &[ChUnit(c), ChBias(c), ChBiasZero(c), ChSkew(c), AutoDeskew, ChExpand],
+        _ => &[],
+    };
+    items.iter().filter_map(|&it| super::descriptor(it)).collect()
 }
 
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    let m = &ui.m;
-    let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-    Some(match it {
-        Item::ChOn(c) => onoff(m.ch[c].on),
-        Item::ChCoupling(c) => m.ch[c].coupling.name().into(),
-        Item::ChBw(c) => BWS[m.ch[c].bw].0.into(),
-        Item::ChProbe(c) => format!("{}x", m.ch[c].probe),
-        Item::ChInvert(c) => onoff(m.ch[c].invert),
-        Item::ChScale(c) => si_short(m.ch[c].volts_per_div() as f64, m.unit(c)),
-        Item::ChOffset(c) => si(m.ch[c].offset as f64, m.unit(c)),
-        Item::ChUnit(c) => m.unit(c).into(),
-        Item::ChBias(c) => si(m.ch[c].bias as f64, m.unit(c)),
-        Item::ChSkew(c) => si(m.ch[c].skew as f64, "s"),
-        Item::ChExpand => if m.v_expand_gnd { "Ground" } else { "Center" }.into(),
-        Item::ChFine => onoff(m.fine_v),
-        _ => return None,
-    })
+const fn channel<const C: usize>() -> [Descriptor; 13] {
+    use Item::*;
+    [
+        Descriptor::choice(ChOn(C), "Display", |u| onoff(u.m.ch[C].on), toggles),
+        Descriptor::value(ChScale(C), "Scale", |u| si_short(u.m.ch[C].volts_per_div() as f64, u.m.unit(C))),
+        Descriptor::value(ChOffset(C), "Offset", |u| si(u.m.ch[C].offset as f64, u.m.unit(C))),
+        Descriptor::choice(
+            ChCoupling(C),
+            "Coupling",
+            |u| u.m.ch[C].coupling.name().into(),
+            |_| board().couplings().iter().map(|c| c.name().into()).collect(),
+        ),
+        Descriptor::choice(
+            ChBw(C),
+            "Bandwidth",
+            |u| BWS[u.m.ch[C].bw].0.into(),
+            |_| BWS.iter().map(|b| b.0.into()).collect(),
+        ),
+        Descriptor::choice(
+            ChProbe(C),
+            "Probe",
+            |u| probe_label(u.m.ch[C].probe),
+            |_| PROBES.into_iter().map(probe_label).collect(),
+        ),
+        Descriptor::choice(ChInvert(C), "Invert", |u| onoff(u.m.ch[C].invert), toggles),
+        Descriptor::action(ChLabel(C), "Name"),
+        Descriptor::action(Open(MenuId::ChMore(C)), "More"),
+        Descriptor::choice(
+            ChUnit(C),
+            "Unit",
+            |u| u.m.unit(C).into(),
+            |_| AmpUnit::ALL.iter().map(|u| u.name().into()).collect(),
+        ),
+        Descriptor::value(ChBias(C), "Zero bias", |u| si(u.m.ch[C].bias as f64, u.m.unit(C))),
+        Descriptor::action(ChBiasZero(C), "Zero this input"),
+        Descriptor::value(ChSkew(C), "Deskew", |u| si(u.m.ch[C].skew as f64, "s")),
+    ]
 }
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
@@ -73,7 +115,7 @@ fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
         }
         Item::ChBw(c) => m.ch[c].bw = cyc(m.ch[c].bw, BWS.len(), d),
         Item::ChProbe(c) => {
-            let all = [1.0, 10.0, 100.0];
+            let all = PROBES;
             let i = all.iter().position(|&x| x == m.ch[c].probe).unwrap_or(0);
             m.ch[c].probe = all[cyc(i, 3, d)];
         }
@@ -119,44 +161,4 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
         _ => {}
     }
     true
-}
-
-fn options(_ui: &Ui, it: Item) -> Option<Vec<String>> {
-    let v: &[&str] = match it {
-        Item::ChOn(_) | Item::ChInvert(_) => &["Off", "On"],
-        Item::ChCoupling(_) => return Some(board().couplings().iter().map(|c| c.name().to_string()).collect()),
-        Item::ChProbe(_) => &["1x", "10x", "100x"],
-        Item::ChFine => &["Off", "On"],
-        Item::ChUnit(_) => &["V", "A", "W", "U"],
-        Item::ChExpand => &["Center", "Ground"],
-        Item::ChBw(_) => return Some(BWS.iter().map(|b| b.0.to_string()).collect()),
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(_ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Channel(c) => vec![
-            Item::ChOn(c),
-            Item::ChScale(c),
-            Item::ChOffset(c),
-            Item::ChCoupling(c),
-            Item::ChBw(c),
-            Item::ChProbe(c),
-            Item::ChInvert(c),
-            Item::ChFine,
-            Item::ChLabel(c),
-            Item::Open(MenuId::ChMore(c)),
-        ],
-        MenuId::ChMore(c) => vec![
-            Item::ChUnit(c),
-            Item::ChBias(c),
-            Item::ChBiasZero(c),
-            Item::ChSkew(c),
-            Item::AutoDeskew,
-            Item::ChExpand,
-        ],
-        _ => Vec::new(),
-    }
 }

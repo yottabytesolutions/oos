@@ -93,6 +93,14 @@ fn onoff(on: bool) -> String {
     if on { "On" } else { "Off" }.into()
 }
 
+fn choice_label<T: PartialEq>(value: T, choices: &[(T, &str)]) -> String {
+    choices.iter().find(|(v, _)| *v == value).map_or("", |(_, label)| *label).into()
+}
+
+fn choice_options<T>(choices: &[(T, &str)]) -> Vec<String> {
+    choices.iter().map(|(_, label)| (*label).into()).collect()
+}
+
 struct Area {
     descriptors: &'static [Descriptor],
     sources: fn(&Ui, MenuId) -> Vec<WaveId>,
@@ -297,8 +305,6 @@ pub(super) use navigation::main_groups;
 
 #[cfg(test)]
 pub(super) use decode::decode_items;
-
-pub(super) use trigger::trigger_items;
 
 pub(super) fn off_sources(ui: &Ui, menu: MenuId) -> Vec<usize> {
     let want = (for_menu(menu).sources)(ui, menu);

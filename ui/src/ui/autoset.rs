@@ -767,7 +767,7 @@ mod tests {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         // a new set-up: Auto bandwidth, noise reject off
         assert!(ui.m.ch.iter().all(|c| c.bw == BW_AUTO) && !ui.m.trig_nrej);
-        assert!(ui.trigger_items().contains(&Item::TrigNoise));
+        assert!(ui.menu_items(MenuId::Trigger).contains(&Item::TrigNoise));
         ui.select_option(Item::TrigNoise, "On");
         assert!(ui.m.trig_nrej && ui.m.trig_hyst_div() == 0.7);
         let back = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
@@ -982,7 +982,7 @@ mod tests {
         }
         // the option is part of the set-up and of the trigger menu
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        assert!(ui.trigger_items().contains(&Item::TrigAutoNoise));
+        assert!(ui.menu_items(MenuId::Trigger).contains(&Item::TrigAutoNoise));
         ui.select_option(Item::TrigAutoNoise, "On");
         assert!(crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap().auto_nrej);
     }

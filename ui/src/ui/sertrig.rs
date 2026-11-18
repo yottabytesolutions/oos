@@ -133,7 +133,7 @@ mod tests {
         ui.m.trig_bus = BusWhat::Data;
         assert_eq!(ui.serial_items(), [SerRel, SerMask, I2cBytes, I2cDir]);
         // the menu shows them right after the value
-        let t = ui.trigger_items();
+        let t = ui.menu_items(MenuId::Trigger);
         let k = t.iter().position(|&x| x == TrigBusVal).unwrap();
         assert_eq!(&t[k..k + 5], &[TrigBusVal, SerRel, SerMask, I2cBytes, I2cDir]);
     }

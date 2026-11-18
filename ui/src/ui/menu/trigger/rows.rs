@@ -1,103 +1,59 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Julian Decker
+
 use super::*;
 
-pub(in crate::ui) fn trigger_items(ui: &Ui) -> Vec<Item> {
-    use crate::model::TrigType as TT;
+pub(super) fn ordered_rows(ui: &Ui, _: MenuId) -> Vec<&'static Descriptor> {
     use Item::*;
-    let m = &ui.m;
-    let mut v = vec![Item::TrigType];
-    match m.trig_type {
-        // an LA line has no level of its own (LA page: pod threshold)
-        TT::Edge if m.trig_line().is_some() => v.extend([TrigSrc, TrigSlope]),
-        TT::Edge => v.extend([TrigSrc, TrigSlope, TrigLevel, Trig50, TrigCoup]),
-        // the protocol and its sources come from the Decode menu
-        TT::Bus => {
-            v.extend([DecProto, TrigBusWhat]);
-            if matches!(m.trig_bus, BusWhat::Id | BusWhat::Data) {
-                v.push(TrigBusVal);
-            }
-            v.extend(ui.serial_items());
+    let body: &[Item] = match ui.m.trig_type {
+        TT::Edge => &[TrigSrc, TrigSlope, TrigLevel, Trig50, TrigCoup],
+        TT::Bus => &[DecProto, TrigBusWhat, TrigBusVal],
+        TT::Pulse => &[TrigSrc, TrigPol, TrigWhen, TrigT1, TrigT2, TrigLevel],
+        TT::Slope => &[TrigSrc, TrigSlope, TrigWhen, TrigT1, TrigT2, TrigLevel, TrigLevel2],
+        TT::Video => &[TrigSrc, VidStd, VidSync, VidLine, TrigLevel],
+        TT::Pattern => &[Pat(0), Pat(1), Pat(2), Pat(3), TrigSrc, PatLevel, Open(MenuId::LaPat)],
+        TT::Duration => {
+            &[Pat(0), Pat(1), Pat(2), Pat(3), TrigWhen, TrigT1, TrigT2, TrigSrc, PatLevel, Open(MenuId::LaPat)]
         }
-        TT::Pulse => {
-            v.extend([TrigSrc, TrigPol]);
-            condition_items(m, &mut v);
-            v.push(TrigLevel);
-        }
-        TT::Slope => {
-            v.extend([TrigSrc, TrigSlope]);
-            condition_items(m, &mut v);
-            v.extend([TrigLevel, TrigLevel2]);
-        }
-        TT::Video => {
-            v.extend([TrigSrc, VidStd, VidSync]);
-            if m.video_sync == VSync::Line {
-                v.push(VidLine);
-            }
-            v.push(TrigLevel);
-        }
-        TT::Pattern | TT::Duration => pattern_items(m, &mut v),
-        TT::Timeout => v.extend([TrigSrc, TrigSlope, TrigT1, TrigLevel]),
-        TT::Runt => {
-            v.extend([TrigSrc, TrigPol]);
-            condition_items(m, &mut v);
-            v.extend([TrigLevel, TrigLevel2]);
-        }
-        TT::Window => {
-            v.extend([TrigSrc, WinModeI]);
-            if m.win_mode == WinMode::Inside {
-                condition_items(m, &mut v);
-            }
-            v.extend([TrigLevel, TrigLevel2]);
-        }
-        TT::Delay => {
-            v.extend([TrigSrc, TrigSlope, TrigSrc2, TrigSlope2]);
-            condition_items(m, &mut v);
-            v.extend([TrigLevel, TrigLevel2]);
-        }
-        TT::SetupHold => v.extend([TrigSrc, TrigSrc2, TrigSlope2, Setup, Hold, TrigLevel, TrigLevel2]),
-        TT::NthEdge => v.extend([TrigSrc, TrigSlope, NthIdle, NthN, TrigLevel]),
-    }
-    common_items(ui, &mut v);
-    v
+        TT::Timeout => &[TrigSrc, TrigSlope, TrigT1, TrigLevel],
+        TT::Runt => &[TrigSrc, TrigPol, TrigWhen, TrigT1, TrigT2, TrigLevel, TrigLevel2],
+        TT::Window => &[TrigSrc, WinModeI, TrigWhen, TrigT1, TrigT2, TrigLevel, TrigLevel2],
+        TT::Delay => &[TrigSrc, TrigSlope, TrigSrc2, TrigSlope2, TrigWhen, TrigT1, TrigT2, TrigLevel, TrigLevel2],
+        TT::SetupHold => &[TrigSrc, TrigSrc2, TrigSlope2, Setup, Hold, TrigLevel, TrigLevel2],
+        TT::NthEdge => &[TrigSrc, TrigSlope, NthIdle, NthN, TrigLevel],
+    };
+    let serial = if ui.m.trig_type == TT::Bus { ui.serial_items() } else { Vec::new() };
+    resolve_rows([TrigType].iter().chain(body).copied().chain(serial).chain([
+        TrigNoise,
+        TrigAutoNoise,
+        TrigMode,
+        SearchOn,
+        SearchTable,
+        SearchSave,
+        Open(MenuId::Zone),
+        TrigHoldoff,
+    ]))
 }
 
-fn common_items(ui: &Ui, v: &mut Vec<Item>) {
-    use crate::model::TrigType as TT;
-    use Item::*;
-    let m = &ui.m;
-    // the analog comparators: not for a protocol or an LA line
-    if m.trig_type != TT::Bus && m.trig_line().is_none() {
-        v.push(TrigNoise);
-    }
-    v.push(TrigAutoNoise);
-    v.push(TrigMode);
-    v.push(SearchOn);
-    if ui.search_on {
-        v.extend([SearchTable, SearchSave]);
-    }
-    v.push(Open(MenuId::Zone));
-    v.push(TrigHoldoff);
+fn resolve_rows(items: impl Iterator<Item = Item>) -> Vec<&'static Descriptor> {
+    let rows: std::collections::HashMap<_, _> = super::super::decode::AREA
+        .descriptors
+        .iter()
+        .chain(super::super::serial::AREA.descriptors)
+        .chain(ROWS)
+        .map(|row| (row.item, row))
+        .collect();
+    items.filter_map(|item| rows.get(&item).copied()).collect()
 }
 
-fn condition_items(m: &Model, v: &mut Vec<Item>) {
-    v.push(Item::TrigWhen);
-    if m.trig_when != WhenKind::Off {
-        v.push(Item::TrigT1);
-    }
-    if matches!(m.trig_when, WhenKind::In | WhenKind::Out) {
-        v.push(Item::TrigT2);
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn pattern_items(m: &Model, v: &mut Vec<Item>) {
-    use Item::*;
-    v.extend([Pat(0), Pat(1), Pat(2), Pat(3)]);
-    if m.trig_type == crate::model::TrigType::Duration {
-        condition_items(m, v);
-    }
-    v.extend([TrigSrc, PatLevel]);
-    if m.la_on() {
-        v.push(Open(MenuId::LaPat));
+    #[test]
+    fn unregistered_rows_are_skipped_without_losing_the_order() {
+        let items = [Item::TrigType, Item::ChOn(0), Item::TrigMode];
+        let rows = resolve_rows(items.into_iter());
+        assert_eq!(rows.iter().map(|row| row.item).collect::<Vec<_>>(), [Item::TrigType, Item::TrigMode]);
     }
 }

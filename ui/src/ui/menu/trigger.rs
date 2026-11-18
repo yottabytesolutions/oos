@@ -2,129 +2,167 @@
 // Copyright (C) 2026 Julian Decker
 
 use super::*;
+use crate::model::TrigType as TT;
 
-pub(super) const AREA: Area = Area { kind, label, value, adjust, activate, options, menu_items, ..Area::EMPTY };
+use choices::*;
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::TrigHoldoff => Kind::Value,
-        Item::TrigLevel2
-        | Item::TrigT1
-        | Item::TrigT2
-        | Item::VidLine
-        | Item::PatLevel
-        | Item::NthIdle
-        | Item::NthN
-        | Item::Setup
-        | Item::Hold => Kind::Value,
-        Item::TrigLevel => Kind::Value,
-        Item::SearchTable | Item::SearchSave | Item::Trig50 => Kind::Action,
-        _ => return None,
-    })
-}
+pub(super) const AREA: Area = Area {
+    descriptors: ROWS,
+    label: |it| LABELS.iter().find(|r| r.0 == it).map(|r| r.1),
+    ordered_rows: rows::ordered_rows,
+    adjust,
+    activate,
+    ..Area::EMPTY
+};
 
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Trigger) => "Trigger",
-        Item::SearchTable => "Event list",
-        Item::SearchSave => "Save events",
-        Item::TrigBusWhat => "Match",
-        Item::TrigBusVal => "Value",
-        Item::TrigSrc => "Source",
-        Item::TrigSlope => "Slope",
-        Item::TrigMode => "Sweep",
-        Item::TrigLevel => "Level",
-        Item::Trig50 => "Level 50 %",
-        Item::TrigType => "Type",
-        Item::SearchOn => "Mark events",
-        Item::TrigLevel2 => "Level 2",
-        Item::TrigSrc2 => "Source B",
-        Item::TrigSlope2 => "Slope B",
-        Item::TrigPol => "Polarity",
-        Item::TrigWhen => "When",
-        Item::TrigT1 => "Time",
-        Item::TrigT2 => "Upper limit",
-        Item::VidStd => "Standard",
-        Item::VidSync => "Sync",
-        Item::VidLine => "Line",
-        Item::Pat(0) => "CH1",
-        Item::Pat(1) => "CH2",
-        Item::Pat(2) => "CH3",
-        Item::Pat(_) => "CH4",
-        Item::PatLevel => "Level",
-        Item::WinModeI => "Trigger on",
-        Item::NthIdle => "Idle time",
-        Item::NthN => "Edge no.",
-        Item::Setup => "Setup",
-        Item::Hold => "Hold",
-        Item::TrigHoldoff => "Holdoff",
-        Item::TrigNoise => "Noise reject",
-        Item::TrigAutoNoise => "Auto noise rej.",
-        Item::TrigCoup => "Coupling",
-        _ => return None,
-    })
-}
+const LABELS: &[(Item, &str)] = &[(Item::Open(MenuId::Trigger), "Trigger")];
 
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    if it == Item::TrigSrc {
-        if let Some(line) = ui.m.trig_line() {
-            return Some(la::NAMES[line as usize].into());
-        }
-    }
-    if let Some(v) = value_condition(ui, it) {
-        return Some(v);
-    }
-    let m = &ui.m;
-    let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-    Some(match it {
-        Item::TrigSrc => ui.trigger_source_label(),
-        Item::TrigSlope => match m.slope {
-            Slope::Rise => "Rising".into(),
-            Slope::Fall => "Falling".into(),
-            Slope::Either => "Either".into(),
-        },
-        Item::TrigMode => format!("{:?}", m.trig_mode),
-        Item::TrigLevel => si(m.trig_level as f64, m.unit(m.trig_src)),
-        Item::TrigType => m.trig_type.name().into(),
-        Item::SearchOn => onoff(ui.search_on),
-        Item::TrigLevel2 => si(m.trig_level2 as f64, m.unit(m.trig_src)),
-        Item::TrigSrc2 => Ui::trigger_wave_label(m.trigger_wave2()),
-        Item::TrigSlope2 => match m.trig_slope2 {
-            Slope::Rise => "Rising".into(),
-            Slope::Fall => "Falling".into(),
-            Slope::Either => "Either".into(),
-        },
-        Item::TrigPol => {
-            if m.trig_pol == Pol::Pos {
-                "Positive".into()
-            } else {
-                "Negative".into()
-            }
-        }
-        Item::TrigWhen => match m.trig_when {
-            WhenKind::Off => "Off".into(),
-            WhenKind::Gt => ">".into(),
-            WhenKind::Lt => "<".into(),
-            WhenKind::In => "Inside".into(),
-            WhenKind::Out => "Outside".into(),
-        },
-        Item::TrigT1 => si_short(m.trig_t1 as f64, "s"),
-        Item::TrigT2 => si_short(m.trig_t2 as f64, "s"),
-        Item::TrigHoldoff => {
-            if m.holdoff <= 0.0 {
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    &[
+        Descriptor::choice(
+            TrigType,
+            "Type",
+            |u| u.m.trig_type.name().into(),
+            |_| TRIG_TYPES.iter().map(|t| t.name().into()).collect(),
+        ),
+        Descriptor::choice(
+            TrigSrc,
+            "Source",
+            |u| u.m.trig_line().map_or_else(|| u.trigger_source_label(), |line| la::NAMES[line as usize].into()),
+            |u| {
+                if u.m.trig_la_ok() {
+                    ch_names().into_iter().chain(la::NAMES.iter().map(|s| s.to_string())).collect()
+                } else {
+                    sources(u)
+                }
+            },
+        ),
+        Descriptor::choice(TrigSlope, "Slope", |u| choice_label(u.m.slope, SLOPES), |_| choice_options(SLOPES)),
+        Descriptor::choice(
+            TrigMode,
+            "Sweep",
+            |u| format!("{:?}", u.m.trig_mode),
+            |_| ["Auto", "Normal", "Single"].into_iter().map(String::from).collect(),
+        ),
+        Descriptor::value(TrigLevel, "Level", |u| si(u.m.trig_level as f64, u.m.unit(u.m.trig_src)))
+            .when(|u| u.m.trig_type != TT::Edge || analog(u)),
+        Descriptor::action(Trig50, "Level 50 %").when(analog),
+        Descriptor::choice(SearchOn, "Mark events", |u| onoff(u.search_on), toggles),
+        Descriptor::action(SearchTable, "Event list").when(|u| u.search_on),
+        Descriptor::action(SearchSave, "Save events").when(|u| u.search_on),
+        Descriptor::value(TrigLevel2, "Level 2", |u| si(u.m.trig_level2 as f64, u.m.unit(u.m.trig_src))),
+        Descriptor::choice(TrigSrc2, "Source B", |u| Ui::trigger_wave_label(u.m.trigger_wave2()), sources),
+        Descriptor::choice(
+            TrigSlope2,
+            "Slope B",
+            |u| choice_label(u.m.trig_slope2, SLOPES),
+            |_| choice_options(SLOPES),
+        ),
+        Descriptor::choice(
+            TrigPol,
+            "Polarity",
+            |u| choice_label(u.m.trig_pol, POLARITIES),
+            |_| choice_options(POLARITIES),
+        ),
+        Descriptor::choice(
+            TrigWhen,
+            "When",
+            |u| choice_label(u.m.trig_when, CONDITIONS),
+            |u| choice_options(conditions(u)),
+        )
+        .when(condition),
+        Descriptor::value(TrigT1, "Time", |u| si_short(u.m.trig_t1 as f64, "s"))
+            .when(|u| u.m.trig_type == TT::Timeout || (condition(u) && u.m.trig_when != WhenKind::Off)),
+        Descriptor::value(TrigT2, "Upper limit", |u| si_short(u.m.trig_t2 as f64, "s"))
+            .when(|u| condition(u) && (matches!(u.m.trig_when, WhenKind::In | WhenKind::Out))),
+        Descriptor::choice(
+            VidStd,
+            "Standard",
+            |u| choice_label(u.m.video_std, VIDEO_STANDARDS),
+            |_| choice_options(VIDEO_STANDARDS),
+        ),
+        Descriptor::choice(
+            VidSync,
+            "Sync",
+            |u| choice_label(u.m.video_sync, VIDEO_SYNC),
+            |_| choice_options(VIDEO_SYNC),
+        ),
+        Descriptor::value(VidLine, "Line", |u| u.m.video_line.to_string()).when(|u| u.m.video_sync == VSync::Line),
+        pattern::<0>(),
+        pattern::<1>(),
+        pattern::<2>(),
+        pattern::<3>(),
+        Descriptor::value(PatLevel, "Level", |u| si(u.m.pat_levels[u.m.trig_src] as f64, "V")),
+        Descriptor::choice(
+            WinModeI,
+            "Trigger on",
+            |u| choice_label(u.m.win_mode, WINDOW_MODES),
+            |_| choice_options(WINDOW_MODES),
+        ),
+        Descriptor::value(NthIdle, "Idle time", |u| si_short(u.m.nth_idle as f64, "s")),
+        Descriptor::value(NthN, "Edge no.", |u| u.m.nth_n.to_string()),
+        Descriptor::value(Setup, "Setup", |u| si_short(u.m.setup as f64, "s")),
+        Descriptor::value(Hold, "Hold", |u| si_short(u.m.hold as f64, "s")),
+        Descriptor::value(TrigHoldoff, "Holdoff", |u| {
+            if u.m.holdoff <= 0.0 {
                 "Off".into()
             } else {
-                si_short(m.holdoff as f64, "s")
+                si_short(u.m.holdoff as f64, "s")
             }
-        }
-        Item::TrigNoise => onoff(m.trig_nrej),
-        Item::TrigAutoNoise => onoff(m.auto_nrej),
-        Item::TrigCoup => m.trig_coup.name().into(),
-        Item::TrigBusWhat => m.trig_bus.name().into(),
-        Item::TrigBusVal => format!("0x{:X}", m.trig_bus_val),
-        _ => return None,
-    })
+        }),
+        Descriptor::choice(TrigNoise, "Noise reject", |u| onoff(u.m.trig_nrej), toggles)
+            .when(|u| u.m.trig_type != TT::Bus && analog(u)),
+        Descriptor::choice(TrigAutoNoise, "Auto noise rej.", |u| onoff(u.m.auto_nrej), toggles),
+        Descriptor::choice(
+            TrigCoup,
+            "Coupling",
+            |u| u.m.trig_coup.name().into(),
+            |_| TRIG_COUPS.iter().map(|c| c.name().into()).collect(),
+        )
+        .when(analog),
+        Descriptor::choice(
+            TrigBusWhat,
+            "Match",
+            |u| u.m.trig_bus.name().into(),
+            |_| ["Frame", "ID/Addr", "Data", "Error"].into_iter().map(String::from).collect(),
+        ),
+        Descriptor::choice(
+            TrigBusVal,
+            "Value",
+            |u| format!("0x{:X}", u.m.trig_bus_val),
+            |_| KEYPAD.iter().map(|k| k.to_string()).collect(),
+        )
+        .when(|u| matches!(u.m.trig_bus, BusWhat::Id | BusWhat::Data)),
+        Descriptor::reference(Open(MenuId::Zone)),
+        Descriptor::reference(Open(MenuId::LaPat)).when(|u| u.m.la_on()),
+    ]
+};
+
+fn analog(ui: &Ui) -> bool {
+    ui.m.trig_line().is_none()
 }
+
+fn condition(ui: &Ui) -> bool {
+    ui.m.trig_type != TT::Window || ui.m.win_mode == WinMode::Inside
+}
+
+fn sources(ui: &Ui) -> Vec<String> {
+    ui.trigger_sources().into_iter().map(Ui::trigger_wave_label).collect()
+}
+
+const fn pattern<const C: usize>() -> Descriptor {
+    Descriptor::choice(
+        Item::Pat(C),
+        ["CH1", "CH2", "CH3", "CH4"][C],
+        |u| choice_label(u.m.pat[C], PATTERN_BITS),
+        |u| choice_options(pattern_bits(u)),
+    )
+}
+
+mod choices;
+
+mod rows;
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
     if ui.la_adjust(it, d) {
@@ -194,96 +232,6 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
     true
 }
 
-fn options(ui: &Ui, it: Item) -> Option<Vec<String>> {
-    if it == Item::TrigSrc && ui.m.trig_la_ok() {
-        return Some(ch_names().into_iter().chain(la::NAMES.iter().map(|s| s.to_string())).collect());
-    }
-    let v: &[&str] = match it {
-        Item::SearchOn => &["Off", "On"],
-        Item::TrigSrc | Item::TrigSrc2 => {
-            return Some(ui.trigger_sources().into_iter().map(Ui::trigger_wave_label).collect())
-        }
-        Item::TrigSlope => &["Rising", "Falling", "Either"],
-        Item::TrigMode => &["Auto", "Normal", "Single"],
-        Item::TrigCoup => return Some(TRIG_COUPS.iter().map(|c| c.name().to_string()).collect()),
-        Item::TrigSlope2 => &["Rising", "Falling", "Either"],
-        Item::TrigPol => &["Positive", "Negative"],
-        Item::TrigWhen => {
-            if ui.m.trig_type == TrigType::Runt {
-                &["Off", ">", "<", "Inside", "Outside"]
-            } else {
-                &[">", "<", "Inside", "Outside"]
-            }
-        }
-        Item::VidStd => &["PAL", "NTSC"],
-        Item::VidSync => &["Lines", "Line n", "Odd", "Even", "Fields"],
-        Item::Pat(_) => {
-            if ui.m.trig_type == TrigType::Duration {
-                &["H", "L", "X"]
-            } else {
-                &["H", "L", "X", "Rise", "Fall"]
-            }
-        }
-        Item::WinModeI => &["Enter", "Exit", "Inside"],
-        Item::TrigBusWhat => &["Frame", "ID/Addr", "Data", "Error"],
-        Item::TrigNoise | Item::TrigAutoNoise => &["Off", "On"],
-        Item::TrigType => return Some(TRIG_TYPES.iter().map(|t| t.name().to_string()).collect()),
-        Item::TrigBusVal => return Some(KEYPAD.iter().map(|k| k.to_string()).collect()),
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Trigger => ui.trigger_items(),
-        // the Horizontal Menu key opens Acquire; time base and zoom one level down
-        _ => Vec::new(),
-    }
-}
-
-mod rows;
-pub(in crate::ui) use rows::trigger_items;
-
-fn value_condition(ui: &Ui, it: Item) -> Option<String> {
-    let m = &ui.m;
-    Some(match it {
-        Item::VidStd => {
-            if m.video_std == VideoStd::Pal {
-                "PAL".into()
-            } else {
-                "NTSC".into()
-            }
-        }
-        Item::VidSync => match m.video_sync {
-            VSync::AllLines => "Lines".into(),
-            VSync::Line => "Line n".into(),
-            VSync::Odd => "Odd".into(),
-            VSync::Even => "Even".into(),
-            VSync::AllFields => "Fields".into(),
-        },
-        Item::VidLine => format!("{}", m.video_line),
-        Item::Pat(c) => match m.pat[c] {
-            Bit::H => "H".into(),
-            Bit::L => "L".into(),
-            Bit::X => "X".into(),
-            Bit::R => "Rise".into(),
-            Bit::F => "Fall".into(),
-        },
-        Item::PatLevel => si(m.pat_levels[m.trig_src] as f64, "V"),
-        Item::WinModeI => match m.win_mode {
-            WinMode::Enter => "Enter".into(),
-            WinMode::Exit => "Exit".into(),
-            WinMode::Inside => "Inside".into(),
-        },
-        Item::NthIdle => si_short(m.nth_idle as f64, "s"),
-        Item::NthN => format!("{}", m.nth_n),
-        Item::Setup => si_short(m.setup as f64, "s"),
-        Item::Hold => si_short(m.hold as f64, "s"),
-        _ => return None,
-    })
-}
-
 fn adjust_condition(ui: &mut Ui, it: Item, d: i32) -> bool {
     let m = &mut ui.m;
     let cyc = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).rem_euclid(n as i32) as usize };
@@ -295,7 +243,7 @@ fn adjust_condition(ui: &mut Ui, it: Item, d: i32) -> bool {
         }
         Item::TrigPol => m.trig_pol = if m.trig_pol == Pol::Pos { Pol::Neg } else { Pol::Pos },
         Item::TrigWhen => {
-            let all: &[WhenKind] = if m.trig_type == TrigType::Runt {
+            let all: &[WhenKind] = if m.trig_type == TT::Runt {
                 &[WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out]
             } else {
                 &[WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out]
@@ -311,7 +259,7 @@ fn adjust_condition(ui: &mut Ui, it: Item, d: i32) -> bool {
         }
         Item::VidLine => m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32,
         Item::Pat(c) => {
-            let all = if m.trig_type == TrigType::Duration {
+            let all = if m.trig_type == TT::Duration {
                 &[Bit::H, Bit::L, Bit::X][..]
             } else {
                 &[Bit::H, Bit::L, Bit::X, Bit::R, Bit::F][..]
@@ -361,7 +309,7 @@ fn adjust_source(ui: &mut Ui, it: Item, d: i32) -> bool {
         return true;
     }
     if matches!(it, Item::TrigLevel | Item::TrigLevel2) && ui.m.trig_ref.is_some() {
-        let secondary = it == Item::TrigLevel2 && matches!(ui.m.trig_type, TrigType::Delay | TrigType::SetupHold);
+        let secondary = it == Item::TrigLevel2 && matches!(ui.m.trig_type, TT::Delay | TT::SetupHold);
         let step = d as f32 * ui.trigger_vpd(secondary) / 25.0;
         if it == Item::TrigLevel {
             ui.m.trig_level += step;
@@ -385,7 +333,7 @@ fn adjust_channel_level(ui: &mut Ui, it: Item, d: i32) {
             }
         }
         Item::TrigLevel2 => {
-            let c = if matches!(m.trig_type, TrigType::Delay | TrigType::SetupHold) { m.trig_src2 } else { m.trig_src };
+            let c = if matches!(m.trig_type, TT::Delay | TT::SetupHold) { m.trig_src2 } else { m.trig_src };
             m.trig_level2 += d as f32 * m.ch[c].volts_per_div() / 25.0;
             if m.trig_type.two_level() {
                 m.trig_level2 = m.trig_level2.min(m.trig_level);

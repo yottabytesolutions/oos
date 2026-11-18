@@ -40,6 +40,14 @@ Added:
 
 Changed:
 
+- Pending clock-floor restoration preserves `engaged reason restore-pending` after a verified raise (#197).
+  Unverified raises and startup recovery report `disabled reason restore-pending`; failed re-raises discard
+  stale verification while retaining the original rollback receipt. Clock diagnostics use owned samples refreshed
+  every second and after state changes; status queries perform no clock IO or wait for controller IO.
+  CPU minimum read-backs remain visible when floor control is off or unavailable, including without
+  available-frequency metadata. Absent, unreadable and malformed minima remain unknown.
+  Host-tested only; unit acceptance remains pending.
+
 - mDNS uses mdns-sd for dual-stack discovery, conflict handling and address changes (#194). Service switches,
   names and TXT records remain. Long advertised names are shortened to leave room for conflict suffixes.
   Reverse PTR, QU unicast replies and host publication without registered services are dropped. Host-tested only.

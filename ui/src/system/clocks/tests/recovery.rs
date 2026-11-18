@@ -132,7 +132,7 @@ fn locked_panic_child() {
     std::panic::set_hook(Box::new(|_| std::process::exit(74)));
     let handle = Handle::guarded(linux::controller(root, &root.join("saved"), Config::parse("")));
     handle.update(true);
-    let _held = oos_hal::sync::lock(&handle.0);
+    let _held = oos_hal::sync::lock(&handle.controller);
     panic!("locked clock panic");
 }
 
@@ -165,6 +165,80 @@ fn stale_staging_symlink_cannot_overwrite_another_file() {
     assert_eq!(std::fs::read_to_string(other).unwrap(), "keep");
 }
 
+struct PolicyFailure {
+    inner: linux::Sysfs,
+    failure: Arc<Mutex<Option<&'static str>>>,
+}
+impl Port for PolicyFailure {
+    fn read(&self, path: &str) -> io::Result<String> {
+        let failure = *oos_hal::sync::lock(&self.failure);
+        if path == format!("{}/scaling_min_freq", policies::A53) {
+            match failure {
+                Some("readback") => return Err(io::ErrorKind::PermissionDenied.into()),
+                Some("mismatch") => return Ok("1200000".into()),
+                _ => {}
+            }
+        }
+        self.inner.read(path)
+    }
+    fn write(&mut self, path: &str, value: u64) -> io::Result<()> {
+        if path == format!("{}/scaling_min_freq", policies::A53) && *oos_hal::sync::lock(&self.failure) == Some("write")
+        {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        self.inner.write(path, value)
+    }
+    fn entries(&self, path: &str) -> io::Result<Vec<String>> {
+        self.inner.entries(path)
+    }
+}
+
+#[test]
+fn persistent_policy_recovery_failure_does_not_block_later_devices() {
+    for config in ["", "perf.cpu_floor = off\nperf.gpu_floor = off"] {
+        for fault in ["unavailable", "write", "readback", "mismatch"] {
+            let tree = Tree::new();
+            policies::policies(&tree);
+            tree.set(policies::A53, "scaling_min_freq", "1200000");
+            tree.set(CPU, "scaling_min_freq", "1416000");
+            tree.set(GPU, "min_freq", "600000000");
+            if fault == "unavailable" {
+                std::fs::remove_file(tree.0.join(policies::A53).join("scaling_available_frequencies")).unwrap();
+            }
+            let receipt = "cpu-a53 408000\ncpu-a72 816000\ngpu 400000000\n";
+            std::fs::write(tree.0.join("saved"), receipt).unwrap();
+            let clock = ManualClock::new();
+            let failure = Arc::new(Mutex::new(Some(fault)));
+            let port = PolicyFailure { inner: linux::Sysfs(tree.0.clone()), failure: failure.clone() };
+            let mut c = Controller::with_clock(
+                Box::new(port),
+                Config::parse(config),
+                Some(GPU),
+                tree.0.join("saved"),
+                clock.source(),
+            );
+            for running in [true, false, true] {
+                assert!(c.status().to_string().contains("a53 disabled reason restore-pending"));
+                assert_eq!(tree.minima(), ("816000".into(), "400000000".into()));
+                assert_eq!(std::fs::read_to_string(tree.0.join("saved")).unwrap(), receipt);
+                assert!(c.recover().is_err(), "{fault}");
+                clock.advance(thermal::SAMPLE_PERIOD);
+                c.update(running);
+            }
+            *oos_hal::sync::lock(&failure) = None;
+            policies::policies(&tree);
+            tree.set(policies::A53, "scaling_min_freq", "1200000");
+            clock.advance(thermal::SAMPLE_PERIOD);
+            c.update(true);
+            assert_eq!(std::fs::read_to_string(tree.0.join(policies::A53).join("scaling_min_freq")).unwrap(), "408000");
+            assert!(!tree.0.join("saved").exists());
+            c.update(true);
+            assert_eq!(tree.minima(), ("816000".into(), "400000000".into()));
+            assert!(c.status().to_string().contains("a53 disabled reason recovery-failed"));
+        }
+    }
+}
+
 #[test]
 fn startup_restore_failure_owns_all_saved_minima_and_retries_without_raising() {
     for config in ["", "perf.cpu_floor = off\nperf.gpu_floor = off"] {
@@ -174,7 +248,7 @@ fn startup_restore_failure_owns_all_saved_minima_and_retries_without_raising() {
         let receipt = "cpu-a72 408000\ngpu 400000000\n";
         std::fs::write(tree.0.join("saved"), receipt).unwrap();
         let clock = ManualClock::new();
-        let failures = Arc::new(Mutex::new(2));
+        let failures = Arc::new(Mutex::new(4));
         let port = Failing { inner: linux::Sysfs(tree.0.clone()), failures: failures.clone() };
         let mut c = Controller::with_clock(
             Box::new(port),
@@ -188,7 +262,7 @@ fn startup_restore_failure_owns_all_saved_minima_and_retries_without_raising() {
         }
         for running in [true, false] {
             c.update(running);
-            assert_eq!(*oos_hal::sync::lock(&failures), 1);
+            assert_eq!(*oos_hal::sync::lock(&failures), 2);
         }
         clock.advance(thermal::SAMPLE_PERIOD);
         c.update(true);

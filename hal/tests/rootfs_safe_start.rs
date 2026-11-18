@@ -165,18 +165,10 @@ fn every_exit_restores_clock_receipt_even_when_no_restart_is_requested() {
         ("clean-retain", "1416000", false, 0),
     ] {
         let f = Fake::new(&format!("clock-{tag}"));
+        clock_sysfs(&f, available);
         let dir = "sys/devices/system/cpu/cpufreq/policy4";
-        std::fs::create_dir_all(f.p(dir)).unwrap();
-        f.write(&format!("{dir}/scaling_available_frequencies"), available);
-        f.write(&format!("{dir}/scaling_min_freq"), "1416000");
         let a53 = "sys/devices/system/cpu/cpufreq/policy0";
-        std::fs::create_dir_all(f.p(a53)).unwrap();
-        f.write(&format!("{a53}/scaling_available_frequencies"), "408000 1200000");
-        f.write(&format!("{a53}/scaling_min_freq"), "1200000");
         let gpu = "sys/class/devfreq/ff9a0000.gpu";
-        std::fs::create_dir_all(f.p(gpu)).unwrap();
-        f.write(&format!("{gpu}/available_frequencies"), "400000000 600000000");
-        f.write(&format!("{gpu}/min_freq"), "600000000");
         let a72 = if tag.starts_with("clean") { "cpu-a72" } else { "cpu" };
         f.write("tmp/oos-clock-floors", &format!("{a72} 408000\ncpu-a53 408000\ngpu 400000000"));
         f.exec("bin/ui", &format!("#!/bin/sh\ntouch \"$OOS_UI_TMP/oos-ui.off\"\nexit {rc}\n"));
@@ -186,10 +178,87 @@ fn every_exit_restores_clock_receipt_even_when_no_restart_is_requested() {
         let cpu = std::fs::read_to_string(f.p(&format!("{dir}/scaling_min_freq"))).unwrap();
         let gpu = std::fs::read_to_string(f.p(&format!("{gpu}/min_freq"))).unwrap();
         assert_eq!(cpu.trim(), if restored { "408000" } else { "1416000" });
-        assert_eq!(gpu.trim(), if restored { "400000000" } else { "600000000" });
+        assert_eq!(gpu.trim(), "400000000");
         let a53 = std::fs::read_to_string(f.p(&format!("{a53}/scaling_min_freq"))).unwrap();
-        assert_eq!(a53.trim(), if restored { "408000" } else { "1200000" });
+        assert_eq!(a53.trim(), "408000");
         let log = std::fs::read_to_string(f.p("tmp/oos-ui.log")).unwrap();
         assert!(log.contains(if restored { "device=cpu-a72 restored=408000" } else { "recovery failed" }));
+    }
+}
+
+fn clock_sysfs(f: &Fake, available: &str) {
+    let dir = "sys/devices/system/cpu/cpufreq/policy4";
+    std::fs::create_dir_all(f.p(dir)).expect("test fixture operation succeeds");
+    f.write(&format!("{dir}/scaling_available_frequencies"), available);
+    f.write(&format!("{dir}/scaling_min_freq"), "1416000");
+    let a53 = "sys/devices/system/cpu/cpufreq/policy0";
+    std::fs::create_dir_all(f.p(a53)).expect("test fixture operation succeeds");
+    f.write(&format!("{a53}/scaling_available_frequencies"), "408000 1200000");
+    f.write(&format!("{a53}/scaling_min_freq"), "1200000");
+    let gpu = "sys/class/devfreq/ff9a0000.gpu";
+    std::fs::create_dir_all(f.p(gpu)).expect("test fixture operation succeeds");
+    f.write(&format!("{gpu}/available_frequencies"), "400000000 600000000");
+    f.write(&format!("{gpu}/min_freq"), "600000000");
+}
+
+#[test]
+fn failed_policy_recovery_restores_later_devices_and_retains_receipt_until_retry() {
+    for fault in ["unavailable", "write", "readback", "mismatch"] {
+        let f = Fake::new(&format!("clock-independent-{fault}"));
+        clock_sysfs(&f, "408000 816000 1416000");
+        let minimum = "sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq";
+        let available = "sys/devices/system/cpu/cpufreq/policy0/scaling_available_frequencies";
+        let receipt = "cpu-a53 408000\ncpu 816000\ngpu 400000000\n";
+        f.write("tmp/oos-clock-floors", receipt);
+        f.write("tmp/fault", fault);
+        if fault == "unavailable" {
+            std::fs::remove_file(f.p(available)).unwrap();
+        } else if fault == "write" {
+            std::fs::remove_file(f.p(minimum)).unwrap();
+            std::fs::create_dir(f.p(minimum)).unwrap();
+        }
+        f.exec(
+            "host-bin/cat",
+            r#"#!/bin/sh
+case "$1" in
+    */policy0/scaling_min_freq)
+        if [ -e "$OOS_UI_TMP/fault" ]; then
+            case "$(/bin/cat "$OOS_UI_TMP/fault")" in
+                readback) exit 1 ;;
+                mismatch) echo 1200000; exit 0 ;;
+            esac
+        fi ;;
+esac
+exec /bin/cat "$@"
+"#,
+        );
+        f.exec("bin/ui", "#!/bin/sh\ntouch \"$OOS_UI_TMP/oos-ui.off\"\nexit 137\n");
+        for _ in 0..2 {
+            let out = f.command("oos-ui-loop").env("OOS_CLOCK_SYSFS", f.p("sys")).output().unwrap();
+            assert!(out.status.success(), "{out:?}");
+            assert_eq!(std::fs::read_to_string(f.p("tmp/oos-clock-floors")).unwrap(), receipt);
+            assert_eq!(
+                std::fs::read_to_string(f.p("sys/class/devfreq/ff9a0000.gpu/min_freq")).unwrap().trim(),
+                "400000000"
+            );
+            assert_eq!(
+                std::fs::read_to_string(f.p("sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq")).unwrap().trim(),
+                "816000"
+            );
+            std::fs::remove_file(f.p("tmp/oos-ui.off")).unwrap();
+        }
+        let log = std::fs::read_to_string(f.p("tmp/oos-ui.log")).unwrap();
+        assert_eq!(log.matches("recovery failed; receipt retained").count(), 2, "{log}");
+        assert_eq!(log.matches("device=gpu restored=400000000").count(), 2, "{log}");
+        std::fs::remove_file(f.p("tmp/fault")).unwrap();
+        if fault == "write" {
+            std::fs::remove_dir(f.p(minimum)).unwrap();
+            f.write(minimum, "1200000");
+        }
+        f.write(available, "408000 1200000");
+        let out = f.command("oos-ui-loop").env("OOS_CLOCK_SYSFS", f.p("sys")).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert!(!f.p("tmp/oos-clock-floors").exists());
+        assert_eq!(std::fs::read_to_string(f.p(minimum)).unwrap().trim(), "408000");
     }
 }

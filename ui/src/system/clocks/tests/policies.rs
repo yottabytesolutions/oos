@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use super::*;
 
-const A53: &str = "devices/system/cpu/cpufreq/policy0";
+pub(super) const A53: &str = "devices/system/cpu/cpufreq/policy0";
 
 pub(super) fn policies(tree: &Tree) {
     tree.set(A53, "scaling_available_frequencies", "1200000 408000 1008000 600000");

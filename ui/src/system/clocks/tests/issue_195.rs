@@ -96,6 +96,39 @@ fn state_query_reports_gpu_readbacks_floors_and_upload_quantiles() {
 }
 
 #[test]
+fn state_query_distinguishes_verified_and_unverified_pending_restoration() {
+    for case in ["verified-raise", "unverified-raise", "startup-recovery"] {
+        let tree = Tree::new();
+        let receipt = "cpu-a72 408000\n";
+        if case == "startup-recovery" {
+            tree.set(CPU, "scaling_min_freq", "1416000");
+            std::fs::write(tree.0.join("saved"), receipt).unwrap();
+        }
+        let failures = Arc::new(Mutex::new(usize::from(case != "verified-raise")));
+        let port = Failing { inner: linux::Sysfs(tree.0.clone()), failures: failures.clone() };
+        let clock = ManualClock::new();
+        let mut c = Controller::with_clock(
+            Box::new(port),
+            Config::parse("perf.gpu_floor = off"),
+            None,
+            tree.0.join("saved"),
+            clock.source(),
+        );
+        c.update(true);
+        *oos_hal::sync::lock(&failures) = 3;
+        c.update(false);
+        let host = crate::ui::host::Host::fixture_with_clocks(Handle::fixture(c));
+        let mut ui = crate::ui::Ui::new(crate::wave::Source::Hw { shared: Default::default(), seen: 0 }, host);
+        let mut scpi = crate::scpi::Scpi::open(0, false);
+        let canvas = crate::gfx::Canvas::new(1, 1);
+        let text = String::from_utf8(scpi.exec_line(&mut ui, &canvas, ":SYSTem:STATe?")).unwrap();
+        let state = if case == "verified-raise" { "engaged" } else { "disabled" };
+        assert!(text.contains(&format!("a72 {state} reason restore-pending")), "{case}: {text}");
+        assert_eq!(std::fs::read_to_string(tree.0.join("saved")).unwrap(), receipt);
+    }
+}
+
+#[test]
 fn state_reasons_distinguish_unavailable_off_failed_and_idle_floors() {
     let tree = Tree::new();
     let mut c = tree.controller("perf.gpu_floor = off");
@@ -216,10 +249,15 @@ fn gpu_readbacks_survive_disabled_floors_and_report_missing_attributes_independe
         }
     }
     std::fs::remove_file(tree.0.join("saved")).unwrap();
-    let c = tree.controller("");
+    let clock = ManualClock::new();
+    let mut c = tree.controller_with_clock(&clock);
     tree.set(GPU, "cur_freq", "bad");
+    clock.advance(thermal::SAMPLE_PERIOD);
+    c.update(false);
     assert!(c.status().to_string().contains("gpu_clock current_hz=unknown min_hz=400000000 max_hz=600000000"));
     tree.set(GPU, "cur_freq", "200000000");
     std::fs::remove_file(tree.0.join(GPU).join("max_freq")).unwrap();
+    clock.advance(thermal::SAMPLE_PERIOD);
+    c.update(false);
     assert!(c.status().to_string().contains("gpu_clock current_hz=200000000 min_hz=400000000 max_hz=unknown"));
 }

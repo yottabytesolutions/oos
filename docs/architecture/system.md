@@ -288,6 +288,8 @@ the receipt after every exit, including unclean deaths (SIGKILL, SIGSEGV and
 allocator abort) and clean exits with pending recovery, even without a restart. Startup independently restores it
 before reading new previous minima, including when switches are now off. Failed
 or invalid recovery keeps the receipt and disables new floors for that process.
+Startup and supervisor recovery attempt every saved device despite earlier IO or
+verification failures, removing the receipt only when every entry verifies.
 Failed STOP/thermal restores retry at most once per second; teardown still
 tries immediately. Only the first restore failure and eventual success are
 logged per device. A reboot discards tmpfs and resets the kernel's clock policy.
@@ -310,9 +312,25 @@ verified for this change; task 0086 records the required unit capture.
 
 `:SYSTem:STATe?` reports GPU current/minimum/maximum frequencies in Hz and each
 floor's engaged/disabled state with a reason. `cpu_floor a53` and `a72` each
-include their minimum read-back as `min_khz`. Missing readings are `unknown`.
-A verified floor that cannot restore remains `engaged reason restore-pending`,
-including during thermal inhibition. An unverified raise reports `not-engaged`.
+include their minimum read-back as `min_khz`. CPU samples read the known policy0
+and policy4 paths independently of floor enablement and available-frequency metadata.
+A readable minimum is reported even with `config-off` or `device-unavailable`;
+absent, unreadable and malformed readings are `unknown`. Control and sampling share
+the canonical CPU policy paths.
+The controller owns a bounded sample of five optional frequency values, refreshed
+through the clock port at construction and on the first lifecycle update at or after
+each one-second deadline, even with floors disabled. RUN/STOP changes and raise/restore
+attempts refresh it after IO. The handle owns the latest status snapshot separately
+from the controller IO lock, so repeated queries neither read sysfs nor wait for IO.
+A failed sample replaces the affected value with `unknown` until a later sample succeeds.
+A floor whose last raise was verified remains `engaged reason restore-pending`
+until restoration succeeds, including during thermal inhibition. An unverified
+raise or startup recovery with outstanding rollback reports
+`disabled reason restore-pending`. A new raise invalidates prior verification
+before writing the minimum and becomes verified only after a valid read-back.
+Rollback receipt ownership is independent of this status: both pending states
+keep the original minimum across STOP, RUN re-entry and unsuccessful restoration.
+An unverified raise without pending restoration reports `not-engaged`.
 `diag gpu.upload` reports panel upload p50/p99 in ns over the latest 256 completed
 panel uploads, using the existing diagnostic-ring pending thresholds. HDMI uploads
 and idle frames do not enter that ring. These additions are host-tested only.

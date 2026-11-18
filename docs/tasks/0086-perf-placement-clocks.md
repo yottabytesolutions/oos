@@ -66,7 +66,25 @@ The owner's explicit task assignment authorizes this claim on the supplied base.
    Fixture review: regenerate `tools/tests/fixtures/perfmap/state.txt` through
    the real SCPI host test, update its README provenance and compare clock
    status in `ui/src/ui/tests/change_picture_contracts.rs` to prevent drift.
-7. Test lifecycle, unavailable values, missing nodes, independent opt-outs,
+7. Follow up on PR #197: retain verified-raise status through pending STOP or
+   thermal rollback, distinguish unverified raises and startup recovery, and
+   invalidate old verification before a new raise writes. Keep original receipt
+   ownership across retries and RUN re-entry. Cover both wire outputs and a
+   failed re-raise with host fixtures; retain the unit acceptance hold.
+8. PR #197 status IO review: sample owned clock read-backs at construction,
+   at the existing one-second update cadence, and after material state changes.
+   Keep query formatting independent of port IO and the controller IO lock.
+   Prove repeated SCPI queries perform no reads and later samples refresh values,
+   retaining verified/pending semantics and the hardware hold.
+9. PR #197 cross-vendor readback fix: share canonical CPU policy paths between
+   control and sampling, independently of enabled or available floor controls.
+   Cover config-off, missing available-frequency metadata, absent policies and
+   failed reads with host fixtures; preserve snapshots, cadence and receipts.
+10. PR #197 recovery follow-up: attempt every saved floor despite earlier policy
+    IO or verification failures in the UI and supervisor; retain the complete
+    receipt until all entries verify. Cover persistent A53 failure, later GPU
+    restoration and successful retry with host fixtures. Keep the unit hold.
+11. Test lifecycle, unavailable values, missing nodes, independent opt-outs,
    failed writes and restoration against a fake filesystem, debug and release.
    Run the gate's exact clippy step and `cargo xtask check --fast`; preserve
    complete logs and exits. No ratchet edits or commits.
@@ -179,6 +197,108 @@ done
 ```
 
 ## Status
+
+- 2026-11-18: PR #197 recovery follow-up ready for coordinator review.
+  UI and supervisor recovery continue after per-device IO or verification
+  failures, retain the original receipt on any failure and clear it only after
+  all entries verify. Persistent A53 metadata, write, read-back and mismatch
+  fixtures prove later A72/GPU restoration, repeated failure retention and
+  eventual retry success. Startup raise inhibition remains latched, including
+  with both switches off. Validation, legacy/duplicate handling and passive
+  thermal behavior are unchanged. Both regressions failed before the fix
+  (exit 101). Touched-crate host nextest suites pass debug 2262 and optimized
+  test-release 2261, each with 69 existing skips (exit 0). After the final
+  fixture cleanup, supervisor tests pass 31 in each profile (exit 0).
+  Initial clippy failed on three unwraps in the extracted fixture helper;
+  using the existing fixture expect convention fixes them. Final clippy:
+  `partial gate passed (not done): 1 steps in 2 s` (exit 0). Fast gate:
+  `partial gate passed (not done): 12 steps in 12 s` (exit 0), including
+  this evidence update. No lowered ratchet counts. Production delta: +8 Rust
+  lines; shell tooling: +3 lines. Complete logs are in
+  `target/recovery-evidence/`. Changed controller/recovery tests, supervisor/
+  safe-start fixtures, system documentation and this task. Host-only; no
+  hardware access or Git writes. Hardware hold, independent review, full
+  integration gate and unit acceptance remain with the coordinator and owner.
+
+- 2026-11-18: PR #197 recovery review follow-up claimed on a040135c under
+  the existing reserved paths. Fix early returns in UI and supervisor recovery;
+  preserve validation, original values and startup inhibition. Host fixtures,
+  relevant crate tests and fast gate only; hardware hold unchanged.
+
+- 2026-11-18: PR #197 cross-vendor readback fix ready for coordinator review.
+  Control and sampling share canonical policy0/A53 and policy4/A72 definitions;
+  read-backs no longer depend on the retained floor-control list. Config-off and
+  missing available-frequency metadata preserve readable minima. Absent policies,
+  unreadable and malformed minima report unknown independently. Four new host
+  fixtures cover both policies, unchanged state/reason fields, no disabled-control
+  receipts, refresh deadlines and the five-read sample bound. Existing query IO,
+  owned snapshot and rollback regressions pass unchanged. Before the fix, the
+  sample suite failed three regressions (exit 101); final focused clock tests
+  pass 68 (exit 0). Complete oos-ui host suites pass: debug 1769 and optimized
+  test-release 1768, each with 59 existing skips and exit 0. Clippy exits 0:
+  `partial gate passed (not done): 1 steps in 31 s`. Fast gate exits 0:
+  `partial gate passed (not done): 12 steps in 12 s`; rerun after this evidence
+  update. No lowered ratchet counts. Production delta is -1 Rust line, no tooling
+  growth. Updated clock controller/paths/status and fixtures, system/state-query
+  docs, this task and the existing changelog entry. Commands, logs and exits are
+  in `target/cpu-readback-evidence/`. Host-only; no hardware access, commits or
+  pushes. Owner's hardware hold remains; independent review, the full integration
+  gate and unit acceptance remain with the coordinator and owner.
+
+- 2026-11-18: PR #197 cross-vendor readback follow-up claimed on the supplied
+  revision. Plan above reserves controller, canonical policy paths, sampler,
+  clock fixtures and system/state-query docs. Decouple readback topology from
+  retained floor controls; preserve state/reason fields, receipt ownership,
+  owned snapshots and sampling bounds. Host-only; hardware hold stays with owner.
+
+- 2026-11-18: PR #197 query IO review fix ready for coordinator review. The
+  existing verified-raise/failed-restore-write SCPI regression passes unchanged;
+  no rollback state-machine redesign. Read-backs are now owned samples refreshed
+  through the port at construction, at one-second update deadlines and after
+  RUN/STOP changes or raise/restore attempts. The handle's status snapshot is
+  independent of the controller IO lock. Field names, units, unknown values and
+  verified/pending semantics remain unchanged. Updated controller/status, clock
+  fixtures, state-query/system docs and the existing changelog entry.
+  The new repeated-query regression failed before the fix: 100 queries added
+  500 reads (exit 101). Final clock suites pass 64 tests in each profile, including
+  queries after an elapsed deadline, zero reads before a later update, refreshed
+  diagnostics and queries while the controller lock is held. Complete oos-ui host
+  suites pass: debug 1765 and optimized test-release 1764, each with 59 skipped
+  and exit 0. The final deadline assertion was added after the full debug run and
+  optimized build; focused suites were rebuilt and rerun in both profiles afterward.
+  Clippy exits 0: `partial gate passed (not done): 1 steps in 56 s`.
+  Fast gate exits 0: `partial gate passed (not done): 12 steps in 9 s`;
+  a final rerun covers the completed evidence update. No lowered ratchet counts.
+  Production delta is +40 Rust lines, no tooling growth. Commands, logs and exits
+  are in `target/status-sample-evidence/`. Host-only; hardware hold retained.
+  Independent review, full integration gate and unit acceptance remain with the
+  coordinator. No commits, pushes or hardware access.
+
+- 2026-11-18: PR #197 query IO follow-up claimed on the supplied revision.
+  Reserve the existing clock controller/status and clock host fixtures, plus
+  state-query/system docs and the existing changelog entry. Verify the landed
+  rollback regression unchanged, then sample diagnostics through the clock port.
+  Host fixtures only; unit hold and coordinator review/integration remain.
+
+- 2026-11-18: PR #197 pending-restoration wire contract restored for verified
+  raises; unverified raises and startup recovery remain disabled while rollback
+  is outstanding. Re-raises invalidate old verification before writes, keeping
+  the original receipt through STOP, RUN re-entry and unsuccessful restoration.
+  Updated controller/status, clock fixtures, state-query/system docs and changelog.
+  Before the fix, clock regressions reported 54 passed and 5 failed (exit 101).
+  Complete oos-ui host suites pass: debug 1763 and optimized test-release 1762,
+  each with 59 skipped and exit 0. Clippy exits 0:
+  `partial gate passed (not done): 1 steps in 99 s`.
+  Final fast gate exits 0: `partial gate passed (not done): 12 steps in 17 s`.
+  No lowered ratchet counts. Production delta is +12 Rust lines, no tooling growth.
+  Commands, logs and exits are in `target/floor-status-evidence/`.
+  Host-only; unit hold retained. Independent review, full integration gate and
+  unit acceptance remain with the coordinator.
+
+- 2026-11-18: PR #197 status-contract follow-up claimed on the supplied branch.
+  Plan above reserves the existing clock adapter, host tests and diagnostic docs.
+  Host fixtures only; independent review, integration and unit acceptance remain
+  with the coordinator.
 
 - 2026-11-18: PR #197 state-fixture review fix: regenerated the complete
   perfmap reply from the real SCPI host test and updated fixture provenance.

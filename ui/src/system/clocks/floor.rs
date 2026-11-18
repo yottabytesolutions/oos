@@ -5,6 +5,8 @@ use std::io;
 use std::str::FromStr;
 use std::sync::Arc;
 
+pub(super) const CPU_POLICIES: [(Kind, &str); 2] = [(Kind::CpuA72, "policy4"), (Kind::CpuA53, "policy0")];
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
     CpuA53,
@@ -86,7 +88,13 @@ pub(super) enum FloorPhase {
     // Only a valid raise read-back enters Raised. Every non-idle state owns the same receipt.
     Raised(u64),
     // Any restore attempt enters RestorePending; only confirmed restoration enters Idle.
-    RestorePending(u64),
+    RestorePending { previous: u64, raise_verified: bool },
+}
+
+impl FloorPhase {
+    pub(super) fn raise_verified(self) -> bool {
+        matches!(self, Self::Raised(_) | Self::RestorePending { raise_verified: true, .. })
+    }
 }
 
 pub(super) struct Floor {
@@ -104,9 +112,9 @@ impl Floor {
     pub(super) fn saved(&self) -> Option<u64> {
         match self.phase {
             FloorPhase::Idle => None,
-            FloorPhase::Prepared(previous) | FloorPhase::Raised(previous) | FloorPhase::RestorePending(previous) => {
-                Some(previous)
-            }
+            FloorPhase::Prepared(previous)
+            | FloorPhase::Raised(previous)
+            | FloorPhase::RestorePending { previous, .. } => Some(previous),
         }
     }
 
@@ -147,6 +155,11 @@ impl Floor {
     pub(super) fn raise(&mut self, io: &mut dyn Port) -> io::Result<()> {
         let Some(previous) = self.saved() else { return Ok(()) };
         let applied = self.requested(io, previous)?;
+        // Keep rollback ownership, but no earlier verification survives a new write attempt.
+        self.phase = match self.phase {
+            FloorPhase::RestorePending { .. } => FloorPhase::RestorePending { previous, raise_verified: false },
+            _ => FloorPhase::Prepared(previous),
+        };
         // The controller persisted this minimum before calling raise.
         io.write(&self.device.minimum(), applied)?;
         let actual = io.read(&self.device.minimum())?.trim().parse::<u64>().map_err(io::Error::other)?;
@@ -176,8 +189,8 @@ impl Floor {
         let Some(previous) = self.saved() else {
             return Ok(());
         };
-        let retry = matches!(self.phase, FloorPhase::RestorePending(_));
-        self.phase = FloorPhase::RestorePending(previous);
+        let retry = matches!(self.phase, FloorPhase::RestorePending { .. });
+        self.phase = FloorPhase::RestorePending { previous, raise_verified: self.phase.raise_verified() };
         let result = self.restore_value(io, previous);
         match &result {
             Err(error) if !retry => {

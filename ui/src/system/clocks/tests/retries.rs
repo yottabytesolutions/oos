@@ -246,3 +246,38 @@ fn startup_unverified_restoration_stays_pending_until_forced_retry_confirms_it()
     assert!(c.status().to_string().contains("a72 disabled reason recovery-failed"));
     assert!(!tree.0.join("saved").exists());
 }
+
+#[test]
+fn failed_reraise_invalidates_verification_without_replacing_the_receipt() {
+    let tree = Tree::new();
+    let clock = ManualClock::new();
+    let failures = Arc::new(Mutex::new(ReadBackFailure { pending: false, after_write: false }));
+    let port = Uncertain { inner: linux::Sysfs(tree.0.clone()), failures: failures.clone() };
+    let mut c = Controller::with_clock(
+        Box::new(port),
+        Config::parse("perf.gpu_floor = off"),
+        None,
+        tree.0.join("saved"),
+        clock.source(),
+    );
+    c.update(true);
+    assert!(c.status().to_string().contains("a72 engaged reason none"));
+    let receipt = std::fs::read_to_string(tree.0.join("saved")).unwrap();
+    oos_hal::sync::lock(&failures).after_write = true;
+    c.update(false);
+    assert!(c.status().to_string().contains("a72 engaged reason restore-pending"));
+    assert_eq!(tree.minima().0, "408000");
+    c.update(true);
+    assert_eq!(tree.minima().0, "1416000");
+    assert!(c.status().to_string().contains("a72 disabled reason restore-pending"));
+    assert_eq!(std::fs::read_to_string(tree.0.join("saved")).unwrap(), receipt);
+    c.update(false);
+    assert!(c.status().to_string().contains("a72 disabled reason restore-pending"));
+    assert_eq!(std::fs::read_to_string(tree.0.join("saved")).unwrap(), receipt);
+    oos_hal::sync::lock(&failures).after_write = false;
+    clock.advance(thermal::SAMPLE_PERIOD);
+    c.update(false);
+    assert_eq!(tree.minima().0, "408000");
+    assert!(c.status().to_string().contains("a72 disabled reason idle"));
+    assert!(!tree.0.join("saved").exists());
+}

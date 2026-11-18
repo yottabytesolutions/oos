@@ -49,6 +49,7 @@ restore_clocks() (
     [ -e "$receipt" ] || exit 0
     sys=${OOS_CLOCK_SYSFS:-/sys}
     seen=
+    restore_failed=false
     while read -r device value extra || [ -n "$device$value$extra" ]; do
         # Canonicalise legacy A72 receipts before detecting duplicate policies.
         [ "$device" != cpu ] || device=cpu-a72
@@ -67,18 +68,20 @@ restore_clocks() (
                      [ -d "$node" ] || continue
                      dir=$node; break
                  done
-                 [ -n "$dir" ] || exit 1
+                 [ -n "$dir" ] || { restore_failed=true; continue; }
                  minimum=$dir/min_freq; available=$dir/available_frequencies ;;
             *) exit 1 ;;
         esac
-        frequencies=$(cat "$available") || exit 1
-        case " $frequencies " in *" $value "*) ;; *) exit 1 ;; esac
-        echo "$value" > "$minimum" || exit 1
-        restored=$(cat "$minimum") || exit 1
-        [ "$restored" = "$value" ] || exit 1
-        echo "oos-ui-loop: clock_floor recovery device=$device restored=$value"
+        frequencies=$(cat "$available") || { restore_failed=true; continue; }
+        case " $frequencies " in *" $value "*) ;; *) restore_failed=true; continue ;; esac
+        if echo "$value" > "$minimum" && restored=$(cat "$minimum") && [ "$restored" = "$value" ]; then
+            echo "oos-ui-loop: clock_floor recovery device=$device restored=$value"
+        else
+            restore_failed=true
+        fi
     done < "$receipt"
     [ -n "$seen" ] || exit 1
+    [ "$restore_failed" = false ] || exit 1
     rm -f "$receipt"
 )
 seq=0

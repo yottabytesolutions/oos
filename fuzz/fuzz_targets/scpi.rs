@@ -22,6 +22,6 @@ libfuzzer_sys::fuzz_target!(|data: &[u8]| {
         let mut scpi = Scpi::disconnected();
         let mut ui = Ui::new(Source::Demo { t: 0.0 }, Host::headless());
         let canvas = Canvas::new(1, 1);
-        let _ = scpi.exec_line_checked(&mut ui, &canvas, &text);
+        let _ = scpi.exec_message_checked(&mut ui, &canvas, &text);
     }
 });

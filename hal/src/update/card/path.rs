@@ -7,20 +7,34 @@ use std::io;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::Path;
 
-impl Card {
-    /// Only the opened regular file can opt into simulated units, extra keys and direct test installs.
-    pub fn is_test_file(&self) -> io::Result<bool> {
-        Ok(self.f.metadata()?.is_file())
-    }
-}
+mod host;
 
 /// Resolve aliases, then validate the opened object before any card reads or writes.
 pub fn open_checked(path: &Path, write: bool) -> Result<Card, String> {
     let path = fs::canonicalize(path).map_err(|e| format!("card path: {e}"))?;
     let card = Card::open(&path, write).map_err(|e| format!("card open: {e}"))?;
-    let meta = card.f.metadata().map_err(|e| format!("card metadata: {e}"))?;
+    Ok(card)
+}
+
+/// Host boot tools may write a whole removable card, with the same layout and range checks as the unit.
+pub fn open_removable(path: &Path) -> Result<Card, String> {
+    let path = fs::canonicalize(path).map_err(|e| format!("card path: {e}"))?;
+    #[cfg(target_os = "macos")]
+    let path = host::buffered_path(&path);
+    Card::open_at(&path, true, true).map_err(|e| format!("card open: {e}"))
+}
+
+pub(super) fn check_file(file: &fs::File, path: &Path, removable: bool) -> io::Result<()> {
+    validate_file(file, path, removable).map_err(io::Error::other)
+}
+
+fn validate_file(file: &fs::File, path: &Path, removable: bool) -> Result<(), String> {
+    let meta = file.metadata().map_err(|e| format!("card metadata: {e}"))?;
     if meta.is_file() {
-        return Ok(card);
+        return Ok(());
+    }
+    if removable {
+        return host::check(&meta, path);
     }
     if !meta.file_type().is_block_device() {
         return Err("card must be a regular test file or the board's SD block device".into());
@@ -30,8 +44,7 @@ pub fn open_checked(path: &Path, write: bool) -> Result<Card, String> {
     #[cfg(not(target_os = "linux"))]
     let number = meta.rdev() as libc::dev_t;
     let sys = format!("/sys/dev/block/{}:{}", libc::major(number), libc::minor(number));
-    check_device(Path::new(&sys), crate::target::ACTIVE.card_controller)?;
-    Ok(card)
+    check_device(Path::new(&sys), crate::target::ACTIVE.card_controller)
 }
 
 /// Sysfs maps the opened device number to its controller on both stock Android and OOS.

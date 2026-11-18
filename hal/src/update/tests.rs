@@ -1045,3 +1045,19 @@ fn install_and_restore_reports_describe_their_actual_start_paths() {
 }
 
 mod sd;
+
+#[test]
+fn refused_writes_leave_the_card_unchanged_and_boot_writes_only_four_bytes() {
+    let fake = Fake::new("checked-writer", None);
+    let mut card = fake.card();
+    let before = card.read(BOOT_LBA, 512).unwrap();
+    assert!(card.write_checked("boot", BOOT_LBA * SECTOR, &[0; 512]).is_err());
+    assert!(card.write_checked("misc", crate::target::ACTIVE.layout.bcb_lba * SECTOR, &[0; 512]).is_err());
+    assert_eq!(card.read(BOOT_LBA, 512).unwrap(), before);
+    card.arm_oos().unwrap();
+    let after = card.read(BOOT_LBA, 512).unwrap();
+    assert_eq!(&after[..4], b"OOSK");
+    assert_eq!(&after[4..], &before[4..]);
+    let readonly = Card::open(std::path::Path::new("/dev/null"), true);
+    assert!(readonly.is_err());
+}

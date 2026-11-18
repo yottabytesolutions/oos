@@ -87,6 +87,15 @@ pub(crate) const CHECKS: &[Check] = &[
         [],
         crate::text::check
     ),
+    entry!(
+        "protected-storage",
+        "protected storage",
+        "python3 -I tools/protected_storage.py",
+        "Git, Python",
+        Fast,
+        [],
+        steps::scripts::protected_storage
+    ),
     entry!("doctor-base", "doctor-base", "doctor", "tools/bootstrap.sh; no Docker", Host, [], crate::doctor::check),
     entry!(
         "doctor",

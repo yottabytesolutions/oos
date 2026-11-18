@@ -77,6 +77,8 @@ their containers with `--rm`, use no network and keep output scratch private. Mi
 The default gate runs `doctor-base` without Docker, in addition to committed pin/lock syntax
 alongside formatting. The image tier adds the GPU/simulation doctor profiles before their consumers.
 Fast checks preserve G1 and task 0020 dispatch and need Python with `tomllib`.
+The `protected-storage` fast check rejects raw storage-write primitives outside the checked writer in
+`hal/src/update/card/writer.rs` (ADR 0011). Its explicit `dd` exceptions are regular host images, not devices.
 
 Install Docker and QEMU separately, without using bootstrap as an OS package installer. On x86-64, configure arm64
 emulation manually using the distribution's QEMU/binfmt setup.

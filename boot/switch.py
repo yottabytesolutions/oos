@@ -15,6 +15,7 @@ It does NOT read the boot command in `misc` on a normal power-on (tested 2026-11
 import argparse, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import boardconf
+import storage
 
 SECTOR = 512
 BOARD = boardconf.load()
@@ -51,21 +52,17 @@ def main():
         return
     writes = []
     if boot[:4] != want:
-        writes.append((BOOT_LBA, want + boot[4:]))
+        writes.append((BOOT_LBA, want))
     if fix_backup:
-        writes.append((BACKUP_LBA, b"KRNL" + bak[4:]))
+        writes.append((BACKUP_LBA, b"KRNL"))
     if not a.execute:
         for lba, sec in writes:
             print(f"dry run: would write {sec[:4]!r} at LBA {lba}")
         print("add --execute")
         return
-    with open(a.target, "r+b", buffering=0) as f:
-        for lba, sec in writes:
-            f.seek(lba * SECTOR)
-            f.write(sec)
-        os.fsync(f.fileno())
-        ok = all(rd(f, lba) == sec for lba, sec in writes)
-    print("written and verified" if ok else "READ-BACK MISMATCH")
+    for lba, sec in writes:
+        storage.write(a.target, "boot" if lba == BOOT_LBA else "backup", lba * SECTOR, sec)
+    print("written and verified")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ fn default_gate_never_selects_docker_or_image_prerequisites() {
             "test-time",
             "links",
             "text",
+            "protected-storage",
             "doctor-base",
             "clippy",
             "plan-matrix",
@@ -92,7 +93,8 @@ fn selections_preserve_the_fast_prefix_and_conditional_checks() {
             "agent-rules",
             "test-time",
             "links",
-            "text"
+            "text",
+            "protected-storage"
         ]
     );
     let full = ids(false, true, false);

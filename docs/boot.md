@@ -64,6 +64,13 @@ boots `recovery`, and if it refuses that image it boots `backup`, which holds a 
 (`card-install.py --fallback-stock`), in its first 32 MiB. Back to stock: write `KRNL` again. `boot/switch.py` does this
 on a card in a host computer. The OOS initramfs restores `KRNL` at start (one-shot), and `oos-boot-oos-again` sets `OOSK`.
 
+`card-install.py` and `switch.py` require a host build of `oos-update` on PATH, or selected with `OOS_UPDATE`.
+They submit writes with `storage-write --host-card`, which accepts card-image files and whole removable Linux
+devices or physical removable/external SD/USB disks on macOS. macOS `/dev/rdiskN` targets use the buffered
+`/dev/diskN` alias for short boot-selector writes. The unit's `--card` path still requires its SD controller.
+Both paths enforce the stock layout and the same ADR 0011 write ranges. Physical reader writes remain unverified
+on hardware for this change.
+
 ### Ramdisk length must be a multiple of 4
 
 Verified on the unit: the loader refuses an image whose ramdisk length is not a multiple of 4. It hashes with the RK3399

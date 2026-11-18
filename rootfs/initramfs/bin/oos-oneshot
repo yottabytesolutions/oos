@@ -4,13 +4,12 @@
 # One-shot return to stock. The stock loader (Rigol U-Boot 2014.10, 2024-08-29) boots `boot`; when the image in `boot`
 # fails its check it tries `recovery` (this OOS image), then `backup`. OOS is selected by replacing the magic "KRNL" at
 # the start of `boot` with "OOSK"; this script puts "KRNL" back so the next power-on boots stock Android.
-# It also clears a leftover "boot-recovery" in `misc` (not evaluated by this loader).
+# misc/BCB stays untouched under ADR 0011.
 # Checks first that the device is the board's SD card and that its PARM table has the stock layout (/etc/oos-board).
 . "${OOS_BOARD_FILE:-/etc/oos-board}"
 dev=${OOS_DEV:-/dev/mmcblk0}
 log=${OOS_LOG:-/dev/kmsg}
 BOOT_LBA=$OOS_BOOT_LBA
-BCB_LBA=$OOS_BCB_LBA
 for i in $(seq 1 50); do { [ -b $dev ] || [ -f $dev ]; } && break; sleep 0.2; done
 { [ -b $dev ] || [ -f $dev ]; } || { echo "oos-oneshot: no $dev" > $log; exit 1; }
 [ -n "${OOS_TEST:-}" ] || readlink -f /sys/block/mmcblk0/device | grep -q "$OOS_CARD_CONTROLLER" || { echo "oos-oneshot: mmcblk0 is not the SD card, skipped" > $log; exit 1; }
@@ -28,24 +27,14 @@ done
 magic=$(dd if=$dev bs=512 skip=$BOOT_LBA count=1 2>/dev/null | head -c 4)
 case "$magic" in
 	OOSK)
-		dd if=$dev bs=512 skip=$BOOT_LBA count=1 of=/tmp/bootsec 2>/dev/null
-		{ printf 'KRNL'; tail -c 508 /tmp/bootsec; } > /tmp/bootsec.new
-		dd if=/tmp/bootsec.new of=$dev bs=512 seek=$BOOT_LBA count=1 conv=notrunc,fsync 2>/dev/null \
-			|| { echo "oos-oneshot: RESTORE write or fsync FAILED" > $log; exit 1; }
-		sync || { echo "oos-oneshot: RESTORE sync FAILED" > $log; exit 1; }
-		# The initramfs busybox-static enables FEATURE_DD_IBS_OBS, including iflag=direct.
-		now=$(dd if=$dev bs=512 skip=$BOOT_LBA count=1 iflag=direct 2>/dev/null | head -c 4)
-		[ "$now" = KRNL ] || { echo "oos-oneshot: RESTORE FAILED ($now)" > $log; exit 1; }
+        printf KRNL | oos-update storage-write boot "$((BOOT_LBA * 512))" --card "$dev" --execute \
+            || { echo "oos-oneshot: RESTORE write or verification FAILED" > "$log"; exit 1; }
+        sync || { echo "oos-oneshot: RESTORE sync FAILED" > "$log"; exit 1; }
+        now=$(dd if=$dev bs=512 skip=$BOOT_LBA count=1 iflag=direct 2>/dev/null | head -c 4)
+        [ "$now" = KRNL ] || { echo "oos-oneshot: RESTORE FAILED ($now)" > "$log"; exit 1; }
 		echo "oos-oneshot: boot magic restored, next power-on boots stock" > $log;;
 	KRNL) echo "oos-oneshot: boot already valid (stock boots next time)" > $log;;
 	*) echo "oos-oneshot: unexpected boot magic '$magic', left alone" > $log; exit 1;;
 esac
-cmd=$(dd if=$dev bs=512 skip=$BCB_LBA count=1 2>/dev/null | head -c 13)
-if [ "$cmd" = "boot-recovery" ]; then
-	dd if=$dev bs=512 skip=$BCB_LBA count=1 of=/tmp/bcb 2>/dev/null
-	{ head -c 32 /dev/zero; tail -c 480 /tmp/bcb; } > /tmp/bcb.new
-	dd if=/tmp/bcb.new of=$dev bs=512 seek=$BCB_LBA count=1 conv=notrunc,fsync 2>/dev/null; sync
-fi
 
-# A misc cleanup failure cannot invalidate the confirmed KRNL selection.
 exit 0

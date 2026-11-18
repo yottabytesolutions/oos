@@ -23,8 +23,19 @@ Slot 0x800000 is reserved for a future OOS bitstream, which requires an opt-in f
 record before any write is implemented. Current OOS writes no FPGA flash. BOOT selects only slots 0x000000 and 0x400000.
 There is no exception path to the protected-area list.
 
-Check: protected_areas_before/protected_areas_after in tools/device-test.py; review. A host allowlist test and mandatory
-protected-area evidence for releases and PRs touching update, boot, rootfs or HAL boot paths are the target follow-up.
+All raw card writes use `hal/src/update/card/writer.rs`, which owns the writable descriptor and checks the named
+area and complete byte range before writing, syncing and reading back. Device identity follows the opened descriptor,
+not its path spelling. Host boot tools and `oos-oneshot` submit bytes through `oos-update storage-write`.
+Formatting and repair operate on a regular image of OOS data, then submit changed bytes through the same writer.
+Legacy misc/BCB writes and whole-card clone writes are refused.
+
+Check: host range, opened-device, CLI and boot-ordering tests; the fast gate's `protected-storage` rule rejects raw
+storage-write primitives outside the writer. FPGA flash has no accepted range, including slot 0x800000 until a future
+owner-approved implementation.
+
+The protected-area before/after checks in tools/device-test.py and review
+remain hardware evidence. Mandatory protected-area evidence for releases and PRs touching update, boot, rootfs or
+HAL boot paths is still the target follow-up. This writer change is not yet verified on hardware.
 
 ## Alternatives
 

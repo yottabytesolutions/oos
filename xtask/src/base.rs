@@ -8,6 +8,7 @@
 
 use crate::ratchet::Ratchet;
 use crate::run;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// The ref to compare with: the CI override, else the first of `main`, `origin/main` that exists.
@@ -80,6 +81,22 @@ pub fn protected(ctx: &crate::run::Context, root: &Path) -> Result<String, Strin
     let exists = |r: &str| git(ctx, root, &["rev-parse", "--verify", "--quiet", r]).is_ok();
     let base = select(std::env::var_os("CI").is_some(), env.as_deref(), exists)?;
     commit(ctx, root, &base)
+}
+
+/// Paths changed since `commit`, including staged, unstaged, deleted and untracked files.
+pub fn changed_files(ctx: &run::Context, root: &Path, commit: &str) -> Result<BTreeSet<String>, String> {
+    let mut files = BTreeSet::new();
+    for args in [
+        vec!["diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", commit, "--"],
+        vec!["ls-files", "--others", "--exclude-standard", "-z"],
+    ] {
+        let out = run::capture(ctx, root, "git", &args)?;
+        if !out.ok {
+            return Err(format!("git {}: {}", args.join(" "), out.stderr.trim()));
+        }
+        files.extend(out.stdout.split('\0').filter(|s| !s.is_empty()).map(str::to_string));
+    }
+    Ok(files)
 }
 
 /// The text of `rel` at the protected base of the repository at `root`.

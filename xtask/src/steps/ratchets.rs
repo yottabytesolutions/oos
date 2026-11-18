@@ -7,6 +7,7 @@ use crate::base::{self, At};
 use crate::moves::{self, Move};
 use crate::ratchet::Ratchet;
 use crate::store::{self, Kind};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// The planned moves at the base and on the branch. `ratchet --move` keeps the moves the base still needs, so they
@@ -54,6 +55,36 @@ fn allowed(
     Ok((moves::apply(&work, &moves)?, base))
 }
 
+/// An impl removed from a changed file still makes that file a constituent of the type's spread at the base.
+fn impl_touched(
+    ctx: &crate::run::Context,
+    root: &Path,
+    commit: &str,
+    krate: &str,
+    ty: &str,
+    changed: &BTreeSet<String>,
+) -> Result<bool, String> {
+    let prefix = format!("{krate}/");
+    for file in changed.iter().filter(|f| f.starts_with(&prefix) && f.ends_with(".rs")) {
+        let current = match std::fs::read_to_string(root.join(file)) {
+            Ok(text) => Some(text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(format!("{file}: {e}")),
+        };
+        let before = match base::at(ctx, root, commit, file)? {
+            At::Present(text) => Some(text),
+            _ => None,
+        };
+        for text in [before, current].into_iter().flatten() {
+            let impls = crate::size::inherent_impls(&text).map_err(|e| format!("{file}: {e}"))?;
+            if impls.iter().any(|name| name == ty) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Compares `now` of every crate (`(crate, entries)`) with the ratchet files of `kind`, moves applied. A crate allows
 /// what its files list and what the moves bring into it; a new crate without files starts clean.
 pub fn ratcheted(ctx: &crate::run::Context, root: &Path, kind: Kind, now: &[(&'static str, Ratchet)]) -> Outcome {
@@ -66,10 +97,22 @@ pub fn ratcheted(ctx: &crate::run::Context, root: &Path, kind: Kind, now: &[(&'s
             return Err(widened.into_iter().map(|w| format!("{} ratchet: {}", kind.name(), w)).collect());
         }
     }
+    let changed = base::changed_files(ctx, root, &commit).map_err(|e| vec![e])?;
     let (mut ok, mut bad) = (Vec::new(), Vec::new());
     for (krate, n) in now {
         let v = store::of_crate(&work, krate).compare(n);
         bad.extend(v.failures().into_iter().map(|f| format!("{}: {}", krate, f)));
+        for (key, allowed, now) in &v.shrunk {
+            let touched = match key.strip_prefix(&format!("impls {krate} ")).filter(|_| kind == Kind::Size) {
+                Some(ty) => impl_touched(ctx, root, &commit, krate, ty, &changed).map_err(|e| vec![e])?,
+                None => key.split(' ').nth(1).is_some_and(|file| changed.contains(file)),
+            };
+            if touched {
+                bad.push(format!(
+                    "{krate}: {key} has unused ratchet slack: {allowed} -> {now}; run cargo xtask ratchet"
+                ));
+            }
+        }
         let total: u64 = n.0.values().sum();
         let shrunk = if v.shrunk.is_empty() {
             String::new()
@@ -89,6 +132,133 @@ mod tests {
 
     fn r(t: &str) -> Ratchet {
         Ratchet::parse(t).expect("r")
+    }
+
+    #[test]
+    fn impl_spread_slack_requires_a_changed_constituent_file() {
+        for (name, allowance, current, delete) in
+            [("reduced", 5, 4, false), ("fixed", 4, 0, false), ("deleted", 5, 4, true)]
+        {
+            let d = repo(
+                &format!("impl-slack-{name}"),
+                &[(
+                    &[
+                        ("xtask/Cargo.toml", "x"),
+                        ("xtask/data/ui/size.txt", &format!("{allowance} impls ui Ui\n")),
+                        ("ui/src/a.rs", "impl Ui {}\n"),
+                        ("ui/src/b.rs", "impl Other {}\n"),
+                        ("core/src/a.rs", "impl Ui {}\n"),
+                        ("ui/src/tests.rs", "#[cfg(test)] mod tests { impl Ui {} }\n"),
+                        ("ui/src/traits.rs", "impl Clone for Ui {}\n"),
+                    ],
+                    "base",
+                )],
+            );
+            git(&d, &["checkout", "-q", "-b", "change"]);
+            commit(&d, &[("README", "unrelated change")], "change");
+            let now = if current == 0 { Ratchet::default() } else { r(&format!("{current} impls ui Ui\n")) };
+            let check = || ratcheted(&Default::default(), &d, Kind::Size, &[("ui", now.clone())]);
+            assert!(check().is_ok(), "untouched slack must pass");
+            for file in ["ui/src/b.rs", "core/src/a.rs", "ui/src/tests.rs", "ui/src/traits.rs"] {
+                let path = d.join(file);
+                let text = std::fs::read_to_string(&path).expect("read");
+                std::fs::write(path, format!("{text}// unrelated edit\n")).expect("edit");
+            }
+            assert!(check().is_ok(), "unrelated impls must not require tightening");
+            if delete {
+                std::fs::remove_file(d.join("ui/src/a.rs")).expect("delete");
+            } else {
+                std::fs::write(d.join("ui/src/a.rs"), "").expect("remove impl");
+            }
+            assert_eq!(
+                check().expect_err("impl slack"),
+                [format!(
+                    "ui: impls ui Ui has unused ratchet slack: {allowance} -> {current}; run cargo xtask ratchet"
+                )]
+            );
+            store::save(&d, "ui", Kind::Size, &now).expect("tighten");
+            assert!(check().is_ok(), "tightened impl spread must pass");
+            std::fs::remove_dir_all(&d).expect("clean up");
+        }
+    }
+
+    #[test]
+    fn unused_slack_requires_tightening_only_for_touched_files() {
+        for (kind, prefix) in [
+            (Kind::Size, "fn"),
+            (Kind::Clippy, "ui"),
+            (Kind::Statics, "static"),
+            (Kind::Unsafe, "unsafe"),
+            (Kind::Allow, "allow"),
+            (Kind::Known, "known"),
+            (Kind::TestTime, "time"),
+        ] {
+            let a = format!("{prefix} ui/src/a.rs finding");
+            let b = format!("{prefix} ui/src/b.rs finding");
+            let allowance = format!("3 {a}\n3 {b}\n");
+            let d = repo(
+                &format!("slack-{}", kind.name()),
+                &[(
+                    &[
+                        ("xtask/Cargo.toml", "x"),
+                        (&store::rel("ui", kind), &allowance),
+                        ("ui/src/a.rs", "before"),
+                        ("ui/src/b.rs", "before"),
+                    ],
+                    "base",
+                )],
+            );
+            git(&d, &["checkout", "-q", "-b", "change"]);
+            commit(&d, &[("README", "unrelated change")], "change");
+            let now = [("ui", r(&format!("2 {a}\n2 {b}\n")))];
+            let check = |now: &[(&'static str, Ratchet)]| ratcheted(&Default::default(), &d, kind, now);
+            assert!(check(&now).is_ok(), "untouched slack must pass");
+            std::fs::write(d.join("ui/src/a.rs"), "after").expect("edit");
+            assert_eq!(
+                check(&now).expect_err("touched slack"),
+                [format!("ui: {a} has unused ratchet slack: 3 -> 2; run cargo xtask ratchet")]
+            );
+            let tightened = store::load(&d, "ui", kind).expect("load").tightened(&now[0].1);
+            store::save(&d, "ui", kind, &tightened).expect("tighten");
+            assert!(check(&now).is_ok(), "tightened entries must pass");
+            std::fs::remove_file(d.join("ui/src/a.rs")).expect("delete");
+            let gone = [("ui", Ratchet::default())];
+            assert_eq!(
+                check(&gone).expect_err("removed finding"),
+                [format!("ui: {a} has unused ratchet slack: 2 -> 0; run cargo xtask ratchet")]
+            );
+            store::save(&d, "ui", kind, &tightened.tightened(&gone[0].1)).expect("drop fixed entries");
+            assert!(check(&gone).is_ok());
+            std::fs::remove_dir_all(&d).expect("clean up");
+        }
+    }
+
+    #[test]
+    fn moved_entries_must_be_tightened_at_the_destination() {
+        let d = repo(
+            "moved-slack",
+            &[(
+                &[
+                    ("xtask/Cargo.toml", "x"),
+                    ("xtask/data/ui/size.txt", "90 fn ui/src/a.rs f\n"),
+                    ("ui/src/a.rs", "before"),
+                ],
+                "base",
+            )],
+        );
+        git(&d, &["checkout", "-q", "-b", "move"]);
+        git(&d, &["mv", "ui/src/a.rs", "ui/src/b.rs"]);
+        commit(&d, &[("xtask/data/moves.txt", "ui/src/a.rs -> ui/src/b.rs\n")], "move");
+        let check = |n| ratcheted(&Default::default(), &d, Kind::Size, &[("ui", r(n))]);
+        assert!(check("90 fn ui/src/b.rs f\n").is_ok(), "unchanged move must pass");
+        let error = check("80 fn ui/src/b.rs f\n").expect_err("moved slack");
+        assert_eq!(error, ["ui: fn ui/src/b.rs f has unused ratchet slack: 90 -> 80; run cargo xtask ratchet"]);
+        crate::tighten::apply_moves_in(&d, &["ui"]).expect("--move");
+        let now = r("80 fn ui/src/b.rs f\n");
+        let tightened = store::load(&d, "ui", Kind::Size).expect("load").tightened(&now);
+        store::save(&d, "ui", Kind::Size, &tightened).expect("tighten");
+        assert!(check("80 fn ui/src/b.rs f\n").is_ok());
+        std::fs::remove_dir_all(&d).expect("clean up");
     }
 
     // The point of moves: an entry under its new key passes against the base's old key, a larger one does not.

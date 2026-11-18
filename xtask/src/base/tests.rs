@@ -36,6 +36,42 @@ fn the_base_override_counts_only_in_ci() {
 
 use crate::testrepo::repo;
 
+#[test]
+fn changed_files_include_committed_and_local_changes_and_both_rename_paths() {
+    use crate::testrepo::{commit, git};
+    let d = repo(
+        "changed-files",
+        &[(
+            &[
+                ("committed.rs", "before"),
+                ("staged.rs", "before"),
+                ("unstaged.rs", "before"),
+                ("deleted.rs", "before"),
+                ("old.rs", "before"),
+                ("untouched.rs", "before"),
+            ],
+            "base",
+        )],
+    );
+    git(&d, &["checkout", "-q", "-b", "change"]);
+    commit(&d, &[("committed.rs", "after")], "committed change");
+    std::fs::write(d.join("staged.rs"), "after").expect("write");
+    git(&d, &["add", "staged.rs"]);
+    std::fs::write(d.join("unstaged.rs"), "after").expect("write");
+    std::fs::write(d.join("new file.rs"), "new").expect("write");
+    std::fs::remove_file(d.join("deleted.rs")).expect("delete");
+    git(&d, &["mv", "old.rs", "new.rs"]);
+    assert_eq!(
+        changed_files(&Default::default(), &d, "main").expect("changed files"),
+        ["committed.rs", "deleted.rs", "new file.rs", "new.rs", "old.rs", "staged.rs", "unstaged.rs"]
+            .map(str::to_string)
+            .into_iter()
+            .collect()
+    );
+    assert!(changed_files(&Default::default(), &d, "no-such-base").is_err());
+    std::fs::remove_dir_all(&d).expect("clean up");
+}
+
 // The holes: on the base branch the merge base was HEAD itself; a missing file at a base that already had the gate
 // was taken as "no ratchet yet".
 #[test]

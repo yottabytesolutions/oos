@@ -5588,6 +5588,33 @@ mod tests {
 #[cfg(test)]
 mod draw_path_tests {
     use super::*;
+    use crate::drawpipe::Mode;
+    use crate::wave::Source;
+
+    fn state_pipeline_after_route(ui: &mut Ui, route: &str) -> String {
+        let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
+        let mut scpi = Scpi::open(0, false);
+        let program = format!(":SYSTem:PIPeline {route};:SYSTem:STATe?");
+        let state = String::from_utf8(scpi.exec_line(ui, &cv, &program)).unwrap();
+        state.split_once(" pipeline ").unwrap().1.split_whitespace().next().unwrap().to_owned()
+    }
+
+    #[test]
+    fn hardware_state_reports_the_active_draw_route_after_scpi_switches() {
+        let mut ui = Ui::for_tests(Source::Hw { shared: Default::default(), seen: 0 });
+        for (route, expected) in [("FRAMes", "Frames"), ("BATCh", "Batch"), ("STANdard", "Frames")] {
+            assert_eq!(state_pipeline_after_route(&mut ui, route), expected, "{route}");
+        }
+    }
+
+    #[test]
+    fn demo_state_keeps_the_startup_draw_route_after_scpi_switches() {
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+        assert_eq!(ui.switches().pipeline, Mode::Batch);
+        for route in ["FRAMes", "BATCh", "STANdard"] {
+            assert_eq!(state_pipeline_after_route(&mut ui, route), "Batch", "{route}");
+        }
+    }
 
     // Break it catches: the draw path switch not reaching the model or the setup, or the pipe running where the
     // switch is off
@@ -5610,7 +5637,7 @@ mod draw_path_tests {
         q(&mut ui, ":SYST:PIP FRAM");
         assert!(!ui.m.draw_batch);
         // Non-hardware sources retain the startup pipeline selection.
-        assert_eq!(crate::ui::change::acquisition::draw_switches(&ui, &ui.m).pipeline, crate::drawpipe::Mode::Batch);
+        assert_eq!(crate::ui::change::acquisition::draw_switches(&ui, &ui.m).pipeline, Mode::Batch);
         q(&mut ui, ":SYST:PIP BOGUS");
         assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
     }

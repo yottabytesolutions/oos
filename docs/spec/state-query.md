@@ -94,7 +94,7 @@ so the whole diagnostic answer is not an atomic multi-counter snapshot.
 | state-query-25 | `gpu.upload` | optional f1, ms | ui.t_gpu[3]; last panel helper frame upload timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
 | state-query-26 | `gpu.draw` | optional f1, ms | ui.t_gpu[4]; last panel helper frame draw timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
 | state-query-27 | `gpu.read` | optional f1, ms | ui.t_gpu[5]; last panel helper frame readback timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
-| state-query-28 | `pipeline` | enum Frames/Batch | startup switches.pipeline; not m.draw_batch or the effective draw_switches route | `ui/src/drawpipe.rs:354` |
+| state-query-28 | `pipeline` | enum Frames/Batch | effective draw_switches route; hardware uses m.draw_batch, other sources use startup switches.pipeline | `ui/src/ui/change/acquisition.rs:10` |
 | state-query-29 | `interp` | enum Exact/Fast | switches.interp; sparse interpolation policy | `ui/src/sparse.rs:161` |
 | state-query-30 | `acquired` | u64, frames | drawpipe::Counters.acquired; process aggregate of frames acquired | `ui/src/drawpipe.rs:320` |
 | state-query-31 | `used` | u64, frames | drawpipe::Counters.used; process aggregate of frames drawn into picture | `ui/src/drawpipe.rs:320` |
@@ -110,13 +110,12 @@ so the whole diagnostic answer is not an atomic multi-counter snapshot.
 | state-query-41 | `gpu.panel` | optional f1, ms | ui.t_gpu_screens.0; helper time of last panel frame | `ui/src/cmd.rs:168` |
 | state-query-42 | `gpu.monitor` | optional f1, ms | ui.t_gpu_screens.1 when Some; helper time of last monitor frame; monitor is every second frame | `ui/src/cmd.rs:167` |
 
-The `pipeline` diagnostic (state-query-28) reads the startup host switch,
-while :SYST:PIPeline? reads m.draw_batch. Hardware draw_switches substitutes
-the model preference; non-hardware paths retain startup switches. These can
-differ after a remote write; the diagnostic is not proof of the effective
-route. Evidence: `ui/src/cmd.rs:156`, `ui/src/ui/host.rs:88`,
-`ui/src/ui/change/acquisition.rs:62`. This merged-tree mismatch remains
-observable and is not repaired by the re-spec.
+The `pipeline` diagnostic (state-query-28) reads the effective draw route from
+`draw_switches`, while `:SYST:PIPeline?` reads `m.draw_batch`. Hardware uses the
+model preference, including live changes through `:SYST:PIPeline`.
+Non-hardware sources retain the startup pipeline switch, so their diagnostic
+can differ from the model preference. Evidence: `ui/src/cmd.rs:154`,
+`ui/src/ui/change/acquisition.rs:10`.
 
 ## Pacing, composition and frame costs
 

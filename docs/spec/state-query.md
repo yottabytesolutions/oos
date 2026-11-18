@@ -25,11 +25,10 @@ fps F frames N records N run R status S t T step X ms (acq A draw D)
 render X ms present X ms edges A B C D off SUM MAX
 parts meas X analyse X pane X max X ms
 [gpu layers X copy X wait X (upload X draw X read X) ms]
-pipeline MODE interp MODE acquired N used N dropped N measured N compress k K
+pipeline MODE route=ROUTE interp MODE acquired N used N dropped N measured N compress k K
 deep reads N dma X decode X record X measure X ms (N pts)
 [gpu panel X [monitor X] ms]
 pacing ... picture ... settle ...
-cost frames N wide N us decode/level/near/wide/frame A/B/C/D/E
 rss BYTES_OR_UNKNOWN watchdog STATE [gpu_failures N gpu_restarts N gpu_retry STATE]
 persistence on_OR_off last_crash none_OR_TIME_AND_TEXT
 shadow acq=N mapping=N phosphor=N stats=N mask=N zone=N hw_average=N
@@ -94,11 +93,11 @@ so the whole diagnostic answer is not an atomic multi-counter snapshot.
 | state-query-25 | `gpu.upload` | optional f1, ms | ui.t_gpu[3]; last panel helper frame upload timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
 | state-query-26 | `gpu.draw` | optional f1, ms | ui.t_gpu[4]; last panel helper frame draw timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
 | state-query-27 | `gpu.read` | optional f1, ms | ui.t_gpu[5]; last panel helper frame readback timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
-| state-query-28 | `pipeline` | enum Frames/Batch | effective draw_switches route; hardware uses m.draw_batch, other sources use startup switches.pipeline | `ui/src/ui/change/acquisition.rs:10` |
+| state-query-28 | `pipeline` | enum Frames/Batch | accepted draw_switches route; hardware uses accepted m.draw_batch, other sources use startup switches.pipeline | `ui/src/ui/change/acquisition.rs:18` |
 | state-query-29 | `interp` | enum Exact/Fast | switches.interp; sparse interpolation policy | `ui/src/sparse.rs:161` |
 | state-query-30 | `acquired` | u64, frames | drawpipe::Counters.acquired; process aggregate of frames acquired | `ui/src/drawpipe.rs:320` |
 | state-query-31 | `used` | u64, frames | drawpipe::Counters.used; process aggregate of frames drawn into picture | `ui/src/drawpipe.rs:320` |
-| state-query-32 | `dropped` | u64, frames | drawpipe::Counters.dropped; process aggregate of frames discarded across pipeline sites | `ui/src/drawpipe.rs:320` |
+| state-query-32 | `dropped` | u64, frames | drawpipe::Counters.dropped; legacy overload and stale-work discard aggregate | `ui/src/drawpipe.rs:320` |
 | state-query-33 | `measured` | u64, frames | drawpipe::Counters.measured; process aggregate of frames whose cheap measurements entered statistics | `ui/src/drawpipe.rs:320` |
 | state-query-34 | `compress.k` | u32, dimensionless | compress::last_k(); last FPGA compression factor | `ui/src/compress.rs:45` |
 | state-query-35 | `deep.reads` | u64, reads | deepmeas::cost::READS; accumulated raw deep rereads | `ui/src/deepmeas.rs:30` |
@@ -110,12 +109,15 @@ so the whole diagnostic answer is not an atomic multi-counter snapshot.
 | state-query-41 | `gpu.panel` | optional f1, ms | ui.t_gpu_screens.0; helper time of last panel frame | `ui/src/cmd.rs:168` |
 | state-query-42 | `gpu.monitor` | optional f1, ms | ui.t_gpu_screens.1 when Some; helper time of last monitor frame; monitor is every second frame | `ui/src/cmd.rs:167` |
 
-The `pipeline` diagnostic (state-query-28) reads the effective draw route from
-`draw_switches`, while `:SYST:PIPeline?` reads `m.draw_batch`. Hardware uses the
-model preference, including live changes through `:SYST:PIPeline`.
+The `pipeline` diagnostic (state-query-28) reads the accepted draw route from
+`accepted_draw_switches`, while `:SYST:PIPeline?` reads `m.draw_batch`. Hardware uses the
+accepted model preference, including accepted changes through `:SYST:PIPeline`.
 Non-hardware sources retain the startup pipeline switch, so their diagnostic
 can differ from the model preference. Evidence: `ui/src/cmd.rs:154`,
-`ui/src/ui/change/acquisition.rs:10`.
+`ui/src/ui/change/acquisition.rs:18`.
+`route=` reports the current UI path: `batch`, `standard`, `records`, `stopped` or `replay`.
+Batch still delivers its newest record through the queue. This names the selected path,
+not a promise that a worker has a pending batch. Source: `ui/src/ui/step_draw.rs`.
 
 ## Pacing, composition and frame costs
 
@@ -147,13 +149,9 @@ can differ from the model preference. Evidence: `ui/src/cmd.rs:154`,
 | state-query-66 | `picture.wanted` | u64, generation | pacing::WANTED; metrics mirror of published identity.gen, not an identity authority | `ui/src/ui/change/acquisition.rs:54` |
 | state-query-67 | `picture.applied` | u64, generation | pacing::APPLIED; metrics mirror of worker-applied want_gen | `ui/src/board/dho/hw.rs:1881` |
 | state-query-68 | `settle.configured/first/steady ms/empty` | zero..4 space-separated tuples, or - | Most recent first. Each tuple configured/first/steady/empty: rounded ms from settings change for first three, -1 if missing; final u32 empty-picture count. State.settled, ten new pictures in a row defines steady | `ui/src/pacing.rs:392` |
-| state-query-69 | `cost.frames` | u64, frames | framecost::FRAMES; dense fast-path frame calls since process start | `ui/src/framecost.rs:26` |
-| state-query-70 | `cost.wide` | u64, searches | framecost::WIDES; wide trigger searches since start | `ui/src/framecost.rs:28` |
-| state-query-71 | `cost.us.decode` | u64, us | framecost::NS[0]/1000; cumulative sample-to-volts decode, not a per-frame mean | `ui/src/framecost.rs:42` |
-| state-query-72 | `cost.us.level` | u64, us | framecost::NS[1]/1000; cumulative AC/LF-reject trigger-level estimate, not a per-frame mean | `ui/src/framecost.rs:42` |
-| state-query-73 | `cost.us.near` | u64, us | framecost::NS[2]/1000; cumulative near trigger search, not a per-frame mean | `ui/src/framecost.rs:42` |
-| state-query-74 | `cost.us.wide` | u64, us | framecost::NS[3]/1000; cumulative wide trigger search incl source decode, not a per-frame mean | `ui/src/framecost.rs:42` |
-| state-query-75 | `cost.us.frame` | u64, us | framecost::NS[4]/1000; cumulative whole decode/deposit frame, not a per-frame mean | `ui/src/framecost.rs:42` |
+The per-record cumulative cost fields (state-query-69..75) are retired in F0 (#202).
+Their clock reads are replaced by bounded claim-level rings described below. This is a version 0
+migration; the append-only version 1 contract has not started.
 
 Pacing windows retain at most 300 entries of each kind, independently; samples
 are not necessarily aligned across windows (`ui/src/pacing.rs:18`, `:72`). The
@@ -404,12 +402,12 @@ not claims about unseen consumer source. Run them as global searches on the
 whole line, without first splitting into sections. Preserve the first match,
 all matches in order, and capture strings before and after appending
 ` state_version=1` and further compatible fields. In particular, the frames
-pattern can match UI `frames`, `cost frames` and the appended `hw frames`; the read pattern matches
-the pacing timing tuple rather than GPU `read X) ms`.
+pattern matches UI `frames` and the appended `hw frames`; F0 retired the version 0 `cost frames`
+section. The read pattern matches the pacing timing tuple rather than GPU `read X) ms`.
 
 | Pattern (regex source) | Expected matching shape |
 |---|---|
-| `\bframes (\d+)` | UI frames first, cost frames later, optional hw frames last; preserve ordered captures |
+| `\bframes (\d+)` | UI frames first, optional hw frames last; F0 retired cost frames; preserve ordered captures |
 | `read ([\d./]+) ms` | Pacing read p50/p90/p99/max tuple |
 | `settle configured/first/steady ms/empty` | Exact settle label, including slash/space punctuation |
 | `\bfps ([\d.]+)` | Leading picture rate |
@@ -548,8 +546,8 @@ matched repetitions and scheduling context are still needed for causal evidence.
 
 These seven blocks are appended after `diag producer.clone`, preserving all
 existing field and block order. Each has the existing call-ring grammar
-`diag LABEL n=N total=T p50_ns=V p99_ns=V max_ns=V`, including literal `pending`
-for p50 at n=0 and p99 at n<50. Nearest-rank quantiles retain the latest 256
+`diag LABEL n=N total=T p50_ns=V p90_ns=V p99_ns=V max_ns=V`, including literal `pending`
+for p50/p90 at n=0 and p99 at n<50. Nearest-rank quantiles retain the latest 256
 observations, including zeros; totals saturate over process lifetime. CLEAR and
 acquisition identity changes do not reset them.
 
@@ -575,7 +573,53 @@ p50/p99 values are independent quantiles and must not be summed as a frame p99.
 They are wall time, including scheduling delays, not CPU time or GPU time.
 
 Sources: `ui/src/perfguard/draw.rs`, `ui/src/ui.rs`, `ui/src/ui/step_draw.rs`.
-Storage adds less than 15 KiB inline to each StageTiming owner and a fixed
-five-duration local per step. Recording does not allocate or sort; reporting
-sorts copies. Allocation guards and unchanged host layout/goldens are host
+The compiled-layout test in `ui/src/perfguard/draw.rs` bounds `perfguard::draw::Timing`
+below 17 KiB inline, including seven duration rings, F0's independent
+`draw.frames_per_picture` ring and their bookkeeping. This owner is embedded in
+each `StageTiming`; the bound excludes the rest of `StageTiming` and the separate
+deposit timing rings. Each step also uses a fixed five-duration local.
+Recording does not allocate or sort; reporting sorts copies.
+Allocation guards and unchanged host layout/goldens are host
 evidence only; timing overhead and budgets are not yet verified on the unit.
+
+## F0 record accounting and stage rings (#202)
+
+Host implementation, not yet verified on hardware. Process-lifetime counts use records, including
+hardware-average inputs that are deliberately withheld. Roll and scan count published sweep snapshots,
+not samples. `records read=N deposited=N shown=N` reports reads, deposits (worker and direct UI),
+and hardware records reaching a picture. Demo playback is excluded from `shown` and direct deposits;
+the older `used` aggregate still includes it. Independent relaxed atomic loads can observe work in flight.
+
+`lost.settings`, `lost.frame0`, `lost.frame1`, `lost.average` and `lost.error` identify intentional
+selection and short-read losses. Settings includes the existing worker-push, UI-publication and queue-pop
+identity counters. `lost.buffer`, `lost.unclaimed`, `lost.budget`, `lost.queue_overflow`
+and `lost.superseded` expose the current pipeline's remaining discards. F0 preserves these policies;
+F3 removes the buffer and unclaimed overload sites through back-pressure. Sweep snapshots replaced by
+a newer snapshot are `superseded`. Completed maps rejected after deposition count as
+`rejected.epoch` when their epoch changed, otherwise `rejected.stale_key`.
+`dropped` retains its pre-F0 meaning: buffer exhaustion, unclaimed work, stale queued work and
+rejected maps. Intentional frame-zero/frame-one, average, budget and superseded-snapshot selections do not
+increment it. `records ... not_used=N` is the saturating `acquired - used` gap, including those selections
+and pending work. It is not a loss rate; the legacy `used` counter also includes demo playback.
+The frozen accumulator and its rejection counter arrive with F6.
+
+The quiescent ordinary live fast-route accounting is `read = deposited + source losses` and
+`deposited = shown + map rejections`. Pending queues, batches and maps prevent testing those equalities
+from an arbitrary running snapshot. Other record-only consumers retain their existing selection counters.
+
+Every completed UI step, including zero-record and stopped steps, enters `draw.frames_per_picture`
+(wire unit `frames`, counting acquired records). All shared diagnostic time rings also report p90.
+`deposit.slice` samples every 64th worker/helper claim, including decode, drawing and cheap folds.
+Each producer keeps its sampling cursor locally. Samples travel with the existing maps; each accepted picture
+retains at most one sample, and only the UI updates the timing rings. `deposit.record` divides that sampled
+claim's elapsed nanoseconds by its record count. `deposit.batch` measures feed-to-UI-merge age once per
+nonempty picture using the newest accepted batch; it is not yet the future read-to-slot latency. All three use ns.
+Deposited and measured counts accumulate locally and publish at existing batch/share boundaries.
+There are no timing-ring locks or counter atomics in the per-record draw loop.
+The future pool's separate place/tile, busy and wait-buffer observations require F2/F3 and are not synthesized here.
+
+Each ring holds the last 256 observations, including zeros, with nearest-rank p50/p90/p99 and maximum.
+No observations means pending; p99 stays pending until 50 observations. The lifetime `total` saturates;
+ring eviction keeps working after saturation. Reporting sorts copies and does not reset the rings.
+The rings allocate no memory per observation. Source: `ui/src/perfguard/ring.rs`,
+`ui/src/perfguard/draw.rs`, `ui/src/claim_timing.rs`, `ui/src/drawpipe/losses.rs`.

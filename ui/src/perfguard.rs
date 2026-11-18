@@ -122,6 +122,9 @@ impl StageTiming {
     pub fn draw_step(&mut self, parts: [Duration; 5]) {
         self.draw.step(parts);
     }
+    pub(crate) fn picture_frames(&mut self, frames: usize) {
+        self.draw.picture(frames);
+    }
     /// Rendering is separate from step; panel and HDMI view calls have independent rings.
     pub fn draw_render(&mut self, elapsed: Duration, view: bool) {
         self.draw.render(elapsed, view);
@@ -287,7 +290,10 @@ impl StageTiming {
     }
     /// Appended after the existing restart fields in state queries; also used by host reports.
     pub fn diagnostics_text(&self) -> String {
-        self.split.text(&self.intake, self.samples()) + &deep::counters().text() + &self.draw.text()
+        self.split.text(&self.intake, self.samples())
+            + &deep::counters().text()
+            + &self.draw.text()
+            + &crate::claim_timing::summary()
     }
     pub(crate) fn intake_active(&self) -> bool {
         self.split.active()

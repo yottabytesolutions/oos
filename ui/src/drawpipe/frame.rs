@@ -30,11 +30,9 @@ pub(crate) fn draw_frame_reusing(
     let src = &f.ch[m.trig_src];
     let present: [bool; NCH] = std::array::from_fn(|c| !f.ch[c].is_empty());
     let refine = |hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
-        let t = std::time::Instant::now();
         let level = crate::board::sw_trig_level(m, f);
-        cost::add(Part::Level, t);
         refine_near(src, 0, src.len(), f.pre, near_only(m, f), level, hyst, rising, either, half, col).unwrap_or_else(
-            || refine_wide(std::time::Instant::now(), src, f.pre, level, hyst, rising, either, half, col),
+            || crate::fastdraw::edge_smooth(src, f.pre, level, hyst, rising, either, half, col, |_| true),
         )
     };
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {

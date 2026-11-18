@@ -65,3 +65,48 @@ pub(super) fn render_start(ui: &mut Ui, l: &mut Layers) -> bool {
     }
     false
 }
+
+pub(crate) fn route(ui: &Ui) -> &'static str {
+    if ui.record_mode() {
+        return "replay";
+    }
+    if ui.m.run == RunState::Stop {
+        return "stopped";
+    }
+    if !ui.fast_ok() {
+        return "records";
+    }
+    if ui.m.draw_batch {
+        "batch"
+    } else {
+        "standard"
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Composition {
+    pub(super) deposit: usize,
+    pub(super) record: usize,
+    pub(super) newest: Option<std::time::Instant>,
+    pub(super) merged: u64,
+}
+
+pub(super) fn account_picture(ui: &Ui, records: usize, composition: Composition) {
+    let Composition { deposit, record, newest, merged } = composition;
+    let counters = crate::drawpipe::counters();
+    crate::drawpipe::Counters::add(&counters.used, records as u64);
+    if ui.src.is_hw() && counters.diagnostics_enabled() {
+        crate::drawpipe::Counters::add(&counters.shown, records as u64);
+        crate::drawpipe::Counters::add(&counters.deposited, records as u64 - merged);
+    }
+    crate::pacing::composition(deposit, record, newest.map(|t| t.elapsed().as_secs_f32() * 1e3));
+    crate::pacing::picture(records);
+}
+
+pub(super) fn timing(ui: &mut Ui, parts: [std::time::Duration; 5], records: usize) {
+    let timing = change::timing_mut(ui);
+    timing.draw_step(parts);
+    if crate::drawpipe::counters().diagnostics_enabled() {
+        timing.picture_frames(records);
+    }
+}

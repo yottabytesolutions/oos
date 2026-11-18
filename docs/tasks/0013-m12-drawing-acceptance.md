@@ -30,7 +30,171 @@ or production behavior change; owner selection and M12b remain separate.
 Follow [migration M12](../architecture/migration.md#m12-acceptance-and-removal-d9), including its tests, deletions, boundary rules and required unit round.
 Keep the tracker brief. Record evidence here as the step progresses.
 
+F0 (#202), branch `refactor/202-frames-f0`: reserve `ui/src/drawpipe.rs`, `ui/src/drawpipe/losses.rs`,
+`ui/src/drawpipe/frame.rs` (timing removal only), `ui/src/drawpipe/feed.rs`, `ui/src/drawpipe/identity_tests.rs`,
+`ui/src/drawpipe/budget_tests.rs`, `ui/src/framecost.rs` (renamed to `ui/src/claim_timing.rs`),
+`ui/src/main.rs`, `ui/src/board/dho/mod.rs`,
+`ui/src/board/dho/frame1/tests.rs`, `ui/src/netport/latency.rs` (shared ring formatter), `ui/src/perfguard/`, `ui/src/perfguard.rs`,
+`ui/src/ui.rs` (counter wiring only), `ui/src/board/dho/hw.rs`, `ui/src/board/dho/hw/batch.rs`,
+`ui/src/board/dho/publication.rs`, `ui/src/board/dho/frame1.rs`, `ui/src/board/dho/roll.rs`, `ui/src/wave.rs`,
+`ui/src/cmd.rs`, `ui/src/ui/draw_routes/perf.rs`, `ui/src/ui/step_draw.rs`, `ui/src/ui/change.rs`,
+`ui/src/board/dho/hw/batch/tests.rs`, `ui/src/board/dho/peak_tests.rs`, `docs/spec/state-query.md`,
+`xtask/data/architecture.txt` (remove retired metrics), `tools/tests/fixtures/perfmap/state.txt`,
+`tools/tests/fixtures/perfmap/README.md`, `ui/tests/snapshots/hot_paths.rs` and lowered ratchets for these files.
+The owner supplied the F0 design because its documents are not in this base.
+
+1. Salvage bounded quantiles, per-picture record counts including zeros, enabled-channel maps and empty-merge tests.
+2. Replace per-record clock reads with per-claim timing. Expose current loss buckets and live route without changing
+   acquisition, drawing, scheduling or overload policy. Keep legacy overload losses visible until F3 removes them.
+3. Run fast gate, UI debug/optimized tests, draw-route equality and host Batch picture perf rows. Report production LOC.
+   Hold for independent review, integrated full gate and coordinator/owner DHO804 unit round before merge.
+
+F0 unit-regression fix (#213): also reserve `ui/src/drawpipe/test_scope.rs`,
+`ui/src/drawpipe/counter_tests.rs`, `ui/src/ui/draw_routes/counters.rs`,
+`docs/architecture/README.md` (host budget row) and `tools/tests/test_perf_budgets.py`.
+Sample claims in producer-local state, publish counters at existing batch/share boundaries, and update timing rings
+once per picture. Preserve claim sizes, intake limits and pacing. Restore legacy dropped semantics and expose
+acquired-minus-used separately. Compare identical warmed pipelines with diagnostics enabled/disabled in one host run.
+
+PR #213 review follow-up: also reserve `ui/src/board/counters.rs` and `ui/src/ui/lifecycle.rs`.
+Move queue-loss accounting onto `Shared` so watchdog recovery and DHO publication reuse the same helper.
+Exercise hard-limit recovery with queued hardware records and repeated stopped polls; preserve legacy dropped semantics.
+Check the route finding against the hardware-only fast-path guard and reply with evidence if unreachable.
+
+PR #213 failed-check follow-up: accept each pipeline edit through the existing change point before the
+route-reporting test reads status. Reproduce with nextest's process isolation, then run the UI tests in debug
+and optimized profiles and the fast gate. No production behavior change.
+
 ## Status
+
+- 2026-11-18: PR #213 inline-storage sentence corrected without code changes. The existing compiled-layout
+  assertion proves the draw timing owner's bound below 17 KiB with all eight rings and bookkeeping retained.
+  Host draw-ring tests passed in debug and `test-release`: 2 passed per profile, including layout and independent
+  frame-ring wrapping. Fast gate passed all 12 selected steps (exit 0); no lowered ratchets.
+  Production line delta is zero. No hardware access; the existing frame hold remains:
+  renewed independent review, integrated full gate and coordinator/owner DHO804 unit acceptance are still required.
+
+- 2026-11-18: PR #213 inline-storage review fix claimed for `docs/spec/state-query.md`.
+  Reconcile the pre-F0 sentence with the existing compiled-layout bound for `perfguard::draw::Timing`:
+  seven duration rings plus the independent frames-per-picture ring, below 17 KiB including bookkeeping.
+  Documentation only; preserve samples, diagnostics, counters and the existing F0 acceptance hold.
+  Run the host layout test and fast gate; GPU-upload changes from #197 remain outside this fix.
+
+- 2026-11-18: Route-reporting regression fixed by settling each pipeline edit before reading status, as SCPI does.
+  Isolated nextest regression passed. Full `cargo nextest run --locked -p oos-ui --color never` exited 0:
+  1,733 passed, 61 skipped. The same command with `--cargo-profile test-release` exited 0:
+  1,732 passed, 61 skipped, including all five soak modes. Fast gate exited 0:
+  `partial gate passed (not done): 12 steps in 11 s`. No lowered ratchets; production delta against HEAD is zero.
+  Logs: `target/f0-check-fix-{focused-debug,debug,release,fast,loc}.log`. Hardware was not accessed.
+  Runner synchronization, final CI and coordinator review-state verification remain open; no review threads were supplied.
+
+- 2026-11-18: Failed-check follow-up reproduced with `cargo xtask step tests-debug`: the route-reporting test
+  fails in an isolated process because it queries the startup pipeline before accepting its model edit.
+  The other 1,732 UI tests pass. Initial fast gate passed all 12 steps. Fetch was sandbox-blocked;
+  runner owns branch synchronization. Review-state verification needs the coordinator's GitHub evidence.
+
+- 2026-11-18: PR #213 watchdog finding fixed by sharing `Shared::clear_queue` with recovery, settings and sweeps.
+  Queued recovery records enter `lost.error` once; legacy dropped semantics and acquisition/drawing policy are unchanged.
+  The extended hard-limit regression failed before the fix with two reads and zero losses, then passed in both profiles.
+  The route finding is a false positive: replay/stopped routes return first, `fast_ok` requires hardware, and hardware
+  switches already use the same model selector. Existing route-reporting tests pass in both profiles.
+  `cargo xtask check --fast` exited 0: `partial gate passed (not done): 12 steps in 29 s`; no lowered ratchets.
+  Complete `cargo test --locked -p oos-ui -- --test-threads=1` and the same command with `--profile test-release`
+  exited 0: 1,631/1,630 unit tests passed (60 ignored each), plus 8 goldens (1 ignored), 17 scripts, 10 sockets and
+  16 soak/support tests in each profile. Logs: `target/f0-watchdog-{before,debug,release,fast,loc}.log`.
+  Production delta against the job base is +2 UI lines and zero elsewhere. No hardware access; renewed independent
+  review, integrated full gate, runner Git updates and the existing coordinator/owner unit acceptance remain open.
+
+- 2026-11-18: PR #213 review follow-up claimed on the existing F0 branch at `67af815d`.
+  Watchdog queue clearing bypasses loss accounting. The route report returns records for non-hardware sources
+  before consulting the model pipeline. Runner owns Git updates; cached feature refs diverge, so no fetch/reset.
+
+- 2026-11-18: Unit-regression host fix validated. Producers sample every 64th claim with local cursors, carry
+  samples with existing maps, and never lock timing rings. The UI publishes at most one sample/age per picture.
+  Deposited/measured totals publish at existing share boundaries. Claim sizes, intake budgets and pacing are unchanged.
+  Legacy dropped sites are restored; `not_used` separately reports the saturating acquired-minus-used gap.
+- 2026-11-18: Final shipping-release paired guard passed all six production-plan rows, 101 alternating rounds of
+  16 pictures after warm-up, reusing the same pipeline/buffers/maps with a test-only diagnostics switch.
+  Candidate/reference best ratios at 1/10 us/div: 1 ch 1.0026/0.9960, 2 ch 1.0030/0.9968, 4 ch 0.9986/0.9956.
+  Maximum p99 CPU ratio 1.096. Limits remain 1.01 best and 1.515 p99 CPU. The budget-reader tests reject a missing
+  row and observations above 1 %. Complete observations: `target/f0-unit-fix-counters-perf-final.log`.
+- 2026-11-18: Full UI debug/optimized runs exited 0: 1,631/1,630 unit tests passed, 60 ignored in each;
+  each also passed 6 goldens (1 ignored), 15 scripts, 8 sockets and 14 soak/support tests. Final focused counter
+  checks after the test-only guard switch changed passed in both profiles: 15 passed, 1 timing guard ignored.
+  The helper regression exercises 64 single-record claims: counts wait for publication and rings wait for merge.
+  The six on/off cases retain identical pixels, picture membership, waveform totals and intake pacing.
+  Python budget/perfmap suites passed 9/17 tests. Final fast gate exited 0:
+  `partial gate passed (not done): 12 steps in 14 s`. Host/ARM Clippy exited 0:
+  `partial gate passed (not done): 1 steps in 46 s`. Production delta against the job base: +50 UI lines,
+  zero other crates/tools. Generated ratchets lower only the touched drawpipe size entry by one line.
+- 2026-11-18: Validation corrections: the first fast gate found an unwritten test module and failed fmt, size,
+  architecture, mutable-statics, unsafe, method-exceptions, known-failures and test-time. Later size growth/slack
+  findings were corrected by keeping counter methods together and regenerating the lowered entry.
+  An optimized helper fixture initially released its zero-worker batch before claiming; retaining its handle fixed it.
+  The first performance probe used separate pipeline allocations and exceeded the best-ratio limit (1.0475);
+  the final probe reuses one warmed pipeline and measures longer groups. No performance limit was loosened.
+  Logs retain the `target/f0-unit-fix-` prefix. No hardware access; renewed independent review, integrated checks,
+  runner Git operations and the matched coordinator/owner DHO804 A/B remain open. F0 is not unit-accepted.
+
+- 2026-11-18: Unit-regression fix claimed on the existing F0 branch. The supplied DHO804 A/B evidence blocks
+  acceptance. Remaining claim clocks and the shared timing lock still run per helper record. Runner owns Git writes;
+  cached refs diverge and no fetch/reset/rebase is performed by this network-restricted worker. Host work only.
+
+- 2026-11-18: Review-fix host validation complete. Full single-threaded UI debug and optimized crate commands both
+  exited 0: debug 1,627 unit tests passed, optimized 1,626 passed, 59 ignored in each. Both also passed 6 golden
+  tests (1 ignored), 15 host scripts, 8 host sockets and 14 soak/support tests. The final average-accounting assertion
+  passed a focused rerun in both profiles. Golden pictures are unchanged. No hardware access or verification claimed;
+  renewed independent review, the integrated full gate and coordinator/owner unit evidence remain required.
+
+- 2026-11-18: PR #213 review fixes implemented. Queue clearing is shared, decode selection returns skip counts
+  without recording losses, and the caller accounts them once. Loss/rejection reasons own their labels; frame 1 uses
+  the common loss path. Claim timing uses named rings in `claim_timing`; shared ring formatting always includes p90.
+  Picture accounting takes a composition value and returns nothing; enabled-channel map sizing happens once.
+  Roll already incremented acquired in this checkout. New tests pin roll/scan conservation across supersession,
+  STOP and rearm, both map-rejection sites, distinct labels and repeated side-effect-free decode selection.
+- 2026-11-18: Review-fix fast gate exit 0: `partial gate passed (not done): 12 steps in 46 s`. Earlier size failures
+  (growth, then unused slack) were corrected; generated ratchets retain only the lowered `ui.rs` and `Ui::step` counts.
+  Final host/ARM Clippy exit 0: `partial gate passed (not done): 1 steps in 214 s`. Production delta against HEAD:
+  +42 UI lines, zero other crates/tools. The real-handler state fixture was refreshed; all 17 perfmap tests passed.
+  Average-selection caller accounting also passed focused debug and optimized checks. Complete review-fix logs use
+  the `target/f0-review-` prefix. Fetch was sandbox-blocked; HEAD equals the cached remote feature ref.
+  Runner owns Git writes; coordinator owns renewed review, integrated full gate and the DHO804 unit round.
+
+- 2026-11-18: F0 (#202) host handoff ready, uncommitted. Added read/deposited/shown accounting and named source
+  losses/map rejections, current route reporting, claim-level timing and per-picture record quantiles including zeros.
+  Salvaged enabled-channel allocation and empty-completion coverage from closed #186 without its reduction mechanism.
+  No acquisition, drawing, overload or core-placement policy change. Production Rust: +101 UI, +0 other crates and tools,
+  measured by `cargo xtask loc --compare HEAD`. Generated ratchets lower only drawpipe.rs, ui.rs and Ui::step.
+- 2026-11-18: F0 final `cargo xtask check --fast` exit 0: `partial gate passed (not done): 12 steps in 25 s`.
+  `cargo xtask step clippy` exit 0: `partial gate passed (not done): 1 steps in 83 s` (host and ARM Clippy).
+  `python3 -m unittest discover -s tools/tests -p test_perfmap.py`: 17 passed. Real SCPI state fixture regenerated
+  from the handler's printed reply; no golden pictures changed. Complete logs: `target/f0-evidence/`.
+- 2026-11-18: F0 optimized complete UI crate run, `RUST_TEST_THREADS=1 cargo test --locked -p oos-ui
+  --profile test-release`, exit 0: 1,624 unit tests passed, 59 ignored; golden 6 passed/1 ignored, host scripts 15,
+  host sockets 8, soak/support 14 passed. Debug crate run passed 1,623 unit tests/59 ignored, golden 6/1,
+  scripts 15 and sockets 8, but soak initially failed its old diagnostic-string assertion after adding p90.
+  Corrected debug soak rerun: all 14 passed. Final focused debug routes: 8 passed/2 ignored; map-budget tests:
+  3 passed/1 ignored, including allocation, empty completion, key/epoch rejection and live conservation coverage.
+- 2026-11-18: F0 host perf, arm64, 4 workers, Normal, 970 x 448, 101 measured rounds after 8 warmups.
+  Quiet `test-release` baseline (`OOS_PERF_TESTS=1`, ignored `perf_guard_batch_picture_merge`): exit 0;
+  `BATCH_PICTURE` merge/UI p50/p90/p99 in ms: 1 us/div, 90 records, 0.395/0.786/1.017;
+  10 us/div, 14 records, 0.355/0.404/0.874. Earlier shipping-release run during builds also passed:
+  0.432/1.102/2.810 and 0.415/1.631/8.370 ms respectively. No unit performance claim.
+- 2026-11-18: F0 validation corrections retained in the evidence logs: first fast run started before its new test
+  module existed; subsequent size growth was removed by placing reporting/allocation helpers in companion modules.
+  Initial UI debug/optimized runs failed three diagnostic-order/fixture assertions, corrected by retaining the old
+  field adjacencies and regenerating the fixture. The added conservation test initially exceeded the scripted source's
+  32-record bound, corrected to 27. Two new Clippy test findings were fixed. An initial ratchet run exposed a macOS
+  non-test cfg error in roll publication; roll now records its clear directly without a Linux-only helper dependency.
+  All remaining failures were corrected and checked as recorded above; no unrelated changes or ignores were added.
+- 2026-11-18: F0 remains held for independent cross-vendor review, the coordinator's integrated full gate and the
+  coordinator/owner DHO804 unit run before merge. Hardware is not yet verified. Record placement for that run:
+  workers on A53 cores 0..3, UI/acquisition on A72 cores 4..5, per the owner's #196 evidence. This host job neither
+  accessed hardware nor changed placement. Runner owns commit/publication; coordinator owns integration and closure.
+
+- 2026-11-18: F0 owner assignment claimed on `refactor/202-frames-f0`, base `a8eb80da`. Plan above written before code.
+  F1 kernel extraction remains outside this job; only obsolete timing is removed from the existing kernel callers.
+  No Git writes, publication or hardware access; the runner and coordinator own those actions.
 
 - 2026-11-18: PR #161 review fix: both M12a fixture types now use `Route::dispatch` for acquisition preparation,
   route selection, frame delivery, the buffer-return barrier and UI stepping. The production-plan fixture implements

@@ -51,7 +51,7 @@ pub(crate) fn roll_run(
         *rolling = None;
         ring.iter_mut().for_each(|r| r.clear());
         ring_la.clear();
-        g.queue.clear();
+        g.clear_queue(crate::drawpipe::Lost::Superseded);
     }
     !g.hold
 }
@@ -63,7 +63,7 @@ pub(crate) fn publish_roll(g: &mut Shared, f: Frame) -> Option<crate::perfguard:
         return None;
     }
     // Roll pictures overlap: only the newest snapshot is needed, always within QUEUE_MAX.
-    g.queue.clear();
+    g.clear_queue(crate::drawpipe::Lost::Superseded);
     let f = std::sync::Arc::new(f);
     let (copy, sample) = crate::perfguard::deep::clone_frame(&f);
     g.queue.push_back(copy);
@@ -77,12 +77,13 @@ pub(crate) fn publish(g: &mut Shared, f: Frame, scan: bool) -> Option<crate::per
     if scan {
         // A complete sweep must not be dropped by the next partial picture.
         if g.queue.back().is_none_or(|b| b.partial) {
-            g.queue.clear();
+            g.clear_queue(crate::drawpipe::Lost::Superseded);
         }
         let f = std::sync::Arc::new(f);
         let (copy, sample) = crate::perfguard::deep::clone_frame(&f);
         g.queue.push_back(copy);
         g.frame = f;
+        crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, 1);
         Some(sample)
     } else {
         publish_roll(g, f)
@@ -117,6 +118,37 @@ mod tests {
     use crate::board::{identity::Publication, HwShared};
     use oos_core::change::{Request, Shadow, UiAcq};
     use oos_hal::sync::lock;
+
+    #[test]
+    fn roll_and_scan_snapshots_conserve_reads_across_supersession_stop_and_rearm() {
+        for scan in [false, true] {
+            for rearm in [false, true] {
+                let _scope = crate::drawpipe::test_scope::Scope::new();
+                let mut shared = Shared::default();
+                let counters = crate::drawpipe::counters();
+                for seq in 1..=4 {
+                    let sample = publish(&mut shared, Frame { seq, partial: seq != 3, ..Default::default() }, scan);
+                    sample.unwrap().record();
+                    let (read, _, dropped) = counters.read();
+                    let lost = seq - shared.queue.len() as u64;
+                    assert_eq!(dropped, 0);
+                    assert!(counters.records_text().contains(&format!("lost.superseded={lost}")));
+                    assert_eq!(read, seq);
+                    assert_eq!(read, lost + shared.queue.len() as u64);
+                }
+                assert_eq!(shared.queue.len(), if scan { 2 } else { 1 });
+                shared.hold = !rearm;
+                shared.rearm = rearm;
+                assert_eq!(roll_run(&mut shared, &mut None, &mut Default::default(), &mut Default::default()), rearm);
+                assert!(shared.queue.is_empty());
+                assert_eq!(counters.read(), (4, 0, 0));
+                assert!(counters.records_text().contains("lost.superseded=4"));
+                shared.hold = true;
+                assert!(publish_roll(&mut shared, Frame::default()).is_none());
+                assert_eq!(counters.read(), (4, 0, 0), "stopped roll must not count an unpublished snapshot");
+            }
+        }
+    }
 
     #[test]
     fn clear_and_run_discard_preboundary_roll_and_scan_samples() {

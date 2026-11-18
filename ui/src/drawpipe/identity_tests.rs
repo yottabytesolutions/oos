@@ -12,7 +12,7 @@ fn identities(request: Request) -> (Model, Identity) {
 }
 
 fn accumulator(gen: u64, identity: Identity) -> Acc {
-    let mut a = Acc::new(gen, 8, 8);
+    let mut a = fresh_acc(None, &View { gen, w: 8, h: 8, m: Model::default(), interp: Interp::Exact });
     a.identity = Some(identity);
     a.frames = 1;
     let mut fold = crate::framestats::Fold::default();

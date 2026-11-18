@@ -42,6 +42,14 @@ impl AcquisitionCounters {
     }
 }
 
+impl super::Shared {
+    /// Queue clears at source boundaries, recovery and superseded sweeps are explicit record losses.
+    pub(crate) fn clear_queue(&mut self, reason: crate::drawpipe::Lost) {
+        crate::drawpipe::counters().lose(reason, self.queue.len() as u64);
+        self.queue.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

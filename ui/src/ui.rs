@@ -58,6 +58,7 @@ mod sertrig;
 mod sim;
 pub mod startup;
 mod step_draw;
+pub(crate) use step_draw::route as draw_route;
 mod sysinfo;
 mod tables;
 mod tools;
@@ -2823,6 +2824,7 @@ impl Ui {
         self.sim_poll();
         self.eye_auto_poll();
         let mut draw = [std::time::Duration::ZERO; 5];
+        let mut got = 0;
         let hw_seg = self.seg_hw_on();
         let persist = PERSIST[self.m.persist].1;
         if self.record_mode() {
@@ -2869,10 +2871,9 @@ impl Ui {
                 TrigType::Video => 1,
                 _ => 2,
             };
-            let mut got = 0;
             // what this picture is made of (pacing::composition): frames through a deposit kernel, through the record
             // path, and when the newest pipe batch in it was fed
-            let (mut n_dep, mut n_rec, mut newest) = (0usize, 0usize, None);
+            let mut composition = step_draw::Composition::default();
             let (mut ta, mut td, sw) = (0f32, 0f32, change::acquisition::draw_switches(self, &self.m));
             // the newest raw deep record of this step (deepmeas.rs): with one frame per batch (2 ms/div and up at
             // 10 M) the next pair frame is often queued behind it, which drew it on the fast path or replaced it as
@@ -2891,7 +2892,7 @@ impl Ui {
                 for f in &frames {
                     crate::pacing::drawn(f.cfg, 1);
                 }
-                n_dep += n;
+                composition.deposit += n;
                 if let Some(f) = frames.iter().rev().find(|f| deep_raw && crate::deepmeas::deep_raw_frame(f)) {
                     let t = std::time::Instant::now();
                     raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
@@ -2921,7 +2922,8 @@ impl Ui {
                         self.m.status = TrigStatus::Triggered;
                     }
                     got += d.frames as usize;
-                    (n_dep, newest) = (n_dep + d.frames as usize, d.newest);
+                    composition.merged += d.frames;
+                    (composition.deposit, composition.newest) = (composition.deposit + d.frames as usize, d.newest);
                     crate::pacing::drawn_stale(d.stale);
                     self.mstat_fold(&d.folds);
                     td += t1.elapsed().as_secs_f32() * 1000.0;
@@ -3022,9 +3024,9 @@ impl Ui {
                         }
                         if let Some(f) = frame {
                             deep_draw::draw(self, &f, &rec, sw.interp, drawing_input);
-                            n_dep += 1;
+                            composition.deposit += 1;
                         } else {
-                            n_rec += 1;
+                            composition.record += 1;
                             for c in 0..NCH {
                                 if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
                                     let shifted_main = self.deskew_channel_view(&rec, c, mainv);
@@ -3136,13 +3138,7 @@ impl Ui {
             let rate = got as f32 / dt_wall.max(1e-3) as f32;
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
             self.wfm_total += got as u64;
-            crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
-            crate::pacing::composition(
-                n_dep,
-                n_rec,
-                newest.map(|t: std::time::Instant| t.elapsed().as_secs_f32() * 1e3),
-            );
-            crate::pacing::picture(got);
+            step_draw::account_picture(self, got, composition);
             // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
             // measurement stays that of the last raw record
             let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
@@ -3250,7 +3246,7 @@ impl Ui {
             self.vmaxz_cg = (self.vmaxz_cg / 2).max(1);
         }
         draw[4] += halve_zoom.elapsed();
-        change::timing_mut(self).draw_step(draw);
+        step_draw::timing(self, draw, got);
     }
 
     /// One line of settings for the HDMI workspace: channels, time base, trigger, state, rate.

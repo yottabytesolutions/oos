@@ -54,7 +54,7 @@ fn polls_external_nesting_and_state_query_share_the_perf_report() {
     assert!(restart < diagnostic);
     assert!(text.contains("diag intake.p50 n=1 intake_ns="));
     assert!(text.contains("diag lock.ui.wait n="));
-    assert!(text.contains("diag lock.acq.wait n=0 total=0 p50_ns=pending p99_ns=pending max_ns=0"));
+    assert!(text.contains("diag lock.acq.wait n=0 total=0 p50_ns=pending p90_ns=pending p99_ns=pending max_ns=0"));
     assert!(std::mem::size_of::<Diagnostics>() <= 56 * 1024);
 }
 

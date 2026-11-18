@@ -55,18 +55,18 @@ impl Diagnostics {
         let mut text = String::new();
         for (poll, ring) in Poll::ALL.iter().zip(&self.polls) {
             let sample = { lock(ring).clone() };
-            text.push_str(&sample.text(&format!("poll.{}", poll.label()), "ns"));
+            text.push_str(&sample.format(&format!("poll.{}", poll.label()), "ns"));
         }
         for (side, rings) in ["ui", "acq"].iter().zip(&self.locks) {
             let (wait, held) = {
                 let rings = lock(rings);
                 (rings.wait.clone(), rings.held.clone())
             };
-            text.push_str(&wait.text(&format!("lock.{side}.wait"), "ns"));
-            text.push_str(&held.text(&format!("lock.{side}.held"), "ns"));
+            text.push_str(&wait.format(&format!("lock.{side}.wait"), "ns"));
+            text.push_str(&held.format(&format!("lock.{side}.held"), "ns"));
         }
         let time = { lock(&self.copies).time.clone() };
-        text.push_str(&time.text("producer.clone", "ns"));
+        text.push_str(&time.format("producer.clone", "ns"));
         text
     }
 }

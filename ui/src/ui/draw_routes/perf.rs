@@ -5,10 +5,10 @@ use crate::board::Frame;
 use crate::drawpipe::{CodesInto, DecodeInto};
 use std::time::Instant;
 
-struct Build {
-    route: Route,
+pub(super) struct Build {
+    pub(super) route: Route,
     input: Input,
-    frames: usize,
+    pub(super) frames: usize,
 }
 
 struct Input {
@@ -21,7 +21,7 @@ struct Input {
 }
 
 impl Build {
-    fn new(batch: bool, channels: usize, tdiv: f32, frames: usize) -> Self {
+    pub(super) fn new(batch: bool, channels: usize, tdiv: f32, frames: usize) -> Self {
         let route = Route::new(BatchKind::Codes, batch, channels, tdiv);
         let (input, frames, plan) = scripted::draw_route_batch(&route.ui.m, route.ui.switches(), frames);
         println!("ROUTE_PLAN batch={batch} channels={channels} tdiv={tdiv} frames={frames} {plan}");
@@ -30,7 +30,7 @@ impl Build {
         Self { route, input, frames }
     }
 
-    fn run(&mut self) {
+    pub(super) fn run(&mut self) {
         self.input.first = self.route.ui.wfm_total + 1;
         self.input.bytes = Some(self.route.dispatch(self.frames, |_, _| &mut self.input));
     }
@@ -84,7 +84,7 @@ fn perf_guard_draw_routes() {
                     for _ in 0..8 {
                         build.run();
                     }
-                    let cost_before = crate::framecost::summary();
+                    let cost_before = crate::claim_timing::summary();
                     let mut times = Vec::new();
                     let mut allocations = Vec::new();
                     for _ in 0..crate::perfguard::ROUNDS {
@@ -104,7 +104,7 @@ fn perf_guard_draw_routes() {
                         );
                         println!(
                             "DRAW_ROUTE_COST batch={batch} before={cost_before} after={}",
-                            crate::framecost::summary()
+                            crate::claim_timing::summary()
                         );
                     }
                     assert_eq!(build.route.ui.pic_frames as usize, frames);
@@ -162,5 +162,51 @@ fn draw_routes_one_frame_and_full_steps_match_with_buffer_reuse() {
             };
             compare(&run(false), &run(true), "one-frame/48-frame production sample geometry");
         }
+    }
+}
+
+#[test]
+fn state_reports_the_effective_pipeline_and_draw_route() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Codes, true, 4, 1e-6);
+    for (batch, pipeline, draw) in [(false, "Frames", "standard"), (true, "Batch", "batch")] {
+        route.ui.m.draw_batch = batch;
+        change::settle(&mut route.ui);
+        let text = crate::cmd::stat_text(&route.ui);
+        assert!(text.contains(&format!("pipeline {pipeline} route={draw}")), "{text}");
+    }
+    route.ui.m.zoom = true;
+    assert!(crate::cmd::stat_text(&route.ui).contains("route=records"));
+    route.ui.m.run = RunState::Stop;
+    assert!(crate::cmd::stat_text(&route.ui).contains("route=stopped"));
+}
+
+#[test]
+fn picture_record_ring_samples_live_and_stopped_empty_steps() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Codes, true, 1, 10e-6);
+    route.step(3);
+    route.ui.step(1.0 / 30.0);
+    let text = change::timing(&route.ui).diagnostics_text();
+    assert!(text.contains("draw.frames_per_picture n=2 total=2 p50_frames=0 p90_frames=3"), "{text}");
+    route.ui.m.run = RunState::Stop;
+    route.ui.step(1.0 / 30.0);
+    assert!(change::timing(&route.ui).diagnostics_text().contains("draw.frames_per_picture n=3 total=3"));
+}
+
+#[test]
+fn quiescent_live_routes_conserve_read_deposited_and_shown_records() {
+    for batch in [false, true] {
+        let _scope = Scope::new();
+        let mut route = Route::new(BatchKind::Codes, batch, 4, 10e-6);
+        let counters = crate::drawpipe::counters();
+        for records in [1, 27] {
+            // The host fixture supplies completed reads without hardware IO.
+            crate::drawpipe::Counters::add(&counters.acquired, records as u64);
+            route.step(records);
+        }
+        assert_eq!(counters.read(), (28, 28, 0));
+        let text = counters.records_text();
+        assert!(text.contains("records read=28 deposited=28 shown=28"), "{text}");
     }
 }

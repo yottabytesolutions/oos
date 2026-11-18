@@ -10,7 +10,9 @@ fn rpc(
     ui: &mut crate::ui::Ui,
 ) -> Vec<u8> {
     let cv = crate::gfx::Canvas::new(1, 1);
-    core_async(&Call { xid: 1, prog: CORE_PROG, vers: 1, proc_, args }, links, &mut |p| scpi.poll_program(ui, &cv, p))
+    core_async(&Call { xid: 1, prog: CORE_PROG, vers: 1, proc_, args }, links, None, &mut |p| {
+        scpi.poll_program(ui, &cv, p)
+    })
 }
 
 fn write(command: &str, links: &mut Vec<Option<Link>>, scpi: &mut crate::scpi::Scpi, ui: &mut crate::ui::Ui) {

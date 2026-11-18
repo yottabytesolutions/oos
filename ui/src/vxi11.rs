@@ -5,106 +5,17 @@
 //! `TCPIP::<ip>::INSTR`. ONC RPC (RFC 5531) with XDR (RFC 4506): a portmapper (program 100000 v2, TCP and UDP port
 //! 111) that answers GETPORT for the core channel, and the core channel (program 0x0607AF v1, TCP `CORE_PORT`) with
 //! create_link, device_write, device_read, device_readstb, device_clear, remote/local/lock/unlock, destroy_link.
-//! The commands go through the SCPI interpreter (`Scpi::poll_program`); everything runs non-blocking from the main loop.
+//! The frame thread owns links and SCPI programs; netio owns sockets and timed output.
 //! Unauthenticated like SCPI and the web remote: bench LAN only.
 
-use std::net::{TcpListener, TcpStream, UdpSocket};
-
-pub const PMAP_PROG: u32 = 100_000;
-pub const CORE_PROG: u32 = 0x0607AF;
-pub const CORE_PORT: u16 = 9009;
-/// Most data waiting on one connection: maxRecvSize of create_link and room for the RPC header.
-const MAX_RECORD: usize = (1 << 20) + 4096;
-
-/// XDR reader over a call body.
-pub struct Xdr<'a> {
-    b: &'a [u8],
-    p: usize,
-}
-
-impl<'a> Xdr<'a> {
-    pub fn new(b: &'a [u8]) -> Xdr<'a> {
-        Xdr { b, p: 0 }
-    }
-    pub fn u32(&mut self) -> Option<u32> {
-        let v = self.b.get(self.p..self.p + 4)?;
-        self.p += 4;
-        Some(u32::from_be_bytes([v[0], v[1], v[2], v[3]]))
-    }
-    pub fn opaque(&mut self) -> Option<&'a [u8]> {
-        let n = self.u32()? as usize;
-        let v = self.b.get(self.p..self.p + n)?;
-        self.p += n.div_ceil(4) * 4;
-        Some(v)
-    }
-}
-
-fn put(out: &mut Vec<u8>, v: u32) {
-    out.extend_from_slice(&v.to_be_bytes());
-}
-
-fn put_opaque(out: &mut Vec<u8>, d: &[u8]) {
-    put(out, d.len() as u32);
-    out.extend_from_slice(d);
-    out.resize(out.len() + (4 - d.len() % 4) % 4, 0);
-}
-
-/// A parsed RPC call: xid, program, version, procedure and the argument bytes.
-pub struct Call<'a> {
-    pub xid: u32,
-    pub prog: u32,
-    pub vers: u32,
-    pub proc_: u32,
-    pub args: &'a [u8],
-}
-
-pub fn parse_call(m: &[u8]) -> Option<Call<'_>> {
-    let mut x = Xdr::new(m);
-    let xid = x.u32()?;
-    if x.u32()? != 0 || x.u32()? != 2 {
-        return None; // not a call / not RPC v2
-    }
-    let (prog, vers, proc_) = (x.u32()?, x.u32()?, x.u32()?);
-    x.u32()?;
-    x.opaque()?; // credentials
-    x.u32()?;
-    x.opaque()?; // verifier
-                 // a verifier without its padding leaves the position past the end
-    Some(Call { xid, prog, vers, proc_, args: m.get(x.p..)? })
-}
-
-/// Accepted reply header (verifier AUTH_NONE) with `accept_stat` (0 success, 1 prog unavailable, 3 proc unavailable).
-fn reply(xid: u32, accept: u32) -> Vec<u8> {
-    let mut o = Vec::new();
-    for v in [xid, 1, 0, 0, 0, accept] {
-        put(&mut o, v);
-    }
-    o
-}
-
-/// Portmapper: GETPORT (3) of the core channel over TCP (6) -> `CORE_PORT`; NULL (0); anything else 0.
-pub fn portmap(c: &Call, core_port: u16) -> Vec<u8> {
-    if c.prog != PMAP_PROG {
-        return reply(c.xid, 1);
-    }
-    let mut o = reply(c.xid, 0);
-    match c.proc_ {
-        0 => {}
-        3 => {
-            let mut x = Xdr::new(c.args);
-            let (prog, _vers, prot) = (x.u32().unwrap_or(0), x.u32().unwrap_or(0), x.u32().unwrap_or(0));
-            put(&mut o, if prog == CORE_PROG && prot == 6 { core_port as u32 } else { 0 });
-        }
-        _ => return reply(c.xid, 3),
-    }
-    o
-}
+pub(crate) use crate::netport::rpc::*;
 
 /// One VXI-11 link's output (responses waiting for device_read).
 #[derive(Default)]
 pub struct Link {
     pub out: Vec<u8>,
     programs: std::collections::VecDeque<crate::scpi::Program>,
+    owner: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// Core channel procedures; `exec` runs one program message (may contain several ';'-separated commands) and
@@ -112,6 +23,7 @@ pub struct Link {
 pub fn core_async(
     c: &Call,
     links: &mut Vec<Option<Link>>,
+    owner: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>,
 ) -> Vec<u8> {
     if c.prog != CORE_PROG || c.vers != 1 {
@@ -123,26 +35,16 @@ pub fn core_async(
         0 => {}
         // create_link(clientId, lockDevice, lock_timeout, device) -> error, lid, abortPort, maxRecvSize
         10 => {
-            let lid = match links.iter().position(|l| l.is_none()) {
-                None if links.len() >= MAX_LINKS => {
-                    put(&mut o, 9); // out of resources
-                    put(&mut o, 0);
-                    put(&mut o, 0);
-                    put(&mut o, 0);
-                    return o;
-                }
-                Some(i) => {
-                    links[i] = Some(Link::default());
-                    i
-                }
-                None => {
-                    links.push(Some(Link::default()));
-                    links.len() - 1
-                }
-            };
-            for v in [0, lid as u32, 0, 1 << 20] {
-                put(&mut o, v);
+            let lid = links.iter().position(Option::is_none).unwrap_or(links.len());
+            if lid >= MAX_LINKS {
+                words(&mut o, &[9, 0, 0, 0]); // out of resources
+                return o;
             }
+            if lid == links.len() {
+                links.push(None);
+            }
+            links[lid] = Some(Link { owner, ..Default::default() });
+            words(&mut o, &[0, lid as u32, 0, 1 << 20]);
         }
         // device_write(lid, io_timeout, lock_timeout, flags, data) -> error, size
         11 => {
@@ -153,18 +55,15 @@ pub fn core_async(
                 Some(l) => {
                     let queued: usize = l.programs.iter().map(|program| program.bytes).sum();
                     if queued + data.len() > MAX_RECORD || l.programs.len() >= 16 {
-                        put(&mut o, 9);
-                        put(&mut o, 0);
+                        words(&mut o, &[9, 0]);
                         return o;
                     }
                     l.programs.push_back(crate::scpi::Program::new(&String::from_utf8_lossy(data)));
                     pump_link(l, exec);
-                    put(&mut o, 0);
-                    put(&mut o, data.len() as u32);
+                    words(&mut o, &[0, data.len() as u32]);
                 }
                 None => {
-                    put(&mut o, 4); // invalid link identifier
-                    put(&mut o, 0);
+                    words(&mut o, &[4, 0]); // invalid link identifier
                 }
             }
         }
@@ -176,26 +75,18 @@ pub fn core_async(
                 Some(l) if !l.out.is_empty() => {
                     let n = req.max(1).min(l.out.len());
                     let chunk: Vec<u8> = l.out.drain(..n).collect();
-                    put(&mut o, 0);
-                    put(&mut o, if l.out.is_empty() { 4 } else { 1 }); // END, or REQCNT (more to come)
+                    words(&mut o, &[0, if l.out.is_empty() { 4 } else { 1 }]); // END, or REQCNT
                     put_opaque(&mut o, &chunk);
                 }
-                Some(_) => {
-                    put(&mut o, 15); // I/O timeout: nothing to read
-                    put(&mut o, 0);
-                    put_opaque(&mut o, &[]);
-                }
-                None => {
-                    put(&mut o, 4);
-                    put(&mut o, 0);
+                link => {
+                    words(&mut o, &[if link.is_some() { 15 } else { 4 }, 0]); // timeout or invalid link
                     put_opaque(&mut o, &[]);
                 }
             }
         }
         // device_readstb -> error, stb
         13 => {
-            put(&mut o, 0);
-            put(&mut o, 0);
+            words(&mut o, &[0, 0]);
         }
         // device_trigger, device_clear, device_remote, device_local, device_lock, device_unlock -> error
         14..=19 => {
@@ -240,234 +131,12 @@ fn pump_link(link: &mut Link, exec: &mut dyn FnMut(&mut crate::scpi::Program) ->
 
 #[cfg(test)]
 pub fn core(c: &Call, links: &mut Vec<Option<Link>>, exec: &mut dyn FnMut(&str) -> Vec<u8>) -> Vec<u8> {
-    core_async(c, links, &mut |program| Some(program.immediate(exec)))
+    core_async(c, links, None, &mut |program| Some(program.immediate(exec)))
 }
 
-const MAX_CONNS: usize = 8;
 const MAX_LINKS: usize = 16;
 
-struct Conn {
-    s: TcpStream,
-    buf: Vec<u8>,
-    core: bool,
-    links: Vec<usize>,
-}
-
-/// The listeners: portmapper TCP/UDP 111, core TCP `CORE_PORT`.
-pub struct Server {
-    pm_tcp: Option<TcpListener>,
-    pm_udp: Option<UdpSocket>,
-    core_tcp: Option<TcpListener>,
-    conns: Vec<Conn>,
-    pub links: Vec<Option<Link>>,
-    /// who may connect (`netacl`, net.allow; empty: everyone): new connections, and after a change those held
-    pub acl: crate::netacl::Shared,
-    /// the changes of `acl` looked at (`netacl::Shared::changed`)
-    acl_seen: u64,
-}
-
-impl Server {
-    pub fn host() -> std::io::Result<Server> {
-        let mut s = Self::empty();
-        let tcp = || -> std::io::Result<TcpListener> {
-            let l = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
-            l.set_nonblocking(true)?;
-            Ok(l)
-        };
-        s.pm_tcp = Some(tcp()?);
-        s.core_tcp = Some(tcp()?);
-        let u = UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
-        u.set_nonblocking(true)?;
-        s.pm_udp = Some(u);
-        Ok(s)
-    }
-
-    pub fn open(v6: bool) -> Server {
-        let mut s = Self::empty();
-        s.set_open(true, v6);
-        s
-    }
-
-    /// The core port, once the portmapper and the core channel are both up (the scope: `CORE_PORT`; a host harness:
-    /// the port it was given).
-    pub fn service_port(&self) -> Option<u16> {
-        if self.pm_tcp.is_none() || self.pm_udp.is_none() {
-            return None;
-        }
-        self.core_tcp.as_ref().and_then(|l| l.local_addr().ok()).map(|a| a.port())
-    }
-
-    /// Nothing listening. A computer leaves VXI-11 to the scope, where port 111 is free.
-    pub fn closed() -> Server {
-        Self::empty()
-    }
-
-    fn empty() -> Server {
-        let acl = crate::netacl::Shared::default();
-        Server { pm_tcp: None, pm_udp: None, core_tcp: None, conns: Vec::new(), links: Vec::new(), acl, acl_seen: 0 }
-    }
-
-    /// System > Network > Remote services: portmapper and core port open, or closed with their connections.
-    pub fn set_open(&mut self, on: bool, v6: bool) {
-        if !on {
-            if self.pm_tcp.take().is_some() | self.core_tcp.take().is_some() | self.pm_udp.take().is_some() {
-                eprintln!("oos-ui: VXI-11 off");
-            }
-            for conn in &self.conns {
-                let _ = conn.s.shutdown(std::net::Shutdown::Both);
-            }
-            self.conns.clear();
-            self.links.clear();
-            return;
-        }
-        if self.pm_tcp.is_some() || self.core_tcp.is_some() {
-            return;
-        }
-        let tcp = |p: u16| crate::net6::tcp(p, v6).inspect(|l| drop(l.set_nonblocking(true)));
-        self.pm_udp = crate::net6::udp(111, v6).inspect(|u| drop(u.set_nonblocking(true)));
-        (self.pm_tcp, self.core_tcp) = (tcp(111), tcp(CORE_PORT));
-        eprintln!(
-            "oos-ui: VXI-11 portmapper {} / core {}",
-            if self.pm_tcp.is_some() { "111" } else { "unavailable" },
-            if self.core_tcp.is_some() { CORE_PORT.to_string() } else { "unavailable".into() }
-        );
-    }
-
-    fn portmap(&self, c: &Call) -> Vec<u8> {
-        let port = self.core_tcp.as_ref().and_then(|l| l.local_addr().ok()).map_or(0, |a| a.port());
-        portmap(c, port)
-    }
-
-    pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
-        if let Some(u) = &self.pm_udp {
-            let mut b = [0u8; 1500];
-            while let Ok((n, from)) = u.recv_from(&mut b) {
-                if !self.acl.permits_peer(Ok(from)) {
-                    continue;
-                }
-                if let Some(c) = parse_call(&b[..n]) {
-                    let _ = u.send_to(&self.portmap(&c), from);
-                }
-            }
-        }
-        for (l, core) in [(&self.pm_tcp, false), (&self.core_tcp, true)] {
-            if let Some(l) = l {
-                while let Ok((s, peer)) = l.accept() {
-                    if !self.acl.permits_peer(Ok(peer)) {
-                        continue;
-                    }
-                    let _ = s.set_nonblocking(false);
-                    let _ = s.set_nodelay(true);
-                    if self.conns.len() < MAX_CONNS {
-                        self.conns.push(Conn { s, buf: Vec::new(), core, links: Vec::new() });
-                    }
-                }
-            }
-        }
-        // net.allow changed on the screen: a connection the list now leaves out is closed with its links
-        let recheck = self.acl.changed(&mut self.acl_seen);
-        let mut i = 0;
-        while i < self.conns.len() {
-            let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
-            let mut tmp = [0u8; 8192];
-            let mut read_bytes = 0;
-            while !closed {
-                match crate::net::read_now(&self.conns[i].s, &mut tmp) {
-                    Ok(0) => {
-                        closed = true;
-                        break;
-                    }
-                    Ok(n) => {
-                        if self.conns[i].buf.len() + n > MAX_RECORD {
-                            closed = true;
-                            break;
-                        }
-                        self.conns[i].buf.extend_from_slice(&tmp[..n]);
-                        read_bytes += n;
-                        if read_bytes >= 65536 {
-                            break;
-                        }
-                    }
-                    Err(e) if crate::net::later(&e) => break,
-                    Err(_) => {
-                        closed = true;
-                        break;
-                    }
-                }
-            }
-            // RPC record marking: 4-byte header (bit31 = last fragment, length), fragments joined
-            while !closed {
-                let Some(msg) = take_record(&mut self.conns[i].buf) else {
-                    break;
-                };
-                let r = match parse_call(&msg) {
-                    Some(c) if self.conns[i].core => {
-                        let response = core_async(&c, &mut self.links, exec);
-                        if c.proc_ == 10 && response.get(24..28) == Some(&0u32.to_be_bytes()) {
-                            if let Some(id) = response.get(28..32) {
-                                let id = u32::from_be_bytes(id.try_into().unwrap()) as usize;
-                                for connection in &mut self.conns {
-                                    connection.links.retain(|old| *old != id);
-                                }
-                                self.conns[i].links.push(id);
-                            }
-                        }
-                        response
-                    }
-                    Some(c) => self.portmap(&c),
-                    None => continue,
-                };
-                let mut out = ((r.len() as u32) | 1 << 31).to_be_bytes().to_vec();
-                out.extend_from_slice(&r);
-                if !crate::net::send(&mut self.conns[i].s, &out) {
-                    closed = true;
-                    break;
-                }
-            }
-            if !closed {
-                for &id in &self.conns[i].links {
-                    if let Some(Some(link)) = self.links.get_mut(id) {
-                        pump_link(link, exec);
-                    }
-                }
-            }
-            // what is left is one unfinished record: nothing beyond the announced maxRecvSize
-            closed |= self.conns[i].buf.len() > MAX_RECORD;
-            if closed {
-                let connection = self.conns.remove(i);
-                for id in connection.links {
-                    if let Some(link) = self.links.get_mut(id) {
-                        *link = None;
-                    }
-                }
-                // a client that left without destroy_link: nobody can read what its link holds
-                if !self.conns.iter().any(|c| c.core) {
-                    self.links.clear();
-                }
-            } else {
-                i += 1;
-            }
-        }
-    }
-}
-
-/// Removes one complete RPC record (all fragments up to the last) from `buf`.
-pub fn take_record(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
-    let mut p = 0;
-    let mut msg = Vec::new();
-    loop {
-        let h = buf.get(p..p + 4)?;
-        let h = u32::from_be_bytes([h[0], h[1], h[2], h[3]]);
-        let n = (h & 0x7fff_ffff) as usize;
-        let frag = buf.get(p + 4..p + 4 + n)?;
-        msg.extend_from_slice(frag);
-        p += 4 + n;
-        if h & 1 << 31 != 0 {
-            buf.drain(..p);
-            return Some(msg);
-        }
-    }
-}
+pub use ports::Server;
 
 #[cfg(test)]
 mod tests {
@@ -475,17 +144,43 @@ mod tests {
 
     #[test]
     fn host_vxi_listeners_use_loopback_and_advertise_the_selected_core() {
-        let s = Server::host().unwrap();
-        assert_eq!(s.pm_tcp.as_ref().unwrap().local_addr().unwrap().ip(), std::net::Ipv4Addr::LOCALHOST);
-        assert_eq!(s.pm_udp.as_ref().unwrap().local_addr().unwrap().ip(), std::net::Ipv4Addr::LOCALHOST);
-        assert_eq!(s.core_tcp.as_ref().unwrap().local_addr().unwrap().ip(), std::net::Ipv4Addr::LOCALHOST);
-        let mut args = Vec::new();
-        for v in [CORE_PROG, 1, 6, 0] {
-            put(&mut args, v);
+        use std::{
+            io::{Read, Write},
+            sync::Arc,
+        };
+        let mut s = Server::host(crate::netio::Runtime::new().unwrap(), Arc::new(crate::netport::Wake::new().unwrap()))
+            .unwrap();
+        s.poll_async(&mut |_| panic!("portmapper does not interpret SCPI"));
+        let (tcp, udp, core) = s.ports().unwrap();
+        let client = std::thread::spawn(move || {
+            let mut args = Vec::new();
+            for v in [CORE_PROG, 1, 6, 0] {
+                put(&mut args, v);
+            }
+            let msg = call(1, PMAP_PROG, 3, &args);
+            let socket = std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+            socket.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
+            socket.send_to(&msg, (std::net::Ipv4Addr::LOCALHOST, udp)).unwrap();
+            let mut response = [0; 1024];
+            let n = socket.recv(&mut response).unwrap();
+            assert_eq!(Xdr::new(&response[24..n]).u32(), Some(u32::from(core)));
+            let mut socket = std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, tcp)).unwrap();
+            socket.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
+            socket.write_all(&((msg.len() as u32) | 1 << 31).to_be_bytes()).unwrap();
+            socket.write_all(&msg).unwrap();
+            let mut header = [0; 4];
+            socket.read_exact(&mut header).unwrap();
+            let n = (u32::from_be_bytes(header) & 0x7fffffff) as usize;
+            socket.read_exact(&mut response[..n]).unwrap();
+            assert_eq!(Xdr::new(&response[24..n]).u32(), Some(u32::from(core)));
+        });
+        let guard = crate::ui::lifecycle::test_wait::Wait::new("portmapper IO completion");
+        while !client.is_finished() {
+            guard.check();
+            s.poll_async(&mut |_| panic!("portmapper does not interpret SCPI"));
+            std::thread::yield_now();
         }
-        let msg = call(1, PMAP_PROG, 3, &args);
-        let reply = s.portmap(&parse_call(&msg).unwrap());
-        assert_eq!(Xdr::new(&reply[24..]).u32(), Some(u32::from(s.ports().unwrap().2)));
+        client.join().unwrap();
     }
 
     #[test]
@@ -523,7 +218,8 @@ mod tests {
             put(&mut args, value);
         }
         let request = call(77, CORE_PROG, 12, &args);
-        let reply = core_async(&parse_call(&request).unwrap(), &mut links, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        let reply =
+            core_async(&parse_call(&request).unwrap(), &mut links, None, &mut |p| scpi.poll_program(&mut ui, &cv, p));
         let mut body = Xdr::new(&reply[24..]);
         assert_eq!((body.u32(), body.u32()), (Some(0), Some(4)));
         assert_eq!(body.opaque(), Some(&b"\n"[..]), "empty query succeeds instead of an immediate read timeout");

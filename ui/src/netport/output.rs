@@ -13,6 +13,11 @@ impl Default for Output {
     }
 }
 impl Output {
+    pub(crate) fn rpc(bytes: Vec<u8>) -> Self {
+        let header = ((bytes.len() as u32) | 1 << 31).to_be_bytes().to_vec();
+        let capacity = header.capacity() + bytes.capacity();
+        Self { chunks: vec![header, bytes], capacity, limit: crate::netport::rpc::REPLY_BYTES }
+    }
     pub fn bounded(limit: usize) -> Self {
         Self { chunks: Vec::new(), capacity: 0, limit }
     }

@@ -35,32 +35,40 @@ impl AsyncWrite for Writer {
 
 #[test]
 fn partial_writes_and_both_timeouts_release_owned_output() {
-    for (step, stalled, timeout) in
-        [(Duration::from_millis(20), false, false), (Duration::from_secs(1), false, true), (Duration::ZERO, true, true)]
-    {
-        let budget = Budget::new(Arc::new(Wake::new().unwrap()));
-        let now = Rc::new(Cell::new(Duration::ZERO));
-        let mut writer = Writer { bytes: Vec::new(), step, now: now.clone(), stalled };
-        let reply = Reply::new(Id::new(1, 1), vec![b'x'; 64], budget.reserve(RESPONSE_BYTES).unwrap());
-        let request = crate::netport::Envelope::program(1, 1, "query?".into());
-        let ports = crate::netport::Ports::new(Arc::new(Wake::new().unwrap())).unwrap();
-        let send = async {
-            let _credit = request.credit(ports);
-            send(
-                &mut writer,
-                reply,
-                || now.get(),
-                move |_| std::future::poll_fn(move |_| if stalled { Poll::Ready(()) } else { Poll::Pending }),
-            )
-            .await
-        };
-        let mut send = std::pin::pin!(send);
-        let Poll::Ready(result) = send.as_mut().poll(&mut Context::from_waker(Waker::noop())) else {
-            panic!("fixture must complete");
-        };
-        assert_eq!(result.as_ref().err().map(io::Error::kind), timeout.then_some(io::ErrorKind::TimedOut));
-        assert_eq!(budget.used(), 0, "completion and timeout release response capacity");
-        assert!(request.cancelled(), "completion and both timeout paths return the connection credit");
+    for framed in [false, true] {
+        for (step, stalled, timeout) in [
+            (Duration::from_millis(20), false, false),
+            (Duration::from_secs(1), false, true),
+            (Duration::ZERO, true, true),
+        ] {
+            let budget = Budget::new(Arc::new(Wake::new().unwrap()));
+            let now = Rc::new(Cell::new(Duration::ZERO));
+            let mut writer = Writer { bytes: Vec::new(), step, now: now.clone(), stalled };
+            let bytes = vec![b'x'; 64];
+            let mut plain = crate::netport::Output::default();
+            assert!(plain.push(bytes.clone()).is_ok());
+            let output = if framed { crate::netport::Output::rpc(bytes) } else { plain };
+            let reply = Reply::from_output(Id::new(1, 1), output, budget.reserve(RESPONSE_BYTES).unwrap());
+            let request = crate::netport::Envelope::program(1, 1, "query?".into());
+            let ports = crate::netport::Ports::new(Arc::new(Wake::new().unwrap())).unwrap();
+            let send = async {
+                let _credit = request.credit(ports);
+                send(
+                    &mut writer,
+                    reply,
+                    || now.get(),
+                    move |_| std::future::poll_fn(move |_| if stalled { Poll::Ready(()) } else { Poll::Pending }),
+                )
+                .await
+            };
+            let mut send = std::pin::pin!(send);
+            let Poll::Ready(result) = send.as_mut().poll(&mut Context::from_waker(Waker::noop())) else {
+                panic!("fixture must complete");
+            };
+            assert_eq!(result.as_ref().err().map(io::Error::kind), timeout.then_some(io::ErrorKind::TimedOut));
+            assert_eq!(budget.used(), 0, "completion and timeout release response capacity");
+            assert!(request.cancelled(), "completion and both timeout paths return the connection credit");
+        }
     }
 }
 
@@ -69,7 +77,11 @@ fn cancelling_a_stalled_write_releases_its_reservation() {
     let budget = Budget::new(Arc::new(Wake::new().unwrap()));
     let mut writer =
         Writer { bytes: Vec::new(), step: Duration::ZERO, now: Rc::new(Cell::new(Duration::ZERO)), stalled: true };
-    let reply = Reply::new(Id::new(1, 1), vec![0; 4096], budget.reserve(RESPONSE_BYTES).unwrap());
+    let reply = Reply::from_output(
+        Id::new(1, 1),
+        crate::netport::Output::rpc(vec![0; 4096]),
+        budget.reserve(RESPONSE_BYTES).unwrap(),
+    );
     let mut output = Box::pin(send(&mut writer, reply, || Duration::ZERO, |_| std::future::pending()));
     assert!(output.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
     assert!(budget.used() >= 4096);

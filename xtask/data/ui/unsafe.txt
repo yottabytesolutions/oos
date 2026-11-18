@@ -7,7 +7,6 @@
 19 unsafe ui/src/gpu.rs
 2 unsafe ui/src/main.rs
 8 unsafe ui/src/mdns.rs
-1 unsafe ui/src/net.rs
 1 unsafe ui/src/sntp.rs
 1 unsafe ui/src/store.rs
 1 unsafe ui/src/usbtmc.rs

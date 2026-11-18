@@ -5,23 +5,13 @@ use crate::netport::{Envelope, Ports, RemoteRequest, Reply, Reservation};
 use std::time::Duration;
 
 pub(super) struct Transport {
-    pub(super) io: Option<crate::netio::Raw>,
+    pub(super) endpoint: crate::netio::Endpoint,
     pub(super) intake: Intake,
-    pub(super) wake: std::sync::Arc<crate::system::intake::Wake>,
-    pub(super) acl_seen: u64,
     pub(super) reply_limit: usize,
 }
 impl Default for Transport {
     fn default() -> Self {
-        Self {
-            io: None,
-            intake: Default::default(),
-            wake: std::sync::Arc::new(
-                crate::system::intake::Wake::new().expect("SCPI intake requires a wake descriptor"),
-            ),
-            acl_seen: u64::MAX,
-            reply_limit: super::RESP_MAX,
-        }
+        Self { endpoint: Default::default(), intake: Default::default(), reply_limit: super::RESP_MAX }
     }
 }
 
@@ -48,12 +38,8 @@ impl Intake {
                 ports.notify_frame();
                 break;
             }
-            if let Some(reply) = self.parked.take() {
-                let capacity = reply.capacity();
-                if let Err(reply) = ports.replies().submit(reply.id(), reply, capacity) {
-                    self.parked = Some(reply);
-                    return;
-                }
+            if !ports.flush(&mut self.parked) {
+                return;
             }
             if self.active.is_none() {
                 if ports.requests().is_empty() {
@@ -116,3 +102,15 @@ impl Intake {
 
 #[cfg(test)]
 mod tests;
+
+impl super::Scpi {
+    pub fn io_runtime(&mut self) -> std::io::Result<crate::netio::Runtime> {
+        self.transport.endpoint.runtime()
+    }
+    pub fn set_open(&mut self, port: Option<u16>, v6: bool) {
+        self.transport.endpoint.set_open(port.map(Into::into), v6, false);
+        if port.is_none() {
+            self.transport.intake = Default::default();
+        }
+    }
+}

@@ -25,7 +25,8 @@ impl Remote {
         let scope = on_scope();
         let mut web = http::Http::open(web_port, sw);
         let mut scpi = scpi::Scpi::open_with_wake(scpi_port, sw.ipv6, web.wake_handle());
-        let mut vxi = if scope { vxi11::Server::open(sw.ipv6) } else { vxi11::Server::closed() };
+        let mut vxi = vxi11::Server::closed(net6::host_or_exit(scpi.io_runtime()), web.wake_handle());
+        vxi.set_open(scope, sw.ipv6);
         let hislip = if scope {
             hislip::Server::closed()
         } else {

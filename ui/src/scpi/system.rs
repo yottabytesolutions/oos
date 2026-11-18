@@ -75,7 +75,7 @@ fn settings(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str
     }
     if kw(nodes[1], "STATe") && query {
         let mut text = crate::cmd::stat_text(ui).trim().to_string();
-        if let Some(raw) = &scpi.transport.io {
+        if let Some(raw) = &scpi.transport.endpoint.io {
             text.push_str(&raw.ports().enqueue().text());
         }
         return Some(text_reply(&text));

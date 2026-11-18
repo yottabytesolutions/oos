@@ -13,7 +13,7 @@
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
-3308 file ui/src/scpi.rs
+3290 file ui/src/scpi.rs
 1464 file ui/src/store.rs
 8877 file ui/src/ui.rs
 1747 file ui/src/ui/analysis.rs
@@ -39,7 +39,6 @@
 807 file ui/src/ui/wlan.rs
 655 file ui/src/ui/workflow.rs
 804 file ui/src/ui/workspace.rs
-434 file ui/src/vxi11.rs
 1221 file ui/src/wave.rs
 138 fn ui/src/board/dho/fpga.rs spawn
 72 fn ui/src/board/dho/hw.rs hw_trigger
@@ -164,8 +163,7 @@
 74 fn ui/src/ui/workflow.rs Ui::replay_acquire
 99 fn ui/src/ui/workspace.rs Ui::workspace_action
 116 fn ui/src/ui/workspace.rs Ui::workspace_touch
-107 fn ui/src/vxi11.rs Server::poll_async
-105 fn ui/src/vxi11.rs core_async
+85 fn ui/src/vxi11.rs core_async
 241 fn ui/src/wave.rs Source::acquire_impl
 85 fn ui/src/wave.rs demo_signal
 125 fn ui/src/wave.rs stats

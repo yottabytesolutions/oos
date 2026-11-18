@@ -2,6 +2,7 @@
 //! Owned application messages shared by synchronous intake and transport adapters.
 mod latency;
 mod output;
+pub(crate) mod rpc;
 pub use crate::system::intake::{Id, Port, Wake};
 pub use output::Output;
 use std::sync::{
@@ -43,6 +44,7 @@ impl Payload {
 
 pub enum RemoteRequest {
     Program(String),
+    Vxi11 { record: Vec<u8>, channel: rpc::Channel, closed: Arc<AtomicBool> },
     UiState,
     ImportWaveform { slot: usize, name: String, payload: Payload },
     ExportWaveform { format: WaveFormat },
@@ -59,6 +61,10 @@ pub struct Envelope {
     read_closed: Arc<AtomicBool>,
 }
 impl Envelope {
+    pub fn message(connection: u64, request: u64, message: RemoteRequest) -> Self {
+        Self::new(Id::new(connection, request), message)
+    }
+    #[cfg(test)]
     pub fn program(connection: u64, request: u64, text: String) -> Self {
         Self::new(Id::new(connection, request), RemoteRequest::Program(text))
     }
@@ -103,22 +109,27 @@ impl Drop for Credit {
 /// Reservations cover assembled, parked, queued and IO-held output, without charging moves twice.
 pub struct Budget {
     used: Mutex<usize>,
+    limit: usize,
     wake: Arc<Wake>,
 }
 impl Budget {
+    #[cfg(test)]
     pub fn new(wake: Arc<Wake>) -> Arc<Self> {
-        Arc::new(Self { used: Mutex::new(0), wake })
+        Self::bounded(wake, RESPONSE_BYTES)
+    }
+    fn bounded(wake: Arc<Wake>, limit: usize) -> Arc<Self> {
+        Arc::new(Self { used: Mutex::new(0), limit, wake })
     }
     pub fn reserve(self: &Arc<Self>, bytes: usize) -> Option<Reservation> {
         let mut used = oos_hal::sync::lock(&self.used);
-        if bytes > RESPONSE_BYTES.saturating_sub(*used) {
+        if bytes > self.limit.saturating_sub(*used) {
             return None;
         }
         *used += bytes;
         Some(Reservation { budget: self.clone(), bytes })
     }
     pub fn reserve_available(self: &Arc<Self>) -> Option<Reservation> {
-        let available = RESPONSE_BYTES.saturating_sub(self.used());
+        let available = self.limit.saturating_sub(self.used());
         (available != 0).then(|| self.reserve(available)).flatten()
     }
     pub fn used(&self) -> usize {
@@ -185,11 +196,14 @@ pub struct Ports {
 }
 impl Ports {
     pub fn new(frame_wake: Arc<Wake>) -> std::io::Result<Arc<Self>> {
+        Self::bounded(frame_wake, MAX_CLIENTS, RESPONSE_BYTES)
+    }
+    pub(crate) fn bounded(frame_wake: Arc<Wake>, requests: usize, reply_bytes: usize) -> std::io::Result<Arc<Self>> {
         let io_wake = Arc::new(Wake::new()?);
         Ok(Arc::new(Self {
-            requests: Port::new(MAX_CLIENTS, MAX_CLIENTS * MAX_PROGRAM, frame_wake.clone()),
-            replies: Port::new(1, RESPONSE_BYTES, io_wake.clone()),
-            budget: Budget::new(frame_wake.clone()),
+            requests: Port::new(requests, requests * MAX_PROGRAM, frame_wake.clone()),
+            replies: Port::new(1, reply_bytes, io_wake.clone()),
+            budget: Budget::bounded(frame_wake.clone(), reply_bytes),
             frame_wake,
             io_wake,
             enqueue: Default::default(),
@@ -203,6 +217,14 @@ impl Ports {
     }
     pub fn replies(&self) -> &Port<Reply> {
         &self.replies
+    }
+    /// Retry an owned reply without releasing its reservation or repeating interpretation.
+    pub fn flush(&self, parked: &mut Option<Reply>) -> bool {
+        if let Some(reply) = parked.take() {
+            let capacity = reply.capacity();
+            *parked = self.replies.submit(reply.id(), reply, capacity).err();
+        }
+        parked.is_none()
     }
     pub fn budget(&self) -> &Arc<Budget> {
         &self.budget

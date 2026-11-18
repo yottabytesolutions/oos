@@ -717,7 +717,7 @@ fn e(v: f64) -> String {
 impl Scpi {
     pub fn open(port: impl Into<crate::net6::Port>, v6: bool) -> Scpi {
         let mut scpi = Self::disconnected();
-        scpi.transport.io = crate::netio::Raw::open(port, v6, scpi.transport.wake.clone()).ok();
+        scpi.transport.endpoint.set_open(Some(port.into()), v6, false);
         scpi
     }
 
@@ -727,8 +727,8 @@ impl Scpi {
         wake: std::sync::Arc<crate::system::intake::Wake>,
     ) -> Self {
         let mut scpi = Self::disconnected();
-        scpi.transport.wake = wake;
-        scpi.transport.io = crate::netio::Raw::open(port, v6, scpi.transport.wake.clone()).ok();
+        scpi.transport.endpoint.wake = wake;
+        scpi.transport.endpoint.set_open(Some(port.into()), v6, false);
         scpi
     }
 
@@ -761,29 +761,11 @@ impl Scpi {
     }
 
     pub fn port(&self) -> Option<u16> {
-        self.transport.io.as_ref().map(crate::netio::Raw::port)
-    }
-
-    pub fn set_open(&mut self, port: Option<u16>, v6: bool) {
-        match port {
-            Some(port) if self.transport.io.is_none() => {
-                self.transport.io = crate::netio::Raw::open(port, v6, self.transport.wake.clone()).ok();
-                self.transport.acl_seen = u64::MAX;
-            }
-            Some(_) => {}
-            None => {
-                self.transport.io = None;
-                self.transport.intake = Default::default();
-            }
-        }
+        self.transport.endpoint.port()
     }
 
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
-        let Some(raw) = &self.transport.io else { return };
-        if self.acl.changed(&mut self.transport.acl_seen) {
-            raw.set_acl(self.acl.clone());
-        }
-        let ports = raw.ports();
+        let Some(ports) = self.transport.endpoint.ports(&self.acl) else { return };
         let start = std::time::Instant::now();
         let mut intake = std::mem::take(&mut self.transport.intake);
         intake.poll(&ports, || start.elapsed(), |program| self.poll_program(ui, cv, program));
@@ -4240,7 +4222,7 @@ mod tests {
         s.wav_mode = 2;
         // An independently pending client request must not be consumed or
         // cancelled while another client polls configuration/status.
-        let ports = s.transport.io.as_ref().unwrap().ports();
+        let ports = s.transport.endpoint.io.as_ref().unwrap().ports();
         let pending = ":MEAS:ITEM? VPP,CHAN1".to_string();
         let request = crate::netport::Envelope::new(
             crate::system::intake::Id::new(999, 1),

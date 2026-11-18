@@ -23,7 +23,7 @@ Exit criteria:
 - M1 through M12 meet the [migration specification](architecture/migration.md#steps).
 - Guardrails and golden comparisons pass. The full gate passes on the integrated result.
 - Unit rounds through round 5 and the full stress round pass with the required hardware evidence.
-- Publish the accepted build and update the upstream PR.
+- Publish the accepted build from this fork. No pull request goes upstream (ADR 0001).
 
 State: active.
 

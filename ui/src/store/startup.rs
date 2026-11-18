@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! One owner of automatic setup promotion and the running/stable marker lifecycle (ADR 0015).
+//! One owner of automatic setup promotion and the running/stable marker lifecycle (ADR 0017).
 use super::durable::{self, Disk, Files};
 use std::io;
 use std::path::{Path, PathBuf};

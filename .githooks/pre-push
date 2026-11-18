@@ -1,4 +1,4 @@
 #!/bin/sh
 # The fast tier before anything leaves the machine; the full gate runs in CI as the required checks
-# (ADR 0031, docs/development.md). Setup once per clone: git config core.hooksPath .githooks
+# (ADR 0005, docs/development.md). Setup once per clone: git config core.hooksPath .githooks
 exec cargo xtask check --fast

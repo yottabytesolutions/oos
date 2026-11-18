@@ -72,7 +72,7 @@ UI step: ChangeSet -> accumulator: drop units of another mapping key, add whole 
   picture.
 - **Frames mode** (no worker pipe: the host, `acq.pipeline = frames`) is the same unit drawn by
   the UI thread itself. The UI thread groups one step's queued frames of one mapping key into one unit; a single
-  delivered frame in a step is a unit of one. One composition, not two (adr/0013). One unit per step matters for cost:
+  delivered frame in a step is a unit of one. One composition, not two (docs/architecture/migration.md#m12). One unit per step matters for cost:
   48 frames as 48 units would mean 48 x 2 full-map passes per step (about 2.5 GB/s); perf-guard measures the 48-frame
   case.
 - **Route per batch, from the batch's own tag.** The acquisition thread sends every `Batch` to the pipe and knows

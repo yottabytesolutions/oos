@@ -39,7 +39,7 @@ pull request that fixes a mistake: what happened, then the rule.
   directory.
 - A rule change that contradicted an accepted ADR was flagged in review. Add a superseding or amending ADR in the
   same pull request, or leave the rule alone.
-- `AGENTS.md` changed while a pull request was open (ratchet ownership, ADR 0039), and an agent followed the old
+- `AGENTS.md` changed while a pull request was open (ratchet ownership, ADR 0006), and an agent followed the old
   rule. Re-read `AGENTS.md` on `origin/main` after every rebase.
 
 ## Tests and CI

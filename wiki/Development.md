@@ -34,7 +34,7 @@ To build an image yourself, see [[Building OOS]].
 
 Each crate builds on its own. The hardware code is Linux-only, so it is checked for the target as well.
 `cargo xtask check` is the gate: formatting, limits, lints, the tests of all crates in debug and release, the target
-build, coverage and the script checks ([ADR 0031](https://github.com/yottabytesolutions/oos/blob/main/docs/adr/process/0031-the-gate-is-cargo-xtask-check.md),
+build, coverage and the script checks ([ADR 0005](https://github.com/yottabytesolutions/oos/blob/main/docs/adr/0005-the-gate.md),
 [docs/development.md](https://github.com/yottabytesolutions/oos/blob/main/docs/development.md)). `cargo xtask check --fast` runs the seconds-long part:
 
 ```sh

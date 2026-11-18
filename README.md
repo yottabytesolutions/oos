@@ -66,7 +66,7 @@ to the release.
 ## Thanks
 
 This tree is a hard fork of **[OOS](https://github.com/dekajoule/oos)** by Julian Decker and its contributors, at
-upstream commit 15b819e2 ([ADR 0030](docs/adr/process/0030-this-tree-is-a-hard-fork-of-oos.md)). Their copyright and
+upstream commit 15b819e2 ([ADR 0001](docs/adr/0001-hard-fork.md)). Their copyright and
 the GPL-2.0-or-later licence stay with every file they wrote.
 
 OOS also builds on [NovaOS](https://github.com/Bradyok/novaos-kernel-source) by Olympian LED, Inc., whose published

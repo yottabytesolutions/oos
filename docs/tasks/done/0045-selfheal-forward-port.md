@@ -14,7 +14,7 @@ depends: []
 
 Bring the `dho804` hotfix `fix/self-heal` (merged as abd00ca) to `overhaul` through the hotfix lane
 ([migration](../../architecture/migration.md), Hotfix lane): the unit restarts by itself after a kernel panic or a hard
-hang, and the panic text is archived on `/oos`. Where ADR 0015 ([safe start](../../architecture/adr/0015-safe-start.md),
+hang, and the panic text is archived on `/oos`. Where ADR 0017 ([safe start](../../adr/0017-safe-start.md),
 its "Kernel panics" part) is more specific than the hotfix, the scripts follow the design. The rest of M1b (the
 abnormal-exit counter, the markers and safe mode in `oos-ui`) stays planned under M1b.
 

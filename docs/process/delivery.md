@@ -9,6 +9,9 @@ A task is one worker job: plan and implement together. The worker writes the pla
 then implements it in the same job. A separate plan job and plan review happen only for migration steps that
 change the architecture (new crates, ownership, change detection); those plans get an architecture review.
 
+GitHub issues are the durable work queue. Agent work starts from an agent-ready issue with acceptance criteria;
+branch naming and issue linkage follow CONTRIBUTING.md.
+
 The brief names the minimal scope, the files other tasks hold and the review tier. Work outside the scope is a
 follow-up task, not part of the change. A worker may touch further files the deliverable strictly needs when no
 other task holds them, and lists them in the task Status.
@@ -49,7 +52,7 @@ explicit execution until the image tier includes them automatically.
 
 ## Soft freeze
 
-Code that a planned step replaces gets no features and no cosmetic fixes ([adr/0017](../architecture/adr/0017-hybrid-after-m12.md)):
+Code that a planned step replaces gets no features and no cosmetic fixes ([ADR 0038](../adr/0038-menus-and-parser.md)):
 the drawing kernels in `drawpipe`, `wave` and `fastdraw` until M7 to M10 replace them, the menu tables in `ui.rs`
 until the menu rebuild, and the SCPI parser until the M15 rebuild. Feature requests for these areas go into the
 specification or the replacing step.

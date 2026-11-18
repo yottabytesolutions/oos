@@ -35,7 +35,7 @@ main.rs retains only extraction and lifecycle wiring changes under the owner's e
 Held elsewhere: xtask/, ui/tests/golden*, ui/tests/soak.rs and tools/ golden tooling.
 
 Specification: [M1b](../../architecture/migration.md#m1b-safe-start-and-exit),
-[ADR 0015](../../architecture/adr/0015-safe-start.md),
+[ADR 0017](../../adr/0017-safe-start.md),
 [safe start and exit](../../architecture/README.md#safe-start-and-exit).
 Branch `t0048-m1b-safe-start`, base `aac04cc`, contributor codex-b (Codex).
 No commits, pushes or device access in this job. Prepare review units and their messages/file lists in
@@ -120,7 +120,7 @@ Planned names below are acceptance targets, not evidence of tests already run.
   review. Kexec undo starts the image supervisor only on exact-name absence; recovery requires a parse
   failure and retains two archives; PID-claim mkdir locking serializes writers and reclaims stale/empty
   locks. Quarantine stamps sort numerically. Shutdown waits share 2.2 s; memory STOP retains clock/toast
-  and service polls; helper acknowledgments must span 10 s before retry-budget reset. ADR 0015's
+  and service polls; helper acknowledgments must span 10 s before retry-budget reset. ADR 0017's
   dw_wdt/CARDRESET residual-risk section is unchanged. Notes: `target/review2-findings.txt`; message and
   all 20 review paths: `target/COMMIT_MSG.txt`. No staging, commits, pushes, merges, device access,
   held-path edits or ratchet changes. Task remains active; another independent review follows.
@@ -144,10 +144,10 @@ Planned names below are acceptance targets, not evidence of tests already run.
   Plan: reproduce each P2/P3 with failing-before tests; repair kexec undo supervision, parse-only ledger
   recovery and bounded archives, serialize ledger writers, sort quarantine stamps numerically, share a
   shutdown deadline below 2.5 s, keep service polls alive during memory STOP, and require 10 s helper
-  stability. Run focused host tests and the fast gate only. Preserve ADR 0015 reset-evidence limits.
+  stability. Run focused host tests and the fast gate only. Preserve ADR 0017 reset-evidence limits.
   Additional owner-assigned paths: fpgad/src/bin/oos-update.rs and its regression tests. Existing reserved
   paths cover all other code changes; reserve the safe-start/shutdown sections of the architecture README
-  and ADR 0015 for matching implementation details. No staging, commits, pushes or device access; another
+  and ADR 0017 for matching implementation details. No staging, commits, pushes or device access; another
   review follows.
 
 - 2026-11-15: round 1 fixes are prepared for renewed Claude review, uncommitted. The original part 2
@@ -188,7 +188,7 @@ Planned names below are acceptance targets, not evidence of tests already run.
   the first plus two timestamped copies. Ledger mode is read-only; damaged state is archived and replaced,
   selecting safe once; clear/recovery bypass awk. Crash-save has a 20 s process timeout; all ledger calls
   have 5 s, including crash archive counting. Archive counter failures retain pstore and signal the loop.
-  Fresh loop-provided run IDs count early process aborts independently of stale markers. ADR 0015 records
+  Fresh loop-provided run IDs count early process aborts independently of stale markers. ADR 0017 records
   the owner's same-boot/previous-boot evidence rule and the limits of reset-reason evidence.
 - 2026-11-15: the storage/backoff/quarantine/supervisor regressions fail before their fixes:
   `target/review1-storage-before.log` (4 failures), `target/review1-supervisor-before.log` (6 failures).
@@ -206,7 +206,7 @@ Planned names below are acceptance targets, not evidence of tests already run.
   regressions; make storage optional, bound recovery subprocesses, recover corrupt ledgers and pass launch
   identities before process entry. Same-boot stale markers count; previous-boot markers count only with an
   archived panic/oops or an exposed watchdog reset bit. No evidence means power loss. Record that owner
-  decision in ADR 0015. Review fixes get their own message/file-list section. No commits or device access.
+  decision in ADR 0017. Review fixes get their own message/file-list section. No commits or device access.
 
 - 2026-11-15: final part 2 source full `cargo xtask check` exited 1 and printed exactly:
   `gate FAILED in 528 s: tests (debug), tests (release), coverage`.
@@ -303,7 +303,7 @@ Planned names below are acceptance targets, not evidence of tests already run.
   `target/COMMIT_MSG.txt`. No staging, commits, pushes or device access. Final full gate result is recorded above.
   Cross-vendor review and round 0 remain coordinator work.
 
-- 2026-11-15: codex-b read the M1b/ADR 0015 and 0045 evidence; plan and failing-before acceptance map written before code. Confirmed clean worktree on `t0048-m1b-safe-start` at `aac04cc`; no device access or commits.
+- 2026-11-15: codex-b read the M1b/ADR 0017 and 0045 evidence; plan and failing-before acceptance map written before code. Confirmed clean worktree on `t0048-m1b-safe-start` at `aac04cc`; no device access or commits.
 
 - 2026-11-15: seeded and claimed for codex-b by the coordinator; the M1b prerequisite (roll fix forward-port bb7dd9b)
   is merged.

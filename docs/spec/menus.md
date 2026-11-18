@@ -4,7 +4,7 @@ Status: specification draft for coordinator disposition review and owner approva
 `main` e846b2cf (2026-11-18), compared with draft e9f7c30b. M17b-read reconciles the
 E1 area owners, all 963 requirement rows and every indexed expansion below. This is a code extraction, not hardware
 verification. It implements the specification
-scope of [ADR 0017](../architecture/adr/0017-hybrid-after-m12.md) and rows 1 and 2 of
+scope of [ADR 0038](../adr/0038-menus-and-parser.md) and rows 1 and 2 of
 [Specification gaps](../architecture/spec-gaps.md). The [overview](overview.md) uses these same readers and links.
 
 ## Reading the inventory
@@ -506,7 +506,7 @@ RefShow expands R1..R10 after Import; selected empty-slot adjustments do nothing
 | menus-337 | `RefOffset`: Slot offset | numeric | `Ui.refs[ref_sel].offset`; V; step 0.1 slot V/div | always; empty selected slot does nothing | V | keep | `ui/src/ui/menu/reference.rs` | Kept |
 | menus-338 | `RefColor`: Slot color | picker (stepped choice today) | `Ui.refs[ref_sel].color`; White, Red, Green, Blue, Violet; wraps | always; empty selected slot does nothing | S/P by committed index; collapsed value filled; focus outline independent | keep committed identity and selected-value cue | `ui/src/ui/menu/reference.rs` | Kept |
 | menus-339 | `RefLabel`: Slot name | action | `Ui.refs[ref_sel].label; Osk::for_ref`; name keyboard; toast if slot empty | Always | focus border only | keep | `ui/src/ui/menu/reference.rs` | Kept |
-| menus-1227 | `RefLoad`: Load file | action | `ref_load / ref_import`; takes the file from storage into the Slot row's reference, as Import slot does; loaded record overlays live acquisition by default | load feature offered | focus border only | keep | `ui/src/ui/menu/reference.rs`; `ui/src/ui/tools.rs`; `ref_load` | Changed: the destination chooser and host file picker moved to oos-desktop (ADR 0036) |
+| menus-1227 | `RefLoad`: Load file | action | `ref_load / ref_import`; takes the file from storage into the Slot row's reference, as Import slot does; loaded record overlays live acquisition by default | load feature offered | focus border only | keep | `ui/src/ui/menu/reference.rs`; `ui/src/ui/tools.rs`; `ref_load` | Changed: the destination chooser and host file picker moved to oos-desktop (ADR 0027) |
 | menus-340 | `RefExport`: Export slot | action | `ref_export()`; export selected reference slot | Always | focus border only | keep | `ui/src/ui/menu/reference.rs` | Kept |
 | menus-341 | `RefImport`: Import slot | action | `ref_import()`; import selected reference slot | Always | focus border only | keep | `ui/src/ui/menu/reference.rs` | Kept |
 | menus-342 | `RefShow:0`: R1 | toggle (button) | `Ui.refs[0].on`; empty or CHn on/off; toggle this populated slot | always; empty slots do nothing | filled while populated slot is On; focus outline independent | keep committed identity and selected-value cue | `ui/src/ui/menu/reference.rs` | Kept |
@@ -1405,7 +1405,7 @@ Delta vs e9f7c30b: **Added**. Constructor: `ui/src/ui.rs`. Runtime order: top le
 | menus-1566 | Compact: Time | submenu | Horizontal; read current detail/main time/div | bar_compact | plain value | change H1: inline Zoom state | `ui/src/ui/workspace.rs` | Added |
 | menus-1567 | Compact: Trigger | submenu | Trigger; shows source/type/sweep/levels, whole rect opens menu | bar_compact | accent labels and root border | keep; H1 summary applies | `ui/src/ui/trigger_controls.rs` | Added |
 | menus-1568 | Compact: Live | action | return_to_live; fallback when top Live absent | record_mode && no visible top Live | plain text | keep | `ui/src/ui/workspace.rs` | Added |
-| menus-1569 | Compact: Panel | toggle | `desktop_panel`; show/hide desktop front panel | Removed from this surface: the front panel belonged to the native Windows window, which moved to oos-desktop (ADR 0036) | Not rendered at HEAD | drop: superseded control; retain this id as a tombstone | historical: `ui/src/ui/workspace.rs` | Dropped |
+| menus-1569 | Compact: Panel | toggle | `desktop_panel`; show/hide desktop front panel | Removed from this surface: the front panel belonged to the native Windows window, which moved to oos-desktop (ADR 0027) | Not rendered at HEAD | drop: superseded control; retain this id as a tombstone | historical: `ui/src/ui/workspace.rs` | Dropped |
 
 ### Sources popup
 
@@ -1493,13 +1493,13 @@ Delta vs e9f7c30b: **Added**. Constructor: `ui/src/ui/reflook.rs`. Runtime order
 ### Load destination modal
 
 Path: **Reference > Load file** in the native Windows window, and the `workflow load` command. Surface requirement:
-**menus-1618**, tombstone: the modal only fed the native file dialog, which moved to oos-desktop (ADR 0036); drop,
+**menus-1618**, tombstone: the modal only fed the native file dialog, which moved to oos-desktop (ADR 0027); drop,
 retain the ids. Not rendered at HEAD.
 
 | ID | Item / label | Kind | Field or action; value set / step | Visibility / enable conditions | Highlight today | Disposition | Evidence | Delta vs e9f7c30b |
 |---|---|---|---|---|---|---|---|---|
-| menus-1619 | Rn / Rn replace | action | slot=0..9; set load_destination, clear ask flag and open file request | Removed from this surface: the modal fed the native file dialog, which moved to oos-desktop (ADR 0036) | Not rendered at HEAD | drop: superseded control; retain this id as a tombstone | historical: `ui/src/ui/workflow.rs` | Dropped |
-| menus-1620 | Cancel / outside / physical key | action | cancel_load_slot; no source or model change; file request cancelled | Removed from this surface: the modal fed the native file dialog, which moved to oos-desktop (ADR 0036) | Not rendered at HEAD | drop: superseded control; retain this id as a tombstone | historical: `ui/src/ui/workflow.rs` | Dropped |
+| menus-1619 | Rn / Rn replace | action | slot=0..9; set load_destination, clear ask flag and open file request | Removed from this surface: the modal fed the native file dialog, which moved to oos-desktop (ADR 0027) | Not rendered at HEAD | drop: superseded control; retain this id as a tombstone | historical: `ui/src/ui/workflow.rs` | Dropped |
+| menus-1620 | Cancel / outside / physical key | action | cancel_load_slot; no source or model change; file request cancelled | Removed from this surface: the modal fed the native file dialog, which moved to oos-desktop (ADR 0027) | Not rendered at HEAD | drop: superseded control; retain this id as a tombstone | historical: `ui/src/ui/workflow.rs` | Dropped |
 
 ### Eye header and auxiliary view controls
 
@@ -1645,13 +1645,13 @@ variants. Counts of rendered controls depend on capabilities, state and the sele
 
 | ID | Requirement | Disposition | Evidence | Delta vs e9f7c30b |
 |---|---|---|---|---|
-| menus-60 | A menu item is data: stable id, label/role reader, one of the documented control kinds, typed value reader, command/event producer, ordered option identities and labels, visibility/enable predicate, active identity and optional submenu summary/target. One renderer uses these fields. Numeric step/range and status-only rows are explicit; no per-menu renderer decides whether selected state exists. | change representation under accepted ADR 0017; preserve inventory behaviours | `ui/src/ui.rs`; [ADR 0017](../architecture/adr/0017-hybrid-after-m12.md) | Kept |
+| menus-60 | A menu item is data: stable id, label/role reader, one of the documented control kinds, typed value reader, command/event producer, ordered option identities and labels, visibility/enable predicate, active identity and optional submenu summary/target. One renderer uses these fields. Numeric step/range and status-only rows are explicit; no per-menu renderer decides whether selected state exists. | change representation under accepted ADR 0038; preserve inventory behaviours | `ui/src/ui.rs`; [ADR 0038](../adr/0038-menus-and-parser.md) | Kept |
 | menus-61 | Effective displayed view uses XY precedence, then m.view; retained analyser settings remain inspectable when another view is displayed. The view entry's active cue names the displayed view. Expose a retained/suppressed analyser preference separately if needed instead of falsely labelling it the displayed view. The owner question below resolves the legacy simultaneous XY/analyser case. | change H1: effective view indication | `ui/src/ui/viewmore.rs`; `ui/src/ui/analysis.rs`; `ui/src/ui/bode.rs`; `ui/src/ui/bwtest.rs` | Kept |
 
 ## Review and owner questions
 
 The extraction and proposed H1/N1 dispositions need coordinator review; the menu tree, highlight rule and overview
-need owner approval under ADR 0017. Read-side migration starts with DVM/counter; other areas still use E1 read dispatches.
+need owner approval under ADR 0038. Read-side migration starts with DVM/counter; other areas still use E1 read dispatches.
 The owner proposals below are not part of this representation-only package. These are explicit open owner questions, not
 changes already accepted:
 

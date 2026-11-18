@@ -33,7 +33,7 @@ pub(super) fn outside<T>(ui: &mut Ui, f: impl FnOnce(&mut Ui) -> T) -> T {
     f(guard.0)
 }
 
-/// A sample of the timing rings' clock, which tests supply at construction (ADR 0019).
+/// A sample of the timing rings' clock, which tests supply at construction (ADR 0009).
 pub(super) fn now(ui: &Ui) -> std::time::Instant {
     ui.host.runtime().change.timing.now()
 }

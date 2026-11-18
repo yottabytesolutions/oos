@@ -1,6 +1,6 @@
 # UI design rules
 
-These rules collect the former ADR 0005 to 0008. They describe UI design, rather than architecture decisions.
+This document collects the retired UI design records. They describe UI design, rather than architecture decisions.
 
 ## Measurements
 
@@ -12,7 +12,7 @@ One tap adds a measurement; a second removes it. An enabled tile is filled. The 
 Analysis > Measure open the same page. Settings are grouped as Sources, Measure over, Display, Parameters and More.
 Selected lists enabled measurements with Remove, Set and Clear all. The page covers the plot while open.
 
-Each measurement has one full name and place, declared by its module (`Def::places`, ADR 0002). See
+Each measurement has one full name and place, declared by its module (`Def::places`, ADR 0028). See
 [measurement modules](measurement-modules.md) and the [analysis reference](reference-analysis.md).
 
 ## Lists
@@ -42,4 +42,4 @@ the generator enabled. Do not copy another product's look or arrangement.
 
 Use the shared colour constants in `ui/src/ui.rs`. A page-specific colour is a named constant with a reason, rather
 than a literal in drawing code. Check new pages at all three text sizes with everything enabled, following
-[ADR 0014](adr/process/0014-refactorings-keep-every-pixel.md).
+[ADR 0008](adr/0008-behaviour-baselines.md).

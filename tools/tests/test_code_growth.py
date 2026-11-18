@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""Release notes section for production code and the `Code growth:` rule (ADR 0035)."""
+"""Release notes section for production code and the `Code growth:` rule (ADR 0007)."""
 import importlib.util
 import json
 from pathlib import Path
@@ -61,7 +61,7 @@ class NotesTests(unittest.TestCase):
         self.assertFalse(growth.notes(loc(5), "| t |", None)[1])
         text, ok = growth.notes(loc(5), "| t |", "Code growth: why.")
         self.assertTrue(ok)
-        self.assertEqual(text, "## Production code\n\nCompared with v0.2.0 (ADR 0035).\n\n| t |\n\nCode growth: why.\n")
+        self.assertEqual(text, "## Production code\n\nCompared with v0.2.0 (ADR 0007).\n\n| t |\n\nCode growth: why.\n")
         self.assertTrue(growth.notes(loc(-3), "| t |", None)[1])
         self.assertTrue(growth.notes(loc(0), "| t |", None)[1])
 

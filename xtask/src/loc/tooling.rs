@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Shell and Python lines, counted as tooling beside production code (ADR 0035). A line counts when it is neither
+//! Shell and Python lines, counted as tooling beside production code (ADR 0007). A line counts when it is neither
 //! blank nor a `#` comment. Tests and test data do not count.
 
 use std::collections::BTreeMap;

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-"""A stacked pull request (ADR 0034) targets the branch of the layer below it, not main. pr_meta, changes.py and the
+"""A stacked pull request (CONTRIBUTING.md#stacked-pull-requests) targets the branch of the layer below it, not main. pr_meta, changes.py and the
 Codex gate judge only the layer's own commits. That the required workflows run on such a pull request is checked in
 xtask (xtask/src/stack_ci.rs), with a YAML parser. Offline: a throwaway Git repository, no network."""
 import importlib.util

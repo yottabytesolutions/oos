@@ -10,9 +10,9 @@ and [records](records.md) describe the detailed target, not completed implementa
 Keep the frame loop responsive while acquisition, remote clients and storage make progress.
 Give settings, records, pictures and views explicit owners. Remove repeated dispatch and blocking IO.
 Keep the existing behaviour through small migrations. The accepted decisions are
-[architecture/0017](adr/0017-hybrid-after-m12.md),
-[ADR 0037](../adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md) and
-[ADR 0038](../adr/code/0038-one-table-may-generate-per-field-code.md).
+[ADR 0038](../adr/0038-menus-and-parser.md),
+[ADR 0023](../adr/0023-io-layer.md) and
+[ADR 0029](../adr/0029-table-generation.md).
 
 ## Current state
 
@@ -59,7 +59,7 @@ These are not production LOC. The size ratchet counts 375 code lines in `Ui::ste
 `Ui.m` is the flat core `Model`. Menus, keys, SCPI and `store::set` still mutate it directly.
 `core/src/change/` supplies normalization, classification, mapping keys, identities and bounded outboxes.
 `field_table.rs` generates flat-field comparison/refresh and typed patches from one field inventory
-(ADR 0038); member-level classes and mapping logic remain separate. This is not yet grouped settings ownership.
+(ADR 0029); member-level classes and mapping logic remain separate. This is not yet grouped settings ownership.
 `Command` is a transitional API with Run, Timebase, Channel, TriggerMode, AutoFast, Request and Patch variants.
 
 `ui/change/` accepts changes, runs reset consumers and publishes acquisition settings.
@@ -146,7 +146,7 @@ CPU rendering and GPU layer composition both exist. `Model::draw_batch` selects 
 `draw.model` is absent from this checkout. M12 has not chosen which remaining routes to remove.
 
 Boot images contain shared model defaults; device identity and overrides stay in `/oos/system.conf`. Updates compare
-runtime hardware model detection with a signed model list and board target (ADR 0041). See [system](system.md).
+runtime hardware model detection with a signed model list and board target (ADR 0015). See [system](system.md).
 
 ## Layers
 
@@ -187,11 +187,11 @@ flowchart TB
     render -->|"snapshot lease"| io
 ```
 
-ADR 0037 permits only tokio `rt`, `net`, `time`, `sync`, `io-util` and `macros`.
-The owner accepted the raw-SCPI implementation after unit measurements in [M15](migration.md#m15-remote-adapters-on-commands-and-queries).
-Tokio is the runtime for all network IO; each transport reports and minimises its production LOC and binary delta. Blocking filesystem, usbfs and process calls must not run on the executor;
-use bounded blocking adapters. CPU work stays on the existing worker abstraction. WLAN, SNTP and Bode
-keep their existing threads; USBTMC stays blocking. Later network runtime moves keep reporting their production LOC and binary deltas.
+ADR 0023 keeps non-blocking IO behind ports, preferably on one current-thread tokio runtime.
+The current Cargo features are rt, net, time, sync and macros. Raw SCPI, VXI-11 and HiSLIP use netio.
+HTTP, mDNS, NTP and the update check remain migration work. USB bulk and WLAN control also move behind
+non-blocking ports where async removes blocking. Blocking filesystem, usbfs and process calls never run on
+the executor; use bounded blocking adapters. CPU work stays on CPU workers.
 
 ## State and ownership
 
@@ -211,7 +211,7 @@ M13 groups settings without changing values or setup compatibility. M14 replaces
 including relative knob edits. Apply deferred internal commands before external intake; preserve SCPI program order.
 The later store/remote/input merge order must be explicit and tested when those edges share command intake.
 One descriptor inventory supplies menu metadata; one SCPI table supplies accepted headers and typed mappings.
-Generate repeated field handling only under ADR 0038, with every row exercised by tests.
+Generate repeated field handling only under ADR 0029, with every row exercised by tests.
 
 ### Normalize
 
@@ -237,7 +237,7 @@ Typed requests, frame metadata and batch ownership follow [acquisition](acquisit
 
 ## Step pipeline
 
-Target order: intake, change, acquisition intake, records, accumulate/measure, views, compose/present, reply.
+Target order: intake, change, acquire, records, accumulate, measure, views, compose, present, reply (ADR 0034).
 Internal proposals apply at the next intake. SCPI query barriers may accept a change between full pictures.
 Extract stages around today's acceptance and publication seams before moving their state.
 
@@ -484,8 +484,14 @@ Boot/watchdog/kexec contracts and hardware evidence remain in [system](system.md
 
 ## Performance budgets
 
+GPU migration uses dirty regions, a fenced buffer pool, asynchronous on-demand snapshots and fused
+accumulation/decay without maxima scans. Hot shared counters are per thread and cache-line aligned; readers sum
+them. Each hand-off has a contention counter. A measured lock-free replacement lives in oos_hal::sync with its
+own tests and Miri coverage. These are ADR 0031 targets, accepted through the performance migration steps.
+
+
 Every target budget must have a counter in `:SYSTem:STATe?` (p50 and p99 over the last 10 s, one line per thread)
-and a gate ([architecture/0016](adr/0016-performance-principles.md)). Host perf guards check primitive ratios and
+and a gate ([ADR 0031](../adr/0031-performance.md)). Host perf guards check primitive ratios and
 allocation counts; the absolute values must be asserted on the unit in each acceptance round. These are target
 unit acceptance values, not achieved measurements. The values are for 4 channels on the panel unless a row says
 otherwise; the first unit round after each step may tighten them, never loosen them without a doc change.
@@ -560,7 +566,7 @@ budgets above are for normal depths (up to 1 M points per channel on screen); de
 
 | Work | Normal depth | Deep raw window (12.5 MB) | Basis |
 |---|---|---|---|
-| decode | none: codes stay codes | none for drawing; the measure thread converts only what a non-cheap measurement needs | architecture/0016, codes until volts |
+| decode | none: codes stay codes | none for drawing; the measure thread converts only what a non-cheap measurement needs | ADR 0031, codes until volts |
 | screen record | inside the records stage budget | <= 5.5 ms, off main | measured |
 | cheap measurement set | p99 <= 2 ms | p99 <= 10 ms: one pass over 12.5 MB of codes at >= 2 GB/s, plus margin | from the 58 ms baseline, which included the decode to `f32` |
 | full measurement set | p99 <= 40 ms on 4 x 625 k | measured in M6, recorded here | no baseline yet |
@@ -590,7 +596,25 @@ synchronous port; only netio constructs/polls the runtime. Current `remote.rs` r
 blocking worker; they do not run on the IO executor.
 The gate is `cargo xtask check`; fast is a partial gate. Size/lint debt only shrinks.
 Authors run `cargo xtask ratchet` (`--move` for planned moves) under
-[ADR 0039](../adr/process/0039-format-lints-and-ratchets-the-author-tightens.md).
+[ADR 0006](../adr/0006-format-lints-and-ratchets.md).
 Contributions and source provenance follow
-[ADR 0040](../adr/process/0040-contributions-signed-off-no-vendor-material-rebased.md).
+[ADR 0003](../adr/0003-contributions.md).
 See [development](../development.md) for executable checks and their limits.
+
+### Epoch token protocol
+
+This is the change-detection protocol for ADR 0033. Autoset and Bode run after change, so they request an epoch
+by token instead of borrowing the change stage mutably. The next ChangeSet carries (token, epoch); a stage with
+an unresolved token accepts no records. Tokens are unique per request; several requests can share an epoch.
+Apply settings emitted with a token before resolving its epoch, so AcqIntent carries the new gen and epoch together.
+An epoch-only change drops armed-ahead batches and queued older-epoch frames. SINGLE arm, CLEAR and RUN after STOP
+resolve in the change stage itself. UiAcq is derived and diffed each step rather than stored. AcqIntent carries
+the route into BatchMeta; DepositView carries the mapping separately. In STOP a mapping change redraws the last record.
+Tests must cover unresolved tokens, same-step settings/epoch association and epoch-only acquisition boundaries.
+
+### Error recovery mechanics
+
+For the M16 stage target, each state-holding stage exposes reset and a fake-backed test that reset restores
+new-stage behaviour. Detectable inconsistencies use debug assertions in tests/debug builds and one log plus
+recovery in release builds, rather than an expect. Log format is `oos-ui <area>: <what> <values>`; review checks it.
+These mechanisms implement ADR 0030 without requiring an error enum per small source file.

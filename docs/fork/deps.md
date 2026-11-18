@@ -34,10 +34,10 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
 ## Rust crates
 
 A crate from crates.io is added only where it removes code or blocking
-([ADR 0037](../adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md)). Each crate's allowed dependencies are its line in
+([ADR 0004](../adr/0004-dependencies.md)). Each crate's allowed dependencies are its line in
 `xtask/data/architecture.txt`; cargo-deny (`deny.toml`) vets licences and advisories. Crates outside `xtask` are
 listed here. There are none: the Windows desktop window and its crates moved to
-[oos-desktop](https://github.com/yottabytesolutions/oos-desktop) (ADR 0036).
+[oos-desktop](https://github.com/yottabytesolutions/oos-desktop) (ADR 0027).
 
 ## Checking for updates
 
@@ -65,3 +65,13 @@ For the `upstream:` line: change `gpu/build.sh` and the line together.
 `tools/deps-check.sh` found newer releases that were not taken in this round: libnftnl 1.2.9 -> 1.3.2, nftables
 1.1.3 -> 1.1.7 (fork, `rootfs/build-nft.sh`); e2fsprogs 1.47.2 -> 1.47.4, wpa_supplicant 2.11 -> 2.12, Mesa 26.0.8 ->
 26.3.0. Dropbear, OpenSSH, libmnl and kexec-tools are current.
+
+## M15a adoption evidence
+
+Historical M15a comparison, recorded in task 0016: verified on the unit, DHO804, 2026-11-18,
+raw-SCPI candidate B retained at least 26 fps with a stalled client versus 0.2 fps on main;
+628-1038 exchanges/s versus 30-34; frame p50/p99 at most 2.2/6.5 ms on both.
+CPU, wakeups and RSS were within noise and picture loss at most 3%.
+Host comparison after the gate fix: +685 production lines, +2.86% aarch64 binary size, +9 dependencies.
+The owner accepted the behaviour gain and retired the deferred size gate and poll fallback.
+Later IO moves report and minimise their own code and binary deltas (ADR 0023).

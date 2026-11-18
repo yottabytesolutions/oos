@@ -37,7 +37,7 @@ pub fn guard_pair(
     pair.best
 }
 
-/// The time source of the intake, change, consumer, picture and shadow rings, supplied at construction (ADR 0019).
+/// The time source of the intake, change, consumer, picture and shadow rings, supplied at construction (ADR 0009).
 #[derive(Clone)]
 pub(crate) struct Clock(Arc<dyn Fn() -> Instant + Send + Sync>);
 impl Default for Clock {

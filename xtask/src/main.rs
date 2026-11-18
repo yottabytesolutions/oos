@@ -5,7 +5,7 @@
 //!   cargo xtask step <id>...   only the named inventory steps, in inventory order (CI splits the gate into jobs)
 //!   cargo xtask ratchet [--coverage] [--move] [--init]   write the ratchet files back after an improvement
 //!   cargo xtask elf-static <file>...   verify static AArch64 executables
-//!   cargo xtask loc [--json] [--compare <git-ref>]   production code lines per crate (ADR 0035)
+//!   cargo xtask loc [--json] [--compare <git-ref>]   production code lines per crate (ADR 0007)
 //!   cargo xtask plan-matrix [--update]   check or deliberately replace the register-plan baseline
 
 mod agent_rules;

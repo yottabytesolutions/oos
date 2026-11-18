@@ -100,7 +100,7 @@ impl Walk {
         }
     }
 
-    /// Code lines from `start` to `end` (ADR 0010: no blank and no comment lines).
+    /// Code lines from `start` to `end` (ADR 0006: no blank and no comment lines).
     fn code_lines(&self, start: proc_macro2::Span, end: proc_macro2::Span) -> u64 {
         self.code.range(start.start().line..=end.end().line).count() as u64
     }

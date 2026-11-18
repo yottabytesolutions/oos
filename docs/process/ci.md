@@ -26,7 +26,7 @@ workflow uses a secret.
 | labeler.yml | PR (same repository only) | label (paths, `agent` for the agent app) |
 
 The jobs call `cargo xtask step <id>...`, so CI and the local gate share one definition
-([ADR 0031](../adr/process/0031-the-gate-is-cargo-xtask-check.md)). The hooks run only the fast tier; the full gate
+([ADR 0005](../adr/0005-the-gate.md)). The hooks run only the fast tier; the full gate
 is these required checks. Every PR job reports its required name; `tools/ci/changes.py` skips the Rust build steps
 for changes to documents, GitHub settings or CI scripts, and in the merge queue for a tree that already passed on its
 PR head. A push to `main` only warms the caches. The timings jobs summarise job and step durations per run

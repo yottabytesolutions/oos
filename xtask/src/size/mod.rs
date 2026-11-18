@@ -11,9 +11,9 @@ use crate::ratchet::Ratchet;
 use crate::sources::Source;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Lines of a source file outside `#[cfg(test)]` items, comment lines left out (ADR 0035).
+/// Lines of a source file outside `#[cfg(test)]` items, comment lines left out (ADR 0006).
 pub const FILE_LINES: u64 = 400;
-/// Code lines of a function, from `fn` to its closing brace: no blank and no comment lines (ADR 0010).
+/// Code lines of a function, from `fn` to its closing brace: no blank and no comment lines (ADR 0006).
 pub const FN_LINES: u64 = 60;
 /// Fields of a struct.
 pub const STRUCT_FIELDS: u64 = 12;
@@ -57,7 +57,7 @@ pub fn visit_for_test(text: &str) -> visit::Found {
     visit::walk(text).expect("parses")
 }
 
-/// The production code lines of `src`: none for test code (ADR 0035).
+/// The production code lines of `src`: none for test code (ADR 0007).
 pub fn code_lines(src: &Source) -> u64 {
     visit::walk_file(&src.file, &src.text, src.test).code_lines
 }

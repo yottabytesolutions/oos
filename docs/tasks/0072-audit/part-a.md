@@ -1,6 +1,6 @@
 # Audit part a: second check
 
-> Historical unit-image references below are superseded by ADR 0041; use generic images and device state.
+> Historical unit-image references below are superseded by ADR 0015; use generic images and device state.
 
 Input: `target/audit-a.md` (revision a451a3fa). Every S1 and S2 finding was checked against the cited doc lines, the
 code and the unit logs (`docs/fork/unit-dho804.md`, `docs/fork/hwmask.md`, `docs/fork/flicker.md`). Corrections were

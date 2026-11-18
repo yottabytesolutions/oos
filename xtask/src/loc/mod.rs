@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! `cargo xtask loc`: production code lines per crate and in total, and the tooling lines beside them (ADR 0035).
+//! `cargo xtask loc`: production code lines per crate and in total, and the tooling lines beside them (ADR 0007).
 //! Production code is the Rust of the crates built for the scope and this project's C, outside test code, without
 //! blank lines, comment lines and generated files. `--compare <ref>` measures `ref` as well and prints the change.
 

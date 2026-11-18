@@ -35,7 +35,7 @@ Starts after `overhaul-guardrails` and `overhaul-agents` are merged into `overha
 |---|---|
 | `docs/architecture.md` | `docs/architecture/README.md` |
 | `docs/architecture/{acquisition,picture,records,system}.md` | unchanged |
-| `docs/adr/` | `docs/architecture/adr/` |
+| `docs/adr/` | `docs/adr/` (consolidated 2026-11-18) |
 | `docs/extending.md` | `docs/architecture/extending.md` |
 | `docs/overhaul-migration.md` | `docs/architecture/migration.md` |
 | `docs/fork/draw-architecture.md` | `docs/architecture/drawing.md` |

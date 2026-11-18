@@ -15,15 +15,15 @@ No commits or hardware access in this task.
 
 ## Plan
 
-1. Establish ADR 0019 and the test-time rule authorized by the owner's task instructions.
+1. Establish ADR 0009 and the test-time rule authorized by the owner's task instructions.
 2. Convert failed SIM, measurement and pair waits to completion events. Audit all workspace test timing,
    replacing scheduling assumptions with events and elapsed-time behavior with explicit time inputs.
 3. Add a source check with a nonincreasing ratchet and regression fixtures.
 4. Run debug/release tests, exact Clippy, fast gate and UI stress tests with CPU load and coverage.
 5. Record the converted tests, safe audit exceptions and complete validation evidence; prepare the commit message.
 
-Reserved paths: `AGENTS.md`, `docs/tasks/0088-test-time.md`, `docs/architecture/adr/0019-test-time.md`,
-`docs/architecture/adr/README.md`, `docs/architecture/README.md`, `docs/development.md`, `ui/src/` (including `ui/src/ui.rs` and `ui/src/board/dho/hw.rs`), `hal/src/`,
+Reserved paths: `AGENTS.md`, `docs/tasks/0088-test-time.md`, `docs/adr/0009-test-time.md`,
+`docs/adr/README.md`, `docs/architecture/README.md`, `docs/development.md`, `ui/src/` (including `ui/src/ui.rs` and `ui/src/board/dho/hw.rs`), `hal/src/`,
 `dsp/src/`, `fpgad/src/`, `hal/tests/`, `ui/tests/`, `xtask/src/`, `xtask/data/ui/test-time.txt`, `xtask/data/moves.txt`, `tools/perf-guard.sh`.
 
 ### Round 2 review repair plan

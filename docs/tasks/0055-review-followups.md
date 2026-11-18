@@ -8,7 +8,7 @@ owner: codex-c
 depends: []
 ---
 
-> Historical unit-image references below are superseded by ADR 0041; use generic images and device state.
+> Historical unit-image references below are superseded by ADR 0015; use generic images and device state.
 
 ## Goal
 

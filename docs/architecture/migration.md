@@ -12,17 +12,17 @@ Each package is one reviewable topic; repeat family/group packages rather than o
 A package needs tests in debug and release, the gate and independent review before completion.
 Fixes add failing-before tests; moves preserve named characterisation tests and goldens.
 Each package removes its replaced production path; unfinished paths remain explicit.
-Run `cargo xtask ratchet` for improvements, `--move` for planned moves (ADR 0039).
-Use declarative tables with row-complete tests (ADR 0038), not parallel handwritten inventories.
-Source provenance and contribution rules are ADR 0040.
+Run `cargo xtask ratchet` for improvements, `--move` for planned moves (ADR 0006).
+Use declarative tables with row-complete tests (ADR 0029), not parallel handwritten inventories.
+Source provenance and contribution rules are ADR 0003.
 
 ## Steps
 
 M0..M11 prerequisites remain below so existing task links retain their meaning.
 After drawing acceptance, M13/M14 precede the M15 parser and M17 write-descriptor cutovers;
 M17 read descriptors need only E1 and the refreshed inventory
-([architecture/0017](adr/0017-hybrid-after-m12.md)).
-The ADR 0037 IO experiment addresses transport blocking separately; it keeps the existing interpreter.
+([ADR 0038](../adr/0038-menus-and-parser.md)).
+The ADR 0023 IO experiment addresses transport blocking separately; it keeps the existing interpreter.
 No package author may infer that unfinished drawing work has passed M12.
 
 ### G1: gate prerequisites
@@ -43,7 +43,7 @@ Their presence does not prove whole-batch accumulation.
 ### M1: golden pictures and the host harness
 
 Implemented; [task 0002](../tasks/done/0002-m01-golden-pictures.md) is done.
-Golden comparisons follow [ADR 0014](../adr/process/0014-refactorings-keep-every-pixel.md).
+Golden comparisons follow [ADR 0008](../adr/0008-behaviour-baselines.md).
 `ui/tests/golden.rs`, `host_script.rs` and `soak.rs` are the host regression harness.
 
 ### M1b: safe start and exit
@@ -56,7 +56,7 @@ Startup quarantine, durable markers, watchdog and ordered shutdown remain contra
 Core extraction, live normalization, identity publication, deferred internal proposals and class-owned resets
 are implemented. SCPI queries/program ends now settle changes. Production legacy reset comparison is retired.
 [Task 0003](../tasks/0003-m02-change-detection.md) remains active, awaiting review/unit smoke in its latest status.
-ADR 0038's field table is implemented. Grouped settings and universal command-only writes are not.
+ADR 0029's field table is implemented. Grouped settings and universal command-only writes are not.
 
 ### M3: acquisition thread split (D1b)
 
@@ -205,7 +205,7 @@ read-only Picture. At 1/2 channels reduce shares by touched row bands; at 3/4 ch
 main adds at most three map sets. Files: `drawpipe*`, `ui.rs`, `picture/`, core window types.
 Acceptance: every merge contains whole batches including newest frame; route-equivalent content, one-frame/
 48-frame perf ratios, no reduction at 4 channels, no allocations/blocking in reduction. Keep Standard alongside
-Batch for M12's owner decision under [architecture/0013](adr/0013-one-batch-path.md).
+Batch for M12's owner decision under [migration plan](migration.md#m12).
 Remove replaced Acc lists, Tally if present, Deliver, MERGE_WAIT_MAX, early help_done and duplicate newest-frame
 composition only where replaced; do not delete Standard here.
 Delta: -100..-300. Depends: M7/M8. Parallel: serial on map ownership/publication. Unit round 3: partial=0 stress.
@@ -248,20 +248,22 @@ excluding tests, comments and dependency sources; they are planning ranges, not 
 Moves should be near zero. Each repeated slice must fit normal review size and preserve a green tree.
 Risk is low for docs, medium for observable UI/protocol behaviour; acquisition timing also needs unit evidence.
 
+<a id="m12"></a>
+
 ### M12: acceptance and removal (D9)
 
 **M12a, evidence and owner selection.** Scope: compare current Standard/Frames and Batch routes after M2..M11
 prerequisites pass. Files: `ui/tests/`, `tools/perf-guard.sh`, drawing task evidence, `docs/architecture/drawing.md`.
 Acceptance: route-equivalent pictures/weights for raw, pairs, dots, zoom, deep reads, roll/scan, STOP/SINGLE and replay;
 full gate; authorized unit load/soak with frame, latency, drop and memory evidence.
-Under [architecture/0013](adr/0013-one-batch-path.md), do not delete Standard before the cause of Batch's
+Under [migration plan](migration.md#m12), do not delete Standard before the cause of Batch's
 drop to about 18 fps with four channels at 10 us/div is found.
 Expected delta: 0. Risk: medium, with unit timing evidence. Parallel: evidence preparation alongside IO baselining;
 final acceptance waits for the drawing prerequisites.
 
 **Open owner question:** which of Standard/Frames and Batch survives after those measurements?
 `Model::draw_batch`, `drawpipe::Mode` and the fast/record routes still exist. `draw.model` does not exist in this
-checkout; there is no such switch to remove. M12 must keep one path and delete the loser under architecture/0013;
+checkout; there is no such switch to remove. M12 must keep one path and delete the loser under docs/architecture/migration.md#m12;
 the surviving route remains pending measurement and owner selection.
 
 **M12b, approved deletion.** Scope: delete the losing path and code made obsolete by the owner's selection.
@@ -360,7 +362,7 @@ Acceptance tests implement the [thread/message contract](README.md#threads-and-m
   separate single-large-body admission, current limits and signed-package verification worker; only job
   handles/status/results enter intake. Test rejection/cancellation/release without moving large bodies to main.
 - Add `confine ui tokio -> netio` and a top-level netio layer rule excluding Ui/settings/interpreter access.
-  Public port types are synchronous; only netio uses ADR 0037 features. Boundary fixtures reject a tokio use
+  Public port types are synchronous; only netio uses ADR 0023 features. Boundary fixtures reject a tokio use
   outside netio and a netio-to-Ui import; cargo-deny passes.
 
 Remove raw accept/read/send/poll code on successful cutover. Expected delta: +100..+300 for the experiment,
@@ -374,9 +376,9 @@ Use the same build profile, workload and unit; no host ratio substitutes for uni
 Retain the [target budgets](README.md#performance-budgets): frame p50 <= 8 ms / p99 <= 15 ms,
 remote enqueue p99 <= 3 ms, >= 500 exchanges/s and picture-rate loss <= 10%.
 The report must show the blocking write removed and justify any resource/code growth before broader adoption.
-Owner decision 2026-11-18 ([ADR 0037 amendment](../adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md#amendment-2026-11-18)):
-accept M15a for the behaviour gain verified on the unit. The second amendment on that date chooses tokio
-for all network IO and retires the deferred size gate and `poll(2)` fallback. M15a's host size cost is +685 production LOC,
+Owner decision 2026-11-18 ([ADR 0023](../adr/0023-io-layer.md)):
+accept M15a for the behaviour gain verified on the unit. ADR 0023 now defines the wider IO-port policy,
+including beneficial device-stream moves. The deferred size gate and `poll(2)` fallback are retired. M15a's host size cost is +685 production LOC,
 +2.86 % aarch64 binary size and +9 dependencies after the gate fix. The unit and host measurements are recorded
 in [task 0016](../tasks/0016-m15-remote-adapters.md#measurements).
 
@@ -386,7 +388,7 @@ error codes, binary/text encoding and pending-program semantics.
 Files: each transport and its helpers, `system/device/remote.rs`, `main.rs`, `netio/` and shared port types.
 Acceptance: existing RPC/HTTP/discovery fixtures plus M15a application-route, FIFO/Cmd and separate signed-upload
 contracts, stalled-client/cancellation/limit cases through the new IO;
-repeat M15a load measurements. Tokio remains the runtime for all network IO (ADR 0037); there is no
+repeat M15a load measurements. M15b reuses netio and tokio under ADR 0023; there is no
 deferred size gate or `poll(2)` fallback. Each transport PR reports and minimises its production LOC and
 aarch64 binary size delta. Expected delta: -100..-400 per transport, measured after deletion.
 Risk: medium. Depends: M15a gate. Parallel: disjoint transport internals after the shared API lands;
@@ -501,3 +503,53 @@ Moves have near-zero production delta. Repeat unit load/soak against M12 evidenc
 - 2026-11-17: source audit recorded implemented core change handling, field generation, generic Worker,
   browser-only host view and remaining UI/IO/draw debt. M12 owner choice, IO experiment measurements,
   overview approval and final hardware acceptance remain open. No refactor or unit run is claimed here.
+
+## Strategy and draw-path acceptance
+
+The incremental migration continues through M12, including removal of M2 bridges. Settings and views keep that
+approach. Menus and the parser rebuild from approved specifications (ADR 0038); their soft freeze is in delivery.md.
+The owned board-neutral AcqRequest belongs to M5. Specification work can precede production rebuilds.
+
+Planning estimates from the retired hybrid record: 45 planned host days to M12, 70 to 90 adjusted; full rebuild
+150 to 300 adjusted. The fresh-core spike estimated 74 to 132 days for parity and measured kernels at 49/183 us
+against 13.9/7.7 us on the same host inputs. These are historical planning evidence, not current forecasts or
+unit verification. A full rebuild was rejected because it delayed all shipping benefits until one switch-over.
+Rebuilding menus/parser from specs avoids preserving accidental legacy behaviour; the legacy parser remains a
+host differential oracle until deletion. Every difference needs a recorded spec decision or a fix.
+
+Batch is today's generic-image default; the parser defaults to Standard/Frames without configuration.
+The surviving Standard-versus-Batch choice is target M12.
+Keep both until picture equality, performance ratios and unit round 5 select one and delete the other.
+Verified on the unit: DHO924S, 2026-11-15, four channels at 10 us/div with a 100 kHz CH1 square wave and Auto
+trigger, Batch refreshed at 18.2 fps versus Standard 26.1 fps. Find the cause before deleting Standard.
+M9 adds whole BatchUnits alongside Standard; a one-frame step forms one unit. RecordBatch off the fast path
+uses the same accumulator as a pseudo-batch. Keep the N-frame/67 ms window and 3-batch cap. Route-D composition
+removal waits for M12. Compare one-frame units and 48-frame steps: one unit per frame can cost two full-map
+passes per frame, about 2.5 GB/s at 48 frames per step. Host equality proves no hardware timing.
+
+## ADR baseline follow-ups
+
+These are follow-up issue briefs for the coordinator, not implemented checks or new unit evidence (#159).
+The coordinator replaces each TBD issue placeholder before acceptance.
+
+| Record | Issue | Follow-up and acceptance |
+|---|---|---|
+| ADR 0006 | TBD (coordinator) | Gate tightening: fail on lowered counts left uncommitted; tests cover slack and planned moves. Preserve the current file/function line definitions. |
+| ADR 0008 | TBD (coordinator) | Baselines: replace current CPU RGB-1/floor(N/1000) tolerance with exact comparison; cover every layout-check script and all three text sizes with goldens, then remove the temporary procedure. |
+| ADR 0011 | TBD (coordinator) | Protected areas: host-test every update write device/offset against the allowlist; require protected-area before/after evidence for releases and hardware-path PRs. |
+| ADR 0012 | TBD (coordinator) | Hardware-key inventory: check every parsed key has a row and removal issue; reconcile enabled image defaults and environment switches with off-until-verified. |
+| ADR 0015 | TBD (coordinator) | Device state: manifest all first-boot defaults, durable writes and update-preserved files; test absent/present values and signed sd.mode variant selection. |
+| ADR 0016 | TBD (coordinator) | Automatic rollback: verify failure and rollback on a released unit, recording model, build, date and artifacts. |
+| ADR 0017 | TBD (coordinator) | Reset evidence: verify whether RK3399 exposes a positive watchdog reset indication; preserve power-cut handling if absent. |
+| ADR 0018 | TBD (coordinator) | Service policy: finish #139 telnet removal; add /cmd second ACL, a service-table coverage test and one-second stop/withdrawal tests; verify firewall on the unit. |
+| ADR 0019 | TBD (coordinator) | M15b: verify HiSLIP on the scope with remote.hislip off by default until verification; check discovery withdrawal and VISA sessions. |
+| ADR 0023 | TBD (coordinator) | IO ports: forbid std::net in non-IO layers, including alias fixtures; complete HTTP/mDNS/NTP/update moves and assess USB/WLAN benefits with explicit synchronous exceptions. |
+| ADR 0025 | TBD (coordinator) | SCPI conformance: every documented command resolves, no undocumented command answers, and abbreviations/identity match the reference. |
+| ADR 0028 | TBD (coordinator) | Registries: pin released identifiers, register remaining measurements and test release feature completeness. |
+| ADR 0030 | TBD (coordinator) | Typed errors: add a shrinking Result<_, String> ratchet, migrate areas to typed errors and test sender/retry reporting. |
+| ADR 0031 | TBD (coordinator) | Performance gates: required ratio-based host perf CI, a production sleep ratchet, and a complete budget/counter/assertion inventory; require measured unit release budgets. |
+| ADR 0035 | TBD (coordinator) | Default alignment: change host/model and invalid-value fallbacks from Frames to Batch in a separate behaviour PR with tests and a changelog entry. |
+| ADR 0036 | TBD (coordinator) | M5 ownership: reject Mutex outside named cells with alias tests after removing Shared. |
+
+The registry migration also splits Protocol as one package: decode/trigger matching into dsp, metadata into core
+and presentation into ui, preserving the static registration and released identifiers (ADR 0028).

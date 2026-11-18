@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Host register plans against a reviewed baseline (ADR 0014).
+//! Host register plans against a reviewed baseline (ADR 0008).
 
 use crate::run::{self, Context};
 use crate::steps::{host, Outcome};

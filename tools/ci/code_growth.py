@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""The production code section of the release notes (ADR 0035). Fails when production code grew since the previous
+"""The production code section of the release notes (ADR 0007). Fails when production code grew since the previous
 release and neither the tag annotation nor the release's CHANGELOG.md section has a `Code growth:` paragraph.
 
   code_growth.py --loc loc.json --table loc.md --version 0.2.1 --tag-message tag.txt --changelog CHANGELOG.md
@@ -43,7 +43,7 @@ def notes(loc: dict, table: str, why: str | None) -> tuple[str, bool]:
     delta = loc["production_total"].get("delta")
     lines = ["## Production code", ""]
     if loc.get("base"):
-        lines += [f"Compared with {loc['base']} (ADR 0035).", ""]
+        lines += [f"Compared with {loc['base']} (ADR 0007).", ""]
     lines.append(table.rstrip())
     if why:
         lines += ["", why]
@@ -63,7 +63,7 @@ def main() -> int:
     if not ok:
         delta = loc["production_total"]["delta"]
         print(f"::error::production code grew by {delta} lines since {loc.get('base')}: add a paragraph that starts "
-              f"with '{MARK}' to the tag annotation or to the {a.version} section of CHANGELOG.md (ADR 0035)",
+              f"with '{MARK}' to the tag annotation or to the {a.version} section of CHANGELOG.md (ADR 0007)",
               file=sys.stderr)
     return 0 if ok else 1
 

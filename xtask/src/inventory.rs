@@ -78,7 +78,15 @@ pub(crate) const CHECKS: &[Check] = &[
     ),
     entry!("test-time", "test timing", "test source timing ratchet", "sources", Fast, [], crate::test_time::check),
     entry!("links", "links", "links in README, wiki/ and docs/ resolve", "Git", Fast, [], crate::links::check),
-    entry!("text", "text files", "ADR 0019 file rules over git ls-files", "Git", Fast, [], crate::text::check),
+    entry!(
+        "text",
+        "text files",
+        "File rules and ADR references over tracked and new files",
+        "Git",
+        Fast,
+        [],
+        crate::text::check
+    ),
     entry!("doctor-base", "doctor-base", "doctor", "tools/bootstrap.sh; no Docker", Host, [], crate::doctor::check),
     entry!(
         "doctor",

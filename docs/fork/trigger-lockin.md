@@ -195,7 +195,7 @@ Verification on the unit, before turning it on by default:
 
 ## ADC measure-unit diagnostics
 
-The autoset measure-unit experiment was removed under ADR 0010: on a DHO924S
+The autoset measure-unit experiment was removed under ADR 0012: on a DHO924S
 (2026-11-15), every request returned the levels of an earlier signal. Autoset uses records for its levels.
 Raw slot diagnostics and core-offset matching still use the measure unit.
 
@@ -298,7 +298,7 @@ carry the square. Restore the user's settings afterwards.
 | 8 autoset noise reject, opt-in (Trigger > Auto noise rej.) | done, 417a81c |
 | 5 status from 0x4034 | verified on the unit 2026-11-13; default on in fix/autoset-multich |
 | 6 counter for the time base | dropped (team-lead, 2026-11-13): after fix 2 a search stage costs one record (tens of ms below 2 ms/div), while the counter needs a 0.25 s gate plus 0.1 s and its threshold (0x2200/0x2204) is not understood (counter.md) |
-| (a) autoset levels from the measure unit | removed under ADR 0010 after stale readings on the DHO924S (2026-11-15) made Auto miss a 5 MHz sine of 0.2 Vpp |
+| (a) autoset levels from the measure unit | removed under ADR 0012 after stale readings on the DHO924S (2026-11-15) made Auto miss a 5 MHz sine of 0.2 Vpp |
 | autoset search in at most three records | done; timed on the unit for CH1 alone on the probe-comp output (build d9800d9) |
 | F1 flicker | done: at minimum persistence the picture is graded against the per-frame maximum times the frames in it (`picture_ref` in ui.rs), so equal frames give equal brightness whatever the batch size. F2 (fixed picture window) not needed |
 

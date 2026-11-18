@@ -13,7 +13,7 @@ depends: [63]
 ## Goal
 
 Extract the legacy SCPI surface and state response for the M15 rebuild under
-[adr/0017](../architecture/adr/0017-hybrid-after-m12.md). Review tier: standard.
+[ADR 0038](../adr/0038-menus-and-parser.md). Review tier: standard.
 Docs only; no hardware access, code changes or commits.
 
 ## Plan

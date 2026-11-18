@@ -25,3 +25,7 @@
 /.github/workflows/ @ichnograph
 /.github/rulesets/ @ichnograph
 /tools/privacy/ @ichnograph
+
+# Architecture/dependency rules and golden picture baselines (ADRs 0004 and 0008).
+/xtask/data/architecture.txt @ichnograph
+/ui/tests/golden/ @ichnograph

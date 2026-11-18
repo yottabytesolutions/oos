@@ -1,7 +1,7 @@
 # The gate for every pull request and every merge-queue group, split into parallel jobs on GitHub-hosted runners.
 # Required checks (.github/rulesets/main.json): fast, clippy, test, python, deny. pr-meta, privacy and codex-review
 # come from their own workflows. No secrets; the token is read-only.
-# No branch or path filter on pull_request: a stacked layer targets the branch below it, not main (ADR 0034,
+# No branch or path filter on pull_request: a stacked layer targets the branch below it, not main (CONTRIBUTING.md#stacked-pull-requests,
 # xtask/src/stack_ci.rs).
 # Every job always reports its required name. tools/ci/changes.py decides whether its build steps run: a change to
 # documents, GitHub settings or CI scripts only skips clippy, the tests and deny; a merge-queue group with the tree of
@@ -68,14 +68,14 @@ jobs:
       - name: Host scripts (shellcheck --shell=sh)
         if: steps.changes.outputs.run == 'true'
         run: python3 -I tools/ci/host_scripts.py check
-      # ADR 0035: informational, never fails. A pull request may add lines; a release that grows must say why.
+      # ADR 0007: informational, never fails. A pull request may add lines; a release that grows must say why.
       - name: Production code change against the base
         if: ${{ !cancelled() && steps.changes.outputs.run == 'true' && github.event_name == 'pull_request' }}
         continue-on-error: true
         run: |
           set -eu
           table=$(cargo xtask loc --compare "$BASE")
-          printf '### Production code\n\nInformational (ADR 0035): the release, not each pull request, must shrink.\n\n%s\n' \
+          printf '### Production code\n\nInformational (ADR 0007): the release, not each pull request, must shrink.\n\n%s\n' \
             "$table" >> "$GITHUB_STEP_SUMMARY"
 
   # Cargo serializes builds in a target directory. Keep decoder builds and register plans off the lints' critical path.

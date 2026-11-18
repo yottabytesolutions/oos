@@ -56,4 +56,4 @@ libc = "0.2"
 oos-hal = { path = "../hal" }
 oos-dsp = { path = "../dsp" }
 oos-core = { path = "../core" }
-tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "macros"] }
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "io-util", "macros"] }

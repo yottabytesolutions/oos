@@ -721,17 +721,6 @@ impl Scpi {
         scpi
     }
 
-    pub fn open_with_wake(
-        port: impl Into<crate::net6::Port>,
-        v6: bool,
-        wake: std::sync::Arc<crate::system::intake::Wake>,
-    ) -> Self {
-        let mut scpi = Self::disconnected();
-        scpi.transport.endpoint.wake = wake;
-        scpi.transport.endpoint.set_open(Some(port.into()), v6, crate::netio::Protocol::Raw);
-        scpi
-    }
-
     /// Queue a SCPI error and latch the matching *ESR bit. A query that fails still answers with this text,
     /// so a client blocked on a line never waits forever.
     fn push_err(&mut self, mut message: String) {

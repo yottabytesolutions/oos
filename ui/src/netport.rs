@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Owned application messages shared by synchronous intake and transport adapters.
 pub(crate) mod hislip;
+pub(crate) mod http;
 mod latency;
-mod output;
+pub(crate) mod output;
 pub(crate) mod rpc;
 pub use crate::system::intake::{Id, Port, Wake};
 pub use output::Output;
@@ -47,6 +48,7 @@ pub enum RemoteRequest {
     Program(String),
     Vxi11 { record: Vec<u8>, channel: rpc::Channel, closed: Arc<AtomicBool> },
     Hislip { message: Option<hislip::Message>, closed: Arc<AtomicBool>, cleared: Arc<AtomicBool> },
+    Http(http::Req),
     UiState,
     ImportWaveform { slot: usize, name: String, payload: Payload },
     ExportWaveform { format: WaveFormat },
@@ -78,6 +80,9 @@ impl Envelope {
     }
     pub fn id(&self) -> Id {
         self.id
+    }
+    pub(crate) fn into_request(self) -> RemoteRequest {
+        self.request
     }
     pub fn request(&self) -> &RemoteRequest {
         &self.request
@@ -208,9 +213,17 @@ impl Ports {
         Self::bounded(frame_wake, MAX_CLIENTS, RESPONSE_BYTES)
     }
     pub(crate) fn bounded(frame_wake: Arc<Wake>, requests: usize, reply_bytes: usize) -> std::io::Result<Arc<Self>> {
+        Self::with_limits(frame_wake, requests, requests * MAX_PROGRAM, reply_bytes)
+    }
+    pub(crate) fn with_limits(
+        frame_wake: Arc<Wake>,
+        requests: usize,
+        request_bytes: usize,
+        reply_bytes: usize,
+    ) -> std::io::Result<Arc<Self>> {
         let io_wake = Arc::new(Wake::new()?);
         Ok(Arc::new(Self {
-            requests: Port::new(requests, requests * MAX_PROGRAM, frame_wake.clone()),
+            requests: Port::new(requests, request_bytes, frame_wake.clone()),
             replies: Port::new(1, reply_bytes, io_wake.clone()),
             budget: Budget::bounded(frame_wake.clone(), reply_bytes),
             frame_wake,
@@ -269,8 +282,18 @@ impl Default for UploadAdmission {
 }
 impl UploadAdmission {
     pub fn admit(&self, bytes: usize) -> Option<UploadPermit<'_>> {
-        (bytes <= UPLOAD_BYTES && self.0.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok())
+        self.admit_bounded(bytes, UPLOAD_BYTES)
+    }
+    pub(crate) fn admit_large_body(&self, bytes: usize) -> Option<UploadPermit<'_>> {
+        self.admit_bounded(bytes, IMPORT_BYTES)
+    }
+    fn admit_bounded(&self, bytes: usize, limit: usize) -> Option<UploadPermit<'_>> {
+        (bytes <= limit && self.0.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok())
             .then(|| UploadPermit(self))
+    }
+    #[cfg(test)]
+    pub(crate) fn occupied(&self) -> bool {
+        self.0.load(Ordering::Acquire)
     }
 }
 pub struct UploadPermit<'a>(&'a UploadAdmission);

@@ -8,7 +8,8 @@ use crate::*;
 /// as a cable from the output would.
 pub fn run(mut ui: Ui, sw: &sysconf::Switches) {
     let mut web = http::Http::open(net6::Port::Host, sw);
-    let mut scpi = scpi::Scpi::open_with_wake(net6::Port::Host, false, web.wake_handle());
+    let mut scpi =
+        scpi::Scpi::open_with_runtime(net6::Port::Host, false, net6::host_or_exit(web.io_runtime()), web.wake_handle());
     let mut vxi = net6::host_or_exit(vxi11::Server::host(net6::host_or_exit(scpi.io_runtime()), web.wake_handle()));
     let mut hislip =
         hislip::Server::open_with_runtime(net6::Port::Host, net6::host_or_exit(scpi.io_runtime()), web.wake_handle());

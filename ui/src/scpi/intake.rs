@@ -104,6 +104,18 @@ impl Intake {
 mod tests;
 
 impl super::Scpi {
+    pub fn open_with_runtime(
+        port: impl Into<crate::net6::Port>,
+        v6: bool,
+        runtime: crate::netio::Runtime,
+        wake: std::sync::Arc<crate::system::intake::Wake>,
+    ) -> Self {
+        let mut scpi = Self::disconnected();
+        scpi.transport.endpoint = crate::netio::Endpoint::new(Some(runtime), wake);
+        scpi.transport.endpoint.set_open(Some(port.into()), v6, crate::netio::Protocol::Raw);
+        scpi
+    }
+
     pub fn io_runtime(&mut self) -> std::io::Result<crate::netio::Runtime> {
         self.transport.endpoint.runtime()
     }

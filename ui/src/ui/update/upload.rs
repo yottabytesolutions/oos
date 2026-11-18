@@ -36,13 +36,18 @@ pub(super) fn reply(result: Result<Reply, String>) -> (bool, &'static str, Vec<u
 
 /// The checks of an uploaded package that the frame loop can afford: header signature against `keys`, target and the
 /// image length the header names (a truncated upload fails here). The image hash is `upload_store`'s.
+#[cfg(test)]
 pub(super) fn upload_header(body: &[u8], keys: &[[u8; 32]]) -> Result<pkg::Header, String> {
+    upload_header_len(body, body.len(), keys)
+}
+
+pub(super) fn upload_header_len(body: &[u8], len: usize, keys: &[[u8; 32]]) -> Result<pkg::Header, String> {
     let h = pkg::verify_header(body, keys)?;
     let m = &h.manifest;
     if m.target != pkg::TARGET {
         return Err(format!("package is for '{}', this unit takes '{}'", m.target, pkg::TARGET));
     }
-    let img = body.len().saturating_sub(h.data_offset) as u64;
+    let img = len.saturating_sub(h.data_offset) as u64;
     if img != m.size {
         return Err(format!("image is {} bytes, the header says {} (truncated upload?)", img, m.size));
     }

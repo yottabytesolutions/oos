@@ -6,13 +6,13 @@
 754 file ui/src/fastdraw.rs
 649 file ui/src/gfx.rs
 650 file ui/src/gpu.rs
-946 file ui/src/http.rs
-439 file ui/src/main.rs
+657 file ui/src/http.rs
+438 file ui/src/main.rs
 1512 file ui/src/mdns.rs
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
-3290 file ui/src/scpi.rs
+3279 file ui/src/scpi.rs
 1464 file ui/src/store.rs
 8877 file ui/src/ui.rs
 1747 file ui/src/ui/analysis.rs
@@ -51,7 +51,7 @@
 63 fn ui/src/framestats.rs cheap_results
 237 fn ui/src/gpu.rs Gpu::submit
 71 fn ui/src/hislip.rs on_program_message
-120 fn ui/src/http.rs Http::poll
+108 fn ui/src/http.rs Http::poll
 88 fn ui/src/http.rs Shots::encoder
 75 fn ui/src/http.rs mcp
 73 fn ui/src/input.rs Inputs::read_touch

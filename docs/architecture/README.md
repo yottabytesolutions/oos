@@ -19,7 +19,7 @@ Keep the existing behaviour through small migrations. The accepted decisions are
 `oos-ui` uses `src/main.rs` for its binary and library module graph. `main` selects scripted execution,
 host `--serve`, or Linux device execution in `system/device.rs`. The browser is the host desktop view.
 There is no native Windows window in this crate. `oos-core` depends only on `oos-dsp`;
-`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI, VXI-11 and HiSLIP use tokio; HTTP and mDNS await their M15b slices.
+`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI, VXI-11, HiSLIP and HTTP/MCP use tokio; mDNS awaits its M15b slice.
 DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their application bindings.
 
 ### Module map
@@ -31,7 +31,7 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 | `model.rs`, `model/` | core model exports, platform/capability bridge, protocol bindings and colours |
 | `scpi.rs`, `scpi/`, `cmd.rs` | shared SCPI interpreter and program continuations; script/FIFO command syntax |
 | `http.rs`, `http/`, `vxi11.rs`, `hislip.rs`, `mdns.rs` | web/MCP, instrument transports and discovery |
-| `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11/HiSLIP runtime, socket framing/output and owned bounded application ports |
+| `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11/HiSLIP/HTTP runtime, socket framing/output and owned bounded application ports |
 | `remote.rs` | telnet/firewall helper |
 | `store.rs`, `store/`, `sysconf.rs` | setup codec, waveform/image files, durable startup state, system settings |
 | `board/`, `board/dho/` | Board port, Shared exchange, hardware configuration/readout and publication |
@@ -97,7 +97,7 @@ flowchart LR
         maps --> render["Canvas or GPU layers"]
     end
     raw["Raw SCPI / VXI-11 / HiSLIP: netio IO thread"] -->|"bounded owned requests, replies + wake"| scpi
-    http["HTTP accept/read/send threads"] -->|"inbox: MCP programs"| scpi
+    http["HTTP/MCP: netio IO thread"] -->|"inbox: MCP programs"| scpi
     http -->|"web actions"| ui
     change -->|"want + identity under mutex"| shared[("Shared")]
     shared --> acq["DHO acquisition thread"]
@@ -111,7 +111,7 @@ flowchart LR
     render --> display["DRM / GPU helper; HTTP snapshots"]
 ```
 
-Raw SCPI, VXI-11 and HiSLIP TCP/UDP framing and writes share one current-thread tokio runtime on the `netio` thread.
+Raw SCPI, VXI-11, HiSLIP and HTTP TCP/UDP framing and writes share one current-thread tokio runtime on the `netio` thread.
 IO owns credits until output completes and enforces 2 s without progress and 30 s total send limits.
 VXI-11 links and HiSLIP sessions retain frame-owned resumable programs behind owned request/reply ports.
 HiSLIP shares the eight-connection limit, admission, cancellation and timed output machinery. Its reply budget
@@ -121,8 +121,10 @@ VXI-11 preserves eight TCP connections plus a separate 1500-byte UDP portmapper 
 and the existing per-link pending-program/output bounds. Its RPC output port reserves up to two RESP_MAX
 payloads plus 4096 bytes for framing, because a link can append a program before its next output-limit check.
 This preserves reads larger than one program; it does not change the raw SCPI 64 MiB reply budget.
-HTTP has accept/read threads, background screenshot encoding and large-response senders;
-request dispatch and small responses still run during its frame-thread poll.
+HTTP retains eight pending readers, one large-body admission, eight screenshot waiters and two large outputs.
+Static pages stay on IO; owned requests and socket-free reply handles cross bounded intake. Application responses use
+shared timed output and reservations. Live-picture encoding stays on its CPU worker. Signed upload bytes remain
+on a separate worker; only its bounded header and job handle cross frame intake before verification is started.
 MCP uses the same interpreter. The FIFO enters through `cmd`.
 mDNS has its own control channel, wake descriptor, socket thread and timers.
 

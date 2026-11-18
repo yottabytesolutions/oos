@@ -165,7 +165,7 @@ async fn read(socket: &TcpStream, buffer: &mut Vec<u8>, limit: usize, cleared: &
     }
 }
 
-async fn disconnected(socket: &TcpStream) -> io::Result<()> {
+pub(super) async fn disconnected(socket: &TcpStream) -> io::Result<()> {
     let mut probe = [0];
     if socket.peek(&mut probe).await? != 0 {
         std::future::pending::<()>().await;

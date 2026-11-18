@@ -2,6 +2,7 @@
 //! Network framing and output. The application port contains no runtime types.
 mod endpoint;
 mod executor;
+pub(crate) mod http;
 pub use endpoint::Endpoint;
 mod output;
 mod rpc;

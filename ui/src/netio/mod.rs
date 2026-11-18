@@ -3,6 +3,7 @@
 mod endpoint;
 mod executor;
 pub(crate) mod http;
+pub(crate) mod mdns;
 pub use endpoint::Endpoint;
 mod output;
 mod rpc;

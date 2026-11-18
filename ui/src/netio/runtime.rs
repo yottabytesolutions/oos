@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use super::*;
 use crate::netport::{Reply, MAX_CLIENTS};
+use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::collections::HashMap;
 use tokio::{
     net::{TcpListener, UnixDatagram},
@@ -37,7 +38,14 @@ pub(super) async fn run(
 }
 
 pub(super) fn listen(port: crate::net6::Port, v6: bool) -> io::Result<TcpListener> {
-    let listener = crate::net6::tcp(port, v6).ok_or_else(|| io::Error::other("listener unavailable"))?;
+    let listener = match port {
+        crate::net6::Port::Host => std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).ok(),
+        crate::net6::Port::Service(port) => bind_any(v6, port, std::net::TcpListener::bind),
+    }
+    .ok_or_else(|| {
+        eprintln!("oos-ui: TCP listener {port:?} unavailable");
+        io::Error::other("listener unavailable")
+    })?;
     listener.set_nonblocking(true)?;
     TcpListener::from_std(listener)
 }
@@ -121,4 +129,14 @@ async fn accept(
 // The eight connection rechecks, one accept and one datagram bound the single blocking worker's queue.
 pub(super) async fn permits(acl: crate::netacl::Shared, peer: io::Result<std::net::SocketAddr>) -> bool {
     tokio::task::spawn_blocking(move || acl.permits_peer(peer)).await.unwrap_or(false)
+}
+
+/// `bind` on `[::]:port` when `v6`, else (or when IPv6 is not there) on `0.0.0.0:port`.
+pub(super) fn bind_any<T>(v6: bool, port: u16, bind: impl Fn(SocketAddr) -> io::Result<T>) -> Option<T> {
+    if v6 {
+        if let Ok(s) = bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port))) {
+            return Some(s);
+        }
+    }
+    bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port))).ok()
 }

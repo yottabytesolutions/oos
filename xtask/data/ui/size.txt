@@ -8,7 +8,7 @@
 650 file ui/src/gpu.rs
 657 file ui/src/http.rs
 438 file ui/src/main.rs
-1512 file ui/src/mdns.rs
+1098 file ui/src/mdns.rs
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
@@ -56,7 +56,6 @@
 77 fn ui/src/main.rs hdmi_gpu_frame
 70 fn ui/src/main.rs main
 68 fn ui/src/mdns.rs Responder::answer
-92 fn ui/src/mdns.rs run
 69 fn ui/src/measures/jitter.rs eye_of
 76 fn ui/src/pacing.rs summary
 162 fn ui/src/scpi.rs Scpi::bus_cmd

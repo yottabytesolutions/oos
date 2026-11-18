@@ -12,7 +12,7 @@
 //! every check takes the list of that moment, and each server closes the connections it holds from an address the new
 //! list leaves out.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -104,14 +104,14 @@ impl Acl {
     /// `permits` with the prefixes on the link from `onlink` (asked only when `onlink6` is in the list and the address
     /// is IPv6).
     #[cfg(test)]
-    pub fn permits_with(&self, ip: IpAddr, onlink: impl FnOnce() -> Vec<(std::net::Ipv6Addr, u8)>) -> bool {
+    pub fn permits_with(&self, ip: IpAddr, onlink: impl FnOnce() -> Vec<(core::net::Ipv6Addr, u8)>) -> bool {
         self.permits_onlinks(ip, onlink, Vec::new)
     }
 
     fn permits_onlinks(
         &self,
         ip: IpAddr,
-        onlink: impl FnOnce() -> Vec<(std::net::Ipv6Addr, u8)>,
+        onlink: impl FnOnce() -> Vec<(core::net::Ipv6Addr, u8)>,
         v4: impl FnOnce() -> Vec<(Ipv4Addr, Ipv4Addr)>,
     ) -> bool {
         let ip = match ip {

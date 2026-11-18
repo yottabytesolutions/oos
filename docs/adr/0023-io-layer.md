@@ -2,7 +2,7 @@
 
 - Number: 0023
 - Category: code
-- State: target: M15b and IO-port follow-up in docs/architecture/migration.md#adr-baseline-follow-ups
+- State: target: IO-port follow-up in docs/architecture/migration.md#adr-baseline-follow-ups
 - Date: 2026-11-18
 
 ## Context
@@ -25,11 +25,15 @@ Synchronous exceptions are:
 - Core and DSP computations: no waiting IO.
 - Pure HAL plans: no waiting IO.
 - Hardware register sequences behind Board: ordered operations and required hardware gaps.
+- SNTP and the Bode external-generator connection: existing dedicated workers, pending the IO-port follow-up.
+  They do not run network calls on the frame thread. This migration retains their behaviour.
+- GPU-helper shutdown: `std::net::Shutdown` selects a half-close of the existing Unix socket; no IP socket IO.
 
 USB/WLAN moves must demonstrate the criterion above. Other synchronous IO exceptions require a reason in this record.
 
-Check: `architecture` confines tokio to netio; transport timer/cancellation tests. A gate rule excluding std::net from
-non-IO layers is a target follow-up.
+Check: `architecture` confines tokio to netio and std::net to netio plus the named synchronous exceptions,
+including imports through aliases and re-exports. Pure address values use core::net. Transport fixtures cover
+cancellation and timers. Netio may name the socket-free mDNS responder, alongside the synchronous application ports.
 
 ## Alternatives
 
@@ -39,5 +43,5 @@ the CPU-bound frame thread gains latency and no useful waiting concurrency.
 
 ## Consequences
 
-Raw SCPI, VXI-11 and HiSLIP use netio today. HTTP, mDNS, NTP, update checks and device-stream moves meeting the
+Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and mDNS use netio today. NTP, update checks and device-stream moves meeting the
 criterion above remain targets.

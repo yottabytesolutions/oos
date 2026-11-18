@@ -58,6 +58,21 @@ Additional reserved paths: `ui/src/system.rs`, `ui/src/sysconf/instruments.rs`, 
 `xtask/data/ui/size.txt`,
 `docs/network.md`, `docs/adr/0019-instrument-protocols.md`, `docs/adr/README.md`, `CHANGELOG.md`.
 
+M15b mDNS (#151): move discovery sockets, packet metadata and lifecycle onto the shared netio
+runtime. Preserve responder fixtures, multicast membership, replies, goodbyes and interface refresh.
+Delete replaced loops and unused network helpers; enforce the IO boundary with alias fixtures.
+Repeat host stalled-client/cancellation/limit checks and report aggregate M15 LOC/aarch64 size.
+Additional reserved paths: `ui/src/mdns.rs`, `ui/src/mdns/`, `ui/src/net6.rs`,
+`ui/src/netacl.rs`, `ui/src/netport/http/`, `ui/src/main.rs`, `docs/adr/README.md` and affected generated ratchets.
+
+PR #179 check fix: reserve `ui/src/ui/menu/tests.rs`; extract the renderer control assertions
+to reduce the reproduced test complexity without changing coverage, then rerun clippy, UI tests and fast checks.
+
+PR #179 simulation check fix: reserve `ui/src/ui/menu/simulation/tests.rs`; split setting-choice
+and reference-slot coverage into separate tests and extract the row-inventory setup to satisfy the
+line and complexity limits without changing assertions. Run clippy, UI tests in debug and
+test-release, and the fast gate.
+
 ## Measurements
 
 Owner-reported results, 2026-11-18, for PR #145's measurement section. Unit results are verified on the DHO804;
@@ -77,6 +92,44 @@ host size measurements are after the gate fix. These are supplied results, not a
 The owner accepts M15a for the behaviour gain. The IO runtime decision of 2026-11-18 chose tokio for all
 network IO and retires the deferred size gate and `poll(2)` fallback. Each transport still reports and
 minimises its production LOC and aarch64 binary size delta.
+
+### M15b closure measurements, host only
+
+Measured 2026-11-18. Baseline is the pre-M15a main at
+`2e2af564f16b8647e3af61ba563d0d7eb35a67f2`. The M15-only replay applies M15a and all four M15b
+transport slices, retaining the baseline's update identity API names and ACL implementation to exclude
+intervening boot/model and menu changes. Counts use the unchanged xtask production measurement; tests,
+comments and tooling are excluded. Both default-feature ARM builds use the pinned toolchain,
+`--locked --release --target aarch64-unknown-linux-musl`, with the same release profile and CPU flags.
+Both ELF files pass `cargo xtask elf-static`.
+
+| Aggregate M15 measurement | Pre-M15a | M15-only | Delta |
+|---|---:|---:|---:|
+| UI production LOC | 72,270 | 73,492 | +1,222 |
+| Total production LOC | 108,344 | 109,566 | +1,222 |
+| aarch64 release ELF bytes | 6,966,704 | 7,252,104 | +285,400 (+4.10 %) |
+
+The mDNS slice itself changes UI/total production LOC from 73,491/109,799 to 73,486/109,794 (-5),
+with +8 xtask tooling lines and no new dependencies. Cumulative growth pays for shared bounded
+intake/reply ownership, cancellation and protocol framing; the earlier negative LOC expectation is unmet.
+These are reporting measurements, not a size gate (ADR 0023).
+
+Host `--serve`, dev profile, demo acquisition on channels 1 and 2: medians of three paired 1.5 s windows
+after 100 warm-up queries. The stalled peer leaves a 1,843,254-byte BMP reply unread with a 4 KiB
+receive buffer; a non-consuming header peek verifies the large reply before measurement. Enqueue p99
+uses the existing rolling 256-observation diagnostic. These host figures do not substitute for unit results.
+
+| Host measurement | Healthy client | Beside stalled client |
+|---|---:|---:|
+| Exchanges/s | 2,597.3 | 2,848.6 |
+| Pictures/s | 36.76 | 36.67 |
+| Round-trip p50/p99, ms | 0.088/16.845 | 0.095/16.661 |
+| Server enqueue p99, microseconds | 6.750 | 6.708 |
+
+All three stalled-client runs answer after disconnect. Eight raw clients remain admitted, the ninth is
+closed, and disconnect releases a slot for re-admission. Injected-time fixtures retain the 2 s stalled and
+30 s total output deadlines, release credits/reservations on cancellation and preserve bounded request,
+reply, snapshot and upload admission. The explicit loopback multicast responder test passes.
 
 ## Status
 
@@ -119,6 +172,79 @@ minimises its production LOC and aarch64 binary size delta.
   the test's cognitive complexity is 26/25. Run Clippy, the fast gate and complete UI
   debug/test-release suites; retain only generated ratchet reductions for changed files.
   Git updates and remote checks remain with the coordinator.
+
+- 2026-11-18: PR #179 simulation check fix: extracted the row-inventory setup and separated
+  reference-slot choices from setting choices, preserving all assertions and production behaviour.
+  Clippy passes with `partial gate passed (not done): 1 steps in 107 s` (exit 0).
+  Initial clippy printed `gate FAILED in 2 s: clippy`; after splitting choices it printed
+  `gate FAILED in 96 s: clippy` until the separate row-inventory setup was extracted.
+  `cargo test --locked -p oos-ui` and its `--profile test-release` counterpart pass (exit 0):
+  1,577 debug / 1,576 release unit tests and 43 integration tests per profile, with 58 unit
+  and one golden existing ignores. Fast passed with
+  `partial gate passed (not done): 11 steps in 14 s` (exit 0).
+  Production LOC delta is zero; no changed-file ratchet reductions were reported.
+  Host only. Fetch was blocked by sandbox Git metadata permissions; remote synchronization,
+  independent review and CI remain with the coordinator.
+
+- 2026-11-18: PR #179 simulation check-fix plan: local clippy reproduces
+  `gate FAILED in 2 s: clippy` on simulation tests (row inventory 65/60 lines, choices complexity 28/25).
+  Extract row setup and split the independent reference-slot cases while preserving every assertion. Host only;
+  Git synchronization and CI remain with the coordinator because the sandbox blocks fetch metadata writes.
+
+- 2026-11-18: PR #179 review fix: discovery receives consume Tokio's cooperative budget.
+  The queued-packet regression fails before the fix (exit 101) and passes after for IPv4 and IPv6.
+  Both `getifaddrs` pointer findings are false positives: successful allocation, non-null list links
+  and traversal before `freeifaddrs` preserve pointer validity. No interface code changed.
+  `cargo test --locked -p oos-ui` and its `--profile test-release` counterpart pass (exit 0):
+  1,576 debug / 1,575 release unit tests and 43 integration tests per profile; existing ignores remain.
+  Fast prints `partial gate passed (not done): 11 steps in 5 s` (exit 0).
+  Clippy prints `gate FAILED in 55 s: clippy` (exit 1) on unchanged
+  `ui/src/ui/menu/simulation/tests.rs`: 65/60 lines and complexity 28/25.
+  Production LOC increases by one; no changed-file ratchet reductions were reported.
+  Host only. Git synchronization, unrelated clippy findings, independent review and CI remain with the coordinator.
+
+- 2026-11-18: PR #179 review-fix plan: budget discovery receives on the shared executor and add a
+  deterministic queued-packet regression for both address families in `ui/src/netio/mdns/socket/`.
+  Check the two interface-list pointer findings against the `getifaddrs` lifetime contract;
+  run UI tests in debug and test-release and the fast gate. Git and CI remain with the coordinator.
+
+- 2026-11-18: PR #179 check fix: `cargo xtask step clippy` reproduced
+  `gate FAILED in 56 s: clippy` on the menu-renderer test's cognitive complexity (26/25).
+  Extracted its row-control assertions into a test helper, preserving all checks and production behaviour.
+  Clippy now prints `partial gate passed (not done): 1 steps in 153 s` (exit 0);
+  fast prints `partial gate passed (not done): 11 steps in 18 s` (exit 0).
+  `cargo test --locked -p oos-ui` and its `--profile test-release` counterpart pass (exit 0):
+  1,562 debug / 1,561 release unit tests and 43 integration tests per profile,
+  with 58 unit and one golden existing ignores per profile. Production LOC delta is zero;
+  no ratchet reductions were reported. Host only. Remote refresh, review and CI remain with the coordinator.
+
+- 2026-11-18: Final host validation passes (exit 0): `cargo test --locked -p oos-ui -p xtask`
+  and its `--profile test-release` counterpart, including 1,547 debug / 1,546 release UI unit
+  tests, 43 integration tests per profile and 238 xtask tests per profile. Existing ignores:
+  58 unit tests and one golden test per profile. The explicit loopback multicast test and all
+  host load/connection-limit trials pass. `cargo xtask step clippy` prints
+  `partial gate passed (not done): 1 steps in 183 s` (exit 0); the fast gate prints
+  `partial gate passed (not done): 11 steps in 13 s` (exit 0).
+  Initial fast printed `gate FAILED in 3 s: size, architecture, unsafe`: generated reductions
+  and filtering test-only imports resolve those findings. Clippy initially printed
+  `gate FAILED in 55 s: clippy`; moving the discovery export before the test module resolves
+  `items_after_test_module`. `cargo xtask ratchet --move` and `cargo xtask ratchet` passed;
+  only changed mDNS size/lint/unsafe entries are retained, including the unsafe move (8 to 7).
+  Complete logs, measurement scripts, source snapshots and ELF files remain in ignored
+  `target/m15b-mdns/`. Git changes, independent review, CI and integration remain with the
+  coordinator. No unit run or hardware verification is claimed.
+
+- 2026-11-18: M15b mDNS (#151): discovery uses the same netio executor as the instrument and web
+  transports. The packet responder, records, goodbyes and IPv4/IPv6 metadata remain; the dedicated
+  thread, control wake and poll loop are deleted. Net6 binding helpers now live in netio; the gate
+  confines std::net with alias/re-export fixtures and explicit existing worker exceptions in ADR 0023.
+  The slice removes 5 production lines and adds 8 tooling lines. The full M15 task remains active
+  for the parser work; the M15b transport cutover is implemented and host-verified. No hardware access.
+
+- 2026-11-18: M15b mDNS plan accepted through the assigned brief on `refactor/151-m15b-mdns`. Reuse the existing task
+  and runtime; preserve protocol behaviour and exercise host discovery/lifecycle and shared limits.
+  The coordinator owns Git, independent review, final CI and integration. Host only.
+
 
 - 2026-11-18: PR #168 screenshot review fix: 200 and 304 replies share the bounded error
   fallback; an exhausted output budget closes the reply and wakes IO. The matching-ETag

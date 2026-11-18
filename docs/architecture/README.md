@@ -19,7 +19,7 @@ Keep the existing behaviour through small migrations. The accepted decisions are
 `oos-ui` uses `src/main.rs` for its binary and library module graph. `main` selects scripted execution,
 host `--serve`, or Linux device execution in `system/device.rs`. The browser is the host desktop view.
 There is no native Windows window in this crate. `oos-core` depends only on `oos-dsp`;
-`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI, VXI-11, HiSLIP and HTTP/MCP use tokio; mDNS awaits its M15b slice.
+`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and mDNS share tokio on netio.
 DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their application bindings.
 
 ### Module map
@@ -31,7 +31,7 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 | `model.rs`, `model/` | core model exports, platform/capability bridge, protocol bindings and colours |
 | `scpi.rs`, `scpi/`, `cmd.rs` | shared SCPI interpreter and program continuations; script/FIFO command syntax |
 | `http.rs`, `http/`, `vxi11.rs`, `hislip.rs`, `mdns.rs` | web/MCP, instrument transports and discovery |
-| `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11/HiSLIP/HTTP runtime, socket framing/output and owned bounded application ports |
+| `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11/HiSLIP/HTTP/mDNS runtime, socket framing/output and owned bounded application ports |
 | `remote.rs` | telnet/firewall helper |
 | `store.rs`, `store/`, `sysconf.rs` | setup codec, waveform/image files, durable startup state, system settings |
 | `board/`, `board/dho/` | Board port, Shared exchange, hardware configuration/readout and publication |
@@ -111,7 +111,9 @@ flowchart LR
     render --> display["DRM / GPU helper; HTTP snapshots"]
 ```
 
-Raw SCPI, VXI-11, HiSLIP and HTTP TCP/UDP framing and writes share one current-thread tokio runtime on the `netio` thread.
+Raw SCPI, VXI-11, HiSLIP, HTTP and mDNS TCP/UDP framing and writes share one current-thread tokio runtime on the `netio` thread.
+mDNS keeps its socket-free responder, multicast packet metadata and two-second interface refresh; switching off
+withdraws records and closes its sockets. Discovery shutdown leaves the shared executor available to other services.
 IO owns credits until output completes and enforces 2 s without progress and 30 s total send limits.
 VXI-11 links and HiSLIP sessions retain frame-owned resumable programs behind owned request/reply ports.
 HiSLIP shares the eight-connection limit, admission, cancellation and timed output machinery. Its reply budget
@@ -191,8 +193,8 @@ flowchart TB
 ```
 
 ADR 0023 keeps non-blocking IO behind ports, preferably on one current-thread tokio runtime.
-The current Cargo features are rt, net, time, sync and macros. Raw SCPI, VXI-11 and HiSLIP use netio.
-HTTP, mDNS, NTP and the update check remain migration work. USB bulk and WLAN control also move behind
+The current Cargo features are rt, net, time, sync, macros and io-util. Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and mDNS
+use netio. NTP and the update check remain migration work. USB bulk and WLAN control also move behind
 non-blocking ports where async removes blocking. Blocking filesystem, usbfs and process calls never run on
 the executor; use bounded blocking adapters. CPU work stays on CPU workers.
 
@@ -593,10 +595,12 @@ M12 unit acceptance is still open; see [migration](migration.md).
 Cargo enforces crate dependencies. `xtask/data/architecture.txt` confines HAL access to `board/dho`
 and sets core module layers. Broad target UI layers are not yet installed. M15a confines tokio to `netio`.
 M15a puts IO in top-level `ui/src/netio/` and adds `confine ui tokio -> netio` plus a `layer ui netio`
-allowlist for `netport` owned values plus the existing `net6` and `netacl` helpers, excluding `ui`, settings and interpreter modules. The checker works on
+allowlist for `netport` owned values, the socket-free `mdns` responder and existing `net6`/`netacl` helpers,
+excluding `ui`, settings and interpreter modules. The checker works on
 top-level modules; nesting IO under `remote` would not enforce this separation. Frame-side code receives a
 synchronous port; only netio constructs/polls the runtime. Current `remote.rs` remains the telnet/firewall helper. IPv6 ACL prefix-file reads use a single bounded
-blocking worker; they do not run on the IO executor.
+blocking worker; they do not run on the IO executor. `std::net` is confined to netio and the explicit synchronous
+exceptions in ADR 0023 (SNTP, the Bode generator worker and GPU Unix-socket shutdown). Pure address values use `core::net`.
 The gate is `cargo xtask check`; fast is a partial gate. Size/lint debt only shrinks.
 Authors run `cargo xtask ratchet` (`--move` for planned moves) under
 [ADR 0006](../adr/0006-format-lints-and-ratchets.md).

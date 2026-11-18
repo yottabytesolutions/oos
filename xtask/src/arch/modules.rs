@@ -26,7 +26,7 @@ pub struct CrateRules<'r> {
 
 impl CrateRules<'_> {
     fn is_dep(&self, path: &str) -> bool {
-        path.split("::").next().is_some_and(|f| self.deps.values().any(|d| d == f))
+        path.split("::").next().is_some_and(|f| f == "std" || f == "core" || self.deps.values().any(|d| d == f))
     }
 
     /// `crate::a::b` for a crate path, the path itself for a dependency path.
@@ -111,7 +111,9 @@ pub fn check(sources: &[Source], rules: &CrateRules) -> Vec<String> {
     let mut out = Vec::new();
     let files: Vec<(&syn::File, &str)> =
         sources.iter().filter(|s| !s.test).map(|s| (&s.file, s.module.as_str())).collect();
-    let krate = Crate::new(&rules.deps, &files);
+    let mut deps = rules.deps.clone();
+    deps.extend([("std".into(), "std".into()), ("core".into(), "core".into())]);
+    let krate = Crate::new(&deps, &files);
     for s in sources.iter().filter(|s| !s.test) {
         let (rel, module, names) = (&s.rel, &s.module, krate.named(&s.file, &s.module));
         for f in rules.forbid.iter().filter(|f| within(module, &f.from)) {

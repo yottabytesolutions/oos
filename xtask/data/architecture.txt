@@ -70,4 +70,7 @@ layer core protocols ->
 
 # M15a raw transport: synchronous application ports, never interpreter or settings.
 confine ui tokio -> netio
-layer ui netio -> netport net6 netacl
+layer ui netio -> netport net6 netacl mdns
+
+# ADR 0023: socket IO and the remaining synchronous worker exceptions.
+confine ui std::net -> netio sntp ui::bode gpu

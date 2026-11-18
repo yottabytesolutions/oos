@@ -72,6 +72,9 @@ struct Scope {
 
 impl Scope {
     fn add_use(&mut self, u: &syn::ItemUse) {
+        if test_only(&u.attrs) {
+            return;
+        }
         for i in use_imports(u) {
             match (i.glob, i.name) {
                 (true, _) => self.globs.push(i.path),
@@ -313,6 +316,9 @@ impl<'a> Visit<'a> for Named<'_, '_> {
     }
 
     fn visit_item_use(&mut self, u: &'a syn::ItemUse) {
+        if test_only(&u.attrs) {
+            return;
+        }
         for i in use_imports(u) {
             self.record(&i.path);
         }

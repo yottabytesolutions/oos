@@ -47,7 +47,7 @@ ADR paths across the repository. The `links` step also checks Markdown links and
 | [0020](0020-crates.md) | Crates have one dependency direction | code | in force |
 | [0021](0021-static-programs.md) | Scope programs are static musl binaries and abort on panic | code | in force |
 | [0022](0022-frame-state.md) | The frame thread owns UI state without locks | code | in force |
-| [0023](0023-io-layer.md) | Non-blocking IO stays behind ports in one IO layer | code | target: M15b and IO-port follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0023](0023-io-layer.md) | Non-blocking IO stays behind ports in one IO layer | code | target: IO-port follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
 | [0024](0024-scpi-interpreter.md) | One SCPI interpreter runs on the frame thread | code | in force |
 | [0025](0025-scpi-identity.md) | SCPI follows stock names and identifies as OOS | code | target: SCPI conformance follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
 | [0026](0026-gpu-helper.md) | GPU drawing uses a helper and the CPU path stays complete | code | in force |

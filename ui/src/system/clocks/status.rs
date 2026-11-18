@@ -34,7 +34,7 @@ impl fmt::Display for FloorState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Engaged => f.write_str("engaged reason none"),
-            Self::RestorePending => f.write_str("engaged reason restore-pending"),
+            Self::RestorePending => f.write_str("disabled reason restore-pending"),
             Self::Disabled(reason) => write!(f, "disabled reason {reason}"),
         }
     }
@@ -103,9 +103,8 @@ impl Controller {
     fn floor_state(&self, kind: Kind) -> FloorState {
         let floor = self.floors.iter().find(|f| f.kind == kind);
         let allowed = self.allowed && kind.enabled(self.config);
-        if floor.is_some_and(|f| {
-            matches!(f.phase, FloorPhase::RestorePending(_)) || (matches!(f.phase, FloorPhase::Raised(_)) && !allowed)
-        }) {
+        if floor.is_some_and(|f| f.saved().is_some() && (!allowed || matches!(f.phase, FloorPhase::RestorePending(_))))
+        {
             return FloorState::RestorePending;
         }
         let reason = if self.recovery_failed {

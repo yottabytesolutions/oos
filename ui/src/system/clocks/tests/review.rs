@@ -46,7 +46,7 @@ fn failed_restore_retries_once_per_second_and_logs_only_failure_then_success() {
 }
 
 #[test]
-fn thermal_restore_failures_remain_engaged_until_restored_or_rearmed() {
+fn thermal_restore_failures_remain_pending_until_restored_or_rearmed() {
     for (temperature, rearm) in [("65000", false), ("bad", false), ("65000", true)] {
         let tree = Tree::new();
         let failures = Arc::new(Mutex::new(0));
@@ -66,7 +66,7 @@ fn thermal_restore_failures_remain_engaged_until_restored_or_rearmed() {
         clock.advance(Duration::from_secs(1));
         c.poll();
         let pending = c.status();
-        assert!(pending.to_string().contains("a72 engaged reason restore-pending"));
+        assert!(pending.to_string().contains("a72 disabled reason restore-pending"));
         assert_eq!(tree.minima().0, "1416000");
         assert!(tree.0.join("saved").exists());
         if rearm {
@@ -80,7 +80,7 @@ fn thermal_restore_failures_remain_engaged_until_restored_or_rearmed() {
         assert_eq!(tree.minima().0, "408000");
         assert!(!tree.0.join("saved").exists());
         assert!(running.to_string().contains("a72 engaged reason none min_khz=1416000"));
-        assert!(pending.to_string().contains("a72 engaged reason restore-pending min_khz=1416000"));
+        assert!(pending.to_string().contains("a72 disabled reason restore-pending min_khz=1416000"));
     }
 }
 
@@ -200,7 +200,7 @@ fn run_after_failed_restore_reapplies_and_verifies_the_floor() {
         *oos_hal::sync::lock(&failures) = 1;
         c.update(false);
         tree.set(CPU, "scaling_min_freq", minimum);
-        assert!(c.status().to_string().contains("a72 engaged reason restore-pending"));
+        assert!(c.status().to_string().contains("a72 disabled reason restore-pending"));
         c.update(true);
         assert_eq!(tree.minima().0, "1416000");
         assert!(c.status().to_string().contains("a72 engaged reason none"));

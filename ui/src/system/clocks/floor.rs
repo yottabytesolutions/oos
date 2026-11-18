@@ -81,8 +81,11 @@ impl DevicePaths {
 #[derive(Clone, Copy)]
 pub(super) enum FloorPhase {
     Idle,
+    // Receipt persisted; hardware is unverified, including after failed writes/read-backs.
     Prepared(u64),
+    // Only a valid raise read-back enters Raised. Every non-idle state owns the same receipt.
     Raised(u64),
+    // Any restore attempt enters RestorePending; only confirmed restoration enters Idle.
     RestorePending(u64),
 }
 
@@ -91,12 +94,11 @@ pub(super) struct Floor {
     pub(super) device: Arc<DevicePaths>,
     pub(super) phase: FloorPhase,
     pub(super) logged: bool,
-    restore_failed: bool,
     raise_error: Option<String>,
 }
 impl Floor {
     pub(super) fn new(kind: Kind, device: Arc<DevicePaths>) -> Self {
-        Self { kind, device, phase: FloorPhase::Idle, logged: false, restore_failed: false, raise_error: None }
+        Self { kind, device, phase: FloorPhase::Idle, logged: false, raise_error: None }
     }
 
     pub(super) fn saved(&self) -> Option<u64> {
@@ -174,20 +176,18 @@ impl Floor {
         let Some(previous) = self.saved() else {
             return Ok(());
         };
+        let retry = matches!(self.phase, FloorPhase::RestorePending(_));
+        self.phase = FloorPhase::RestorePending(previous);
         let result = self.restore_value(io, previous);
-        if result.is_err() && matches!(self.phase, FloorPhase::Raised(_) | FloorPhase::RestorePending(_)) {
-            self.phase = FloorPhase::RestorePending(previous);
-        }
         match &result {
-            Err(error) if !self.restore_failed => {
+            Err(error) if !retry => {
                 eprintln!("oos-ui: clock_floor device={} running=false error={error}", self.kind);
             }
-            Ok(()) if self.restore_failed => {
+            Ok(()) if retry => {
                 eprintln!("oos-ui: clock_floor device={} restored={previous}", self.kind);
             }
             _ => {}
         }
-        self.restore_failed = result.is_err();
         result
     }
 

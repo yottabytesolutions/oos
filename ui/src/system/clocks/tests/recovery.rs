@@ -164,3 +164,43 @@ fn stale_staging_symlink_cannot_overwrite_another_file() {
     assert_eq!(tree.minima().0, "1416000");
     assert_eq!(std::fs::read_to_string(other).unwrap(), "keep");
 }
+
+#[test]
+fn startup_restore_failure_owns_all_saved_minima_and_retries_without_raising() {
+    for config in ["", "perf.cpu_floor = off\nperf.gpu_floor = off"] {
+        let tree = Tree::new();
+        tree.set(CPU, "scaling_min_freq", "1416000");
+        tree.set(GPU, "min_freq", "600000000");
+        let receipt = "cpu-a72 408000\ngpu 400000000\n";
+        std::fs::write(tree.0.join("saved"), receipt).unwrap();
+        let clock = ManualClock::new();
+        let failures = Arc::new(Mutex::new(2));
+        let port = Failing { inner: linux::Sysfs(tree.0.clone()), failures: failures.clone() };
+        let mut c = Controller::with_clock(
+            Box::new(port),
+            Config::parse(config),
+            Some(GPU),
+            tree.0.join("saved"),
+            clock.source(),
+        );
+        for label in ["a72", "gpu_floor"] {
+            assert!(c.status().to_string().contains(&format!("{label} disabled reason restore-pending")));
+        }
+        for running in [true, false] {
+            c.update(running);
+            assert_eq!(*oos_hal::sync::lock(&failures), 1);
+        }
+        clock.advance(thermal::SAMPLE_PERIOD);
+        c.update(true);
+        assert_eq!(*oos_hal::sync::lock(&failures), 0);
+        assert_eq!(std::fs::read_to_string(tree.0.join("saved")).unwrap(), receipt);
+        assert!(c.status().to_string().contains("a72 disabled reason restore-pending"));
+        clock.advance(thermal::SAMPLE_PERIOD);
+        c.update(false);
+        assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
+        assert!(!tree.0.join("saved").exists());
+        c.update(true);
+        assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
+        assert!(c.status().to_string().contains("a72 disabled reason recovery-failed"));
+    }
+}

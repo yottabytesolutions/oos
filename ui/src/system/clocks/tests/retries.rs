@@ -141,3 +141,108 @@ fn raise_errors_child() {
     tree.set(GPU, "available_frequencies", "200000000 400000000");
     c.update(true);
 }
+
+struct ReadBackFailure {
+    pending: bool,
+    after_write: bool,
+}
+
+struct Uncertain {
+    inner: linux::Sysfs,
+    failures: Arc<Mutex<ReadBackFailure>>,
+}
+impl Port for Uncertain {
+    fn read(&self, path: &str) -> io::Result<String> {
+        let mut failures = oos_hal::sync::lock(&self.failures);
+        if path == format!("{CPU}/scaling_min_freq") && failures.pending {
+            failures.pending = false;
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        self.inner.read(path)
+    }
+    fn write(&mut self, path: &str, value: u64) -> io::Result<()> {
+        let receipt = std::fs::read_to_string(self.inner.0.join("saved"))?;
+        assert!(receipt.contains("cpu-a72 408000\n"));
+        self.inner.write(path, value)?;
+        if path == format!("{CPU}/scaling_min_freq") {
+            let mut failures = oos_hal::sync::lock(&self.failures);
+            failures.pending = failures.after_write;
+        }
+        Ok(())
+    }
+    fn entries(&self, path: &str) -> io::Result<Vec<String>> {
+        self.inner.entries(path)
+    }
+}
+
+#[test]
+fn unverified_raise_and_stop_keep_the_receipt_until_confirmed_restoration() {
+    for reenter in [false, true] {
+        let tree = Tree::new();
+        let clock = ManualClock::new();
+        let failures = Arc::new(Mutex::new(ReadBackFailure { pending: false, after_write: true }));
+        let port = Uncertain { inner: linux::Sysfs(tree.0.clone()), failures: failures.clone() };
+        let mut c = Controller::with_clock(
+            Box::new(port),
+            Config::parse("perf.gpu_floor = off"),
+            None,
+            tree.0.join("saved"),
+            clock.source(),
+        );
+        c.update(true);
+        assert_eq!(tree.minima().0, "1416000");
+        assert!(c.status().to_string().contains("a72 disabled reason not-engaged"));
+        let receipt = std::fs::read_to_string(tree.0.join("saved")).unwrap();
+        assert_eq!(receipt, "cpu-a72 408000\n");
+        c.update(false);
+        assert_eq!(tree.minima().0, "408000");
+        assert!(c.status().to_string().contains("a72 disabled reason restore-pending"));
+        assert_eq!(std::fs::read_to_string(tree.0.join("saved")).unwrap(), receipt);
+        if reenter {
+            c.update(true);
+            assert_eq!(tree.minima().0, "1416000");
+            assert!(c.status().to_string().contains("a72 disabled reason restore-pending"));
+            assert_eq!(std::fs::read_to_string(tree.0.join("saved")).unwrap(), receipt);
+            oos_hal::sync::lock(&failures).after_write = false;
+            clock.advance(thermal::SAMPLE_PERIOD);
+            c.update(true);
+            assert!(c.status().to_string().contains("a72 engaged reason none"));
+            assert_eq!(std::fs::read_to_string(tree.0.join("saved")).unwrap(), receipt);
+        }
+        oos_hal::sync::lock(&failures).after_write = false;
+        clock.advance(thermal::SAMPLE_PERIOD);
+        c.update(false);
+        assert_eq!(tree.minima().0, "408000");
+        assert!(c.status().to_string().contains("a72 disabled reason idle"));
+        assert!(!tree.0.join("saved").exists());
+    }
+}
+
+#[test]
+fn startup_unverified_restoration_stays_pending_until_forced_retry_confirms_it() {
+    let tree = Tree::new();
+    tree.set(CPU, "scaling_min_freq", "1416000");
+    let receipt = "cpu-a72 408000\n";
+    std::fs::write(tree.0.join("saved"), receipt).unwrap();
+    let clock = ManualClock::new();
+    let failures = Arc::new(Mutex::new(ReadBackFailure { pending: false, after_write: true }));
+    let port = Uncertain { inner: linux::Sysfs(tree.0.clone()), failures: failures.clone() };
+    let mut c =
+        Controller::with_clock(Box::new(port), Config::parse(""), Some(GPU), tree.0.join("saved"), clock.source());
+    assert_eq!(tree.minima().0, "408000");
+    for running in [true, false, true] {
+        clock.advance(thermal::SAMPLE_PERIOD);
+        c.update(running);
+        assert!(c.status().to_string().contains("a72 disabled reason restore-pending"));
+        assert_eq!(std::fs::read_to_string(tree.0.join("saved")).unwrap(), receipt);
+        assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
+    }
+    oos_hal::sync::lock(&failures).after_write = false;
+    c.restore();
+    assert_eq!(tree.minima().0, "408000");
+    assert!(!tree.0.join("saved").exists());
+    clock.advance(thermal::SAMPLE_PERIOD);
+    c.update(true);
+    assert!(c.status().to_string().contains("a72 disabled reason recovery-failed"));
+    assert!(!tree.0.join("saved").exists());
+}

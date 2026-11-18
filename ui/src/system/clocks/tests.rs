@@ -214,7 +214,7 @@ fn failed_restore_retains_original_for_exit_retry() {
     c.update(false);
     assert_eq!(tree.minima().0, "1416000");
     assert!(tree.0.join("saved").exists());
-    assert!(c.status().to_string().contains("a72 engaged reason restore-pending"));
+    assert!(c.status().to_string().contains("a72 disabled reason restore-pending"));
     c.restore();
     assert_eq!(tree.minima().0, "408000");
     assert!(!tree.0.join("saved").exists());

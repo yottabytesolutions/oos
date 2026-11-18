@@ -93,7 +93,7 @@ impl Controller {
         if let Err(error) = me.recover() {
             eprintln!("oos-ui: clock_floor recovery_error={error}; floors disabled");
             me.recovery_failed = true;
-            me.floors.clear();
+            me.next_attempt = now + thermal::SAMPLE_PERIOD;
             return me;
         }
         me.floors.retain(|f| {
@@ -115,13 +115,20 @@ impl Controller {
 
     fn recover(&mut self) -> io::Result<()> {
         let Some(saved) = self.journal.load()? else { return Ok(()) };
+        // Own every known rollback before IO, even if an earlier device fails recovery.
+        for floor in &mut self.floors {
+            if let Some((_, value)) = saved.iter().find(|(kind, _)| *kind == floor.kind) {
+                if floor.saved().is_none() {
+                    floor.phase = FloorPhase::Prepared(*value);
+                }
+            }
+        }
         for (kind, value) in saved {
             let floor = self
                 .floors
                 .iter_mut()
                 .find(|f| f.kind == kind)
                 .ok_or_else(|| io::Error::other("saved device is absent"))?;
-            floor.phase = FloorPhase::Prepared(value);
             floor.restore(self.port.as_mut())?;
             eprintln!("oos-ui: clock_floor recovery device={kind} restored={value}");
         }
@@ -143,10 +150,16 @@ impl Controller {
 
     pub fn update(&mut self, running: bool) {
         self.requested = running;
+        let now = (self.clock)();
         if self.recovery_failed {
+            // Keep startup failure latched against new raises; restoration may still retry.
+            if self.allowed || now >= self.next_attempt {
+                self.allowed = false;
+                self.next_attempt = now + thermal::SAMPLE_PERIOD;
+                let _ = self.recover();
+            }
             return;
         }
-        let now = (self.clock)();
         let allowed = running && !self.floors.is_empty() && self.thermal.allowed(self.port.as_ref(), now);
         let settled = if allowed {
             self.floors.iter().all(|floor| matches!(floor.phase, FloorPhase::Raised(_)))

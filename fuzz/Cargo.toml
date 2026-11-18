@@ -10,6 +10,7 @@ license = "GPL-2.0-or-later"
 cargo-fuzz = true
 
 [dependencies]
+hyper = { version = "1", default-features = false, features = ["http1", "server"] }
 libfuzzer-sys = "0.4"
 oos-ui = { path = "../ui" }
 oos-hal = { path = "../hal" }

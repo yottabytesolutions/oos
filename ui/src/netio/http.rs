@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! HTTP sockets share the instrument IO executor and bounded application admission.
 mod input;
+mod timing;
 use super::{runtime, Runtime};
 use crate::netport::{http::*, RemoteRequest};
 use std::{
@@ -8,11 +9,7 @@ use std::{
     net::SocketAddr,
     sync::{atomic::Ordering, Arc, Mutex},
 };
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::oneshot,
-    task::JoinSet,
-};
+use tokio::{net::TcpListener, sync::oneshot, task::JoinSet};
 
 pub(crate) struct Service {
     addr: SocketAddr,
@@ -78,7 +75,7 @@ async fn serve(
                 if inbox.active.load(Ordering::SeqCst) >= MAX_PENDING || clients.len() >= MAX_SESSIONS {
                     tokio::select! {
                         _ = &mut *stopping => break,
-                        _ = input::answer(&mut socket, "503 Service Unavailable", "busy, try again") => {},
+                        _ = input::refuse(&mut socket, "503 Service Unavailable", "busy, try again") => {},
                     }
                     continue;
                 }
@@ -110,63 +107,54 @@ impl Drop for Connection {
     }
 }
 async fn conversation(
-    socket: &mut TcpStream,
+    socket: &mut (impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin),
     peer: SocketAddr,
     inbox: Arc<Inbox>,
     acl: Arc<Mutex<crate::netacl::Shared>>,
     limits: Limits,
     active: Active,
 ) -> io::Result<()> {
-    let start = tokio::time::Instant::now();
-    let input = input::Input { inbox: &inbox, acl: &acl, peer, limits };
-    let Some((text, body, large)) =
-        input.read(socket, || start.elapsed(), |deadline| tokio::time::sleep_until(start + deadline)).await?
-    else {
-        return Ok(());
+    let progress = timing::Progress::new();
+    let input = Arc::new(input::Input { inbox, acl, peer, limits, active: Mutex::new(Some(active)) });
+    let timed_out_read = {
+        let io = timing::Io { socket: &mut *socket, progress: progress.clone() };
+        let service = hyper::service::service_fn(|request| {
+            let (input, progress) = (input.clone(), progress.clone());
+            async move {
+                let response = input.handle(request, &progress).await;
+                progress.begin_send();
+                response
+            }
+        });
+        let mut builder = hyper::server::conn::http1::Builder::new();
+        builder
+            .keep_alive(false)
+            .half_close(true)
+            .auto_date_header(false)
+            .title_case_headers(true)
+            // Queued buffers retain payload owners and admission until socket output completes.
+            .writev(true)
+            .max_headers(MAX_HEAD / 4)
+            .max_header_size(MAX_HEAD)
+            .max_buf_size(MAX_HEAD);
+        let connection = builder.serve_connection(hyper_util::rt::TokioIo::new(io), service);
+        tokio::select! {
+            biased;
+            reading = progress.expired(limits) => reading,
+            result = connection => return result.map_err(io::Error::other),
+        }
     };
-    let bytes = text.capacity() + body.capacity();
-    let envelope = inbox.envelope(text, body, peer);
-    let RemoteRequest::Http(req) = envelope.request() else { return Ok(()) };
-    let reply = req.reply.clone();
-    let _connection = Connection(reply.clone());
-    let id = envelope.id();
-    let _credit = envelope.credit(inbox.ports.clone());
-    if !reply.static_content(&req.head) {
-        if inbox.ports.requests().submit(id, envelope, bytes).is_err() {
-            return input::answer(socket, "503 Service Unavailable", "busy, try again").await;
-        }
-        let taken = tokio::select! {
-            taken = wait_taken(&reply, tokio::time::sleep(limits.take), || inbox.ports.requests().cancel(id)) => taken,
-            _ = read_failed(socket) => return Ok(()),
-        };
-        if !taken {
-            return input::answer(socket, "503 Service Unavailable", "busy, try again").await;
-        }
+    if let Some(message) = timed_out_read {
+        input::refuse(socket, "408 Request Timeout", message).await
+    } else {
+        Err(io::ErrorKind::TimedOut.into())
     }
-    drop((active, large));
-    let response = tokio::select! {
-        response = reply.receive() => response,
-        _ = read_failed(socket) => return Ok(()),
-    };
-    let Some(response) = response else { return Ok(()) };
-    let start = tokio::time::Instant::now();
-    super::output::send(
-        socket,
-        response.reply,
-        || start.elapsed(),
-        |deadline| tokio::time::sleep_until(start + deadline),
-    )
-    .await
 }
 
 #[cfg(test)]
 pub(crate) mod tests;
-
-async fn read_failed(socket: &TcpStream) -> io::Result<()> {
-    super::session::disconnected(socket).await?;
-    // Read EOF leaves the response direction open after a complete request.
-    std::future::pending().await
-}
+#[cfg(test)]
+mod transport_tests;
 
 async fn wait_taken(
     reply: &ReplyHandle,

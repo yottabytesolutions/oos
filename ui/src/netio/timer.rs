@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use std::time::Duration;
 
+#[derive(Clone, Copy)]
 pub(super) struct SendTimer {
     started: Duration,
     progress: Duration,

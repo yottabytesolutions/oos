@@ -73,6 +73,16 @@ and reference-slot coverage into separate tests and extract the row-inventory se
 line and complexity limits without changing assertions. Run clippy, UI tests in debug and
 test-release, and the fast gate.
 
+HTTP/MCP on hyper (#193): the owner-approved job replaces HTTP parsing, wire output and the connection driver
+with hyper HTTP/1 server on netio. Retain application routes, bounded ports, early policy refusals, update worker,
+and injected-time deadline fixtures. Reserve `ui/Cargo.toml`, `Cargo.lock`, `ui/src/netio/http/`,
+`ui/src/netio/http.rs`, `ui/src/netport/http/`, `ui/src/netport/http.rs`, `ui/src/netport/output.rs`,
+`ui/src/http.rs`, `fuzz/fuzz_targets/http.rs`, `docs/fork/deps.md`, `docs/architecture/README.md`,
+`xtask/data/architecture.txt`, `ui/src/netio/timer.rs`, `ui/src/netio/output/tests.rs`, `fuzz/Cargo.toml`,
+`fuzz/Cargo.lock` and affected generated ratchets. Measure production LOC and identical-profile
+AArch64 release size before and after; run UI tests, deny and the fast gate. Coordination and review remain
+with the coordinator.
+
 ## Measurements
 
 Owner-reported results, 2026-11-18, for PR #145's measurement section. Unit results are verified on the DHO804;
@@ -132,6 +142,24 @@ closed, and disconnect releases a slot for re-admission. Injected-time fixtures 
 reply, snapshot and upload admission. The explicit loopback multicast responder test passes.
 
 ## Status
+
+- 2026-11-18: #193, branch `refactor/193-http-hyper`: hyper HTTP/1 server now owns request parsing,
+  response serialization and connection driving on netio. Application routes, early policy checks, bounded
+  admission and the signed-upload worker remain. Typed headers replace wire strings at intake. Queued vectored
+  output retains payload ownership, sender slots and byte reservations until socket output completes.
+  Host-only evidence: all nine focused transport tests pass, including injected read/body and 2 s idle/30 s total
+  output deadlines. Complete debug UI tests: 1,617 passed, one failed, 58 ignored; test-release: 1,616 passed,
+  one failed, 58 ignored. All 43 integration tests pass in each profile, including unchanged golden references.
+  Both suites exit 101 because `http::tests::update_upload_limits` still requires 413 for
+  `Content-Length: 18446744073709551615`; hyper rejects that length as 431 before invoking the service.
+  That assertion is unchanged. The compatibility decision is open, so this slice is not complete.
+  Fast gate: `partial gate passed (not done): 12 steps in 15 s` (exit 0). Host Clippy and the HTTP fuzz-target
+  build pass. Offline cargo-deny reports `advisories ok, bans ok, licenses ok, sources ok` using the cached
+  advisory database. Generated ratchets retain only the changed `Http::poll` size reduction, 108 to 107.
+  Identical default-feature `--locked --release --target aarch64-unknown-linux-musl -p oos-ui --bin oos-ui`
+  builds: ELF bytes 7,369,000 to 7,603,608, +234,608 (+3.18%); both pass `elf-static`.
+  UI production LOC 72,830 to 72,880; total production LOC 109,372 to 109,422 (+50).
+  Hyper does not remove more production lines than its integration costs. No hardware was accessed.
 
 - 2026-11-18: PR #173 follow-up check fix: extracted simulation fixture setup and
   separated decorated-choice and reference-slot assertions into independent tests.

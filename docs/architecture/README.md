@@ -19,7 +19,8 @@ Keep the existing behaviour through small migrations. The accepted decisions are
 `oos-ui` uses `src/main.rs` for its binary and library module graph. `main` selects scripted execution,
 host `--serve`, or Linux device execution in `system/device.rs`. The browser is the host desktop view.
 There is no native Windows window in this crate. `oos-core` depends only on `oos-dsp`;
-`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and mDNS share tokio on netio.
+`oos-ui` depends on core, DSP, HAL, libc, tokio and the hyper HTTP/1 server with its IO/body adapters.
+Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and mDNS share tokio on netio.
 DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their application bindings.
 
 ### Module map
@@ -123,9 +124,11 @@ VXI-11 preserves eight TCP connections plus a separate 1500-byte UDP portmapper 
 and the existing per-link pending-program/output bounds. Its RPC output port reserves up to two RESP_MAX
 payloads plus 4096 bytes for framing, because a link can append a program before its next output-limit check.
 This preserves reads larger than one program; it does not change the raw SCPI 64 MiB reply budget.
-HTTP retains eight pending readers, one large-body admission, eight screenshot waiters and two large outputs.
-Static pages stay on IO; owned requests and socket-free reply handles cross bounded intake. Application responses use
-shared timed output and reservations. Live-picture encoding stays on its CPU worker. Signed upload bytes remain
+Hyper owns HTTP/1 request parsing, response serialization and connection driving on netio. HTTP retains eight pending
+readers, one large-body admission, eight screenshot waiters and two large outputs. Static pages stay on IO; owned
+requests and socket-free reply handles cross bounded intake. Application responses retain reservations through hyper
+output; transport progress enforces the existing read and send deadlines. Live-picture encoding stays on its CPU
+worker. Signed upload bytes remain
 on a separate worker; only its bounded header and job handle cross frame intake before verification is started.
 MCP uses the same interpreter. The FIFO enters through `cmd`.
 mDNS has its own control channel, wake descriptor, socket thread and timers.

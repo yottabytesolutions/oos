@@ -36,8 +36,17 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
 A crate from crates.io is added only where it removes code or blocking
 ([ADR 0004](../adr/0004-dependencies.md)). Each crate's allowed dependencies are its line in
 `xtask/data/architecture.txt`; cargo-deny (`deny.toml`) vets licences and advisories. Crates outside `xtask` are
-listed here. There are none: the Windows desktop window and its crates moved to
+listed here. The Windows desktop window and its crates moved to
 [oos-desktop](https://github.com/yottabytesolutions/oos-desktop) (ADR 0027).
+
+- `tokio`: the shared netio executor replaces blocking network workers and frame-thread socket IO (ADR 0023).
+- `hyper`, with defaults off and only `server` and `http1`: replaces the HTTP request parser, wire response writer
+  and connection driver for the web UI and MCP. Route policy, application admission and update verification stay owned
+  by OOS. The owner approved this replacement in #193.
+- `hyper-util`, with defaults off and only `tokio`: supplies the safe Tokio IO bridge for hyper, avoiding a local
+  unsafe read-buffer adapter.
+- `http-body-util`, with defaults off: supplies body frame polling and a complete response body without a local
+  HTTP-body implementation. Response byte ownership retains output reservations through hyper's writes.
 
 ## Checking for updates
 

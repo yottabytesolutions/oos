@@ -7,7 +7,7 @@ mod head;
 pub(crate) use head::*;
 pub use head::{parse_head, refuse_early, Head};
 mod upload;
-use super::{Envelope, Id, Ports, RemoteRequest, Reply};
+use super::{Envelope, Id, Ports, RemoteRequest, Reservation};
 use core::net::SocketAddr;
 use std::{
     sync::{
@@ -52,7 +52,7 @@ impl Body {
 pub struct Req {
     pub(crate) reply: ReplyHandle,
     pub(crate) peer: SocketAddr,
-    pub(crate) head: String,
+    pub(crate) head: hyper::Request<()>,
     pub(crate) body: Body,
 }
 
@@ -96,10 +96,9 @@ impl Inbox {
             })
             .collect()
     }
-    pub(crate) fn envelope(&self, head: String, body: Body, peer: SocketAddr) -> Envelope {
+    pub(crate) fn envelope(&self, head: hyper::Request<()>, body: Body, peer: SocketAddr) -> Envelope {
         let id = Id::new(self.next.fetch_add(1, Ordering::Relaxed), 0);
         let reply = ReplyHandle(Arc::new(Mutex::new(State {
-            id,
             ports: self.ports.clone(),
             taken: false,
             closed: false,
@@ -113,7 +112,6 @@ impl Inbox {
 #[derive(Clone)]
 pub(crate) struct ReplyHandle(Arc<Mutex<State>>);
 struct State {
-    id: Id,
     ports: Arc<Ports>,
     taken: bool,
     closed: bool,
@@ -121,7 +119,9 @@ struct State {
     waker: Option<Waker>,
 }
 pub(crate) struct Response {
-    pub(crate) reply: Reply,
+    pub(crate) head: hyper::http::response::Builder,
+    body: super::output::Chunk,
+    _reservation: Reservation,
     _sender: Option<SenderSlot>,
 }
 struct SenderSlot;
@@ -175,7 +175,12 @@ impl ReplyHandle {
         })
         .await
     }
-    pub(crate) fn send(&self, head: String, body: impl Into<super::output::Chunk>, force_large: bool) -> bool {
+    pub(crate) fn send(
+        &self,
+        head: hyper::http::response::Builder,
+        body: impl Into<super::output::Chunk>,
+        force_large: bool,
+    ) -> bool {
         let mut state = oos_hal::sync::lock(&self.0);
         if state.closed || state.reply.is_some() {
             return true;
@@ -190,21 +195,18 @@ impl ReplyHandle {
         } else {
             None
         };
-        let output = super::Output::http(head, body);
-        let Some(reservation) = state.ports.budget().reserve(output.capacity()) else { return false };
-        let reply = Reply::from_output(state.id, output, reservation);
-        state.reply = Some(Response { reply, _sender: sender });
+        let Some(reservation) = state.ports.budget().reserve(body.capacity() + MAX_HEAD) else { return false };
+        state.reply = Some(Response { head, body, _reservation: reservation, _sender: sender });
         if let Some(waker) = state.waker.take() {
             waker.wake();
         }
         true
     }
     pub(crate) fn content(&self, status: &str, kind: &str, body: Vec<u8>) -> bool {
-        let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, kind, body.len());
-        self.send(head, body, false)
+        self.send(response(status).header("content-type", kind).header("cache-control", "no-store"), body, false)
     }
-    pub(crate) fn static_content(&self, text: &str) -> bool {
-        let head = parse_head(text);
+    pub(crate) fn static_content(&self, request: &hyper::Request<()>) -> bool {
+        let head = parse_head(request);
         let (kind, body) = match head.route.as_str() {
             "/" => ("text/html; charset=utf-8", PAGE),
             "/style.css" => ("text/css", STYLE),
@@ -216,18 +218,32 @@ impl ReplyHandle {
         true
     }
     pub(crate) fn answer(&self, status: &str, message: &str) {
-        if !self.send(
-            format!(
-                "HTTP/1.1 {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                status,
-                message.len()
-            ),
-            message.as_bytes().to_vec(),
-            false,
-        ) {
+        if !self.send(response(status).header("content-type", "text/plain"), message.as_bytes().to_vec(), false) {
             self.close();
         }
     }
+}
+
+impl AsRef<[u8]> for Response {
+    fn as_ref(&self) -> &[u8] {
+        self.body.bytes()
+    }
+}
+pub(crate) fn response(status: &str) -> hyper::http::response::Builder {
+    hyper::Response::builder().status(status.split_whitespace().next().unwrap_or("500")).header("connection", "close")
+}
+
+#[cfg(test)]
+pub(crate) fn request(text: &str) -> hyper::Request<()> {
+    let mut lines = text.lines();
+    let mut words = lines.next().unwrap_or("GET / HTTP/1.1").split_whitespace();
+    let mut builder = hyper::Request::builder().method(words.next().unwrap_or("GET")).uri(words.next().unwrap_or("/"));
+    for line in lines.filter(|line| !line.is_empty()) {
+        if let Some((name, value)) = line.split_once(':') {
+            builder = builder.header(name.trim(), value.trim());
+        }
+    }
+    builder.body(()).unwrap()
 }
 
 #[cfg(test)]
@@ -251,7 +267,7 @@ mod tests {
         }
         let inbox = Inbox::default();
         let reservation = inbox.ports.budget().reserve_available().unwrap();
-        let request = inbox.envelope(String::new(), Body::Bytes(Vec::new()), "127.0.0.1:1".parse().unwrap());
+        let request = inbox.envelope(Default::default(), Body::Bytes(Vec::new()), "192.0.2.1:1".parse().unwrap());
         let RemoteRequest::Http(req) = request.into_request() else { panic!("HTTP request expected") };
         let reply = req.reply;
         assert!(!reply.content("200 OK", "text/plain", b"state".to_vec()));
@@ -271,7 +287,7 @@ mod tests {
     #[test]
     fn full_acknowledgement_channel_never_blocks_frame_intake() {
         let inbox = Inbox::default();
-        let request = inbox.envelope(String::new(), Body::Bytes(Vec::new()), "127.0.0.1:1".parse().unwrap());
+        let request = inbox.envelope(Default::default(), Body::Bytes(Vec::new()), "192.0.2.1:1".parse().unwrap());
         let RemoteRequest::Http(req) = request.request() else { panic!("HTTP request expected") };
         let reply = req.reply.clone();
         reply.mark_taken();

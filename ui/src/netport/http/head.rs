@@ -38,19 +38,20 @@ pub struct Head {
     pub(crate) expect_continue: bool,
 }
 
-pub fn parse_head(text: &str) -> Head {
-    let mut words = text.split_whitespace();
-    let post = words.next() == Some("POST");
-    let path = words.next().unwrap_or("/");
-    let route = path.split_once('?').map_or(path, |x| x.0).to_string();
-    let len = header(text, "content-length").and_then(|v| v.parse::<usize>().ok());
-    let chunked = header(text, "transfer-encoding").is_some_and(|v| !v.eq_ignore_ascii_case("identity"));
-    let expect_continue = header(text, "expect").is_some_and(|v| v.eq_ignore_ascii_case("100-continue"));
-    Head { post, route, len, chunked, expect_continue }
+pub fn parse_head<B>(request: &hyper::Request<B>) -> Head {
+    let headers = request.headers();
+    let value = |name| header(headers, name);
+    Head {
+        post: request.method() == hyper::Method::POST,
+        route: request.uri().path().into(),
+        len: value("content-length").and_then(|v| v.parse().ok()),
+        chunked: value("transfer-encoding").is_some_and(|v| !v.eq_ignore_ascii_case("identity")),
+        expect_continue: value("expect").is_some_and(|v| v.eq_ignore_ascii_case("100-continue")),
+    }
 }
 
 /// Why a request is answered before its body is read: the status line and text, or None to read it.
-pub fn refuse_early(h: &Head, text: &str, peer_ok: bool) -> Option<(&'static str, &'static str)> {
+pub fn refuse_early(h: &Head, headers: &hyper::HeaderMap, peer_ok: bool) -> Option<(&'static str, &'static str)> {
     let limit = match (h.post, h.route.as_str()) {
         (true, "/update") => MAX_UPDATE,
         (true, "/waveform") => MAX_WAVEFORM,
@@ -62,7 +63,7 @@ pub fn refuse_early(h: &Head, text: &str, peer_ok: bool) -> Option<(&'static str
     if h.len.is_some_and(|n| n > limit) {
         return Some(("413 Payload Too Large", "request too large"));
     }
-    if foreign(text, &h.route, h.post)
+    if foreign(headers, &h.route, h.post)
         || (matches!(h.route.as_str(), "/update" | "/mcp") && (h.post || h.route == "/mcp") && !peer_ok)
     {
         return Some(("403 Forbidden", "refused"));
@@ -71,11 +72,8 @@ pub fn refuse_early(h: &Head, text: &str, peer_ok: bool) -> Option<(&'static str
 }
 
 /// The value of a header of the request head (name without case).
-pub(crate) fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
-    head.lines().skip(1).find_map(|l| {
-        let (k, v) = l.split_once(':')?;
-        k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
-    })
+pub(crate) fn header<'a>(headers: &'a hyper::HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name)?.to_str().ok()
 }
 
 /// A request a web page on another site made through the browser of the bench PC, not the page of the scope or a tool:
@@ -83,13 +81,8 @@ pub(crate) fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
 /// name (a foreign name that resolves here is DNS rebinding), an Origin matches the Host, and the browser's own
 /// Sec-Fetch-Site says the rest, also for the GET of an image tag, which has no Origin. A link to the page itself may
 /// come from anywhere. curl and the like send neither header.
-pub(crate) fn foreign(head: &str, route: &str, post: bool) -> bool {
-    let header = |name: &str| {
-        head.lines().skip(1).find_map(|l| {
-            let (k, v) = l.split_once(':')?;
-            k.trim().eq_ignore_ascii_case(name).then(|| v.trim().to_ascii_lowercase())
-        })
-    };
+pub(crate) fn foreign(headers: &hyper::HeaderMap, route: &str, post: bool) -> bool {
+    let header = |name: &str| header(headers, name).map(str::to_ascii_lowercase);
     let name_of = |h: &str| {
         h.rsplit_once(':')
             .filter(|(n, p)| !n.ends_with(':') && p.bytes().all(|b| b.is_ascii_digit()))

@@ -35,7 +35,7 @@ impl AsyncWrite for Writer {
 
 #[test]
 fn partial_writes_and_both_timeouts_release_owned_output() {
-    for framing in 0..5 {
+    for framing in 0..3 {
         for (step, stalled, timeout) in [
             (Duration::from_millis(20), false, false),
             (Duration::from_secs(1), false, true),
@@ -50,9 +50,7 @@ fn partial_writes_and_both_timeouts_release_owned_output() {
             let output = match framing {
                 0 => plain,
                 1 => crate::netport::Output::rpc(bytes),
-                2 => crate::netport::Output::hislip(bytes, 77, 16),
-                3 => crate::netport::Output::http("HTTP/1.1 200 OK\r\n\r\n".into(), bytes.into()),
-                _ => crate::netport::Output::http("HTTP/1.1 200 OK\r\n\r\n".into(), Arc::<[u8]>::from(bytes).into()),
+                _ => crate::netport::Output::hislip(bytes, 77, 16),
             };
             let reply = Reply::from_output(Id::new(1, 1), output, budget.reserve(RESPONSE_BYTES).unwrap());
             let request = crate::netport::Envelope::program(1, 1, "query?".into());
@@ -83,10 +81,7 @@ fn cancelling_a_stalled_write_releases_its_reservation() {
     let budget = Budget::new(Arc::new(Wake::new().unwrap()));
     let mut writer =
         Writer { bytes: Vec::new(), step: Duration::ZERO, now: Rc::new(Cell::new(Duration::ZERO)), stalled: true };
-    for output in [
-        crate::netport::Output::hislip(vec![0; 4096], 77, 4096),
-        crate::netport::Output::http("HTTP/1.1 200 OK\r\n\r\n".into(), Arc::<[u8]>::from(vec![0; 4096]).into()),
-    ] {
+    for output in [crate::netport::Output::hislip(vec![0; 4096], 77, 4096)] {
         let reply = Reply::from_output(Id::new(1, 1), output, budget.reserve(RESPONSE_BYTES).unwrap());
         let mut output = Box::pin(send(&mut writer, reply, || Duration::ZERO, |_| std::future::pending()));
         assert!(output.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());

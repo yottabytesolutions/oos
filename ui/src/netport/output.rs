@@ -34,7 +34,7 @@ impl Chunk {
             Self::Shared(bytes) => bytes,
         }
     }
-    fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         match self {
             Self::Owned(bytes) => bytes.capacity(),
             Self::Shared(bytes) => bytes.len(),
@@ -46,10 +46,6 @@ impl Chunk {
     }
 }
 impl Output {
-    pub(crate) fn http(head: String, body: Chunk) -> Self {
-        let capacity = head.capacity() + body.capacity();
-        Self { chunks: vec![head.into_bytes().into(), body], capacity, limit: usize::MAX, hislip: None }
-    }
     pub(crate) fn rpc(bytes: Vec<u8>) -> Self {
         let header = ((bytes.len() as u32) | 1 << 31).to_be_bytes().to_vec();
         let capacity = header.capacity() + bytes.capacity();

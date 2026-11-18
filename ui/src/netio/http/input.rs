@@ -1,147 +1,115 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! HTTP framing samples elapsed time explicitly; stalled reads never block the executor.
-use crate::netport::http::*;
-use std::{future::Future, io, net::SocketAddr, sync::Mutex, time::Duration};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-type Refusal = (&'static str, &'static str);
-type Large<'a> = Option<crate::netport::UploadPermit<'a>>;
-pub(super) struct Input<'a> {
-    pub(super) inbox: &'a Inbox,
-    pub(super) acl: &'a Mutex<crate::netacl::Shared>,
+//! Hyper supplies framing; policy and admission run before the first body poll.
+use super::*;
+use http_body_util::{BodyExt, Full};
+use hyper::{body::Bytes, Request, Response};
+pub(super) type WireResponse = Response<Full<Bytes>>;
+
+pub(super) struct Input {
+    pub(super) inbox: Arc<Inbox>,
+    pub(super) acl: Arc<Mutex<crate::netacl::Shared>>,
     pub(super) peer: SocketAddr,
     pub(super) limits: Limits,
+    pub(super) active: Mutex<Option<Active>>,
 }
-impl<'a> Input<'a> {
-    pub(super) async fn read<F: Future<Output = ()>>(
+impl Input {
+    pub(super) async fn handle(
         &self,
-        socket: &mut (impl AsyncRead + AsyncWrite + Unpin),
-        mut now: impl FnMut() -> Duration,
-        mut wait: impl FnMut(Duration) -> F,
-    ) -> io::Result<Option<(String, Body, Large<'a>)>> {
-        let mut bytes = Vec::new();
-        let result = async {
-            let end = loop {
-                if let Some(p) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                    break p + 4;
-                }
-                if bytes.len() > MAX_HEAD {
-                    return Err(("431 Request Header Fields Too Large", "request head too long"));
-                }
-                read_more(socket, &mut bytes, MAX_HEAD + 65536, self.limits, &mut now, &mut wait).await?;
+        request: Request<hyper::body::Incoming>,
+        progress: &timing::Progress,
+    ) -> io::Result<WireResponse> {
+        let head = parse_head(&request);
+        let policy = oos_hal::sync::lock(&self.acl).clone();
+        let peer_ok = super::super::runtime::permits(policy, Ok(self.peer)).await;
+        if let Some((status, message)) = refuse_early(&head, request.headers(), peer_ok) {
+            return Ok(answer(status, message));
+        }
+        let large = if head.len.is_some_and(|n| n > LARGE_BODY) {
+            let Some(permit) = self.inbox.large.admit_large_body(head.len.unwrap_or(0)) else {
+                return Ok(answer("503 Service Unavailable", "busy, try again"));
             };
-            let text = String::from_utf8_lossy(&bytes[..end]).into_owned();
-            let head = parse_head(&text);
-            let policy = oos_hal::sync::lock(self.acl).clone();
-            let peer_ok = super::super::runtime::permits(policy, Ok(self.peer)).await;
-            if let Some(refusal) = refuse_early(&head, &text, peer_ok) {
-                return Err(refusal);
-            }
-            let slot = if head.len.is_some_and(|n| n > LARGE_BODY) {
-                Some(
-                    self.inbox
-                        .large
-                        .admit_large_body(head.len.unwrap_or(0))
-                        .ok_or(("503 Service Unavailable", "busy, try again"))?,
-                )
-            } else {
-                None
-            };
-            let body = self.body(socket, bytes, end, &head, &mut now, &mut wait).await?;
-            Ok((text, body, slot))
-        }
-        .await;
-        match result {
-            Ok(request) => Ok(Some(request)),
-            Err(("", "")) => Ok(None),
-            Err((status, message)) => {
-                answer(socket, status, message).await?;
-                drain(socket).await;
-                Ok(None)
-            }
-        }
-    }
-    async fn body<F: Future<Output = ()>>(
-        &self,
-        socket: &mut (impl AsyncRead + AsyncWrite + Unpin),
-        mut bytes: Vec<u8>,
-        end: usize,
-        head: &Head,
-        now: &mut impl FnMut() -> Duration,
-        wait: &mut impl FnMut(Duration) -> F,
-    ) -> Result<Body, Refusal> {
-        let need = end + head.len.unwrap_or(0);
-        bytes.reserve_exact(need.saturating_sub(bytes.len()));
-        if head.expect_continue && bytes.len() < need {
-            match tokio::time::timeout(Duration::from_secs(1), socket.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")).await
-            {
-                Ok(Ok(())) => {}
-                _ => return Err(("", "")),
-            }
-        }
-        while bytes.len() < need {
-            read_more(socket, &mut bytes, need, self.limits, now, wait).await?;
-        }
-        bytes.truncate(need);
-        let body = bytes.split_off(end);
-        if head.post && head.route == "/update" {
-            Ok(Body::Upload(Some(
-                Upload::new(body)
-                    .map_err(|_| ("409 Conflict", "REFUSED: no thread for the check, nothing installed"))?,
-            )))
+            Some(permit)
         } else {
-            Ok(Body::Bytes(body))
-        }
-    }
-}
-
-async fn read_more<F: Future<Output = ()>>(
-    socket: &mut (impl AsyncRead + Unpin),
-    bytes: &mut Vec<u8>,
-    maximum: usize,
-    limits: Limits,
-    now: &mut impl FnMut() -> Duration,
-    wait: &mut impl FnMut(Duration) -> F,
-) -> Result<(), Refusal> {
-    let elapsed = now();
-    if elapsed >= limits.deadline {
-        return Err(("408 Request Timeout", "request took too long"));
-    }
-    let deadline = (elapsed + limits.idle).min(limits.deadline);
-    let mut buffer = [0; 65536];
-    let length = buffer.len().min(maximum.saturating_sub(bytes.len()));
-    let result = tokio::select! {
-        biased;
-        _ = wait(deadline) => return Err(("408 Request Timeout", "request timed out")),
-        result = socket.read(&mut buffer[..length]) => result,
-    };
-    match result {
-        Ok(0) | Err(_) => Err(("", "")),
-        Ok(n) => {
-            bytes.extend_from_slice(&buffer[..n]);
-            Ok(())
-        }
-    }
-}
-
-pub(super) async fn answer(socket: &mut (impl AsyncWrite + Unpin), status: &str, message: &str) -> io::Result<()> {
-    let head = format!(
-        "HTTP/1.1 {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        status,
-        message.len(),
-        message
-    );
-    tokio::time::timeout(Duration::from_secs(1), socket.write_all(head.as_bytes())).await??;
-    socket.shutdown().await
-}
-async fn drain(socket: &mut (impl AsyncRead + Unpin)) {
-    let mut bytes = [0; 16384];
-    let _ = tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            match tokio::time::timeout(Duration::from_millis(200), socket.read(&mut bytes)).await {
-                Ok(Ok(n)) if n != 0 => {}
-                _ => break,
+            None
+        };
+        let (parts, mut incoming) = request.into_parts();
+        let mut bytes = Vec::with_capacity(head.len.unwrap_or(0));
+        while let Some(frame) = incoming.frame().await {
+            let frame = frame.map_err(io::Error::other)?;
+            if let Ok(data) = frame.into_data() {
+                bytes.extend_from_slice(&data);
             }
         }
-    })
-    .await;
+        progress.finish_read();
+        let body = if head.post && head.route == "/update" {
+            match Upload::new(bytes) {
+                Ok(upload) => Body::Upload(Some(upload)),
+                Err(_) => return Ok(answer("409 Conflict", "REFUSED: no thread for the check, nothing installed")),
+            }
+        } else {
+            Body::Bytes(bytes)
+        };
+        let envelope = self.inbox.envelope(Request::from_parts(parts, ()), body, self.peer);
+        let RemoteRequest::Http(req) = envelope.request() else {
+            return Err(io::Error::other("HTTP request expected"));
+        };
+        let reply = req.reply.clone();
+        let _connection = Connection(reply.clone());
+        let id = envelope.id();
+        let _credit = envelope.credit(self.inbox.ports.clone());
+        if !reply.static_content(&req.head) {
+            let size = req.body.capacity() + MAX_HEAD;
+            if self.inbox.ports.requests().submit(id, envelope, size).is_err()
+                || !wait_taken(&reply, tokio::time::sleep(self.limits.take), || self.inbox.ports.requests().cancel(id))
+                    .await
+            {
+                return Ok(answer("503 Service Unavailable", "busy, try again"));
+            }
+        }
+        drop((oos_hal::sync::lock(&self.active).take(), large));
+        let Some(mut response) = reply.receive().await else { return Err(io::Error::other("HTTP response cancelled")) };
+        let builder = std::mem::replace(&mut response.head, Response::builder());
+        builder.body(Full::new(Bytes::from_owner(Output { response, _credit, _connection }))).map_err(io::Error::other)
+    }
+}
+
+struct Output {
+    response: crate::netport::http::Response,
+    _credit: crate::netport::Credit,
+    _connection: Connection,
+}
+impl AsRef<[u8]> for Output {
+    fn as_ref(&self) -> &[u8] {
+        self.response.as_ref()
+    }
+}
+
+pub(super) fn answer(status: &str, message: &str) -> WireResponse {
+    response(status)
+        .header("content-type", "text/plain")
+        .body(Full::new(Bytes::copy_from_slice(message.as_bytes())))
+        .expect("HTTP refusal status and headers are constants")
+}
+
+/// Use hyper's writer for refusals made before a request head exists, too.
+pub(super) async fn refuse(
+    socket: &mut (impl tokio::io::AsyncWrite + Unpin),
+    status: &str,
+    message: &str,
+) -> io::Result<()> {
+    let io = tokio::io::join(&b"GET / HTTP/1.1\r\n\r\n"[..], socket);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        hyper::server::conn::http1::Builder::new()
+            .keep_alive(false)
+            .half_close(true)
+            .auto_date_header(false)
+            .title_case_headers(true)
+            .serve_connection(
+                hyper_util::rt::TokioIo::new(io),
+                hyper::service::service_fn(|_| async { Ok::<_, io::Error>(answer(status, message)) }),
+            ),
+    )
+    .await?
+    .map_err(io::Error::other)
 }

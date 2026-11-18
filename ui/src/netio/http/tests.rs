@@ -37,65 +37,54 @@ impl AsyncWrite for Socket {
         Poll::Ready(Ok(()))
     }
 }
-fn runtime() -> tokio::runtime::Runtime {
+pub(super) fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
 }
 
-pub(crate) fn partial_head_deadline() {
+fn head_deadline_fixture(total: bool) {
     runtime().block_on(async {
+        tokio::time::pause();
         let mut socket = Socket { input: b"GET / HTTP/1.1\r\nHo".to_vec(), ..Default::default() };
-        let samples = Cell::new(0u32);
-        let inbox = Inbox::default();
-        let acl = Default::default();
-        let input = input::Input { inbox: &inbox, acl: &acl, peer: "127.0.0.1:1".parse().unwrap(), limits: LIMITS };
-        let read = input.read(
+        let inbox = Arc::new(Inbox::default());
+        inbox.active.store(1, Ordering::SeqCst);
+        let limits = if total { Limits { idle: LIMITS.deadline * 2, ..LIMITS } } else { LIMITS };
+        let mut read = Box::pin(conversation(
             &mut socket,
-            || {
-                let n = samples.get();
-                samples.set(n + 1);
-                assert!(n <= 1, "deadline must stop the trickle before another read");
-                LIMITS.deadline * n
-            },
-            |_| std::future::pending(),
-        );
-        assert!(read.await.unwrap().is_none());
-        assert_eq!(samples.get(), 2);
-        assert!(socket.output.starts_with(b"HTTP/1.1 408"));
-        assert!(String::from_utf8_lossy(&socket.output).contains("request took too long"));
-    });
-}
-
-#[test]
-pub(crate) fn idle_partial_head_expires_only_on_injected_time() {
-    runtime().block_on(async {
-        let mut socket = Socket { input: b"GET / HTTP/1.1\r\nHo".to_vec(), ..Default::default() };
-        let clock = &Cell::new(Duration::ZERO);
-        let inbox = Inbox::default();
-        let acl = Default::default();
-        let input = input::Input { inbox: &inbox, acl: &acl, peer: "127.0.0.1:1".parse().unwrap(), limits: LIMITS };
-        let mut read = Box::pin(input.read(
-            &mut socket,
-            || clock.get(),
-            |deadline| {
-                std::future::poll_fn(move |_| if clock.get() >= deadline { Poll::Ready(()) } else { Poll::Pending })
-            },
+            "192.0.2.1:1".parse().unwrap(),
+            inbox.clone(),
+            Default::default(),
+            limits,
+            Active(inbox),
         ));
         let mut cx = Context::from_waker(Waker::noop());
         assert!(read.as_mut().poll(&mut cx).is_pending());
-        clock.set(LIMITS.idle);
-        assert!(matches!(read.as_mut().poll(&mut cx), Poll::Ready(Ok(None))));
+        tokio::time::advance(if total { limits.deadline } else { limits.idle }).await;
+        let result = read.as_mut().poll(&mut cx);
+        assert!(matches!(result, Poll::Ready(Ok(()))), "head deadline result: {result:?}");
         drop(read);
         assert!(socket.output.starts_with(b"HTTP/1.1 408"));
+        assert!(String::from_utf8_lossy(&socket.output).contains(if total {
+            "request took too long"
+        } else {
+            "request timed out"
+        }));
     });
+}
+pub(crate) fn partial_head_deadline() {
+    head_deadline_fixture(true);
+}
+#[test]
+pub(crate) fn idle_partial_head_expires_only_on_injected_time() {
+    head_deadline_fixture(false);
 }
 
 #[test]
 fn queued_request_cancellation_returns_credit_and_discards_late_output() {
     let inbox = Inbox::default();
     let envelope = inbox.envelope(
-        "GET /ui-state HTTP/1.1\r\n\r\n".into(),
+        request("GET /ui-state HTTP/1.1\r\n\r\n"),
         Body::Bytes(Vec::new()),
-        "127.0.0.1:1".parse().unwrap(),
+        "192.0.2.1:1".parse().unwrap(),
     );
     let id = envelope.id();
     let RemoteRequest::Http(req) = envelope.request() else { panic!("HTTP request expected") };
@@ -105,7 +94,7 @@ fn queued_request_cancellation_returns_credit_and_discards_late_output() {
     drop(credit);
     assert!(inbox.take().is_empty());
     reply.close();
-    assert!(reply.send("HTTP/1.1 200 OK\r\n\r\n".into(), vec![1; 4096], false));
+    assert!(reply.send(response("200 OK"), vec![1; 4096], false));
     assert_eq!(inbox.ports.budget().used(), 0);
 }
 
@@ -113,9 +102,9 @@ pub(crate) fn untaken_request_times_out() {
     runtime().block_on(async {
         let inbox = Inbox::default();
         let envelope = inbox.envelope(
-            "GET /ui-state HTTP/1.1\r\n\r\n".into(),
+            request("GET /ui-state HTTP/1.1\r\n\r\n"),
             Body::Bytes(Vec::new()),
-            "127.0.0.1:1".parse().unwrap(),
+            "192.0.2.1:1".parse().unwrap(),
         );
         let id = envelope.id();
         let RemoteRequest::Http(req) = envelope.request() else { panic!("HTTP request expected") };
@@ -131,7 +120,7 @@ pub(crate) fn untaken_request_times_out() {
         assert!(matches!(taken.as_mut().poll(&mut cx), Poll::Ready(false)));
         assert!(inbox.ports.requests().is_empty());
         let mut socket = Socket::default();
-        input::answer(&mut socket, "503 Service Unavailable", "busy, try again").await.unwrap();
+        input::refuse(&mut socket, "503 Service Unavailable", "busy, try again").await.unwrap();
         assert!(socket.output.starts_with(b"HTTP/1.1 503"));
     });
 }
@@ -139,12 +128,12 @@ pub(crate) fn untaken_request_times_out() {
 #[test]
 fn completed_worker_closes_its_connection_before_handle_is_reaped() {
     let inbox = Inbox::default();
-    let envelope = inbox.envelope(String::new(), Body::Bytes(Vec::new()), "127.0.0.1:1".parse().unwrap());
+    let envelope = inbox.envelope(Default::default(), Body::Bytes(Vec::new()), "192.0.2.1:1".parse().unwrap());
     let RemoteRequest::Http(req) = envelope.request() else { panic!("HTTP request expected") };
     let reply = req.reply.clone();
     let bytes: Arc<[u8]> = Arc::from(vec![42; 4096]);
     let weak = Arc::downgrade(&bytes);
-    assert!(reply.send(String::new(), bytes, false));
+    assert!(reply.send(response("200 OK"), bytes, false));
     let worker = std::thread::spawn(move || {
         let _connection = Connection(reply);
     });
@@ -159,15 +148,15 @@ fn large_output_admission_and_cancellation_return_all_capacity() {
     let inbox = Inbox::default();
     let replies: Vec<_> = (0..3)
         .map(|_| {
-            let request = inbox.envelope(String::new(), Body::Bytes(Vec::new()), "127.0.0.1:1".parse().unwrap());
+            let request = inbox.envelope(Default::default(), Body::Bytes(Vec::new()), "192.0.2.1:1".parse().unwrap());
             let RemoteRequest::Http(req) = request.into_request() else { panic!("HTTP request expected") };
             req.reply
         })
         .collect();
-    assert!(replies[0].send(String::new(), vec![1; SEND_INLINE + 1], false));
-    assert!(replies[1].send(String::new(), vec![2; SEND_INLINE + 1], false));
-    assert!(!replies[2].send(String::new(), vec![3; SEND_INLINE + 1], false));
-    assert!(replies[2].send(String::new(), b"small".to_vec(), false));
+    assert!(replies[0].send(response("200 OK"), vec![1; SEND_INLINE + 1], false));
+    assert!(replies[1].send(response("200 OK"), vec![2; SEND_INLINE + 1], false));
+    assert!(!replies[2].send(response("200 OK"), vec![3; SEND_INLINE + 1], false));
+    assert!(replies[2].send(response("200 OK"), b"small".to_vec(), false));
     replies[0].close();
     assert_eq!(SENDERS.load(Ordering::SeqCst), 1);
     replies[1].close();
@@ -199,12 +188,18 @@ fn closing_service_joins_sessions_and_cancels_queued_intake() {
 #[test]
 fn cancelling_a_large_body_read_releases_its_single_admission() {
     runtime().block_on(async {
-        let inbox = Inbox::default();
-        let acl = Default::default();
-        let input = input::Input { inbox: &inbox, acl: &acl, peer: "127.0.0.1:1".parse().unwrap(), limits: LIMITS };
+        let inbox = Arc::new(Inbox::default());
+        inbox.active.store(2, Ordering::SeqCst);
         let head = format!("POST /update HTTP/1.1\r\nContent-Length: {}\r\n\r\n", 2 * LARGE_BODY);
         let mut socket = Socket { input: head.as_bytes().to_vec(), ..Default::default() };
-        let mut reading = Box::pin(input.read(&mut socket, || Duration::ZERO, |_| std::future::pending()));
+        let mut reading = Box::pin(conversation(
+            &mut socket,
+            "192.0.2.1:1".parse().unwrap(),
+            inbox.clone(),
+            Default::default(),
+            LIMITS,
+            Active(inbox.clone()),
+        ));
         std::future::poll_fn(|cx| {
             assert!(reading.as_mut().poll(cx).is_pending());
             if inbox.large.occupied() {
@@ -215,7 +210,16 @@ fn cancelling_a_large_body_read_releases_its_single_admission() {
         })
         .await;
         let mut other = Socket { input: head.into_bytes(), ..Default::default() };
-        assert!(input.read(&mut other, || Duration::ZERO, |_| std::future::pending()).await.unwrap().is_none());
+        conversation(
+            &mut other,
+            "192.0.2.1:1".parse().unwrap(),
+            inbox.clone(),
+            Default::default(),
+            LIMITS,
+            Active(inbox.clone()),
+        )
+        .await
+        .unwrap();
         assert!(other.output.starts_with(b"HTTP/1.1 503"));
         drop(reading);
         assert!(!inbox.large.occupied());
@@ -234,7 +238,7 @@ fn half_closed_request_receives_its_application_response() {
         client.shutdown(std::net::Shutdown::Write).unwrap();
         let (server, peer) = listener.accept().unwrap();
         server.set_nonblocking(true).unwrap();
-        let mut socket = TcpStream::from_std(server).unwrap();
+        let mut socket = tokio::net::TcpStream::from_std(server).unwrap();
         let inbox = Arc::new(Inbox::default());
         inbox.active.store(1, Ordering::SeqCst);
         let mut session =

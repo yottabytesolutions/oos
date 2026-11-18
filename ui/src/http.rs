@@ -373,14 +373,15 @@ pub fn same_pixels(a: &[u32], b: &[u32]) -> bool {
 
 /// 304 when the viewer has this picture, else the PNG through IO (503 when all are busy).
 fn answer_shot(s: &Response, have: Option<&str>, png: Arc<[u8]>, tag: &str) {
-    let etag = if tag.is_empty() { String::new() } else { format!("ETag: {}\r\n", tag) };
     let not_modified = !tag.is_empty() && have == Some(tag);
-    let head = if not_modified {
-        format!("HTTP/1.1 304 Not Modified\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", etag)
-    } else {
-        let ctype = if png.starts_with(&[0xff, 0xd8]) { "image/jpeg" } else { "image/png" };
-        format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", ctype, png.len(), etag)
-    };
+    let mut head =
+        response(if not_modified { "304 Not Modified" } else { "200 OK" }).header("cache-control", "no-store");
+    if !tag.is_empty() {
+        head = head.header("etag", tag);
+    }
+    if !not_modified {
+        head = head.header("content-type", if png.starts_with(&[0xff, 0xd8]) { "image/jpeg" } else { "image/png" });
+    }
     if !s.send(head, if not_modified { Arc::from([]) } else { png }, !not_modified) {
         busy_answer(s);
     }
@@ -547,12 +548,10 @@ impl Http {
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
         let mut cmds = Vec::new();
         self.shots.tick(cv);
-        for Req { reply, head: text, body, peer } in self.inbox.take() {
-            // only the header as text: the body may be a 31 MB binary package
-            let path = text.split_whitespace().nth(1).unwrap_or("/").to_string();
-            let (route, query) = path.split_once('?').unwrap_or((&path, ""));
-            let mut req_body = body;
-            let post = text.starts_with("POST ");
+        for Req { reply, head, body: mut req_body, peer } in self.inbox.take() {
+            let path = head.uri().path_and_query().map_or("/", |uri| uri.as_str());
+            let (route, query) = path.split_once('?').unwrap_or((path, ""));
+            let post = head.method() == hyper::Method::POST;
             // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
             let peer_ok = self.acl.permits_peer(Ok(peer));
             // an answer that is text for the page to show, not the data asked for
@@ -565,7 +564,7 @@ impl Http {
                 }
             };
             let (ctype, body): (&str, Vec<u8>) = match route {
-                _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
+                _ if foreign(head.headers(), route, post) => ("text/plain", b"refused".to_vec()),
                 "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
                 "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
                 "/waveform" if post => {
@@ -600,7 +599,7 @@ impl Http {
                     }
                 }
                 "/screen.png" | "/screen.jpg" => {
-                    let have = header(&text, "if-none-match").map(str::to_string);
+                    let have = header(head.headers(), "if-none-match").map(str::to_string);
                     self.shots.request(&reply, have, cv, route == "/screen.jpg");
                     continue;
                 }
@@ -778,12 +777,22 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
 
 #[cfg(test)]
 mod tests {
+    // Raw fixtures enter through the same typed policy boundary as hyper requests.
+    fn parse_head(text: &str) -> Head {
+        super::parse_head(&crate::netport::http::request(text))
+    }
+    fn foreign(text: &str, route: &str, post: bool) -> bool {
+        super::foreign(crate::netport::http::request(text).headers(), route, post)
+    }
+    fn refuse_early(head: &Head, text: &str, peer_ok: bool) -> Option<(&'static str, &'static str)> {
+        super::refuse_early(head, crate::netport::http::request(text).headers(), peer_ok)
+    }
     #[test]
     fn exhausted_not_modified_response_budget_closes_the_screenshot_reply() {
         use std::{future::Future, task::Context, task::Poll, task::Waker};
         let inbox = Inbox::default();
         let reservation = inbox.ports.budget().reserve_available().unwrap();
-        let request = inbox.envelope(String::new(), Body::Bytes(Vec::new()), "192.0.2.1:1".parse().unwrap());
+        let request = inbox.envelope(Default::default(), Body::Bytes(Vec::new()), "192.0.2.1:1".parse().unwrap());
         let crate::netport::RemoteRequest::Http(req) = request.into_request() else {
             panic!("HTTP request expected");
         };
@@ -1579,7 +1588,14 @@ setTimeout(() => {
             let out = t.join().unwrap();
             let e = out.windows(4).position(|w| w == b"\r\n\r\n").expect("a head") + 4;
             let head = String::from_utf8_lossy(&out[..e]).to_string();
-            let tag = head.lines().find_map(|l| l.strip_prefix("ETag: ")).unwrap_or("").to_string();
+            let tag = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("etag").then(|| value.trim())
+                })
+                .unwrap_or("")
+                .to_string();
             (head, tag, out[e..].to_vec())
         };
         let encodes = |h: &Http| h.shots.lock().encodes;

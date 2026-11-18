@@ -910,12 +910,17 @@ pub fn draw_trace(
 ) {
     let (b0, b1) = (r_lo as i32, (r_lo + band.len() / pw.max(1)).min(ph) as i32);
     let wi = pw as i32;
-    trace_columns(pw, ph, c, m, view, rec_t0, dt, v, w, z, pairs, (0, wi), |cx, r0, r1, w| {
+    let put = |cx, r0: i32, r1: i32, weight| {
         for r in r0.max(b0)..=r1.min(b1 - 1) {
             let idx = ((r - b0) * wi + cx) as usize;
-            band[idx] = band[idx].saturating_add(w);
+            band[idx] = band[idx].saturating_add(weight);
         }
-    });
+    };
+    let ch = &m.ch[c];
+    let vertical = (ch.volts_per_div(), ch.offset);
+    let view = (view.0 as f64, view.1 as f64);
+    let dots = m.dots_at(dt / view.0 * (pw as f32 as f64 / HDIV as f64));
+    trace_columns(pw, ph, vertical, dots, view, rec_t0, dt, v, w, z, pairs, (0, wi), put);
 }
 
 /// The pixels of a trace on a `pw` x `ph` map, column by column: `put(column, first row, last row, weight)` for every
@@ -924,12 +929,12 @@ pub fn draw_trace(
 /// (`v` holds min/max pairs) and dots, each pair is one span from its minimum to its maximum over the columns it
 /// covers: two dots would lose the edges of a square at slow time bases.
 #[allow(clippy::too_many_arguments)]
-pub fn trace_columns(
+pub(crate) fn trace_columns(
     pw: usize,
     ph: usize,
-    c: usize,
-    m: &Model,
-    view: (f32, f32),
+    vertical: (f32, f32),
+    dots: bool,
+    view: (f64, f64),
     rec_t0: f64,
     dt: f64,
     v: &[f32],
@@ -940,24 +945,19 @@ pub fn trace_columns(
     mut put: impl FnMut(i32, i32, i32, u16),
 ) {
     let (wd, ht) = (pw as f32, ph as f32);
-    let tdiv = view.0 as f64;
-    let vdelay = view.1 as f64;
+    let (tdiv, vdelay) = view;
     let ppd_x = wd as f64 / HDIV as f64;
-    let ch = &m.ch[c];
-    let vpd = ch.volts_per_div();
+    let (vpd, offset) = vertical;
     let ppd_y = ht / VDIV;
     let cy = ht / 2.0;
     let x_of = |k: usize| -> f32 { (((rec_t0 + k as f64 * dt - vdelay) / tdiv) * ppd_x + wd as f64 / 2.0) as f32 };
-    let y_of = |val: f32| -> f32 { cy - (val + ch.offset) / vpd * ppd_y };
+    let y_of = |val: f32| -> f32 { cy - (val + offset) / vpd * ppd_y };
     let hi = ph as i32;
     let (c_lo, c_hi) = (cols.0.max(0), cols.1.min(pw as i32));
-    let w0 = w;
     let wt = |k: usize| match z {
-        Some(z) => (w0 as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
-        None => w0,
+        Some(z) => (w as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
+        None => w,
     };
-    // dots or lines for points `dt` apart (`trace_style`; Auto never dots outside XY)
-    let dots = m.dots_at(dt / tdiv * ppd_x);
     if dots && pairs {
         for (j, p) in v.chunks(2).enumerate() {
             let (lo, hi_) = p
@@ -988,10 +988,7 @@ pub fn trace_columns(
             prev = None;
             continue;
         }
-        let w = match z {
-            Some(z) => (w0 as f32 * z.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0)).round() as u16,
-            None => w0,
-        };
+        let w = wt(k);
         let p = (x_of(k), y_of(val));
         if dots {
             let (x, y) = (p.0.floor() as i32, p.1.round() as i32);

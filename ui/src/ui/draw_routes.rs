@@ -12,6 +12,7 @@ use crate::system::test_allocator::Counting;
 #[global_allocator]
 static HEAP: Counting = Counting::new();
 mod counters;
+mod memory;
 mod perf;
 
 struct Route {

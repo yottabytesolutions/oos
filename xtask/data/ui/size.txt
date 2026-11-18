@@ -1,9 +1,9 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
 2080 file ui/src/board/dho/hw.rs
-693 file ui/src/drawpipe.rs
+627 file ui/src/drawpipe.rs
 568 file ui/src/drm.rs
-754 file ui/src/fastdraw.rs
+713 file ui/src/fastdraw.rs
 649 file ui/src/gfx.rs
 650 file ui/src/gpu.rs
 657 file ui/src/http.rs
@@ -13,7 +13,7 @@
 516 file ui/src/measures/standard.rs
 3277 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8825 file ui/src/ui.rs
+8668 file ui/src/ui.rs
 1513 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -34,7 +34,7 @@
 772 file ui/src/ui/wlan.rs
 653 file ui/src/ui/workflow.rs
 804 file ui/src/ui/workspace.rs
-1221 file ui/src/wave.rs
+1219 file ui/src/wave.rs
 138 fn ui/src/board/dho/fpga.rs spawn
 72 fn ui/src/board/dho/hw.rs hw_trigger
 125 fn ui/src/board/dho/hw.rs settings
@@ -42,7 +42,6 @@
 83 fn ui/src/board/record.rs resample
 103 fn ui/src/board/record.rs trigger_point
 91 fn ui/src/cmd.rs execute
-62 fn ui/src/drawpipe.rs dense
 105 fn ui/src/drm.rs Display::on_fd
 63 fn ui/src/framestats.rs cheap_results
 237 fn ui/src/gpu.rs Gpu::submit
@@ -86,7 +85,7 @@
 75 fn ui/src/ui.rs Ui::draw_refs_at
 66 fn ui/src/ui.rs Ui::draw_strip_band
 73 fn ui/src/ui.rs Ui::draw_top
-83 fn ui/src/ui.rs Ui::fast_draw_all
+76 fn ui/src/ui.rs Ui::fast_draw_all
 159 fn ui/src/ui.rs Ui::key
 117 fn ui/src/ui.rs Ui::knob
 76 fn ui/src/ui.rs Ui::menu_title
@@ -100,7 +99,6 @@
 214 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 409 fn ui/src/ui.rs Ui::touch_in
-62 fn ui/src/ui.rs fast_plan
 66 fn ui/src/ui.rs packet_text
 121 fn ui/src/ui/analysis.rs Ui::ana_adjust
 66 fn ui/src/ui/analysis.rs Ui::apply_finding
@@ -158,7 +156,7 @@
 241 fn ui/src/wave.rs Source::acquire_impl
 85 fn ui/src/wave.rs demo_signal
 125 fn ui/src/wave.rs stats
-99 fn ui/src/wave.rs trace_columns
+92 fn ui/src/wave.rs trace_columns
 4 impls ui Job
 5 impls ui State
 61 impls ui Ui

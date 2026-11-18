@@ -19,10 +19,10 @@ pub fn run(mut sample: impl FnMut(&str, &mut dyn FnMut())) {
     };
     let mut pixels = vec![0u16; w * h];
     sample("deposit spans", &mut || {
-        let _ = fastdraw::deposit(&mut pixels, w, h, black_box(&samples), &map, 1);
+        black_box(fastdraw::deposit(&mut pixels, w, h, black_box(&samples), &map, 1));
     });
     sample("deposit dots", &mut || {
-        let _ = fastdraw::deposit_dots(&mut pixels, w, h, black_box(&samples), &map, 1);
+        black_box(fastdraw::deposit_dots(&mut pixels, w, h, black_box(&samples), &map, 1));
     });
     let codes = Codes {
         bytes: &bytes,
@@ -34,7 +34,7 @@ pub fn run(mut sample: impl FnMut(&str, &mut dyn FnMut())) {
         volt: |x, (a, b)| x as f32 * a - b,
     };
     sample("deposit codes", &mut || {
-        let _ = fastdraw::deposit_codes(&mut pixels, w, h, black_box(&codes), &map, 1);
+        black_box(fastdraw::deposit_codes(&mut pixels, w, h, black_box(&codes), &map, 1));
     });
     crate::board::scripted::core_matching_probe(&mut sample);
     sample("cheap measurements", &mut || {

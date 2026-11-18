@@ -47,13 +47,8 @@ pub(crate) fn draw_frame_reusing(
         if let Some(spans) = &trace.spans[c] {
             ph.edit_channel(c, |map| {
                 crate::picture::deposit::kernel::paint_spans(map, w, 0, spans, 24);
-                spans.rows.iter().filter(|&&(a, b)| a <= b).fold(0..0, |rows, &(a, b)| {
-                    if rows.is_empty() {
-                        a as usize..b as usize + 1
-                    } else {
-                        rows.start.min(a as usize)..rows.end.max(b as usize + 1)
-                    }
-                })
+                let (start, end) = crate::fastdraw::span_rows(spans);
+                start.min(end)..end
             });
         } else if let Some(map) = crate::picture::deposit::kernel::raw_map(projection, c, trace.trigger_at) {
             ph.edit_channel(c, |pixels| crate::fastdraw::deposit_dots(pixels, w, h, &f.ch[c], &map, 24));

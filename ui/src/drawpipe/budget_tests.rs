@@ -39,7 +39,7 @@ fn perf_guard_batch_picture_merge() {
         }
         times.sort_unstable();
         println!("BATCH_PICTURE channels=4 acq=Normal tdiv={tdiv} frames={frames} merge_ns_p50={} merge_ns_p90={} merge_ns_p99={} ui_ns_p50={} ui_ns_p99={}", times[50], times[90], times[99], times[50], times[99]);
-        assert!(ph.map.iter().all(|map| map.iter().any(|&v| v > 0)));
+        assert!(ph.maps().iter().all(|map| map.iter().any(|&v| v > 0)));
         assert!(times[99] < 16_500_000, "merge must fit within half a picture period on the host");
         shutdown::close(&pipe, Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD);
     }
@@ -74,11 +74,11 @@ fn completed_deposits_rejected_by_key_or_epoch_enter_distinct_record_buckets() {
         feed(current, 1);
         assert_eq!(counters.read().2, 3, "the coordinator rejects the old open deposit");
         let mut ph = Phosphor::new(4, 4);
-        ph.map[0].fill(17);
+        ph.channel_mut(0).fill(17);
         let got = pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(got.frames, 0);
         assert_eq!(counters.read().2, 6, "the UI rejects the old pending deposit");
-        assert_eq!(ph.map[0], [17; 16]);
+        assert_eq!(ph.maps()[0], [17; 16]);
         let text = counters.records_text();
         assert!(
             text.contains(if epoch {

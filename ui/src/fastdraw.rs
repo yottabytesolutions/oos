@@ -423,7 +423,6 @@ mod whole {
     pub use dots::deposit_dots;
     #[cfg(test)]
     pub use dots::deposit_dots_band;
-
     /// Adds `w` to every pixel of `map` (w x h, row-major) the trace covers: per column the span of its samples, joined
     /// to the last sample of the column before (so steep edges stay connected). Needs at least one sample per column
     /// (`x_per_sample <= 1`).
@@ -433,11 +432,12 @@ mod whole {
     /// rows the frame touches (a vectorised pass that adds `wgt` where the row lies in a column's span) when they are long:
     /// a noisy or fast signal at 100 samples per column covers tens of rows in every column, and the scattered writes
     /// were three quarters of the time.
+    #[must_use]
     pub fn deposit(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) -> Range<usize> {
         deposit_from(map, w, h, v, m, wgt)
     }
-
     /// `deposit` straight from a frame's read-out words (`Codes`): the same picture, without the f32 copy of the channel.
+    #[must_use]
     pub fn deposit_codes(map: &mut [u16], w: usize, h: usize, v: &Codes, m: &Map, wgt: u16) -> Range<usize> {
         deposit_from(map, w, h, &crate::picture::deposit::kernel::SamplesRef::Codes(*v), m, wgt)
     }
@@ -832,7 +832,7 @@ mod whole {
                                 let m = Map { ti, x_per_sample: xps, x0, y_per_volt: ypv, y0 };
                                 let (mut a, mut b) = (vec![pre; w * h], vec![pre; w * h]);
                                 deposit_reference(&mut a, w, h, &v, &m, wgt);
-                                deposit(&mut b, w, h, &v, &m, wgt);
+                                let _ = deposit(&mut b, w, h, &v, &m, wgt);
                                 assert!(a == b, "n {} xps {} ti {} y {} {} wgt {}", n, xps, ti, ypv, y0, wgt);
                                 let mut sp = Spans::default();
                                 if let Some((c0, c1, r0, r1, px)) = spans(&v[..], &m, w, h, &mut sp) {
@@ -873,7 +873,7 @@ mod whole {
                         33,
                         || deposit_reference(&mut ma, w, h, &v, &m, 1),
                         || {
-                            let _ = deposit(&mut mb, w, h, &v, &m, 1);
+                            std::hint::black_box(deposit(&mut mb, w, h, &v, &m, 1));
                         },
                     );
                     let r = new.as_secs_f64() / old.as_secs_f64();
@@ -1225,7 +1225,7 @@ mod tests {
         // a square: 4 samples per column, low (row 15) for 5 columns, then high (row 5)
         let v: Vec<f32> = (0..40).map(|k| if k < 20 { 0.0 } else { 1.0 }).collect();
         let m = Map { ti: 0.0, x_per_sample: 0.25, x0: 0.0, y_per_volt: -10.0, y0: 15.0 };
-        deposit(&mut map, w, h, &v, &m, 1);
+        let _ = deposit(&mut map, w, h, &v, &m, 1);
         let col = |c: usize| (0..h).filter(|&r| map[r * w + c] > 0).collect::<Vec<_>>();
         assert_eq!(col(2), [15]);
         // column 5 holds the step: joined from row 15 (last low sample) up to row 5
@@ -1233,11 +1233,11 @@ mod tests {
         assert_eq!(col(7), [5]);
         // samples off screen are skipped; a shift by ti moves the step
         let mut map2 = vec![0u16; w * h];
-        deposit(&mut map2, w, h, &v, &Map { ti: 8.0, ..m }, 1);
+        let _ = deposit(&mut map2, w, h, &v, &Map { ti: 8.0, ..m }, 1);
         assert_eq!((0..h).filter(|&r| map2[r * w + 3] > 0).count(), 11);
         // dots: only the sample rows, no join across the step, 4 samples per column add up
         let mut map3 = vec![0u16; w * h];
-        deposit_dots(&mut map3, w, h, &v, &m, 1);
+        let _ = deposit_dots(&mut map3, w, h, &v, &m, 1);
         let col3 = |c: usize| (0..h).filter(|&r| map3[r * w + c] > 0).collect::<Vec<_>>();
         assert_eq!((col3(5), map3[5 * w + 5], col3(4)), (vec![5], 4, vec![15]));
     }

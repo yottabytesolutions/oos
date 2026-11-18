@@ -5,7 +5,9 @@ use std::ops::Range;
 
 /// Hit-count maps (one per channel) of the waveform area: the digital phosphor.
 pub struct Phosphor {
+    /// Fixed at construction. Replace the phosphor to resize its maps and row revisions together.
     pub w: usize,
+    /// Fixed at construction. Replace the phosphor to resize its maps and row revisions together.
     pub h: usize,
     pub map: [Vec<u16>; NCH],
     wide: Option<[Vec<u32>; NCH]>,
@@ -115,7 +117,17 @@ impl Phosphor {
                 map.fill(0);
             }
         }
-        self.transform(|_| 0);
+        let width = self.w.max(1);
+        for c in 0..NCH {
+            self.edit_channel(c, |map| {
+                let rows = map.iter().position(|&value| value != 0).map_or(0..0, |first| {
+                    let last = map.iter().rposition(|&value| value != 0).unwrap_or(first);
+                    first / width..last / width + 1
+                });
+                map.fill(0);
+                rows
+            });
+        }
         self.clear_rows();
     }
 
@@ -132,7 +144,13 @@ impl Phosphor {
                 *x = ((u64::from(*x) * u64::from(k)) >> 16) as u32;
             }
         }
-        self.transform(|x| ((u32::from(x) * k) >> 16) as u16);
+        self.map_rows(|row| {
+            let changed = row.iter().any(|&value| value != 0);
+            for value in row {
+                *value = ((*value as u32 * k) >> 16) as u16;
+            }
+            changed
+        });
         if changed {
             include(&mut self.dirty, &self.occupied);
         }
@@ -147,7 +165,13 @@ impl Phosphor {
                 *x = (*x >> 1).max(1);
             }
         }
-        self.transform(|x| if x == 0 { 0 } else { (x >> 1).max(1) });
+        self.map_rows(|row| {
+            let changed = row.iter().any(|&value| value > 1);
+            for value in row {
+                *value = if *value == 0 { 0 } else { (*value >> 1).max(1) };
+            }
+            changed
+        });
     }
 
     /// Highest sum of the maps of the channels in `on` at one pixel (colour grade).
@@ -253,13 +277,23 @@ impl Phosphor {
         });
     }
 
-    /// Track changes during the existing map traversal, without a second picture scan at publication.
-    fn transform(&mut self, mut apply: impl FnMut(u16) -> u16) {
+    /// Track changed rows while applying an in-place unary operation.
+    fn map_rows(&mut self, mut apply: impl FnMut(&mut [u16]) -> bool) {
+        let width = self.w.max(1);
         for c in 0..NCH {
-            self.transform_channel(c, std::iter::repeat(std::iter::repeat(0)), |value, _| apply(value));
+            self.edit_channel(c, |map| {
+                let mut band = RowBand::empty();
+                for (y, row) in map.chunks_mut(width).enumerate() {
+                    if apply(row) {
+                        band.include(y..y + 1);
+                    }
+                }
+                band.into_range()
+            });
         }
     }
 
+    #[cfg(test)]
     fn transform_channel<I: IntoIterator<Item = u16>>(
         &mut self,
         channel: usize,

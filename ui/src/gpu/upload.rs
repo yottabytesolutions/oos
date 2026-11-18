@@ -43,6 +43,10 @@ impl Block {
     ) -> (Self, Range<usize>) {
         let src = source.bytes();
         let row = source.row_bytes();
+        if src.is_empty() {
+            return (Self { offset, len: dst.len(), stamp: None }, copy_rows(dst, src, row, None));
+        }
+        debug_assert!(row > 0);
         let (stamp, dirty) = match &source {
             Source::Channel { phosphor, channel } => {
                 let (stamp, band) = phosphor.upload_rows(*channel, previous.and_then(|block| block.stamp.as_ref()));
@@ -58,6 +62,10 @@ impl Block {
 /// Known dirty bands are copied once; legacy pixel layers still discover their band by comparison.
 pub(super) fn copy_rows(dst: &mut [u8], src: &[u8], row: usize, dirty: Option<Range<usize>>) -> Range<usize> {
     assert_eq!(dst.len(), src.len());
+    if src.is_empty() {
+        return 0..0;
+    }
+    debug_assert!(row > 0);
     if let Some(band) = dirty {
         let bytes = band.start * row..band.end * row;
         dst[bytes.clone()].copy_from_slice(&src[bytes]);

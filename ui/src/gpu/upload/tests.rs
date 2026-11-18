@@ -4,6 +4,17 @@ use super::*;
 use crate::wave::Phosphor;
 
 #[test]
+fn empty_pixel_sources_need_no_rows_on_first_or_repeated_publication() {
+    let mut dst = [];
+    let pixels = || Source::Pixels { bytes: &[], row_bytes: 0 };
+    let (block, rows) = Block::publish(0, &mut dst, pixels(), None);
+    assert_eq!(rows, 0..0);
+    assert_eq!(Block::publish(0, &mut dst, pixels(), Some(&block)).1, 0..0);
+    assert_eq!(copy_rows(&mut dst, &[], 0, None), 0..0);
+    assert_eq!(copy_rows(&mut dst, &[], 0, Some(0..0)), 0..0);
+}
+
+#[test]
 fn dirty_copy_touches_only_the_band_and_pixel_fallback_finds_the_same_hull() {
     let src = vec![7; 32];
     let mut dst = vec![99; 32];

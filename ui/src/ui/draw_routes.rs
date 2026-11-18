@@ -131,7 +131,7 @@ fn batch_redraws_current_waveform_after_mapping_rejects_its_planes() {
     let _scope = Scope::new();
     let mut route = Route::new(BatchKind::Codes, true, 1, 10e-6);
     route.step(1);
-    assert!(route.ui.ph.map[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps()[0].iter().any(|&v| v > 0));
 
     let id = change::acquisition::identity(&route.ui);
     let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
@@ -153,8 +153,8 @@ fn batch_redraws_current_waveform_after_mapping_rejects_its_planes() {
     assert_eq!(shown.frame.seq, waveform.seq);
     let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
     drawpipe::draw_frame(&mut expected, &route.ui.m, &waveform, sw.interp, None);
-    assert!(expected.map[0].iter().any(|&v| v > 0));
-    assert!(route.ui.ph.map == expected.map, "the delivered waveform should be drawn with dots");
+    assert!(expected.maps()[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps() == expected.maps(), "the delivered waveform should be drawn with dots");
     assert_eq!(route.ui.batch_picture.frames, 1);
 }
 
@@ -206,14 +206,14 @@ fn batch_picture_keeps_recent_deposits_without_recounting_their_records() {
     route.step(3);
     assert_eq!(route.ui.batch_picture.frames, 9);
     assert_eq!(route.ui.wfm_total, 36);
-    assert!(route.ui.ph.map[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps()[0].iter().any(|&v| v > 0));
 
     for _ in 0..3 {
         route.ui.step(1.0 / 30.0);
     }
     assert_eq!(route.ui.batch_picture.frames, 0);
     assert_eq!(route.ui.wfm_total, 36);
-    assert!(route.ui.ph.map[0].iter().all(|&v| v == 0));
+    assert!(route.ui.ph.maps()[0].iter().all(|&v| v == 0));
 }
 
 #[test]

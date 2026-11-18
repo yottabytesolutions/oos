@@ -234,7 +234,7 @@ fn newest(pipe: &Pipe, frames: Vec<Frame>, (replacement, drawn): (bool, usize), 
         assert_eq!(accepted.frames, drawn as u64 + 1);
         let newest = pipe.take_waveform((128, 64)).unwrap();
         let mut expected = Phosphor::new(128, 64);
-        expected.add_maps(&want, [true; 4]);
+        expected.add_maps(want, [true; 4]);
         let mut model = Model::default();
         for (c, ch) in model.ch.iter_mut().enumerate() {
             ch.on = c == 0;

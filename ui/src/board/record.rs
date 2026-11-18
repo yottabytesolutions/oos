@@ -666,7 +666,7 @@ mod bench {
                     y_per_volt: -56.0,
                     y0: 224.0,
                 };
-                crate::fastdraw::deposit(&mut map, 970, 448, &fr.ch[0], &xm, 24);
+                let _ = crate::fastdraw::deposit(&mut map, 970, 448, &fr.ch[0], &xm, 24);
                 t_fast += t0.elapsed().as_secs_f64();
             }
             let us = |t: f64| t / n as f64 * 1e6;

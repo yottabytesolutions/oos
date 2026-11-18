@@ -383,7 +383,7 @@ mod tests {
                 let mr = Map { ti: 0.0, x_per_sample: 1.0 / per_column, x0: 0.0, y_per_volt: -56.0, y0: 224.0 };
                 let mc = Map { x_per_sample: 1.0 / POINTS_PER_COLUMN, ..mr };
                 let (mut a, mut b) = (vec![0u16; w * h], vec![0u16; w * h]);
-                crate::fastdraw::deposit(&mut a, w, h, &raw, &mr, 1);
+                let _ = crate::fastdraw::deposit(&mut a, w, h, &raw, &mr, 1);
                 deposit_pairs(&mut b, w, h, &comp, &mc, 1, false);
                 let span = |m: &[u16], c: usize| {
                     let rows: Vec<usize> = (0..h).filter(|&r| m[r * w + c] > 0).collect();

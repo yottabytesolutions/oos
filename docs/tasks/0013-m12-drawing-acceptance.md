@@ -161,6 +161,15 @@ existing upload tests, changed-file ratchets and this task. Preserve the F2 deli
 repairs. Run serial shipping upload guards, the fast gate and the full combined host gate.
 Keep the prior optimized census failure unresolved, coordinate before any census edit, and retain the unit hold.
 
+PR #221 current-F2 replay and coordinator-routed #230 census repair: keep the two upload topics above
+`refactor/204-frames-f2`. Reserve `ui/src/drawpipe.rs` for the moved non-window fold and
+`ui/src/drawpipe/tests/window.rs` for read-only map access and independent
+GPU-consumer coverage of retained and expired deposits. Keep every fold behind the dirty-row edit boundary.
+Also reserve `ui/src/system/test_allocator.rs`, `ui/src/ui/change/census.rs`, `ui/src/ui/script.rs` and
+`ui/tests/soak.rs` for the verified caller-thread census patch. Preserve all six 256-call regions, strict zero
+assertions and process-wide accounting. Run the fast gate, UI debug/optimized tests and serial shipping upload
+guards. The coordinator retains independent review, the final combined full gate and the DHO804 unit round.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -263,6 +272,26 @@ Keep the prior optimized census failure unresolved, coordinate before any census
   26 reviewed cases. For multi-channel deep pairs the final map agrees with the control, but retention at
   record 46 changes the running grade. Min persistence and grade cases retain the 13-record and 3-record
   deposits together. The four Dots On transition fixtures whose original pixels match are restored.
+
+- 2026-11-19: PR #221 current-F2 replay retains exactly two upload topics above `refactor/204-frames-f2`
+  (`155021d5`). The targeted pre-fix build exited 101 with E0616 in the moved non-window fold.
+  That fold now uses `edit_channel`; the window fixture reads `maps()`. An injected-clock regression checks
+  retained deposits, expiry without new input, independent upload consumers and once-only record accounting.
+  The coordinator-routed #230 patch exposes the existing calling-thread allocation counter and selects it for
+  the warmed observer census. All six measurement boundaries, 256-call counts, strict zero assertions and
+  process-wide accounting remain intact. Both debug and optimized focused runs reported 256 calls and zero
+  allocations in every region; no calling-thread allocation was observed.
+  Initial fast gate: `gate FAILED in 8 s: size` (exit 1). `cargo xtask ratchet` generated only the changed
+  `ui.rs` allowance reduction, 8,587 to 8,576. Final fast gate:
+  `partial gate passed (not done): 12 steps in 8 s` (exit 0). Host/ARM Clippy passed (exit 0).
+  UI nextest passed 1,792 debug and 1,791 optimized tests, with 64 skipped per profile; goldens are unchanged.
+  Serial shipping-profile dots and both upload guards passed all three tests (exit 0) with unchanged limits.
+  Production delta for this repair is zero; the upload stack is +255 UI Rust lines over current F2, zero
+  elsewhere (109,189 total). Files: `ui/src/drawpipe.rs`, `ui/src/drawpipe/tests/window.rs`,
+  `ui/src/system/test_allocator.rs`, `ui/src/ui/change/census.rs`, `ui/src/ui/script.rs`, `ui/tests/soak.rs`,
+  `xtask/data/ui/size.txt` and this task. Complete logs use `target/replay221-current-f2-*.log`.
+  Host only. Renewed independent review, the final combined exact-head full gate after the F2 correctness
+  follow-up and the combined DHO804 unit round remain required under the coordinator's hold. No scope access.
 
 - 2026-11-19: PR #224 review follow-up retains up to three whole deposits at minimum persistence. The UI grades
   the retained record count and counts each accepted deposit once. Injected-clock regressions cover the 67 ms

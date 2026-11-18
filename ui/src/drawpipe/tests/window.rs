@@ -62,7 +62,7 @@ impl Fixture {
 
     fn rows(&self) -> [u16; 4] {
         std::array::from_fn(|row| {
-            let pixels = &self.picture.map[0][row * 4..(row + 1) * 4];
+            let pixels = &self.picture.maps()[0][row * 4..(row + 1) * 4];
             assert_eq!(pixels, [pixels[0]; 4]);
             pixels[0]
         })
@@ -144,6 +144,44 @@ fn dirty_publication_covers_disjoint_evicted_and_new_rows_then_expires() {
     f.step(70);
     f.picture.publish();
     assert!(f.picture.published_rows().is_empty());
+}
+
+#[test]
+fn independent_uploads_include_retained_and_expired_deposits() {
+    let mut f = Fixture::new();
+    let initial = f.picture.upload_rows(0, None).0;
+    let mut stamps = [initial.clone(), initial];
+    let mut maps = [vec![0; 16], vec![0; 16]];
+    let steps = [
+        (0, [648, 0, 0, 0]),
+        (1, [648, 72, 0, 0]),
+        (2, [648, 72, 72, 0]),
+        (68, [0, 72, 72, 0]),
+        (69, [0, 0, 72, 0]),
+        (70, [0; 4]),
+    ];
+    for (step, (ms, expected)) in steps.into_iter().enumerate() {
+        if step < 3 {
+            let records = if step == 0 { 27 } else { 3 };
+            f.put(records, records, step, ms..=ms);
+        }
+        f.step(ms);
+        assert_eq!(f.rows(), expected);
+        for consumer in 0..2 {
+            if consumer == 1 && step % 2 == 0 {
+                continue;
+            }
+            let (stamp, rows) = f.picture.upload_rows(0, Some(&stamps[consumer]));
+            assert!(!rows.is_empty(), "consumer {consumer}, step {step}");
+            let range = rows.start * 4..rows.end * 4;
+            maps[consumer][range.clone()].copy_from_slice(&f.picture.maps()[0][range]);
+            stamps[consumer] = stamp;
+            assert_eq!(maps[consumer], f.picture.maps()[0], "consumer {consumer}, step {step}");
+        }
+    }
+    assert_eq!(maps, [vec![0; 16], vec![0; 16]]);
+    assert_eq!(f.edges[0], 33, "retained and expired records are counted once");
+    assert_eq!(f.pipe.counters.read().2, 0);
 }
 
 #[test]

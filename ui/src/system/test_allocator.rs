@@ -89,6 +89,10 @@ impl Counting {
     pub fn own_live(&self) -> isize {
         OWN_LIVE.get()
     }
+    /// Successful allocations and reallocations on the calling thread.
+    pub fn own_allocations(&self) -> usize {
+        OWN_ALLOCATIONS.get()
+    }
     pub fn peak(&self) -> usize {
         self.peak.load(SeqCst)
     }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::super::*;
+use super::allocation_budget::{CLEAR_ALLOCATIONS, DEFAULT_ALLOCATIONS, WARMUP_STEPS};
+use crate::system::test_allocator::count_own;
 use oos_core::change::{Classes as C, Requester};
 
 fn base(run: RunState) -> Ui {
@@ -13,88 +15,118 @@ fn base(run: RunState) -> Ui {
     ui
 }
 
-type OracleCase = (&'static str, RunState, fn(&mut Ui), C, [u64; 10]);
+struct OracleCase {
+    name: &'static str,
+    run: RunState,
+    apply: fn(&mut Ui),
+    classes: C,
+    raw: [u64; 10],
+    max_allocations: usize,
+}
+
 const ORACLE_CASES: &[OracleCase] = &[
-    (
-        "stopped offset, D2",
-        RunState::Stop,
-        |u| {
+    OracleCase {
+        name: "stopped offset, D2",
+        run: RunState::Stop,
+        apply: |u| {
             u.m.ch[0].offset += 0.25;
             change::edited(u);
         },
-        C::ACQ.union(C::MAPPING).union(C::STATS),
-        [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
-    ),
-    (
-        "running offset",
-        RunState::Run,
-        |u| {
+        classes: C::ACQ.union(C::MAPPING).union(C::STATS),
+        raw: [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+        max_allocations: DEFAULT_ALLOCATIONS,
+    },
+    OracleCase {
+        name: "running offset",
+        run: RunState::Run,
+        apply: |u| {
             u.m.ch[0].offset += 0.25;
             change::edited(u);
         },
-        C::ACQ.union(C::MAPPING).union(C::STATS),
-        [0; 10],
-    ),
-    (
-        "running brightness, D1",
-        RunState::Run,
-        |u| {
-            u.m.grid_bright -= 10;
+        classes: C::ACQ.union(C::MAPPING).union(C::STATS),
+        raw: [0; 10],
+        max_allocations: DEFAULT_ALLOCATIONS,
+    },
+    OracleCase {
+        name: "running brightness, D1",
+        run: RunState::Run,
+        apply: |u| {
+            u.m.grid_bright = if u.m.grid_bright == 80 { 100 } else { 80 };
             change::edited(u);
         },
-        C::NONE,
-        [0, 1, 0, 1, 0, 0, 0, 0, 0, 0],
-    ),
-    (
-        "stopped brightness, D1",
-        RunState::Stop,
-        |u| {
-            u.m.grid_bright -= 10;
+        classes: C::NONE,
+        raw: [0, 1, 0, 1, 0, 0, 0, 0, 0, 0],
+        max_allocations: DEFAULT_ALLOCATIONS,
+    },
+    OracleCase {
+        name: "stopped brightness, D1",
+        run: RunState::Stop,
+        apply: |u| {
+            u.m.grid_bright = if u.m.grid_bright == 80 { 100 } else { 80 };
             change::edited(u);
         },
-        C::NONE,
-        [0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
-    ),
-    ("same value mark, D1", RunState::Run, |u| change::edited(u), C::NONE, [0, 1, 0, 1, 0, 0, 0, 0, 0, 0]),
-    (
-        "trigger has no mapping",
-        RunState::Stop,
-        |u| {
+        classes: C::NONE,
+        raw: [0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+        max_allocations: DEFAULT_ALLOCATIONS,
+    },
+    OracleCase {
+        name: "same value mark, D1",
+        run: RunState::Run,
+        apply: change::edited,
+        classes: C::NONE,
+        raw: [0, 1, 0, 1, 0, 0, 0, 0, 0, 0],
+        max_allocations: DEFAULT_ALLOCATIONS,
+    },
+    OracleCase {
+        name: "trigger has no mapping",
+        run: RunState::Stop,
+        apply: |u| {
             u.m.trig_level += 0.1;
             change::edited(u);
         },
-        C::ACQ.union(C::STATS),
-        [0; 10],
-    ),
-    (
-        "unmarked offset clamp, D3",
-        RunState::Stop,
-        |u| u.m.ch[0].offset = 1e6,
-        C::ACQ.union(C::MAPPING).union(C::STATS),
-        [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
-    ),
-    (
-        "CLEAR at equal settings, D4",
-        RunState::Stop,
-        |u| u.key(key::CLEAR),
-        C::PHOSPHOR.union(C::STATS).union(C::MASK).union(C::ZONE).union(C::HW_AVERAGE).union(C::MATH).union(C::VIEW),
-        [0, 0, 0, 0, 0, 0, 1, 0, 1, 1],
-    ),
+        classes: C::ACQ.union(C::STATS),
+        raw: [0; 10],
+        max_allocations: DEFAULT_ALLOCATIONS,
+    },
+    OracleCase {
+        name: "unmarked offset clamp, D3",
+        run: RunState::Stop,
+        apply: |u| u.m.ch[0].offset = 1e6,
+        classes: C::ACQ.union(C::MAPPING).union(C::STATS),
+        raw: [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+        max_allocations: DEFAULT_ALLOCATIONS,
+    },
+    OracleCase {
+        name: "CLEAR at equal settings, D4",
+        run: RunState::Stop,
+        apply: |u| u.key(key::CLEAR),
+        classes: C::PHOSPHOR
+            .union(C::STATS)
+            .union(C::MASK)
+            .union(C::ZONE)
+            .union(C::HW_AVERAGE)
+            .union(C::MATH)
+            .union(C::VIEW),
+        raw: [0, 0, 0, 0, 0, 0, 1, 0, 1, 1],
+        max_allocations: CLEAR_ALLOCATIONS,
+    },
 ];
 
 // Each fixture pins a union from the task oracle, independently of classify. Geometry is included explicitly.
 #[test]
 fn scripted_change_storm_matches_reviewed_oracle() {
-    for (name, run, apply, classes, _raw) in ORACLE_CASES {
-        let mut ui = base(*run);
+    for case in ORACLE_CASES {
+        let name = case.name;
+        let classes = case.classes;
+        let mut ui = base(case.run);
         ui.mstat = vec![MStat { n: 7, ..Default::default() }];
-        apply(&mut ui);
+        (case.apply)(&mut ui);
         assert_eq!(ui.mstat[0].n, 7, "input defers statistics: {name}");
         change::begin_step(&mut ui, 0.04).unwrap();
-        assert_eq!(ui.host.runtime().change.last.as_ref().unwrap().classes(), *classes, "{name}");
+        assert_eq!(ui.host.runtime().change.last.as_ref().unwrap().classes(), classes, "{name}");
         assert_eq!(ui.mstat.is_empty(), classes.contains(C::STATS), "{name}");
         let (actual, _, outbox, errors, unreviewed) = change::counters(&ui);
-        assert_eq!(actual, [0; 10], "retired legacy counters: {name}");
+        assert_eq!(actual, [0; 10], "retired legacy counters (previously {:?}): {name}", case.raw);
         assert_eq!((outbox, errors, unreviewed), (0, 0, 0), "{name}");
     }
 }
@@ -179,30 +211,29 @@ fn shadow_counters_are_available_to_state_queries() {
 }
 
 #[test]
-#[ignore = "explicit release timing guard; run alone with OOS_PERF_TESTS=1"]
+#[ignore = "explicit allocation guard; run with OOS_PERF_TESTS=1"]
 fn perf_guard_intake_change_shadow_budget() {
     if std::env::var("OOS_PERF_TESTS").as_deref() != Ok("1") {
         return;
     }
-    let mut timing = crate::perfguard::StageTiming::default();
-    // Sparse clears need enough storm cycles for at least 50 clearing observations.
-    super::super::script::host::soak::run_observed("raw", 1000, |step, _, ui| {
-        if step == 1000 {
-            timing = change::timing(ui);
+    for case in ORACLE_CASES {
+        let name = case.name;
+        let limit = case.max_allocations;
+        let mut ui = base(case.run);
+        let mut maximum = 0;
+        // Warm the exact input/change path before checking retained storage reuse.
+        for step in 0..100 {
+            let (allocations, ()) = count_own(|| {
+                change::intake(&mut ui, case.apply);
+                change::begin_step(&mut ui, 0.04).unwrap();
+                change::finish_step(&mut ui);
+            });
+            if step >= WARMUP_STEPS {
+                maximum = maximum.max(allocations);
+            }
         }
-    })
-    .unwrap();
-    assert!(timing.samples() >= 50);
-    let quantiles = timing.p99().unwrap();
-    println!(
-        "{} host={} profile={} budget_ns=500000 picture_host_budget_ns=750000 estimated_a72_budget_ns=3000000",
-        timing.text(),
-        std::env::consts::ARCH,
-        if cfg!(debug_assertions) { "debug" } else { "release" }
-    );
-    assert!(quantiles[2] <= 500_000, "combined intake/change p99 {} exceeds 0.5 ms", quantiles[2]);
-    let picture = timing.picture_p99().unwrap();
-    assert!(picture > 0 && picture <= 750_000, "picture p99 {picture} exceeds the calibrated host budget");
+        assert!(maximum <= limit, "{name}: intake/change allocations {maximum} exceed {limit}");
+    }
 }
 
 #[test]

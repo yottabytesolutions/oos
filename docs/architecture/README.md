@@ -526,8 +526,8 @@ otherwise; the first unit round after each step may tighten them, never loosen t
 | Thread or stage | Budget | Counter | Asserted by | Guard lands in |
 |---|---|---|---|---|
 | main, full step (first A72) | p50 <= 8 ms, p99 <= 15 ms | `step` | unitlab | M3d (counter), asserted from round 1 |
-| intake + change | p99 <= 0.5 ms | `stage intake`, `stage change` | host timing guard, unitlab | M2.3 |
-| picture invalidation (main and zoom map clear) | p99 <= 3 ms, provisional 4x host estimate plus tail headroom | `stage picture` | host mapping-edit storm, mandatory unit storm | M2.3d |
+| intake + change | p99 <= 0.5 ms | `stage intake`, `stage change` | unitlab timing (no host timing assertion) | M2.3 |
+| picture invalidation (main and zoom map clear) | p99 <= 3 ms, provisional 4x host estimate plus tail headroom | `stage picture` | mandatory unit storm (no host timing assertion) | M2.3d |
 | records stage | p99 <= 1.5 ms off the fast path; records are built on the workers | `stage records` | host timing guard, unitlab | M6 |
 | picture blend (Min: up to three deposits; decay: one new deposit; one touched-row pass) | estimated <= 3 ms at Min, <= 4 ms with decay | `picture.blend` | host ratio guard, unitlab | F2, F6 |
 | compose + present submission (sum) | p99 <= 4 ms; <= 6 ms on HDMI | `stage compose`, `stage present` | unitlab | M3d (counter), asserted from M9b |
@@ -552,6 +552,12 @@ otherwise; the first unit round after each step may tighten them, never loosen t
 Picture invalidation is a separate consumer phase; intake/change timing excludes it.
 The IO experiment records its own before/after evidence. Existing host ratio guards below remain unchanged.
 Absolute timing belongs in perf/unit acceptance, not machine-speed-dependent unit tests.
+Host intake/change guards use the limits in `ui/src/ui/tests/allocation_budget.rs` and count the calling thread's
+allocations after warm-up: input/change oracle cases and mapping acceptance with both map clears permit at most four
+(five for CLEAR); Peak backlog intake permits six.
+These bounds pin the existing complete change-point costs, including lifecycle polls and acceptance.
+The existing counting allocator includes transient allocations and reallocations; worker and harness allocations
+are excluded. The absolute intake/change and picture timing budgets remain unit acceptance requirements.
 
 ### Host budget rows
 

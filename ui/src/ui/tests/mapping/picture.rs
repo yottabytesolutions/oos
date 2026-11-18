@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::system::test_allocator::count_own;
+use crate::ui::tests::allocation_budget::{DEFAULT_ALLOCATIONS, WARMUP_STEPS};
 
 fn running(batch: bool) -> Ui {
     let mut ui = Ui::new(Source::Hw { shared: Default::default(), seen: 0 }, host::Host::headless());
@@ -191,7 +193,7 @@ fn z_input_clears_running_infinite_persistence_on_both_paths() {
 }
 
 #[test]
-#[ignore = "explicit release timing guard; run alone with OOS_PERF_TESTS=1"]
+#[ignore = "explicit allocation guard; run with OOS_PERF_TESTS=1"]
 fn perf_guard_picture_consumer_mapping_storm_budget() {
     if std::env::var("OOS_PERF_TESTS").as_deref() != Ok("1") {
         return;
@@ -204,20 +206,16 @@ fn perf_guard_picture_consumer_mapping_storm_budget() {
         seed(&mut ui);
         ui.m.ch[0].offset = (1 + i % 2) as f32 * 0.1;
 
+        let (allocations, (_, cleared)) = count_own(|| change::begin_step(&mut ui, 0.04).unwrap());
+        assert!(cleared, "each mapping edit must clear the picture");
+        if i >= WARMUP_STEPS {
+            assert!(
+                allocations <= DEFAULT_ALLOCATIONS,
+                "mapping acceptance and picture allocations {allocations} at step {i}"
+            );
+        }
         ui.step(0.04);
         assert!(empty(&ui), "every edit exercises both map clears");
     }
     assert_eq!(change::counters(&ui), ([0; 10], 0, 0, 0, 0));
-    let timing = change::timing(&ui);
-    let picture = timing.picture_p99().unwrap();
-    // Worst of ten runs per storm: 422,833 ns x 4 (A72) x 1.5, rounded up to 3 ms.
-    // docs/fork/perf-plan.md, Host measurements. Actual unit acceptance remains mandatory.
-    println!(
-        "{} host={} profile={} picture_host_budget_ns=750000 estimated_a72_budget_ns=3000000 rk3399_host_factor=4",
-        timing.text(),
-        std::env::consts::ARCH,
-        if cfg!(debug_assertions) { "debug" } else { "release" }
-    );
-    assert!(picture > 0 && picture <= 750_000, "picture p99 {picture} exceeds the calibrated host budget");
-    assert!(timing.p99().unwrap()[2] <= 500_000, "detection retains its separate G2 budget");
 }

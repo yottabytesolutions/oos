@@ -94,23 +94,38 @@ fn mask_and_zone_rows_keep_order_kinds_labels_and_options() {
 }
 
 #[test]
-fn acquire_values_and_committed_indices_follow_current_settings() {
+fn acquire_mode_values_and_committed_indices_follow_current_settings() {
     let mut u = demo();
     for (index, mode) in [AcqMode::Normal, AcqMode::Peak, AcqMode::Average, AcqMode::HiRes].into_iter().enumerate() {
         u.m.acq = mode;
         assert_eq!(u.value(Item::AcqMode), ["Normal", "Peak", "Average", "High res"][index]);
         assert_eq!(active_choice::index(&u, Item::AcqMode), Some(index));
     }
+}
+
+#[test]
+fn acquire_average_values_and_committed_indices_follow_current_settings() {
+    let mut u = demo();
     for (index, count) in AVERAGES.into_iter().enumerate() {
         u.m.avg_count = count;
         assert_eq!(u.value(Item::AcqAvg), count.to_string());
         assert_eq!(active_choice::index(&u, Item::AcqAvg), Some(index));
     }
+}
+
+#[test]
+fn acquire_depth_values_and_committed_indices_follow_current_settings() {
+    let mut u = demo();
     for (index, (label, _)) in mdepths().iter().enumerate() {
         u.m.mdepth = index;
         assert_eq!(u.value(Item::AcqDepth), *label);
         assert_eq!(active_choice::index(&u, Item::AcqDepth), Some(index));
     }
+}
+
+#[test]
+fn acquire_segment_values_and_committed_indices_follow_current_settings() {
+    let mut u = demo();
     for (index, count) in u.seg_options().into_iter().enumerate() {
         u.m.segments = count;
         assert_eq!(u.value(Item::AcqSeg), if count == 0 { "Off".into() } else { count.to_string() });
@@ -118,11 +133,21 @@ fn acquire_values_and_committed_indices_follow_current_settings() {
     }
     u.m.segments = usize::MAX;
     assert_eq!(u.value(Item::AcqSeg), u.seg_limit().to_string());
+}
+
+#[test]
+fn acquire_interval_values_and_committed_indices_follow_current_settings() {
+    let mut u = demo();
     for (index, interval) in SEG_IVLS.into_iter().enumerate() {
         u.m.seg_ivl = interval;
         assert_eq!(u.value(Item::AcqSegIvl), seg_ivl_name(interval));
         assert_eq!(active_choice::index(&u, Item::AcqSegIvl), Some(index));
     }
+}
+
+#[test]
+fn acquire_toggle_values_and_committed_indices_follow_current_settings() {
+    let mut u = demo();
     for on in [false, true] {
         (u.m.avg_hw, u.m.seg_hw, u.m.cores, u.m.draw_batch) = (on, on, on, on);
         for (item, values) in [
@@ -278,21 +303,27 @@ fn new_areas_use_shared_renderer_picker_back_and_close_at_every_text_size() {
 #[test]
 fn channel_capabilities_in_an_isolated_process() {
     for model in ["DHO802", "DHO804", "DHO924S"] {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "ui::menu::tests::capability_fixture", "--nocapture"])
-            .env("OOS_MENU_TEST_MODEL", model)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{model}: {}", String::from_utf8_lossy(&output.stdout));
+        for fixture in ["layout_capability_fixture", "source_capability_fixture", "off_sources_capability_fixture"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", &format!("ui::menu::tests::{fixture}"), "--nocapture"])
+                .env("OOS_MENU_TEST_MODEL", model)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{model} {fixture}: {}", String::from_utf8_lossy(&output.stdout));
+        }
     }
 }
 
-#[test]
-fn capability_fixture() {
-    let Ok(model) = std::env::var("OOS_MENU_TEST_MODEL") else { return };
+fn capability_ui() -> Option<(Ui, usize)> {
+    let model = std::env::var("OOS_MENU_TEST_MODEL").ok()?;
     assert!(oos_hal::model::init(oos_hal::model::Platform::build(None, None, Some(&model))));
     let channels = if model == "DHO802" { 2 } else { 4 };
-    let mut u = demo();
+    Some((demo(), channels))
+}
+
+#[test]
+fn layout_capability_fixture() {
+    let Some((mut u, _)) = capability_ui() else { return };
     for size in TEXT_SIZES {
         u.m.text_size = size;
         for offline in [false, true] {
@@ -301,6 +332,17 @@ fn capability_fixture() {
                 u.open_menu(menu);
                 assert_eq!(u.dlg_layout().unwrap().rows.iter().map(|r| r.it).collect::<Vec<_>>(), u.items(menu));
             }
+        }
+    }
+}
+
+#[test]
+fn source_capability_fixture() {
+    let Some((mut u, channels)) = capability_ui() else { return };
+    for size in TEXT_SIZES {
+        u.m.text_size = size;
+        for offline in [false, true] {
+            u.offline = offline;
             for selected in 0..2 {
                 u.zone_sel = selected;
                 for source in 0..channels {
@@ -313,6 +355,17 @@ fn capability_fixture() {
                     }
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn off_sources_capability_fixture() {
+    let Some((mut u, _)) = capability_ui() else { return };
+    for size in TEXT_SIZES {
+        u.m.text_size = size;
+        for offline in [false, true] {
+            u.offline = offline;
             u.m.ch[0].on = false;
             u.m.mask_src = 0;
             assert_eq!(u.off_sources(MenuId::Mask), vec![0]);

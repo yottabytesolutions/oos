@@ -28,7 +28,7 @@ impl Sample {
 }
 
 pub(in crate::ui) fn run(steps: usize, count: fn() -> usize) -> [[usize; 2]; 6] {
-    // Fake Shared has no producer or worker threads, so a process census measures only this UI.
+    // The fake board has no producer. The Batch route can still start deposit workers.
     let mut ui = Ui::new(Source::Hw { shared: Default::default(), seen: 0 }, host::Host::headless());
     ui.m.meas.clear();
     ui.m.meas2.clear();

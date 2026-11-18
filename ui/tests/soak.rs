@@ -254,7 +254,8 @@ fn warmed_ui_observer_allocation_census() {
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         return;
     }
-    let rows = oos_ui::Ui::scripted_change_census(256, || HEAP.allocations());
+    // The harness and Batch deposit workers share this process with the UI thread.
+    let rows = oos_ui::Ui::scripted_change_census(256, || HEAP.own_allocations());
     for (name, [calls, allocations]) in
         ["prepare_keys", "compare", "finish_capture", "stage", "live_normalize", "consumers"].into_iter().zip(rows)
     {

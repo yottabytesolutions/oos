@@ -104,6 +104,15 @@ the fast gate plus generated changed-file ratchets.
   No acceptance or review state changed. Native timing awaits experiment-supervisor release.
   The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
 
+- 2026-11-18: Replayed the published F1 delta for #212 onto F0 `65c45c47` using old F0 `9a802cfe`
+  as the fork boundary. The new base carries the Telnet removal. The `ui.rs` size allowance is 8,668,
+  preserving F1's reduction of 157 lines from the new F0 allowance. F0 loss accounting and claim timing,
+  the reviewed F1 kernel, and the golden references are intact. Production delta over F0 is +106 UI Rust
+  lines. The fast gate passed all 12 selected steps. `cargo test --locked -p oos-ui` with one test thread
+  passed in debug and `test-release`: 1,705/1,704 unit tests, plus 8 golden, 17 script, 10 socket and 16
+  soak/support tests per profile. `cargo test --locked -p xtask` passed 242 tests in each profile.
+  Independent review, the integrated full gate and the required DHO804 unit run remain open. Host validation only.
+
 - 2026-11-18: Stack #212 over #213 conflict resolution validated on exact F0 base
   `9a802cfef9a8f27bc6db48cc23da17afd35f6367`. Preserve both task sections and host golden evidence.
   Keep F0 record reuse, intentional-loss accounting, producer-local claim timing and the shared enabled-channel

@@ -40,16 +40,22 @@ class GoldenTests(unittest.TestCase):
             self.assertFalse(reference.with_name('golden.pending').exists())
             self.assertFalse(reference.with_name('golden.previous').exists())
 
-    def test_threshold_and_floor_per_region(self):
-        a = self.image()
-        self.assertTrue(compare_rgb(a, a)['remaining']['pass'])
-        self.assertTrue(compare_rgb(a, self.image(value=41))['remaining']['pass'])
-        b = bytearray(a[2])
-        b[0] += 2
-        self.assertTrue(compare_rgb(a, (1000, 1, b))['remaining']['pass'])
-        self.assertFalse(compare_rgb(a, (1000, 1, b), [('main', 0, 0, 999, 1)])['main']['pass'])
-        b[3] += 2
-        self.assertFalse(compare_rgb(a, (1000, 1, b))['remaining']['pass'])
+    def test_cpu_comparison_requires_every_rgb_byte_to_match(self):
+        a = self.image(n=2000)
+        regions = [('main', 0, 0, 1000, 1)]
+        self.assertTrue(all(m['pass'] for m in compare_rgb(a, a, regions).values()))
+        for pixel, region in ((0, 'main'), (1999, 'remaining')):
+            for component in range(3):
+                for delta in (-1, 1, 2):
+                    with self.subTest(pixel=pixel, component=component, delta=delta):
+                        b = bytearray(a[2])
+                        b[pixel * 3 + component] += delta
+                        metrics = compare_rgb(a, (2000, 1, b), regions)
+                        self.assertFalse(metrics[region]['pass'])
+                        self.assertEqual(metrics[region]['different'], 1)
+                        self.assertEqual(metrics[region]['maximum'], abs(delta))
+                        other = 'remaining' if region == 'main' else 'main'
+                        self.assertTrue(metrics[other]['pass'])
 
     def test_trace_translation_and_brightness_loss(self):
         a = (100, 100, bytes([0, 200, 0] * 100 + [0, 0, 0] * 9900))

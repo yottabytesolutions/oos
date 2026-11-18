@@ -38,6 +38,7 @@ RUST_FILES: Final = frozenset({
     ".github/workflows/main.yml",  # xtask plan-matrix tests cover the split nightly gate
     ".github/workflows/image.yml",  # fpgad/tests/explicit_signing.rs includes it
     "tools/ci/changes.py",
+    "docs/spec/menus.md",  # ui/tests/support/cases.rs includes the menu catalogue
     # xtask/src/stack_ci.rs includes these: the required checks run on stacked pull requests (CONTRIBUTING.md#stacked-pull-requests)
     ".github/workflows/pr-meta.yml",
     ".github/workflows/privacy.yml",

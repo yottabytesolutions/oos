@@ -120,15 +120,15 @@ class GitInputTests(unittest.TestCase):
     def test_changed_blobs_force_text_and_disable_external_filters(self) -> None:
         def fake_git(root: Path, *args: str) -> bytes:
             if args[0] == "cat-file":
-                return b"old\nnew\0text\n"
+                return b"old\nnew text\n"
             self.assertIn("--text", args)
             self.assertIn("--no-ext-diff", args)
             self.assertIn("--no-textconv", args)
-            return b"@@ -1 +2 @@\n+new\0text\n"
+            return b"@@ -1 +2 @@\n+new text\n"
         with patch.object(git_input, "entries", return_value=iter([("odd\nname.txt", "newoid")])), \
                 patch.object(git_input, "git", side_effect=fake_git):
             records = list(git_input.changed(Path("."), {"odd\nname.txt": "oldoid"}, None))
-        self.assertEqual(records[1][1:3], (2, "new\0text"))
+        self.assertEqual(records[1][1:3], (2, "new text"))
 
     def test_index_and_tree_nul_paths_and_submodules(self) -> None:
         for revision, raw in ((None, b"100644 abc 0\todd\nname\0"),

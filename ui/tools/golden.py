@@ -102,7 +102,7 @@ def compare_rgb(expected, actual, regions=()):
     if actual[:2] != (w, h) or len(a) != w * h * 3 or len(actual[2]) != len(a):
         raise ValueError('picture size mismatch')
     labels, names = region_map(w, h, regions)
-    metrics = {name: dict(pixels=labels.count(i), different=0, over=0, maximum=0, box=None)
+    metrics = {name: dict(pixels=labels.count(i), different=0, maximum=0, box=None)
                for i, name in enumerate(names)}
     if a != actual[2]:
         for p, (r, g, b) in enumerate(zip(a[0::3], a[1::3], a[2::3])):
@@ -112,14 +112,12 @@ def compare_rgb(expected, actual, regions=()):
                 continue
             m = metrics[names[labels[p]]]
             m['different'] += 1
-            m['over'] += error > 1
             m['maximum'] = max(m['maximum'], error)
             x, y = p % w, p // w
             old = m['box'] or [x, y, x, y]
             m['box'] = [min(old[0], x), min(old[1], y), max(old[2], x), max(old[3], y)]
     for m in metrics.values():
-        m['budget'] = m['pixels'] // 1000
-        m['pass'] = m['over'] <= m['budget']
+        m['pass'] = m['different'] == 0
     return metrics
 
 

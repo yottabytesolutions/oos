@@ -1,0 +1,132 @@
+# Every MenuId in docs/spec/menus.md, through existing script and input commands.
+frames 2
+menu Menu
+shot $S/Main.ppm
+menu Horizontal
+shot $S/Horizontal.ppm
+menu Trigger
+shot $S/Trigger.ppm
+menu Acquire
+shot $S/Acquire.ppm
+menu Measure settings
+shot $S/Measure.ppm
+menu DVM / Counter
+shot $S/Dvm.ppm
+menu Cursor
+shot $S/Cursor.ppm
+menu Display
+shot $S/Display.ppm
+menu System
+shot $S/Utility.ppm
+menu Math
+shot $S/Math.ppm
+menu Reference
+shot $S/Ref.ppm
+menu Decode
+shot $S/Decode.ppm
+menu Bus
+shot $S/Bus.ppm
+menu Storage
+shot $S/Storage.ppm
+menu Mask
+shot $S/Mask.ppm
+menu Zones
+shot $S/Zone.ppm
+menu Spectrum
+shot $S/Spectrum.ppm
+menu Eye / jitter
+shot $S/Eye.ppm
+menu Power analysis
+shot $S/Power.ppm
+menu Magnetic
+shot $S/Magnetic.ppm
+menu Inverter
+shot $S/Inverter.ppm
+menu Double pulse
+shot $S/Dpt.ppm
+menu Menu
+do Identify
+shot $S/Identify.ppm
+menu Bode
+shot $S/Bode.ppm
+menu Generator
+shot $S/Afg.ppm
+menu Bandwidth test (step response)
+shot $S/BwTest.ppm
+menu Logic analyser
+shot $S/La.ppm
+menu Data logger
+shot $S/Logger.ppm
+menu SIM
+shot $S/Sim.ppm
+menu CH1
+shot $S/Channel-1.ppm
+do More
+shot $S/ChMore-1.ppm
+menu CH2
+shot $S/Channel-2.ppm
+do More
+shot $S/ChMore-2.ppm
+menu CH3
+shot $S/Channel-3.ppm
+do More
+shot $S/ChMore-3.ppm
+menu CH4
+shot $S/Channel-4.ppm
+do More
+shot $S/ChMore-4.ppm
+menu System
+do Self-cal
+shot $S/SelfCal.ppm
+menu System
+do Network
+shot $S/Network.ppm
+do Remote services
+shot $S/Remote.ppm
+do SSH settings
+shot $S/Ssh.ppm
+menu System
+do Date and time
+shot $S/Time.ppm
+menu System
+do Features
+shot $S/Features.ppm
+do Decoders
+shot $S/Decoders-1.ppm
+do More decoders
+shot $S/Decoders-2.ppm
+menu SIM
+do Advanced
+shot $S/SimAdvanced.ppm
+menu Logic analyser
+do Line select
+shot $S/LaLines.ppm
+menu Logic analyser
+set LA = On
+menu Trigger
+set Type = Pattern
+do D0-D15
+shot $S/LaPat.ppm
+menu Display
+do Windows
+shot $S/Windows.ppm
+menu Measure settings
+do Channel pair
+shot $S/MeasPair.ppm
+menu Trigger
+pick Type
+shot $S/Pick.ppm
+workflow measure
+shot $S/MeasAdd.ppm
+tap 80 510
+shot $S/MeasSelected.ppm
+close
+drag 575 16 575 16 hold
+frames 16
+shot $S/MeasHold.ppm
+release
+menu Spectrum
+set View = On
+close
+tap 995 60
+shot $S/ViewMore.ppm

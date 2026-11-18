@@ -32,7 +32,7 @@ ADR paths across the repository. The `links` step also checks Markdown links and
 | [0005](0005-the-gate.md) | The gate is cargo xtask check | policy | in force |
 | [0006](0006-format-lints-and-ratchets.md) | Format, limits, unsafe and ratchets protect the code | policy | target: gate tightening follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
 | [0007](0007-less-production-code.md) | Each release has less production code | policy | in force |
-| [0008](0008-behaviour-baselines.md) | Behaviour-preserving changes prove equality against baselines | policy | target: exact CPU goldens and layout coverage; baseline follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0008](0008-behaviour-baselines.md) | Behaviour-preserving changes prove equality against baselines | policy | implemented on host; new layout references require owner review |
 | [0009](0009-test-time.md) | Tests do not depend on machine speed | policy | in force |
 | [0010](0010-development-platforms.md) | Development supports Linux and macOS; BSDs are best effort; Windows uses WSL or a VM | policy | in force |
 | [0011](0011-protected-areas.md) | OOS writes only named card areas and protects stock FPGA slots | hardware | target: protected-area evidence follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |

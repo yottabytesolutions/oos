@@ -39,7 +39,8 @@ class PathTests(unittest.TestCase):
         for path in ("ui/src/ui.rs", "Cargo.lock", "deny.toml", "rust-toolchain.toml", ".cargo/config.toml",
                      "rootfs/initramfs/bin/oos-watchdog", "tools/privacy/scan.py", "xtask/data/size.txt",
                      ".github/workflows/pr.yml", ".github/workflows/image.yml", "tools/ci/changes.py",
-                     ".github/workflows/privacy.yml", ".github/rulesets/main.json", "tools/ci/codex_gate.py"):
+                     ".github/workflows/privacy.yml", ".github/rulesets/main.json", "tools/ci/codex_gate.py",
+                     "docs/spec/menus.md"):
             with self.subTest(path=path):
                 self.assertTrue(changes.needs_rust(path))
 
@@ -96,6 +97,7 @@ class DecideTests(unittest.TestCase):
     def test_pull_request_filters_by_path(self):
         pr = {"EVENT": "pull_request", "BASE": "a" * 40}
         self.assertFalse(self.decide("rust", pr).run)
+        self.assertTrue(self.decide("rust", pr, diff="docs/spec/menus.md\n").run)
         self.assertTrue(self.decide("rust", pr, diff="docs/a.md\nhal/src/lib.rs\n").run)
         self.assertTrue(self.decide("all", pr).run)
 

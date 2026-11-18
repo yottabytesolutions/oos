@@ -1,0 +1,89 @@
+# Protocol-specific Decode row layouts from the menu inventory.
+frames 2
+menu Decode
+set Protocol = UART
+shot $S/protocol-01.ppm
+menu Decode
+set Protocol = I2C
+shot $S/protocol-02.ppm
+menu Decode
+set Protocol = SPI
+shot $S/protocol-03.ppm
+menu Decode
+set Protocol = CAN
+shot $S/protocol-04.ppm
+menu Decode
+set Protocol = LIN
+shot $S/protocol-05.ppm
+menu Decode
+set Protocol = Parallel
+shot $S/protocol-06.ppm
+menu Decode
+set Protocol = C-PHY
+shot $S/protocol-07.ppm
+menu Decode
+set Protocol = DMX512
+shot $S/protocol-08.ppm
+menu Decode
+set Protocol = S/PDIF
+shot $S/protocol-09.ppm
+menu Decode
+set Protocol = USB PD
+shot $S/protocol-10.ppm
+menu Decode
+set Protocol = DCC
+shot $S/protocol-11.ppm
+menu Decode
+set Protocol = Manchester
+shot $S/protocol-12.ppm
+menu Decode
+set Protocol = MLT-3
+shot $S/protocol-13.ppm
+menu Decode
+set Protocol = UART 9-bit
+shot $S/protocol-14.ppm
+menu Decode
+set Protocol = Modbus RTU
+shot $S/protocol-15.ppm
+menu Decode
+set Protocol = Modbus ASCII
+shot $S/protocol-16.ppm
+menu Decode
+set Protocol = 1-Wire
+shot $S/protocol-17.ppm
+menu Decode
+set Protocol = DS2482
+shot $S/protocol-18.ppm
+menu Decode
+set Protocol = SWD
+shot $S/protocol-19.ppm
+menu Decode
+set Protocol = JTAG
+shot $S/protocol-20.ppm
+menu Decode
+set Protocol = Quad-SPI
+shot $S/protocol-21.ppm
+menu Decode
+set Protocol = I3C
+shot $S/protocol-22.ppm
+menu Decode
+set Protocol = CAN-FD
+shot $S/protocol-23.ppm
+menu Decode
+set Protocol = FlexRay
+shot $S/protocol-24.ppm
+menu Decode
+set Protocol = SENT
+shot $S/protocol-25.ppm
+menu Decode
+set Protocol = ARINC 429
+shot $S/protocol-26.ppm
+menu Decode
+set Protocol = 1553
+shot $S/protocol-27.ppm
+menu Decode
+set Protocol = I2S
+shot $S/protocol-28.ppm
+menu Decode
+set Protocol = USB
+shot $S/protocol-29.ppm

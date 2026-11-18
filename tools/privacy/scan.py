@@ -10,6 +10,7 @@ import sys
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
+from content import content_text
 from git_input import Record, git, incoming, staged, text_lines
 from patterns import SESSION_TRAILER, matches
 from policy import digest, load_allowlist, load_literals
@@ -44,10 +45,12 @@ def working_tree(root: Path) -> Iterator[Record]:
         if path.is_symlink():
             text = str(path.readlink())
         elif path.is_file():
-            text = path.read_bytes().decode("utf-8", errors="replace")
+            text = content_text(path.read_bytes())
         else:
             continue  # Deleted files and submodules have no working-tree text.
         yield name, 0, name, False
+        if text is None:
+            continue
         for number, line in enumerate(text_lines(text), 1):
             yield name, number, line, False
 

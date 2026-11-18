@@ -20,6 +20,13 @@ targets. An unborn branch scans all index content. It ignores unstaged replaceme
 does not create findings. Blob diffs force text and disable external diff and text-conversion commands; binary
 attributes cannot hide textual secrets. Submodule contents are separate repositories and are not inspected.
 
+Contents are sniffed rather than classified by filename. PNGs contribute only their `tEXt`, `iTXt` and `zTXt`
+metadata, including keywords and decompressed text; pixel data and other chunks are not pattern-matched.
+PNG line numbers refer to the extracted metadata, with its fields and chunks separated by LF. Changed PNGs scan
+only added metadata lines. Malformed PNG text or chunk framing is an input error. Other contents with NUL bytes
+or invalid UTF-8 are treated as binary and skipped. Filenames are checked even when their contents are binary.
+The same content rules apply to index blobs, commit ranges and working-tree audits.
+
 `--range BASE HEAD` scans every commit reachable from HEAD but not BASE, including side commits. It checks each
 message and compares each non-merge tree with its parent, so a value added and then removed still fails. For merges,
 only result lines added against every parent are scanned, equivalent to combined-diff additions. Text inherited

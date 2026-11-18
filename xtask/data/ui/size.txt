@@ -3,7 +3,7 @@
 2080 file ui/src/board/dho/hw.rs
 627 file ui/src/drawpipe.rs
 568 file ui/src/drm.rs
-713 file ui/src/fastdraw.rs
+697 file ui/src/fastdraw.rs
 649 file ui/src/gfx.rs
 650 file ui/src/gpu.rs
 657 file ui/src/http.rs
@@ -38,7 +38,7 @@
 138 fn ui/src/board/dho/fpga.rs spawn
 72 fn ui/src/board/dho/hw.rs hw_trigger
 125 fn ui/src/board/dho/hw.rs settings
-850 fn ui/src/board/dho/hw.rs spawn
+833 fn ui/src/board/dho/hw.rs spawn
 83 fn ui/src/board/record.rs resample
 103 fn ui/src/board/record.rs trigger_point
 91 fn ui/src/cmd.rs execute
@@ -162,7 +162,6 @@
 61 impls ui Ui
 16 struct ui/src/board/mod.rs Frame
 45 struct ui/src/board/mod.rs Shared
-13 struct ui/src/drawpipe.rs Batch
 14 struct ui/src/drm.rs Display
 16 struct ui/src/drm.rs GetConnector
 15 struct ui/src/drm.rs ModeInfo

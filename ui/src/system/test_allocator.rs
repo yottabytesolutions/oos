@@ -19,6 +19,15 @@ pub fn count_own<T>(f: impl FnOnce() -> T) -> (usize, T) {
     (OWN_ALLOCATIONS.get() - before, result)
 }
 
+/// Peak live bytes above entry on the calling thread, including freed transients.
+pub fn own_high_water<T>(f: impl FnOnce() -> T) -> (usize, T) {
+    let baseline = OWN_LIVE.get();
+    let previous = OWN_PEAK.replace(baseline);
+    let result = f();
+    let peak = OWN_PEAK.replace(previous.max(OWN_PEAK.get()));
+    ((peak - baseline) as usize, result)
+}
+
 pub struct Counting {
     live: AtomicUsize,
     peak: AtomicUsize,
@@ -54,14 +63,6 @@ impl Counting {
     /// Like `count`, but only the allocations of the calling thread.
     pub fn count_own<T>(&self, f: impl FnOnce() -> T) -> (usize, T) {
         count_own(f)
-    }
-    /// Peak live bytes above entry on the calling thread, including freed transients.
-    pub fn own_high_water<T>(&self, f: impl FnOnce() -> T) -> (usize, T) {
-        let baseline = OWN_LIVE.get();
-        let previous = OWN_PEAK.replace(baseline);
-        let result = f();
-        let peak = OWN_PEAK.replace(previous.max(OWN_PEAK.get()));
-        ((peak - baseline) as usize, result)
     }
     pub fn allocated(&self, bytes: usize) {
         self.large.fetch_add(usize::from(bytes >= self.large_min.load(SeqCst)), SeqCst);

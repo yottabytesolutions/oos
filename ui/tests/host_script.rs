@@ -105,7 +105,7 @@ fn batches_repeat_and_account_for_every_frame() {
         let log = success(&run_host(&a, script, &args));
         assert_eq!(log, success(&run_host(&b, script, &args)), "{}", kind);
         assert!(
-            log.contains("batch 6 submitted 86 deposited 80 delivered 6 dropped 0 newest 86 route workers"),
+            log.contains("batch 6 submitted 86 deposited 86 delivered 6 dropped 0 newest 86 route workers"),
             "{}",
             log
         );
@@ -125,7 +125,7 @@ fn average_zoom_and_slow_timebases_drain_records_without_a_time_cutoff() {
         assert_eq!(log, success(&run_host(&b, &script, &args)));
         assert!(log.contains("route records"), "{}", log);
         assert!(
-            log.contains("batch 4 submitted 46 deposited 26 delivered 1 dropped 0 newest 46 route records"),
+            log.contains("batch 4 submitted 46 deposited 27 delivered 1 dropped 0 newest 46 route records"),
             "{}",
             log
         );
@@ -134,7 +134,7 @@ fn average_zoom_and_slow_timebases_drain_records_without_a_time_cutoff() {
 }
 
 #[test]
-fn codes_keep_four_channel_and_dots_decode_fallbacks_repeatable() {
+fn codes_keep_four_channel_and_dots_pictures_repeatable() {
     for commands in
         ["key ch2\nkey ch3\nkey ch4\n", "menu Display\nset Dots = On\n", "menu Horizontal\nset Time/div = 200 ns\n"]
     {
@@ -145,11 +145,11 @@ fn codes_keep_four_channel_and_dots_decode_fallbacks_repeatable() {
         let log = success(&run_host(&a, &script, &args));
         assert_eq!(log, success(&run_host(&b, &script, &args)));
         assert!(
-            log.contains("batch 4 submitted 46 deposited 42 delivered 4 dropped 0 newest 46 route workers"),
+            log.contains("batch 4 submitted 46 deposited 46 delivered 4 dropped 0 newest 46 route workers"),
             "{}",
             log
         );
-        assert!(log.contains("newest 46 route workers decode decoded"), "{}", log);
+        assert!(log.contains("newest 46 route workers decode codes"), "{}", log);
         assert_eq!(rgb(&a, "fallback.ppm"), rgb(&b, "fallback.ppm"));
     }
 }
@@ -177,7 +177,7 @@ fn single_captures_one_post_arm_record_and_stops() {
         "key single\nframes 3\nshot single.ppm\nstat state.txt\n",
         &["--scripted-batch", "raw"],
     ));
-    assert!(log.contains("batch 2 submitted 28 deposited 26 delivered 1 dropped 0 newest 28 route records"), "{}", log);
+    assert!(log.contains("batch 2 submitted 28 deposited 27 delivered 1 dropped 0 newest 28 route records"), "{}", log);
     let state = std::fs::read_to_string(inputs.path("state.txt")).unwrap();
     assert!(state.contains("run Stop"), "{}", state);
     rgb(&inputs, "single.ppm");

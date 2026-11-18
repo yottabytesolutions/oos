@@ -35,12 +35,9 @@ impl Pipe {
         self.feed_batch(raw, fb, 0..frames, (stamp, None), decode, None);
     }
 
-    /// From the acquisition thread: the first `frames` frames of `fb` bytes in `raw`, recorded under settings stamp
-    /// `stamp`, for the workers (and the helper) to claim, decoded with `decode` or, without per-frame measurements,
-    /// drawn from their words with `codes` (`draw_frame_codes`). The buffer comes back through `take_buffer` when the
-    /// batch is done. Frames nobody claims are counted as dropped. The unit feeds with `feed_with`.
+    /// Submit the first `frames` frames with an optional direct-code layout for host tests.
     #[cfg(test)]
-    pub(crate) fn feed_codes(
+    pub fn feed_codes(
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
@@ -48,16 +45,12 @@ impl Pipe {
         stamp: u64,
         decode: DecodeInto,
         codes: Option<CodesInto>,
-    ) -> Arc<Batch> {
-        self.feed_batch(raw, fb, 0..frames, (stamp, None), decode, codes)
+    ) {
+        self.feed_batch(raw, fb, 0..frames, (stamp, None), decode, codes);
     }
 
-    /// `feed_codes` for frames `frames` (those before its start stay out: frame 0 of a batch, and a frame 1 without
-    /// its edge, docs/protocols/acquisition-start.md), and `deliver` run by the UI right after the merge that brings the batch's
-    /// frames: the newest frame of the batch reaches the screen in the same picture as the others
-    /// (docs/fork/stutter.md).
-    // Buffer geometry, identity, decoder and one delivery form a single batch submission.
-    #[allow(clippy::too_many_arguments)]
+    /// Whole kept range and its newest waveform, already decoded for record readers.
+    #[allow(clippy::too_many_arguments)] // Buffer geometry, identity and conversion describe one ring read.
     pub fn feed_with(
         &self,
         raw: Box<dyn RawBatch>,
@@ -66,13 +59,11 @@ impl Pipe {
         identity: oos_core::change::Identity,
         decode: DecodeInto,
         codes: Option<CodesInto>,
-        deliver: Deliver,
+        newest: Option<Arc<Frame>>,
     ) {
-        let b = self.feed_batch(raw, fb, frames, (identity.epoch(), Some(identity)), decode, codes);
-        *oos_hal::sync::lock(&b.deliver) = Some(deliver);
+        self.submit(raw, fb, frames, (identity.epoch(), Some(identity)), decode.into(), codes, newest);
     }
 
-    /// Submit immutable preparation in record order; decoding always runs before drawing.
     #[cfg(any(target_os = "linux", test))]
     pub fn feed_prepared(
         &self,
@@ -81,20 +72,20 @@ impl Pipe {
         frames: std::ops::Range<usize>,
         identity: oos_core::change::Identity,
         decode: IndexedDecodeInto,
-        deliver: Deliver,
+        newest: Option<Arc<Frame>>,
     ) {
-        let batch = self.feed_batch(
+        self.submit(
             raw,
             fb,
             frames,
             (identity.epoch(), Some(identity)),
             decoder::Decoder::Prepared(decode),
             None,
+            newest,
         );
-        *oos_hal::sync::lock(&batch.deliver) = Some(deliver);
     }
 
-    /// Submit the raw buffer once and share its lease across indexed worker jobs.
+    #[cfg(test)]
     pub(super) fn feed_batch(
         &self,
         raw: Box<dyn RawBatch>,
@@ -104,43 +95,48 @@ impl Pipe {
         decode: impl Into<decoder::Decoder>,
         codes: Option<CodesInto>,
     ) -> Arc<Batch> {
+        self.submit(raw, fb, frames, header, decode.into(), codes, None)
+    }
+
+    #[allow(clippy::too_many_arguments)] // All arguments are immutable batch inputs.
+    fn submit(
+        &self,
+        raw: Box<dyn RawBatch>,
+        fb: usize,
+        frames: std::ops::Range<usize>,
+        header: (u64, Option<oos_core::change::Identity>),
+        decode: decoder::Decoder,
+        codes: Option<CodesInto>,
+        newest: Option<Arc<Frame>>,
+    ) -> Arc<Batch> {
         let (stamp, identity) = header;
         let first = frames.start;
         let frames = frames.end.min(raw.bytes().len().checked_div(fb).unwrap_or(0));
-        static IDS: AtomicU64 = AtomicU64::new(0);
-        let id = IDS.fetch_add(1, Ordering::Relaxed) + 1;
         let b = Arc::new(Batch {
             lease: Lease { raw: Some(raw), home: self.home.clone() },
             fb,
             frames,
-            decode: decode.into(),
+            decode,
             codes,
             header: Header::new(stamp, identity),
             next: AtomicUsize::new(first.min(frames)),
             counters: self.counters,
             live: self.live.clone(),
-            deliver: Mutex::new(None),
-            ready: self.ready.clone(),
-            id,
+            newest,
             fed: std::time::Instant::now(),
         });
         self.live.fetch_add(1, Ordering::Acquire);
-        {
-            let mut open = oos_hal::sync::lock(&self.open);
-            open.retain(|w| w.strong_count() > 0);
-            open.push_back(Arc::downgrade(&b));
-        }
-        for w in &oos_hal::sync::lock(&self.workers).senders {
-            // full only if the workers are far behind: the others take its frames
-            if let Err(TrySendError::Disconnected(_)) = w.try_send(b.clone()) {
-                eprintln!("oos-ui: deposit worker gone");
+        let workers = oos_hal::sync::lock(&self.workers);
+        if let Some(tx) = &workers.sender {
+            if tx.try_send(Message::Batch(b.clone())).is_err() {
+                eprintln!("oos-ui: deposit intake unavailable");
             }
         }
         b
     }
 }
 
-pub(super) fn same_pair(a: Option<oos_core::change::Identity>, b: Option<oos_core::change::Identity>) -> bool {
+pub(crate) fn same_pair(a: Option<oos_core::change::Identity>, b: Option<oos_core::change::Identity>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => (a.gen(), a.epoch()) == (b.gen(), b.epoch()),
         (None, None) => true,
@@ -184,7 +180,6 @@ pub(super) fn set_view(
     let Some(m) = m else {
         (v.view, v.key) = (None, None);
         drop(v);
-        pipe.release();
         return;
     };
     let layout = oos_core::change::Layout::new((w, h), (0, 0), (0, 0), None, 0, 0);

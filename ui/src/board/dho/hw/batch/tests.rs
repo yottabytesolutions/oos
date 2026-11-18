@@ -3,7 +3,6 @@
 use super::*;
 use crate::board::dho::switches::HeaderProbe;
 use crate::{model::Model, sparse::Interp, wave::Phosphor};
-use std::sync::{Arc, Mutex};
 
 struct Bytes(Vec<u8>);
 impl RawBatch for Bytes {
@@ -21,16 +20,8 @@ fn record(n: u32, amplitude: i32) -> Vec<u8> {
         .collect()
 }
 
-fn finish(pipe: &Pipe) {
-    let deadline = crate::ui::lifecycle::test_wait::Wait::new("batch workers return the completed buffer");
-    let mut helper = crate::drawpipe::Helper::default();
-    while pipe.take_buffer().is_none() {
-        deadline.check();
-        if !pipe.help(&mut helper) {
-            deadline.poll();
-        }
-        pipe.help_done(&mut helper);
-    }
+fn finish(pipe: &crate::drawpipe::Pipe) {
+    crate::drawpipe::host::finish_batch(pipe, 1).expect("the completed batch returns its buffer");
 }
 
 fn stale_frame(bytes: &[u8], s: &Settings, p: &hz::Params, warm: bool) -> Frame {
@@ -87,8 +78,6 @@ fn run(frame0_drop: bool, replacement: bool, warm: bool) {
     let expected_newest = super::super::decode_with(&good, &s, &p, 3, HeaderProbe::Off, Some(&mut oracle));
     let pipe = Pipe::start(1, 0, counters);
     pipe.publish_view(&model, 128, 64, Interp::Exact, Default::default());
-    let delivered = Arc::new(Mutex::new(None));
-    let done = delivered.clone();
     let frames =
         Readout::new(&pipe, (&s, &p), (good.len(), 3, frame0_drop), (3, HeaderProbe::Off, None), Default::default())
             .dispatch(
@@ -96,11 +85,10 @@ fn run(frame0_drop: bool, replacement: bool, warm: bool) {
                 replacement.then(|| Bytes(Vec::new())),
                 Some(&mut cores),
                 |frame| Frame { stamp: 17, cfg: 23, ..frame },
-                move |frame| Box::new(move || *oos_hal::sync::lock(&done) = Some(frame)),
             );
     assert_eq!(cores.pattern((1, 0, p.rate)), oracle.pattern((1, 0, p.rate)), "learning includes an ineligible frame");
     let drawn = if frame0_drop { 1 } else { 2 };
-    let newest = newest(&pipe, frames, (replacement, drawn), &delivered, &want);
+    let newest = newest(&pipe, frames, (replacement, drawn), &want);
     assert_eq!((newest.seq, newest.stamp, newest.cfg), (3, 17, 23));
     assert_eq!(newest.ch, expected_newest.ch);
     accounted(counters, replacement, frame0_drop);
@@ -118,22 +106,24 @@ fn accounted(counters: &crate::drawpipe::Counters, replacement: bool, frame0_dro
         .contains(&format!("lost.buffer={}", if replacement { 0 } else { 2 - u64::from(frame0_drop) })));
 }
 
-fn newest(
-    pipe: &Pipe,
-    frames: Vec<Frame>,
-    (replacement, drawn): (bool, usize),
-    delivered: &Mutex<Option<Frame>>,
-    want: &Phosphor,
-) -> Frame {
+fn newest(pipe: &Pipe, frames: Vec<Frame>, (replacement, drawn): (bool, usize), want: &Phosphor) -> Frame {
     if replacement {
         assert!(frames.is_empty());
         finish(pipe);
         let mut got = Phosphor::new(128, 64);
-        assert_eq!(pipe.merge(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, drawn as u64);
-        assert_eq!(got.map, want.map, "frame 0 left out, or drawn with the pre-frame pattern");
-        oos_hal::sync::lock(delivered).take().unwrap()
+        let accepted = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        assert_eq!(accepted.frames, drawn as u64 + 1);
+        let newest = accepted.waveform.unwrap();
+        let mut expected = Phosphor::new(128, 64);
+        expected.map.clone_from(&want.map);
+        let mut model = Model::default();
+        for (c, ch) in model.ch.iter_mut().enumerate() {
+            ch.on = c == 0;
+        }
+        crate::drawpipe::draw_frame(&mut expected, &model, &newest, Interp::Exact, None);
+        assert_eq!(got.map, expected.map, "the complete batch includes its corrected newest frame");
+        std::sync::Arc::try_unwrap(newest).ok().unwrap()
     } else {
-        assert!(oos_hal::sync::lock(delivered).is_none());
         assert_eq!(frames.len(), 1);
         frames.into_iter().next().unwrap()
     }

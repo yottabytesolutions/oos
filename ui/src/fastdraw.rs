@@ -221,11 +221,6 @@ pub struct Map {
     pub y0: f32,
 }
 
-/// Adds `w` to every pixel of `map` (w x h, row-major) the trace covers: per column the span of its samples, joined
-/// to the last sample of the column before (so steep edges stay connected). Needs at least one sample per column
-/// (`x_per_sample <= 1`). The fast path draws the same through `spans` and `add_spans`, band by band; this is the
-/// whole map at once (tests, benchmark).
-
 /// One channel of a frame as `deposit` puts it on the screen: for each column from `c0` on, the first and last row its
 /// samples cover (first > last: nothing in that column). Worked out once per frame; the rows are then added band by
 /// band (`add_spans`), so even one channel is drawn on several cores.
@@ -235,14 +230,7 @@ pub struct Spans {
     pub rows: Vec<(i16, i16)>,
 }
 
-/// The `Spans` of `v` on a `w` x `h` map.
-pub fn spans<S: Samples + ?Sized>(w: usize, h: usize, v: &S, m: &Map) -> Spans {
-    let mut out = Spans::default();
-    spans_into(w, h, v, m, &mut out);
-    out
-}
-
-fn spans_into<S: Samples + ?Sized>(w: usize, h: usize, v: &S, m: &Map, out: &mut Spans) {
+pub(crate) fn spans_into<S: Samples + ?Sized>(w: usize, h: usize, v: &S, m: &Map, out: &mut Spans) {
     out.c0 = 0;
     out.rows.clear();
     if v.len() == 0 || m.x_per_sample <= 0.0 || w == 0 || h == 0 {
@@ -282,25 +270,10 @@ fn spans_into<S: Samples + ?Sized>(w: usize, h: usize, v: &S, m: &Map, out: &mut
     }
 }
 
-#[cfg(test)]
 /// Adds `wgt` to the pixels of `s` that fall in `band`: rows `r_lo` .. `r_lo + band.len() / w` of a map `w` wide.
+#[cfg(test)]
 pub fn add_spans(band: &mut [u16], w: usize, r_lo: usize, s: &Spans, wgt: u16) {
-    let r_hi = r_lo + band.len() / w;
-    if r_hi == r_lo {
-        return;
-    }
-    for (k, &(a, b)) in s.rows.iter().enumerate() {
-        // rows are never negative (`spans` clamps them); an empty column has a > b
-        let (a, b) = ((a as usize).max(r_lo), (b as usize).min(r_hi - 1));
-        if a > b {
-            continue;
-        }
-        let mut i = (a - r_lo) * w + s.c0 + k;
-        for _ in a..=b {
-            band[i] = band[i].saturating_add(wgt);
-            i += w;
-        }
-    }
+    crate::picture::deposit::kernel::paint_spans(band, w, r_lo, s, wgt);
 }
 
 /// The fast path collects a screen's frames as differences: a span of rows r0..=r1 with weight w is +w at r0 and -w
@@ -361,30 +334,20 @@ pub(crate) fn deposit_dots_t<S: Samples + ?Sized>(band: &mut [u16], h: usize, c_
 /// row-major `map` (`w` x `h`) and clears them: down each band a row at a time, its columns side by side (vector
 /// instructions), rows with nothing running pass the map by.
 pub fn fold_t(map: &mut [u16], acc: &mut [u16], w: usize, h: usize, band_cols: usize, rows: std::ops::Range<usize>) {
-    let hp = h + 1;
-    // the entry below the last row touched holds its -w
-    let (r_lo, r_end) = (rows.start.min(h), (rows.end.min(h) + 1).min(hp));
-    if r_lo >= r_end || band_cols == 0 {
+    let mut run = vec![0u16; band_cols.min(w)];
+    if band_cols == 0 {
         return;
     }
-    let mut run = vec![0u16; band_cols.min(w)];
-    for (b, band) in acc.chunks_mut(band_cols * hp).enumerate() {
-        let (c_lo, bw) = (b * band_cols, band.len() / hp);
-        let run = &mut run[..bw];
-        run.fill(0);
-        for r in r_lo..r_end {
-            let mut o = 0u16;
-            for (v, x) in run.iter_mut().zip(band[r * bw..][..bw].iter_mut()) {
-                *v = v.wrapping_add(*x);
-                *x = 0;
-                o |= *v;
-            }
-            if o != 0 && r < h {
-                for (x, &v) in map[r * w + c_lo..][..bw].iter_mut().zip(run.iter()) {
-                    *x = x.saturating_add(v);
-                }
-            }
-        }
+    for (b, band) in acc.chunks_mut(band_cols * (h + 1)).enumerate() {
+        let bw = band.len() / (h + 1);
+        crate::picture::deposit::kernel::fold_band(
+            map,
+            band,
+            &mut run[..bw],
+            (w, h, b * band_cols),
+            rows.clone(),
+            true,
+        );
     }
 }
 

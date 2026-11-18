@@ -20074,7 +20074,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes/Off-4ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=Off;channels=4;tdiv=200 us;measurements=off;settings=;recipe=baseline",
@@ -20194,7 +20194,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes/On-1ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=1;tdiv=200 us;measurements=off;settings=;recipe=baseline",
@@ -20314,7 +20314,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes/On-2ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=2;tdiv=200 us;measurements=off;settings=;recipe=baseline",
@@ -20434,7 +20434,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes/On-4ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=4;tdiv=200 us;measurements=off;settings=;recipe=baseline",
@@ -20794,7 +20794,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes/Auto-4ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=Auto;channels=4;tdiv=200 us;measurements=off;settings=;recipe=baseline",
@@ -20894,7 +20894,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/rate-codes/Off-1ch-200ns/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=Off;channels=1;tdiv=200 ns;measurements=off;settings=;recipe=baseline",
@@ -23294,7 +23294,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-Off-500ms/Off-4ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=codes;dots=Off;channels=4;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = Off;;recipe=later",
@@ -23314,7 +23314,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-Off-500ms/Off-4ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=Off;channels=4;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = Off;;recipe=later",
@@ -23334,7 +23334,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-On-500ms/Off-4ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=codes;dots=Off;channels=4;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = On;;recipe=later",
@@ -23354,7 +23354,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-On-500ms/Off-4ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=Off;channels=4;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = On;;recipe=later",
@@ -23374,7 +23374,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-Off-500ms/On-1ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=1;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = Off;;recipe=later",
@@ -23394,7 +23394,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-Off-500ms/On-1ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=1;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = Off;;recipe=later",
@@ -23414,7 +23414,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-On-500ms/On-1ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=1;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = On;;recipe=later",
@@ -23434,7 +23434,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-On-500ms/On-1ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=1;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = On;;recipe=later",
@@ -23454,7 +23454,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-Off-500ms/On-4ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=4;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = Off;;recipe=later",
@@ -23474,7 +23474,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-Off-500ms/On-4ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=4;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = Off;;recipe=later",
@@ -23494,7 +23494,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-On-500ms/On-4ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=4;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = On;;recipe=later",
@@ -23514,7 +23514,7 @@
       "width": 1024
     },
     {
-      "decode_route": "decoded",
+      "decode_route": "codes",
       "height": 600,
       "path": "batch/codes-grade-On-500ms/On-4ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=codes;dots=On;channels=4;tdiv=200 us;measurements=off;settings=set Persistence = 500 ms;set Colour grade = On;;recipe=later",

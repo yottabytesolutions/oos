@@ -2884,6 +2884,7 @@ impl Ui {
             // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
             let deep_raw = crate::deepmeas::want(&self.m).is_some();
             let mut raw_rec: Option<Record> = None;
+            let mut deposited_newest = None;
             // fast display path (fastdraw.rs): every queued frame but the newest straight into the phosphor map
             if fast {
                 let t0 = std::time::Instant::now();
@@ -2921,7 +2922,8 @@ impl Ui {
                 // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
                 if let Some(p) = crate::drawpipe::pipe(&sw) {
                     let t1 = std::time::Instant::now();
-                    let d = p.merge(&mut self.ph, &mut clear_pending, &mut self.fast_edges, &mut self.fast_off);
+                    let d = p.accept(&mut self.ph, &mut clear_pending, &mut self.fast_edges, &mut self.fast_off);
+                    deposited_newest = deep_draw::newest(self, d.waveform);
                     if d.triggered > 0 {
                         self.m.status = TrigStatus::Triggered;
                     }
@@ -3005,65 +3007,11 @@ impl Ui {
                             self.phz.clear();
                             clear_pending = false;
                         }
-                        let mainv = (self.m.time_per_div(), self.m.delay);
-                        let zv = (tscales()[self.m.zscale], self.m.zdelay);
-                        let zoom_model = self.zoom_display_model();
-                        let detail = self.captured_record_view(&rec, zv);
                         let t1 = std::time::Instant::now();
-                        let zw = self.z_weights(&rec);
-                        // the fast path draws the other frames of the picture from their samples (`draw_frame`): the
-                        // newest one the same way, or it adds about 3.6 times their counts per pixel (3600 record points
-                        // against one span per column) and the grading of the picture follows how many of each it holds:
-                        // the trace flickered with the batch sizes (docs/fork/flicker.md)
-                        // a deep raw window takes the record path in `draw_frame` (flicker.md): that path is this record,
-                        // already made by `Source::acquire`, so it is drawn below instead of made once more (25 to 50 ms
-                        // on the host for a 10 to 12 M-point window)
-                        let frame = rec
-                            .raw
-                            .as_ref()
-                            .filter(|r| self.fast_ok() && !crate::deepmeas::deep_raw_frame(&r.frame))
-                            .map(|r| r.frame.clone());
-                        if let Some(r) = rec.raw.as_ref() {
-                            crate::pacing::drawn(r.frame.cfg, 1);
-                        }
-                        if let Some(f) = frame {
-                            deep_draw::draw(self, &f, &rec, sw.interp, drawing_input);
-                            composition.deposit += 1;
-                        } else {
-                            composition.record += 1;
-                            for c in 0..NCH {
-                                if self.m.ch[c].on && !rec.ch[c].is_empty() && self.m.z_src != Some(c) {
-                                    let shifted_main = self.deskew_channel_view(&rec, c, mainv);
-                                    let main = shifted_main.as_deref().unwrap_or(&rec);
-                                    self.ph.draw_ex(
-                                        c,
-                                        &self.m,
-                                        mainv,
-                                        main.t0 - self.m.deskew_ch[c],
-                                        main.dt,
-                                        &main.ch[c],
-                                        24,
-                                        if shifted_main.is_some() { None } else { zw.as_deref() },
-                                        main.pairs,
-                                    );
-                                    if self.m.zoom {
-                                        let shifted = self.deskew_channel_view(&rec, c, zv);
-                                        let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
-                                        self.phz.draw_ex(
-                                            c,
-                                            &zoom_model,
-                                            zv,
-                                            z.t0 - self.m.deskew_ch[c],
-                                            z.dt,
-                                            &z.ch[c],
-                                            24,
-                                            if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() },
-                                            z.pairs,
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                        let deposited = rec.raw.as_ref().is_some_and(|r| Some(r.frame.seq) == deposited_newest);
+                        let (dep, records) = deep_draw::record(self, &rec, sw.interp, drawing_input, deposited);
+                        composition.deposit += dep;
+                        composition.record += records;
                         td += t1.elapsed().as_secs_f32() * 1000.0;
                         if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
                             self.history.pop_front();
@@ -3078,7 +3026,7 @@ impl Ui {
                         }
                         self.last[0] = Some(rec);
                         self.cleared = false;
-                        got += 1;
+                        got += usize::from(!deposited);
                         self.records += 1;
                         if self.m.segments > 0 {
                             self.seg_n += 1;

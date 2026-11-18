@@ -46,15 +46,26 @@ pub(crate) struct FastPlan {
 }
 
 impl FastPlan {
+    pub(crate) fn raw(&self) -> Option<(&Projection, &RawTrace)> {
+        match &self.route {
+            FastRoute::Raw(trace) => Some((&self.projection, trace)),
+            FastRoute::Rec(_) => None,
+        }
+    }
+
+    pub(crate) fn into_raw(self) -> Option<RawTrace> {
+        match self.route {
+            FastRoute::Raw(trace) => Some(trace),
+            FastRoute::Rec(_) => None,
+        }
+    }
+
     pub(crate) fn fold(&self, c: usize) -> Option<crate::fastdraw::Fold> {
         self.fold[c]
     }
 
     pub(crate) fn outcome(&self) -> Option<&kernel::TrigOutcome> {
-        match &self.route {
-            FastRoute::Raw(p) => Some(&p.outcome),
-            FastRoute::Rec(_) => None,
-        }
+        self.raw().map(|(_, trace)| &trace.outcome)
     }
 
     pub(crate) fn rows(&self, c: usize) -> (usize, usize) {
@@ -96,6 +107,23 @@ pub(crate) struct FastFrame {
     pub(crate) triggered: bool,
 }
 
+impl FastFrame {
+    pub(crate) fn record(
+        rec: crate::wave::Record,
+        projection: Projection,
+        fold: [Option<crate::fastdraw::Fold>; NCH],
+    ) -> Self {
+        Self { triggered: rec.triggered, plan: FastPlan { route: FastRoute::Rec(rec), fold, projection } }
+    }
+
+    fn placed(Placed { projection, trace, fold }: Placed, meta: &FrameTiming) -> Self {
+        Self {
+            triggered: trace.outcome.triggered(meta),
+            plan: FastPlan { route: FastRoute::Raw(trace), projection, fold },
+        }
+    }
+}
+
 pub(crate) fn fast_plan(
     m: &Model,
     w: usize,
@@ -112,26 +140,26 @@ pub(crate) fn fast_plan(
         let fold = std::array::from_fn(|c| {
             (fold[c] && m.ch[c].on).then(|| crate::fastdraw::Fold::of(rec.ch[c].as_slice(), 0..rec.ch[c].len()))
         });
-        let triggered = rec.triggered;
-        return FastFrame { plan: FastPlan { route: FastRoute::Rec(rec), fold, projection: proj }, triggered };
+        return FastFrame::record(rec, proj, fold);
     }
     let meta = frame_timing(m, f);
-    let Placed { projection, trace, fold } = kernel::place(
+    let placed = kernel::place(
         std::array::from_fn(|c| SamplesRef::Volts(&f.ch[c])),
         &meta,
         &proj,
         crate::board::sw_trig_level(m, f),
         fold,
     );
-    FastFrame {
-        triggered: trace.outcome.triggered(&meta),
-        plan: FastPlan { route: FastRoute::Raw(trace), projection, fold },
-    }
+    FastFrame::placed(placed, &meta)
 }
 
 /// Channel `c` of a placed frame into a band of its collected differences (`fastdraw::diff_span`): the columns
 /// `c_lo ..` of a map `w` x `h`, `h + 1` rows of them.
 pub(crate) fn add_frame_band(c: usize, band: &mut [u16], c_lo: usize, f: &crate::board::Frame, p: &FastPlan) {
+    add_sample_band(c, band, c_lo, SamplesRef::Volts(&f.ch[c]), p);
+}
+
+pub(crate) fn add_sample_band(c: usize, band: &mut [u16], c_lo: usize, samples: SamplesRef<'_>, p: &FastPlan) {
     match &p.route {
         FastRoute::Rec(rec) => {
             let bw = band.len() / (p.projection.rows + 1);
@@ -140,7 +168,7 @@ pub(crate) fn add_frame_band(c: usize, band: &mut [u16], c_lo: usize, f: &crate:
             });
         }
         FastRoute::Raw(trace) => {
-            kernel::add_placed_band(c, band, c_lo, &SamplesRef::Volts(&f.ch[c]), &p.projection, trace);
+            kernel::add_placed_band(c, band, c_lo, &samples, &p.projection, trace);
         }
     }
 }
@@ -170,4 +198,49 @@ pub(crate) fn fast_deposit(c: usize, band: &mut [u16], r_lo: usize, f: &crate::b
             }
         },
     }
+}
+
+/// Frozen legacy search policy shared by the Batch pool and the newest-record adapter.
+pub(crate) fn batch_plan(
+    m: &Model,
+    (w, h): (usize, usize),
+    f: &crate::board::Frame,
+    words: Option<(&[u8], crate::drawpipe::CodeLayout)>,
+    previous: Option<RawTrace>,
+) -> FastFrame {
+    let spacing = f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64;
+    let pairs = crate::compress::live(f) && spacing <= 0.5;
+    let (bytes, codes) = words.map_or((&[][..], None), |(bytes, layout)| (bytes, Some(layout)));
+    use crate::fastdraw::Samples;
+    let samples = std::array::from_fn(|c| match codes {
+        Some(layout) => kernel::SamplesRef::Codes(layout.channel(bytes, c)),
+        None => kernel::SamplesRef::Volts(&f.ch[c]),
+    });
+    let meta = frame_timing(m, f);
+    let proj = projection(m, w, h, spacing);
+    let src = &samples[m.trig_src];
+    let level = crate::board::sw_trig_level_of(m, src.len(), |i| src.at(i));
+    let col =
+        if pairs { crate::compress::smooth_len(spacing) } else { (1.0 / spacing).floor().clamp(1.0, 256.0) as usize };
+    let t = meta.trigger;
+    let (ti, outcome) = kernel::refine(&meta, col, || {
+        let half = (proj.time_per_div * HDIV as f64 / 2.0 / f.dt) as usize;
+        if near_only(m, f) {
+            crate::trignear::edge_near(src, 0, src.len(), f.pre, level, t.hysteresis, t.rising, t.either, half, col)
+        } else {
+            crate::trignear::edge_smooth_near(src, f.pre, level, t.hysteresis, t.rising, t.either, half, col, |_| true)
+        }
+    });
+    let mut placed = kernel::place_at(samples, &meta, &proj, [false; NCH], ti, outcome, previous);
+    if pairs {
+        for c in 0..NCH {
+            placed.trace.spans[c] =
+                kernel::raw_map(&proj, c, ti).map(|map| crate::compress::spans(w, h, &f.ch[c], &map, proj.dots));
+        }
+    }
+    FastFrame::placed(placed, &meta)
+}
+
+fn near_only(m: &Model, f: &crate::board::Frame) -> bool {
+    !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject) || (f.pre_exact && m.trig_type == TrigType::Edge)
 }

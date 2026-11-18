@@ -1569,14 +1569,10 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
         let mut paused = false;
         // read-out buffers made so far: this one, and up to `POOL` in all lent to the deposit workers in batch mode
         let mut pool_made = 1usize;
-        // this thread's share of the deposit work while it waits (drawpipe.rs)
-        let mut helper = crate::drawpipe::Helper::default();
         // ring-fill time of the batches (pacing.rs)
         let mut fill = crate::pacing::Fill::default();
         // frames per batch at most (pacing.rs)
         let mut cap = crate::pacing::FrameCap::default();
-        // time this thread takes to draw one frame as a helper (smoothed)
-        let mut help_cost = std::time::Duration::from_micros(500);
         // the batch armed ahead (`prearm_on`) and the SINGLE stamp it was armed under
         let mut armed: Option<(Settings, (u64, u64))> = None;
         // the captured pair whose SINGLE batch brought its frame (`single_wants_more`)
@@ -2120,27 +2116,14 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 let g = crate::perfguard::deep::acq_lock(&out);
                 (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) || (g.acquisition.identity().gen(), g.acquisition.identity().epoch()) != pair || g.acquisition.route() != route || g.force || g.stop_view.is_some()
             };
-            let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing);
             let t_batch = std::time::Instant::now();
             // the ring fills for at most `fill_ms` after the first frame: the batch is read and drawn just before a
             // screen step (pacing.rs)
             let fill_ms = fill.plan(t_batch, crate::pacing::next_step_after, crate::pacing::ready_ms());
-            // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
-            // the frame count; only one that ends before the fill does (by its usual time), so the read is not late
             let fill_from = std::cell::Cell::new(None);
             let idle = || {
-                let now = std::time::Instant::now();
-                let from = fill_from.get().unwrap_or(now);
-                fill_from.set(Some(from));
-                if now + help_cost >= from + std::time::Duration::from_millis(fill_ms) {
-                    return false;
-                }
-                let drew = pipe.is_some_and(|x| x.help(&mut helper));
-                if drew {
-                    help_cost += (now.elapsed().saturating_sub(help_cost)) / 4;
-                    help_cost -= help_cost.saturating_sub(now.elapsed()) / 4;
-                }
-                drew
+                fill_from.set(Some(fill_from.get().unwrap_or_else(std::time::Instant::now)));
+                false
             };
             // the end of the ring fill (hal logs the count then, before the read): splits the batch for pacing.rs
             let mut fill_end = None;
@@ -2161,9 +2144,6 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 let pre_ms = fill_from.get().or(fill_end).map_or(batch_ms - read_ms, ms);
                 fill.done(pre_ms + read_ms);
                 cap.done(*c, read_ms, pre_ms, uncapped, switches.board.prearm && prearm_keeps_replay(&b, &p, None));
-            }
-            if let Some(x) = pipe {
-                x.help_done(&mut helper);
             }
             match got {
                 Ok(count) => {
@@ -2332,14 +2312,13 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             oos_hal::dho::bus::DmaBuf::new()
                         }));
                         let readout = batch::Readout::new(pipe, (&b, &p), (fb, avail, switches.board.frame0_drop), (n, switches.board.header_probe, raw_frame), identity);
-                        let (o, applied_mode) = (out.clone(), b.mode);
                         readout.dispatch(&mut dma, next, match_cores.then_some(&mut cores), |newest| {
                             let mut newest = Frame { stamp, cfg: want_gen, ..newest };
                             if let Some(w) = la_words.take() {
                                 newest.la = Some(la_record(w, &b, &p));
                             }
                             newest
-                        }, move |newest| Box::new(move || super::publication::push_frames(&o, vec![newest], applied_mode)))
+                        })
                     } else {
                         // frame 0 of a batch is the frame the FPGA held across the stop, read-out and arm: recorded
                         // before this arm, sometimes joined with older memory (a stray trace; issue #5, mj1911). With

@@ -530,15 +530,15 @@ mod auto_timeout {
             ui.step(0.03125);
             assert_eq!((ui.records, ui.wfm_total), (0, 0));
             assert!(lock(shared).queue.is_empty());
-            assert_eq!(pipe.merge(map, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
+            assert_eq!(pipe.accept(map, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
             assert!(matches!(delivered.try_recv(), Err(mpsc::TryRecvError::Empty)));
         }
     }
 
     fn assert_picture(worker_map: &Phosphor, ui: &Ui, reference: &Ui, frames: usize) {
         for c in 0..crate::model::NCH {
-            let combined: Vec<_> = worker_map.map[c].iter().zip(&ui.ph.map[c]).map(|(a, b)| a + b).collect();
-            assert_eq!(combined, reference.ph.map[c], "{} frames: CH{}", frames, c + 1);
+            assert_eq!(worker_map.map[c], reference.ph.map[c], "{} frames: CH{}", frames, c + 1);
+            assert!(ui.last[0].is_some(), "the newest waveform reaches record readers");
         }
     }
 
@@ -564,35 +564,33 @@ mod auto_timeout {
         pipe.set_view(Some(&ui.m), ui.ph.w, ui.ph.h, sw.interp);
         let mut worker_map = Phosphor::new(ui.ph.w, ui.ph.h);
         let (delivered_tx, delivered) = mpsc::channel();
-        let destination = shared.clone();
         pipe.set_identity(crate::ui::change::acquisition::identity(&ui));
         pipe.feed_with(
             Box::new(batch.into_bytes()),
             fb,
-            0..frames - 1,
+            0..frames,
             crate::ui::change::acquisition::identity(&ui),
             decode,
             None,
-            Box::new(move || {
-                let seq = newest.seq;
-                deliver(&destination, newest, false);
-                delivered_tx.send(seq).unwrap();
-            }),
+            Some(Arc::new(newest)),
         );
         entered.recv_timeout(HANG_LIMIT).expect("worker reached its first decode");
         assert_backlog(&pipe, &mut ui, &shared, &mut worker_map, &delivered);
         release.send(()).unwrap();
         let _returned = drawpipe::host::finish_batch(&pipe, 1).unwrap();
         assert!(delivered.try_recv().is_err(), "buffer return alone does not deliver the newest frame");
-        let merged = pipe.merge(&mut worker_map, &mut true, &mut [0; 4], &mut (0.0, 0.0));
+        let merged = pipe.accept(&mut worker_map, &mut true, &mut [0; 4], &mut (0.0, 0.0));
+        let newest = merged.waveform.as_ref().unwrap();
+        deliver(&shared, (**newest).clone(), false);
+        delivered_tx.send(newest.seq).unwrap();
         assert_eq!(delivered.recv_timeout(HANG_LIMIT).unwrap(), frames as u64);
         ui.step(0.03125);
-        assert_eq!((merged.frames, ui.records, ui.wfm_total), ((frames - 1) as u64, 1, 1));
+        assert_eq!((merged.frames, ui.records, ui.wfm_total), (frames as u64, 1, 1));
         assert_eq!(ui.m.status, TrigStatus::Auto);
         assert!(lock(&shared).queue.is_empty());
         assert!(matches!(ui.src, Source::Hw { seen, .. } if seen == frames as u64));
         assert_picture(&worker_map, &ui, &reference, frames);
-        assert_eq!(pipe.merge(&mut worker_map, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
+        assert_eq!(pipe.accept(&mut worker_map, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
         ui.step(0.03125);
         assert_eq!((ui.records, ui.wfm_total, counters.read().2), (1, 1, 0));
         assert!(delivered.try_recv().is_err(), "delivered exactly once");

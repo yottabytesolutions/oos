@@ -12,7 +12,6 @@ use crate::system::test_allocator::Counting;
 #[global_allocator]
 static HEAP: Counting = Counting::new();
 mod counters;
-mod memory;
 mod perf;
 
 struct Route {
@@ -73,20 +72,7 @@ impl Route {
         let bytes = if let Some(pipe) = pipe {
             let newest = tag(batch.newest(id.epoch()));
             let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
-            let shared = shared.clone();
-            pipe.feed_with(
-                batch.into_bytes().into(),
-                fb,
-                0..frames - 1,
-                id,
-                decode,
-                codes,
-                Box::new(move || {
-                    let mut g = lock(&shared);
-                    g.frame = newest.clone();
-                    g.queue.push_back(newest);
-                }),
-            );
+            pipe.feed_with(batch.into_bytes().into(), fb, 0..frames, id, decode, codes, Some(newest));
             drawpipe::host::finish_batch(pipe, 1).unwrap()
         } else {
             let mut g = lock(shared);

@@ -110,6 +110,14 @@ Retain the current-identity waveform when a mapping or layout change rejects the
 Keep the F2 paths and reserve `ui/src/drawpipe/shutdown.rs` for the reset. Run debug and optimized UI tests
 and the fast gate. The coordinator retains the hardware hold.
 
+PR #224 host performance follow-up in the existing F2 paths.
+Compare the shipping-profile compressed-frame guard serially on published F2 and its F1 parent.
+Drain the worker fixture's bounded deposit slot and remove redundant frame placement if confirmed by the comparison.
+Retain full host gate evidence for the coordinator before the combined unit trial.
+
+PR #224 intake review follow-up: return the newest waveform to the existing record path when the coordinator
+rejects a batch. Test full and disconnected intake, buffer return and unclaimed-record accounting.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -117,6 +125,38 @@ and the fast gate. The coordinator retains the hardware hold.
   All production source, other budgets, unit acceptance and sampler/runner remain identical.
   No acceptance or review state changed. Native timing awaits experiment-supervisor release.
   The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
+
+- 2026-11-18: PR #224 code-quality review uses one pool operation and one drawing trigger policy, reuses pair
+  span buffers, and submits only active placement slots. Deposit handoff returns rejected work by value.
+  The acquisition fill timings still feed pacing and cap accounting. Production delta is -11 UI Rust lines.
+  Fast gate and Clippy passed on the host. UI nextest passed 1,764 tests in each profile, with 62 skipped in each.
+  The debug run also saw one intermittent allocation census failure, which passed in isolation.
+  The shipping-profile codes guard measures the production worker against Frames mode and passed all five rows.
+  The worst best-of-rounds and p99 ratios were 0.739 and 0.843. Renewed review and DHO804 acceptance remain open.
+- 2026-11-18: PR #224 intake rejection returns the newest waveform through existing record publication and
+  counts only its undrawn neighbours as unclaimed. The acquisition regression reproduced the missing waveform
+  before the fix. Host tests cover full and disconnected intake for both decoder paths and buffer return.
+  Fast gate passed all 12 selected steps. UI nextest passed 1,767 debug and 1,766 optimized tests, with 62 skipped
+  in each profile. Production delta is +11 UI Rust lines. Renewed review and DHO804 acceptance remain open.
+
+- 2026-11-18: PR #224 host performance follow-up on published F2 `e13efdb0`, stacked on exact F1 `113ccb97`.
+  Three alternating shipping-profile guard runs on macOS arm64 measured best raw/compressed times of
+  32.556/12.098, 32.066/12.863 and 30.571/12.065 us on F1 (0.372, 0.401, 0.395), and
+  29.523/17.111, 28.903/16.705 and 31.798/18.658 us on F2 (0.580, 0.578, 0.587).
+  F2's shared placement built raw spans and then replaced them with pair spans. Select the pair builder
+  directly. Published F2's worker guard reached the
+  120 s buffer-return timeout. The fixture now takes and recycles each published deposit after that event,
+  checks its record count and keeps the UI fold outside the timed work. The first full run measured
+  30.768/12.850 us raw/compressed (0.418) after the fix, and the three guarded worker rows passed at
+  1.27, 1.00 and 0.71. The fast gate passed all 12 steps. Production Rust LOC delta is zero.
+  The first full gate failed an experimental allocation assertion, Python socket pacing, sparse interpolation and
+  the diagnostic-counter ratio. The existing pixel and timing tests cover pair placement.
+  The Python case passed in isolation. Serial sparse guards passed on F1, published F2 and the candidate;
+  the row that failed at 1.15 in the first gate measured 1.07, 1.06 and 1.07 respectively in isolation.
+  The second run passed every performance guard (compressed ratio 0.417) and Python tests. Its debug,
+  optimized and coverage test steps still included the experimental allocation probe, since removed.
+  The optimized run also observed an intermittent allocation census failure.
+  The coordinator retains the combined DHO804 trial and merge hold.
 
 - 2026-11-18: PR #224 review follow-up on `a6ff1fe7`. The UI redraws the delivered waveform under the current
   mapping when the worker planes were rejected. The regression failed before the fix and passed after it.

@@ -231,16 +231,22 @@ pub(crate) fn batch_plan(
             crate::trignear::edge_smooth_near(src, f.pre, level, t.hysteresis, t.rising, t.either, half, col, |_| true)
         }
     });
-    let mut placed = kernel::place_at(samples, &meta, &proj, [false; NCH], ti, outcome, previous);
-    if pairs {
-        for c in 0..NCH {
-            placed.trace.spans[c] =
-                kernel::raw_map(&proj, c, ti).map(|map| crate::compress::spans(w, h, &f.ch[c], &map, proj.dots));
-        }
+    if !pairs {
+        return FastFrame::placed(kernel::place_at(samples, &meta, &proj, [false; NCH], ti, outcome, previous), &meta);
     }
-    FastFrame::placed(placed, &meta)
+    let mut reused = previous.map_or_else(|| std::array::from_fn(|_| None), |trace| trace.spans);
+    let spans = std::array::from_fn(|c| {
+        kernel::raw_map(&proj, c, ti).map(|map| {
+            let mut spans = reused[c].take().unwrap_or_default();
+            crate::compress::spans_into(w, h, &f.ch[c], &map, proj.dots, &mut spans);
+            spans
+        })
+    });
+    let trace = RawTrace { trigger_at: ti, outcome, spans };
+    FastFrame::placed(Placed { projection: proj, trace, fold: [None; NCH] }, &meta)
 }
 
+// AC and LF reject hide the comparator's signal from software. An exact edge trigger is already at `pre`.
 fn near_only(m: &Model, f: &crate::board::Frame) -> bool {
     !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject) || (f.pre_exact && m.trig_type == TrigType::Edge)
 }

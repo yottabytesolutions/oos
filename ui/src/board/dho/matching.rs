@@ -189,7 +189,7 @@ pub(super) fn feed(
     settings: (Settings, hz::Params, super::switches::HeaderProbe),
     matched: Option<BatchMatch>,
     newest: Option<Arc<Frame>>,
-) {
+) -> Option<Arc<Frame>> {
     let (raw, fb, frames) = raw;
     let (s, p, probe) = settings;
     match matched {
@@ -200,7 +200,7 @@ pub(super) fn feed(
                 Arc::new(move |bytes, f| super::hw::codes_into(bytes, &cs, &cp, 0, f));
             let decode: crate::drawpipe::DecodeInto =
                 Arc::new(move |bytes, f| super::hw::decode_into_probed(bytes, &s, &p, 0, f, probe));
-            pipe.feed_with(raw, fb, frames, identity, decode, Some(codes), newest);
+            pipe.feed_with(raw, fb, frames, identity, decode, Some(codes), newest)
         }
     }
 }

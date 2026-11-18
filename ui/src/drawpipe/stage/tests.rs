@@ -46,7 +46,7 @@ fn measure_batch(m: &Model, channels: usize) {
         assert_eq!(deposit.planes.iter().map(|b| b.plane.d.len()).sum::<usize>(), channels * w * (h + 1));
         assert!(deposit.planes.iter().all(|b| m.ch[b.channel].on));
         draw(&batch, &view, &mut deposit, &mut pool, &mut arena, &mut jobs, &mut sampler);
-        assert!(pipe.slot.put(deposit).is_none());
+        assert!(pipe.slot.put(deposit).is_ok());
         drop(batch);
         bytes = Some(host::finish_batch(&pipe, 0).unwrap());
         let got = pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));

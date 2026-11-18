@@ -64,10 +64,6 @@ impl<J: Send + 'static, S: Default + Send + 'static> Pool<J, S> {
             jobs.append(shard);
         }
     }
-
-    pub(crate) fn each(&mut self, jobs: &mut Vec<J>) {
-        self.map(jobs);
-    }
 }
 
 impl<J, S> Drop for Pool<J, S> {
@@ -84,11 +80,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn map_and_each_return_every_owned_job() {
+    fn map_returns_every_owned_job() {
         let mut pool = Pool::new(4, 0, |_: &mut (), value: &mut u32| *value += 1);
         let mut jobs: Vec<_> = (0..64).collect();
         pool.map(&mut jobs);
-        pool.each(&mut jobs);
+        pool.map(&mut jobs);
         jobs.sort_unstable();
         assert_eq!(jobs, (2..66).collect::<Vec<_>>());
     }

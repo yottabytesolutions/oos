@@ -50,6 +50,7 @@ impl Pipe {
     }
 
     /// Whole kept range and its newest waveform, already decoded for record readers.
+    /// Returns the waveform for the record path if the coordinator cannot queue the batch.
     #[allow(clippy::too_many_arguments)] // Buffer geometry, identity and conversion describe one ring read.
     pub fn feed_with(
         &self,
@@ -60,8 +61,8 @@ impl Pipe {
         decode: DecodeInto,
         codes: Option<CodesInto>,
         newest: Option<Arc<Frame>>,
-    ) {
-        self.submit(raw, fb, frames, (identity.epoch(), Some(identity)), decode.into(), codes, newest);
+    ) -> Option<Arc<Frame>> {
+        self.submit(raw, fb, frames, (identity.epoch(), Some(identity)), decode.into(), codes, newest).1
     }
 
     #[cfg(any(target_os = "linux", test))]
@@ -73,7 +74,7 @@ impl Pipe {
         identity: oos_core::change::Identity,
         decode: IndexedDecodeInto,
         newest: Option<Arc<Frame>>,
-    ) {
+    ) -> Option<Arc<Frame>> {
         self.submit(
             raw,
             fb,
@@ -82,7 +83,8 @@ impl Pipe {
             decoder::Decoder::Prepared(decode),
             None,
             newest,
-        );
+        )
+        .1
     }
 
     #[cfg(test)]
@@ -95,7 +97,7 @@ impl Pipe {
         decode: impl Into<decoder::Decoder>,
         codes: Option<CodesInto>,
     ) -> Arc<Batch> {
-        self.submit(raw, fb, frames, header, decode.into(), codes, None)
+        self.submit(raw, fb, frames, header, decode.into(), codes, None).0
     }
 
     #[allow(clippy::too_many_arguments)] // All arguments are immutable batch inputs.
@@ -108,11 +110,11 @@ impl Pipe {
         decode: decoder::Decoder,
         codes: Option<CodesInto>,
         newest: Option<Arc<Frame>>,
-    ) -> Arc<Batch> {
+    ) -> (Arc<Batch>, Option<Arc<Frame>>) {
         let (stamp, identity) = header;
         let first = frames.start;
         let frames = frames.end.min(raw.bytes().len().checked_div(fb).unwrap_or(0));
-        let b = Arc::new(Batch {
+        let mut b = Arc::new(Batch {
             lease: Lease { raw: Some(raw), home: self.home.clone() },
             fb,
             frames,
@@ -127,13 +129,18 @@ impl Pipe {
             fed: std::time::Instant::now(),
         });
         self.live.fetch_add(1, Ordering::Acquire);
-        let workers = oos_hal::sync::lock(&self.workers);
-        if let Some(tx) = &workers.sender {
-            if tx.try_send(Message::Batch(b.clone())).is_err() {
-                eprintln!("oos-ui: deposit intake unavailable");
+        if let Some(tx) = &oos_hal::sync::lock(&self.workers).sender {
+            if tx.try_send(Message::Batch(b.clone())).is_ok() {
+                return (b, None);
             }
+            eprintln!("oos-ui: deposit intake unavailable");
         }
-        b
+        let batch = Arc::get_mut(&mut b).expect("rejected intake did not share the batch");
+        let fallback = batch.newest.take();
+        let next = batch.next.get_mut();
+        // The record path accounts for the returned waveform.
+        *next += usize::from(fallback.is_some() && *next < batch.frames);
+        (b, fallback)
     }
 }
 

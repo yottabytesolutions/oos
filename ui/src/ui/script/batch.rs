@@ -88,7 +88,11 @@ impl BatchScript {
                 decoded.fetch_add(1, Ordering::Relaxed);
                 decode(bytes, frame);
             });
-            pipe.feed_with(Box::new(batch.into_bytes()), fb, 0..frames, identity, decode, codes, Some(newest));
+            let fallback =
+                pipe.feed_with(Box::new(batch.into_bytes()), fb, 0..frames, identity, decode, codes, Some(newest));
+            if fallback.is_some() {
+                return Err(format!("batch {}: deposit intake unavailable", self.id));
+            }
             let returned = drawpipe::host::finish_batch(pipe, self.id as u64)?;
             self.spare = Some(*returned.into_any().downcast::<ScriptBytes>().map_err(|_| "wrong scripted buffer")?);
         } else {

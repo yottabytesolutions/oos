@@ -30,14 +30,14 @@ fn old_folds_cannot_refill_current_statistics() {
         pipe.set_identity(current);
         let gen = pipe.view.lock().unwrap().gen;
         let mut phosphor = Phosphor::new(8, 8);
-        assert!(pipe.slot.put(accumulator(gen, Identity::default())).is_none());
+        assert!(pipe.slot.put(accumulator(gen, Identity::default())).is_ok());
         let stale = pipe.accept(&mut phosphor, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert!(stale.folds.is_empty(), "late folds must not refill reset statistics");
         assert_eq!(counters.losses.pipe.load(Ordering::Relaxed), u64::from(request == Request::Clear));
         assert_eq!(counters.losses.folds.load(Ordering::Relaxed), 1);
         assert_eq!(counters.losses.overflow.load(Ordering::Relaxed), 0);
         assert_eq!(stale.frames, u64::from(request == Request::StatsReset), "statistics alone retain valid pictures");
-        assert!(pipe.slot.put(accumulator(gen, current)).is_none());
+        assert!(pipe.slot.put(accumulator(gen, current)).is_ok());
         let valid = pipe.accept(&mut phosphor, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(valid.frames, 1);
         assert_eq!(valid.folds[0].1.n, 1, "valid current folds are retained");
@@ -59,7 +59,7 @@ fn rejecting_painted_planes_keeps_only_current_waveforms() {
         pipe.publish_view(&model, 8, 8, Interp::Exact, current);
         let mut deposit = accumulator(oos_hal::sync::lock(&pipe.view).gen, current);
         deposit.newest = Some(waveform.clone());
-        assert!(pipe.slot.put(deposit).is_none());
+        assert!(pipe.slot.put(deposit).is_ok());
 
         pipe.publish_view(view, view_width, 8, Interp::Exact, identity);
         let mut picture = Phosphor::new(picture_width, 8);

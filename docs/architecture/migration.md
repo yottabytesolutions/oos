@@ -259,7 +259,7 @@ scope explicitly changes behaviour. No step claims implementation or unit accept
 
 #### F2: Batch on the shared kernel
 
-- **Scope:** synchronous pool with map over record indices and each over owned tiles; one coordinator plus
+- **Scope:** synchronous pool that maps jobs over record indices and owned tiles; one coordinator plus
   three workers on four A53. Add Deposit, bounded slot and accumulator fold. Use the canonical contracts for
   [types and weights](frames.md#vocabulary-and-types), [projection identity](frames.md#projection-identity),
   [capacity](frames.md#difference-plane-capacity), [tap capacity](frames.md#tap-capacity) and

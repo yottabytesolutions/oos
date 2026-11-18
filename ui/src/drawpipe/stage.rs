@@ -16,20 +16,18 @@ struct Prepared {
     measured: bool,
 }
 
+type Arena = Arc<Vec<Option<Box<Prepared>>>>;
+
 enum Job {
     Place(Arc<Batch>, Arc<View>, Box<Prepared>),
-    Tile(Arc<Batch>, Arc<Vec<Box<Prepared>>>, DiffBand),
+    Tile(Arc<Batch>, Arena, usize, DiffBand),
 }
 
 fn run(scratch: &mut Frame, job: &mut Job) {
     match job {
-        Job::Place(b, v, p) if p.index < b.frames => place(b, v, p, scratch),
-        Job::Place(..) => {}
-        Job::Tile(b, placed, band) => {
-            for p in placed.iter() {
-                if p.index >= b.frames {
-                    continue;
-                }
+        Job::Place(b, v, p) => place(b, v, p, scratch),
+        Job::Tile(b, placed, count, band) => {
+            for p in placed[..*count].iter().flatten() {
                 let Some(plan) = &p.plan else { continue };
                 let (a, z) = plan.plan.rows(band.channel);
                 if a >= z {
@@ -105,7 +103,7 @@ pub(super) fn work(
 ) {
     let mut pool = Pool::new(n, little, run);
     let mut current: Option<Deposit> = None;
-    let mut arena = Arc::new(Vec::<Box<Prepared>>::new());
+    let mut arena = Arena::default();
     let mut jobs = Vec::new();
     let mut statistics = None;
     let mut sampler = Sampler::default();
@@ -119,14 +117,14 @@ pub(super) fn work(
             Message::Batch(b) => b,
             Message::Wake => {
                 if let Some(d) = current.take() {
-                    current = slot.put(d);
+                    current = slot.put(d).err();
                 }
                 continue;
             }
             #[cfg(test)]
             Message::Barrier(reply) => {
                 if let Some(d) = current.take() {
-                    current = slot.put(d);
+                    current = slot.put(d).err();
                 }
                 let _ = reply.send(());
                 continue;
@@ -137,7 +135,7 @@ pub(super) fn work(
         drop(state);
         let key = (v.gen, b.header.identity().map(|id| id.stats_gen()));
         if statistics != Some(key) {
-            for p in Arc::get_mut(&mut arena).expect("all previous batch jobs returned").iter_mut() {
+            for p in Arc::get_mut(&mut arena).expect("all previous batch jobs returned").iter_mut().flatten() {
                 p.folds = crate::framestats::folds_for(&v.m);
             }
             statistics = Some(key);
@@ -149,7 +147,7 @@ pub(super) fn work(
             continue;
         };
         draw(&b, &v, &mut deposit, &mut pool, &mut arena, &mut jobs, &mut sampler);
-        current = slot.put(deposit);
+        current = slot.put(deposit).err();
     }
     if let Some(deposit) = current {
         deposit.reject(oos_hal::sync::lock(view).identity, counters);
@@ -190,7 +188,7 @@ fn prepare(
     let records = b.frames.saturating_sub(b.next.load(Ordering::Relaxed)) as u64;
     if current.as_ref().is_some_and(|d| d.records + records > u16::MAX as u64 / 24) {
         let full = current.take().expect("the weight limit applies to an existing deposit");
-        if let Some(full) = slot.send(full) {
+        if let Err(full) = slot.send(full) {
             full.reject(identity, b.counters);
             return None;
         }
@@ -229,7 +227,7 @@ fn draw(
     v: &Arc<View>,
     d: &mut Deposit,
     pool: &mut Pool<Job, Frame>,
-    arena: &mut Arc<Vec<Box<Prepared>>>,
+    arena: &mut Arena,
     jobs: &mut Vec<Job>,
     sampler: &mut Sampler,
 ) {
@@ -239,41 +237,43 @@ fn draw(
     }
     let before = d.records;
     for first in (start..b.frames).step_by(64) {
-        let end = (first + 64).min(b.frames);
+        let count = (b.frames - first).min(64);
         let started = b.counters.diagnostics_enabled().then(|| sampler.start()).flatten();
         if crate::pacing::is_stale(b.header.cfg()) {
-            d.progress.stale += (end - first) as u64;
+            d.progress.stale += count as u64;
         }
         let placed = Arc::get_mut(arena).expect("all tile jobs returned their arena references");
-        while placed.len() < end - first {
-            placed.push(Box::new(Prepared {
-                index: 0,
-                samples: None,
-                plan: None,
-                codes: None,
-                folds: crate::framestats::folds_for(&v.m),
-                measured: false,
-            }));
-        }
-        for (i, mut p) in placed.drain(..).enumerate() {
-            p.index = if first + i < end { first + i } else { usize::MAX };
+        placed.resize_with(placed.len().max(count), || None);
+        for (index, slot) in (first..first + count).zip(&mut placed[..count]) {
+            let mut p = slot.take().unwrap_or_else(|| {
+                Box::new(Prepared {
+                    index,
+                    samples: None,
+                    plan: None,
+                    codes: None,
+                    folds: crate::framestats::folds_for(&v.m),
+                    measured: false,
+                })
+            });
+            p.index = index;
             jobs.push(Job::Place(b.clone(), v.clone(), p));
         }
         pool.map(jobs);
-        for job in jobs.drain(..) {
+        for (slot, job) in placed[..count].iter_mut().zip(jobs.drain(..)) {
             if let Job::Place(_, _, p) = job {
-                placed.push(p);
+                *slot = Some(p);
             }
         }
-        draw_tiles(b, &mut d.planes, pool, arena, jobs);
-        account(b, d, arena);
-        for p in Arc::get_mut(arena).expect("tile jobs released the arena").iter_mut() {
+        draw_tiles(b, &mut d.planes, pool, arena, count, jobs);
+        account(b, d, &arena[..count]);
+        let placed = Arc::get_mut(arena).expect("tile jobs released the arena");
+        for p in placed[..count].iter_mut().flatten() {
             for (_, fold) in &mut p.folds {
                 *fold = Default::default();
             }
         }
         if let Some(started) = started {
-            d.progress.sample = Some((started.elapsed(), (end - first) as u64));
+            d.progress.sample = Some((started.elapsed(), count as u64));
         }
     }
     b.next.store(b.frames, Ordering::Relaxed);
@@ -287,25 +287,23 @@ fn draw_tiles(
     b: &Arc<Batch>,
     planes: &mut Vec<DiffBand>,
     pool: &mut Pool<Job, Frame>,
-    arena: &Arc<Vec<Box<Prepared>>>,
+    arena: &Arena,
+    count: usize,
     jobs: &mut Vec<Job>,
 ) {
     for band in planes.drain(..) {
-        jobs.push(Job::Tile(b.clone(), arena.clone(), band));
+        jobs.push(Job::Tile(b.clone(), arena.clone(), count, band));
     }
-    pool.each(jobs);
+    pool.map(jobs);
     for job in jobs.drain(..) {
-        if let Job::Tile(_, _, band) = job {
+        if let Job::Tile(.., band) = job {
             planes.push(band);
         }
     }
 }
 
-fn account(b: &Batch, d: &mut Deposit, arena: &[Box<Prepared>]) {
-    for p in arena.iter() {
-        if p.index >= b.frames {
-            continue;
-        }
+fn account(b: &Batch, d: &mut Deposit, placed: &[Option<Box<Prepared>>]) {
+    for p in placed.iter().flatten() {
         let Some(plan) = &p.plan else { continue };
         d.records += 1;
         d.progress.measured += u64::from(p.measured);

@@ -146,7 +146,8 @@ pub fn ranges(v: &[f32], m: &Map, w: usize) -> Vec<Option<(f32, f32)>> {
 /// one pair per column (`x_per_sample` <= 0.5).
 #[cfg(test)]
 pub fn deposit_pairs(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16, dots: bool) {
-    let spans = spans(w, h, v, m, dots);
+    let mut spans = crate::fastdraw::Spans::default();
+    spans_into(w, h, v, m, dots, &mut spans);
     for (c, &(r0, r1)) in spans.rows.iter().enumerate() {
         for r in r0..=r1 {
             let pixel = &mut map[r as usize * w + c];
@@ -155,9 +156,11 @@ pub fn deposit_pairs(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wg
     }
 }
 
-pub(crate) fn spans(w: usize, h: usize, v: &[f32], m: &Map, dots: bool) -> crate::fastdraw::Spans {
+pub(crate) fn spans_into(w: usize, h: usize, v: &[f32], m: &Map, dots: bool, spans: &mut crate::fastdraw::Spans) {
     let cols = ranges(v, m, w);
-    let mut spans = crate::fastdraw::Spans { c0: 0, rows: vec![(1, 0); w] };
+    spans.c0 = 0;
+    spans.rows.clear();
+    spans.rows.resize(w, (1, 0));
     let hh = h as i32;
     for (c, r) in cols.iter().enumerate() {
         let Some((mut mn, mut mx)) = *r else { continue };
@@ -175,7 +178,6 @@ pub(crate) fn spans(w: usize, h: usize, v: &[f32], m: &Map, dots: bool) -> crate
             spans.rows[c] = (r0 as i16, r1 as i16);
         }
     }
-    spans
 }
 
 /// The range of the last pair whose centre lies left of column `c`.

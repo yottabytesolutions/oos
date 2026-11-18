@@ -1206,7 +1206,6 @@ pub fn codes_into(
         word: m.word,
         affine: m.affine,
         volt: oos_hal::dho::seq::volt_code,
-        volts: oos_hal::dho::seq::lane_volts_into,
     })
 }
 

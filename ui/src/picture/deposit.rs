@@ -4,7 +4,7 @@ pub(crate) mod kernel;
 mod planes;
 pub(crate) mod pool;
 pub(crate) mod standard;
-pub(crate) use planes::{DiffBand, DiffPlane};
+pub(crate) use planes::DiffBand;
 #[cfg(test)]
 mod tests;
 
@@ -36,7 +36,7 @@ impl Deposit {
             identity,
             records: 0,
             triggered: 0,
-            planes: DiffPlane::bands(size, used),
+            planes: DiffBand::bands(size, used),
             folds: Vec::new(),
             edges: [0; 4],
             off: (0.0, 0.0),
@@ -80,7 +80,7 @@ impl Deposit {
 }
 
 #[derive(Default)]
-pub(crate) struct Slot {
+struct Slot {
     closed: bool,
     reset_before: u64,
     pending: Option<Deposit>,
@@ -88,13 +88,13 @@ pub(crate) struct Slot {
 }
 
 impl Slot {
-    pub(crate) fn put(&mut self, deposit: Deposit) -> Option<Deposit> {
+    #[expect(clippy::result_large_err, reason = "Return the rejected deposit without allocating a box")]
+    fn put(&mut self, deposit: Deposit) -> Result<(), Deposit> {
         if self.pending.is_some() || deposit.predates(self.reset_before) {
-            return Some(deposit);
+            return Err(deposit);
         }
         self.pending = Some(deposit);
-        crate::pacing::ready();
-        None
+        Ok(())
     }
 }
 
@@ -112,8 +112,9 @@ impl Handoff {
         deposit
     }
 
-    pub(crate) fn put(&self, deposit: Deposit) -> Option<Deposit> {
-        oos_hal::sync::lock(&self.state).put(deposit)
+    #[expect(clippy::result_large_err, reason = "Return the rejected deposit without allocating a box")]
+    pub(crate) fn put(&self, deposit: Deposit) -> Result<(), Deposit> {
+        oos_hal::sync::lock(&self.state).put(deposit).inspect(|()| crate::pacing::ready())
     }
     pub(crate) fn recycle(&self, deposit: Deposit) {
         let mut state = oos_hal::sync::lock(&self.state);
@@ -125,15 +126,16 @@ impl Handoff {
         oos_hal::sync::lock(&self.state).spare.pop()
     }
 
-    pub(crate) fn send(&self, deposit: Deposit) -> Option<Deposit> {
+    #[expect(clippy::result_large_err, reason = "Return the rejected deposit without allocating a box")]
+    pub(crate) fn send(&self, deposit: Deposit) -> Result<(), Deposit> {
         let mut state = oos_hal::sync::lock(&self.state);
         while state.pending.is_some() && !state.closed && !deposit.predates(state.reset_before) {
             state = self.space.wait(state).unwrap_or_else(std::sync::PoisonError::into_inner);
         }
         if state.closed {
-            return Some(deposit);
+            return Err(deposit);
         }
-        state.put(deposit)
+        state.put(deposit).inspect(|()| crate::pacing::ready())
     }
 
     pub(crate) fn reset(&self, reset_before: u64) -> Option<Deposit> {

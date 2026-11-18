@@ -241,28 +241,6 @@ mod tests {
     }
 
     #[test]
-    fn codes_use_direct_drawing_and_four_channels_and_dots_fall_back() {
-        use crate::drawpipe::codes_picture;
-        use crate::model::DotsMode;
-        use crate::wave::Phosphor;
-        let mut m = Model::default();
-        let mut src = ScriptedBatchSource::new(BatchKind::Codes, 123);
-        for (channels, dots, direct) in
-            [(1, DotsMode::Off, true), (2, DotsMode::Auto, true), (4, DotsMode::Off, true), (1, DotsMode::On, false)]
-        {
-            for c in 0..4 {
-                m.ch[c].on = c < channels;
-            }
-            m.dots = dots;
-            let batch = src.next_batch(&m, &Default::default(), 3, None).unwrap();
-            let mut f = Frame::default();
-            let layout = batch.codes().unwrap()(&batch.bytes.0[..batch.fb], &mut f).unwrap();
-            let result = codes_picture(&mut Phosphor::new(970, 448), &m, &f, &batch.bytes.0[..batch.fb], &layout, None);
-            assert_eq!(result.is_some(), direct);
-        }
-    }
-
-    #[test]
     fn slow_auto_depth_supplies_bounded_records_with_captured_metadata() {
         let m = Model { tscale: crate::model::tscales().iter().position(|&t| t == 0.2).unwrap(), ..Default::default() };
         let mut src = ScriptedBatchSource::new(BatchKind::Raw, 123);

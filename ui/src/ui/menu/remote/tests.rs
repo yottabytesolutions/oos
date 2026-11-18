@@ -11,13 +11,12 @@ fn remote_service_rows_preserve_metadata_values_and_committed_choices() {
     read_rows(&u, &[(Open(MenuId::Remote), Action, "Remote services", "".into(), vec![])]);
     for on in [false, true] {
         (u.sys.remote_web, u.sys.remote_scpi, u.sys.instruments.vxi11, u.sys.instruments.hislip) = (on, on, on, on);
-        (u.sys.remote_telnet, u.sys.remote_ssh, u.sys.remote_mdns) = (on, on, on);
+        (u.sys.remote_ssh, u.sys.remote_mdns) = (on, on);
         for (item, label) in [
             (RemWeb, "Web remote"),
             (RemScpi, "SCPI"),
             (RemVxi, "VXI-11"),
             (RemHislip, "HiSLIP"),
-            (RemTelnet, "telnet"),
             (RemSsh, "SSH"),
             (RemMdns, "mDNS"),
         ] {
@@ -29,7 +28,6 @@ fn remote_service_rows_preserve_metadata_values_and_committed_choices() {
             (RemScpiInfo, "Port", "5555 (TCP)"),
             (RemVxiInfo, "Port", "111 and 9009 (LXI)"),
             (RemHislipInfo, "Port", "4880 (TCP)"),
-            (RemTelnetInfo, "Port", "23, a shell without password"),
         ] {
             read_rows(&u, &[(item, Text, label, if on { enabled } else { "off" }.into(), vec![])]);
             assert!(matches!(u.ctl(item, 1000), Ctl::Text));
@@ -90,7 +88,6 @@ fn remote_rows_keep_their_menu_order() {
             RemScpi,
             RemVxi,
             RemHislip,
-            RemTelnet,
             RemSsh,
             RemMdns,
             RemAllow,
@@ -98,7 +95,6 @@ fn remote_rows_keep_their_menu_order() {
             RemScpiInfo,
             RemVxiInfo,
             RemHislipInfo,
-            RemTelnetInfo,
             Open(MenuId::Ssh),
             RemName,
             RemFirewall

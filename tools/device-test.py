@@ -218,9 +218,8 @@ class Scope:
                 f.write(b)
 
     def shell(self, cmd, wait=2.0, reads_card=False):
-        """A read-only command on the scope's shell, the output as text: telnet (the default, as the image starts it)
-        or, with OOS_SHELL=ssh, key-authenticated SSH with strict host identity checking (OOS_SSH_IDENTITY,
-        OOS_SSH_PORT)."""
+        """A read-only command over key-authenticated SSH with strict host identity checking
+        (OOS_SSH_IDENTITY, OOS_SSH_PORT), returning output as text."""
         if self.sim:
             raise Skip("no shell in the simulation")
         self.check_lease()

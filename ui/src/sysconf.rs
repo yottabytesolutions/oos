@@ -10,7 +10,7 @@
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3  # or dhcp: the zone of the DHCP lease (option 100), else tz.fallback
 //! tz.fallback = UTC0        # with tz = dhcp, while no lease names a valid zone
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
-//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet, remote.ssh,
+//! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.ssh,
 //!                           # remote.hislip (off by default), remote.mdns)
 //! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
 //! net.name = dho924s-204527 # the scope's name on the network (host name, <name>.local); written at the first start
@@ -66,8 +66,6 @@ pub struct SysConf {
     pub remote_web: bool,
     pub remote_scpi: bool,
     pub instruments: InstrumentServices,
-    /// the telnet shell (23, read by rcS too): off by default, a shell without password when enabled
-    pub remote_telnet: bool,
     pub remote_ssh: bool,
     /// SSH login with the generated password as well as with a trusted key (`/bin/oos-ssh`)
     pub ssh_password: bool,
@@ -103,7 +101,6 @@ impl Default for SysConf {
             remote_web: true,
             remote_scpi: true,
             instruments: InstrumentServices::default(),
-            remote_telnet: false,
             remote_ssh: false,
             ssh_password: true,
             remote_mdns: true,
@@ -220,7 +217,6 @@ impl SysConf {
                 "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
                 "remote.hislip" | "remote.vxi11" => c.instruments.parse(k, v),
-                "remote.telnet" => on_off(v).map(|b| c.remote_telnet = b).is_some(),
                 "remote.ssh" => on_off(v).map(|b| c.remote_ssh = b).is_some(),
                 "ssh.password" => on_off(v).map(|b| c.ssh_password = b).is_some(),
                 "remote.mdns" => on_off(v).map(|b| c.remote_mdns = b).is_some(),
@@ -271,7 +267,6 @@ impl SysConf {
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
         s.push_str(&format!("remote.hislip = {}\n", word(self.instruments.hislip)));
         s.push_str(&format!("remote.vxi11 = {}\n", word(self.instruments.vxi11)));
-        s.push_str(&format!("remote.telnet = {}\n", word(self.remote_telnet)));
         s.push_str(&format!("remote.ssh = {}\n", word(self.remote_ssh)));
         s.push_str(&format!("ssh.password = {}\n", word(self.ssh_password)));
         s.push_str(&format!("remote.mdns = {}\n", word(self.remote_mdns)));
@@ -413,7 +408,7 @@ mod tests {
         assert_eq!(c.zone(), Tz::utc());
         assert!(c.eth_retry_10m);
         // no shell on the network unless an image or the user switches it on
-        assert!(!c.remote_telnet && !c.remote_ssh && c.ssh_password);
+        assert!(!c.remote_ssh && c.ssh_password);
         assert_eq!(SysConf::parse("").0, c);
     }
 
@@ -424,8 +419,7 @@ mod tests {
         c.ntp_server = "ptbtime1.ptb.de".into();
         c.tz = "CET-1CEST,M3.5.0,M10.5.0/3".into();
         c.eth_retry_10m = false;
-        (c.remote_web, c.remote_telnet, c.remote_ssh, c.ssh_password, c.remote_mdns) =
-            (false, true, true, false, false);
+        (c.remote_web, c.remote_ssh, c.ssh_password, c.remote_mdns) = (false, true, false, false);
         c.net_name = "lab-scope-3".into();
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
@@ -566,7 +560,7 @@ mod tests {
         let lease = |i: &str| (i == "eth0").then(|| "192.0.2.1".to_string());
         let (fresh, _) = SysConf::parse_over(base.clone(), "");
         assert_eq!(ntp_server(&fresh.ntp_server, lease), ("192.0.2.1".into(), NtpOrigin::Dhcp("eth0")));
-        let (user, _) = SysConf::parse_over(base, "ntp.server = pool.ntp.org\nremote.telnet = on\n");
+        let (user, _) = SysConf::parse_over(base, "ntp.server = pool.ntp.org\n");
         assert_eq!(ntp_server(&user.ntp_server, lease), ("pool.ntp.org".into(), NtpOrigin::Set));
     }
 
@@ -581,7 +575,6 @@ mod tests {
         assert!(c.ntp && c.remote_ssh);
         let (c, _) = SysConf::parse_over(base, "remote.ssh = off\nssh.password = off\n");
         assert!(!c.remote_ssh && !c.ssh_password);
-        assert!(!SysConf::default().remote_telnet);
     }
 
     #[test]
@@ -601,21 +594,17 @@ mod tests {
     }
 
     #[test]
-    fn telnet_requires_an_explicit_opt_in() {
-        for text in ["", "remote.telnet = off\n", "remote.telnet =\n", "remote.telnet = invalid\n"] {
-            assert!(!SysConf::parse(text).0.remote_telnet, "{:?}", text);
-        }
+    fn legacy_telnet_key_is_accepted_as_an_unknown_line() {
+        assert!(!SysConf::default().text().contains("remote.telnet"));
         let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/initramfs/etc/oos/system.conf"));
-        assert!(bad.is_empty() && !base.remote_telnet && !base.remote_ssh);
-        for value in ["on", "true", "1"] {
-            let text = format!("remote.telnet = {}\n", value);
-            let (generic, bad) = SysConf::parse(&text);
-            assert!(bad.is_empty() && generic.remote_telnet && !generic.remote_ssh);
-            let (enabled, bad) = SysConf::parse_over(base.clone(), &text);
-            assert!(bad.is_empty() && enabled.remote_telnet && !enabled.remote_ssh);
-            assert!(SysConf::parse(&enabled.text()).0.remote_telnet);
-            let (disabled, bad) = SysConf::parse_over(enabled, "remote.telnet = off\n");
-            assert!(bad.is_empty() && !disabled.remote_telnet && !disabled.remote_ssh);
+        assert!(bad.is_empty());
+        for value in ["on", "off", "true", "1", "", "invalid"] {
+            let text = format!("remote.telnet = {value}\nremote.ssh = on\n");
+            let (c, bad) = SysConf::parse_over(base.clone(), &text);
+            assert!(bad.is_empty(), "{bad:?}");
+            assert!(c.remote_ssh);
+            assert!(c.text().contains(&format!("remote.telnet = {value}\n")));
+            assert_eq!(SysConf::parse_over(base.clone(), &c.text()).0, c);
         }
     }
 

@@ -151,9 +151,9 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS
 	cp /k/$OOS_KERNEL_DTB /out/$OOS_IMAGE_NAME.dtb
 	fdtput -t s /out/$OOS_IMAGE_NAME.dtb /chosen bootargs "$OOS_BOOTARGS"
 	fdtget /out/$OOS_IMAGE_NAME.dtb /chosen bootargs
-	# the busybox package in the image, and the glibc it was built with and holds: their sources go with a release
-	# (tools/release-sources.sh names that glibc; it follows when this line changes)
-	dpkg-query -W -f "\${Package} \${Version}\nBuilt-Using: \${Built-Using}\n" busybox-static > /out/busybox.version
+	# the rebuilt BusyBox and its build glibc: their sources go with a release
+	# tools/release-sources.sh reads the build glibc from this file
+	cat /usr/local/share/oos-busybox.version > /out/busybox.version
 	chown -R "$OUT_OWNER" /out
 	ls -la /out
 '

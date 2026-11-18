@@ -35,7 +35,7 @@ it for safety-relevant, medical, legal, commercial or compliance measurements.
 
 ## Is it safe to put the scope on my network?
 
-Only on a trusted bench network, never directly on the internet. Apart from SSH, OOS has no authentication: telnet,
+Only on a trusted bench network, never directly on the internet. SSH is the only remote shell. Apart from SSH, OOS has no authentication:
 SCPI, VXI-11, the web remote and MCP are open to everyone who can reach the scope. Updates require a signature
 from this project's release key.
 

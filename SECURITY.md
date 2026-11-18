@@ -37,8 +37,7 @@ leave a unit unable to boot.
 
 ## Threat model
 
-**OOS has no authentication apart from SSH, by design for now.** SSH asks for the scope's own password or a trusted key; telnet gives a root shell without a password (switch it off
-once SSH is set up). SCPI, VXI-11, HiSLIP (on a computer), the web remote, the LAN announcement,
+**OOS has no authentication apart from SSH, by design for now.** SSH is the only remote shell and asks for the scope's own password or a trusted key. SCPI, VXI-11, HiSLIP (on a computer), the web remote, the LAN announcement,
 MCP and the update page are open to everyone who can reach the scope, over Ethernet and over WLAN. Updates require a signature from this project's
 release key. Keep the scope on a trusted bench network and never
 expose it to the internet. None of this is a vulnerability to report: it is listed in the

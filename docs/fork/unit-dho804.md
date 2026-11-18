@@ -22,7 +22,7 @@ values through local configuration; they are intentionally omitted from this pag
 | Boot card | the test unit sets `sd.mode = sdr104` in `/oos/system.conf`; the updater patches the generic DTB for the next boot and keeps HS for rollback; not yet verified under the OOS kernel | `hal/src/update/sd.rs`, [boot mode and safety boundary](../boot.md#device-boot-card-mode) |
 | Firewall | `net.allow` prefixes: nftables ruleset before any service starts; static `nft` in the image | `rootfs/initramfs/bin/oos-firewall`, `rootfs/build-nft.sh`, rcS |
 | Remote ACL | the same prefixes in oos-ui: `POST /update`, `/mcp` get 403, SCPI and VXI-11 connections are closed | `ui/src/netacl.rs`, `http.rs`, `scpi.rs`, `vxi11.rs` |
-| SSH, no telnet | Dropbear on port 22 replaces telnet: rcS starts `oos-ssh` instead of `telnetd`, the telnet switch and `crate::remote` are gone. Generated root password and host keys in `/oos/ssh`, trusted keys from a USB stick, password login off only with a key. Listens only with `net.allow` and the firewall loaded. Keys `remote.ssh` (generic image on), `ssh.password` (docs/network.md 7) | `rootfs/initramfs/bin/oos-ssh`, `rootfs/build-dropbear.sh`, rcS, `ui/src/ssh.rs`, `ui/src/ui/ssh.rs`, `ui/src/ui/remote.rs`, `tools/ssh-sim.sh` |
+| SSH, no telnet | Dropbear on port 22 replaces telnet: rcS starts `oos-ssh`; telnet applets, switch and runtime are removed (#139, not yet verified on hardware). Generated root password and host keys in `/oos/ssh`, trusted keys from a USB stick, password login off only with a key. Listens only with `net.allow` and the firewall loaded. Keys `remote.ssh` (generic image off), `ssh.password` (docs/network.md 7) | `rootfs/initramfs/bin/oos-ssh`, `rootfs/build-dropbear.sh`, rcS, `ui/src/ssh.rs`, `ui/src/ui/ssh.rs`, `ui/src/ui/remote.rs`, `tools/ssh-sim.sh` |
 | MAC | `eth.mac = cid / vendor / <address>` | `rootfs/initramfs/bin/oos-mac`, `oos-board mac`, rcS |
 | Settings lookup | `/etc/oos/system.conf` (image default), then `/oos/system.conf`; last line wins | `rootfs/initramfs/bin/oos-conf`, `netacl::Acl::from_texts` |
 | Model defaults | shared system defaults; capabilities from runtime model detection; identity and overrides on the device | `rootfs/initramfs/etc/oos/system.conf`, `hal/src/model.rs` |
@@ -337,7 +337,7 @@ What changed for the fork with the merge of upstream 0.1.7 to 0.1.11:
 
 - Telnet: the fork's `telnet` key is dropped for upstream's `remote.telnet` (System > Network > Remote services). oos-ui
   now layers the image default `/etc/oos/system.conf` under `/oos/system.conf` (known keys only; `net.allow` and
-  `eth.mac` are not copied into the settings file). Without that layering oos-ui would start telnetd at its start.
+  `eth.mac` are not copied into the settings file). That historical telnet path is removed by #139; old keys are inert.
 - Network: upstream's link-local fallback (169.254.x.y/16, `arping -D`) replaces a fixed fallback address. It runs after the
   firewall and the fixed MAC. In the placeholder example `net.allow = 192.0.2.0/24`, a computer on a direct cable is dropped; add
   `169.254.0.0/16` for that case. Upstream's remote switches close web, SCPI and VXI-11 ports; the ACL still applies to

@@ -13,11 +13,21 @@ pub(super) struct Remote {
     web_port: u16,
     scpi_port: u16,
     hislip_port: u16,
-    remote_now: Option<[bool; 7]>,
+    remote_now: Option<RemoteSwitches>,
     mdns: mdns::Mdns,
     mdns_now: Option<mdns::Config>,
     mdns_t: Option<Instant>,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RemoteSwitches {
+    web: bool,
+    scpi: bool,
+    vxi11: bool,
+    ssh: bool,
+    ssh_password: bool,
+    hislip: bool,
+}
+
 impl Remote {
     pub(super) fn new(args: &[String], sw: &sysconf::Switches, ui: &mut Ui) -> Self {
         let web_port = arg(args, "--web-port").and_then(|p| p.parse().ok()).unwrap_or(8080);
@@ -70,37 +80,38 @@ impl Remote {
         self.web.wake()
     }
     fn switch(&mut self, sys: &sysconf::SysConf, sw: &sysconf::Switches) {
-        // the services follow their switches: the ports were opened above, SSH (oos-ssh) and telnet are started by rcS
-        let want = [
-            sys.remote_web,
-            sys.remote_scpi,
-            sys.instruments.vxi11,
-            sys.remote_ssh,
-            sys.ssh_password,
-            sys.remote_telnet,
-            !self.scope || sys.instruments.hislip,
-        ];
+        // the services follow their switches: the ports were opened above, SSH (oos-ssh) is started by rcS
+        let want = RemoteSwitches {
+            web: sys.remote_web,
+            scpi: sys.remote_scpi,
+            vxi11: sys.instruments.vxi11,
+            ssh: sys.remote_ssh,
+            ssh_password: sys.ssh_password,
+            hislip: !self.scope || sys.instruments.hislip,
+        };
         if self.remote_now != Some(want) {
-            let was =
-                self.remote_now.unwrap_or([true, true, true, want[3], want[4], !want[5], self.hislip.port().is_some()]);
-            if want[0] != was[0] {
-                self.web.set_open(want[0].then_some(self.web_port), sw.ipv6);
+            let was = self.remote_now.unwrap_or(RemoteSwitches {
+                web: true,
+                scpi: true,
+                vxi11: true,
+                hislip: self.hislip.port().is_some(),
+                ..want
+            });
+            if want.web != was.web {
+                self.web.set_open(want.web.then_some(self.web_port), sw.ipv6);
             }
-            if want[1] != was[1] {
-                self.scpi.set_open(want[1].then_some(self.scpi_port), sw.ipv6);
+            if want.scpi != was.scpi {
+                self.scpi.set_open(want.scpi.then_some(self.scpi_port), sw.ipv6);
             }
             // VXI-11 needs port 111, which only the scope has free
-            if want[2] != was[2] && self.scope {
-                self.vxi.set_open(want[2], sw.ipv6);
+            if want.vxi11 != was.vxi11 && self.scope {
+                self.vxi.set_open(want.vxi11, sw.ipv6);
             }
-            if want[3] != was[3] || want[4] != was[4] {
-                ssh::apply(want[3]);
+            if want.ssh != was.ssh || want.ssh_password != was.ssh_password {
+                ssh::apply(want.ssh);
             }
-            if want[5] != was[5] {
-                remote::telnet(want[5]);
-            }
-            if want[6] != was[6] {
-                self.hislip.set_open(want[6].then_some(self.hislip_port.into()), sw.ipv6);
+            if want.hislip != was.hislip {
+                self.hislip.set_open(want.hislip.then_some(self.hislip_port.into()), sw.ipv6);
             }
             self.offer();
             self.remote_now = Some(want);
@@ -198,10 +209,42 @@ mod tests {
             web_port: 0,
             scpi_port: 0,
             hislip_port: 0,
-            remote_now: Some([true, true, false, false, true, false, false]),
+            remote_now: Some(RemoteSwitches {
+                web: true,
+                scpi: true,
+                vxi11: false,
+                ssh: false,
+                ssh_password: true,
+                hislip: false,
+            }),
             mdns: mdns::Mdns::new(runtime, None),
             mdns_now: None,
             mdns_t: None,
+        }
+    }
+
+    #[test]
+    fn web_and_scpi_switches_change_only_their_listener() {
+        let sw = sysconf::Switches::default();
+        let mut r = scope_remote(&sw);
+        let mut sys = sysconf::SysConf::default();
+        sys.instruments.vxi11 = false;
+        r.remote_now = None;
+        r.switch(&sys, &sw);
+        let scpi_port = r.scpi.port();
+        for enabled in [false, true, false] {
+            sys.remote_web = enabled;
+            r.switch(&sys, &sw);
+            assert_eq!(r.web.port().is_some(), enabled);
+            assert_eq!(r.scpi.port(), scpi_port);
+            assert_eq!(r.hislip.port(), None);
+        }
+        for enabled in [false, true, false] {
+            sys.remote_scpi = enabled;
+            r.switch(&sys, &sw);
+            assert_eq!(r.scpi.port().is_some(), enabled);
+            assert_eq!(r.web.port(), None);
+            assert_eq!(r.hislip.port(), None);
         }
     }
 

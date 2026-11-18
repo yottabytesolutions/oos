@@ -245,7 +245,7 @@ areas! {
     system { [Item::About | Item::SysInfo | Item::Shot | Item::AuxOut | Item::Stock | Item::Update | Item::UpdateRollback | Item::BootMode | Item::Overclock | Item::QuickAct], [MenuId::Utility] }
     view_more { [Item::ViewExit | Item::ViewSettings], [MenuId::ViewMore] }
     network { [Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::WlanNet | Item::WlanForgetNet], [MenuId::Network] }
-    remote { [Item::NetWeb | Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemHislip | Item::RemTelnet | Item::RemSsh | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemHislipInfo | Item::RemTelnetInfo | Item::RemMdns | Item::RemName | Item::RemAllow | Item::RemFirewall], [MenuId::Remote] }
+    remote { [Item::NetWeb | Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemHislip | Item::RemSsh | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemHislipInfo | Item::RemMdns | Item::RemName | Item::RemAllow | Item::RemFirewall], [MenuId::Remote] }
     ssh { [Item::SshState | Item::SshPassword | Item::SshShowPass | Item::SshHostKey | Item::SshKeys | Item::SshKeyList | Item::SshImport | Item::SshRemove | Item::SshRemoveKey], [MenuId::Ssh] }
     graphics { [Item::Graphics], [] }
     views { [Item::Views], [] }

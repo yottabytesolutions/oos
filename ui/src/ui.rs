@@ -874,12 +874,10 @@ enum Item {
     RemScpi,
     RemVxi,
     RemHislip,
-    RemTelnet,
     RemSsh,
     RemScpiInfo,
     RemVxiInfo,
     RemHislipInfo,
-    RemTelnetInfo,
     /// System > Network > Remote services > SSH settings (ui/ssh.rs); `SshRemoveKey` is its picker
     SshState,
     SshPassword,

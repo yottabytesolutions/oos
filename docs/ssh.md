@@ -2,8 +2,8 @@
 
 The SSH server, its switches and its page are described in [network.md](network.md) section 7: Dropbear started by
 `/bin/oos-ssh`, off in generic images (`remote.ssh`), enabled from the front panel, listening only with `net.allow` and the firewall loaded, root with the
-scope's own password or a trusted key, System > Network > Remote services > SSH settings. telnet is off by default and scheduled for removal in #139
-(`remote.telnet`, off by default); enable it only for bench bring-up. `net.allow` is set on the same page, **Allowed**
+scope's own password or a trusted key, System > Network > Remote services > SSH settings. SSH is the only remote
+shell; telnet is removed. `net.allow` is set on the same page, **Allowed**
 (network.md section 6); it applies at once: with SSH switched on, a list set starts the server, and a list removed
 stops it with its sessions.
 
@@ -33,9 +33,9 @@ password (network.md 7).
 
 ## Tools over SSH
 
-`tools/device-deploy.sh` and `tools/device-test.py` use the telnet shell. Over SSH instead:
-`tools/device-deploy-ssh.sh <ip>` and `OOS_SHELL=ssh tools/device-test.py ...`, with strict host key checking
-(compare the fingerprint on the SSH settings page with the first `ssh root@<ip>` prompt first); `OOS_SSH_IDENTITY`
-names a private key, `OOS_SSH_PORT` another port.
+`tools/device-deploy.sh --host HOST`, its compatibility entry point `tools/device-deploy-ssh.sh HOST`, and
+`tools/device-test.py` use key-only SSH (`BatchMode=yes`) with strict host key checking. Compare the fingerprint
+on the SSH settings page with the first `ssh root@HOST` prompt before running them. `OOS_SSH_IDENTITY` names
+a private key; `OOS_SSH_PORT` selects another port. There is no telnet or netcat fallback.
 
 Offline tests of the key tool: `python3 -m unittest discover -s tools/tests -p test_ssh_keys.py -v`.

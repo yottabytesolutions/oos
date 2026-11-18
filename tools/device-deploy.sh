@@ -17,6 +17,7 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 root=$here
 . "$root/tools/output.sh"
+. "$root/tools/lib/portable.sh"
 host=${OOS_SCOPE:-}
 restore=0
 while [ "$#" -gt 0 ]; do
@@ -32,30 +33,32 @@ port=${OOS_SSH_PORT:-22}
 ui=${OOS_DEPLOY_UI:-$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/oos-ui}
 fpgad=${OOS_DEPLOY_FPGAD:-$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/oos-fpgad}
 
-# one command on the telnet shell; the pauses keep nc from dropping what comes back
-tel() {
-	(sleep 1; echo "$1"; sleep "${2:-2}"; echo exit) | nc -w $((${2:-2} + 5)) "$host" "$port" | LC_ALL=C tr -d '\r'
+# SSH never accepts a changed/unknown identity silently. Provision and verify
+# the scope host fingerprint first (docs/ssh.md). The optional identity stays local.
+remote() {
+	if [ -n "${OOS_SSH_IDENTITY:-}" ]; then
+		ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$port" -i "$OOS_SSH_IDENTITY" "root@$host" "$1"
+	else
+		ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$port" "root@$host" "$1"
+	fi
 }
 
 send() {
 	echo "sending $(basename "$1") -> /tmp/$2"
-	tel "(sleep 120 | nc -l -p 7777 > /tmp/$2) &" 1 >/dev/null
-	sleep 1
-	nc -w 3 "$host" "${OOS_NC_PORT:-7777}" < "$1"
-	want=$(md5 -q "$1" 2>/dev/null || md5sum "$1" | cut -d' ' -f1)
-	tel "md5sum /tmp/$2" 3 | grep -q "$want" || { echo "error: /tmp/$2 differs after the upload" >&2; exit 1; }
-	# the listener holds the file open while its stdin lives: "text file busy" otherwise
-	tel "kill \$(pidof nc) 2>/dev/null; chmod +x /tmp/$2" 1 >/dev/null
+	remote "umask 077; cat > /tmp/$2.part && mv /tmp/$2.part /tmp/$2" < "$1"
+	want=$(sha256 "$1") || { echo "error: cannot hash $1" >&2; exit 1; }
+	remote "sha256sum /tmp/$2" | grep -q "^$want " || { echo "error: /tmp/$2 differs after the upload" >&2; exit 1; }
+	remote "chmod +x /tmp/$2" >/dev/null
 }
 
 loop() {
 	# as rcS starts it, with another program and another stop file; the hardware is up, so no start-up screen
-	tel "(setsid sh -c 'while [ ! -e $2 ]; do $1 --hw --afe >> /tmp/oos-ui.log 2>&1; sleep 2; done' </dev/null >/dev/null 2>&1 &)" 1 >/dev/null
+	remote "(setsid sh -c 'while [ ! -e $2 ]; do $1 --hw --afe >> /tmp/oos-ui.log 2>&1; sleep 2; done' </dev/null >/dev/null 2>&1 &)" >/dev/null
 }
 
 if [ "$restore" -eq 1 ]; then
-	remote "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new) 2>/dev/null || true" 3 >/dev/null
-	remote "rm -f /tmp/oos-ui.off" 1 >/dev/null
+	remote "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new) 2>/dev/null || true" >/dev/null
+	remote "rm -f /tmp/oos-ui.off" >/dev/null
 	loop /bin/oos-ui /tmp/oos-ui.off
 	echo "installed oos-ui running again"
 	exit 0
@@ -63,15 +66,17 @@ fi
 
 python3 "$root/tools/output.py" verify "$ui" "$fpgad"
 [ -x "$ui" ] && [ -x "$fpgad" ] || { echo "error: build first (see the top of this script)" >&2; exit 1; }
-tel "cat /proc/version; ls -l /bin/oos-ui; pidof oos-ui oos-ui.new; df -k /tmp | tail -1" 2
+remote "cat /proc/version; ls -l /bin/oos-ui; pidof oos-ui oos-ui.new; df -k /tmp | tail -1"
 # a build from an earlier deploy still runs from /tmp: "text file busy" for the upload otherwise
-tel "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new) 2>/dev/null" 3 >/dev/null
+remote "touch /tmp/oos-ui.off2; kill \$(pidof oos-ui.new) 2>/dev/null || true" >/dev/null
 send "$ui" oos-ui.new
 send "$fpgad" oos-fpgad.new
 send "$here/tools/plan-matrix.sh" plan-matrix.sh
 send "$here/tools/plan-matrix-cases.txt" plan-matrix-cases.txt
-tel "touch /tmp/oos-ui.off; kill \$(pidof oos-ui)" 3 >/dev/null
-tel "rm -f /tmp/oos-ui.off2" 1 >/dev/null
+remote "touch /tmp/oos-ui.off; kill \$(pidof oos-ui) 2>/dev/null || true" >/dev/null
+# Legacy images can start telnetd independently of oos-ui.
+remote 'for pid in $(pidof telnetd); do kill "$pid" || exit 1; done'
+remote "rm -f /tmp/oos-ui.off2" >/dev/null
 loop /tmp/oos-ui.new /tmp/oos-ui.off2
 sleep 6
-tel "pidof oos-ui.new; tail -3 /tmp/oos-ui.log" 2
+remote "pidof oos-ui.new; tail -3 /tmp/oos-ui.log"

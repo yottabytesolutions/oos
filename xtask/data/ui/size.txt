@@ -13,7 +13,7 @@
 516 file ui/src/measures/standard.rs
 3277 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8831 file ui/src/ui.rs
+8829 file ui/src/ui.rs
 1513 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -73,7 +73,7 @@
 146 fn ui/src/scpi.rs Scpi::sim_cmd
 171 fn ui/src/scpi.rs Scpi::timebase_more
 223 fn ui/src/scpi/ser.rs trig
-67 fn ui/src/sysconf.rs SysConf::parse_over
+66 fn ui/src/sysconf.rs SysConf::parse_over
 62 fn ui/src/ui.rs Ui::cursor_values
 73 fn ui/src/ui.rs Ui::dlg_layout
 73 fn ui/src/ui.rs Ui::draw_axes
@@ -174,7 +174,7 @@
 20 struct ui/src/http.rs ShotState
 26 struct ui/src/measures/jitter.rs EyeSnap
 14 struct ui/src/pacing.rs State
-19 struct ui/src/sysconf.rs SysConf
+18 struct ui/src/sysconf.rs SysConf
 13 struct ui/src/ui.rs TouchState
 215 struct ui/src/ui.rs Ui
 19 struct ui/src/ui/analysis.rs RefMeasureKey

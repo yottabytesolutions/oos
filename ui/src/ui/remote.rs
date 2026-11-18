@@ -4,8 +4,7 @@
 //! System > Network > Remote services: which of the network services run, each switch next to the line that says
 //! where to reach it. The choice is a setting of the scope (`/oos/system.conf`, `remote.*`); `main.rs` opens and closes
 //! the ports from it, `crate::ssh` the SSH server, whose page is ui/ssh.rs. Web, SCPI and VXI-11 are on by default,
-//! telnet (a shell without password, for bring-up on the bench LAN) is off by default; SSH, the
-//! authenticated shell, is off unless the image or the user switches it on.
+//! SSH, the authenticated shell, is off unless the image or the user switches it on.
 //!
 //! The last row: the mDNS responder (`crate::mdns`, on by default: it answers on the local link only) next to the
 //! scope's name on the network, `dho924s-204527.local` (`net.name`). The name is also the kernel's host name, which
@@ -356,7 +355,6 @@ impl Ui {
             Item::RemScpi => (&mut s.remote_scpi, "SCPI"),
             Item::RemVxi => (&mut s.instruments.vxi11, "VXI-11"),
             Item::RemHislip => (&mut s.instruments.hislip, "HiSLIP"),
-            Item::RemTelnet => (&mut s.remote_telnet, "telnet"),
             Item::RemSsh => (&mut s.remote_ssh, "SSH"),
             Item::RemMdns => (&mut s.remote_mdns, "mDNS"),
             // the name and the address list change in their pickers only
@@ -377,7 +375,6 @@ impl Ui {
         // what is lost with it
         match (it, now_on) {
             (Item::RemWeb, false) => self.toast("Web remote off: updates then come from a USB stick"),
-            (Item::RemTelnet, false) => self.toast("telnet off: no remote shell without password"),
             (Item::RemSsh, false) => self.toast("SSH off: its sessions end"),
             _ => self.toast(&format!("{} {}", what, if now_on { "on" } else { "off" })),
         }
@@ -394,14 +391,13 @@ mod tests {
         let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
-        // two columns of eight: each switch has its address, port, settings or name on the same row, the address list
+        // two columns of seven: each switch has its address, port, settings or name on the same row, the address list
         // its firewall
         for (sw, info) in [
             (Item::RemWeb, Item::NetWeb),
             (Item::RemScpi, Item::RemScpiInfo),
             (Item::RemVxi, Item::RemVxiInfo),
             (Item::RemHislip, Item::RemHislipInfo),
-            (Item::RemTelnet, Item::RemTelnetInfo),
             (Item::RemSsh, Item::Open(MenuId::Ssh)),
             (Item::RemMdns, Item::RemName),
             (Item::RemAllow, Item::RemFirewall),
@@ -416,16 +412,9 @@ mod tests {
     fn a_service_switched_off_says_so() {
         let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.instruments.vxi11, "on by default");
-        assert!(!u.sys.remote_telnet && !u.sys.remote_ssh, "shells off by default");
-        assert_eq!(u.value(Item::RemTelnetInfo), "off");
-        u.select_option(Item::RemTelnet, "On");
-        assert!(u.sys.remote_telnet);
-        assert_eq!(u.value(Item::RemTelnetInfo), "23, a shell without password");
-        u.select_option(Item::RemTelnet, "Off");
-        assert!(!u.sys.remote_telnet);
-        assert_eq!(u.value(Item::RemTelnetInfo), "off");
-        u.net = "192.168.1.9".into();
-        assert_eq!(u.value(Item::NetWeb), "http://192.168.1.9:8080");
+        assert!(!u.sys.remote_ssh, "SSH off by default");
+        u.net = "192.0.2.9".into();
+        assert_eq!(u.value(Item::NetWeb), "http://192.0.2.9:8080");
         u.select_option(Item::RemWeb, "Off");
         assert!(!u.sys.remote_web);
         assert_eq!(u.value(Item::NetWeb), "off");

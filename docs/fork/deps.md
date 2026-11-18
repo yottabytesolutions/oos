@@ -23,11 +23,13 @@ Every source tarball the image builds from is listed once, in `rootfs/deps.lock`
   for the release and stops when Alpine installs another version.
 - CI (`.github/workflows/image.yml`) caches `rootfs/out/sources/` keyed on the hash of `rootfs/deps.lock`. An older
   cache may be restored: the checksum check still applies to every file.
-- What a release has to carry next to its image is listed by `tools/release-sources.sh list`, from this manifest and
-  `kernel/base.sha256`; `tools/release-sources.sh check <tag>` compares a release on GitHub with it
+- What a release has to carry next to its image is listed by `tools/release-sources.sh list`, from this manifest,
+  `kernel/base.sha256` and the build's `busybox.version`; `tools/release-sources.sh check <tag>` compares a release
+  on GitHub with it
   ([THIRD-PARTY-LICENSES.md](../../THIRD-PARTY-LICENSES.md)).
-- Not in the manifest: the Docker base images (`alpine:3.22`, `ubuntu:26.04`, `rust:1-alpine`), busybox (Ubuntu's
-  `busybox-static`, its version and the glibc it was built with recorded in `busybox.version` of each build), the
+- Not in the manifest: the Docker base images (`alpine:3.22`, `ubuntu:26.04`, `rust:1-alpine`), BusyBox (rebuilt from Ubuntu's
+  `busybox-static` source and static configuration with `CONFIG_TELNET` and `CONFIG_TELNETD` removed; its version
+  and build glibc are recorded in `busybox.version` of each build), the
   kernel base archive
   (`kernel/src/SHA256SUMS`) and Rust crates (`Cargo.lock`).
 

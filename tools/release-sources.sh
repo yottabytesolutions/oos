@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # release-sources.sh - the source files a release carries next to its image (THIRD-PARTY-LICENSES.md), and whether a
 # release on GitHub has them. Read only; `check` needs `gh` and the network.
-#   tools/release-sources.sh list          the file names and patterns, one per line
-#   tools/release-sources.sh check v0.1.13 exit 1 and the missing ones when the release lacks a file
+#   tools/release-sources.sh list [busybox.version]          the file names and patterns, one per line
+#   tools/release-sources.sh check TAG [busybox.version]     exit 1 and the missing files
 # The names come from rootfs/deps.lock (the archives the image builds from) and kernel/base.sha256 (the kernel
 # base). The packages taken from Ubuntu (busybox-static, and glibc, GCC's runtime, libdrm, zlib with the GPU helper)
 # go with their source packages, whose versions follow the container image: those are patterns.
@@ -14,10 +14,13 @@ set -eu
 set -f
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
-# busybox-static 1:1.37.0-7ubuntu1 says "Built-Using: glibc (= 2.42-2ubuntu4)"; follows when the package changes
-busybox_glibc=glibc_2.42-2ubuntu4
+version_file="${CARGO_TARGET_DIR:-$root/target}/image/busybox.version"
 
 names() {
+    # Use the actual build's libc, since apt packages can change without a recipe change.
+    glibc_version=$(sed -n 's/^Built-Using: glibc (= \([^)]*\))$/\1/p' "$1") || return 1
+    [ -n "$glibc_version" ] || { echo "release-sources.sh: missing build glibc in $1" >&2; return 1; }
+    busybox_glibc="glibc_$glibc_version"
     # the kernel base archive
     awk '{ print $2 }' "$root/kernel/base.sha256" | sed 's|.*/||'
     # every pinned archive; Mesa is built from the archive of Ubuntu's source package, which is upstream's renamed
@@ -28,8 +31,7 @@ names() {
         *) echo "${url##*/}" ;;
         esac
     done
-    # the glibc inside Ubuntu's busybox-static: the one that package was built with (its Built-Using, which
-    # boot/out/busybox.version of a build names), not the one of the container
+    # the glibc inside the rebuilt BusyBox, recorded by the initramfs builder in busybox.version
     for f in "$busybox_glibc.dsc" "${busybox_glibc%%-*}.orig.tar.*" "$busybox_glibc.debian.tar.*"; do
         echo "$f"
     done
@@ -60,14 +62,15 @@ has() {
 
 case "${1:-}" in
 list)
-    names
+    names "${2:-$version_file}"
     ;;
 check)
     tag=${2:?usage: release-sources.sh check <tag>}
+    required=$(names "${3:-$version_file}") || exit 1
     assets=$(gh release view "$tag" --json assets --jq '.assets[].name')
     [ -n "$assets" ] || { echo "release-sources.sh: no files in release $tag" >&2; exit 1; }
     missing=0
-    for n in $(names); do
+    for n in $required; do
         has "$assets" "$n" || { echo "missing in $tag: $n"; missing=1; }
     done
     [ "$missing" = 0 ] && echo "$tag: every source file is there"

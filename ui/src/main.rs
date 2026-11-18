@@ -41,7 +41,6 @@ mod math;
 pub mod mdns;
 mod measures;
 mod model;
-mod net;
 mod net6;
 mod netacl;
 pub mod netio;

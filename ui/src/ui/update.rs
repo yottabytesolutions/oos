@@ -18,7 +18,9 @@ const UPLOAD: &str = "/tmp/oos-update.upload";
 const JOB_LOG: &str = "/tmp/oos-update.job";
 
 mod upload;
-use upload::{page, upload_header, upload_store};
+#[cfg(test)]
+use upload::upload_header;
+use upload::{page, upload_store};
 
 struct PendingUpload {
     thread: std::thread::JoinHandle<Result<(), String>>,
@@ -154,29 +156,31 @@ impl Ui {
     /// (`upload_header`) and answers at once; the image hash and the copy to /tmp run in a thread (`upload_store`,
     /// ~31 MB), and `update_poll` starts the install job from there. Mismatch without override: ask for confirmation,
     /// nothing kept. Err: refused, nothing kept.
-    pub fn update_upload_reply(&mut self, body: Vec<u8>, query: &str) -> (bool, &'static str, Vec<u8>) {
-        let result = upload::any_model(query).and_then(|any| self.update_upload(body, any));
+    pub(crate) fn update_upload_job(
+        &mut self,
+        job: Option<crate::netport::http::Upload>,
+        query: &str,
+    ) -> (bool, &'static str, Vec<u8>) {
+        let result = upload::any_model(query)
+            .and_then(|any| self.update_upload(job.ok_or_else(|| "upload worker unavailable".to_string())?, any));
         upload::reply(result)
     }
 
-    fn update_upload(&mut self, body: Vec<u8>, any_model: bool) -> Result<upload::Reply, String> {
+    fn update_upload(&mut self, body: crate::netport::http::Upload, any_model: bool) -> Result<upload::Reply, String> {
         if self.update_busy() {
             return Err("an update job is running".into());
         }
         let keys = update::trusted_keys();
         #[cfg(test)]
         let keys = self.upd.trusted_keys.clone().unwrap_or(keys);
-        let h = upload_header(&body, &keys)?;
+        let h = upload::upload_header_len(body.header(), body.len(), &keys)?;
         let running = self.upd.running_model.get_or_insert_with(update::models::running).clone()?;
         if let Some(confirmation) = upload::confirmation(&h.manifest, &running, any_model)? {
             return Ok(confirmation);
         }
         let warning = update::models::check(&h.manifest, &running, any_model)?;
         let b = update::short(&h.manifest.build).to_string();
-        let t = std::thread::Builder::new()
-            .name("update-check".into())
-            .spawn(move || upload_store(&body, &keys, Path::new(UPLOAD)))
-            .map_err(|e| format!("no thread for the check ({}), nothing installed", e))?;
+        let t = body.run(move |bytes| upload_store(bytes, &keys, Path::new(UPLOAD)))?;
         self.upd.upload = Some(PendingUpload { thread: t, build: b.clone(), any_model });
         self.upd.last = format!("package of build {} received, checking it", b);
         let accepted = upload::accepted(&h.manifest);
@@ -323,7 +327,7 @@ mod tests {
         u.upd.trusted_keys = Some(vec![update::ed25519::public_key(&seed)]);
         let body = pkg::build_with(&seed, "20261115-120000", "k", b"image", &[("models", "other-unit")]).unwrap();
         u.upd.running_model = Some(Ok("fake-unit".into()));
-        let (refused, kind, reply) = u.update_upload_reply(body, "");
+        let (refused, kind, reply) = u.update_upload_job(Some(crate::netport::http::Upload::new(body).unwrap()), "");
         assert!(refused);
         assert_eq!(kind, "application/json");
         let reply = String::from_utf8(reply).unwrap();
@@ -345,7 +349,8 @@ mod tests {
             .unwrap();
         u.upd.trusted_keys = Some(vec![update::ed25519::public_key(&seed)]);
         let body = pkg::build(&seed, "b", "k", b"image").unwrap();
-        let (refused, kind, reply) = u.update_upload_reply(body, "any-model=1");
+        let (refused, kind, reply) =
+            u.update_upload_job(Some(crate::netport::http::Upload::new(body).unwrap()), "any-model=1");
         assert!(refused);
         assert_eq!(kind, "text/plain");
         assert!(String::from_utf8(reply).unwrap().contains("identity read failed"));
@@ -355,7 +360,12 @@ mod tests {
     #[test]
     fn upload_refuses_unsigned_packages() {
         let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
-        let e = u.update_upload(b"OOS-UPDATE 1\ntarget dho900-recovery\n\nxx".to_vec(), false).unwrap_err();
+        let e = u
+            .update_upload(
+                crate::netport::http::Upload::new(b"OOS-UPDATE 1\ntarget dho900-recovery\n\nxx".to_vec()).unwrap(),
+                false,
+            )
+            .unwrap_err();
         assert!(e.contains("signature") || e.contains("header"), "{}", e);
         assert!(u.upd.job.is_none() && u.upd.upload.is_none());
     }

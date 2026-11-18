@@ -38,6 +38,14 @@ Reuse netio admission, ACLs, output deadlines and cancellation; delete the frame
 blocking send helper. Preserve fixtures, add injected-time stalled-output/cancellation coverage and measure
 production LOC and same-profile aarch64 binary size. Additional reserved paths: `ui/src/hislip/`.
 
+M15b HTTP/MCP (#151): replace accept/read/send threads and frame-owned sockets with netio
+sessions and owned replies. Preserve the parser, DNS-rebinding checks, ACLs, status codes and
+fixtures. Keep update bytes in a separately admitted worker, with only its bounded header and
+job handle reaching intake. Reuse cancellation and output deadlines; test limits with injected time.
+Additional reserved paths: `ui/src/http.rs`, `ui/src/http/`, `ui/src/netport/http/`,
+`ui/src/netport/http.rs`, `ui/src/ui/update.rs`, `ui/src/ui/update/upload.rs`,
+`ui/src/scpi/intake.rs`, `xtask/data/moves.txt` and affected generated ratchets.
+
 ## Measurements
 
 Owner-reported results, 2026-11-18, for PR #145's measurement section. Unit results are verified on the DHO804;
@@ -60,6 +68,63 @@ minimises its production LOC and aarch64 binary size delta.
 
 ## Status
 
+- 2026-11-18: PR #168 screenshot review fix: 200 and 304 replies share the bounded error
+  fallback; an exhausted output budget closes the reply and wakes IO. The matching-ETag
+  long-poll regression fails before the fix (exit 101) and passes after with injected time.
+  Final `cargo test --locked -p oos-ui` and
+  `cargo test --locked --profile test-release -p oos-ui` passed (exit 0): 1,545 debug and
+  1,544 release unit tests plus 43 integration tests per profile; 59 existing ignores.
+  An earlier release attempt failed `warmed_ui_observer_allocation_census` with three
+  finish-capture allocations; it passed in both final suites. The initial fast gate printed
+  `gate FAILED in 8 s: size`; sharing the response path resolved the growth, and the gate
+  printed `partial gate passed (not done): 11 steps in 14 s` (exit 0).
+  `cargo xtask ratchet` passed and changed only `ui/src/http.rs`'s size entry, 660 to 657.
+  Production LOC decreased by three. Complete logs remain in ignored `target/http-304-*.log`.
+  Host only; no hardware access or Git writes. Branch synchronization, independent review
+  and integrated checks remain with the coordinator.
+
+- 2026-11-18: PR #168 screenshot review-fix plan: use the bounded error fallback when a
+  matching-ETag 304 response cannot reserve output bytes. Reserve `ui/src/http.rs` for the fix and
+  a deterministic long-poll regression with an exhausted output budget. Run UI tests
+  in debug and test-release and the fast gate; Git updates remain with the coordinator.
+
+- 2026-11-18: PR #168 review fixes: complete HTTP requests survive request-side EOF while
+  socket errors still cancel waiting work. An error response that cannot reserve byte capacity
+  closes its reply and wakes IO. Both regressions fail before the fixes (exit 101) and pass after.
+  `cargo test --locked -p oos-ui` and `cargo test --locked --profile test-release -p oos-ui`
+  passed (exit 0): 1,544 debug and 1,543 release unit tests, plus 43 integration tests in each
+  profile; 59 existing ignores per profile. `cargo xtask check --fast` printed
+  `partial gate passed (not done): 11 steps in 3 s` (exit 0); `cargo xtask step clippy` printed
+  `partial gate passed (not done): 1 steps in 43 s` (exit 0). No changed-file ratchets decreased.
+  `cargo xtask loc --compare HEAD` reports UI 73,488 to 73,494 and total 109,796 to 109,802
+  (+6 production lines). Complete logs remain in ignored `target/http-*.log`.
+  Host only; no hardware access or Git writes. Remote synchronization, independent review,
+  the integrated full gate and integration remain with the coordinator.
+
+- 2026-11-18: PR #168 review-fix plan: preserve complete HTTP requests across write-side EOF,
+  close replies when their error response cannot reserve byte capacity, and add deterministic
+  socket and exhausted-budget regressions. Reserved paths remain `ui/src/netio/http.rs`,
+  `ui/src/netio/http/tests.rs` and `ui/src/netport/http.rs`. Run the fast gate and UI tests
+  in debug and test-release; the coordinator owns Git updates and integration.
+
+- 2026-11-18: M15b HTTP/MCP (#151), branch `refactor/151-m15b-http`: HTTP framing and all socket writes
+  now share netio with SCPI, VXI-11 and HiSLIP. Static pages bypass frame intake; live pictures retain their
+  encoder and use owned reply handles. Single-large-body admission and the signed update worker remain;
+  only a bounded header and job handle reach frame intake. Legacy accept/read/send loops are deleted.
+  Existing HTTP/MCP, Host/Origin, ACL, status and export fixtures pass. Injected time covers read idle/total,
+  intake expiry, partial sends and both output deadlines; cancellation covers body admission, queued intake,
+  snapshots and joined shutdown. Production delta is +316 lines (shared output chunks, reply ownership and
+  upload-worker handles); no hardware was accessed. Matching `--release` aarch64 ELF builds measured
+  7,214,632 -> 7,262,192 bytes: +47,560 (+0.66%). Approved tokio `io-util` adds the `bytes` transitive
+  dependency and replaces manual async read/write plumbing. `cargo test --locked -p oos-ui` passed
+  1,534 unit tests and 43 integration tests; `cargo test --locked --release -p oos-ui` passed 1,533 unit
+  tests and the same 43 integration tests (59 existing ignores in each profile). `cargo xtask step clippy`
+  printed `partial gate passed (not done): 1 steps in 1 s`. `cargo xtask check --fast` printed
+  `partial gate passed (not done): 11 steps in 2 s`.
+  Independent review, the full gate, new unit/load measurements and integration remain with the coordinator.
+  Earlier checks printed `gate FAILED in 10 s: size, mutable-statics`, `gate FAILED in 4 s: architecture`
+  and `gate FAILED in 29 s: clippy`; factoring input, recording the sender-counter move, retaining the
+  port boundary and deleting the obsolete synchronous helper resolved those findings.
 - 2026-11-18: M15b HiSLIP (#151) implementation: sync/async channels use the shared current-thread runtime,
   request admission, connection credits, ACL rechecks, disconnect cancellation and timed output. Protocol
   sessions and SCPI continuations stay frame-owned. Borrowed payload slices and stack headers replace the

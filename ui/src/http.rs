@@ -16,83 +16,36 @@
 //!                     `scpi` (any SCPI command of scpi.rs, returns the response) and `screenshot` (PNG)
 //!   GET /update       update state and upload form; POST /update with a signed package (.oosupd) installs it;
 //!                     (ui/update.rs: the header is checked here, the image off the frame loop, before anything is
-//!                     written). Requests are read by threads with time limits (`reader`, `Limits`); every limit
+//!                     written). Netio reads requests with time limits (`Limits`); every limit
 //!                     ends in an answer (docs/update.md).
 //! Unauthenticated: bench LAN only (an update must carry a signature from this project's release key).
 //! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
-mod intake;
-use intake::{Inbox, Req};
-mod reader;
-use reader::reader;
-
 use crate::gfx::Canvas;
+use crate::netport::http::ReplyHandle as Response;
+use crate::netport::http::*;
+pub use crate::netport::http::{parse_head, refuse_early, Head};
 use crate::ui::Ui;
-use std::io::Write;
-use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
-
-/// Longest request: `POST /update` (a package is ~31 MB, the image at most 64 MiB), every other request.
-const MAX_UPDATE: usize = 70 << 20;
-const MAX_WAVEFORM: usize = crate::store::MAX_WAVEFORM_BYTES;
-const MAX_OTHER: usize = 1 << 20;
-/// Requests being read at once (more are answered 503 at accept).
-const MAX_PENDING: usize = 8;
-/// Longest request head; a longer one is answered 431.
-const MAX_HEAD: usize = 16384;
-
-/// Time limits of a request (`reader`). Requests are read in threads of their own, not in the frame loop: a frame loop
-/// that stalls (a long step, a stuck lock) cannot keep a client waiting for ever; every limit ends in an answer.
-#[derive(Clone, Copy, Debug)]
-struct Limits {
-    /// no data for this long: 408 (the socket's read time-out)
-    idle: Duration,
-    /// the whole request, head and body (the upload of a package over 10 Mbit/s takes ~30 s): 408
-    deadline: Duration,
-    /// a complete request the frame loop has not taken after this long: 503
-    take: Duration,
-}
-
-const LIMITS: Limits =
-    Limits { idle: Duration::from_secs(10), deadline: Duration::from_secs(120), take: Duration::from_secs(10) };
-
-/// A body above this (an update package, a waveform) is read one at a time: a second one is answered 503 when its
-/// head is in, so the readers hold at most one large body and `MAX_PENDING` small ones.
-const LARGE_BODY: usize = MAX_OTHER;
-/// Answers above this size are sent from a thread of their own: over WLAN a picture takes long enough to stall the
-/// frame loop, and with it the scope's own screen and keys. A screen as PNG is 60 to 175 KB (a BMP 1.8 MB), so it
-/// goes the same way; the page and the small answers fit into the socket's buffer and go at once.
-const SEND_INLINE: usize = 48 << 10;
-/// At most this many at once; more are answered 503, and the page tries again.
-const MAX_SENDERS: usize = 2;
-mod limits;
 mod listener;
 mod shutdown;
-const SEND_TIMEOUT_S: u64 = 30;
-static SENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 use crate::placement::lower_priority;
-use shutdown::send_in_background;
 
-/// Which instrument addresses the identification page lists. The default is the scope: VXI-11 and the SCPI socket.
+/// Which instrument addresses the identification page lists.
 #[derive(Clone, Debug)]
 pub struct Offer {
     pub scpi_port: Option<u16>,
     pub vxi11: bool,
     pub hislip_port: Option<u16>,
 }
-
 impl Default for Offer {
-    fn default() -> Offer {
+    fn default() -> Self {
         Offer { scpi_port: Some(5555), vxi11: true, hislip_port: None }
     }
 }
-
-fn busy_answer(s: &TcpStream) {
-    let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-    let msg = "busy, try again";
-    let _ = (&*s).write_all(format!("HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", msg.len(), msg).as_bytes());
+fn busy_answer(s: &Response) {
+    s.answer("503 Service Unavailable", "busy, try again");
 }
 
 /// The fastest the live picture is made: 20 a second.
@@ -122,13 +75,12 @@ const VPU_RETRY: Duration = Duration::from_secs(60);
 ///
 /// The frame loop only copies the screen (2.4 MB), and only while somebody waits, and not more often than the encoder
 /// can keep up with on a third of a slow core (`SHOT_DUTY`), at most 20 times a second. The encoder thread compares the
-/// copy with the last picture, makes a PNG only of a changed screen and hands it to the waiting viewers; it and the
-/// senders get only the time the scope leaves over (`lower_priority`). The PNG used to be made in the frame loop:
+/// copy with the last picture, makes a PNG only of a changed screen and hands it to the waiting viewers; it gets only the time the scope leaves over (`lower_priority`). The PNG used to be made in the frame loop:
 /// one viewer at 15 pictures a second took the scope's screen from 27 to 16 frames a second.
 pub struct Shots {
     st: Mutex<ShotState>,
     wake: Condvar,
-    /// the little cores the encoder and the senders run on (`Cores::little`)
+    /// the little cores the encoder runs on (`Cores::little`)
     little: u64,
     tasks: Arc<shutdown::Tasks>,
 }
@@ -141,7 +93,7 @@ struct ShotState {
     busy: bool,
     /// connections waiting for a picture newer than the ETag they have, since when, and in which format (JPEG; PNG
     /// once the VPU failed)
-    waiting: Vec<(TcpStream, Option<String>, Instant, bool)>,
+    waiting: Vec<(Response, Option<String>, Instant, bool)>,
     /// the last picture: its pixels (taken out by the encoder while it compares), size, PNG, ETag
     px: Vec<u32>,
     size: (u32, u32),
@@ -182,8 +134,9 @@ impl Shots {
     }
 
     /// The answer to one `GET /screen.png` (`have`: the ETag of If-None-Match); the frame loop never encodes here.
-    fn request(self: &Arc<Self>, s: &TcpStream, have: Option<String>, cv: &Canvas, jpeg: bool) {
+    fn request(self: &Arc<Self>, s: &Response, have: Option<String>, cv: &Canvas, jpeg: bool) {
         let mut st = self.lock();
+        st.waiting.retain(|(reply, ..)| !reply.closed());
         st.asked = Some(Instant::now());
         if st.no_jpeg && st.no_jpeg_at.is_some_and(|t| t.elapsed() >= VPU_RETRY) {
             st.no_jpeg = false;
@@ -200,7 +153,7 @@ impl Shots {
         {
             let tag = st.tag.clone();
             drop(st);
-            return answer_shot(s, have.as_deref(), png, &tag, self.little, &self.tasks);
+            return answer_shot(s, have.as_deref(), png, &tag);
         }
         if st.waiting.len() >= SHOT_WAITING {
             drop(st);
@@ -208,14 +161,14 @@ impl Shots {
         }
         if !st.thread {
             let me = self.clone();
-            if self.tasks.spawn("web-png", None, move || me.encoder()).is_err() {
+            if self.tasks.spawn("web-png", move || me.encoder()).is_err() {
                 // no thread: the old way, in the frame loop
                 drop(st);
-                return answer_shot(s, None, crate::store::png_of(cv).into(), "", self.little, &self.tasks);
+                return answer_shot(s, None, crate::store::png_of(cv).into(), "");
             }
             st.thread = true;
         }
-        let Ok(c) = s.try_clone() else { return };
+        let c = s.clone();
         let want = st.jpeg;
         st.waiting.push((c, have, Instant::now(), want));
         drop(st);
@@ -235,6 +188,7 @@ impl Shots {
 
     fn tick_with(&self, cv: &Canvas, now: impl Fn() -> Instant) {
         let mut st = self.lock();
+        st.waiting.retain(|(reply, ..)| !reply.closed());
         let watched = st.asked.is_some_and(|t| now().saturating_duration_since(t) < SHOT_AHEAD);
         if st.waiting.is_empty() && !watched {
             return;
@@ -255,7 +209,7 @@ impl Shots {
             for ((c, have, _, _), ok) in old.into_iter().zip(fits) {
                 // the last picture in the format asked for, else "busy" (the page asks again)
                 if ok {
-                    answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little, &self.tasks);
+                    answer_shot(&c, have.as_deref(), png.clone(), &tag);
                 } else {
                     busy_answer(&c);
                 }
@@ -379,7 +333,7 @@ impl Shots {
                 let png = st.png.clone().unwrap_or_else(|| Arc::from(&[][..]));
                 drop(st);
                 for (c, have, _, _) in lack {
-                    answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little, &self.tasks);
+                    answer_shot(&c, have.as_deref(), png.clone(), &tag);
                 }
                 continue;
             };
@@ -399,7 +353,7 @@ impl Shots {
             let tag = st.tag.clone();
             drop(st);
             for (c, have, _, _) in waiting {
-                answer_shot(&c, have.as_deref(), png.clone(), &tag, self.little, &self.tasks);
+                answer_shot(&c, have.as_deref(), png.clone(), &tag);
             }
         }
     }
@@ -417,35 +371,33 @@ pub fn same_pixels(a: &[u32], b: &[u32]) -> bool {
     ca.zip(cb).all(|(x, y)| x.iter().zip(y).fold(0u32, |d, (p, q)| d | (p ^ q)) == 0) && ra == rb
 }
 
-/// 304 when the viewer has this picture, else the PNG through a sender thread (503 when all are busy).
-fn answer_shot(s: &TcpStream, have: Option<&str>, png: Arc<[u8]>, tag: &str, little: u64, tasks: &shutdown::Tasks) {
+/// 304 when the viewer has this picture, else the PNG through IO (503 when all are busy).
+fn answer_shot(s: &Response, have: Option<&str>, png: Arc<[u8]>, tag: &str) {
     let etag = if tag.is_empty() { String::new() } else { format!("ETag: {}\r\n", tag) };
-    if !tag.is_empty() && have == Some(tag) {
-        let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-        let _ = (&*s).write_all(
-            format!("HTTP/1.1 304 Not Modified\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", etag)
-                .as_bytes(),
-        );
-        return;
-    }
-    let ctype = if png.starts_with(&[0xff, 0xd8]) { "image/jpeg" } else { "image/png" };
-    let head = format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", ctype, png.len(), etag);
-    if !send_in_background(s, head, png, little, tasks) {
+    let not_modified = !tag.is_empty() && have == Some(tag);
+    let head = if not_modified {
+        format!("HTTP/1.1 304 Not Modified\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", etag)
+    } else {
+        let ctype = if png.starts_with(&[0xff, 0xd8]) { "image/jpeg" } else { "image/png" };
+        format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", ctype, png.len(), etag)
+    };
+    if !s.send(head, if not_modified { Arc::from([]) } else { png }, !not_modified) {
         busy_answer(s);
     }
 }
 
 pub struct Http {
-    /// the accept thread's address and stop flag while the port is open
-    open: Option<(std::net::SocketAddr, Arc<std::sync::atomic::AtomicBool>)>,
-    /// complete requests from the reader threads
+    /// the IO service while the port is open
+    open: Option<crate::netio::http::Service>,
+    runtime: Option<crate::netio::Runtime>,
+    /// complete owned requests from IO
     inbox: Arc<Inbox>,
     limits: Limits,
     shots: Arc<Shots>,
     /// who may install an update or use MCP (empty: everyone); the list Remote services > Allowed sets, checked per
     /// request, so a change counts at once
     acl: crate::netacl::Shared,
-    /// the list the reader threads see (refused before the body is read): `acl`, swapped by `set_acl`
+    /// the list IO sees (refused before the body is read): `acl`, swapped by `set_acl`
     acl_shared: Arc<Mutex<crate::netacl::Shared>>,
     /// the addresses the identification page names
     offer: Offer,
@@ -453,228 +405,16 @@ pub struct Http {
 
 impl Drop for Http {
     fn drop(&mut self) {
-        self.inbox.port.clear(true);
+        self.inbox.ports.requests().clear(true);
         self.shots.lock().quit = true;
         self.shots.wake.notify_all();
-        if let Some((_, stop)) = self.open.take() {
-            stop.store(true, std::sync::atomic::Ordering::SeqCst);
-        }
+        self.open.take();
     }
 }
 
-/// A short answer and the end of the connection (every refused or dropped request gets one): at most 1 s to write.
-/// The rest of an unread body is read away for up to 1 s, so the client sees the answer and not a reset.
-fn answer(s: &TcpStream, status: &str, msg: &str) {
-    answer_now(s, status, msg);
-    let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
-    let end = Instant::now() + Duration::from_secs(1);
-    let mut b = [0u8; 16384];
-    while Instant::now() < end {
-        match std::io::Read::read(&mut &*s, &mut b) {
-            Ok(n) if n > 0 => {}
-            _ => break,
-        }
-    }
-}
-
-/// `answer` without reading the rest away (the accept thread: it must not wait).
-fn answer_now(s: &TcpStream, status: &str, msg: &str) {
-    let _ = s.set_write_timeout(Some(Duration::from_secs(1)));
-    let _ = (&*s).write_all(
-        format!(
-            "HTTP/1.1 {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            status,
-            msg.len(),
-            msg
-        )
-        .as_bytes(),
-    );
-    let _ = s.shutdown(std::net::Shutdown::Write);
-}
-
-/// The parts of a request head the reader needs (names without case).
-#[derive(Debug, PartialEq)]
-pub struct Head {
-    post: bool,
-    route: String,
-    /// Content-Length; None without one
-    len: Option<usize>,
-    chunked: bool,
-    expect_continue: bool,
-}
-
-pub fn parse_head(text: &str) -> Head {
-    let mut words = text.split_whitespace();
-    let post = words.next() == Some("POST");
-    let path = words.next().unwrap_or("/");
-    let route = path.split_once('?').map_or(path, |x| x.0).to_string();
-    let len = header(text, "content-length").and_then(|v| v.parse::<usize>().ok());
-    let chunked = header(text, "transfer-encoding").is_some_and(|v| !v.eq_ignore_ascii_case("identity"));
-    let expect_continue = header(text, "expect").is_some_and(|v| v.eq_ignore_ascii_case("100-continue"));
-    Head { post, route, len, chunked, expect_continue }
-}
-
-/// Why a request is answered before its body is read: the status line and text, or None to read it.
-pub fn refuse_early(h: &Head, text: &str, peer_ok: bool) -> Option<(&'static str, &'static str)> {
-    let limit = match (h.post, h.route.as_str()) {
-        (true, "/update") => MAX_UPDATE,
-        (true, "/waveform") => MAX_WAVEFORM,
-        _ => MAX_OTHER,
-    };
-    if h.post && (h.chunked || h.len.is_none()) {
-        return Some(("411 Length Required", "a body needs a Content-Length"));
-    }
-    if h.len.is_some_and(|n| n > limit) {
-        return Some(("413 Payload Too Large", "request too large"));
-    }
-    if foreign(text, &h.route, h.post)
-        || (matches!(h.route.as_str(), "/update" | "/mcp") && (h.post || h.route == "/mcp") && !peer_ok)
-    {
-        return Some(("403 Forbidden", "refused"));
-    }
-    None
-}
-
-/// The accept thread of an open port: a reader thread per connection, at most `MAX_PENDING` (503 beyond). Polls the
-/// listener every 20 ms so that `stop` ends it.
-fn acceptor(
-    l: TcpListener,
-    inbox: Arc<Inbox>,
-    acl: Arc<Mutex<crate::netacl::Shared>>,
-    stop: Arc<std::sync::atomic::AtomicBool>,
-    lim: Limits,
-    tasks: Arc<shutdown::Tasks>,
-) {
-    use std::sync::atomic::Ordering::SeqCst;
-    let _ = l.set_nonblocking(true);
-    while !stop.load(SeqCst) {
-        match l.accept() {
-            Ok((s, _)) => {
-                if inbox.active.fetch_add(1, SeqCst) >= MAX_PENDING {
-                    inbox.active.fetch_sub(1, SeqCst);
-                    let _ = s.set_nonblocking(false);
-                    answer_now(&s, "503 Service Unavailable", "busy, try again");
-                    continue;
-                }
-                let (ib, acl) = (inbox.clone(), acl.clone());
-                let tracked = s.try_clone().ok();
-                let spawned = tasks.spawn("web-read", tracked.as_ref(), move || {
-                    reader(s, &ib, &acl, lim);
-                    ib.active.fetch_sub(1, SeqCst);
-                });
-                if spawned.is_err() {
-                    inbox.active.fetch_sub(1, SeqCst);
-                }
-            }
-            Err(_) => std::thread::sleep(Duration::from_millis(20)),
-        }
-    }
-}
-
-/// Style of both pages (the update page uses it too).
-pub const STYLE: &str = r#"*{box-sizing:border-box}
-body{background:#14171c;color:#e4e7ea;font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0 auto;max-width:1048px;padding:12px}
-header{display:flex;align-items:center;gap:14px;margin-bottom:10px}header b{font-size:17px}header nav{margin-left:auto;display:flex;gap:14px}
-a{color:#5cb2f0;text-decoration:none}a:hover{text-decoration:underline}
-#st{color:#9aa4af;font-size:13px}#st.bad{color:#f0a93b}
-button{background:#242a33;color:#e4e7ea;border:1px solid #3a424d;border-radius:6px;padding:7px 11px;font:inherit;cursor:pointer;touch-action:manipulation}
-button:hover{background:#2f3743}button:active{background:#3a4452}button.on{border-color:#f0a93b;color:#f0a93b}
-button:focus-visible,a:focus-visible,select:focus-visible{outline:2px solid #f0a93b;outline-offset:3px}button:disabled{opacity:.55;cursor:wait}
-select{background:#242a33;color:#e4e7ea;border:1px solid #3a424d;border-radius:6px;padding:7px;font:inherit}
-pre{background:#0d0f13;border:1px solid #2a3038;border-radius:6px;padding:12px;overflow-x:auto;white-space:pre-wrap}
-code{font:13px ui-monospace,Menlo,Consolas,monospace}"#;
-
-const PAGE: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OOS remote</title>
-<link rel="stylesheet" href="/style.css">
-<style>img{display:block;width:100%;height:auto;border:1px solid #3a424d;border-radius:6px;cursor:crosshair;touch-action:none;user-select:none;-webkit-user-select:none}
-.g{display:flex;flex-wrap:wrap;gap:12px 22px;margin-top:12px}.k span{display:block;font-size:12px;color:#9aa4af;margin-bottom:3px}.k div{display:flex;flex-wrap:wrap;gap:4px}
-.workflow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 8px}.workflow label{display:flex;align-items:center;gap:6px;color:#b8c0ca;font-size:13px}.workflow .primary{border-color:#f0a93b;color:#f0a93b}.session{margin-left:auto;color:#b8c0ca;font-size:13px;font-variant-numeric:tabular-nums}.file-hint{min-height:20px;margin:0 0 8px;color:#b8c0ca;font-size:13px}.file-hint.bad{color:#ffab91}header{flex-wrap:wrap}@media(max-width:620px){.session{margin-left:0;flex-basis:100%}.workflow{gap:6px}button{min-height:40px}}</style></head>
-<body><header><b>OOS remote</b><span id="st">connecting ...</span><nav><a href="/update">Update</a></nav></header>
-<div class="workflow" aria-label="Waveform and source actions">
-<button id="load-wave" class="primary" onclick="askFile()">Load waveform</button>
-<input id="wave-file" type="file" accept=".csv,.bin,.wfm,.trc,.isf,.tr0,.wfmx" hidden>
-<label>Into <select id="wave-slot" aria-label="Reference slot"><option value="" selected>Choose slot</option><option value="1">R1</option><option value="2">R2</option><option value="3">R3</option><option value="4">R4</option><option value="5">R5</option><option value="6">R6</option><option value="7">R7</option><option value="8">R8</option><option value="9">R9</option><option value="10">R10</option></select></label>
-<button id="sim-mode" onclick="c('workflow sim')">SIM</button><button id="return-live" onclick="c('workflow live')" hidden>Return to live</button>
-<button id="acquire-toggle" onclick="c('key runstop')" aria-label="Run or stop acquisition">Run/Stop</button><button onclick="c('key single')">Single</button>
-<button onclick="c('workflow measure')">Add measurement</button><span id="session-state" class="session" aria-live="polite">Reading source...</span></div>
-<p id="wave-status" class="file-hint" role="status">Choose a slot, then CSV, BIN, WFM, TRC, ISF, TR0 or WFMX · up to 128 MiB. You can also drop a file on the waveform.</p>
-<img id="s" width="1024" height="600" alt="scope screen" src="/screen.png">
-<div class="g"><div class="k"><span>Acquisition</span><div>
-<button onclick="c('key runstop')">Run/Stop</button><button onclick="c('key single')">Single</button><button onclick="c('key auto')">Autoset</button><button onclick="c('key clear')">Clear</button><button onclick="c('key default')">Default</button></div></div>
-<div class="k"><span>Channels</span><div>
-<button onclick="c('key ch1')">CH1</button><button onclick="c('key ch2')">CH2</button><button onclick="c('key ch3')">CH3</button><button onclick="c('key ch4')">CH4</button><button onclick="c('key math')">Math</button><button onclick="c('key ref')">Ref</button><button onclick="c('key la')">LA</button><button onclick="c('key gi')">Gen</button></div></div>
-<div class="k"><span>Tools</span><div>
-<button onclick="c('workflow settings')">Measure settings</button><button onclick="c('key cursor')">Cursor</button><button onclick="c('key analyse')">Decode</button><button onclick="c('key tmenu')">Trigger</button><button onclick="c('key force')">Force trigger</button></div></div></div>
-<div class="g">
-<div class="k"><span>V scale</span><div><button onclick="c('knob vscale -1')">-</button><button onclick="c('knob vscale +1')">+</button></div></div>
-<div class="k"><span>V pos</span><div><button onclick="c('knob vpos -5')">-</button><button onclick="c('knob vpos +5')">+</button></div></div>
-<div class="k"><span>H scale</span><div><button onclick="c('knob hscale -1')">-</button><button onclick="c('knob hscale +1')">+</button><button onclick="c('knob hscale push')">zoom</button></div></div>
-<div class="k"><span>H pos</span><div><button onclick="c('knob hpos -5')">-</button><button onclick="c('knob hpos +5')">+</button></div></div>
-<div class="k"><span>Trig level</span><div><button onclick="c('knob tlevel -5')">-</button><button onclick="c('knob tlevel +5')">+</button><button onclick="c('knob tlevel push')">50%</button></div></div>
-<div class="k"><span>Multi 1</span><div><button onclick="c('knob multi1 -1')">-</button><button onclick="c('knob multi1 +1')">+</button><button onclick="c('knob multi1 push')">push</button></div></div>
-<div class="k"><span>Multi 2</span><div><button onclick="c('knob multi2 -1')">-</button><button onclick="c('knob multi2 +1')">+</button></div></div></div>
-<div class="g"><div class="k"><span>Save to this computer</span><div>
-<button onclick="dl('/screen.png','png')">Screenshot (PNG)</button><button onclick="dl('/wave.csv','csv')">Waveform (CSV)</button><button onclick="dl('/wave.bin','bin')">Waveform (binary)</button><button onclick="dl('/la.csv','la.csv')">LA lines (CSV)</button></div></div>
-<div class="k"><span>Browser picture only</span><div><button id="p" onclick="pause()">Pause picture</button></div></div>
-<div class="k"><span>Live picture format</span><div><button id="fp" onclick="setfmt('png')" title="compressed, about 90 KB per picture">PNG</button><button id="fb" onclick="setfmt('bmp')" title="uncompressed, 1.8 MB per picture">BMP</button><button id="fj" onclick="setfmt('jpg')" title="made by the scope's video encoder, about 70 KB per picture: up to 20 a second, but text a little less sharp">JPEG</button></div></div></div>
-<script>
-const s=document.getElementById('s'),st=document.getElementById('st'),pb=document.getElementById('p'),fp=document.getElementById('fp'),fb=document.getElementById('fb'),fj=document.getElementById('fj');
-let paused=false,running=false,n=0,msg='',until=0,fmt='png';
-try{const f=localStorage.getItem('fmt');if(f=='bmp'||f=='jpg')fmt=f;}catch(e){}
-function setfmt(f){fmt=f;try{localStorage.setItem('fmt',f);}catch(e){}fp.className=f=='png'?'on':'';fb.className=f=='bmp'?'on':'';fj.className=f=='jpg'?'on':'';}
-setfmt(fmt);
-function say(t){msg=t;until=Date.now()+5000;show();}
-function show(bad){st.textContent=Date.now()<until?msg:(paused?'picture paused':bad?'no connection':'connected, '+n+' pictures/s');st.className=bad?'bad':'';}
-function c(x){return fetch('/cmd?c='+encodeURIComponent(x)).then(async r=>{const text=await r.text();if(!r.ok||text==='refused')throw Error(text);refreshState();}).catch(()=>say('Command not sent. Check the connection.'));}
-let statePending=false,uploading=false,workflowState=null;
-function askFile(){const slot=document.getElementById('wave-slot'),status=document.getElementById('wave-status');if(!slot.value){status.textContent='Choose a slot from R1 to R10 before the file.';status.className='file-hint bad';return;}document.getElementById('wave-file').click();}
-function refreshState(){if(statePending||document.hidden)return;statePending=true;fetch('/ui-state').then(r=>{if(!r.ok)throw Error();return r.json();}).then(v=>{
-const mode=v.mode==='sim'?'SIM':v.mode==='reference'?'Stored waveform':'Live';
-workflowState=v;
-document.getElementById('session-state').textContent=[mode,v.source,v.status,(v.captures>0?'Capture '+v.captures:'')].filter(Boolean).join(' · ');
-document.getElementById('sim-mode').className=v.mode==='sim'?'on':'';document.getElementById('return-live').hidden=v.mode==='live';
-document.getElementById('acquire-toggle').textContent=v.running?'Stop':'Run';
-}).catch(()=>{}).finally(()=>{statePending=false;});}
-async function uploadWave(file){if(!file||uploading)return;const status=document.getElementById('wave-status'),button=document.getElementById('load-wave'),slot=document.getElementById('wave-slot');
-if(!slot.value){status.textContent='Choose a slot from R1 to R10 before the file.';status.className='file-hint bad';document.getElementById('wave-file').value='';return;}
-if(file.size>128*1024*1024){status.textContent='That file is larger than 128 MiB. Export a shorter waveform and try again.';status.className='file-hint bad';return;}
-uploading=true;button.disabled=true;slot.disabled=true;button.textContent='Loading...';status.className='file-hint';status.textContent='Loading '+file.name+' into R'+slot.value+'...';
-try{const response=await fetch('/waveform?name='+encodeURIComponent(file.name)+'&slot='+encodeURIComponent(slot.value),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});const text=await response.text();if(!response.ok)throw Error(text);status.textContent=text;refreshState();}
-catch(error){status.textContent='Could not load waveform: '+(error.message||'check the connection and try again.');status.className='file-hint bad';}
-finally{uploading=false;button.disabled=false;slot.disabled=false;button.textContent='Load waveform';document.getElementById('wave-file').value='';}}
-document.getElementById('wave-file').addEventListener('change',event=>uploadWave(event.target.files[0]));
-s.addEventListener('dragover',event=>{if(Array.from(event.dataTransfer?.types||[]).includes('Files'))event.preventDefault();});
-s.addEventListener('drop',event=>{event.preventDefault();uploadWave(event.dataTransfer.files[0]);});
-document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='o'){event.preventDefault();askFile();}});
-refreshState();
-function dl(u,ext){say('saving ...');Promise.all([fetch(u).then(r=>r.ok?r.blob():r.text().then(t=>Promise.reject(t))),fetch('/stamp').then(r=>r.ok?r.text():'').catch(()=>'')]).then(([b,t])=>{
-const a=document.createElement('a'),d=t.trim()||new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,19).replace(/-|:/g,'').replace('T','-');
-a.href=URL.createObjectURL(b);a.download='oos-'+d+'.'+ext;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),10000);say('saved');
-}).catch(e=>say(typeof e=='string'?e:'not saved: no connection'));}
-function pause(){paused=!paused;pb.textContent=paused?'Resume picture':'Pause picture';pb.className=paused?'on':'';show();go();}
-function pt(e){const r=s.getBoundingClientRect();const p=e.changedTouches?e.changedTouches[0]:e;return [Math.round((p.clientX-r.left)*(s.naturalWidth||1024)/r.width),Math.round((p.clientY-r.top)*(s.naturalHeight||600)/r.height)];}
-let d0=null;
-function down(e){e.preventDefault();d0=pt(e);}
-function up(e){if(!d0)return;e.preventDefault();const p=pt(e),start=d0;d0=null;if(Math.abs(p[0]-start[0])+Math.abs(p[1]-start[1])<8){c('tap '+start[0]+' '+start[1]);}else c('drag '+start[0]+' '+start[1]+' '+p[0]+' '+p[1]);}
-s.addEventListener('mousedown',down);s.addEventListener('mouseup',up);s.addEventListener('touchstart',down,{passive:false});s.addEventListener('touchend',up,{passive:false});
-s.ondragstart=()=>false;
-let count=0;setInterval(()=>{n=count;count=0;if(!document.hidden){refreshState();if(!paused)show(st.className=='bad');}},1000);
-// no pictures while paused or in a background tab: each one is 90 KB as PNG, 1.8 MB as BMP, which the scope has to send
-// a PNG comes with an ETag: sent back, the scope holds the request until its screen has changed (304 after 2 s), so
-// the next request can go at once; a BMP has none, so a pause between them
-let tag='',shown='';
-function next(ok){running=false;show(!ok);setTimeout(go,!ok?1000:fmt!='bmp'?0:150);}
-function go(){if(running||paused||document.hidden)return;running=true;const f=fmt;
-fetch('/screen.'+f+'?t='+Date.now(),{cache:'no-store',headers:tag&&f!='bmp'?{'If-None-Match':tag}:{}}).then(r=>{
-if(r.status==304)return next(true);
-if(!r.ok)return next(false);
-const t=f!='bmp'&&r.headers.get('ETag')||'';
-return r.blob().then(b=>{const u=URL.createObjectURL(b),i=new Image();
-i.onload=()=>{s.src=u;if(shown)URL.revokeObjectURL(shown);shown=u;tag=t;count++;next(true);};
-i.onerror=()=>{URL.revokeObjectURL(u);next(false);};i.src=u;});
-}).catch(()=>next(false));}
-document.addEventListener('visibilitychange',go);go();
-</script></body></html>"#;
+#[cfg(test)]
+use crate::netport::http::PAGE;
+pub use crate::netport::http::STYLE;
 
 fn unescape(s: &str) -> String {
     let b = s.as_bytes();
@@ -717,7 +457,7 @@ impl Http {
     }
 
     pub fn port(&self) -> Option<u16> {
-        self.open.as_ref().map(|(addr, _)| addr.port())
+        self.open.as_ref().map(|service| service.addr().port())
     }
 
     /// The address list to check (`Ui::acl`, shared with the other servers), for the frame loop and the readers.
@@ -730,6 +470,7 @@ impl Http {
         let acl = crate::netacl::Shared::default();
         let mut h = Http {
             open: None,
+            runtime: None,
             inbox: Arc::new(Inbox::default()),
             limits,
             shots: Shots::new(sw.cores.little),
@@ -742,13 +483,13 @@ impl Http {
     }
 
     pub fn wake(&self) -> &crate::system::intake::Wake {
-        self.inbox.port.wake()
+        self.inbox.ports.requests().wake()
     }
 
     /// The address the port is open on (tests).
     #[cfg(test)]
     fn addr(&self) -> std::net::SocketAddr {
-        self.open.as_ref().expect("web port open").0
+        self.open.as_ref().expect("web port open").addr()
     }
 
     /// The addresses the identification page names. Set from the listeners that actually came up.
@@ -762,12 +503,11 @@ impl Http {
             Some(p) if self.open.is_none() => self.start(p, v6),
             Some(_) => {}
             None => {
-                if let Some((_, stop)) = self.open.take() {
-                    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                if self.open.take().is_some() {
                     eprintln!("oos-ui: web remote off");
                 }
                 // the readers waiting for the frame loop answer 503 when they give up
-                self.inbox.port.clear(false);
+                self.inbox.ports.requests().clear(false);
             }
         }
     }
@@ -807,135 +547,115 @@ impl Http {
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
         let mut cmds = Vec::new();
         self.shots.tick(cv);
-        for Req { s, head: text, body, .. } in self.inbox.take() {
-            let s = &s;
-            {
-                // only the header as text: the body may be a 31 MB binary package
-                let path = text.split_whitespace().nth(1).unwrap_or("/").to_string();
-                let (route, query) = path.split_once('?').unwrap_or((&path, ""));
-                let mut req_body = body;
-                let post = text.starts_with("POST ");
-                // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
-                let peer_ok = self.acl.permits_peer(s.peer_addr());
-                // an answer that is text for the page to show, not the data asked for
-                let mut failed = false;
-                let mut csv = |r: Result<String, String>| match r {
-                    Ok(t) => ("text/csv; charset=utf-8", t.into_bytes()),
+        for Req { reply, head: text, body, peer } in self.inbox.take() {
+            // only the header as text: the body may be a 31 MB binary package
+            let path = text.split_whitespace().nth(1).unwrap_or("/").to_string();
+            let (route, query) = path.split_once('?').unwrap_or((&path, ""));
+            let mut req_body = body;
+            let post = text.starts_with("POST ");
+            // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
+            let peer_ok = self.acl.permits_peer(Ok(peer));
+            // an answer that is text for the page to show, not the data asked for
+            let mut failed = false;
+            let mut csv = |r: Result<String, String>| match r {
+                Ok(t) => ("text/csv; charset=utf-8", t.into_bytes()),
+                Err(e) => {
+                    failed = true;
+                    ("text/plain", e.into_bytes())
+                }
+            };
+            let (ctype, body): (&str, Vec<u8>) = match route {
+                _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
+                "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
+                "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
+                "/waveform" if post => {
+                    let slot = query
+                        .split('&')
+                        .find_map(|part| part.strip_prefix("slot="))
+                        .and_then(|value| value.parse::<usize>().ok());
+                    let name = waveform_name(query);
+                    let previous = ui.ref_slot();
+                    let result = if let Some(slot) = slot.filter(|s| (1..=10).contains(s)) {
+                        ui.load_waveform_bytes_at(req_body.bytes(), &name, slot - 1)
+                    } else {
+                        Err("Choose a reference slot from R1 to R10.".into())
+                    };
+                    match result {
+                        Ok(()) => {
+                            let hint = if ui.record_mode() {
+                                "Use Run/Stop or Single to acquire from this record; Return to live restores the live source."
+                            } else {
+                                "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition."
+                            };
+                            (
+                                "text/plain; charset=utf-8",
+                                format!("Loaded {} into R{}. {}", name, ui.ref_slot() + 1, hint).into_bytes(),
+                            )
+                        }
+                        Err(error) => {
+                            ui.ref_slot_set(previous);
+                            failed = true;
+                            ("text/plain; charset=utf-8", error.into_bytes())
+                        }
+                    }
+                }
+                "/screen.png" | "/screen.jpg" => {
+                    let have = header(&text, "if-none-match").map(str::to_string);
+                    self.shots.request(&reply, have, cv, route == "/screen.jpg");
+                    continue;
+                }
+                // the scope's local time for the names of the page's downloads; empty while its clock is not set
+                "/stamp" => ("text/plain", ui.file_stamp().unwrap_or_default().into_bytes()),
+                "/wave.csv" => csv(ui.web_wave_csv()),
+                "/la.csv" => csv(ui.web_la_csv()),
+                "/wave.bin" => match ui.web_wave_bin() {
+                    Ok(b) => ("application/octet-stream", b),
                     Err(e) => {
                         failed = true;
                         ("text/plain", e.into_bytes())
                     }
-                };
-                let (ctype, body): (&str, Vec<u8>) = match route {
-                    _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
-                    "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
-                    "/" => ("text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
-                    "/style.css" => ("text/css", STYLE.as_bytes().to_vec()),
-                    "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
-                    "/waveform" if post => {
-                        let slot = query
-                            .split('&')
-                            .find_map(|part| part.strip_prefix("slot="))
-                            .and_then(|value| value.parse::<usize>().ok());
-                        let name = waveform_name(query);
-                        let previous = ui.ref_slot();
-                        let result = if let Some(slot) = slot.filter(|s| (1..=10).contains(s)) {
-                            ui.load_waveform_bytes_at(&req_body, &name, slot - 1)
-                        } else {
-                            Err("Choose a reference slot from R1 to R10.".into())
-                        };
-                        match result {
-                            Ok(()) => {
-                                let hint = if ui.record_mode() {
-                                    "Use Run/Stop or Single to acquire from this record; Return to live restores the live source."
-                                } else {
-                                    "It is on with the live channels. Fit shows its full record; Take over enters stored acquisition."
-                                };
-                                (
-                                    "text/plain; charset=utf-8",
-                                    format!("Loaded {} into R{}. {}", name, ui.ref_slot() + 1, hint).into_bytes(),
-                                )
-                            }
-                            Err(error) => {
-                                ui.ref_slot_set(previous);
-                                failed = true;
-                                ("text/plain; charset=utf-8", error.into_bytes())
-                            }
-                        }
-                    }
-                    "/screen.png" | "/screen.jpg" => {
-                        let have = header(&text, "if-none-match").map(str::to_string);
-                        self.shots.request(s, have, cv, route == "/screen.jpg");
-                        continue;
-                    }
-                    // the scope's local time for the names of the page's downloads; empty while its clock is not set
-                    "/stamp" => ("text/plain", ui.file_stamp().unwrap_or_default().into_bytes()),
-                    "/wave.csv" => csv(ui.web_wave_csv()),
-                    "/la.csv" => csv(ui.web_la_csv()),
-                    "/wave.bin" => match ui.web_wave_bin() {
-                        Ok(b) => ("application/octet-stream", b),
-                        Err(e) => {
-                            failed = true;
-                            ("text/plain", e.into_bytes())
-                        }
-                    },
-                    "/update" if post => {
-                        let (refused, kind, body) = ui.update_upload_reply(std::mem::take(&mut req_body), query);
-                        failed = refused;
-                        (kind, body)
-                    }
-                    "/update" => ("text/html; charset=utf-8", ui.update_page().into_bytes()),
-                    "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
-                    "/mcp" => match mcp(&String::from_utf8_lossy(&req_body), ui, cv, scpi) {
-                        Some(r) => ("application/json", r.into_bytes()),
-                        None => ("", Vec::new()),
-                    },
-                    "/screen.bmp" => ("image/bmp", crate::scpi::bmp(cv)),
-                    "/cmd" => {
-                        let mut refused = false;
-                        for kv in query.split('&') {
-                            if let Some(v) = kv.strip_prefix("c=") {
-                                let c = unescape(v);
-                                if crate::cmd::remote_ok(&c) {
-                                    cmds.push(c);
-                                } else {
-                                    refused = true;
-                                }
-                            }
-                        }
-                        ("text/plain", if refused { b"refused".to_vec() } else { b"ok".to_vec() })
-                    }
-                    _ => ("text/plain", b"not found".to_vec()),
-                };
-                let status = match (failed, body.as_slice(), ctype.is_empty()) {
-                    (true, _, _) => "409 Conflict",
-                    (_, b"not found", _) => "404 Not Found",
-                    (_, b"refused", _) => "403 Forbidden",
-                    (_, _, true) => "202 Accepted",
-                    _ => "200 OK",
-                };
-                let head = format!("HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status, ctype, body.len());
-                if body.len() > SEND_INLINE {
-                    if !send_in_background(s, head, body, self.shots.little, &self.shots.tasks) {
-                        busy_answer(s);
-                    }
-                } else {
-                    let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
-                    let _ = (&*s).write_all(head.as_bytes());
-                    let _ = (&*s).write_all(&body);
+                },
+                "/update" if post => {
+                    let (refused, kind, body) = ui.update_upload_job(req_body.take_upload(), query);
+                    failed = refused;
+                    (kind, body)
                 }
+                "/update" => ("text/html; charset=utf-8", ui.update_page().into_bytes()),
+                "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
+                "/mcp" => match mcp(&String::from_utf8_lossy(req_body.bytes()), ui, cv, scpi) {
+                    Some(r) => ("application/json", r.into_bytes()),
+                    None => ("", Vec::new()),
+                },
+                "/screen.bmp" => ("image/bmp", crate::scpi::bmp(cv)),
+                "/cmd" => {
+                    let mut refused = false;
+                    for kv in query.split('&') {
+                        if let Some(v) = kv.strip_prefix("c=") {
+                            let c = unescape(v);
+                            if crate::cmd::remote_ok(&c) {
+                                cmds.push(c);
+                            } else {
+                                refused = true;
+                            }
+                        }
+                    }
+                    ("text/plain", if refused { b"refused".to_vec() } else { b"ok".to_vec() })
+                }
+                _ => ("text/plain", b"not found".to_vec()),
+            };
+            let status = match (failed, body.as_slice(), ctype.is_empty()) {
+                (true, _, _) => "409 Conflict",
+                (_, b"not found", _) => "404 Not Found",
+                (_, b"refused", _) => "403 Forbidden",
+                (_, _, true) => "202 Accepted",
+                _ => "200 OK",
+            };
+            if !reply.content(status, ctype, body) {
+                busy_answer(&reply);
             }
         }
         cmds
     }
-}
-
-/// The value of a header of the request head (name without case).
-fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
-    head.lines().skip(1).find_map(|l| {
-        let (k, v) = l.split_once(':')?;
-        k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
-    })
 }
 
 fn lxi_identification(o: &Offer) -> String {
@@ -1056,45 +776,38 @@ pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -
     Some(J::obj(&[("jsonrpc", J::s("2.0")), ("id", id), ("result", result)]).to_string())
 }
 
-/// A request a web page on another site made through the browser of the bench PC, not the page of the scope or a tool:
-/// it may press keys or install a package without the owner's doing. The Host names the scope by address or local
-/// name (a foreign name that resolves here is DNS rebinding), an Origin matches the Host, and the browser's own
-/// Sec-Fetch-Site says the rest, also for the GET of an image tag, which has no Origin. A link to the page itself may
-/// come from anywhere. curl and the like send neither header.
-fn foreign(head: &str, route: &str, post: bool) -> bool {
-    let header = |name: &str| {
-        head.lines().skip(1).find_map(|l| {
-            let (k, v) = l.split_once(':')?;
-            k.trim().eq_ignore_ascii_case(name).then(|| v.trim().to_ascii_lowercase())
-        })
-    };
-    let name_of = |h: &str| {
-        h.rsplit_once(':')
-            .filter(|(n, p)| !n.ends_with(':') && p.bytes().all(|b| b.is_ascii_digit()))
-            .map_or(h.to_string(), |(n, _)| n.to_string())
-    };
-    let host = header("host");
-    if let Some(h) = &host {
-        let n = name_of(h);
-        let n = n.trim_matches(['[', ']']);
-        let local =
-            n.parse::<std::net::IpAddr>().is_ok() || n == "localhost" || !n.contains('.') || n.ends_with(".local");
-        if !local {
-            return true;
-        }
-    }
-    if let Some(o) = header("origin") {
-        let o = o.split_once("://").map_or(o.as_str(), |x| x.1).to_string();
-        if host.as_deref() != Some(o.as_str()) {
-            return true;
-        }
-    }
-    let page = !post && matches!(route, "/" | "/style.css" | "/update" | "/lxi/identification");
-    !page && matches!(header("sec-fetch-site").as_deref(), Some("cross-site" | "same-site"))
-}
-
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn exhausted_not_modified_response_budget_closes_the_screenshot_reply() {
+        use std::{future::Future, task::Context, task::Poll, task::Waker};
+        let inbox = Inbox::default();
+        let reservation = inbox.ports.budget().reserve_available().unwrap();
+        let request = inbox.envelope(String::new(), Body::Bytes(Vec::new()), "192.0.2.1:1".parse().unwrap());
+        let crate::netport::RemoteRequest::Http(req) = request.into_request() else {
+            panic!("HTTP request expected");
+        };
+        let reply = req.reply;
+        let shots = Shots::new(0);
+        let now = Instant::now();
+        let tag = "\"unchanged\"";
+        {
+            let mut st = shots.lock();
+            st.tag = tag.into();
+            st.png = Some(Arc::from(&b"picture"[..]));
+            st.waiting.push((reply.clone(), Some(tag.into()), now, false));
+        }
+        let mut response = std::pin::pin!(reply.receive());
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(response.as_mut().poll(&mut cx).is_pending());
+        shots.tick_at(&Canvas::new(1, 1), now + LONG_POLL);
+        assert!(shots.lock().waiting.is_empty());
+        assert!(reply.closed());
+        assert!(matches!(response.as_mut().poll(&mut cx), Poll::Ready(None)));
+        drop(reservation);
+        assert_eq!(inbox.ports.budget().used(), 0);
+    }
+
     #[test]
     fn shot_expiry_clock_is_sampled_under_state_lock() {
         let shots = Shots::new(0);
@@ -1116,7 +829,8 @@ mod tests {
 
     mod empty_tests;
     use super::*;
-    use std::io::Read;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
 
     #[test]
     fn a_foreign_site_gets_nowhere() {
@@ -1194,23 +908,11 @@ mod tests {
         String::from_utf8_lossy(&out).into_owned()
     }
 
-    fn quick(idle_ms: u64, deadline_ms: u64, take_ms: u64) -> Http {
-        let ms = Duration::from_millis;
-        Http::open_with(
-            0,
-            Limits { idle: ms(idle_ms), deadline: ms(deadline_ms), take: ms(take_ms) },
-            &Default::default(),
-        )
-    }
-
     // Break it catches: a client held for ever when the frame loop does not run (the 55 min upload of 2026-11-14 is
     // the case this is for): the reader answers 503 once `take` passed.
     #[test]
     fn a_request_the_frame_loop_does_not_take_gets_503() {
-        let h = quick(10_000, 120_000, 300);
-        let r = talk(h.addr().port(), b"GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-        assert!(r.starts_with("HTTP/1.1 503"), "{}", r);
-        assert!(h.inbox.port.is_empty(), "the request left the inbox");
+        crate::netio::http::tests::untaken_request_times_out();
     }
 
     // Break it catches: no answer to `Expect: 100-continue` (curl waits a second, other clients longer), the 100 sent
@@ -1314,34 +1016,10 @@ mod tests {
     // keeps a connection longer than the deadline, a head without an end read for ever.
     #[test]
     fn every_limit_answers() {
-        // idle: half a head, then nothing
-        let h = quick(300, 120_000, 10_000);
-        let r = talk(h.addr().port(), b"GET / HTTP/1.1\r\nHo");
-        assert!(r.starts_with("HTTP/1.1 408"), "idle: {}", r);
-        // A partial head keeps the idle read alive, but the next read must honor the total deadline.
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        client.set_read_timeout(Some(crate::ui::lifecycle::test_wait::HANG_GUARD)).unwrap();
-        client.write_all(b"GET / HTTP/1.1\r\nHo").unwrap();
-        let (server, _) = listener.accept().unwrap();
-        let worker = std::thread::spawn(move || {
-            let start = Instant::now();
-            let samples = std::cell::Cell::new(0u32);
-            let limits = Limits { idle: crate::ui::lifecycle::test_wait::HANG_GUARD, ..LIMITS };
-            reader::reader_with_now(server, &Inbox::default(), &Mutex::new(Default::default()), limits, || {
-                let n = samples.get();
-                samples.set(n + 1);
-                // Sample 0 starts the request, 1 permits the partial read, 2 expires the next read.
-                assert!(n <= 2, "deadline must stop the trickle before another read");
-                start + limits.deadline * n.saturating_sub(1)
-            });
-            assert_eq!(samples.get(), 3, "partial input must precede deadline expiry");
-        });
-        let mut response = String::new();
-        client.read_to_string(&mut response).unwrap();
-        worker.join().unwrap();
-        assert!(response.starts_with("HTTP/1.1 408"), "deadline: {response}");
-        assert!(response.contains("request took too long"), "deadline body: {response}");
+        // Idle: half a head, then nothing, with an injected timeout.
+        crate::netio::http::tests::idle_partial_head_expires_only_on_injected_time();
+        // The partial-head total deadline fixture runs against async input with an injected clock.
+        crate::netio::http::tests::partial_head_deadline();
         // head too long
         let h = open_test(0, &Default::default());
         let r = talk(h.addr().port(), format!("GET / HTTP/1.1\r\nX: {}", "a".repeat(MAX_HEAD + 100)).as_bytes());
@@ -1582,8 +1260,7 @@ setTimeout(() => {
     /// send large answers in parallel took each other's slots, and a picture came back 503 (about 1 run in 12 under
     /// load, `live_picture_from_the_frame_loop_without_a_copy`). Those tests run one at a time.
     fn senders_alone() -> std::sync::MutexGuard<'static, ()> {
-        static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        ALONE.lock().unwrap_or_else(|e| e.into_inner())
+        crate::netport::http::senders_alone()
     }
 
     #[test]
@@ -1665,7 +1342,7 @@ setTimeout(() => {
 
     /// Large answers leave the frame loop: the whole body arrives, also several at once, and the count goes back.
     #[test]
-    fn large_answers_go_through_a_thread() {
+    fn large_answers_go_through_netio() {
         let wait = crate::ui::lifecycle::test_wait::Wait::new("HTTP sender completion");
         let _alone = senders_alone();
         use std::sync::atomic::Ordering::SeqCst;
@@ -2008,7 +1685,7 @@ setTimeout(() => {
         let until = crate::ui::lifecycle::test_wait::Wait::new(
             "a_large_body_at_a_time_and_net_allow_before_the_body completion",
         );
-        while !h.inbox.large.load(std::sync::atomic::Ordering::SeqCst) {
+        while !h.inbox.large.occupied() {
             until.check();
             h.poll(&mut ui, &cv, &mut scpi);
             wait.poll();

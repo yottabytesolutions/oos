@@ -14,137 +14,6 @@ impl Ui {
         (self.value(Item::AfgFreq), format!("{} \u{b7} {}", self.value(Item::AfgWave), self.value(Item::AfgAmpl)))
     }
 
-    pub(super) fn afg_items(&self) -> Vec<Item> {
-        // the selector only where there is a choice
-        let mut v = if gen_count() > 1 {
-            vec![Item::AfgSel, Item::AfgOn, Item::AfgWave]
-        } else {
-            vec![Item::AfgOn, Item::AfgWave]
-        };
-        match self.m.afg_wave {
-            // DC: the level is the offset
-            5 => return [v, vec![Item::AfgOffset]].concat(),
-            6 => {
-                return [
-                    v,
-                    vec![
-                        Item::AfgFreq,
-                        Item::AfgAmpl,
-                        Item::AfgOffset,
-                        Item::AfgArbSrc,
-                        Item::AfgArbGrab,
-                        Item::AfgArbFile,
-                    ],
-                ]
-                .concat()
-            }
-            4 => v.extend([Item::AfgAmpl, Item::AfgOffset]),
-            _ => v.extend([Item::AfgFreq, Item::AfgAmpl, Item::AfgOffset]),
-        }
-        match self.m.afg_wave {
-            1 | 3 => v.push(Item::AfgDuty),
-            2 => v.push(Item::AfgSym),
-            _ => {}
-        }
-        // modulation of sine, square and ramp carriers
-        if self.m.afg_wave <= 2 {
-            v.push(Item::AfgMod);
-            if self.m.afg_mod > 0 {
-                v.extend([Item::AfgModRate, Item::AfgModDepth, Item::AfgModShape]);
-            }
-        }
-        v
-    }
-
-    pub(super) fn afg_kind(it: Item) -> Option<Kind> {
-        Some(match it {
-            Item::AfgSel
-            | Item::AfgOn
-            | Item::AfgWave
-            | Item::AfgMod
-            | Item::AfgModShape
-            | Item::AfgArbSrc
-            | Item::AfgFreqEntry => Kind::Choice,
-            Item::AfgArbGrab | Item::AfgArbFile => Kind::Action,
-            Item::AfgFreq
-            | Item::AfgAmpl
-            | Item::AfgOffset
-            | Item::AfgDuty
-            | Item::AfgSym
-            | Item::AfgModRate
-            | Item::AfgModDepth => Kind::Value,
-            _ => return None,
-        })
-    }
-
-    pub(super) fn afg_label(it: Item) -> Option<&'static str> {
-        Some(match it {
-            Item::Open(MenuId::Afg) => "Generator",
-            Item::AfgSel => "Generator",
-            Item::AfgOn => "Output",
-            Item::AfgFreq => "Frequency",
-            Item::AfgFreqEntry => "Enter frequency",
-            Item::AfgAmpl => "Amplitude",
-            Item::AfgOffset => "Offset",
-            Item::AfgWave => "Wave",
-            Item::AfgDuty => "Duty",
-            Item::AfgSym => "Symmetry",
-            Item::AfgMod => "Modulation",
-            Item::AfgModRate => "Mod. rate",
-            // depth (AM) or deviation (FM, PM): the label follows the value
-            Item::AfgModDepth => "Depth / dev.",
-            Item::AfgModShape => "Mod. shape",
-            Item::AfgArbSrc => "Capture from",
-            Item::AfgArbGrab => "Capture the screen",
-            Item::AfgArbFile => "Load arb.csv",
-            _ => return None,
-        })
-    }
-
-    pub(super) fn afg_value(&self, it: Item) -> Option<String> {
-        let m = &self.m;
-        Some(match it {
-            Item::AfgSel => format!("Gen {}", m.gen_sel + 1),
-            Item::AfgOn => {
-                if m.afg_on {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            Item::AfgFreq => si_short(m.afg_freq, "Hz"),
-            Item::AfgFreqEntry => "Keypad".into(),
-            Item::AfgAmpl => si_short(m.afg_ampl, "Vpp"),
-            Item::AfgOffset => si(m.afg_offset, "V"),
-            Item::AfgWave => AFG_WAVES[m.afg_wave].into(),
-            Item::AfgDuty => format!("{:.0} %", m.afg_duty),
-            Item::AfgSym => format!("{:.0} %", m.afg_symmetry),
-            Item::AfgMod => AFG_MODS[m.afg_mod].into(),
-            Item::AfgModRate => si_short(m.afg_mod_rate, "Hz"),
-            Item::AfgModDepth => match m.afg_mod {
-                2 => format!("dev {}", si_short(m.afg_fm_dev, "Hz")),
-                3 => format!("dev {:.0}\u{b0}", m.afg_pm_dev),
-                _ => format!("{:.0} %", m.afg_mod_depth),
-            },
-            Item::AfgModShape => AFG_MOD_SHAPES[m.afg_mod_shape].into(),
-            Item::AfgArbSrc => format!("CH{}", m.afg_arb_src + 1),
-            Item::AfgArbGrab | Item::AfgArbFile => String::new(),
-            _ => return None,
-        })
-    }
-
-    pub(super) fn afg_options(&self, it: Item) -> Option<Vec<String>> {
-        match it {
-            Item::AfgSel => Some((1..=gen_count()).map(|i| format!("Gen {}", i)).collect()),
-            Item::AfgOn => Some(vec!["Off".into(), "On".into()]),
-            Item::AfgWave => Some(AFG_WAVES.iter().map(|s| s.to_string()).collect()),
-            Item::AfgMod => Some(AFG_MODS.iter().map(|s| s.to_string()).collect()),
-            Item::AfgModShape => Some(AFG_MOD_SHAPES.iter().map(|s| s.to_string()).collect()),
-            Item::AfgArbSrc => Some(ch_names()),
-            _ => None,
-        }
-    }
-
     pub(super) fn afg_adjust(&mut self, it: Item, d: i32) -> bool {
         let m = &mut self.m;
         let ladder = |x: f64, d: i32, lo: f64, hi: f64| {
@@ -372,7 +241,7 @@ mod arb_tests {
         );
         let t = crate::board::dho::wave(&ui.m.gen_read()).table(1e3);
         assert!(t.iter().any(|&v| v > 30000) && t.iter().any(|&v| v < -30000));
-        assert!(ui.afg_items().contains(&Item::AfgArbGrab));
+        assert!(ui.menu_items(MenuId::Afg).contains(&Item::AfgArbGrab));
         let id = ui.m.afg_arb;
         ui.activate(Item::AfgArbFile);
         assert_ne!(ui.m.afg_arb, id, "loaded from arb.csv");

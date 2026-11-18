@@ -13,7 +13,6 @@ const ROWS: &[Descriptor] = {
         Descriptor::choice(RemScpi, "SCPI", |u| onoff(u.sys.remote_scpi), toggles),
         Descriptor::choice(RemVxi, "VXI-11", |u| onoff(u.sys.instruments.vxi11), toggles),
         Descriptor::choice(RemHislip, "HiSLIP", |u| onoff(u.sys.instruments.hislip), toggles),
-        Descriptor::choice(RemTelnet, "telnet", |u| onoff(u.sys.remote_telnet), toggles),
         Descriptor::choice(RemSsh, "SSH", |u| onoff(u.sys.remote_ssh), toggles),
         Descriptor::choice(RemMdns, "mDNS", |u| onoff(u.sys.remote_mdns), toggles),
         Descriptor::choice(RemAllow, "Allowed", Ui::allow_value, |u| {
@@ -34,9 +33,6 @@ const ROWS: &[Descriptor] = {
         }),
         Descriptor::text(RemHislipInfo, "Port", |u| {
             port_text(u.sys.instruments.hislip, || format!("{} (TCP)", crate::hislip::PORT))
-        }),
-        Descriptor::text(RemTelnetInfo, "Port", |u| {
-            port_text(u.sys.remote_telnet, || "23, a shell without password".into())
         }),
         Descriptor::reference(Open(MenuId::Ssh)),
         Descriptor::choice(RemName, "Name", Ui::name_value, Ui::name_options),

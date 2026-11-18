@@ -96,7 +96,7 @@ class HostKeys(unittest.TestCase):
         # our device tool checks its scope lease before every command; a held fake lease stands in for it
         scope.lease = mock.Mock()
         result = subprocess.CompletedProcess([], 0, "read-only result\n", "")
-        with mock.patch.dict(os.environ, {"OOS_SHELL": "ssh", "OOS_SSH_IDENTITY": "local/test identity", "OOS_SSH_PORT": "2222"}):
+        with mock.patch.dict(os.environ, {"OOS_SSH_IDENTITY": "local/test identity", "OOS_SSH_PORT": "2222"}):
             with mock.patch.object(subprocess, "run", return_value=result) as run:
                 self.assertEqual(scope.shell("uname -r"), "read-only result")
                 args = run.call_args.args[0]

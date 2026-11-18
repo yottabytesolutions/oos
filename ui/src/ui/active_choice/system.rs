@@ -14,7 +14,6 @@ pub(super) fn index(u: &Ui, it: Item) -> Option<usize> {
         Item::RemScpi => usize::from(s.remote_scpi),
         Item::RemVxi => usize::from(s.instruments.vxi11),
         Item::RemHislip => usize::from(s.instruments.hislip),
-        Item::RemTelnet => usize::from(s.remote_telnet),
         Item::RemSsh => usize::from(s.remote_ssh),
         Item::RemMdns => usize::from(s.remote_mdns),
         Item::SshPassword => usize::from(s.ssh_password),

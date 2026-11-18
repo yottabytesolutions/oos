@@ -12,12 +12,14 @@
   },
   "roles": {
     "initramfs": {
-      "recipe_sha256": "51f9439e98174752e83275eb8c63af7c7898c94419132a7f748aa49911c9e2dc",
+      "recipe_sha256": "fd008b4f14bd15998f758574f8e1a706a3e2cc5eac23da77403eefc316254b2d",
       "requested": [
         "busybox-static",
         "cpio",
         "gzip",
-        "device-tree-compiler"
+        "device-tree-compiler",
+        "build-essential",
+        "dpkg-dev"
       ]
     },
     "gpu-build": {

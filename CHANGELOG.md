@@ -49,8 +49,9 @@ Changed:
   overrides. Host-tested only; early voltage-switch failures still need owner recovery (docs/boot.md).
 
 - Removed the failed autoset measure-unit option. Auto set-up always reads signal levels from records (ADR 0012).
-- Telnet is off by default at boot and in the system settings. System > Network > Remote services > telnet still
-  enables it for bench bring-up; an existing explicit `remote.telnet = on` setting is kept.
+- Removed telnet from the image, boot, system settings and Remote services menu. SSH (Dropbear, password or
+  trusted key) is the only remote shell. Old `remote.telnet` lines are accepted as inert unknown settings.
+  Deployment and device-test tools use key-only SSH. Not yet verified on hardware (#139).
 - SCPI setup and hold (`SETUP`, `HOLD`, `SETHOLD`, `FSETUP`, `FHOLD` in `:MEASure:ITEM?`) take the data first and the
   clock second, as the tiles say (A = data, B = clock). Before, they took the clock first: a script that sends the
   clock first gets swapped results now. These are OOS items; the stock programming guide has none.

@@ -487,7 +487,7 @@ with M3d. This package is independent of M12 and the new parser.
 tokio runtime on one IO thread; raw TCP framing/output only, existing interpreter on the frame thread.
 Define RemoteRequest's application variants now; migrate their transports only in M15b.
 Files: `ui/Cargo.toml`, `Cargo.lock`, `ui/src/netio/`, shared port, `scpi.rs`, `system/device*`, `main.rs`,
-`xtask/data/architecture.txt`, transport/perf fixtures. Current `ui/src/remote.rs` is the telnet/firewall helper.
+`xtask/data/architecture.txt`, transport/perf fixtures. Current `ui/src/remote.rs` is the firewall and SSH ACL helper.
 Acceptance tests implement the [thread/message contract](README.md#threads-and-messages):
 
 - Credit one per connection lasts until reply sent/no-reply completion; fragmented/coalesced/pipelined programs
@@ -697,7 +697,7 @@ The coordinator replaces each TBD issue placeholder before acceptance.
 | ADR 0015 | TBD (coordinator) | Device state: manifest all first-boot defaults, durable writes and update-preserved files; test absent/present values and signed sd.mode variant selection. |
 | ADR 0016 | TBD (coordinator) | Automatic rollback: verify failure and rollback on a released unit, recording model, build, date and artifacts. |
 | ADR 0017 | TBD (coordinator) | Reset evidence: verify whether RK3399 exposes a positive watchdog reset indication; preserve power-cut handling if absent. |
-| ADR 0018 | TBD (coordinator) | Service policy: finish #139 telnet removal; add /cmd second ACL, a service-table coverage test and one-second stop/withdrawal tests; verify firewall on the unit. |
+| ADR 0018 | TBD (coordinator) | Service policy: add /cmd second ACL, a service-table coverage test and one-second stop/withdrawal tests; verify firewall on the unit. |
 | ADR 0019 | TBD (coordinator) | M15b: verify HiSLIP on the scope with remote.hislip off by default until verification; check discovery withdrawal and VISA sessions. |
 | ADR 0023 | TBD (coordinator) | IO ports: std::net confinement and alias fixtures are in force; complete NTP/update moves and assess USB/WLAN benefits with the explicit synchronous exceptions in ADR 0023. |
 | ADR 0025 | TBD (coordinator) | SCPI conformance: every documented command resolves, no undocumented command answers, and abbreviations/identity match the reference. |

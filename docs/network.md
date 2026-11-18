@@ -155,23 +155,20 @@ System > Network > Remote services has a switch for each service, next to where 
 | SCPI | 5555 (TCP) | the SCPI commands |
 | VXI-11 | 111 (portmapper, TCP and UDP) and 9009 | SCPI through VISA (LXI instruments) |
 | HiSLIP | 4880 (TCP) | SCPI through VISA; `remote.hislip = off` by default until unit verification |
-| telnet | 23 | a shell **without password** (bring-up; use it on the bench LAN only) |
 | SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
 
 Generic images enable the unauthenticated bench-LAN web remote, raw SCPI and VXI-11, restricted to the dynamic
-LAN list. SSH is authenticated and off on a fresh unit, enabled from the panel. Telnet is off by default and
-scheduled for removal in #139. HiSLIP runs on the scope only with `remote.hislip = on`; it stays off by default
-until verified on the unit.
-Switching off a service closes its listener and connections. ADR 0018 targets a tested one-second bound. Switching off the web remote also takes away
-the update page: an update then comes from a USB stick. telnet and SSH are started by `rcS` at power-on (`telnetd`,
-`/bin/oos-ssh`), which reads `remote.telnet` and `remote.ssh` from `/oos/system.conf`; oos-ui starts or stops them
-when a switch changes. Enable telnet only for bench bring-up: it is a shell for anyone on the network. The serial
-console (UART2) keeps its shell without a login.
+LAN list. SSH is the only remote shell, authenticated and off on a fresh unit, enabled from the panel.
+HiSLIP runs on the scope only with `remote.hislip = on`; it stays off by default until verified on the unit.
+Switching off a service closes its listener and connections. ADR 0018 targets a tested one-second bound.
+Switching off the web remote also takes away the update page: an update then comes from a USB stick.
+`rcS` starts SSH through `/bin/oos-ssh` at power-on according to `remote.ssh` in `/oos/system.conf`;
+oos-ui starts or stops it when the switch changes. The serial console (UART2) keeps its shell without a login.
 
-Telnet stays off on first boot and with a missing configuration or `remote.telnet` key, including generic
-images. An explicit `remote.telnet = on` setting is kept across updates. The Default key resets the measurement
-setup, leaving these system settings unchanged. The default and menu switch are tested on the host; this change
-is not yet verified on hardware. See [ADR 0018](adr/0018-bench-lan-services.md).
+Telnet is removed, including the BusyBox applets and menu row. Old `remote.telnet` lines load without error
+as unknown settings, are preserved on save and start nothing. New defaults omit the key. The Default key
+resets the measurement setup, leaving system settings unchanged. Removal is host-tested and not yet verified
+on hardware. See [ADR 0018](adr/0018-bench-lan-services.md).
 
 The HiSLIP switch is saved in `system.conf`. Turning it off closes its listener and existing sessions, removes
 its mDNS service and LXI identification entry, and reloads the firewall. With `net.allow` configured, the firewall
@@ -268,7 +265,6 @@ eth.retry_10m = on
 remote.web = on
 remote.scpi = on
 remote.vxi11 = on
-remote.telnet = off
 remote.ssh = off
 ssh.password = on
 remote.mdns = on              # mDNS and DNS-SD (4.1)

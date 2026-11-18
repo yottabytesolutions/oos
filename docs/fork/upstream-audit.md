@@ -63,7 +63,7 @@ measured on the unit.
 | item | upstream | fork | verdict | evidence | action |
 |---|---|---|---|---|---|
 | Remote services | on/off switches for web, SCPI, VXI-11, telnet (`remote.*`) | `netacl` source ACL (`net.allow`) on HTTP update/MCP, SCPI, VXI-11 | both, orthogonal | switch = whether it listens, ACL = who; handles v4-mapped v6 | keep both |
-| Telnet | `remote.telnet` in `/oos/system.conf` | dropped own switch, uses upstream key, `oos-conf` adds `/etc/oos/system.conf` defaults | upstream adopted | `image_defaults_under_the_settings` | done |
+| Telnet | `remote.telnet` in `/oos/system.conf` | removed applets, boot path, switch and runtime; old key is inert | removed (#139) | legacy_telnet_key_is_accepted_as_an_unknown_line | done |
 | Firewall vs link-local | link-local fallback 169.254/16 when DHCP fails | nftables drop-by-default from `net.allow`, runs before the network | conflict | direct-cable laptop is blocked by nft and by `netacl` | add `169.254.0.0/16` to the unit's `net.allow`: link-local is not routable, and any on-link host can already spoof a 192.0.2.x source, so the exposure does not grow |
 | MAC | from SD CID, in rcS | `oos-mac`: CID default, or `eth.mac` (stock or fixed) | fork superset | default unchanged | keep; unit `system.conf` holds the real MAC, remove before any publication |
 | Unit defaults | none | runtime model capabilities and shared `/etc/oos/system.conf` (ADR 0015) | fork | model and device-identity tests | keep |
@@ -79,7 +79,7 @@ measured on the unit.
 
 ## Where upstream is better
 
-The deep-memory window and the frequency counter. Both are adopted. Upstream's telnet key is adopted. No upstream code
+The deep-memory window and the frequency counter. Both are adopted. Upstream's telnet service is removed (#139). No upstream code
 path is faster than its fork counterpart.
 
 ## Guards against future merges (P3)

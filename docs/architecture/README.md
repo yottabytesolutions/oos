@@ -36,7 +36,7 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 | `scpi.rs`, `scpi/`, `cmd.rs` | shared SCPI interpreter and program continuations; script/FIFO command syntax |
 | `http.rs`, `http/`, `vxi11.rs`, `hislip.rs`, `mdns.rs` | web/MCP, instrument transports and discovery |
 | `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11/HiSLIP/HTTP/mDNS runtime, socket framing/output and owned bounded application ports |
-| `remote.rs` | telnet/firewall helper |
+| `remote.rs` | firewall and SSH ACL helper |
 | `store.rs`, `store/`, `sysconf.rs` | setup codec, waveform/image files, durable startup state, system settings |
 | `board/`, `board/dho/` | Board port, Shared exchange, hardware configuration/readout and publication |
 | `wave.rs`, `drawpipe.rs`, `drawpipe/`, `fastdraw.rs`, `sparse.rs`, `compress.rs` | records, phosphor maps, batch deposits and drawing kernels |
@@ -625,7 +625,7 @@ M15a puts IO in top-level `ui/src/netio/` and adds `confine ui tokio -> netio` p
 allowlist for `netport` owned values, the socket-free `mdns` responder and existing `net6`/`netacl` helpers,
 excluding `ui`, settings and interpreter modules. The checker works on
 top-level modules; nesting IO under `remote` would not enforce this separation. Frame-side code receives a
-synchronous port; only netio constructs/polls the runtime. Current `remote.rs` remains the telnet/firewall helper. IPv6 ACL prefix-file reads use a single bounded
+synchronous port; only netio constructs/polls the runtime. Current `remote.rs` remains the firewall and SSH ACL helper. IPv6 ACL prefix-file reads use a single bounded
 blocking worker; they do not run on the IO executor. `std::net` is confined to netio and the explicit synchronous
 exceptions in ADR 0023 (SNTP, the Bode generator worker and GPU Unix-socket shutdown). Pure address values use `core::net`.
 The gate is `cargo xtask check`; fast is a partial gate. Size/lint debt only shrinks.

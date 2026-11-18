@@ -98,7 +98,7 @@ impl Acl {
     }
 
     pub fn permits(&self, ip: IpAddr) -> bool {
-        self.permits_onlinks(ip, crate::net6::onlink, crate::mdns::ipv4_networks)
+        self.permits_onlinks(ip, crate::net6::onlink, oos_hal::system::ipv4_all)
     }
 
     /// `permits` with the prefixes on the link from `onlink` (asked only when `onlink6` is in the list and the address

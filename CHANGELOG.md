@@ -37,6 +37,10 @@ Added:
 
 Changed:
 
+- mDNS uses mdns-sd for dual-stack discovery, conflict handling and address changes (#194). Service switches,
+  names and TXT records remain. Long advertised names are shortened to leave room for conflict suffixes.
+  Reverse PTR, QU unicast replies and host publication without registered services are dropped. Host-tested only.
+
 - Batch is the code default draw pipeline, matching shipped images. `acq.pipeline = standard` or `frames`
   keeps Standard available for comparison until M12; invalid values are logged and fall back to Batch (#159).
 

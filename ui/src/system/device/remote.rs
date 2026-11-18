@@ -162,7 +162,7 @@ fn mdns_services(mut c: mdns::Config, web: Option<u16>, vxi: Option<u16>, hislip
         c.services.retain(|s| s.kind != "_vxi-11._tcp");
     }
     if let Some(p) = web.filter(|_| c.services.iter().any(|s| s.kind == "_http._tcp")) {
-        let path = "path=/lxi/identification".to_string();
+        let path = ("path".into(), Some("/lxi/identification".into()));
         c.services.push(mdns::Service { kind: "_lxi._tcp".into(), port: p, txt: vec![path] });
     }
     if let Some(p) = hislip {

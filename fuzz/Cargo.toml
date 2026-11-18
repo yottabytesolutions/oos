@@ -62,10 +62,3 @@ path = "fuzz_targets/http.rs"
 test = false
 doc = false
 bench = false
-
-[[bin]]
-name = "mdns"
-path = "fuzz_targets/mdns.rs"
-test = false
-doc = false
-bench = false

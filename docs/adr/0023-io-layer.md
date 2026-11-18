@@ -25,8 +25,17 @@ Synchronous exceptions are:
 - Core and DSP computations: no waiting IO.
 - Pure HAL plans: no waiting IO.
 - Hardware register sequences behind Board: ordered operations and required hardware gaps.
-- SNTP and the Bode external-generator connection: existing dedicated workers, pending the IO-port follow-up.
+- SNTP and the Bode external-generator TCP connection: existing dedicated workers, pending the IO-port follow-up.
   They do not run network calls on the frame thread. This migration retains their behaviour.
+- USBTMC host bulk IO for Bode's external generator (`ui/src/usbtmc.rs`, `ui/src/ui/bode.rs`): retain the
+  synchronous `Bulk` port on the generator worker. Discovery, interface claiming, the initial `*IDN?` query and
+  command transfers all run there; frame intake only sends owned command strings and polls error/note state.
+  `USBDEVFS_BULK` waits inside an ioctl, with a 2000 ms timeout per transfer. Descriptor readiness does not make
+  that ioctl asynchronous, and `spawn_blocking` still needs a worker for it. Moving the existing port to netio
+  therefore removes neither frame-thread blocking nor a blocking worker. A genuinely asynchronous usbfs backend
+  would instead need URB submission, completion reaping, retained buffers and cancellation before buffer release;
+  that replacement is not justified for this single command-stream worker. No USBTMC gadget bulk service exists
+  in the application. This is a source assessment for issue #205, not yet verified on hardware.
 - GPU-helper shutdown: `std::net::Shutdown` selects a half-close of the existing Unix socket; no IP socket IO.
 
 USB/WLAN moves must demonstrate the criterion above. Other synchronous IO exceptions require a reason in this record.

@@ -150,8 +150,9 @@ with every edit restarting its stability interval. Shutdown drains accepted writ
 Manual exports and screenshots still call synchronous file IO from UI actions.
 
 The draw routes also remain distinct. Standard/Frames queues frames. Batch places records in a persistent pool
-and hands whole deposits of owned column differences to the UI. The UI folds once per accepted deposit and sends
-its newest waveform to record readers. Batch is the code and image default; `acq.pipeline = standard` or `frames` selects
+and hands whole deposits of owned column differences to the UI. At minimum persistence, the UI rebuilds the
+picture from a bounded window of recent deposits. It sends each accepted deposit's newest waveform to record readers.
+Batch is the code and image default; `acq.pipeline = standard` or `frames` selects
 Standard. `fast_ok` selects eligible hardware views. `drawpipe::draw_frame_reusing` uses dense `fastdraw` spans,
 sparse interpolation or deep-record drawing. `Phosphor::draw_ex` handles record drawing.
 CPU rendering and GPU layer composition both exist. `Model::draw_batch` selects the hardware route;

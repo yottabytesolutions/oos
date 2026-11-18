@@ -1443,7 +1443,7 @@ pub struct Ui {
     vmaxz_cg: u32,
     /// minimum persistence: frames in the picture on screen, and the brightest pixel per frame behind `vmax`, `vmaxz`,
     /// `vmax_cg`, `vmaxz_cg` (`picture_ref`)
-    pic_frames: u32,
+    batch_picture: step_draw::BatchPicture,
     per_frame: [u32; NCH],
     per_framez: [u32; NCH],
     per_frame_cg: [u32; 2],
@@ -1765,7 +1765,7 @@ impl Ui {
             vmax: [1; NCH],
             vmax_cg: 1,
             vmaxz_cg: 1,
-            pic_frames: 0,
+            batch_picture: Default::default(),
             per_frame: [1; NCH],
             per_framez: [1; NCH],
             per_frame_cg: [1; 2],
@@ -2821,7 +2821,9 @@ impl Ui {
     pub fn step(&mut self, dt_wall: f64) {
         // System > Features: what is left out runs nothing
         self.features_enforce();
+        let before = self.now;
         let Some((final_done, picture_cleared)) = change::begin_step(self, dt_wall) else { return };
+        let window_now = step_draw::window_time(self, before);
         self.poll_reference_measurements();
         self.poll_catalog_measurements();
         self.math_fit_tick();
@@ -2884,58 +2886,11 @@ impl Ui {
             // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
             let deep_raw = crate::deepmeas::want(&self.m).is_some();
             let mut raw_rec: Option<Record> = None;
-            let mut deposited_newest = None;
-            // fast display path (fastdraw.rs): every queued frame but the newest straight into the phosphor map
+            let (mut deposited_newest, mut window_frames) = (None, None);
             if fast {
-                let t0 = std::time::Instant::now();
-                let frames = self.src.drain_newest(self.fast_max());
-                if !frames.is_empty() && clear_pending {
-                    self.ph.clear();
-                    clear_pending = false;
-                }
-                let n = frames.len();
-                for f in &frames {
-                    crate::pacing::drawn(f.cfg, 1);
-                }
-                composition.deposit += n;
-                if let Some(f) = frames.iter().rev().find(|f| deep_raw && crate::deepmeas::deep_raw_frame(f)) {
-                    let t = std::time::Instant::now();
-                    raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
-                    crate::deepmeas::cost::set(&crate::deepmeas::cost::RECORD_US, t.elapsed());
-                }
-                if n > 0 && self.fast_draw_all(frames) > 0 {
-                    self.m.status = TrigStatus::Triggered;
-                }
-                got += n;
-                let ms = t0.elapsed().as_secs_f32() * 1000.0;
-                td += ms;
-                self.t_fast += 0.05 * (ms - self.t_fast);
-                if n > 0 && ms > 0.0 {
-                    // as many as would have filled the budget at this pace: with a fixed part in each screen's time
-                    // (starting the helpers) this settles where the time meets the budget. Down only when the budget
-                    // was exceeded, up only when the take was the limit: the hardware delivers in bursts, and a screen
-                    // with a few frames says nothing about how many fit
-                    self.fast_take = fast_take_next(self.fast_take, n, ms, self.fast_budget());
-                }
-                let t_merge = std::time::Instant::now();
-                draw[1] += t_merge - t0;
-                // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
-                if let Some(p) = crate::drawpipe::pipe(&sw) {
-                    let t1 = std::time::Instant::now();
-                    let d = p.accept(&mut self.ph, &mut clear_pending, &mut self.fast_edges, &mut self.fast_off);
-                    deposited_newest = deep_draw::newest(self, d.waveform).filter(|_| d.frames > 0);
-                    if d.triggered > 0 {
-                        self.m.status = TrigStatus::Triggered;
-                    }
-                    got += d.frames as usize;
-                    composition.merged += d.frames;
-                    (composition.deposit, composition.newest) = (composition.deposit + d.frames as usize, d.newest);
-                    crate::pacing::drawn_stale(d.stale);
-                    self.mstat_fold(&d.folds);
-                    td += t1.elapsed().as_secs_f32() * 1000.0;
-                }
-                draw[2] += t_merge.elapsed();
-                crate::pacing::fast_block((t_merge - t0).as_secs_f32() * 1e3, t_merge.elapsed().as_secs_f32() * 1e3);
+                let f = step_draw::fast(self, &sw, &mut clear_pending, window_now, &mut composition, &mut draw);
+                (got, td, deposited_newest, window_frames, raw_rec) =
+                    (f.frames, f.ms, f.newest, f.window_frames, f.raw);
             }
             let t_records = std::time::Instant::now();
             for _ in 0..k {
@@ -3002,13 +2957,14 @@ impl Ui {
                         }
                         // minimum persistence: the picture of this step is every frame of it (the fast path's and this
                         // record), cleared once before the first of them
-                        if clear_pending {
+                        let deposited = rec.raw.as_ref().is_some_and(|r| Some(r.frame.seq) == deposited_newest);
+                        if clear_pending && !deposited {
+                            step_draw::reset_window(self);
                             self.ph.clear();
                             self.phz.clear();
                             clear_pending = false;
                         }
                         let t1 = std::time::Instant::now();
-                        let deposited = rec.raw.as_ref().is_some_and(|r| Some(r.frame.seq) == deposited_newest);
                         let (dep, records) = deep_draw::record(self, &rec, sw.interp, drawing_input, deposited);
                         composition.deposit += dep;
                         composition.record += records;
@@ -3067,11 +3023,12 @@ impl Ui {
                     self.m.status = if tpu { TrigStatus::Triggered } else { TrigStatus::Auto };
                 }
             }
-            // minimum persistence shows the frames of this step alone: their number grades the picture (`picture_ref`)
             if persist != 0.0 {
-                self.pic_frames = 0;
+                self.batch_picture.frames = 0;
+            } else if let Some(records) = window_frames {
+                self.batch_picture.frames = (records + got as u64 - composition.merged) as u32;
             } else if got > 0 {
-                self.pic_frames = got as u32;
+                self.batch_picture.frames = got as u32;
             }
             if got > 0 {
                 // a forced record is not part of the trigger's rhythm: counted in, forces seconds apart in Normal
@@ -3856,7 +3813,7 @@ impl Ui {
     /// The counts the picture is graded against (`picture_ref`), per channel and for colour grade; whether the main and
     /// the zoom map are near saturation.
     fn grade_refs(&mut self) -> (bool, bool) {
-        let n = self.pic_frames;
+        let n = self.batch_picture.frames;
         let (mut full, mut fullz) = (false, false);
         for c in 0..NCH {
             if self.m.ch[c].on {
@@ -10251,7 +10208,7 @@ mod tests {
             for _ in 0..n {
                 ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None, false);
             }
-            ui.pic_frames = n;
+            ui.batch_picture.frames = n;
             ui.grade_refs();
             let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
             // as `draw_traces`: an empty pixel stays dark
@@ -10265,10 +10222,10 @@ mod tests {
         }
         // the plain grade (longer persistence) is what pumped: one frame after sixteen is graded against 16 times its
         // counts
-        ui.pic_frames = 0;
+        ui.batch_picture.frames = 0;
         ui.m.persist = 1;
         let _ = picture(&mut ui, 16);
-        ui.pic_frames = 0;
+        ui.batch_picture.frames = 0;
         ui.grade_refs();
         let bright = |ui: &super::Ui| ui.vmax[0];
         let before = bright(&ui);

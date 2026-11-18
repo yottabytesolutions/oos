@@ -126,6 +126,22 @@ rejects a batch. Test full and disconnected intake, buffer return and unclaimed-
   No acceptance or review state changed. Native timing awaits experiment-supervisor release.
   The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
 
+- 2026-11-19: PR #224 review follow-up retains up to three whole deposits at minimum persistence. The UI grades
+  the retained record count and counts each accepted deposit once. Injected-clock regressions cover the 67 ms
+  age boundary, expiry without a new batch and the combined u16 hit bound. Regenerated 26 changed golden captures
+  and verified debug and optimized golden comparisons. The fast gate passed all 12 selected steps.
+  Host evidence only. Independent review and the DHO804 unit round remain open.
+
+- 2026-11-18: PR #224 replays published F2 `20879ac4` from its exact F1 parent `113ccb97`
+  onto F1 `38defc1d`. The three F2 commits replay to `22ba4e1f` with the reviewed waveform delivery
+  and worker and compressed-frame repairs intact. The `ui.rs` size allowance carries the same 45-line
+  reduction from F1, ending at 8,623. Production delta over F1 is +298 UI Rust lines.
+  The fast gate passed all 12 selected steps. The full host gate passed all 23 steps in 607 s against F1.
+  UI nextest passed 1,766 debug and 1,765 optimized tests, with 62 skipped per profile and 90.1% coverage.
+  All 65 synthetic register plans matched. The compressed-frame ratio was 0.413, and the three guarded
+  worker ratios were 1.25, 1.08 and 0.72. Complete gate logs were retained. Renewed independent review and
+  the combined DHO804 unit trial remain open under the coordinator's hold.
+
 - 2026-11-18: PR #224 code-quality review uses one pool operation and one drawing trigger policy, reuses pair
   span buffers, and submits only active placement slots. Deposit handoff returns rejected work by value.
   The acquisition fill timings still feed pacing and cap accounting. Production delta is -11 UI Rust lines.

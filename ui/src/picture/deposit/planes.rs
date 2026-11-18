@@ -65,6 +65,34 @@ impl DiffBand {
             false,
         );
     }
+
+    pub(crate) fn fold_window(&mut self, prior: [Option<&Self>; 2], map: &mut [u16]) {
+        let mut touched = self.plane.touched.clone();
+        let diffs = prior.map(|band| {
+            band.map(|band| {
+                touched = touched.start.min(band.plane.touched.start)..touched.end.max(band.plane.touched.end);
+                band.plane.d.as_slice()
+            })
+        });
+        let width = self.plane.band_cols;
+        let run = &mut self.run;
+        let newest = &self.plane.d;
+        let geometry = (self.picture_cols, self.plane.rows, self.first);
+        super::kernel::fold_rows(map, run, geometry, touched, |r, run| {
+            let start = r * width;
+            let mut occupied = 0;
+            for diff in diffs.into_iter().flatten() {
+                for (sum, delta) in run.iter_mut().zip(&diff[start..][..width]) {
+                    *sum = sum.wrapping_add(*delta);
+                }
+            }
+            for (sum, delta) in run.iter_mut().zip(&newest[start..][..width]) {
+                *sum = sum.wrapping_add(*delta);
+                occupied |= *sum;
+            }
+            occupied
+        });
+    }
 }
 
 #[cfg(test)]

@@ -88,8 +88,9 @@ impl BatchScript {
                 decoded.fetch_add(1, Ordering::Relaxed);
                 decode(bytes, frame);
             });
+            let at = ui.host.picture_time(ui.now);
             let fallback =
-                pipe.feed_with(Box::new(batch.into_bytes()), fb, 0..frames, identity, decode, codes, Some(newest));
+                pipe.feed_at(Box::new(batch.into_bytes()), fb, 0..frames, (identity, at), decode, codes, Some(newest));
             if fallback.is_some() {
                 return Err(format!("batch {}: deposit intake unavailable", self.id));
             }

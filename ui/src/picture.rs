@@ -4,27 +4,93 @@ pub(crate) mod deposit;
 
 use crate::drawpipe::{Accepted, Counters, Stats};
 use crate::wave::Phosphor;
-use deposit::Deposit;
+use deposit::{Deposit, Handoff, HIT_LIMIT};
 use oos_core::change::Identity;
+use std::collections::VecDeque;
+use std::time::Instant;
 
-/// Fold a completed deposit into the UI phosphor until picture ownership moves in F7.
-pub(crate) fn fold_deposit(
+const MAX_DEPOSITS: usize = 3;
+
+#[derive(Default)]
+pub(crate) struct DepositWindow {
+    deposits: VecDeque<Deposit>,
+    target: f64,
+}
+
+impl DepositWindow {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.deposits.is_empty()
+    }
+
+    pub(crate) fn idle(&mut self) {
+        self.target *= 0.9;
+    }
+
+    pub(crate) fn reset(&mut self, slot: &Handoff) {
+        for deposit in self.deposits.drain(..) {
+            slot.recycle(deposit);
+        }
+        self.target = 0.0;
+    }
+
+    pub(crate) fn expire(&mut self, now: Instant, slot: &Handoff, valid: impl Fn(&Deposit) -> bool) -> bool {
+        let mut changed = false;
+        while let Some(old) = self.deposits.pop_front_if(|d| !valid(d) || d.extent.expired(now)) {
+            slot.recycle(old);
+            changed = true;
+        }
+        changed
+    }
+
+    pub(crate) fn push(&mut self, mut deposit: Deposit, slot: &Handoff) {
+        if self.target == 0.0 {
+            self.target = deposit.records as f64;
+        } else {
+            self.target += 0.1 * (deposit.records as f64 - self.target);
+        }
+        let target = self.target.round() as u64;
+        let (mut records, mut hits) = (deposit.records, deposit.extent.hits());
+        let mut keep = 0;
+        for older in self.deposits.iter().rev().take(MAX_DEPOSITS - 1) {
+            if records >= target || hits.saturating_add(older.extent.hits()) > HIT_LIMIT {
+                break;
+            }
+            records += older.records;
+            hits += older.extent.hits();
+            keep += 1;
+        }
+        let evict = self.deposits.len() - keep;
+        for old in self.deposits.drain(..evict) {
+            slot.recycle(old);
+        }
+        deposit.planes.sort_unstable_by_key(|band| (band.channel, band.first));
+        self.deposits.push_back(deposit);
+    }
+
+    pub(crate) fn rebuild(&mut self, ph: &mut Phosphor) -> u64 {
+        ph.clear();
+        let Some((newest, prior)) = self.deposits.make_contiguous().split_last_mut() else { return 0 };
+        for (i, band) in newest.planes.iter_mut().enumerate() {
+            let map = &mut ph.map[band.channel];
+            if prior.is_empty() {
+                band.fold(map);
+            } else {
+                band.fold_window(std::array::from_fn(|j| prior.get(j).map(|deposit| &deposit.planes[i])), map);
+            }
+        }
+        newest.records + prior.iter().map(|deposit| deposit.records).sum::<u64>()
+    }
+}
+
+/// Account for newly accepted records once, even if their planes contribute to later pictures.
+pub(crate) fn accept_deposit(
     deposit: &mut Deposit,
-    ph: &mut Phosphor,
-    clear: &mut bool,
     stats: Stats<'_>,
     identity: Option<Identity>,
     counters: &Counters,
 ) -> Accepted {
     if deposit.records == 0 {
         return Accepted::default();
-    }
-    if *clear {
-        ph.clear();
-        *clear = false;
-    }
-    for band in &mut deposit.planes {
-        band.fold(&mut ph.map[band.channel]);
     }
     for (a, b) in stats.edges.iter_mut().zip(deposit.edges) {
         *a += b;
@@ -33,15 +99,15 @@ pub(crate) fn fold_deposit(
     let folds = if deposit.identity == identity {
         std::mem::take(&mut deposit.folds)
     } else {
-        Counters::add(&counters.losses.folds, deposit.folds.iter().map(|(_, f)| f.n).sum());
+        deposit.discard_folds(counters);
         Vec::new()
     };
     Accepted {
         frames: deposit.records,
         triggered: deposit.triggered,
         folds,
-        newest: deposit.read_at,
+        newest: deposit.extent.newest(),
         stale: deposit.progress.stale,
-        waveform: None,
+        ..Accepted::default()
     }
 }

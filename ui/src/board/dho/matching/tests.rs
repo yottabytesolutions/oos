@@ -166,7 +166,7 @@ fn batch_core_matching_workers_draw_the_standard_picture() {
         feed(
             &pipe,
             (Box::new(Bytes(bytes.clone())), fb, 0..10),
-            Default::default(),
+            (Default::default(), std::time::Instant::now()),
             (s.clone(), p, HeaderProbe::Off),
             matched,
             Some(Arc::new(newest)),

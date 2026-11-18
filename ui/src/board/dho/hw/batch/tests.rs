@@ -78,14 +78,19 @@ fn run(frame0_drop: bool, replacement: bool, warm: bool) {
     let expected_newest = super::super::decode_with(&good, &s, &p, 3, HeaderProbe::Off, Some(&mut oracle));
     let pipe = Pipe::start(1, 0, counters);
     pipe.publish_view(&model, 128, 64, Interp::Exact, Default::default());
-    let frames =
-        Readout::new(&pipe, (&s, &p), (good.len(), 3, frame0_drop), (3, HeaderProbe::Off, None), Default::default())
-            .dispatch(
-                &mut Bytes([stale, neighbour, good].concat()),
-                replacement.then(|| Bytes(Vec::new())),
-                Some(&mut cores),
-                |frame| Frame { stamp: 17, cfg: 23, ..frame },
-            );
+    let frames = Readout::new(
+        &pipe,
+        (&s, &p),
+        (good.len(), 3, frame0_drop),
+        (3, HeaderProbe::Off, None),
+        (Default::default(), Instant::now()),
+    )
+    .dispatch(
+        &mut Bytes([stale, neighbour, good].concat()),
+        replacement.then(|| Bytes(Vec::new())),
+        Some(&mut cores),
+        |frame| Frame { stamp: 17, cfg: 23, ..frame },
+    );
     assert_eq!(cores.pattern((1, 0, p.rate)), oracle.pattern((1, 0, p.rate)), "learning includes an ineligible frame");
     let drawn = if frame0_drop { 1 } else { 2 };
     let newest = newest(&pipe, frames, (replacement, drawn), &want);
@@ -160,7 +165,8 @@ fn unavailable_deposit_intake_falls_back_to_the_record_queue() {
     let mut dma = Bytes(raw.repeat(3));
     let identity = Identity::default();
     publication::read(3, 3, 3);
-    let readout = Readout::new(&pipe, (&s, &p), (raw.len(), 3, false), (3, HeaderProbe::Off, None), identity);
+    let readout =
+        Readout::new(&pipe, (&s, &p), (raw.len(), 3, false), (3, HeaderProbe::Off, None), (identity, Instant::now()));
     let frames = readout.dispatch(&mut dma, Some(Bytes(Vec::new())), None, |frame| frame);
     let shared = crate::board::HwShared::default();
     publication::push_frames(&shared, frames, s.mode);

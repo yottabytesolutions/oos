@@ -112,6 +112,10 @@ fn mode(kind: &str, name: &str, view: (&str, usize, &str), settings: &str, shots
     ));
     script.push_str(settings);
     script.push_str("menu close\n");
+    if name == kind && channels == 1 && matches!(kind, "raw" | "codes" | "pairs" | "deep-pairs") {
+        // Auto can keep the startup deposit at the default mapping. Start both line modes from a cleared picture.
+        script.push_str("key clear\n");
+    }
     script.push_str(&recipe(shots));
     Case {
         name: format!(

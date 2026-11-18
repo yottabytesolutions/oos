@@ -107,7 +107,7 @@ fn perf_guard_draw_routes() {
                             crate::claim_timing::summary()
                         );
                     }
-                    assert_eq!(build.route.ui.pic_frames as usize, frames);
+                    assert_eq!(build.route.ui.batch_picture.frames as usize, frames);
                     pictures.push(picture(&build.route.ui));
                 }
                 compare(&pictures[0], &pictures[1], "warmed production-plan route build");

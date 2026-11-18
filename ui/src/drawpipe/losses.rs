@@ -62,14 +62,16 @@ impl Lost {
 pub(super) enum Rejection {
     StaleKey,
     Epoch,
+    Age,
 }
 impl Rejection {
-    const ALL: [Self; 2] = [Self::StaleKey, Self::Epoch];
+    const ALL: [Self; 3] = [Self::StaleKey, Self::Epoch, Self::Age];
 
     fn label(self) -> &'static str {
         match self {
             Self::StaleKey => "stale_key",
             Self::Epoch => "epoch",
+            Self::Age => "age",
         }
     }
 
@@ -185,7 +187,7 @@ mod tests {
         {
             assert!(text.contains(&format!(" lost.{label}={} ", i + 2)), "{text}");
         }
-        assert!(text.ends_with("rejected.stale_key=11 rejected.epoch=13"), "{text}");
+        assert!(text.ends_with("rejected.stale_key=11 rejected.epoch=13 rejected.age=0"), "{text}");
         assert_eq!(counters.read().2, 0, "selection buckets preserve the legacy dropped aggregate");
     }
 }

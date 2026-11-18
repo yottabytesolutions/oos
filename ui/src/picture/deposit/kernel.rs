@@ -235,8 +235,7 @@ pub(crate) fn fold_band(
     clear: bool,
 ) {
     let width = run.len();
-    run.fill(0);
-    for r in touched.start.min(rows)..(touched.end.min(rows) + 1).min(rows + 1) {
+    fold_rows(map, run, (cols, rows, first), touched, |r, run| {
         let mut occupied = 0;
         for (sum, delta) in run.iter_mut().zip(&mut diff[r * width..][..width]) {
             *sum = sum.wrapping_add(*delta);
@@ -245,6 +244,21 @@ pub(crate) fn fold_band(
             }
             occupied |= *sum;
         }
+        occupied
+    });
+}
+
+pub(super) fn fold_rows(
+    map: &mut [u16],
+    run: &mut [u16],
+    (cols, rows, first): (usize, usize, usize),
+    touched: std::ops::Range<usize>,
+    mut prefix: impl FnMut(usize, &mut [u16]) -> u16,
+) {
+    let width = run.len();
+    run.fill(0);
+    for r in touched.start.min(rows)..(touched.end.min(rows) + 1).min(rows + 1) {
+        let occupied = prefix(r, run);
         if occupied != 0 && r < rows {
             for (pixel, sum) in map[r * cols + first..][..width].iter_mut().zip(run.iter()) {
                 *pixel = pixel.saturating_add(*sum);

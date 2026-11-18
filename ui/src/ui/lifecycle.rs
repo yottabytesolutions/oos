@@ -17,7 +17,7 @@ pub(super) struct Runtime {
     pub(super) crash: Option<crate::store::startup::crash::Crash>,
     pub(super) clocks: Option<crate::system::clocks::Handle>,
     pub(super) storage: Option<crate::store::startup::worker::Worker>,
-    started: Instant,
+    pub(super) started: Instant,
     pub(in crate::ui) query_time: query_time::QueryTime,
     pub(super) gpu: String,
     pub(super) persistence: bool,

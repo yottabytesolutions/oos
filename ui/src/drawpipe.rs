@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Whole-batch placement and owned column differences. The UI folds one deposit per picture.
+//! Whole-batch placement and owned column differences. The UI takes one deposit per step.
 
 mod config;
 pub use config::{conf_value, mode_from, Mode};
@@ -27,6 +27,7 @@ pub mod shutdown;
 use crate::board::Frame;
 use crate::model::*;
 use crate::picture::deposit::{Deposit, Handoff};
+use crate::picture::DepositWindow;
 use crate::sparse::Interp;
 use crate::wave::Phosphor;
 use std::any::Any;
@@ -185,6 +186,8 @@ pub struct Accepted {
     pub newest: Option<std::time::Instant>,
     pub stale: u64,
     pub waveform: Option<Arc<Frame>>,
+    pub(crate) age_rejected: bool,
+    pub(crate) window_frames: Option<u64>,
 }
 
 impl Pipe {
@@ -208,29 +211,107 @@ impl Pipe {
         oos_hal::sync::lock(&self.pool).try_recv().ok().map(|r| r.into_any())
     }
 
+    #[cfg(test)]
     pub fn accept(&self, ph: &mut Phosphor, clear: &mut bool, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Accepted {
-        let Some(mut deposit) = self.slot.take() else { return Accepted::default() };
-        self.wake();
+        self.accept_into(ph, clear, Stats { edges, off }, None)
+    }
+
+    pub(crate) fn discard_window(&self, window: &mut DepositWindow) {
+        window.reset(&self.slot);
+    }
+
+    pub(crate) fn accept_into(
+        &self,
+        ph: &mut Phosphor,
+        clear: &mut bool,
+        stats: Stats<'_>,
+        window: Option<(&mut DepositWindow, std::time::Instant)>,
+    ) -> Accepted {
+        let mut claim = self.slot.claim();
+        let mut window = window;
+        if claim.is_none() && window.as_ref().is_none_or(|(retained, _)| retained.is_empty()) {
+            if let Some((retained, _)) = window {
+                retained.idle();
+            }
+            return Accepted::default();
+        }
         let state = oos_hal::sync::lock(&self.view);
-        let same_acquisition = same_pair(deposit.identity, state.identity);
-        let valid = state.view.as_ref().is_some_and(|v| deposit.matches(v.gen, v.w, v.h))
-            && same_acquisition
-            && deposit.size() == (ph.w, ph.h);
+        let view = state.view.clone();
         let identity = state.identity;
         drop(state);
-        let mut accepted = if valid {
-            let accepted =
-                crate::picture::fold_deposit(&mut deposit, ph, clear, Stats { edges, off }, identity, self.counters);
-            if self.counters.diagnostics_enabled() {
-                self.counters.timing.picture(deposit.progress.sample, accepted.newest.map(|fed| fed.elapsed()));
+        let size = (ph.w, ph.h);
+        let mapping_matches =
+            |d: &Deposit| d.size() == size && view.as_ref().is_some_and(|v| d.matches(v.gen, v.w, v.h));
+        let mut accepted = Accepted::default();
+        let mut rebuild = false;
+        if let Some((retained, now)) = &mut window {
+            rebuild = retained.expire(*now, &self.slot, |d| {
+                mapping_matches(d) && d.identity.map(|id| id.epoch()) == identity.map(|id| id.epoch())
+            });
+        }
+        if let Some(mut deposit) = claim.as_mut().and_then(|claim| claim.deposit.take()) {
+            let same_acquisition = same_pair(deposit.identity, identity);
+            let waveform = deposit.newest.take().filter(|_| same_acquisition);
+            if mapping_matches(&deposit) && same_acquisition {
+                accepted = self.fold_pending(deposit, ph, clear, stats, identity, window.as_mut());
+                rebuild |= accepted.frames > 0;
+            } else {
+                deposit.reject(identity, self.counters);
+                self.slot.recycle(deposit);
             }
-            accepted
+            accepted.waveform = waveform;
+        }
+        if claim.is_some() {
+            drop(claim);
+            self.wake();
+        }
+        if let Some((retained, _)) = window {
+            if accepted.frames == 0 {
+                retained.idle();
+            }
+            if rebuild {
+                *clear = false;
+                accepted.window_frames = Some(retained.rebuild(ph));
+            }
+        }
+        accepted
+    }
+
+    fn fold_pending(
+        &self,
+        mut deposit: Deposit,
+        ph: &mut Phosphor,
+        clear: &mut bool,
+        stats: Stats<'_>,
+        identity: Option<oos_core::change::Identity>,
+        window: Option<&mut (&mut DepositWindow, std::time::Instant)>,
+    ) -> Accepted {
+        if let Some((_, now)) = window.as_ref() {
+            if deposit.extent.expired(*now) {
+                self.counters.reject(losses::Rejection::Age, deposit.records);
+                Counters::add(&self.counters.dropped, deposit.records);
+                deposit.discard_folds(self.counters);
+                self.slot.recycle(deposit);
+                return Accepted { age_rejected: true, ..Accepted::default() };
+            }
+        }
+        let accepted = crate::picture::accept_deposit(&mut deposit, stats, identity, self.counters);
+        if self.counters.diagnostics_enabled() {
+            self.counters.timing.picture(deposit.progress.sample, accepted.newest.map(|fed| fed.elapsed()));
+        }
+        if let Some((retained, _)) = window.filter(|_| accepted.frames > 0) {
+            retained.push(deposit, &self.slot);
         } else {
-            deposit.reject(identity, self.counters);
-            Accepted::default()
-        };
-        accepted.waveform = deposit.newest.take().filter(|_| same_acquisition);
-        self.slot.recycle(deposit);
+            if accepted.frames > 0 {
+                if std::mem::take(clear) {
+                    ph.clear();
+                }
+                for band in &mut deposit.planes {
+                    band.fold(&mut ph.map[band.channel]);
+                }
+            }
+            self.slot.recycle(deposit);
+        }
         accepted
     }
 
@@ -271,6 +352,7 @@ mod tests {
     use super::*;
     mod deposit;
     mod publication;
+    mod window;
     use oos_hal::dho::hz;
     use oos_hal::dho::seq::Settings;
 

@@ -75,6 +75,24 @@ impl FastPlan {
         }
     }
 
+    pub(crate) fn hit_bound(&self) -> u64 {
+        let proj = &self.projection;
+        match &self.route {
+            FastRoute::Raw(trace)
+                if proj.dots && (0..NCH).any(|c| proj.ch[c].is_some() && trace.spans[c].is_none()) =>
+            {
+                // The rounded sample-index edges can include an extra sample.
+                ((1.0 / proj.x_per_sample).ceil().max(1.0) as u64).saturating_add(1)
+            }
+            FastRoute::Raw(_) => 1,
+            FastRoute::Rec(rec) => {
+                let spacing = rec.dt * proj.cols as f64 / (proj.time_per_div * HDIV as f64);
+                // The legacy record rasterizer can include the segments on both column edges.
+                ((1.0 / spacing).ceil().max(1.0) as u64).saturating_add(2)
+            }
+        }
+    }
+
     fn trace_record(
         &self,
         c: usize,

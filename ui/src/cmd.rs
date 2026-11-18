@@ -151,7 +151,7 @@ pub fn stat_text(ui: &Ui) -> String {
     let gpu = format!(
         "{} pipeline {:?} interp {:?} acquired {} used {} dropped {} measured {} compress k {}{}",
         gpu,
-        ui.switches().pipeline,
+        crate::ui::change::acquisition::accepted_draw_switches(ui).pipeline,
         ui.switches().interp,
         acq,
         used,

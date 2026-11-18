@@ -2,44 +2,10 @@
 
 //! Process-wide requested-live-byte characterisation, confined to this test executable.
 
-use std::alloc::{GlobalAlloc, Layout, System};
 use support::counting::Counting;
 
 #[global_allocator]
 static HEAP: Counting = Counting::new();
-
-// SAFETY: every allocation and layout is delegated unchanged to System. Atomic counters never allocate.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: the caller supplies GlobalAlloc's valid layout; System owns the returned allocation.
-        let p = unsafe { System.alloc(layout) };
-        if !p.is_null() {
-            self.allocated(layout.size());
-        }
-        p
-    }
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: the valid layout is passed unchanged to System, preserving its zero-initialization contract.
-        let p = unsafe { System.alloc_zeroed(layout) };
-        if !p.is_null() {
-            self.allocated(layout.size());
-        }
-        p
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: the caller provides the System allocation and its original layout.
-        unsafe { System.dealloc(ptr, layout) };
-        self.freed(layout.size());
-    }
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-        // SAFETY: the caller provides the live System allocation, original layout and valid new size.
-        let p = unsafe { System.realloc(ptr, layout, size) };
-        if !p.is_null() {
-            self.resized(layout.size(), size);
-        }
-        p
-    }
-}
 
 fn limit(baseline: usize) -> usize {
     baseline + baseline.div_ceil(100)

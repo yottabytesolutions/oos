@@ -28,6 +28,8 @@ pub(crate) mod change;
 mod deep_draw;
 mod deskew;
 mod dpt;
+#[cfg(test)]
+mod draw_routes;
 mod eyepage;
 pub(crate) mod facts;
 #[cfg(test)]

@@ -3,6 +3,9 @@
 
 #[cfg(test)]
 pub mod perfguard;
+#[cfg(test)]
+#[allow(dead_code)] // Shared observer also serves integration soak retained-byte and thread-local probes.
+pub(crate) mod test_allocator;
 
 pub mod clocks;
 pub mod intake;

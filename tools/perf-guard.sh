@@ -66,7 +66,7 @@ run cargo test --locked --profile perf --quiet -p oos-hal --test perf_ratio -- -
 echo "== ui: zero-allocation hot paths"
 run cargo test --locked --release --quiet -p oos-ui --test soak -- hot_paths_allocate_nothing_after_warmup --nocapture
 
-echo "== ui: timing guards (best and p99 ratios)"
+echo "== ui: timing guards (best and p99 ratios; M12 draw-route build/allocation rows)"
 run cargo test --locked --release --quiet -p oos-ui --bin oos-ui -- --ignored --nocapture --test-threads=1 perf_guard
 
 python3 "$root/tools/perf-budgets.py" --log "$log"

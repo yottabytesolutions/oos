@@ -6,6 +6,7 @@ pub struct Output {
     chunks: Vec<Vec<u8>>,
     capacity: usize,
     limit: usize,
+    hislip: Option<(u32, usize)>,
 }
 impl Default for Output {
     fn default() -> Self {
@@ -16,10 +17,21 @@ impl Output {
     pub(crate) fn rpc(bytes: Vec<u8>) -> Self {
         let header = ((bytes.len() as u32) | 1 << 31).to_be_bytes().to_vec();
         let capacity = header.capacity() + bytes.capacity();
-        Self { chunks: vec![header, bytes], capacity, limit: crate::netport::rpc::REPLY_BYTES }
+        Self { chunks: vec![header, bytes], capacity, limit: crate::netport::rpc::REPLY_BYTES, hislip: None }
+    }
+    pub(crate) fn bytes(bytes: Vec<u8>) -> Self {
+        let capacity = bytes.capacity();
+        Self { chunks: vec![bytes], capacity, limit: RESPONSE_BYTES, hislip: None }
+    }
+    pub(crate) fn hislip(bytes: Vec<u8>, msgid: u32, max: usize) -> Self {
+        Self { hislip: Some((msgid, max)), ..Self::bytes(bytes) }
+    }
+
+    pub(crate) fn hislip_framing(&self) -> Option<(u32, usize)> {
+        self.hislip
     }
     pub fn bounded(limit: usize) -> Self {
-        Self { chunks: Vec::new(), capacity: 0, limit }
+        Self { chunks: Vec::new(), capacity: 0, limit, hislip: None }
     }
     pub fn remaining(&self) -> usize {
         self.limit.saturating_sub(self.capacity + self.chunks.capacity() * std::mem::size_of::<Vec<u8>>() + 64)

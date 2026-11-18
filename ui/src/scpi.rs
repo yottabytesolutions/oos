@@ -717,7 +717,7 @@ fn e(v: f64) -> String {
 impl Scpi {
     pub fn open(port: impl Into<crate::net6::Port>, v6: bool) -> Scpi {
         let mut scpi = Self::disconnected();
-        scpi.transport.endpoint.set_open(Some(port.into()), v6, false);
+        scpi.transport.endpoint.set_open(Some(port.into()), v6, crate::netio::Protocol::Raw);
         scpi
     }
 
@@ -728,7 +728,7 @@ impl Scpi {
     ) -> Self {
         let mut scpi = Self::disconnected();
         scpi.transport.endpoint.wake = wake;
-        scpi.transport.endpoint.set_open(Some(port.into()), v6, false);
+        scpi.transport.endpoint.set_open(Some(port.into()), v6, crate::netio::Protocol::Raw);
         scpi
     }
 

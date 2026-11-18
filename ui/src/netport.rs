@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Owned application messages shared by synchronous intake and transport adapters.
+pub(crate) mod hislip;
 mod latency;
 mod output;
 pub(crate) mod rpc;
@@ -45,6 +46,7 @@ impl Payload {
 pub enum RemoteRequest {
     Program(String),
     Vxi11 { record: Vec<u8>, channel: rpc::Channel, closed: Arc<AtomicBool> },
+    Hislip { message: Option<hislip::Message>, closed: Arc<AtomicBool>, cleared: Arc<AtomicBool> },
     UiState,
     ImportWaveform { slot: usize, name: String, payload: Payload },
     ExportWaveform { format: WaveFormat },
@@ -162,6 +164,7 @@ pub struct Reply {
     id: Id,
     output: Output,
     _reservation: Reservation,
+    close: bool,
 }
 impl Reply {
     pub fn new(id: Id, bytes: Vec<u8>, reservation: Reservation) -> Self {
@@ -173,10 +176,16 @@ impl Reply {
     }
     pub fn from_output(id: Id, output: Output, mut reservation: Reservation) -> Self {
         reservation.retain(output.capacity());
-        Self { id, output, _reservation: reservation }
+        Self { id, output, _reservation: reservation, close: false }
     }
     pub fn id(&self) -> Id {
         self.id
+    }
+    pub(crate) fn set_close(&mut self, close: bool) {
+        self.close = close;
+    }
+    pub(crate) fn closes(&self) -> bool {
+        self.close
     }
     pub fn output(&self) -> &Output {
         &self.output

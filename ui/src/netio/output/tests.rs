@@ -35,7 +35,7 @@ impl AsyncWrite for Writer {
 
 #[test]
 fn partial_writes_and_both_timeouts_release_owned_output() {
-    for framed in [false, true] {
+    for framing in 0..3 {
         for (step, stalled, timeout) in [
             (Duration::from_millis(20), false, false),
             (Duration::from_secs(1), false, true),
@@ -47,7 +47,11 @@ fn partial_writes_and_both_timeouts_release_owned_output() {
             let bytes = vec![b'x'; 64];
             let mut plain = crate::netport::Output::default();
             assert!(plain.push(bytes.clone()).is_ok());
-            let output = if framed { crate::netport::Output::rpc(bytes) } else { plain };
+            let output = match framing {
+                0 => plain,
+                1 => crate::netport::Output::rpc(bytes),
+                _ => crate::netport::Output::hislip(bytes, 77, 16),
+            };
             let reply = Reply::from_output(Id::new(1, 1), output, budget.reserve(RESPONSE_BYTES).unwrap());
             let request = crate::netport::Envelope::program(1, 1, "query?".into());
             let ports = crate::netport::Ports::new(Arc::new(Wake::new().unwrap())).unwrap();
@@ -79,7 +83,7 @@ fn cancelling_a_stalled_write_releases_its_reservation() {
         Writer { bytes: Vec::new(), step: Duration::ZERO, now: Rc::new(Cell::new(Duration::ZERO)), stalled: true };
     let reply = Reply::from_output(
         Id::new(1, 1),
-        crate::netport::Output::rpc(vec![0; 4096]),
+        crate::netport::Output::hislip(vec![0; 4096], 77, 4096),
         budget.reserve(RESPONSE_BYTES).unwrap(),
     );
     let mut output = Box::pin(send(&mut writer, reply, || Duration::ZERO, |_| std::future::pending()));
@@ -94,21 +98,58 @@ fn stalled_writer_does_not_delay_a_healthy_connections_output() {
     let ports = crate::netport::Ports::new(Arc::new(Wake::new().unwrap())).unwrap();
     let clock = Rc::new(Cell::new(Duration::ZERO));
     let mut stalled = Writer { bytes: Vec::new(), step: Duration::ZERO, now: clock.clone(), stalled: true };
-    let held = Reply::new(Id::new(1, 1), vec![0; 4096], ports.budget().reserve(RESPONSE_BYTES).unwrap());
+    let held = Reply::from_output(
+        Id::new(1, 1),
+        crate::netport::Output::hislip(vec![0; 4096], 77, 4096),
+        ports.budget().reserve(RESPONSE_BYTES).unwrap(),
+    );
     let mut output = Box::pin(send(&mut stalled, held, || clock.get(), |_| std::future::pending()));
     let mut cx = Context::from_waker(Waker::noop());
     assert!(output.as_mut().poll(&mut cx).is_pending());
     let mut healthy =
         Writer { bytes: Vec::new(), step: Duration::from_micros(100), now: clock.clone(), stalled: false };
-    let reply = Reply::new(Id::new(2, 1), b"ready\n".to_vec(), ports.budget().reserve(1024).unwrap());
+    let reply = Reply::from_output(
+        Id::new(2, 1),
+        crate::netport::Output::hislip(b"ready\n".to_vec(), 78, 4096),
+        ports.budget().reserve(1024).unwrap(),
+    );
     {
         let send = send(&mut healthy, reply, || clock.get(), |_| std::future::pending());
         let mut send = std::pin::pin!(send);
         assert!(matches!(send.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
     }
-    assert_eq!(healthy.bytes, b"ready\n");
+    assert_eq!(healthy.bytes, crate::netport::hislip::encode(7, 0, 78, b"ready\n"));
     assert!(clock.get() <= Duration::from_millis(33));
     assert!(output.as_mut().poll(&mut cx).is_pending());
     drop(output);
     assert_eq!(ports.budget().used(), 0);
+}
+
+#[test]
+fn hislip_partial_writes_preserve_fragment_headers_empty_replies_and_message_ids() {
+    for bytes in [Vec::new(), vec![0; 4096], vec![1; 8193]] {
+        let budget = Budget::new(Arc::new(Wake::new().unwrap()));
+        let now = Rc::new(Cell::new(Duration::ZERO));
+        let mut writer = Writer { bytes: Vec::new(), step: Duration::ZERO, now, stalled: false };
+        let reply = Reply::from_output(
+            Id::new(1, 1),
+            crate::netport::Output::hislip(bytes.clone(), 42, 4096),
+            budget.reserve(RESPONSE_BYTES).unwrap(),
+        );
+        let work = send(&mut writer, reply, || Duration::ZERO, |_| std::future::pending());
+        {
+            let mut work = std::pin::pin!(work);
+            assert!(matches!(work.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Ok(()))));
+        }
+        let count = bytes.len().div_ceil(4096).max(1);
+        let mut received = Vec::new();
+        for index in 0..count {
+            let message = crate::netport::hislip::take_message(&mut writer.bytes).unwrap().unwrap();
+            assert_eq!((message.typ, message.control, message.param), (if index + 1 == count { 7 } else { 6 }, 0, 42));
+            received.extend(message.data);
+        }
+        assert_eq!(received, bytes);
+        assert!(writer.bytes.is_empty());
+        assert_eq!(budget.used(), 0);
+    }
 }

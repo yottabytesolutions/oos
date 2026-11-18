@@ -33,6 +33,11 @@ Keep the tracker brief. Record evidence here as the step progresses.
 2026-11-18 gate-decision fix: record the owner's M15a acceptance and deferred M15b size criterion in ADR 0037
 and the migration specification; collect the supplied unit and host measurements below, then run the fast gate.
 
+M15b HiSLIP (#151): retain framing, handshake, clear and acknowledgement behaviour behind owned requests.
+Reuse netio admission, ACLs, output deadlines and cancellation; delete the frame-thread socket loops and
+blocking send helper. Preserve fixtures, add injected-time stalled-output/cancellation coverage and measure
+production LOC and same-profile aarch64 binary size. Additional reserved paths: `ui/src/hislip/`.
+
 ## Measurements
 
 Owner-reported results, 2026-11-18, for PR #145's measurement section. Unit results are verified on the DHO804;
@@ -49,12 +54,43 @@ host size measurements are after the gate fix. These are supplied results, not a
 | aarch64 binary size, host | Baseline | +2.86 % |
 | Dependencies, host | Baseline | +9 |
 
-The owner accepts M15a now for the behaviour gain. Size is judged after M15b, once all transports use netio
-and the old raw IO code is deleted. If the total then still adds production lines or binary size beyond noise,
-replace tokio with a `poll(2)` IO thread keeping the same architecture. This supersedes the earlier M15a
-size/rollout hold below; the deferred size gate is M15b's acceptance criterion.
+The owner accepts M15a for the behaviour gain. ADR 0037 amendment 2026-11-18 (2) chooses tokio for all
+network IO and retires the deferred size gate and `poll(2)` fallback. Each transport still reports and
+minimises its production LOC and aarch64 binary size delta.
 
 ## Status
+
+- 2026-11-18: M15b HiSLIP (#151) implementation: sync/async channels use the shared current-thread runtime,
+  request admission, connection credits, ACL rechecks, disconnect cancellation and timed output. Protocol
+  sessions and SCPI continuations stay frame-owned. Borrowed payload slices and stack headers replace the
+  old per-fragment wire copies; the frame-thread socket loops and last blocking send helper are deleted.
+  Async clear no longer carries unreachable per-async-channel program/payload clearing. Existing handshake,
+  acknowledgement-only locking, switches, limits, error codes and protocol fixtures remain.
+  Added injected-time intake/output checks plus fragmentation, malformed/oversized headers, read-ahead
+  overflow, eight-peer fairness, backpressure, disconnect and cancellation regressions. The first fast gate
+  printed `gate FAILED in 2 s: size`; shared reply pumping corrected the oversized polling function.
+  The first full release suite found a clear/read-ahead race that discarded a fresh post-acknowledgement
+  command. Clearing buffered bytes before the next socket read fixes it. Its deterministic regression
+  fails with that fix removed (exit 101) and passes with it restored; all 16 focused HiSLIP tests pass in
+  debug and test-release. Final complete UI suites pass (exit 0): 1,511 debug and 1,510 release unit tests,
+  56 ignored in each; both profiles pass 6 golden tests (1 ignored), 15 host-script tests, 8 host-socket
+  tests and all 14 soak tests. Fast printed `partial gate passed (not done): 11 steps in 4 s` (exit 0);
+  clippy printed `partial gate passed (not done): 1 steps in 83 s` (exit 0). Generated ratchets retain only
+  the reduced HiSLIP file/function size and lint entries. `git diff --check` passes.
+  `cargo xtask loc --compare HEAD`, base `e846b2cf7080ce93d2713c18e644e3803a4289a1`, reports UI 73,100
+  to 73,199 (+99), total 109,145 to 109,244 (+99); tooling and dependencies are unchanged. Separate
+  baseline/candidate default-feature aarch64 musl release builds report 7,197,912 to 7,206,312 bytes
+  (+8,400, +0.12%). The net reduction aim is unmet: bounded continuation/reply ownership, cancellable
+  clear read-ahead and shared streaming framing add more lines than the deleted socket loops remove.
+  Complete logs, baseline source/binary and measurements remain in ignored `target/m15b-hislip/`.
+  Host only; no hardware access or Git writes. Independent review, the integrated full gate and unit load
+  measurements remain with the coordinator; the wider M15 task stays active.
+
+- 2026-11-18: M15b HiSLIP (#151) plan accepted through the assigned brief: amend ADR 0037 and M15a/M15b,
+  migrate sync/async channels to netio on `refactor/151-m15b-hislip`, preserve protocol fixtures,
+  then run fast/debug/release checks and
+  measure LOC/binary deltas. Base: `e846b2cf7080ce93d2713c18e644e3803a4289a1`. Coordinator owns Git,
+  independent review and integration; host only.
 
 - 2026-11-18: PR #155 size-fix result: shared service switching/runtime retention/ACL
   publication and parked-reply retry replace duplicated raw/VXI plumbing. Link ownership

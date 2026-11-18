@@ -60,9 +60,12 @@ stalled client (main 0.2 fps), delivers 628-1038 exchanges/s (main 30-34), and f
 <= 2.2/6.5 ms on both. CPU, wakeups and RSS are within noise; picture loss is <= 3 %.
 Host measurements after the gate fix show +685 production LOC, +2.86 % aarch64 binary size and +9 dependencies.
 
-Judge size after M15b, once all transports use netio and the old raw IO code is deleted. If the total still adds
-production lines or binary size beyond noise, replace tokio with a `poll(2)` IO thread keeping the same architecture.
-This deferred size gate is an M15b acceptance criterion.
+The deferred M15b size gate from this amendment is retired by the decision below.
+
+## Amendment 2026-11-18 (2)
+
+Tokio is the runtime for all network IO. The deferred size gate and the `poll(2)` fallback are retired.
+Each transport PR still reports and minimises its production LOC and aarch64 binary size delta.
 
 ## References
 

@@ -12,6 +12,12 @@ mod timer;
 pub use crate::netport::*;
 use std::{io, sync::Arc};
 
+#[derive(Clone, Copy)]
+pub(crate) enum Protocol {
+    Raw,
+    Hislip,
+    Rpc(crate::netport::rpc::Channel),
+}
 pub(super) type BoundPorts = (u16, Option<(u16, u16)>);
 
 pub struct Service {
@@ -27,10 +33,12 @@ impl Service {
         v6: bool,
         wake: Arc<Wake>,
         runtime: Runtime,
-        vxi: bool,
+        protocol: Protocol,
     ) -> io::Result<Self> {
-        let ports = if vxi {
+        let ports = if matches!(protocol, Protocol::Rpc(_)) {
             Ports::bounded(wake, MAX_CLIENTS + 1, crate::netport::rpc::REPLY_BYTES)?
+        } else if matches!(protocol, Protocol::Hislip) {
+            Ports::bounded(wake, MAX_CLIENTS, MAX_CLIENTS * crate::netport::hislip::REPLY_BYTES)?
         } else {
             Ports::new(wake)?
         };
@@ -39,7 +47,7 @@ impl Service {
         let (finished, stopped) = std::sync::mpsc::sync_channel(1);
         let io_ports = ports.clone();
         runtime.spawn(async move {
-            runtime::run(port, v6, io_ports, changed, ready, vxi).await;
+            runtime::run(port, v6, io_ports, changed, ready, protocol).await;
             let _ = finished.send(());
         });
         let bound = started.recv().map_err(io::Error::other)??;

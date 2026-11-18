@@ -2,65 +2,100 @@
 // Copyright (C) 2026 Julian Decker
 
 use super::*;
+use crate::model::AcqMode as AcquisitionMode;
 
-pub(super) const AREA: Area = Area { kind, label, value, adjust, activate, options, menu_items, ..Area::EMPTY };
+pub(super) const AREA: Area = Area { descriptors: ROWS, adjust, activate, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::AcqAvg => Kind::Value,
-        Item::AcqSegTable => Kind::Action,
-        _ => return None,
-    })
-}
-
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Acquire) => "Acquire",
-        Item::AcqMode => "Mode",
-        Item::AcqAvg => "Averages",
-        Item::AcqSeg => "Segments",
-        Item::AcqSegHw => "HW segments",
-        Item::AcqAvgHw => "HW average",
-        Item::AcqSegIvl => "Seg. interval",
-        Item::AcqSegTable => "Segment times",
-        Item::AcqDepth => "Memory",
-        Item::AcqCores => "ADC cores",
-        Item::AcqDrawPath => "Draw path",
-        Item::AcqAlias => "Aliasing",
-        _ => return None,
-    })
-}
-
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    let m = &ui.m;
-    let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-    Some(match it {
-        Item::AcqMode => match m.acq {
-            AcqMode::Normal => "Normal".into(),
-            AcqMode::Peak => "Peak".into(),
-            AcqMode::Average => "Average".into(),
-            AcqMode::HiRes => "High res".into(),
-        },
-        Item::AcqAvg => format!("{}", m.avg_count),
-        Item::AcqSeg => {
-            if m.segments == 0 {
-                "Off".into()
-            } else {
-                ui.seg_count().to_string()
-            }
-        }
-        Item::AcqSegHw => onoff(m.seg_hw),
-        Item::AcqAvgHw => onoff(m.avg_hw),
-        Item::AcqSegIvl => seg_ivl_name(m.seg_ivl),
-        Item::AcqDepth => mdepths()[m.mdepth].0.into(),
-        Item::AcqCores => if m.cores { "Matched" } else { "Raw" }.into(),
-        Item::AcqDrawPath => if m.draw_batch { "Batch" } else { "Standard" }.into(),
-        Item::AcqAlias => {
-            ui.alias_above().map_or(String::new(), |f| format!("above {}, Peak shows it", si_short(f, "Hz")))
-        }
-        _ => return None,
-    })
-}
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    use Kind::*;
+    &[
+        Descriptor::new(Open(MenuId::Acquire), Action, "Acquire", |_| String::new(), |_| Vec::new(), |_| false),
+        Descriptor::new(
+            AcqMode,
+            Choice,
+            "Mode",
+            |u| {
+                match u.m.acq {
+                    AcquisitionMode::Normal => "Normal",
+                    AcquisitionMode::Peak => "Peak",
+                    AcquisitionMode::Average => "Average",
+                    AcquisitionMode::HiRes => "High res",
+                }
+                .into()
+            },
+            |_| ["Normal", "Peak", "Average", "High res"].into_iter().map(String::from).collect(),
+            |_| true,
+        ),
+        Descriptor::new(
+            AcqAvg,
+            Value,
+            "Averages",
+            |u| u.m.avg_count.to_string(),
+            |_| AVERAGES.iter().map(ToString::to_string).collect(),
+            |u| u.m.acq == AcquisitionMode::Average,
+        ),
+        Descriptor::new(
+            AcqAvgHw,
+            Choice,
+            "HW average",
+            |u| onoff(u.m.avg_hw),
+            toggles,
+            |u| u.m.acq == AcquisitionMode::Average && u.src.is_hw(),
+        ),
+        Descriptor::new(
+            AcqDepth,
+            Choice,
+            "Memory",
+            |u| mdepths()[u.m.mdepth].0.into(),
+            |_| mdepths().iter().map(|d| d.0.to_string()).collect(),
+            |_| true,
+        ),
+        Descriptor::new(
+            AcqSeg,
+            Choice,
+            "Segments",
+            |u| if u.m.segments == 0 { "Off".into() } else { u.seg_count().to_string() },
+            |u| u.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect(),
+            |_| true,
+        ),
+        Descriptor::new(AcqSegHw, Choice, "HW segments", |u| onoff(u.m.seg_hw), toggles, |u| u.m.segments > 0),
+        Descriptor::new(
+            AcqSegIvl,
+            Choice,
+            "Seg. interval",
+            |u| seg_ivl_name(u.m.seg_ivl),
+            |_| SEG_IVLS.iter().map(|&x| seg_ivl_name(x)).collect(),
+            Ui::seg_hw_on,
+        ),
+        Descriptor::new(AcqSegTable, Action, "Segment times", |_| String::new(), |_| Vec::new(), Ui::seg_hw_on),
+        Descriptor::new(
+            AcqCores,
+            Choice,
+            "ADC cores",
+            |u| if u.m.cores { "Matched" } else { "Raw" }.into(),
+            |_| ["Raw", "Matched"].into_iter().map(String::from).collect(),
+            |_| true,
+        ),
+        Descriptor::new(
+            AcqDrawPath,
+            Choice,
+            "Draw path",
+            |u| if u.m.draw_batch { "Batch" } else { "Standard" }.into(),
+            |_| ["Standard", "Batch"].into_iter().map(String::from).collect(),
+            |_| true,
+        ),
+        Descriptor::new(
+            AcqAlias,
+            Choice,
+            "Aliasing",
+            |u| u.alias_above().map_or(String::new(), |f| format!("above {}, Peak shows it", si_short(f, "Hz"))),
+            |_| Vec::new(),
+            |u| u.alias_above().is_some(),
+        ),
+        Descriptor::new(Open(MenuId::Horizontal), Action, "Horizontal", |_| String::new(), |_| Vec::new(), |_| true),
+    ]
+};
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
     if seg_adjust(ui, it, d) {
@@ -95,53 +130,6 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
         ui.table_toggle(tables::TableKind::Segments);
     }
     true
-}
-
-fn options(ui: &Ui, it: Item) -> Option<Vec<String>> {
-    let v: &[&str] = match it {
-        Item::AcqMode => &["Normal", "Peak", "Average", "High res"],
-        Item::AcqCores => &["Raw", "Matched"],
-        Item::AcqDrawPath => &["Standard", "Batch"],
-        Item::AcqSegHw | Item::AcqAvgHw => &["Off", "On"],
-        Item::AcqDepth => return Some(mdepths().iter().map(|d| d.0.to_string()).collect()),
-        Item::AcqAvg => return Some(AVERAGES.iter().map(|n| n.to_string()).collect()),
-        Item::AcqSeg => {
-            return Some(ui.seg_options().iter().map(|&n| if n == 0 { "Off".into() } else { n.to_string() }).collect())
-        }
-        Item::AcqSegIvl => return Some(SEG_IVLS.iter().map(|&x| seg_ivl_name(x)).collect()),
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Acquire => {
-            let mut v = vec![Item::AcqMode];
-            if ui.m.acq == AcqMode::Average {
-                v.push(Item::AcqAvg);
-                if ui.src.is_hw() {
-                    v.push(Item::AcqAvgHw);
-                }
-            }
-            v.push(Item::AcqDepth);
-            v.push(Item::AcqSeg);
-            if ui.m.segments > 0 {
-                v.push(Item::AcqSegHw);
-            }
-            if ui.seg_hw_on() {
-                v.extend([Item::AcqSegIvl, Item::AcqSegTable]);
-            }
-            v.push(Item::AcqCores);
-            v.push(Item::AcqDrawPath);
-            if ui.alias_above().is_some() {
-                v.push(Item::AcqAlias);
-            }
-            v.push(Item::Open(MenuId::Horizontal));
-            v
-        }
-        _ => Vec::new(),
-    }
 }
 
 /// The segment items of the Acquire menu; false for any other item.

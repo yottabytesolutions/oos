@@ -240,3 +240,6 @@ pub(super) fn off_sources(ui: &Ui, menu: MenuId) -> Vec<usize> {
     v.dedup();
     v
 }
+
+#[cfg(test)]
+mod tests;

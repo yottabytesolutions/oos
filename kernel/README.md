@@ -34,6 +34,23 @@ Linux x86-64 also requests the cross compiler packages. Build containers use a s
 `oos-kbuild-<worktree>-<environment>` when base/recipe/package requests change. Old volumes remain for active builds. A completed build records `out/base/build-environment`;
 image assembly rejects a missing/mismatched compiler environment instead of reusing a stale kernel.
 The builder records sorted installed packages in `out/base/build-packages.txt` as informational provenance.
+
+`kernel/build-base.sh` reuses a completed kernel base from the local cache when every input matches.
+The SHA-256 key covers `base.sha256` (version and source archive checksum), patches and their order, device trees,
+configuration and fragments, firmware, modules, recorded Git answers, the builder and cache helper, and the shared
+build-environment scripts and lock. It also includes the selected platform, environment identity and immutable
+compiler container image ID, so rebuilding a container with different apt packages invalidates the cache.
+An archive present in `src/` is always checked; a matching cache hit needs no source download.
+Image assembly verifies the same key and output checksums before using the kernel.
+
+Entries live under `$XDG_CACHE_HOME/oos/kernel-base` when XDG_CACHE_HOME is absolute, otherwise
+`~/Library/Caches/oos/kernel-base` on macOS or `~/.cache/oos/kernel-base` on Linux and the BSDs.
+`kernel/build-base.sh cache-dir` prints the selected location. Each hit or completed build prints its size in bytes.
+`kernel/build-base.sh purge` removes cached entries without Docker or a source archive; it leaves `out/base` alone.
+Different input keys coexist until purged. Builds and purges share a lock across worktrees; incomplete or failed
+builds never become cache entries. Completed entries are published by rename, and every reuse verifies their key,
+required files and content hashes before copying them to `out/base`.
+
 Missing package locks do not block builds; complete per-role locks and the binfmt installer identity move to
-0033 (0.3.0). Base/recipe pins do not freeze apt package resolution. Real builds on this macOS arm64 host and
-Linux x86-64 runner validation remain untested here; the latter does not block this scope. See `docs/development.md`.
+0033 (0.3.0). Base/recipe pins do not freeze apt package resolution. Cold and cached kernel builds were verified
+on a macOS arm64 host. Linux x86-64 runner validation remains untested here. See `docs/development.md`.

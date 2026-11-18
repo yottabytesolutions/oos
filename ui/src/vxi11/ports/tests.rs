@@ -172,7 +172,7 @@ fn closing_raw_scpi_keeps_vxi_on_the_shared_runtime() {
         false,
         server.endpoint.wake.clone(),
         server.endpoint.runtime().unwrap(),
-        false,
+        crate::netio::Protocol::Raw,
     )
     .unwrap();
     drop(raw);
@@ -251,7 +251,7 @@ fn stopping_vxi_cancels_its_queued_request_without_stopping_raw_scpi() {
         false,
         server.endpoint.wake.clone(),
         server.endpoint.runtime().unwrap(),
-        false,
+        crate::netio::Protocol::Raw,
     )
     .unwrap();
     raw.set_acl(crate::netacl::Shared::default());

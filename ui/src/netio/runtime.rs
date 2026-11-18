@@ -14,15 +14,19 @@ pub(super) async fn run(
     ports: Arc<Ports>,
     changed: watch::Receiver<Option<crate::netacl::Shared>>,
     ready: std::sync::mpsc::SyncSender<io::Result<BoundPorts>>,
-    vxi: bool,
+    protocol: Protocol,
 ) {
     let result = async {
         let listener = listen(port, v6)?;
-        let mapper = if vxi { Some(Arc::new(super::rpc::Mapper::open(port, v6)?)) } else { None };
+        let mapper = if matches!(protocol, Protocol::Rpc(_)) {
+            Some(Arc::new(super::rpc::Mapper::open(port, v6)?))
+        } else {
+            None
+        };
         let bound = (listener.local_addr()?.port(), mapper.as_ref().map(|m| m.ports()).transpose()?);
         let wake = UnixDatagram::from_std(ports.io_wake().receiver()?)?;
         let _ = ready.send(Ok(bound));
-        serve(listener, mapper, wake, ports.clone(), changed).await;
+        serve(listener, mapper, wake, ports.clone(), changed, protocol).await;
         Ok(())
     }
     .await;
@@ -44,6 +48,7 @@ async fn serve(
     wake: UnixDatagram,
     ports: Arc<Ports>,
     mut changed: watch::Receiver<Option<crate::netacl::Shared>>,
+    protocol: Protocol,
 ) {
     let mut clients = JoinSet::new();
     let mut sessions: HashMap<u64, (mpsc::Sender<Reply>, Option<watch::Sender<crate::netacl::Shared>>)> =
@@ -61,7 +66,7 @@ async fn serve(
     });
     loop {
         tokio::select! {
-            event = accept(&listener, &mapper), if changed.borrow().is_some() => {
+            event = accept(&listener, &mapper, protocol), if changed.borrow().is_some() => {
                 let Ok((socket, peer, protocol)) = event else { break };
                 let Some(policy) = changed.borrow().clone() else { continue };
                 if clients.len() >= MAX_CLIENTS || !permits(policy.clone(), Ok(peer)).await { continue; }
@@ -101,10 +106,10 @@ async fn serve(
 async fn accept(
     listener: &TcpListener,
     mapper: &Option<Arc<super::rpc::Mapper>>,
-) -> io::Result<(tokio::net::TcpStream, std::net::SocketAddr, super::rpc::Protocol)> {
-    use super::rpc::Protocol;
+    protocol: Protocol,
+) -> io::Result<(tokio::net::TcpStream, std::net::SocketAddr, Protocol)> {
     tokio::select! {
-        result = listener.accept() => result.map(|(s, p)| (s, p, if mapper.is_some() { Protocol::Rpc(crate::netport::rpc::Channel::Core) } else { Protocol::Raw })),
+        result = listener.accept() => result.map(|(s, p)| (s, p, protocol)),
         result = async {
             if let Some(mapper) = mapper { mapper.tcp.accept().await }
             else { std::future::pending().await }

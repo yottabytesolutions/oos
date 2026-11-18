@@ -19,7 +19,7 @@ Keep the existing behaviour through small migrations. The accepted decisions are
 `oos-ui` uses `src/main.rs` for its binary and library module graph. `main` selects scripted execution,
 host `--serve`, or Linux device execution in `system/device.rs`. The browser is the host desktop view.
 There is no native Windows window in this crate. `oos-core` depends only on `oos-dsp`;
-`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI and VXI-11 use tokio; the remaining transports await their M15b slices.
+`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI, VXI-11 and HiSLIP use tokio; HTTP and mDNS await their M15b slices.
 DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their application bindings.
 
 ### Module map
@@ -31,7 +31,7 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 | `model.rs`, `model/` | core model exports, platform/capability bridge, protocol bindings and colours |
 | `scpi.rs`, `scpi/`, `cmd.rs` | shared SCPI interpreter and program continuations; script/FIFO command syntax |
 | `http.rs`, `http/`, `vxi11.rs`, `hislip.rs`, `mdns.rs` | web/MCP, instrument transports and discovery |
-| `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11 runtime, socket framing/output and owned bounded application ports |
+| `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11/HiSLIP runtime, socket framing/output and owned bounded application ports |
 | `remote.rs` | telnet/firewall helper |
 | `store.rs`, `store/`, `sysconf.rs` | setup codec, waveform/image files, durable startup state, system settings |
 | `board/`, `board/dho/` | Board port, Shared exchange, hardware configuration/readout and publication |
@@ -89,14 +89,14 @@ updates panes, and grades/halves the maps. Rendering is a separate call.
 flowchart LR
     subgraph frame["Synchronous frame thread"]
         input["Panel / touch / FIFO"] --> ui["Ui: Model, menus, records, views"]
-        transports["HiSLIP polls"] --> scpi["One SCPI interpreter"]
+        scpi["One SCPI interpreter"]
         scpi -->|"setters and queries"| ui
         ui --> change["normalize / accept / reset / publish"]
         ui --> draw["record drawing + fast drawing + pipe merge"]
         draw --> maps["ph / phz, grade"]
         maps --> render["Canvas or GPU layers"]
     end
-    raw["Raw SCPI / VXI-11: netio IO thread"] -->|"bounded owned programs / RPC requests, replies + wake"| scpi
+    raw["Raw SCPI / VXI-11 / HiSLIP: netio IO thread"] -->|"bounded owned requests, replies + wake"| scpi
     http["HTTP accept/read/send threads"] -->|"inbox: MCP programs"| scpi
     http -->|"web actions"| ui
     change -->|"want + identity under mutex"| shared[("Shared")]
@@ -111,10 +111,12 @@ flowchart LR
     render --> display["DRM / GPU helper; HTTP snapshots"]
 ```
 
-Raw SCPI and VXI-11 TCP/UDP framing and writes share one current-thread tokio runtime on the `netio` thread.
+Raw SCPI, VXI-11 and HiSLIP TCP/UDP framing and writes share one current-thread tokio runtime on the `netio` thread.
 IO owns credits until output completes and enforces 2 s without progress and 30 s total send limits.
-VXI-11 retains frame-owned links and resumable programs behind the owned RPC port. HiSLIP still calls the
-blocking send helper until its M15b slice; its `poll_async` means resumable programs, not a tokio runtime.
+VXI-11 links and HiSLIP sessions retain frame-owned resumable programs behind owned request/reply ports.
+HiSLIP shares the eight-connection limit, admission, cancellation and timed output machinery. Its reply budget
+covers eight existing response assemblers, each with up to twice the 64 MiB response ceiling for geometric
+allocation growth plus framing metadata; output sends borrowed payload slices without assembling a second copy.
 VXI-11 preserves eight TCP connections plus a separate 1500-byte UDP portmapper request, sixteen links,
 and the existing per-link pending-program/output bounds. Its RPC output port reserves up to two RESP_MAX
 payloads plus 4096 bytes for framing, because a link can append a program before its next output-limit check.
@@ -186,10 +188,10 @@ flowchart TB
 ```
 
 ADR 0037 permits only tokio `rt`, `net`, `time`, `sync`, `io-util` and `macros`.
-Its first implementation is the raw-SCPI experiment awaiting unit measurement in [M15](migration.md#m15-remote-adapters-on-commands-and-queries).
-Broader rollout waits for that gate. Blocking filesystem, usbfs and process calls must not run on the executor;
+The owner accepted the raw-SCPI implementation after unit measurements in [M15](migration.md#m15-remote-adapters-on-commands-and-queries).
+Tokio is the runtime for all network IO; each transport reports and minimises its production LOC and binary delta. Blocking filesystem, usbfs and process calls must not run on the executor;
 use bounded blocking adapters. CPU work stays on the existing worker abstraction. WLAN, SNTP and Bode
-keep their existing threads; USBTMC stays blocking. Any later runtime move needs measured production-line reduction.
+keep their existing threads; USBTMC stays blocking. Later network runtime moves keep reporting their production LOC and binary deltas.
 
 ## State and ownership
 

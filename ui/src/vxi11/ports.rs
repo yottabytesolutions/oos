@@ -28,12 +28,12 @@ impl Server {
             false,
             server.endpoint.wake.clone(),
             server.endpoint.runtime()?,
-            true,
+            crate::netio::Protocol::Rpc(crate::netport::rpc::Channel::Core),
         )?);
         Ok(server)
     }
     pub fn set_open(&mut self, on: bool, v6: bool) {
-        self.endpoint.set_open(on.then_some(CORE_PORT.into()), v6, true);
+        self.endpoint.set_open(on.then_some(CORE_PORT.into()), v6, crate::netio::Protocol::Rpc(Channel::Core));
         if !on {
             self.links.clear();
             self.parked = None;

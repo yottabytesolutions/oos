@@ -23,11 +23,13 @@ impl Endpoint {
         }
         self.runtime.clone().ok_or_else(|| io::Error::other("IO runtime unavailable"))
     }
-    pub fn set_open(&mut self, port: Option<crate::net6::Port>, v6: bool, vxi: bool) {
+    pub(crate) fn set_open(&mut self, port: Option<crate::net6::Port>, v6: bool, protocol: Protocol) {
         match port {
             Some(port) if self.io.is_none() => {
-                self.io =
-                    self.runtime().and_then(|runtime| Service::start(port, v6, self.wake.clone(), runtime, vxi)).ok();
+                self.io = self
+                    .runtime()
+                    .and_then(|runtime| Service::start(port, v6, self.wake.clone(), runtime, protocol))
+                    .ok();
                 self.acl_seen = u64::MAX;
             }
             Some(_) => {}

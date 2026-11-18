@@ -6,7 +6,6 @@
 754 file ui/src/fastdraw.rs
 649 file ui/src/gfx.rs
 650 file ui/src/gpu.rs
-406 file ui/src/hislip.rs
 946 file ui/src/http.rs
 439 file ui/src/main.rs
 1512 file ui/src/mdns.rs
@@ -51,8 +50,7 @@
 105 fn ui/src/drm.rs Display::on_fd
 63 fn ui/src/framestats.rs cheap_results
 237 fn ui/src/gpu.rs Gpu::submit
-125 fn ui/src/hislip.rs Server::poll_async
-85 fn ui/src/hislip.rs on_program_message
+71 fn ui/src/hislip.rs on_program_message
 120 fn ui/src/http.rs Http::poll
 88 fn ui/src/http.rs Shots::encoder
 75 fn ui/src/http.rs mcp

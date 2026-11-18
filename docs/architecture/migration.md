@@ -375,8 +375,8 @@ Retain the [target budgets](README.md#performance-budgets): frame p50 <= 8 ms / 
 remote enqueue p99 <= 3 ms, >= 500 exchanges/s and picture-rate loss <= 10%.
 The report must show the blocking write removed and justify any resource/code growth before broader adoption.
 Owner decision 2026-11-18 ([ADR 0037 amendment](../adr/code/0037-crates-where-they-remove-code-remote-io-on-tokio.md#amendment-2026-11-18)):
-accept M15a for the behaviour gain verified on the unit; defer the size criteria to M15b acceptance, after all
-transports use netio and the old raw IO code is deleted. M15a's host size cost is +685 production LOC,
+accept M15a for the behaviour gain verified on the unit. The second amendment on that date chooses tokio
+for all network IO and retires the deferred size gate and `poll(2)` fallback. M15a's host size cost is +685 production LOC,
 +2.86 % aarch64 binary size and +9 dependencies after the gate fix. The unit and host measurements are recorded
 in [task 0016](../tasks/0016-m15-remote-adapters.md#measurements).
 
@@ -386,10 +386,9 @@ error codes, binary/text encoding and pending-program semantics.
 Files: each transport and its helpers, `system/device/remote.rs`, `main.rs`, `netio/` and shared port types.
 Acceptance: existing RPC/HTTP/discovery fixtures plus M15a application-route, FIFO/Cmd and separate signed-upload
 contracts, stalled-client/cancellation/limit cases through the new IO;
-repeat M15a load measurements. Acceptance also includes the deferred size gate from ADR 0037: after all
-transports use netio and the old raw IO code is deleted, judge the total production LOC and binary size against
-the pre-M15a baseline. If the total still adds production lines or binary size beyond noise, replace tokio with
-a `poll(2)` IO thread keeping the same architecture. Expected delta: -100..-400 per transport, measured after deletion.
+repeat M15a load measurements. Tokio remains the runtime for all network IO (ADR 0037); there is no
+deferred size gate or `poll(2)` fallback. Each transport PR reports and minimises its production LOC and
+aarch64 binary size delta. Expected delta: -100..-400 per transport, measured after deletion.
 Risk: medium. Depends: M15a gate. Parallel: disjoint transport internals after the shared API lands;
 serialize runtime registration/wiring. Encoding stays on CPU workers, not the IO executor.
 

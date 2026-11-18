@@ -108,7 +108,7 @@ impl super::Scpi {
         self.transport.endpoint.runtime()
     }
     pub fn set_open(&mut self, port: Option<u16>, v6: bool) {
-        self.transport.endpoint.set_open(port.map(Into::into), v6, false);
+        self.transport.endpoint.set_open(port.map(Into::into), v6, crate::netio::Protocol::Raw);
         if port.is_none() {
             self.transport.intake = Default::default();
         }

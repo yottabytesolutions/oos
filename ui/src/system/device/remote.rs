@@ -31,7 +31,7 @@ impl Remote {
             hislip::Server::closed()
         } else {
             let port = arg(args, "--hislip-port").and_then(|p| p.parse().ok()).unwrap_or(hislip::PORT);
-            hislip::Server::open(port)
+            hislip::Server::open_with_runtime(port, net6::host_or_exit(scpi.io_runtime()), web.wake_handle())
         };
         // who may update or control the scope over the network: net.allow (docs/network.md 6), read here at the start;
         // the servers share the list with Remote services > Allowed, which sets it after a change

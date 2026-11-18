@@ -4,11 +4,6 @@ use super::*;
 use crate::netport::rpc::Channel;
 use tokio::net::{TcpListener, UdpSocket};
 
-#[derive(Clone, Copy)]
-pub(super) enum Protocol {
-    Raw,
-    Rpc(Channel),
-}
 pub(super) struct Mapper {
     pub(super) tcp: TcpListener,
     udp: UdpSocket,
@@ -71,13 +66,5 @@ impl Mapper {
                 }
             }
         }
-    }
-}
-
-pub(super) struct Connection(pub Arc<std::sync::atomic::AtomicBool>, pub Arc<Ports>);
-impl Drop for Connection {
-    fn drop(&mut self) {
-        self.0.store(true, std::sync::atomic::Ordering::Release);
-        self.1.notify_frame();
     }
 }

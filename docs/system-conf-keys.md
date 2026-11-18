@@ -6,14 +6,15 @@ unit evidence and deleting the alternate path and its switch; this inventory doe
 Hardware verification is limited to the evidence linked here, not a new unit run.
 
 Defaults below are the parser defaults without environment overrides, image defaults or user configuration.
-The [shared image defaults](../rootfs/initramfs/etc/oos/system.conf) enable `acq.pipeline = batch`, `acq.prearm = on`,
-`acq.compress = on` and `perf.place = on`. The user's system.conf wins over image defaults.
+Batch drawing is the code default. The [shared image defaults](../rootfs/initramfs/etc/oos/system.conf) enable
+`acq.prearm = on`, `acq.compress = on` and `perf.place = on`. The user's system.conf wins over image defaults.
+For `acq.pipeline`, `OOS_PIPELINE` overrides system.conf; an invalid value (including empty) is logged and uses Batch.
 `acq.frame0`, `trig.serial_hw`, `zone.batch` and `mask.map.*` are read only from the user's settings file;
 the other rows use the combined settings and image text. These switches are read at startup.
 
 | Key | Purpose | Default | Why temporary / removal issue scope |
 |---|---|---|---|
-| `acq.pipeline` | Choose Frames or Batch drawing. | `frames` | Two draw paths remain under docs/architecture/migration.md#m12; finish the [batch migration](architecture/migration.md) and remove the alternate path. |
+| `acq.pipeline` | Choose Batch or Standard (`standard` / `frames`) drawing. | `batch` | Two draw paths remain under docs/architecture/migration.md#m12; finish the [batch migration](architecture/migration.md) and remove the alternate path. |
 | `acq.prearm` | Arm the next batch before decoding the current batch. | `off` | Hardware opt-in under ADR 0012; [transfer efficiency](fork/specs/10-transfer-efficiency.md) needs one supported arm order after unit verification. |
 | `acq.compress` | Read live FPGA min/max pairs instead of every sample where possible. | `off` | Experimental acquisition alternative; use the [compression evidence](fork/compress.md) to settle the supported path and remove the switch. |
 | `acq.interp` | Choose exact or fast sparse-frame interpolation. | `exact` | Fast alternative remains opt-in under ADR 0012; settle interpolation after validation and remove the alternate path. |

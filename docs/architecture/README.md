@@ -142,7 +142,8 @@ with every edit restarting its stability interval. Shutdown drains accepted writ
 Manual exports and screenshots still call synchronous file IO from UI actions.
 
 The draw routes also remain distinct. Standard/Frames queues frames; Batch feeds deposit workers and
-queues the newest record. `fast_ok` selects eligible hardware views. `drawpipe::draw_frame` uses dense
+queues the newest record. Batch is the code and image default; `acq.pipeline = standard` or `frames` selects
+Standard. `fast_ok` selects eligible hardware views. `drawpipe::draw_frame` uses dense
 `fastdraw` spans, sparse interpolation or deep-record drawing; `Phosphor::draw_ex` handles record drawing.
 CPU rendering and GPU layer composition both exist. `Model::draw_batch` selects the hardware route;
 `draw.model` is absent from this checkout. M12 has not chosen which remaining routes to remove.

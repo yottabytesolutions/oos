@@ -43,7 +43,8 @@ Batch mode also uses route D:
 - When no read-out buffer is free (`take_buffer` None), the other frames are dropped and only the newest is queued.
 
 Both give batch-mode pictures of a different composition. `acq.pipeline` defaults to `batch`
-(`drawpipe::mode_from`), matching the generic image. `frames` explicitly selects the legacy Standard path.
+(`drawpipe::mode_from`), matching the generic image. `standard` or `frames` explicitly selects route D for comparison
+until the M12 decision.
 
 Kernels in `draw_frame` (`drawpipe.rs:38`), weight 24:
 - `fastdraw::deposit` / `deposit_codes`: one min/max span per screen column.
@@ -421,9 +422,10 @@ Not in scope: XY and LA (canvas), the auto timeout.
 
 ## M12a host draw-route evidence (2026-11-18, #157)
 
-Recommendation: retain Standard as the default and as the unit-comparison baseline. Owner selection and M12b
-remain open. Host equality does not establish the target weight/freeze contract or explain the historical DHO924S
-18.2 fps result in ADR 0035. No production behavior changes in this evidence step.
+Standard remains the unit-comparison baseline. The owner confirmed Batch as the code and image default on
+2026-11-18; the M12 path selection and M12b remain open. Host equality does not establish the target weight/freeze
+contract or explain the historical DHO924S 18.2 fps result in ADR 0035. No production behavior changes in
+this evidence step.
 
 Reproduce the deterministic cases with `cargo test -p oos-ui --bin oos-ui draw_routes`. The tests live in
 `ui/src/ui/draw_routes.rs` because they inspect the actual UI maps and route selection. They use captured, seeded

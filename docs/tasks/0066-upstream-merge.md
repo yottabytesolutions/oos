@@ -32,8 +32,9 @@ Reserved paths: whole tree on branch `integ-20-upstream` (integration merge), th
 
 Owner decisions applied:
 
-- Both draw paths stay: upstream's Standard (multi-core fast path, default) and our batch path, with upstream's
-  "Acquire > Draw path" setting. The draw-path acceptance plan in migration M9/M12: removal superseded, M12 measures both on the unit.
+- Both draw paths stay: upstream's Standard (multi-core fast path) and our Batch path (default since 2026-11-18), with
+  upstream's "Acquire > Draw path" setting. The draw-path acceptance plan in migration M9/M12: removal superseded,
+  M12 measures both on the unit.
 - Our acquisition correctness work stays (M2.x change detection and generation filter, kexec and watchdog, PCIe
   Gen1, self-heal, update hardening, SCPI empty reply and compound fixes). Where upstream fixed the same, one
   implementation stays; the Status names which.

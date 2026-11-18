@@ -13,9 +13,11 @@
 //! `draw_frame` on the frames the UI would have fast-drawn, and the newest frame of each batch takes the UI's path.
 //! A batch whose workers are still busy, frames of older settings and maps of an older mapping are dropped and
 //! counted (`Counters`). Where the fast path does not apply (no view), the acquisition thread queues every frame as in
-//! `frames` mode. Mode: `acq.pipeline = batch` in system.conf or OOS_PIPELINE=batch; `frames` (default) is the old
-//! path, kept for comparison until the unit has verified the new one.
+//! `frames` mode. Batch is the default; `acq.pipeline = standard` or `frames` in system.conf (or OOS_PIPELINE)
+//! selects the old path for comparison until M12 chooses the retained path.
 
+mod config;
+pub use config::{conf_value, mode_from, Mode};
 mod decoder;
 mod frame;
 pub use frame::draw_frame;
@@ -306,31 +308,6 @@ impl Counters {
     /// (acquired, used, dropped)
     pub fn read(&self) -> (u64, u64, u64) {
         (self.acquired.load(Ordering::Relaxed), self.used.load(Ordering::Relaxed), self.dropped.load(Ordering::Relaxed))
-    }
-}
-
-/// The pipeline mode: `batch` (this pipeline) or `frames` (every frame through the UI queue).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
-    Frames,
-    Batch,
-}
-
-/// `env` if set, else the value of `key` in system.conf text `conf` (a fork key: kept by `SysConf` as an unknown line).
-pub fn conf_value(env: Option<&str>, conf: &str, key: &str) -> Option<String> {
-    let conf_val = conf
-        .lines()
-        .filter_map(|l| l.split('#').next()?.split_once('='))
-        .find(|(k, _)| k.trim() == key)
-        .map(|(_, v)| v.trim().to_string());
-    env.map(str::to_string).or(conf_val)
-}
-
-/// OOS_PIPELINE, else the `acq.pipeline` line of system.conf, else `frames`.
-pub fn mode_from(env: Option<&str>, conf: &str) -> Mode {
-    match conf_value(env, conf, "acq.pipeline").as_deref() {
-        Some("batch") => Mode::Batch,
-        _ => Mode::Frames,
     }
 }
 
@@ -1756,15 +1733,6 @@ mod tests {
         // no view: the acquisition thread queues the frames itself
         pipe.set_view(None, 0, 0, Interp::Exact);
         assert!(!pipe.accepting());
-    }
-
-    #[test]
-    fn pipeline_mode_from_env_and_system_conf() {
-        assert_eq!(mode_from(None, ""), Mode::Frames);
-        assert_eq!(mode_from(None, "ntp = off\nacq.pipeline = batch   # new path\n"), Mode::Batch);
-        assert_eq!(mode_from(Some("frames"), "acq.pipeline = batch\n"), Mode::Frames);
-        assert_eq!(mode_from(Some("batch"), ""), Mode::Batch);
-        assert_eq!(mode_from(None, "acq.pipeline = bogus\n"), Mode::Frames);
     }
 
     /// Host cost per frame of a worker (decode into kept vectors, trigger refinement, deposit) against the frames

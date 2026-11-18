@@ -150,7 +150,7 @@ impl Default for Model {
             color_grade: false,
             dots: DotsMode::Auto,
             hdmi: HdmiMode::Waveform,
-            draw_batch: false,
+            draw_batch: true,
             bar_compact: false,
             hdmi_view: 0,
             views: 1,
@@ -323,5 +323,15 @@ impl Default for Model {
         m.ch[0].offset = -1.5;
         m.trig_level = 1.5;
         m
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_draw_path_is_batch() {
+        assert!(Model::default().draw_batch);
     }
 }

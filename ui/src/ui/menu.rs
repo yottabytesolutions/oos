@@ -3,11 +3,26 @@
 
 use super::*;
 
-/// Read-only rows in display and navigation order. Visibility never changes option identity.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Kind {
+    Text,
+    Choice,
+    Value,
+    Action,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Role {
+    Row(Kind),
+    Context,
+    Reference,
+}
+
+/// Read-only metadata owned by an area. Visibility never changes option identity.
 #[derive(Clone, Copy)]
 pub(super) struct Descriptor {
     item: Item,
-    kind: Kind,
+    role: Role,
     label: &'static str,
     value: fn(&Ui) -> String,
     options: fn(&Ui) -> Vec<String>,
@@ -23,7 +38,7 @@ impl Descriptor {
         options: fn(&Ui) -> Vec<String>,
         visible: fn(&Ui) -> bool,
     ) -> Self {
-        Self { item, kind, label, value, options, visible }
+        Self { item, role: Role::Row(kind), label, value, options, visible }
     }
 
     const fn action(item: Item, label: &'static str) -> Self {
@@ -41,6 +56,27 @@ impl Descriptor {
         options: fn(&Ui) -> Vec<String>,
     ) -> Self {
         Self::new(item, Kind::Choice, label, value, options, |_| true)
+    }
+
+    const fn text(item: Item, label: &'static str, value: fn(&Ui) -> String) -> Self {
+        Self::new(item, Kind::Text, label, value, |_| Vec::new(), |_| true)
+    }
+
+    const fn title(item: Item, label: &'static str) -> Self {
+        Self::picker_context(item, label, |_| Vec::new())
+    }
+
+    const fn picker_context(item: Item, label: &'static str, options: fn(&Ui) -> Vec<String>) -> Self {
+        Self { item, role: Role::Context, label, value: |_| String::new(), options, visible: |_| true }
+    }
+
+    // References keep cross-area metadata with its owner while contributing to this menu's order.
+    const fn reference(item: Item) -> Self {
+        Self { role: Role::Reference, ..Self::title(item, "") }
+    }
+
+    fn shown(&self, ui: &Ui) -> bool {
+        self.role != Role::Context && (self.visible)(ui)
     }
 
     const fn when(mut self, visible: fn(&Ui) -> bool) -> Self {
@@ -86,6 +122,19 @@ impl Area {
         rows: |_, _| &[],
         ordered_rows: |_, _| Vec::new(),
     };
+    fn items(&self, ui: &Ui, menu: MenuId) -> Vec<Item> {
+        let ordered = (self.ordered_rows)(ui, menu);
+        if !ordered.is_empty() {
+            return ordered.iter().filter(|row| row.shown(ui)).map(|row| row.item).collect();
+        }
+        let rows = (self.rows)(ui, menu);
+        let rows = if rows.is_empty() { self.descriptors } else { rows };
+        if rows.is_empty() {
+            (self.menu_items)(ui, menu)
+        } else {
+            rows.iter().filter(|row| row.shown(ui)).map(|row| row.item).collect()
+        }
+    }
 }
 
 mod acquire;
@@ -203,12 +252,12 @@ areas! {
 }
 
 fn descriptor(it: Item) -> Option<&'static Descriptor> {
-    for_item(it).descriptors.iter().find(|row| row.item == it)
+    for_item(it).descriptors.iter().find(|row| row.item == it && row.role != Role::Reference)
 }
 
 pub(super) fn kind(it: Item) -> Kind {
-    if let Some(row) = descriptor(it) {
-        return row.kind;
+    if let Some(Descriptor { role: Role::Row(kind), .. }) = descriptor(it) {
+        return *kind;
     }
     if matches!(it, Item::Open(_)) {
         return Kind::Action;
@@ -241,18 +290,7 @@ pub(super) fn options(ui: &Ui, it: Item) -> Vec<String> {
 }
 
 pub(super) fn items(ui: &Ui, menu: MenuId) -> Vec<Item> {
-    let area = for_menu(menu);
-    let ordered = (area.ordered_rows)(ui, menu);
-    if !ordered.is_empty() {
-        return ordered.iter().filter(|row| (row.visible)(ui)).map(|row| row.item).collect();
-    }
-    let rows = (area.rows)(ui, menu);
-    let rows = if rows.is_empty() { area.descriptors } else { rows };
-    if rows.is_empty() {
-        (area.menu_items)(ui, menu)
-    } else {
-        rows.iter().filter(|row| (row.visible)(ui)).map(|row| row.item).collect()
-    }
+    for_menu(menu).items(ui, menu)
 }
 
 pub(super) use navigation::main_groups;
@@ -299,7 +337,9 @@ pub(super) fn anchor(ui: &Ui) -> (i32, bool) {
     }
 }
 
-pub(super) use remote::{remote_kind, remote_text};
+pub(super) fn is_text_row(it: Item) -> bool {
+    matches!(kind(it), Kind::Text)
+}
 
 #[cfg(test)]
 mod tests;

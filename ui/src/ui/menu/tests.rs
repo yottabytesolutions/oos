@@ -253,6 +253,7 @@ fn check_row_control(row: &Row) {
     assert!(match (row.it, Ui::kind(row.it)) {
         (Item::AcqAlias, _) => matches!(row.ctl, Ctl::Text),
         (Item::AcqAvg, _) => matches!(row.ctl, Ctl::Pick),
+        (_, Kind::Text) => matches!(row.ctl, Ctl::Text),
         (_, Kind::Value) => matches!(row.ctl, Ctl::Value),
         (_, Kind::Action) => matches!(row.ctl, Ctl::Button),
         (_, Kind::Choice) => matches!(row.ctl, Ctl::Pick | Ctl::Seg(..)),
@@ -373,4 +374,45 @@ fn off_sources_capability_fixture() {
             assert!(u.off_sources(MenuId::Zone).is_empty());
         }
     }
+}
+
+#[test]
+fn ordered_descriptors_take_precedence_and_apply_visibility() {
+    const ROWS: &[Descriptor] = &[
+        Descriptor::action(Item::Shot, "Screenshot"),
+        Descriptor::action(Item::About, "About OOS").when(|u| !u.offline),
+        Descriptor::title(Item::Open(MenuId::Utility), "System"),
+    ];
+    let area = Area {
+        ordered_rows: |_, _| vec![&ROWS[2], &ROWS[1], &ROWS[0]],
+        rows: |_, _| panic!("ordered rows take precedence"),
+        menu_items: |_, _| panic!("descriptors take precedence over legacy items"),
+        ..Area::EMPTY
+    };
+    let mut u = demo();
+    assert_eq!(area.items(&u, MenuId::Utility), [Item::About, Item::Shot]);
+    u.offline = true;
+    assert_eq!(area.items(&u, MenuId::Utility), [Item::Shot]);
+}
+
+#[test]
+fn static_descriptors_take_precedence_and_apply_visibility() {
+    const ROWS: &[Descriptor] = &[
+        Descriptor::title(Item::Open(MenuId::Utility), "System"),
+        Descriptor::action(Item::Shot, "Screenshot").when(|u| !u.offline),
+        Descriptor::action(Item::About, "About OOS"),
+    ];
+    let area = Area {
+        descriptors: ROWS,
+        menu_items: |_, _| panic!("descriptors take precedence over legacy items"),
+        ..Area::EMPTY
+    };
+    let mut u = demo();
+    assert_eq!(area.items(&u, MenuId::Utility), [Item::Shot, Item::About]);
+    u.offline = true;
+    assert_eq!(area.items(&u, MenuId::Utility), [Item::About]);
+    let area = Area { rows: |_, _| ROWS, descriptors: &[], ..area };
+    assert_eq!(area.items(&u, MenuId::Utility), [Item::About]);
+    let area = Area { menu_items: |_, _| vec![Item::Stock], ..Area::EMPTY };
+    assert_eq!(area.items(&u, MenuId::Utility), [Item::Stock]);
 }

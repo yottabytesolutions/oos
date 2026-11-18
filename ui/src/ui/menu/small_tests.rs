@@ -253,3 +253,84 @@ fn capability_fixture() {
         }
     }
 }
+
+pub(super) fn contexts(menu: MenuId, contexts: &[Item]) {
+    let u = demo();
+    for &item in contexts {
+        assert!(matches!(descriptor(item).unwrap().role, Role::Context));
+        assert!(!Ui::label(item).is_empty());
+        assert!(!u.menu_items(menu).contains(&item));
+    }
+    for item in u.menu_items(menu) {
+        assert!(!Ui::label(item).is_empty(), "{item:?}: every row resolves its owner's label");
+        if Ui::kind(item) == Kind::Text {
+            assert!(matches!(u.ctl(item, 1000), Ctl::Text));
+            assert!(u.options(item).is_empty());
+        }
+    }
+}
+
+pub(super) fn navigation(menu: MenuId, item: Item, change: fn(&mut Ui, usize)) {
+    for size in TEXT_SIZES {
+        let mut u = demo();
+        u.m.text_size = size;
+        let expected = u.menu_items(menu);
+        for offline in [false, true] {
+            u.offline = offline;
+            u.usb = offline;
+            u.sys.remote_ssh = offline;
+            u.wlan.link.stick = offline;
+            assert_eq!(u.menu_items(menu), expected);
+        }
+        u.open_menu(MenuId::Main);
+        u.focus = 3;
+        u.open_submenu(menu);
+        u.focus = 2;
+        assert_eq!(u.dlg_layout().unwrap().rows.iter().map(|r| r.it).collect::<Vec<_>>(), expected);
+        let committed = active_choice::index(&u, item).unwrap();
+        assert!(matches!(u.ctl(item, 1), Ctl::Pick));
+        assert!(matches!(u.ctl(item, 10000), Ctl::Seg(_, Some(i)) if i == committed));
+        u.open_picker(item);
+        assert_eq!(u.focus, committed);
+        let focused = (committed + 1) % u.options(item).len();
+        u.focus = focused;
+        assert_eq!(active_choice::index(&u, item), Some(committed));
+        change(&mut u, focused);
+        assert_eq!(active_choice::index(&u, item), Some(focused));
+        assert_eq!(u.focus, focused);
+        let back = u.dlg_layout().unwrap().back.unwrap();
+        assert!(u.tap_menu(back.x + 1, back.y + 1));
+        assert_eq!((u.menu, u.focus), (menu, 2));
+        let back = u.dlg_layout().unwrap().back.unwrap();
+        assert!(u.tap_menu(back.x + 1, back.y + 1));
+        assert_eq!((u.menu, u.focus), (MenuId::Main, 3));
+        u.open_submenu(menu);
+        let close = u.dlg_layout().unwrap().close;
+        assert!(u.tap_menu(close.x + 1, close.y + 1));
+        assert!(!u.menu_open);
+    }
+}
+
+pub(super) fn capabilities(menu: MenuId, test: &str, check: fn()) {
+    if let Ok(model) = std::env::var("OOS_SYSTEM_MENU_MODEL") {
+        assert!(oos_hal::model::init(oos_hal::model::Platform::build(None, None, Some(&model))));
+        let mut u = demo();
+        for size in TEXT_SIZES {
+            u.m.text_size = size;
+            u.open_menu(menu);
+            assert_eq!(u.dlg_layout().unwrap().rows.iter().map(|r| r.it).collect::<Vec<_>>(), u.menu_items(menu));
+            check();
+        }
+    } else {
+        for model in ["DHO802", "DHO804", "DHO924S"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test])
+                .env("OOS_SYSTEM_MENU_MODEL", model)
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{model}: {stdout}\n{}", String::from_utf8_lossy(&output.stderr));
+            assert!(stdout.contains("1 passed"), "{model}: capability test did not run: {stdout}");
+        }
+    }
+}

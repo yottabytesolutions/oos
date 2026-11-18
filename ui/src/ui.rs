@@ -9,6 +9,7 @@ use crate::gfx::*;
 use crate::math::*;
 use crate::model::*;
 use crate::wave::*;
+use menu::Kind;
 
 mod active_choice;
 mod afg;
@@ -1023,13 +1024,6 @@ enum Item {
     MeasRemove(u16),
     CatSourceC,
     CatSourceD,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Kind {
-    Choice,
-    Value,
-    Action,
 }
 
 pub enum Ev {
@@ -7151,7 +7145,7 @@ impl Ui {
     fn activate(&mut self, it: Item) {
         match Self::kind(it) {
             Kind::Choice => self.adjust(it, 1),
-            Kind::Value => {}
+            Kind::Value | Kind::Text => {}
             Kind::Action => menu::activate(self, it),
         }
     }
@@ -7432,18 +7426,9 @@ impl Ui {
             let cur = self.value(it);
             return Ctl::Seg(vec![cur], None);
         }
-        if matches!(
-            it,
-            Item::MathExprI
-                | Item::LogInfo
-                | Item::CalStatus
-                | Item::NetEth
-                | Item::NetMac
-                | Item::NetPorts
-                | Item::NetWlan
-                | Item::AcqAlias
-        ) || Self::time_text(it)
-            || menu::remote_text(it)
+        if matches!(it, Item::MathExprI | Item::LogInfo | Item::CalStatus | Item::AcqAlias)
+            || Self::time_text(it)
+            || menu::is_text_row(it)
         {
             return Ctl::Text;
         }

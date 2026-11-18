@@ -116,7 +116,7 @@ impl Ui {
     }
 
     /// The name's row: `<name>.local` while mDNS is on (the one in use: `-2` after a conflict), else the name.
-    fn name_value(&self) -> String {
+    pub(super) fn name_value(&self) -> String {
         let st = mdns::status();
         let n = match st.state {
             mdns::State::Probing | mdns::State::Running if !st.name.is_empty() => st.name,
@@ -146,7 +146,7 @@ impl Ui {
         (!n.is_empty() && *n != Self::name_default()).then(|| n.clone())
     }
 
-    fn name_options(&self) -> Vec<String> {
+    pub(super) fn name_options(&self) -> Vec<String> {
         let mut v = vec![short_name(&Self::name_default())];
         v.extend(self.name_own().map(|n| short_name(&n)));
         v.push(OTHER.into());
@@ -190,7 +190,7 @@ impl Ui {
 
     /// The lines of Allowed's picker: the list in use (stays), the network the scope is on, Other on the keyboard.
     /// The value each one sets, None for the keyboard.
-    fn allow_choices(&self) -> Vec<(String, Option<String>)> {
+    pub(super) fn allow_choices(&self) -> Vec<(String, Option<String>)> {
         let now = self.sys.net_allow();
         let mut v = Vec::new();
         if !now.is_empty() {
@@ -316,7 +316,7 @@ impl Ui {
     }
 
     /// Allowed's row: the list in use, cut to the room of its row.
-    fn allow_value(&self) -> String {
+    pub(super) fn allow_value(&self) -> String {
         let now = self.sys.net_allow();
         if now.is_empty() {
             return "everyone".into();
@@ -337,7 +337,7 @@ impl Ui {
     }
 
     /// Firewall's row: the state in force, or the run of a change that has not answered yet or failed.
-    fn firewall_value(&self) -> String {
+    pub(super) fn firewall_value(&self) -> String {
         if self.remote.job.is_some() {
             "applying".into()
         } else if self.remote.failed {
@@ -346,43 +346,6 @@ impl Ui {
             "off: everyone".into()
         } else {
             "on".into()
-        }
-    }
-
-    pub(super) fn remote_value(&self, it: Item) -> Option<String> {
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-        let s = &self.sys;
-        let port = |on: bool, text: String| if on { text } else { "off".into() };
-        Some(match it {
-            Item::RemWeb => onoff(s.remote_web),
-            Item::RemScpi => onoff(s.remote_scpi),
-            Item::RemVxi => onoff(s.instruments.vxi11),
-            Item::RemHislip => onoff(s.instruments.hislip),
-            Item::RemTelnet => onoff(s.remote_telnet),
-            Item::RemSsh => onoff(s.remote_ssh),
-            Item::RemMdns => onoff(s.remote_mdns),
-            Item::RemName => self.name_value(),
-            Item::RemAllow => self.allow_value(),
-            Item::RemFirewall => self.firewall_value(),
-            Item::NetWeb if !s.remote_web => "off".into(),
-            Item::NetWeb if self.net.is_empty() => "not connected".into(),
-            Item::NetWeb => format!("http://{}:8080", self.net),
-            Item::RemScpiInfo => port(s.remote_scpi, "5555 (TCP)".into()),
-            Item::RemVxiInfo => port(s.instruments.vxi11, format!("111 and {} (LXI)", crate::vxi11::CORE_PORT)),
-            Item::RemHislipInfo => port(s.instruments.hislip, format!("{} (TCP)", crate::hislip::PORT)),
-            Item::RemTelnetInfo => port(s.remote_telnet, "23, a shell without password".into()),
-            _ => return self.ssh_value(it),
-        })
-    }
-
-    pub(super) fn remote_options(&self, it: Item) -> Option<Vec<String>> {
-        if let Some(o) = self.ssh_options(it) {
-            return Some(o);
-        }
-        match it {
-            Item::RemName => Some(self.name_options()),
-            Item::RemAllow => Some(self.allow_choices().into_iter().map(|c| c.0).collect()),
-            _ => menu::remote_kind(it).filter(|k| *k == Kind::Choice).map(|_| vec!["Off".into(), "On".into()]),
         }
     }
 

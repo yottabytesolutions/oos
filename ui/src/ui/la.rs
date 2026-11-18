@@ -22,7 +22,7 @@ const AXIS_ROW: i32 = 22;
 /// Line groups of the Lines row; "Custom" = any other set (Lines sub menu).
 pub(super) const GROUPS: [(&str, u16); 4] = [("D0-D7", 0xff), ("D8-D15", 0xff00), ("All", 0xffff), ("Custom", 0x000f)];
 /// Line names (menu labels are static).
-const NAMES: [&str; 16] =
+pub(super) const NAMES: [&str; 16] =
     ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14", "D15"];
 /// Lane colours of pod 1 (D0-D7) and pod 2 (D8-D15).
 const POD_COLORS: [Rgb; 2] = [rgb(0x4c, 0xd1, 0x6b), rgb(0xb4, 0xe6, 0x5a)];
@@ -30,7 +30,7 @@ const POD_COLORS: [Rgb; 2] = [rgb(0x4c, 0xd1, 0x6b), rgb(0xb4, 0xe6, 0x5a)];
 pub const DEMO_SAMPLES: usize = 8192;
 
 /// Pattern values of a line.
-const PAT_BITS: [Bit; 3] = [Bit::H, Bit::L, Bit::X];
+pub(super) const PAT_BITS: [Bit; 3] = [Bit::H, Bit::L, Bit::X];
 
 /// Whether the word `w` matches `pat`.
 pub fn pattern_is(w: u16, pat: &[Bit; 16]) -> bool {
@@ -140,91 +140,6 @@ type ColKey = (usize, usize, u64, u64, usize);
 pub struct Cache(Option<(ColKey, Arc<Vec<Col>>)>);
 
 impl Ui {
-    pub(super) fn la_items(&self) -> Vec<Item> {
-        let mut v = vec![Item::LaOn, Item::LaShow, Item::Open(MenuId::LaLines), Item::LaHeight];
-        for p in 0..2 {
-            v.push(Item::LaThr(p));
-            if self.m.la.preset[p] == USER {
-                v.push(Item::LaUser(p));
-            }
-        }
-        v
-    }
-
-    pub(super) fn la_line_items(&self) -> Vec<Item> {
-        (0..16).map(Item::LaLine).collect()
-    }
-
-    pub(super) fn la_kind(it: Item) -> Option<Kind> {
-        Some(match it {
-            Item::LaOn | Item::LaShow | Item::LaThr(_) | Item::LaHeight | Item::LaLine(_) | Item::LaPat(_) => {
-                Kind::Choice
-            }
-            Item::LaUser(_) => Kind::Value,
-            _ => return None,
-        })
-    }
-
-    pub(super) fn la_label(it: Item) -> Option<&'static str> {
-        Some(match it {
-            Item::Open(MenuId::La) => "Logic analyser",
-            Item::Open(MenuId::LaLines) => "Line select",
-            Item::LaOn => "LA",
-            Item::LaShow => "Lines",
-            Item::LaThr(0) => "Thr D0-7",
-            Item::LaThr(_) => "Thr D8-15",
-            Item::LaUser(0) => "User D0-7",
-            Item::LaUser(_) => "User D8-15",
-            Item::LaHeight => "Lane height",
-            Item::LaLine(n) | Item::LaPat(n) => NAMES[n.min(15)],
-            Item::Open(MenuId::LaPat) => "D0-D15",
-            Item::DecIn => "Input",
-            _ => return None,
-        })
-    }
-
-    pub(super) fn la_value(&self, it: Item) -> Option<String> {
-        let l = &self.m.la;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-        Some(match it {
-            Item::LaOn => onoff(l.on),
-            Item::LaShow => GROUPS.iter().take(3).find(|g| g.1 == l.show).map_or(GROUPS[3].0, |g| g.0).into(),
-            Item::LaThr(p) => PRESETS[l.preset[p.min(1)].min(USER)].0.into(),
-            Item::LaUser(p) => format!("{:.2} V", l.user[p.min(1)]),
-            Item::LaHeight => HEIGHTS[l.height.min(HEIGHTS.len() - 1)].0.into(),
-            Item::LaLine(n) => onoff(l.show >> n.min(15) & 1 == 1),
-            Item::LaPat(n) => {
-                ["H", "L", "X"][PAT_BITS.iter().position(|&b| b == self.m.pat_la[n.min(15)]).unwrap_or(2)].into()
-            }
-            Item::Open(MenuId::LaPat) => self
-                .m
-                .pat_la
-                .iter()
-                .rev()
-                .map(|&b| match b {
-                    Bit::H => '1',
-                    Bit::L => '0',
-                    _ => 'x',
-                })
-                .collect(),
-            Item::DecIn => {
-                if self.m.dec_la_in {
-                    "LA".into()
-                } else {
-                    "Analog".into()
-                }
-            }
-            Item::TrigSrc if self.m.trig_line().is_some() => {
-                NAMES[self.m.trig_line().unwrap_or(0) as usize].to_string()
-            }
-            // decoder roles on LA lines
-            Item::DecSrc | Item::DecSrc2 | Item::DecCs | Item::DecSrc4 if self.m.dec_on_la() => {
-                self.m.dec_la[Self::dec_role(it)].map_or("None".into(), |n| NAMES[n as usize].to_string())
-            }
-            _ => return None,
-        })
-    }
-
     /// Index in `Model::dec_la` of a decoder source item.
     fn dec_role(it: Item) -> usize {
         match it {
@@ -233,26 +148,6 @@ impl Ui {
             Item::DecSrc4 => 3,
             _ => 0,
         }
-    }
-
-    pub(super) fn la_options(&self, it: Item) -> Option<Vec<String>> {
-        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
-        Some(match it {
-            Item::LaOn | Item::LaLine(_) => names(&["Off", "On"]),
-            Item::LaShow => GROUPS.iter().map(|g| g.0.to_string()).collect(),
-            Item::LaThr(_) => PRESETS.iter().map(|p| p.0.to_string()).collect(),
-            Item::LaHeight => HEIGHTS.iter().map(|h| h.0.to_string()).collect(),
-            Item::LaPat(_) => names(&["H", "L", "X"]),
-            Item::DecIn => names(&["Analog", "LA"]),
-            Item::TrigSrc if self.m.trig_la_ok() => {
-                ch_names().into_iter().chain(NAMES.iter().map(|s| s.to_string())).collect()
-            }
-            Item::DecSrc | Item::DecSrc2 if self.m.dec_on_la() => names(&NAMES),
-            Item::DecCs | Item::DecSrc4 if self.m.dec_on_la() => {
-                std::iter::once("None".to_string()).chain(NAMES.iter().map(|s| s.to_string())).collect()
-            }
-            _ => return None,
-        })
     }
 
     pub(super) fn la_adjust(&mut self, it: Item, d: i32) -> bool {

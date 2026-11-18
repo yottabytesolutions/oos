@@ -69,6 +69,7 @@ struct Area {
     options: fn(&Ui, Item) -> Option<Vec<String>>,
     menu_items: fn(&Ui, MenuId) -> Vec<Item>,
     rows: fn(&Ui, MenuId) -> &'static [Descriptor],
+    ordered_rows: fn(&Ui, MenuId) -> Vec<&'static Descriptor>,
 }
 
 impl Area {
@@ -83,6 +84,7 @@ impl Area {
         options: |_, _| None,
         menu_items: |_, _| Vec::new(),
         rows: |_, _| &[],
+        ordered_rows: |_, _| Vec::new(),
     };
 }
 
@@ -240,6 +242,10 @@ pub(super) fn options(ui: &Ui, it: Item) -> Vec<String> {
 
 pub(super) fn items(ui: &Ui, menu: MenuId) -> Vec<Item> {
     let area = for_menu(menu);
+    let ordered = (area.ordered_rows)(ui, menu);
+    if !ordered.is_empty() {
+        return ordered.iter().filter(|row| (row.visible)(ui)).map(|row| row.item).collect();
+    }
     let rows = (area.rows)(ui, menu);
     let rows = if rows.is_empty() { area.descriptors } else { rows };
     if rows.is_empty() {
@@ -251,6 +257,7 @@ pub(super) fn items(ui: &Ui, menu: MenuId) -> Vec<Item> {
 
 pub(super) use navigation::main_groups;
 
+#[cfg(test)]
 pub(super) use decode::decode_items;
 
 pub(super) use trigger::trigger_items;
@@ -299,3 +306,8 @@ mod tests;
 
 #[cfg(test)]
 mod small_tests;
+
+pub(super) use serial::serial_items;
+
+#[cfg(test)]
+mod read_tests;

@@ -21,45 +21,7 @@ const TIMEOUTS: [f32; 17] = [
 impl Ui {
     /// The settings items of the protocol trigger for the current protocol and condition.
     pub(super) fn serial_items(&self) -> Vec<Item> {
-        use Item::*;
-        let (m, s) = (&self.m, &self.m.ser);
-        let mut v = Vec::new();
-        let value = |v: &mut Vec<Item>, rel: Rel, mask: bool| {
-            v.push(SerRel);
-            if rel.uses_max() {
-                v.push(SerMax);
-            }
-            if mask {
-                v.push(SerMask);
-            }
-        };
-        match (m.dec_proto, m.trig_bus) {
-            (Proto::UART, w) => {
-                if w == BusWhat::Data {
-                    value(&mut v, s.rel, false);
-                }
-                if w == BusWhat::Error {
-                    v.push(UartErr);
-                }
-                v.extend([UartPol, UartStop]);
-            }
-            (Proto::SPI, w) => {
-                if w == BusWhat::Data {
-                    value(&mut v, s.rel, true);
-                }
-                v.push(if m.dec_cs.is_some() { SpiCs } else { SpiTimeout });
-            }
-            (Proto::I2C, BusWhat::Id) => {
-                value(&mut v, s.addr_rel, false);
-                v.extend([I2cAddrBits, I2cDir]);
-            }
-            (Proto::I2C, BusWhat::Data) => {
-                value(&mut v, s.rel, true);
-                v.extend([I2cBytes, I2cDir]);
-            }
-            _ => {}
-        }
-        v
+        menu::serial_items(self)
     }
 
     /// The relation the value items edit: the address's for an I2C address, else the value's.
@@ -69,77 +31,6 @@ impl Ui {
         } else {
             &mut self.m.ser.rel
         }
-    }
-
-    pub(super) fn serial_value(&self, it: Item) -> String {
-        let s = &self.m.ser;
-        let i2c_addr = self.m.dec_proto == Proto::I2C && self.m.trig_bus == BusWhat::Id;
-        match it {
-            Item::SerRel => (if i2c_addr { s.addr_rel } else { s.rel }).name().into(),
-            Item::SerMax | Item::SerMask => format!("0x{:X}", self.hex_value(it)),
-            Item::UartPol => {
-                if s.uart_inv {
-                    "Inverted".into()
-                } else {
-                    "Normal".into()
-                }
-            }
-            Item::UartStop => match s.uart_stop {
-                StopBits::One => "1".into(),
-                StopBits::OneHalf => "1.5".into(),
-                StopBits::Two => "2".into(),
-            },
-            Item::UartErr => match s.uart_err {
-                UartErr::Either => "Any".into(),
-                UartErr::Parity => "Parity".into(),
-                UartErr::Framing => "Framing".into(),
-            },
-            Item::SpiCs => {
-                if s.spi_cs_high {
-                    "Active high".into()
-                } else {
-                    "Active low".into()
-                }
-            }
-            Item::SpiTimeout => {
-                if s.spi_timeout > 0.0 {
-                    si_short(s.spi_timeout as f64, "s")
-                } else {
-                    "Off".into()
-                }
-            }
-            Item::I2cDir => format!("{:?}", s.dir),
-            Item::I2cAddrBits => {
-                if s.ten_bit {
-                    "10-bit".into()
-                } else {
-                    "7-bit".into()
-                }
-            }
-            Item::I2cBytes => {
-                if s.bytes == 0 {
-                    "Any".into()
-                } else {
-                    s.bytes.to_string()
-                }
-            }
-            _ => String::new(),
-        }
-    }
-
-    pub(super) fn serial_options(it: Item) -> Vec<String> {
-        let v: &[&str] = match it {
-            Item::SerRel => return RELS.iter().map(|r| r.name().to_string()).collect(),
-            Item::UartPol => &["Normal", "Inverted"],
-            Item::UartStop => &["1", "1.5", "2"],
-            Item::UartErr => &["Any", "Parity", "Framing"],
-            Item::SpiCs => &["Active low", "Active high"],
-            Item::I2cDir => &["Either", "Write", "Read"],
-            Item::I2cAddrBits => &["7-bit", "10-bit"],
-            Item::I2cBytes => &["Any", "1", "2", "3", "4", "5"],
-            _ => &[],
-        };
-        v.iter().map(|x| x.to_string()).collect()
     }
 
     pub(super) fn serial_adjust(&mut self, it: Item, d: i32) {

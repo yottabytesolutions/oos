@@ -3,103 +3,180 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area {
-    sources,
-    kind,
-    label,
-    value,
-    adjust,
-    activate,
-    options,
-    menu_items: |ui, _| ui.decode_items(),
-    ..Area::EMPTY
+pub(super) const AREA: Area = Area { descriptors: ROWS, ordered_rows, sources, adjust, activate, ..Area::EMPTY };
+
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    &[
+        Descriptor::action(Open(MenuId::Decode), "Decode").when(|_| false),
+        Descriptor::choice(
+            DecSel,
+            "Decoder no.",
+            |u| format!("D{}", u.m.dec_sel + 1),
+            |_| ["D1", "D2", "D3", "D4"].into_iter().map(String::from).collect(),
+        ),
+        Descriptor::choice(DecOn, "Decoder", |u| onoff(u.m.dec_on), toggles),
+        Descriptor::choice(
+            DecProto,
+            "Protocol",
+            |u| u.m.dec_proto.name().into(),
+            |u| u.protos_on().iter().map(|p| p.name().to_string()).collect(),
+        ),
+        Descriptor::choice(DecSrc, "Source", |u| source_value(u, 0, Some(u.m.dec_src)), |u| source_options(u, false)),
+        Descriptor::choice(DecSrc2, "Clock", |u| source_value(u, 1, Some(u.m.dec_src2)), |u| source_options(u, false))
+            .when(|u| u.m.dec_proto.roles()[1].is_some()),
+        Descriptor::choice(
+            DecCs,
+            "CS",
+            |u| source_value(u, 2, u.m.dec_cs),
+            |u| source_options(u, u.m.dec_proto != Proto::CPHY),
+        )
+        .when(|u| u.m.dec_proto.roles()[2].is_some()),
+        Descriptor::choice(DecSrc4, "Source 4", |u| source_value(u, 3, u.m.dec_src4), |u| source_options(u, true))
+            .when(|u| u.m.dec_proto.roles()[3].is_some()),
+        Descriptor::choice(
+            DecDiff,
+            "B line (A-B)",
+            |u| u.m.dec_diff.map_or("None".into(), decode_source_name),
+            |u| analog_sources(u, true),
+        )
+        .when(|u| u.m.dec_proto.diff_ok() && !u.m.dec_on_la()),
+        Descriptor::choice(
+            DecBaud,
+            "Baud",
+            |u| crate::decode::BAUDS[u.m.dec_baud].to_string(),
+            |_| crate::decode::BAUDS.iter().map(ToString::to_string).collect(),
+        ),
+        Descriptor::value(DecBits, "Data bits", |u| u.m.dec_bits.to_string()),
+        Descriptor::choice(
+            DecParity,
+            "Parity",
+            |u| {
+                match u.m.dec_parity {
+                    oos_dsp::decode::Parity::None => "None",
+                    oos_dsp::decode::Parity::Even => "Even",
+                    oos_dsp::decode::Parity::Odd => "Odd",
+                }
+                .into()
+            },
+            |_| ["None", "Even", "Odd"].into_iter().map(String::from).collect(),
+        ),
+        Descriptor::choice(
+            DecMode,
+            "Mode",
+            |u| u.m.dec_mode.to_string(),
+            |_| ["0", "1", "2", "3"].into_iter().map(String::from).collect(),
+        ),
+        Descriptor::choice(
+            DecCanRate,
+            "Bit rate",
+            |u| si(crate::decode::CAN_RATES[u.m.dec_canrate], "bit/s"),
+            |_| crate::decode::CAN_RATES.iter().map(|&b| si(b, "bit/s")).collect(),
+        ),
+        Descriptor::choice(
+            DecCanH,
+            "Signal",
+            |u| if u.m.dec_canh { "CAN_H" } else { "RX/TX" }.into(),
+            |_| ["RX/TX", "CAN_H"].into_iter().map(String::from).collect(),
+        ),
+        Descriptor::choice(
+            DecUsbSpeed,
+            "Speed",
+            |u| USPEED_NAMES[u.m.dec_uspeed].into(),
+            |_| USPEED_NAMES.into_iter().map(String::from).collect(),
+        ),
+        Descriptor::choice(
+            DecCphyRate,
+            "Symbol rate",
+            |u| crate::decode::cphy_rate_label(u.m.dec_cphy_rate),
+            |_| crate::decode::CPHY_RATES.into_iter().map(crate::decode::cphy_rate_label).collect(),
+        ),
+        Descriptor::choice(
+            DecFmt,
+            "Format",
+            |u| if u.m.dec_ascii { "ASCII" } else { "Hex" }.into(),
+            |_| ["Hex", "ASCII"].into_iter().map(String::from).collect(),
+        ),
+        option::<0>(),
+        option::<1>(),
+        option::<2>(),
+        option::<3>(),
+        Descriptor::value(DecThr, "Threshold", |u| si(u.m.dec_thr as f64, "V")).when(|u| !u.m.dec_on_la()),
+        Descriptor::action(DecTable, "Event table"),
+        Descriptor::action(DecExport, "Export events"),
+    ]
 };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::DecThr => Kind::Value,
-        Item::DecBits => Kind::Value,
-        Item::DecTable | Item::DecExport => Kind::Action,
-        _ => return None,
-    })
-}
-
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Decode) => "Decode",
-        Item::DecOn => "Decoder",
-        Item::DecSel => "Decoder no.",
-        Item::DecTable => "Event table",
-        Item::DecExport => "Export events",
-        Item::DecSrc => "Source",
-        Item::DecBaud => "Baud",
-        Item::DecCphyRate => "Symbol rate",
-        Item::DecCanRate => "Bit rate",
-        Item::DecCanH => "Signal",
-        Item::DecUsbSpeed => "Speed",
-        Item::DecOpt(_) => "Option",
-        Item::DecSrc4 => "Source 4",
-        Item::DecDiff => "B line (A-B)",
-        Item::DecThr => "Threshold",
-        Item::DecFmt => "Format",
-        Item::DecProto => "Protocol",
-        Item::DecSrc2 => "Clock",
-        Item::DecCs => "CS",
-        Item::DecMode => "Mode",
-        Item::DecBits => "Data bits",
-        Item::DecParity => "Parity",
-        _ => return None,
-    })
-}
-
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    if let Some(v) = ui.la_value(it) {
-        return Some(v);
-    }
-    let m = &ui.m;
-    let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-    Some(match it {
-        Item::DecOn => onoff(m.dec_on),
-        Item::DecSel => format!("D{}", m.dec_sel + 1),
-        Item::DecSrc => decode_source_name(m.dec_src),
-        Item::DecBaud => format!("{}", crate::decode::BAUDS[m.dec_baud]),
-        Item::DecCphyRate => crate::decode::cphy_rate_label(m.dec_cphy_rate),
-        Item::DecCanRate => si(crate::decode::CAN_RATES[m.dec_canrate], "bit/s"),
-        Item::DecCanH => {
-            if m.dec_canh {
-                "CAN_H".into()
-            } else {
-                "RX/TX".into()
-            }
-        }
-        Item::DecUsbSpeed => USPEED_NAMES[m.dec_uspeed].into(),
-        Item::DecSrc4 => m.dec_src4.map_or("None".into(), decode_source_name),
-        Item::DecDiff => m.dec_diff.map_or("None".into(), decode_source_name),
-        Item::DecThr => si(m.dec_thr as f64, "V"),
-        Item::DecFmt => {
-            if m.dec_ascii {
-                "ASCII".into()
-            } else {
-                "Hex".into()
-            }
-        }
-        Item::DecProto => m.dec_proto.name().into(),
-        Item::DecOpt(k) => m
-            .dec_proto
-            .module()
-            .and_then(|p| p.options().get(k))
-            .map_or(String::new(), |o| o.choices[m.dec_opts()[k]].into()),
-        Item::DecSrc2 => decode_source_name(m.dec_src2),
-        Item::DecCs => m.dec_cs.map_or("None".into(), decode_source_name),
-        Item::DecMode => format!("{}", m.dec_mode),
-        Item::DecBits => format!("{}", m.dec_bits),
-        Item::DecParity => match m.dec_parity {
-            oos_dsp::decode::Parity::None => "None".into(),
-            oos_dsp::decode::Parity::Even => "Even".into(),
-            oos_dsp::decode::Parity::Odd => "Odd".into(),
+const fn option<const K: usize>() -> Descriptor {
+    Descriptor::choice(
+        Item::DecOpt(K),
+        "Option",
+        |u| {
+            u.m.dec_proto
+                .module()
+                .and_then(|p| p.options().get(K))
+                .map_or(String::new(), |o| o.choices[u.m.dec_opts()[K]].into())
         },
-        _ => return None,
-    })
+        |u| {
+            u.m.dec_proto
+                .module()
+                .and_then(|p| p.options().get(K))
+                .map_or(Vec::new(), |o| o.choices.iter().map(|c| c.to_string()).collect())
+        },
+    )
+    .when(|u| u.m.dec_proto.module().is_some_and(|p| K < p.options().len()))
+}
+
+fn source_value(ui: &Ui, role: usize, analog: Option<usize>) -> String {
+    if ui.m.dec_on_la() {
+        ui.m.dec_la[role].map_or("None".into(), |n| la::NAMES[n as usize].into())
+    } else {
+        analog.map_or("None".into(), decode_source_name)
+    }
+}
+
+fn analog_sources(ui: &Ui, optional: bool) -> Vec<String> {
+    optional
+        .then(|| "None".into())
+        .into_iter()
+        .chain(ui.decoder_sources().into_iter().map(decode_source_name))
+        .collect()
+}
+
+fn source_options(ui: &Ui, optional: bool) -> Vec<String> {
+    if ui.m.dec_on_la() {
+        optional.then(|| "None".into()).into_iter().chain(la::NAMES.into_iter().map(String::from)).collect()
+    } else {
+        analog_sources(ui, optional)
+    }
+}
+
+fn ordered_rows(ui: &Ui, _: MenuId) -> Vec<&'static Descriptor> {
+    use crate::protocols::Row;
+    use Item::*;
+    let shared = ui.m.dec_proto.module().map_or(&[][..], |p| p.shared()).iter().map(|r| match r {
+        Row::Baud => DecBaud,
+        Row::Bits => DecBits,
+        Row::Parity => DecParity,
+        Row::SpiMode => DecMode,
+        Row::CanRate => DecCanRate,
+        Row::CanH => DecCanH,
+        Row::UsbSpeed => DecUsbSpeed,
+        Row::CphyRate => DecCphyRate,
+        Row::Fmt => DecFmt,
+    });
+    [DecSel, DecOn, DecProto, DecIn, DecSrc, DecSrc2, DecCs, DecSrc4, DecDiff]
+        .into_iter()
+        .chain(shared)
+        .chain((0..crate::protocols::OPTS).map(DecOpt))
+        .chain([DecThr, DecTable, DecExport])
+        .map(|it| super::descriptor(it).expect("every decoder row has a registered descriptor"))
+        .collect()
+}
+
+#[cfg(test)]
+pub(in crate::ui) fn decode_items(ui: &Ui) -> Vec<Item> {
+    super::items(ui, MenuId::Decode)
 }
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
@@ -164,102 +241,6 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
         _ => {}
     }
     true
-}
-
-fn options(ui: &Ui, it: Item) -> Option<Vec<String>> {
-    if let Some(v) = ui.la_options(it) {
-        return Some(v);
-    }
-    let v: &[&str] = match it {
-        Item::DecOn => &["Off", "On"],
-        Item::DecSrc => return Some(ui.decoder_sources().into_iter().map(decode_source_name).collect()),
-        Item::DecProto => return Some(ui.protos_on().iter().map(|p| p.name().to_string()).collect()),
-        Item::DecUsbSpeed => &USPEED_NAMES,
-        Item::DecOpt(k) => {
-            return Some(
-                ui.m.dec_proto
-                    .module()
-                    .and_then(|p| p.options().get(k))
-                    .map_or(Vec::new(), |o| o.choices.iter().map(|c| c.to_string()).collect()),
-            )
-        }
-        Item::DecSrc4 | Item::DecDiff => {
-            return Some(
-                std::iter::once("None".into())
-                    .chain(ui.decoder_sources().into_iter().map(decode_source_name))
-                    .collect(),
-            )
-        }
-        Item::DecCanH => &["RX/TX", "CAN_H"],
-        Item::DecSrc2 => return Some(ui.decoder_sources().into_iter().map(decode_source_name).collect()),
-        Item::DecCs => {
-            return Some(
-                (if ui.m.dec_proto == Proto::CPHY { Vec::new() } else { vec!["None".into()] })
-                    .into_iter()
-                    .chain(ui.decoder_sources().into_iter().map(decode_source_name))
-                    .collect(),
-            )
-        }
-        Item::DecMode => &["0", "1", "2", "3"],
-        Item::DecParity => &["None", "Even", "Odd"],
-        Item::DecFmt => &["Hex", "ASCII"],
-        Item::DecSel => &["D1", "D2", "D3", "D4"],
-        Item::DecBaud => return Some(crate::decode::BAUDS.iter().map(|b| b.to_string()).collect()),
-        Item::DecCphyRate => {
-            return Some(crate::decode::CPHY_RATES.into_iter().map(crate::decode::cphy_rate_label).collect())
-        }
-        Item::DecCanRate => return Some(crate::decode::CAN_RATES.iter().map(|&b| si(b, "bit/s")).collect()),
-        // the value picker is a hex keypad
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-pub(in crate::ui) fn decode_items(ui: &Ui) -> Vec<Item> {
-    use Item::*;
-    let p = ui.m.dec_proto;
-    let r = p.roles();
-    let on_la = ui.m.dec_on_la();
-    let mut v = vec![DecSel, DecOn, DecProto];
-    if ui.m.la_on() && p != Proto::CPHY {
-        v.push(DecIn);
-    }
-    v.push(DecSrc);
-    if r[1].is_some() {
-        v.push(DecSrc2);
-    }
-    if r[2].is_some() {
-        v.push(DecCs);
-    }
-    if r[3].is_some() {
-        v.push(DecSrc4);
-    }
-    if p.diff_ok() && !on_la {
-        v.push(DecDiff);
-    }
-    // the shared rows the protocol names, then its own options
-    use crate::protocols::Row;
-    for r in p.module().map_or(&[][..], |x| x.shared()) {
-        v.push(match r {
-            Row::Baud => DecBaud,
-            Row::Bits => DecBits,
-            Row::Parity => DecParity,
-            Row::SpiMode => DecMode,
-            Row::CanRate => DecCanRate,
-            Row::CanH => DecCanH,
-            Row::UsbSpeed => DecUsbSpeed,
-            Row::CphyRate => DecCphyRate,
-            Row::Fmt => DecFmt,
-        });
-    }
-    v.extend((0..p.module().map_or(0, |x| x.options().len())).map(DecOpt));
-    // LA lines: the probe's comparators set the levels (LA page)
-    if !on_la {
-        v.push(DecThr);
-    }
-    // what it decoded, as a table, and as a file
-    v.extend([DecTable, DecExport]);
-    v
 }
 
 fn sources(ui: &Ui, menu: MenuId) -> Vec<WaveId> {

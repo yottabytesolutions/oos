@@ -3,56 +3,61 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area { kind, label, value, adjust, activate, options, menu_items, ..Area::EMPTY };
+pub(super) const AREA: Area = Area { descriptors: ROWS, adjust, activate, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::RefColor | Item::RefSel | Item::RefVpd | Item::RefOffset => Kind::Value,
-        Item::RefSave | Item::RefClear => Kind::Action,
-        Item::RefLabel | Item::RefExport | Item::RefImport | Item::RefLoad => Kind::Action,
-        _ => return None,
-    })
-}
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    &[
+        Descriptor::action(Open(MenuId::Ref), "Reference").when(|_| false),
+        Descriptor::choice(RefSrc, "Save from", |u| format!("CH{}", u.ref_src + 1), |_| ch_names()),
+        Descriptor::action(RefSave, "Save to next R"),
+        Descriptor::action(RefClear, "Clear all"),
+        Descriptor::value(RefSel, "Slot", |u| format!("R{}", u.ref_sel + 1)),
+        Descriptor::value(RefVpd, "Slot scale", |u| {
+            u.refs[u.ref_sel].as_ref().map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V")))
+        }),
+        Descriptor::value(RefOffset, "Slot offset", |u| {
+            u.refs[u.ref_sel].as_ref().map_or("-".into(), |r| si_short(r.offset as f64, "V"))
+        }),
+        Descriptor::value(RefColor, "Slot color", |u| {
+            u.refs[u.ref_sel].as_ref().map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0).into()
+        }),
+        Descriptor::action(RefLabel, "Slot name"),
+        Descriptor::action(RefLoad, "Load file").when(|u| u.feature_on("load")),
+        Descriptor::action(RefExport, "Export slot"),
+        Descriptor::new(
+            RefImport,
+            Kind::Action,
+            "Import slot",
+            |_| String::new(),
+            |u| u.ref_files.iter().map(|p| crate::store::file_name(p)).collect(),
+            |_| true,
+        ),
+        slot::<0>(),
+        slot::<1>(),
+        slot::<2>(),
+        slot::<3>(),
+        slot::<4>(),
+        slot::<5>(),
+        slot::<6>(),
+        slot::<7>(),
+        slot::<8>(),
+        slot::<9>(),
+    ]
+};
 
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Ref) => "Reference",
-        Item::RefSrc => "Save from",
-        Item::RefSave => "Save to next R",
-        Item::RefShow(i) => ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"][i.min(NREF - 1)],
-        Item::RefClear => "Clear all",
-        Item::RefColor => "Slot color",
-        Item::RefLabel => "Slot name",
-        Item::RefSel => "Slot",
-        Item::RefVpd => "Slot scale",
-        Item::RefOffset => "Slot offset",
-        Item::RefExport => "Export slot",
-        Item::RefImport => "Import slot",
-        Item::RefLoad => "Load file",
-        _ => return None,
-    })
-}
-
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    Some(match it {
-        Item::RefColor => {
-            ui.refs[ui.ref_sel].as_ref().map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0).into()
-        }
-        Item::RefSel => format!("R{}", ui.ref_sel + 1),
-        Item::RefVpd => {
-            ui.refs[ui.ref_sel].as_ref().map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V")))
-        }
-        Item::RefOffset => ui.refs[ui.ref_sel].as_ref().map_or("-".into(), |r| si_short(r.offset as f64, "V")),
-        Item::RefSrc => format!("CH{}", ui.ref_src + 1),
-        Item::RefShow(i) => match &ui.refs[i] {
-            None => "empty".into(),
-            Some(r) => {
+const fn slot<const N: usize>() -> Descriptor {
+    Descriptor::choice(
+        Item::RefShow(N),
+        ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"][N],
+        |u| {
+            u.refs[N].as_ref().map_or("empty".into(), |r| {
                 let src = if r.label.is_empty() { format!("CH{}", r.src + 1) } else { r.label.clone() };
                 format!("{} {}", src, if r.on { "on" } else { "off" })
-            }
+            })
         },
-        _ => return None,
-    })
+        |_| Vec::new(),
+    )
 }
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
@@ -137,36 +142,4 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
         _ => {}
     }
     true
-}
-
-fn options(ui: &Ui, it: Item) -> Option<Vec<String>> {
-    let v: &[&str] = match it {
-        Item::RefSrc => return Some(ch_names()),
-        Item::RefImport => return Some(ui.ref_files.iter().map(|p| crate::store::file_name(p)).collect()),
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Ref => vec![
-            Item::RefSrc,
-            Item::RefSave,
-            Item::RefClear,
-            Item::RefSel,
-            Item::RefVpd,
-            Item::RefOffset,
-            Item::RefColor,
-            Item::RefLabel,
-            Item::RefLoad,
-            Item::RefExport,
-            Item::RefImport,
-        ]
-        .into_iter()
-        .filter(|&it| it != Item::RefLoad || ui.feature_on("load"))
-        .chain((0..NREF).map(Item::RefShow))
-        .collect(),
-        _ => Vec::new(),
-    }
 }

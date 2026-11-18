@@ -6673,6 +6673,7 @@ impl Ui {
     }
 
     /// Decode menu rows for the selected protocol.
+    #[cfg(test)]
     fn decode_items(&self) -> Vec<Item> {
         menu::decode_items(self)
     }

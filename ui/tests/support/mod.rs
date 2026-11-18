@@ -126,27 +126,38 @@ fn kill_group(pgid: u32) {
 fn group_kill_reaches_grandchildren_and_nothing_else() {
     use std::io::{BufRead, Read};
     use std::os::unix::process::CommandExt;
-    let (reader, writer) = std::io::pipe().expect("test pipe");
-    // fd 3 holds the pipe in every member of the group. A grandchild that survives the kill reports it after 120 s
-    // (hang guard); a killed group closes the pipe at once.
-    let script = "exec 3<&0 0</dev/null; (sleep 120; echo survived >&3) & echo ready >&3; wait";
+    let (reader, writer) = std::io::pipe().expect("group output pipe");
+    let (control, hold) = std::io::pipe().expect("lifetime pipe");
+    // The shell starts a grandchild blocked on input held open by this test, then announces readiness.
+    // No descendant or bystander can exit just because instrumentation or host load delayed the parent.
+    // A surviving grandchild holds stdout open and reports itself when the lifetime pipe closes.
+    let script = "exec 3<&0; (cat <&3; echo survived) & echo ready; wait";
     let mut group = Command::new("sh");
-    group.args(["-c", script]).stdin(writer).process_group(0);
+    group
+        .args(["-c", script])
+        .stdin(control.try_clone().expect("lifetime reader clones"))
+        .stdout(writer)
+        .process_group(0);
     let mut leader = group.spawn().expect("sh starts");
     drop(group);
-    let mut bystander = Command::new("sleep").arg("120").process_group(0).spawn().expect("sleep starts");
+    let mut bystander =
+        Command::new("cat").stdin(control).stdout(Stdio::null()).process_group(0).spawn().expect("cat starts");
     let mut reader = std::io::BufReader::new(reader);
     let mut line = String::new();
     reader.read_line(&mut line).expect("group start is readable");
     assert_eq!(line, "ready\n");
     kill_group(leader.id());
+    let bystander_status = bystander.try_wait().expect("bystander state is readable");
+    // Release survivors even if the kill command failed, so reading stdout cannot wait on this test.
+    drop(hold);
     let mut rest = String::new();
     reader.read_to_string(&mut rest).expect("group output is readable");
+    let leader_exit = leader.wait().expect("leader is reaped");
+    let bystander_exit = bystander.wait().expect("bystander exits on input EOF");
     assert_eq!(rest, "", "a grandchild outlived the group kill");
-    assert!(!leader.wait().expect("leader is reaped").success());
-    assert!(bystander.try_wait().expect("bystander state is readable").is_none(), "the kill reached another group");
-    bystander.kill().expect("bystander is ours");
-    bystander.wait().expect("bystander is reaped");
+    assert!(!leader_exit.success());
+    assert!(bystander_status.is_none(), "the kill reached another group");
+    assert!(bystander_exit.success());
 }
 
 #[test]

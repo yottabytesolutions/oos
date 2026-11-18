@@ -11,6 +11,13 @@ thread_local! {
     static OWN_ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
 }
 
+/// Counts allocations and reallocations made by the calling thread, including freed transients.
+pub fn count_own<T>(f: impl FnOnce() -> T) -> (usize, T) {
+    let before = OWN_ALLOCATIONS.get();
+    let result = f();
+    (OWN_ALLOCATIONS.get() - before, result)
+}
+
 pub struct Counting {
     live: AtomicUsize,
     peak: AtomicUsize,
@@ -45,9 +52,7 @@ impl Counting {
     }
     /// Like `count`, but only the allocations of the calling thread.
     pub fn count_own<T>(&self, f: impl FnOnce() -> T) -> (usize, T) {
-        let before = OWN_ALLOCATIONS.get();
-        let result = f();
-        (OWN_ALLOCATIONS.get() - before, result)
+        count_own(f)
     }
     pub fn allocated(&self, bytes: usize) {
         self.large.fetch_add(usize::from(bytes >= self.large_min.load(SeqCst)), SeqCst);

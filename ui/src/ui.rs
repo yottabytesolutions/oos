@@ -9893,6 +9893,7 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    mod allocation_budget;
     mod change;
     mod change_consumers;
     mod change_display_rules;

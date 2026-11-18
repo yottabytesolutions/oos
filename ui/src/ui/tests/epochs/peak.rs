@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::system::test_allocator::count_own;
+use crate::ui::tests::allocation_budget::{PEAK_ALLOCATIONS, WARMUP_STEPS};
 use oos_hal::sync::lock;
 use std::sync::atomic::Ordering::Relaxed;
 
@@ -99,24 +101,26 @@ fn peak_burst_matches_lossless_small_batch_picture_statistics_and_history() {
 }
 
 #[test]
-#[ignore = "explicit release timing guard; run alone with OOS_PERF_TESTS=1"]
+#[ignore = "explicit allocation guard; run with OOS_PERF_TESTS=1"]
 fn perf_guard_peak_intake_change_budget() {
     if std::env::var("OOS_PERF_TESTS").as_deref() != Ok("1") {
         return;
     }
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let (mut ui, shared) = fixture(host::Host::fixture());
-    for _ in 0..300 {
+    for step in 0..300 {
         if lock(&shared).queue.is_empty() {
             feed(&ui, &shared, ui.records + 1, crate::board::scripted::peak_batch_frames(&ui.m) as u64);
         }
+        let (allocations, _) = count_own(|| change::begin_step(&mut ui, 1.0 / 30.0));
+        if step >= WARMUP_STEPS {
+            assert!(
+                allocations <= PEAK_ALLOCATIONS,
+                "Peak backlog intake/change allocations {allocations} at step {step}"
+            );
+        }
         ui.step(1.0 / 30.0);
     }
-    let timing = change::timing(&ui);
-    assert!(timing.samples() >= 50);
-    let p99 = timing.p99().unwrap();
-    println!("Peak backlog: {} host={} budget_ns=500000", timing.text(), std::env::consts::ARCH);
-    assert!(p99[2] <= 500_000, "Peak intake/change p99 {} exceeds 0.5 ms", p99[2]);
 }
 
 #[test]

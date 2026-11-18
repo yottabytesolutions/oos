@@ -41,6 +41,9 @@ runtime detection selects capabilities. `oos-mac` persists identity on the devic
 rcS resolves it before loading the Rockchip GMAC module, which registers the supplied MAC as permanent.
 IPv6 stable address hashing keeps using that permanent address; the boot path still needs the unit comparison
 in [network](../network.md).
+Boot card mode (`sd.mode`, default HS) is applied by the updater to the next boot image and staged kexec tree,
+not by rcS after the SD driver probes. The existing trial mechanism keeps an HS rollback image; its early-boot
+limits and required unit validation are in [boot](../boot.md#device-boot-card-mode).
 The IPv6 secret stays in `/oos/net/ipv6.secret` across updates. No build profile supplies device identity.
 
 ## Rust crates

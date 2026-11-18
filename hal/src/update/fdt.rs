@@ -26,7 +26,7 @@ impl Node {
         self.props.iter().find(|p| p.0 == name).map(|p| p.1.as_slice())
     }
 
-    fn set(&mut self, name: &str, v: &[u8]) {
+    pub(super) fn set(&mut self, name: &str, v: &[u8]) {
         match self.props.iter_mut().find(|p| p.0 == name) {
             Some(p) => p.1 = v.to_vec(),
             None => self.props.push((name.to_string(), v.to_vec())),

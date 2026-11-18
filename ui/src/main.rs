@@ -9,7 +9,7 @@
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
 //!   --store-dir DIR                storage directory for setups, CSV and PNG (default /tmp/oos; scripts: the script's dir)
 //!   --model NAME                   act as this model (DHO802 .. DHO924S), instead of /rigol/data/vendor.bin
-//!   --limits FILE                  experimental limits (default /oos/limits.conf, docs/models.md)
+//!   --limits FILE                  device overrides (default /oos/limits.conf, docs/models.md)
 
 // SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -135,7 +135,7 @@ pub fn main() {
     );
     eprintln!("oos-ui: {} ({})", p.ident(), p.caps_line());
     for o in &p.overrides {
-        eprintln!("oos-ui: EXPERIMENTAL limit {}", o);
+        eprintln!("oos-ui: Device override {}", o);
     }
     for w in &p.warnings {
         eprintln!("oos-ui: {}", w);
@@ -162,7 +162,7 @@ pub fn main() {
     }
     ui.limits_path = limits;
     if experimental {
-        ui.toast("Experimental limits active (limits.conf), see System > System info");
+        ui.toast("Device overrides active (limits.conf), see System > System info");
     }
     if let Some(script) = arg(&args, "--script") {
         ui.start_script(&script, &args);

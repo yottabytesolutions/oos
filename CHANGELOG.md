@@ -34,6 +34,10 @@ Added:
 
 Changed:
 
+- Boot card mode is a device setting (`sd.mode = hs|sdr104`, default HS). The updater selects the next boot DTB
+  from the generic image and keeps HS for trial rollback. Device capability overrides are labelled as device
+  overrides. Host-tested only; early voltage-switch failures still need owner recovery (docs/boot.md).
+
 - Removed the failed autoset measure-unit option. Auto set-up always reads signal levels from records (ADR 0010).
 - Telnet is off by default at boot and in the system settings. System > Network > Remote services > telnet still
   enables it for bench bring-up; an existing explicit `remote.telnet = on` setting is kept.

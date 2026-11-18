@@ -299,6 +299,7 @@ no device identity or LAN-specific address prefixes ([ADR 0041](adr/system/0041-
 |---|---|---|
 | `net.allow` | `onlink 169.254.0.0/16 fe80::/10 onlink6` | IPv4 subnets of the interfaces, IPv4 and IPv6 link-local, and IPv6 prefixes on the link. Explicit address prefixes are also accepted |
 | `net.ipv6` | `on` | Stable IPv6 addresses, services and mDNS on IPv6 |
+| `sd.mode` | `hs` | Boot card mode: `hs` or `sdr104`; next boot after install or `oos-update sd-mode --execute`, with an HS rollback image ([boot](boot.md#device-boot-card-mode)) |
 | `eth.mac` | detected on device | A saved literal MAC wins; otherwise the stored board MAC, then a deterministic locally administered unicast MAC from the RK3399 CPU id |
 
 **First boot and migration.** `oos-mac` creates `/oos/system.conf` with a header and the chosen `eth.mac` if the file

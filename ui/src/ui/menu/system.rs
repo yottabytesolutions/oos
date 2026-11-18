@@ -77,9 +77,9 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
                 format!("Rigol {}", p.ident()),
                 p.caps_line(),
             ];
-            // experimental limits (limits.conf) and detection problems: the details are on System info
+            // device overrides (limits.conf) and detection problems: the details are on System info
             if p.experimental() {
-                d.push(format!("EXPERIMENTAL limits ({}), see System info", p.overrides.len()));
+                d.push(format!("Device overrides ({}), see System info", p.overrides.len()));
             }
             if !p.warnings.is_empty() {
                 d.push(format!("{} warning(s), see System info", p.warnings.len()));

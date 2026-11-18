@@ -284,10 +284,7 @@ impl Ui {
             }
         }
         d.push(kv("Screen", format!("{:.0} fps", self.fps)));
-        if p.experimental() {
-            d.push(Row::Head("Experimental limits".into()));
-            d.extend(p.overrides.iter().map(|o| Row::Note(o.clone(), AMBER)));
-        }
+        d.extend(device_overrides(p));
         if !p.warnings.is_empty() {
             d.push(Row::Head("Warnings".into()));
             d.extend(p.warnings.iter().map(|w| Row::Note(w.clone(), AMBER)));
@@ -367,6 +364,15 @@ impl Ui {
     }
 }
 
+fn device_overrides(platform: &oos_hal::model::Platform) -> Vec<Row> {
+    if !platform.experimental() {
+        return Vec::new();
+    }
+    let mut rows = vec![Row::Head("Device overrides".into())];
+    rows.extend(platform.overrides.iter().map(|value| Row::Note(value.clone(), AMBER)));
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,6 +395,24 @@ mod tests {
         ui.key(key::RUNSTOP);
         ui.step(0.02);
         assert!(ui.dialog.is_none() && ui.sysinfo.is_none());
+    }
+
+    #[test]
+    fn device_overrides_have_a_descriptive_label() {
+        let platform = oos_hal::model::Platform::build(None, Some("afg = no\nla = no\n"), None);
+        let rows = device_overrides(&platform);
+        assert!(matches!(&rows[0], Row::Head(label) if label == "Device overrides"));
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+        ui.sysinfo = Some([vec![], vec![], rows]);
+        let mut canvas = Canvas::new(PANEL_W, PANEL_H);
+        ui.draw_sysinfo(&mut canvas);
+        let actual = crate::store::png_of(&canvas);
+        let expected = include_bytes!("../../tests/fixtures/device-overrides.png");
+        if actual != expected {
+            let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/device-overrides.png");
+            std::fs::write(output, &actual).unwrap();
+        }
+        assert!(actual == expected, "device override label picture changed");
     }
 
     #[test]

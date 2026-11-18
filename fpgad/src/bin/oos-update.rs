@@ -15,6 +15,7 @@
 //!                                          it starts on trial at the next power-on
 //!   oos-update kexec-check FILE.oosupd     load the package's kernel and initramfs for a kexec start and unload them
 //!                                          again: nothing written, no restart
+//!   oos-update sd-mode [--execute]         restage sd.mode from system.conf for the next boot, on trial
 //!   oos-update rollback [--execute]        write the rollback image back to recovery and arm OOS
 //!   oos-update gel-install FILE.oosupd --save DIR [--any-model] [--reinstall] [--execute]
 //!                                          first install from the running stock system, rescue set in DIR; again on
@@ -80,6 +81,7 @@ mod oos_update {
     pub(crate) mod args;
     pub(crate) mod messages;
     pub(crate) mod sign;
+    pub(crate) mod storage;
 }
 
 use oos_update::{
@@ -198,15 +200,7 @@ fn main() {
         "install" => install(&a),
         "gel-install" => gel_install(&a),
         "kexec-check" => kexec_check(&a),
-        "rollback" => {
-            need_data(&a);
-            let ex = a.flag("--execute");
-            let mut c = open_card(&a, ex);
-            match update::rollback(&mut c, &state_path(&a), "by hand", ex, None) {
-                Ok(r) => r.lines.iter().for_each(|l| out!("{}", l)),
-                Err(e) => die(&e),
-            }
-        }
+        "sd-mode" | "rollback" => oos_update::storage::run(&a),
         "confirm" => {
             need_data(&a);
             let running = std::fs::read_to_string("/etc/oos-build").ok();

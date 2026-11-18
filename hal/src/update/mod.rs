@@ -31,10 +31,11 @@ pub mod inflate;
 pub mod kexec;
 pub mod models;
 pub mod pkg;
+pub mod sd;
 pub mod text;
 pub use card::Card;
 use card::{check_image, Region};
-use hash::{hex, unhex};
+use hash::hex;
 use std::path::Path;
 
 /// Default place of the state file (OOS data partition).
@@ -70,91 +71,17 @@ pub struct State {
     pub trial: Option<u32>,
     /// Arm OOS again after every confirmed start.
     pub persist: bool,
+    /// Suppress an SDR104 retry after an unconfirmed boot.
+    sd_failed: bool,
+    /// A same-build DTB trial must actually start before it can be confirmed.
+    sd_trial: Option<sd::Mode>,
     /// The build whose kexec start is under way (`kexec_stage`): nothing of it is on the card yet.
     pub kexec: Option<String>,
     /// Last thing that happened, one line.
     pub event: String,
 }
 
-impl State {
-    pub fn parse(text: &str) -> State {
-        let mut s = State::default();
-        let mut cur = (String::new(), None, 0u64);
-        let mut prev = (String::new(), None, 0u64);
-        for l in text.lines() {
-            let Some((k, v)) = l.split_once(' ') else { continue };
-            let v = v.trim();
-            match k {
-                "current.build" => cur.0 = v.into(),
-                "current.sha256" => cur.1 = unhex(v).and_then(|b| b.try_into().ok()),
-                "current.len" => cur.2 = v.parse().unwrap_or(0),
-                "previous.build" => prev.0 = v.into(),
-                "previous.sha256" => prev.1 = unhex(v).and_then(|b| b.try_into().ok()),
-                "previous.len" => prev.2 = v.parse().unwrap_or(0),
-                "trial" => s.trial = v.parse().ok(),
-                "mode" => s.persist = v == "persist",
-                "kexec" if !v.is_empty() => s.kexec = Some(v.into()),
-                "event" => s.event = v.into(),
-                _ => {}
-            }
-        }
-        let entry = |(build, sha, len): (String, Option<[u8; 32]>, u64)| {
-            sha.filter(|_| len > 0).map(|sha256| Entry { build, sha256, len })
-        };
-        s.current = entry(cur);
-        s.previous = entry(prev);
-        s
-    }
-
-    pub fn text(&self) -> String {
-        let mut t = String::from("# OOS update state (oos_hal::update, docs/update.md)\n");
-        for (n, e) in [("current", &self.current), ("previous", &self.previous)] {
-            if let Some(e) = e {
-                t.push_str(&format!("{0}.build {1}\n{0}.sha256 {2}\n{0}.len {3}\n", n, e.build, hex(&e.sha256), e.len));
-            }
-        }
-        if let Some(n) = self.trial {
-            t.push_str(&format!("trial {}\n", n));
-        }
-        t.push_str(if self.persist { "mode persist\n" } else { "mode oneshot\n" });
-        if let Some(b) = &self.kexec {
-            t.push_str(&format!("kexec {}\n", b.replace('\n', " ")));
-        }
-        if !self.event.is_empty() {
-            t.push_str(&format!("event {}\n", self.event.replace('\n', " ")));
-        }
-        t
-    }
-
-    pub fn load(path: &Path) -> std::io::Result<State> {
-        match std::fs::read_to_string(path) {
-            Ok(t) => Ok(State::parse(&t)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Atomic: temp file, fsync, rename.
-    pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(d) = path.parent() {
-            std::fs::create_dir_all(d)?;
-        }
-        let tmp = path.with_extension("new");
-        {
-            use std::io::Write;
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(self.text().as_bytes())?;
-            f.sync_all()?;
-        }
-        std::fs::rename(&tmp, path)?;
-        if let Some(d) = path.parent() {
-            if let Ok(f) = std::fs::File::open(d) {
-                let _ = f.sync_all();
-            }
-        }
-        Ok(())
-    }
-}
+mod state;
 
 /// Short form of a build id for messages.
 pub fn short(build: &str) -> &str {
@@ -224,7 +151,10 @@ pub fn install(
     card.check_layout()?;
     let _l = if opt.execute { Some(lock(state_path)?) } else { None };
     let mut st = State::load(state_path).map_err(io("reading the update state"))?;
-    let new = Entry { build: m.build.clone(), sha256: m.sha256, len: m.size };
+    let mode = sd::configured(state_path, &st)?;
+    let image = sd::image(img, mode)?;
+    let img = image.as_slice();
+    let new = Entry { build: m.build.clone(), sha256: hash::sha256(img), len: img.len() as u64 };
 
     if let Some(cur) = st.current.as_ref().filter(|c| !c.build.starts_with("untracked")) {
         if cur.build_key() > new.build_key() && !opt.downgrade {
@@ -265,19 +195,21 @@ pub fn install(
     let mut save: Option<(Vec<u8>, Entry)> = None;
     match (&cur_img, st.trial) {
         (Some((b, sha)), None) => {
+            let saved = sd::image(b, sd::Mode::Hs)?;
+            let saved_sha = hash::sha256(&saved);
             let e = Entry {
                 build: match &st.current {
                     Some(c) if c.sha256 == *sha => c.build.clone(),
                     _ => format!("untracked-{}", &hex(sha)[..12]),
                 },
-                sha256: *sha,
-                len: b.len() as u64,
+                sha256: saved_sha,
+                len: saved.len() as u64,
             };
-            if st.previous.as_ref().is_some_and(|p| p.sha256 == *sha) && slot_holds(card, &e)? {
+            if st.previous.as_ref().is_some_and(|p| p.sha256 == saved_sha) && slot_holds(card, &e)? {
                 r.say(format!("rollback slot already holds build {}", short(&e.build)));
             } else {
                 r.say(format!("keep build {} ({} bytes) in the {}", short(&e.build), e.len, Region::Slot.name()));
-                save = Some((b.clone(), e));
+                save = Some((saved, e));
             }
         }
         (Some(_), Some(n)) => r.say(format!(
@@ -288,16 +220,12 @@ pub fn install(
         (None, _) => {}
     }
     if save.is_some() {
-        let slot_hdr = card.header(Region::Slot).map_err(io("reading the rollback slot"))?;
-        // (a write of the slot cut by a power loss can leave data without its header: then it is ours to overwrite)
-        if slot_hdr.is_none()
-            && st.event != SLOT_WRITING
-            && !card.region_empty(Region::Slot).map_err(io("reading the rollback slot"))?
-        {
-            return Err("the rollback slot (backup + 32 MiB) holds data that is not an OOS image: nothing written, inspect it first".into());
-        }
+        check_slot(card, &st)?;
     }
     if save.is_none() && st.previous.is_none() {
+        if mode == sd::Mode::Sdr104 {
+            return Err("SDR104 needs a confirmed HS rollback image: nothing written".into());
+        }
         r.say("WARNING: no rollback image; a failed start falls back to stock Android only");
     }
     r.say(format!("write build {} to recovery, on trial; arm OOS for the next power-on", short(&new.build)));
@@ -309,23 +237,33 @@ pub fn install(
     // the state file must be writable before the card is touched (a full /oos would leave the new image untracked)
     st.save(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
     if let Some((b, e)) = save {
-        // while the slot is being written it holds no valid image
-        st.previous = None;
-        st.event = SLOT_WRITING.into();
-        st.save(state_path).map_err(io("writing the update state"))?;
-        card.write_image(Region::Slot, &b)?;
-        st.previous = Some(e);
-        st.save(state_path).map_err(io("writing the update state"))?;
+        state::write_slot(card, state_path, &b, e, &mut st)?;
         r.say("rollback slot written and read back");
     }
+    st.sd_trial = (mode == sd::Mode::Sdr104).then_some(mode);
+    if sd::requested(state_path)? == sd::Mode::Hs {
+        st.sd_failed = false;
+    }
+    write_trial(card, state_path, img, &new.build, &mut st, &mut r)?;
+    Ok(r)
+}
+
+fn write_trial(
+    card: &mut Card,
+    state_path: &Path,
+    img: &[u8],
+    build: &str,
+    st: &mut State,
+    r: &mut Report,
+) -> Result<(), String> {
     let old = st.current.clone();
     // stock for the next power-on while recovery is not a valid image (`Card::disarm_oos`); armed again below
     card.disarm_oos()?;
     // recorded before the write: a failed or cut write leaves a state that names the new image on trial (a rollback or a
     // new install repairs it)
-    st.current = Some(new.clone());
+    st.current = Some(Entry { build: build.into(), sha256: hash::sha256(img), len: img.len() as u64 });
     st.trial = Some(0);
-    st.event = format!("writing build {}", short(&new.build));
+    st.event = format!("writing build {}", short(build));
     st.save(state_path).map_err(io("writing the update state"))?;
     card.write_image(Region::Recovery, img)?;
     r.written = true;
@@ -334,16 +272,16 @@ pub fn install(
     st.kexec = None;
     st.event = format!(
         "installed {} over {}",
-        short(&new.build),
+        short(build),
         old.as_ref().map_or("an untracked image".into(), |o| short(&o.build).to_string())
     );
     st.save(state_path).map_err(io("writing the update state"))?;
     r.say("recovery written and read back");
     match card.arm_oos() {
-        Ok(_) => r.say(text::installed(&new.build)),
+        Ok(_) => r.say(text::installed(build)),
         Err(e) => r.say(format!("WARNING: {}; start OOS with oos-boot-oos-again", e)),
     }
-    Ok(r)
+    Ok(())
 }
 
 /// What a kexec start needs: kernel, initramfs (with the package, the key that verified it and the device tree section
@@ -387,7 +325,9 @@ pub fn kexec_stage(
     if !kexec::announced(m) {
         return Err(format!("build {} does not finish a kexec start (its package has no 'trial kexec' line): install it with --no-kexec", short(&m.build)));
     }
-    let (kernel, ramdisk, dt) = kexec::parts(img)?;
+    let selected =
+        sd::image(img, sd::configured(state_path, &State::load(state_path).map_err(io("reading update state"))?)?)?;
+    let (kernel, ramdisk, dt) = kexec::parts(&selected)?;
     // the tree the running kernel got from the loader, which the kexec start keeps
     let booted: Vec<u8> = match booted_dt {
         Some(b) => b.to_vec(),
@@ -405,21 +345,7 @@ pub fn kexec_stage(
             kexec::parts(&cur_img).map_err(|e| format!("recovery: {}: no device tree to compare with", e))?.2.to_vec()
         }
     };
-    let tree = if booted == dt {
-        r.say("device tree: the same as the running one");
-        None
-    } else {
-        let Some(run) = running_tree else {
-            return Err("the image brings another device tree than the one this scope started with, and this build cannot start a kernel with another tree".into());
-        };
-        let new_dt = fdt::rsce_file(dt, fdt::TREE).map_err(|e| format!("the new image's device tree: {}", e))?;
-        let old_dt =
-            fdt::rsce_file(&booted, fdt::TREE).map_err(|e| format!("the running image's device tree: {}", e))?;
-        let (t, n) =
-            fdt::with_loader_changes(new_dt, old_dt, run).map_err(|e| format!("the new device tree: {}", e))?;
-        r.say(format!("device tree: another one; the kexec start tries it, with the {} changes the loader made to the running one", n));
-        Some(t)
-    };
+    let tree = sd::trial_tree(dt, &booted, running_tree, &mut r)?;
     let key = keys.iter().find(|k| pkg::key_id(k) == m.key).ok_or("no key for the package")?;
     // the started image keeps the tree section it runs with (for its own updates later): the new one, when it brings one
     let staged = Staged {
@@ -437,6 +363,7 @@ pub fn kexec_stage(
     }
     let _l = lock(state_path)?;
     let mut st = State::load(state_path).map_err(io("reading the update state"))?;
+    st.sd_trial = (sd::configured(state_path, &st)? == sd::Mode::Sdr104).then_some(sd::Mode::Sdr104);
     st.kexec = Some(staged.build.clone());
     st.event = format!("starting build {} by kexec for its trial", short(&staged.build));
     st.save(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
@@ -452,6 +379,7 @@ pub fn kexec_clear(state_path: &Path, event: &str) -> Result<(), String> {
     if st.kexec.take().is_none() {
         return Ok(());
     }
+    st.sd_trial = None;
     st.event = event.into();
     st.save(state_path).map_err(io("writing the update state"))
 }
@@ -465,10 +393,23 @@ pub fn kexec_missed(state_path: &Path, kexec_start: bool) -> Result<Option<Strin
     let _l = lock(state_path)?;
     let mut st = State::load(state_path).map_err(io("reading the update state"))?;
     let Some(b) = st.kexec.take() else { return Ok(None) };
-    let msg = format!("Update {} did not finish when started by kexec (its kernel or start-up hung, or the power went off): not installed", short(&b));
+    let fallback = st.missed_sd_trial();
+    let msg = format!("Update {} did not finish when started by kexec (its kernel or start-up hung, or the power went off): not installed{}", short(&b), fallback);
     st.event = msg.clone();
     st.save(state_path).map_err(io("writing the update state"))?;
     Ok(Some(msg))
+}
+
+fn check_slot(card: &mut Card, st: &State) -> Result<(), String> {
+    let slot_hdr = card.header(Region::Slot).map_err(io("reading the rollback slot"))?;
+    // (a write of the slot cut by a power loss can leave data without its header: then it is ours to overwrite)
+    if slot_hdr.is_none()
+        && st.event != SLOT_WRITING
+        && !card.region_empty(Region::Slot).map_err(io("reading the rollback slot"))?
+    {
+        return Err("the rollback slot (backup + 32 MiB) holds data that is not an OOS image: nothing written, inspect it first".into());
+    }
+    Ok(())
 }
 
 fn slot_holds(card: &mut Card, e: &Entry) -> Result<bool, String> {
@@ -521,6 +462,7 @@ pub fn rollback(
         return Ok(r);
     }
     // the state keeps naming the image and its trial until the write is done: a cut write stays a rollback to repeat
+    st.fail_sd_trial();
     st.event = format!("rolling back from {} to {}", from, short(&prev.build));
     st.save(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
     card.disarm_oos()?;
@@ -531,6 +473,7 @@ pub fn rollback(
     st.event = format!("rolled back from {} to {}: {}", from, short(&prev.build), reason);
     st.save(state_path).map_err(io("writing the update state"))?;
     r.say("recovery written and read back");
+    r.lines.extend(st.sd_fallback().map(str::to_string));
     match card.arm_oos() {
         Ok(_) => r.say(text::restored(&prev.build)),
         Err(e) => r.say(format!("WARNING: {}", e)),
@@ -604,6 +547,7 @@ pub fn boot_started(state_path: &Path, running: Option<&str>) -> Result<Boot, St
                 short(run),
                 short(&cur)
             );
+            st.fail_sd_trial();
             st.trial = None;
             st.current = None;
             st.event = msg.clone();
@@ -630,6 +574,9 @@ pub fn confirm_running(state_path: &Path, expect: Option<[u8; 32]>, running: Opt
     if st.trial.is_none() {
         return Ok(false);
     }
+    if st.sd_trial.is_some() && st.trial == Some(0) {
+        return Err("SD mode trial has not booted yet: not confirmed".into());
+    }
     if let Some(run) = running {
         let cur = st.current.as_ref().map(|c| c.build.trim().to_string()).unwrap_or_default();
         if run.trim() != cur {
@@ -646,6 +593,7 @@ pub fn confirm_running(state_path: &Path, expect: Option<[u8; 32]>, running: Opt
         }
     }
     st.trial = None;
+    st.sd_trial = None;
     st.event = format!("confirmed {}", st.current.as_ref().map_or("?", |c| short(&c.build)));
     st.save(state_path).map_err(io("writing the update state"))?;
     Ok(true)

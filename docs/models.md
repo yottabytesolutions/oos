@@ -90,10 +90,10 @@ A report of OOS starting on a model of a variant marked "-" makes the whole vari
 | ADC clock | 1.25 GHz | LMX2582 table, `protocols/pll.md` |
 | generator DDS clock | 156.25 MHz | `protocols/afg.md` |
 
-## 4. Experimental limits: `/oos/limits.conf`
+## 4. Device overrides: `/oos/limits.conf`
 
 This file lives on the OOS data partition. Its format is `key = value`, and `#` starts a comment. Every key that is
-applied is printed at start, shown in System > About as "EXPERIMENTAL limits" and announced with a toast. Unknown keys
+applied is printed at start, shown in System > About as "Device overrides" and announced with a toast. Unknown keys
 and bad values only produce warnings.
 
 | Key | Effect |
@@ -198,7 +198,7 @@ Network identity is detected and persisted on the device, never supplied by a bu
   FPGA version, uptime, network, source. Temperatures: SoC zones and FPGA die (XADC 0x1438, read by the acquisition
   thread once a second), VCCINT, fan, the alarm limits (SoC 90 degC, FPGA 75 degC, kernel throttling 70/85 degC),
   CPU load and clock, RAM, free space on /oos. Limits per channel count, LA depths, generator caps and clocks, with
-  values that differ from section 3 in amber. The current acquisition. Experimental limits and warnings in full.
+  values that differ from section 3 in amber. The current acquisition. Device overrides and warnings in full.
 - oos-fpgad: `oos-fpgad model` prints everything; `oos-fpgad afg` refuses on models without a generator
   (`--force` overrides).
 

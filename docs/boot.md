@@ -106,11 +106,36 @@ The loader's messages go to UART2 (115200 8N1).
 - The switch between stock and OOS is the magic of `boot`: `OOSK` = OOS (via the fallback to `recovery`), `KRNL` = stock.
 - The PARM table stays as it is. Assumed, not yet verified on hardware: U-Boot checks a CRC over the first 942 bytes of
   the PARM copy, and a changed table drops into Rockusb.
-- The card runs at 3.3 V high speed (`cap-sd-highspeed`). `kernel/dts/rk3399-rigol-dho900-uhs.dts` is an opt-in variant
-  with UHS-I (SDR104, SDR50) and a 30 ms settling time on `vccio_sd`; the image takes it with
-  `OOS_KERNEL_DTB=rk3399-rigol-dho900-uhs.dtb` (or a unit's `build.env`). Why each setting: the comment in that file.
-  Not yet verified under the OOS kernel. A warm restart from a stock system that left the card at 1.8 V into an OOS
-  image without the variant is not verified either: use a power cycle.
+- The boot card defaults to 3.3 V high speed (`sd.mode = hs`). Device configuration and trial details follow.
+
+### Device boot card mode
+
+`/oos/system.conf` accepts `sd.mode = hs` (default) or `sd.mode = sdr104`. The generic package ships one base
+DTB. After verifying the package signature and image hash, the updater applies the small property delta from
+`kernel/dts/rk3399-rigol-dho900-uhs.dts`. This reuses the existing FDT codec and is smaller than shipping a second
+DTB. SDR104 enables `sd-uhs-sdr104` and `sd-uhs-sdr50`, caps the SD controller at 150 MHz, removes
+`regulator-init-microvolt` from `vccio_sd`, and sets `regulator-settling-time-down-us` to 30000.
+The regulator's 1.8-3.3 V range and its connection to the SD IO domain remain intact.
+
+The setting affects the next kernel, never the running SD driver. Installs select the DTB both for the Android
+boot image's RSCE `second` and for kexec's staged tree, before loader changes are merged. The package stays signed
+and unchanged; the locally derived image gets a recomputed Android loader id and a SHA-256 in the update state.
+No device build input is needed. Nothing writes stock `resource`, `kernel` or U-Boot.
+
+To change an already installed image, edit `sd.mode` in `/oos/system.conf`, then run `oos-update sd-mode` to inspect
+the dry run, followed by `oos-update sd-mode --execute`. This requires a tracked, confirmed active image and refuses
+an update already on trial. The existing verified slot-write path retains an HS rollback image and writes the selected
+DTB into OOS recovery, on trial. Reboot through the authorized unit procedure. There is no kexec on every boot.
+The running session cannot confirm a same-build DTB trial until it has booted. The ordinary start-up watcher confirms
+it after a stable start, or restores HS on failure. An unconfirmed second start also restores HS and logs the fallback.
+After fallback, SDR104 is suppressed while `system.conf` still requests it. Select `hs` and run `sd-mode --execute`
+before explicitly retrying `sdr104`; updates do not rewrite the device setting.
+
+**Safety boundary, not yet verified on hardware:** the stock loader cannot read the setting or update state.
+Rollback runs in rcS and therefore cannot run when a voltage-switch failure wedges the card before userspace.
+An initial kexec trial from HS leaves that installed HS image untouched; remove power before the next start to reset the card.
+A directly restaged cold trial that hangs before rcS still requires the owner's card-reader recovery procedure.
+The existing trial mechanism does not guarantee automatic HS selection in that case. Unit acceptance remains open.
 
 ## OOS start-up after the kernel (rcS)
 

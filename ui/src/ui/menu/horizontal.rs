@@ -3,51 +3,47 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area { kind, label, value, adjust, activate, options, menu_items, ..Area::EMPTY };
+pub(super) const AREA: Area = Area { descriptors: ROWS, adjust, activate, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::ZScale | Item::ZDelay => Kind::Value,
-        Item::HScale | Item::HDelay => Kind::Value,
-        Item::HZero => Kind::Action,
-        Item::AutoDeskew | Item::ClearDeskew => Kind::Action,
-        _ => return None,
-    })
-}
-
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Horizontal) => "Horizontal",
-        Item::Zoom => "Zoom",
-        Item::AutoRoll => "Auto Roll",
-        Item::ZScale => "Zoom time/div",
-        Item::ZDelay => "Zoom position",
-        Item::HScale => "Time/div",
-        Item::HDelay => "Delay",
-        Item::HZero => "Delay to 0",
-        Item::AutoDeskew => "Auto deskew",
-        Item::ClearDeskew => "Clear deskew",
-        Item::HFine => "Fine time base",
-        Item::HExpandI => "Expand around",
-        _ => return None,
-    })
-}
-
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    let m = &ui.m;
-    let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-    Some(match it {
-        Item::HFine => onoff(m.fine_t),
-        Item::HExpandI => format!("{:?}", m.h_expand),
-        Item::HScale => si_short(m.time_per_div() as f64, "s"),
-        Item::HDelay => si(m.delay as f64, "s"),
-        Item::Zoom => onoff(m.zoom),
-        Item::AutoRoll => onoff(m.auto_roll),
-        Item::ZScale => si_short(tscales()[m.zscale] as f64, "s"),
-        Item::ZDelay => si(m.zdelay as f64, "s"),
-        _ => return None,
-    })
-}
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    use Kind::*;
+    &[
+        Descriptor::new(Open(MenuId::Horizontal), Action, "Horizontal", |_| String::new(), |_| Vec::new(), |_| false),
+        Descriptor::new(
+            HScale,
+            Value,
+            "Time/div",
+            |u| si_short(u.m.time_per_div() as f64, "s"),
+            |_| Vec::new(),
+            |_| true,
+        ),
+        Descriptor::new(HFine, Choice, "Fine time base", |u| onoff(u.m.fine_t), toggles, |_| true),
+        Descriptor::new(
+            HExpandI,
+            Choice,
+            "Expand around",
+            |u| format!("{:?}", u.m.h_expand),
+            |_| ["Center", "Left", "Right", "Trigger"].into_iter().map(String::from).collect(),
+            |_| true,
+        ),
+        Descriptor::new(HDelay, Value, "Delay", |u| si(u.m.delay as f64, "s"), |_| Vec::new(), |_| true),
+        Descriptor::new(HZero, Action, "Delay to 0", |_| String::new(), |_| Vec::new(), |_| true),
+        Descriptor::new(AutoDeskew, Action, "Auto deskew", |_| String::new(), |_| Vec::new(), |_| true),
+        Descriptor::new(ClearDeskew, Action, "Clear deskew", |_| String::new(), |_| Vec::new(), |_| true),
+        Descriptor::new(Zoom, Choice, "Zoom", |u| onoff(u.m.zoom), toggles, |_| true),
+        Descriptor::new(
+            ZScale,
+            Value,
+            "Zoom time/div",
+            |u| si_short(tscales()[u.m.zscale] as f64, "s"),
+            |_| Vec::new(),
+            |u| u.m.zoom,
+        ),
+        Descriptor::new(ZDelay, Value, "Zoom position", |u| si(u.m.zdelay as f64, "s"), |_| Vec::new(), |u| u.m.zoom),
+        Descriptor::new(AutoRoll, Choice, "Auto Roll", |u| onoff(u.m.auto_roll), toggles, |_| true),
+    ]
+};
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
     let m = &mut ui.m;
@@ -108,47 +104,5 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
     true
 }
 
-fn options(_ui: &Ui, it: Item) -> Option<Vec<String>> {
-    let v: &[&str] = match it {
-        Item::Zoom | Item::AutoRoll => &["Off", "On"],
-        Item::HFine => &["Off", "On"],
-        Item::HExpandI => &["Center", "Left", "Right", "Trigger"],
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Horizontal => {
-            if ui.m.zoom {
-                vec![
-                    Item::HScale,
-                    Item::HFine,
-                    Item::HExpandI,
-                    Item::HDelay,
-                    Item::HZero,
-                    Item::AutoDeskew,
-                    Item::ClearDeskew,
-                    Item::Zoom,
-                    Item::ZScale,
-                    Item::ZDelay,
-                    Item::AutoRoll,
-                ]
-            } else {
-                vec![
-                    Item::HScale,
-                    Item::HFine,
-                    Item::HExpandI,
-                    Item::HDelay,
-                    Item::HZero,
-                    Item::AutoDeskew,
-                    Item::ClearDeskew,
-                    Item::Zoom,
-                    Item::AutoRoll,
-                ]
-            }
-        }
-        _ => Vec::new(),
-    }
-}
+#[cfg(test)]
+mod tests;

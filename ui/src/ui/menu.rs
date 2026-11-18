@@ -26,6 +26,14 @@ impl Descriptor {
     }
 }
 
+fn toggles(_: &Ui) -> Vec<String> {
+    ["Off", "On"].into_iter().map(String::from).collect()
+}
+
+fn onoff(on: bool) -> String {
+    if on { "On" } else { "Off" }.into()
+}
+
 struct Area {
     descriptors: &'static [Descriptor],
     sources: fn(&Ui, MenuId) -> Vec<WaveId>,

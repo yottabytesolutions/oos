@@ -39,14 +39,6 @@ fn strings(labels: &[&str]) -> Vec<String> {
     labels.iter().map(|s| (*s).into()).collect()
 }
 
-fn toggles(_: &Ui) -> Vec<String> {
-    strings(&["Off", "On"])
-}
-
-fn onoff(on: bool) -> String {
-    if on { "On" } else { "Off" }.into()
-}
-
 fn source(ui: &Ui, it: Item, channel: usize) -> String {
     ui.offline_value(it).unwrap_or_else(|| format!("CH{}", channel + 1))
 }

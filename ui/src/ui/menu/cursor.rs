@@ -3,44 +3,54 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area { kind, label, value, adjust, options, menu_items, ..Area::EMPTY };
+pub(super) const AREA: Area = Area { descriptors: ROWS, adjust, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::CurC | Item::CurD => Kind::Value,
-        Item::CurA | Item::CurB => Kind::Value,
-        _ => return None,
-    })
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    use Kind::*;
+    &[
+        Descriptor::new(Open(MenuId::Cursor), Action, "Cursor", |_| String::new(), |_| Vec::new(), |_| false),
+        Descriptor::new(
+            CurMode,
+            Choice,
+            "Mode",
+            |u| format!("{:?}", u.m.cursor),
+            |_| ["Off", "Time", "Volt", "Track", "XY"].into_iter().map(String::from).collect(),
+            |_| true,
+        ),
+        Descriptor::new(CurA, Value, "Cursor A", |u| position(u, u.m.cur_a, 0), |_| Vec::new(), enabled),
+        Descriptor::new(
+            CurB,
+            Value,
+            "Cursor B",
+            |u| position(u, u.m.cur_b, if u.m.cursor == CursorMode::Track { 2 } else { 1 }),
+            |_| Vec::new(),
+            enabled,
+        ),
+        Descriptor::new(CurC, Value, "Y1", |u| position(u, u.m.cur_c, 2), |_| Vec::new(), xy),
+        Descriptor::new(CurD, Value, "Y2", |u| position(u, u.m.cur_d, 3), |_| Vec::new(), xy),
+        Descriptor::new(
+            CurSrcB,
+            Choice,
+            "Cursor B source",
+            |u| u.wave_name(u.cursor_b_source()),
+            Ui::wave_names,
+            |u| u.m.cursor == CursorMode::Track,
+        ),
+    ]
+};
+
+fn enabled(ui: &Ui) -> bool {
+    ui.m.cursor != CursorMode::Off
 }
 
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Cursor) => "Cursor",
-        Item::CurMode => "Mode",
-        Item::CurSrcB => "Cursor B source",
-        Item::CurA => "Cursor A",
-        Item::CurB => "Cursor B",
-        Item::CurC => "Y1",
-        Item::CurD => "Y2",
-        _ => return None,
-    })
+fn xy(ui: &Ui) -> bool {
+    ui.m.cursor == CursorMode::Xy
 }
 
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    let m = &ui.m;
-    Some(match it {
-        Item::CurSrcB => ui.wave_name(ui.cursor_b_source()),
-        Item::CurC => ui.cursor_values().get(2).map_or(format!("{:.0} %", m.cur_c * 100.0), |v| v.1.clone()),
-        Item::CurD => ui.cursor_values().get(3).map_or(format!("{:.0} %", m.cur_d * 100.0), |v| v.1.clone()),
-        Item::CurMode => format!("{:?}", m.cursor),
-        // where the cursor is, as the read-out under the plot says it; the percentage only without a record
-        Item::CurA => ui.cursor_values().first().map_or(format!("{:.0} %", m.cur_a * 100.0), |v| v.1.clone()),
-        Item::CurB => ui
-            .cursor_values()
-            .get(if m.cursor == CursorMode::Track { 2 } else { 1 })
-            .map_or(format!("{:.0} %", m.cur_b * 100.0), |v| v.1.clone()),
-        _ => return None,
-    })
+// Use the readout under the plot, or a percentage when it is unavailable.
+fn position(ui: &Ui, fraction: f32, index: usize) -> String {
+    ui.cursor_values().get(index).map_or(format!("{:.0} %", fraction * 100.0), |v| v.1.clone())
 }
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
@@ -66,25 +76,5 @@ fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
     false
 }
 
-fn options(ui: &Ui, it: Item) -> Option<Vec<String>> {
-    let v: &[&str] = match it {
-        Item::CurSrcB => return Some(ui.wave_names()),
-        Item::CurMode => &["Off", "Time", "Volt", "Track", "XY"],
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Cursor if ui.m.cursor == CursorMode::Off => vec![Item::CurMode],
-        MenuId::Cursor if ui.m.cursor == CursorMode::Xy => {
-            vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurC, Item::CurD]
-        }
-        MenuId::Cursor if ui.m.cursor == CursorMode::Track => {
-            vec![Item::CurMode, Item::CurA, Item::CurB, Item::CurSrcB]
-        }
-        MenuId::Cursor => vec![Item::CurMode, Item::CurA, Item::CurB],
-        _ => Vec::new(),
-    }
-}
+#[cfg(test)]
+mod tests;

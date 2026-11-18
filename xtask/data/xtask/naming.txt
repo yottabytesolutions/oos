@@ -1,0 +1,17 @@
+# Declaration vocabulary findings: <count> name <file> <declaration> <rule>.
+# Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
+1 name xtask/src/arch/modules.rs is_dep abbreviation-dep
+1 name xtask/src/arch/resolve.rs dep_path abbreviation-dep
+1 name xtask/src/attrs.rs from_cfg_attr abbreviation-cfg
+1 name xtask/src/coverage.rs Data vague
+1 name xtask/src/coverage.rs coverage_dir abbreviation-dir
+1 name xtask/src/repo.rs data vague
+1 name xtask/src/run.rs capture_env abbreviation-env
+1 name xtask/src/size/mod.rs inherent_impls vague
+1 name xtask/src/sources.rs cfg_test abbreviation-cfg
+1 name xtask/src/sources.rs child_dir abbreviation-dir
+1 name xtask/src/sources.rs of_dir abbreviation-dir
+1 name xtask/src/steps/ratchets.rs impl_touched vague
+1 name xtask/src/store.rs rel abbreviation-rel
+1 name xtask/src/tighten.rs refuse_init abbreviation-init
+1 name xtask/src/workspace.rs dir abbreviation-dir

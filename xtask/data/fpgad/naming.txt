@@ -1,0 +1,19 @@
+# Declaration vocabulary findings: <count> name <file> <declaration> <rule>.
+# Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
+1 name fpgad/src/bin/oos-update.rs die abbreviation-die
+1 name fpgad/src/bin/oos-update.rs gel_install abbreviation-gel
+1 name fpgad/src/bin/oos-update.rs may_restart abbreviation-may
+1 name fpgad/src/bin/oos-update.rs need_data vague
+1 name fpgad/src/bin/oos_update/args.rs install_opt abbreviation-opt
+1 name fpgad/src/bin/oos_update/args.rs kexec_opt abbreviation-opt
+1 name fpgad/src/bin/oos_update/args.rs val abbreviation-val
+1 name fpgad/src/cmd/acquisition.rs int abbreviation-int
+1 name fpgad/src/cmd/acquisition.rs num abbreviation-num
+1 name fpgad/src/cmd/cold_boot.rs bar_for_temps abbreviation-bar
+1 name fpgad/src/cmd/cold_boot.rs check_cal abbreviation-cal
+1 name fpgad/src/cmd/mod.rs Opt abbreviation-opt
+1 name fpgad/src/cmd/options.rs num abbreviation-num
+1 name fpgad/src/cmd/pll.rs dry abbreviation-dry
+1 name fpgad/src/cmd/selfcal.rs UnitHw abbreviation-hw
+1 name fpgad/src/pcie.rs xdma_params abbreviation-params
+1 name fpgad/src/pcie.rs xdma_params_for abbreviation-params

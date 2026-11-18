@@ -9,7 +9,7 @@ pub(crate) mod python;
 mod ratchets;
 pub(crate) mod scripts;
 
-pub use code::{allows, known, measured, size, statics, unsafe_now, unsafety};
+pub use code::{allows, known, measured, naming, size, statics, unsafe_now, unsafety};
 pub use ratchets::load_moves;
 
 use crate::store::Kind;

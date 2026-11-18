@@ -1,5 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Keep public signal-processing values inspectable when diagnosing analysis results.
+#![warn(missing_debug_implementations)]
 
 //! OOS signal processing, platform independent, no dependencies.
 //!

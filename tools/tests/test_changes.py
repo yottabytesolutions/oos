@@ -40,7 +40,7 @@ class PathTests(unittest.TestCase):
                      "rootfs/initramfs/bin/oos-watchdog", "tools/privacy/scan.py", "xtask/data/size.txt",
                      ".github/workflows/pr.yml", ".github/workflows/image.yml", "tools/ci/changes.py",
                      ".github/workflows/privacy.yml", ".github/rulesets/main.json", "tools/ci/codex_gate.py",
-                     "docs/spec/menus.md"):
+                     "docs/spec/menus.md", "docs/architecture/glossary.md"):
             with self.subTest(path=path):
                 self.assertTrue(changes.needs_rust(path))
 
@@ -67,6 +67,7 @@ class PathTests(unittest.TestCase):
     def test_decision_by_paths(self):
         self.assertFalse(changes.by_paths(["docs/a.md", ".github/CODEOWNERS"]).run)
         self.assertTrue(changes.by_paths(["docs/a.md", "core/src/lib.rs"]).run)
+        self.assertTrue(changes.by_paths(["docs/architecture/glossary.md"]).run)
         self.assertTrue(changes.by_paths([]).run)
 
 

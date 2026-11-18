@@ -76,6 +76,7 @@ pub(crate) const CHECKS: &[Check] = &[
         [],
         crate::agent_rules::check
     ),
+    entry!("naming", "naming", "glossary and declaration naming ratchets", "sources", Fast, [], steps::naming),
     entry!("test-time", "test timing", "test source timing ratchet", "sources", Fast, [], crate::test_time::check),
     entry!("links", "links", "links in README, wiki/ and docs/ resolve", "Git", Fast, [], crate::links::check),
     entry!(

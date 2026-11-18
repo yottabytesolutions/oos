@@ -6,21 +6,8 @@ edition = "2021"
 description = "OOS oscilloscope user interface for the Rigol DHO800/DHO900 (software renderer on DRM/KMS, touch, front panel)"
 license = "GPL-2.0-or-later"
 
-# The lint set of every crate (docs/development.md). Existing findings are held by the clippy ratchet of
-# `cargo xtask check`; new ones fail it.
-[lints.rust]
-unused = { level = "warn", priority = -1 }
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-too_many_lines = "warn"
-cognitive_complexity = "warn"
-too_many_arguments = "warn"
-type_complexity = "warn"
-large_enum_variant = "warn"
-unwrap_used = "warn"
-undocumented_unsafe_blocks = "warn"
-missing_safety_doc = "warn"
+[lints]
+workspace = true
 
 # GlobalAlloc must observe the UI and workers in the same process. A separate binary cannot expose
 # its allocations to the integration test. Reuse the module graph; disable duplicate test/bench suites.

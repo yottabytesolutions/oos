@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The syntax walk of one file: functions, structs and inherent impls outside test code, with their sizes.
 
+use crate::sources::visit_production;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
 use syn::visit::{self, Visit};
@@ -79,6 +80,13 @@ fn type_name(t: &Type) -> String {
     }
 }
 
+/// A test item's extent, shared by syntax checks that exclude test declarations.
+pub(super) fn test_extent(item: &impl ToTokens) -> Option<(usize, usize)> {
+    let tokens = item.to_token_stream();
+    let attrs = syn::parse2::<Outer>(tokens.clone()).ok()?.0;
+    extent(tokens).filter(|_| is_test(&attrs))
+}
+
 /// The walk: `owner` is the impl or trait the next functions belong to.
 #[derive(Debug, Default)]
 pub struct Walk {
@@ -107,11 +115,7 @@ impl Walk {
 
     /// An item of any kind under `#[cfg(test)]` or `#[test]`: its lines, attributes included, are test lines.
     fn test_item(&mut self, item: &impl ToTokens) -> bool {
-        let tokens = item.to_token_stream();
-        let Ok(Outer(attrs)) = syn::parse2(tokens.clone()) else {
-            return false;
-        };
-        match extent(tokens).filter(|_| is_test(&attrs)) {
+        match test_extent(item) {
             Some((start, end)) => {
                 self.test.extend(start..=end);
                 true
@@ -122,53 +126,7 @@ impl Walk {
 }
 
 impl<'a> Visit<'a> for Walk {
-    fn visit_item(&mut self, i: &'a syn::Item) {
-        if !self.test_item(i) {
-            visit::visit_item(self, i);
-        }
-    }
-
-    fn visit_impl_item(&mut self, i: &'a syn::ImplItem) {
-        if !self.test_item(i) {
-            visit::visit_impl_item(self, i);
-        }
-    }
-
-    fn visit_trait_item(&mut self, i: &'a syn::TraitItem) {
-        if !self.test_item(i) {
-            visit::visit_trait_item(self, i);
-        }
-    }
-
-    fn visit_stmt(&mut self, i: &'a syn::Stmt) {
-        if !self.test_item(i) {
-            visit::visit_stmt(self, i);
-        }
-    }
-
-    fn visit_field(&mut self, i: &'a syn::Field) {
-        if !self.test_item(i) {
-            visit::visit_field(self, i);
-        }
-    }
-
-    fn visit_variant(&mut self, i: &'a syn::Variant) {
-        if !self.test_item(i) {
-            visit::visit_variant(self, i);
-        }
-    }
-
-    fn visit_arm(&mut self, i: &'a syn::Arm) {
-        if !self.test_item(i) {
-            visit::visit_arm(self, i);
-        }
-    }
-
-    fn visit_field_value(&mut self, i: &'a syn::FieldValue) {
-        if !self.test_item(i) {
-            visit::visit_field_value(self, i);
-        }
-    }
+    visit_production!('a, |self, node| self.test_item(node));
 
     fn visit_item_fn(&mut self, f: &'a ItemFn) {
         let n = self.code_lines(f.sig.fn_token.span, f.block.brace_token.span.close());

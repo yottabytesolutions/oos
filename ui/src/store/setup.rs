@@ -54,6 +54,11 @@ mod parse;
 mod tests;
 use parse::*;
 
+/// Parses a trigger sweep mode from a setup value.
+///
+/// # Errors
+///
+/// Returns an error if the value does not match a setup sweep mode.
 pub fn parse_sweep(value: &str) -> Result<TrigMode, String> {
     p_enum(value, &TRIG_MODES)
 }

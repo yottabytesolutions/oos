@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+use super::port::{RemoteRequest, RESPONSE_BYTES};
 use super::*;
 use std::{io::Write, net::TcpStream};
 
@@ -24,7 +25,7 @@ fn connection_credit_covers_output_and_shutdown_cancels_owned_requests() {
     let reply = Reply::new(first.id(), Vec::new(), ports.budget().reserve(RESPONSE_BYTES).unwrap());
     assert!(ports.replies().submit(reply.id(), reply, 0).is_ok());
     let second = next_request(&ports);
-    assert_eq!(second.id(), crate::netport::Id::new(first.id().connection(), 2));
+    assert_eq!(second.id(), super::port::Id::new(first.id().connection(), 2));
     assert!(matches!(second.request(), RemoteRequest::Program(text) if text == "second\n"));
     drop(raw);
     assert!(second.cancelled(), "shutdown cancels the IO-held credit before joining the thread");
@@ -41,13 +42,13 @@ fn rpc_disconnect_cancels_an_admitted_request_before_a_frame_reply() {
         false,
         wake,
         runtime,
-        crate::netio::Protocol::Rpc(crate::netport::rpc::Channel::Core),
+        crate::netio::Protocol::Rpc(super::port::rpc::Channel::Core),
     )
     .unwrap();
     io.set_acl(crate::netacl::Shared::default());
     let ports = io.ports();
     let mut client = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, io.port())).unwrap();
-    let words = [1u32, 0, 2, crate::netport::rpc::CORE_PROG, 1, 0, 0, 0, 0, 0];
+    let words = [1u32, 0, 2, super::port::rpc::CORE_PROG, 1, 0, 0, 0, 0, 0];
     client.write_all(&(40u32 | 1 << 31).to_be_bytes()).unwrap();
     for word in words {
         client.write_all(&word.to_be_bytes()).unwrap();
@@ -72,7 +73,7 @@ fn rpc_request_queue_reserves_a_udp_slot_beside_the_eight_tcp_slots() {
         false,
         Arc::new(Wake::new().unwrap()),
         Runtime::new().unwrap(),
-        crate::netio::Protocol::Rpc(crate::netport::rpc::Channel::Core),
+        crate::netio::Protocol::Rpc(super::port::rpc::Channel::Core),
     )
     .unwrap();
     let ports = io.ports();
@@ -82,7 +83,7 @@ fn rpc_request_queue_reserves_a_udp_slot_beside_the_eight_tcp_slots() {
             1,
             RemoteRequest::Vxi11 {
                 record: vec![],
-                channel: crate::netport::rpc::Channel::Core,
+                channel: super::port::rpc::Channel::Core,
                 closed: Default::default(),
             },
         );
@@ -95,7 +96,7 @@ fn rpc_request_queue_reserves_a_udp_slot_beside_the_eight_tcp_slots() {
 
 #[test]
 fn hislip_fragmentation_clear_and_disconnect_cancel_the_original_credit() {
-    use crate::netport::hislip::*;
+    use super::port::hislip::*;
     let io = Service::start(
         crate::net6::Port::Host,
         false,

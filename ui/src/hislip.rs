@@ -10,9 +10,9 @@
 //! reply that carries the SCPI response back.
 
 #[cfg(test)]
-pub use crate::netport::hislip::take_message;
-pub use crate::netport::hislip::{encode, Message, PORT};
-use crate::netport::{hislip::*, Output};
+pub use crate::netio::port::hislip::take_message;
+pub use crate::netio::port::hislip::{encode, Message, PORT};
+use crate::netio::port::{hislip::*, Output};
 #[derive(Clone, Copy, PartialEq)]
 enum Role {
     New,

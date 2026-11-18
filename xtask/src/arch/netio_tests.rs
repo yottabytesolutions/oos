@@ -5,7 +5,7 @@ use crate::{repo, sources::Source};
 
 fn source(module: &str, text: &str) -> Source {
     Source {
-        rel: format!("ui/src/{module}.rs"),
+        rel: format!("ui/src/{}.rs", module.replace("::", "/")),
         module: module.into(),
         test: false,
         file: syn::parse_file(text).unwrap(),
@@ -28,7 +28,7 @@ fn runtime_is_confined_and_io_cannot_import_application_state() {
         assert!(!modules::check(&[source("netio", &format!("use crate::{path};"))], &check).is_empty());
     }
     assert!(modules::check(
-        &[source("netio", "use tokio::net::TcpStream; use crate::netport::RemoteRequest;")],
+        &[source("netio", "use tokio::net::TcpStream; use crate::netio::port::RemoteRequest;")],
         &check
     )
     .is_empty());
@@ -68,5 +68,35 @@ fn standard_network_io_stays_inside_the_recorded_adapters() {
         ("ui", "#[cfg(test)] mod tests { use std::net::TcpListener; }"),
     ] {
         assert!(modules::check(&[source(module, text)], &check).is_empty(), "{module}: {text}");
+    }
+}
+
+#[test]
+fn port_helpers_keep_only_their_existing_dependencies() {
+    let actual = super::load(&repo::root()).unwrap();
+    let layers = actual.layers.iter().filter(|r| r.krate == "ui").collect();
+    let check = modules::CrateRules { layers, ..Default::default() };
+    for (module, allowed) in [
+        ("netio::port::latency", "perfguard::Clock"),
+        ("netio::port::latency", "perfguard::ring::Ring"),
+        ("netio::port::http::head", "store::MAX_WAVEFORM_BYTES"),
+    ] {
+        assert!(modules::check(&[source(module, &format!("use crate::{allowed};"))], &check).is_empty());
+        for forbidden in ["ui::Ui", "scpi::Scpi", "model::Model", "system::Device", "store::set"] {
+            assert!(!modules::check(&[source(module, &format!("use crate::{forbidden};"))], &check).is_empty());
+        }
+    }
+    for module in ["netio", "netio::port::wake"] {
+        assert!(!modules::check(&[source(module, "use crate::system::wake::wait;")], &check).is_empty());
+    }
+}
+
+#[test]
+fn network_ports_cannot_contain_unsafe() {
+    let actual = super::load(&repo::root()).unwrap();
+    for module in ["netio", "netio::port::wake"] {
+        let measured = crate::size::measure("ui", &[source(module, "fn wait() { unsafe {} }")]);
+        let violations = crate::steps::unsafe_now(&measured, &actual.unsafe_paths);
+        assert_eq!(violations.0.values().copied().sum::<u64>(), 1, "{module}");
     }
 }

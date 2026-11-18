@@ -73,6 +73,49 @@ and reference-slot coverage into separate tests and extract the row-inventory se
 line and complexity limits without changing assertions. Run clippy, UI tests in debug and
 test-release, and the fast gate.
 
+M15 consolidation (#191): the assigned brief authorizes consolidating the completed transport IO layers.
+Reserve `ui/src/netio/`, `ui/src/netport.rs`, `ui/src/netport/`, `ui/src/system/intake.rs`,
+`ui/src/system/intake/`, `ui/src/system/wake.rs`, `ui/src/main.rs`, synchronous port import sites,
+`ui/Cargo.toml`, `Cargo.lock`, `xtask/data/architecture.txt`,
+`docs/fork/deps.md`, `docs/architecture/README.md`, and affected generated ratchets.
+Measure components and aarch64 release size first. Consolidate synchronous port implementation under netio,
+replace equivalent admission and reply mechanisms with tokio primitives, share service and TCP session lifecycle,
+and preserve existing framing, cancellation, reservation, FIFO and deadline fixtures unchanged.
+Delete superseded helpers, then run fast checks, UI tests in both profiles and matching ARM size measurements.
+
+PR #192 fast-check fix: reserve `fuzz/Cargo.lock` and this task file. Regenerate the fuzz workspace's
+lockfile for the UI dependency change, preserving existing package versions, then rerun locked metadata,
+fast checks and UI tests.
+
+PR #192 quality-review fix: remove the cyclic port shim and update imports, preserve frame-wake ownership,
+restore policy-gated acceptance, expose mDNS startup errors and flatten its shutdown selection. Name admission
+capacity explicitly, use semaphore occupancy helpers in tests and drop the unused session result.
+Reuse the consolidation claim, add deterministic regressions and run fast checks plus UI tests in both profiles.
+
+PR #192 cross-vendor review fixes: keep established sessions alive when the listener policy is withdrawn;
+add a deterministic exchange regression, name HTTP reply state and notification fields, and rearm cloned
+ACL watches. Move mDNS-only support into its tests, clarify task completion and bound-value names, and retry
+available-budget reservations after competing acquisitions. Retain the system wake syscall because the
+unsafe-confinement rule excludes netio; document that reason at the call. Use the existing reserved paths,
+then run the fast gate and UI tests in debug and test-release.
+
+PR #192 Clippy-check fix: use the existing consolidation claim to remove unused upload-job and admission
+scaffolding. Retarget the overload/cancellation test to HTTP's live large-body admission method, preserving
+request limits and runtime behaviour. Run exact host/ARM Clippy, fast checks and UI tests in both profiles.
+
+PR #192 final review: retry logged TCP accept errors after a cancellable backoff, name the large-body
+slot and bound endpoints, use named reply routes and one runtime-owned port close. The assigned brief
+permits moving the poll syscall into the wake port with a narrow unsafe-confinement rule; remove the
+system helper and its layer exception. Compare signed uploads with main and pin worker admission and
+verification with a host regression. Reuse the consolidation claim, including `ui/src/system.rs` and
+`xtask/src/arch/netio_tests.rs`; run fast checks and both touched crates' tests.
+
+PR #192 unsafe-boundary review fix: reserve `hal/src/system.rs`, `hal/src/system/tests.rs`,
+`ui/src/netio/port/wake.rs`, `xtask/data/architecture.txt`, `xtask/src/arch/netio_tests.rs` and this task file.
+Keep the existing poll semantics behind a safe borrowed-descriptor wrapper in HAL's OS-call module,
+remove the wake-port unsafe allowance and add a regression against the actual unsafe rules.
+Run fast checks and HAL, UI and xtask tests in debug and test-release. No hardware access or behaviour change.
+
 ## Measurements
 
 Owner-reported results, 2026-11-18, for PR #145's measurement section. Unit results are verified on the DHO804;
@@ -92,6 +135,54 @@ host size measurements are after the gate fix. These are supplied results, not a
 The owner accepts M15a for the behaviour gain. The IO runtime decision of 2026-11-18 chose tokio for all
 network IO and retires the deferred size gate and `poll(2)` fallback. Each transport still reports and
 minimises its production LOC and aarch64 binary size delta.
+
+### M15 consolidation (#191), host only
+
+Measured against the assigned parent `7b667b4a`, using the unchanged xtask production counter.
+The whole checkout has intervening work beyond the earlier M15-only replay, so these totals use the
+assigned parent rather than the pre-M15a ledger. UI production LOC: 72,961 to 72,954 (-7).
+Total production LOC: 109,503 to 109,496 (-7). The table accounts for -6; shorter input-port wiring accounts for -1.
+Moves retain tests and protocol parsers. Net6 has no remaining obsolete TCP/accept/send helpers to delete.
+
+Both default-feature builds use the pinned toolchain, `--locked --release --target aarch64-unknown-linux-musl`
+and the unchanged release profile/CPU flags. Complete ELF bytes: 7,346,504 to 7,378,312
+(+31,808, +0.43%). The consolidation reduces source only slightly and does not reduce the complete ELF.
+Per-component bytes below are text symbols from `llvm-nm --print-size --demangle`, attributed to the first
+named network component and deduplicated by address/size. Fat LTO moves/inlines code and leaves shared code
+outside these groups, so these are attribution diagnostics, not independently linked component sizes.
+
+| Component | Production LOC before | After | Text-symbol bytes before | After |
+|---|---:|---:|---:|---:|
+| `netio/mod.rs` | 74 | 65 | 8,524 | 3,068 |
+| `netio/endpoint.rs` | 46 | 46 | 780 | 780 |
+| `netio/executor.rs` | 32 | 83 | 10,408 | 37,092 |
+| `netio/listener.rs` | 0 | 32 | 0 | 1,204 |
+| `netio/runtime.rs` | 132 | 127 | 29,444 | 39,176 |
+| `netio/session.rs` | 204 | 204 | 16,140 | 3,772 |
+| `netio/output.rs + timer.rs` | 75 | 75 | 2,484 | 2,484 |
+| `netio/rpc.rs` | 67 | 67 | 1,844 | 1,840 |
+| `netio/http*` | 313 | 272 | 33,988 | 26,608 |
+| `netio/mdns*` | 491 | 487 | 26,828 | 24,452 |
+| `netio/port/*` | 0 | 951 | 0 | 33,812 |
+| `netport*` | 1,026 | 167 | 27,604 | 4,780 |
+| `M15a-0 intake + system wake` | 128 | 6 | 4,592 | 0 |
+| `raw SCPI intake` | 103 | 103 | 184 | 184 |
+| `VXI-11 adapter` | 235 | 235 | 6,688 | 7,284 |
+| `HiSLIP adapter` | 291 | 291 | 6,732 | 7,048 |
+| `HTTP/MCP adapter` | 696 | 696 | 39,472 | 41,628 |
+| `mDNS responder` | 998 | 998 | 51,928 | 51,680 |
+| `net6` | 82 | 82 | 612 | 612 |
+
+The shared port, synchronous wake and protocol/latency policy now live under `netio/port/`, with the existing platform poll syscall in `system/wake.rs`. HTTP and instrument TCP accept/admission,
+connection cleanup and cancellation share one skeleton. Services share startup/shutdown acknowledgement and
+an executor-rooted CancellationToken tree. Semaphores own reserved reply bytes and large-body/output permits;
+HTTP output uses bounded mpsc and Notify. The request FIFO retains selective cancellation under its mutex,
+and original protocol framers retain their tested read-ahead/clear behavior. Timed output retains its injected
+clock fixtures and tokio sleep deadlines at 2 seconds without progress and 30 seconds total.
+
+`tokio-util` adds seven locked packages. Offline cargo-deny passes advisories, bans, licenses and sources with
+the existing wildcard and duplicate-version warnings. No hardware was accessed. Independent review and the
+coordinator's full integration gate remain required; these size results make no hardware performance claim.
 
 ### M15b closure measurements, host only
 
@@ -132,6 +223,125 @@ closed, and disconnect releases a slot for re-admission. Injected-time fixtures 
 reply, snapshot and upload admission. The explicit loopback multicast responder test passes.
 
 ## Status
+
+- 2026-11-18: PR #192 unsafe-boundary review fixes: removed the wake-port unsafe allowance and moved
+  its poll syscall behind `oos_hal::system::wait_readable`, taking a borrowed descriptor. Wake notification,
+  timeout, interruption and readiness semantics are unchanged. A HAL datagram test covers readiness and
+  consumption; the architecture regression fails before the allowance removal (exit 101) and passes after.
+  Fast printed `partial gate passed (not done): 12 steps in 15 s` (exit 0); no ratchet reductions.
+  `cargo test --locked -p oos-hal -p oos-ui -p xtask` passed (exit 0). The same command with
+  `--profile test-release` failed (exit 101) in the unchanged
+  `warmed_ui_observer_allocation_census`: finish-capture measured one allocation and stage measured two.
+  The exact failed test passed in isolation with all six allocation counters zero (exit 0).
+  All other HAL/UI release tests passed; the separately run
+  `cargo test --locked -p xtask --profile test-release` passed (exit 0). The allocation-census failure
+  remains open for coordinator investigation. Production LOC: +6 overall (+8 HAL, -2 UI), tooling unchanged.
+  Logs remain under `target/pr192-unsafe-*.log`. Host only; no hardware access.
+  Fetch was blocked by shared Git metadata permissions; synchronization, renewed cross-vendor review
+  and the full integration gate remain with the coordinator.
+
+- 2026-11-18: PR #192 final review fixes: TCP accept errors are logged and retried after a cancellable
+  backoff; an injected EMFILE/ENFILE/ECONNABORTED regression proves later connections are admitted.
+  Large-body slot/permit and bound endpoint fields have descriptive names; reply routing uses its alias.
+  The runtime alone closes instrument ports. The wake port owns its poll syscall under the brief's narrow
+  unsafe-confinement exception; the system helper and layer exception are removed. The architecture
+  fixture now rejects that dependency from the wake port too. Relative port paths replace repeated crate paths.
+  Confirmed POST `/update` retains single-large-body admission, signed-header verification, the image
+  verification/storage worker and install handling exactly as on main, apart from names and formatting.
+  No signed-upload implementation was removed or needed restoration. A signed large-request regression
+  pins admission, bounded intake, worker verification and permit release. Fast printed
+  `partial gate passed (not done): 12 steps in 59 s` (exit 0); host/ARM Clippy printed
+  `partial gate passed (not done): 1 steps in 213 s` (exit 0). No ratchet reductions were reported.
+  `cargo test --locked -p oos-ui` and its `--profile test-release` variant passed 1,668/1,667 tests,
+  with the existing 59 ignores per profile (both exit 0). The corresponding xtask commands passed
+  243 tests per profile (both exit 0). Production LOC relative to the reviewed commit: +7, all in UI.
+  Logs and LOC evidence remain under `target/pr192-final-review/`. Host only; no hardware access.
+  Build-only network and the runner's Git-write ownership leave synchronization, renewed cross-vendor
+  review and the full integration gate with the coordinator.
+
+- 2026-11-18: PR #192 Clippy failure reproduced: `gate FAILED in 37 s: clippy` (exit 1), reporting
+  four new dead-code findings in the shared port. Removed the unused upload-job identity and admission
+  method; the overload/cancellation test now exercises HTTP's live large-body admission path. HTTP request
+  limits and runtime behaviour are unchanged. Exact host/ARM Clippy printed
+  `partial gate passed (not done): 1 steps in 132 s` (exit 0); fast printed
+  `partial gate passed (not done): 12 steps in 28 s` (exit 0). No ratchet reductions were reported.
+  `cargo test --locked -p oos-ui` and the same command with `--profile test-release` passed
+  1,666/1,665 tests with 59 existing ignores per profile (both exit 0). Production LOC: -14, all in UI.
+  Host only. Fetch could not write the shared Git metadata; cached remote and HEAD matched.
+  Remote synchronization, independent review and final CI remain with the coordinator.
+
+- 2026-11-18: PR #192 cross-vendor review fixes: established sessions survive policy withdrawal, with a
+  deterministic regression that failed on the reviewed code and now completes a request/reply exchange.
+  HTTP reply handles have named state/notification fields and an early-return intake check; new tests cover
+  intake, closure and remaining-budget reservations. Cloned ACL watches mark their current versions seen;
+  available-budget reservations retry competing acquisitions. mDNS calls discovery directly from its tests;
+  task completion and bound-value names now state their purpose. The system wake helper remains because
+  unsafe confinement excludes netio; the call documents that requirement. Initial fast printed
+  `gate FAILED in 16 s: test-time`; the test now uses the existing timeout hang guard instead of sleep.
+  Corrected fast printed `partial gate passed (not done): 12 steps in 17 s` (exit 0); no ratchet reductions.
+  `cargo test --locked -p oos-ui` and the same command with `--profile test-release` passed
+  1,666/1,665 tests with 59 existing ignores per profile (both exit 0). Production LOC: +20, all in UI.
+  Complete logs remain under `target/pr192-cross-vendor/`. Host only. Local cached branch ref matches;
+  build-only network leaves remote synchronization, renewed review and the full gate to the coordinator.
+
+- 2026-11-18: PR #192 quality-review fix: moved the remaining synchronous helpers into the owned port,
+  deleted the cyclic shim and updated import sites. IO reply routing leaves frame-wake draining to its owner;
+  policy withdrawal gates both TCP listeners. mDNS reports startup errors and shares graceful shutdown across
+  flat cancellation/control arms. Admission uses named capacity; HTTP tests inspect semaphore occupancy;
+  sessions return unit. Deterministic regressions cover policy withdrawal/re-enabling, frame notifications
+  and executor cancellation. Focused network tests passed 49; xtask tests passed 243. Complete UI debug and
+  test-release suites passed 1,663/1,662 tests with 59 existing ignores per profile (exit 0).
+  Initial fast checks printed `gate FAILED in 9 s: size, architecture`; narrow rules preserve the moved helpers'
+  existing dependencies. Generated ratchets retain only the main-file size reduction, 438 to 437.
+  Final fast printed `partial gate passed (not done): 12 steps in 15 s` (exit 0).
+  Production LOC relative to the assigned commit: +19, all in UI. Logs remain under `target/pr192-quality/`.
+  Host only; synchronization, cross-vendor review and the full integration gate remain with the coordinator.
+
+- 2026-11-18: PR #192 fast-check fix: generated `fuzz/Cargo.lock` now includes `tokio-util`
+  and its six transitive dependencies, preserving every existing package version. Locked fuzz
+  metadata and all eight fuzz-target checks passed using a temporary writable Cargo cache.
+  Host shellcheck passed all 39 scripts. Fast printed
+  `partial gate passed (not done): 12 steps in 15 s` (exit 0).
+  `cargo test --locked -p oos-ui` and the same command with `--profile test-release`
+  passed 1,660/1,659 tests, with 59 existing ignores per profile (both exit 0).
+  Logs remain in `target/pr192-*.log` and `target/check-logs/`; temporary dependency-cache
+  copies were removed. Production LOC delta: zero. Host only; synchronization, review and CI
+  remain with the coordinator.
+
+- 2026-11-18: PR #192 fast-check failure reproduced: the fast gate passed, but the following
+  locked fuzz metadata command exited 101 because `fuzz/Cargo.lock` lacks the new UI dependency.
+  Regenerate only that lockfile; preserve application behaviour. Fetch was blocked by sandbox
+  permissions, so synchronization remains with the coordinator.
+
+- 2026-11-18: #191 final verification: fast printed
+  `partial gate passed (not done): 12 steps in 5 s`; explicit host/ARM Clippy printed
+  `partial gate passed (not done): 1 steps in 80 s`. Final debug/test-release UI suites passed
+  1,641/1,640 tests with the existing 59 explicit ignores per profile. Offline dependency checks and
+  static-ELF validation passed; ARM symbol attribution is unchanged after the final release rebuild.
+  Independent cross-vendor review and the full integration gate remain with the coordinator.
+
+
+- 2026-11-18: #191 implementation: shared TCP admission and joined cleanup, common service lifetime,
+  executor cancellation tree, semaphore reservations/admission and bounded HTTP replies are implemented.
+  Existing transport, stalled-output, FIFO/credit/parking, limit and cancellation tests retain their assertions.
+  Added an event-driven cancellation-during-admission/joined-cleanup fixture. Debug UI suites passed
+  1,641 tests; test-release suites passed 1,640, with the existing 59 explicit ignores in each profile.
+  Ratchet generation passes, including host/ARM Clippy measurement; only the changed HTTP sender static
+  reduction is retained. Earlier fast runs printed `gate FAILED in 9 s: size, architecture, mutable-statics`,
+  `gate FAILED in 5 s: architecture, mutable-statics, test-time`,
+  `gate FAILED in 5 s: mutable-statics, unsafe`, and `gate FAILED in 5 s: mutable-statics`.
+  Fast printed `partial gate passed (not done): 12 steps in 6 s`; both measured ARM ELFs pass
+  `cargo xtask elf-static`. The focused network suite exposed an mpsc receiver-close wake regression; dropping its sender before
+  draining preserves cancellation and the unchanged regression now passes. Logs and before/after
+  LOC, ARM binaries and symbol attribution are retained under `target/m15-consolidation/`.
+  An explicit Clippy step printed `gate FAILED in 31 s: clippy` for test support placed after a test
+  module; moving that support before the test module fixes the finding without changing assertions.
+
+
+- 2026-11-18: #191 consolidation plan accepted through the assigned brief on
+  `refactor/191-m15-consolidation`, base `7b667b4a`. Tokio remains the network runtime.
+  Coordinator owns independent review, full integration gate and publication. Host only; no hardware access.
+
 
 - 2026-11-18: PR #173 follow-up check fix: extracted simulation fixture setup and
   separated decorated-choice and reference-slot assertions into independent tests.

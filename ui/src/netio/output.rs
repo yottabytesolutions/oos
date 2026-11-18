@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Send deadlines use IO time; deterministic fixtures supply their own clock and timer futures.
+use super::port::{hislip, Reply};
 use super::timer::SendTimer;
-use crate::netport::{hislip, Reply};
 use std::{future::Future, io, time::Duration};
 use tokio::io::AsyncWrite;
 

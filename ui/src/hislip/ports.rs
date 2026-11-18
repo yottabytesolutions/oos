@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Frame-owned sessions and continuations behind the shared network port.
 use super::*;
-use crate::netport::{Envelope, Ports, RemoteRequest, Reservation, Wake};
+use crate::netio::port::{Envelope, Ports, RemoteRequest, Reservation, Wake};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -23,7 +23,7 @@ pub struct Server {
     live: Vec<Live>,
     next: u16,
     pub acl: crate::netacl::Shared,
-    parked: Option<crate::netport::Reply>,
+    parked: Option<crate::netio::port::Reply>,
 }
 impl Server {
     #[cfg(test)]
@@ -159,8 +159,8 @@ impl Server {
     }
 }
 
-fn reply(request: Envelope, reservation: Reservation, out: Out) -> crate::netport::Reply {
-    let mut reply = crate::netport::Reply::from_output(request.id(), out.output, reservation);
+fn reply(request: Envelope, reservation: Reservation, out: Out) -> crate::netio::port::Reply {
+    let mut reply = crate::netio::port::Reply::from_output(request.id(), out.output, reservation);
     reply.set_close(out.close);
     reply
 }

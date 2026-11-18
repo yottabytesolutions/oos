@@ -34,7 +34,7 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 | `model.rs`, `model/` | core model exports, platform/capability bridge, protocol bindings and colours |
 | `scpi.rs`, `scpi/`, `cmd.rs` | shared SCPI interpreter and program continuations; script/FIFO command syntax |
 | `http.rs`, `http/`, `vxi11.rs`, `hislip.rs`, `mdns.rs` | web/MCP, instrument transports and discovery |
-| `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11/HiSLIP/HTTP/mDNS runtime, socket framing/output and owned bounded application ports |
+| `netio/`, `netio/port/` | shared transport lifecycle, socket framing/output and one owned bounded application port; synchronous wake and transport policy |
 | `remote.rs` | telnet/firewall helper |
 | `store.rs`, `store/`, `sysconf.rs` | setup codec, waveform/image files, durable startup state, system settings |
 | `board/`, `board/dho/` | Board port, Shared exchange, hardware configuration/readout and publication |
@@ -131,7 +131,9 @@ Static pages stay on IO; owned requests and socket-free reply handles cross boun
 shared timed output and reservations. Live-picture encoding stays on its CPU worker. Signed upload bytes remain
 on a separate worker; only its bounded header and job handle cross frame intake before verification is started.
 MCP uses the same interpreter. The FIFO enters through `cmd`.
-mDNS has its own control channel, wake descriptor, socket thread and timers.
+Services share startup/shutdown acknowledgement and one executor cancellation tree. TCP transports share admission and
+joined session cleanup. The port owns FIFO intake, reply reservations and bounded per-connection output; IO reply
+notification uses tokio rather than another socket pair. mDNS retains its configuration channel and graceful goodbyes.
 
 `Worker<J, R>` shares bounded capacity-one job/result channels and nonblocking submit/poll across
 simulation, reference analysis/decode/search, math, bus, eye and measurement-catalog jobs.
@@ -613,9 +615,9 @@ M12 unit acceptance is still open; see [migration](migration.md).
 Cargo enforces crate dependencies. `xtask/data/architecture.txt` confines HAL access to `board/dho`
 and sets core module layers. Broad target UI layers are not yet installed. M15a confines tokio to `netio`.
 M15a puts IO in top-level `ui/src/netio/` and adds `confine ui tokio -> netio` plus a `layer ui netio`
-allowlist for `netport` owned values, the socket-free `mdns` responder and existing `net6`/`netacl` helpers,
-excluding `ui`, settings and interpreter modules. The checker works on
-top-level modules; nesting IO under `remote` would not enforce this separation. Frame-side code receives a
+allowlist for the socket-free `mdns` responder and existing `net6`/`netacl` helpers. The owned port lives inside
+netio; its helpers have narrow rules for platform polling, injected timing and the existing waveform size limit.
+The rules exclude `ui`, settings and interpreter modules. The checker supports nested modules; nesting IO under `remote` would not enforce this separation. Frame-side code receives a
 synchronous port; only netio constructs/polls the runtime. Current `remote.rs` remains the telnet/firewall helper. IPv6 ACL prefix-file reads use a single bounded
 blocking worker; they do not run on the IO executor. `std::net` is confined to netio and the explicit synchronous
 exceptions in ADR 0023 (SNTP, the Bode generator worker and GPU Unix-socket shutdown). Pure address values use `core::net`.

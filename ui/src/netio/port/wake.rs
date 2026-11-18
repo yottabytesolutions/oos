@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Nonblocking, coalescing notification polled beside network sockets or input.
 use std::io;
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, RawFd};
 use std::os::unix::net::UnixDatagram;
 
 pub struct Wake {
@@ -19,15 +19,7 @@ impl Wake {
 
     pub fn notify(&self) {
         // A full socket already signals pending work; the caller owns the messages.
-        while let Err(e) = self.sender.send(&[1]) {
-            if e.kind() != io::ErrorKind::Interrupted {
-                break;
-            }
-        }
-    }
-
-    pub fn receiver(&self) -> io::Result<UnixDatagram> {
-        self.receiver.try_clone()
+        while self.sender.send(&[1]).is_err_and(|e| e.kind() == io::ErrorKind::Interrupted) {}
     }
 
     pub fn fd(&self) -> RawFd {
@@ -45,10 +37,7 @@ impl Wake {
     }
 
     pub fn wait(&self, timeout_ms: i32) -> bool {
-        let mut fd = libc::pollfd { fd: self.fd(), events: libc::POLLIN, revents: 0 };
-        // SAFETY: fd is initialized and the owned socket stays open for the call.
-        let ready = unsafe { libc::poll(&mut fd, 1, timeout_ms) };
-        ready > 0 && fd.revents & libc::POLLIN != 0
+        oos_hal::system::wait_readable(self.receiver.as_fd(), timeout_ms)
     }
 }
 

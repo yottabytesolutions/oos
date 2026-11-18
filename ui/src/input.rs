@@ -188,7 +188,7 @@ impl Inputs {
     }
 
     /// Waits up to `timeout_ms` for input and returns everything that arrived.
-    pub fn poll(&mut self, timeout_ms: i32, wake: &crate::system::intake::Wake) -> Vec<In> {
+    pub fn poll(&mut self, timeout_ms: i32, wake: &crate::netio::port::Wake) -> Vec<In> {
         let mut fds = vec![libc::pollfd { fd: wake.fd(), events: libc::POLLIN, revents: 0 }];
         if let Some(t) = &self.touch {
             fds.push(libc::pollfd { fd: t.fd, events: libc::POLLIN, revents: 0 });
@@ -322,7 +322,7 @@ impl Inputs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::intake::{Id, Port, Wake};
+    use crate::netio::port::{Id, Port, Wake};
     use crate::ui::lifecycle::test_wait::HANG_GUARD;
     use std::sync::{mpsc, Arc};
 

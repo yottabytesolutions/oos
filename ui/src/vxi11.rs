@@ -8,7 +8,7 @@
 //! The frame thread owns links and SCPI programs; netio owns sockets and timed output.
 //! Unauthenticated like SCPI and the web remote: bench LAN only.
 
-pub(crate) use crate::netport::rpc::*;
+pub(crate) use crate::netio::port::rpc::*;
 
 /// One VXI-11 link's output (responses waiting for device_read).
 #[derive(Default)]
@@ -148,8 +148,9 @@ mod tests {
             io::{Read, Write},
             sync::Arc,
         };
-        let mut s = Server::host(crate::netio::Runtime::new().unwrap(), Arc::new(crate::netport::Wake::new().unwrap()))
-            .unwrap();
+        let mut s =
+            Server::host(crate::netio::Runtime::new().unwrap(), Arc::new(crate::netio::port::Wake::new().unwrap()))
+                .unwrap();
         s.poll_async(&mut |_| panic!("portmapper does not interpret SCPI"));
         let (tcp, udp, core) = s.ports().unwrap();
         let client = std::thread::spawn(move || {

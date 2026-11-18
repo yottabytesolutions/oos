@@ -158,7 +158,7 @@ impl Ui {
     /// nothing kept. Err: refused, nothing kept.
     pub(crate) fn update_upload_job(
         &mut self,
-        job: Option<crate::netport::http::Upload>,
+        job: Option<crate::netio::port::http::Upload>,
         query: &str,
     ) -> (bool, &'static str, Vec<u8>) {
         let result = upload::any_model(query)
@@ -166,7 +166,11 @@ impl Ui {
         upload::reply(result)
     }
 
-    fn update_upload(&mut self, body: crate::netport::http::Upload, any_model: bool) -> Result<upload::Reply, String> {
+    fn update_upload(
+        &mut self,
+        body: crate::netio::port::http::Upload,
+        any_model: bool,
+    ) -> Result<upload::Reply, String> {
         if self.update_busy() {
             return Err("an update job is running".into());
         }
@@ -327,7 +331,8 @@ mod tests {
         u.upd.trusted_keys = Some(vec![update::ed25519::public_key(&seed)]);
         let body = pkg::build_with(&seed, "20261115-120000", "k", b"image", &[("models", "other-unit")]).unwrap();
         u.upd.running_model = Some(Ok("fake-unit".into()));
-        let (refused, kind, reply) = u.update_upload_job(Some(crate::netport::http::Upload::new(body).unwrap()), "");
+        let (refused, kind, reply) =
+            u.update_upload_job(Some(crate::netio::port::http::Upload::new(body).unwrap()), "");
         assert!(refused);
         assert_eq!(kind, "application/json");
         let reply = String::from_utf8(reply).unwrap();
@@ -350,7 +355,7 @@ mod tests {
         u.upd.trusted_keys = Some(vec![update::ed25519::public_key(&seed)]);
         let body = pkg::build(&seed, "b", "k", b"image").unwrap();
         let (refused, kind, reply) =
-            u.update_upload_job(Some(crate::netport::http::Upload::new(body).unwrap()), "any-model=1");
+            u.update_upload_job(Some(crate::netio::port::http::Upload::new(body).unwrap()), "any-model=1");
         assert!(refused);
         assert_eq!(kind, "text/plain");
         assert!(String::from_utf8(reply).unwrap().contains("identity read failed"));
@@ -362,7 +367,7 @@ mod tests {
         let mut u = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         let e = u
             .update_upload(
-                crate::netport::http::Upload::new(b"OOS-UPDATE 1\ntarget dho900-recovery\n\nxx".to_vec()).unwrap(),
+                crate::netio::port::http::Upload::new(b"OOS-UPDATE 1\ntarget dho900-recovery\n\nxx".to_vec()).unwrap(),
                 false,
             )
             .unwrap_err();

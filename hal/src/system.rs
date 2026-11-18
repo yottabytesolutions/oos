@@ -5,7 +5,19 @@ mod cores;
 pub use cores::{capacities, cpus, Cores};
 
 use std::io;
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::Path;
+
+/// Waits for readable input; a negative timeout waits indefinitely.
+/// Returns false on timeout, interruption or an error.
+#[cfg(unix)]
+pub fn wait_readable(fd: BorrowedFd<'_>, timeout_ms: i32) -> bool {
+    let mut fd = libc::pollfd { fd: fd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    // SAFETY: poll receives one initialized pollfd and does not retain its pointer.
+    let ready = unsafe { libc::poll(&mut fd, 1, timeout_ms) };
+    ready > 0 && fd.revents & libc::POLLIN != 0
+}
 
 /// Pins the calling thread and its future children to `cores`.
 /// An empty set, or a platform other than Linux, leaves affinity unchanged.

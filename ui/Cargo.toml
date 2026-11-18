@@ -57,3 +57,4 @@ oos-hal = { path = "../hal" }
 oos-dsp = { path = "../dsp" }
 oos-core = { path = "../core" }
 tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "io-util", "macros"] }
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }

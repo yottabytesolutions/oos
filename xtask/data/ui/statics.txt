@@ -7,6 +7,5 @@
 1 static ui/src/drawpipe/feed.rs Pipe::feed_batch::IDS
 1 static ui/src/input.rs STOP
 1 static ui/src/mdns.rs STATUS
-1 static ui/src/netport/http.rs SENDERS
 1 static ui/src/pacing.rs state::S
 1 static ui/src/ui/remote.rs ALLOW_RUN

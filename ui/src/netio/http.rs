@@ -1,24 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! HTTP sockets share the instrument IO executor and bounded application admission.
 mod input;
+use super::port::{http::*, RemoteRequest};
 use super::{runtime, Runtime};
-use crate::netport::{http::*, RemoteRequest};
 use std::{
     io,
     net::SocketAddr,
     sync::{atomic::Ordering, Arc, Mutex},
 };
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::oneshot,
-    task::JoinSet,
-};
+use tokio::net::TcpStream;
 
-pub(crate) struct Service {
-    addr: SocketAddr,
-    stop: Option<oneshot::Sender<()>>,
-    stopped: std::sync::mpsc::Receiver<()>,
-}
+pub(crate) struct Service(super::executor::Task<SocketAddr>);
 impl Service {
     pub(crate) fn start(
         port: crate::net6::Port,
@@ -28,73 +20,41 @@ impl Service {
         acl: Arc<Mutex<crate::netacl::Shared>>,
         limits: Limits,
     ) -> io::Result<Self> {
-        let (ready, started) = std::sync::mpsc::sync_channel(1);
-        let (finished, stopped) = std::sync::mpsc::sync_channel(1);
-        let (stop, mut stopping) = oneshot::channel();
-        runtime.spawn(async move {
-            match runtime::listen(port, v6) {
-                Ok(listener) => match listener.local_addr() {
-                    Ok(addr) => {
-                        let _ = ready.send(Ok(addr));
-                        serve(listener, inbox, acl, limits, &mut stopping).await;
-                    }
-                    Err(e) => {
-                        let _ = ready.send(Err(e));
-                    }
-                },
-                Err(e) => {
-                    let _ = ready.send(Err(e));
-                }
-            }
-            let _ = finished.send(());
-        });
-        let addr = started.recv().map_err(io::Error::other)??;
-        Ok(Self { addr, stop: Some(stop), stopped })
+        runtime
+            .start(move |stop| {
+                let listener = runtime::listen(port, v6)?;
+                Ok((listener.local_addr()?, async move {
+                    super::listener::serve(
+                        MAX_SESSIONS,
+                        stop,
+                        || listener.accept(),
+                        |(mut socket, peer), capacity| {
+                            let (inbox, acl) = (inbox.clone(), acl.clone());
+                            async move {
+                                if matches!(capacity, super::listener::Capacity::Full)
+                                    || inbox.active.load(Ordering::SeqCst) >= MAX_PENDING
+                                {
+                                    let _ =
+                                        input::answer(&mut socket, "503 Service Unavailable", "busy, try again").await;
+                                    return None;
+                                }
+                                inbox.active.fetch_add(1, Ordering::SeqCst);
+                                let active = Active(inbox.clone());
+                                Some(async move {
+                                    let _ = socket.set_nodelay(true);
+                                    let _ = conversation(&mut socket, peer, inbox, acl, limits, active).await;
+                                })
+                            }
+                        },
+                    )
+                    .await;
+                }))
+            })
+            .map(Self)
     }
     pub(crate) fn addr(&self) -> SocketAddr {
-        self.addr
+        self.0.local
     }
-}
-impl Drop for Service {
-    fn drop(&mut self) {
-        self.stop.take();
-        let _ = self.stopped.recv();
-    }
-}
-
-async fn serve(
-    listener: TcpListener,
-    inbox: Arc<Inbox>,
-    acl: Arc<Mutex<crate::netacl::Shared>>,
-    limits: Limits,
-    stopping: &mut oneshot::Receiver<()>,
-) {
-    let mut clients = JoinSet::new();
-    loop {
-        tokio::select! {
-            _ = &mut *stopping => break,
-            event = listener.accept() => {
-                let Ok((mut socket, peer)) = event else { break };
-                if inbox.active.load(Ordering::SeqCst) >= MAX_PENDING || clients.len() >= MAX_SESSIONS {
-                    tokio::select! {
-                        _ = &mut *stopping => break,
-                        _ = input::answer(&mut socket, "503 Service Unavailable", "busy, try again") => {},
-                    }
-                    continue;
-                }
-                inbox.active.fetch_add(1, Ordering::SeqCst);
-                let (inbox, acl) = (inbox.clone(), acl.clone());
-                let active = Active(inbox.clone());
-                clients.spawn(async move {
-                    let _ = socket.set_nodelay(true);
-                    let _ = conversation(&mut socket, peer, inbox, acl, limits, active).await;
-                });
-            }
-            Some(_) = clients.join_next(), if !clients.is_empty() => {}
-        }
-    }
-    clients.abort_all();
-    while clients.join_next().await.is_some() {}
 }
 
 struct Active(Arc<Inbox>);

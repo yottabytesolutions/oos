@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Synchronous owned request/reply queues. Rejected values remain owned by the sender.
-pub use super::wake::Wake;
+pub use super::Wake;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -29,6 +29,7 @@ pub struct Port<T> {
     wake: Arc<Wake>,
     entries: usize,
     bytes: usize,
+    ready: tokio::sync::Notify,
 }
 
 struct State<T> {
@@ -39,7 +40,13 @@ struct State<T> {
 
 impl<T> Port<T> {
     pub fn new(entries: usize, bytes: usize, wake: Arc<Wake>) -> Self {
-        Self { state: Mutex::new(State { queue: VecDeque::new(), bytes: 0, closed: false }), wake, entries, bytes }
+        Self {
+            state: Mutex::new(State { queue: VecDeque::new(), bytes: 0, closed: false }),
+            wake,
+            entries,
+            bytes,
+            ready: Default::default(),
+        }
     }
 
     /// Charge retained allocation capacity, rather than just the payload length.
@@ -51,6 +58,7 @@ impl<T> Port<T> {
         state.bytes += bytes;
         state.queue.push_back((id, value, bytes));
         self.wake.notify();
+        self.ready.notify_one();
         Ok(())
     }
 
@@ -58,12 +66,14 @@ impl<T> Port<T> {
     /// Removing replies also wakes the frame owner to retry its parked, owned reply.
     pub fn take(&self, quota: usize) -> Vec<T> {
         let mut state = oos_hal::sync::lock(&self.state);
-        let mut out = Vec::new();
-        for _ in 0..quota {
-            let Some((_, value, bytes)) = state.queue.pop_front() else { break };
-            state.bytes -= bytes;
-            out.push(value);
-        }
+        let State { queue, bytes, .. } = &mut *state;
+        let out: Vec<T> = queue
+            .drain(..quota.min(queue.len()))
+            .map(|(_, value, capacity)| {
+                *bytes -= capacity;
+                value
+            })
+            .collect();
         if !state.queue.is_empty() || !out.is_empty() {
             self.wake.notify();
         }
@@ -76,7 +86,7 @@ impl<T> Port<T> {
         let bytes = state
             .queue
             .iter()
-            .position(|(queued, _, _)| queued.connection() == id.connection() && queued.request() == id.request())
+            .position(|(queued, _, _)| *queued == id)
             .and_then(|i| state.queue.remove(i))
             .map(|(_, _, bytes)| bytes);
         state.bytes -= bytes.unwrap_or(0);
@@ -98,6 +108,10 @@ impl<T> Port<T> {
 
     pub fn wake(&self) -> &Wake {
         &self.wake
+    }
+
+    pub(crate) async fn notified(&self) {
+        self.ready.notified().await;
     }
 
     pub fn is_empty(&self) -> bool {

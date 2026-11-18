@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+use super::super::port::{Budget, Id, Wake, RESPONSE_BYTES};
 use super::*;
-use crate::netport::{Budget, Id, Wake, RESPONSE_BYTES};
 use std::{
     cell::Cell,
     pin::Pin,
@@ -45,18 +45,20 @@ fn partial_writes_and_both_timeouts_release_owned_output() {
             let now = Rc::new(Cell::new(Duration::ZERO));
             let mut writer = Writer { bytes: Vec::new(), step, now: now.clone(), stalled };
             let bytes = vec![b'x'; 64];
-            let mut plain = crate::netport::Output::default();
+            let mut plain = super::super::port::Output::default();
             assert!(plain.push(bytes.clone()).is_ok());
             let output = match framing {
                 0 => plain,
-                1 => crate::netport::Output::rpc(bytes),
-                2 => crate::netport::Output::hislip(bytes, 77, 16),
-                3 => crate::netport::Output::http("HTTP/1.1 200 OK\r\n\r\n".into(), bytes.into()),
-                _ => crate::netport::Output::http("HTTP/1.1 200 OK\r\n\r\n".into(), Arc::<[u8]>::from(bytes).into()),
+                1 => super::super::port::Output::rpc(bytes),
+                2 => super::super::port::Output::hislip(bytes, 77, 16),
+                3 => super::super::port::Output::http("HTTP/1.1 200 OK\r\n\r\n".into(), bytes.into()),
+                _ => {
+                    super::super::port::Output::http("HTTP/1.1 200 OK\r\n\r\n".into(), Arc::<[u8]>::from(bytes).into())
+                }
             };
             let reply = Reply::from_output(Id::new(1, 1), output, budget.reserve(RESPONSE_BYTES).unwrap());
-            let request = crate::netport::Envelope::program(1, 1, "query?".into());
-            let ports = crate::netport::Ports::new(Arc::new(Wake::new().unwrap())).unwrap();
+            let request = super::super::port::Envelope::program(1, 1, "query?".into());
+            let ports = super::super::port::Ports::new(Arc::new(Wake::new().unwrap())).unwrap();
             let send = async {
                 let _credit = request.credit(ports);
                 send(
@@ -84,8 +86,8 @@ fn cancelling_a_stalled_write_releases_its_reservation() {
     let mut writer =
         Writer { bytes: Vec::new(), step: Duration::ZERO, now: Rc::new(Cell::new(Duration::ZERO)), stalled: true };
     for output in [
-        crate::netport::Output::hislip(vec![0; 4096], 77, 4096),
-        crate::netport::Output::http("HTTP/1.1 200 OK\r\n\r\n".into(), Arc::<[u8]>::from(vec![0; 4096]).into()),
+        super::super::port::Output::hislip(vec![0; 4096], 77, 4096),
+        super::super::port::Output::http("HTTP/1.1 200 OK\r\n\r\n".into(), Arc::<[u8]>::from(vec![0; 4096]).into()),
     ] {
         let reply = Reply::from_output(Id::new(1, 1), output, budget.reserve(RESPONSE_BYTES).unwrap());
         let mut output = Box::pin(send(&mut writer, reply, || Duration::ZERO, |_| std::future::pending()));
@@ -98,12 +100,12 @@ fn cancelling_a_stalled_write_releases_its_reservation() {
 
 #[test]
 fn stalled_writer_does_not_delay_a_healthy_connections_output() {
-    let ports = crate::netport::Ports::new(Arc::new(Wake::new().unwrap())).unwrap();
+    let ports = super::super::port::Ports::new(Arc::new(Wake::new().unwrap())).unwrap();
     let clock = Rc::new(Cell::new(Duration::ZERO));
     let mut stalled = Writer { bytes: Vec::new(), step: Duration::ZERO, now: clock.clone(), stalled: true };
     let held = Reply::from_output(
         Id::new(1, 1),
-        crate::netport::Output::hislip(vec![0; 4096], 77, 4096),
+        super::super::port::Output::hislip(vec![0; 4096], 77, 4096),
         ports.budget().reserve(RESPONSE_BYTES).unwrap(),
     );
     let mut output = Box::pin(send(&mut stalled, held, || clock.get(), |_| std::future::pending()));
@@ -113,7 +115,7 @@ fn stalled_writer_does_not_delay_a_healthy_connections_output() {
         Writer { bytes: Vec::new(), step: Duration::from_micros(100), now: clock.clone(), stalled: false };
     let reply = Reply::from_output(
         Id::new(2, 1),
-        crate::netport::Output::hislip(b"ready\n".to_vec(), 78, 4096),
+        super::super::port::Output::hislip(b"ready\n".to_vec(), 78, 4096),
         ports.budget().reserve(1024).unwrap(),
     );
     {
@@ -121,7 +123,7 @@ fn stalled_writer_does_not_delay_a_healthy_connections_output() {
         let mut send = std::pin::pin!(send);
         assert!(matches!(send.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
     }
-    assert_eq!(healthy.bytes, crate::netport::hislip::encode(7, 0, 78, b"ready\n"));
+    assert_eq!(healthy.bytes, super::super::port::hislip::encode(7, 0, 78, b"ready\n"));
     assert!(clock.get() <= Duration::from_millis(33));
     assert!(output.as_mut().poll(&mut cx).is_pending());
     drop(output);
@@ -136,7 +138,7 @@ fn hislip_partial_writes_preserve_fragment_headers_empty_replies_and_message_ids
         let mut writer = Writer { bytes: Vec::new(), step: Duration::ZERO, now, stalled: false };
         let reply = Reply::from_output(
             Id::new(1, 1),
-            crate::netport::Output::hislip(bytes.clone(), 42, 4096),
+            super::super::port::Output::hislip(bytes.clone(), 42, 4096),
             budget.reserve(RESPONSE_BYTES).unwrap(),
         );
         let work = send(&mut writer, reply, || Duration::ZERO, |_| std::future::pending());
@@ -147,7 +149,7 @@ fn hislip_partial_writes_preserve_fragment_headers_empty_replies_and_message_ids
         let count = bytes.len().div_ceil(4096).max(1);
         let mut received = Vec::new();
         for index in 0..count {
-            let message = crate::netport::hislip::take_message(&mut writer.bytes).unwrap().unwrap();
+            let message = super::super::port::hislip::take_message(&mut writer.bytes).unwrap().unwrap();
             assert_eq!((message.typ, message.control, message.param), (if index + 1 == count { 7 } else { 6 }, 0, 42));
             received.extend(message.data);
         }

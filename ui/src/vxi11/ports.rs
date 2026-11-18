@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Frame-owned RPC requests, link ownership, continuations and parked replies.
 use super::*;
-use crate::netport::{Envelope, Output, Ports, RemoteRequest, Reply, Wake};
+use crate::netio::port::{Envelope, Output, Ports, RemoteRequest, Reply, Wake};
 use std::sync::{atomic::Ordering, Arc};
 
 pub struct Server {
@@ -28,7 +28,7 @@ impl Server {
             false,
             server.endpoint.wake.clone(),
             server.endpoint.runtime()?,
-            crate::netio::Protocol::Rpc(crate::netport::rpc::Channel::Core),
+            crate::netio::Protocol::Rpc(crate::netio::port::rpc::Channel::Core),
         )?);
         Ok(server)
     }

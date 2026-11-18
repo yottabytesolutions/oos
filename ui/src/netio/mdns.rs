@@ -4,41 +4,38 @@ pub(crate) mod socket;
 use super::Runtime;
 use crate::mdns::{set_status, Config, Iface, Out, Responder, State, Status};
 pub(crate) use socket::{interfaces, ipv4_all};
-use std::{
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
 pub struct Mdns {
     runtime: Runtime,
     control: Option<watch::Sender<Config>>,
-    stopped: Option<mpsc::Receiver<()>>,
+    task: Option<super::executor::Task<()>>,
     only: Option<Vec<String>>,
 }
 impl Mdns {
     pub fn new(runtime: Runtime, only: Option<Vec<String>>) -> Self {
-        Self { runtime, control: None, stopped: None, only }
+        Self { runtime, control: None, task: None, only }
     }
     pub fn set(&mut self, cfg: Config) {
         if let Some(control) = &self.control {
             control.send_replace(cfg);
         } else if cfg.on {
             let (control, changed) = watch::channel(cfg);
-            let (finished, stopped) = mpsc::sync_channel(1);
             let only = self.only.clone();
-            self.runtime.spawn(async move {
-                run(changed, only).await;
-                let _ = finished.send(());
-            });
-            self.control = Some(control);
-            self.stopped = Some(stopped);
+            match self.runtime.start(move |stop| Ok(((), discover(changed, only, stop)))) {
+                Ok(task) => {
+                    self.task = Some(task);
+                    self.control = Some(control);
+                }
+                Err(error) => eprintln!("oos-ui: mDNS task: {error}"),
+            }
         }
     }
     pub fn shutdown(&mut self, deadline: Instant) {
         self.control.take();
-        if let Some(stopped) = self.stopped.take() {
-            let _ = stopped.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+        if let Some(mut task) = self.task.take() {
+            task.shutdown(deadline);
         }
     }
 }
@@ -109,14 +106,18 @@ impl Discovery {
     }
 }
 
-async fn run(mut changed: watch::Receiver<Config>, only: Option<Vec<String>>) {
+async fn discover(
+    mut changed: watch::Receiver<Config>,
+    only: Option<Vec<String>>,
+    stop: tokio_util::sync::CancellationToken,
+) {
     let start = tokio::time::Instant::now();
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64)
         ^ std::process::id() as u64;
     let mut discovery =
         Discovery { responder: Responder::new(seed), socket: None, ifaces: Vec::new(), refresh: f64::NEG_INFINITY };
     let mut buf = [0; 9000];
-    loop {
+    'discovery: loop {
         let cfg = changed.borrow_and_update().clone();
         discovery.configure(start.elapsed().as_secs_f64(), cfg);
         loop {
@@ -124,15 +125,11 @@ async fn run(mut changed: watch::Receiver<Config>, only: Option<Vec<String>>) {
             discovery.tick(now, only.as_deref());
             let wake = discovery.responder.next_wake().unwrap_or(now + 1.0).min(discovery.refresh);
             tokio::select! {
-                update = changed.changed() => {
-                    if update.is_err() {
-                        let out = discovery.responder.stop(start.elapsed().as_secs_f64());
-                        discovery.send(out);
-                        set_status(Status::default());
-                        return;
-                    }
+                result = changed.changed() => {
+                    if result.is_err() { break 'discovery; }
                     break;
                 }
+                _ = stop.cancelled() => break 'discovery,
                 packet = async {
                     if let Some(s) = &discovery.socket { s.recv(&mut buf).await }
                     else { std::future::pending().await }
@@ -146,6 +143,9 @@ async fn run(mut changed: watch::Receiver<Config>, only: Option<Vec<String>>) {
             }
         }
     }
+    let out = discovery.responder.stop(start.elapsed().as_secs_f64());
+    discovery.send(out);
+    set_status(Status::default());
 }
 
 #[cfg(test)]

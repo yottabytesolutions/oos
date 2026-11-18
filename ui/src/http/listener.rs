@@ -2,7 +2,7 @@
 //! Web service lifetime on the shared IO executor.
 use super::*;
 impl Http {
-    pub fn wake_handle(&self) -> Arc<crate::system::intake::Wake> {
+    pub fn wake_handle(&self) -> Arc<crate::netio::port::Wake> {
         self.inbox.ports.requests().wake_handle()
     }
     pub fn io_runtime(&mut self) -> std::io::Result<crate::netio::Runtime> {

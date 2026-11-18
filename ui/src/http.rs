@@ -22,9 +22,9 @@
 //! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
 use crate::gfx::Canvas;
-use crate::netport::http::ReplyHandle as Response;
-use crate::netport::http::*;
-pub use crate::netport::http::{parse_head, refuse_early, Head};
+use crate::netio::port::http::ReplyHandle as Response;
+use crate::netio::port::http::*;
+pub use crate::netio::port::http::{parse_head, refuse_early, Head};
 use crate::ui::Ui;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -413,8 +413,8 @@ impl Drop for Http {
 }
 
 #[cfg(test)]
-use crate::netport::http::PAGE;
-pub use crate::netport::http::STYLE;
+use crate::netio::port::http::PAGE;
+pub use crate::netio::port::http::STYLE;
 
 fn unescape(s: &str) -> String {
     let b = s.as_bytes();
@@ -482,7 +482,7 @@ impl Http {
         h
     }
 
-    pub fn wake(&self) -> &crate::system::intake::Wake {
+    pub fn wake(&self) -> &crate::netio::port::Wake {
         self.inbox.ports.requests().wake()
     }
 
@@ -784,7 +784,7 @@ mod tests {
         let inbox = Inbox::default();
         let reservation = inbox.ports.budget().reserve_available().unwrap();
         let request = inbox.envelope(String::new(), Body::Bytes(Vec::new()), "192.0.2.1:1".parse().unwrap());
-        let crate::netport::RemoteRequest::Http(req) = request.into_request() else {
+        let crate::netio::port::RemoteRequest::Http(req) = request.into_request() else {
             panic!("HTTP request expected");
         };
         let reply = req.reply;
@@ -1260,7 +1260,7 @@ setTimeout(() => {
     /// send large answers in parallel took each other's slots, and a picture came back 503 (about 1 run in 12 under
     /// load, `live_picture_from_the_frame_loop_without_a_copy`). Those tests run one at a time.
     fn senders_alone() -> std::sync::MutexGuard<'static, ()> {
-        crate::netport::http::senders_alone()
+        crate::netio::port::http::senders_alone()
     }
 
     #[test]
@@ -1345,7 +1345,6 @@ setTimeout(() => {
     fn large_answers_go_through_netio() {
         let wait = crate::ui::lifecycle::test_wait::Wait::new("HTTP sender completion");
         let _alone = senders_alone();
-        use std::sync::atomic::Ordering::SeqCst;
         let mut h = open_test(0, &Default::default());
         let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
         // a real screen: a blank canvas would be a few KB as a PNG, which is not a large answer
@@ -1379,7 +1378,7 @@ setTimeout(() => {
         }
         // the client has every byte, the sender only lets go of its place: a minute is a guard against a hang only
         let until = crate::ui::lifecycle::test_wait::Wait::new("HTTP sender completion");
-        while SENDERS.load(SeqCst) != 0 {
+        while senders_in_use() != 0 {
             until.check();
             wait.poll();
         }

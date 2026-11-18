@@ -56,7 +56,7 @@ impl Output {
         Self {
             chunks: vec![header.into(), bytes.into()],
             capacity,
-            limit: crate::netport::rpc::REPLY_BYTES,
+            limit: super::super::port::rpc::REPLY_BYTES,
             hislip: None,
         }
     }

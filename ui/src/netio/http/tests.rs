@@ -155,7 +155,7 @@ fn completed_worker_closes_its_connection_before_handle_is_reaped() {
 
 #[test]
 fn large_output_admission_and_cancellation_return_all_capacity() {
-    let _alone = crate::netport::http::senders_alone();
+    let _alone = super::super::port::http::senders_alone();
     let inbox = Inbox::default();
     let replies: Vec<_> = (0..3)
         .map(|_| {
@@ -169,10 +169,10 @@ fn large_output_admission_and_cancellation_return_all_capacity() {
     assert!(!replies[2].send(String::new(), vec![3; SEND_INLINE + 1], false));
     assert!(replies[2].send(String::new(), b"small".to_vec(), false));
     replies[0].close();
-    assert_eq!(SENDERS.load(Ordering::SeqCst), 1);
+    assert_eq!(senders_in_use(), 1);
     replies[1].close();
     replies[2].close();
-    assert_eq!(SENDERS.load(Ordering::SeqCst), 0);
+    assert_eq!(senders_in_use(), 0);
     assert_eq!(inbox.ports.budget().used(), 0);
 }
 
@@ -261,5 +261,47 @@ fn half_closed_request_receives_its_application_response() {
         assert!(response.ends_with("\r\n\r\nstate"));
         assert_eq!(inbox.active.load(Ordering::SeqCst), 0);
         assert_eq!(inbox.ports.budget().used(), 0);
+    });
+}
+
+#[test]
+fn signed_update_keeps_large_body_admission_and_verification_on_its_worker() {
+    runtime().block_on(async {
+        use oos_hal::update::{ed25519, pkg};
+        let keys = [ed25519::public_key(&[9; 32])];
+        let package = pkg::build(&[9; 32], "b", "k", &vec![42; 2 * LARGE_BODY]).unwrap();
+        let length = package.len();
+        let mut bytes = format!("POST /update HTTP/1.1\r\nContent-Length: {length}\r\n\r\n").into_bytes();
+        bytes.extend_from_slice(&package);
+        let mut socket = Socket { input: bytes, ..Default::default() };
+        let inbox = Inbox::default();
+        let acl = Default::default();
+        let peer = SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 1));
+        let input = input::Input { inbox: &inbox, acl: &acl, peer, limits: LIMITS };
+        let (head, body, slot) =
+            input.read(&mut socket, || Duration::ZERO, |_| std::future::pending()).await.unwrap().unwrap();
+        assert!(slot.is_some());
+        assert!(inbox.large.admit(length).is_none());
+        assert!(body.bytes().is_empty(), "the package allocation stays off frame intake");
+        let envelope = inbox.envelope(head, body, peer);
+        assert!(inbox.ports.requests().submit(envelope.id(), envelope, length).is_ok());
+        let mut request = inbox.take().pop().unwrap();
+        assert_eq!(parse_head(&request.head).route, "/update");
+        let job = request.body.take_upload().unwrap();
+        assert_eq!(job.len(), length);
+        assert_eq!(job.header().len(), pkg::MAX_HEADER);
+        pkg::verify_header(job.header(), &keys).unwrap();
+        let caller = std::thread::current().id();
+        job.run(move |bytes| {
+            assert_ne!(std::thread::current().id(), caller);
+            assert_eq!(bytes, package);
+            pkg::verify(bytes, &keys).map(|_| ())
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        drop(slot);
+        assert!(inbox.large.admit(length).is_some());
     });
 }

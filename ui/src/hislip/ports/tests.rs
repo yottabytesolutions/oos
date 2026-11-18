@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use super::*;
-use crate::netport::MAX_CLIENTS;
+use crate::netio::port::MAX_CLIENTS;
 
 fn ports() -> Arc<Ports> {
     Ports::bounded(Arc::new(Wake::new().unwrap()), MAX_CLIENTS, MAX_CLIENTS * REPLY_BYTES).unwrap()
@@ -17,7 +17,7 @@ fn submit(ports: &Ports, connection: u64, sequence: u64, typ: u8, param: u32, da
     );
     assert!(ports.requests().submit(request.id(), request, data.len()).is_ok());
 }
-fn drain(server: &mut Server, ports: &Ports) -> Vec<crate::netport::Reply> {
+fn drain(server: &mut Server, ports: &Ports) -> Vec<crate::netio::port::Reply> {
     ports.flush(&mut server.parked);
     ports.replies().take(MAX_CLIENTS)
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Frame-owned FIFO execution, continuation ownership and parked reply delivery.
 use super::Program;
-use crate::netport::{Envelope, Ports, RemoteRequest, Reply, Reservation};
+use crate::netio::port::{Envelope, Ports, RemoteRequest, Reply, Reservation};
 use std::time::Duration;
 
 pub(super) struct Transport {
@@ -49,7 +49,7 @@ impl Intake {
                 let Some(request) = ports.requests().take(1).pop() else { break };
                 let RemoteRequest::Program(text) = request.request() else { continue };
                 let mut program = Program::new(text);
-                program.output = Some(crate::netport::Output::bounded(reservation.capacity()));
+                program.output = Some(crate::netio::port::Output::bounded(reservation.capacity()));
                 self.active = Some(Active { request, program, reservation });
             }
             let Some(mut active) = self.active.take() else { break };
@@ -108,7 +108,7 @@ impl super::Scpi {
         port: impl Into<crate::net6::Port>,
         v6: bool,
         runtime: crate::netio::Runtime,
-        wake: std::sync::Arc<crate::system::intake::Wake>,
+        wake: std::sync::Arc<crate::netio::port::Wake>,
     ) -> Self {
         let mut scpi = Self::disconnected();
         scpi.transport.endpoint = crate::netio::Endpoint::new(Some(runtime), wake);

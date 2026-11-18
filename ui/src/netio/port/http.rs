@@ -1,20 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Bounded HTTP application intake and socket-free response ownership.
 mod assets;
+mod head;
 pub(crate) use assets::PAGE;
 pub use assets::STYLE;
-mod head;
 pub(crate) use head::*;
 pub use head::{parse_head, refuse_early, Head};
 mod upload;
 use super::{Envelope, Id, Ports, RemoteRequest, Reply};
 use core::net::SocketAddr;
-use std::{
-    sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
-        Arc, Mutex,
-    },
-    task::{Poll, Waker},
+use std::sync::{
+    atomic::{AtomicU64, AtomicUsize, Ordering},
+    Arc, Mutex,
 };
 pub(crate) use upload::Upload;
 
@@ -22,7 +19,7 @@ pub(crate) const SEND_INLINE: usize = 48 << 10;
 const MAX_SENDERS: usize = 2;
 /// Eight readers, eight screenshot waiters and two large responses.
 pub(crate) const MAX_SESSIONS: usize = MAX_PENDING * 2 + MAX_SENDERS;
-pub(crate) static SENDERS: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static SENDERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_SENDERS);
 
 pub(crate) enum Body {
     Bytes(Vec<u8>),
@@ -60,7 +57,7 @@ pub(crate) struct Inbox {
     pub(crate) ports: Arc<Ports>,
     pub(crate) next: AtomicU64,
     pub(crate) active: AtomicUsize,
-    pub(crate) large: super::UploadAdmission,
+    pub(crate) large: super::LargeBodySlot,
 }
 impl Default for Inbox {
     fn default() -> Self {
@@ -98,105 +95,82 @@ impl Inbox {
     }
     pub(crate) fn envelope(&self, head: String, body: Body, peer: SocketAddr) -> Envelope {
         let id = Id::new(self.next.fetch_add(1, Ordering::Relaxed), 0);
-        let reply = ReplyHandle(Arc::new(Mutex::new(State {
-            id,
-            ports: self.ports.clone(),
-            taken: false,
-            closed: false,
-            reply: None,
-            waker: None,
-        })));
+        let (reply, receive) = tokio::sync::mpsc::channel(1);
+        let reply = ReplyHandle {
+            state: Arc::new(Mutex::new(State {
+                id,
+                ports: self.ports.clone(),
+                taken: false,
+                reply: Some(reply),
+                receive,
+            })),
+            changed: Default::default(),
+        };
         Envelope::new(id, RemoteRequest::Http(Req { reply, peer, head, body }))
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct ReplyHandle(Arc<Mutex<State>>);
+pub(crate) struct ReplyHandle {
+    state: Arc<Mutex<State>>,
+    changed: Arc<tokio::sync::Notify>,
+}
 struct State {
     id: Id,
     ports: Arc<Ports>,
     taken: bool,
-    closed: bool,
-    reply: Option<Response>,
-    waker: Option<Waker>,
+    reply: Option<tokio::sync::mpsc::Sender<Response>>,
+    receive: tokio::sync::mpsc::Receiver<Response>,
 }
 pub(crate) struct Response {
     pub(crate) reply: Reply,
-    _sender: Option<SenderSlot>,
-}
-struct SenderSlot;
-impl Drop for SenderSlot {
-    fn drop(&mut self) {
-        SENDERS.fetch_sub(1, Ordering::SeqCst);
-    }
+    _sender: Option<tokio::sync::SemaphorePermit<'static>>,
 }
 impl ReplyHandle {
     pub(crate) fn closed(&self) -> bool {
-        oos_hal::sync::lock(&self.0).closed
+        oos_hal::sync::lock(&self.state).reply.is_none()
     }
     pub(crate) fn close(&self) {
-        let mut state = oos_hal::sync::lock(&self.0);
-        state.closed = true;
-        state.reply = None;
-        if let Some(waker) = state.waker.take() {
-            waker.wake();
-        }
+        let mut state = oos_hal::sync::lock(&self.state);
+        state.reply.take();
+        while state.receive.try_recv().is_ok() {}
+        self.changed.notify_one();
     }
     fn mark_taken(&self) {
-        let mut state = oos_hal::sync::lock(&self.0);
-        state.taken = true;
-        if let Some(waker) = state.waker.take() {
-            waker.wake();
-        }
+        oos_hal::sync::lock(&self.state).taken = true;
+        self.changed.notify_one();
     }
     pub(crate) async fn taken(&self) {
-        std::future::poll_fn(|cx| {
-            let mut state = oos_hal::sync::lock(&self.0);
-            if state.taken || state.closed {
-                Poll::Ready(())
-            } else {
-                state.waker = Some(cx.waker().clone());
-                Poll::Pending
-            }
-        })
-        .await
+        let notified = self.changed.notified();
+        let taken = {
+            let state = oos_hal::sync::lock(&self.state);
+            state.taken || state.reply.is_none()
+        };
+        if taken {
+            return;
+        }
+        notified.await;
     }
     pub(crate) async fn receive(&self) -> Option<Response> {
-        std::future::poll_fn(|cx| {
-            let mut state = oos_hal::sync::lock(&self.0);
-            if let Some(reply) = state.reply.take() {
-                Poll::Ready(Some(reply))
-            } else if state.closed {
-                Poll::Ready(None)
-            } else {
-                state.waker = Some(cx.waker().clone());
-                Poll::Pending
-            }
-        })
-        .await
+        std::future::poll_fn(|cx| oos_hal::sync::lock(&self.state).receive.poll_recv(cx)).await
     }
     pub(crate) fn send(&self, head: String, body: impl Into<super::output::Chunk>, force_large: bool) -> bool {
-        let mut state = oos_hal::sync::lock(&self.0);
-        if state.closed || state.reply.is_some() {
+        let state = oos_hal::sync::lock(&self.state);
+        let Some(send) = &state.reply else { return true };
+        if send.capacity() == 0 {
             return true;
         }
         let body = body.into();
         let sender = if force_large || body.bytes().len() > SEND_INLINE {
-            if SENDERS.fetch_add(1, Ordering::SeqCst) >= MAX_SENDERS {
-                SENDERS.fetch_sub(1, Ordering::SeqCst);
-                return false;
-            }
-            Some(SenderSlot)
+            let Ok(slot) = SENDERS.try_acquire() else { return false };
+            Some(slot)
         } else {
             None
         };
         let output = super::Output::http(head, body);
         let Some(reservation) = state.ports.budget().reserve(output.capacity()) else { return false };
         let reply = Reply::from_output(state.id, output, reservation);
-        state.reply = Some(Response { reply, _sender: sender });
-        if let Some(waker) = state.waker.take() {
-            waker.wake();
-        }
+        let _ = send.try_send(Response { reply, _sender: sender });
         true
     }
     pub(crate) fn content(&self, status: &str, kind: &str, body: Vec<u8>) -> bool {
@@ -237,8 +211,36 @@ pub(crate) fn senders_alone() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[cfg(test)]
+pub(crate) fn senders_in_use() -> usize {
+    MAX_SENDERS - SENDERS.available_permits()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::task::{Poll, Waker};
+
+    #[test]
+    fn taken_waits_for_intake_or_connection_close() {
+        use std::{future::Future, task::Context};
+        for close in [false, true] {
+            let inbox = Inbox::default();
+            let request = inbox.envelope(String::new(), Body::Bytes(Vec::new()), "192.0.2.1:1".parse().unwrap());
+            let RemoteRequest::Http(req) = request.request() else { panic!("HTTP request expected") };
+            let reply = &req.reply;
+            let mut taken = std::pin::pin!(reply.taken());
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(taken.as_mut().poll(&mut cx).is_pending());
+            if close {
+                reply.close();
+            } else {
+                reply.mark_taken();
+            }
+            assert!(taken.as_mut().poll(&mut cx).is_ready());
+            assert!(std::pin::pin!(reply.taken()).poll(&mut cx).is_ready());
+        }
+    }
+
     #[test]
     fn exhausted_error_response_budget_closes_and_wakes_the_reply() {
         use std::{future::Future, task::Wake};

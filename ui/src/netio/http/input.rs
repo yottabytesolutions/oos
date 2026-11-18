@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! HTTP framing samples elapsed time explicitly; stalled reads never block the executor.
-use crate::netport::http::*;
+use super::super::port::http::*;
 use std::{future::Future, io, net::SocketAddr, sync::Mutex, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 type Refusal = (&'static str, &'static str);
-type Large<'a> = Option<crate::netport::UploadPermit<'a>>;
+type Large<'a> = Option<super::super::port::LargeBodyPermit<'a>>;
 pub(super) struct Input<'a> {
     pub(super) inbox: &'a Inbox,
     pub(super) acl: &'a Mutex<crate::netacl::Shared>,
@@ -40,7 +40,7 @@ impl<'a> Input<'a> {
                 Some(
                     self.inbox
                         .large
-                        .admit_large_body(head.len.unwrap_or(0))
+                        .admit(head.len.unwrap_or(0))
                         .ok_or(("503 Service Unavailable", "busy, try again"))?,
                 )
             } else {

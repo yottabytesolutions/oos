@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! ONC RPC framing and portmapper IO; link state and SCPI stay on the frame thread.
+use super::port::{rpc::Channel, RemoteRequest};
 use super::*;
-use crate::netport::rpc::Channel;
 use tokio::net::{TcpListener, UdpSocket};
 
 pub(super) struct Mapper {
@@ -26,8 +26,8 @@ impl Mapper {
         udp.set_nonblocking(true)?;
         Ok(Self { tcp, udp: UdpSocket::from_std(udp)? })
     }
-    pub(super) fn ports(&self) -> io::Result<(u16, u16)> {
-        Ok((self.tcp.local_addr()?.port(), self.udp.local_addr()?.port()))
+    pub(super) fn ports(&self) -> io::Result<VxiPorts> {
+        Ok(VxiPorts { tcp: self.tcp.local_addr()?.port(), udp: self.udp.local_addr()?.port() })
     }
     pub(super) async fn datagrams(
         &self,

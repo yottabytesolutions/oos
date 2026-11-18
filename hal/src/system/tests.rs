@@ -3,6 +3,22 @@
 use super::*;
 
 #[test]
+#[cfg(unix)]
+fn readable_wait_tracks_queued_datagrams() {
+    use std::os::fd::AsFd;
+    use std::os::unix::net::UnixDatagram;
+
+    let (sender, receiver) = UnixDatagram::pair().unwrap();
+    receiver.set_nonblocking(true).unwrap();
+    assert!(!wait_readable(receiver.as_fd(), 0));
+    sender.send(&[1]).unwrap();
+    assert!(wait_readable(receiver.as_fd(), -1));
+    assert!(wait_readable(receiver.as_fd(), 0));
+    assert_eq!(receiver.recv(&mut [0]).unwrap(), 1);
+    assert!(!wait_readable(receiver.as_fd(), 0));
+}
+
+#[test]
 fn core_sets_keep_capacity_order_and_mask_boundaries() {
     let cores = Cores::of(&[(5, 1024), (0, 485), (4, 1024), (3, 485), (2, 485), (1, 485)]);
     assert_eq!(cpus(cores.big), vec![4, 5]);

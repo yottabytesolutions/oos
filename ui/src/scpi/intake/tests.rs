@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use super::*;
-use crate::netport::{Budget, Id, Wake, RESPONSE_BYTES};
+use crate::netio::port::{Budget, Id, Wake, RESPONSE_BYTES};
 use std::sync::Arc;
 
 fn ports() -> Arc<Ports> {

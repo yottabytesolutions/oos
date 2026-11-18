@@ -8,11 +8,9 @@ pub mod perfguard;
 pub(crate) mod test_allocator;
 
 pub mod clocks;
-pub mod intake;
 pub mod memory;
 pub mod serve;
 pub mod shutdown;
-pub mod wake;
 
 #[cfg(target_os = "linux")]
 pub mod device;

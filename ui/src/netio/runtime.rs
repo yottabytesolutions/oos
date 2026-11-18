@@ -1,40 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+use super::port::{Reply, MAX_CLIENTS};
 use super::*;
-use crate::netport::{Reply, MAX_CLIENTS};
 use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::collections::HashMap;
 use tokio::{
-    net::{TcpListener, UnixDatagram},
+    net::TcpListener,
     sync::{mpsc, watch},
-    task::JoinSet,
 };
 
-pub(super) async fn run(
+pub(super) fn open(
     port: crate::net6::Port,
     v6: bool,
     ports: Arc<Ports>,
     changed: watch::Receiver<Option<crate::netacl::Shared>>,
-    ready: std::sync::mpsc::SyncSender<io::Result<BoundPorts>>,
     protocol: Protocol,
-) {
-    let result = async {
-        let listener = listen(port, v6)?;
-        let mapper = if matches!(protocol, Protocol::Rpc(_)) {
-            Some(Arc::new(super::rpc::Mapper::open(port, v6)?))
-        } else {
-            None
-        };
-        let bound = (listener.local_addr()?.port(), mapper.as_ref().map(|m| m.ports()).transpose()?);
-        let wake = UnixDatagram::from_std(ports.io_wake().receiver()?)?;
-        let _ = ready.send(Ok(bound));
-        serve(listener, mapper, wake, ports.clone(), changed, protocol).await;
-        Ok(())
-    }
-    .await;
-    if let Err(e) = result {
-        let _ = ready.send(Err(e));
-    }
-    ports.close();
+    stop: tokio_util::sync::CancellationToken,
+) -> io::Result<(Bound, impl std::future::Future<Output = ()>)> {
+    let listener = listen(port, v6)?;
+    let mapper =
+        if matches!(protocol, Protocol::Rpc(_)) { Some(Arc::new(super::rpc::Mapper::open(port, v6)?)) } else { None };
+    let bound = Bound { core: listener.local_addr()?.port(), vxi: mapper.as_ref().map(|m| m.ports()).transpose()? };
+    Ok((bound, async move {
+        serve(listener, mapper, ports.clone(), changed, protocol, stop).await;
+        ports.close();
+    }))
 }
 
 pub(super) fn listen(port: crate::net6::Port, v6: bool) -> io::Result<TcpListener> {
@@ -53,75 +42,94 @@ pub(super) fn listen(port: crate::net6::Port, v6: bool) -> io::Result<TcpListene
 async fn serve(
     listener: TcpListener,
     mapper: Option<Arc<super::rpc::Mapper>>,
-    wake: UnixDatagram,
     ports: Arc<Ports>,
     mut changed: watch::Receiver<Option<crate::netacl::Shared>>,
     protocol: Protocol,
+    stop: tokio_util::sync::CancellationToken,
 ) {
-    let mut clients = JoinSet::new();
-    let mut sessions: HashMap<u64, (mpsc::Sender<Reply>, Option<watch::Sender<crate::netacl::Shared>>)> =
-        HashMap::new();
-    let mut next = 0u64;
-    let mut notification = [0; 64];
+    let sessions = Arc::new(ReplyRoutes::new(HashMap::new()));
     let core_port = listener.local_addr().map_or(0, |a| a.port());
-    let datagrams = mapper.as_ref().map(|mapper| {
-        let mapper = mapper.clone();
-        let acl = changed.clone();
-        let (send, receive) = mpsc::channel(1);
-        sessions.insert(0, (send, None));
-        let ports = ports.clone();
-        tokio::spawn(async move { mapper.datagrams(core_port, ports, acl, receive).await })
-    });
+    let (send, receive) = mpsc::channel(1);
+    oos_hal::sync::lock(&sessions).insert(0, send);
+    if tokio::select! {
+        _ = stop.cancelled() => true,
+        policy = changed.wait_for(Option::is_some) => policy.is_err(),
+    } {
+        return;
+    }
+    let datagrams = async {
+        if let Some(mapper) = &mapper {
+            mapper.datagrams(core_port, ports.clone(), changed.clone(), receive).await;
+        }
+        std::future::pending::<()>().await;
+    };
+    let mut next = 0;
+    let serving = super::listener::serve(
+        MAX_CLIENTS,
+        stop.clone(),
+        || accept(&listener, &mapper, protocol, changed.clone()),
+        |(socket, peer, protocol), capacity| {
+            next += 1;
+            let id = next;
+            let (ports, sessions, mut acl) = (ports.clone(), sessions.clone(), changed.clone());
+            acl.mark_unchanged();
+            async move {
+                let policy = acl.borrow().clone()?;
+                if matches!(capacity, super::listener::Capacity::Full) || !permits(policy, Ok(peer)).await {
+                    return None;
+                }
+                let (send, receive) = mpsc::channel(1);
+                oos_hal::sync::lock(&sessions).insert(id, send);
+                Some(async move {
+                    session::run(id, socket, ports, receive, acl, protocol).await;
+                    oos_hal::sync::lock(&sessions).remove(&id);
+                })
+            }
+        },
+    );
+    tokio::select! {
+        _ = serving => {},
+        _ = route(&ports, &sessions) => {},
+        _ = datagrams => {},
+    }
+}
+
+type ReplyRoutes = std::sync::Mutex<HashMap<u64, mpsc::Sender<Reply>>>;
+async fn route(ports: &Ports, sessions: &ReplyRoutes) {
     loop {
-        tokio::select! {
-            event = accept(&listener, &mapper, protocol), if changed.borrow().is_some() => {
-                let Ok((socket, peer, protocol)) = event else { break };
-                let Some(policy) = changed.borrow().clone() else { continue };
-                if clients.len() >= MAX_CLIENTS || !permits(policy.clone(), Ok(peer)).await { continue; }
-                next += 1;
-                let (send, receive) = tokio::sync::mpsc::channel(1);
-                let (acl, updates) = watch::channel(policy);
-                clients.spawn(session::run(next, socket, ports.clone(), receive, updates, protocol));
-                sessions.insert(next, (send, Some(acl)));
-            }
-            event = wake.recv(&mut notification) => {
-                if event.is_err() { break; }
-                ports.io_wake().drain();
-                for reply in ports.replies().take(MAX_CLIENTS) {
-                    if let Some((send, _)) = sessions.get(&reply.id().connection()) { let _ = send.try_send(reply); }
-                }
-                ports.notify_frame();
-            }
-            event = changed.changed() => {
-                if event.is_err() { break; }
-                if let Some(policy) = changed.borrow().clone() {
-                    for acl in sessions.values().filter_map(|(_, acl)| acl.as_ref()) { acl.send_replace(policy.clone()); }
-                }
-            }
-            Some(done) = clients.join_next(), if !clients.is_empty() => {
-                if let Ok(id) = done { sessions.remove(&id); }
+        ports.replies().notified().await;
+        for reply in ports.replies().take(MAX_CLIENTS) {
+            if let Some(send) = oos_hal::sync::lock(sessions).get(&reply.id().connection()) {
+                let _ = send.try_send(reply);
             }
         }
     }
-    if let Some(datagrams) = datagrams {
-        datagrams.abort();
-        let _ = datagrams.await;
-    }
-    clients.abort_all();
-    while clients.join_next().await.is_some() {}
 }
 
 async fn accept(
     listener: &TcpListener,
     mapper: &Option<Arc<super::rpc::Mapper>>,
     protocol: Protocol,
+    mut changed: watch::Receiver<Option<crate::netacl::Shared>>,
 ) -> io::Result<(tokio::net::TcpStream, std::net::SocketAddr, Protocol)> {
-    tokio::select! {
-        result = listener.accept() => result.map(|(s, p)| (s, p, protocol)),
-        result = async {
-            if let Some(mapper) = mapper { mapper.tcp.accept().await }
-            else { std::future::pending().await }
-        } => result.map(|(s, p)| (s, p, Protocol::Rpc(crate::netport::rpc::Channel::Mapper { port: listener.local_addr().map_or(0, |a| a.port()), datagram: false }))),
+    changed.mark_unchanged();
+    loop {
+        let enabled = changed.borrow().is_some();
+        tokio::select! {
+            biased;
+            result = changed.changed() => { result.map_err(io::Error::other)?; }
+            result = listener.accept(), if enabled => return result.map(|(s, p)| (s, p, protocol)),
+            result = async {
+                if let Some(mapper) = mapper { mapper.tcp.accept().await }
+                else { std::future::pending().await }
+            }, if enabled => {
+                let (socket, peer) = result?;
+                let channel = super::port::rpc::Channel::Mapper {
+                    port: listener.local_addr().map_or(0, |a| a.port()), datagram: false,
+                };
+                return Ok((socket, peer, Protocol::Rpc(channel)));
+            }
+        }
     }
 }
 
@@ -140,3 +148,6 @@ pub(super) fn bind_any<T>(v6: bool, port: u16, bind: impl Fn(SocketAddr) -> io::
     }
     bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port))).ok()
 }
+
+#[cfg(test)]
+mod tests;

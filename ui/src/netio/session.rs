@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+use super::port::{hislip, Envelope, RemoteRequest, Reply, MAX_PROGRAM};
 use super::*;
-use crate::netport::{hislip, Envelope, RemoteRequest, Reply, MAX_PROGRAM};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::{
     net::TcpStream,
@@ -12,9 +12,9 @@ pub(super) async fn run(
     mut socket: TcpStream,
     ports: Arc<Ports>,
     mut replies: mpsc::Receiver<Reply>,
-    mut acl: watch::Receiver<crate::netacl::Shared>,
+    mut acl: watch::Receiver<Option<crate::netacl::Shared>>,
     protocol: Protocol,
-) -> u64 {
+) {
     let _ = socket.set_nodelay(true);
     let peer = socket.peer_addr().ok();
     let closed = Arc::new(AtomicBool::new(false));
@@ -26,12 +26,11 @@ pub(super) async fn run(
             _ = &mut session => break,
             changed = acl.changed() => {
                 if changed.is_err() { break; }
-                let policy = acl.borrow().clone();
+                let Some(policy) = acl.borrow().clone() else { continue };
                 if !super::runtime::permits(policy, peer.ok_or_else(|| io::Error::other("missing peer"))).await { break; }
             }
         }
     }
-    id
 }
 
 async fn conversation(
@@ -103,7 +102,7 @@ async fn read_message(
     closed: &Arc<AtomicBool>,
     cleared: &Arc<AtomicBool>,
 ) -> io::Result<Option<(RemoteRequest, std::time::Instant)>> {
-    use crate::netport::rpc;
+    use super::port::rpc;
     loop {
         if let Protocol::Raw = protocol {
             if let Some(end) = buffer.iter().position(|&b| b == b'\n') {

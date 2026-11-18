@@ -44,7 +44,6 @@ mod model;
 mod net6;
 mod netacl;
 pub mod netio;
-mod netport;
 mod pacing;
 mod perfguard;
 mod placement;

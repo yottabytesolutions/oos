@@ -197,8 +197,8 @@ fn request(sequence: u64, procedure: u32, args: &[u8]) -> Envelope {
 fn reply_backpressure_and_injected_deadline_never_repeat_a_setter() {
     let mut server = Server::closed(crate::netio::Runtime::new().unwrap(), Arc::new(Wake::new().unwrap()));
     server.links.push(Some(Link::default()));
-    let ports = Ports::bounded(server.endpoint.wake.clone(), crate::netport::MAX_CLIENTS + 1, REPLY_BYTES).unwrap();
-    let occupied = Reply::new(crate::netport::Id::new(2, 1), vec![], ports.budget().reserve(256).unwrap());
+    let ports = Ports::bounded(server.endpoint.wake.clone(), crate::netio::port::MAX_CLIENTS + 1, REPLY_BYTES).unwrap();
+    let occupied = Reply::new(crate::netio::port::Id::new(2, 1), vec![], ports.budget().reserve(256).unwrap());
     ports.replies().submit(occupied.id(), occupied, 0).ok().unwrap();
     let request = request(1, 11, &args(&[0, 1000, 0, 8], Some(b"SETTER")));
     ports.requests().submit(request.id(), request, 64).ok().unwrap();
@@ -226,7 +226,7 @@ fn reply_backpressure_and_injected_deadline_never_repeat_a_setter() {
 #[test]
 fn exhausted_reply_budget_defers_interpretation_and_cancellation_releases_it() {
     let mut server = Server::closed(crate::netio::Runtime::new().unwrap(), Arc::new(Wake::new().unwrap()));
-    let ports = Ports::bounded(server.endpoint.wake.clone(), crate::netport::MAX_CLIENTS + 1, REPLY_BYTES).unwrap();
+    let ports = Ports::bounded(server.endpoint.wake.clone(), crate::netio::port::MAX_CLIENTS + 1, REPLY_BYTES).unwrap();
     let held = ports.budget().reserve(REPLY_BYTES).unwrap();
     let request = request(1, 10, &[]);
     let credit = request.credit(ports.clone());

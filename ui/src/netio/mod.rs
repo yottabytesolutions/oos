@@ -1,33 +1,40 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Network framing and output. The application port contains no runtime types.
+//! Network framing and output behind a synchronous owned application port.
 mod endpoint;
 mod executor;
 pub(crate) mod http;
 pub(crate) mod mdns;
+pub(crate) mod port;
 pub use endpoint::Endpoint;
 mod output;
 mod rpc;
 pub use executor::Runtime;
+mod listener;
 mod runtime;
 mod session;
 mod timer;
-pub use crate::netport::*;
+use port::{Envelope, Id, Ports, Reply, Wake, MAX_CLIENTS};
 use std::{io, sync::Arc};
 
 #[derive(Clone, Copy)]
 pub(crate) enum Protocol {
     Raw,
     Hislip,
-    Rpc(crate::netport::rpc::Channel),
+    Rpc(port::rpc::Channel),
 }
-pub(super) type BoundPorts = (u16, Option<(u16, u16)>);
+pub(super) struct Bound {
+    core: u16,
+    vxi: Option<VxiPorts>,
+}
+pub(super) struct VxiPorts {
+    tcp: u16,
+    udp: u16,
+}
 
 pub struct Service {
     ports: Arc<Ports>,
     control: tokio::sync::watch::Sender<Option<crate::netacl::Shared>>,
-    stopped: std::sync::mpsc::Receiver<()>,
-    _runtime: Runtime,
-    bound: BoundPorts,
+    task: executor::Task<Bound>,
 }
 impl Service {
     pub(crate) fn start(
@@ -38,28 +45,22 @@ impl Service {
         protocol: Protocol,
     ) -> io::Result<Self> {
         let ports = if matches!(protocol, Protocol::Rpc(_)) {
-            Ports::bounded(wake, MAX_CLIENTS + 1, crate::netport::rpc::REPLY_BYTES)?
+            Ports::bounded(wake, MAX_CLIENTS + 1, port::rpc::REPLY_BYTES)?
         } else if matches!(protocol, Protocol::Hislip) {
-            Ports::bounded(wake, MAX_CLIENTS, MAX_CLIENTS * crate::netport::hislip::REPLY_BYTES)?
+            Ports::bounded(wake, MAX_CLIENTS, MAX_CLIENTS * port::hislip::REPLY_BYTES)?
         } else {
             Ports::new(wake)?
         };
         let (control, changed) = tokio::sync::watch::channel(None);
-        let (ready, started) = std::sync::mpsc::sync_channel(1);
-        let (finished, stopped) = std::sync::mpsc::sync_channel(1);
         let io_ports = ports.clone();
-        runtime.spawn(async move {
-            runtime::run(port, v6, io_ports, changed, ready, protocol).await;
-            let _ = finished.send(());
-        });
-        let bound = started.recv().map_err(io::Error::other)??;
-        Ok(Self { ports, control, stopped, _runtime: runtime, bound })
+        let task = runtime.start(move |stop| runtime::open(port, v6, io_ports, changed, protocol, stop))?;
+        Ok(Self { ports, control, task })
     }
     pub fn port(&self) -> u16 {
-        self.bound.0
+        self.task.local.core
     }
     pub fn vxi_ports(&self) -> Option<(u16, u16, u16)> {
-        self.bound.1.map(|(tcp, udp)| (tcp, udp, self.bound.0))
+        self.task.local.vxi.as_ref().map(|ports| (ports.tcp, ports.udp, self.task.local.core))
     }
     pub fn ports(&self) -> Arc<Ports> {
         self.ports.clone()
@@ -68,15 +69,5 @@ impl Service {
         self.control.send_replace(Some(acl));
     }
 }
-impl Drop for Service {
-    fn drop(&mut self) {
-        self.ports.close();
-        // Closing the sole control sender wakes the IO loop and aborts its owned connections.
-        let (replacement, _) = tokio::sync::watch::channel(None);
-        drop(std::mem::replace(&mut self.control, replacement));
-        let _ = self.stopped.recv();
-    }
-}
-
 #[cfg(test)]
 mod tests;

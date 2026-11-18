@@ -66,7 +66,7 @@ impl Remote {
             hislip_port: self.hislip.port(),
         });
     }
-    pub(super) fn wake(&self) -> &system::intake::Wake {
+    pub(super) fn wake(&self) -> &crate::netio::port::Wake {
         self.web.wake()
     }
     fn switch(&mut self, sys: &sysconf::SysConf, sw: &sysconf::Switches) {

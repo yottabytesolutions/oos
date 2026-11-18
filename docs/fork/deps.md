@@ -75,3 +75,12 @@ CPU, wakeups and RSS were within noise and picture loss at most 3%.
 Host comparison after the gate fix: +685 production lines, +2.86% aarch64 binary size, +9 dependencies.
 The owner accepted the behaviour gain and retired the deferred size gate and poll fallback.
 Later IO moves report and minimise their own code and binary deltas (ADR 0023).
+
+## M15 consolidation
+
+`tokio-util` (MIT) supplies the executor's cancellation tree for TCP services and discovery.
+It replaces separate service shutdown channels; connection tasks retain their joined cleanup and synchronous
+application cancellation. Its `rt` feature uses the existing tokio runtime. No codec feature is enabled:
+the bounded protocol parsers retain their tested HiSLIP clear/read-ahead and RPC fragment semantics.
+Tokio semaphores replace manual reply-byte and large-body/output admission, and bounded mpsc replaces
+HTTP's hand-written response slot and waker. The assigned consolidation brief authorizes this replacement.

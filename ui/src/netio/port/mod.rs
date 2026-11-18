@@ -4,19 +4,21 @@ pub(crate) mod hislip;
 pub(crate) mod http;
 mod latency;
 pub(crate) mod output;
+mod queue;
 pub(crate) mod rpc;
-pub use crate::system::intake::{Id, Port, Wake};
+mod wake;
 pub use output::Output;
+pub use queue::{Id, Port};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
+pub use wake::Wake;
 
 pub const MAX_PROGRAM: usize = 4 << 20;
 pub const MAX_CLIENTS: usize = 8;
 pub const RESPONSE_BYTES: usize = 64 << 20;
 pub const IMPORT_BYTES: usize = 128 << 20;
-pub const UPLOAD_BYTES: usize = 70 << 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
@@ -113,57 +115,8 @@ impl Drop for Credit {
     }
 }
 
-/// Reservations cover assembled, parked, queued and IO-held output, without charging moves twice.
-pub struct Budget {
-    used: Mutex<usize>,
-    limit: usize,
-    wake: Arc<Wake>,
-}
-impl Budget {
-    #[cfg(test)]
-    pub fn new(wake: Arc<Wake>) -> Arc<Self> {
-        Self::bounded(wake, RESPONSE_BYTES)
-    }
-    fn bounded(wake: Arc<Wake>, limit: usize) -> Arc<Self> {
-        Arc::new(Self { used: Mutex::new(0), limit, wake })
-    }
-    pub fn reserve(self: &Arc<Self>, bytes: usize) -> Option<Reservation> {
-        let mut used = oos_hal::sync::lock(&self.used);
-        if bytes > self.limit.saturating_sub(*used) {
-            return None;
-        }
-        *used += bytes;
-        Some(Reservation { budget: self.clone(), bytes })
-    }
-    pub fn reserve_available(self: &Arc<Self>) -> Option<Reservation> {
-        let available = self.limit.saturating_sub(self.used());
-        (available != 0).then(|| self.reserve(available)).flatten()
-    }
-    pub fn used(&self) -> usize {
-        *oos_hal::sync::lock(&self.used)
-    }
-}
-pub struct Reservation {
-    budget: Arc<Budget>,
-    bytes: usize,
-}
-impl Reservation {
-    pub fn capacity(&self) -> usize {
-        self.bytes
-    }
-    pub fn retain(&mut self, bytes: usize) {
-        assert!(bytes <= self.bytes, "response allocation exceeds its reservation");
-        *oos_hal::sync::lock(&self.budget.used) -= self.bytes - bytes;
-        self.bytes = bytes;
-        self.budget.wake.notify();
-    }
-}
-impl Drop for Reservation {
-    fn drop(&mut self) {
-        *oos_hal::sync::lock(&self.budget.used) -= self.bytes;
-        self.budget.wake.notify();
-    }
-}
+mod budget;
+pub use budget::{Budget, LargeBodyPermit, LargeBodySlot, Reservation};
 
 pub struct Reply {
     id: Id,
@@ -205,7 +158,6 @@ pub struct Ports {
     replies: Port<Reply>,
     budget: Arc<Budget>,
     frame_wake: Arc<Wake>,
-    io_wake: Arc<Wake>,
     enqueue: latency::Latency,
 }
 impl Ports {
@@ -221,13 +173,11 @@ impl Ports {
         request_bytes: usize,
         reply_bytes: usize,
     ) -> std::io::Result<Arc<Self>> {
-        let io_wake = Arc::new(Wake::new()?);
         Ok(Arc::new(Self {
             requests: Port::new(requests, request_bytes, frame_wake.clone()),
-            replies: Port::new(1, reply_bytes, io_wake.clone()),
+            replies: Port::new(1, reply_bytes, frame_wake.clone()),
             budget: Budget::bounded(frame_wake.clone(), reply_bytes),
             frame_wake,
-            io_wake,
             enqueue: Default::default(),
         }))
     }
@@ -251,55 +201,12 @@ impl Ports {
     pub fn budget(&self) -> &Arc<Budget> {
         &self.budget
     }
-    pub fn io_wake(&self) -> Arc<Wake> {
-        self.io_wake.clone()
-    }
     pub fn notify_frame(&self) {
         self.frame_wake.notify();
     }
     pub fn close(&self) {
         self.requests.clear(true);
         self.replies.clear(true);
-    }
-}
-
-/// Signed uploads have a separate single-large-body permit. Only this job identity crosses intake.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct UploadJob(u64);
-impl UploadJob {
-    pub fn new(id: u64) -> Self {
-        Self(id)
-    }
-    pub fn id(self) -> u64 {
-        self.0
-    }
-}
-pub struct UploadAdmission(AtomicBool);
-impl Default for UploadAdmission {
-    fn default() -> Self {
-        Self(AtomicBool::new(false))
-    }
-}
-impl UploadAdmission {
-    pub fn admit(&self, bytes: usize) -> Option<UploadPermit<'_>> {
-        self.admit_bounded(bytes, UPLOAD_BYTES)
-    }
-    pub(crate) fn admit_large_body(&self, bytes: usize) -> Option<UploadPermit<'_>> {
-        self.admit_bounded(bytes, IMPORT_BYTES)
-    }
-    fn admit_bounded(&self, bytes: usize, limit: usize) -> Option<UploadPermit<'_>> {
-        (bytes <= limit && self.0.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok())
-            .then(|| UploadPermit(self))
-    }
-    #[cfg(test)]
-    pub(crate) fn occupied(&self) -> bool {
-        self.0.load(Ordering::Acquire)
-    }
-}
-pub struct UploadPermit<'a>(&'a UploadAdmission);
-impl Drop for UploadPermit<'_> {
-    fn drop(&mut self) {
-        self.0 .0.store(false, Ordering::Release);
     }
 }
 

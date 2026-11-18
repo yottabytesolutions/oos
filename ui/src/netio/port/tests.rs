@@ -57,14 +57,12 @@ fn local_command_order_and_shot_outcomes_keep_http_privileges_separate() {
 }
 
 #[test]
-fn signed_upload_permit_rejects_overload_and_releases_on_cancellation() {
-    let admission = UploadAdmission::default();
-    assert!(admission.admit(UPLOAD_BYTES + 1).is_none());
-    let pending = admission.admit(UPLOAD_BYTES).unwrap();
+fn large_body_permit_rejects_overload_and_releases_on_cancellation() {
+    let admission = LargeBodySlot::default();
+    assert!(admission.admit(IMPORT_BYTES + 1).is_none());
+    let pending = admission.admit(IMPORT_BYTES).unwrap();
     assert!(admission.admit(1).is_none());
     assert!(admission.admit(1).is_none(), "rejection must not release the current owner's permit");
-    let job = UploadJob::new(42);
-    assert_eq!(job.id(), 42, "only the owned job identity enters application intake");
     drop(pending);
     assert!(admission.admit(1).is_some());
 }

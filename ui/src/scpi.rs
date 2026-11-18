@@ -93,7 +93,7 @@ use std::net::TcpStream;
 pub struct Program {
     commands: std::collections::VecDeque<(String, bool)>,
     out: Vec<u8>,
-    output: Option<crate::netport::Output>,
+    output: Option<crate::netio::port::Output>,
     waiting: Option<crate::ui::Operations>,
     separator: u8,
     pub bytes: usize,
@@ -4213,9 +4213,9 @@ mod tests {
         // cancelled while another client polls configuration/status.
         let ports = s.transport.endpoint.io.as_ref().unwrap().ports();
         let pending = ":MEAS:ITEM? VPP,CHAN1".to_string();
-        let request = crate::netport::Envelope::new(
-            crate::system::intake::Id::new(999, 1),
-            crate::netio::RemoteRequest::Program(pending.clone()),
+        let request = crate::netio::port::Envelope::new(
+            crate::netio::port::Id::new(999, 1),
+            crate::netio::port::RemoteRequest::Program(pending.clone()),
         );
         assert!(ports.requests().submit(request.id(), request, pending.capacity()).is_ok());
         for query in [":TRIG:STAT?", ":TIM:SCAL?", ":CHAN1:DISP?", ":CHAN1:OFFS?", ":ACQ:SRAT?", ":ACQ:MDEP?"] {

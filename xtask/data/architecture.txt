@@ -6,7 +6,7 @@ crate oos-dsp ->
 crate oos-hal -> libc ed25519-dalek miniz_oxide sha2 curve25519-dalek
 # oos-core comes with the migration (ADR 0020, docs/architecture/README.md "Enforcement")
 crate oos-core -> oos-dsp
-crate oos-ui -> libc oos-hal oos-dsp oos-core tokio
+crate oos-ui -> libc oos-hal oos-dsp oos-core tokio tokio-util
 crate oos-fpgad -> libc oos-hal
 crate xtask -> proc-macro2 pulldown-cmark quote serde serde_json syn yaml-rust2
 #
@@ -70,7 +70,10 @@ layer core protocols ->
 
 # M15a raw transport: synchronous application ports, never interpreter or settings.
 confine ui tokio -> netio
-layer ui netio -> netport net6 netacl mdns
+confine ui tokio_util -> netio
+layer ui netio -> net6 netacl mdns
+layer ui netio::port::latency -> perfguard::ring perfguard::Clock
+layer ui netio::port::http::head -> store::MAX_WAVEFORM_BYTES
 
 # ADR 0023: socket IO and the remaining synchronous worker exceptions.
 confine ui std::net -> netio sntp ui::bode gpu

@@ -3,43 +3,55 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area { kind, label, value, adjust, activate, options, menu_items, ..Area::EMPTY };
+pub(super) const AREA: Area = Area { descriptors: ROWS, adjust, activate, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::About | Item::SysInfo | Item::Shot | Item::Stock | Item::Update | Item::UpdateRollback => Kind::Action,
-        _ => return None,
-    })
-}
-
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Utility) => "System",
-        Item::About => "About OOS",
-        Item::SysInfo => "System info",
-        Item::Shot => "Screenshot",
-        Item::AuxOut => "AUX out",
-        Item::Stock => "Back to stock",
-        Item::Update => "Update",
-        Item::BootMode => "Boot mode",
-        Item::Overclock => "Overclock",
-        Item::UpdateRollback => "Roll back update",
-        Item::QuickAct => "Quick key",
-        // drawn with the option text of the picker
-        _ => return None,
-    })
-}
-
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    let m = &ui.m;
-    Some(match it {
-        Item::AuxOut => m.aux_out.name().into(),
-        Item::BootMode => ui.boot_mode().into(),
-        Item::Overclock => overclock::label(ui.clock_next),
-        Item::QuickAct => m.quick.name().into(),
-        _ => return None,
-    })
-}
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    &[
+        Descriptor::title(Open(MenuId::Utility), "System"),
+        Descriptor::reference(Offline),
+        Descriptor::choice(
+            QuickAct,
+            "Quick key",
+            |u| u.m.quick.name().into(),
+            |_| QUICKS.iter().map(|q| q.name().into()).collect(),
+        ),
+        Descriptor::choice(
+            AuxOut,
+            "AUX out",
+            |u| u.m.aux_out.name().into(),
+            |u| {
+                crate::model::AuxOut::choices(board().mask_hw(u.switches()) || board().zone_hw(u.switches()))
+                    .iter()
+                    .map(|a| a.name().into())
+                    .collect()
+            },
+        ),
+        Descriptor::choice(
+            BootMode,
+            "Boot mode",
+            |u| u.boot_mode().into(),
+            |_| ["One-shot", "Persist"].into_iter().map(String::from).collect(),
+        ),
+        Descriptor::choice(
+            Overclock,
+            "Overclock",
+            |u| overclock::label(u.clock_next),
+            |_| board().clock_steps().iter().map(|&hz| overclock::label(hz)).collect(),
+        ),
+        Descriptor::reference(Graphics),
+        Descriptor::action(Shot, "Screenshot"),
+        Descriptor::reference(Open(MenuId::SelfCal)),
+        Descriptor::reference(Open(MenuId::Network)),
+        Descriptor::reference(Open(MenuId::Features)),
+        Descriptor::reference(Open(MenuId::Time)),
+        Descriptor::action(SysInfo, "System info"),
+        Descriptor::action(About, "About OOS"),
+        Descriptor::action(Update, "Update"),
+        Descriptor::action(UpdateRollback, "Roll back update"),
+        Descriptor::action(Stock, "Back to stock"),
+    ]
+};
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
     if ui.aux_adjust(it, d) {
@@ -105,44 +117,5 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
     true
 }
 
-fn options(ui: &Ui, it: Item) -> Option<Vec<String>> {
-    let v: &[&str] = match it {
-        Item::AuxOut => {
-            return Some(
-                AuxOut::choices(board().mask_hw(ui.switches()) || board().zone_hw(ui.switches()))
-                    .iter()
-                    .map(|a| a.name().to_string())
-                    .collect(),
-            )
-        }
-        Item::BootMode => &["One-shot", "Persist"],
-        Item::QuickAct => return Some(QUICKS.iter().map(|q| q.name().to_string()).collect()),
-        Item::Overclock => return Some(board().clock_steps().iter().map(|&hz| overclock::label(hz)).collect()),
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(_ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Utility => vec![
-            Item::Offline,
-            Item::QuickAct,
-            Item::AuxOut,
-            Item::BootMode,
-            Item::Overclock,
-            Item::Graphics,
-            Item::Shot,
-            Item::Open(MenuId::SelfCal),
-            Item::Open(MenuId::Network),
-            Item::Open(MenuId::Features),
-            Item::Open(MenuId::Time),
-            Item::SysInfo,
-            Item::About,
-            Item::Update,
-            Item::UpdateRollback,
-            Item::Stock,
-        ],
-        _ => Vec::new(),
-    }
-}
+#[cfg(test)]
+mod tests;

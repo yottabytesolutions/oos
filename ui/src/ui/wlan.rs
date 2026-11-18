@@ -67,7 +67,7 @@ pub(super) struct WlanUi {
     rx: Option<Receiver<Report>>,
 }
 
-fn short(name: &str) -> String {
+pub(super) fn short(name: &str) -> String {
     if name.chars().count() <= NAME_MAX {
         return name.to_string();
     }
@@ -319,43 +319,6 @@ impl Ui {
         if let Some(n) = self.wlan.link.saved.get(k) {
             let id = n.id;
             self.wlan_send(Job::Forget(id), "Forgetting");
-        }
-    }
-
-    /// Text rows of the network page.
-    pub(super) fn net_value(&self, it: Item) -> String {
-        let addr = |n: &str| self.net_ifs.iter().find(|i| i.0 == n).map(|i| i.1.as_str());
-        let file = |p: &str| self.host.text(p).map(|t| t.trim().to_string()).unwrap_or_default();
-        match it {
-            Item::NetEth => {
-                let link = file("/sys/class/net/eth0/carrier") == "1";
-                let speed = self.eth.speed.map_or("link up".to_string(), |s| format!("{} Mbit/s", s));
-                match (addr("eth0"), link) {
-                    (Some(a), true) => format!("{} \u{b7} {}", a, speed),
-                    (Some(a), false) => format!("{} \u{b7} no cable", a),
-                    (None, true) => "link up, no address yet".into(),
-                    (None, false) => "no cable".into(),
-                }
-            }
-            Item::NetMac => Some(file("/sys/class/net/eth0/address")).filter(|m| !m.is_empty()).unwrap_or("-".into()),
-            // same as the Remote services page (`remote_value`): the web remote may be switched off
-            Item::NetWeb if !self.sys.remote_web => "off".into(),
-            Item::NetWeb if self.net.is_empty() => "not connected".into(),
-            Item::NetWeb => format!("http://{}:8080", self.net),
-            Item::NetPorts => "SCPI 5555, VXI-11, SSH 22 (password or key)".into(),
-            _ => {
-                let l = &self.wlan.link;
-                if !l.stick {
-                    "no stick".into()
-                } else if !l.ctrl {
-                    "stick found, starting".into()
-                } else if l.status.connected() {
-                    let ip = if l.status.ip.is_empty() { "waiting for an address" } else { l.status.ip.as_str() };
-                    format!("{} \u{b7} {}", short(&wlan::name(&l.status.ssid)), ip)
-                } else {
-                    format!("not connected ({})", l.status.state.to_lowercase())
-                }
-            }
         }
     }
 
@@ -1132,19 +1095,19 @@ mod tests {
         ui.tap(950, 20);
         assert!(ui.menu_open && ui.menu == MenuId::Network);
         assert_eq!(ui.value(Item::NetWeb), "not connected");
-        assert_eq!(ui.net_value(Item::NetWlan), "no stick");
-        (ui.net, ui.net_if) = ("192.168.177.64".into(), "eth0".into());
-        ui.net_ifs = vec![("eth0".into(), "192.168.177.64".into())];
-        assert_eq!(ui.value(Item::NetWeb), "http://192.168.177.64:8080");
-        assert!(ui.net_value(Item::NetEth).starts_with("192.168.177.64"));
+        assert_eq!(ui.value(Item::NetWlan), "no stick");
+        (ui.net, ui.net_if) = ("192.0.2.64".into(), "eth0".into());
+        ui.net_ifs = vec![("eth0".into(), "192.0.2.64".into())];
+        assert_eq!(ui.value(Item::NetWeb), "http://192.0.2.64:8080");
+        assert!(ui.value(Item::NetEth).starts_with("192.0.2.64"));
         ui.wlan.link = Link { stick: true, ctrl: true, ..Link::default() };
         ui.wlan.link.status = wlan::parse_status(
-            "wpa_state=COMPLETED\nssid=Ein sehr langer Netzname mit 32 Z\nip_address=192.168.100.200\n",
+            "wpa_state=COMPLETED\nssid=Ein sehr langer Netzname mit 32 Z\nip_address=198.51.100.200\n",
         );
         // the longest line fits its row
         let d = ui.dlg_layout().unwrap();
         let row = d.rows.iter().find(|r| r.it == Item::NetWlan).unwrap();
-        assert!(ui.fonts().m.width(&ui.net_value(Item::NetWlan)) <= row.ctrl.w, "{}", ui.net_value(Item::NetWlan));
+        assert!(ui.fonts().m.width(&ui.value(Item::NetWlan)) <= row.ctrl.w, "{}", ui.value(Item::NetWlan));
         ui.tap(950, 20);
         assert!(!ui.menu_open);
     }
@@ -1152,7 +1115,7 @@ mod tests {
     #[test]
     fn hardware_network_fallback_names_ssh_instead_of_telnet() {
         let ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        let ports = ui.net_value(Item::NetPorts);
+        let ports = ui.value(Item::NetPorts);
         // oos-ssh takes the password and trusted keys (docs/network.md 7), not only a key
         assert!(ports.contains("SSH 22 (password or key)"));
         assert!(!ports.contains("telnet"));

@@ -283,6 +283,7 @@ fn check_navigation_and_picture(model: &str, size: TextSize, menu: MenuId, item:
     assert_eq!(rows.iter().map(|r| r.it).collect::<Vec<_>>(), u.items(menu));
     for row in rows {
         assert!(match Ui::kind(row.it) {
+            Kind::Text => matches!(row.ctl, Ctl::Text),
             Kind::Value => matches!(row.ctl, Ctl::Value),
             Kind::Action => matches!(row.ctl, Ctl::Button),
             Kind::Choice => matches!(row.ctl, Ctl::Pick | Ctl::Seg(..)),

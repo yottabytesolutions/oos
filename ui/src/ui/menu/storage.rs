@@ -3,45 +3,28 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area { kind, label, value, adjust, activate, options, menu_items, ..Area::EMPTY };
+pub(super) const AREA: Area = Area { descriptors: ROWS, adjust, activate, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::StoreSlot => Kind::Value,
-        Item::StoreSaveSetup
-        | Item::StoreRecall
-        | Item::StoreCsv
-        | Item::StorePng
-        | Item::StoreFfSave
-        | Item::StoreFfLoad => Kind::Action,
-        Item::StoreBin => Kind::Action,
-        _ => return None,
-    })
-}
-
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Storage) => "Storage",
-        Item::StoreSlot => "Setup slot",
-        Item::StoreDest => "Save to",
-        Item::StoreSaveSetup => "Save setup",
-        Item::StoreRecall => "Recall setup",
-        Item::StoreCsv => "Save waveform (CSV)",
-        Item::StorePng => "Save screenshot (PNG)",
-        Item::StoreFfSave => "Save fast-frame",
-        Item::StoreFfLoad => "Load fast-frame",
-        Item::StoreBin => "Save waveform (binary)",
-        _ => return None,
-    })
-}
-
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    Some(match it {
-        Item::StoreDest => ui.store_dest.name().into(),
-        Item::StoreSlot => format!("{}  (setup{}.txt)", ui.store_slot, ui.store_slot),
-        _ => return None,
-    })
-}
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    &[
+        Descriptor::title(Open(MenuId::Storage), "Storage"),
+        Descriptor::choice(
+            StoreDest,
+            "Save to",
+            |u| u.store_dest.name().into(),
+            |_| crate::store::StoreDest::ALL.iter().map(|d| d.name().into()).collect(),
+        ),
+        Descriptor::value(StoreSlot, "Setup slot", |u| format!("{}  (setup{}.txt)", u.store_slot, u.store_slot)),
+        Descriptor::action(StoreSaveSetup, "Save setup"),
+        Descriptor::action(StoreRecall, "Recall setup"),
+        Descriptor::action(StoreCsv, "Save waveform (CSV)"),
+        Descriptor::action(StoreBin, "Save waveform (binary)"),
+        Descriptor::action(StoreFfSave, "Save fast-frame"),
+        Descriptor::action(StoreFfLoad, "Load fast-frame"),
+        Descriptor::action(StorePng, "Save screenshot (PNG)"),
+    ]
+};
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
     let cyc = |i: usize, n: usize, d: i32| -> usize { (i as i32 + d).rem_euclid(n as i32) as usize };
@@ -94,31 +77,6 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
     true
 }
 
-fn options(_ui: &Ui, it: Item) -> Option<Vec<String>> {
-    let v: &[&str] = match it {
-        Item::StoreDest => return Some(crate::store::StoreDest::ALL.iter().map(|d| d.name().to_string()).collect()),
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(_ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Storage => vec![
-            Item::StoreDest,
-            Item::StoreSlot,
-            Item::StoreSaveSetup,
-            Item::StoreRecall,
-            Item::StoreCsv,
-            Item::StoreBin,
-            Item::StoreFfSave,
-            Item::StoreFfLoad,
-            Item::StorePng,
-        ],
-        _ => Vec::new(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,3 +94,6 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
+
+#[cfg(test)]
+mod read_tests;

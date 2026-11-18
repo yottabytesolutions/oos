@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn network_page_reads_the_interface_through_the_host() {
         let ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        assert_eq!((ui.net_value(Item::NetEth), ui.net_value(Item::NetMac)), ("no cable".into(), "-".into()));
+        assert_eq!((ui.value(Item::NetEth), ui.value(Item::NetMac)), ("no cable".into(), "-".into()));
         let mut host = Host::fixture();
         host.text = |path| match path {
             "/sys/class/net/eth0/carrier" => Some("1\n".into()),
@@ -350,8 +350,8 @@ mod tests {
             _ => None,
         };
         let ui = Ui::new(Source::Demo { t: 0.0 }, host);
-        assert_eq!(ui.net_value(Item::NetEth), "link up, no address yet");
-        assert_eq!(ui.net_value(Item::NetMac), "00:00:5e:00:53:01");
+        assert_eq!(ui.value(Item::NetEth), "link up, no address yet");
+        assert_eq!(ui.value(Item::NetMac), "00:00:5e:00:53:01");
     }
 
     #[test]

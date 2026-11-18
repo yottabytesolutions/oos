@@ -3,81 +3,54 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area {
-    kind: remote_kind,
-    label: remote_label,
-    value: Ui::remote_value,
-    adjust: Ui::remote_adjust,
-    options: Ui::remote_options,
-    menu_items: |_, _| remote_items(),
-    ..Area::EMPTY
+pub(super) const AREA: Area = Area { descriptors: ROWS, adjust: Ui::remote_adjust, ..Area::EMPTY };
+
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    &[
+        Descriptor::title(Open(MenuId::Remote), "Remote services"),
+        Descriptor::choice(RemWeb, "Web remote", |u| onoff(u.sys.remote_web), toggles),
+        Descriptor::choice(RemScpi, "SCPI", |u| onoff(u.sys.remote_scpi), toggles),
+        Descriptor::choice(RemVxi, "VXI-11", |u| onoff(u.sys.instruments.vxi11), toggles),
+        Descriptor::choice(RemHislip, "HiSLIP", |u| onoff(u.sys.instruments.hislip), toggles),
+        Descriptor::choice(RemTelnet, "telnet", |u| onoff(u.sys.remote_telnet), toggles),
+        Descriptor::choice(RemSsh, "SSH", |u| onoff(u.sys.remote_ssh), toggles),
+        Descriptor::choice(RemMdns, "mDNS", |u| onoff(u.sys.remote_mdns), toggles),
+        Descriptor::choice(RemAllow, "Allowed", Ui::allow_value, |u| {
+            u.allow_choices().into_iter().map(|c| c.0).collect()
+        }),
+        Descriptor::text(NetWeb, "Address", |u| {
+            if !u.sys.remote_web {
+                "off".into()
+            } else if u.net.is_empty() {
+                "not connected".into()
+            } else {
+                format!("http://{}:8080", u.net)
+            }
+        }),
+        Descriptor::text(RemScpiInfo, "Port", |u| port_text(u.sys.remote_scpi, || "5555 (TCP)".into())),
+        Descriptor::text(RemVxiInfo, "Port", |u| {
+            port_text(u.sys.instruments.vxi11, || format!("111 and {} (LXI)", crate::vxi11::CORE_PORT))
+        }),
+        Descriptor::text(RemHislipInfo, "Port", |u| {
+            port_text(u.sys.instruments.hislip, || format!("{} (TCP)", crate::hislip::PORT))
+        }),
+        Descriptor::text(RemTelnetInfo, "Port", |u| {
+            port_text(u.sys.remote_telnet, || "23, a shell without password".into())
+        }),
+        Descriptor::reference(Open(MenuId::Ssh)),
+        Descriptor::choice(RemName, "Name", Ui::name_value, Ui::name_options),
+        Descriptor::text(RemFirewall, "Firewall", Ui::firewall_value),
+    ]
 };
 
-/// Switches in the left column, what they open in the right one, row by row.
-fn remote_items() -> Vec<Item> {
-    vec![
-        Item::RemWeb,
-        Item::RemScpi,
-        Item::RemVxi,
-        Item::RemHislip,
-        Item::RemTelnet,
-        Item::RemSsh,
-        Item::RemMdns,
-        Item::RemAllow,
-        Item::NetWeb,
-        Item::RemScpiInfo,
-        Item::RemVxiInfo,
-        Item::RemHislipInfo,
-        Item::RemTelnetInfo,
-        Item::Open(MenuId::Ssh),
-        Item::RemName,
-        Item::RemFirewall,
-    ]
-}
-
-pub(in crate::ui) fn remote_kind(it: Item) -> Option<Kind> {
-    match it {
-        Item::RemWeb
-        | Item::RemScpi
-        | Item::RemVxi
-        | Item::RemHislip
-        | Item::RemTelnet
-        | Item::RemSsh
-        | Item::RemMdns
-        | Item::RemName
-        | Item::RemAllow => Some(Kind::Choice),
-        _ => Ui::ssh_kind(it),
+fn port_text(on: bool, text: impl FnOnce() -> String) -> String {
+    if on {
+        text()
+    } else {
+        "off".into()
     }
 }
 
-/// Rows that are only text.
-pub(in crate::ui) fn remote_text(it: Item) -> bool {
-    matches!(
-        it,
-        Item::NetWeb
-            | Item::RemScpiInfo
-            | Item::RemVxiInfo
-            | Item::RemHislipInfo
-            | Item::RemTelnetInfo
-            | Item::RemFirewall
-    ) || Ui::ssh_text(it)
-}
-
-pub(super) fn remote_label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Remote) => "Remote services",
-        Item::RemWeb => "Web remote",
-        Item::RemScpi => "SCPI",
-        Item::RemVxi => "VXI-11",
-        Item::RemHislip => "HiSLIP",
-        Item::RemTelnet => "telnet",
-        Item::RemSsh => "SSH",
-        Item::RemMdns => "mDNS",
-        Item::RemName => "Name",
-        Item::RemAllow => "Allowed",
-        Item::RemFirewall => "Firewall",
-        Item::NetWeb => "Address",
-        Item::RemScpiInfo | Item::RemVxiInfo | Item::RemHislipInfo | Item::RemTelnetInfo => "Port",
-        _ => return Ui::ssh_label(it),
-    })
-}
+#[cfg(test)]
+mod tests;

@@ -3,36 +3,58 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area { kind, label, value, activate, options, menu_items, ..Area::EMPTY };
+pub(super) const AREA: Area = Area { descriptors: ROWS, activate, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::WlanInfo | Item::WlanScan | Item::WlanForget => Kind::Action,
-        _ => return None,
-    })
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    &[
+        Descriptor::title(Open(MenuId::Network), "Network"),
+        Descriptor::text(NetEth, "Ethernet", ethernet_value),
+        Descriptor::reference(NetRetry10),
+        Descriptor::text(NetMac, "MAC", mac_value),
+        Descriptor::reference(Open(MenuId::Remote)),
+        Descriptor::text(NetPorts, "Other access", |_| "SCPI 5555, VXI-11, SSH 22 (password or key)".into()),
+        Descriptor::text(NetWlan, "WLAN", wlan_value),
+        Descriptor::action(WlanScan, "Find WLAN networks"),
+        Descriptor::action(WlanForget, "Forget WLAN network"),
+        Descriptor::action(WlanInfo, "WLAN details"),
+        Descriptor::picker_context(WlanNet, "Networks", Ui::wlan_net_options),
+        Descriptor::picker_context(WlanForgetNet, "Forget", Ui::wlan_forget_options),
+    ]
+};
+
+fn ethernet_value(ui: &Ui) -> String {
+    let addr = ui.net_ifs.iter().find(|i| i.0 == "eth0").map(|i| i.1.as_str());
+    let link = ui.host.text("/sys/class/net/eth0/carrier").is_some_and(|t| t.trim() == "1");
+    let speed = ui.eth.speed.map_or("link up".to_string(), |s| format!("{} Mbit/s", s));
+    match (addr, link) {
+        (Some(a), true) => format!("{} \u{b7} {}", a, speed),
+        (Some(a), false) => format!("{} \u{b7} no cable", a),
+        (None, true) => "link up, no address yet".into(),
+        (None, false) => "no cable".into(),
+    }
 }
 
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Network) => "Network",
-        Item::WlanInfo => "WLAN details",
-        Item::WlanScan => "Find WLAN networks",
-        Item::WlanForget => "Forget WLAN network",
-        Item::NetEth => "Ethernet",
-        Item::NetMac => "MAC",
-        Item::NetPorts => "Other access",
-        Item::NetWlan => "WLAN",
-        Item::WlanNet => "Networks",
-        Item::WlanForgetNet => "Forget",
-        _ => return None,
-    })
+fn mac_value(ui: &Ui) -> String {
+    ui.host
+        .text("/sys/class/net/eth0/address")
+        .map(|t| t.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| "-".into())
 }
 
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    Some(match it {
-        Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan => ui.net_value(it),
-        _ => return None,
-    })
+fn wlan_value(ui: &Ui) -> String {
+    let l = &ui.wlan.link;
+    if !l.stick {
+        "no stick".into()
+    } else if !l.ctrl {
+        "stick found, starting".into()
+    } else if l.status.connected() {
+        let ip = if l.status.ip.is_empty() { "waiting for an address" } else { l.status.ip.as_str() };
+        format!("{} \u{b7} {}", wlan::short(&oos_hal::wlan::name(&l.status.ssid)), ip)
+    } else {
+        format!("not connected ({})", l.status.state.to_lowercase())
+    }
 }
 
 fn activate(ui: &mut Ui, it: Item) -> bool {
@@ -45,28 +67,5 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
     true
 }
 
-fn options(ui: &Ui, it: Item) -> Option<Vec<String>> {
-    let v: &[&str] = match it {
-        Item::WlanNet => return Some(ui.wlan_net_options()),
-        Item::WlanForgetNet => return Some(ui.wlan_forget_options()),
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(_ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Network => vec![
-            Item::NetEth,
-            Item::NetRetry10,
-            Item::NetMac,
-            Item::Open(MenuId::Remote),
-            Item::NetPorts,
-            Item::NetWlan,
-            Item::WlanScan,
-            Item::WlanForget,
-            Item::WlanInfo,
-        ],
-        _ => Vec::new(),
-    }
-}
+#[cfg(test)]
+mod tests;

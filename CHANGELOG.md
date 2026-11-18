@@ -22,6 +22,10 @@ attribution stay as they were.
 Fixes from a review of 0.1.13, and the forum's report on it. All of it is tested on the host. Marked "(unit)" where
 it also ran on a DHO924S (2026-11-16).
 
+- Batch picture merging uses bounded background workers with parallel channel reduction. Excess shares combine
+  without losing frame weight; empty completions retain the visible picture. Accumulators allocate only enabled
+  channel maps. `:SYSTem:STATe?` reports worker merge time and frames per picture. Not yet verified on hardware.
+
 Added:
 
 - System > Network > Remote services > HiSLIP enables TCP 4880 independently with `remote.hislip`. It is off by

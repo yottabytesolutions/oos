@@ -158,6 +158,11 @@ fn state_query_real_reply_has_separate_panel_and_view_renders() {
     assert!(state.starts_with("fps "), "{state}");
     assert!(state.contains("diag draw.render n=1 total=1"), "{state}");
     assert!(state.contains("diag draw.view_render n=2 total=2"), "{state}");
+    assert!(state.contains("diag draw.worker_merge n=0 total=0 p50_ns=pending p90_ns=pending p99_ns=pending"));
+    assert!(state.contains("diag draw.frames_per_picture n=1 total=1 p50_frames="));
+    assert!(state.contains(" worker_merge_us="));
+    // Retain the actual production reply for fixture regeneration on restricted hosts.
+    println!("{state}");
     let fixture = include_str!("../../../../tools/tests/fixtures/perfmap/state.txt");
     let labels = |reply: &str| {
         reply
@@ -167,6 +172,4 @@ fn state_query_real_reply_has_separate_panel_and_view_renders() {
             .collect::<Vec<_>>()
     };
     assert_eq!(labels(&state), labels(fixture), "fixture diagnostic labels must track the real handler");
-    // Retain the actual production reply for fixture regeneration on restricted hosts.
-    println!("{state}");
 }

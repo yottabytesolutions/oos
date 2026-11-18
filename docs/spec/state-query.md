@@ -580,3 +580,25 @@ Storage adds less than 15 KiB inline to each StageTiming owner and a fixed
 five-duration local per step. Recording does not allocate or sort; reporting
 sorts copies. Allocation guards and unchanged host layout/goldens are host
 evidence only; timing overhead and budgets are not yet verified on the unit.
+
+
+## Batch worker diagnostics (#184, PR #186)
+
+Two blocks follow `diag draw.view_render`, before the remaining response suffix. Existing fields retain their order.
+Both use the latest 256 observations with saturating lifetime observation counts and nearest-rank quantiles:
+`diag LABEL n=N total=T p50_UNIT=V p90_UNIT=V p99_UNIT=V max_UNIT=V`.
+p50 and p90 are `pending` at n=0; p99 is `pending` at n<50. The two inline rings add about 4 KiB per StageTiming
+owner. Recording does not allocate or sort.
+
+- `draw.worker_merge`, unit `ns`: one completed picture-worker job, including destination preparation, mailbox
+  collection, channel reduction dispatch/wait and recycling. Empty and rejected completions also enter this ring.
+  It excludes UI snapshot submission, the wait before the picture worker starts, and UI publication. Its elapsed
+  duration is measured on the worker and reported when its result is polled, including headless completion.
+- `draw.frames_per_picture`, unit `frames`: new frames counted by each acquiring UI step, including newest records,
+  deposit shares and zero-frame steps. Retaining a previous picture while a worker is pending records zero here;
+  rendering that retained picture does not imply a new acquisition picture. STOP/replay-only steps do not enter it.
+
+The appended `worker_merge_us=N` is the process-lifetime sum of worker elapsed microseconds from `framecost`.
+It records on worker completion, so it may lead the polled quantile ring by one job. Neither this sum nor the
+rings reset on CLEAR or settings changes. `draw.merge` remains UI handoff/fold time, distinct from worker time.
+Quantiles from different rings are independent and must not be added. The existing cost five-tuple is unchanged.

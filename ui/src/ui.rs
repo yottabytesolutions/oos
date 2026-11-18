@@ -21,6 +21,7 @@ mod batch1_tests;
 mod batch2_tests;
 #[cfg(test)]
 mod batch5_tests;
+mod batch_merge;
 pub mod bode;
 mod bus;
 mod busview;
@@ -2830,6 +2831,7 @@ impl Ui {
         self.math_fit_tick();
         self.sim_poll();
         self.eye_auto_poll();
+        batch_merge::invalidate(self);
         let mut draw = [std::time::Duration::ZERO; 5];
         let hw_seg = self.seg_hw_on();
         let persist = PERSIST[self.m.persist].1;
@@ -2867,7 +2869,7 @@ impl Ui {
             if !fast {
                 self.src.hw_take_all();
             }
-            let k = match self.m.trig_type {
+            let mut k = match self.m.trig_type {
                 // fast path: it draws the queue on several cores, the record is the newest frame only (frames that
                 // come in meanwhile wait for the next screen's fast path instead of a full record each, one by one)
                 _ if fast => 1,
@@ -2889,53 +2891,11 @@ impl Ui {
             let mut raw_rec: Option<Record> = None;
             // fast display path (fastdraw.rs): every queued frame but the newest straight into the phosphor map
             if fast {
-                let t0 = std::time::Instant::now();
-                let frames = self.src.drain_newest(self.fast_max());
-                if !frames.is_empty() && clear_pending {
-                    self.ph.clear();
-                    clear_pending = false;
-                }
-                let n = frames.len();
-                for f in &frames {
-                    crate::pacing::drawn(f.cfg, 1);
-                }
-                n_dep += n;
-                if let Some(f) = frames.iter().rev().find(|f| deep_raw && crate::deepmeas::deep_raw_frame(f)) {
-                    let t = std::time::Instant::now();
-                    raw_rec = Some(crate::wave::hw_record(&self.m, f.clone()));
-                    crate::deepmeas::cost::set(&crate::deepmeas::cost::RECORD_US, t.elapsed());
-                }
-                if n > 0 && self.fast_draw_all(frames) > 0 {
-                    self.m.status = TrigStatus::Triggered;
-                }
-                got += n;
-                let ms = t0.elapsed().as_secs_f32() * 1000.0;
-                td += ms;
-                self.t_fast += 0.05 * (ms - self.t_fast);
-                if n > 0 && ms > 0.0 {
-                    // as many as would have filled the budget at this pace: with a fixed part in each screen's time
-                    // (starting the helpers) this settles where the time meets the budget. Down only when the budget
-                    // was exceeded, up only when the take was the limit: the hardware delivers in bursts, and a screen
-                    // with a few frames says nothing about how many fit
-                    self.fast_take = fast_take_next(self.fast_take, n, ms, self.fast_budget());
-                }
-                let t_merge = std::time::Instant::now();
-                draw[1] += t_merge - t0;
-                // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
-                if let Some(p) = crate::drawpipe::pipe(&sw) {
-                    let t1 = std::time::Instant::now();
-                    let d = p.merge(&mut self.ph, &mut clear_pending, &mut self.fast_edges, &mut self.fast_off);
-                    if d.triggered > 0 {
-                        self.m.status = TrigStatus::Triggered;
-                    }
-                    got += d.frames as usize;
-                    (n_dep, newest) = (n_dep + d.frames as usize, d.newest);
-                    crate::pacing::drawn_stale(d.stale);
-                    self.mstat_fold(&d.folds);
-                    td += t1.elapsed().as_secs_f32() * 1000.0;
-                }
-                draw[2] += t_merge.elapsed();
-                crate::pacing::fast_block((t_merge - t0).as_secs_f32() * 1e3, t_merge.elapsed().as_secs_f32() * 1e3);
+                let result = batch_merge::fast(self, &mut clear_pending, &mut k, dt_wall, picture_cleared);
+                got += result.got;
+                (n_dep, newest, raw_rec) = (result.got, result.newest, result.raw);
+                td += result.drawing;
+                (draw[1], draw[2]) = (result.times[0], result.times[1]);
             }
             let t_records = std::time::Instant::now();
             for _ in 0..k {
@@ -3145,12 +3105,7 @@ impl Ui {
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
             self.wfm_total += got as u64;
             crate::drawpipe::Counters::add(&crate::drawpipe::counters().used, got as u64);
-            crate::pacing::composition(
-                n_dep,
-                n_rec,
-                newest.map(|t: std::time::Instant| t.elapsed().as_secs_f32() * 1e3),
-            );
-            crate::pacing::picture(got);
+            step_draw::picture(self, got, n_dep, n_rec, newest);
             // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
             // measurement stays that of the last raw record
             let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
@@ -3258,6 +3213,7 @@ impl Ui {
             self.vmaxz_cg = (self.vmaxz_cg / 2).max(1);
         }
         draw[4] += halve_zoom.elapsed();
+        batch_merge::schedule(self);
         change::timing_mut(self).draw_step(draw);
     }
 
@@ -9924,6 +9880,7 @@ mod tests {
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
         shared.lock().unwrap().deep_ok = true;
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.measure_in_background();
         ui.m.run = RunState::Run;
         for c in 1..NCH {
@@ -9984,6 +9941,7 @@ mod tests {
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
         shared.lock().unwrap().deep_ok = true;
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.measure_in_background();
         ui.m.run = RunState::Run;
         for c in 1..NCH {
@@ -10035,6 +9993,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.run = RunState::Run;
         for c in 1..NCH {
             ui.m.ch[c].on = false;
@@ -10095,6 +10054,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.producer_step(0.02);
         assert!(!shared.lock().unwrap().needs_raw);
         ui.azr.watch = true;
@@ -10116,6 +10076,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.run = RunState::Run;
         for c in 1..NCH {
             ui.m.ch[c].on = false;
@@ -10253,6 +10214,7 @@ mod tests {
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
         shared.lock().unwrap().deep_ok = true;
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.run = RunState::Run;
         for c in 1..NCH {
             ui.m.ch[c].on = false;
@@ -10310,6 +10272,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.run = RunState::Run;
         ui.m.persist = 0;
         ui.m.trig_level = 0.15;
@@ -10365,6 +10328,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.run = RunState::Run;
         ui.m.persist = 0;
         ui.m.trig_level = 0.15;
@@ -10501,6 +10465,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.run = RunState::Run;
         ui.m.trig_level = 0.5;
         let window = ui.m.time_per_div() as f64 * HDIV as f64;
@@ -10660,6 +10625,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.trig_mode = TrigMode::Normal;
         ui.m.run = RunState::Run;
         ui.m.tscale = tscales().iter().position(|&t| (t - 500e-6).abs() < 1e-9).unwrap();
@@ -10699,6 +10665,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         let mut scpi = crate::scpi::Scpi::open(0, false);
         let cv = Canvas::new(PANEL_W, PANEL_H);
         let take = |s: &crate::board::HwShared| std::mem::take(&mut s.lock().unwrap().force);
@@ -11701,6 +11668,7 @@ mod tests {
         use crate::board::SegPhase;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
         (ui.m.segments, ui.m.seg_hw, ui.m.seg_ivl) = (100, true, 1e-3);
         ui.m.run = RunState::Run;
@@ -11768,6 +11736,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared, seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-7).abs() < 1e-10).unwrap();
         ui.m.segments = 10;
         assert_eq!(*ui.seg_options().last().unwrap(), SEG_MAX);
@@ -11855,6 +11824,7 @@ mod tests {
         };
         shared.lock().unwrap().queue.extend((1..=10).map(frame).map(std::sync::Arc::new));
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         ui.m.trig_level = 0.0;
         ui.m.ch[0].offset = 0.0;
@@ -11913,6 +11883,7 @@ mod tests {
             };
             let shared: crate::board::HwShared = Default::default();
             let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+            ui.m.draw_batch = false;
             ui.m.tscale = tscales().iter().position(|&x| (x as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
             ui.m.trig_level = 0.0;
             for c in 0..NCH {
@@ -11996,6 +11967,7 @@ mod tests {
                     })
                     .collect();
                 let mut ui = Ui::for_tests(Source::Hw { shared: Default::default(), seen: 0 });
+                ui.m.draw_batch = false;
                 ui.m.tscale = tscales().iter().position(|&x| (x as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
                 ui.m.trig_level = 0.0;
                 ui.m.ch[0].offset = 0.0;
@@ -12048,6 +12020,7 @@ mod tests {
         };
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         ui.m.trig_level = 0.0;
         ui.m.ch[0].offset = 0.0;
@@ -12095,6 +12068,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         ui.m.trig_level = 0.0;
         ui.m.ch[0].offset = 0.0;
@@ -12137,6 +12111,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         // frames carry the identity the acquisition had when it read them (our generation filter)
         let push = |ui: &Ui, f: crate::board::Frame| {
             let id = change::acquisition::identity(ui);
@@ -12194,6 +12169,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         // frames carry the identity the acquisition had when it read them (our generation filter)
         let push = |ui: &Ui, f: crate::board::Frame| {
             let id = change::acquisition::identity(ui);
@@ -12309,6 +12285,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         // frames carry the identity the acquisition had when it read them (our generation filter)
         let push = |ui: &Ui, f: crate::board::Frame| {
             let id = change::acquisition::identity(ui);
@@ -12354,6 +12331,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         // frames carry the identity the acquisition had when it read them (our generation filter)
         let push = |ui: &Ui, f: crate::board::Frame| {
             let id = change::acquisition::identity(ui);
@@ -12479,6 +12457,7 @@ mod tests {
         use oos_hal::dho::acq::Mode;
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.draw_batch = false;
         // 100 us/div, Auto depth: 62.5 MSa/s
         ui.m.tscale = tscales().iter().position(|&x| (x - 100e-6).abs() < 1e-9).unwrap();
         (ui.m.acq, ui.m.avg_count, ui.m.avg_hw) = (AcqMode::Average, 16, true);
@@ -12527,8 +12506,15 @@ mod tests {
         ui.m.trig_mode = TrigMode::Single;
         ui.producer_step(0.02);
         assert!(shared.lock().unwrap().avg_clear > c2);
-        ui.m.trig_mode = TrigMode::Auto;
-        // fall-backs to the software average
+    }
+
+    #[test]
+    fn hardware_average_falls_back_to_software_when_unsupported() {
+        use super::*;
+        let mut ui = Ui::for_tests(Source::Hw { shared: Default::default(), seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x - 100e-6).abs() < 1e-9).unwrap();
+        ui.m.acq = AcqMode::Average;
+        ui.m.avg_hw = true;
         ui.m.avg_count = 24;
         assert!(!board().avg_hw(&ui.m));
         ui.m.avg_count = 16;

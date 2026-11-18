@@ -81,7 +81,8 @@ Host `serve` has its own step/render/transport loop; scripts use the same `Ui` w
 
 `Ui::step` polls lifecycle services, accepts normalized changes, then handles records and drawing.
 It drains queued frames on the fast route or builds records on the frame loop.
-It merges worker deposits, updates history/mask/segments, measurements and analysers, queues internal proposals,
+It polls a capacity-one Batch merge worker with channel-parallel reduction on the little cores (headless execution
+waits for completion), updates history/mask/segments, measurements and analysers, queues internal proposals,
 updates panes, and grades/halves the maps. Rendering is a separate call.
 `ph` and `phz` are still public `Ui` fields with several writers.
 
@@ -104,7 +105,8 @@ flowchart LR
     acq -->|"Arc Frame queue / latest"| shared
     shared -->|"Source intake"| ui
     acq -->|"batch buffer + published view"| workers["Deposit workers / acquisition helper"]
-    workers -->|"share maps + folds"| draw
+    workers -->|"combined shares"| merger["Batch picture Worker"]
+    merger -->|"finished merge + folds"| draw
     ui <-->|"jobs / results"| jobs["Measurement and analysis workers"]
     ui <-->|"owned setup snapshots / completions"| store[("Bounded setup storage worker")]
     ui -->|"synchronous exports"| exports[("Waveform and image storage")]
@@ -131,7 +133,8 @@ MCP uses the same interpreter. The FIFO enters through `cmd`.
 mDNS has its own control channel, wake descriptor, socket thread and timers.
 
 `Worker<J, R>` shares bounded capacity-one job/result channels and nonblocking submit/poll across
-simulation, reference analysis/decode/search, math, bus, eye and measurement-catalog jobs.
+Batch picture merging and its four channel reducers, simulation, reference analysis/decode/search, math, bus, eye
+and measurement-catalog jobs.
 One job remains busy until its result is consumed. `MeasWorker` is separate; it handles live measurements
 and analyser windows. WLAN and SNTP use their own job/report threads. Bode's external generator thread
 owns blocking TCP or USBTMC IO. These are not users of a shared IO runtime.
@@ -148,7 +151,8 @@ queues the newest record. Batch is the code and image default; `acq.pipeline = s
 Standard. `fast_ok` selects eligible hardware views. `drawpipe::draw_frame` uses dense
 `fastdraw` spans, sparse interpolation or deep-record drawing; `Phosphor::draw_ex` handles record drawing.
 CPU rendering and GPU layer composition both exist. `Model::draw_batch` selects the hardware route;
-`draw.model` is absent from this checkout. M12 has not chosen which remaining routes to remove.
+`draw.model` is absent from this checkout. The owner selected Batch as the surviving path; M12b removes Standard/Frames
+separately, after the bounded merge's unit verification.
 
 Boot images contain shared model defaults; device identity and overrides stay in `/oos/system.conf`. Updates compare
 runtime hardware model detection with a signed model list and board target (ADR 0015). See [system](system.md).

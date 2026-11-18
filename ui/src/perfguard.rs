@@ -122,6 +122,12 @@ impl StageTiming {
     pub fn draw_step(&mut self, parts: [Duration; 5]) {
         self.draw.step(parts);
     }
+    pub(crate) fn worker_merge(&mut self, elapsed: Duration) {
+        self.draw.merge(elapsed);
+    }
+    pub(crate) fn picture_frames(&mut self, frames: usize) {
+        self.draw.picture(frames);
+    }
     /// Rendering is separate from step; panel and HDMI view calls have independent rings.
     pub fn draw_render(&mut self, elapsed: Duration, view: bool) {
         self.draw.render(elapsed, view);

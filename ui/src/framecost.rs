@@ -19,9 +19,11 @@ pub enum Part {
     Wide,
     /// the whole frame, decode and deposit included
     Frame,
+    /// picture worker wall time, including channel reduction completion
+    Merge,
 }
 
-const PARTS: usize = 5;
+const PARTS: usize = 6;
 
 static NS: [AtomicU64; PARTS] = [const { AtomicU64::new(0) }; PARTS];
 static FRAMES: AtomicU64 = AtomicU64::new(0);
@@ -44,13 +46,19 @@ fn add_at(part: Part, t0: Instant, now: Instant) {
 
 /// ` cost frames N wide N us decode/level/near/wide/frame a/b/c/d/e` (sums since the start).
 pub fn summary() -> String {
-    let us: Vec<String> = NS.iter().map(|n| (n.load(Ordering::Relaxed) / 1000).to_string()).collect();
+    let us: Vec<String> =
+        NS[..Part::Merge as usize].iter().map(|n| (n.load(Ordering::Relaxed) / 1000).to_string()).collect();
     format!(
         " cost frames {} wide {} us decode/level/near/wide/frame {}",
         FRAMES.load(Ordering::Relaxed),
         WIDES.load(Ordering::Relaxed),
         us.join("/")
     )
+}
+
+/// Cumulative picture-worker time, independent of the rolling quantile window.
+pub(crate) fn merge_us() -> u64 {
+    NS[Part::Merge as usize].load(Ordering::Relaxed) / 1000
 }
 
 #[cfg(test)]
@@ -69,6 +77,9 @@ mod tests {
         let t = now - std::time::Duration::from_millis(5);
         add_at(Part::Wide, t, now);
         add_at(Part::Frame, t, now);
+        let merge_before = merge_us();
+        add_at(Part::Merge, t, now);
+        assert!(merge_us() >= merge_before + 5000);
         let (f1, w1, b) = parse(&summary());
         assert!(f1 > f0 && w1 > w0);
         assert!(b[3] >= a[3] + 5000 && b[4] >= a[4] + 5000);

@@ -65,3 +65,9 @@ pub(super) fn render_start(ui: &mut Ui, l: &mut Layers) -> bool {
     }
     false
 }
+
+pub(super) fn picture(ui: &mut Ui, frames: usize, deposit: usize, record: usize, newest: Option<std::time::Instant>) {
+    change::timing_mut(ui).picture_frames(frames);
+    crate::pacing::composition(deposit, record, newest.map(|t| t.elapsed().as_secs_f32() * 1e3));
+    crate::pacing::picture(frames);
+}

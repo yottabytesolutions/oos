@@ -22,7 +22,13 @@ impl Ring {
     }
 
     /// Nearest-rank quantiles; a tail is pending until 50 observations exist.
-    pub(crate) fn text(mut self, label: &str, unit: &str) -> String {
+    pub(crate) fn text(self, label: &str, unit: &str) -> String {
+        self.format(label, unit, false)
+    }
+    pub(crate) fn text_with_p90(self, label: &str, unit: &str) -> String {
+        self.format(label, unit, true)
+    }
+    fn format(mut self, label: &str, unit: &str, p90: bool) -> String {
         self.values[..self.len].sort_unstable();
         let quantile = |percent: usize| {
             if self.len == 0 || (percent == 99 && self.len < 50) {
@@ -31,8 +37,9 @@ impl Ring {
                 self.values[(self.len * percent).div_ceil(100) - 1].to_string()
             }
         };
+        let middle = if p90 { format!(" p90_{unit}={}", quantile(90)) } else { String::new() };
         format!(
-            " diag {label} n={} total={} p50_{unit}={} p99_{unit}={} max_{unit}={}",
+            " diag {label} n={} total={} p50_{unit}={}{middle} p99_{unit}={} max_{unit}={}",
             self.len,
             self.total,
             quantile(50),

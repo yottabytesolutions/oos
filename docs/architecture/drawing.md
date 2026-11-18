@@ -518,3 +518,81 @@ repeat 1/2/4 channels at 10 us/div and neighboring timebases, then the specified
 freeze/replacement behavior for the matrix above, including hardware segment replay and STOP final reads.
 These measurements are not yet verified on hardware. M12a full-gate/prerequisite acceptance and the owner's
 route decision remain with the coordinator; M12b and its deletions are not authorized by host results alone.
+
+
+## Bounded Batch picture merge (#184)
+
+Batch is the surviving path by owner decision; Standard/Frames deletion remains M12b.
+Each deposit worker and the acquisition helper publishes at most one combined share map. Additional shares are
+added outside the mailbox lock, with saturating pixel addition and summed frame/trigger/measurement statistics.
+This combines excess work without selecting representative waveforms or discarding their picture weight.
+The per-picture reduction budget is `(workers + 1) * channels * width * height`: at most 8,691,200 u16 samples for
+four deposit workers, four channels and 970 x 448 pixels, regardless of whether a picture represents 14 or 90 frames.
+
+The capacity-one picture `Worker` collects the shares and reduces channels on four reusable capacity-one Workers,
+using the existing little-core placement. Each reducer owns its destination vector and borrows immutable producer
+shares through Arc handles; the pixel buffers are neither copied nor newly allocated for parallel reduction.
+Clearing replacement pictures also runs per channel. Producer buffers return to their original mailboxes only
+after all reducers finish. Saturating addition and all frame/trigger/measurement statistics retain their meanings.
+If reducer startup fails, the same reduction runs serially.
+
+Live intake polls completion and retains the visible picture while work is pending. It submits only when producer
+maps are available, so a job submitted before the next batch cannot repeatedly publish an empty snapshot. A racing
+empty completion also retains the visible picture and clear intent. A completion is consumed at a subsequent live
+step, independent of machine speed; headless execution waits on the completion event. Ready newest-only batches
+still release their records when no producer maps exist. Mapping, identity, clears and layout changes reject
+obsolete results. Persistence ages the completed picture by injected elapsed time before publication.
+Replacement jobs recycle the spare destination without copying the visible picture; persistence jobs retain the
+existing snapshot copy. Rendering and record/measurement handling keep their current paths.
+
+### Memory bound
+
+An accumulator allocates only enabled channel maps; disabling a channel releases that vector's capacity when its
+accumulator is reused. A producer retains at most three accumulators: one drawing, one published and one held by
+the sole in-flight reduction. With four workers plus the acquisition helper the map payload bound is
+`3 * 5 * active_channels * 970 * 448 * 2` bytes. This is 12.43/24.87/49.73 MiB at 1/2/4 channels, plus one recycled
+3.32 MiB picture snapshot. Decoder vectors, read-out buffers and thread stacks are separate costs; the four reducer threads add stacks,
+but no pixel buffers.
+This is the steady-state bound after accumulators have reused the current view; channel transitions can retain
+old maps until then, within the four-channel bound. The previous all-channel allocation used up to 49.73 MiB of accumulator maps even at one channel. The new bound
+cuts 37.30 MiB at one channel and 24.87 MiB at two relative to the reviewed branch's payload bound.
+Off-thread ownership can retain an extra accumulator per producer plus the snapshot: up to 19.89 MiB of additional
+four-channel pixel buffers compared with two accumulators per producer. That alone cannot explain the entire
+supplied +45-50 MB RSS increase over main; allocator high-water retention, decoder buffers and stacks still need
+a matched unit census. These are payload bounds and savings, not measured process RSS. Tests exercise delayed recycling over 100 rounds,
+channel enable/disable transitions and pointer reuse across parallel reduction.
+
+### Host evidence and unit expectations
+
+`tools/perf-guard.sh` includes `BATCH_PICTURE` rows for both serial and parallel reduction, reporting worker merge
+p50/p90/p99 and UI submission/publication p50/p99. Four-channel Normal acquisition uses 90 frames at 1 us/div and
+the 14-frame production geometry at 10 us/div. The guard checks frame counts and the existing 16.5 ms host merge
+p99 budget. `BATCH_UI_PICTURE` measures the complete live UI step, including newest records and grading, against
+its 33 ms p99 budget. Ordinary regression tests have no elapsed-time assertions. The real STATe handler exposes
+worker quantiles, per-step new-frame counts including zeros, and cumulative worker time; see
+[state-query](../spec/state-query.md#batch-worker-diagnostics-184-pr-186).
+
+Isolated shipping-release host comparison (101 measured pictures after eight warmups, 2026-11-18), not verified
+on hardware:
+
+| Timebase | Frames | Serial merge p50/p90/p99 | Parallel merge p50/p90/p99 | Parallel UI handoff p99 |
+|---|---:|---:|---:|---:|
+| 1 us/div | 90 | 0.349/0.385/0.446 ms | 0.164/0.182/0.202 ms | 0.005 ms |
+| 10 us/div | 14 | 0.341/0.366/0.386 ms | 0.151/0.164/0.172 ms | 0.003 ms |
+
+Parallel reduction is selected because it roughly halves elapsed merge time with no extra pixel buffers.
+Whole-step p50/p99 was 0.531/0.631 ms at 1 us/div and 5.396/5.840 ms at 10 us/div.
+No other tests or builds ran during these final timing observations.
+
+The supplied DHO804 A/B round shows why UI time alone is insufficient: the previous branch reached about 30 fps
+but had 49-61 % empty pictures, 11-15 drops/s at 10 us/div and 145-188 drops/s at 1 us/div. Main had zero drops at
+10 us/div and 17-33 drops/s at 1 us/div. This fix has not been run on hardware.
+Expected unit targets remain merge p90 below 16.5 ms, p99 below the 33.3 ms picture period, and UI handoff p90 no
+worse than the supplied 0.1 ms. A rough expectation is 5-10 ms for a nonempty worker merge with four channels,
+assuming channel parallelism survives shared memory bandwidth and deposit contention; this is uncalibrated and
+must be replaced by measured worker quantiles. The host speedup alone does not establish a unit timing guarantee.
+At 10 us/div expect about 30 fps, nonzero frames-per-picture median after warmup and zero drops. At 1 us/div,
+drops must stay at or below main's matched 17-33/s range, with nonempty acquisition pictures. Retained UI renders
+can still have zero new frames while acquisition is pending; the new counter makes these visible. Compare matched
+warm stationary windows for acquired/used/drop rates, picture membership/brightness, persistence, STOP and setting
+changes, CPU placement/load and RSS. Coordinator owns the DHO804 rerun and acceptance.

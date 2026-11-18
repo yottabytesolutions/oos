@@ -2,23 +2,23 @@
 
 - Number: 0008
 - Category: policy
-- State: target: exact CPU goldens and layout coverage; baseline follow-up in docs/architecture/migration.md#adr-baseline-follow-ups
+- State: implemented on host; new layout references require owner review
 - Date: 2026-11-18
 
 ## Context
 
 Moves can preserve an interface while changing pixels, register writes or computed values. Committed demo/fake-board
 pictures, the 65-plan host matrix and bit-for-bit value comparisons catch those differences before a unit round. Current
-CPU goldens have a tolerance, so they do not yet prove exact equality.
+CPU goldens use deterministic synthetic inputs and bundled fonts so pixel equality can be required.
 
 ## Decision
 
 A behaviour-preserving change proves equality against the applicable committed baselines: golden pictures in
 `ui/tests/golden/`, register plans in `xtask/data/plan-matrix.txt`, and bit-for-bit comparisons for moved computations.
 Baseline changes have a reason in the commit message, a pull request label identifying the baseline change and
-maintainer approval. CPU goldens currently allow RGB differences of 1 and floor(N/1000) over-threshold pixels per
-region; exact CPU comparison is the target. CPU/GPU comparison uses the tolerance in `gpu/test-host.sh`. Host equality
-proves nothing about timing; timing claims require unit evidence.
+maintainer approval. CPU goldens require byte-for-byte equality of decoded RGB data, with no tolerance or masked regions.
+`ui/tests/golden/README.md` lists the layout coverage and the limits of deterministic host inputs. CPU/GPU comparison
+uses the tolerance in `gpu/test-host.sh`. Host equality proves nothing about timing; timing claims require unit evidence.
 
 Check: `tests-debug`, `tests-release`, `plan-matrix`, CODEOWNERS on the baseline paths; review checks the label, reason
 and value comparisons.

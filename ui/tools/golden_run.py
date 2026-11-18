@@ -130,7 +130,7 @@ def manifest(captures):
     return dict(format='m1-rgb-v1', fixture='m1-v1', renderer='CPU; 1024x600; bundled fonts',
                 reference_base='2b5d170fd59d487bbf8851eab84820b9bd07a24c', hermetic_inputs='4b505b411c99f69ed8e834fbdd5e6bfc68ea8521 (task-0030 integration)',
                 seed='0x9e3779b97f4a7c15', schedule=[27, 3, 13, 3, 27, 13],
-                clock=1762862400, dt='1/30', tolerance='RGB 1; over-1 pixels <= floor(N/1000) per region',
+                clock=1762862400, dt='1/30', tolerance='exact decoded RGB bytes; no exceptions',
                 scope='synthetic host characterisation; no hardware verification; Demo acq.pipeline=batch',
                 captures=captures)
 
@@ -230,7 +230,7 @@ def main():
     else:
         compare_inventory(captures, reference, args.subset)
         previous = {c['path']: c for c in json.loads((reference / 'manifest.txt').read_text())['captures']}
-        # Reference hashes describe the baseline; ordinary comparisons use the documented tolerance.
+        # Reference hashes describe the baseline; ordinary comparisons require exact decoded RGB bytes.
         for new in captures:
             old = previous[new['path']]
             for key in ('path', 'regions', 'settings', 'script_sha256', 'provenance', 'source_route', 'decode_route'):

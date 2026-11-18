@@ -1,0 +1,181 @@
+# Trigger conditional order recipes in docs/spec/menus.md.
+frames 2
+menu Trigger
+set Type = Pulse
+set When = <
+shot $S/Pulse-less.ppm
+menu Trigger
+set Type = Pulse
+set When = Inside
+shot $S/Pulse-Inside.ppm
+menu Trigger
+set Type = Slope
+set When = <
+shot $S/Slope-less.ppm
+menu Trigger
+set Type = Slope
+set When = Inside
+shot $S/Slope-Inside.ppm
+menu Trigger
+set Type = Duration
+set When = <
+shot $S/Duration-less.ppm
+menu Trigger
+set Type = Duration
+set When = Inside
+shot $S/Duration-Inside.ppm
+menu Trigger
+set Type = Runt
+set When = Off
+shot $S/Runt-Off.ppm
+menu Trigger
+set Type = Runt
+set When = <
+shot $S/Runt-less.ppm
+menu Trigger
+set Type = Runt
+set When = Inside
+shot $S/Runt-Inside.ppm
+menu Trigger
+set Type = Window
+set Trigger on = Inside
+set When = <
+shot $S/Window-less.ppm
+menu Trigger
+set Type = Window
+set Trigger on = Inside
+set When = Inside
+shot $S/Window-Inside.ppm
+menu Trigger
+set Type = Delay
+set When = <
+shot $S/Delay-less.ppm
+menu Trigger
+set Type = Delay
+set When = Inside
+shot $S/Delay-Inside.ppm
+menu Trigger
+set Type = Window
+set Trigger on = Exit
+shot $S/window-outside.ppm
+menu Trigger
+set Type = Video
+set Sync = Line n
+shot $S/video-line.ppm
+set Mark events = On
+shot $S/search.ppm
+menu Decode
+set Protocol = UART
+menu Trigger
+set Type = Bus
+set Match = Frame
+shot $S/UART-Frame.ppm
+menu Decode
+set Protocol = UART
+menu Trigger
+set Type = Bus
+set Match = ID/Addr
+shot $S/UART-ID-Addr.ppm
+menu Decode
+set Protocol = UART
+menu Trigger
+set Type = Bus
+set Match = Data
+shot $S/UART-Data.ppm
+set Relation = In range
+shot $S/UART-range.ppm
+menu Decode
+set Protocol = UART
+menu Trigger
+set Type = Bus
+set Match = Error
+shot $S/UART-Error.ppm
+menu Decode
+set Protocol = SPI
+menu Trigger
+set Type = Bus
+set Match = Frame
+shot $S/SPI-Frame.ppm
+menu Decode
+set Protocol = SPI
+menu Trigger
+set Type = Bus
+set Match = ID/Addr
+shot $S/SPI-ID-Addr.ppm
+menu Decode
+set Protocol = SPI
+menu Trigger
+set Type = Bus
+set Match = Data
+shot $S/SPI-Data.ppm
+set Relation = In range
+shot $S/SPI-range.ppm
+menu Decode
+set Protocol = SPI
+menu Trigger
+set Type = Bus
+set Match = Error
+shot $S/SPI-Error.ppm
+menu Decode
+set Protocol = I2C
+menu Trigger
+set Type = Bus
+set Match = Frame
+shot $S/I2C-Frame.ppm
+menu Decode
+set Protocol = I2C
+menu Trigger
+set Type = Bus
+set Match = ID/Addr
+shot $S/I2C-ID-Addr.ppm
+menu Decode
+set Protocol = I2C
+menu Trigger
+set Type = Bus
+set Match = Data
+shot $S/I2C-Data.ppm
+set Relation = In range
+shot $S/I2C-range.ppm
+menu Decode
+set Protocol = I2C
+menu Trigger
+set Type = Bus
+set Match = Error
+shot $S/I2C-Error.ppm
+menu Decode
+set Protocol = CAN
+menu Trigger
+set Type = Bus
+set Match = Frame
+shot $S/CAN-Frame.ppm
+menu Decode
+set Protocol = CAN
+menu Trigger
+set Type = Bus
+set Match = ID/Addr
+shot $S/CAN-ID-Addr.ppm
+menu Decode
+set Protocol = CAN
+menu Trigger
+set Type = Bus
+set Match = Data
+shot $S/CAN-Data.ppm
+menu Decode
+set Protocol = CAN
+menu Trigger
+set Type = Bus
+set Match = Error
+shot $S/CAN-Error.ppm
+menu Decode
+set Protocol = I2C
+menu Trigger
+set Type = Bus
+set Match = Data
+pick Mask
+shot $S/hex-keypad.ppm
+menu Logic analyser
+set LA = On
+menu Trigger
+set Type = Edge
+set Source = D0
+shot $S/logic-trigger.ppm

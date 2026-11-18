@@ -15,7 +15,7 @@ pub fn inventory(out: &Path, smoke: bool) -> std::path::PathBuf {
     cases.extend(matrix());
     if smoke {
         cases.retain(|c| smoke_case(&c.name));
-        assert_eq!(cases.len(), 20, "smoke routes must remain explicit");
+        assert_eq!(cases.len(), 23, "smoke routes must remain explicit");
     }
     assert!(!cases.is_empty());
     let mut index = String::new();
@@ -256,6 +256,9 @@ fn inventory_is_unique_and_every_case_has_captures() {
 
 fn smoke_case(name: &str) -> bool {
     [
+        "demo/normal/layout-menus",
+        "demo/large/layout-menus",
+        "demo/larger/layout-menus",
         "demo/normal/basic",
         "demo/large/menus",
         "demo/larger/axes",
@@ -315,5 +318,42 @@ fn persistence_routes(cases: &mut Vec<Case>) {
 fn smoke_inventory_covers_every_execution_route() {
     let inputs = super::isolated_inputs();
     let path = inventory(&inputs.path("smoke"), true);
-    assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 20);
+    assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 23);
+}
+
+#[test]
+fn golden_scripts_cover_every_menu_in_the_specification() {
+    let specification = include_str!("../../../docs/spec/menus.md");
+    let menus = specification.split("## Ordered menu inventory").nth(1).unwrap();
+    let menus = menus.split("### Catalogue controls").next().unwrap();
+    let expected = menus
+        .lines()
+        .filter_map(|l| l.strip_prefix("### "))
+        .map(|name| name.split('(').next().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    let script = include_str!("../layout-menus.txt");
+    let actual = script
+        .lines()
+        .filter_map(|l| l.strip_prefix("shot $S/"))
+        .map(|name| name.trim_end_matches(".ppm").split('-').next().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(expected.len(), 48, "update the menu golden inventory with the specification");
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn golden_scripts_cover_every_protocol_layout_in_the_specification() {
+    let specification = include_str!("../../../docs/spec/menus.md");
+    let registry = specification.split("### Decoder registry").nth(1).unwrap();
+    let registry = registry.split("### Shared merged domains").next().unwrap();
+    let expected = registry
+        .lines()
+        .filter(|l| l.contains(" | choice option | "))
+        .map(|l| l.split(" | ").nth(1).unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    let actual = include_str!("../layout-decoders.txt")
+        .lines()
+        .filter_map(|l| l.strip_prefix("set Protocol = "))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(actual, expected);
 }

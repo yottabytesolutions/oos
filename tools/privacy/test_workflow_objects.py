@@ -39,7 +39,7 @@ class WorkflowObjectTests(unittest.TestCase):
     def run_range(self, fallback: bool, injected: bool = False, other_ref: bool = True,
                   pushed_ref: str = "topic") -> subprocess.CompletedProcess[str]:
         scanner = {"tools/privacy/" + name: (ROOT / "tools/privacy" / name).read_text()
-                   for name in ("scan.py", "patterns.py", "policy.py", "git_input.py")}
+                   for name in ("scan.py", "patterns.py", "policy.py", "git_input.py", "content.py")}
         scanner["tools/privacy/allowlist.json"] = "[]"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

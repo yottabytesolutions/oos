@@ -1,0 +1,2 @@
+main0 0 40 1024 392
+settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=169 records=1014 menu_open=false Demo acq.pipeline=batch

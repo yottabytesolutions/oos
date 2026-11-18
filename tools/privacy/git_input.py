@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Read Git objects without staging, creating commits or touching the device."""
 
+import difflib
 import re
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
+
+from content import PNG_SIGNATURE, content_text
 
 Record = tuple[str, int, str, bool]  # Path/label, line number, text, commit-message source.
 
@@ -63,16 +66,26 @@ def additions(patch: bytes) -> Iterator[tuple[int, str]]:
 
 
 def blob_additions(root: Path, previous: str | None, oid: str) -> Iterator[tuple[int, str]]:
+    data = git(root, "cat-file", "blob", oid)
+    text = content_text(data)
+    if text is None:
+        return
     if previous is None:
-        data = git(root, "cat-file", "blob", oid).decode("utf-8", errors="replace")
-        yield from enumerate(text_lines(data), 1)
+        yield from enumerate(text_lines(text), 1)
+    elif data.startswith(PNG_SIGNATURE):
+        old = content_text(git(root, "cat-file", "blob", previous)) or ""
+        lines = list(text_lines(text))
+        for tag, _, _, start, end in difflib.SequenceMatcher(None, list(text_lines(old)), lines,
+                                                            autojunk=False).get_opcodes():
+            if tag in ("insert", "replace"):
+                yield from ((index + 1, lines[index]) for index in range(start, end))
     else:
         patch = git(root, "diff", "--no-ext-diff", "--no-textconv", "--text", "--unified=0", previous, oid)
         yield from additions(patch)
 
 
 def changed(root: Path, old: dict[str, str], revision: str | None) -> Iterator[Record]:
-    # Compare blobs individually: unusual filenames and binary attributes cannot hide added text.
+    # Compare blobs individually: unusual filenames and binary attributes cannot hide textual additions.
     for name, oid in entries(root, revision):
         previous = old.get(name)
         if oid == previous:

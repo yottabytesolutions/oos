@@ -39,13 +39,14 @@ clearing inherited application overrides. The Python runner inherits PATH and co
 Python CLI invocation can publish references; exporting its inventory does not update anything.
 
 The comparator decodes 8-bit RGB PNGs, verifies chunk CRCs and data lengths and rejects missing, extra or
-wrong-size captures. Each actual plot rectangle and the remaining screen has its own allowance:
-absolute RGB component differences up to 1, with at most `floor(N/1000)` pixels exceeding that threshold.
-No trace or label pixels are masked. Initial repeated-run and debug/release checks require exact equality.
+wrong-size captures. Every decoded RGB byte must match, including each plot rectangle and the remaining screen.
+A one-byte difference fails; there is no pixel budget, tolerance or mask. Region metrics only locate the change.
+Fresh-process repeats and debug/release comparisons use the same exact references.
+PNG compression and chunk encoding are not compared: decoded pixels are the rendering contract.
 
 Each invocation keeps child output logs and a compact `summary.json`. Only failed comparisons write
 expected/actual/diff PNGs, metrics, an HTML gallery and a full report. Magenta marks every changed pixel,
-including tolerated differences. A missing reference fails and leaves the actual capture and log.
+including a single component differing by one. A missing reference fails and leaves the actual capture and log.
 Only the two newest `run-*` directories per profile are retained; builds and soak logs are separate.
 
 ## Soak and gate handoff
@@ -92,7 +93,7 @@ The test includes real workers where eligible and the record route for average a
 claims zero partial merges nor changes the existing perf guards. No listener, port or device is opened.
 The shared server harness remains `tools/host_harness.py` for tests that actually need a host server.
 
-Default Cargo stages run all golden comparisons in release and an explicit 20-case subset in debug
+Default Cargo stages run all golden comparisons in release and an explicit 23-case subset in debug
 and coverage, covering Demo/text sizes, worker raw/direct-code/decode fallback, live/deep pairs,
 average, zoom, frozen/history, roll and scan. The subset compares against the full read-only manifest.
 Until task 0027 supplies `cargo xtask check --image`, the explicit extended commands are:
@@ -114,3 +115,42 @@ coverage smoke 124.472 s. These exclude compilation and are focused test runs, n
 The five-mode short release soak took 34.33 s initially and 44.24 s on final-source confirmation; the
 extended raw-only soak took 63.59 s.
 The coordinator measures the complete integration gate against the approximately twenty-minute budget.
+
+## Menu and layout coverage (issue #170)
+
+The `layout-*.txt` scripts extend the existing scripted corpus at Normal, Large and Larger text sizes.
+`support/cases.rs` checks `layout-menus.txt` against all 48 menu headings in `docs/spec/menus.md`.
+Every script is automatically included in the full inventory; `layout-menus` runs at all three sizes in the smoke set.
+These are captures of the current implementation, including its existing clipping and navigation limitations.
+They do not implement the draft inventory's proposed H1/N1 changes.
+
+| Inventory surface | Script and capture family |
+|---|---|
+| All 48 MenuId variants | `layout-menus`: capture names match inventory headings |
+| Channel and ChMore indexed expansion | `layout-menus`: `Channel-1..4`, `ChMore-1..4` |
+| Features decoder pages | `layout-menus`: `Decoders-1..2` (29 production protocols) |
+| Protocol-specific Decode rows | `layout-decoders`: every production protocol in registry order |
+| Trigger conditional rows, bus match/relation, LA source, hex picker | `layout-triggers`; existing `triggers` covers the twelve analogue types |
+| Power pages; inverter page/angle layouts; Dpt fourth source | `layout-states`: `power-*`, `inverter-*`, `dpt-*` |
+| Analyser pages and overflow menus | `layout-states`: `*-view`, `*-overflow`; existing `spectrum`, `eye`, `xy` |
+| Generator waveform/modulation/frequency keypad; Bode generator-dependent rows | `layout-states`: `generator-*`, `bode-*` |
+| Acquisition and cursor conditional rows | `layout-states`: `acquire-*`, `cursor-*` |
+| Scope/Full/Split/Four densities and Windows assignment rows | `layout-states`: `windows-*`, `density-*`; existing `panes` |
+| Catalogue categories, Selected pagination and all per-measurement settings layouts | `layout-catalogue`; existing `menus`, `results` |
+| Cards/Compact chrome, sources and plot/Eye context popups | `layout-states`; existing `startmenu`, `picker`, `zoom` |
+| Reference, storage, replay and event/result panes | existing `refs`, `storage`, `replay`, `search`, `results` |
+
+### Exactness limits
+
+There are **no exceptions in the deterministic CPU corpus**. All synthetic batch routes, Demo captures,
+menus, fonts and layouts compare exactly. Time and input data are fixed by the headless runner.
+
+The following comparisons are outside that deterministic contract:
+
+- CPU versus GPU parity retains `gpu/test-host.sh`'s tolerance: the GPU's floating-point shaders and rasterisation
+  differ from the CPU implementation. These are separate parity checks, not exceptions to CPU golden comparison.
+- Live hardware waveforms and changing OS/network/calibration status cannot match a fixed screenshot exactly:
+  their samples, timestamps and service results vary. Goldens use synthetic data and hermetic host inputs instead.
+  Hardware verification remains separate.
+- The removed native load-destination modal (menus-1618..1620) has no current rendered state; it is a tombstone.
+  Dynamic WLAN/key lists need supplied entries and are not live network captures.

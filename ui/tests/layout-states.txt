@@ -1,0 +1,366 @@
+# Conditional row layouts and analyser pages from docs/spec/menus.md.
+frames 2
+key default
+menu Power analysis
+shot $S/power-menu.ppm
+set View = On
+close
+frames 3
+shot $S/power-view.ppm
+tap 995 60
+shot $S/power-overflow.ppm
+key default
+menu Magnetic
+shot $S/magnetic-menu.ppm
+set View = On
+close
+frames 3
+shot $S/magnetic-view.ppm
+tap 995 60
+shot $S/magnetic-overflow.ppm
+key default
+menu Inverter
+shot $S/inverter-menu.ppm
+set View = On
+close
+frames 3
+shot $S/inverter-view.ppm
+tap 995 60
+shot $S/inverter-overflow.ppm
+key default
+menu Double pulse
+shot $S/dpt-menu.ppm
+set View = On
+close
+frames 3
+shot $S/dpt-view.ppm
+tap 995 60
+shot $S/dpt-overflow.ppm
+key default
+menu Bode
+shot $S/bode-menu.ppm
+set View = On
+close
+frames 3
+shot $S/bode-view.ppm
+tap 995 60
+shot $S/bode-overflow.ppm
+menu Power analysis
+set Page = Quality
+shot $S/power-Quality.ppm
+close
+frames 2
+shot $S/power-Quality-view.ppm
+menu Power analysis
+set Page = Harmonics
+shot $S/power-Harmonics.ppm
+close
+frames 2
+shot $S/power-Harmonics-view.ppm
+menu Power analysis
+set Page = Switching
+shot $S/power-Switching.ppm
+close
+frames 2
+shot $S/power-Switching-view.ppm
+menu Power analysis
+set Page = Ripple
+shot $S/power-Ripple.ppm
+close
+frames 2
+shot $S/power-Ripple-view.ppm
+menu Power analysis
+set Page = Cin
+shot $S/power-Cin.ppm
+close
+frames 2
+shot $S/power-Cin-view.ppm
+menu Power analysis
+set Page = Rail
+shot $S/power-Rail.ppm
+close
+frames 2
+shot $S/power-Rail-view.ppm
+menu Inverter
+set Page = DQ0
+set Angle = Off
+shot $S/inverter-DQ0-Off.ppm
+menu Inverter
+set Page = DQ0
+set Angle = Phase
+shot $S/inverter-DQ0-Phase.ppm
+menu Inverter
+set Page = DQ0
+set Angle = Analog
+shot $S/inverter-DQ0-Analog.ppm
+menu Inverter
+set Page = DQ0
+set Angle = Quad
+shot $S/inverter-DQ0-Quad.ppm
+menu Inverter
+set Page = DQ0
+set Angle = Hall
+shot $S/inverter-DQ0-Hall.ppm
+menu Inverter
+set Page = Mechanical
+set Angle = Phase
+shot $S/inverter-Mechanical-Phase.ppm
+menu Inverter
+set Page = Mechanical
+set Angle = Analog
+shot $S/inverter-Mechanical-Analog.ppm
+menu Inverter
+set Page = Mechanical
+set Angle = Quad
+shot $S/inverter-Mechanical-Quad.ppm
+menu Inverter
+set Page = Mechanical
+set Angle = Hall
+shot $S/inverter-Mechanical-Hall.ppm
+menu Double pulse
+set Fourth = Gate
+shot $S/dpt-Gate.ppm
+menu Double pulse
+set Fourth = Diode V
+shot $S/dpt-Diode-V.ppm
+menu Double pulse
+set Fourth = Diode I
+shot $S/dpt-Diode-I.ppm
+key default
+menu SIM
+do Advanced
+shot $S/sim-advanced.ppm
+menu Generator
+set Wave = Sine
+shot $S/generator-Sine.ppm
+menu Generator
+set Wave = Square
+shot $S/generator-Square.ppm
+menu Generator
+set Wave = Ramp
+shot $S/generator-Ramp.ppm
+menu Generator
+set Wave = Pulse
+shot $S/generator-Pulse.ppm
+menu Generator
+set Wave = Noise
+shot $S/generator-Noise.ppm
+menu Generator
+set Wave = DC
+shot $S/generator-DC.ppm
+menu Generator
+set Wave = Arb
+shot $S/generator-Arb.ppm
+key default
+menu Acquire
+set Mode = Normal
+shot $S/acquire-Normal.ppm
+key default
+menu Acquire
+set Mode = Peak
+shot $S/acquire-Peak.ppm
+key default
+menu Acquire
+set Mode = Average
+shot $S/acquire-Average.ppm
+key default
+menu Acquire
+set Mode = High res
+shot $S/acquire-High-res.ppm
+menu Cursor
+set Mode = Off
+shot $S/cursor-Off.ppm
+menu Cursor
+set Mode = Time
+shot $S/cursor-Time.ppm
+menu Cursor
+set Mode = Volt
+shot $S/cursor-Volt.ppm
+menu Cursor
+set Mode = Track
+shot $S/cursor-Track.ppm
+menu Cursor
+set Mode = XY
+shot $S/cursor-XY.ppm
+key default
+key ch2
+key ch3
+key ch4
+menu Display
+do Windows
+set Density = Scope
+shot $S/windows-Scope.ppm
+close
+shot $S/density-Scope.ppm
+key default
+key ch2
+key ch3
+key ch4
+menu Display
+do Windows
+set Density = Full
+shot $S/windows-Full.ppm
+close
+shot $S/density-Full.ppm
+key default
+key ch2
+key ch3
+key ch4
+menu Display
+do Windows
+set Density = Split
+shot $S/windows-Split.ppm
+close
+shot $S/density-Split.ppm
+key default
+key ch2
+key ch3
+key ch4
+menu Display
+do Windows
+set Density = Four
+shot $S/windows-Four.ppm
+close
+shot $S/density-Four.ppm
+key default
+menu Horizontal
+set Zoom = On
+shot $S/windows-zoom.ppm
+key default
+menu Display
+set Bottom bar = Compact
+close
+shot $S/compact.ppm
+tap 80 575
+shot $S/compact-sources.ppm
+key default
+menu Bode
+set Generator = Free-running sweep
+shot $S/bode-free.ppm
+set Input (ref) = Off
+shot $S/bode-free-no-reference.ppm
+set Generator = APPL
+shot $S/bode-external.ppm
+menu Generator
+set Wave = Sine
+set Modulation = AM
+shot $S/generator-modulation.ppm
+menu Logic analyser
+set Thr D0-7 = User
+set Thr D8-15 = User
+shot $S/logic-user-thresholds.ppm
+key default
+close
+drag 300 200 300 200 hold
+frames 20
+shot $S/plot-context.ppm
+release
+key default
+menu Eye / jitter
+set View = On
+set Place = Side
+close
+frames 2
+shot $S/eye-side.ppm
+drag 900 50 900 50 hold
+frames 20
+shot $S/eye-context.ppm
+release
+key default
+menu Eye / jitter
+set View = On
+set Place = Under
+close
+frames 2
+shot $S/eye-under.ppm
+key default
+key ch2
+menu Display
+set Bottom bar = Compact
+close
+tap 635 575
+shot $S/stacked.ppm
+key default
+menu Display
+do Windows
+set Density = Split
+set Lower = Traces
+close
+frames 2
+shot $S/pane-Traces.ppm
+key default
+menu Display
+do Windows
+set Density = Split
+set Lower = Spectrum
+close
+frames 2
+shot $S/pane-Spectrum.ppm
+key default
+menu Display
+do Windows
+set Density = Split
+set Lower = Results
+close
+frames 2
+shot $S/pane-Results.ppm
+key default
+menu Display
+do Windows
+set Density = Split
+set Lower = Events
+close
+frames 2
+shot $S/pane-Events.ppm
+key default
+menu Display
+do Windows
+set Density = Split
+set Lower = Trend
+close
+frames 2
+shot $S/pane-Trend.ppm
+key default
+menu Display
+do Windows
+set Density = Split
+set Lower = Bus view
+close
+frames 2
+shot $S/pane-Bus-view.ppm
+key default
+menu Generator
+tap 400 490
+shot $S/frequency-keypad.ppm
+key default
+menu Measure settings
+set Statistics = On
+set Dock = Under
+close
+frames 2
+shot $S/measurements-Under.ppm
+key default
+menu Measure settings
+set Statistics = On
+set Dock = Left
+close
+frames 2
+shot $S/measurements-Left.ppm
+key default
+menu Measure settings
+set Statistics = On
+set Dock = Right
+close
+frames 2
+shot $S/measurements-Right.ppm
+key default
+menu Measure settings
+set Statistics = On
+set Dock = Above
+close
+frames 2
+shot $S/measurements-Above.ppm
+key default
+menu CH1
+do Name
+shot $S/keyboard.ppm

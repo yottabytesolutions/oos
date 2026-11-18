@@ -1,0 +1,82 @@
+# Every catalogue category, its selected measurements and custom settings surfaces.
+frames 4
+workflow measure
+tap 80 118
+shot $S/catalogue-basic.ppm
+tap 80 162
+shot $S/catalogue-two-sources.ppm
+tap 80 206
+shot $S/catalogue-serial-pam.ppm
+tap 80 250
+shot $S/catalogue-jitter-eye.ppm
+tap 80 294
+shot $S/catalogue-power.ppm
+tap 80 338
+shot $S/catalogue-motor.ppm
+tap 80 382
+shot $S/catalogue-rails.ppm
+tap 80 426
+shot $S/catalogue-double-pulse.ppm
+tap 80 510
+shot $S/selected.ppm
+tap 465 112
+shot $S/measurement-settings.ppm
+close
+menu Measure settings
+do Clear all
+workflow measure
+tap 80 500
+shot $S/selected-empty.ppm
+menu Measure settings
+do Clear all
+workflow measure
+do Rise Time
+tap 80 500
+tap 465 112
+shot $S/settings-edges.ppm
+menu Measure settings
+do Clear all
+workflow measure
+do Burst Width
+tap 80 500
+tap 465 112
+shot $S/settings-idle.ppm
+menu Measure settings
+do Clear all
+workflow measure
+do Time Outside Level
+tap 80 500
+tap 465 112
+shot $S/settings-outside.ppm
+menu Measure settings
+do Clear all
+workflow measure
+do Duration N-Periods
+tap 80 500
+tap 465 112
+shot $S/settings-periods.ppm
+menu Measure settings
+do Clear all
+workflow measure
+do Amplitude
+do Peak-to-Peak
+do Maximum
+do Minimum
+do Top
+do Base
+do Upper Level
+do Middle Level
+do Lower Level
+do Positive Overshoot
+do Negative Overshoot
+do Mean
+do RMS
+do AC RMS
+do Area
+do Standard Deviation
+do Median
+do Mode
+tap 80 500
+shot $S/selected-page-1.ppm
+tap 160 494
+shot $S/selected-page-2.ppm

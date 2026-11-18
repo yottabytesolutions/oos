@@ -691,7 +691,7 @@ The coordinator replaces each TBD issue placeholder before acceptance.
 
 | Record | Issue | Follow-up and acceptance |
 |---|---|---|
-| ADR 0008 | TBD (coordinator) | Baselines: replace current CPU RGB-1/floor(N/1000) tolerance with exact comparison; cover every layout-check script and all three text sizes with goldens, then remove the temporary procedure. |
+| ADR 0008 | TBD (coordinator) | Exact CPU comparison and all-script, three-text-size references are implemented in #170. Accept the new menu/layout references before removing the temporary layout-check procedure. |
 | ADR 0011 | TBD (coordinator) | Protected areas: host allowlist coverage is in the checked-writer and CLI tests. Require protected-area before/after evidence for releases and hardware-path PRs. |
 | ADR 0012 | TBD (coordinator) | Hardware-key inventory: check every parsed key has a row and removal issue; reconcile enabled image defaults and environment switches with off-until-verified. |
 | ADR 0015 | TBD (coordinator) | Device state: manifest all first-boot defaults, durable writes and update-preserved files; test absent/present values and signed sd.mode variant selection. |

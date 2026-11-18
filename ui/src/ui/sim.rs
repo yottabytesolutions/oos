@@ -113,171 +113,6 @@ impl Ui {
         SIM_MEAS.into_iter().map(|k| (k, WaveId::Ref(slot))).collect()
     }
 
-    pub(super) fn sim_items(&self) -> Vec<Item> {
-        let mut items = vec![
-            Item::SimPreset,
-            Item::SimRate,
-            Item::SimPat,
-            Item::SimHigh,
-            Item::SimLow,
-            Item::SimRise,
-            Item::SimBw,
-            Item::SimDeemph,
-            Item::SimNoise,
-            Item::SimSsc,
-            Item::Open(MenuId::SimAdvanced),
-            Item::SimRj,
-            Item::SimPj,
-            Item::SimPjHz,
-            Item::SimSlot,
-            Item::SimPlay,
-            Item::SimShow,
-            Item::SimDefaults,
-        ];
-        if self.record_mode() {
-            items.insert(0, Item::SimLive);
-        }
-        items
-    }
-
-    pub(super) fn sim_advanced_items(&self) -> Vec<Item> {
-        vec![
-            Item::SimSsc,
-            Item::SimSscCenter,
-            Item::SimSscDeviation,
-            Item::SimSscHz,
-            Item::SimDcd,
-            Item::SimCorrRj,
-            Item::SimCorrHz,
-            Item::SimDefaults,
-        ]
-    }
-
-    pub(super) fn sim_kind(it: Item) -> Option<Kind> {
-        Some(match it {
-            Item::SimPlay | Item::SimLive | Item::SimDefaults => Kind::Action,
-            Item::SimPreset | Item::SimPat | Item::SimSsc | Item::SimSscCenter | Item::SimSlot | Item::SimShow => {
-                Kind::Choice
-            }
-            Item::SimRate
-            | Item::SimHigh
-            | Item::SimLow
-            | Item::SimRise
-            | Item::SimBw
-            | Item::SimDeemph
-            | Item::SimNoise
-            | Item::SimRj
-            | Item::SimPj
-            | Item::SimPjHz
-            | Item::SimSscDeviation
-            | Item::SimSscHz
-            | Item::SimDcd
-            | Item::SimCorrRj
-            | Item::SimCorrHz => Kind::Value,
-            _ => return None,
-        })
-    }
-
-    pub(super) fn sim_label(it: Item) -> Option<&'static str> {
-        Some(match it {
-            Item::Open(MenuId::Sim) => "SIM",
-            Item::Open(MenuId::SimAdvanced) => "Advanced",
-            Item::SimPreset => "Preset",
-            Item::SimRate => "Rate",
-            Item::SimPat => "Pattern",
-            Item::SimHigh => "High",
-            Item::SimLow => "Low",
-            Item::SimRise => "Rise 20-80%",
-            Item::SimBw => "Bandwidth",
-            Item::SimDeemph => "De-emph",
-            Item::SimNoise => "Noise",
-            Item::SimSsc => "Spread",
-            Item::SimSscCenter => "SSC profile",
-            Item::SimSscDeviation => "SSC deviation",
-            Item::SimSscHz => "SSC frequency",
-            Item::SimDcd => "DCD p-p",
-            Item::SimCorrRj => "Corr RJ RMS",
-            Item::SimCorrHz => "Corr RJ corner",
-            Item::SimRj => "RJ RMS",
-            Item::SimPj => "PJ peak",
-            Item::SimPjHz => "PJ freq",
-            Item::SimSlot => "Slot",
-            Item::SimPlay => "Play",
-            Item::SimLive => "Live",
-            Item::SimShow => "Show",
-            Item::SimDefaults => "Defaults",
-            _ => return None,
-        })
-    }
-
-    pub(super) fn sim_value(&self, it: Item) -> Option<String> {
-        let m = &self.m;
-        Some(match it {
-            Item::SimPreset => self.sim_lane().name.into(),
-            Item::SimRate => si_short(m.sim_rate, "b/s"),
-            Item::SimPat => format!("PRBS-{}", m.sim_prbs),
-            Item::SimHigh => si_short(m.sim_vhigh, "V"),
-            Item::SimLow => si_short(m.sim_vlow, "V"),
-            Item::SimRise => si_short(m.sim_rise, "s"),
-            Item::SimBw => si_short(m.sim_bw, "Hz"),
-            Item::SimDeemph => format!("{:.1} dB", m.sim_deemph),
-            Item::SimNoise => si_short(m.sim_noise, "V"),
-            Item::SimSsc => {
-                if m.sim_ssc {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            Item::SimSscCenter => {
-                if m.sim_ssc_center {
-                    "Center".into()
-                } else {
-                    "Down, DC removed".into()
-                }
-            }
-            Item::SimSscDeviation => {
-                format!("{:.2} % {}", 100.0 * m.sim_ssc_deviation, if m.sim_ssc_center { "pk" } else { "p-p" })
-            }
-            Item::SimSscHz => si_short(m.sim_ssc_hz, "Hz"),
-            Item::SimDcd => si_short(m.sim_dcd_pp, "s"),
-            Item::SimCorrRj => si_short(m.sim_corr_rj, "s"),
-            Item::SimCorrHz => si_short(m.sim_corr_hz, "Hz"),
-            Item::SimRj => si_short(m.sim_rj, "s"),
-            Item::SimPj => si_short(m.sim_pj, "s"),
-            Item::SimPjHz => {
-                if m.sim_pj > 0.0 {
-                    si_short(m.sim_pjhz, "Hz")
-                } else {
-                    "off".into()
-                }
-            }
-            Item::SimSlot => format!("R{}", m.sim_slot + 1),
-            Item::SimPlay => String::new(),
-            Item::SimDefaults => String::new(),
-            Item::SimShow => match &self.refs[m.sim_slot] {
-                None => "empty".into(),
-                Some(r) => {
-                    let name = if r.label.is_empty() { format!("R{}", m.sim_slot + 1) } else { r.label.clone() };
-                    format!("{} {}", name, if r.on { "on" } else { "off" })
-                }
-            },
-            _ => return None,
-        })
-    }
-
-    pub(super) fn sim_options(&self, it: Item) -> Option<Vec<String>> {
-        Some(match it {
-            Item::SimPreset => serial::names().into_iter().map(|s| s.to_string()).collect(),
-            Item::SimPat => PRBS.iter().map(|n| format!("PRBS-{n}")).collect(),
-            Item::SimSsc => vec!["Off".into(), "On".into()],
-            Item::SimSscCenter => vec!["Down, DC removed".into(), "Center".into()],
-            Item::SimSlot => (0..NREF).map(|i| format!("R{}", i + 1)).collect(),
-            Item::SimShow => vec!["Off".into(), "On".into()],
-            _ => return None,
-        })
-    }
-
     pub(super) fn sim_adjust(&mut self, it: Item, d: i32) -> bool {
         let running = self.sim_requested_running();
         match it {
@@ -1221,7 +1056,7 @@ mod tests {
         assert!(!u.top_buttons().iter().any(|b| b.0 == TopBtn::Live));
         u.session_is_sim = true;
         u.m.ch[0].on = false;
-        assert!(u.sim_items().first() == Some(&Item::SimLive));
+        assert!(u.menu_items(MenuId::Sim).first() == Some(&Item::SimLive));
         let live = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Live).expect("Live");
         u.tap(live.2.x + 4, 10);
         assert!(!u.session_is_sim);
@@ -1263,7 +1098,7 @@ mod tests {
         let names = serial::names().join(" ");
         assert!(!names.to_ascii_lowercase().contains("hss"));
         assert!(!names.contains("Waveform"));
-        let labels: String = u.sim_items().iter().filter_map(|&it| Ui::sim_label(it)).collect::<Vec<_>>().join(" ");
+        let labels: String = u.menu_items(MenuId::Sim).iter().map(|&it| Ui::label(it)).collect::<Vec<_>>().join(" ");
         assert!(!labels.to_ascii_lowercase().contains("hss"));
     }
 
@@ -1331,7 +1166,7 @@ mod tests {
         assert_eq!(u.m.sim_prbs, 15);
         assert!(!u.m.sim_ssc);
         u.open_menu(MenuId::Sim);
-        let labels: Vec<_> = u.sim_items().iter().filter_map(|&it| Ui::sim_label(it)).collect();
+        let labels: Vec<_> = u.menu_items(MenuId::Sim).iter().map(|&it| Ui::label(it)).collect();
         for want in [
             "Rate",
             "Pattern",

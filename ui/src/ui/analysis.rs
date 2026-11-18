@@ -333,7 +333,6 @@ fn power_page(p: PowerMode) -> &'static str {
         PowerMode::Rail => "Rail",
     }
 }
-const FIND_LABELS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
 /// 1-2-5 frequency ladder 1 Hz .. 1 GHz (0 = full span / auto RBW in front).
 fn freq_ladder() -> Vec<f64> {
@@ -893,16 +892,8 @@ impl Ui {
             | Item::PowFline
             | Item::PowFsw
             | Item::PowRef => Kind::Value,
-            Item::SpecPeak
-            | Item::SpecLimitSet
-            | Item::SpecLimitClear
-            | Item::EyeClear
-            | Item::EyeAct
-            | Item::IdentifyAct => Kind::Action,
+            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::EyeAct => Kind::Action,
             Item::SpecMargin => Kind::Value,
-            Item::ProtoWatch => Kind::Choice,
-            // a finding is a row with its summary as the only option: tapping it applies it
-            Item::IdFind(_) => Kind::Choice,
             Item::SpecOn
             | Item::SpecSrc
             | Item::SpecHarm
@@ -932,8 +923,6 @@ impl Ui {
             Item::Open(MenuId::Spectrum) => "Spectrum",
             Item::Open(MenuId::Eye) => "Eye / jitter",
             Item::Open(MenuId::Power) => "Power analysis",
-            Item::IdentifyAct => "Identify",
-            Item::ProtoWatch => "Protocol watch",
             Item::SpecOn | Item::EyeOn | Item::PowOn => "View",
             Item::SpecSrc | Item::EyeSrc => "Source",
             Item::SpecCenter => "Centre",
@@ -971,7 +960,6 @@ impl Ui {
             Item::PowClk => "Clock",
             Item::SpecAcprW => "Ch width",
             Item::SpecAcprS => "Ch space",
-            Item::IdFind(k) => FIND_LABELS[k.min(7)],
             _ => return None,
         })
     }
@@ -981,7 +969,6 @@ impl Ui {
         let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
             Item::SpecOn => onoff(m.view == AView::Spectrum),
-            Item::ProtoWatch => onoff(self.azr.watch),
             Item::EyeOn => onoff(m.view == AView::Eye),
             Item::EyePlace => match m.eye_place {
                 EyePlace::Full => "Full".into(),
@@ -1056,16 +1043,7 @@ impl Ui {
             Item::PowClk => m.pw_clk.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into()),
             Item::SpecAcprW => si_short(m.spec_acpr_w, "Hz"),
             Item::SpecAcprS => si_short(m.spec_acpr_s, "Hz"),
-            Item::IdFind(k) => self.azr.findings.get(k).map_or(String::new(), |f| {
-                // the whole text: the row's button draws it in the largest font that fits
-                format!("CH{} {}", f.channels.first().map_or(0, |c| c + 1), f.summary)
-            }),
-            Item::SpecPeak
-            | Item::SpecLimitSet
-            | Item::SpecLimitClear
-            | Item::EyeClear
-            | Item::EyeAct
-            | Item::IdentifyAct => String::new(),
+            Item::SpecPeak | Item::SpecLimitSet | Item::SpecLimitClear | Item::EyeClear | Item::EyeAct => String::new(),
             Item::SpecMargin => format!("{:.0} dB", self.m.spec_margin),
             _ => return None,
         })
@@ -1074,14 +1052,9 @@ impl Ui {
     pub(super) fn ana_options(&self, it: Item) -> Option<Vec<String>> {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
         Some(match it {
-            Item::SpecOn
-            | Item::EyeOn
-            | Item::PowOn
-            | Item::SpecWf
-            | Item::SpecDist
-            | Item::EyeHp
-            | Item::EyeNpj
-            | Item::ProtoWatch => v(&["Off", "On"]),
+            Item::SpecOn | Item::EyeOn | Item::PowOn | Item::SpecWf | Item::SpecDist | Item::EyeHp | Item::EyeNpj => {
+                v(&["Off", "On"])
+            }
             Item::EyePlace => v(&["Full", "Side", "Under"]),
             Item::SpecSrc | Item::EyeSrc | Item::PowV | Item::PowI => self.wave_names(),
             Item::EyeB | Item::EyeRail | Item::PowVin | Item::PowClk => self.wave_names_opt(),
@@ -1089,7 +1062,6 @@ impl Ui {
             Item::SpecWin => crate::math::WINDOWS.iter().map(|w| w.name().to_string()).collect(),
             Item::SpecTrace => v(&TRACES),
             Item::PowMode => POWER_MODES.iter().map(|p| power_page(*p).to_string()).collect(),
-            Item::IdFind(_) => vec![self.ana_value(it).unwrap_or_default()],
             _ => return None,
         })
     }
@@ -1302,12 +1274,6 @@ impl Ui {
         }
         let Some(s) = self.wave_samples(rec, id) else { return f64::NAN };
         oos_dsp::measure::analyze_min(&s.v, s.dt, 0.4 * self.wave_vpd(id)).get(Meas::Freq)
-    }
-
-    pub(super) fn identify_items(&self) -> Vec<Item> {
-        let mut v = vec![Item::ProtoWatch];
-        v.extend((0..self.azr.findings.len().min(8)).map(Item::IdFind));
-        v
     }
 
     /// Protocol watch: every 2 s Identify on the screen record of the channels that are on; a bus that was

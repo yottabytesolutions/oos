@@ -8,183 +8,7 @@ use super::*;
 use oos_dsp::motor::{self, Theta};
 
 impl Ui {
-    pub(super) fn inverter_items(&self) -> Vec<Item> {
-        use Item::{
-            InvA, InvAn, InvAng, InvB, InvC, InvCpr, InvDeg, InvEi, InvElec, InvEv, InvHa, InvHb, InvHc, InvOff, InvOn,
-            InvPage, InvPoles, InvQa, InvQb, InvQi, InvQty, InvScale, InvSwap, InvTq,
-        };
-        let m = &self.m;
-        let mut v = vec![InvOn, InvPage];
-        if m.inv_page == crate::model::InvPage::Dq0 {
-            v.extend([InvA, InvB, InvC, InvQty, InvAng]);
-            if m.inv_ang == InvAngle::Analog {
-                v.push(InvAn);
-            }
-            if m.inv_ang == InvAngle::Phase
-                || (m.inv_ang == InvAngle::Analog && m.inv_elec)
-                || m.inv_ang == InvAngle::Off
-            {
-                v.push(InvPoles);
-            }
-            if m.inv_ang == InvAngle::Analog {
-                v.extend([InvDeg, InvOff, InvElec]);
-            }
-            if m.inv_ang == InvAngle::Quad {
-                v.extend([InvQa, InvQb, InvQi, InvCpr, InvSwap]);
-            }
-            if m.inv_ang == InvAngle::Hall {
-                v.extend([InvHa, InvHb, InvHc]);
-            }
-        } else {
-            v.push(InvAng);
-            match if m.inv_ang == InvAngle::Off { InvAngle::Phase } else { m.inv_ang } {
-                InvAngle::Phase | InvAngle::Off => v.extend([InvA, InvB, InvC, InvPoles]),
-                InvAngle::Analog => {
-                    v.push(InvAn);
-                    v.extend([InvDeg, InvOff, InvElec]);
-                    if m.inv_elec {
-                        v.push(InvPoles);
-                    }
-                }
-                InvAngle::Quad => v.extend([InvQa, InvQb, InvQi, InvCpr, InvSwap]),
-                InvAngle::Hall => v.extend([InvHa, InvHb, InvHc]),
-            }
-            v.extend([InvTq, InvScale, InvEv, InvEi]);
-        }
-        v
-    }
-
-    pub(super) fn inverter_kind(it: Item) -> Option<Kind> {
-        Some(match it {
-            Item::InvPoles
-            | Item::InvScale
-            | Item::InvDeg
-            | Item::InvOff
-            | Item::InvQa
-            | Item::InvQb
-            | Item::InvQi
-            | Item::InvCpr
-            | Item::InvHa
-            | Item::InvHb
-            | Item::InvHc => Kind::Value,
-            Item::InvOn
-            | Item::InvPage
-            | Item::InvA
-            | Item::InvB
-            | Item::InvC
-            | Item::InvAng
-            | Item::InvAn
-            | Item::InvQty
-            | Item::InvTq
-            | Item::InvEv
-            | Item::InvEi
-            | Item::InvElec
-            | Item::InvSwap => Kind::Choice,
-            _ => return None,
-        })
-    }
-
-    pub(super) fn inverter_label(it: Item) -> Option<&'static str> {
-        Some(match it {
-            Item::InvOn => "View",
-            Item::InvPage => "Page",
-            Item::InvA => "Phase A",
-            Item::InvB => "Phase B",
-            Item::InvC => "Phase C",
-            Item::InvAng => "Angle",
-            Item::InvPoles => "Poles",
-            Item::InvAn => "Analog",
-            Item::InvQty => "Signal",
-            Item::InvTq => "Torque",
-            Item::InvEv => "Bus V",
-            Item::InvEi => "Bus I",
-            Item::InvScale => "Scale",
-            Item::InvDeg => "Deg/V",
-            Item::InvOff => "Offset",
-            Item::InvElec => "Angle is",
-            Item::InvQa => "A lead",
-            Item::InvQb => "B",
-            Item::InvQi => "Index",
-            Item::InvCpr => "Counts",
-            Item::InvSwap => "Swap",
-            Item::InvHa => "Hall A",
-            Item::InvHb => "Hall B",
-            Item::InvHc => "Hall C",
-            _ => return None,
-        })
-    }
-
-    pub(super) fn inverter_value(&self, it: Item) -> Option<String> {
-        let m = &self.m;
-        let onoff = |b: bool| if b { "On".into() } else { "Off".into() };
-        let opt = |c: Option<WaveId>| c.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into());
-        let line = |n: u8| format!("D{}", n.min(15));
-        Some(match it {
-            Item::InvOn => onoff(m.view == AView::Inverter),
-            Item::InvPage => {
-                if m.inv_page == InvPage::Dq0 {
-                    "DQ0".into()
-                } else {
-                    "Mechanical".into()
-                }
-            }
-            Item::InvA => self.wave_name(m.inv_a),
-            Item::InvB => self.wave_name(m.inv_b),
-            Item::InvC => self.wave_name(m.inv_c),
-            Item::InvAng => self.ang_name(),
-            Item::InvPoles => format!("{}", m.inv_poles.max(1)),
-            Item::InvAn => self.wave_name(m.inv_an),
-            Item::InvQty => {
-                if m.inv_volt {
-                    "Voltage".into()
-                } else {
-                    "Current".into()
-                }
-            }
-            Item::InvTq => opt(m.inv_tq),
-            Item::InvEv => opt(m.inv_ev),
-            Item::InvEi => opt(m.inv_ei),
-            Item::InvScale => short_num(m.inv_scale),
-            Item::InvDeg => format!("{} \u{b0}/V", short_num(m.inv_degv)),
-            Item::InvOff => format!("{} \u{b0}", short_num(m.inv_off)),
-            Item::InvElec => {
-                if m.inv_elec {
-                    "Elec".into()
-                } else {
-                    "Mech".into()
-                }
-            }
-            Item::InvQa => line(m.inv_qa),
-            Item::InvQb => line(m.inv_qb),
-            Item::InvQi => m.inv_qi.map(line).unwrap_or_else(|| "Off".into()),
-            Item::InvCpr => format!("{:.0}", m.inv_cpr),
-            Item::InvSwap => onoff(m.inv_swap),
-            Item::InvHa => line(m.inv_ha),
-            Item::InvHb => line(m.inv_hb),
-            Item::InvHc => line(m.inv_hc),
-            _ => return None,
-        })
-    }
-
-    pub(super) fn inverter_options(&self, it: Item) -> Option<Vec<String>> {
-        let v = |o: &[&str]| Some(o.iter().map(|s| s.to_string()).collect());
-        match it {
-            Item::InvOn | Item::InvSwap => v(&["Off", "On"]),
-            Item::InvPage => v(&["DQ0", "Mechanical"]),
-            Item::InvA | Item::InvB | Item::InvC | Item::InvAn => Some(self.wave_names()),
-            Item::InvAng => Some(if self.m.inv_page == InvPage::Dq0 {
-                vec!["Off".into(), "Phase".into(), "Analog".into(), "Quad".into(), "Hall".into()]
-            } else {
-                vec!["Phase".into(), "Analog".into(), "Quad".into(), "Hall".into()]
-            }),
-            Item::InvQty => v(&["Voltage", "Current"]),
-            Item::InvTq | Item::InvEv | Item::InvEi => Some(self.wave_names_opt()),
-            Item::InvElec => v(&["Mech", "Elec"]),
-            _ => None,
-        }
-    }
-
-    fn ang_name(&self) -> String {
+    pub(super) fn ang_name(&self) -> String {
         let a = if self.m.inv_page == InvPage::Mech && self.m.inv_ang == InvAngle::Off {
             InvAngle::Phase
         } else {
@@ -211,7 +35,7 @@ impl Ui {
     }
 
     pub(super) fn inverter_adjust(&mut self, it: Item, d: i32) -> bool {
-        let opts = self.inverter_options(it);
+        let opts = self.options(it);
         let pick = |cur: &str, opts: &[String]| {
             let i = opts.iter().position(|o| o == cur).unwrap_or(0);
             opts[(i as i32 + d).rem_euclid(opts.len() as i32) as usize].clone()
@@ -242,7 +66,7 @@ impl Ui {
             }
             Item::InvAng => {
                 let cur = self.ang_name();
-                let name = pick(&cur, opts.as_deref().unwrap_or(&[]));
+                let name = pick(&cur, &opts);
                 self.set_ang(&name);
             }
             Item::InvPoles => self.m.inv_poles = (self.m.inv_poles as i32 + d).clamp(1, 32) as u32,
@@ -643,7 +467,7 @@ impl Ui {
     }
 }
 
-fn short_num(x: f64) -> String {
+pub(super) fn short_num(x: f64) -> String {
     if !x.is_finite() {
         return "----".into();
     }

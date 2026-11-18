@@ -186,27 +186,8 @@ impl Ui {
         }
     }
 
-    pub(super) fn offline_kind(it: Item) -> Option<Kind> {
-        match it {
-            Item::Offline => Some(Kind::Choice),
-            _ => None,
-        }
-    }
-
-    pub(super) fn offline_label(it: Item) -> Option<&'static str> {
-        match it {
-            Item::Offline => Some("Record"),
-            _ => None,
-        }
-    }
-
     pub(super) fn offline_value(&self, it: Item) -> Option<String> {
         match it {
-            Item::Offline => Some(match self.look {
-                reflook::RefLook::Live => "With live".into(),
-                reflook::RefLook::TakeOver => "Take over".into(),
-                reflook::RefLook::Waves => "Offline".into(),
-            }),
             Item::DvmSrc | Item::CntSrc if self.offline => Some(format!("R{}", self.offline_ref.min(NREF - 1) + 1)),
             _ => None,
         }
@@ -214,7 +195,6 @@ impl Ui {
 
     pub(super) fn offline_options(&self, it: Item) -> Option<Vec<String>> {
         match it {
-            Item::Offline => Some(vec!["With live".into(), "Take over".into(), "Offline".into()]),
             Item::DvmSrc | Item::CntSrc if self.offline => Some((0..NREF).map(|i| format!("R{}", i + 1)).collect()),
             _ => None,
         }

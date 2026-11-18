@@ -35,18 +35,6 @@ pub fn apply(pct: u32) {
 }
 
 impl Ui {
-    pub(super) fn backlight_kind(it: Item) -> Option<Kind> {
-        (it == Item::Backlight).then_some(Kind::Value)
-    }
-
-    pub(super) fn backlight_label(it: Item) -> Option<&'static str> {
-        (it == Item::Backlight).then_some("Backlight")
-    }
-
-    pub(super) fn backlight_value(&self, it: Item) -> Option<String> {
-        (it == Item::Backlight).then(|| format!("{} %", self.sys.backlight))
-    }
-
     pub(super) fn backlight_adjust(&mut self, it: Item, d: i32) -> bool {
         if it != Item::Backlight {
             return false;

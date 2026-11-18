@@ -169,11 +169,16 @@ fn every_exit_restores_clock_receipt_even_when_no_restart_is_requested() {
         std::fs::create_dir_all(f.p(dir)).unwrap();
         f.write(&format!("{dir}/scaling_available_frequencies"), available);
         f.write(&format!("{dir}/scaling_min_freq"), "1416000");
+        let a53 = "sys/devices/system/cpu/cpufreq/policy0";
+        std::fs::create_dir_all(f.p(a53)).unwrap();
+        f.write(&format!("{a53}/scaling_available_frequencies"), "408000 1200000");
+        f.write(&format!("{a53}/scaling_min_freq"), "1200000");
         let gpu = "sys/class/devfreq/ff9a0000.gpu";
         std::fs::create_dir_all(f.p(gpu)).unwrap();
         f.write(&format!("{gpu}/available_frequencies"), "400000000 600000000");
         f.write(&format!("{gpu}/min_freq"), "600000000");
-        f.write("tmp/oos-clock-floors", "cpu 408000\ngpu 400000000");
+        let a72 = if tag.starts_with("clean") { "cpu-a72" } else { "cpu" };
+        f.write("tmp/oos-clock-floors", &format!("{a72} 408000\ncpu-a53 408000\ngpu 400000000"));
         f.exec("bin/ui", &format!("#!/bin/sh\ntouch \"$OOS_UI_TMP/oos-ui.off\"\nexit {rc}\n"));
         let out = f.command("oos-ui-loop").env("OOS_CLOCK_SYSFS", f.p("sys")).output().unwrap();
         assert!(out.status.success(), "{:?}", out);
@@ -182,7 +187,9 @@ fn every_exit_restores_clock_receipt_even_when_no_restart_is_requested() {
         let gpu = std::fs::read_to_string(f.p(&format!("{gpu}/min_freq"))).unwrap();
         assert_eq!(cpu.trim(), if restored { "408000" } else { "1416000" });
         assert_eq!(gpu.trim(), if restored { "400000000" } else { "600000000" });
+        let a53 = std::fs::read_to_string(f.p(&format!("{a53}/scaling_min_freq"))).unwrap();
+        assert_eq!(a53.trim(), if restored { "408000" } else { "1200000" });
         let log = std::fs::read_to_string(f.p("tmp/oos-ui.log")).unwrap();
-        assert!(log.contains(if restored { "device=cpu restored=408000" } else { "recovery failed" }));
+        assert!(log.contains(if restored { "device=cpu-a72 restored=408000" } else { "recovery failed" }));
     }
 }

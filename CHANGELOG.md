@@ -24,6 +24,9 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- `:SYSTem:STATe?` includes GPU clock read-backs, per-policy A53/A72 and GPU floor states/reasons,
+  and panel upload p50/p99 (#195). Host-tested only; not yet verified on hardware.
+
 - System > Network > Remote services > HiSLIP enables TCP 4880 independently with `remote.hislip`. It is off by
   default until verified on the unit. The listener, sessions, firewall and discovery follow the switch. Host-tested only.
 
@@ -68,6 +71,14 @@ Fixed:
 - `:SYSTem:STATe?` reports the active hardware draw pipeline after live changes through `:SYSTem:PIPeline` (#182).
   Non-hardware sources still report the startup pipeline switch.
 - RUN after SINGLE restores the previous NORMAL or AUTO sweep, including after STOP (#183). Host-tested only.
+
+- RUN clock floors now accept RK3399 thermal layouts with passive trips on the CPU zone only, while guarding both
+  CPU and GPU temperatures. GPU minima have one reversible owner, restored on STOP and thermal inhibition.
+  CPU floors select each A53/A72 policy's highest available OPP within its current maximum, accept valid lower
+  kernel clamps, and report and restore both policies independently. Failed raises retry at most once per second
+  with the saved original minimum and suppress repeated identical errors; RUN after a failed restore reapplies
+  and verifies the floor.
+  Host-tested only; not yet verified on hardware.
 
 - The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it
   only changed the density there and the panel stayed as it was (forum report). Full chosen under Density still

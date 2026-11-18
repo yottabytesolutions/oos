@@ -32,6 +32,8 @@ pacing ... picture ... settle ...
 cost frames N wide N us decode/level/near/wide/frame A/B/C/D/E
 rss BYTES_OR_UNKNOWN watchdog STATE [gpu_failures N gpu_restarts N gpu_retry STATE]
 persistence on_OR_off last_crash none_OR_TIME_AND_TEXT
+gpu_clock current_hz=VALUE min_hz=VALUE max_hz=VALUE
+cpu_floor engaged_OR_disabled reason REASON gpu_floor engaged_OR_disabled reason REASON
 shadow acq=N mapping=N phosphor=N stats=N mask=N zone=N hw_average=N
 history=N math=N view=N normalize=N outbox=N errors=N unreviewed=N
 Full=N PayloadTooLarge=N SnapshotTooLarge=N DuplicateToken=N GenerationOverflow=N
@@ -579,3 +581,35 @@ Storage adds less than 15 KiB inline to each StageTiming owner and a fixed
 five-duration local per step. Recording does not allocate or sort; reporting
 sorts copies. Allocation guards and unchanged host layout/goldens are host
 evidence only; timing overhead and budgets are not yet verified on the unit.
+
+## RUN clock and GPU upload diagnostics (#195)
+
+After `last_crash`, `gpu_clock current_hz=VALUE min_hz=VALUE max_hz=VALUE` reports
+read-backs from the discovered GPU devfreq node. Values are decimal Hz or `unknown`
+when absent, unreadable or malformed. They describe the kernel's current policy,
+including any maximum imposed by cooling; querying them does not change it.
+
+`cpu_floor a53 STATE reason REASON min_khz=VALUE a72 STATE reason REASON min_khz=VALUE`
+and `gpu_floor STATE reason REASON` report each RUN floor independently. Each CPU
+minimum is a decimal kHz read-back or `unknown`. STATE is `engaged` after a successful write and read-back,
+otherwise `disabled`. REASON is `none` for engagement, `idle` outside hardware RUN,
+`config-off`, `device-unavailable`, `no-controller`, `recovery-failed`,
+`not-engaged`, `restore-pending` (with STATE `engaged`), `thermal-limit` (including re-arm hysteresis),
+`thermal-read-error`, or `thermal-unavailable:DETAIL`. Discovery DETAIL includes
+`no-passive-trip`, `missing-cpu-gpu-zones` or an IO error kind prefixed with `io-`
+(for example, `io-NotFound`). Each reason is a single token. CPU and GPU sensors share
+the earliest passive trip exported by either zone; both temperatures remain required.
+A verified floor remains `engaged reason restore-pending` while STOP or thermal
+inhibition requires restoration and restoration has not succeeded. `not-engaged`
+does not imply an IO error; it includes an unattempted or unverified raise.
+
+After the seven draw diagnostics, `diag gpu.upload` uses the same bounded-ring
+format and nearest-rank/pending rules, with `p50_ns`, `p99_ns` and `max_ns`.
+One observation is the helper's upload duration for one successfully collected
+panel frame, converted from helper milliseconds to a `Duration` at receipt. Invalid
+upload times fail the collection with an explicit helper error. HDMI collections, CPU
+frames and collections with no pending panel frame add no observations. Reporting
+retains the last 256 observations and a saturating lifetime total; queries do not
+record samples. The extra ring raises inline draw diagnostic storage to less than
+17 KiB. Existing draw rings retain their boundaries and order. Host-tested only;
+unit performance and thermal read-back verification remain pending.

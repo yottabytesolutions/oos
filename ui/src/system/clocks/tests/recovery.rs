@@ -33,7 +33,7 @@ fn death_child() {
 #[test]
 fn recovery_ignores_optouts_and_retains_unverifiable_receipts() {
     let tree = Tree::new();
-    std::fs::write(tree.0.join("saved"), "cpu 408000\ngpu 400000000\n").unwrap();
+    std::fs::write(tree.0.join("saved"), "gpu 400000000\ncpu 408000\n").unwrap();
     tree.set(CPU, "scaling_min_freq", "1416000");
     tree.set(GPU, "min_freq", "600000000");
     let mut c = tree.controller("perf.cpu_floor = off\nperf.gpu_floor = off");
@@ -57,7 +57,16 @@ fn failed_journal_write_never_raises_and_invalid_receipt_is_kept() {
     c.update(true);
     assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
     drop(c);
-    for text in ["", "cpu bad\n", "cpu 408000\ncpu 816000\n", "other 1\n"] {
+    for text in [
+        "",
+        "cpu bad\n",
+        "cpu 408000\ncpu 816000\n",
+        "cpu 408000\ncpu-a72 408000\n",
+        "other 1\n",
+        "CPU 408000\n",
+        "cpu\n",
+        "gpu 400000000 extra\n",
+    ] {
         std::fs::write(tree.0.join("saved"), text).unwrap();
         let mut c = tree.controller("");
         c.update(true);
@@ -92,8 +101,8 @@ fn thermal_drop_rearm_and_sensor_failure_work_during_continuous_run() {
 }
 
 #[test]
-fn missing_passive_trip_or_zone_disables_floors() {
-    for file in ["thermal_zone2/type", "thermal_zone7/trip_point_0_type"] {
+fn missing_required_zone_disables_floors() {
+    for file in ["thermal_zone2/type", "thermal_zone7/type"] {
         let tree = Tree::new();
         std::fs::remove_file(tree.0.join("class/thermal").join(file)).unwrap();
         let mut c = tree.controller("");
@@ -139,7 +148,7 @@ fn absent_floors_are_reported_once() {
         .unwrap();
     assert!(output.status.success());
     let text = String::from_utf8(output.stderr).unwrap();
-    assert_eq!(text.matches("device=cpu absent; disabled").count(), 1);
+    assert_eq!(text.matches("device=cpu-a72 absent; disabled").count(), 1);
     assert_eq!(text.matches("device=gpu absent; disabled").count(), 1);
     assert!(!tree.0.join("saved").exists());
 }

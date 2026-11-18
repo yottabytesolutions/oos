@@ -31,6 +31,7 @@ impl Tree {
         )));
         me.set(CPU, "scaling_available_frequencies", "408000 816000 1416000 1800000");
         me.set(CPU, "scaling_min_freq", "408000");
+        me.set(CPU, "scaling_max_freq", "1416000");
         me.set(GPU, "available_frequencies", "200000000 400000000 600000000");
         me.set(GPU, "min_freq", "400000000");
         for (number, kind) in [(7, "cpu-thermal"), (2, "gpu-thermal")] {
@@ -72,7 +73,10 @@ impl Drop for Tree {
     }
 }
 
+mod issue_195;
+mod policies;
 mod recovery;
+mod retries;
 mod review;
 
 #[test]
@@ -108,6 +112,7 @@ fn independent_default_on_switches_and_higher_prior_floor() {
     }
     let tree = Tree::new();
     tree.set(CPU, "scaling_min_freq", "1800000");
+    tree.set(CPU, "scaling_max_freq", "1800000");
     let mut c = tree.controller("");
     c.update(true);
     assert_eq!(tree.minima().0, "1800000");
@@ -116,8 +121,8 @@ fn independent_default_on_switches_and_higher_prior_floor() {
 }
 
 #[test]
-fn unavailable_target_or_prior_minimum_is_never_written() {
-    for (available, previous) in [("408000 816000", "408000"), ("1416000", "408000"), ("408000 1416000", "bad")] {
+fn invalid_prior_minimum_or_no_opp_under_maximum_is_never_written() {
+    for (available, previous) in [("1800000", "1800000"), ("1416000", "408000"), ("408000 1416000", "bad")] {
         let tree = Tree::new();
         tree.set(CPU, "scaling_available_frequencies", available);
         tree.set(CPU, "scaling_min_freq", previous);
@@ -209,6 +214,7 @@ fn failed_restore_retains_original_for_exit_retry() {
     c.update(false);
     assert_eq!(tree.minima().0, "1416000");
     assert!(tree.0.join("saved").exists());
+    assert!(c.status().to_string().contains("a72 engaged reason restore-pending"));
     c.restore();
     assert_eq!(tree.minima().0, "408000");
     assert!(!tree.0.join("saved").exists());
@@ -274,8 +280,8 @@ fn successful_applied_values_are_structured_and_logged_once() {
         .unwrap();
     assert!(output.status.success());
     let text = String::from_utf8(output.stderr).unwrap();
-    assert_eq!(text.matches("clock_floor device=").count(), 2);
-    assert!(text.contains("device=cpu applied=1416000 previous=408000"));
+    assert_eq!(text.matches(" applied=").count(), 2);
+    assert!(text.contains("device=cpu-a72 applied=1416000 previous=408000"));
     assert!(text.contains("device=gpu applied=600000000 previous=400000000"));
 }
 
@@ -291,7 +297,7 @@ fn logging_child() {
     }
 }
 
-struct Clamping(linux::Sysfs);
+struct Clamping(linux::Sysfs, &'static str, u64);
 impl Port for Clamping {
     fn read(&self, path: &str) -> io::Result<String> {
         self.0.read(path)
@@ -300,14 +306,15 @@ impl Port for Clamping {
         self.0.entries(path)
     }
     fn write(&mut self, path: &str, value: u64) -> io::Result<()> {
-        self.0.write(path, if value == 1_416_000 { 816000 } else { value })
+        let clamp = path == format!("{}/scaling_min_freq", self.1) && value > 408000;
+        self.0.write(path, if clamp { self.2 } else { value })
     }
 }
 
 #[test]
 fn mismatched_read_back_still_restores_the_original() {
     let tree = Tree::new();
-    let port = Clamping(linux::Sysfs(tree.0.clone()));
+    let port = Clamping(linux::Sysfs(tree.0.clone()), CPU, 816000);
     let mut c = Controller::new(Box::new(port), Config::parse("perf.gpu_floor = off"), None, tree.0.join("saved"));
     c.update(true);
     assert_eq!(tree.minima().0, "816000");

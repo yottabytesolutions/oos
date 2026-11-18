@@ -52,7 +52,21 @@ The owner's explicit task assignment authorizes this claim on the supplied base.
    and readings/errors in transitions, restore after every supervisor exit,
    keep host tests hermetic and correct the remote-listener thread table. Add
    failing-before regressions where testable.
-6. Test lifecycle, unavailable values, missing nodes, independent opt-outs,
+6. PR #197 round f: handle policy0/A53 and policy4/A72 independently. Select
+   each CPU policy's highest available OPP within scaling_max_freq, accept valid
+   lower read-backs, expose per-policy state and minima, and preserve recovery
+   for both policies including legacy receipts. Add fixture regressions; host
+   validation only, with the unit re-check owned by the coordinator.
+   Final review: keep the per-policy fix, model saved/verified/pending floors
+   as enum states, share one thermal limit, return owned status snapshots, and
+   convert helper upload time to Duration at the protocol boundary. Reserve
+   `ui/src/gpu.rs`, `ui/src/gpu/times.rs`, `ui/src/system/device/graphics.rs`,
+   `ui/src/ui/graphics.rs`, `docs/spec/state-query.md` and `CHANGELOG.md`
+   for these review fixes and their documented diagnostics.
+   Fixture review: regenerate `tools/tests/fixtures/perfmap/state.txt` through
+   the real SCPI host test, update its README provenance and compare clock
+   status in `ui/src/ui/tests/change_picture_contracts.rs` to prevent drift.
+7. Test lifecycle, unavailable values, missing nodes, independent opt-outs,
    failed writes and restoration against a fake filesystem, debug and release.
    Run the gate's exact clippy step and `cargo xtask check --fast`; preserve
    complete logs and exits. No ratchet edits or commits.
@@ -67,10 +81,12 @@ Unit acceptance, coordinator under an owner-released scope lease:
   startup. XDMA MSI must avoid deposit0's core; eth0 must avoid cpu0 when a
   deposit worker uses it. Check VOP/panfrost/MMC affinities remain unchanged.
   Confirm MSI mode, no new timeouts and normal acquisition.
-- Capture policy4 `scaling_available_frequencies`, `scaling_min_freq` and GPU
-  devfreq `available_frequencies`, `min_freq` before startup. During RUN read
-  back 1416000 kHz / 600000000 Hz (or preserved higher prior minima). STOP
-  must restore exact prior minima; repeat RUN/STOP and exit while RUN,
+- Capture policy0 and policy4 `scaling_available_frequencies`, `scaling_min_freq`,
+  `scaling_max_freq` and GPU devfreq `available_frequencies`, `min_freq` before
+  startup. During RUN verify each CPU policy's highest OPP within its maximum,
+  or a valid lower clamped OPP, and GPU 600000000 Hz (or a higher prior minimum).
+  Check `cpu_floor a53` and `a72` against those read-backs. STOP must restore
+  each policy's exact prior minimum; repeat RUN/STOP and exit while RUN,
   SIGINT/SIGTERM and the existing panic/exit qualification path. Under the
   coordinator's approved qualification procedure, include an unclean exit during
   RUN, confirm `/tmp/oos-clock-floors` exists before death and is removed only
@@ -123,9 +139,10 @@ done
 cat /proc/interrupts
 for f in /proc/irq/*/smp_affinity_list; do echo "$f: $(cat "$f")"; done
 clock_readback() {
-    d=/sys/devices/system/cpu/cpufreq/policy4
-    for f in scaling_available_frequencies scaling_min_freq scaling_cur_freq; do
-        echo "$d/$f: $(cat "$d/$f")"
+    for d in /sys/devices/system/cpu/cpufreq/policy0 /sys/devices/system/cpu/cpufreq/policy4; do
+        for f in scaling_available_frequencies scaling_min_freq scaling_max_freq scaling_cur_freq; do
+            echo "$d/$f: $(cat "$d/$f")"
+        done
     done
     for d in /sys/class/devfreq/*.gpu; do
         for f in available_frequencies min_freq cur_freq; do
@@ -162,6 +179,128 @@ done
 ```
 
 ## Status
+
+- 2026-11-18: PR #197 state-fixture review fix: regenerated the complete
+  perfmap reply from the real SCPI host test and updated fixture provenance.
+  The existing fixture contract now compares clock status, including both CPU
+  policies and minima; it rejects the stale fixture (exit 101). All 17 perfmap
+  Python tests pass. Complete UI suites pass: debug 1732 and optimized
+  test-release 1731, each with 59 skipped and exit 0. Fast gate exits 0:
+  `partial gate passed (not done): 12 steps in 26 s`.
+  No lowered ratchet counts. Production delta is zero. Complete logs, commands
+  and exits are in `target/state-fixture-review/`. Host-only; no hardware access.
+  Branch refresh was blocked by sandbox Git metadata permissions and remains
+  with the runner. Independent review and integration remain with the coordinator.
+
+- 2026-11-18: PR #197 retry review fix ready for coordinator review.
+  Failed RUN raises retry at the existing one-second sampling interval; repeated
+  identical per-device errors are suppressed until success or a changed error.
+  RUN/thermal transitions and forced restoration still attempt immediately.
+  The existing retry deadline is shared with restores, and saved original
+  minima remain unchanged across retries. Clock fixtures use manual time.
+  Updated the existing system documentation and clock-floor changelog entry.
+  Three new regressions fail before the fix (exit 101). An intermediate clock
+  run (53 passed, one failed, exit 101) and full-debug run (665 passed, one
+  failed, exit 100) exposed another immediate-retry fixture, now converted to
+  the manual clock alongside the existing failed-write status fixture.
+  Final complete oos-ui nextest suites pass: debug 1686 and optimized
+  test-release 1685, each with 59 skipped and exit 0. Final fast gate exits 0:
+  `partial gate passed (not done): 12 steps in 13 s`.
+  No lowered ratchet counts were reported. Production delta against HEAD:
+  +8 Rust lines, no tooling growth. Evidence: `target/clock-retries-*.log`,
+  debug/release `.command` and `.exit` files, and `target/clock-retries-source.json`.
+  All six changed Rust source fingerprints match the tested files.
+  Host-only; no hardware access, Git writes or repository network operations.
+  Branch refresh, independent review, full/image gates and the unit re-check
+  remain with the runner/coordinator. Task remains active for that acceptance.
+
+- 2026-11-18: PR #197 code-quality fixes ready for coordinator review.
+  Prepared and RestorePending floors retry through verified writes without
+  replacing the saved original minima. Status uses the controller allow
+  decision; Runtime string output is named text. CPU/GPU constructors own
+  minimum, maximum and available attribute names; upload_ms owns conversion;
+  Kind uses FromStr and frame rings use LABELS.len(). Four regressions fail
+  before the fix (exit 101) and pass after. Complete oos-ui nextest suites
+  pass in debug (1681 tests) and optimized test-release (1680 tests), each
+  with 59 skipped and exit 0, including golden comparisons and the optimized
+  composed soak. Fast gate exits 0 and prints
+  `partial gate passed (not done): 12 steps in 47 s`.
+  No lowered ratchet counts were reported. Production delta against HEAD:
+  +15 Rust lines, no tooling growth. Evidence: `target/clock-quality/`
+  contains commands, logs, exits and fingerprints for all 12 changed Rust
+  files, verified unchanged after testing. No hardware access or Git history
+  writes. Sandbox-blocked fetch, branch refresh, renewed independent review
+  and the coordinator full/image gates and unit re-check remain pending.
+
+- 2026-11-18: PR #197 code-quality fixes active under the existing claim.
+  Retry Prepared and RestorePending floors through verified raises; share the
+  controller allow decision with status. Centralize CPU/GPU attributes, upload
+  milliseconds and ring length; use FromStr and restore Runtime text naming.
+  Reserve `ui/src/ui.rs` (lifecycle text call only) and
+  `ui/src/perfguard/draw.rs` for the named findings. Add failing-before
+  regressions, then run host debug/release tests and the fast gate. Fetch was
+  blocked by sandbox Git metadata permissions; preserve the runner checkout.
+  No hardware access or Git history writes.
+
+- 2026-11-18: final review fixes ready for coordinator review and unit re-check.
+  Guard owns one shared limit. FloorPhase owns saved minima: Prepared preserves
+  the receipt for an unverified write; Raised and RestorePending preserve verified
+  floors without a separate engaged flag. Thermal inhibition reports raised
+  floors as restore-pending independently of cached running state. Controller
+  and Handle return owned Status snapshots; unavailable construction is direct.
+  GPU upload time is a Duration at helper receipt, with explicit invalid-value
+  errors. Diagnostics use not-engaged for unverified floors; changelog entries
+  separate fixes from added diagnostics. The existing two-policy OPP/clamp and
+  recovery fixtures pass in both profiles.
+  `cargo nextest run -p oos-ui` passes 1679 tests; `--cargo-profile test-release`
+  passes 1678 tests, each with 59 skips and exit 0. The sampled-thermal regression
+  fails against the original clock modules (exit 101) and passes against the
+  changed modules (exit 0), using the same fixture and regression source.
+  `cargo xtask step clippy` exits 0 and prints
+  `partial gate passed (not done): 1 steps in 6 s`, covering host and ARM.
+  Initial fast gate failed size on unused GPU ratchet slack. Running
+  `cargo xtask ratchet` changed only the GPU file allowance, 628 to 618.
+  Subsequent fast gate exits 0 and prints
+  `partial gate passed (not done): 12 steps in 36 s`.
+  Logs and exits: `target/clock-review-{debug,release,ratchet,fast-final,clippy-final}.*`;
+  before/after regression evidence: `target/clock-review-regression/`.
+  `cargo xtask loc --compare HEAD` reports +25 production Rust lines, no other
+  production or tooling delta. Host-only; coordinator full/image gates,
+  independent review and DHO804 unit re-check remain pending. No hardware access
+  or Git writes; no repository network operations.
+
+- 2026-11-18: final review round active on `fix/195-clock-floors`. Per-policy
+  CPU selection and fixture coverage are already present in the supplied base.
+  Add thermal restore-failure and status snapshot regressions, retain policy
+  tests, and validate GPU upload conversion. Host-only; unit re-check and
+  independent review remain with the coordinator. Git writes and repository
+  network operations remain with the runner.
+
+- 2026-11-18: PR #197 round f fix ready for coordinator review and unit re-check.
+  Policy0/A53 and policy4/A72 select their own highest available OPP within
+  scaling_max_freq. Valid lower CPU read-backs engage at the actual value;
+  invalid/higher read-backs remain per-policy failures. STATe exposes separate
+  A53/A72 states and min_khz read-backs. Both recovery paths restore separate
+  receipts and accept legacy cpu receipts for A72. GPU behavior is unchanged.
+  Three initial per-policy regressions failed before the fix (exit 101).
+  Final focused tests pass in debug and the gate's optimized test-release
+  profile: clocks 48 and supervisor 30 per profile, no failures or ignores,
+  each command exit 0. Commands, full logs and exits are in
+  `target/clock-final-{debug,release,supervisor-debug,supervisor-release}.{command,log,exit}`.
+  Initial fast gate failed size (constructor 62 lines); extracting CPU path
+  construction fixes it. Initial clock runs also found two outdated host fake
+  assumptions; the fake now exposes its modeled policy and scaling_max_freq.
+  Subsequent fast gate exits 0: `partial gate passed (not done): 12 steps in 45 s`.
+  Handoff rerun evidence: `target/clock-fast-handoff.{command,log,exit}`.
+  No lowered ratchet counts were reported for changed files. Production delta
+  from `cargo xtask loc --compare HEAD`: +36 Rust lines, +4 shell tooling lines.
+  Unit read-backs, independent review and the coordinator's full/image gates
+  remain pending. No hardware access, Git writes or network operations.
+
+- 2026-11-18: PR #197 round f fix active on `fix/195-clock-floors`. Existing
+  claim covers clock source, supervisor recovery and fixture tests. Extend the
+  reservation to `CHANGELOG.md` for the existing #195 entry. Git writes and
+  network operations belong to the runner/coordinator. Unit re-check pending.
 
 - 2026-11-16: round 3 author handoff ready, uncommitted. P2 and P3.1-P3.6
   addressed, including throttling repeated memory-hold restoration. Final debug

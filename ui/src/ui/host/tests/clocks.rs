@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex};
 struct Fake(Arc<Mutex<u64>>);
 impl Port for Fake {
     fn read(&self, path: &str) -> std::io::Result<String> {
+        if path.starts_with("devices/system/cpu/cpufreq/policy0/") {
+            return Err(std::io::ErrorKind::NotFound.into());
+        }
         Ok(if path.ends_with("/type") {
             if path.contains("zone7") {
                 "cpu-thermal".into()
@@ -18,6 +21,8 @@ impl Port for Fake {
             "70000".into()
         } else if path.ends_with("/temp") {
             "45000".into()
+        } else if path.ends_with("scaling_max_freq") {
+            "1416000".into()
         } else if path.ends_with("scaling_available_frequencies") {
             "408000 1416000".into()
         } else {

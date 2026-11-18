@@ -50,12 +50,17 @@ restore_clocks() (
     sys=${OOS_CLOCK_SYSFS:-/sys}
     seen=
     while read -r device value extra || [ -n "$device$value$extra" ]; do
+        # Canonicalise legacy A72 receipts before detecting duplicate policies.
+        [ "$device" != cpu ] || device=cpu-a72
         case "$value" in ''|*[!0-9]*) exit 1 ;; esac
         [ -z "$extra" ] || exit 1
         case " $seen " in *" $device "*) exit 1 ;; esac
         seen="$seen $device"
         case "$device" in
-            cpu) dir=$sys/devices/system/cpu/cpufreq/policy4
+            cpu-a53|cpu-a72)
+                 policy=policy4
+                 [ "$device" != cpu-a53 ] || policy=policy0
+                 dir=$sys/devices/system/cpu/cpufreq/$policy
                  minimum=$dir/scaling_min_freq; available=$dir/scaling_available_frequencies ;;
             gpu) dir=
                  for node in "$sys"/class/devfreq/*.gpu; do

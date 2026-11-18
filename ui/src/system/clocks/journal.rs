@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Same-boot recovery receipt. Rename commits every saved value before sysfs is changed.
-use super::Floor;
+use super::{Floor, Kind};
 use std::io::{self, Write};
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ impl Journal {
         Self(path)
     }
 
-    pub(super) fn load(&self) -> io::Result<Option<Vec<(String, u64)>>> {
+    pub(super) fn load(&self) -> io::Result<Option<Vec<(Kind, u64)>>> {
         let text = match std::fs::read_to_string(&self.0) {
             Ok(text) => text,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -19,13 +19,14 @@ impl Journal {
         let mut values = Vec::new();
         for line in text.lines() {
             let fields: Vec<_> = line.split_whitespace().collect();
-            if fields.len() != 2
-                || !matches!(fields[0], "cpu" | "gpu")
-                || values.iter().any(|(name, _)| name == fields[0])
-            {
+            let [name, value] = fields.as_slice() else {
+                return Err(io::Error::other("invalid clock recovery receipt"));
+            };
+            let kind = name.parse::<Kind>()?;
+            if values.iter().any(|(saved, _)| *saved == kind) {
                 return Err(io::Error::other("invalid clock recovery receipt"));
             }
-            values.push((fields[0].to_string(), fields[1].parse().map_err(io::Error::other)?));
+            values.push((kind, value.parse().map_err(io::Error::other)?));
         }
         if values.is_empty() {
             return Err(io::Error::other("empty clock recovery receipt"));
@@ -38,8 +39,8 @@ impl Journal {
             .iter()
             .enumerate()
             .filter_map(|(i, floor)| {
-                let saved = if i == index { Some(previous) } else { floor.saved };
-                saved.map(|value| format!("{} {value}\n", floor.name))
+                let saved = if i == index { Some(previous) } else { floor.saved() };
+                saved.map(|value| format!("{} {value}\n", floor.kind))
             })
             .collect();
         let temp = self.0.with_extension("new");

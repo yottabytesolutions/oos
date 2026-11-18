@@ -3,8 +3,10 @@
 mod floor;
 mod journal;
 mod linux;
+mod status;
 mod thermal;
-use floor::Floor;
+use floor::{DevicePaths, Floor, FloorPhase, Kind};
+pub(crate) use status::Status;
 #[cfg(test)]
 mod tests;
 
@@ -41,12 +43,14 @@ pub trait Port: Send {
 pub struct Controller {
     port: Box<dyn Port>,
     floors: Vec<Floor>,
+    gpu: Option<Arc<DevicePaths>>,
+    config: Config,
     journal: journal::Journal,
     thermal: thermal::Guard,
-    running: bool,
+    allowed: bool,
     recovery_failed: bool,
     requested: bool,
-    next_restore: Instant,
+    next_attempt: Instant,
     clock: Box<dyn Fn() -> Instant + Send>,
 }
 impl Controller {
@@ -62,26 +66,27 @@ impl Controller {
         clock: Box<dyn Fn() -> Instant + Send>,
     ) -> Self {
         let now = clock();
-        let mut floors = vec![Floor::new(
-            "cpu",
-            "devices/system/cpu/cpufreq/policy4",
-            "scaling_min_freq",
-            "scaling_available_frequencies",
-            1_416_000,
-        )];
-        if let Some(gpu) = gpu {
-            floors.push(Floor::new("gpu", gpu, "min_freq", "available_frequencies", 600_000_000));
+        let mut floors: Vec<_> = [(Kind::CpuA72, "policy4"), (Kind::CpuA53, "policy0")]
+            .into_iter()
+            .map(|(kind, policy)| Floor::cpu(kind, policy))
+            .collect();
+        let gpu = gpu.map(|path| Arc::new(DevicePaths::gpu(path)));
+        if let Some(gpu) = &gpu {
+            floors.push(Floor::new(Kind::Gpu, gpu.clone()));
         }
+        let gpu_missing = gpu.is_none();
         let thermal = thermal::Guard::discover(port.as_ref(), now);
         let mut me = Self {
             port,
             floors,
+            gpu,
+            config,
             journal: journal::Journal::new(saved),
             thermal,
-            running: false,
+            allowed: false,
             recovery_failed: false,
             requested: false,
-            next_restore: now,
+            next_attempt: now,
             clock,
         };
         // Recover irrespective of current opt-outs, before reading any new previous minimum.
@@ -92,17 +97,17 @@ impl Controller {
             return me;
         }
         me.floors.retain(|f| {
-            let enabled = if f.name == "cpu" { config.cpu } else { config.gpu };
+            let enabled = f.kind.enabled(config);
             if !enabled {
                 return false;
             }
-            let present = me.port.read(&f.minimum).is_ok() && me.port.read(&f.available).is_ok();
+            let present = me.port.read(&f.device.minimum()).is_ok() && me.port.read(&f.device.available()).is_ok();
             if !present {
-                eprintln!("oos-ui: clock_floor device={} absent; disabled", f.name);
+                eprintln!("oos-ui: clock_floor device={} absent; disabled", f.kind);
             }
             present
         });
-        if config.gpu && gpu.is_none() {
+        if config.gpu && gpu_missing {
             eprintln!("oos-ui: clock_floor device=gpu absent; disabled");
         }
         me
@@ -110,26 +115,29 @@ impl Controller {
 
     fn recover(&mut self) -> io::Result<()> {
         let Some(saved) = self.journal.load()? else { return Ok(()) };
-        for (name, value) in saved {
+        for (kind, value) in saved {
             let floor = self
                 .floors
                 .iter_mut()
-                .find(|f| f.name == name)
+                .find(|f| f.kind == kind)
                 .ok_or_else(|| io::Error::other("saved device is absent"))?;
-            floor.saved = Some(value);
+            floor.phase = FloorPhase::Prepared(value);
             floor.restore(self.port.as_mut())?;
-            eprintln!("oos-ui: clock_floor recovery device={name} restored={value}");
+            eprintln!("oos-ui: clock_floor recovery device={kind} restored={value}");
         }
         self.journal.clear()
     }
 
     fn raise(&mut self, index: usize) -> io::Result<()> {
-        if self.floors[index].saved.is_some() {
-            return Ok(());
+        match self.floors[index].phase {
+            FloorPhase::Raised(_) => return Ok(()),
+            FloorPhase::Idle => {
+                let previous = self.floors[index].prepare(self.port.as_ref())?;
+                self.journal.save(&self.floors, index, previous)?;
+                self.floors[index].phase = FloorPhase::Prepared(previous);
+            }
+            FloorPhase::Prepared(_) | FloorPhase::RestorePending(_) => {}
         }
-        let previous = self.floors[index].prepare(self.port.as_ref())?;
-        self.journal.save(&self.floors, index, previous)?;
-        self.floors[index].saved = Some(previous);
         self.floors[index].raise(self.port.as_mut())
     }
 
@@ -140,23 +148,23 @@ impl Controller {
         }
         let now = (self.clock)();
         let allowed = running && !self.floors.is_empty() && self.thermal.allowed(self.port.as_ref(), now);
-        if allowed == self.running
-            && (allowed || self.floors.iter().all(|f| f.saved.is_none()) || now < self.next_restore)
-        {
+        let settled = if allowed {
+            self.floors.iter().all(|floor| matches!(floor.phase, FloorPhase::Raised(_)))
+        } else {
+            self.floors.iter().all(|floor| floor.saved().is_none())
+        };
+        if allowed == self.allowed && (settled || now < self.next_attempt) {
             return;
         }
-        self.running = allowed;
-        if !allowed {
-            self.next_restore = now + thermal::SAMPLE_PERIOD;
-        }
+        self.allowed = allowed;
+        self.next_attempt = now + thermal::SAMPLE_PERIOD;
         for index in 0..self.floors.len() {
             let result = if allowed { self.raise(index) } else { self.floors[index].restore(self.port.as_mut()) };
-            // Restore reports only the first failure and eventual success for each device.
-            if let (true, Err(error)) = (allowed, result) {
-                eprintln!("oos-ui: clock_floor device={} running={allowed} error={error}", self.floors[index].name);
+            if allowed {
+                self.floors[index].report_raise(result);
             }
         }
-        if !allowed && self.floors.iter().all(|f| f.saved.is_none()) {
+        if !allowed && self.floors.iter().all(|f| f.saved().is_none()) {
             if let Err(error) = self.journal.clear() {
                 eprintln!("oos-ui: clock_floor journal_error={error}");
             }
@@ -164,7 +172,7 @@ impl Controller {
     }
 
     pub fn restore(&mut self) {
-        self.running = true;
+        self.allowed = true;
         self.update(false);
     }
 }
@@ -203,6 +211,10 @@ impl Handle {
             previous(info);
         }));
         handle
+    }
+
+    pub(crate) fn status(&self) -> Status {
+        oos_hal::sync::lock(&self.0).status()
     }
 
     pub fn poll(&self) {

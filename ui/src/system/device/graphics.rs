@@ -110,11 +110,18 @@ impl Graphics {
         )
     }
 
-    fn collect(&mut self, cv: &mut Canvas, out: &mut Outputs, web: &mut http::Http) -> Result<f32, String> {
+    fn collect(
+        &mut self,
+        ui: &mut Ui,
+        cv: &mut Canvas,
+        out: &mut Outputs,
+        web: &mut http::Http,
+    ) -> Result<f32, String> {
         let Some((tp, bp, th)) = self.pending.take() else { return Ok(0.0) };
         let g = self.gpu.as_mut().ok_or("helper unavailable")?;
         let back = tp.reads();
         g.collect(tp, Some(cv))?;
+        ui.record_gpu_upload(g.times.upload);
         if back {
             web.picture_read_back(cv);
         }
@@ -155,7 +162,7 @@ impl Graphics {
         let t = Instant::now();
         self.gl.draw(ui, cv.w, cv.h, false);
         let layers = t.elapsed().as_secs_f32() * 1e3;
-        let wait = self.collect(cv, out, web)?;
+        let wait = self.collect(ui, cv, out, web)?;
         self.monitor_targets(out)?;
         let g = self.gpu.as_mut().ok_or("helper unavailable")?;
         let b = out.disp.free();
@@ -185,11 +192,11 @@ impl Graphics {
         };
         self.pending = Some((tp, b, th));
         if shot {
-            self.collect(cv, out, web)?;
+            self.collect(ui, cv, out, web)?;
         }
         let g = self.gpu.as_ref().ok_or("helper unavailable")?;
         let t = g.times;
-        ui.t_gpu = Some([layers, copy, wait, t.upload, t.draw, t.read]);
+        ui.t_gpu = Some([layers, copy, wait, t.upload_ms(), t.draw, t.read]);
         ui.t_gpu_screens = Some((t.panel, (out.hdmi.is_some() && self.hdmi_gpu == Some(true)).then_some(t.monitor)));
         Ok(())
     }

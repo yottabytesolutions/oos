@@ -12,7 +12,13 @@ use std::path::Path;
 pub fn measured(ctx: &crate::run::Context, root: &Path) -> Result<Vec<(Crate, size::Measured)>, String> {
     ctx.source_measurements(root, || {
         let meta = workspace::load(ctx, root)?;
-        let measured = crate::repo::each(|c| sources::of_dir(&meta, c.dir).map(|s| size::measure(c.dir, &s)));
+        let measured = crate::repo::each(|c| {
+            sources::of_dir(&meta, c.dir).and_then(|s| {
+                let mut measured = size::measure(c.dir, &s);
+                measured.names = crate::naming::measure(root, &s).map_err(|e| e.to_string())?;
+                Ok(measured)
+            })
+        });
         CRATES.iter().zip(measured).map(|(c, m)| Ok((*c, m?))).collect()
     })
 }
@@ -20,6 +26,11 @@ pub fn measured(ctx: &crate::run::Context, root: &Path) -> Result<Vec<(Crate, si
 pub fn size(ctx: &crate::run::Context, root: &Path) -> Outcome {
     let now: Vec<_> = measured(ctx, root).map_err(|e| vec![e])?.into_iter().map(|(c, m)| (c.dir, m.sizes)).collect();
     ratcheted(ctx, root, Kind::Size, &now)
+}
+
+pub fn naming(ctx: &crate::run::Context, root: &Path) -> Outcome {
+    let now: Vec<_> = measured(ctx, root).map_err(|e| vec![e])?.into_iter().map(|(c, m)| (c.dir, m.names)).collect();
+    ratcheted(ctx, root, Kind::Naming, &now)
 }
 
 /// Exceptions to `clippy::disallowed_methods`: their count per file may only fall.

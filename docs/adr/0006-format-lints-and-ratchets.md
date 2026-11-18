@@ -13,9 +13,10 @@ replaced that role: improvements left unwritten allowed later changes to reuse t
 
 ## Decision
 
-Use the pinned stable toolchain in `rust-toolchain.toml` and root `rustfmt.toml`. Each crate declares its lints in
-Cargo.toml; docs/development.md lists them. Normal builds warn; the gate counts findings. Limits are 400 lines per file,
-60 code lines per function, 12 fields per struct and inherent impls in at most 3 files. File lines exclude tests and
+Use the pinned stable toolchain in `rust-toolchain.toml` and root `rustfmt.toml`. Declare lints in
+the root `[workspace.lints]`; members inherit them and docs/development.md lists them. Normal builds warn; the gate counts
+findings. Limits are 400 lines per file, 60 code lines per function, 12 fields per struct and inherent impls in at
+most 3 files. File lines exclude tests and
 comment-only lines, including doc comments, but count blank lines. Function lines contain tokens; blank lines and
 comments do not count. Tests are exempt from syntax size limits.
 
@@ -28,8 +29,8 @@ commits `cargo xtask ratchet` when a count falls; nobody edits its output by han
 reject uncommitted tightening for files touched since the protected base, including local changes. Untouched files
 keep their allowances. A stricter lint set needs an owner-approved record and one baseline commit.
 
-Check: `fmt`, `clippy`, `size`, `architecture`, `unsafe`, `mutable-statics`, `method-exceptions`, `test-time` and
-`coverage`; review checks SAFETY and exception reasons.
+Check: `fmt`, `clippy`, `size`, `architecture`, `unsafe`, `mutable-statics`, `method-exceptions`, `test-time`,
+`naming` and `coverage`; review checks SAFETY, exception reasons and the reviewed Rust style rules.
 
 Ratchet checks reject unused slack in touched files and
 direct the author to run `cargo xtask ratchet`.
@@ -44,3 +45,16 @@ existing findings would block incremental cleanup.
 
 All rules are in force. Two branches lowering the same entry must rerun ratchet after rebasing rather than merge
 generated counts by hand.
+
+## Readability baseline, issue #198
+
+The owner-approved issue #198 brief adds pedantic and selected idiom lints plus glossary-based declaration checks.
+`cargo xtask ratchet --init-style` generates the first counts for these newly enabled rules on existing files.
+`xtask/data/style-lints.txt` names the measured new lint kinds. Existing lint kinds keep their prior limits, and
+new source files receive no initial allowance. The transition is available only while this marker is absent at
+the protected base. Once integrated, normal shrink-only checks apply, including to the new naming kind.
+This is the single baseline commit required above, not a general way to raise ratchets.
+
+Numeric DSP/register casts, numeric literal grouping, exact float comparisons, blanket `must_use` suggestions and
+broad const-API conversion are allowed with reasons in Cargo.toml. Other existing findings are frozen; zero-count
+rules apply immediately. Per-lint measurements and decisions live in task 0097. No firmware behavior changes.

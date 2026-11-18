@@ -50,3 +50,57 @@ opt-level = 2
 # Debug assertions and overflow checks remain enabled.
 [profile.test.package.oos-ui]
 opt-level = 1
+
+# Shared policy; existing findings are frozen per file by the gate (ADR 0006).
+[workspace.lints.rust]
+unused = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -1 }
+too_many_lines = "warn"
+cognitive_complexity = "warn"
+too_many_arguments = "warn"
+type_complexity = "warn"
+large_enum_variant = "warn"
+undocumented_unsafe_blocks = "warn"
+missing_safety_doc = "warn"
+use_self = "warn"
+option_if_let_else = "warn"
+manual_let_else = "warn"
+redundant_else = "warn"
+needless_pass_by_value = "warn"
+items_after_statements = "warn"
+module_name_repetitions = "warn"
+struct_field_names = "warn"
+enum_variant_names = "warn"
+similar_names = "warn"
+many_single_char_names = "warn"
+fn_params_excessive_bools = "warn"
+struct_excessive_bools = "warn"
+wildcard_imports = "warn"
+unnested_or_patterns = "warn"
+semicolon_if_nothing_returned = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+allow_attributes_without_reason = "warn"
+# DSP and pixel/register conversions intentionally narrow after domain bounds checks.
+cast_possible_truncation = "allow"
+# Sample, pixel and register arithmetic intentionally crosses signed representations.
+cast_sign_loss = "allow"
+# DSP uses floating-point approximations of sample indices and counters.
+cast_precision_loss = "allow"
+# Register and sample bit patterns intentionally cross signed representations.
+cast_possible_wrap = "allow"
+# `as` keeps mixed numeric DSP expressions readable, including widening conversions.
+cast_lossless = "allow"
+# Hex register values and measured constants use the hardware/domain notation.
+unreadable_literal = "allow"
+# Public getters are already used by their callers; blanket annotations obscure the API.
+must_use_candidate = "allow"
+# Builder return values follow the same convention as other value-returning APIs.
+return_self_not_must_use = "allow"
+# Exact comparisons are intentional for discrete values and synthetic DSP fixtures.
+float_cmp = "allow"
+# Making 500 existing APIs const would expand the compatibility contract without a user benefit.
+missing_const_for_fn = "allow"

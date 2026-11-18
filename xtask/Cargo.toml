@@ -6,21 +6,8 @@ description = "The repository gate: cargo xtask check (docs/development.md)"
 license = "GPL-2.0-or-later"
 publish = false
 
-# xtask has no ratchet: every finding fails its own gate.
-[lints.rust]
-unused = { level = "deny", priority = -1 }
-missing_debug_implementations = "deny"
-
-[lints.clippy]
-all = { level = "deny", priority = -1 }
-too_many_lines = "deny"
-cognitive_complexity = "deny"
-too_many_arguments = "deny"
-type_complexity = "deny"
-large_enum_variant = "deny"
-unwrap_used = "deny"
-undocumented_unsafe_blocks = "deny"
-missing_safety_doc = "deny"
+[lints]
+workspace = true
 
 [dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }

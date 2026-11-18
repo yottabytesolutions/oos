@@ -90,6 +90,22 @@ to the document that explains it. When a rule and your task conflict, stop and a
 - Agents take only `agent-ready` issues, stay within acceptance criteria and out of scope, avoid high-risk paths
   unless the issue says so, and push only as `yottabyte-oos-agent[bot]`, never with a maintainer's credentials.
 
+### Review guidelines
+
+Read [Rust style](docs/process/rust-style.md) and the [domain glossary](docs/architecture/glossary.md).
+Report violations of these reviewed rules as P2 findings, with a concrete location and maintainability consequence:
+
+- Names describe the concept and effect: types are domain nouns, functions are verbs, abbreviations and glossary
+  terms have their stated meaning, and the full module path reads clearly. Check generated names too.
+- Types and modules have one cohesive responsibility; callers and callees use a consistent abstraction level.
+  Keep visibility narrow and place code in the existing architecture module map.
+- Traits represent real substitution or IO seams. Reuse and extend existing abstractions; flag duplicated logic.
+- Distinct units and identifiers use newtypes; states and mutually exclusive alternatives use enums.
+- Iterators express traversal clearly; borrows express access without unnecessary ownership, cloning or allocation.
+- New errors are typed enums, never `Result<_, String>`; convert them to text at reporting boundaries.
+- Comments explain why, constraints and invariants. Check unsafe explanations, exception reasons and production
+  `expect` invariants for evidence, rather than accepting annotations alone.
+
 ## Where code goes
 
 - Find the module in [Module map](docs/architecture/README.md#module-map). If nothing fits, ask; do not create a new

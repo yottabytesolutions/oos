@@ -1,5 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Keep public hardware-layer values inspectable when diagnosing adapter failures.
+#![warn(missing_debug_implementations)]
 
 //! OOS hardware layer.
 //!

@@ -92,7 +92,9 @@ pub fn ratcheted(ctx: &crate::run::Context, root: &Path, kind: Kind, now: &[(&'s
     let commit = base::protected(ctx, root).map_err(|e| vec![e])?;
     let (work, base) = allowed(ctx, root, kind, &crates, &commit).map_err(|e| vec![e])?;
     if let Some(b) = &base {
-        let widened = base::widened(b, &work);
+        let initial = crate::style_rollout::extend_initial_baseline(ctx, root, &commit, kind, b, &work)
+            .map_err(|e| vec![e.to_string()])?;
+        let widened = base::widened(&initial, &work);
         if !widened.is_empty() {
             return Err(widened.into_iter().map(|w| format!("{} ratchet: {}", kind.name(), w)).collect());
         }

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::super::*;
+use crate::board::HwShared;
 
 fn hardware(mode: TrigMode) -> Ui {
-    let mut ui = Ui::for_tests(Source::Hw { shared: Default::default(), seen: 0 });
+    let mut ui = Ui::for_tests(Source::Hw { shared: HwShared::default(), seen: 0 });
     ui.m.trig_mode = mode;
     ui.step(0.04);
     ui

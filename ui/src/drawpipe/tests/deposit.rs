@@ -3,6 +3,58 @@
 use super::*;
 
 #[test]
+fn watchdog_reset_releases_the_full_handoff_without_another_batch() {
+    let m = model(1e-6, false, false);
+    let pipe = Pipe::start(1, 0, fresh());
+    pipe.set_view(Some(&m), 97, 48, Interp::Exact);
+    let (bytes, fb, s, p) = batch(1, 400, false);
+    for _ in 0..2 {
+        pipe.feed(Box::new(Bytes(bytes.clone())), fb, 1, 0, dec(&s, &p));
+        drop(recycled(&pipe));
+    }
+    host::barrier(&pipe);
+    let gen = oos_hal::sync::lock(&pipe.view).gen;
+    pipe.slot.recycle(Deposit::new(gen, (97, 48), None, [true; NCH]));
+
+    shutdown::reset(&pipe);
+
+    assert!(!pipe.accepting());
+    assert!(pipe.slot.spare().is_none(), "reset releases recycled storage");
+    crate::ui::lifecycle::test_wait::until("public and private deposits discarded", || {
+        (pipe.counters.read().2 == 2).then_some(())
+    });
+    assert!(pipe.slot.take().is_none(), "the private deposit cannot reappear in the public slot");
+}
+
+#[test]
+fn watchdog_reset_fences_in_flight_and_queued_batches_before_reopening() {
+    let m = model(1e-6, false, false);
+    let pipe = Pipe::start(2, 0, fresh());
+    pipe.set_view(Some(&m), 97, 48, Interp::Exact);
+    let (bytes, fb, s, p) = batch(1, 400, false);
+    pipe.feed(Box::new(Bytes(bytes.clone())), fb, 1, 0, dec(&s, &p));
+    drop(recycled(&pipe));
+    let gate = one_worker_held(&pipe);
+    for _ in 0..16 {
+        pipe.feed(Box::new(Bytes(bytes.clone())), fb, 1, 0, dec(&s, &p));
+    }
+
+    shutdown::reset(&pipe);
+    pipe.set_view(Some(&m), 97, 48, Interp::Exact);
+    *gate.0.lock().unwrap() = true;
+    gate.1.notify_all();
+    settle(&pipe);
+    host::barrier(&pipe);
+
+    assert_eq!(pipe.counters.read().2, 37, "every pre-reset record is discarded once");
+    assert!(pipe.slot.take().is_none());
+    assert!(pipe.slot.spare().is_none());
+    pipe.feed(Box::new(Bytes(bytes)), fb, 1, 0, dec(&s, &p));
+    settle(&pipe);
+    assert_eq!(pipe.accept(&mut Phosphor::new(97, 48), &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames, 1);
+}
+
+#[test]
 fn coalesced_batches_are_whole_and_flush_without_another_read() {
     let m = model(1e-6, false, false);
     let pipe = Pipe::start(4, 0, fresh());
@@ -37,9 +89,11 @@ fn completion_without_records_keeps_the_visible_picture() {
     pipe.feed_batch(Box::new(Bytes(bytes)), fb, 0..0, (0, None), dec(&s, &p), None);
     drop(recycled(&pipe));
     let mut clear = true;
-    assert_eq!(pipe.accept(&mut picture, &mut clear, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
+    let (mut edges, mut off) = ([0; 4], (0.0, 0.0));
+    assert_eq!(pipe.accept(&mut picture, &mut clear, &mut edges, &mut off).frames, 0);
     assert!(clear);
     assert_eq!(picture.map, visible);
+    assert_eq!((edges, off), ([0; 4], (0.0, 0.0)));
 }
 
 #[test]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::claim_timing::Sampler;
 use crate::picture::deposit::{kernel, pool::Pool, standard, DiffBand};
 
 #[cfg(test)]
@@ -12,6 +13,7 @@ struct Prepared {
     plan: Option<standard::FastFrame>,
     codes: Option<CodeLayout>,
     folds: crate::framestats::Folds,
+    measured: bool,
 }
 
 enum Job {
@@ -89,9 +91,8 @@ fn decode(b: &Batch, v: &View, p: &mut Prepared, f: &mut Frame) {
         }
     }
     b.header.tag(f);
-    if !(p.index + 1 == b.frames && b.newest.is_some()) && crate::framestats::fold_frame(f, &v.m, &mut p.folds) {
-        Counters::add(&b.counters.measured, 1);
-    }
+    p.measured =
+        (p.index + 1 != b.frames || b.newest.is_none()) && crate::framestats::fold_frame(f, &v.m, &mut p.folds);
 }
 
 pub(super) fn work(
@@ -107,7 +108,13 @@ pub(super) fn work(
     let mut arena = Arc::new(Vec::<Box<Prepared>>::new());
     let mut jobs = Vec::new();
     let mut statistics = None;
+    let mut sampler = Sampler::default();
     while let Ok(message) = rx.recv() {
+        let state = oos_hal::sync::lock(view);
+        let reset_before = slot.reset_before();
+        if let Some(deposit) = current.take_if(|d| d.predates(reset_before)) {
+            deposit.reject(state.identity, counters);
+        }
         let b = match message {
             Message::Batch(b) => b,
             Message::Wake => {
@@ -125,7 +132,9 @@ pub(super) fn work(
                 continue;
             }
         };
-        let Some((v, identity)) = batch_view(&b, view) else { continue };
+        let Some(v) = batch_view(&b, &state, reset_before) else { continue };
+        let identity = state.identity;
+        drop(state);
         let key = (v.gen, b.header.identity().map(|id| id.stats_gen()));
         if statistics != Some(key) {
             for p in Arc::get_mut(&mut arena).expect("all previous batch jobs returned").iter_mut() {
@@ -133,28 +142,33 @@ pub(super) fn work(
             }
             statistics = Some(key);
         }
-        current = prepare(current, slot, &b, &v, identity);
-        let Some(deposit) = current.as_mut() else { break };
-        draw(&b, &v, deposit, &mut pool, &mut arena, &mut jobs);
-        let finished = current.take().expect("a batch always has an open deposit");
-        current = slot.put(finished);
+        let Some(mut deposit) = prepare(current.take(), slot, &b, &v, identity) else {
+            if slot.closed() {
+                break;
+            }
+            continue;
+        };
+        draw(&b, &v, &mut deposit, &mut pool, &mut arena, &mut jobs, &mut sampler);
+        current = slot.put(deposit);
     }
     if let Some(deposit) = current {
         deposit.reject(oos_hal::sync::lock(view).identity, counters);
     }
 }
 
-fn batch_view(b: &Batch, view: &Mutex<ViewState>) -> Option<(Arc<View>, Option<oos_core::change::Identity>)> {
-    let state = oos_hal::sync::lock(view);
-    let v = state.view.clone().filter(|_| accepts(b, feed::legacy_stamp(&state), state.identity));
+fn batch_view(b: &Batch, state: &ViewState, reset_before: u64) -> Option<Arc<View>> {
+    let v = state
+        .view
+        .clone()
+        .filter(|_| b.view_gen_at_submit >= reset_before && accepts(b, feed::legacy_stamp(state), state.identity));
     if v.is_none() {
         let records = b.frames.saturating_sub(b.next.swap(b.frames, Ordering::Relaxed)) as u64;
         if !same_pair(b.header.identity(), state.identity) {
             Counters::add(&b.counters.losses.pipe, records);
         }
-        Counters::add(&b.counters.dropped, records);
+        b.counters.discard(Lost::Settings, records);
     }
-    v.map(|v| (v, state.identity))
+    v
 }
 
 fn prepare(
@@ -164,9 +178,13 @@ fn prepare(
     v: &View,
     identity: Option<oos_core::change::Identity>,
 ) -> Option<Deposit> {
+    let mut waveform = None;
     if current.as_ref().is_some_and(|d| !d.matches(v.gen, v.w, v.h) || !same_pair(d.identity, b.header.identity())) {
-        let old = current.take().expect("the preceding check found a deposit");
+        let mut old = current.take().expect("the preceding check found a deposit");
         old.reject(identity, b.counters);
+        if b.newest.is_none() && same_pair(old.identity, identity) {
+            waveform = old.newest.take();
+        }
         slot.recycle(old);
     }
     let records = b.frames.saturating_sub(b.next.load(Ordering::Relaxed)) as u64;
@@ -187,11 +205,14 @@ fn prepare(
             _ => Deposit::new(v.gen, (v.w, v.h), b.header.identity(), v.m.ch.each_ref().map(|c| c.on)),
         }
     });
+    if waveform.is_some() {
+        deposit.newest = waveform;
+    }
     // Only the final waveform is measured by UI readers. Earlier coalesced taps belong in the pool folds.
     if b.newest.is_some() {
         if let Some(prior) = &deposit.newest {
             if crate::framestats::fold_frame(prior, &v.m, &mut deposit.folds) {
-                Counters::add(&b.counters.measured, 1);
+                deposit.progress.measured += 1;
             }
         }
     }
@@ -210,13 +231,19 @@ fn draw(
     pool: &mut Pool<Job, Frame>,
     arena: &mut Arc<Vec<Box<Prepared>>>,
     jobs: &mut Vec<Job>,
+    sampler: &mut Sampler,
 ) {
     let start = b.next.load(Ordering::Relaxed);
     if start == b.frames {
         return;
     }
+    let before = d.records;
     for first in (start..b.frames).step_by(64) {
         let end = (first + 64).min(b.frames);
+        let started = b.counters.diagnostics_enabled().then(|| sampler.start()).flatten();
+        if crate::pacing::is_stale(b.header.cfg()) {
+            d.progress.stale += (end - first) as u64;
+        }
         let placed = Arc::get_mut(arena).expect("all tile jobs returned their arena references");
         while placed.len() < end - first {
             placed.push(Box::new(Prepared {
@@ -225,6 +252,7 @@ fn draw(
                 plan: None,
                 codes: None,
                 folds: crate::framestats::folds_for(&v.m),
+                measured: false,
             }));
         }
         for (i, mut p) in placed.drain(..).enumerate() {
@@ -237,27 +265,39 @@ fn draw(
                 placed.push(p);
             }
         }
-        for band in d.planes.drain(..) {
-            jobs.push(Job::Tile(b.clone(), arena.clone(), band));
-        }
-        pool.each(jobs);
-        for job in jobs.drain(..) {
-            if let Job::Tile(_, _, band) = job {
-                d.planes.push(band);
-            }
-        }
+        draw_tiles(b, &mut d.planes, pool, arena, jobs);
         account(b, d, arena);
         for p in Arc::get_mut(arena).expect("tile jobs released the arena").iter_mut() {
             for (_, fold) in &mut p.folds {
                 *fold = Default::default();
             }
         }
+        if let Some(started) = started {
+            d.progress.sample = Some((started.elapsed(), (end - first) as u64));
+        }
     }
     b.next.store(b.frames, Ordering::Relaxed);
     d.newest = b.newest.clone().or_else(|| d.newest.take());
     d.read_at = Some(b.fed);
-    if crate::pacing::is_stale(b.header.cfg()) {
-        d.stale += (b.frames - start) as u64;
+    b.counters.publish(&d.progress, d.records - before);
+    d.progress.measured = 0;
+}
+
+fn draw_tiles(
+    b: &Arc<Batch>,
+    planes: &mut Vec<DiffBand>,
+    pool: &mut Pool<Job, Frame>,
+    arena: &Arc<Vec<Box<Prepared>>>,
+    jobs: &mut Vec<Job>,
+) {
+    for band in planes.drain(..) {
+        jobs.push(Job::Tile(b.clone(), arena.clone(), band));
+    }
+    pool.each(jobs);
+    for job in jobs.drain(..) {
+        if let Job::Tile(_, _, band) = job {
+            planes.push(band);
+        }
     }
 }
 
@@ -268,6 +308,7 @@ fn account(b: &Batch, d: &mut Deposit, arena: &[Box<Prepared>]) {
         }
         let Some(plan) = &p.plan else { continue };
         d.records += 1;
+        d.progress.measured += u64::from(p.measured);
         d.triggered += u64::from(plan.triggered);
         if let Some(outcome) = plan.plan.outcome() {
             Stats { edges: &mut d.edges, off: &mut d.off }.record(outcome);

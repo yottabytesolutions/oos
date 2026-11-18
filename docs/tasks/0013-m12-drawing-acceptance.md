@@ -105,6 +105,11 @@ at 1, 2 and 4 channels. Source back-pressure belongs to F3. Reserved paths: `ui/
 `docs/architecture/README.md`, changed-file ratchets and this task. Validate UI debug/optimized suites,
 fast gate and four-channel host timing rows. Coordinator retains publication, independent review and unit acceptance.
 
+PR #224 review follow-up: exercise watchdog reset with public, private, recycled and in-flight deposits.
+Retain the current-identity waveform when a mapping or layout change rejects the painted planes.
+Keep the F2 paths and reserve `ui/src/drawpipe/shutdown.rs` for the reset. Run debug and optimized UI tests
+and the fast gate. The coordinator retains the hardware hold.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -112,13 +117,40 @@ fast gate and four-channel host timing rows. Coordinator retains publication, in
   All production source, other budgets, unit acceptance and sampler/runner remain identical.
   No acceptance or review state changed. Native timing awaits experiment-supervisor release.
   The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
-- 2026-11-18: PR #224 conflict resolution prepared for the single F2 commit `3f926b6c` on exact F1
-  `113ccb97ddea35284467d52f513d74e95f2937f6` (F0 parent `9a802cfe`). Host validation is blocked.
-  Both UI profiles and ratchet regeneration stop at the obsolete worker-map initializer retained by the
-  automatic merge in `drawpipe/feed.rs`. The F0 worker-map tests and the F2 deposit accounting also need
-  reconciliation outside the listed conflicts. The fast gate failed its size step on unused ratchet slack.
-  The xtask suites passed 242 tests per profile. The current production delta is +235 UI Rust lines.
-  The rebase remains paused and the DHO804 hold remains in force. Host only.
+
+- 2026-11-18: PR #224 review follow-up on `a6ff1fe7`. The UI redraws the delivered waveform under the current
+  mapping when the worker planes were rejected. The regression failed before the fix and passed after it.
+  Host `oos-ui` nextest passed 1,765 debug and 1,764 optimized tests, with 62 skipped in each. The fast gate
+  passed all 12 selected steps. Production delta is zero. Renewed review and DHO804 acceptance remain open.
+
+- 2026-11-18: PR #224 review fixes on published head `29bbadd57bad48fdd33d5b4a15469186c64de42a` above F1.
+  P1 reset disables the view and fences the handoff before waking the coordinator. Tests cover idle cleanup with
+  a full public slot and a private deposit, spare release, and rejection of in-flight and queued batches after reopen.
+  Both P2 findings are covered by current waveform delivery after a mapping or dimension rejection, including a
+  private deposit replaced before publication. The tests verify obsolete acquisition identity drops the waveform.
+  The two watchdog regressions and public waveform regression failed on the published code. All four passed in
+  both profiles. `oos-ui` nextest passed 1,764 debug and 1,763 optimized tests, with 62 skipped in each.
+  The fast gate and Clippy step passed. Production delta is +52 UI Rust lines against the published head.
+  Host only. Renewed review and coordinator DHO804 acceptance remain open.
+
+- 2026-11-18: PR #224 replays F2 `3f926b6c` on exact F1 `113ccb97ddea35284467d52f513d74e95f2937f6`
+  (F0 parent `9a802cfe`). The deposit coordinator publishes F0 record and measurement counts at batch completion.
+  The UI records sampled claim timing at picture acceptance. Obsolete intake still counts as a settings loss.
+  Invalid completed deposits retain separate stale-key and epoch counts at the coordinator and the UI.
+  The acquisition fixture checks that a whole deposit includes its newest record exactly once while preserving
+  the fallback buffer and frame-zero loss classifications. F1 projection and route tests and F2 pixel tests passed
+  in 54 isolated nextest processes. Against exact F1, the golden manifest changes only 18 decode-route entries.
+  Initial fast runs failed `size` on unused allowances and on the length of the draw function. The draw function
+  now delegates the tile phase, and `cargo xtask ratchet` tightened allowances for changed UI files.
+  `cargo xtask check --fast` with F1 as the gate base reported `partial gate passed (not done): 12 steps in 11 s`.
+  The Clippy step also passed against F1. Debug and `test-release` runs of `oos-ui` and `xtask` exited zero.
+  UI unit tests passed 1,709/1,708 with 61 ignored per profile. Each profile passed 8 goldens, 17 scripts,
+  10 sockets, 16 soak/support cases and 242 xtask tests. One golden was ignored in each profile.
+  The shipping-profile host probe matched Standard and Batch pixels at four channels and 48 records per picture.
+  At 1 us/div, build p50/p99 was 1.554/1.688 ms for Standard and 1.694/1.856 ms for Batch.
+  At 10 us/div, build p50/p99 was 8.971/10.315 ms for Standard and 7.120/8.225 ms for Batch.
+  The production delta is +246 UI Rust lines against exact F1. Host only. The DHO804 acceptance and merge hold remain.
+
 
 - 2026-11-18: PR #224 contains one F2 (#204) topic above the supplied F1 (#212) parent `ce496614`. Batch placement reuses
   `RawTrace` span storage; Batch tiles, Standard and the newest-record adapter use F1's full-width projection

@@ -124,6 +124,37 @@ fn compare(a: &Picture, b: &Picture, label: &str) {
 }
 
 #[test]
+fn batch_redraws_current_waveform_after_mapping_rejects_its_planes() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Codes, true, 1, 10e-6);
+    route.step(1);
+    assert!(route.ui.ph.map[0].iter().any(|&v| v > 0));
+
+    let id = change::acquisition::identity(&route.ui);
+    let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
+    let pipe = drawpipe::pipe(&sw).unwrap();
+    let batch = route.source.next_batch(&route.ui.m, &sw, 1, route.spare.take()).unwrap();
+    let mut waveform = batch.newest(id.epoch());
+    waveform.cfg = id.gen();
+    let waveform = Arc::new(waveform);
+    let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
+    pipe.feed_with(batch.into_bytes().into(), fb, 0..1, id, decode, codes, Some(waveform.clone()));
+    drawpipe::host::finish_batch(pipe, 2).unwrap();
+
+    route.ui.m.dots = DotsMode::On;
+    route.ui.step(1.0 / 30.0);
+
+    assert!(drawpipe::counters().records_text().contains("rejected.stale_key=1 "));
+    let shown = route.ui.last[0].as_ref().unwrap().raw.as_ref().unwrap();
+    assert_eq!(shown.frame.seq, waveform.seq);
+    let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
+    drawpipe::draw_frame(&mut expected, &route.ui.m, &waveform, sw.interp, None);
+    assert!(expected.map[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.map == expected.map, "the delivered waveform should be drawn with dots");
+    assert_eq!(route.ui.pic_frames, 1);
+}
+
+#[test]
 fn draw_routes_raw_codes_pairs_dots_and_zoom() {
     for channels in [1, 2, 4] {
         for (kind, dots, zoom) in [

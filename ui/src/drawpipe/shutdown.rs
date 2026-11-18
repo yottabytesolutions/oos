@@ -48,10 +48,17 @@ pub fn close(pipe: &Pipe, deadline: Instant) -> usize {
 }
 
 pub fn reset(pipe: &Pipe) {
-    pipe.set_view(None, 0, 0, Interp::Exact);
-    if let Some(deposit) = pipe.slot.take() {
-        deposit.reject(oos_hal::sync::lock(&pipe.view).identity, pipe.counters);
+    let (pending, identity) = {
+        let mut state = oos_hal::sync::lock(&pipe.view);
+        (state.view, state.key) = (None, None);
+        // The first view published after reset has the next generation.
+        (pipe.slot.reset(state.gen + 1), state.identity)
+    };
+    if let Some(deposit) = pending {
+        deposit.reject(identity, pipe.counters);
     }
+    // A full queue already guarantees the coordinator will check the reset fence.
+    pipe.wake();
 }
 
 #[cfg(test)]

@@ -2923,7 +2923,7 @@ impl Ui {
                 if let Some(p) = crate::drawpipe::pipe(&sw) {
                     let t1 = std::time::Instant::now();
                     let d = p.accept(&mut self.ph, &mut clear_pending, &mut self.fast_edges, &mut self.fast_off);
-                    deposited_newest = deep_draw::newest(self, d.waveform);
+                    deposited_newest = deep_draw::newest(self, d.waveform).filter(|_| d.frames > 0);
                     if d.triggered > 0 {
                         self.m.status = TrigStatus::Triggered;
                     }

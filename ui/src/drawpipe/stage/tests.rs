@@ -37,12 +37,15 @@ fn measure_batch(m: &Model, channels: usize) {
     let mut pool = Pool::new(1, 0, run);
     let mut arena = Arc::default();
     let mut jobs = Vec::new();
+    let mut sampler = Sampler::default();
     let mut ph = Phosphor::new(w, h);
     let mut picture = || {
         let batch =
             pipe.feed_batch(bytes.take().unwrap(), fb, 0..frames, (m.hw_stamp, None), decode.clone(), codes.clone());
         let mut deposit = prepare(None, &pipe.slot, &batch, &view, None).unwrap();
-        draw(&batch, &view, &mut deposit, &mut pool, &mut arena, &mut jobs);
+        assert_eq!(deposit.planes.iter().map(|b| b.plane.d.len()).sum::<usize>(), channels * w * (h + 1));
+        assert!(deposit.planes.iter().all(|b| m.ch[b.channel].on));
+        draw(&batch, &view, &mut deposit, &mut pool, &mut arena, &mut jobs, &mut sampler);
         assert!(pipe.slot.put(deposit).is_none());
         drop(batch);
         bytes = Some(host::finish_batch(&pipe, 0).unwrap());

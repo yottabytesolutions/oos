@@ -36,6 +36,8 @@ jobs:
   fast:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      CARGO_INCREMENTAL: 1
     permissions:
       contents: read
       checks: read

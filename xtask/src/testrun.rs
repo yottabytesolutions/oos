@@ -64,7 +64,7 @@ pub fn slow(out: &str) -> Vec<String> {
 const SLOW_SECS: f64 = 60.0;
 
 /// The Cargo profile of the release tests (root Cargo.toml): the release optimisation without a fat-LTO link per test
-/// binary. The perf guards keep the shipping `release` profile.
+/// binary. HAL timing guards share this profile; UI guards keep the shipping `release` profile.
 const RELEASE_TESTS: &str = "test-release";
 
 fn golden_shard(shard: Option<(u32, u32)>) -> bool {

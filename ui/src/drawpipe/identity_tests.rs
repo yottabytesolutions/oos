@@ -3,7 +3,7 @@
 use super::*;
 use oos_core::change::{Identity, Request, Shadow, UiAcq};
 
-fn identities(request: Request) -> (Model, Identity) {
+pub(super) fn identities(request: Request) -> (Model, Identity) {
     let model = Model::default();
     let config = crate::model::config();
     let mut shadow = Shadow::new(&model, UiAcq::default(), &config).unwrap();
@@ -41,6 +41,74 @@ fn old_folds_cannot_refill_current_statistics() {
         let valid = pipe.accept(&mut phosphor, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(valid.frames, 1);
         assert_eq!(valid.folds[0].1.n, 1, "valid current folds are retained");
+    }
+}
+
+#[test]
+fn rejecting_painted_planes_keeps_only_current_waveforms() {
+    let (model, cleared) = identities(Request::Clear);
+    let (_, stats_reset) = identities(Request::StatsReset);
+    let current = Identity::default();
+    let mut remapped = model.clone();
+    remapped.tscale += 1;
+    let waveform = Arc::new(Frame { seq: 1, ..Default::default() });
+    for (view, view_width, picture_width, identity) in
+        [(&remapped, 8, 8, stats_reset), (&model, 9, 8, current), (&model, 8, 9, current), (&model, 8, 8, cleared)]
+    {
+        let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+        pipe.publish_view(&model, 8, 8, Interp::Exact, current);
+        let mut deposit = accumulator(oos_hal::sync::lock(&pipe.view).gen, current);
+        deposit.newest = Some(waveform.clone());
+        assert!(pipe.slot.put(deposit).is_none());
+
+        pipe.publish_view(view, view_width, 8, Interp::Exact, identity);
+        let mut picture = Phosphor::new(picture_width, 8);
+        let mut clear = true;
+        let accepted = pipe.accept(&mut picture, &mut clear, &mut [0; 4], &mut (0.0, 0.0));
+        assert_eq!((accepted.frames, accepted.triggered, accepted.newest), (0, 0, None));
+        assert!(clear && accepted.folds.is_empty());
+        assert_eq!(pipe.counters.losses.folds.load(Ordering::Relaxed), 1);
+        if identity == cleared {
+            assert!(accepted.waveform.is_none());
+        } else {
+            assert!(Arc::ptr_eq(&accepted.waveform.unwrap(), &waveform));
+        }
+    }
+}
+
+#[test]
+fn remapping_a_private_deposit_keeps_its_waveform_without_a_newer_tap() {
+    use super::tests::{batch, dec, model, Bytes};
+
+    let model = model(1e-6, false, false);
+    let (bytes, fb, settings, params) = batch(1, 400, false);
+    let decode = dec(&settings, &params);
+    let mut frame = Frame { seq: 1, ..Default::default() };
+    decode(&bytes, &mut frame);
+    let waveform = Arc::new(frame);
+    let current = Identity::default();
+    let (_, cleared) = identities(Request::Clear);
+    for identity in [current, cleared] {
+        let pipe = Pipe::start(1, 0, Box::leak(Box::default()));
+        pipe.publish_view(&model, 97, 48, Interp::Exact, current);
+        for tap in [None, Some(waveform.clone())] {
+            pipe.feed_with(Box::new(Bytes(bytes.clone())), fb, 0..1, current, decode.clone(), None, tap);
+            host::finish_batch(&pipe, 0).unwrap();
+        }
+        pipe.publish_view(&model, 98, 48, Interp::Exact, identity);
+        pipe.feed_with(Box::new(Bytes(bytes.clone())), fb, 0..0, identity, decode.clone(), None, None);
+        host::finish_batch(&pipe, 0).unwrap();
+
+        let mut picture = Phosphor::new(98, 48);
+        assert!(pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0)).waveform.is_none());
+        host::barrier(&pipe);
+        let accepted = pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0));
+        assert_eq!(accepted.frames, 0);
+        if identity == current {
+            assert!(Arc::ptr_eq(&accepted.waveform.unwrap(), &waveform));
+        } else {
+            assert!(accepted.waveform.is_none());
+        }
     }
 }
 

@@ -1,7 +1,6 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-2080 file ui/src/board/dho/hw.rs
-627 file ui/src/drawpipe.rs
+2063 file ui/src/board/dho/hw.rs
 568 file ui/src/drm.rs
 697 file ui/src/fastdraw.rs
 649 file ui/src/gfx.rs
@@ -13,7 +12,7 @@
 516 file ui/src/measures/standard.rs
 3277 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8668 file ui/src/ui.rs
+8623 file ui/src/ui.rs
 1513 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -95,7 +94,7 @@
 135 fn ui/src/ui.rs Ui::render_layers
 121 fn ui/src/ui.rs Ui::set_dec_proto
 133 fn ui/src/ui.rs Ui::set_trig_type
-370 fn ui/src/ui.rs Ui::step
+325 fn ui/src/ui.rs Ui::step
 214 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 409 fn ui/src/ui.rs Ui::touch_in

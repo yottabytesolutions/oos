@@ -119,6 +119,7 @@ impl Pipe {
             decode,
             codes,
             header: Header::new(stamp, identity),
+            view_gen_at_submit: oos_hal::sync::lock(&self.view).gen,
             next: AtomicUsize::new(first.min(frames)),
             counters: self.counters,
             live: self.live.clone(),
@@ -199,25 +200,4 @@ pub(super) fn set_view(
     if let Some(id) = identity {
         v.identity = Some(id);
     }
-}
-
-/// Empty maps for view `v`, reusing `spare` when it has the size.
-pub(super) fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
-    let mut a = match spare {
-        Some(mut a) if (a.ph.w, a.ph.h) == (v.w, v.h) => {
-            a.reset(v.gen);
-            a
-        }
-        _ => Acc::new(v.gen, v.w, v.h),
-    };
-    a.used = std::array::from_fn(|c| v.m.ch[c].on);
-    for (map, used) in a.ph.map.iter_mut().zip(a.used) {
-        if used {
-            map.resize(v.w * v.h, 0);
-        } else {
-            *map = Vec::new();
-        }
-    }
-    a.folds = crate::framestats::folds_for(&v.m);
-    a
 }

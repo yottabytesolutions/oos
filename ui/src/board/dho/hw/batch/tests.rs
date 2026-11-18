@@ -97,13 +97,13 @@ fn run(frame0_drop: bool, replacement: bool, warm: bool) {
 fn accounted(counters: &crate::drawpipe::Counters, replacement: bool, frame0_drop: bool) {
     let dropped = counters.read().2;
     let deposited = counters.deposited.load(std::sync::atomic::Ordering::Relaxed);
-    let selected = u64::from(replacement && frame0_drop);
-    assert_eq!(deposited + 1 + dropped + selected, 3, "every read record is deposited, newest, or lost");
+    let frame0 = u64::from(frame0_drop);
+    let buffer = if replacement { 0 } else { 2 - frame0 };
+    assert_eq!(deposited + u64::from(!replacement) + frame0 + buffer, 3, "every read record is accounted for");
     assert_eq!(dropped, if replacement { 0 } else { 2 });
-    assert!(counters.records_text().contains(&format!("lost.frame0={}", u64::from(frame0_drop))));
-    assert!(counters
-        .records_text()
-        .contains(&format!("lost.buffer={}", if replacement { 0 } else { 2 - u64::from(frame0_drop) })));
+    let text = counters.records_text();
+    assert!(text.contains(&format!("lost.frame0={frame0}")));
+    assert!(text.contains(&format!("lost.buffer={buffer}")));
 }
 
 fn newest(pipe: &Pipe, frames: Vec<Frame>, (replacement, drawn): (bool, usize), want: &Phosphor) -> Frame {

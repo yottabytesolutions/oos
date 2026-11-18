@@ -25,7 +25,7 @@ pub(crate) struct Deposit {
     pub(crate) off: (f64, f64),
     pub(crate) newest: Option<Arc<crate::board::Frame>>,
     pub(crate) read_at: Option<std::time::Instant>,
-    pub(crate) stale: u64,
+    pub(crate) progress: crate::claim_timing::Progress,
 }
 
 impl Deposit {
@@ -42,7 +42,7 @@ impl Deposit {
             off: (0.0, 0.0),
             newest: None,
             read_at: None,
-            stale: 0,
+            progress: Default::default(),
         }
     }
 
@@ -52,6 +52,10 @@ impl Deposit {
 
     pub(crate) fn size(&self) -> (usize, usize) {
         self.size
+    }
+
+    pub(crate) fn predates(&self, view_gen: u64) -> bool {
+        self.gen < view_gen
     }
 
     pub(crate) fn reset(&mut self, identity: Option<Identity>) {
@@ -66,28 +70,26 @@ impl Deposit {
         self.off = (0.0, 0.0);
         self.newest = None;
         self.read_at = None;
-        self.stale = 0;
+        self.progress = Default::default();
     }
 
     pub(crate) fn reject(&self, identity: Option<Identity>, counters: &Counters) {
-        if !crate::drawpipe::feed::same_pair(self.identity, identity) {
-            Counters::add(&counters.losses.pipe, self.records);
-        }
+        counters.reject_deposit(self.identity, identity, self.records);
         Counters::add(&counters.losses.folds, self.folds.iter().map(|(_, f)| f.n).sum());
-        Counters::add(&counters.dropped, self.records);
     }
 }
 
 #[derive(Default)]
 pub(crate) struct Slot {
     closed: bool,
+    reset_before: u64,
     pending: Option<Deposit>,
     spare: Vec<Deposit>,
 }
 
 impl Slot {
     pub(crate) fn put(&mut self, deposit: Deposit) -> Option<Deposit> {
-        if self.pending.is_some() {
+        if self.pending.is_some() || deposit.predates(self.reset_before) {
             return Some(deposit);
         }
         self.pending = Some(deposit);
@@ -96,7 +98,7 @@ impl Slot {
     }
 }
 
-/// The condition is used only at the u16 weight limit; ordinary hand-offs never wait on the UI.
+/// Only the u16 weight limit waits for space. Reset and close also release that wait.
 #[derive(Default)]
 pub(crate) struct Handoff {
     state: std::sync::Mutex<Slot>,
@@ -114,7 +116,10 @@ impl Handoff {
         oos_hal::sync::lock(&self.state).put(deposit)
     }
     pub(crate) fn recycle(&self, deposit: Deposit) {
-        oos_hal::sync::lock(&self.state).spare.push(deposit);
+        let mut state = oos_hal::sync::lock(&self.state);
+        if !deposit.predates(state.reset_before) {
+            state.spare.push(deposit);
+        }
     }
     pub(crate) fn spare(&self) -> Option<Deposit> {
         oos_hal::sync::lock(&self.state).spare.pop()
@@ -122,13 +127,30 @@ impl Handoff {
 
     pub(crate) fn send(&self, deposit: Deposit) -> Option<Deposit> {
         let mut state = oos_hal::sync::lock(&self.state);
-        while state.pending.is_some() && !state.closed {
+        while state.pending.is_some() && !state.closed && !deposit.predates(state.reset_before) {
             state = self.space.wait(state).unwrap_or_else(std::sync::PoisonError::into_inner);
         }
         if state.closed {
             return Some(deposit);
         }
         state.put(deposit)
+    }
+
+    pub(crate) fn reset(&self, reset_before: u64) -> Option<Deposit> {
+        let mut state = oos_hal::sync::lock(&self.state);
+        state.reset_before = reset_before;
+        state.spare = Vec::new();
+        let pending = state.pending.take();
+        self.space.notify_all();
+        pending
+    }
+
+    pub(crate) fn reset_before(&self) -> u64 {
+        oos_hal::sync::lock(&self.state).reset_before
+    }
+
+    pub(crate) fn closed(&self) -> bool {
+        oos_hal::sync::lock(&self.state).closed
     }
 
     pub(crate) fn close(&self) {

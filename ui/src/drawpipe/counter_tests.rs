@@ -5,28 +5,63 @@ use super::*;
 #[test]
 fn local_counts_and_sample_wait_for_existing_publication_and_picture_boundaries() {
     use crate::board::scripted::{self, Batch};
-    let counters = Box::leak(Box::default());
-    let pipe = Pipe::start(0, 0, counters);
+    let counters = &*Box::leak(Box::<Counters>::default());
+    let pipe = Pipe::start(2, 0, counters);
     let model = Model { meas: vec![(Meas::Vavg, WaveId::Ch(0))], ..Model::default() };
     pipe.set_view(Some(&model), 16, 16, Interp::Exact);
-    let (fixture, _, _) = scripted::draw_route_batch(&model, &Default::default(), 64);
+    let (fixture, _, _) = scripted::draw_route_batch(&model, &Default::default(), 65);
     let (fb, decode) = (fixture.frame_bytes(), fixture.decode());
-    let _batch = pipe.feed_batch(Box::new(fixture.into_bytes()), fb, 0..64, (0, None), decode, None);
-    let mut helper = Helper::default();
-    for _ in 0..64 {
-        assert!(pipe.help(&mut helper));
+    let first_decode = decode.clone();
+    let check_decode: DecodeInto = Arc::new(move |bytes, frame| {
         assert_eq!(counters.deposited.load(Ordering::Relaxed), 0);
         assert_eq!(counters.measured.load(Ordering::Relaxed), 0);
+        first_decode(bytes, frame);
+    });
+    // The first batch spans two placement slices. The second slice sees no counts from the first.
+    pipe.feed(Box::new(fixture.into_bytes()), fb, 65, 0, check_decode);
+    let mut bytes = host::finish_batch(&pipe, 0).unwrap();
+    assert_eq!(counters.deposited.load(Ordering::Relaxed), 65);
+    assert_eq!(counters.measured.load(Ordering::Relaxed), 65);
+    for _ in 0..62 {
+        pipe.feed(bytes, fb, 1, 0, decode.clone());
+        bytes = host::finish_batch(&pipe, 0).unwrap();
     }
-    pipe.help_done(&mut helper);
-    assert_eq!(counters.deposited.load(Ordering::Relaxed), 64);
-    assert_eq!(counters.measured.load(Ordering::Relaxed), 64);
-    assert!(counters.timing.text().contains("deposit.slice n=0"), "producers do not touch shared timing rings");
-    let got = pipe.merge(&mut Phosphor::new(16, 16), &mut false, &mut [0; 4], &mut (0.0, 0.0));
-    assert_eq!(got.frames, 64);
+    assert_eq!(counters.deposited.load(Ordering::Relaxed), 127);
+    assert_eq!(counters.measured.load(Ordering::Relaxed), 127);
+    let mut ph = Phosphor::new(16, 16);
+    assert_eq!(pipe.accept(&mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 65);
+    assert!(counters.timing.text().contains("deposit.slice n=0"), "the sample waits for its picture");
+    host::barrier(&pipe);
+    assert_eq!(pipe.accept(&mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 62);
     let text = counters.timing.text();
-    for ring in ["slice", "record", "batch"] {
+    for ring in ["slice", "record"] {
         assert!(text.contains(&format!("deposit.{ring} n=1 total=1")), "{text}");
+    }
+    assert!(text.contains("deposit.batch n=2 total=2"), "{text}");
+}
+
+#[test]
+fn obsolete_batches_count_as_settings_losses_before_deposition() {
+    let (_, current) = super::identity_tests::identities(oos_core::change::Request::Clear);
+    let counters = Box::leak(Box::<Counters>::default());
+    let pipe = Pipe::start(1, 0, counters);
+    pipe.publish_view(&Model::default(), 16, 16, Interp::Exact, current);
+    let (bytes, fb, settings, params) = tests::batch(3, 400, false);
+    pipe.feed_with(
+        Box::new(tests::Bytes(bytes)),
+        fb,
+        0..3,
+        Default::default(),
+        tests::dec(&settings, &params),
+        None,
+        None,
+    );
+    drop(host::finish_batch(&pipe, 0).unwrap());
+    assert_eq!(counters.read().2, 3);
+    assert_eq!(counters.losses.pipe.load(Ordering::Relaxed), 3);
+    let text = counters.records_text();
+    for field in ["deposited=0", "lost.settings=3", "lost.unclaimed=0", "rejected.epoch=0"] {
+        assert!(text.contains(field), "{text}");
     }
 }
 

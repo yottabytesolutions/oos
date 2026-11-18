@@ -41,8 +41,8 @@ impl Accumulator {
             triggered: deposit.triggered,
             folds,
             newest: deposit.read_at,
-            stale: deposit.stale,
-            waveform: deposit.newest.take(),
+            stale: deposit.progress.stale,
+            waveform: None,
         }
     }
 }

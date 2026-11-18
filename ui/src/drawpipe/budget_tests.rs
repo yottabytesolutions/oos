@@ -3,47 +3,6 @@
 use super::*;
 
 #[test]
-fn accumulator_storage_follows_enabled_channels_and_releases_disabled_capacity() {
-    let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
-    let mut model = Model::default();
-    let mut spare = None;
-    for channels in [4, 1, 2, 4, 1] {
-        for (c, ch) in model.ch.iter_mut().enumerate() {
-            ch.on = c < channels;
-        }
-        pipe.set_view(Some(&model), 970, 448, Interp::Exact);
-        let view = pipe.view_now().0.unwrap();
-        let acc = fresh_acc(spare.take(), &view);
-        assert_eq!(acc.ph.map.iter().map(Vec::len).sum::<usize>(), channels * 970 * 448);
-        assert!(acc.ph.map.iter().skip(channels).all(|m| m.capacity() == 0));
-        spare = Some(acc);
-    }
-}
-
-#[test]
-fn empty_completion_keeps_newer_visible_pixels_and_clear_intent() {
-    let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
-    pipe.set_view(Some(&Model::default()), 4, 4, Interp::Exact);
-    let view = pipe.view_now().0.unwrap();
-    // A completed batch can publish its newest record without any deposited neighbours.
-    oos_hal::sync::lock(&pipe.mails[0]).full.push(fresh_acc(None, &view));
-    let mut ph = Phosphor::new(4, 4);
-    ph.map[0].fill(17);
-    let (mut clear, mut edges, mut off) = (true, [0; 4], (0.0, 0.0));
-    let completed = Arc::new(AtomicU64::new(0));
-    let delivered = completed.clone();
-    oos_hal::sync::lock(&pipe.ready).push(Box::new(move || {
-        delivered.fetch_add(1, Ordering::Relaxed);
-    }));
-    let got = pipe.merge(&mut ph, &mut clear, &mut edges, &mut off);
-    assert_eq!(got.frames, 0);
-    assert_eq!(ph.map[0], [17; 16]);
-    assert!(clear);
-    assert_eq!(completed.load(Ordering::Relaxed), 1);
-    assert_eq!((edges, off), ([0; 4], (0.0, 0.0)));
-}
-
-#[test]
 #[ignore = "host Batch picture baseline: release, OOS_PERF_TESTS=1, one test thread"]
 fn perf_guard_batch_picture_merge() {
     use crate::board::scripted::{self, Batch};
@@ -71,7 +30,7 @@ fn perf_guard_batch_picture_merge() {
             pipe.feed_codes(bytes, fb, frames, 0, decode.clone(), codes.clone());
             bytes = host::finish_batch(&pipe, round as u64).unwrap();
             let start = Instant::now();
-            let got = pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
+            let got = pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
             let elapsed = start.elapsed().as_nanos();
             assert_eq!(got.frames as usize, frames);
             if round >= 8 {
@@ -87,46 +46,50 @@ fn perf_guard_batch_picture_merge() {
 }
 
 #[test]
-fn completed_maps_rejected_by_key_or_epoch_enter_distinct_record_buckets() {
+fn completed_deposits_rejected_by_key_or_epoch_enter_distinct_record_buckets() {
     use oos_core::change::{Request, Shadow, UiAcq};
-    for (epoch, worker_publish) in [(false, false), (false, true), (true, false), (true, true)] {
+    let (bytes, fb, settings, params) = tests::batch(3, 400, false);
+    let decode = tests::dec(&settings, &params);
+    for epoch in [false, true] {
         let counters = Box::leak(Box::default());
-        let pipe = Pipe::start(0, 0, counters);
+        let pipe = Pipe::start(1, 0, counters);
         let mut model = Model::default();
         let config = crate::model::config();
         let mut shadow = Shadow::new(&model, UiAcq::default(), &config).unwrap();
         let identity = shadow.identity();
         pipe.publish_view(&model, 4, 4, Interp::Exact, identity);
-        let mut share = fresh_acc(None, &pipe.view_now().0.unwrap());
-        share.identity = Some(identity);
-        share.frames = 3;
-        oos_hal::sync::lock(&pipe.mails[0]).full.push(share);
-        if epoch {
-            let id = shadow.observe(&model, UiAcq::default(), &[Request::Clear], &config).unwrap().identity();
-            pipe.set_identity(id);
+        let feed = |id, count| {
+            pipe.feed_with(Box::new(tests::Bytes(bytes.clone())), fb, 0..count, id, decode.clone(), None, None);
+            drop(host::finish_batch(&pipe, 0).unwrap());
+        };
+        feed(identity, 3);
+        feed(identity, 3);
+        let current = if epoch {
+            shadow.observe(&model, UiAcq::default(), &[Request::Clear], &config).unwrap().identity()
         } else {
             model.ch[0].offset = 1.0;
-            pipe.publish_view(&model, 4, 4, Interp::Exact, identity);
-        }
-        if worker_publish {
-            let mut current = fresh_acc(None, &pipe.view_now().0.unwrap());
-            current.identity = oos_hal::sync::lock(&pipe.view).identity;
-            publish(&pipe.mails[0], current, counters);
-        }
+            identity
+        };
+        pipe.publish_view(&model, 4, 4, Interp::Exact, current);
+        feed(current, 1);
+        assert_eq!(counters.read().2, 3, "the coordinator rejects the old open deposit");
         let mut ph = Phosphor::new(4, 4);
         ph.map[0].fill(17);
-        let got = pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
+        let got = pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(got.frames, 0);
-        assert_eq!(counters.read().2, 3);
+        assert_eq!(counters.read().2, 6, "the UI rejects the old pending deposit");
         assert_eq!(ph.map[0], [17; 16]);
         let text = counters.records_text();
         assert!(
             text.contains(if epoch {
-                "rejected.stale_key=0 rejected.epoch=3"
+                "rejected.stale_key=0 rejected.epoch=6"
             } else {
-                "rejected.stale_key=3 rejected.epoch=0"
+                "rejected.stale_key=6 rejected.epoch=0"
             }),
             "{text}"
         );
+        assert_eq!(counters.losses.pipe.load(Ordering::Relaxed), if epoch { 6 } else { 0 });
+        host::barrier(&pipe);
+        assert_eq!(pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames, 1);
     }
 }

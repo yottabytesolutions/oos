@@ -8,7 +8,7 @@ mod frame;
 #[cfg(test)]
 pub use frame::draw_frame;
 pub(crate) use frame::draw_frame_reusing;
-pub(crate) mod feed;
+mod feed;
 pub(crate) mod reuse;
 mod stage;
 pub use decoder::IndexedDecodeInto;
@@ -234,6 +234,7 @@ struct Batch {
     decode: decoder::Decoder,
     codes: Option<CodesInto>,
     header: Header,
+    view_gen_at_submit: u64,
     next: AtomicUsize,
     counters: &'static Counters,
     live: Arc<AtomicUsize>,
@@ -311,34 +312,40 @@ impl Pipe {
 
     pub fn accept(&self, ph: &mut Phosphor, clear: &mut bool, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Accepted {
         let Some(mut deposit) = self.slot.take() else { return Accepted::default() };
-        if let Some(tx) = &oos_hal::sync::lock(&self.workers).sender {
-            let _ = tx.try_send(Message::Wake);
-        }
+        self.wake();
         let state = oos_hal::sync::lock(&self.view);
+        let same_acquisition = same_pair(deposit.identity, state.identity);
         let valid = state.view.as_ref().is_some_and(|v| deposit.matches(v.gen, v.w, v.h))
-            && same_pair(deposit.identity, state.identity)
+            && same_acquisition
             && deposit.size() == (ph.w, ph.h);
         let identity = state.identity;
         drop(state);
-        let accepted = if valid {
-            crate::picture::acc::Accumulator::accept(
+        let mut accepted = if valid {
+            let accepted = crate::picture::acc::Accumulator::accept(
                 &mut deposit,
                 ph,
                 clear,
                 Stats { edges, off },
                 identity,
                 self.counters,
-            )
+            );
+            if self.counters.diagnostics_enabled() {
+                self.counters.timing.picture(deposit.progress.sample, accepted.newest.map(|fed| fed.elapsed()));
+            }
+            accepted
         } else {
-            self.counters.reject(losses::Rejection::between(deposit.identity, identity), deposit.records);
             deposit.reject(identity, self.counters);
             Accepted::default()
         };
-        if self.counters.diagnostics_enabled() {
-            self.counters.timing.picture(None, accepted.newest.map(|fed| fed.elapsed()));
-        }
+        accepted.waveform = deposit.newest.take().filter(|_| same_acquisition);
         self.slot.recycle(deposit);
         accepted
+    }
+
+    fn wake(&self) {
+        if let Some(tx) = &oos_hal::sync::lock(&self.workers).sender {
+            let _ = tx.try_send(Message::Wake);
+        }
     }
 }
 

@@ -120,6 +120,18 @@ impl super::Counters {
             Self::add(&self.losses.rejected[reason as usize], records);
         }
     }
+    pub(crate) fn reject_deposit(
+        &self,
+        previous: Option<oos_core::change::Identity>,
+        current: Option<oos_core::change::Identity>,
+        records: u64,
+    ) {
+        if !super::same_pair(previous, current) {
+            Self::add(&self.losses.pipe, records);
+        }
+        self.reject(Rejection::between(previous, current), records);
+        Self::add(&self.dropped, records);
+    }
     pub(crate) fn records_text(&self) -> String {
         let n = |a: &AtomicU64| a.load(Ordering::Relaxed);
         let mut text =

@@ -242,13 +242,13 @@ mod tests {
 
     #[test]
     fn codes_use_direct_drawing_and_four_channels_and_dots_fall_back() {
-        use crate::drawpipe::{draw_frame_codes, CODES_MAX_STRIDE, CODES_MIN_BYTES};
+        use crate::drawpipe::codes_picture;
         use crate::model::DotsMode;
         use crate::wave::Phosphor;
         let mut m = Model::default();
         let mut src = ScriptedBatchSource::new(BatchKind::Codes, 123);
         for (channels, dots, direct) in
-            [(1, DotsMode::Off, true), (2, DotsMode::Auto, true), (4, DotsMode::Off, false), (1, DotsMode::On, false)]
+            [(1, DotsMode::Off, true), (2, DotsMode::Auto, true), (4, DotsMode::Off, true), (1, DotsMode::On, false)]
         {
             for c in 0..4 {
                 m.ch[c].on = c < channels;
@@ -257,13 +257,7 @@ mod tests {
             let batch = src.next_batch(&m, &Default::default(), 3, None).unwrap();
             let mut f = Frame::default();
             let layout = batch.codes().unwrap()(&batch.bytes.0[..batch.fb], &mut f).unwrap();
-            assert!(batch.fb >= CODES_MIN_BYTES);
-            assert_eq!(layout.stride <= CODES_MAX_STRIDE, channels < 4);
-            let result = (layout.stride <= CODES_MAX_STRIDE)
-                .then(|| {
-                    draw_frame_codes(&mut Phosphor::new(970, 448), &m, &f, &batch.bytes.0[..batch.fb], &layout, None)
-                })
-                .flatten();
+            let result = codes_picture(&mut Phosphor::new(970, 448), &m, &f, &batch.bytes.0[..batch.fb], &layout, None);
             assert_eq!(result.is_some(), direct);
         }
     }

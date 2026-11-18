@@ -188,19 +188,19 @@ pub(super) fn feed(
     identity: oos_core::change::Identity,
     settings: (Settings, hz::Params, super::switches::HeaderProbe),
     matched: Option<BatchMatch>,
-    deliver: crate::drawpipe::Deliver,
+    newest: Option<Arc<Frame>>,
 ) {
     let (raw, fb, frames) = raw;
     let (s, p, probe) = settings;
     match matched {
-        Some(matched) => pipe.feed_prepared(raw, fb, frames, identity, matched.decoder(s, p, probe), deliver),
+        Some(matched) => pipe.feed_prepared(raw, fb, frames, identity, matched.decoder(s, p, probe), newest),
         None => {
             let (cs, cp) = (s.clone(), p);
             let codes: crate::drawpipe::CodesInto =
                 Arc::new(move |bytes, f| super::hw::codes_into(bytes, &cs, &cp, 0, f));
             let decode: crate::drawpipe::DecodeInto =
                 Arc::new(move |bytes, f| super::hw::decode_into_probed(bytes, &s, &p, 0, f, probe));
-            pipe.feed_with(raw, fb, frames, identity, decode, Some(codes), deliver);
+            pipe.feed_with(raw, fb, frames, identity, decode, Some(codes), newest);
         }
     }
 }

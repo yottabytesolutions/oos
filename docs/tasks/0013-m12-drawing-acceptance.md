@@ -96,6 +96,15 @@ full-width dimensions, and preserve all route, trigger and pixel policies. Valid
 and golden suites in debug and optimized profiles, add wide-dimension and record-band regressions, and run
 the fast gate plus generated changed-file ratchets.
 
+F2 (#204): replace per-worker maps and mailboxes with a persistent pool, owned column bands and one whole-deposit
+slot. Fold on the UI thread, preserve Standard and existing source/trigger/sparse policies, and compare raw/codes
+at 1, 2 and 4 channels. Source back-pressure belongs to F3. Reserved paths: `ui/src/drawpipe*`,
+`ui/src/picture/`, `ui/src/fastdraw.rs`, Batch callers in `ui/src/board/dho/`, `ui/src/ui.rs`,
+`ui/src/ui/draw_routes*`, `ui/src/ui/host.rs`, `ui/src/ui/script/`, related contract tests,
+`ui/tests/host_script.rs`, `ui/tests/golden/manifest.txt`, `ui/tests/golden/README.md`,
+`docs/architecture/README.md`, changed-file ratchets and this task. Validate UI debug/optimized suites,
+fast gate and four-channel host timing rows. Coordinator retains publication, independent review and unit acceptance.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -103,6 +112,64 @@ the fast gate plus generated changed-file ratchets.
   All production source, other budgets, unit acceptance and sampler/runner remain identical.
   No acceptance or review state changed. Native timing awaits experiment-supervisor release.
   The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
+- 2026-11-18: PR #224 conflict resolution prepared for the single F2 commit `3f926b6c` on exact F1
+  `113ccb97ddea35284467d52f513d74e95f2937f6` (F0 parent `9a802cfe`). Host validation is blocked.
+  Both UI profiles and ratchet regeneration stop at the obsolete worker-map initializer retained by the
+  automatic merge in `drawpipe/feed.rs`. The F0 worker-map tests and the F2 deposit accounting also need
+  reconciliation outside the listed conflicts. The fast gate failed its size step on unused ratchet slack.
+  The xtask suites passed 242 tests per profile. The current production delta is +235 UI Rust lines.
+  The rebase remains paused and the DHO804 hold remains in force. Host only.
+
+- 2026-11-18: PR #224 contains one F2 (#204) topic above the supplied F1 (#212) parent `ce496614`. Batch placement reuses
+  `RawTrace` span storage; Batch tiles, Standard and the newest-record adapter use F1's full-width projection
+  and shared trace representation. The pool retains F2's whole-deposit handoff. The F1 allocator probe now
+  runs the production F2 placement and tile phases synchronously. Its 12 geometry rows passed on the host,
+  with at most 9,672 bytes of warmed transient allocations. Calls using the old plan shape and worker helpers
+  had blocked the combined build. The first fast gate reported `gate FAILED in 9 s: size` for seven unused allowances.
+  `cargo xtask ratchet` regenerated the size, Clippy and mutable-static allowances for changed UI files.
+  `cargo xtask check --fast`: `partial gate passed (not done): 12 steps in 26 s`.
+  `cargo xtask step clippy`: `partial gate passed (not done): 1 steps in 3 s`.
+  `RUST_TEST_THREADS=1 cargo test --locked -p oos-ui` and the `--profile test-release` run passed
+  1,682/1,681 unit tests, 8 goldens, 17 scripts, 10 sockets and 16 soak/support tests per profile.
+  Both profiles retained 59 unit ignores and one golden ignore. The `xtask` suite passed 242 tests per profile.
+  The optimized four-channel host probe matched Standard and Batch pictures at 48 records per picture.
+  Host build p50/p99 at 1 us/div was 1.576/4.865 ms for Standard and 4.025/8.728 ms for Batch.
+  At 10 us/div it was 14.255/71.012 ms for Standard and 7.887/32.554 ms for Batch.
+  The production delta is +185 Rust lines against the supplied F1 parent. The four-channel DHO804 acceptance
+  and merge hold below still apply.
+
+- 2026-11-18: F2 (#204) host implementation verified before the stack was replayed onto current F1.
+  A persistent coordinator plus workers place slices of at most 64 records and move enabled-channel column bands
+  through synchronous `map`/`each` phases. One slot publishes whole deposits, coalesces complete batches and wakes
+  without another read. The UI accepts/folds the differences once and passes the newest waveform to readers without
+  drawing or counting it twice. Sparse interpolation, prepared corrections, pairs and the legacy Standard route remain.
+  Per-worker maps/mailboxes, partial merges, acquisition help, delivery callbacks and code thresholds are removed.
+  Deposits close before the fixed weight can wrap; shutdown retains in-flight owners. Statistics changes refresh
+  warm placement slots, and coalesced waveform taps retain their cheap folds.
+  Initial fast checks failed `size` and `mutable-statics`; changed-file ratchets were regenerated. Initial Clippy
+  dead-code/manual-contains findings were corrected. Early fixture assertions were corrected; golden/script contracts
+  were updated for whole-deposit counts and direct codes at all strides/dots. No limits or lints were loosened.
+  Final `cargo xtask check --fast`: `partial gate passed (not done): 12 steps in 13 s`.
+  Final `cargo xtask step clippy`: `partial gate passed (not done): 1 steps in 5 s`.
+  `RUST_TEST_THREADS=1 cargo test -p oos-ui` and the `--profile test-release` run both exited zero:
+  1,628/1,627 unit tests, 6 goldens, 15 scripts, 8 sockets and 14 soak/support tests per profile.
+  Each profile retains 59 ignored unit tests and one ignored golden; the additional ignored test is the F2 host probe.
+  The explicit full golden update passed 269 cases, 538 fresh processes and 1,266 exact-repeat captures.
+  All 633 RGB hashes and PNG files are unchanged; only 18 observed `decode_route` entries changed.
+  `cargo xtask loc --compare HEAD`: +185 production Rust lines, all UI, against the -200 to -350 estimate.
+  The owned pool/handoff and transitional source/reader adapters outweigh the removed mailboxes; this variance
+  remains explicit for review. No dependency or hardware-register change. Source back-pressure remains F3.
+  Final shipping-profile host probe passed on Darwin arm64, 4 channels, 48 records per picture. Times below are
+  elapsed best/p50/p90/p99 milliseconds, not unit acceptance:
+  Standard at 1 us/div: 1.987/3.623/6.123/80.358; Batch: 1.702/4.020/4.834/11.663.
+  Standard at 10 us/div: 9.326/24.048/80.594/189.735; Batch: 7.633/18.633/77.255/140.655.
+  Batch accept-block (`draw.merge`) p50/p99: 0.137/0.601 ms at 1 us/div, 0.075/18.508 ms at 10 us/div.
+  Elapsed tails varied substantially on this host. No hardware access or unit verification is claimed.
+  Coordinator retains independent review, the integrated full gate and the DHO804 Normal 4-channel 1/10 us/div
+  round: 30 fps, zero lost records and UI step p99 below 33 ms. Merge remains held until that evidence passes.
+
+- 2026-11-18: F2 plan recorded before code on `refactor/204-frames-f2`, stacked on F1. The implementation
+  used the supplied design in the earlier checkout. Host work only.
 
 - 2026-11-18: Replayed the published F1 delta for #212 onto F0 `65c45c47` using old F0 `9a802cfe`
   as the fork boundary. The new base carries the Telnet removal. The `ui.rs` size allowance is 8,668,

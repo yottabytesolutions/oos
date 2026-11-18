@@ -104,7 +104,7 @@ fn feed_pending_batch(ui: &Ui, pipe: &crate::drawpipe::Pipe) {
     let mut source = scripted::source(BatchKind::Raw, 123);
     let batch = source.next_batch(&ui.m, ui.switches(), 27, None).unwrap();
     let (fb, decode) = (batch.frame_bytes(), batch.decode());
-    pipe.feed_with(Box::new(batch.into_bytes()), fb, 0..26, acquisition::identity(ui), decode, None, Box::new(|| {}));
+    pipe.feed_with(Box::new(batch.into_bytes()), fb, 0..26, acquisition::identity(ui), decode, None, None);
     crate::drawpipe::host::finish_batch(pipe, 1).unwrap();
 }
 

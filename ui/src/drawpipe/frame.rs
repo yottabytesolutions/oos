@@ -4,6 +4,7 @@ use super::*;
 
 /// One frame of the fast path into `ph`; false if its trigger edge was not found near the hardware trigger point.
 /// Sparse frames (fewer than 2 samples per column) take the record path (`sparse::draw_with`, else `board::to_record`).
+#[cfg(test)]
 pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, interp: Interp, stats: Option<Stats>) -> bool {
     draw_frame_reusing(ph, m, f, interp, stats, None)
 }
@@ -27,24 +28,21 @@ pub(crate) fn draw_frame_reusing(
     if !pairs && (x_per_sample > 0.5 || f.envelope || f.roll || f.scan || crate::deepmeas::deep_raw_frame(f)) {
         return fallback(ph, m, f, interp, saved);
     }
-    let src = &f.ch[m.trig_src];
-    let present: [bool; NCH] = std::array::from_fn(|c| !f.ch[c].is_empty());
-    let refine = |hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
-        let level = crate::board::sw_trig_level(m, f);
-        let trigger = crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either };
-        refine_near(src, 0, src.len(), f.pre, near_only(m, f), level, hyst, rising, either, half, col)
-            .unwrap_or_else(|| crate::fastdraw::edge_smooth(src.as_slice(), f.pre, trigger, half, col, |_| true))
+    let placed = crate::picture::deposit::standard::batch_plan(m, (w, h), f, None, None);
+    let Some((projection, trace)) = placed.plan.raw() else {
+        unreachable!("dense placement returns column spans or dots");
     };
-    let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
-        if pairs {
-            crate::compress::deposit_pairs(map, w, h, &f.ch[c], xm, 24, m.dots_at(x_per_sample));
-        } else if m.dots_at(x_per_sample) {
-            crate::fastdraw::deposit_dots(map, w, h, &f.ch[c], xm, 24);
-        } else {
-            crate::fastdraw::deposit(map, w, h, &f.ch[c], xm, 24);
+    if let Some(stats) = stats {
+        stats.record(&trace.outcome);
+    }
+    for c in 0..NCH {
+        if let Some(spans) = &trace.spans[c] {
+            crate::picture::deposit::kernel::paint_spans(&mut ph.map[c], w, 0, spans, 24);
+        } else if let Some(map) = crate::picture::deposit::kernel::raw_map(projection, c, trace.trigger_at) {
+            crate::fastdraw::deposit_dots(&mut ph.map[c], w, h, &f.ch[c], &map, 24);
         }
-    };
-    draw_projected(ph, m, f, ProjectedInput { x_per_sample, pairs, present }, stats, refine, deposit)
+    }
+    placed.triggered
 }
 
 fn fallback(
@@ -73,13 +71,14 @@ fn fallback(
     rec.triggered
 }
 
-// The Batch adapters keep their near-only search and whole-map deposit until F2.
+#[cfg(test)]
 pub(super) struct ProjectedInput {
     pub(super) x_per_sample: f64,
     pub(super) pairs: bool,
     pub(super) present: [bool; NCH],
 }
 
+#[cfg(test)]
 pub(super) fn draw_projected(
     ph: &mut Phosphor,
     m: &Model,

@@ -11,9 +11,8 @@ cover every legacy screen script. `demo/matrix` and `batch` cover the M1 matrix 
 `m1-modes.recipes` is a named recipe catalogue expanded by `support/cases.rs`, not a standalone screen script.
 
 Dots `Off` means lines, `On` means dots and `Auto` means the current lines outside XY. The runner requires
-exact decoded equality between corresponding Auto and Off matrix cases. Codes with four channels or dots
-exercise decode fallback. The 200 ns codes-rate fixture is below the 64 KiB direct-code threshold and also
-falls back to decoding. `decode_route` is observed: the scripted driver counts worker decoder callbacks,
+exact decoded equality between corresponding Auto and Off matrix cases. The F2 deposit kernel reads codes
+at all channel strides and in dots mode. Sparse records retain their interpolation adapter. `decode_route` is observed: the scripted driver counts worker decoder callbacks,
 so `codes` means all deposited worker frames bypassed decoding, `decoded` means all used decoding and
 `mixed` means both ran. `records-decoded` identifies the queued-record route; `source_route` separately
 records workers versus queued records. Zoom and average use records. Roll/scan inject synthetic partial and complete
@@ -72,7 +71,7 @@ no higher than the preceding three. Three-cycle windows cover the batch/storm sc
 small retained growth independently of the 1 % allowance. Output is streamed and six samples are kept
 in a fixed array before warm-up.
 
-The buffer return follows cleanup of the batch's decoder and delivery captures. Returning it earlier lets
+The buffer return follows cleanup of the batch's decoder captures. Returning it earlier lets
 the observer sample captured settings while their worker is still freeing them. A destructor barrier regression
 pins this ordering without elapsed-time assertions; the one-channel-block trend allowance stays unchanged.
 
@@ -88,7 +87,7 @@ existing 300-sample bound at first use, including infrequent settings-change sam
 stable capacity through three complete histories. Neither sample retention nor the bound changed.
 
 Each cycle injects three old-stamp frames at a temporary newer pipe view, checks exactly three drops
-and releases the no-op delivery callback. The normal batches must drain and account for every frame.
+without publishing a waveform tap. The normal batches must drain and account for every frame.
 The test includes real workers where eligible and the record route for average and zoom. It neither
 claims zero partial merges nor changes the existing perf guards. No listener, port or device is opened.
 The shared server harness remains `tools/host_harness.py` for tests that actually need a host server.

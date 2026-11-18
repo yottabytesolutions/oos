@@ -6,7 +6,7 @@ use crate::board::{
     dho::{cores::Cores, frame1, matching, switches::HeaderProbe},
     Frame,
 };
-use crate::drawpipe::{Deliver, Pipe, RawBatch};
+use crate::drawpipe::{Pipe, RawBatch};
 use oos_core::change::Identity;
 use oos_hal::dho::{hz, seq::Settings};
 
@@ -39,7 +39,6 @@ impl<'a> Readout<'a> {
         next: Option<T>,
         cores: Option<&mut Cores>,
         tag: impl FnOnce(Frame) -> Frame,
-        deliver: impl FnOnce(Frame) -> Deliver,
     ) -> Vec<Frame> {
         let (fb, avail, frame0_drop) = self.geometry;
         // frame 0, and a frame 1 without its edge at the trigger point, reach neither the workers nor the matcher
@@ -66,11 +65,11 @@ impl<'a> Readout<'a> {
                 // Publish the newest after its neighbours, so the screen receives one complete batch picture.
                 matching::feed(
                     self.pipe,
-                    (Box::new(full), fb, start..avail - 1),
+                    (Box::new(full), fb, start..if keep { avail } else { avail - 1 }),
                     self.identity,
                     (self.settings.clone(), *self.params, probe),
                     matched,
-                    if keep { deliver(newest) } else { Box::new(|| {}) },
+                    keep.then(|| std::sync::Arc::new(newest)),
                 );
                 Vec::new()
             }

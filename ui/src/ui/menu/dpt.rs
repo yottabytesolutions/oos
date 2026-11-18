@@ -3,26 +3,59 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area {
-    sources,
-    kind: Ui::dpt_kind,
-    label,
-    value: Ui::dpt_value,
-    adjust: Ui::dpt_adjust,
-    options: Ui::dpt_options,
-    menu_items: |ui, _| ui.dpt_items(),
-    ..Area::EMPTY
-};
+pub(super) const AREA: Area = Area { descriptors: ROWS, sources, adjust: Ui::dpt_adjust, ..Area::EMPTY };
 
-fn label(it: Item) -> Option<&'static str> {
-    if let Some(v) = Ui::dpt_label(it) {
-        return Some(v);
-    }
-    Some(match it {
-        Item::Open(MenuId::Dpt) => "Double pulse",
-        _ => return None,
-    })
-}
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    use Kind::*;
+    &[
+        Descriptor::new(Open(MenuId::Dpt), Action, "Double pulse", |_| String::new(), |_| Vec::new(), |_| false),
+        Descriptor::new(DptOn, Choice, "View", |u| onoff(u.m.view == AView::Dpt), toggles, |_| true),
+        Descriptor::new(DptV, Choice, "Vds", |u| u.wave_name(u.m.dpt_v), Ui::wave_names, |_| true),
+        Descriptor::new(DptI, Choice, "Id", |u| u.wave_name(u.m.dpt_i), Ui::wave_names, |_| true),
+        Descriptor::new(DptG, Choice, "Vgs", |u| u.wave_name(u.m.dpt_g), Ui::wave_names, |_| true),
+        Descriptor::new(
+            DptFourth,
+            Choice,
+            "Fourth",
+            |u| {
+                match u.m.dpt_4th {
+                    crate::model::DptFourth::Off => "Off",
+                    crate::model::DptFourth::Gate => "Gate",
+                    crate::model::DptFourth::DiodeV => "Diode V",
+                    crate::model::DptFourth::DiodeI => "Diode I",
+                }
+                .into()
+            },
+            |_| ["Off", "Gate", "Diode V", "Diode I"].into_iter().map(String::from).collect(),
+            |_| true,
+        ),
+        Descriptor::new(
+            Dpt4,
+            Choice,
+            "Channel",
+            |u| u.wave_name(u.m.dpt_4ch),
+            Ui::wave_names,
+            |u| u.m.dpt_4th != crate::model::DptFourth::Off,
+        ),
+        Descriptor::new(DptPct, Value, "Gate", |u| format!("{:.0} %", u.m.dpt_pct), |_| Vec::new(), |_| true),
+        Descriptor::new(
+            DptZoom,
+            Choice,
+            "Zoom",
+            |u| {
+                match u.m.dpt_zoom {
+                    crate::model::DptZoom::Both => "Both",
+                    crate::model::DptZoom::TurnOn => "Turn-on",
+                    crate::model::DptZoom::TurnOff => "Turn-off",
+                }
+                .into()
+            },
+            |_| ["Both", "Turn-on", "Turn-off"].into_iter().map(String::from).collect(),
+            |_| true,
+        ),
+    ]
+};
 
 fn sources(ui: &Ui, menu: MenuId) -> Vec<WaveId> {
     let m = &ui.m;

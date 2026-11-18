@@ -471,6 +471,12 @@ Moves have near-zero production delta. Repeat unit load/soak against M12 evidenc
 
 ## Status
 
+- 2026-11-18: M15b transport cutover reaches mDNS. Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and discovery
+  share netio; replaced socket/thread loops and net6 binding helpers are removed. The architecture gate confines
+  std::net, including aliases, to IO and the synchronous exceptions in ADR 0023. Host tests and aggregate
+  production/binary measurements are recorded in task 0016. Hardware verification is not claimed; the
+  coordinator retains the integrated gate, independent review and unit follow-ups.
+
 - 2026-11-17: E1b extracts SCPI branches into subsystem functions, preserving interpreter state,
   branch operations and reply literals. Host UI tests pass in debug and `test-release`, including
   `ui/lint.rs`, scripts, SCPI sessions/aliases/errors, goldens and soak. The fast gate and Clippy pass;
@@ -542,7 +548,7 @@ The coordinator replaces each TBD issue placeholder before acceptance.
 | ADR 0017 | TBD (coordinator) | Reset evidence: verify whether RK3399 exposes a positive watchdog reset indication; preserve power-cut handling if absent. |
 | ADR 0018 | TBD (coordinator) | Service policy: finish #139 telnet removal; add /cmd second ACL, a service-table coverage test and one-second stop/withdrawal tests; verify firewall on the unit. |
 | ADR 0019 | TBD (coordinator) | M15b: verify HiSLIP on the scope with remote.hislip off by default until verification; check discovery withdrawal and VISA sessions. |
-| ADR 0023 | TBD (coordinator) | IO ports: forbid std::net in non-IO layers, including alias fixtures; complete HTTP/mDNS/NTP/update moves and assess USB/WLAN benefits with explicit synchronous exceptions. |
+| ADR 0023 | TBD (coordinator) | IO ports: std::net confinement and alias fixtures are in force; complete NTP/update moves and assess USB/WLAN benefits with the explicit synchronous exceptions in ADR 0023. |
 | ADR 0025 | TBD (coordinator) | SCPI conformance: every documented command resolves, no undocumented command answers, and abbreviations/identity match the reference. |
 | ADR 0028 | TBD (coordinator) | Registries: pin released identifiers, register remaining measurements and test release feature completeness. |
 | ADR 0030 | TBD (coordinator) | Typed errors: add a shrinking Result<_, String> ratchet, migrate areas to typed errors and test sender/retry reporting. |

@@ -40,6 +40,7 @@ impl Remote {
         }
         web.set_acl(acl.clone());
         (scpi.acl, vxi.acl, hislip.acl) = (acl.clone(), acl.clone(), acl);
+        let mdns = mdns::Mdns::new(net6::host_or_exit(scpi.io_runtime()), None);
         let mut r = Self {
             web,
             scpi,
@@ -50,7 +51,7 @@ impl Remote {
             scpi_port,
             hislip_port,
             remote_now: None,
-            mdns: mdns::Mdns::new(None),
+            mdns,
             mdns_now: None,
             mdns_t: None,
         };
@@ -187,7 +188,7 @@ mod tests {
         let mut scpi = scpi::Scpi::open(0, false);
         let runtime = scpi.io_runtime().unwrap();
         let hislip = hislip::Server::closed_with_runtime(runtime.clone(), web.wake_handle());
-        let vxi = vxi11::Server::closed(runtime, web.wake_handle());
+        let vxi = vxi11::Server::closed(runtime.clone(), web.wake_handle());
         Remote {
             web,
             scpi,
@@ -198,7 +199,7 @@ mod tests {
             scpi_port: 0,
             hislip_port: 0,
             remote_now: Some([true, true, false, false, true, false, false]),
-            mdns: mdns::Mdns::new(None),
+            mdns: mdns::Mdns::new(runtime, None),
             mdns_now: None,
             mdns_t: None,
         }

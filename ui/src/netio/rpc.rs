@@ -20,7 +20,7 @@ impl Mapper {
         )?;
         let udp = match port {
             Port::Host => std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0)).ok(),
-            _ => crate::net6::udp(111, v6),
+            _ => runtime::bind_any(v6, 111, std::net::UdpSocket::bind),
         }
         .ok_or_else(|| io::Error::other("portmapper unavailable"))?;
         udp.set_nonblocking(true)?;

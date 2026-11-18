@@ -123,3 +123,25 @@ fn hislip_fragmentation_clear_and_disconnect_cancel_the_original_credit() {
     crate::ui::lifecycle::test_wait::until("HiSLIP disconnect cancellation", || clear.cancelled().then_some(()));
     assert_eq!(ports.budget().used(), 0);
 }
+#[test]
+fn host_listeners_are_private_and_independent() {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let _enter = rt.enter();
+    let a = runtime::listen(crate::net6::Port::Host, true).unwrap();
+    let b = runtime::listen(crate::net6::Port::Host, false).unwrap();
+    let (a, b) = (a.local_addr().unwrap(), b.local_addr().unwrap());
+    assert_eq!(a.ip(), core::net::Ipv4Addr::LOCALHOST);
+    assert_eq!(b.ip(), core::net::Ipv4Addr::LOCALHOST);
+    assert_ne!(a.port(), 0);
+    assert_ne!(a.port(), b.port());
+}
+
+#[test]
+fn service_listeners_keep_dual_stack_or_ipv4_fallback() {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let _enter = rt.enter();
+    let dual = runtime::listen(crate::net6::Port::Service(0), true).unwrap();
+    assert!(dual.local_addr().unwrap().ip().is_unspecified());
+    let ipv4 = runtime::listen(crate::net6::Port::Service(0), false).unwrap();
+    assert!(ipv4.local_addr().unwrap().is_ipv4());
+}

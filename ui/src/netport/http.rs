@@ -8,8 +8,8 @@ pub(crate) use head::*;
 pub use head::{parse_head, refuse_early, Head};
 mod upload;
 use super::{Envelope, Id, Ports, RemoteRequest, Reply};
+use core::net::SocketAddr;
 use std::{
-    net::SocketAddr,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,

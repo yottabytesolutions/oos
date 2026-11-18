@@ -15,3 +15,4 @@ fn fpgad/src/main.rs selfcal -> fn fpgad/src/cmd/selfcal.rs run
 fpgad fpgad/src/main.rs clippy::too_many_lines -> fpgad fpgad/src/cmd/selfcal.rs clippy::too_many_lines
 fpgad/src/board.rs -> fpgad/src/cmd/board.rs
 static ui/src/http.rs SENDERS -> static ui/src/netport/http.rs SENDERS
+unsafe ui/src/mdns.rs -> unsafe ui/src/netio/mdns/socket.rs

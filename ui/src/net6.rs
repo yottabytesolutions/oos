@@ -7,7 +7,7 @@
 //! themselves are the kernel's SLAAC addresses (`oos-net6`); `onlink6` in `net.allow` admits the prefixes on the link,
 //! which `oos-firewall watch` keeps in `PREFIX_FILE`.
 
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
+use core::net::Ipv6Addr;
 
 /// The IPv6 prefixes on the link, one `addr/len` per line (`oos-firewall`).
 pub const PREFIX_FILE: &str = "/tmp/oos-net6.prefixes";
@@ -18,16 +18,6 @@ pub const PREFIX_MIN: u8 = 48;
 /// `env` if set, else the `net.ipv6` line of `conf`; off unless `on`.
 pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
     crate::drawpipe::conf_value(env, conf, "net.ipv6").as_deref() == Some("on")
-}
-
-/// `bind` on `[::]:port` when `v6`, else (or when IPv6 is not there) on `0.0.0.0:port`.
-pub fn bind_any<T>(v6: bool, port: u16, bind: impl Fn(SocketAddr) -> std::io::Result<T>) -> Option<T> {
-    if v6 {
-        if let Ok(s) = bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port))) {
-            return Some(s);
-        }
-    }
-    bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port))).ok()
 }
 
 /// Device service ports retain their family policy; host harnesses always use IPv4 loopback and port 0.
@@ -41,22 +31,6 @@ impl From<u16> for Port {
     fn from(port: u16) -> Self {
         Self::Service(port)
     }
-}
-
-pub fn tcp(port: impl Into<Port>, v6: bool) -> Option<TcpListener> {
-    let port = port.into();
-    let l = match port {
-        Port::Host => TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).ok(),
-        Port::Service(p) => bind_any(v6, p, TcpListener::bind),
-    };
-    if l.is_none() {
-        eprintln!("oos-ui: TCP listener {:?} unavailable", port);
-    }
-    l
-}
-
-pub fn udp(port: u16, v6: bool) -> Option<UdpSocket> {
-    bind_any(v6, port, UdpSocket::bind)
 }
 
 /// Host startup errors must reach the launcher through stderr and a failing exit status.
@@ -208,17 +182,6 @@ mod tests {
     }
 
     #[test]
-    fn host_listeners_are_private_and_independent() {
-        let a = tcp(Port::Host, true).unwrap();
-        let b = tcp(Port::Host, false).unwrap();
-        let (a, b) = (a.local_addr().unwrap(), b.local_addr().unwrap());
-        assert_eq!(a.ip(), Ipv4Addr::LOCALHOST);
-        assert_eq!(b.ip(), Ipv4Addr::LOCALHOST);
-        assert_ne!(a.port(), 0);
-        assert_ne!(a.port(), b.port());
-    }
-
-    #[test]
     fn switch_and_prefixes() {
         assert!(!enabled_from(None, ""), "off by default");
         assert!(enabled_from(None, "net.ipv6 = on\n") && !enabled_from(Some("off"), "net.ipv6 = on\n"));
@@ -229,15 +192,5 @@ mod tests {
             ("::1".parse().unwrap(), 128),
         ];
         assert_eq!(p, want);
-    }
-
-    #[test]
-    fn dual_stack_or_ipv4() {
-        let l = bind_any(true, 0, TcpListener::bind).unwrap();
-        // a host without IPv6 falls back to IPv4; with it the socket is [::]
-        let a = l.local_addr().unwrap();
-        assert!(a.ip().is_unspecified());
-        let l4 = bind_any(false, 0, TcpListener::bind).unwrap();
-        assert!(l4.local_addr().unwrap().is_ipv4());
     }
 }

@@ -465,7 +465,7 @@ fn ipv4_addresses() -> ((String, String), Vec<(String, String)>) {
                 let link = a.ifa_flags & (libc::IFF_RUNNING as u32) != 0;
                 let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
                 let name = std::ffi::CStr::from_ptr(a.ifa_name).to_string_lossy().into_owned();
-                found.push((name, std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), link));
+                found.push((name, core::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), link));
             }
             p = a.ifa_next;
         }
@@ -478,7 +478,7 @@ fn ipv4_addresses() -> ((String, String), Vec<(String, String)>) {
 /// (169.254/16, what eth0 keeps when no DHCP server answers) after its others, so a page that shows one address per
 /// interface shows the one set by DHCP or by hand. The top bar takes an interface with a link first (eth0 keeps its
 /// fallback address without a cable), then an address that is not link-local, then the first.
-fn pick_addresses(mut v: Vec<(String, std::net::Ipv4Addr, bool)>) -> ((String, String), Vec<(String, String)>) {
+fn pick_addresses(mut v: Vec<(String, core::net::Ipv4Addr, bool)>) -> ((String, String), Vec<(String, String)>) {
     v.sort_by_key(|a| a.1.is_link_local());
     let best = v.iter().enumerate().max_by_key(|(i, a)| (a.2, !a.1.is_link_local(), std::cmp::Reverse(*i)));
     let first = best.map(|(_, a)| (a.0.clone(), a.1.to_string())).unwrap_or_default();
@@ -493,7 +493,7 @@ mod tests {
     /// bar and the Network page show the hand-set one.
     #[test]
     fn a_link_local_address_comes_after_the_others() {
-        let a = |n: &str, ip: &str, link: bool| (n.to_string(), ip.parse::<std::net::Ipv4Addr>().unwrap(), link);
+        let a = |n: &str, ip: &str, link: bool| (n.to_string(), ip.parse::<core::net::Ipv4Addr>().unwrap(), link);
         let s = |n: &str, ip: &str| (n.to_string(), ip.to_string());
         let (first, all) = pick_addresses(vec![a("eth0", "169.254.1.1", true), a("eth0", "192.0.2.51", true)]);
         assert_eq!(first, s("eth0", "192.0.2.51"));

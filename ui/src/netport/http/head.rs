@@ -100,7 +100,7 @@ pub(crate) fn foreign(head: &str, route: &str, post: bool) -> bool {
         let n = name_of(h);
         let n = n.trim_matches(['[', ']']);
         let local =
-            n.parse::<std::net::IpAddr>().is_ok() || n == "localhost" || !n.contains('.') || n.ends_with(".local");
+            n.parse::<core::net::IpAddr>().is_ok() || n == "localhost" || !n.contains('.') || n.ends_with(".local");
         if !local {
             return true;
         }

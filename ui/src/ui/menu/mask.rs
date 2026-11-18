@@ -3,56 +3,34 @@
 
 use super::*;
 
-pub(super) const AREA: Area =
-    Area { sources, kind, label, value, adjust, activate, options, menu_items, ..Area::EMPTY };
+pub(super) const AREA: Area = Area { descriptors: ROWS, sources, adjust, activate, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::MaskX | Item::MaskY => Kind::Value,
-        Item::MaskCreate | Item::MaskFromRef | Item::MaskReset | Item::MaskClear => Kind::Action,
-        Item::MaskSave | Item::MaskLoad => Kind::Action,
-        _ => return None,
-    })
-}
-
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Mask) => "Mask",
-        Item::MaskOn => "Mask test",
-        Item::MaskSrc => "Source",
-        Item::MaskX => "Tolerance X",
-        Item::MaskY => "Tolerance Y",
-        Item::MaskAction => "On fail",
-        Item::MaskInvert => "Invert",
-        Item::MaskCreate => "Create from CH",
-        Item::MaskFromRef => "Create from ref",
-        Item::MaskReset => "Reset counts",
-        Item::MaskClear => "Clear mask",
-        Item::MaskSave => "Save mask",
-        Item::MaskLoad => "Load mask",
-        _ => return None,
-    })
-}
-
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    let m = &ui.m;
-    let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-    Some(match it {
-        Item::MaskInvert => onoff(m.mask_inv),
-        Item::MaskOn => onoff(m.mask_on),
-        Item::MaskSrc => format!("CH{}", m.mask_src + 1),
-        Item::MaskX => format!("{:.2} div", m.mask_x),
-        Item::MaskY => format!("{:.2} div", m.mask_y),
-        Item::MaskAction => {
-            if m.mask_stop {
-                "Stop".into()
-            } else {
-                "None".into()
-            }
-        }
-        _ => return None,
-    })
-}
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    use Kind::*;
+    &[
+        Descriptor::new(Open(MenuId::Mask), Action, "Mask", |_| String::new(), |_| Vec::new(), |_| false),
+        Descriptor::new(MaskOn, Choice, "Mask test", |u| onoff(u.m.mask_on), toggles, |_| true),
+        Descriptor::new(MaskSrc, Choice, "Source", |u| format!("CH{}", u.m.mask_src + 1), |_| ch_names(), |_| true),
+        Descriptor::new(MaskInvert, Choice, "Invert", |u| onoff(u.m.mask_inv), toggles, |_| true),
+        Descriptor::new(MaskX, Value, "Tolerance X", |u| format!("{:.2} div", u.m.mask_x), |_| Vec::new(), |_| true),
+        Descriptor::new(MaskY, Value, "Tolerance Y", |u| format!("{:.2} div", u.m.mask_y), |_| Vec::new(), |_| true),
+        Descriptor::new(
+            MaskAction,
+            Choice,
+            "On fail",
+            |u| if u.m.mask_stop { "Stop" } else { "None" }.into(),
+            |_| ["None", "Stop"].into_iter().map(String::from).collect(),
+            |_| true,
+        ),
+        Descriptor::new(MaskCreate, Action, "Create from CH", |_| String::new(), |_| Vec::new(), |_| true),
+        Descriptor::new(MaskFromRef, Action, "Create from ref", |_| String::new(), |_| Vec::new(), |_| true),
+        Descriptor::new(MaskReset, Action, "Reset counts", |_| String::new(), |_| Vec::new(), |_| true),
+        Descriptor::new(MaskClear, Action, "Clear mask", |_| String::new(), |_| Vec::new(), |_| true),
+        Descriptor::new(MaskSave, Action, "Save mask", |_| String::new(), |_| Vec::new(), |_| true),
+        Descriptor::new(MaskLoad, Action, "Load mask", |_| String::new(), |_| Vec::new(), |_| true),
+    ]
+};
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
     match it {
@@ -104,36 +82,6 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
         _ => {}
     }
     true
-}
-
-fn options(_ui: &Ui, it: Item) -> Option<Vec<String>> {
-    let v: &[&str] = match it {
-        Item::MaskOn | Item::MaskInvert => &["Off", "On"],
-        Item::MaskSrc => return Some(ch_names()),
-        Item::MaskAction => &["None", "Stop"],
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(_ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Mask => vec![
-            Item::MaskOn,
-            Item::MaskSrc,
-            Item::MaskInvert,
-            Item::MaskX,
-            Item::MaskY,
-            Item::MaskAction,
-            Item::MaskCreate,
-            Item::MaskFromRef,
-            Item::MaskReset,
-            Item::MaskClear,
-            Item::MaskSave,
-            Item::MaskLoad,
-        ],
-        _ => Vec::new(),
-    }
 }
 
 fn sources(ui: &Ui, menu: MenuId) -> Vec<WaveId> {

@@ -3,46 +3,43 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area { kind, label, value, adjust, activate, options, menu_items, ..Area::EMPTY };
+pub(super) const AREA: Area = Area { descriptors: ROWS, adjust, activate, ..Area::EMPTY };
 
-fn kind(it: Item) -> Option<Kind> {
-    Some(match it {
-        Item::ZoneBox | Item::ZoneShape | Item::ZoneClear => Kind::Action,
-        _ => return None,
-    })
-}
-
-fn label(it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Open(MenuId::Zone) => "Zones",
-        Item::ZoneSel => "Zone",
-        Item::ZoneOn => "Enable",
-        Item::ZoneSrc => "Source",
-        Item::ZoneMode => "Condition",
-        Item::ZoneBox => "Draw box",
-        Item::ZoneShape => "Draw shape",
-        Item::ZoneClear => "Delete",
-        _ => return None,
-    })
-}
-
-fn value(ui: &Ui, it: Item) -> Option<String> {
-    let m = &ui.m;
-    let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-    Some(match it {
-        Item::ZoneSel => format!("Z{}", ui.zone_sel + 1),
-        Item::ZoneOn => onoff(m.zones[ui.zone_sel].on),
-        Item::ZoneSrc => format!("CH{}", m.zones[ui.zone_sel].src + 1),
-        Item::ZoneMode => {
-            if m.zones[ui.zone_sel].inside {
-                "Intersect".into()
-            } else {
-                "Not intersect".into()
-            }
-        }
-        _ => return None,
-    })
-}
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    use Kind::*;
+    &[
+        Descriptor::new(Open(MenuId::Zone), Action, "Zones", |_| String::new(), |_| Vec::new(), |_| false),
+        Descriptor::new(
+            ZoneSel,
+            Choice,
+            "Zone",
+            |u| format!("Z{}", u.zone_sel + 1),
+            |_| ["Z1", "Z2"].into_iter().map(String::from).collect(),
+            |_| true,
+        ),
+        Descriptor::new(ZoneOn, Choice, "Enable", |u| onoff(u.m.zones[u.zone_sel].on), toggles, |_| true),
+        Descriptor::new(
+            ZoneSrc,
+            Choice,
+            "Source",
+            |u| format!("CH{}", u.m.zones[u.zone_sel].src + 1),
+            |_| ch_names(),
+            |_| true,
+        ),
+        Descriptor::new(
+            ZoneMode,
+            Choice,
+            "Condition",
+            |u| if u.m.zones[u.zone_sel].inside { "Intersect" } else { "Not intersect" }.into(),
+            |_| ["Intersect", "Not intersect"].into_iter().map(String::from).collect(),
+            |_| true,
+        ),
+        Descriptor::new(ZoneBox, Action, "Draw box", |_| String::new(), |_| Vec::new(), |_| true),
+        Descriptor::new(ZoneShape, Action, "Draw shape", |_| String::new(), |_| Vec::new(), |_| true),
+        Descriptor::new(ZoneClear, Action, "Delete", |_| String::new(), |_| Vec::new(), |_| true),
+    ]
+};
 
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
     let m = &mut ui.m;
@@ -79,30 +76,4 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
         _ => {}
     }
     true
-}
-
-fn options(_ui: &Ui, it: Item) -> Option<Vec<String>> {
-    let v: &[&str] = match it {
-        Item::ZoneOn => &["Off", "On"],
-        Item::ZoneSel => &["Z1", "Z2"],
-        Item::ZoneSrc => return Some(ch_names()),
-        Item::ZoneMode => &["Intersect", "Not intersect"],
-        _ => &[],
-    };
-    Some(v.iter().map(|s| s.to_string()).collect())
-}
-
-fn menu_items(_ui: &Ui, menu: MenuId) -> Vec<Item> {
-    match menu {
-        MenuId::Zone => vec![
-            Item::ZoneSel,
-            Item::ZoneOn,
-            Item::ZoneSrc,
-            Item::ZoneMode,
-            Item::ZoneBox,
-            Item::ZoneShape,
-            Item::ZoneClear,
-        ],
-        _ => Vec::new(),
-    }
 }

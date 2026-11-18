@@ -1,5 +1,9 @@
 # Screen drawing architecture (design, 2026-11-14)
 
+The owner-approved [frame pipeline](frames.md), 2026-11-18, supersedes this page's worker-share kernel,
+BatchUnit publication, ring-read window cap and drawing step plan. Keep the measurements and route evidence
+below as historical evidence. [F0-F7](migration.md#f0-f7-frame-pipeline) define the replacement; F4 is M12b.
+
 Goal (user decision): a fast, responsive UI without hiccups or flicker, done properly before the PR. This note is the
 design and the implementation plan. compress reviews it, then an independent reviewer.
 

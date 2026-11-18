@@ -2,7 +2,9 @@
 
 Target architecture of the acquisition thread and its port to the UI. Part of [README.md](README.md).
 Drawing is in [picture.md](picture.md), records and measurements in [records.md](records.md). Today's code is
-referenced as of dho804 32041d0.
+referenced as of dho804 32041d0. The owner-approved [frame pipeline](frames.md) updates the deposit path:
+F2 removes acquisition helper work and moves newest-record decoding to the pool; F3 waits for a free buffer
+before arming, including prearm; F4 removes Standard and the no-buffer fallback. These remain targets.
 
 ## Role
 
@@ -176,10 +178,12 @@ One batch: arm, fill, read, post-read reads, publish. In order:
    (stop-exact.md), then no arming while `hold` is set.
 2. SINGLE: one batch per epoch (`single_wants_more`).
 3. Hardware average: clear on `AvgClear`.
-4. Arm, unless armed ahead under the same `gen` and `epoch`.
+4. Reserve a free DMA buffer before arm or prearm. With none free, wait for buffer return in the same event
+   wait as commands (F3). Report dead time, never read-and-drop for overload. Arm unless already armed ahead
+   under the same `gen` and `epoch`.
 5. `Force`: one force pulse into the armed batch.
-6. Fill: the Fill plan (`pacing::Fill`) ends the ring fill before a screen step. Meanwhile the thread draws shares of
-   the previous batch as the helper (picture.md).
+6. Fill: the Fill plan (`pacing::Fill`) ends the ring fill before a screen step. F2 removes the acquisition
+   helper role; placement and deposit stay on the A53 pool.
 7. Read the ring (one C2H read, chunked).
 8. Post-read reads, at most one raw re-read per batch, before anything arms again (the ring must stay):
    - LA words of the same record;
@@ -189,17 +193,16 @@ One batch: arm, fill, read, post-read reads, publish. In order:
    The two raw reads are `MeasRead`s (records.md).
 9. Unit counters of this batch: trigger status, mask, zone, average progress. They go into `Readings`.
 10. Arm ahead (`prearm`) where nothing needs this ring any more.
-11. Publish: the buffer with every frame to the pipe as one `Batch` (the pipe decides between deposit and records,
-    picture.md). On the fast path the newest frame decoded as a `Frame` to the record path, with the LA record. Off
-    the fast path no `Frame`: the `RecordBatch` already holds the newest frame's record, so the newest frame is
-    decoded once, not twice. `MeasRead`s to the measurement path.
+11. Publish the buffer with every kept record as one `Batch`. The pool routes by BatchMeta to Deposit or
+    RecordBatch and decodes the newest record for readers, not drawing. RecordBatch already contains the newest
+    record, so it is not decoded twice. `MeasRead`s go to the measurement path.
 
 What changes against today:
 - The newest frame is in the `Batch` like the others. The decoded newest `Frame` is for records only and is never
   drawn (route C goes away, picture.md).
 - No `Deliver` closure: the pipe tells the UI when a batch is whole.
-- Frames mode (`acq.pipeline = frames`, the queue of every frame) and the no-buffer fallback both become a `Batch`
-  drawn by the UI thread's own deposit (picture.md). There is one batch path, not two compositions.
+- F4 removes Frames mode (`acq.pipeline = frames`) and its selectors after M12a acceptance.
+  There is no no-buffer fallback: F3 waits before read. There is one deposit composition path.
 
 ### `stream` and `segments`
 

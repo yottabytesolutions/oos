@@ -18,7 +18,9 @@ Source provenance and contribution rules are ADR 0003.
 
 ## Steps
 
-M0..M11 prerequisites remain below so existing task links retain their meaning.
+M0..M11 identifiers remain below so existing task links retain their meaning. The owner-approved
+[frame pipeline](frames.md) replaces the drawing implementation packages with F0-F7. F4 is M12b;
+F7 supplies the picture-state part of M16b. M12a still requires evidence before Standard is deleted.
 After drawing acceptance, M13/M14 precede the M15 parser and M17 write-descriptor cutovers;
 M17 read descriptors need only E1 and the refreshed inventory
 ([ADR 0038](../adr/0038-menus-and-parser.md)).
@@ -146,7 +148,8 @@ Queue/snapshot/outbox bounds and RSS watchdog exist; the complete plan remains o
 roll/scan chunks and retaining-owner census, including [remote replies](README.md#memory-plan).
 Files: `core/src/` memory plan/normalize, `ui/src/board/`, `wave.rs`, `drawpipe*`, `system/memory.rs`, SCPI metrics.
 Acceptance: all Caps/modes/channels/depths/timebases fit or produce the specified clamp/rejection; reconfiguration
-counts old buffers; SINGLE roll publishes once until Rearm; pin/release, full-pipe drops and M3.0 roll soak pass.
+counts old buffers; SINGLE roll publishes once until Rearm; pin/release, source waiting without overload loss (F3) and
+M3.0 roll soak pass.
 Remote budget arithmetic includes queued/parked/encoded replies and upload/snapshot retention below soft RSS.
 Remove owner-local allocation estimates and replaced mutable ring copies. Delta: -50..+100.
 Depends: M5. Parallel: pure sweep fixtures; serialize allocation/queue wiring. Unit memory soak at M12.
@@ -181,34 +184,19 @@ Delta: -100..-300. Depends: M5. Parallel: pure measure fixtures; serialize recor
 
 ### M7: one lines kernel (D3)
 
-Spans/codes/pairs/sparse kernels exist; record and frame routes still differ.
-**Scope:** common weights for every source, code deposits with one trigger/extrema table per frame, reused by
-folds; per-channel workers at 3/4 channels. Files: `fastdraw.rs`, `drawpipe*`, `wave.rs`, target `picture/deposit/`.
-Acceptance: pair/raw and depth mixes at x1.000, record brightness within 3%, lines goldens with reasons,
-4-channel perf guard counts refinement once per frame; unit round 2 benchmarks codes against f32.
-Remove replaced deep-raw draw_frame branch; defer route/segment-joining removal to M12's choice.
-Delta: -100..-300. Depends: M6. Parallel: serial on kernels/weights; no new draw.model switch is implied.
+Superseded by F1/F2 for the shared kernel and F5 for Peak, pairs and zoom. The common source-weight and
+pair/raw equality requirements remain; F6 applies the [weight and grade contract](frames.md#invariants-and-units).
 
 ### M8: dots (D4)
 
-**Scope:** one count per sample across raw/codes/pairs/records, with common source weights.
-Files: dots kernels in `fastdraw.rs`/`picture/deposit/`, `drawpipe*`, golden/perf fixtures.
-Acceptance: brightness within 3% across sources; no sample lost at 100 samples/column over 40 rows;
-existing dots guard/goldens pass. Remove replaced source-specific counting paths. Delta: -20..-100.
-Depends: M7 weights. Parallel: serial on deposit dispatch; standalone fixtures can prepare early.
+Carried by F1/F2's shared deposit kernel and F6's common grade. One count per sample, no sample loss at
+100 samples/column over 40 rows, source brightness within 3 %, dots goldens and the dots perf guard remain
+acceptance requirements. Dots do not infer sample density from min/max pairs.
 
 ### M9: `BatchUnit` (D5)
 
-Workers deposit shares; whole-unit publication/window are open.
-**Scope:** publish complete BatchUnits; accumulator in final `ui/src/picture/acc.rs`, with private maps and
-read-only Picture. At 1/2 channels reduce shares by touched row bands; at 3/4 channels workers own channels;
-main adds at most three map sets. Files: `drawpipe*`, `ui.rs`, `picture/`, core window types.
-Acceptance: every merge contains whole batches including newest frame; route-equivalent content, one-frame/
-48-frame perf ratios, no reduction at 4 channels, no allocations/blocking in reduction. Keep Standard alongside
-Batch for M12's owner decision under [migration plan](migration.md#m12).
-Remove replaced Acc lists, Tally if present, Deliver, MERGE_WAIT_MAX, early help_done and duplicate newest-frame
-composition only where replaced; do not delete Standard here.
-Delta: -100..-300. Depends: M7/M8. Parallel: serial on map ownership/publication. Unit round 3: partial=0 stress.
+Superseded by F2's `Deposit`: whole batches coalesce into one hand-off, without worker share maps or reduction.
+The window cap counts deposits, not ring reads. F7 completes private picture ownership.
 
 ### M9b: GPU work proportional to change
 
@@ -218,18 +206,183 @@ keep glFinish only for readback and preserve HDMI half-rate. Files: `gpu/`, `ui/
 Acceptance: gpu/test-host.sh has zero differences, unchanged pictures upload nothing, held snapshot cannot block
 composition; unit round 3 measures CPU/GPU time and panel/HDMI budgets. Remove replaced row compare,
 periodic snapshots and composition glFinish. Delta: -50..-150.
-Depends: M9 dirty rows. Parallel: GPU internals after dirty-range API; serialize snapshot/display wiring.
+Depends: F2's `Picture::dirty` and dirty-row `publish` contract (formerly M9). F6 later reuses these uploads.
+Parallel: GPU internals after F2's dirty-range API; serialize snapshot/display wiring.
 
 ### M10: grading and records together (D6)
 
-**Scope:** weight-based grade, record pseudo-batches, bounded window in M9's accumulator; at Min rebuild
-entering/leaving rows, above Min fuse decay/add into one pass. Files: `picture/acc.rs`, core window,
-`ui.rs` grading, `drawpipe*` folds. Acceptance: brightness within 3% for 1..27 frames, <= 67 ms window,
-single hit visible, stopped picture constant, replay=live, zoom=main, GPU zero differences; disjoint row bands
-leave no ghost and both bands are dirty. Fix the measurement-selection regression retained in
-[task 0011](../tasks/0011-m10-grading-records.md) before removing its M1 harness restriction.
-Remove picture_ref, per_frame*, pic_frames and vmax-follow paths as replaced; final legacy redraw waits for M12.
-Delta: -100..-300. Depends: M9/M9b. Parallel: serial on accumulator/grade. Unit round 4: full picture acceptance.
+Superseded by F6. Keep the measurement-selection regression in
+[task 0011](../tasks/0011-m10-grading-records.md) as an acceptance requirement before removing its M1 harness
+restriction. F6 changes weight and grade together; F7 completes ownership.
+
+### F0-F7: frame pipeline
+
+Specification: [frame pipeline](frames.md), approved 2026-11-18, part of #196. Budgets and production LOC deltas
+are estimates until measured. Each step preserves behaviour, goldens and draw_routes equality unless its
+scope explicitly changes behaviour. No step claims implementation or unit acceptance in this document.
+
+#### F0: conservation and stage counters
+
+- **Scope:** add named loss buckets, per-stage quantile rings and live-route reporting in `:SYSTem:STATe?`.
+  Salvage only the items in [#186's disposition](frames.md#disposition-of-186).
+- **Files:** `ui/src/drawpipe*`, `ui/src/framecost.rs`, `ui/src/perfguard/`, `ui/src/board/dho/` loss sites,
+  SCPI state reporting and `tools/perf-guard.sh`.
+- **Acceptance:**
+  - Deterministic drained counter tests account for every read record in its route namespace, including settings
+    changes, first/second records, incomplete averages and queue clears; live snapshots expose pending records.
+  - Retain existing drop counters while legacy overload routes remain. F3 enforces the target
+    [conservation rule](frames.md#back-pressure-and-conservation).
+  - Empty pictures count zero records; state reports the live route.
+  - Slice rings replace per-record timing calls at the covered sites.
+- **Remove:** replaced framecost per-record parts.
+- **Delta:** +60..+100 production lines.
+- **Risk:** medium, accounting only; no overload-policy change yet.
+- **Depends:** existing M12a evidence and G2. Serialize drawpipe, acquisition loss sites and UI reporting with F1-F3.
+
+#### F1: shared placement and difference kernel
+
+- **Scope:** move fast_plan, fast_deposit_t, raw_map and rec_rows from `ui.rs` to `picture/deposit/kernel.rs`.
+  Use SamplesRef, BatchMeta and Projection instead of Model/Frame; Standard calls through an adapter.
+  Implement the [sample adapters](frames.md#stages), including software HiRes.
+- **Files:** `ui/src/ui.rs`, `ui/src/fastdraw.rs`, `ui/src/drawpipe*`, `ui/src/picture/deposit/kernel.rs`,
+  shared value types and `ui/tests/draw_routes*`.
+- **Acceptance:**
+  - No behaviour change; raw/codes/pairs/dots and HiRes characterisation and goldens match.
+  - Conversion uses batch metadata, never live settings; warmed kernel allocation tests pass.
+- **Remove:** duplicate Spans type and drawpipe::dense logic as replaced.
+- **Delta:** -30..+30 production lines.
+- **Risk:** medium, kernel extraction.
+- **Depends:** F0 and M4 mapping/metadata contracts. No parallel fast drawing or drawpipe edits.
+  This is the tested prerequisite for F2 and M12b.
+
+#### F2: Batch on the shared kernel
+
+- **Scope:** synchronous pool with map over record indices and each over owned tiles; one coordinator plus
+  three workers on four A53. Add Deposit, bounded slot and accumulator fold. Use the canonical contracts for
+  [types and weights](frames.md#vocabulary-and-types), [projection identity](frames.md#projection-identity),
+  [capacity](frames.md#difference-plane-capacity), [tap capacity](frames.md#tap-capacity) and
+  [dirty-row publication](frames.md#minimum-persistence-and-gpu-hand-off). M9b consumes dirty rows; F6 reuses them.
+- **Files:** `ui/src/drawpipe*`, `ui/src/fastdraw.rs`, `ui/src/picture/`, fast intake in `ui/src/ui.rs`,
+  `ui/tests/draw_routes*`, allocation/perf fixtures.
+- **Acceptance:**
+  - Every map pixel equals Standard for raw and codes at 1, 2 and 4 channels; preserve pairs/dots characterisation.
+  - No partial batch or newest-record double draw; key/identity changes close deposits.
+  - Dirty-row publication covers disjoint old/new bands and their gap, clears traces without ghosts, and publishes
+    no rows for unchanged pictures.
+  - Exercise the [projection and tap regressions](picture.md#tests): view changes before and during claim,
+    full slot, full tap FIFO, and picture rejection independent of history delivery.
+  - Hold the slot full while the final batch completes below the open deposit's capacity; send no more batches.
+    Taking the slot wakes the coordinator and publishes that deposit exactly once for the next UI step.
+    Use completion events, including release before the coordinator waits, to detect lost wakes.
+  - Script maximum-rate one- and two-record batches across picture periods without tap-induced source waits;
+    check plan-derived storage/drain bounds, reconfiguration overlap and the UI step budget.
+  - Tile ownership is exclusive without unsafe or pixel locks; no allocation after warm-up.
+  - Check whole-batch capacity before writing, including last-fitting and first-exceeding batches.
+  - Check the combined three-deposit window against the same u16 bound, using q = 24 before F6. Individually
+    fitting deposits that exceed the combined bound evict oldest whole deposits before folding, without wrapping.
+  - Retain a full window, open set and slot after batch readers finish; all DMA buffers return.
+  - Keep Standard. Authorized unit round covers [M12 rows](frames.md#m12-acceptance), full-height traces,
+    one-channel bands and coalescing/memory bounds.
+- **Remove:** Acc, Mail, worker publish/merge/note_merged, Helper/help, Deliver, open/ready/seen, MAIL_MAX,
+  CODES_* thresholds, draw_frame_codes, live whole::deposit and #186 Reduction if present.
+- **Delta:** -200..-350 production lines.
+- **Risk:** medium, substantial concurrency change and required unit timing evidence.
+- **Depends:** F1 and F0 baseline; replaces M9's BatchUnit implementation. No parallel draw-path edits.
+
+#### F3: wait at the source
+
+- **Scope:** implement [source back-pressure](frames.md#back-pressure-and-conservation), including prearm and
+  command event waiting. Report dead time/capture ratio and shown records/s.
+- **Files:** `ui/src/board/dho/hw.rs`, `ui/src/board/dho/hw/batch.rs`, drawpipe buffer return,
+  state counters and trigger-status display.
+- **Acceptance:**
+  - Scripted buffer exhaustion performs no extra read, wakes on return/STOP/settings, and conserves records
+    after drain. No overload bucket exists.
+  - Authorized unit round shows zero losses under load, visible capture rate and the
+    [M12 rate/wait requirements](frames.md#m12-acceptance).
+  - Verify the hardware trigger counter before using capture ratio; otherwise report unarmed wall-time share.
+- **Remove:** drop-all-but-newest, unclaimed-drop on Batch free and MERGE leftovers.
+- **Delta:** -20..+10 production lines.
+- **Risk:** hardware timing; requires authorized unit evidence.
+- **Depends:** F2 and acquisition event-wait seam (M3c); implements ADR 0036.
+  Serialize acquisition/publication with F0-F2.
+
+#### F4: M12b, delete Standard
+
+- **Scope:** remove Standard only after F2/F3 unit rows and M12a acceptance pass. F4 is exactly M12b.
+- **Files:** `ui/src/ui.rs`, `ui/src/drawpipe*`, `ui/src/fastdraw.rs`, `ui/src/sysconf.rs`,
+  `ui/src/scpi*`, pipeline configuration and core route settings.
+- **Acceptance:**
+  - One live deposit path; obsolete selectors gone; setup compatibility has an explicit tested outcome.
+  - Remaining behaviour matches M12a pictures/perf; full gate and approved unit evidence.
+    Host equality alone cannot allow deletion.
+- **Remove:** drawpipe::Mode/config.rs, acq.pipeline, Model::draw_batch, :SYSTem:PIPeline, UI fast_draw_all,
+  fast_take/fast_budget/fast_max, acc_t, together/par_map/par_each, helper_cores, route D in Ui::step and
+  newest-record drawing.
+- **Delta:** -300..-450 production lines.
+- **Risk:** medium.
+- **Depends:** F2, F3 and M12a approval. No parallel draw-path edits.
+
+#### F5: Peak, pairs and zoom
+
+- **Scope:** put these sources on Deposit immediately after F4. Drop fast_ok's Normal-only and no-zoom restrictions.
+  Peak and zoom use per-column spans instead of joined segments; the owner accepted this look change.
+  Verify Peak's word form before choosing Codes or Pairs.
+- **Files:** `ui/src/picture/deposit/`, `ui/src/drawpipe*`, `ui/src/fastdraw.rs`, `ui/src/ui.rs`,
+  `ui/src/board/dho/publication.rs`, source fixtures and goldens.
+- **Acceptance:**
+  - Raw/pair/deep mixes retain equal weights; zoom uses its second projection and planes; every record contributes once.
+  - Authorized unit round verifies Peak word form, compares capture rate with Normal and reviews Peak/zoom screenshots.
+  - Golden changes state the approved span-style reason.
+- **Remove:** PeakWait queue back-pressure and zoom drawing in the record loop.
+- **Delta:** -50..-150 production lines.
+- **Risk:** medium, approved visible change and unit capture evidence.
+- **Depends:** F4; carries M7 for these sources. Serialize accumulator and deposit dispatch.
+
+#### F6: replace, Frozen and W grade
+
+- **Scope:** STOP freezes; replay, preview, roll and scan use replace with the same kernel. Apply the
+  [weight/grade transition](frames.md#invariants-and-units),
+  [window and dirty-row contract](frames.md#minimum-persistence-and-gpu-hand-off), and
+  [capacity bound](frames.md#difference-plane-capacity); above Min fuse decay/add in u32 16.16.
+  Publish W and reuse F2's dirty rows through M9b uploads.
+- **Files:** `ui/src/picture/`, `ui/src/ui.rs`, `ui/src/ui/step_draw.rs`, `ui/src/wave.rs`,
+  core window types, GPU grade/upload and golden/perf fixtures.
+- **Acceptance:**
+  - Brightness within 3 % for 1..27 records/picture; bounded window; disjoint bands both dirty, without ghosts.
+  - Single-hit persistence; STOP constant over 100 synthetic steps; replay=live; zoom=main; GPU zero differences.
+  - Task 0011's measurement-selection regression passes.
+  - Frozen/stale/epoch rejections are counted; preview loses to current live data and frozen replace wins.
+  - Dots density normalization across raw/replay and main/zoom; sample-hit capacity before/after grade transition.
+  - A UI slot held beyond the age limit, expiry boundaries, mixed-age deposits and conservation follow the
+    linked window contract. Authorized unit round covers full picture acceptance and screenshot pairs.
+- **Remove:** stopped redraw, 24 * 6, picture_ref, per_frame*, pic_frames, vmax follow and grade_refs scan.
+- **Delta:** -100..-300 production lines.
+- **Risk:** medium, approved freeze/grade changes.
+- **Depends:** F5 and M9b uploads consuming F2's dirty rows; replaces M10. No parallel accumulator/grade edits.
+
+#### F7: private picture and waveform ownership
+
+- **Scope:** finish Accumulator/Picture in `ui/src/picture/`, private planes; remove ph/phz from Ui.
+  Use the [Waveform/RecordRef ownership contract](frames.md#vocabulary-and-types); keep wave::Record for readers.
+- **Files:** `ui/src/picture/`, `ui/src/ui.rs`, `ui/src/board/mod.rs`, publication/intake, `ui/src/wave.rs`,
+  `ui/src/records/` and application wiring.
+- **Acceptance:**
+  - Visibility enforces one picture writer; compose reads &Picture.
+  - Batch metadata conversion and STOP/SINGLE/stale-result/golden tests unchanged; no added hot-path allocations/copies.
+  - Long-lived readers cannot pin DMA buffers indefinitely.
+- **Remove:** route-only flags, Frame queue representation and wave::Raw as replaced by Waveform.
+- **Delta:** near 0 for moves, then -50..-100 production lines.
+- **Risk:** medium.
+- **Depends:** F6; coordinate queue types with M5. Supplies M16b picture state and M5 queue representation,
+  not all remaining M16b stages. Only disjoint M16b work can overlap; serialize Ui wiring.
+
+F0-F3 are serial on drawpipe and fast UI drawing. F4 waits for hardware acceptance. F5/F6 are serial on the
+accumulator; F7 can interleave with disjoint M16b work. Estimated total: -1340..-560 production Rust lines
+(ADR 0007), summing the F0-F7 step ranges. Ranges are planning estimates, not allowances.
+F2 has the largest concurrency risk. F1 puts the kernel under Standard first; draw_routes then compares every
+pixel while both routes exist. This is why F2 precedes M12b. Close #186 without merging it; salvage only the
+F0 items specified above. Do not add its reducers as an interim stage.
 
 ### M11: sparse-event pacing (D8)
 
@@ -252,26 +405,25 @@ Risk is low for docs, medium for observable UI/protocol behaviour; acquisition t
 
 ### M12: acceptance and removal (D9)
 
-**M12a, evidence and owner selection.** Scope: compare current Standard/Frames and Batch routes after M2..M11
-prerequisites pass. Files: `ui/tests/`, `tools/perf-guard.sh`, drawing task evidence, `docs/architecture/drawing.md`.
-Acceptance: route-equivalent pictures/weights for raw, pairs, dots, zoom, deep reads, roll/scan, STOP/SINGLE and replay;
-full gate; authorized unit load/soak with frame, latency, drop and memory evidence.
-Under [migration plan](migration.md#m12), do not delete Standard before the cause of Batch's
-drop to about 18 fps with four channels at 10 us/div is found.
-Expected delta: 0. Risk: medium, with unit timing evidence. Parallel: evidence preparation alongside IO baselining;
-final acceptance waits for the drawing prerequisites.
+<a id="m12a"></a>
 
-**Open owner question:** which of Standard/Frames and Batch survives after those measurements?
-`Model::draw_batch`, `drawpipe::Mode` and the fast/record routes still exist. `draw.model` does not exist in this
-checkout; there is no such switch to remove. M12 must keep one path and delete the loser under docs/architecture/migration.md#m12;
-the surviving route remains pending measurement and owner selection.
+**M12a, evidence and acceptance.** The owner selected Batch with the shared difference kernel on 2026-11-18
+([decisions](frames.md#owner-decisions)). Scope: retain Standard as oracle through F2/F3, establish equal
+pictures where behaviour is preserved, and accept the deposit path before deletion.
+Files: `ui/tests/`, `tools/perf-guard.sh`, drawing task evidence and architecture reports.
+Acceptance: raw/codes at 1/2/4 channels, plus pairs/dots/zoom/deep/roll/scan/STOP/SINGLE/replay characterisation;
+full gate and authorized unit load/soak with frame, latency, capture-rate, conservation and memory evidence.
+Four-channel Normal at the fastest time bases must meet the canonical [M12 rows](frames.md#m12-acceptance).
+Budgets remain unverified for the target.
+Expected LOC delta: 0 for evidence. Risk: medium, unit timing evidence required. Dependencies: F0-F3 and
+relevant existing M2-M6/M8 contracts; later F5/F6 behaviour changes have their own unit rows.
+Parallel: evidence preparation only alongside draw-path changes; acceptance is on the final candidate.
 
-**M12b, approved deletion.** Scope: delete the losing path and code made obsolete by the owner's selection.
-Files: selected branches in `ui.rs`, `drawpipe*`, `fastdraw.rs`, `wave.rs`, `compress.rs`, `sysconf.rs` and core settings.
-Acceptance: one surviving path, losing path and obsolete selectors removed, M12a pictures/perf unchanged for the
-surviving behaviour, setup compatibility and full gate.
-Expected delta: < 0, amount measured after the choice.
-Risk: medium. Parallel: no overlapping draw-path edits. M12 is complete only after evidence, selection and deletion.
+<a id="m12b"></a>
+
+**M12b, approved deletion.** Exactly F4 above. The selected route is no longer an open owner question.
+Standard and selectors remain until M12a/F2/F3 pass; no draw.model switch is present or introduced.
+M12 completes after accepted evidence and F4 deletion. F5 follows immediately; F6/F7 complete the target.
 
 ### E1: dispatch extraction before parallel families
 
@@ -421,13 +573,14 @@ rapid edits during a pending write, crash-marker/durable fault tests and shutdow
 Expected delta: 0..+150 for the shared queue, offset by deletion of per-caller write paths.
 Risk: medium. Parallel: network transports; serialize with M14b codec changes. Reuse the durable Files port.
 
-**M16b, one state owner/stage per package.** Scope: records/history/segments, measurement state, picture state,
+**M16b, one state owner/stage per package.** Scope: records/history/segments, measurement state, picture state (F7),
 then intake/reply; extract from Ui with narrow inputs/outputs. Replace step orchestration last by Session.
 Files: `ui.rs`, `ui/change*`, `ui/lifecycle*`, `wave.rs`, `drawpipe*`, new `app/`, `records/`, `picture/`.
 Acceptance: same host command logs, identities, STOP/SINGLE/stale-result tests and goldens; no new allocation/copy
 on touched hot paths; each state has one writer. Final Session has wiring, not Ui's fields.
 Expected delta: near 0 per ownership move, -100..-300 on final orchestration cleanup.
-Risk: medium; timing changes need unit evidence. Depends: accepted drawing owners, M13/M14 and typed IO seams.
+Risk: medium; timing changes need unit evidence. The picture-state package is F7 with its own dependencies;
+remaining packages depend on accepted drawing owners, M13/M14 and typed IO seams.
 Parallel: disjoint view extraction; serialize Ui fields, step order and publication edits.
 
 ### M17: views and menus as components
@@ -523,15 +676,13 @@ unit verification. A full rebuild was rejected because it delayed all shipping b
 Rebuilding menus/parser from specs avoids preserving accidental legacy behaviour; the legacy parser remains a
 host differential oracle until deletion. Every difference needs a recorded spec decision or a fix.
 
-Batch is today's generic-image default; the parser defaults to Standard/Frames without configuration.
-The surviving Standard-versus-Batch choice is target M12.
-Keep both until picture equality, performance ratios and unit round 5 select one and delete the other.
-Verified on the unit: DHO924S, 2026-11-15, four channels at 10 us/div with a 100 kHz CH1 square wave and Auto
-trigger, Batch refreshed at 18.2 fps versus Standard 26.1 fps. Find the cause before deleting Standard.
-M9 adds whole BatchUnits alongside Standard; a one-frame step forms one unit. RecordBatch off the fast path
-uses the same accumulator as a pseudo-batch. Keep the N-frame/67 ms window and 3-batch cap. Route-D composition
-removal waits for M12. Compare one-frame units and 48-frame steps: one unit per frame can cost two full-map
-passes per frame, about 2.5 GB/s at 48 frames per step. Host equality proves no hardware timing.
+The owner selected the [frame pipeline](frames.md) on 2026-11-18. F0-F3 establish counters, shared kernel,
+whole-deposit publication and source waiting while Standard remains the oracle. M12a accepts the measured
+route; F4 is M12b deletion. F5 follows with Peak/pairs/zoom; F6 supplies grade/replace and F7 picture ownership.
+The [minimum-persistence contract](frames.md#minimum-persistence-and-gpu-hand-off) defines the deposit window (ADR 0035).
+A deposit holds whole batches of one key/identity; the UI takes at most one per step. Waiting at the source
+prevents overload loss, so M12 acceptance includes a capture-rate floor, not just fps and zero drops.
+Host equality proves no hardware timing. All new budgets remain estimates until an authorized unit round.
 
 ## ADR baseline follow-ups
 
@@ -553,7 +704,7 @@ The coordinator replaces each TBD issue placeholder before acceptance.
 | ADR 0028 | TBD (coordinator) | Registries: pin released identifiers, register remaining measurements and test release feature completeness. |
 | ADR 0030 | TBD (coordinator) | Typed errors: add a shrinking Result<_, String> ratchet, migrate areas to typed errors and test sender/retry reporting. |
 | ADR 0031 | TBD (coordinator) | Performance gates: required ratio-based host perf CI, a production sleep ratchet, and a complete budget/counter/assertion inventory; require measured unit release budgets. |
-| ADR 0035 | TBD (coordinator) | Default alignment: change host/model and invalid-value fallbacks from Frames to Batch in a separate behaviour PR with tests and a changelog entry. |
+| ADR 0035 | #196 | F0-F7: shared difference kernel, Deposit window, source waiting, W grade and private ownership. F4 removes pipeline selectors after M12a; do not add an interim default-alignment path. |
 | ADR 0036 | TBD (coordinator) | M5 ownership: reject Mutex outside named cells with alias tests after removing Shared. |
 
 The registry migration also splits Protocol as one package: decode/trigger matching into dsp, metadata into core

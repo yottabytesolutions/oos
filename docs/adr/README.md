@@ -55,11 +55,11 @@ ADR paths across the repository. The `links` step also checks Markdown links and
 | [0028](0028-registered-modules.md) | Extensions use static registered modules | code | target: registry coverage follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
 | [0029](0029-table-generation.md) | One table can generate per-field code | code | in force |
 | [0030](0030-typed-errors.md) | Errors return to their sender and use typed values | code | target: typed-error follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
-| [0031](0031-performance.md) | Performance work is bounded, event-driven and measured | code | target: M3-M12 and performance-gate follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
+| [0031](0031-performance.md) | Performance work is bounded, event-driven and measured | code | target: M3-M12, F0-F7 and performance-gate follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
 | [0032](0032-settings-owner.md) | Settings have one owner and change only through commands | code | target: M13, M14 |
 | [0033](0033-change-point.md) | One change point classifies settings and requests | code | target: M4, M13, M14 |
-| [0034](0034-step-pipeline.md) | The step is a fixed pipeline of stages | code | target: M16 |
-| [0035](0035-picture-owner.md) | One accumulator owns the picture and adds whole batches | code | target: M9 and host Batch-default alignment in docs/architecture/migration.md#adr-baseline-follow-ups |
-| [0036](0036-threads-and-channels.md) | Threads share named cells and bounded channels | code | target: M5 |
+| [0034](0034-step-pipeline.md) | The step is a fixed pipeline of stages | code | target: M16 (F7 supplies picture state) |
+| [0035](0035-picture-owner.md) | One accumulator owns the picture and accepts whole deposits | code | target: F0-F7 (F4 = M12b; F7 supplies M16b picture state) |
+| [0036](0036-threads-and-channels.md) | Threads share named cells and bounded channels | code | target: M5 and F3 |
 | [0037](0037-ports.md) | Ports cover the IO the step depends on | code | target: M16 and IO-port follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
 | [0038](0038-menus-and-parser.md) | Menus are data and the SCPI parser comes from one table | code | target: M5, M15, M17 |

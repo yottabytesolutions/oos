@@ -614,8 +614,10 @@ file:
 
 The gate fails when a listed entry grows, when an entry appears that is not listed (a new oversized function, a new
 lint finding in a file), and when coverage falls more than 0.5 points below its floor: measurements move a little
-between runs, and the pull request that raised coverage raises the floor (`--coverage`). An entry that shrank passes, and the gate says so.
-Write the improvement back:
+between runs, and the pull request that raised coverage raises the floor (`--coverage`). For files touched since the
+protected base, including local changes, an allowance above the current count fails as unused slack. This includes
+findings that disappeared and deleted files. Untouched files keep their allowances. Planned moves compare the
+allowance at the destination path. Write the improvement back:
 
 ```sh
 cargo xtask ratchet               # lower sizes and counts to the current values, drop fixed entries

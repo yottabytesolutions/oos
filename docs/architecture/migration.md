@@ -534,7 +534,6 @@ The coordinator replaces each TBD issue placeholder before acceptance.
 
 | Record | Issue | Follow-up and acceptance |
 |---|---|---|
-| ADR 0006 | TBD (coordinator) | Gate tightening: fail on lowered counts left uncommitted; tests cover slack and planned moves. Preserve the current file/function line definitions. |
 | ADR 0008 | TBD (coordinator) | Baselines: replace current CPU RGB-1/floor(N/1000) tolerance with exact comparison; cover every layout-check script and all three text sizes with goldens, then remove the temporary procedure. |
 | ADR 0011 | TBD (coordinator) | Protected areas: host-test every update write device/offset against the allowlist; require protected-area before/after evidence for releases and hardware-path PRs. |
 | ADR 0012 | TBD (coordinator) | Hardware-key inventory: check every parsed key has a row and removal issue; reconcile enabled image defaults and environment switches with off-until-verified. |

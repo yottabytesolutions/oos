@@ -62,6 +62,12 @@ pub fn code_lines(src: &Source) -> u64 {
     visit::walk_file(&src.file, &src.text, src.test).code_lines
 }
 
+/// The self types of inherent impls in `text`, excluding test items as in the size measurement.
+pub fn inherent_impls(text: &str) -> Result<Vec<String>, String> {
+    let file = syn::parse_file(text).map_err(|e| format!("line {}: {}", e.span().start().line, e))?;
+    Ok(visit::walk_file(&file, text, false).impls)
+}
+
 /// Walks the sources of crate `krate` (`sources::of_dir`).
 pub fn measure(krate: &str, sources: &[Source]) -> Measured {
     let mut now = Ratchet::default();

@@ -2,7 +2,7 @@
 
 - Number: 0006
 - Category: policy
-- State: target: gate tightening follow-up in docs/architecture/migration.md#adr-baseline-follow-ups
+- State: accepted
 - Date: 2026-11-18
 
 ## Context
@@ -25,11 +25,14 @@ reason. No crate-wide allows.
 
 Existing excess lives in `xtask/data/<crate>/*.txt`. Counts only shrink and coverage floors only rise. The author
 commits `cargo xtask ratchet` when a count falls; nobody edits its output by hand. The gate rejects loosening and must
-reject uncommitted tightening. A stricter lint set needs an owner-approved record and one baseline commit.
+reject uncommitted tightening for files touched since the protected base, including local changes. Untouched files
+keep their allowances. A stricter lint set needs an owner-approved record and one baseline commit.
 
 Check: `fmt`, `clippy`, `size`, `architecture`, `unsafe`, `mutable-statics`, `method-exceptions`, `test-time` and
-`coverage`; review checks SAFETY and exception reasons. Rejecting unused ratchet slack is a target follow-up, not an
-existing check.
+`coverage`; review checks SAFETY and exception reasons.
+
+Ratchet checks reject unused slack in touched files and
+direct the author to run `cargo xtask ratchet`.
 
 ## Alternatives
 
@@ -39,5 +42,5 @@ existing findings would block incremental cleanup.
 
 ## Consequences
 
-All rules except rejection of unused slack are in force. Two branches lowering the same entry must rerun ratchet
-after rebasing rather than merge generated counts by hand.
+All rules are in force. Two branches lowering the same entry must rerun ratchet after rebasing rather than merge
+generated counts by hand.

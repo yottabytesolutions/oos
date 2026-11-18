@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::system::test_allocator::Counting;
 #[global_allocator]
 static HEAP: Counting = Counting::new();
+mod counters;
 mod perf;
 
 struct Route {

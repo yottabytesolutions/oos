@@ -43,8 +43,8 @@ pub(super) fn off_trigger(f: &Frame, s: &Settings) -> bool {
 
 /// Counts a frame 1 left out and logs the count at 1, 2, 4, 8, ...
 pub(super) fn left_out() {
-    let c = &crate::drawpipe::counters().losses.frame1;
-    let n = c.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let counters = crate::drawpipe::counters();
+    let n = counters.lose(crate::drawpipe::Lost::Frame1, 1);
     if n.is_power_of_two() {
         eprintln!(
             "oos-ui hw: frame 1 of a batch without its edge at the trigger point, left out (issue #5): {n} so far"

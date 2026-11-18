@@ -120,7 +120,7 @@ fn release_board(ui: &mut Ui) {
     ui.src.hw_hold(true, ui.final_req);
     if let Source::Hw { shared, .. } = &ui.src {
         let mut shared = crate::perfguard::deep::ui_lock(shared);
-        shared.queue.clear();
+        shared.clear_queue(crate::drawpipe::Lost::Error);
         shared.frame = Default::default();
         shared.deep_raw = None;
         shared.seg.shown = None;
@@ -323,16 +323,30 @@ mod tests {
 
     #[test]
     fn hardware_stop_drops_published_frames_and_keeps_hold() {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
         let shared: crate::board::HwShared = Default::default();
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         {
             let mut board = oos_hal::sync::lock(&shared);
             std::sync::Arc::make_mut(&mut board.frame).ch[0] = vec![42.0; 1024];
-            board.queue.push_back(crate::board::Frame::default().into());
+            board.queue.extend([crate::board::Frame::default(), crate::board::Frame::default()].map(Into::into));
         }
-        reset(&mut ui);
-        let board = oos_hal::sync::lock(&shared);
-        assert!(board.hold && board.queue.is_empty() && board.frame.ch[0].is_empty());
-        assert_eq!(board.final_req, 0);
+        let counters = crate::drawpipe::counters();
+        crate::drawpipe::Counters::add(&counters.acquired, 2);
+        ui.host.runtime_mut().memory = crate::system::memory::Watchdog::new(crate::system::memory::Limits::parse(
+            "mem.soft_mb = 1\nmem.hard_mb = 2\n",
+        ));
+        assert!(apply_sample(&mut ui, Duration::ZERO, Some(3 << 20)));
+        {
+            let board = oos_hal::sync::lock(&shared);
+            assert!(board.hold && board.queue.is_empty() && board.frame.ch[0].is_empty());
+            assert_eq!(board.final_req, 0);
+        }
+        assert_eq!(counters.read(), (2, 0, 0), "recovery preserves legacy dropped semantics");
+        let text = counters.records_text();
+        assert!(text.contains("records read=2 deposited=0 shown=0"), "{text}");
+        assert!(text.contains("lost.error=2"), "{text}");
+        assert!(apply_sample(&mut ui, Duration::from_secs(1), Some(3 << 20)));
+        assert_eq!(counters.records_text(), text, "repeated recovery must not count released frames again");
     }
 }

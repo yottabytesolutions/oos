@@ -15,6 +15,7 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 mod board;
+mod claim_timing;
 mod clock;
 mod cmd;
 mod compress;
@@ -26,7 +27,6 @@ mod drm;
 mod ethlink;
 mod fastdraw;
 mod font;
-mod framecost;
 mod framestats;
 mod gfx;
 mod gpu;

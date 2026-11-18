@@ -122,12 +122,22 @@ pub(super) fn record_decode(
     avail: usize,
     average: bool,
     frame0_drop: bool,
-) -> (usize, bool) {
+) -> ((usize, usize), bool) {
     let g = lock(out);
     let take = if mode == Mode::Peak || g.take == 0 { avail } else { g.take.min(avail) };
     let take = if average { take.min(1) } else { take };
     let stale = (avail > 1 && !average && frame0_drop) as usize;
-    ((avail - take).max(stale), g.cores)
+    let skip = (avail - take).max(stale);
+    let frame0 = usize::from(skip > 0 && stale > 0);
+    ((frame0, skip - frame0), g.cores)
+}
+
+/// Account for a selected batch's skips once, when the caller commits to decoding it.
+pub(super) fn account_skipped((frame0, other): (usize, usize), average: bool) -> usize {
+    let counters = crate::drawpipe::counters();
+    counters.lose(crate::drawpipe::Lost::Frame0, frame0 as u64);
+    counters.lose(if average { crate::drawpipe::Lost::Average } else { crate::drawpipe::Lost::Budget }, other as u64);
+    frame0 + other
 }
 
 pub(super) fn boundary(applied: Option<(u64, u64)>, identity: Identity) -> bool {
@@ -236,5 +246,58 @@ mod timing_tests {
         publish_held(&shared, Some(stale), 6);
         let g = oos_hal::sync::lock(&shared);
         assert_eq!((g.frame.seq, g.queue.len(), g.final_ack), (3, 1, 6));
+    }
+}
+
+/// Completed read before average selection or short-buffer rejection.
+pub(super) fn read(count: u32, shown: u32, avail: usize) {
+    let counters = crate::drawpipe::counters();
+    crate::drawpipe::Counters::add(&counters.acquired, count as u64);
+    counters.lose(crate::drawpipe::Lost::Average, (count - shown) as u64);
+    counters.lose(crate::drawpipe::Lost::Error, shown as u64 - avail as u64);
+}
+
+#[cfg(test)]
+mod conservation_tests {
+    use super::*;
+
+    #[test]
+    fn completed_reads_account_for_average_short_buffer_selection_and_settings_loss() {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
+        let shared = HwShared::default();
+        oos_hal::sync::lock(&shared).take = 1;
+        read(10, 8, 6);
+        let (skipped, _) = record_decode(&shared, Mode::Normal, 6, false, true);
+        assert_eq!(skipped, (1, 4));
+        assert_eq!(account_skipped(skipped, false), 5);
+        let counters = crate::drawpipe::counters();
+        counters.lose(crate::drawpipe::Lost::Settings, 1);
+        assert_eq!(counters.read(), (10, 0, 0));
+        let text = counters.records_text();
+        for bucket in ["lost.average=2", "lost.error=2", "lost.frame0=1", "lost.budget=4", "lost.settings=1"] {
+            assert!(text.contains(bucket), "{text}");
+        }
+        read(3, 3, 3);
+        let (skipped, _) = record_decode(&shared, Mode::Average { count: 4 }, 3, true, true);
+        assert_eq!(skipped, (0, 2), "average selection does not discard frame zero separately");
+        assert_eq!(account_skipped(skipped, true), 2);
+        assert_eq!(counters.read(), (13, 0, 0));
+        assert!(counters.records_text().contains("lost.average=4"));
+    }
+
+    #[test]
+    fn incomplete_average_and_boundary_queue_clear_have_explicit_buckets() {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
+        read(64, 0, 0);
+        let mut shared = crate::board::Shared::default();
+        shared.queue.extend([Frame::default(), Frame::default()].map(std::sync::Arc::new));
+        read(2, 2, 2);
+        shared.clear_queue(crate::drawpipe::Lost::Settings);
+        let counters = crate::drawpipe::counters();
+        assert_eq!(counters.read(), (66, 0, 0));
+        let text = counters.records_text();
+        assert!(text.contains("lost.average=64"));
+        assert!(text.contains("lost.settings=2"));
+        assert!(shared.queue.is_empty());
     }
 }

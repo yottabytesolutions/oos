@@ -27,13 +27,18 @@ pub(crate) mod reuse;
 pub use decoder::IndexedDecodeInto;
 mod losses;
 pub use losses::Losses;
+pub(crate) use losses::Lost;
+#[cfg(test)]
+mod budget_tests;
+#[cfg(test)]
+mod counter_tests;
 #[cfg(test)]
 mod identity_tests;
-use feed::{accepts, same_pair, Header};
+use feed::{accepts, fresh_acc, same_pair, Header};
 pub mod host;
 pub mod shutdown;
 use crate::board::Frame;
-use crate::framecost::{self as cost, Part};
+use crate::claim_timing::{Progress, Sampler};
 use crate::model::*;
 use crate::sparse::Interp;
 use crate::wave::Phosphor;
@@ -175,7 +180,7 @@ fn near_only(m: &Model, f: &Frame) -> bool {
 
 /// The near part of the dense path's trigger refinement on the source `v` (samples `base..` of `len`, covering
 /// `trignear::near_window`): with `near_only` it decides there alone (`trignear::edge_near`), else the near search of
-/// `trignear::edge_smooth_near`; None where the wide search (`refine_wide`) must decide.
+/// `trignear::edge_smooth_near`; None where the wide search (`fastdraw::edge_smooth`) must decide.
 #[allow(clippy::too_many_arguments)]
 fn refine_near(
     v: &[f32],
@@ -190,33 +195,11 @@ fn refine_near(
     half: usize,
     col: usize,
 ) -> Option<(Option<f64>, Option<oos_dsp::edges::Edge>)> {
-    let t = std::time::Instant::now();
-    let r = if near_only {
+    if near_only {
         Some(crate::trignear::edge_near(v, base, len, pre, level, hyst, rising, either, half, col))
     } else {
         crate::trignear::edge_near_window(v, base, len, pre, level, hyst, rising, either, half, col, |_| true)
-    };
-    cost::add(Part::Near, t);
-    r
-}
-
-/// The wide part: `fastdraw::edge_smooth` on all samples `v` of the source, timed from `t` (the codes path includes
-/// its decode).
-#[allow(clippy::too_many_arguments)]
-fn refine_wide(
-    t: std::time::Instant,
-    v: &[f32],
-    pre: usize,
-    level: f32,
-    hyst: f32,
-    rising: bool,
-    either: bool,
-    half: usize,
-    col: usize,
-) -> (Option<f64>, Option<oos_dsp::edges::Edge>) {
-    let r = crate::fastdraw::edge_smooth(v, pre, level, hyst, rising, either, half, col, |_| true);
-    cost::add(Part::Wide, t);
-    r
+    }
 }
 
 #[cfg(test)]
@@ -254,23 +237,18 @@ pub fn draw_frame_codes(
     let refine = |hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
         use crate::fastdraw::Samples;
         let src = lay.channel(bytes, m.trig_src);
-        let t = std::time::Instant::now();
         let level = crate::board::sw_trig_level_of(m, src.n, |i| src.at(i));
-        cost::add(Part::Level, t);
         TRIG.with(|t| {
             let v = &mut *t.borrow_mut();
             let (a, b) = crate::trignear::near_window(f.pre, src.n, col);
-            let t0 = std::time::Instant::now();
             (lay.volts)(bytes, src.stride, src.word, a, b, src.affine, v);
-            cost::add(Part::Decode, t0);
             if let Some(r) = refine_near(v, a, src.n, f.pre, near_only(m, f), level, hyst, rising, either, half, col) {
                 return r;
             }
             #[cfg(test)]
             WIDE.with(|n| n.set(n.get() + 1));
-            let t = std::time::Instant::now();
             (lay.volts)(bytes, src.stride, src.word, 0, src.n, src.affine, v);
-            refine_wide(t, v, f.pre, level, hyst, rising, either, half, col)
+            crate::fastdraw::edge_smooth(v, f.pre, level, hyst, rising, either, half, col, |_| true)
         })
     };
     let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
@@ -287,8 +265,13 @@ pub struct Counters {
     pub dropped: AtomicU64,
     /// frames whose cheap measurements went into the statistics (framestats.rs)
     pub measured: AtomicU64,
+    pub deposited: AtomicU64,
+    pub shown: AtomicU64,
+    pub timing: crate::claim_timing::Timing,
     pub losses: Losses,
     pub acquisition: crate::board::AcquisitionCounters,
+    #[cfg(test)]
+    pub(crate) diagnostics_disabled: std::sync::atomic::AtomicBool,
 }
 
 /// The process's counters (the acquisition thread, the workers and the UI add to them).
@@ -299,16 +282,6 @@ pub fn counters() -> &'static Counters {
     }
     static C: OnceLock<Counters> = OnceLock::new();
     C.get_or_init(Counters::default)
-}
-
-impl Counters {
-    pub fn add(c: &AtomicU64, n: u64) {
-        c.fetch_add(n, Ordering::Relaxed);
-    }
-    /// (acquired, used, dropped)
-    pub fn read(&self) -> (u64, u64, u64) {
-        (self.acquired.load(Ordering::Relaxed), self.used.load(Ordering::Relaxed), self.dropped.load(Ordering::Relaxed))
-    }
 }
 
 /// A read-out buffer of the board (the acquisition thread's DMA target), lent to the workers.
@@ -374,7 +347,7 @@ impl Batch {
 impl Drop for Batch {
     fn drop(&mut self) {
         let left = self.frames.saturating_sub(self.next.load(Ordering::Relaxed));
-        Counters::add(&self.counters.dropped, left as u64);
+        self.counters.discard(Lost::Unclaimed, left as u64);
         // every frame is in a mailbox now (the workers hand on before they let go of the batch)
         if let Some(d) = self.deliver.lock().unwrap().take() {
             crate::pacing::ready();
@@ -412,9 +385,8 @@ struct Acc {
     /// the batches with frames in these maps (`Batch::id`) and when the newest of them was fed
     batches: Vec<u64>,
     newest: Option<std::time::Instant>,
-    /// frames in these maps acquired before the last settings change (`pacing::is_stale` when drawn), counted as
-    /// stale only if the maps reach the picture
-    stale: u64,
+    /// Producer-local counts and sampled work, carried to the picture with these maps.
+    progress: Progress,
 }
 
 impl Acc {
@@ -422,16 +394,16 @@ impl Acc {
         Acc {
             gen,
             identity: None,
-            ph: Phosphor::new(w, h),
+            ph: Phosphor { w, h, map: Default::default() },
             folds: Vec::new(),
             frames: 0,
             triggered: 0,
             edges: [0; 4],
             off: (0.0, 0.0),
-            used: [true; NCH],
+            used: [false; NCH],
             batches: Vec::new(),
             newest: None,
-            stale: 0,
+            progress: Default::default(),
         }
     }
     /// Empty again, keeping the maps' memory.
@@ -444,7 +416,7 @@ impl Acc {
         self.folds.clear();
         self.batches.clear();
         self.newest = None;
-        self.stale = 0;
+        self.progress = Default::default();
         (self.gen, self.frames, self.triggered, self.edges, self.off) = (gen, 0, 0, [0; 4], (0.0, 0.0));
     }
     fn add(&mut self, o: &Acc, counters: &Counters) {
@@ -470,7 +442,8 @@ impl Acc {
         for &b in &o.batches {
             self.note(b, o.newest);
         }
-        self.stale += o.stale;
+        self.progress.stale += o.progress.stale;
+        self.progress.sample = o.progress.sample.or(self.progress.sample);
     }
     /// Frames of batch `id`, fed at `fed`, drawn into these maps.
     fn note(&mut self, id: u64, fed: Option<std::time::Instant>) {
@@ -498,6 +471,7 @@ pub struct Helper {
     acc: Option<Acc>,
     spare: Option<Acc>,
     f: Frame,
+    sampler: Sampler,
 }
 
 /// The view and the settings stamp the UI is at; None while the fast path does not apply.
@@ -598,7 +572,7 @@ impl Pipe {
                 if !same_pair(b.header.identity(), identity) {
                     Counters::add(&self.counters.losses.pipe, r.len() as u64);
                 }
-                Counters::add(&self.counters.dropped, r.len() as u64);
+                self.counters.discard(Lost::Settings, r.len() as u64);
             }
             Some(v) => {
                 if h.acc.as_ref().is_some_and(|a| a.gen != v.gen || a.identity != b.header.identity()) {
@@ -610,7 +584,7 @@ impl Pipe {
                 }
                 let a = h.acc.as_mut().expect("helper maps");
                 a.identity = b.header.identity();
-                draw_range(&b, r, &v, a, &mut h.f, self.counters);
+                draw_range(&b, r, &v, a, &mut h.f, &mut h.sampler);
             }
         }
         true
@@ -638,6 +612,7 @@ impl Pipe {
         let (gen, identity) = (state.view.as_ref().map(|v| v.gen), state.identity);
         drop(state);
         let mut got = Merged::default();
+        let mut sample = None;
         for mail in &self.mails {
             let full = std::mem::take(&mut mail.lock().unwrap().full);
             let mut back = Vec::with_capacity(full.len());
@@ -656,10 +631,11 @@ impl Pipe {
                         *x += y;
                     }
                     *off = (off.0 + a.off.0, off.1.max(a.off.1));
+                    sample = a.progress.sample.or(sample);
                     got.frames += a.frames;
                     got.triggered += a.triggered;
                     got.newest = got.newest.max(a.newest);
-                    got.stale += a.stale;
+                    got.stale += a.progress.stale;
                     self.note_merged(&a.batches);
                     if a.identity == identity {
                         crate::framestats::add_folds(&mut got.folds, &a.folds);
@@ -671,6 +647,7 @@ impl Pipe {
                         Counters::add(&self.counters.losses.pipe, a.frames);
                     }
                     count_folds(self.counters, &a.folds);
+                    self.counters.reject(losses::Rejection::between(a.identity, identity), a.frames);
                     Counters::add(&self.counters.dropped, a.frames);
                 }
                 back.push(a);
@@ -680,6 +657,9 @@ impl Pipe {
         }
         // after the maps: a batch hands its maps on before it goes on `ready`
         self.release();
+        if self.counters.diagnostics_enabled() {
+            self.counters.timing.picture(sample, got.newest.map(|fed| fed.elapsed()));
+        }
         got
     }
 
@@ -715,30 +695,17 @@ impl Pipe {
     }
 }
 
-/// Empty maps for view `v`, reusing `spare` when it has the size.
-fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
-    let mut a = match spare {
-        Some(mut a) if (a.ph.w, a.ph.h) == (v.w, v.h) => {
-            a.reset(v.gen);
-            a
-        }
-        _ => Acc::new(v.gen, v.w, v.h),
-    };
-    a.used = std::array::from_fn(|c| v.m.ch[c].on);
-    a.folds = crate::framestats::folds_for(&v.m);
-    a
-}
-
 /// Frames `r` of batch `b` decoded into `f` and drawn into `a`.
-fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, counters: &Counters) {
+fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, sampler: &mut Sampler) {
     let Some(bytes) = b.lease.raw.as_ref().map(|x| x.bytes()) else { return };
     a.identity = b.header.identity();
     a.note(b.id, Some(b.fed));
     if crate::pacing::is_stale(b.header.cfg()) {
-        a.stale += r.len() as u64;
+        a.progress.stale += r.len() as u64;
     }
+    let started = b.counters.diagnostics_enabled().then(|| sampler.start()).flatten();
+    let records = r.len() as u64;
     for i in r {
-        let t_frame = std::time::Instant::now();
         let chunk = &bytes[i * b.fb..(i + 1) * b.fb];
         // without per-frame measurements a large frame is drawn from its read-out words where the board has a view of them
         if a.folds.is_empty() && chunk.len() >= CODES_MIN_BYTES {
@@ -748,26 +715,26 @@ fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, 
             if let Some(t) = lay.and_then(|l| draw_frame_codes(&mut a.ph, &v.m, f, chunk, &l, Some(st))) {
                 a.triggered += t as u64;
                 a.frames += 1;
-                cost::add(Part::Frame, t_frame);
                 continue;
             }
         }
-        let t = std::time::Instant::now();
         b.decode.decode(i, chunk, f);
         b.header.tag(f);
-        cost::add(Part::Decode, t);
         let st = Stats { edges: &mut a.edges, off: &mut a.off };
         a.triggered += draw_frame(&mut a.ph, &v.m, f, v.interp, Some(st)) as u64;
         if crate::framestats::fold_frame(f, &v.m, &mut a.folds) {
-            Counters::add(&counters.measured, 1);
+            a.progress.measured += 1;
         }
         a.frames += 1;
-        cost::add(Part::Frame, t_frame);
+    }
+    if let Some(started) = started {
+        a.progress.sample = Some((started.elapsed(), records));
     }
 }
 
 /// Hands drawn maps to `mail` (added to what the UI has not taken yet); returns maps to draw the next ones into.
 fn publish(mail: &Mutex<Mail>, a: Acc, counters: &Counters) -> Option<Acc> {
+    counters.publish(&a.progress, a.frames);
     let mut mb = mail.lock().unwrap();
     // maps of an older mapping: the UI would drop them
     let (keep, old): (Vec<Acc>, Vec<Acc>) = std::mem::take(&mut mb.full)
@@ -779,6 +746,7 @@ fn publish(mail: &Mutex<Mail>, a: Acc, counters: &Counters) -> Option<Acc> {
             Counters::add(&counters.losses.pipe, o.frames);
         }
         count_folds(counters, &o.folds);
+        counters.reject(losses::Rejection::between(o.identity, a.identity), o.frames);
         Counters::add(&counters.dropped, o.frames);
         mb.spare.push(o);
     }
@@ -797,6 +765,7 @@ fn publish(mail: &Mutex<Mail>, a: Acc, counters: &Counters) -> Option<Acc> {
 fn work(rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>) {
     let mut f = Frame::default();
     let mut spare: Option<Acc> = None;
+    let mut sampler = Sampler::default();
     while let Ok(b) = rx.recv() {
         let (v, stamp, identity) = {
             let s = view.lock().unwrap();
@@ -808,14 +777,14 @@ fn work(rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>) {
                 if !same_pair(b.header.identity(), identity) {
                     Counters::add(&b.counters.losses.pipe, r.len() as u64);
                 }
-                Counters::add(&b.counters.dropped, r.len() as u64);
+                b.counters.discard(Lost::Settings, r.len() as u64);
             }
             continue;
         };
         let mut a = fresh_acc(spare.take().or_else(|| mail.lock().unwrap().spare.pop()), &v);
         a.identity = b.header.identity();
         while let Some(r) = b.claim(CLAIM) {
-            draw_range(&b, r, &v, &mut a, &mut f, b.counters);
+            draw_range(&b, r, &v, &mut a, &mut f, &mut sampler);
         }
         // handed on before the batch goes: once it is gone, its frames are in a mailbox
         if a.frames == 0 {
@@ -1197,7 +1166,7 @@ mod tests {
                     for level in [0.0f32, 0.5, -0.99] {
                         let got = refine_near(v, 0, v.len(), pre, false, level, 0.1, true, false, half, col)
                             .unwrap_or_else(|| {
-                                refine_wide(std::time::Instant::now(), v, pre, level, 0.1, true, false, half, col)
+                                crate::fastdraw::edge_smooth(v, pre, level, 0.1, true, false, half, col, |_| true)
                             });
                         let want =
                             crate::trignear::edge_smooth_near(v, pre, level, 0.1, true, false, half, col, |_| true);

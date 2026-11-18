@@ -18,9 +18,9 @@ class PerfBudgets(unittest.TestCase):
         self.lines += [f'ALLOC_BUDGET {name} 64 0' for name in BUDGET.ALLOCATIONS]
 
     def test_real_table_and_samplers(self):
-        self.assertEqual(len(self.rows), 12)
+        self.assertEqual(len(self.rows), 13)
         BUDGET.sampler_copies_match(ROOT)
-        self.assertIn('12 timing budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
+        self.assertIn('13 timing budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
 
     def test_missing_unknown_and_nonpositive_fail(self):
         for lines in [[], self.lines[1:], self.lines + ['PERF_BUDGET unknown 1 1 1 1'],
@@ -40,6 +40,17 @@ class PerfBudgets(unittest.TestCase):
         lines = [line for line in self.lines if not line.startswith(f'PERF_BUDGET {name} ')]
         with self.assertRaises(ValueError):
             BUDGET.check(self.rows, '\n'.join(lines))
+
+    def test_pipeline_counter_overhead_is_required_and_capped_at_one_percent(self):
+        name = 'perf_guard_pipeline_counters'
+        self.assertEqual(self.rows[name], (1.01, 1.515))
+        missing = [line for line in self.lines if not line.startswith(f'PERF_BUDGET {name} ')]
+        with self.assertRaises(ValueError):
+            BUDGET.check(self.rows, '\n'.join(missing))
+        for candidate in [1011, 1020]:
+            with self.assertRaises(ValueError):
+                BUDGET.check(self.rows, '\n'.join(self.lines + [f'PERF_BUDGET {name} 1000 {candidate} 1000 1000']))
+        BUDGET.check(self.rows, '\n'.join(self.lines + [f'PERF_BUDGET {name} 1000 1010 1000 1000']))
 
     def test_freed_allocations_and_missing_paths_fail(self):
         for lines in [self.lines[:-1], self.lines + ['ALLOC_BUDGET deposit_spans 64 1'],

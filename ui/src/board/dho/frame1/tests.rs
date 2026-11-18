@@ -53,7 +53,8 @@ fn the_record_path_leaves_out_frame1_only_after_frame0() {
     assert_eq!(all.len(), 2);
     assert!(newest_kept(&frame(506), 2, true, &s) && !newest_kept(&frame(410), 2, true, &s));
     assert!(newest_kept(&frame(410), 3, true, &s), "with three frames the newest is not frame 1");
-    assert_eq!(crate::drawpipe::counters().losses.frame1.load(std::sync::atomic::Ordering::Relaxed), 2);
+    assert!(crate::drawpipe::counters().records_text().contains("lost.frame1=2"));
+    assert_eq!(crate::drawpipe::counters().read().2, 0);
 }
 
 // Break it catches: the raw newest frame put in place of the record without the batch's identity and sequence.

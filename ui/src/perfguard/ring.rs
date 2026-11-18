@@ -22,7 +22,7 @@ impl Ring {
     }
 
     /// Nearest-rank quantiles; a tail is pending until 50 observations exist.
-    pub(crate) fn text(mut self, label: &str, unit: &str) -> String {
+    pub(crate) fn format(mut self, label: &str, unit: &str) -> String {
         self.values[..self.len].sort_unstable();
         let quantile = |percent: usize| {
             if self.len == 0 || (percent == 99 && self.len < 50) {
@@ -32,10 +32,11 @@ impl Ring {
             }
         };
         format!(
-            " diag {label} n={} total={} p50_{unit}={} p99_{unit}={} max_{unit}={}",
+            " diag {label} n={} total={} p50_{unit}={} p90_{unit}={} p99_{unit}={} max_{unit}={}",
             self.len,
             self.total,
             quantile(50),
+            quantile(90),
             quantile(99),
             self.values[..self.len].last().unwrap_or(&0)
         )
@@ -49,13 +50,16 @@ mod tests {
     #[test]
     fn empty_partial_and_ready_use_nearest_rank_including_zero() {
         let mut ring = Ring::default();
-        assert_eq!(ring.clone().text("test", "ns"), " diag test n=0 total=0 p50_ns=pending p99_ns=pending max_ns=0");
+        assert_eq!(
+            ring.clone().format("test", "ns"),
+            " diag test n=0 total=0 p50_ns=pending p90_ns=pending p99_ns=pending max_ns=0"
+        );
         for i in 0..49 {
             ring.add(i);
         }
-        assert!(ring.clone().text("test", "ns").contains("p50_ns=24 p99_ns=pending max_ns=48"));
+        assert!(ring.clone().format("test", "ns").contains("p50_ns=24 p90_ns=44 p99_ns=pending max_ns=48"));
         ring.add(49);
-        assert!(ring.text("test", "ns").contains("n=50 total=50 p50_ns=24 p99_ns=49 max_ns=49"));
+        assert!(ring.format("test", "ns").contains("n=50 total=50 p50_ns=24 p90_ns=44 p99_ns=49 max_ns=49"));
     }
 
     #[test]
@@ -67,13 +71,13 @@ mod tests {
         }
         assert!(ring
             .clone()
-            .text("test", "bytes")
-            .contains("n=256 total=401 p50_bytes=272 p99_bytes=398 max_bytes=400"));
+            .format("test", "bytes")
+            .contains("n=256 total=401 p50_bytes=272 p90_bytes=375 p99_bytes=398 max_bytes=400"));
         ring.total = u64::MAX;
         for _ in 0..256 {
             ring.add(0);
         }
         assert_eq!(ring.total, u64::MAX);
-        assert!(ring.text("test", "ns").contains("p50_ns=0 p99_ns=0 max_ns=0"));
+        assert!(ring.format("test", "ns").contains("p50_ns=0 p90_ns=0 p99_ns=0 max_ns=0"));
     }
 }

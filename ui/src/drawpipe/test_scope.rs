@@ -39,10 +39,18 @@ pub(crate) struct Scope {
 
 impl Scope {
     pub(crate) fn new() -> Self {
+        Self::with_counters(Counters::default())
+    }
+
+    pub(crate) fn with_counters(counters: Counters) -> Self {
         // Pipe's existing test API requires static counters. One bounded instance per scope;
         // workers are joined at scope exit, including unwinding.
-        let state = Box::leak(Box::new(State { counters: Box::leak(Box::default()), pipe: OnceLock::new() }));
+        let state = Box::leak(Box::new(State { counters: Box::leak(Box::new(counters)), pipe: OnceLock::new() }));
         Self { previous: CURRENT.with(|c| c.replace(Some(state))), state, thread: Default::default() }
+    }
+    /// Select one of two live fixtures for paired observations; scopes still drop in reverse creation order.
+    pub(crate) fn select(&self) {
+        CURRENT.with(|c| c.set(Some(self.state)));
     }
 }
 

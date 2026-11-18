@@ -2071,7 +2071,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             }
             if std::mem::take(&mut paused) {
                 // RUN or SINGLE: the frames of the batch before the STOP are not new
-                crate::perfguard::deep::acq_lock(&out).queue.clear();
+                crate::perfguard::deep::acq_lock(&out).clear_queue(crate::drawpipe::Lost::Settings);
             }
             if peak_wait.poll(&out, s.mode, status) {
                 continue;
@@ -2315,7 +2315,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         _ => count,
                     };
                     let avail = if fb == 0 { 0 } else { (shown as usize).min(dma.data().len() / fb) };
-                    crate::drawpipe::Counters::add(&crate::drawpipe::counters().acquired, avail as u64);
+                    super::publication::read(count, shown, avail);
                     // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
                     // deposit workers, the next batch read into a buffer they gave back
                     let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).filter(|x| route && after.is_none() && avail > 1 && x.accepting());
@@ -2344,8 +2344,8 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         // frame 0 of a batch is the frame the FPGA held across the stop, read-out and arm: recorded
                         // before this arm, sometimes joined with older memory (a stray trace; issue #5, mj1911). With
                         // more frames in the batch it is left out (1 of 26 at 1 kpts, 10 us/div)
-                        let (record_skip, match_cores) = super::publication::record_decode(&out, b.mode, avail, after.is_some(), switches.board.frame0_drop);
-                        skip = record_skip;
+                        let (record_skips, match_cores) = super::publication::record_decode(&out, b.mode, avail, after.is_some(), switches.board.frame0_drop);
+                        skip = super::publication::account_skipped(record_skips, after.is_some());
                         n += skip as u64;
                         let mut all: Vec<Frame> = dma
                             .data()
@@ -2368,8 +2368,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     // (its one record is the answer), not in hardware average, and only for a record shorter than
                     // `FIRST_LEFT_MAX_S`: at slow time bases the next record would keep the screen waiting as long
                     // again (1.25 s at 50 ms/div)
-                    let first = read_with.as_ref() != Some(&b);
-                    read_with = Some(b.clone());
+                    let first = read_with.replace(b.clone()).as_ref() != Some(&b);
                     // not in roll and scan: their pieces come in batches of one with settings of their own
                     let short = (p.memsel as f64) < FIRST_LEFT_MAX_S * p.rate as f64
                         && frames.first().is_some_and(|f| !f.roll && !f.scan);
@@ -2382,6 +2381,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                         && after.is_none()
                         && switches.board.frame0_drop
                     {
+                        crate::drawpipe::counters().lose(crate::drawpipe::Lost::Settings, frames.len() as u64);
                         frames.clear();
                         first_left = true;
                         // the deep window read of this batch went with it: the next batch reads one at once

@@ -72,14 +72,18 @@ fn peak_keeps_count_and_sample_bounds_and_newest_exception() {
 
 #[test]
 fn peak_decodes_all_records_across_a_normal_to_peak_transition() {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
     let shared = shared();
     lock(&shared).take = 3;
-    assert_eq!(publication::record_decode(&shared, Mode::Peak, 720, false, false), (0, false));
-    assert_eq!(publication::record_decode(&shared, Mode::Normal, 720, false, false), (717, false));
-    assert_eq!(publication::record_decode(&shared, Mode::Peak, 720, false, true), (1, false));
-    assert_eq!(publication::record_decode(&shared, Mode::Average { count: 4 }, 720, true, false), (719, false));
+    assert_eq!(publication::record_decode(&shared, Mode::Peak, 720, false, false), ((0, 0), false));
+    assert_eq!(publication::record_decode(&shared, Mode::Normal, 720, false, false), ((0, 717), false));
+    assert_eq!(publication::record_decode(&shared, Mode::Peak, 720, false, true), ((1, 0), false));
+    assert_eq!(publication::record_decode(&shared, Mode::Average { count: 4 }, 720, true, false), ((0, 719), false));
+    assert_eq!(crate::drawpipe::counters().read(), (0, 0, 0), "selection must not account losses");
+    assert_eq!(publication::record_decode(&shared, Mode::Normal, 720, false, false), ((0, 717), false));
+    assert_eq!(crate::drawpipe::counters().read(), (0, 0, 0), "repeated selection must remain side-effect free");
     lock(&shared).take = 0;
-    assert_eq!(publication::record_decode(&shared, Mode::Normal, 720, false, false), (0, false));
+    assert_eq!(publication::record_decode(&shared, Mode::Normal, 720, false, false), ((0, 0), false));
 }
 
 #[test]

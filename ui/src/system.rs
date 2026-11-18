@@ -17,6 +17,11 @@ pub mod wake;
 #[cfg(target_os = "linux")]
 pub mod device;
 
+#[cfg(all(test, not(target_os = "linux")))]
+mod device {
+    mod remote;
+}
+
 pub fn stop_server(
     ui: &mut crate::ui::Ui,
     web: &mut crate::http::Http,

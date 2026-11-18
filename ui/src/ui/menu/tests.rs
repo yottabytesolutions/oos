@@ -224,6 +224,16 @@ fn check_acquire_visibility(u: &Ui, hardware: bool, average: bool, segments: boo
     assert_eq!(u.items(MenuId::Acquire), expected);
 }
 
+fn check_row_control(row: &Row) {
+    assert!(match (row.it, Ui::kind(row.it)) {
+        (Item::AcqAlias, _) => matches!(row.ctl, Ctl::Text),
+        (Item::AcqAvg, _) => matches!(row.ctl, Ctl::Pick),
+        (_, Kind::Value) => matches!(row.ctl, Ctl::Value),
+        (_, Kind::Action) => matches!(row.ctl, Ctl::Button),
+        (_, Kind::Choice) => matches!(row.ctl, Ctl::Pick | Ctl::Seg(..)),
+    });
+}
+
 #[test]
 fn new_areas_use_shared_renderer_picker_back_and_close_at_every_text_size() {
     for size in TEXT_SIZES {
@@ -240,13 +250,7 @@ fn new_areas_use_shared_renderer_picker_back_and_close_at_every_text_size() {
             let rows = u.dlg_layout().unwrap().rows;
             assert_eq!(rows.iter().map(|r| r.it).collect::<Vec<_>>(), u.items(menu));
             for row in rows {
-                assert!(match (row.it, Ui::kind(row.it)) {
-                    (Item::AcqAlias, _) => matches!(row.ctl, Ctl::Text),
-                    (Item::AcqAvg, _) => matches!(row.ctl, Ctl::Pick),
-                    (_, Kind::Value) => matches!(row.ctl, Ctl::Value),
-                    (_, Kind::Action) => matches!(row.ctl, Ctl::Button),
-                    (_, Kind::Choice) => matches!(row.ctl, Ctl::Pick | Ctl::Seg(..)),
-                });
+                check_row_control(&row);
             }
             let committed = active_choice::index(&u, item).unwrap();
             assert!(matches!(u.ctl(item, 1), Ctl::Pick));

@@ -4,8 +4,8 @@
 use super::*;
 
 pub(super) const AREA: Area = Area {
-    kind: Ui::remote_kind,
-    label: Ui::remote_label,
+    kind: remote::remote_kind,
+    label: remote::remote_label,
     value: Ui::remote_value,
     adjust: Ui::remote_adjust,
     activate: Ui::ssh_activate,

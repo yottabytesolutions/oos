@@ -11,7 +11,7 @@
 //! tz.fallback = UTC0        # with tz = dhcp, while no lease names a valid zone
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
 //! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.telnet, remote.ssh,
-//!                           # remote.mdns)
+//!                           # remote.hislip (off by default), remote.mdns)
 //! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
 //! net.name = dho924s-204527 # the scope's name on the network (host name, <name>.local); written at the first start
 //! graphics = gpu            # System > Graphics (gpu or cpu)
@@ -19,6 +19,8 @@
 //! net.allow = 192.0.2.0/24 # System > Network > Remote services > Allowed (netacl.rs; rcS reads it, docs/network.md 6)
 //! ```
 
+mod instruments;
+pub use instruments::InstrumentServices;
 pub mod switches;
 
 use crate::clock::Tz;
@@ -63,7 +65,7 @@ pub struct SysConf {
     /// VXI-11 (111 and its core port), SSH (22, `/bin/oos-ssh` reads it too; off by default, docs/network.md 7)
     pub remote_web: bool,
     pub remote_scpi: bool,
-    pub remote_vxi11: bool,
+    pub instruments: InstrumentServices,
     /// the telnet shell (23, read by rcS too): off by default, a shell without password when enabled
     pub remote_telnet: bool,
     pub remote_ssh: bool,
@@ -100,7 +102,7 @@ impl Default for SysConf {
             eth_retry_10m: true,
             remote_web: true,
             remote_scpi: true,
-            remote_vxi11: true,
+            instruments: InstrumentServices::default(),
             remote_telnet: false,
             remote_ssh: false,
             ssh_password: true,
@@ -217,7 +219,7 @@ impl SysConf {
                 "eth.retry_10m" => on_off(v).map(|b| c.eth_retry_10m = b).is_some(),
                 "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
-                "remote.vxi11" => on_off(v).map(|b| c.remote_vxi11 = b).is_some(),
+                "remote.hislip" | "remote.vxi11" => c.instruments.parse(k, v),
                 "remote.telnet" => on_off(v).map(|b| c.remote_telnet = b).is_some(),
                 "remote.ssh" => on_off(v).map(|b| c.remote_ssh = b).is_some(),
                 "ssh.password" => on_off(v).map(|b| c.ssh_password = b).is_some(),
@@ -267,7 +269,8 @@ impl SysConf {
         s.push_str(&format!("eth.retry_10m = {}\n", word(self.eth_retry_10m)));
         s.push_str(&format!("remote.web = {}\n", word(self.remote_web)));
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
-        s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
+        s.push_str(&format!("remote.hislip = {}\n", word(self.instruments.hislip)));
+        s.push_str(&format!("remote.vxi11 = {}\n", word(self.instruments.vxi11)));
         s.push_str(&format!("remote.telnet = {}\n", word(self.remote_telnet)));
         s.push_str(&format!("remote.ssh = {}\n", word(self.remote_ssh)));
         s.push_str(&format!("ssh.password = {}\n", word(self.ssh_password)));
@@ -579,6 +582,22 @@ mod tests {
         let (c, _) = SysConf::parse_over(base, "remote.ssh = off\nssh.password = off\n");
         assert!(!c.remote_ssh && !c.ssh_password);
         assert!(!SysConf::default().remote_telnet);
+    }
+
+    #[test]
+    fn hislip_requires_an_explicit_opt_in_and_round_trips() {
+        for text in ["", "remote.hislip = off\n", "remote.hislip =\n", "remote.hislip = invalid\n"] {
+            assert!(!SysConf::parse(text).0.instruments.hislip, "{text:?}");
+        }
+        let (base, bad) = SysConf::image_defaults(include_str!("../../rootfs/initramfs/etc/oos/system.conf"));
+        assert!(bad.is_empty() && !base.instruments.hislip);
+        for value in ["on", "true", "1", "off", "false", "0"] {
+            let text = format!("remote.hislip = {value}\n");
+            let (c, bad) = SysConf::parse_over(base.clone(), &text);
+            assert!(bad.is_empty());
+            assert_eq!(c.instruments.hislip, matches!(value, "on" | "true" | "1"));
+            assert_eq!(SysConf::parse_over(base.clone(), &c.text()).0, c);
+        }
     }
 
     #[test]

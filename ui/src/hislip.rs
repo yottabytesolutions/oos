@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! HiSLIP (IVI-6.1) on TCP 4880, for a computer. The scope keeps VXI-11, where port 111 is free.
+//! HiSLIP (IVI-6.1) on TCP 4880; the scope enables it with `remote.hislip` (off by default).
 //!
 //! A connection is accepted (from the addresses of `net.allow`, `netacl`) and the data payload is handed to the same
 //! SCPI interpreter as the raw socket.

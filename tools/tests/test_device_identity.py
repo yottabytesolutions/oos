@@ -194,6 +194,23 @@ esac
         self.assertIn('add element inet oos_fw onlink { 198.51.100.0/24 }', applied)
         self.assertNotIn('192.0.2.', applied)
 
+    def test_hislip_firewall_follows_its_switch(self):
+        routes = self.root / 'routes'
+        routes.write_text('')
+        self.env.update(OOS_CONF_FILES=str(self.conf), OOS_ROUTES4=str(routes), OOS_ROUTES6=str(routes))
+        for value in [None, 'off', 'on', 'off', 'true', '1', '', 'invalid']:
+            self.conf.write_text('net.allow = 192.0.2.0/24 2001:db8::/64\n' +
+                                 ('' if value is None else f'remote.hislip = {value}\n'))
+            result = self.run_script('oos-firewall', '--print')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            blocked = 'tcp dport 4880 drop'
+            self.assertEqual(blocked in result.stdout, value not in ('on', 'true', '1'))
+            self.assertIn('ip saddr { 192.0.2.0/24 } accept', result.stdout)
+            self.assertIn('ip6 saddr { 2001:db8::/64 } accept', result.stdout)
+            if blocked in result.stdout:
+                self.assertLess(result.stdout.index(blocked), result.stdout.index('ct state established'))
+                self.assertLess(result.stdout.index(blocked), result.stdout.index('ip saddr'))
+
     def test_generic_defaults_and_firewall_follow_connected_routes(self):
         defaults = (ROOT / 'rootfs/initramfs/etc/oos/system.conf').read_text()
         self.assertIn('net.allow = onlink 169.254.0.0/16 fe80::/10 onlink6\n', defaults)

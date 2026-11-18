@@ -61,40 +61,6 @@ impl Ui {
         self.host.switches()
     }
 
-    /// Switches in the left column, what they open in the right one, row by row.
-    pub(super) fn remote_items(&self) -> Vec<Item> {
-        vec![
-            Item::RemWeb,
-            Item::RemScpi,
-            Item::RemVxi,
-            Item::RemTelnet,
-            Item::RemSsh,
-            Item::RemMdns,
-            Item::RemAllow,
-            Item::NetWeb,
-            Item::RemScpiInfo,
-            Item::RemVxiInfo,
-            Item::RemTelnetInfo,
-            Item::Open(MenuId::Ssh),
-            Item::RemName,
-            Item::RemFirewall,
-        ]
-    }
-
-    pub(super) fn remote_kind(it: Item) -> Option<Kind> {
-        match it {
-            Item::RemWeb
-            | Item::RemScpi
-            | Item::RemVxi
-            | Item::RemTelnet
-            | Item::RemSsh
-            | Item::RemMdns
-            | Item::RemName
-            | Item::RemAllow => Some(Kind::Choice),
-            _ => Self::ssh_kind(it),
-        }
-    }
-
     /// The name from model and serial number (`dho924s-204527`).
     fn name_default() -> String {
         let p = oos_hal::model::platform();
@@ -137,7 +103,7 @@ impl Ui {
         };
         add(s.remote_web, "_http._tcp", web_port, &["path=/"]);
         add(s.remote_scpi, "_scpi-raw._tcp", scpi_port, &[]);
-        add(s.remote_vxi11, "_vxi-11._tcp", 111, &[]);
+        add(s.instruments.vxi11, "_vxi-11._tcp", 111, &[]);
         // SSH (docs/network.md 7): announced only while oos-ssh would listen (it needs `net.allow` as well)
         add(s.remote_ssh && crate::ssh::listens(), "_ssh._tcp", 22, &[]);
         mdns::Config {
@@ -289,14 +255,13 @@ impl Ui {
         eprintln!("oos-ui: net.allow = {} (Remote services > Allowed)", shown);
         self.remote.acl.set(netacl::Acl::from_value(&now).0);
         match self.remote.runner.clone() {
-            Some(run) => self.allow_run(run, &now),
+            Some(run) => self.allow_run(run, crate::remote::allow_steps(self.sys.remote_ssh, !now.is_empty())),
             None => self.allow_done(Ok(())),
         }
     }
 
-    /// The firewall and SSH for the list `now`, in a thread: the scripts take a moment, the frame loop does not wait.
-    fn allow_run(&mut self, run: Runner, now: &str) {
-        let steps = crate::remote::allow_steps(self.sys.remote_ssh, !now.is_empty());
+    /// Run service-policy scripts in a thread so the frame loop does not wait.
+    fn allow_run(&mut self, run: Runner, steps: Vec<crate::remote::Step>) {
         let (tx, rx) = mpsc::channel();
         let job = move || {
             let _one = ALLOW_RUN.lock().unwrap_or_else(PoisonError::into_inner);
@@ -384,30 +349,6 @@ impl Ui {
         }
     }
 
-    /// Rows that are only text.
-    pub(super) fn remote_text(it: Item) -> bool {
-        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo | Item::RemFirewall)
-            || Self::ssh_text(it)
-    }
-
-    pub(super) fn remote_label(it: Item) -> Option<&'static str> {
-        Some(match it {
-            Item::Open(MenuId::Remote) => "Remote services",
-            Item::RemWeb => "Web remote",
-            Item::RemScpi => "SCPI",
-            Item::RemVxi => "VXI-11",
-            Item::RemTelnet => "telnet",
-            Item::RemSsh => "SSH",
-            Item::RemMdns => "mDNS",
-            Item::RemName => "Name",
-            Item::RemAllow => "Allowed",
-            Item::RemFirewall => "Firewall",
-            Item::NetWeb => "Address",
-            Item::RemScpiInfo | Item::RemVxiInfo | Item::RemTelnetInfo => "Port",
-            _ => return Self::ssh_label(it),
-        })
-    }
-
     pub(super) fn remote_value(&self, it: Item) -> Option<String> {
         let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         let s = &self.sys;
@@ -415,7 +356,8 @@ impl Ui {
         Some(match it {
             Item::RemWeb => onoff(s.remote_web),
             Item::RemScpi => onoff(s.remote_scpi),
-            Item::RemVxi => onoff(s.remote_vxi11),
+            Item::RemVxi => onoff(s.instruments.vxi11),
+            Item::RemHislip => onoff(s.instruments.hislip),
             Item::RemTelnet => onoff(s.remote_telnet),
             Item::RemSsh => onoff(s.remote_ssh),
             Item::RemMdns => onoff(s.remote_mdns),
@@ -426,7 +368,8 @@ impl Ui {
             Item::NetWeb if self.net.is_empty() => "not connected".into(),
             Item::NetWeb => format!("http://{}:8080", self.net),
             Item::RemScpiInfo => port(s.remote_scpi, "5555 (TCP)".into()),
-            Item::RemVxiInfo => port(s.remote_vxi11, format!("111 and {} (LXI)", crate::vxi11::CORE_PORT)),
+            Item::RemVxiInfo => port(s.instruments.vxi11, format!("111 and {} (LXI)", crate::vxi11::CORE_PORT)),
+            Item::RemHislipInfo => port(s.instruments.hislip, format!("{} (TCP)", crate::hislip::PORT)),
             Item::RemTelnetInfo => port(s.remote_telnet, "23, a shell without password".into()),
             _ => return self.ssh_value(it),
         })
@@ -439,7 +382,7 @@ impl Ui {
         match it {
             Item::RemName => Some(self.name_options()),
             Item::RemAllow => Some(self.allow_choices().into_iter().map(|c| c.0).collect()),
-            _ => Self::remote_kind(it).filter(|k| *k == Kind::Choice).map(|_| vec!["Off".into(), "On".into()]),
+            _ => menu::remote_kind(it).filter(|k| *k == Kind::Choice).map(|_| vec!["Off".into(), "On".into()]),
         }
     }
 
@@ -448,7 +391,8 @@ impl Ui {
         let (on, what) = match it {
             Item::RemWeb => (&mut s.remote_web, "Web remote"),
             Item::RemScpi => (&mut s.remote_scpi, "SCPI"),
-            Item::RemVxi => (&mut s.remote_vxi11, "VXI-11"),
+            Item::RemVxi => (&mut s.instruments.vxi11, "VXI-11"),
+            Item::RemHislip => (&mut s.instruments.hislip, "HiSLIP"),
             Item::RemTelnet => (&mut s.remote_telnet, "telnet"),
             Item::RemSsh => (&mut s.remote_ssh, "SSH"),
             Item::RemMdns => (&mut s.remote_mdns, "mDNS"),
@@ -458,7 +402,15 @@ impl Ui {
         };
         *on = !*on;
         let now_on = *on;
-        self.sys_save();
+        if !self.sys_save() && it == Item::RemHislip {
+            self.sys.instruments.hislip = !now_on;
+            return true;
+        }
+        if it == Item::RemHislip {
+            if let Some(run) = self.remote.runner.clone() {
+                self.allow_run(run, crate::remote::allow_steps(false, false));
+            }
+        }
         // what is lost with it
         match (it, now_on) {
             (Item::RemWeb, false) => self.toast("Web remote off: updates then come from a USB stick"),
@@ -479,12 +431,13 @@ mod tests {
         let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
-        // two columns of seven: each switch has its address, port, settings or name on the same row, the address list
+        // two columns of eight: each switch has its address, port, settings or name on the same row, the address list
         // its firewall
         for (sw, info) in [
             (Item::RemWeb, Item::NetWeb),
             (Item::RemScpi, Item::RemScpiInfo),
             (Item::RemVxi, Item::RemVxiInfo),
+            (Item::RemHislip, Item::RemHislipInfo),
             (Item::RemTelnet, Item::RemTelnetInfo),
             (Item::RemSsh, Item::Open(MenuId::Ssh)),
             (Item::RemMdns, Item::RemName),
@@ -499,7 +452,7 @@ mod tests {
     #[test]
     fn a_service_switched_off_says_so() {
         let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
-        assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.remote_vxi11, "on by default");
+        assert!(u.sys.remote_web && u.sys.remote_scpi && u.sys.instruments.vxi11, "on by default");
         assert!(!u.sys.remote_telnet && !u.sys.remote_ssh, "shells off by default");
         assert_eq!(u.value(Item::RemTelnetInfo), "off");
         u.select_option(Item::RemTelnet, "On");
@@ -518,6 +471,32 @@ mod tests {
         assert_eq!(u.value(Item::RemScpiInfo), "off");
         u.select_option(Item::RemScpi, "On");
         assert_eq!(u.value(Item::RemScpiInfo), "5555 (TCP)");
+    }
+
+    #[test]
+    fn hislip_switch_saves_and_reloads_only_the_firewall() {
+        let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
+        let dir = std::env::temp_dir().join(format!("oos-hislip-switch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("system.conf");
+        u.sys_path = Some(path.clone());
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = calls.clone();
+        u.set_allow_runner(std::sync::Arc::new(move |step| {
+            seen.lock().unwrap().push(*step);
+            Ok(())
+        }));
+        assert!(!u.sys.instruments.hislip);
+        assert_eq!(u.value(Item::RemHislipInfo), "off");
+        for (choice, enabled) in [("On", true), ("Off", false)] {
+            u.select_option(Item::RemHislip, choice);
+            u.allow_wait();
+            assert_eq!(u.sys.instruments.hislip, enabled);
+            assert_eq!(u.value(Item::RemHislipInfo), if enabled { "4880 (TCP)" } else { "off" });
+            assert_eq!(crate::sysconf::SysConf::load_with_image(&path, "").instruments.hislip, enabled);
+        }
+        assert_eq!(*calls.lock().unwrap(), crate::remote::allow_steps(false, false).repeat(2));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

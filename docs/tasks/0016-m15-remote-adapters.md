@@ -46,6 +46,18 @@ Additional reserved paths: `ui/src/http.rs`, `ui/src/http/`, `ui/src/netport/htt
 `ui/src/netport/http.rs`, `ui/src/ui/update.rs`, `ui/src/ui/update/upload.rs`,
 `ui/src/scpi/intake.rs`, `xtask/data/moves.txt` and affected generated ratchets.
 
+HiSLIP switch (#163): the assigned brief authorizes extending this owning task. Add `remote.hislip`, default
+off, to sysconf and the existing remote menu pattern; switch the scope listener, share its ACL, reload the
+firewall and keep discovery tied to its actual listener. Preserve host serving. Test defaults, persistence,
+menu layout, listener shutdown/restart and firewall rules, then run the fast gate and UI suites.
+Additional reserved paths: `ui/src/system.rs`, `ui/src/sysconf/instruments.rs`, `ui/src/sysconf.rs`,
+`ui/src/ui.rs`, `ui/src/ui/remote.rs`,
+`ui/src/ui/menu.rs`, `ui/src/ui/menu/remote.rs`, `ui/src/ui/menu/ssh.rs`, `ui/src/ui/active_choice/system.rs`,
+`rootfs/initramfs/bin/oos-firewall`,
+`tools/tests/test_device_identity.py`, `ui/tests/remote-services.txt`, `ui/tests/golden/`,
+`xtask/data/ui/size.txt`,
+`docs/network.md`, `docs/adr/0019-instrument-protocols.md`, `docs/adr/README.md`, `CHANGELOG.md`.
+
 ## Measurements
 
 Owner-reported results, 2026-11-18, for PR #145's measurement section. Unit results are verified on the DHO804;
@@ -67,6 +79,46 @@ network IO and retires the deferred size gate and `poll(2)` fallback. Each trans
 minimises its production LOC and aarch64 binary size delta.
 
 ## Status
+
+- 2026-11-18: PR #173 follow-up check fix: extracted simulation fixture setup and
+  separated decorated-choice and reference-slot assertions into independent tests.
+  Host and ARM Clippy passed in 222 s with no ratchet reductions. The fast gate printed
+  `partial gate passed (not done): 11 steps in 14 s` (exit 0).
+  Complete `cargo test --locked -p oos-ui` and
+  `cargo test --locked --profile test-release -p oos-ui` suites passed (exit 0):
+  1,577 debug and 1,576 release unit tests plus 43 integration tests per profile,
+  with 59 existing ignores each. Production LOC delta is zero. Host only; no unit access.
+  All 65 register plans and all 15 standalone decoder configurations passed:
+  `partial gate passed (not done): 3 steps in 419 s` (exit 0).
+  Fetch was blocked by sandbox permissions; synchronization, independent review and final
+  CI remain with the coordinator.
+
+- 2026-11-18: PR #173 follow-up check-fix plan: reserve
+  `ui/src/ui/menu/simulation/tests.rs` for test-only fixture extraction and choice-test
+  separation, retaining all assertions. Local Clippy printed `gate FAILED in 39 s: clippy`
+  (exit 1): the row test is 65/60 lines and the choice test has cognitive complexity 28/25.
+  Verify Clippy, decoder configurations, register plans, the fast gate and complete UI
+  debug/test-release suites. Fetch was blocked by sandbox permissions; cached branch refs
+  match. Remote synchronization and final CI remain with the coordinator.
+
+- 2026-11-18: PR #173 check fix: extracted the row-control assertions into a test helper,
+  preserving every menu, text-size, picker and navigation case. Final Clippy printed
+  `partial gate passed (not done): 1 steps in 69 s` (exit 0); no ratchet reductions were reported.
+  The fast gate printed `partial gate passed (not done): 11 steps in 17 s` (exit 0).
+  Complete `cargo test --locked -p oos-ui` and
+  `cargo test --locked --profile test-release -p oos-ui` suites passed (exit 0):
+  1,556 debug and 1,555 release unit tests plus 43 integration tests per profile,
+  with 59 existing ignores each. The extracted test also passed a final exact debug run.
+  `cargo xtask loc --compare HEAD` reports zero production-line change.
+  Logs remain in ignored `target/pr173-*.log`. Host only; no hardware access or Git writes.
+  Remote synchronization, independent review and final CI remain with the coordinator.
+
+- 2026-11-18: PR #173 check-fix plan: reserve `ui/src/ui/menu/tests.rs` to extract the
+  row-control assertions from the renderer/picker/navigation test without changing its cases.
+  Local `cargo xtask step clippy` reproduced `gate FAILED in 61 s: clippy` (exit 1):
+  the test's cognitive complexity is 26/25. Run Clippy, the fast gate and complete UI
+  debug/test-release suites; retain only generated ratchet reductions for changed files.
+  Git updates and remote checks remain with the coordinator.
 
 - 2026-11-18: PR #168 screenshot review fix: 200 and 304 replies share the bounded error
   fallback; an exhausted output budget closes the reply and wakes IO. The matching-ETag
@@ -125,6 +177,30 @@ minimises its production LOC and aarch64 binary size delta.
   Earlier checks printed `gate FAILED in 10 s: size, mutable-statics`, `gate FAILED in 4 s: architecture`
   and `gate FAILED in 29 s: clippy`; factoring input, recording the sender-counter move, retaining the
   port boundary and deleting the obsolete synchronous helper resolved those findings.
+
+- 2026-11-18: HiSLIP switch (#163) on `feat/163-hislip-switch`, base
+  `ff535fb732c18cc79d12b428f236edc5d857a311`: implemented `remote.hislip`, default off, with sysconf persistence,
+  remote menu/active choice, scope listener switching, shared ACL, firewall reload and discovery lifecycle.
+  Host serving retains HiSLIP. No peer remote-service switch has an SCPI command, so none was added.
+  Grouped instrument flags and moved menu metadata/anchoring to meet existing size limits without loosening
+  ratchets. Initial fast checks failed on size and a rejected test-module path attribute; both were corrected.
+  Initial Clippy rejected the long lifecycle test; its setup is now a helper. An initial persistence test
+  compared image-only state with serialized state; it now reloads over the same image defaults.
+  Python firewall/identity tests pass (11); explicit golden update passes all 269 cases, 538 fresh processes
+  and 1266 repeat captures, adding only six remote-service captures and their manifest entries. New off/on
+  menu images were visually checked at normal and larger text sizes. Generated size ratchets retain only
+  reductions for the changed UI and remote-menu files. Final complete UI suites pass (exit 0): 1,539 debug
+  and 1,538 test-release unit tests, with 58 ignored in each. Both profiles pass 6 golden tests (1 ignored),
+  15 host-script, 8 host-socket and 14 soak tests. Clippy prints
+  `partial gate passed (not done): 1 steps in 102 s` (exit 0). Fast prints
+  `partial gate passed (not done): 11 steps in 14 s` (exit 0); `git diff --check` passes.
+  Earlier checks printed `gate FAILED in 3 s: size`, `gate FAILED in 5 s: size`, and
+  `gate FAILED in 2 s: size, architecture, mutable-statics, unsafe, method-exceptions, known-failures, test-time`
+  (the forbidden module-path attribute); Clippy printed `gate FAILED in 85 s: clippy` before the test split.
+  `cargo xtask loc --compare HEAD` reports UI 73,172 to 73,231 (+59 production Rust lines); shell tooling
+  grows by 4 firewall lines. Other production crates and dependencies are unchanged.
+  Host only; no hardware or Git writes. Coordinator owns independent review, full integration gate and unit verification.
+
 - 2026-11-18: M15b HiSLIP (#151) implementation: sync/async channels use the shared current-thread runtime,
   request admission, connection credits, ACL rechecks, disconnect cancellation and timed output. Protocol
   sessions and SCPI continuations stay frame-owned. Borrowed payload slices and stack headers replace the

@@ -3,10 +3,7 @@
 use super::super::small_tests::{demo, read_rows, strings};
 use super::*;
 
-#[test]
-fn every_simulation_row_keeps_kind_label_value_and_options() {
-    use Item::*;
-    use Kind::*;
+fn configured_simulation() -> Ui {
     let mut u = demo();
     u.m.sim_rate = 1e9;
     u.m.sim_vhigh = 1.0;
@@ -27,6 +24,14 @@ fn every_simulation_row_keeps_kind_label_value_and_options() {
     u.m.sim_ssc_center = false;
     u.m.sim_ssc_deviation = 0.005;
     u.m.sim_slot = 2;
+    u
+}
+
+#[test]
+fn every_simulation_row_keeps_kind_label_value_and_options() {
+    use Item::*;
+    use Kind::*;
+    let u = configured_simulation();
     read_rows(
         &u,
         &[
@@ -113,7 +118,7 @@ fn simulation_menu_order_and_live_visibility_follow_record_mode() {
 }
 
 #[test]
-fn simulation_choices_keep_identity_with_decorated_values_and_missing_slots() {
+fn simulation_choices_keep_identity_with_decorated_values() {
     use Item::*;
     let mut u = demo();
     for (preset, name) in oos_dsp::serial::names().into_iter().enumerate() {
@@ -139,6 +144,12 @@ fn simulation_choices_keep_identity_with_decorated_values_and_missing_slots() {
     }
     u.m.sim_pj = 0.0;
     assert_eq!(u.value(SimPjHz), "off");
+}
+
+#[test]
+fn simulation_reference_choices_keep_identity_with_empty_and_named_slots() {
+    use Item::*;
+    let mut u = demo();
     for slot in 0..NREF {
         u.m.sim_slot = slot;
         assert_eq!(u.value(SimSlot), format!("R{}", slot + 1));

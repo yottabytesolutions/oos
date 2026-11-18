@@ -82,7 +82,7 @@ fn batch_worker_view_stays_enabled_during_stop_final_read() {
     assert!(ui.stop_final.is_some());
     assert!(pipe.accepting(), "STOP must keep merging the in-flight batch until its final read");
     assert_eq!(crate::drawpipe::counters().read(), (0, 26, 0));
-    assert!(ui.ph.map[0].iter().any(|&v| v != 0), "the completed worker batch reaches the picture");
+    assert!(ui.ph.maps()[0].iter().any(|&v| v != 0), "the completed worker batch reaches the picture");
     let Source::Hw { shared, .. } = &ui.src else { unreachable!() };
     let id = acquisition::identity(&ui);
     let final_frame =

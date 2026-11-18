@@ -2895,6 +2895,12 @@ impl Ui {
             let mut window_frames = None;
             if fast {
                 let f = step_draw::fast(self, &sw, &mut clear_pending, window_now, &mut composition, &mut draw);
+                // Owned deposit bands still fold directly into the base picture storage.
+                if composition.merged > 0 {
+                    for c in 0..NCH {
+                        self.ph.mark_rows(c, 0..self.ph.h);
+                    }
+                }
                 (got, td, window_frames, raw_rec) = (f.frames, f.ms, f.window_frames, f.raw);
             }
             let mut received_record = false;
@@ -3318,18 +3324,7 @@ impl Ui {
             self.ph.touch(rows[c].0..rows[c].1);
         }
         let t2 = std::time::Instant::now();
-        let pairs: Vec<(usize, &mut Vec<u16>, &mut Vec<u16>)> = self
-            .ph
-            .map
-            .iter_mut()
-            .zip(self.acc_t.iter_mut())
-            .enumerate()
-            .filter(|(c, _)| on.contains(c))
-            .map(|(c, (a, b))| (c, a, b))
-            .collect();
-        crate::fastdraw::par_each(pairs, |(c, map, acc)| {
-            crate::fastdraw::fold_t(map, acc, w, h, band_cols, rows[c].0..rows[c].1)
-        });
+        self.ph.fold_rows(&mut self.acc_t, &on, band_cols, rows);
         let (a, b) = ((t1 - t0).as_secs_f32() * 1e3, t1.elapsed().as_secs_f32() * 1e3);
         self.t_fast_ab.0 += 0.05 * (a - self.t_fast_ab.0);
         self.t_fast_ab.1 += 0.05 * (b - self.t_fast_ab.1);
@@ -9885,7 +9880,10 @@ mod tests {
             }
             ui.producer_step(0.033);
             let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
-            ui.ph.map[0].iter().map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] }).collect()
+            ui.ph.maps()[0]
+                .iter()
+                .map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] })
+                .collect()
         };
         let first = picture(&mut ui, 3);
         for k in [1, 2, 3, 1, 5, 1, 2] {
@@ -9963,7 +9961,10 @@ mod tests {
             }
             ui.producer_step(0.033);
             let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
-            ui.ph.map[0].iter().map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] }).collect()
+            ui.ph.maps()[0]
+                .iter()
+                .map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] })
+                .collect()
         };
         picture(&mut ui, false);
         let first = picture(&mut ui, false);
@@ -10103,7 +10104,10 @@ mod tests {
             ui.grade_refs();
             let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
             // as `draw_traces`: an empty pixel stays dark
-            ui.ph.map[0].iter().map(|&k| if k == 0 { 0 } else { lut[((k as u32) >> sh).min(1023) as usize] }).collect()
+            ui.ph.maps()[0]
+                .iter()
+                .map(|&k| if k == 0 { 0 } else { lut[((k as u32) >> sh).min(1023) as usize] })
+                .collect()
         };
         let first = picture(&mut ui, 4);
         for n in [1, 7, 1, 2, 16, 1, 4] {
@@ -10123,7 +10127,7 @@ mod tests {
         ui.ph.clear();
         ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None, false);
         ui.grade_refs();
-        assert!(bright(&ui) > ui.ph.map[0].iter().copied().max().unwrap() as u32 * 8, "{}", before);
+        assert!(bright(&ui) > ui.ph.maps()[0].iter().copied().max().unwrap() as u32 * 8, "{}", before);
     }
 
     /// Measurements in the background (the frame loop on the unit) while a new record comes every frame: their results
@@ -11047,7 +11051,7 @@ mod tests {
             let mut active = 0;
             for y in 0..ph.h {
                 for x in 0..ph.w {
-                    let expected = (0..NCH).any(|c| ui.m.ch[c].on && ui.shows(c) && ph.map[c][y * ph.w + x] != 0);
+                    let expected = (0..NCH).any(|c| ui.m.ch[c].on && ui.shows(c) && ph.maps()[c][y * ph.w + x] != 0);
                     let graded = pal.contains(&direct.px[((a.y + y as i32) * W + a.x + x as i32) as usize]);
                     assert_eq!(graded, expected, "zoom {zoom}: map pixel {x},{y}");
                     active += usize::from(expected);
@@ -11405,7 +11409,7 @@ mod tests {
         assert_eq!(ui.m.status, TrigStatus::Triggered);
         // the zero crossing sits at the centre of the plot in every frame: the centre column is lit at the middle row
         let (w, h) = (ui.ph.w, ui.ph.h);
-        let lit: Vec<usize> = (0..h).filter(|&r| ui.ph.map[0][r * w + w / 2] > 0).collect();
+        let lit: Vec<usize> = (0..h).filter(|&r| ui.ph.maps()[0][r * w + w / 2] > 0).collect();
         assert!(lit.iter().any(|&r| (r as i32 - h as i32 / 2).abs() <= 2), "{:?}", lit);
         // averaging needs every record: back to the record path
         ui.m.acq = AcqMode::Average;
@@ -11467,14 +11471,14 @@ mod tests {
                 let f = std::sync::Arc::new(f.clone());
                 let p = fast_plan(&ui.m, w, h, &f, [false; NCH]);
                 for c in 0..NCH {
-                    fast_deposit(c, &mut want.map[c], 0, &f, &p.plan);
+                    fast_deposit(c, want.channel_mut(c), 0, &f, &p.plan);
                 }
             }
             ui.ph.clear();
             assert_eq!(ui.fast_draw_all(frames.iter().cloned().map(std::sync::Arc::new).collect()), 40);
             for c in 0..NCH {
-                assert!(want.map[c].iter().any(|&x| x > 0), "{} s/div CH{}: nothing drawn", tdiv, c + 1);
-                assert!(ui.ph.map[c] == want.map[c], "{} s/div CH{}: maps differ", tdiv, c + 1);
+                assert!(want.maps()[c].iter().any(|&x| x > 0), "{} s/div CH{}: nothing drawn", tdiv, c + 1);
+                assert!(ui.ph.maps()[c] == want.maps()[c], "{} s/div CH{}: maps differ", tdiv, c + 1);
             }
             // through `step`: 41 queued frames, 40 by the fast path, the newest as the record; nothing left
             shared.lock().unwrap().queue.extend((1..=41).map(frame).map(Into::into));
@@ -11550,7 +11554,7 @@ mod tests {
                 ui.ph.clear();
                 ui.fast_draw_all(frames.into_iter().map(std::sync::Arc::new).collect());
                 assert!(want.iter().filter(|&&x| x > 0).count() > w / 2, "{} s/div dots {}: little drawn", tdiv, dots);
-                assert!(ui.ph.map[0] == want, "{} s/div dots {}: maps differ", tdiv, dots);
+                assert!(ui.ph.maps()[0] == want, "{} s/div dots {}: maps differ", tdiv, dots);
             }
         }
     }
@@ -12305,7 +12309,7 @@ mod tests {
     fn clear_empties_the_display_in_stop() {
         use super::*;
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        let lit = |ui: &Ui| ui.ph.map.iter().map(|m| m.iter().filter(|&&v| v > 0).count()).sum::<usize>();
+        let lit = |ui: &Ui| ui.ph.maps().iter().map(|m| m.iter().filter(|&&v| v > 0).count()).sum::<usize>();
         for _ in 0..5 {
             ui.producer_step(0.033);
         }

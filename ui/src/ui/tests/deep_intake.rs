@@ -262,7 +262,7 @@ fn deep_pair_step_resamples_once_and_matches_the_double_conversion() {
     let before = crate::board::record::resample_count();
     new.step(1.0 / 30.0);
     assert_eq!(crate::board::record::resample_count() - before, 1);
-    assert_eq!(new.ph.map, old.ph.map);
+    assert_eq!(new.ph.maps(), old.ph.maps());
     assert_eq!(new.records, old.records);
     assert_eq!(new.m.status, old.m.status);
     for c in 0..NCH {

@@ -152,7 +152,7 @@ fn assert_bounded_analysis_steps(roll: bool) {
             assert!(queued <= 7200, "only the selected screen vectors may be copied on main");
             println!("{view:?} roll={roll} step={step}: main analysis samples={work}, queued screen samples={queued}");
             assert!(ui.last[0].is_some() && ui.records > records);
-            assert!(ui.ph.map[1].iter().any(|&v| v != 0), "waveform keeps updating");
+            assert!(ui.ph.maps()[1].iter().any(|&v| v != 0), "waveform keeps updating");
             assert!(matches!(ui.src, Source::Hw { seen, .. } if seen == frame.seq));
             assert!(scpi.exec_line(&mut ui, &cv, "*IDN?;*OPC?").starts_with(b"OOS,"));
         }

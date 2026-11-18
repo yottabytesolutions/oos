@@ -45,9 +45,18 @@ pub(crate) fn draw_frame_reusing(
             ph.touch(first..end);
         }
         if let Some(spans) = &trace.spans[c] {
-            crate::picture::deposit::kernel::paint_spans(&mut ph.map[c], w, 0, spans, 24);
+            ph.edit_channel(c, |map| {
+                crate::picture::deposit::kernel::paint_spans(map, w, 0, spans, 24);
+                spans.rows.iter().filter(|&&(a, b)| a <= b).fold(0..0, |rows, &(a, b)| {
+                    if rows.is_empty() {
+                        a as usize..b as usize + 1
+                    } else {
+                        rows.start.min(a as usize)..rows.end.max(b as usize + 1)
+                    }
+                })
+            });
         } else if let Some(map) = crate::picture::deposit::kernel::raw_map(projection, c, trace.trigger_at) {
-            crate::fastdraw::deposit_dots(&mut ph.map[c], w, h, &f.ch[c], &map, 24);
+            ph.edit_channel(c, |pixels| crate::fastdraw::deposit_dots(pixels, w, h, &f.ch[c], &map, 24));
         }
     }
     placed.triggered

@@ -18,9 +18,9 @@ class PerfBudgets(unittest.TestCase):
         self.lines += [f'ALLOC_BUDGET {name} 64 0' for name in BUDGET.ALLOCATIONS]
 
     def test_real_table_and_samplers(self):
-        self.assertEqual(len(self.rows), 13)
+        self.assertEqual(len(self.rows), 15)
         BUDGET.sampler_copies_match(ROOT)
-        self.assertIn('13 timing budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
+        self.assertIn('15 timing budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
 
     def test_missing_unknown_and_nonpositive_fail(self):
         for lines in [[], self.lines[1:], self.lines + ['PERF_BUDGET unknown 1 1 1 1'],

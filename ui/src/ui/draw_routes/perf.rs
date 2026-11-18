@@ -141,7 +141,7 @@ fn perf_guard_draw_route_deposit_profile() {
             route.ui.fast_draw_all(frames.clone());
         },
     );
-    assert!(pixels.map == route.ui.ph.map, "the per-frame pixel kernel and step span accumulation agree");
+    assert!(pixels.maps() == route.ui.ph.maps(), "the per-frame pixel kernel and step span accumulation agree");
     println!("DRAW_DEPOSIT_PROFILE {plan} frames=48 pixel_per_frame_vs_step_difference_spans={pair:?}");
 }
 

@@ -588,6 +588,8 @@ They are not runtime frame-event quantiles or proof of unit performance.
 | perf_guard_pipeline_counters | 1.02 | 1.515 | identical warmed Batch pipelines, counters on / off; 1/2/4 channels at 1 and 10 us/div, full production-plan batches | temporary F0 staging elapsed overhead <= 2 %; restore 1.01 at F3 cutover (ADR 0031); CPU tail unchanged |
 | perf_guard_deposit_worker_per_frame | 1.5 | 2.25 | three depths, measurements off; one worker / frames mode | worker orchestration |
 | perf_guard_deep_record_reuse | 0.8 | 1.0 | 4 channels, 10M depth (625k pairs each); actual hw_record + reused draw / hw_record + independent draw_frame conversion | main-view conversion and draw |
+| perf_guard_upload_full | 1.0 | 1.5 | four 970 x 448 u16 maps, all rows changed; single band copy / previous compare and row copies | worst-case shared GPU upload publication |
+| perf_guard_upload_rows | 0.2 | 0.3 | four 970 x 448 u16 maps, eight changed rows; revision-band copy / previous full-map comparison | shared GPU upload publication |
 | perf_guard_framestats | 0.7 | 1.05 | 125 k points, cheap set; fused / reference statistics | measure primitive |
 
 The counters wall limit is an owner-approved intermediate allowance for live F2 evaluation. Reports retain raw

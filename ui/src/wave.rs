@@ -11,7 +11,10 @@ mod hw_queue;
 use crate::board::{board, Board};
 use crate::model::*;
 
+pub(crate) mod dirty;
 mod hw_reads;
+mod rows;
+pub(crate) use rows::RowBand;
 
 pub struct Rng(u64);
 impl Rng {

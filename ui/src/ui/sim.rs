@@ -1267,7 +1267,7 @@ mod tests {
         u.step(0.25);
         assert_eq!(u.m.delay, position, "a repeated trigger holds the edge in place");
         assert_eq!(u.replay.captures, 2);
-        assert!(u.ph.map.iter().all(|m| m.iter().all(|&p| p == 0)));
+        assert!(u.ph.maps().iter().all(|m| m.iter().all(|&p| p == 0)));
     }
 
     #[test]

@@ -126,13 +126,13 @@ fn partial_single_completes_once_and_leaves_later_records_queued() {
         assert!(change::proposals::stopping(&ui));
         assert_eq!(ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.seq, 2);
         assert_eq!(oos_hal::sync::lock(&shared).queue.front().unwrap().seq, 3);
-        let map = ui.ph.map.clone();
+        let map = ui.ph.maps().clone();
         ui.step(0.04);
         assert_eq!((ui.records, ui.m.run), (2, RunState::Stop));
         assert!(oos_hal::sync::lock(&shared).hold);
         assert!(ui.stop_final.is_none());
         assert!(map.iter().flatten().any(|&v| v != 0));
-        assert!(ui.ph.map.iter().flatten().any(|&v| v != 0), "STOP retains the trace");
+        assert!(ui.ph.maps().iter().flatten().any(|&v| v != 0), "STOP retains the trace");
         ui.step(0.04);
         assert_eq!((ui.records, ui.m.run), (2, RunState::Stop), "completion must happen once");
         assert!(!change::proposals::stopping(&ui));

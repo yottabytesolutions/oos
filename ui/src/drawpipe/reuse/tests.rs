@@ -38,7 +38,7 @@ fn reuse_is_pixel_exact_and_skips_the_second_resample() {
         let actual = crate::drawpipe::draw_frame_reusing(&mut new, &m, &f, Interp::Exact, None, Some((&rec, input)));
         assert_eq!(crate::board::record::resample_count() - before, 0);
         assert_eq!(actual, expected);
-        assert_eq!(new.map, old.map);
+        assert_eq!(new.maps(), old.maps());
     }
 }
 
@@ -70,7 +70,7 @@ fn reuse_rejects_different_conversion_inputs_and_frame_identity() {
         let got = crate::drawpipe::draw_frame_reusing(&mut new, &changed, &f, Interp::Exact, None, Some((&rec, input)));
         assert_eq!(crate::board::record::resample_count() - before, 1);
         assert_eq!(got, expected);
-        assert_eq!(new.map, old.map);
+        assert_eq!(new.maps(), old.maps());
     }
     assert!(!input.matches(&m, &(*f).clone(), &rec));
     let mut wrong_grid = rec.clone();
@@ -98,7 +98,7 @@ fn perf_guard_deep_record_reuse() {
         } else {
             crate::drawpipe::draw_frame(ph, &m, &frame, Interp::Exact, None)
         };
-        std::hint::black_box(&ph.map);
+        std::hint::black_box(&ph.maps());
         triggered
     };
     let before = crate::board::record::resample_count();
@@ -107,7 +107,7 @@ fn perf_guard_deep_record_reuse() {
     let before = crate::board::record::resample_count();
     convert_and_draw(&mut new, true);
     assert_eq!(crate::board::record::resample_count() - before, 1);
-    assert_eq!(new.map, old.map);
+    assert_eq!(new.maps(), old.maps());
     let pair = crate::system::perfguard::measure(
         crate::perfguard::ROUNDS,
         3,

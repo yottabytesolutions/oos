@@ -8,6 +8,8 @@
 //! trigger; the hardware already put the edge at `pre` to within a sample or two, so the crossing is only refined
 //! (sub-sample, by linear interpolation) near it.
 
+use std::ops::Range;
+
 /// The level crossing of the edge nearest to `pre` within +-`span` samples, as a fractional sample index (rising:
 /// below -> at or above `level`; falling the other way). `either`: both directions. `hyst` > 0: like the hardware
 /// comparators, only the first crossing after the signal was `hyst` on the other side of the level counts, so noise on
@@ -279,7 +281,7 @@ pub fn add_spans(band: &mut [u16], w: usize, r_lo: usize, s: &Spans, wgt: u16) {
 /// Sums the collected differences `acc` (`diff_span`, bands of `band_cols` columns) of the rows `rows` up into the
 /// row-major `map` (`w` x `h`) and clears them: down each band a row at a time, its columns side by side (vector
 /// instructions), rows with nothing running pass the map by.
-pub fn fold_t(map: &mut [u16], acc: &mut [u16], w: usize, h: usize, band_cols: usize, rows: std::ops::Range<usize>) {
+pub fn fold_t(map: &mut [u16], acc: &mut [u16], w: usize, h: usize, band_cols: usize, rows: Range<usize>) {
     let mut run = vec![0u16; band_cols.min(w)];
     if band_cols == 0 {
         return;
@@ -300,7 +302,7 @@ pub fn fold_t(map: &mut [u16], acc: &mut [u16], w: usize, h: usize, band_cols: u
 /// The first fold: differences column by column (`h + 1` a column), summed down the columns in tiles (the reference
 /// of the test, and the bench's baseline).
 #[cfg(test)]
-fn fold_t_cols(map: &mut [u16], acc: &mut [u16], w: usize, h: usize, rows: std::ops::Range<usize>) {
+fn fold_t_cols(map: &mut [u16], acc: &mut [u16], w: usize, h: usize, rows: Range<usize>) {
     const T: usize = 32;
     let hp = h + 1;
     let (r_lo, r_end) = (rows.start.min(h), (rows.end.min(h) + 1).min(hp));
@@ -346,27 +348,7 @@ pub fn span_rows(s: &Spans) -> (usize, usize) {
 #[cfg(test)]
 /// `deposit_dots` for the rows `r_lo` .. `r_lo + band.len() / w` of a map `w` x `h`, held in `band`.
 pub fn deposit_dots_band(band: &mut [u16], w: usize, r_lo: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
-    if v.is_empty() || m.x_per_sample <= 0.0 {
-        return;
-    }
-    let r_hi = (r_lo + band.len() / w).min(h);
-    let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
-    let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(v.len());
-    let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(0);
-    let c1 = ((((v.len() as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(w as i64);
-    let mut ka = first(c0);
-    for c in c0..c1 {
-        let kb = first(c + 1);
-        for &x in &v[ka..kb.max(ka)] {
-            let r = (x * m.y_per_volt + m.y0).round();
-            // NaN fails both comparisons
-            if r >= r_lo as f32 && r < r_hi as f32 {
-                let i = (r as usize - r_lo) * w + c as usize;
-                band[i] = band[i].saturating_add(wgt);
-            }
-        }
-        ka = kb.max(ka);
-    }
+    let _ = whole::deposit_dots_band(band, w, r_lo, h, v, m, wgt);
 }
 
 /// Max, min, sum and sum of squares of the finite samples of one channel of one frame: the voltage measurements of
@@ -436,7 +418,11 @@ impl Fold {
 pub mod difference;
 pub(crate) use difference::{add_spans_t, deposit_dots_t, diff_span};
 mod whole {
-    use super::{Map, Spans};
+    use super::{Map, Range, Spans};
+    mod dots;
+    pub use dots::deposit_dots;
+    #[cfg(test)]
+    pub use dots::deposit_dots_band;
 
     /// Adds `w` to every pixel of `map` (w x h, row-major) the trace covers: per column the span of its samples, joined
     /// to the last sample of the column before (so steep edges stay connected). Needs at least one sample per column
@@ -447,13 +433,13 @@ mod whole {
     /// rows the frame touches (a vectorised pass that adds `wgt` where the row lies in a column's span) when they are long:
     /// a noisy or fast signal at 100 samples per column covers tens of rows in every column, and the scattered writes
     /// were three quarters of the time.
-    pub fn deposit(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
-        deposit_from(map, w, h, v, m, wgt);
+    pub fn deposit(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) -> Range<usize> {
+        deposit_from(map, w, h, v, m, wgt)
     }
 
     /// `deposit` straight from a frame's read-out words (`Codes`): the same picture, without the f32 copy of the channel.
-    pub fn deposit_codes(map: &mut [u16], w: usize, h: usize, v: &Codes, m: &Map, wgt: u16) {
-        deposit_from(map, w, h, &crate::picture::deposit::kernel::SamplesRef::Codes(*v), m, wgt);
+    pub fn deposit_codes(map: &mut [u16], w: usize, h: usize, v: &Codes, m: &Map, wgt: u16) -> Range<usize> {
+        deposit_from(map, w, h, &crate::picture::deposit::kernel::SamplesRef::Codes(*v), m, wgt)
     }
 
     /// The samples of one channel as `deposit` needs them: their number, the extremes of a range and one sample.
@@ -608,10 +594,17 @@ mod whole {
         (lo, hi)
     }
 
-    fn deposit_from<S: Samples + ?Sized>(map: &mut [u16], w: usize, h: usize, v: &S, m: &Map, wgt: u16) {
+    fn deposit_from<S: Samples + ?Sized>(
+        map: &mut [u16],
+        w: usize,
+        h: usize,
+        v: &S,
+        m: &Map,
+        wgt: u16,
+    ) -> Range<usize> {
         SPANS.with(|sp| {
             let sp = &mut *sp.borrow_mut();
-            let Some((c0, c1, rmin, rmax, pixels)) = spans(v, m, w, h, sp) else { return };
+            let Some((c0, c1, rmin, rmax, pixels)) = spans(v, m, w, h, sp) else { return 0..0 };
             if pixels > sweep_cost(rmax - rmin + 1, c1 - c0) {
                 for r in rmin..=rmax {
                     let row = &mut map[r * w + c0..r * w + c1];
@@ -630,7 +623,8 @@ mod whole {
                     }
                 }
             }
-        });
+            rmin..rmax + 1
+        })
     }
 
     thread_local! {
@@ -763,95 +757,6 @@ mod whole {
         (a, b)
     }
 
-    /// Dots display (`Model::dots`): every sample as one pixel, no spans and no joins; the brightness of a column follows
-    /// where its samples dwell. Same mapping and column walk as `deposit`.
-    ///
-    /// Where samples repeat the row before (flat or slow parts), one add per sample makes a chain of read-modify-writes on
-    /// one pixel, each waiting for the last; there each run of samples on one row adds `run x wgt` at once (saturating as
-    /// the single adds did: min(pixel + run x wgt, 65535)). On fast or noisy parts the run test would mispredict, so one
-    /// add per sample stays. Which of the two a column takes follows how many samples of the column before repeated their
-    /// row (signals change slowly from column to column); both give the same picture.
-    pub fn deposit_dots(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
-        let mut runs = false;
-        dots_walk(w, v.len(), m, |c, a, b| dots_column(map, w, h, c, &v[a..b], m, wgt, &mut runs));
-    }
-
-    /// The column walk of `deposit_dots` over `n` samples: `col(c, a, b)` for each column c with samples a..b.
-    fn dots_walk(w: usize, n: usize, m: &Map, mut col: impl FnMut(usize, usize, usize)) {
-        if n == 0 || m.x_per_sample <= 0.0 {
-            return;
-        }
-        let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
-        let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(n);
-        let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(0);
-        let c1 = ((((n as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(w as i64);
-        let mut ka = first(c0);
-        for c in c0..c1 {
-            let kb = first(c + 1).max(ka);
-            if kb > ka {
-                col(c as usize, ka, kb);
-            }
-            ka = kb;
-        }
-    }
-
-    /// The dots of column `c` (samples `s`); `runs`: add in runs (in: this column, out: the next).
-    #[allow(clippy::too_many_arguments)]
-    #[inline]
-    fn dots_column(map: &mut [u16], w: usize, h: usize, c: usize, s: &[f32], m: &Map, wgt: u16, runs: &mut bool) {
-        let hf = h as f32;
-        // the row of a sample, None off the map (NaN fails both comparisons)
-        let row = |x: f32| {
-            let r = (x * m.y_per_volt + m.y0).round();
-            (r >= 0.0 && r < hf).then_some(r as usize)
-        };
-        let mut repeats = 0usize;
-        if *runs {
-            let mut run: (Option<usize>, u32) = (None, 0);
-            for &x in s {
-                let r = row(x);
-                if r == run.0 {
-                    run.1 += 1;
-                    repeats += 1;
-                    continue;
-                }
-                if let Some(r0) = run.0 {
-                    let i = r0 * w + c;
-                    map[i] = (map[i] as u32 + run.1 * wgt as u32).min(u16::MAX as u32) as u16;
-                }
-                run = (r, 1);
-            }
-            if let Some(r0) = run.0 {
-                let i = r0 * w + c;
-                map[i] = (map[i] as u32 + run.1 * wgt as u32).min(u16::MAX as u32) as u16;
-            }
-            *runs = 2 * repeats > s.len();
-        } else {
-            // the repeats of the first `PROBE` samples decide the next column (counting all cost more than it saved)
-            let (head, tail) = s.split_at(s.len().min(PROBE));
-            let mut prev = None;
-            for &x in head {
-                let r = row(x);
-                repeats += (r == prev) as usize;
-                prev = r;
-                if let Some(r) = r {
-                    let i = r * w + c;
-                    map[i] = map[i].saturating_add(wgt);
-                }
-            }
-            for &x in tail {
-                if let Some(r) = row(x) {
-                    let i = r * w + c;
-                    map[i] = map[i].saturating_add(wgt);
-                }
-            }
-            *runs = 2 * repeats > head.len();
-        }
-    }
-
-    /// Samples of a column whose row repeats decide whether the next column adds in runs (`dots_column`).
-    const PROBE: usize = 32;
-
     /// `deposit_dots` as it was (one scattered write per sample): the reference of the equality test and timing guard.
     #[cfg(test)]
     pub fn deposit_dots_reference(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
@@ -967,7 +872,9 @@ mod whole {
                         crate::perfguard::ROUNDS,
                         33,
                         || deposit_reference(&mut ma, w, h, &v, &m, 1),
-                        || deposit(&mut mb, w, h, &v, &m, 1),
+                        || {
+                            let _ = deposit(&mut mb, w, h, &v, &m, 1);
+                        },
                     );
                     let r = new.as_secs_f64() / old.as_secs_f64();
                     worst = worst.max(r);
@@ -998,7 +905,17 @@ mod whole {
                                 let m = Map { ti, x_per_sample: xps, x0, y_per_volt: ypv, y0 };
                                 let (mut a, mut b) = (vec![pre; w * h], vec![pre; w * h]);
                                 deposit_dots_reference(&mut a, w, h, &v, &m, wgt);
-                                deposit_dots(&mut b, w, h, &v, &m, wgt);
+                                let rows = deposit_dots(&mut b, w, h, &v, &m, wgt);
+                                if pre == 0 {
+                                    let mut touched = a
+                                        .chunks(w)
+                                        .enumerate()
+                                        .filter_map(|(r, row)| row.iter().any(|&value| value != 0).then_some(r));
+                                    let expected = touched
+                                        .next()
+                                        .map_or(0..0, |first| first..touched.next_back().unwrap_or(first) + 1);
+                                    assert_eq!(rows, expected, "n {n} xps {xps} ti {ti} y {ypv} {y0}");
+                                }
                                 assert!(a == b, "n {} xps {} ti {} y {} {} wgt {}", n, xps, ti, ypv, y0, wgt);
                             }
                         }
@@ -1030,7 +947,9 @@ mod whole {
                     crate::perfguard::ROUNDS,
                     22,
                     || deposit_dots_reference(&mut ma, w, h, &v, &m, 1),
-                    || deposit_dots(&mut mb, w, h, &v, &m, 1),
+                    || {
+                        std::hint::black_box(deposit_dots(&mut mb, w, h, &v, &m, 1));
+                    },
                 );
                 let r = new.as_secs_f64() / old.as_secs_f64();
                 worst = worst.max(r);

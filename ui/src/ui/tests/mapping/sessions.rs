@@ -26,10 +26,10 @@ fn repeated_present_record_observes_the_old_clear() {
     for _ in 0..2 {
         let before = change::counters(&ui).4;
         ui.present_record(0);
-        ui.ph.map[0][0] = 97;
-        ui.phz.map[0][0] = 97;
+        ui.ph.channel_mut(0)[0] = 97;
+        ui.phz.channel_mut(0)[0] = 97;
         change::begin_step(&mut ui, 0.04).unwrap();
-        assert_eq!((ui.ph.map[0][0], ui.phz.map[0][0]), (0, 0));
+        assert_eq!((ui.ph.maps()[0][0], ui.phz.maps()[0][0]), (0, 0));
         assert_eq!(change::counters(&ui).4, before, "present_record must observe its legacy clear");
     }
 }
@@ -42,15 +42,15 @@ fn offline_entry_with_all_channels_off_clears_stale_session_picture_once() {
         ch.on = false;
     }
     ui.step(0.04);
-    ui.ph.map[0][0] = 97;
-    ui.phz.map[0][0] = 97;
+    ui.ph.channel_mut(0)[0] = 97;
+    ui.phz.channel_mut(0)[0] = 97;
     ui.set_offline(true);
-    assert_eq!(ui.ph.map[0][0], 97, "the accepted consumer owns the clear");
+    assert_eq!(ui.ph.maps()[0][0], 97, "the accepted consumer owns the clear");
     change::begin_step(&mut ui, 0.04).unwrap();
-    assert_eq!((ui.ph.map[0][0], ui.phz.map[0][0]), (0, 0));
-    ui.ph.map[0][0] = 97;
+    assert_eq!((ui.ph.maps()[0][0], ui.phz.maps()[0][0]), (0, 0));
+    ui.ph.channel_mut(0)[0] = 97;
     change::begin_step(&mut ui, 0.04).unwrap();
-    assert_eq!(ui.ph.map[0][0], 97, "entry request acts once");
+    assert_eq!(ui.ph.maps()[0][0], 97, "entry request acts once");
 }
 
 #[test]
@@ -59,14 +59,14 @@ fn return_to_identical_retained_live_settings_clears_stale_picture_once() {
     ui.step(0.04);
     ui.remember_live();
     ui.session_is_sim = true;
-    ui.ph.map[0][0] = 97;
-    ui.phz.map[0][0] = 97;
+    ui.ph.channel_mut(0)[0] = 97;
+    ui.phz.channel_mut(0)[0] = 97;
     let before = ui.m.clone();
     ui.return_to_live();
     assert_eq!(ui.m, before, "retained settings produce no mapping diff");
     change::begin_step(&mut ui, 0.04).unwrap();
-    assert_eq!((ui.ph.map[0][0], ui.phz.map[0][0]), (0, 0));
-    ui.ph.map[0][0] = 97;
+    assert_eq!((ui.ph.maps()[0][0], ui.phz.maps()[0][0]), (0, 0));
+    ui.ph.channel_mut(0)[0] = 97;
     change::begin_step(&mut ui, 0.04).unwrap();
-    assert_eq!(ui.ph.map[0][0], 97, "return request acts once");
+    assert_eq!(ui.ph.maps()[0][0], 97, "return request acts once");
 }

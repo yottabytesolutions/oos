@@ -234,13 +234,13 @@ fn newest(pipe: &Pipe, frames: Vec<Frame>, (replacement, drawn): (bool, usize), 
         assert_eq!(accepted.frames, drawn as u64 + 1);
         let newest = pipe.take_waveform((128, 64)).unwrap();
         let mut expected = Phosphor::new(128, 64);
-        expected.map.clone_from(&want.map);
+        expected.add_maps(&want, [true; 4]);
         let mut model = Model::default();
         for (c, ch) in model.ch.iter_mut().enumerate() {
             ch.on = c == 0;
         }
         crate::drawpipe::draw_frame(&mut expected, &model, &newest, Interp::Exact, None);
-        assert_eq!(got.map, expected.map, "the complete batch includes its corrected newest frame");
+        assert_eq!(got.maps(), expected.maps(), "the complete batch includes its corrected newest frame");
         std::sync::Arc::try_unwrap(newest.into_frame()).ok().unwrap()
     } else {
         assert_eq!(frames.len(), 1);

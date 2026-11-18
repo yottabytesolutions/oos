@@ -891,7 +891,7 @@ mod tests {
             oos_hal::sync::lock(&shared).queue.push_back(old.into());
             ui.step(0.04);
             assert_eq!(ui.records, records, "the pre-final pair is stale after terminal settings apply");
-            assert!(ui.ph.map.iter().flatten().all(|&v| v == 0), "no old-pair trace after the clear");
+            assert!(ui.ph.maps().iter().flatten().all(|&v| v == 0), "no old-pair trace after the clear");
             assert!(ui.mstat.is_empty(), "no old-pair measurement after the clear");
             return;
         }

@@ -25,6 +25,8 @@ After drawing acceptance, M13/M14 precede the M15 parser and M17 write-descripto
 M17 read descriptors need only E1 and the refreshed inventory
 ([ADR 0038](../adr/0038-menus-and-parser.md)).
 The ADR 0023 IO experiment addresses transport blocking separately; it keeps the existing interpreter.
+The [IO layer design](io.md) now specifies its replacement, including the requirements audit, deletions,
+one coherent implementation PR, and boundary acceptance tests. It supersedes M15a-0/a/b's plumbing recipes below.
 No package author may infer that unfinished drawing work has passed M12.
 
 ### G1: gate prerequisites
@@ -471,6 +473,15 @@ Parallel: IO transport work; serialize setup codec changes with M16 storage work
 
 ### M15: remote adapters on commands and queries
 
+The [IO layer design](io.md) is the target for #222 under #220. The M15a-0/a/b entries below retain the
+original cutover scope and evidence. Their custom ports, credits, parked replies and per-transport admission
+loops are historical implementation choices, not requirements for the replacement.
+Follow [IO implementation and acceptance](io.md#implementation-and-acceptance) for one coherent replacement PR,
+with raw-first development, all transport cutovers, final deletion and the production-LOC check in that PR.
+Keep the single frame-owned interpreter, client-visible results and accepted unit performance.
+WLAN #219 is redone on that core. Protocol slimming follows transport acceptance under a separate issue in #220;
+its issue number is not supplied here. M15c remains the parser migration, not an IO prerequisite.
+
 **M15a-0, bounded wakeable intake.** Scope: synchronous owned request/reply ports with count/byte admission,
 connection/request identities, cancellation and wake notification, before introducing tokio.
 Files: `ui/src/input.rs`, `ui/src/system/device.rs`, `system/device/remote.rs`, host-serve wiring in `main.rs`
@@ -559,8 +570,10 @@ Risk: medium. Depends: E1, M14 mappings for that family and reviewed specificati
 Parallel: accepted transport migration and disjoint families; serialize shared parser state/table edits.
 Remove the test oracle only after full inventory/corpus parity and review.
 
-WLAN, SNTP and Bode already own threads; USBTMC remains a blocking adapter. There is no M15d service migration.
-A later service-to-runtime proposal must demonstrate a measured production-line reduction before admission.
+WLAN #219 follows the [device-task design](io.md#http-large-bodies-and-device-control) after the coherent
+IO replacement lands.
+SNTP and update checks remain later IO work. Bode USBTMC stays on its synchronous generator worker under ADR 0023.
+These moves do not depend on M15c or change the SCPI parser. Report production-line savings with each cutover.
 
 ### M16: stages and `Session` replace `Ui::step`
 
@@ -699,7 +712,7 @@ The coordinator replaces each TBD issue placeholder before acceptance.
 | ADR 0017 | TBD (coordinator) | Reset evidence: verify whether RK3399 exposes a positive watchdog reset indication; preserve power-cut handling if absent. |
 | ADR 0018 | TBD (coordinator) | Service policy: finish #139 telnet removal; add /cmd second ACL, a service-table coverage test and one-second stop/withdrawal tests; verify firewall on the unit. |
 | ADR 0019 | TBD (coordinator) | M15b: verify HiSLIP on the scope with remote.hislip off by default until verification; check discovery withdrawal and VISA sessions. |
-| ADR 0023 | TBD (coordinator) | IO ports: std::net confinement and alias fixtures are in force; complete NTP/update moves and assess USB/WLAN benefits with the explicit synchronous exceptions in ADR 0023. |
+| ADR 0023 | TBD (coordinator) | Implement the [IO layer design](io.md): one replacement PR with raw-first development and all transports, then WLAN #219. Keep USB bulk synchronous. NTP/update checks follow later. Existing std::net confinement and alias fixtures remain in force. |
 | ADR 0025 | TBD (coordinator) | SCPI conformance: every documented command resolves, no undocumented command answers, and abbreviations/identity match the reference. |
 | ADR 0028 | TBD (coordinator) | Registries: pin released identifiers, register remaining measurements and test release feature completeness. |
 | ADR 0030 | TBD (coordinator) | Typed errors: add a shrinking Result<_, String> ratchet, migrate areas to typed errors and test sender/retry reporting. |

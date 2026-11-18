@@ -1459,8 +1459,9 @@ fn scpi_errors_and_answers_stay_bounded() {
     let mut u = with_two_channels();
     let cv = Canvas::new(PANEL_W, PANEL_H);
     let mut s = crate::scpi::Scpi::open(0, false);
+    let invalid = format!(":NOPE{}", "x".repeat(10_000));
     for _ in 0..1000 {
-        s.exec_line(&mut u, &cv, &format!(":NOPE{}", "x".repeat(10_000)));
+        s.exec_line(&mut u, &cv, &invalid);
     }
     let mut n = 0;
     let mut last = String::new();

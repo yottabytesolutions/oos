@@ -61,7 +61,7 @@ pub fn slow(out: &str) -> Vec<String> {
 }
 
 /// Matches `slow-timeout` in `.config/nextest.toml`.
-const SLOW_SECS: f64 = 60.0;
+const SLOW_SECS: f64 = 5.0;
 
 /// The Cargo profile of the release tests (root Cargo.toml): the release optimisation without a fat-LTO link per test
 /// binary. HAL timing guards share this profile; UI guards keep the shipping `release` profile.
@@ -70,12 +70,6 @@ const RELEASE_TESTS: &str = "test-release";
 fn golden_shard(shard: Option<(u32, u32)>) -> bool {
     shard.is_some_and(|(k, n)| n > 1 && k == n)
 }
-
-fn layout_shard(shard: Option<(u32, u32)>) -> bool {
-    shard.is_some_and(|(k, n)| n > 2 && k == n - 1)
-}
-
-const LAYOUT_TEST: &str = "test(=ui::lint::second_pane_fits_with_everything_else)";
 
 /// The cargo-nextest options for one crate, after `nextest run` or `llvm-cov nextest`. cargo-nextest runs every test
 /// in its own process and the tests of all binaries in parallel; the doctests it cannot run go through `cargo test`.
@@ -93,19 +87,12 @@ pub fn nextest_args(root: &Path, release: bool, shard: Option<(u32, u32)>) -> Re
     }
     if golden_shard(shard) {
         args.extend(["--test".to_string(), "golden".to_string()]);
-    } else if layout_shard(shard) {
-        args.extend(["--bin", "oos-ui", "-E", LAYOUT_TEST].map(String::from));
     } else if let Some((k, n)) = shard.filter(|(_, n)| *n > 1) {
-        let filter = if n > 2 {
-            format!("not (binary_id(=oos-ui::golden) or {LAYOUT_TEST})")
-        } else {
-            "not binary_id(=oos-ui::golden)".to_string()
-        };
         args.extend([
             "-E".to_string(),
-            filter,
+            "not binary_id(=oos-ui::golden)".to_string(),
             "--partition".to_string(),
-            format!("hash:{k}/{}", n - 1 - u32::from(n > 2)),
+            format!("hash:{k}/{}", n - 1),
         ]);
     }
     Ok(args)
@@ -116,7 +103,7 @@ fn fail(out: &run::Output) -> String {
 }
 
 /// Runs the tests of the crate in `root/krate`, with the release-tests profile when `release`. Ok with the counts and
-/// the tests that ran 60 s or longer. Err with the end of the output when a test fails or the build breaks.
+/// the tests that ran 5 s or longer. Err with the end of the output when a test fails or the build breaks.
 pub fn run(
     ctx: &crate::run::Context,
     root: &Path,
@@ -124,7 +111,7 @@ pub fn run(
     release: bool,
 ) -> Result<(Counts, Vec<String>), String> {
     let shard = run::partition("OOS_TEST_PARTITION", std::env::var("OOS_TEST_PARTITION").ok().as_deref())?;
-    if (golden_shard(shard) || layout_shard(shard)) && krate != "ui" {
+    if golden_shard(shard) && krate != "ui" {
         return Ok((Counts::default(), Vec::new()));
     }
     let dir = root.join(krate);
@@ -189,25 +176,17 @@ mod tests {
     }
 
     #[test]
-    fn layout_and_golden_have_disjoint_shards_while_unsharded_runs_keep_every_test() {
+    fn hash_and_golden_shards_cover_every_test_in_both_profiles() {
         for release in [false, true] {
             let root = Path::new("/path/to/oos");
-            for k in 1..4 {
-                let args = nextest_args(root, release, Some((k, 5))).unwrap();
+            for k in 1..3 {
+                let args = nextest_args(root, release, Some((k, 3))).unwrap();
                 assert_eq!(
                     args[args.len() - 4..],
-                    [
-                        "-E",
-                        &format!("not (binary_id(=oos-ui::golden) or {LAYOUT_TEST})"),
-                        "--partition",
-                        &format!("hash:{k}/3")
-                    ]
+                    ["-E", "not binary_id(=oos-ui::golden)", "--partition", &format!("hash:{k}/2")]
                 );
             }
-            let layout = nextest_args(root, release, Some((4, 5))).unwrap();
-            assert_eq!(layout[layout.len() - 4..], ["--bin", "oos-ui", "-E", LAYOUT_TEST]);
-            assert!(!layout.iter().any(|a| a == "--partition"));
-            let golden = nextest_args(root, release, Some((5, 5))).unwrap();
+            let golden = nextest_args(root, release, Some((3, 3))).unwrap();
             assert_eq!(golden[golden.len() - 2..], ["--test", "golden"]);
             assert!(!golden.iter().any(|a| a == "--partition"));
             for shard in [None, Some((1, 1))] {
@@ -220,12 +199,19 @@ mod tests {
     }
 
     #[test]
-    fn names_the_tests_that_ran_a_minute_or_longer() {
-        let out = "        PASS [  26.171s] (455/456) oos-hal update::tests::short\n\
-                   \u{20}       SLOW [> 60.000s] (─────────) oos-ui::golden compare_scripted_pictures\n\
-                   \u{20}       PASS [  73.402s] (456/456) oos-ui::golden compare_scripted_pictures\n\
-                   \u{20}    Summary [ 118.865s] 1465 tests run: 1465 passed (1 slow), 58 skipped\n";
-        assert_eq!(slow(out), ["PASS [  73.402s] (456/456) oos-ui::golden compare_scripted_pictures"]);
+    fn names_every_test_at_or_above_five_seconds() {
+        let out = "        PASS [   4.999s] (1/3) oos-hal update::tests::short\n\
+                   \u{20}       SLOW [>  5.000s] (───) oos-ui::golden compare_scripted_pictures\n\
+                   \u{20}       PASS [   5.000s] (2/3) oos-hal update::tests::boundary\n\
+                   \u{20}       PASS [  73.402s] (3/3) oos-ui::golden compare_scripted_pictures\n\
+                   \u{20}    Summary [ 118.865s] 3 tests run: 3 passed (2 slow)\n";
+        assert_eq!(
+            slow(out),
+            [
+                "PASS [   5.000s] (2/3) oos-hal update::tests::boundary",
+                "PASS [  73.402s] (3/3) oos-ui::golden compare_scripted_pictures"
+            ]
+        );
         assert!(slow("no result lines").is_empty());
     }
 }

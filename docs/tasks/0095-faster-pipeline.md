@@ -91,7 +91,57 @@ Reserved paths: `.github/workflows/pr.yml`, `xtask/src/steps/decoders/`,
    Record the supplied run 44196789417 baseline. The coordinator supplies the PR's after-run timings because this
    worker has build-only network access and may not use GitHub or `gh`. Target: PR wall time at most 220 s.
 
+### Slow single tests and runner contention, issue #176
+
+Reserved paths: `Cargo.toml`, `.config/nextest.toml`, `.github/workflows/pr.yml`,
+`hal/src/update/tests.rs`, `hal/tests/safe_start/cuts.rs`, `hal/tests/safe_start/mod.rs`, `ui/src/ui/lint.rs`,
+`ui/src/drawpipe.rs`, `xtask/src/testrun.rs`,
+`xtask/src/stack_ci/tests.rs`, `docs/development.md`, this task file.
+
+1. Inventory all debug tests over 5 seconds using local nextest result lines. Diagnose repeated work,
+   fixture costs and unoptimized dependencies; retain all assertions and exhaustive inputs.
+2. Measure the changed suites and rebalance fewer test shards. Combine small lint/decoder/plan jobs
+   where practical, preserving required names and PR-only cancellation.
+3. Run the fast gate and changed crate tests in debug and test-release. Record local evidence separately
+   from CI evidence. The coordinator supplies this PR's before/after per-job timings and the 180-second
+   idle-queue target result; build-only networking prohibits GitHub access in this worker job.
+
 ## Status
+
+- 2026-11-18: The remaining ledger-matrix delay includes a real one-second retry backoff after each
+  killed lock owner. Its fixture now supplies an immediate sleep command only for these dead-owner cases;
+  every durable operation, kill boundary, namespace-loss case and retry assertion remains intact.
+  Focused final debug safe-start suite: 30 passed, 0 failed, exit 0, 9.740 s total; ledger matrix 9.738 s
+  versus baseline 22.834 s. Final release safe-start suite: 30 passed, 0 failed, exit 0, 8.030 s.
+  Final fast gate: `partial gate passed (not done): 11 steps in 4 s`, exit 0; no lowered ratchet counts.
+  Diff whitespace check passed. Complete logs and partition JSON are retained in `target/slow-tests/`.
+  This task stays active pending coordinator CI evidence and independent review.
+
+- 2026-11-18: Issue #176 workspace release tests passed: 2737 passed, 0 failed, 73 skipped,
+  nextest execution 112.616 s, exit 0. HAL release doctests passed (0 examples); debug doctests ran in shard 1.
+  Actual nextest JSON proves all 2738 runnable debug tests occur exactly once across shards: 1381, 1351, 6.
+  All three `cargo xtask step tests-debug` runs passed (exit 0): through-Cargo 59.739, 26.717 and 16.195 s.
+  Shard 1 overlapped release work; its subsequent run after release finished passed in 39.226 s.
+  These measured local shards replace five shards; full trigger and layout sweeps are in different hash shards.
+  `cargo xtask loc --json --compare HEAD`: production 109799, delta 0; Rust tooling delta -11.
+  Build cost remains a CI acceptance consideration: the initial debug build reported 32.02 s before and
+  88 s with the new test profile, then 26.14 s for the later rebuild. Different cache/load states prevent a
+  controlled build-time comparison. Required CI results, this PR's per-job timings, the 180-second target and
+  independent cross-vendor review remain coordinator actions. Hardware was not accessed.
+
+- 2026-11-18: Issue #176 initial debug comparison passed all 2736 runnable tests in both runs:
+  nextest execution 84.676 s before, 45.662 s after test-profile optimization and key hoisting.
+  A later run, concurrent with release compilation, passed 2738 tests in 63.062 s after adding protected-byte
+  comparison and PR-cancellation regressions. These timings exclude builds and are local evidence only.
+  Fast gate: `partial gate passed (not done): 11 steps in 10 s`, exit 0. No lowered counts reported.
+  SHA-2 and shared UI test code retain debug assertions and overflow checks. No shipping profile changed.
+  Two card scans use complete protected slices; identical waveform fixtures and invalid SCPI commands are shared.
+  The ledger cut injector now uses the existing per-path sync fixture; its Python shim skips site initialization.
+  Five-second slow reporting retains the ten-minute hang guard. Workflow consolidation removes two test runners,
+  one decoder runner and the separate plan runner; existing PR-only cancellation is covered by a regression.
+
+- 2026-11-18: Issue #176 assigned on `ci/176-slow-tests`; the existing task owns the CI paths above.
+  Baseline workspace nextest measurement is running before edits. Hardware access is outside this job.
 
 - 2026-11-18: Round 3 default full gate exited 1: `gate FAILED in 507 s: perf`.
   Final fast gate exited 0: `partial gate passed (not done): 11 steps in 3 s`.
@@ -283,3 +333,78 @@ This worker may not access GitHub, run `gh`, push or create a PR. No CI speed im
 
 Record the after run id, aggregate `clippy` and `test` conclusions, all group durations and full-run wall time here
 before accepting the 220-second target. CI per-test durations should confirm or revise the local layout-test split.
+
+### Issue #176 local slow-test inventory
+
+All 36 unique tests above 5 s in the baseline workspace debug run are listed below. Both runs used the same
+host and default nextest thread count; the second overlapped release compilation, so this is diagnostic evidence,
+not a controlled performance benchmark or CI result. Every scenario, fixture size and assertion is retained.
+The subsequent per-path sync, startup and backoff refinements are validated separately in Status. Some exhaustive cases remain above 5 s;
+that threshold is reporting, not a correctness deadline.
+
+| Debug test | Before, s | After, s | Cause and change |
+|---|---:|---:|---|
+| `oos-ui::bin/oos-ui trignear::tests::near_first_equals_the_wide_search` | 58.552 | 48.564 | Exhaustive trigger oracle corpus: optimize UI search code |
+| `oos-ui::bin/oos-ui ui::lint::second_pane_fits_with_everything_else` | 46.671 | 36.565 | Full screen/text/menu/render matrix: optimize UI code |
+| `oos-ui::golden compare_scripted_pictures` | 45.729 | 38.240 | Screenshot corpus: optimized shared UI renderer |
+| `oos-ui::bin/oos-ui ui::lint::random_input_on_the_new_pages_on_a_large_monitor` | 40.463 | 34.143 | Full screen/text/menu/render matrix: optimize UI code |
+| `oos-hal update::tests::the_stick_again_repairs_a_damaged_recovery_from_the_slot` | 29.853 | 3.318 | Rescue hashing: test-only SHA-2 optimization |
+| `oos-hal update::tests::first_install_power_cut_leaves_stock_selected` | 28.805 | 4.210 | Rescue hashing: test-only SHA-2 optimization |
+| `oos-ui::bin/oos-ui ui::lint::every_text_size_keeps_the_screen_in_order` | 28.622 | 27.837 | Full screen/text/menu/render matrix: optimize UI code |
+| `oos-ui::bin/oos-ui ui::lint::random_input_on_the_new_pages_on_a_small_monitor` | 28.493 | 22.569 | Full screen/text/menu/render matrix: optimize UI code |
+| `oos-ui::bin/oos-ui ui::script::host::soak::tests::soak_reports_its_own_counters_after_a_demo_step` | 23.032 | 21.771 | Repeated acquisition/step scenarios: optimize shared UI code |
+| `oos-hal::rootfs_safe_start safe_start::cuts::ledger_kills_at_every_commit_boundary_count_exactly_once_after_retry` | 22.834 | 22.071 | Durable cut matrix: per-path sync fixture; skip startup and dead-owner backoff |
+| `oos-hal update::tests::the_stick_again_keeps_a_newer_build_and_only_selects_it` | 20.356 | 1.816 | Rescue hashing: test-only SHA-2 optimization; complete slice comparison |
+| `oos-ui::soak snapshots::hot_paths::hot_paths_allocate_nothing_after_warmup` | 18.316 | 10.775 | Deep-buffer allocation census: optimize shared UI code |
+| `oos-ui::bin/oos-ui drawpipe::tests::drawing_from_the_codes_equals_drawing_the_decoded_frame` | 16.061 | 10.132 | Frame/mode product: share identical frames; optimize UI code |
+| `oos-hal update::tests::first_install_writes_only_its_regions` | 15.592 | 1.778 | Rescue hashing: test-only SHA-2 optimization; complete slice comparison |
+| `oos-ui::bin/oos-ui ui::tests::roll::tests::roll_single_bounds_snapshots_holds_and_rearms` | 13.722 | 12.696 | Repeated acquisition/step scenarios: optimize shared UI code |
+| `oos-ui::bin/oos-ui ui::lint::every_menu_fits` | 12.099 | 7.487 | Full screen/text/menu/render matrix: optimize UI code |
+| `oos-ui::bin/oos-ui ui::lint::random_input_on_the_new_pages_on_the_panel` | 12.080 | 4.564 | Full screen/text/menu/render matrix: optimize UI code |
+| `oos-ui::bin/oos-ui board::dho::matching::tests::batch_core_matching_equals_standard_in_record_order` | 11.736 | 7.502 | Full mask/header/record matrix: optimize shared UI code |
+| `oos-ui::host_script batches_repeat_and_account_for_every_frame` | 11.213 | 8.213 | Fresh-process frame/render comparisons: optimize shared UI code |
+| `oos-hal update::tests::the_stick_updates_an_older_build` | 11.098 | 2.296 | Rescue hashing: test-only SHA-2 optimization |
+| `oos-hal update::tests::first_install_from_stock` | 11.027 | 2.197 | Rescue hashing: test-only SHA-2 optimization |
+| `oos-hal update::tests::first_install_again_keeps_the_rescue_set` | 11.022 | 3.196 | Rescue hashing: test-only SHA-2 optimization |
+| `oos-hal update::tests::a_rescue_set_from_another_unit_stops_the_install` | 10.983 | 3.082 | Rescue hashing: test-only SHA-2 optimization |
+| `oos-ui::bin/oos-ui ui::tests::outbox::single_reconfigure::segmented::segmented_single_restarts_each_pair_during_recording_and_reading` | 10.819 | 6.793 | Repeated acquisition/step scenarios: optimize shared UI code |
+| `oos-hal update::tests::first_install_reinstall_with_oos_selected_goes_through_stock` | 10.627 | 2.403 | Rescue hashing: test-only SHA-2 optimization |
+| `oos-ui::host_script codes_keep_four_channel_and_dots_decode_fallbacks_repeatable` | 10.111 | 7.359 | Fresh-process frame/render comparisons: optimize shared UI code |
+| `oos-hal update::tests::first_install_dry_run_leaves_the_card_alone` | 9.695 | 2.036 | Rescue hashing: test-only SHA-2 optimization |
+| `oos-ui::bin/oos-ui ui::tests::every_trigger_type_triggers_on_the_demo` | 9.126 | 6.848 | Repeated acquisition/step scenarios: optimize shared UI code |
+| `oos-ui::host_script average_zoom_and_slow_timebases_drain_records_without_a_time_cutoff` | 8.563 | 5.765 | Fresh-process frame/render comparisons: optimize shared UI code |
+| `oos-ui::bin/oos-ui ui::tests::outbox::single_reconfigure::twenty_single_presses_replace_obsolete_batches_once_each` | 8.550 | 4.442 | Repeated acquisition/step scenarios: optimize shared UI code |
+| `oos-ui::bin/oos-ui ui::lint::scpi_errors_and_answers_stay_bounded` | 8.382 | 9.599 | 1000 long commands: share command buffer; optimize UI code |
+| `oos-ui::bin/oos-ui fastdraw::whole::tests::deposit_is_bit_identical_to_the_scattered_writes` | 7.249 | 3.807 | Repeated acquisition/step scenarios: optimize shared UI code |
+| `oos-ui::bin/oos-ui ui::lint::the_hdmi_layout_leaves_the_panel_alone` | 6.998 | 2.379 | Full screen/text/menu/render matrix: optimize UI code |
+| `oos-ui::bin/oos-ui ui::tests::outbox::single_reconfigure::incomplete_single_reconfigures_before_late_old_pair_record` | 6.672 | 8.008 | Repeated acquisition/step scenarios: optimize shared UI code |
+| `oos-ui::bin/oos-ui fastdraw::whole::tests::dots_are_bit_identical_to_one_add_per_sample` | 6.422 | 4.078 | Repeated acquisition/step scenarios: optimize shared UI code |
+| `oos-ui::bin/oos-ui ui::lint::the_logger_writes_rows_at_its_interval` | 5.525 | 1.745 | Repeated acquisition/step scenarios: optimize shared UI code |
+
+CI also reported `oos-hal update::tests::kexec_stage_writes_nothing_to_the_card` at 123 s and
+`oos-ui ui::lint::every_menu_fits` at 155 s in run 44280239855. The kexec test was below 5 s locally;
+it now computes the hex public key once, preserving the exact package, kernel, initrd and whole-card assertions.
+
+### Issue #176 CI acceptance evidence
+
+The coordinator must populate this table from this PR's own run before accepting the 180-second idle-queue target.
+This worker may use network access for builds only, so no CI result is inferred from local test times.
+
+| Job or metric | Before (run 44280239855), s | This PR after, s |
+|---|---:|---:|
+| PR wall time, idle queue | not supplied | coordinator measurement needed |
+| Debug shard 2/5 | 303 | replaced by two hash shards plus golden |
+| Debug shards 1/5, 3/5, 5/5 | 200-240 (range supplied) | replaced |
+| Debug shard 4/5 | not supplied | combined into hash shards |
+| test (debug 1/3) | n/a | coordinator measurement needed |
+| test (debug 2/3) | n/a | coordinator measurement needed |
+| test (debug 3/3), golden | n/a | coordinator measurement needed |
+| clippy (lints), including register plans | not supplied | coordinator measurement needed |
+| clippy (decoders 1/2) | n/a | coordinator measurement needed |
+| clippy (decoders 2/2) | n/a | coordinator measurement needed |
+| fast, python, deny, privacy, pr-meta, codex-review | not supplied | coordinator measurement needed per job |
+| Required aggregate clippy and test | not supplied | coordinator conclusions needed |
+| Runner wait | up to 130 | coordinator measurement needed |
+
+Two test runners, one decoder runner and one register-plan runner are removed per PR run. Main and merge-queue
+runs retain non-cancelling concurrency; superseded pull-request runs already cancelled and now have a regression.

@@ -13,10 +13,13 @@ pub(super) async fn run(
     ports: Arc<Ports>,
     mut replies: mpsc::Receiver<Reply>,
     mut acl: watch::Receiver<crate::netacl::Shared>,
+    protocol: super::rpc::Protocol,
 ) -> u64 {
     let _ = socket.set_nodelay(true);
     let peer = socket.peer_addr().ok();
-    let session = conversation(id, &mut socket, &ports, &mut replies);
+    let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _connection = super::rpc::Connection(closed.clone(), ports.clone());
+    let session = conversation(id, &mut socket, &ports, &mut replies, protocol, closed);
     tokio::pin!(session);
     loop {
         tokio::select! {
@@ -36,18 +39,23 @@ async fn conversation(
     socket: &mut TcpStream,
     ports: &Arc<Ports>,
     replies: &mut mpsc::Receiver<Reply>,
+    protocol: super::rpc::Protocol,
+    closed: Arc<std::sync::atomic::AtomicBool>,
 ) -> io::Result<()> {
     let mut buffer = Vec::new();
     let mut request = 0;
     loop {
-        let Some((text, accepted)) = read_program(socket, &mut buffer, ports).await? else { return Ok(()) };
+        let Some((message, accepted)) = read_message(socket, &mut buffer, ports, protocol, &closed).await? else {
+            return Ok(());
+        };
         request += 1;
-        let envelope = Envelope::program(id, request, text);
+        let envelope = Envelope::message(id, request, message);
         let request_id = envelope.id();
         let read_closed = envelope.read_closed();
         let _credit = envelope.credit(ports.clone());
         let bytes = match envelope.request() {
             RemoteRequest::Program(text) => text.capacity(),
+            RemoteRequest::Vxi11 { record, .. } => record.capacity(),
             _ => 0,
         };
         if ports.requests().submit(request_id, envelope, bytes).is_err() {
@@ -59,6 +67,7 @@ async fn conversation(
             reply = replies.recv() => reply,
             result = socket.peek(&mut probe) => {
                 if result? == 0 {
+                    if matches!(protocol, super::rpc::Protocol::Rpc(_)) { return Ok(()); }
                     read_closed.store(true, Ordering::Release);
                     ports.notify_frame();
                 }
@@ -75,24 +84,36 @@ async fn conversation(
     }
 }
 
-async fn read_program(
-    socket: &TcpStream,
+async fn read_message(
+    socket: &mut TcpStream,
     buffer: &mut Vec<u8>,
     ports: &Ports,
-) -> io::Result<Option<(String, std::time::Instant)>> {
+    protocol: super::rpc::Protocol,
+    closed: &Arc<std::sync::atomic::AtomicBool>,
+) -> io::Result<Option<(RemoteRequest, std::time::Instant)>> {
+    use super::rpc::Protocol;
+    use crate::netport::rpc;
     loop {
-        if let Some(end) = buffer.iter().position(|&b| b == b'\n') {
+        if let Protocol::Raw = protocol {
+            if let Some(end) = buffer.iter().position(|&b| b == b'\n') {
+                let accepted = ports.enqueue().now();
+                let text = String::from_utf8_lossy(&buffer[..=end]).into_owned();
+                buffer.drain(..=end);
+                return Ok(Some((RemoteRequest::Program(text), accepted)));
+            }
+        } else if let Some(record) = rpc::take_record(buffer) {
             let accepted = ports.enqueue().now();
-            let text = String::from_utf8_lossy(&buffer[..=end]).into_owned();
-            buffer.drain(..=end);
-            return Ok(Some((text, accepted)));
+            if let Protocol::Rpc(channel) = protocol {
+                return Ok(Some((RemoteRequest::Vxi11 { record, channel, closed: closed.clone() }, accepted)));
+            }
         }
-        if buffer.len() >= MAX_PROGRAM {
-            return Err(io::Error::other("program too large"));
+        let limit = if matches!(protocol, Protocol::Raw) { MAX_PROGRAM } else { rpc::MAX_RECORD };
+        if buffer.len() >= limit {
+            return Err(io::ErrorKind::InvalidData.into());
         }
         socket.readable().await?;
         let mut chunk = [0; 4096];
-        let available = chunk.len().min(MAX_PROGRAM - buffer.len());
+        let available = chunk.len().min(limit - buffer.len());
         match socket.try_read(&mut chunk[..available]) {
             Ok(0) => return Ok(None),
             Ok(n) => {

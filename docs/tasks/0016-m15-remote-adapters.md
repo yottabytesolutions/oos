@@ -56,6 +56,64 @@ size/rollout hold below; the deferred size gate is M15b's acceptance criterion.
 
 ## Status
 
+- 2026-11-18: PR #155 size-fix result: shared service switching/runtime retention/ACL
+  publication and parked-reply retry replace duplicated raw/VXI plumbing. Link ownership
+  is assigned when creating a link, removing serialized-reply parsing; shared XDR word
+  output preserves RPC errors and payloads. Existing VXI tests pass (17/17). Production
+  LOC against `origin/main`: UI 72,976 to 73,100 (+124), total 109,021 to 109,145 (+124),
+  tooling unchanged. This removes 36 production lines from the submitted +160, but does
+  not meet the <= 0 acceptance criterion. Tests and docs were already excluded correctly.
+  Remaining growth pays for the shared executor lifetime, separate UDP admission alongside
+  eight TCP slots, disconnect/link cancellation, and frame-owned bounded pending/reply
+  dispatch. These cannot simply be deleted without removing retained transport guarantees;
+  further structural replacement remains an acceptance decision for the coordinator.
+  The final fast gate printed `partial gate passed (not done): 11 steps in 6 s` (exit 0).
+  Clippy printed `partial gate passed (not done): 1 steps in 172 s` (exit 0).
+  `cargo test --locked -p oos-ui` and the same command with `--profile test-release`
+  both exit 0, including golden, host-script/socket and soak suites. Unit suites pass
+  1,502 debug and 1,501 release tests, with 56 ignored in each; all 14 soak tests pass
+  in each profile. Generated ratchet changes are limited to the modified SCPI file size
+  and VXI core function size. `git diff --check` passes. Complete logs and production
+  per-file token/diff accounting remain in ignored `target/m15b-size-audit/`.
+  Binary size was not remeasured. Host only; no hardware access or Git writes.
+
+- 2026-11-18: PR #155 size-fix plan: account for production additions/removals against
+  `origin/main`, share raw/VXI service lifecycle, ACL propagation and parked-reply delivery,
+  and simplify RPC framing/dispatch only where existing behaviour is preserved. Retain
+  RPC fixtures, limits and error codes. Run the fast gate, UI debug/release tests and
+  production LOC measurement. The runner owns Git updates; fetch is sandbox-blocked.
+
+- 2026-11-18: M15b VXI-11 (#151) implementation: TCP/UDP portmapper and core channel
+  share raw SCPI's current-thread runtime and owned request/reply ports. Frame-owned link
+  and pending-program handling retains RPC fixtures, error codes and text/binary encoding;
+  eight TCP slots remain available beside UDP admission. Replaced VXI-11 accept/read/send/poll
+  code and its unused shared socket-read helper are deleted. No abort channel existed.
+  No Tokio features or dependencies were added. Host debug and test-release UI suites pass,
+  including golden, host script/socket and soak suites; focused RPC/IO regressions cover
+  fragmented/malformed/oversized records, binary/empty/large reads, pending-program/link
+  limits, injected-time backpressure/deadlines, cancellation and independent service shutdown.
+  Clippy printed `partial gate passed (not done): 1 steps in 30 s` (exit 0).
+  Fast printed `partial gate passed (not done): 11 steps in 2 s` (exit 0).
+  `cargo xtask ratchet` retains reductions only for modified SCPI/VXI-11 size/lint entries
+  and the deleted `net` unsafe block. `git diff --check` passes.
+  `cargo xtask loc --compare HEAD`, baseline `e088534a524785bba3c38a77acd4881eb10e668d`,
+  reports UI 72,955 to 73,115 (+160), total 109,029 to 109,189 (+160); tooling unchanged.
+  Same default-feature aarch64 musl release builds: 7,165,960 to 7,200,224 bytes
+  (+34,264, +0.48%). The candidate UI package was rebuilt after clearing its release artifacts
+  to avoid reusing the archived baseline's shared-target fingerprint. Logs, source/binary
+  measurements and the baseline executable remain in ignored `target/m15b-evidence/`.
+  The expected negative LOC delta is unmet. Aggregate M15b size acceptance remains open
+  under ADR 0037. Host only; independent review, final CI and unit load measurements remain
+  with the coordinator. No Git writes or remote operations were performed.
+
+- 2026-11-18: M15b VXI-11 (#151) plan: reuse netio runtime, bounded request/reply ports,
+  cancellation and timed output for portmapper TCP/UDP and core TCP. Preserve frame-owned
+  links, RPC fixtures, program continuations and all protocol limits. Delete replaced socket
+  polling, exercise injected-time output and host RPC fixtures, then measure production LOC
+  and same-profile aarch64 binary size. No abort channel exists. Coordinator owns review,
+  integration and unit measurements. Additional reserved paths: `ui/src/vxi11/`,
+  `ui/src/system/serve.rs`, `ui/src/scpi/intake.rs`, `docs/architecture/system.md`.
+
 - 2026-11-18: Recorded the owner's gate decision in ADR 0037, the M15a gate and M15b acceptance criterion,
   with the supplied unit and host measurements above for the coordinator's PR update. Docs only;
   no production change or new unit run. `cargo xtask check --fast` printed

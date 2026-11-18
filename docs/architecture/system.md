@@ -113,11 +113,12 @@ Threads:
 
 | Thread | Job |
 |---|---|
-| main | input events -> model, acquisition step of the active source, analysis (dsp), render, page flip; reads the web, SCPI and VXI-11 connections without waiting (`net::read_now`): nothing in the loop may block on the network |
+| main | input events -> model, acquisition step of the active source, analysis (dsp), render, page flip; drains owned SCPI/VXI-11 requests and polls the remaining web/HiSLIP adapters; nothing in the loop may block on the network |
 | input | front-panel UART (keys, knobs, LED frames) and touch (evdev) |
 | hw (`--hw`) | the board's acquisition thread (`Board::spawn`; on the DHO800/DHO900 `board/dho/hw.rs`: `hal::dho::seq` plan/execute in a loop); hands frames over through `board::HwShared` |
 | live (`--fpga-live`) | experimental, DHO800/DHO900: repeats the verified read-out (no arming) |
-| scpi, http | SCPI server on 5555, web remote on 8080 (polled by the main thread) |
+| netio | raw SCPI on 5555 and VXI-11 portmapper/core sockets, bounded request/reply ports and send deadlines on one current-thread runtime |
+| http | web remote on 8080, still polled by the main thread until its M15b slice |
 | web-accept, web-png, web-send | the web remote's PNG of the screen (made only of a changed screen, at most 20 a second and half a core) and the large answers; SCHED_IDLE on the slow cores (A53), so the frame loop and the acquisition never wait for them |
 | control FIFO | `/tmp/oos-ui.ctl` text commands (`cmd`), used by remote tests |
 | ntp | SNTP exchange and clock step when Time from NTP is on (`sntp`, `ui/time.rs`; `../network.md`) |

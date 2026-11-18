@@ -9,7 +9,7 @@ fn next_request(ports: &Ports) -> Envelope {
 #[test]
 fn connection_credit_covers_output_and_shutdown_cancels_owned_requests() {
     let wake = Arc::new(Wake::new().unwrap());
-    let raw = Raw::open(crate::net6::Port::Host, false, wake).unwrap();
+    let raw = Service::start(crate::net6::Port::Host, false, wake, Runtime::new().unwrap(), false).unwrap();
     raw.set_acl(crate::netacl::Shared::default());
     let ports = raw.ports();
     let mut client = TcpStream::connect(("127.0.0.1", raw.port())).unwrap();
@@ -28,4 +28,53 @@ fn connection_credit_covers_output_and_shutdown_cancels_owned_requests() {
     assert!(second.cancelled(), "shutdown cancels the IO-held credit before joining the thread");
     assert!(ports.requests().is_empty());
     assert_eq!(ports.budget().used(), 0);
+}
+
+#[test]
+fn rpc_disconnect_cancels_an_admitted_request_before_a_frame_reply() {
+    let wake = Arc::new(Wake::new().unwrap());
+    let runtime = Runtime::new().unwrap();
+    let io = Service::start(crate::net6::Port::Host, false, wake, runtime, true).unwrap();
+    io.set_acl(crate::netacl::Shared::default());
+    let ports = io.ports();
+    let mut client = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, io.port())).unwrap();
+    let words = [1u32, 0, 2, crate::netport::rpc::CORE_PROG, 1, 0, 0, 0, 0, 0];
+    client.write_all(&(40u32 | 1 << 31).to_be_bytes()).unwrap();
+    for word in words {
+        client.write_all(&word.to_be_bytes()).unwrap();
+    }
+    let request = next_request(&ports);
+    let RemoteRequest::Vxi11 { closed, .. } = request.request() else { panic!("RPC request expected") };
+    drop(client);
+    let guard = crate::ui::lifecycle::test_wait::Wait::new("RPC cancellation");
+    while !closed.load(std::sync::atomic::Ordering::Acquire) {
+        guard.check();
+        std::thread::yield_now();
+    }
+    assert!(request.cancelled());
+    assert!(ports.requests().is_empty());
+    assert_eq!(ports.budget().used(), 0);
+}
+
+#[test]
+fn rpc_request_queue_reserves_a_udp_slot_beside_the_eight_tcp_slots() {
+    let io =
+        Service::start(crate::net6::Port::Host, false, Arc::new(Wake::new().unwrap()), Runtime::new().unwrap(), true)
+            .unwrap();
+    let ports = io.ports();
+    for connection in 0..=MAX_CLIENTS {
+        let request = Envelope::message(
+            connection as u64,
+            1,
+            RemoteRequest::Vxi11 {
+                record: vec![],
+                channel: crate::netport::rpc::Channel::Core,
+                closed: Default::default(),
+            },
+        );
+        assert!(ports.requests().submit(request.id(), request, 0).is_ok());
+    }
+    let overflow = Envelope::program(9, 1, String::new());
+    assert!(ports.requests().submit(overflow.id(), overflow, 0).is_err());
+    assert_eq!(ports.requests().take(MAX_CLIENTS + 1).len(), MAX_CLIENTS + 1);
 }

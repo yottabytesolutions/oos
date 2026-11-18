@@ -19,7 +19,7 @@ Keep the existing behaviour through small migrations. The accepted decisions are
 `oos-ui` uses `src/main.rs` for its binary and library module graph. `main` selects scripted execution,
 host `--serve`, or Linux device execution in `system/device.rs`. The browser is the host desktop view.
 There is no native Windows window in this crate. `oos-core` depends only on `oos-dsp`;
-`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI uses tokio; the remaining transports await M15b.
+`oos-ui` depends on core, DSP, HAL, libc and tokio. Raw SCPI and VXI-11 use tokio; the remaining transports await their M15b slices.
 DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their application bindings.
 
 ### Module map
@@ -31,7 +31,7 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 | `model.rs`, `model/` | core model exports, platform/capability bridge, protocol bindings and colours |
 | `scpi.rs`, `scpi/`, `cmd.rs` | shared SCPI interpreter and program continuations; script/FIFO command syntax |
 | `http.rs`, `http/`, `vxi11.rs`, `hislip.rs`, `mdns.rs` | web/MCP, instrument transports and discovery |
-| `netio/`, `netport.rs`, `netport/` | raw SCPI runtime, socket framing/output and owned bounded application ports |
+| `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11 runtime, socket framing/output and owned bounded application ports |
 | `remote.rs` | telnet/firewall helper |
 | `store.rs`, `store/`, `sysconf.rs` | setup codec, waveform/image files, durable startup state, system settings |
 | `board/`, `board/dho/` | Board port, Shared exchange, hardware configuration/readout and publication |
@@ -89,14 +89,14 @@ updates panes, and grades/halves the maps. Rendering is a separate call.
 flowchart LR
     subgraph frame["Synchronous frame thread"]
         input["Panel / touch / FIFO"] --> ui["Ui: Model, menus, records, views"]
-        transports["VXI-11 / HiSLIP polls"] --> scpi["One SCPI interpreter"]
+        transports["HiSLIP polls"] --> scpi["One SCPI interpreter"]
         scpi -->|"setters and queries"| ui
         ui --> change["normalize / accept / reset / publish"]
         ui --> draw["record drawing + fast drawing + pipe merge"]
         draw --> maps["ph / phz, grade"]
         maps --> render["Canvas or GPU layers"]
     end
-    raw["Raw SCPI: netio IO thread"] -->|"bounded owned programs / replies + wake"| scpi
+    raw["Raw SCPI / VXI-11: netio IO thread"] -->|"bounded owned programs / RPC requests, replies + wake"| scpi
     http["HTTP accept/read/send threads"] -->|"inbox: MCP programs"| scpi
     http -->|"web actions"| ui
     change -->|"want + identity under mutex"| shared[("Shared")]
@@ -111,9 +111,14 @@ flowchart LR
     render --> display["DRM / GPU helper; HTTP snapshots"]
 ```
 
-Raw TCP framing and writes run on one current-thread tokio runtime on the `netio` thread.
+Raw SCPI and VXI-11 TCP/UDP framing and writes share one current-thread tokio runtime on the `netio` thread.
 IO owns credits until output completes and enforces 2 s without progress and 30 s total send limits.
-VXI-11 and HiSLIP still call the shared blocking send helper until M15b; their `poll_async` methods mean resumable programs, not a tokio runtime.
+VXI-11 retains frame-owned links and resumable programs behind the owned RPC port. HiSLIP still calls the
+blocking send helper until its M15b slice; its `poll_async` means resumable programs, not a tokio runtime.
+VXI-11 preserves eight TCP connections plus a separate 1500-byte UDP portmapper request, sixteen links,
+and the existing per-link pending-program/output bounds. Its RPC output port reserves up to two RESP_MAX
+payloads plus 4096 bytes for framing, because a link can append a program before its next output-limit check.
+This preserves reads larger than one program; it does not change the raw SCPI 64 MiB reply budget.
 HTTP has accept/read threads, background screenshot encoding and large-response senders;
 request dispatch and small responses still run during its frame-thread poll.
 MCP uses the same interpreter. The FIFO enters through `cmd`.

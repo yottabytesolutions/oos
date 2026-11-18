@@ -200,6 +200,59 @@ fn parallel_jobs_keep_every_check_and_fail_the_required_names() {
 }
 
 #[test]
+fn pull_requests_check_locked_fuzz_dependencies() {
+    let doc = parse(workflow("pr.yml").unwrap()).unwrap();
+    let step = super::steps(&doc, "fast")
+        .into_iter()
+        .find(|step| step["name"].as_str() == Some("Locked fuzz dependencies"))
+        .unwrap();
+    assert_eq!(step["if"].as_str(), Some("steps.changes.outputs.run == 'true'"));
+    assert_eq!(
+        step["run"].as_str(),
+        Some("cargo metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml > /dev/null")
+    );
+}
+
+#[test]
+fn fuzz_uses_the_gnu_host_target_for_address_sanitizer() {
+    let doc = parse(include_str!("../../../.github/workflows/main.yml")).unwrap();
+    let step = super::steps(&doc, "fuzz")
+        .into_iter()
+        .find(|step| step["name"].as_str() == Some("Fuzz every parser for 60 seconds"))
+        .unwrap();
+    assert!(step["run"].as_str().unwrap().contains("cargo fuzz run --target x86_64-unknown-linux-gnu"));
+}
+
+#[test]
+fn pull_requests_and_main_run_the_same_clippy_step() {
+    let pr = parse(workflow("pr.yml").unwrap()).unwrap();
+    let main = parse(include_str!("../../../.github/workflows/main.yml")).unwrap();
+    let pr_lints = pr["jobs"]["clippy-run"]["strategy"]["matrix"]["include"]
+        .as_vec()
+        .unwrap()
+        .iter()
+        .find(|job| job["name"].as_str() == Some("lints"))
+        .unwrap();
+    let main_lints = main["jobs"]["gate"]["strategy"]["matrix"]["include"]
+        .as_vec()
+        .unwrap()
+        .iter()
+        .find(|job| job["name"].as_str() == Some("clippy"))
+        .unwrap();
+    assert_eq!(pr_lints["steps"].as_str(), Some("clippy plan-matrix"));
+    assert_eq!(pr_lints["steps"], main_lints["steps"]);
+    let runner = |doc: &Yaml, job| {
+        super::steps(doc, job)
+            .iter()
+            .find_map(|step| {
+                (step["env"]["STEPS"].as_str() == Some("${{ matrix.steps }}")).then(|| step["run"].clone())
+            })
+            .unwrap()
+    };
+    assert_eq!(runner(&pr, "clippy-run"), runner(&main, "gate"));
+}
+
+#[test]
 fn test_matrix_keeps_three_shards_in_both_profiles() {
     let doc = parse(workflow("pr.yml").unwrap()).unwrap();
     let job = &doc["jobs"]["test-run"];

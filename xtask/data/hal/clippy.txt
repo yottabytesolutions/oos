@@ -60,7 +60,6 @@
 2 hal hal/src/model.rs clippy::manual_is_multiple_of
 2 hal hal/src/model.rs clippy::unwrap_used
 1 hal hal/src/target.rs missing_debug_implementations
-1 hal hal/src/update/card.rs clippy::undocumented_unsafe_blocks
 1 hal hal/src/update/card.rs missing_debug_implementations
 2 hal hal/src/update/fdt.rs clippy::manual_is_multiple_of
 1 hal hal/src/update/fdt.rs clippy::too_many_lines

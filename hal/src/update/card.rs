@@ -12,17 +12,17 @@
 //! | 385024 | 0x20000 (64 MiB) | `backup` + 32 MiB: **the previous OOS image** (rollback slot) |
 //! | 516096 | 0x8000 (16 MiB) | end of `backup`: the OOS data partition /oos, never written here |
 //!
-//! Every write goes through `write_image`, which refuses anything outside the two image regions, pads to whole
-//! sectors, syncs, drops the cached pages and reads the region back from the card before it reports success.
+//! Every raw write goes through the checked writer (ADR 0011). Images are padded to whole sectors; the boot
+//! selector changes only four bytes. Writes sync, drop cached pages and verify the bytes from the opened card.
 
 use super::hash::{hex, sha1, Sha256};
 use crate::target::ACTIVE;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 mod path;
-pub use path::open_checked;
+mod writer;
+pub use path::{open_checked, open_removable};
+pub use writer::check_range;
 
 pub const SECTOR: u64 = 512;
 pub const PARM_LBA: u64 = ACTIVE.layout.parm_lba;
@@ -160,29 +160,32 @@ pub fn check_image(b: &[u8]) -> Result<ImageInfo, String> {
 
 /// The card (or, in tests, a file laid out like it).
 pub struct Card {
-    f: File,
-    write: bool,
+    storage: writer::Storage,
     /// tests: the next write of this region stops half way, as in a power cut
     #[cfg(test)]
     pub cut: Option<Region>,
 }
 
 impl Card {
+    /// Only an opened regular file can opt into simulated units and direct test installs.
+    pub fn is_test_file(&self) -> std::io::Result<bool> {
+        self.storage.is_file()
+    }
+
     pub fn open(path: &Path, write: bool) -> std::io::Result<Card> {
-        let f = OpenOptions::new().read(true).write(write).open(path)?;
+        Self::open_at(path, write, false)
+    }
+
+    fn open_at(path: &Path, write: bool, removable: bool) -> std::io::Result<Card> {
         Ok(Card {
-            f,
-            write,
+            storage: writer::Storage::open(path, write, removable)?,
             #[cfg(test)]
             cut: None,
         })
     }
 
     pub fn read(&mut self, lba: u64, len: usize) -> std::io::Result<Vec<u8>> {
-        let mut b = vec![0u8; len];
-        self.f.seek(SeekFrom::Start(lba * SECTOR))?;
-        self.f.read_exact(&mut b)?;
-        Ok(b)
+        self.storage.read(lba * SECTOR, len)
     }
 
     /// The stock partition table (as `oos-oneshot` and `card-install.py` check it).
@@ -231,7 +234,7 @@ impl Card {
     /// Write `img` to `r` and read it back from the card. Only these regions can be written, and only an image no
     /// longer than the region.
     pub fn write_image(&mut self, r: Region, img: &[u8]) -> Result<(), String> {
-        if !self.write {
+        if !self.storage.writable() {
             return Err("card opened read only".into());
         }
         if img.len() > r.max() {
@@ -240,37 +243,9 @@ impl Card {
         let mut data = img.to_vec();
         data.resize(img.len().div_ceil(SECTOR as usize) * SECTOR as usize, 0);
         let off = r.lba() * SECTOR;
-        let io = |e: std::io::Error| format!("writing {}: {}", r.name(), e);
-        self.f.seek(SeekFrom::Start(off)).map_err(io)?;
-        #[cfg(test)]
-        if self.cut == Some(r) {
-            // a power cut in the middle of the write (tests)
-            self.cut = None;
-            self.f.write_all(&data[..data.len() / 2]).map_err(io)?;
-            return Err("power cut".into());
-        }
-        self.f.write_all(&data).map_err(io)?;
-        self.f.sync_all().map_err(io)?;
-        self.drop_cache(off, data.len());
-        let back = self.read(r.lba(), data.len()).map_err(|e| format!("reading {} back: {}", r.name(), e))?;
-        if back != data {
-            return Err(format!("READ-BACK MISMATCH in {}", r.name()));
-        }
+        let area = if r == Region::Recovery { "recovery" } else { "backup" };
+        self.write_checked(area, off, &data)?;
         Ok(())
-    }
-
-    /// After a write: forget the cached pages, so the read-back comes from the card.
-    fn drop_cache(&self, off: u64, len: usize) {
-        #[cfg(target_os = "linux")]
-        unsafe {
-            use std::os::fd::AsRawFd;
-            // only whole pages are dropped: round the range out, or the read-back of the last part (and of the one
-            // sector of the magic) would come from the cache
-            let (a, e) = (off & !4095, (off + len as u64 + 4095) & !4095);
-            libc::posix_fadvise(self.f.as_raw_fd(), a as i64, (e - a) as i64, libc::POSIX_FADV_DONTNEED);
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = (off, len);
     }
 
     pub fn boot_magic(&mut self) -> std::io::Result<[u8; 4]> {
@@ -292,7 +267,7 @@ impl Card {
     }
 
     fn set_magic(&mut self, to: &[u8; 4], from: &[u8; 4]) -> Result<bool, String> {
-        let mut s = self.read(BOOT_LBA, SECTOR as usize).map_err(|e| e.to_string())?;
+        let s = self.boot_magic().map_err(|e| e.to_string())?;
         if &s[..4] == to {
             return Ok(false);
         }
@@ -302,18 +277,10 @@ impl Card {
                 String::from_utf8_lossy(&s[..4])
             ));
         }
-        if !self.write {
+        if !self.storage.writable() {
             return Err("card opened read only".into());
         }
-        s[..4].copy_from_slice(to);
-        let io = |e: std::io::Error| format!("writing the boot magic: {}", e);
-        self.f.seek(SeekFrom::Start(BOOT_LBA * SECTOR)).map_err(io)?;
-        self.f.write_all(&s).map_err(io)?;
-        self.f.sync_all().map_err(io)?;
-        self.drop_cache(BOOT_LBA * SECTOR, SECTOR as usize);
-        if self.boot_magic().map_err(|e| e.to_string())? != *to {
-            return Err("boot magic did not stick".into());
-        }
+        self.write_checked("boot", BOOT_LBA * SECTOR, to)?;
         Ok(true)
     }
 }

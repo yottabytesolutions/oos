@@ -46,6 +46,21 @@ impl Boot {
                 "os.execv('/bin/dd', ['dd', *args])\n",
             ),
         );
+        f.exec(
+            "bin/oos-update",
+            concat!(
+                "#!/usr/bin/env python3\nimport os, pathlib, sys\n",
+                "args = sys.argv[1:]\n",
+                "assert args[:2] == ['storage-write', 'boot'] and '--execute' in args\n",
+                "fail = pathlib.Path(os.environ['OOS_FAIL_WRITE'])\n",
+                "mode = fail.read_text() if fail.exists() else ''\n",
+                "if mode == 'before': sys.exit(1)\n",
+                "data = sys.stdin.buffer.read()\nassert data == b'KRNL'\n",
+                "with open(args[args.index('--card') + 1], 'r+b') as f:\n",
+                " f.seek(int(args[2])); f.write(data); f.flush(); os.fsync(f.fileno())\n",
+                "sys.exit(1 if mode == 'after' else 0)\n",
+            ),
+        );
         let script = source("rootfs/initramfs/bin/oos-oneshot").replace("/tmp/", &format!("{}/", f.0.display()));
         let shell = std::env::var("OOS_TEST_SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let script = script.replacen("#!/bin/sh", &format!("#!{shell}"), 1);

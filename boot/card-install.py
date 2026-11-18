@@ -13,14 +13,14 @@ Checks before anything is written:
   - the PARM table at LBA 8192 has the stock layout (recovery 0x00020000@0x0002C000, misc 0x00002000@0x00006000)
   - the image is an ANDROID! boot image whose Rockchip id holds (oos-bootimg.py) and fits the partition
   - the current recovery content is a Rockchip KRNL ramdisk, an ANDROID! image, or a saved OOS image
---arm also writes `boot-recovery` to LBA 32800 (bcb.py), so the next power-on boots the image once
-(the OOS development initramfs clears it again at start).
+--arm is refused: misc/BCB is protected by ADR 0011. Use switch.py to select OOS.
 """
-import argparse, datetime, hashlib, importlib.util, os, subprocess, sys
+import argparse, datetime, hashlib, importlib.util, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import boardconf
+import storage
 
 SECTOR = 512
 BOARD = boardconf.load()
@@ -75,6 +75,8 @@ def main():
     ap.add_argument("--execute", action="store_true")
     ap.add_argument("--backup-dir", default=os.path.join(HERE, "..", "backups"))
     a = ap.parse_args()
+    if a.arm:
+        sys.exit("misc/BCB is protected by ADR 0011; use switch.py to select OOS")
     spec = importlib.util.spec_from_file_location("oosbootimg", os.path.join(HERE, "oos-bootimg.py"))
     bi = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bi)
@@ -115,8 +117,6 @@ def main():
             sys.exit("`backup` is not empty; --fallback-stock refused (inspect it first)")
         else:
             plan.append(f"copy boot (32 MiB, stock Android ramdisk) to LBA {BACKUP_LBA} (backup), fallback if recovery is rejected")
-    if a.arm:
-        plan.append("write boot-recovery to LBA 32800 (next power-on boots recovery once)")
     for p in plan:
         print("plan:", p)
     if not a.execute:
@@ -133,24 +133,11 @@ def main():
     print(f"saved current recovery to {os.path.abspath(bfile)}")
 
     padded = data + bytes(-len(data) % SECTOR)
-    with open(a.target, "r+b", buffering=0) as f:
-        f.seek(RECOVERY_LBA * SECTOR)
-        f.write(padded)
-        os.fsync(f.fileno())
-        back = read(f, RECOVERY_LBA, len(padded) // SECTOR)
-    if back != padded:
-        sys.exit("READ-BACK MISMATCH in recovery; restore with: card-install.py restore TARGET --backup " + bfile)
+    storage.write(a.target, "recovery", RECOVERY_LBA * SECTOR, padded)
     print("recovery written and verified")
     if a.fallback_stock:
-        with open(a.target, "r+b", buffering=0) as f:
-            f.seek(BACKUP_LBA * SECTOR)
-            f.write(stock_boot)
-            os.fsync(f.fileno())
-            ok = read(f, BACKUP_LBA, BOOT_SECTORS) == stock_boot
-        print("backup: stock boot copy written and verified" if ok else "backup: READ-BACK MISMATCH (recovery is fine)")
-    if a.arm:
-        sys.stdout.flush()
-        subprocess.run([sys.executable, "-I", os.path.join(HERE, "bcb.py"), "set", a.target, "recovery", "--execute"])
+        storage.write(a.target, "backup", BACKUP_LBA * SECTOR, stock_boot)
+        print("backup: stock boot copy written and verified")
 
 
 if __name__ == "__main__":

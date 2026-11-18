@@ -200,7 +200,7 @@ fn main() {
         "install" => install(&a),
         "gel-install" => gel_install(&a),
         "kexec-check" => kexec_check(&a),
-        "sd-mode" | "rollback" => oos_update::storage::run(&a),
+        "sd-mode" | "rollback" | "storage-write" | "storage-data" => oos_update::storage::run(&a),
         "confirm" => {
             need_data(&a);
             let running = std::fs::read_to_string("/etc/oos-build").ok();

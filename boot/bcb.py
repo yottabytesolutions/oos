@@ -15,7 +15,7 @@ Card layout: `misc` starts at LBA 32768 (PARM 0x2000@0x6000 + 0x2000), so the co
     bcb.py show   TARGET                    TARGET = card image, /dev/rdiskN (Mac), /dev/mmcblk0 or /dev/block/mmcblk0
     bcb.py set    TARGET recovery|loader    dry run: prints what would be written
     bcb.py clear  TARGET                    dry run
-    add --execute to write; the sector is read back and compared. --misc-lba overrides 32768.
+    --execute refuses writes under ADR 0011. --misc-lba overrides 32768 for inspection.
 """
 import argparse, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -25,10 +25,6 @@ SECTOR = 512
 CMD_OFFSET_SECTORS = 0x20
 MISC_LBA = int(boardconf.load()["OOS_BCB_LBA"]) - CMD_OFFSET_SECTORS
 COMMANDS = {"recovery": b"boot-recovery", "factory": b"boot-factory", "loader": b"bootloader"}
-
-
-def rw_open(path, write):
-    return open(path, "r+b" if write else "rb", buffering=0)
 
 
 def read_sector(f, lba):
@@ -57,7 +53,7 @@ def main():
     ap.add_argument("--execute", action="store_true")
     a = ap.parse_args()
     lba = a.misc_lba + CMD_OFFSET_SECTORS
-    with rw_open(a.target, False) as f:
+    with open(a.target, "rb", buffering=0) as f:
         sec = read_sector(f, lba)
         head = read_sector(f, a.misc_lba)
     if len(sec) != SECTOR:
@@ -81,14 +77,7 @@ def main():
     if not a.execute:
         print("  dry run: add --execute to write this one sector")
         return
-    with rw_open(a.target, True) as f:
-        f.seek(lba * SECTOR)
-        f.write(bytes(new))
-        os.fsync(f.fileno())
-        back = read_sector(f, lba)
-    if back != bytes(new):
-        sys.exit("  READ-BACK MISMATCH")
-    print("  written and verified")
+    sys.exit("misc/BCB is protected by ADR 0011; nothing written")
 
 
 if __name__ == "__main__":

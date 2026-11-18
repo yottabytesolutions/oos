@@ -5,7 +5,7 @@
 #
 #   sdcard-clone.sh list                       list SD and USB disks
 #   sdcard-clone.sh read  DISK out.img         card -> image (+ out.img.sha256, + layout report)
-#   sdcard-clone.sh write in.img DISK          image -> card (asks you to type the disk id), then verifies
+#   sdcard-clone.sh write in.img DISK          refused: whole-card writes include protected storage
 #   sdcard-clone.sh verify in.img DISK         compare a card with an image (sha256 over the image length)
 #   sdcard-clone.sh fit in.img DISK|BYTES out.img
 #                                              a copy of a card image for a smaller card: the ext4 of the last
@@ -109,13 +109,6 @@ Linux)
 	die "sdcard-clone.sh supports macOS and Linux, not $(uname -s)";;
 esac
 
-copy() { # copy src dst bytes
-	if command -v pv >/dev/null 2>&1; then
-		pv -s "$3" "$1" | dd of="$2" bs=4194304 2>/dev/null
-	else
-		dd if="$1" of="$2" bs=4194304 status=progress
-	fi
-}
 
 cmd=${1:-}
 case "$cmd" in
@@ -151,29 +144,7 @@ read)
 	"$py" "$here/sdcard-layout.py" "$out" | tee "$out.layout.txt"
 	;;
 write)
-	[ $# -eq 3 ] || die "usage: $0 write in.img DISK"
-	img=$2; d=$3
-	[ -f "$img" ] || die "no image $img"
-	check_disk "$d"; describe "$d"
-	ib=$(file_bytes "$img"); db=$(disk_bytes "$d")
-	[ "$ib" -le "$db" ] || die "image ($ib bytes) is larger than the card ($db bytes); for a smaller card: $0 fit $img $d fitted.img"
-	if [ -f "$img.sha256" ] && [ "${IMAGE_VERIFIED:-0}" != 1 ]; then
-		echo "checking $img against $img.sha256 ..."
-		(cd "$(dirname "$img")" && sha256_check < "$(basename "$img").sha256") || die "image does not match its .sha256"
-	fi
-	echo "ALL DATA ON $d WILL BE REPLACED by $img."
-	printf "type the disk id (%s) to continue: " "$d"; read -r answer
-	[ "$answer" = "$d" ] || die "aborted"
-	unmount "$d"
-	if command -v pv >/dev/null 2>&1; then
-		sudo sh -c 'pv -s "$1" "$2" > "$3"' sh "$ib" "$img" "$(raw "$d")"
-	else
-		sudo dd if="$img" of="$(raw "$d")" bs=4194304 status=progress
-	fi
-	sync
-	"$0" verify "$img" "$d"
-	eject_disk "$d"
-	;;
+    die "whole-card writes include protected storage (ADR 0011); use boot/card-install.py for recovery";;
 verify)
 	[ $# -eq 3 ] || die "usage: $0 verify in.img DISK"
 	img=$2; d=$3

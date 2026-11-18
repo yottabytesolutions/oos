@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::claim_timing::Sampler;
-use crate::picture::deposit::{kernel, pool::Pool, standard, DiffBand};
+use crate::picture::deposit::{kernel, pool::Pool, standard, DiffBand, HIT_LIMIT};
 
 #[cfg(test)]
 mod tests;
@@ -186,7 +186,7 @@ fn prepare(
         slot.recycle(old);
     }
     let records = b.frames.saturating_sub(b.next.load(Ordering::Relaxed)) as u64;
-    if current.as_ref().is_some_and(|d| d.records + records > u16::MAX as u64 / 24) {
+    if current.as_ref().is_some_and(|d| d.records + records > HIT_LIMIT) {
         let full = current.take().expect("the weight limit applies to an existing deposit");
         if let Err(full) = slot.send(full) {
             full.reject(identity, b.counters);
@@ -200,7 +200,10 @@ fn prepare(
                 d.reset(b.header.identity());
                 d
             }
-            _ => Deposit::new(v.gen, (v.w, v.h), b.header.identity(), v.m.ch.each_ref().map(|c| c.on)),
+            other => {
+                drop(other);
+                Deposit::new(v.gen, (v.w, v.h), b.header.identity(), v.m.ch.each_ref().map(|c| c.on))
+            }
         }
     });
     if waveform.is_some() {
@@ -278,7 +281,7 @@ fn draw(
     }
     b.next.store(b.frames, Ordering::Relaxed);
     d.newest = b.newest.clone().or_else(|| d.newest.take());
-    d.read_at = Some(b.fed);
+    d.extent.include(b.fed);
     b.counters.publish(&d.progress, d.records - before);
     d.progress.measured = 0;
 }
@@ -306,6 +309,7 @@ fn account(b: &Batch, d: &mut Deposit, placed: &[Option<Box<Prepared>>]) {
     for p in placed.iter().flatten() {
         let Some(plan) = &p.plan else { continue };
         d.records += 1;
+        d.extent.add_hits(plan.plan.hit_bound());
         d.progress.measured += u64::from(p.measured);
         d.triggered += u64::from(plan.triggered);
         if let Some(outcome) = plan.plan.outcome() {

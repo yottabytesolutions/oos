@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use std::time::Instant;
 
 pub(super) struct Header {
     pair: (u64, u64),
@@ -62,7 +63,22 @@ impl Pipe {
         codes: Option<CodesInto>,
         newest: Option<Arc<Frame>>,
     ) -> Option<Arc<Frame>> {
-        self.submit(raw, fb, frames, (identity.epoch(), Some(identity)), decode.into(), codes, newest).1
+        self.feed_at(raw, fb, frames, (identity, Instant::now()), decode, codes, newest)
+    }
+
+    #[allow(clippy::too_many_arguments)] // Buffer geometry, timestamp and conversion describe one ring read.
+    pub(crate) fn feed_at(
+        &self,
+        raw: Box<dyn RawBatch>,
+        fb: usize,
+        frames: std::ops::Range<usize>,
+        (identity, fed): (oos_core::change::Identity, Instant),
+        decode: DecodeInto,
+        codes: Option<CodesInto>,
+        newest: Option<Arc<Frame>>,
+    ) -> Option<Arc<Frame>> {
+        self.submit(raw, fb, frames, (Header::new(identity.epoch(), Some(identity)), fed), decode.into(), codes, newest)
+            .1
     }
 
     #[cfg(any(target_os = "linux", test))]
@@ -71,7 +87,7 @@ impl Pipe {
         raw: Box<dyn RawBatch>,
         fb: usize,
         frames: std::ops::Range<usize>,
-        identity: oos_core::change::Identity,
+        (identity, fed): (oos_core::change::Identity, Instant),
         decode: IndexedDecodeInto,
         newest: Option<Arc<Frame>>,
     ) -> Option<Arc<Frame>> {
@@ -79,7 +95,7 @@ impl Pipe {
             raw,
             fb,
             frames,
-            (identity.epoch(), Some(identity)),
+            (Header::new(identity.epoch(), Some(identity)), fed),
             decoder::Decoder::Prepared(decode),
             None,
             newest,
@@ -97,7 +113,7 @@ impl Pipe {
         decode: impl Into<decoder::Decoder>,
         codes: Option<CodesInto>,
     ) -> Arc<Batch> {
-        self.submit(raw, fb, frames, header, decode.into(), codes, None).0
+        self.submit(raw, fb, frames, (Header::new(header.0, header.1), Instant::now()), decode.into(), codes, None).0
     }
 
     #[allow(clippy::too_many_arguments)] // All arguments are immutable batch inputs.
@@ -106,12 +122,11 @@ impl Pipe {
         raw: Box<dyn RawBatch>,
         fb: usize,
         frames: std::ops::Range<usize>,
-        header: (u64, Option<oos_core::change::Identity>),
+        (header, fed): (Header, Instant),
         decode: decoder::Decoder,
         codes: Option<CodesInto>,
         newest: Option<Arc<Frame>>,
     ) -> (Arc<Batch>, Option<Arc<Frame>>) {
-        let (stamp, identity) = header;
         let first = frames.start;
         let frames = frames.end.min(raw.bytes().len().checked_div(fb).unwrap_or(0));
         let mut b = Arc::new(Batch {
@@ -120,13 +135,13 @@ impl Pipe {
             frames,
             decode,
             codes,
-            header: Header::new(stamp, identity),
+            header,
             view_gen_at_submit: oos_hal::sync::lock(&self.view).gen,
             next: AtomicUsize::new(first.min(frames)),
             counters: self.counters,
             live: self.live.clone(),
             newest,
-            fed: std::time::Instant::now(),
+            fed,
         });
         self.live.fetch_add(1, Ordering::Acquire);
         if let Some(tx) = &oos_hal::sync::lock(&self.workers).sender {

@@ -115,6 +115,14 @@ impl Host {
         self.time_budgets
     }
 
+    pub(super) fn picture_time(&self, elapsed: f64) -> std::time::Instant {
+        if self.time_budgets {
+            std::time::Instant::now()
+        } else {
+            self.runtime.started + std::time::Duration::from_secs_f64(elapsed)
+        }
+    }
+
     #[cfg(test)]
     pub fn fixture() -> Self {
         let switches = crate::sysconf::Switches::default();

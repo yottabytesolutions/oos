@@ -12,6 +12,39 @@ use crate::drawpipe::Counters;
 use crate::model::NCH;
 use oos_core::change::Identity;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+pub(crate) const HIT_LIMIT: u64 = u16::MAX as u64 / 24;
+
+#[derive(Default)]
+pub(crate) struct Extent {
+    oldest: Option<Instant>,
+    newest: Option<Instant>,
+    hits: u64,
+}
+
+impl Extent {
+    pub(crate) fn include(&mut self, at: Instant) {
+        self.oldest = Some(self.oldest.map_or(at, |oldest| oldest.min(at)));
+        self.newest = Some(self.newest.map_or(at, |newest| newest.max(at)));
+    }
+
+    pub(crate) fn newest(&self) -> Option<Instant> {
+        self.newest
+    }
+
+    pub(crate) fn expired(&self, now: Instant) -> bool {
+        self.oldest.is_some_and(|oldest| now.saturating_duration_since(oldest) > Duration::from_millis(67))
+    }
+
+    pub(crate) fn add_hits(&mut self, hits: u64) {
+        self.hits = self.hits.saturating_add(hits);
+    }
+
+    pub(crate) fn hits(&self) -> u64 {
+        self.hits
+    }
+}
 
 pub(crate) struct Deposit {
     gen: u64,
@@ -24,7 +57,7 @@ pub(crate) struct Deposit {
     pub(crate) edges: [u64; 4],
     pub(crate) off: (f64, f64),
     pub(crate) newest: Option<Arc<crate::board::Frame>>,
-    pub(crate) read_at: Option<std::time::Instant>,
+    pub(crate) extent: Extent,
     pub(crate) progress: crate::claim_timing::Progress,
 }
 
@@ -41,7 +74,7 @@ impl Deposit {
             edges: [0; 4],
             off: (0.0, 0.0),
             newest: None,
-            read_at: None,
+            extent: Extent::default(),
             progress: Default::default(),
         }
     }
@@ -69,12 +102,16 @@ impl Deposit {
         self.edges = [0; 4];
         self.off = (0.0, 0.0);
         self.newest = None;
-        self.read_at = None;
+        self.extent = Extent::default();
         self.progress = Default::default();
     }
 
     pub(crate) fn reject(&self, identity: Option<Identity>, counters: &Counters) {
         counters.reject_deposit(self.identity, identity, self.records);
+        self.discard_folds(counters);
+    }
+
+    pub(crate) fn discard_folds(&self, counters: &Counters) {
         Counters::add(&counters.losses.folds, self.folds.iter().map(|(_, f)| f.n).sum());
     }
 }
@@ -82,19 +119,36 @@ impl Deposit {
 #[derive(Default)]
 struct Slot {
     closed: bool,
+    claimed: bool,
     reset_before: u64,
     pending: Option<Deposit>,
     spare: Vec<Deposit>,
 }
 
 impl Slot {
+    fn occupied(&self) -> bool {
+        self.claimed || self.pending.is_some()
+    }
+
     #[expect(clippy::result_large_err, reason = "Return the rejected deposit without allocating a box")]
     fn put(&mut self, deposit: Deposit) -> Result<(), Deposit> {
-        if self.pending.is_some() || deposit.predates(self.reset_before) {
+        if self.occupied() || deposit.predates(self.reset_before) {
             return Err(deposit);
         }
         self.pending = Some(deposit);
         Ok(())
+    }
+}
+
+pub(crate) struct Claim<'a> {
+    pub(crate) deposit: Option<Deposit>,
+    slot: &'a Handoff,
+}
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        oos_hal::sync::lock(&self.slot.state).claimed = false;
+        self.slot.space.notify_all();
     }
 }
 
@@ -106,10 +160,16 @@ pub(crate) struct Handoff {
 }
 
 impl Handoff {
+    pub(crate) fn claim(&self) -> Option<Claim<'_>> {
+        let mut state = oos_hal::sync::lock(&self.state);
+        let deposit = state.pending.take()?;
+        state.claimed = true;
+        Some(Claim { deposit: Some(deposit), slot: self })
+    }
+
+    #[cfg(test)]
     pub(crate) fn take(&self) -> Option<Deposit> {
-        let deposit = oos_hal::sync::lock(&self.state).pending.take();
-        self.space.notify_all();
-        deposit
+        self.claim()?.deposit.take()
     }
 
     #[expect(clippy::result_large_err, reason = "Return the rejected deposit without allocating a box")]
@@ -129,7 +189,7 @@ impl Handoff {
     #[expect(clippy::result_large_err, reason = "Return the rejected deposit without allocating a box")]
     pub(crate) fn send(&self, deposit: Deposit) -> Result<(), Deposit> {
         let mut state = oos_hal::sync::lock(&self.state);
-        while state.pending.is_some() && !state.closed && !deposit.predates(state.reset_before) {
+        while state.occupied() && !state.closed && !deposit.predates(state.reset_before) {
             state = self.space.wait(state).unwrap_or_else(std::sync::PoisonError::into_inner);
         }
         if state.closed {

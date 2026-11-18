@@ -48,7 +48,14 @@ mod tests {
                 let id = Default::default();
                 let newest = Some(waveform.clone());
                 let returned = if prepared {
-                    pipe.feed_prepared(raw, 1, 1..4, id, Arc::new(|_, _, _| unreachable!()), newest)
+                    pipe.feed_prepared(
+                        raw,
+                        1,
+                        1..4,
+                        (id, std::time::Instant::now()),
+                        Arc::new(|_, _, _| unreachable!()),
+                        newest,
+                    )
                 } else {
                     pipe.feed_with(raw, 1, 1..4, id, Arc::new(|_, _| unreachable!()), None, newest)
                 };

@@ -9,6 +9,7 @@ use crate::board::{
 use crate::drawpipe::{Pipe, RawBatch};
 use oos_core::change::Identity;
 use oos_hal::dho::{hz, seq::Settings};
+use std::time::Instant;
 
 #[cfg(test)]
 mod tests;
@@ -19,7 +20,7 @@ pub(super) struct Readout<'a> {
     params: &'a hz::Params,
     geometry: (usize, usize, bool),
     newest: (u64, HeaderProbe, Option<Frame>),
-    identity: Identity,
+    batch: (Identity, Instant),
 }
 
 impl<'a> Readout<'a> {
@@ -28,9 +29,9 @@ impl<'a> Readout<'a> {
         settings: (&'a Settings, &'a hz::Params),
         geometry: (usize, usize, bool),
         newest: (u64, HeaderProbe, Option<Frame>),
-        identity: Identity,
+        batch: (Identity, Instant),
     ) -> Self {
-        Self { pipe, settings: settings.0, params: settings.1, geometry, newest, identity }
+        Self { pipe, settings: settings.0, params: settings.1, geometry, newest, batch }
     }
 
     pub(super) fn dispatch<T: RawBatch + 'static>(
@@ -66,7 +67,7 @@ impl<'a> Readout<'a> {
                 matching::feed(
                     self.pipe,
                     (Box::new(full), fb, start..if keep { avail } else { avail - 1 }),
-                    self.identity,
+                    self.batch,
                     (self.settings.clone(), *self.params, probe),
                     matched,
                     keep.then(|| std::sync::Arc::new(newest)),

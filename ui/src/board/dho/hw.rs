@@ -2132,11 +2132,11 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                 }
             };
             let got = lifecycle::batch(b.single, ahead, || seq::acquire_batch_idle(&mut state, &b, &p, &mut bar, &mut c2h, &mut dma, ahead, fill_ms, log, changed, idle));
-            let batch_ms = t_batch.elapsed().as_secs_f32() * 1e3;
+            let read_at = std::time::Instant::now();
+            let batch_ms = (read_at - t_batch).as_secs_f32() * 1e3;
             if let Ok(c) = &got {
-                let asked = seq::frames(&b, &p);
                 let read_ms = fill_end.map_or(0.0, |e| e.elapsed().as_secs_f32() * 1e3);
-                crate::pacing::batch(batch_ms, *c, asked, fill_ms, read_ms);
+                crate::pacing::batch(batch_ms, *c, seq::frames(&b, &p), fill_ms, read_ms);
                 // before the fill: to its first look at the frame count (or to its end, a ring full at once); a fill
                 // ended early by a full ring counts as fill, not as rest
                 let ms = |a: std::time::Instant| a.saturating_duration_since(t_batch).as_secs_f32() * 1e3;
@@ -2310,7 +2310,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                             pool_made += 1;
                             oos_hal::dho::bus::DmaBuf::new()
                         }));
-                        let readout = batch::Readout::new(pipe, (&b, &p), (fb, avail, switches.board.frame0_drop), (n, switches.board.header_probe, raw_frame), identity);
+                        let readout = batch::Readout::new(pipe, (&b, &p), (fb, avail, switches.board.frame0_drop), (n, switches.board.header_probe, raw_frame), (identity, read_at));
                         readout.dispatch(&mut dma, next, match_cores.then_some(&mut cores), |newest| {
                             let mut newest = Frame { stamp, cfg: want_gen, ..newest };
                             if let Some(w) = la_words.take() {

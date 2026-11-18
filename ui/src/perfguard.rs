@@ -59,7 +59,7 @@ impl Clock {
 #[derive(Clone)]
 pub struct StageTiming {
     clock: Clock,
-    draw: draw::Timing,
+    frame: draw::FrameTiming,
     intake: [u64; 256],
     change: [u64; 256],
     picture: [u64; 256],
@@ -95,7 +95,7 @@ impl StageTiming {
     pub(crate) fn with_clock(clock: Clock) -> Self {
         Self {
             clock,
-            draw: draw::Timing::default(),
+            frame: draw::FrameTiming::default(),
             intake: [0; 256],
             change: [0; 256],
             picture: [0; 256],
@@ -120,11 +120,15 @@ impl StageTiming {
     }
     /// Disjoint per-step decay, fast, merge, records and grade durations, including skipped zeros.
     pub fn draw_step(&mut self, parts: [Duration; 5]) {
-        self.draw.step(parts);
+        self.frame.step(parts);
     }
     /// Rendering is separate from step; panel and HDMI view calls have independent rings.
     pub fn draw_render(&mut self, elapsed: Duration, view: bool) {
-        self.draw.render(elapsed, view);
+        self.frame.render(elapsed, view);
+    }
+    /// Record completed panel uploads only.
+    pub fn gpu_upload(&mut self, elapsed: Duration) {
+        self.frame.gpu_upload(elapsed);
     }
     pub fn begin_change(&mut self) {
         self.current_shadow = Some(Duration::ZERO);
@@ -287,7 +291,7 @@ impl StageTiming {
     }
     /// Appended after the existing restart fields in state queries; also used by host reports.
     pub fn diagnostics_text(&self) -> String {
-        self.split.text(&self.intake, self.samples()) + &deep::counters().text() + &self.draw.text()
+        self.split.text(&self.intake, self.samples()) + &deep::counters().text() + &self.frame.text()
     }
     pub(crate) fn intake_active(&self) -> bool {
         self.split.active()

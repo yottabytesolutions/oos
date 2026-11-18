@@ -32,6 +32,8 @@ pacing ... picture ... settle ...
 cost frames N wide N us decode/level/near/wide/frame A/B/C/D/E
 rss BYTES_OR_UNKNOWN watchdog STATE [gpu_failures N gpu_restarts N gpu_retry STATE]
 persistence on_OR_off last_crash none_OR_TIME_AND_TEXT
+gpu_clock current_hz=VALUE min_hz=VALUE max_hz=VALUE
+cpu_floor engaged_OR_disabled reason REASON gpu_floor engaged_OR_disabled reason REASON
 shadow acq=N mapping=N phosphor=N stats=N mask=N zone=N hw_average=N
 history=N math=N view=N normalize=N outbox=N errors=N unreviewed=N
 Full=N PayloadTooLarge=N SnapshotTooLarge=N DuplicateToken=N GenerationOverflow=N
@@ -579,3 +581,48 @@ Storage adds less than 15 KiB inline to each StageTiming owner and a fixed
 five-duration local per step. Recording does not allocate or sort; reporting
 sorts copies. Allocation guards and unchanged host layout/goldens are host
 evidence only; timing overhead and budgets are not yet verified on the unit.
+
+## RUN clock and GPU upload diagnostics (#195)
+
+After `last_crash`, `gpu_clock current_hz=VALUE min_hz=VALUE max_hz=VALUE` reports
+read-backs from the discovered GPU devfreq node. Values are decimal Hz or `unknown`
+when absent, unreadable or malformed. They describe the kernel's current policy,
+including any maximum imposed by cooling. The clock controller samples through its
+platform port at construction and on the first update at or after each one-second
+deadline, including while floors are disabled. RUN/STOP changes and raise/restore
+attempts refresh the sample immediately after the attempt. Queries format the last
+owned sample without reading sysfs or waiting for controller IO. Read failures replace
+only the affected sampled field with `unknown`; later samples can recover it.
+
+`cpu_floor a53 STATE reason REASON min_khz=VALUE a72 STATE reason REASON min_khz=VALUE`
+and `gpu_floor STATE reason REASON` report each RUN floor independently. Each CPU
+minimum is a decimal kHz read-back sampled from policy0 (A53) or policy4 (A72),
+using the same canonical paths as floor control. Sampling is independent of floor
+enablement and available-frequency metadata: a readable minimum remains visible
+with `config-off` or `device-unavailable`. An absent policy, unreadable minimum or
+malformed value reports `unknown` only for that cluster. STATE is `engaged` after a successful write and read-back,
+otherwise `disabled`. REASON is `none` for engagement, `idle` outside hardware RUN,
+`config-off`, `device-unavailable`, `no-controller`, `recovery-failed`,
+`not-engaged`, `restore-pending`, `thermal-limit` (including re-arm hysteresis),
+`thermal-read-error`, or `thermal-unavailable:DETAIL`. Discovery DETAIL includes
+`no-passive-trip`, `missing-cpu-gpu-zones` or an IO error kind prefixed with `io-`
+(for example, `io-NotFound`). Each reason is a single token. CPU and GPU sensors share
+the earliest passive trip exported by either zone; both temperatures remain required.
+A floor whose last raise was verified remains `engaged reason restore-pending` while STOP or thermal
+inhibition requires restoration and restoration has not succeeded. An unverified raise or startup recovery
+reports `disabled reason restore-pending` when rollback is outstanding. Before a new raise writes the minimum,
+it invalidates prior raise verification; only a successful read-back verifies the new raise. Both pending states
+retain the original rollback receipt across STOP, RUN re-entry and unsuccessful restoration, until restoration
+is verified. `not-engaged` does not imply an IO error; it includes an unattempted or unverified raise
+without pending restoration.
+
+After the seven draw diagnostics, `diag gpu.upload` uses the same bounded-ring
+format and nearest-rank/pending rules, with `p50_ns`, `p99_ns` and `max_ns`.
+One observation is the helper's upload duration for one successfully collected
+panel frame, converted from helper milliseconds to a `Duration` at receipt. Invalid
+upload times fail the collection with an explicit helper error. HDMI collections, CPU
+frames and collections with no pending panel frame add no observations. Reporting
+retains the last 256 observations and a saturating lifetime total; queries do not
+record samples. The extra ring raises inline draw diagnostic storage to less than
+17 KiB. Existing draw rings retain their boundaries and order. Host-tested only;
+unit performance and thermal read-back verification remain pending.

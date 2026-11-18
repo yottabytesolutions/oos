@@ -9,6 +9,10 @@
 use super::*;
 
 impl Ui {
+    pub(crate) fn record_gpu_upload(&mut self, elapsed: std::time::Duration) {
+        change::timing_mut(self).gpu_upload(elapsed);
+    }
+
     pub(super) fn graphics_kind(it: Item) -> Option<Kind> {
         (it == Item::Graphics).then_some(Kind::Choice)
     }
@@ -49,6 +53,16 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helper_upload_durations_are_recorded_without_conversion() {
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+        assert!(change::timing(&ui).diagnostics_text().contains("gpu.upload n=0 total=0 p50_ns=pending"));
+        ui.record_gpu_upload(std::time::Duration::ZERO);
+        ui.record_gpu_upload(std::time::Duration::from_millis(125));
+        let text = change::timing(&ui).diagnostics_text();
+        assert!(text.contains("gpu.upload n=2 total=2 p50_ns=0 p99_ns=pending max_ns=125000000"), "{text}");
+    }
 
     #[test]
     fn the_choice_is_a_setting_of_the_scope() {

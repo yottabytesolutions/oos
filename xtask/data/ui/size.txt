@@ -5,7 +5,7 @@
 568 file ui/src/drm.rs
 754 file ui/src/fastdraw.rs
 649 file ui/src/gfx.rs
-650 file ui/src/gpu.rs
+618 file ui/src/gpu.rs
 657 file ui/src/http.rs
 438 file ui/src/main.rs
 460 file ui/src/measures/jitter.rs

@@ -41,8 +41,64 @@ fn invalid_floor_switches_log_the_key_and_value() {
 #[test]
 fn failed_restore_retries_once_per_second_and_logs_only_failure_then_success() {
     let text = child(&Tree::new(), "restore");
-    assert_eq!(text.matches("device=cpu running=false error=").count(), 1, "{text}");
-    assert_eq!(text.matches("device=cpu restored=408000").count(), 1, "{text}");
+    assert_eq!(text.matches("device=cpu-a72 running=false error=").count(), 1, "{text}");
+    assert_eq!(text.matches("device=cpu-a72 restored=408000").count(), 1, "{text}");
+}
+
+#[test]
+fn thermal_restore_failures_remain_pending_until_restored_or_rearmed() {
+    for (temperature, rearm) in [("65000", false), ("bad", false), ("65000", true)] {
+        let tree = Tree::new();
+        let failures = Arc::new(Mutex::new(0));
+        let port = Failing { inner: linux::Sysfs(tree.0.clone()), failures: failures.clone() };
+        let clock = ManualClock::new();
+        let c = Handle::fixture(Controller::with_clock(
+            Box::new(port),
+            Config::parse("perf.gpu_floor = off"),
+            None,
+            tree.0.join("saved"),
+            clock.source(),
+        ));
+        c.update(true);
+        let running: Status = c.status();
+        *oos_hal::sync::lock(&failures) = 1;
+        tree.set("class/thermal/thermal_zone2", "temp", temperature);
+        clock.advance(Duration::from_secs(1));
+        c.poll();
+        let pending = c.status();
+        assert!(pending.to_string().contains("a72 engaged reason restore-pending"));
+        assert_eq!(tree.minima().0, "1416000");
+        assert!(tree.0.join("saved").exists());
+        if rearm {
+            tree.set("class/thermal/thermal_zone2", "temp", "59999");
+        }
+        clock.advance(Duration::from_secs(1));
+        c.poll();
+        let expected = if rearm { "a72 engaged reason none" } else { "a72 disabled reason thermal-" };
+        assert!(c.status().to_string().contains(expected));
+        c.update(false);
+        assert_eq!(tree.minima().0, "408000");
+        assert!(!tree.0.join("saved").exists());
+        assert!(running.to_string().contains("a72 engaged reason none min_khz=1416000"));
+        assert!(pending.to_string().contains("a72 engaged reason restore-pending min_khz=1416000"));
+    }
+}
+
+#[test]
+fn sampled_guard_does_not_change_status_until_controller_update() {
+    let tree = Tree::new();
+    let clock = ManualClock::new();
+    let mut c = tree.controller_with_clock(&clock);
+    c.update(true);
+    tree.set("class/thermal/thermal_zone2", "temp", "65000");
+    clock.advance(Duration::from_secs(1));
+    assert!(!c.thermal.allowed(c.port.as_ref(), (c.clock)()));
+    let text = c.status().to_string();
+    for label in ["a72", "gpu_floor"] {
+        assert!(text.contains(&format!("{label} engaged reason none")), "{text}");
+    }
+    c.update(true);
+    assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
 }
 
 fn restore_retries(tree: &Tree) {
@@ -130,4 +186,53 @@ fn review_child() {
         "thermal" => thermal_transitions(&tree),
         case => panic!("unknown review case {case}"),
     }
+}
+
+#[test]
+fn run_after_failed_restore_reapplies_and_verifies_the_floor() {
+    for minimum in ["408000", "816000"] {
+        let tree = Tree::new();
+        let failures = Arc::new(Mutex::new(0));
+        let port = Failing { inner: linux::Sysfs(tree.0.clone()), failures: failures.clone() };
+        let mut c = Controller::new(Box::new(port), Config::parse("perf.gpu_floor = off"), None, tree.0.join("saved"));
+        c.update(true);
+        let receipt = std::fs::read(tree.0.join("saved")).unwrap();
+        *oos_hal::sync::lock(&failures) = 1;
+        c.update(false);
+        tree.set(CPU, "scaling_min_freq", minimum);
+        assert!(c.status().to_string().contains("a72 engaged reason restore-pending"));
+        c.update(true);
+        assert_eq!(tree.minima().0, "1416000");
+        assert!(c.status().to_string().contains("a72 engaged reason none"));
+        assert_eq!(std::fs::read(tree.0.join("saved")).unwrap(), receipt);
+        c.update(false);
+        assert_eq!(tree.minima().0, "408000");
+        assert!(!tree.0.join("saved").exists());
+    }
+}
+
+#[test]
+fn retry_after_unverified_raise_keeps_the_original_minimum() {
+    let tree = Tree::new();
+    let clock = ManualClock::new();
+    let port = Clamping(linux::Sysfs(tree.0.clone()), CPU, 123);
+    let mut c = Controller::with_clock(
+        Box::new(port),
+        Config::parse("perf.gpu_floor = off"),
+        None,
+        tree.0.join("saved"),
+        clock.source(),
+    );
+    c.update(true);
+    assert_eq!(tree.minima().0, "123");
+    assert!(c.status().to_string().contains("a72 disabled reason not-engaged"));
+    let receipt = std::fs::read(tree.0.join("saved")).unwrap();
+    tree.set(CPU, "scaling_max_freq", "408000");
+    clock.advance(thermal::SAMPLE_PERIOD);
+    c.update(true);
+    assert_eq!(tree.minima().0, "408000");
+    assert!(c.status().to_string().contains("a72 engaged reason none"));
+    assert_eq!(std::fs::read(tree.0.join("saved")).unwrap(), receipt);
+    c.update(false);
+    assert_eq!(tree.minima().0, "408000");
 }

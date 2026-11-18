@@ -42,11 +42,12 @@ impl Runtime {
 
     pub(super) fn text(&self) -> String {
         format!(
-            "{} {} persistence {} last_crash {}",
+            "{} {} persistence {} last_crash {}{}",
             self.memory.status(),
             self.gpu,
             if self.persistence { "on" } else { "off" },
-            self.crash.as_ref().map_or("none".into(), |c| c.text())
+            self.crash.as_ref().map_or("none".into(), |c| c.text()),
+            self.clocks.as_ref().map_or_else(crate::system::clocks::Status::unavailable, |clocks| clocks.status())
         )
     }
 }

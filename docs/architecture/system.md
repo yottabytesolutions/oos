@@ -265,16 +265,22 @@ disable that device's floor. Only `on` and `off` are accepted; unrecognised
 values are logged and treated as `off`. They do not depend on `perf.place`, and saved
 measurement setups do not change them.
 
-Accepted hardware RUN requests policy4 `scaling_min_freq = 1416000` (kHz) and
-the GPU devfreq `min_freq = 600000000` (Hz). Higher prior minima are preserved.
-The system clock adapter discovers the `.gpu` devfreq node, reads each previous
-minimum first, and writes only values listed in that node's available frequencies.
-Missing nodes, unavailable frequencies and IO failures are reported without
-changing the other device's policy. Successful applied values are logged once
-per device per process as structured `clock_floor` fields.
+Accepted hardware RUN floors policy0 (A53) and policy4 (A72) independently at
+that policy's highest `scaling_available_frequencies` entry no greater than its
+current `scaling_max_freq` (kHz). A kernel clamp to a valid lower OPP counts as
+engaged at the read-back value. The GPU target remains `min_freq = 600000000` (Hz),
+preserving higher prior minima and requiring exact read-back.
+The system clock adapter discovers the `.gpu` devfreq node and reads each previous
+minimum before writing. Missing nodes, unavailable frequencies and IO failures are
+reported per policy without disabling the others. Successful applied values are
+logged once per policy per process as structured `clock_floor` fields. Failed RUN
+raises retry at most once per second while RUN remains allowed. Identical
+consecutive raise errors are logged once per policy until a raise succeeds;
+a changed error is reported immediately on the next attempt.
 
 Before every floor write, saved minima are atomically renamed into the tmpfs
-receipt `/tmp/oos-clock-floors`. STOP, the memory watchdog's hold, worker teardown
+receipt `/tmp/oos-clock-floors`, with separate `cpu-a53`, `cpu-a72` and `gpu`
+entries. Legacy `cpu` entries still recover policy4. STOP, the memory watchdog's hold, worker teardown
 and guard drop restore the saved minima, verify read-back, then remove the receipt.
 The Linux panic hook tries the controller lock without waiting before invoking the
 previous hook; SIGINT/SIGTERM use orderly exit. `oos-ui-loop` restores and logs
@@ -282,21 +288,52 @@ the receipt after every exit, including unclean deaths (SIGKILL, SIGSEGV and
 allocator abort) and clean exits with pending recovery, even without a restart. Startup independently restores it
 before reading new previous minima, including when switches are now off. Failed
 or invalid recovery keeps the receipt and disables new floors for that process.
+Startup and supervisor recovery attempt every saved device despite earlier IO or
+verification failures, removing the receipt only when every entry verifies.
 Failed STOP/thermal restores retry at most once per second; teardown still
 tries immediately. Only the first restore failure and eventual success are
 logged per device. A reboot discards tmpfs and resets the kernel's clock policy.
 
 While RUN requests floors, the adapter samples `cpu-thermal` and `gpu-thermal`
-by type name at most once a second. Each drop limit is the lowest passive trip
-exported by the running DT through sysfs, minus 5000 millidegrees C. For a 70 C
+by type name at most once a second. Both sensors use the lowest passive trip
+exported by either named zone through `trip_point_*_type` and `trip_point_*_temp`,
+minus 5000 millidegrees C. This covers the RK3399 layout where only `cpu-thermal`
+exports passive trips; a GPU zone with only a critical trip still participates
+in temperature protection. For a 70 C
 passive trip this means dropping at 65 C and re-arming below 60 C (5000
 millidegrees hysteresis); these margins are task 0086 policy. Each thermal drop
 and re-arm logs the zone type and temperature, or the read error, once per
-transition. Re-arm reports both zones. Both minima drop if either zone reaches
-its limit or its temperature cannot be read. Missing named zones or passive trips
+transition. Re-arm reports both zones. All CPU/GPU minima drop if either zone reaches
+its limit or its temperature cannot be read. Missing named zones or no passive trip across both zones
 disable floors at construction. Linux still owns cooling, governors and maximum
-frequencies. The exact live trips and GPU cooling-map bindings are not yet
+frequencies. The graphics helper does not write clock minima; the RUN controller
+is their sole application owner. The exact live trips and GPU cooling-map bindings are not yet
 verified for this change; task 0086 records the required unit capture.
+
+`:SYSTem:STATe?` reports GPU current/minimum/maximum frequencies in Hz and each
+floor's engaged/disabled state with a reason. `cpu_floor a53` and `a72` each
+include their minimum read-back as `min_khz`. CPU samples read the known policy0
+and policy4 paths independently of floor enablement and available-frequency metadata.
+A readable minimum is reported even with `config-off` or `device-unavailable`;
+absent, unreadable and malformed readings are `unknown`. Control and sampling share
+the canonical CPU policy paths.
+The controller owns a bounded sample of five optional frequency values, refreshed
+through the clock port at construction and on the first lifecycle update at or after
+each one-second deadline, even with floors disabled. RUN/STOP changes and raise/restore
+attempts refresh it after IO. The handle owns the latest status snapshot separately
+from the controller IO lock, so repeated queries neither read sysfs nor wait for IO.
+A failed sample replaces the affected value with `unknown` until a later sample succeeds.
+A floor whose last raise was verified remains `engaged reason restore-pending`
+until restoration succeeds, including during thermal inhibition. An unverified
+raise or startup recovery with outstanding rollback reports
+`disabled reason restore-pending`. A new raise invalidates prior verification
+before writing the minimum and becomes verified only after a valid read-back.
+Rollback receipt ownership is independent of this status: both pending states
+keep the original minimum across STOP, RUN re-entry and unsuccessful restoration.
+An unverified raise without pending restoration reports `not-engaged`.
+`diag gpu.upload` reports panel upload p50/p99 in ns over the latest 256 completed
+panel uploads, using the existing diagnostic-ring pending thresholds. HDMI uploads
+and idle frames do not enter that ring. These additions are host-tested only.
 
 Host fake-filesystem tests cover recovery, thermal inhibition and lifecycle
 contracts. Actual read-backs, web/upload latency and a 10-minute RUN thermal

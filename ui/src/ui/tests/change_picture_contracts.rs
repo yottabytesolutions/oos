@@ -167,6 +167,8 @@ fn state_query_real_reply_has_separate_panel_and_view_renders() {
             .collect::<Vec<_>>()
     };
     assert_eq!(labels(&state), labels(fixture), "fixture diagnostic labels must track the real handler");
+    let clocks = |reply: &str| reply.split_once(" gpu_clock ").unwrap().1.split_once(" shadow ").unwrap().0.to_owned();
+    assert_eq!(clocks(&state), clocks(fixture), "fixture clock status must track the real handler");
     // Retain the actual production reply for fixture regeneration on restricted hosts.
     println!("{state}");
 }

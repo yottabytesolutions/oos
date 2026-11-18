@@ -21,6 +21,12 @@ is covered by host tests only: no real install path leaves a kexec session runni
 Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/src/bin/oos-update.rs` (command line),
 `ui/src/ui/update.rs` and `ui/src/http.rs` (GUI, web upload), `rootfs/initramfs/etc/rcS` (start count, watcher).
 
+Boot card mode is device-local: `sd.mode` in `/oos/system.conf` defaults to `hs`. Package verification precedes
+DTB selection; the signed package stays unchanged while the selected image's loader id and local update hash
+are recomputed. Kexec stages the selected tree too. `oos-update sd-mode [--execute]` restages a confirmed active
+image for a mode-only trial with an HS rollback image. See [boot mode](boot.md#device-boot-card-mode) for the retry
+rule and the pre-rcS safety boundary. This boot path is host-tested only and still needs a unit run.
+
 ## What it protects against
 
 | Failure | What happens |

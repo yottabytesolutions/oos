@@ -28,6 +28,8 @@ Other Linux and macOS hosts are supported but not verified. The BSDs are best ef
 Doctor accepts newer Python versions and reports the interpreter actually used.
 The default gate needs the scripts' declared shells (including `mksh` for Android GEL syntax),
 coverage tools and the pinned Rust host/ARM toolchain. Syntax checking does not run the scripts.
+HAL's boot card DTB tests also require `fdtget` on `PATH` for independent property readback.
+Install `device-tree-compiler` on Debian/Ubuntu or `dtc` with Homebrew on macOS.
 Only the explicit `--image` tier needs Docker with arm64 execution, QEMU, kernel source and the
 locked GPU/simulation/image profiles. Prepare it with `tools/bootstrap.sh --image`.
 Missing prerequisites fail in the tier that requires them.

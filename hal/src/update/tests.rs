@@ -280,6 +280,8 @@ fn state_text_round_trip() {
         persist: true,
         kexec: Some("20261108-090000".into()),
         event: "installed 20261105-170000".into(),
+        sd_failed: false,
+        sd_trial: None,
     };
     assert_eq!(State::parse(&s.text()), s);
     assert_eq!(State::parse(""), State::default());
@@ -1022,3 +1024,5 @@ fn install_and_restore_reports_describe_their_actual_start_paths() {
     assert!(!r.written);
     assert_eq!(r.lines, [format!("recovery already holds build {}", short(&prev))]);
 }
+
+mod sd;

@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+use super::{
+    card::Region,
+    hash::{hex, unhex},
+    io, sd, Card, Entry, State, SLOT_WRITING,
+};
+use std::path::Path;
+
+pub(super) fn write_slot(
+    card: &mut Card,
+    state_path: &Path,
+    image: &[u8],
+    entry: Entry,
+    state: &mut State,
+) -> Result<(), String> {
+    // While the slot is being written it holds no valid image.
+    state.previous = None;
+    state.event = SLOT_WRITING.into();
+    state.save(state_path).map_err(io("writing the update state"))?;
+    card.write_image(Region::Slot, image)?;
+    state.previous = Some(entry);
+    state.save(state_path).map_err(io("writing the update state"))
+}
+
+impl State {
+    pub fn parse(text: &str) -> State {
+        let mut s = State::default();
+        let mut cur = (String::new(), None, 0u64);
+        let mut prev = (String::new(), None, 0u64);
+        for l in text.lines() {
+            let Some((k, v)) = l.split_once(' ') else { continue };
+            let v = v.trim();
+            match k {
+                "current.build" => cur.0 = v.into(),
+                "current.sha256" => cur.1 = unhex(v).and_then(|b| b.try_into().ok()),
+                "current.len" => cur.2 = v.parse().unwrap_or(0),
+                "previous.build" => prev.0 = v.into(),
+                "previous.sha256" => prev.1 = unhex(v).and_then(|b| b.try_into().ok()),
+                "previous.len" => prev.2 = v.parse().unwrap_or(0),
+                "trial" => s.trial = v.parse().ok(),
+                "sd.failed" => s.sd_failed = v == "yes",
+                "sd.trial" => {
+                    s.sd_trial = match v {
+                        "hs" => Some(sd::Mode::Hs),
+                        "sdr104" => Some(sd::Mode::Sdr104),
+                        _ => None,
+                    }
+                }
+                "mode" => s.persist = v == "persist",
+                "kexec" if !v.is_empty() => s.kexec = Some(v.into()),
+                "event" => s.event = v.into(),
+                _ => {}
+            }
+        }
+        let entry = |(build, sha, len): (String, Option<[u8; 32]>, u64)| {
+            sha.filter(|_| len > 0).map(|sha256| Entry { build, sha256, len })
+        };
+        s.current = entry(cur);
+        s.previous = entry(prev);
+        s
+    }
+
+    pub fn text(&self) -> String {
+        let mut t = String::from("# OOS update state (oos_hal::update, docs/update.md)\n");
+        for (n, e) in [("current", &self.current), ("previous", &self.previous)] {
+            if let Some(e) = e {
+                t.push_str(&format!("{0}.build {1}\n{0}.sha256 {2}\n{0}.len {3}\n", n, e.build, hex(&e.sha256), e.len));
+            }
+        }
+        if let Some(n) = self.trial {
+            t.push_str(&format!("trial {}\n", n));
+        }
+        if self.sd_failed {
+            t.push_str("sd.failed yes\n");
+        }
+        if let Some(mode) = self.sd_trial {
+            t.push_str(if mode == sd::Mode::Hs { "sd.trial hs\n" } else { "sd.trial sdr104\n" });
+        }
+        t.push_str(if self.persist { "mode persist\n" } else { "mode oneshot\n" });
+        if let Some(b) = &self.kexec {
+            t.push_str(&format!("kexec {}\n", b.replace('\n', " ")));
+        }
+        if !self.event.is_empty() {
+            t.push_str(&format!("event {}\n", self.event.replace('\n', " ")));
+        }
+        t
+    }
+
+    pub fn load(path: &Path) -> std::io::Result<State> {
+        match std::fs::read_to_string(path) {
+            Ok(t) => Ok(State::parse(&t)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Atomic: temp file, fsync, rename.
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(d) = path.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        let tmp = path.with_extension("new");
+        {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(self.text().as_bytes())?;
+            f.sync_all()?;
+        }
+        std::fs::rename(&tmp, path)?;
+        if let Some(d) = path.parent() {
+            if let Ok(f) = std::fs::File::open(d) {
+                let _ = f.sync_all();
+            }
+        }
+        Ok(())
+    }
+    pub(super) fn fail_sd_trial(&mut self) {
+        if self.sd_trial == Some(sd::Mode::Sdr104) {
+            self.sd_failed = true;
+        }
+        self.sd_trial = None;
+    }
+
+    pub(super) fn sd_fallback(&self) -> Option<&'static str> {
+        self.sd_failed.then_some("SDR104 trial was not confirmed: falling back to hs; select hs before retrying")
+    }
+    pub(super) fn missed_sd_trial(&mut self) -> &'static str {
+        if self.sd_trial == Some(sd::Mode::Sdr104) {
+            self.fail_sd_trial();
+            "; SDR104 was not confirmed: falling back to hs"
+        } else {
+            ""
+        }
+    }
+}

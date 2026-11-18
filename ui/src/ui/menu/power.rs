@@ -12,6 +12,7 @@ pub(super) const AREA: Area = Area {
     activate: Ui::ana_activate,
     options: Ui::ana_options,
     menu_items,
+    ..Area::EMPTY
 };
 
 fn menu_items(ui: &Ui, menu: MenuId) -> Vec<Item> {

@@ -3,8 +3,17 @@
 
 use super::*;
 
-pub(super) const AREA: Area =
-    Area { sources, kind, label, value, adjust, activate, options, menu_items: |ui, _| ui.decode_items() };
+pub(super) const AREA: Area = Area {
+    sources,
+    kind,
+    label,
+    value,
+    adjust,
+    activate,
+    options,
+    menu_items: |ui, _| ui.decode_items(),
+    ..Area::EMPTY
+};
 
 fn kind(it: Item) -> Option<Kind> {
     Some(match it {

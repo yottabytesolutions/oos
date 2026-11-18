@@ -914,7 +914,7 @@ fn holdoff_steps_and_setups() {
     );
     for t in TRIG_TYPES {
         u.set_trig_type(t);
-        assert!(u.trigger_items().contains(&Item::TrigHoldoff), "{:?}", t);
+        assert!(u.menu_items(MenuId::Trigger).contains(&Item::TrigHoldoff), "{:?}", t);
     }
 }
 
@@ -1028,7 +1028,7 @@ fn event_table_scrolls_and_goes_to_an_event() {
 fn search_list_shows_the_marks() {
     let mut u = with_two_channels();
     u.search_on = true;
-    assert!(u.trigger_items().contains(&Item::SearchTable));
+    assert!(u.menu_items(MenuId::Trigger).contains(&Item::SearchTable));
     u.activate(Item::SearchTable);
     assert_eq!(u.table, Some(tables::TableKind::Search));
     assert_eq!(u.table_rows(tables::TableKind::Search).len(), u.search_events().len());
@@ -3298,7 +3298,7 @@ fn trigger_coupling_by_menu_scpi_and_setup() {
     let mut u = with_two_channels();
     let cv = Canvas::new(PANEL_W, PANEL_H);
     let mut s = crate::scpi::Scpi::open(0, false);
-    assert!(u.trigger_items().contains(&Item::TrigCoup));
+    assert!(u.menu_items(MenuId::Trigger).contains(&Item::TrigCoup));
     s.exec_line(&mut u, &cv, ":TRIG:COUP AC");
     assert_eq!(u.m.trig_coup, TrigCoup::Ac);
     assert_eq!(String::from_utf8_lossy(&s.exec_line(&mut u, &cv, ":TRIG:COUP?")).trim(), "AC");
@@ -3310,7 +3310,7 @@ fn trigger_coupling_by_menu_scpi_and_setup() {
     assert_eq!(board().want(&u.m, &Default::default()).trig_couple, oos_hal::dho::tpu::Coupling::HfReject);
     u.m.trig_type = TrigType::Pulse;
     assert_eq!(u.m.trig_coupling(), TrigCoup::Dc);
-    assert!(!u.trigger_items().contains(&Item::TrigCoup));
+    assert!(!u.menu_items(MenuId::Trigger).contains(&Item::TrigCoup));
 }
 
 // A capped depth shows the applied depth, but the row's value stays the menu's choice: the picker still finds it

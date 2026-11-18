@@ -784,7 +784,7 @@ mod trigger_tests {
         assert_eq!(ui.options(Item::TrigSrc).len(), n_ch() + 16);
         ui.select_option(Item::TrigSrc, "D14");
         assert_eq!((ui.m.trig_line(), ui.value(Item::TrigSrc)), (Some(14), "D14".to_string()));
-        assert!(!ui.trigger_items().contains(&Item::TrigLevel));
+        assert!(!ui.menu_items(MenuId::Trigger).contains(&Item::TrigLevel));
         // no analog channel is needed for the trigger
         assert_eq!(ui.m.trig_channels(), [false; NCH]);
         ui.select_option(Item::TrigSrc, "CH2");
@@ -871,7 +871,7 @@ mod pattern_tests {
             ui.m.pat_la[n] = if 0x5a >> n & 1 == 1 { Bit::H } else { Bit::L };
         }
         assert!(ui.m.pat_on_la() && ui.m.trig_on_la());
-        assert!(ui.trigger_items().contains(&Item::Open(MenuId::LaPat)));
+        assert!(ui.menu_items(MenuId::Trigger).contains(&Item::Open(MenuId::LaPat)));
         for _ in 0..4 {
             ui.step(0.05);
         }
@@ -961,7 +961,7 @@ mod duration_tests {
         ui.m.pat_la[14] = Bit::H;
         (ui.m.trig_when, ui.m.trig_t1) = (WhenKind::Gt, 300e-6);
         assert!(ui.m.pat_on_la());
-        assert!(ui.trigger_items().contains(&Item::Open(MenuId::LaPat)));
+        assert!(ui.menu_items(MenuId::Trigger).contains(&Item::Open(MenuId::LaPat)));
         for _ in 0..4 {
             ui.step(0.05);
         }

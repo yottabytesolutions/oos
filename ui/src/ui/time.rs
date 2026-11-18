@@ -160,7 +160,7 @@ fn worker(jobs: Receiver<String>, out: Sender<Result<Synced, String>>) {
 }
 
 /// A server as the page shows it.
-fn server_label(s: &str) -> String {
+pub(super) fn server_label(s: &str) -> String {
     if s == sysconf::DHCP {
         DHCP_LABEL.into()
     } else {
@@ -389,63 +389,7 @@ impl Ui {
 
     // ------------------------------------------------------------------------------------------------ the page
 
-    pub(super) fn time_items(&self) -> Vec<Item> {
-        vec![Item::TimeNow, Item::NtpOn, Item::NtpServer, Item::NtpStatus, Item::NtpSync, Item::TimeZone, Item::TimeSet]
-    }
-
-    pub(super) fn time_kind(it: Item) -> Option<Kind> {
-        match it {
-            Item::NtpSync | Item::TimeSet => Some(Kind::Action),
-            Item::TimeNow | Item::NtpStatus | Item::NtpOn | Item::NtpServer | Item::TimeZone | Item::NetRetry10 => {
-                Some(Kind::Choice)
-            }
-            _ => None,
-        }
-    }
-
-    /// Rows that are only text.
-    pub(super) fn time_text(it: Item) -> bool {
-        matches!(it, Item::TimeNow | Item::NtpStatus)
-    }
-
-    pub(super) fn time_label(it: Item) -> Option<&'static str> {
-        Some(match it {
-            Item::Open(MenuId::Time) => "Date and time",
-            Item::TimeNow => "Now",
-            Item::NtpOn => "Time from NTP",
-            Item::NtpServer => "NTP server",
-            Item::NtpStatus => "NTP state",
-            Item::NtpSync => "Sync now",
-            Item::TimeZone => "Time zone",
-            Item::TimeSet => "Set the clock",
-            Item::NetRetry10 => "10 Mbit retry",
-            _ => return None,
-        })
-    }
-
-    pub(super) fn time_value(&self, it: Item) -> Option<String> {
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
-        Some(match it {
-            Item::TimeNow => {
-                let t = self.host.unix_now() as i64;
-                let z = self.zone();
-                let s = format!("{} {}", z.local(t).text(), z.abbr_at(t));
-                if self.clock_known {
-                    s
-                } else {
-                    format!("{} (not set)", s)
-                }
-            }
-            Item::NtpOn => onoff(self.sys.ntp),
-            Item::NtpServer => server_label(&self.sys.ntp_server),
-            Item::NtpStatus => self.ntp_status(),
-            Item::TimeZone => self.zone_label(),
-            Item::NetRetry10 => onoff(self.sys.eth_retry_10m),
-            _ => return None,
-        })
-    }
-
-    fn server_options(&self) -> Vec<String> {
+    pub(super) fn server_options(&self) -> Vec<String> {
         let mut v: Vec<String> = SERVERS.iter().map(|s| server_label(s)).collect();
         if !SERVERS.contains(&self.sys.ntp_server.as_str()) {
             v.push(short(&self.sys.ntp_server));
@@ -456,7 +400,7 @@ impl Ui {
 
     /// The zone row: the picker name or the string; with `tz = dhcp` the zone in use and where it came from,
     /// `CET (DHCP)` or `CET (no DHCP)`.
-    fn zone_label(&self) -> String {
+    pub(super) fn zone_label(&self) -> String {
         if self.sys.tz != sysconf::DHCP {
             return clock::zone_name(&self.sys.tz).map_or_else(|| short(&self.sys.tz), str::to_string);
         }
@@ -472,7 +416,7 @@ impl Ui {
         std::iter::once(sysconf::DHCP).chain(ZONES.iter().map(|z| z.1)).collect()
     }
 
-    fn zone_options(&self) -> Vec<String> {
+    pub(super) fn zone_options(&self) -> Vec<String> {
         let mut v: Vec<String> =
             std::iter::once(DHCP_LABEL.to_string()).chain(ZONES.iter().map(|z| z.0.to_string())).collect();
         if self.sys.tz != sysconf::DHCP && clock::zone_name(&self.sys.tz).is_none() {
@@ -480,16 +424,6 @@ impl Ui {
         }
         v.push(OTHER.into());
         v
-    }
-
-    pub(super) fn time_options(&self, it: Item) -> Option<Vec<String>> {
-        Some(match it {
-            Item::NtpOn | Item::NetRetry10 => vec!["Off".into(), "On".into()],
-            Item::NtpServer => self.server_options(),
-            Item::TimeZone => self.zone_options(),
-            Item::TimeNow | Item::NtpStatus => Vec::new(),
-            _ => return None,
-        })
     }
 
     fn set_server(&mut self, s: &str) {

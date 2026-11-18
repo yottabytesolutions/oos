@@ -88,6 +88,33 @@ fn drawn_rows_cover_every_changed_pixel_in_dense_and_sparse_routes() {
 }
 
 #[test]
+fn dense_spans_publish_visible_rows_and_leave_empty_revisions_unchanged() {
+    use crate::{board::Frame, model::*, sparse::Interp};
+    let mut model = Model { dots: DotsMode::Off, ..Model::default() };
+    for ch in &mut model.ch {
+        ch.on = true;
+        ch.offset = 0.0;
+    }
+    for (level, delay) in [(0.0, 0.0), (-100.0, 0.0), (100.0, 0.0), (f32::NAN, 0.0), (0.0, 1.0)] {
+        model.delay = delay;
+        let frame = Frame { dt: 1e-9, pre: 512, ch: std::array::from_fn(|_| vec![level; 1024]), ..Frame::default() };
+        let mut ph = Phosphor::new(64, 32);
+        let stamps: [_; NCH] = std::array::from_fn(|c| ph.upload_rows(c, None).0);
+        crate::drawpipe::draw_frame(&mut ph, &model, &frame, Interp::Exact, None);
+        for (c, stamp) in stamps.iter().enumerate() {
+            let visible = level == 0.0 && delay == 0.0;
+            let (next, rows) = ph.upload_rows(c, Some(stamp));
+            assert_eq!(rows, if visible { 16..17 } else { 0..0 });
+            assert_eq!(next.revision == stamp.revision, !visible);
+            assert_eq!(ph.maps()[c].iter().any(|&v| v != 0), visible);
+            for (y, row) in ph.maps()[c].chunks(ph.w).enumerate() {
+                assert!(row.iter().all(|&v| v == 0) || rows.contains(&y));
+            }
+        }
+    }
+}
+
+#[test]
 fn worker_mutations_need_no_upload_history_and_first_publication_is_complete() {
     let mut dirty = Dirty::new(16);
     for _ in 0..100 {
@@ -162,5 +189,25 @@ fn folding_rows_beyond_the_map_height_tracks_only_the_clipped_rows() {
     assert!(ph.maps()[0][..12 * 4].iter().all(|&value| value == 0));
     assert!(ph.maps()[0][12 * 4..].iter().all(|&value| value == 24));
     ph.fold_rows(&mut accumulators, &[0], 4, [(20, 24); NCH]);
+    assert_eq!(take(&ph, &mut stamp, 0), 0..0);
+}
+
+#[test]
+fn unary_transforms_leave_zero_and_single_hit_rows_clean() {
+    let mut ph = Phosphor::new(4, 16);
+    ph.map[0][2 * 4] = 1;
+    ph.map[0][12 * 4] = 2;
+    let mut stamp = None;
+    take(&ph, &mut stamp, 0);
+    ph.halve();
+    assert_eq!(take(&ph, &mut stamp, 0), 12..13);
+    assert_eq!(ph.map[0][2 * 4], 1);
+    assert_eq!(ph.map[0][12 * 4], 1);
+    ph.halve();
+    assert_eq!(take(&ph, &mut stamp, 0), 0..0);
+    ph.decay(0.5);
+    assert_eq!(take(&ph, &mut stamp, 0), 2..13);
+    assert!(ph.map[0].iter().all(|&value| value == 0));
+    ph.decay(0.0);
     assert_eq!(take(&ph, &mut stamp, 0), 0..0);
 }

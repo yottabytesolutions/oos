@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{min_max, Map, Range};
+use super::{Map, Range};
 use crate::wave::RowBand;
 
 /// Draw every sample as a pixel and return the exact hull of its on-map rows.
@@ -9,32 +9,17 @@ use crate::wave::RowBand;
 /// one pixel, each waiting for the last; each run adds `run x wgt` at once, saturating as the single adds did.
 /// On fast or noisy parts the run test would mispredict, so one add per sample stays. The choice follows how many
 /// samples of the column before repeated their row; both give the same picture.
+#[must_use]
 pub fn deposit_dots(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) -> Range<usize> {
-    let mut samples = RowBand::empty();
-    dots_walk(w, v.len(), m, |_, a, b| samples.include(a..b));
-    let samples = samples.into_range();
-    if samples.is_empty() {
-        return 0..0;
-    }
-    let Some(rows) = unclipped_rows(&v[samples], m, h) else {
-        return deposit_dots_band(map, w, 0, h, v, m, wgt);
-    };
+    let mut rows = RowBand::empty();
     let mut runs = false;
-    dots_walk(w, v.len(), m, |c, a, b| dots_column(map, w, h, c, &v[a..b], m, wgt, &mut runs));
-    rows
+    dots_walk(w, v.len(), m, |c, a, b| {
+        rows.include(dots_column(map, w, h, c, &v[a..b], m, wgt, &mut runs));
+    });
+    rows.into_range()
 }
 
-fn unclipped_rows(samples: &[f32], mapping: &Map, height: usize) -> Option<Range<usize>> {
-    // Avoid a whole-slice extrema pass when a small probe already proves the trace clips.
-    if samples.iter().step_by((samples.len() / PROBE).max(1)).any(|&x| sample_row(x, mapping, height).is_none()) {
-        return None;
-    }
-    let (low, high) = min_max(samples);
-    let a = sample_row(low, mapping, height)?;
-    let b = sample_row(high, mapping, height)?;
-    Some(a.min(b)..a.max(b) + 1)
-}
-
+#[cfg(test)]
 /// Scalar band drawing also tracks the exact hull when clipped extrema lie off the map.
 pub fn deposit_dots_band(
     band: &mut [u16],
@@ -52,7 +37,8 @@ pub fn deposit_dots_band(
     let (mut first, mut end) = (r_hi, 0);
     dots_walk(w, v.len(), m, |c, a, b| {
         for &x in &v[a..b] {
-            if let Some(r) = sample_row(x, m, r_hi).filter(|&r| r >= r_lo) {
+            let r = sample_row(x, m) as usize;
+            if r < (r_hi as f32) as usize && r >= r_lo {
                 let i = (r - r_lo) * w + c;
                 band[i] = band[i].saturating_add(wgt);
                 first = first.min(r);
@@ -86,11 +72,31 @@ fn dots_walk(w: usize, n: usize, m: &Map, mut col: impl FnMut(usize, usize, usiz
 // The column kernel shares its map, mapping and run selection with the whole-map walk.
 #[allow(clippy::too_many_arguments)]
 #[inline]
-fn dots_column(map: &mut [u16], w: usize, h: usize, c: usize, s: &[f32], m: &Map, wgt: u16, runs: &mut bool) {
-    let row = |x| sample_row(x, m, h);
+fn dots_column(
+    map: &mut [u16],
+    w: usize,
+    h: usize,
+    c: usize,
+    s: &[f32],
+    m: &Map,
+    wgt: u16,
+    runs: &mut bool,
+) -> Range<usize> {
+    let row = |x| sample_row(x, m);
+    let row_limit = (h as f32) as usize;
+    let mut bounds = [(h, 0); 4];
+    let mut put = |r: isize, weight: u16, lane: usize| {
+        let r = r as usize;
+        if r < row_limit {
+            let i = r * w + c;
+            map[i] = map[i].saturating_add(weight);
+            bounds[lane].0 = bounds[lane].0.min(r);
+            bounds[lane].1 = bounds[lane].1.max(r + 1);
+        }
+    };
     let mut repeats = 0usize;
     if *runs {
-        let mut run: (Option<usize>, u32) = (None, 0);
+        let mut run = (-1, 0u32);
         for &x in s {
             let r = row(x);
             if r == run.0 {
@@ -98,56 +104,63 @@ fn dots_column(map: &mut [u16], w: usize, h: usize, c: usize, s: &[f32], m: &Map
                 repeats += 1;
                 continue;
             }
-            if let Some(r0) = run.0 {
-                let i = r0 * w + c;
-                map[i] = (map[i] as u32 + run.1 * wgt as u32).min(u16::MAX as u32) as u16;
-            }
+            put(run.0, (run.1 * wgt as u32).min(u16::MAX as u32) as u16, 0);
             run = (r, 1);
         }
-        if let Some(r0) = run.0 {
-            let i = r0 * w + c;
-            map[i] = (map[i] as u32 + run.1 * wgt as u32).min(u16::MAX as u32) as u16;
-        }
+        put(run.0, (run.1 * wgt as u32).min(u16::MAX as u32) as u16, 0);
         *runs = 2 * repeats > s.len();
     } else {
         // the repeats of the first `PROBE` samples decide the next column (counting all cost more than it saved)
         let (head, tail) = s.split_at(s.len().min(PROBE));
-        let mut prev = None;
+        let mut prev = -1;
         for &x in head {
             let r = row(x);
             repeats += (r == prev) as usize;
             prev = r;
-            if let Some(r) = r {
-                let i = r * w + c;
-                map[i] = map[i].saturating_add(wgt);
+            put(r, wgt, 0);
+        }
+        let (groups, remainder) = tail.as_chunks::<4>();
+        for group in groups {
+            for (lane, &x) in group.iter().enumerate() {
+                put(row(x), wgt, lane);
             }
         }
-        for &x in tail {
-            if let Some(r) = row(x) {
-                let i = r * w + c;
-                map[i] = map[i].saturating_add(wgt);
-            }
+        for &x in remainder {
+            put(row(x), wgt, 0);
         }
         *runs = 2 * repeats > head.len();
     }
+    let (first, end) = bounds.into_iter().fold((h, 0), |(a, b), (c, d)| (a.min(c), b.max(d)));
+    first.min(end)..end
 }
 
 #[inline]
-fn sample_row(value: f32, mapping: &Map, height: usize) -> Option<usize> {
-    let row = (value * mapping.y_per_volt + mapping.y0).round();
-    if row >= 0.0 && row < height as f32 {
-        let row = row as usize;
-        Some(row)
-    } else {
-        None
-    }
+fn sample_row(value: f32, mapping: &Map) -> isize {
+    (value * mapping.y_per_volt + mapping.y0).round().max(-1.0) as isize
 }
 
-const PROBE: usize = 32;
+const PROBE: usize = 8;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chunk_remainders_match_scalar_dots_with_clipping_and_saturation() {
+        let values = [0.0, 7.5, -7.5, f32::NAN, 100.0, -100.0, f32::INFINITY, f32::NEG_INFINITY];
+        for len in PROBE..=PROBE + 8 {
+            let samples: Vec<_> = values.into_iter().cycle().take(len).collect();
+            let m = Map { ti: 0.0, x_per_sample: 1.0 / len as f64, x0: 0.0, y_per_volt: -2.0, y0: 16.0 };
+            for weight in [24, u16::MAX] {
+                let mut map = vec![0; 32];
+                let rows = deposit_dots(&mut map, 1, 32, &samples, &m, weight);
+                let mut reference = vec![0; 32];
+                super::super::deposit_dots_reference(&mut reference, 1, 32, &samples, &m, weight);
+                assert_eq!(map, reference, "samples {len}, weight {weight}");
+                assert_eq!(rows, 1..32);
+            }
+        }
+    }
 
     #[test]
     fn bounds_cover_dots_with_nan_gaps_and_clipping() {
@@ -166,7 +179,7 @@ mod tests {
             for initial_runs in [false, true] {
                 let mut runs = initial_runs;
                 let mut map = vec![0; 32];
-                dots_column(&mut map, 1, 32, 0, &samples, &m, 24, &mut runs);
+                let column_rows = dots_column(&mut map, 1, 32, 0, &samples, &m, 24, &mut runs);
                 let mut bounded = vec![0; 32];
                 let band = deposit_dots(
                     &mut bounded,
@@ -179,6 +192,7 @@ mod tests {
                 assert_eq!(map, bounded);
                 let rows: Vec<_> = map.iter().enumerate().filter(|(_, value)| **value != 0).map(|(y, _)| y).collect();
                 let expected = rows.first().zip(rows.last()).map_or(0..0, |(&first, &last)| first..last + 1);
+                assert_eq!(column_rows, expected);
                 assert_eq!(band, expected, "samples {samples:?}, runs {initial_runs}");
             }
         }

@@ -15,7 +15,7 @@ pub(crate) struct Stamp {
 /// Workers never publish their maps. Allocate and maintain history only after a GPU consumer first asks for it.
 pub(super) struct Dirty {
     height: usize,
-    revisions: OnceLock<Box<Revisions>>,
+    revisions: OnceLock<Revisions>,
 }
 
 impl Dirty {
@@ -31,7 +31,7 @@ impl Dirty {
     }
 
     pub(super) fn since(&self, channel: usize, previous: Option<&Stamp>) -> (Stamp, Range<usize>) {
-        self.revisions.get_or_init(|| Box::new(Revisions::new(self.height))).since(channel, previous)
+        self.revisions.get_or_init(|| Revisions::new(self.height)).since(channel, previous)
     }
 }
 

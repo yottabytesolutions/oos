@@ -128,6 +128,39 @@ real board descriptors and full B-tap steps with explicit staged funding and leg
 for this follow-up include the existing F2 paths, `ui/src/board/frame_summary.rs`, `ui/src/board/dho/hw.rs`,
 `ui/src/wave.rs`, `ui/src/ui.rs`, startup switches and mode reporting, and the changed-file ratchets.
 
+PR #221 upload integration (#216) on published F2 `29bbadd57bad48fdd33d5b4a15469186c64de42a`:
+reserve `ui/src/picture/acc.rs`, `ui/src/picture/deposit/planes.rs`, `ui/src/wave/phosphor.rs`,
+shared drawing and acquisition batch fixtures,
+`ui/src/drawpipe/tests/deposit.rs`, changed-file ratchets and this task. Route whole-deposit map writes through
+upload row tracking, reconcile private-map callers, and retain captured projections, routing, accounting and goldens.
+Run the full host gate, drawing/four-channel regressions and serial shipping-profile dots/upload guards with
+same-session references. Record failures and production LOC. Keep 30 fps, zero lost records and every frame hold;
+hardware acceptance, independent review and publication remain with the coordinator and owner.
+
+PR #221 span-row review follow-up on `072cac8e`, stacked on F2 `e13efdb0`:
+reserve `ui/src/drawpipe/frame.rs`, `ui/src/wave/dirty/tests.rs`, changed-file ratchets and this task.
+Reuse `fastdraw::span_rows` for dense Standard uploads and normalize its empty sentinel to `0..0`.
+Check visible, vertically clipped and horizontally empty spans without changing painting or route policy.
+Run UI debug/optimized tests, serial shipping-profile upload guards and the fast gate. Preserve the stacked base,
+all performance thresholds and the coordinator's hardware hold; F2 performance repair remains separate.
+
+PR #221 failed-check follow-up: reserve `ui/src/fastdraw/whole/dots.rs`, changed-file ratchets and this task.
+Replace constant-size chunk iteration with array chunks, retaining the four lanes and scalar remainder.
+Compare chunk boundaries with the scalar dots oracle, then run host/ARM clippy, UI debug/optimized tests and fast gate.
+No drawing or routing behavior change; publication, independent review and hardware holds remain with the coordinator.
+
+PR #221 counter-budget review follow-up: reserve this task and, if reproduction identifies a regression,
+the existing upload-row paths above and their tests. Compare the unchanged shipping-profile counter guard
+before changing production code. Preserve its six workloads, 1.01 best-time limit and 1.515 CPU-tail limit.
+Resolve any demonstrated overhead without changing pictures, membership or pacing, then run the fast gate,
+UI debug/optimized tests and the full host gate serially. The runner retains Git mutations and publication.
+
+PR #221 replay on F2 `861170b3`: retain exactly the two published upload topics, using old F2
+`8c0254ee` as their verified parent. Reserve `ui/src/picture.rs` for the moved fold integration,
+existing upload tests, changed-file ratchets and this task. Preserve the F2 delivery, pool and performance
+repairs. Run serial shipping upload guards, the fast gate and the full combined host gate.
+Keep the prior optimized census failure unresolved, coordinate before any census edit, and retain the unit hold.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -237,6 +270,44 @@ for this follow-up include the existing F2 paths, `ui/src/board/frame_summary.rs
   and verified debug and optimized golden comparisons. The fast gate passed all 12 selected steps.
   Host evidence only. Independent review and the DHO804 unit round remain open.
 
+- 2026-11-19: PR #221 stable-input combined host gate reported
+  `gate FAILED in 421 s: tests-release` (exit 1). Optimized UI nextest passed 1,785 tests and failed
+  `warmed_ui_observer_allocation_census`, with 64 skipped. Its six 256-call regions counted allocations
+  `[3, 0, 0, 3, 0, 0]`: `prepare_keys=3` and `stage=3`. Debug passed all 1,787 UI tests, with 64 skipped.
+  Every other selected step passed, including host/ARM Clippy, all 65 synthetic register plans, decoder variants,
+  Python, 90.1% UI coverage and all 30 UI timing guards: `perf guards: all passed (209 s)`.
+  The earlier two-allocation optimized failure remains recorded and unresolved; 24 isolated main-reference
+  passes do not explain either failure. No passing retry replaces this result.
+  Bus job #230 owns the census repair and records controlled background-worker and libtest allocations entering
+  the process-wide count while the calling UI thread allocated zero. This run's individual events remain
+  unattributed. The allocator callback and all shared census code are unchanged from exact F2 `861170b3`.
+  Complete evidence: `target/replay221-full-stable.log`, its retained command logs, and
+  `target/replay221-census-handoff.md`. Independent review, census resolution and the combined DHO804 unit trial
+  remain open under the coordinator's hold. Host only; no scope access or image-tier checks.
+
+- 2026-11-19: The first combined host gate reported `gate FAILED in 746 s: plan-matrix` (exit 1).
+  Writing runner metadata during the plan-matrix build changed its input digest; the receipt correctly refused
+  consumption. All other selected steps passed, including 1,787 debug and 1,786 optimized UI tests (64 skipped
+  per profile), coverage and all 30 UI timing guards: `perf guards: all passed (307 s)`.
+  The stable-input rerun above cleared the receipt failure and reproduced the optimized census failure.
+  The first failure and complete logs remain in `target/replay221-full.log`.
+
+- 2026-11-18: Runner supplied replay head `d6089214` above exact F2 `861170b3`. Range comparison confirms
+  only published upload commits `7b98e7ba` and `674af593` were replayed from their verified old F2 parent
+  `8c0254ee`, rather than from the common ancestor with amended F2. F2 moved the fold into `picture.rs`;
+  the replay now routes that fold through `edit_channel`. The existing independent-GPU-consumer regression
+  failed to compile before this correction and passes after it. F2 delivery, placement, producer/worker and
+  release performance repairs, shared span bounds, clipped dots, upload contents and goldens are preserved.
+  Generated ratchets lower only the changed `ui.rs` file allowance from 8,623 to 8,612.
+  Initial fast gate: `gate FAILED in 8 s: size` (exit 1); after ratcheting:
+  `partial gate passed (not done): 12 steps in 8 s` (exit 0).
+  Serial shipping-profile dots and both upload guards passed (3 tests, exit 0) with unchanged limits.
+  Eight-row best/p99 CPU ratios were 0.028/0.041; full-upload ratios were 0.433/0.469.
+  Production delta over F2 is +252 UI Rust lines, zero elsewhere (108,862 total); this fold correction adds zero.
+  Changed files for the correction are `ui/src/picture.rs`, `xtask/data/ui/size.txt` and this task.
+  Final fast gate: `partial gate passed (not done): 12 steps in 9 s` (exit 0).
+  Complete current-run logs use `target/replay221-*.log`.
+
 - 2026-11-18: PR #224 replays published F2 `20879ac4` from its exact F1 parent `113ccb97`
   onto F1 `38defc1d`. The three F2 commits replay to `22ba4e1f` with the reviewed waveform delivery
   and worker and compressed-frame repairs intact. The `ui.rs` size allowance carries the same 45-line
@@ -254,6 +325,54 @@ for this follow-up include the existing F2 paths, `ui/src/board/frame_summary.rs
   The debug run also saw one intermittent allocation census failure, which passed in isolation.
   The shipping-profile codes guard measures the production worker against Frames mode and passed all five rows.
   The worst best-of-rounds and p99 ratios were 0.739 and 0.843. Renewed review and DHO804 acceptance remain open.
+
+- 2026-11-18: PR #221 counter-budget review on unchanged production head `cbc4975f`: the recorded
+  candidate-specific counter regression did not reproduce. The standalone shipping-profile guard passed all six
+  workloads (exit 0), then all six passed again inside the full host gate. Both use the existing shared workers
+  and buffers, 101 alternating rounds, 16 pictures per sample and unchanged best/p99 limits of 1.01/1.515.
+
+  | Channels | Time/div | Records | Standalone best / p99 CPU ratio | Full-gate best / p99 CPU ratio |
+  |---|---|---|---|---|
+  | 1 | 1 us | 142 | 0.998531 / 1.019316 | 1.006208 / 0.986460 |
+  | 1 | 10 us | 20 | 0.995717 / 0.969637 | 1.002958 / 0.987312 |
+  | 2 | 1 us | 142 | 0.999422 / 0.952731 | 1.007346 / 1.119348 |
+  | 2 | 10 us | 14 | 1.003453 / 0.936712 | 0.992244 / 0.987403 |
+  | 4 | 1 us | 142 | 0.997418 / 1.007466 | 1.002371 / 1.042824 |
+  | 4 | 10 us | 14 | 0.998729 / 0.988709 | 1.003190 / 1.046590 |
+
+  The reported one-channel 20-record case measured disabled/enabled best times of 8,400,031/8,364,057 ns
+  standalone and 8,336,382/8,361,039 ns in the full gate. No counter, upload, drawing, routing or pacing code,
+  fixture, threshold or ratchet changed. Production delta against HEAD is zero (108,903 total lines).
+  The full gate's performance step reported `perf guards: all passed (208 s)`, including all 30 UI guards.
+  Its final result was `gate FAILED in 604 s: tests-release` (exit 1): optimized
+  `warmed_ui_observer_allocation_census` counted two `prepare_keys` allocations instead of zero.
+  UI nextest passed all 1,789 debug tests; optimized passed 1,787 and failed that one test, with 64 skipped per
+  profile. All other selected full-gate steps passed, including Clippy, coverage, decoders and Python tests.
+  This job does not change the settings-observer allocation census. Its failure still blocks landing; independent
+  review and DHO804 acceptance also remain open. Host only; no hardware access or image-tier checks.
+  Evidence: `target/counter-{before,full-gate,fast,loc}.log` and the retained full-gate command logs.
+  The initial fast gate reported `partial gate passed (not done): 12 steps in 8 s` (exit 0).
+
+- 2026-11-18: PR #221 counter-budget investigation starts on `perf/216-upload-rows`, head `cbc4975f`.
+  HEAD matches the cached feature-branch ref. The sandbox refused the requested fetch when opening
+  `FETCH_HEAD`; remote freshness remains runner-owned. The historical failing gate remains unresolved pending
+  current-head reproduction and full host-gate evidence. No hardware access is authorized or planned.
+
+- 2026-11-18: PR #221 check fix replaces `chunks_exact(4)` with `as_chunks::<4>()`, preserving lane order,
+  remainder handling and drawing behavior. The scalar-oracle regression passes for tail lengths 0 through 8,
+  clipped/non-finite samples and saturating weights. Host/ARM `cargo xtask step clippy` reported
+  `partial gate passed (not done): 1 steps in 131 s` (exit 0). UI nextest passed 1,789 debug and 1,788
+  `test-release` tests, with 64 skipped per profile (exit 0 each). The fast gate reported
+  `partial gate passed (not done): 12 steps in 31 s` (exit 0). No changed-file ratchet reductions were reported.
+  `cargo xtask loc --compare HEAD` reports zero production line delta. Changed files are
+  `ui/src/fastdraw/whole/dots.rs` and this task. Evidence: `target/upload-{clippy,fast,ui-debug,ui-optimized,loc}-fixed.log`.
+  Host only; no hardware access. CI confirmation, renewed independent review and publication remain coordinator-owned.
+
+- 2026-11-18: PR #221 check-fix plan on `perf/216-upload-rows`, head `ccd23810`:
+  `cargo xtask step clippy` reproduced `gate FAILED in 142 s: clippy` (exit 1), solely the new
+  `chunks_exact_to_as_chunks` finding in `fastdraw/whole/dots.rs`. The baseline fast gate passed all 12 steps.
+  The checked-out head matches the locally recorded remote branch; network and Git mutations are runner-owned.
+
 - 2026-11-18: PR #224 intake rejection returns the newest waveform through existing record publication and
   counts only its undrawn neighbours as unclaimed. The acquisition regression reproduced the missing waveform
   before the fix. Host tests cover full and disconnected intake for both decoder paths and buffer return.
@@ -279,6 +398,27 @@ for this follow-up include the existing F2 paths, `ui/src/board/frame_summary.rs
   The optimized run also observed an intermittent allocation census failure.
   The coordinator retains the combined DHO804 trial and merge hold.
 
+- 2026-11-18: PR #221 span-row review follow-up on `perf/216-upload-rows`, published head
+  `072cac8ef8b1105eaa1ffc96d2a414db107da699` above F2 `e13efdb0`. Dense Standard painting now reuses
+  `fastdraw::span_rows` and maps its empty sentinel to `0..0`. Painting, clipping, routing, upload accounting,
+  golden references and performance thresholds are unchanged. Added coverage for visible, vertically clipped,
+  non-finite and horizontally empty spans, including unchanged empty upload revisions. The initial fixture's
+  assumptions about default offsets and channel-local revisions were corrected; the focused regression passed.
+  Final `oos-ui` nextest runs passed 1,783 debug and 1,782 optimized tests, with 64 skipped per profile.
+  `cargo xtask check --fast` reported `partial gate passed (not done): 12 steps in 8 s`, exit 0.
+  No changed-file ratchet reductions were reported. Production delta against the published head is -5 UI Rust
+  lines, zero elsewhere, 108,904 total production lines (`cargo xtask loc --compare HEAD`).
+  Modified files are `ui/src/drawpipe/frame.rs`, `ui/src/wave/dirty/tests.rs` and this task.
+  Serial shipping `release` upload guards passed both cases with `OOS_PERF_TESTS=1`, one test thread,
+  101 measurement rounds and exact reference/candidate buffer equality. Narrow-band best reference/candidate
+  was 69,265/2,067 ns and p99 CPU 96,375/3,875 ns; full-height best was 112,718/59,078 ns and p99 CPU
+  157,750/99,125 ns. Best/p99 limits remain 0.2/0.3 for narrow rows and 1.0/1.5 for full height.
+  Evidence: `target/span-row-{ui-debug-verified,ui-optimized-verified,upload-guards,fast-verified,loc}.log`.
+  Full gate was not rerun in this review job; the previously recorded compressed-frame and counter-overhead
+  `perf` failures remain unclosed.
+  Exact rebase after the separate F2 performance repair, renewed independent review and DHO804 acceptance remain open.
+  The stacked base and every coordinator/owner hardware hold are preserved. Host only; no hardware was accessed.
+
 - 2026-11-18: PR #224 review follow-up on `a6ff1fe7`. The UI redraws the delivered waveform under the current
   mapping when the worker planes were rejected. The regression failed before the fix and passed after it.
   Host `oos-ui` nextest passed 1,765 debug and 1,764 optimized tests, with 62 skipped in each. The fast gate
@@ -293,6 +433,91 @@ for this follow-up include the existing F2 paths, `ui/src/board/frame_summary.rs
   both profiles. `oos-ui` nextest passed 1,764 debug and 1,763 optimized tests, with 62 skipped in each.
   The fast gate and Clippy step passed. Production delta is +52 UI Rust lines against the published head.
   Host only. Renewed review and coordinator DHO804 acceptance remain open.
+
+- 2026-11-18: PR #221 upload integration reconciled on exact published F2
+  `29bbadd57bad48fdd33d5b4a15469186c64de42a` (F1 `113ccb97`, F0 `9a802cfe`). The upload topic is
+  `447c2ea5c2824846ceabb2d0088bb7cea02f7b4f` before reconciliation. Whole-deposit folds now return their
+  existing touched rows through the phosphor edit API. Shared fixtures use read-only map access; the legacy
+  map-add and channel-clear helpers are test-only. The worker timing fixture recycles each completed whole deposit
+  after buffer return, checking its record count, without timing a UI fold or filling the bounded slot.
+  No record accounting, captured projections, worker routing, accepted golden reference or threshold changed.
+  Four generated size-ratchet reductions are retained for fastdraw, UI and wave. Production delta: +269 UI Rust
+  lines against F2, -11 against the supplied upload topic; zero elsewhere, 108,857 total production lines.
+  Modified paths: `ui/src/picture/{acc.rs,deposit/planes.rs,deposit/tests.rs}`, `ui/src/wave/phosphor.rs`,
+  `ui/src/drawpipe.rs`, `ui/src/drawpipe/{budget_tests.rs,tests/deposit.rs}`,
+  `ui/src/board/dho/hw/batch/tests.rs`, `xtask/data/ui/size.txt` and this task.
+
+  Host: native `aarch64-apple-darwin`, Rust 1.99.1. UI guards use shipping `release`, opt-level 3, LTO,
+  one codegen unit, one test thread, `OOS_PERF_TESTS=1`, 101 rounds. Dots use 22 runs per sample over nine
+  100,000-point signals. Upload uses eight runs per sample over four 970 x 448 maps. Picture probes use eight
+  warmups and 101 measured steps, 48 records per picture. Baseline and candidate measurements were serial.
+
+  Implementation `cargo xtask check --fast`: `partial gate passed (not done): 12 steps in 33 s`, exit 0.
+  After the evidence update, the handoff fast gate reported
+  `partial gate passed (not done): 12 steps in 32 s`, exit 0.
+  Final default `cargo xtask check`: `gate FAILED in 828 s: perf`, exit 1. All 22 other selected steps passed,
+  including Clippy, decoder configurations, coverage, 65 acquisition plans, script syntax and 379 Python tests
+  with zero skips. UI line coverage was 90.1% against the unchanged 86.2% floor. Rust test results:
+
+  | Crate | Debug passed | Optimized passed | Ignored per profile |
+  |---|---:|---:|---:|
+  | HAL | 491 | 491 | 10 |
+  | DSP | 346 | 346 | 4 |
+  | Core | 41 | 41 | 0 |
+  | UI, including host integrations and goldens | 1777 | 1776 | 64 |
+  | FPGA daemon | 51 | 51 | 0 |
+  | xtask | 242 | 242 | 0 |
+
+  The focused drawing run passed 48 isolated nextest cases. Four-channel host scripts passed in both profiles.
+  The new whole-deposit upload regression checks lines and dots, independent panel/monitor revisions, erased rows
+  and skipped monitor frames. Existing live-route accounting checks read=28, deposited=28, shown=28 and zero
+  dropped records for both Standard and Batch. Golden references are unchanged against F2.
+
+  The final UI guard suite passed 28 and failed 2. Compressed-frame best reference/candidate was
+  33,990/20,035 ns (0.589438, limit 0.5), p99 CPU 60,320/37,000 ns (0.613395, limit 0.75).
+  Exact F2 also failed: 31,445/17,971 ns (0.571506); p99 CPU 40,240/21,120 ns (0.524851).
+  The counter guard failed at one channel, 10 us/div, 20 records: best 10,017,796/10,191,278 ns
+  (1.017317, limit 1.01), p99 CPU 19,574,937/19,856,312 ns (1.014374, limit 1.515).
+  It stopped after two geometry rows; the exact F2 baseline passed all six. Its corresponding row was
+  7,616,497/7,633,302 ns best and 14,971,687/18,182,562 ns p99 CPU.
+  The corrected worker guard passed all five scenarios, with three finite-limit rows: worst best ratio 1.099424
+  against 1.5, worst p99 CPU ratio 1.266199 against 2.25. No threshold was relaxed.
+  The separate unchanged budget reader also exited 1 for the compressed-frame best ratio.
+
+  A subsequent back-to-back shipping-profile run passed all three F2 baseline guards and all five candidate
+  guards: dots, four-channel picture and merge probes on both, plus candidate narrow/full upload guards.
+  Upload reference/candidate times were 68,927/1,989 ns best and 216,625/5,375 ns p99 CPU for eight rows;
+  full height was 113,161/58,145 ns best and 157,750/108,250 ns p99 CPU.
+  Narrow ratios 0.028857/0.024812 retain limits 0.2/0.3; full ratios 0.513825/0.686212 retain 1.0/1.5.
+  Across nine dots signals, worst best/p99 CPU ratios were 0.986086/1.197840 on F2 and
+  1.191959/1.201185 on the candidate, retaining limits 1.25/1.875.
+  Four-channel picture build observations below are p50/p99 in nanoseconds, 48 records per picture:
+
+  | Time/div | Route | F2 p50 / p99 | Upload p50 / p99 |
+  |---|---|---:|---:|
+  | 1 us | Standard | 3386500 / 48681166 | 3430583 / 50184125 |
+  | 1 us | Batch | 3948625 / 9104625 | 4224917 / 40145125 |
+  | 10 us | Standard | 14683459 / 128085417 | 15384041 / 169542958 |
+  | 10 us | Batch | 14108250 / 56757166 | 13851541 / 149275625 |
+
+  Matched merge p50/p99 at 1 us/div, 90 records, was 65,917/278,708 ns on F2 and
+  235,500/369,250 ns on the candidate. At 10 us/div, 14 records, it was 111,542/6,141,000 ns on F2 and
+  228,583/1,935,167 ns on the candidate. Both retain the 16,500,000 ns p99 host merge limit.
+
+  Final-gate Batch p99 was also wide: 46,829,459 ns at 1 us/div and 120,916,083 ns at 10 us/div.
+  These are host wall-time observations, not evidence of the required four-channel 30 fps unit rate.
+  The acceptance target stays 30 fps and zero lost records. Compressed-frame and counter-overhead guard failures,
+  independent review and the owner-controlled DHO804 round remain open. Every existing frame acceptance/merge hold
+  remains. No hardware was accessed; image-tier checks were not selected.
+
+  Earlier failures remain recorded: private-map and test-adapter compilation errors, four unused size allowances,
+  an overstrict narrow-band assertion for F2 dots, two Clippy findings, and an exact-base environment override leaking
+  into synthetic Git fixtures (eight xtask failures in each profile and coverage). The first full run reported
+  `gate FAILED in 1060 s: clippy, tests-debug, tests-release, perf, coverage`. Its worker guard and the immutable
+  F2 baseline both timed out because the old fixture never consumed deposits. The reconciled guard now passes.
+  Complete final command logs remain under `target/check-logs/99875-1795032538970327000/`;
+  `target/upload-integration/verified-host-gate.log`, `verified-perf-full.log`, `f2-baseline-guards.log` and
+  `matched-{f2,upload}-guards.log` retain the comparisons. The overwritten initial summary is not final evidence.
 
 - 2026-11-18: PR #224 replays F2 `3f926b6c` on exact F1 `113ccb97ddea35284467d52f513d74e95f2937f6`
   (F0 parent `9a802cfe`). The deposit coordinator publishes F0 record and measurement counts at batch completion.

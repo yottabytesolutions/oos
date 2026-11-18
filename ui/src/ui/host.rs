@@ -107,7 +107,7 @@ impl Host {
             time_budgets: false,
             // inside the crate and never created: no USB device of the build machine is seen
             usb_root: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/no-usb-root").into(),
-            switches: crate::sysconf::Switches { pipeline: crate::drawpipe::Mode::Batch, ..Default::default() },
+            switches: crate::sysconf::Switches::default(),
         }
     }
 
@@ -158,6 +158,21 @@ mod tests {
     use crate::ui::Item;
     use crate::ui::{sysinfo::Row, Ui};
     use crate::wave::Source;
+
+    #[test]
+    fn pipeline_configuration_reaches_the_model() {
+        for (conf, batch) in [
+            ("", true),
+            ("acq.pipeline = standard\n", false),
+            ("acq.pipeline = frames\n", false),
+            ("acq.pipeline = bogus\n", true),
+        ] {
+            let switches = crate::sysconf::Switches::parse(&|_| None, conf, "", Default::default());
+            let host = Host { switches, ..Host::fixture() };
+            let ui = Ui::new(Source::Demo { t: 0.0 }, host);
+            assert_eq!(ui.m.draw_batch, batch, "{}", conf);
+        }
+    }
 
     fn idn(host: Host) -> String {
         let mut ui = Ui::new(Source::Demo { t: 0.0 }, host);

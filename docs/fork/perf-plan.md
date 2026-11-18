@@ -239,9 +239,10 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   screenshot comparison on the unit. Guards: pixel equality over 612 set-ups (450 answered by the new path), bitwise
   kernel equality incl. record ends and NaN samples, ignored timing ratio <= 0.8.
 - 1, batch pipeline (`drawpipe.rs`), selectable: `acq.pipeline = batch` in system.conf or `OOS_PIPELINE=batch`;
-  `frames` is the old path, formerly the default; Batch is now the code and image default. Every frame is used: the hw thread decodes only the newest frame of a batch for
-  the queue and lends the read-out buffer itself (a pool of 3 `DmaBuf`, no copy; `DmaBuf` is a plain heap buffer, the
-  xdma read can target any of them) with the other frames to 2 deposit workers on the A53s. Each decodes its share
+  `batch` is the code and image default; `standard` or `frames` selects the old path for comparison until M12.
+  Every frame is used: the hw thread decodes only the newest frame of a batch for the queue and lends the read-out
+  buffer itself (a pool of 3 `DmaBuf`, no copy; `DmaBuf` is a plain heap buffer, the xdma read can target any of them)
+  with the other frames to 2 deposit workers on the A53s. Each decodes its share
   into kept vectors (`hw::decode_into`, `decode_volts_into`), refines the trigger and draws with `draw_frame` (the body
   of `Ui::fast_draw`) into its own maps, counting the trigger statistics. Once per refresh the UI adds the maps and
   the statistics (`fast_edges`, `fast_off` cover every frame). Busy workers, older settings and an older mapping drop

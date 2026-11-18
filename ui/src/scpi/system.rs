@@ -80,7 +80,7 @@ fn settings(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str
         }
         return Some(text_reply(&text));
     }
-    // Acquire > Draw path: FRAMes (the fast path, default) or BATCh (PR #7's pipeline); the `pipe` part of
+    // Acquire > Draw path: FRAMes (Standard) or BATCh (default); the `pipe` part of
     // :SYSTem:STATe? says which runs
     if kw(nodes[1], "PIPeline") {
         return pipeline(scpi, ui, query, arg);

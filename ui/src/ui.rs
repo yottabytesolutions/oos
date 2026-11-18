@@ -1547,7 +1547,6 @@ impl Ui {
     pub fn new(src: Source, host: host::Host) -> Ui {
         let mut m = Model::default();
         m.meas = Self::default_meas();
-        // `acq.pipeline = batch` (or OOS_PIPELINE): the draw path starts as Batch (Acquire > Draw path)
         m.draw_batch = host.switches().pipeline == crate::drawpipe::Mode::Batch;
         if let Source::Replay { .. } = src {
             // the replayed frame of 2026-11-02: 3.2 µs at 0.8 ns

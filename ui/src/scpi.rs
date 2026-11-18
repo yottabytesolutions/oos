@@ -5608,17 +5608,20 @@ mod draw_path_tests {
         let cv = Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
         let mut scpi = Scpi::open(0, false);
         let mut q = |ui: &mut Ui, c: &str| String::from_utf8(scpi.exec_line(ui, &cv, c)).unwrap();
+        assert_eq!(q(&mut ui, ":SYST:PIP?"), "BATC");
+        q(&mut ui, ":SYST:PIP STAN");
+        assert!(!ui.m.draw_batch);
         assert_eq!(q(&mut ui, ":SYST:PIP?"), "FRAM");
         q(&mut ui, ":SYSTem:PIPeline BATCh");
         assert!(ui.m.draw_batch);
         assert!(crate::store::setup_text(&ui.m).contains("draw_path = batch\n"));
         let back = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
         assert!(back.draw_batch);
-        // the demo source is not the hardware: no workers
         ui.step(0.02);
-        assert_eq!(crate::ui::change::acquisition::draw_switches(&ui, &ui.m).pipeline, crate::drawpipe::Mode::Frames);
         q(&mut ui, ":SYST:PIP FRAM");
         assert!(!ui.m.draw_batch);
+        // Non-hardware sources retain the startup pipeline selection.
+        assert_eq!(crate::ui::change::acquisition::draw_switches(&ui, &ui.m).pipeline, crate::drawpipe::Mode::Batch);
         q(&mut ui, ":SYST:PIP BOGUS");
         assert!(q(&mut ui, ":SYST:ERR?").starts_with("-224"));
     }

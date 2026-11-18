@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn empty_configuration_is_the_default() {
         let s = Switches::default();
-        assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (0, false, Mode::Frames, Interp::Exact));
+        assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (0, false, Mode::Batch, Interp::Exact));
         assert!(!s.perf.place() && !s.ipv6);
         assert_eq!(s.board, crate::board::BoardSwitches::parse(&|_| None, "", ""));
     }

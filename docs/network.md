@@ -272,8 +272,8 @@ graphics = gpu                # System > Graphics: gpu or cpu (gpu/README.md)
 
 ### Temporary hardware keys
 
-[system-conf-keys.md](system-conf-keys.md) is the only inventory. Batch is the generic-image default; the parser
-defaults to Standard/Frames without configuration. Both remain selectable until the M12 comparison chooses one path.
+[system-conf-keys.md](system-conf-keys.md) is the only inventory. Batch is the code and generic-image default;
+`standard` or `frames` explicitly selects Standard. Both remain selectable until the M12 comparison chooses one path.
 See ADR 0012 for verification policy.
 
 ## 6. Firewall, remote access and the MAC address

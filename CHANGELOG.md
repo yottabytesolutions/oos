@@ -34,6 +34,9 @@ Added:
 
 Changed:
 
+- Batch is the code default draw pipeline, matching shipped images. `acq.pipeline = standard` or `frames`
+  keeps Standard available for comparison until M12; invalid values are logged and fall back to Batch (#159).
+
 - Boot card mode is a device setting (`sd.mode = hs|sdr104`, default HS). The updater selects the next boot DTB
   from the generic image and keeps HS for trial rollback. Device capability overrides are labelled as device
   overrides. Host-tested only; early voltage-switch failures still need owner recovery (docs/boot.md).

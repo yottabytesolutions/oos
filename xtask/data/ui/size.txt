@@ -1,7 +1,7 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
 2080 file ui/src/board/dho/hw.rs
-745 file ui/src/drawpipe.rs
+725 file ui/src/drawpipe.rs
 568 file ui/src/drm.rs
 754 file ui/src/fastdraw.rs
 649 file ui/src/gfx.rs

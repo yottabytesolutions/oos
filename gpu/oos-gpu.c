@@ -273,9 +273,10 @@ static const char *FS_LAYER = "#version 300 es\n"
  * (a monitor) the GPU's own filter mixes the four nearest indices, one fetch for all channels, and the LUT comes after
  * the mixing, so a thin trace keeps its brightness; unstretched (the panel) the texel is taken as it is, which gives
  * the CPU's pixels. Mixing the counts in the shader instead took 16 fetches of integer textures per pixel: 36 to
- * 41 ms for the traces of a 1920x1080 monitor, against 5 ms of the panel. */
+ * 41 ms for the traces of a 1920x1080 monitor, against 5 ms of the panel.
+ * Both prepasses need highp integers for unsigned 16-bit counts and for colour grade sums of up to four counts. */
 static const char *FS_INDEX = "#version 300 es\n"
-			      "precision highp float; precision highp usampler2D;\n"
+			      "precision highp float; precision highp int; precision highp usampler2D;\n"
 			      "uniform usampler2D m0, m1, m2, m3; uniform ivec4 on; uniform ivec4 shift;\n"
 			      "out vec4 o;\n"
 			      "float e(usampler2D m, int c){ uint v = texelFetch(m, ivec2(gl_FragCoord.xy), 0).r;"
@@ -297,7 +298,7 @@ static const char *FS_TRACE = "#version 300 es\n"
 /* Colour grade the same way: first, at the size of the maps, the sum of the shown maps as the index into the colour
  * LUT plus 1, then in the target that index's colour, opaque, where it is not empty. */
 static const char *FS_GRADE_PRE = "#version 300 es\n"
-				  "precision highp float; precision highp usampler2D;\n"
+				  "precision highp float; precision highp int; precision highp usampler2D;\n"
 				  "uniform usampler2D m0, m1, m2, m3; uniform int n; uniform int shift;\n"
 				  "out vec4 o;\n"
 				  "void main(){ ivec2 c = ivec2(gl_FragCoord.xy); uint s = texelFetch(m0, c, 0).r;"

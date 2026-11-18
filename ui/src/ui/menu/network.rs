@@ -45,15 +45,15 @@ fn mac_value(ui: &Ui) -> String {
 
 fn wlan_value(ui: &Ui) -> String {
     let l = &ui.wlan.link;
-    if !l.stick {
+    if !l.stick() {
         "no stick".into()
-    } else if !l.ctrl {
+    } else if !l.ctrl() {
         "stick found, starting".into()
-    } else if l.status.connected() {
-        let ip = if l.status.ip.is_empty() { "waiting for an address" } else { l.status.ip.as_str() };
-        format!("{} \u{b7} {}", wlan::short(&oos_hal::wlan::name(&l.status.ssid)), ip)
+    } else if l.status().connected() {
+        let ip = if l.status().ip.is_empty() { "waiting for an address" } else { l.status().ip.as_str() };
+        format!("{} \u{b7} {}", wlan::short(&oos_hal::wlan::name(&l.status().ssid)), ip)
     } else {
-        format!("not connected ({})", l.status.state.to_lowercase())
+        format!("not connected ({})", l.status().state.to_lowercase())
     }
 }
 

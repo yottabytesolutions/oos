@@ -55,5 +55,10 @@ the CPU-bound frame thread gains latency and no useful waiting concurrency.
 
 ## Consequences
 
-Raw SCPI, VXI-11, HiSLIP and HTTP/MCP use the netio runtime today. mDNS uses a crate-owned daemon behind netio.
+Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and WLAN control use the netio runtime today. mDNS uses a crate-owned daemon
+behind netio. WLAN removes its dedicated socket/timer thread while retaining the scan and join intervals and
+per-transfer five-second control deadlines. Its synchronous owned port admits one queued job and two reports;
+IO waits for report capacity and wakes frame intake after publishing. Filesystem setup/cleanup, password key
+derivation and disk sync use the shared bounded blocking adapter. This source assessment for issue #206 is not
+yet verified on hardware.
 NTP, update checks and device-stream moves meeting the criterion above remain targets.

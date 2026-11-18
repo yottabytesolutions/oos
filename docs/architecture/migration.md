@@ -559,7 +559,8 @@ Risk: medium. Depends: E1, M14 mappings for that family and reviewed specificati
 Parallel: accepted transport migration and disjoint families; serialize shared parser state/table edits.
 Remove the test oracle only after full inventory/corpus parity and review.
 
-WLAN, SNTP and Bode already own threads; USBTMC remains a blocking adapter. There is no M15d service migration.
+WLAN control shares netio after issue #206; SNTP and Bode still own threads, and USBTMC remains a blocking adapter.
+There is no M15d service migration.
 A later service-to-runtime proposal must demonstrate a measured production-line reduction before admission.
 
 ### M16: stages and `Session` replace `Ui::step`

@@ -22,8 +22,8 @@ Keep the existing behaviour through small migrations. The accepted decisions are
 `oos-ui` uses `src/main.rs` for its binary and library module graph. `main` selects scripted execution,
 host `--serve`, or Linux device execution in `system/device.rs`. The browser is the host desktop view.
 There is no native Windows window in this crate. `oos-core` depends only on `oos-dsp`;
-`oos-ui` depends on core, DSP, HAL, libc, tokio and mdns-sd. Raw SCPI, VXI-11, HiSLIP and HTTP/MCP share tokio on netio;
-mdns-sd owns a discovery daemon behind a netio adapter.
+`oos-ui` depends on core, DSP, HAL, libc, tokio and mdns-sd. Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and WLAN control
+share tokio on netio; mdns-sd owns a discovery daemon behind a netio adapter.
 DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their application bindings.
 
 ### Module map
@@ -35,7 +35,7 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 | `model.rs`, `model/` | core model exports, platform/capability bridge, protocol bindings and colours |
 | `scpi.rs`, `scpi/`, `cmd.rs` | shared SCPI interpreter and program continuations; script/FIFO command syntax |
 | `http.rs`, `http/`, `vxi11.rs`, `hislip.rs`, `mdns.rs` | web/MCP, instrument transports and discovery |
-| `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11/HiSLIP/HTTP/mDNS runtime, socket framing/output and owned bounded application ports |
+| `netio/`, `netport.rs`, `netport/` | raw SCPI/VXI-11/HiSLIP/HTTP/mDNS/WLAN runtime, socket framing/output and owned bounded application ports |
 | `remote.rs` | telnet/firewall helper |
 | `store.rs`, `store/`, `sysconf.rs` | setup codec, waveform/image files, durable startup state, system settings |
 | `board/`, `board/dho/` | Board port, Shared exchange, hardware configuration/readout and publication |
@@ -138,8 +138,11 @@ mDNS configuration uses a watch channel; mdns-sd owns its sockets and timers.
 `Worker<J, R>` shares bounded capacity-one job/result channels and nonblocking submit/poll across
 simulation, reference analysis/decode/search, math, bus, eye and measurement-catalog jobs.
 One job remains busy until its result is consumed. `MeasWorker` is separate; it handles live measurements
-and analyser windows. WLAN and SNTP use their own job/report threads. Bode's external generator thread
-owns blocking TCP or USBTMC IO. These are not users of a shared IO runtime.
+and analyser windows. WLAN control starts lazily on netio when its menu is first opened. Its port carries one queued
+job (at most 32 SSID bytes and 63 password bytes) and two reports, with one job/report in flight. Each report derives from at most two
+16 KiB replies, bounded below 2 MiB including decoded strings and vector capacity. Full report queues suspend IO;
+full job queues return an error to intake. Socket/timer waits yield to other services. Filesystem work, PBKDF2 and
+save-time disk sync run on the shared blocking adapter. SNTP and Bode's external generator still own blocking workers.
 
 `store.rs` combines setup serialization, string setters, waveform parsing/exports and image encoding.
 Manual setup saves and automatic promotion share one storage worker using `store/durable.rs`.
@@ -199,9 +202,9 @@ flowchart TB
 ```
 
 ADR 0023 keeps non-blocking IO behind ports, preferably on one current-thread tokio runtime.
-The current Cargo features are rt, net, time, sync, macros and io-util. Raw SCPI, VXI-11, HiSLIP and HTTP/MCP
-use the netio executor. mDNS uses its crate-owned daemon behind a netio adapter (ADR 0023).
-NTP and the update check remain migration work. USB bulk and WLAN control also move behind
+The current Cargo features are rt, net, time, sync, macros and io-util. Raw SCPI, VXI-11, HiSLIP, HTTP/MCP and
+WLAN control use the netio executor. mDNS uses its crate-owned daemon behind a netio adapter (ADR 0023).
+NTP and the update check remain migration work. USB bulk moves behind
 non-blocking ports where async removes blocking. Blocking filesystem, usbfs and process calls never run on
 the executor; use bounded blocking adapters. CPU work stays on CPU workers.
 

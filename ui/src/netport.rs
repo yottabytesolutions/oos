@@ -5,6 +5,7 @@ pub(crate) mod http;
 mod latency;
 pub(crate) mod output;
 pub(crate) mod rpc;
+pub(crate) mod wlan;
 pub use crate::system::intake::{Id, Port, Wake};
 pub use output::Output;
 use std::sync::{

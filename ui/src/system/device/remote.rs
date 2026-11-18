@@ -40,6 +40,7 @@ impl Remote {
         }
         web.set_acl(acl.clone());
         (scpi.acl, vxi.acl, hislip.acl) = (acl.clone(), acl.clone(), acl);
+        ui.wlan_io(net6::host_or_exit(scpi.io_runtime()), web.wake_handle());
         let mdns = mdns::Mdns::new(net6::host_or_exit(scpi.io_runtime()), None);
         let mut r = Self {
             web,

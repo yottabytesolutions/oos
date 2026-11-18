@@ -11,6 +11,7 @@ pub use executor::Runtime;
 mod runtime;
 mod session;
 mod timer;
+pub(crate) mod wlan;
 pub use crate::netport::*;
 use std::{io, sync::Arc};
 

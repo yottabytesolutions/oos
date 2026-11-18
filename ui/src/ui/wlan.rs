@@ -3,56 +3,19 @@
 
 //! The network page (network box in the top bar, or System > Network): overview of the interfaces, and finding, joining
 //! and forgetting WLAN networks through a USB stick (docs/wlan.md). `/bin/oos-wlan`
-//! runs the driver, wpa_supplicant and DHCP; a worker thread here talks to wpa_supplicant, so that nothing waits on
-//! the radio in the frame loop. Passwords come from the on-screen keyboard (`Osk`) and only their derived key leaves
-//! this file.
+//! runs the driver, wpa_supplicant and DHCP; netio talks to wpa_supplicant, so that nothing waits on
+//! the radio in the frame loop. Passwords come from the on-screen keyboard (`Osk`); only their derived key reaches
+//! wpa_supplicant.
 
 use super::*;
-use oos_hal::wlan::{self, Ctrl, Net, Saved, Security, Status};
+use crate::netport::wlan::{How, Job, Link, Report};
+use oos_hal::wlan::{self, Net, Security};
 use std::path::Path;
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
-use std::time::{Duration, Instant};
 
-/// How long a join may take before it counts as failed.
-const JOIN_TIMEOUT: Duration = Duration::from_secs(30);
-/// wpa_supplicant's state is read this often.
-const POLL: Duration = Duration::from_secs(2);
 /// Lines of the two-column network pickers that fit the screen.
 const LIST_MAX: usize = 18;
 /// Characters of a network name in a picker line.
 const NAME_MAX: usize = 24;
-
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum How {
-    /// a network already saved
-    Saved(u32),
-    Open,
-    Pass(String),
-}
-
-enum Job {
-    Scan,
-    Join(Vec<u8>, How),
-    Forget(u32),
-}
-
-pub(super) enum Report {
-    Link(Link),
-    Scan(Result<Vec<Net>, String>),
-    Done(Result<String, String>),
-}
-
-/// What the worker last saw.
-#[derive(Clone, Debug, Default)]
-pub(super) struct Link {
-    /// wlan0 exists: a stick with a working driver
-    pub stick: bool,
-    /// wpa_supplicant answers
-    pub ctrl: bool,
-    pub status: Status,
-    pub signal: Option<i32>,
-    pub saved: Vec<Saved>,
-}
 
 #[derive(Default)]
 pub(super) struct WlanUi {
@@ -63,8 +26,7 @@ pub(super) struct WlanUi {
     pub osk: Option<Osk>,
     /// a WLAN stick is plugged in (its interface exists)
     pub(in crate::ui) stick: bool,
-    tx: Option<Sender<Job>>,
-    rx: Option<Receiver<Report>>,
+    io: Option<crate::netio::wlan::Wlan>,
 }
 
 pub(super) fn short(name: &str) -> String {
@@ -78,126 +40,24 @@ pub(super) fn stick_there() -> bool {
     Path::new("/sys/class/net").join(wlan::IFACE).exists()
 }
 
-fn link() -> (Option<Ctrl>, Link) {
-    let mut l = Link { stick: stick_there(), ..Link::default() };
-    let Some(c) = l.stick.then(|| Ctrl::open(Path::new(wlan::CTRL)).ok()).flatten() else { return (None, l) };
-    if let Ok(s) = c.status() {
-        l.ctrl = true;
-        l.signal = if s.connected() { c.signal() } else { None };
-        l.status = s;
-        l.saved = c.networks().unwrap_or_default();
-    }
-    (Some(c), l)
-}
-
-fn with_ctrl<T>(f: impl FnOnce(&Ctrl) -> Result<T, String>) -> Result<T, String> {
-    if !stick_there() {
-        return Err("No WLAN stick found".into());
-    }
-    f(&Ctrl::open(Path::new(wlan::CTRL)).map_err(|_| "WLAN is not ready yet".to_string())?)
-}
-
-fn scan() -> Result<Vec<Net>, String> {
-    with_ctrl(|c| {
-        c.scan()?;
-        // a software scan of 13 channels takes a few seconds; the list also holds earlier results
-        std::thread::sleep(Duration::from_secs(4));
-        let mut v = c.scan_results().map_err(|e| e.to_string())?;
-        if v.is_empty() {
-            std::thread::sleep(Duration::from_secs(3));
-            v = c.scan_results().map_err(|e| e.to_string())?;
-        }
-        Ok(v)
-    })
-}
-
-fn saved_to_card(c: &Ctrl) -> Result<(), String> {
-    c.save()?;
-    // the scope is usually switched off at the mains
-    crate::store::sync_disks();
-    Ok(())
-}
-
-/// Joins a network and keeps it only if that worked.
-fn join(ssid: &[u8], how: How) -> Result<String, String> {
-    let name = wlan::name(ssid);
-    with_ctrl(|c| {
-        let (id, new) = match &how {
-            How::Saved(id) => (*id, false),
-            How::Open => (c.add(ssid, None)?, true),
-            How::Pass(p) => (c.add(ssid, Some(&wlan::psk(p, ssid)))?, true),
-        };
-        let wrong = if how == How::Open { "no answer" } else { "wrong password?" };
-        c.select(id)?;
-        let end = Instant::now() + JOIN_TIMEOUT;
-        let done = loop {
-            std::thread::sleep(Duration::from_millis(500));
-            let st = c.status().map_err(|e| e.to_string())?;
-            if st.connected() && st.ssid == ssid {
-                break true;
-            }
-            let gave_up = c.networks().is_ok_and(|v| v.iter().any(|n| n.id == id && n.temp_disabled));
-            if gave_up || Instant::now() > end {
-                break false;
-            }
-        };
-        // SELECT_NETWORK switched the other saved networks off
-        c.enable_all()?;
-        if !done {
-            if new {
-                c.remove(id)?;
-            }
-            return Err(format!("Could not join {}: {}", name, wrong));
-        }
-        saved_to_card(c)?;
-        Ok(format!("Connected to {}", name))
-    })
-}
-
-fn forget(id: u32) -> Result<String, String> {
-    with_ctrl(|c| {
-        c.remove(id)?;
-        saved_to_card(c)?;
-        Ok("Network forgotten".to_string())
-    })
-}
-
-fn worker(jobs: Receiver<Job>, out: Sender<Report>) {
-    loop {
-        let (_, l) = link();
-        if out.send(Report::Link(l)).is_err() {
-            return;
-        }
-        match jobs.recv_timeout(POLL) {
-            Ok(Job::Scan) => {
-                let _ = out.send(Report::Scan(scan()));
-            }
-            Ok(Job::Join(ssid, how)) => {
-                let _ = out.send(Report::Done(join(&ssid, how)));
-            }
-            Ok(Job::Forget(id)) => {
-                let _ = out.send(Report::Done(forget(id)));
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return,
-        }
-    }
-}
-
 impl Ui {
-    /// From `step`: the worker's reports; the worker itself starts with the first look at the menu.
+    pub(crate) fn wlan_io(&mut self, runtime: crate::netio::Runtime, wake: std::sync::Arc<crate::netport::Wake>) {
+        self.wlan.io = Some(crate::netio::wlan::Wlan::new(
+            runtime,
+            crate::netport::wlan::Port::new(wake, crate::store::sync_disks),
+        ));
+    }
+
+    /// From `step`: start control on the first look at the menu, then drain owned reports.
     pub(super) fn wlan_poll(&mut self) {
         let in_menu =
             self.menu_open && (self.menu == MenuId::Network || self.pick.is_some_and(|p| p.menu == MenuId::Network));
-        if in_menu && self.wlan.tx.is_none() && self.host.services() {
-            let (tx, jobs) = channel();
-            let (out, rx) = channel();
-            if std::thread::Builder::new().name("wlan".into()).spawn(move || worker(jobs, out)).is_ok() {
-                self.wlan.tx = Some(tx);
-                self.wlan.rx = Some(rx);
+        if in_menu && self.host.services() {
+            if let Some(io) = &mut self.wlan.io {
+                io.start();
             }
         }
-        while let Some(r) = self.wlan.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+        while let Some(r) = self.wlan.io.as_mut().and_then(|io| io.poll()) {
             self.wlan_report(r);
         }
     }
@@ -227,7 +87,7 @@ impl Ui {
     }
 
     fn wlan_send(&mut self, j: Job, what: &'static str) {
-        let sent = self.wlan.tx.as_ref().is_some_and(|tx| tx.send(j).is_ok());
+        let sent = self.wlan.io.as_ref().is_some_and(|io| io.send(j));
         if sent {
             self.wlan.busy = Some(what);
             self.toast(&format!("{} ...", what));
@@ -240,7 +100,7 @@ impl Ui {
     fn wlan_blocked(&self) -> Option<&'static str> {
         if self.wlan.busy.is_some() {
             Some("WLAN is busy")
-        } else if !self.wlan.link.stick && !self.host.is_dir(&Path::new("/sys/class/net").join(wlan::IFACE)) {
+        } else if !self.wlan.link.stick() && !self.host.is_dir(&Path::new("/sys/class/net").join(wlan::IFACE)) {
             Some("No WLAN stick in the front USB port")
         } else {
             None
@@ -255,7 +115,7 @@ impl Ui {
     }
 
     pub(super) fn wlan_saved_id(&self, ssid: &[u8]) -> Option<u32> {
-        self.wlan.link.saved.iter().find(|n| n.ssid == ssid).map(|n| n.id)
+        self.wlan.link.saved().iter().find(|n| n.ssid == ssid).map(|n| n.id)
     }
 
     /// The list of the scan, then a line for a network that does not show its name.
@@ -279,7 +139,7 @@ impl Ui {
     }
 
     pub(super) fn wlan_forget_options(&self) -> Vec<String> {
-        self.wlan.link.saved.iter().take(LIST_MAX).map(|n| short(&wlan::name(&n.ssid))).collect()
+        self.wlan.link.saved().iter().take(LIST_MAX).map(|n| short(&wlan::name(&n.ssid))).collect()
     }
 
     /// A line of the scan list was picked.
@@ -308,7 +168,7 @@ impl Ui {
     pub(super) fn wlan_forget_tap(&mut self) {
         if let Some(m) = self.wlan_blocked() {
             self.toast(m);
-        } else if self.wlan.link.saved.is_empty() {
+        } else if self.wlan.link.saved().is_empty() {
             self.toast("No saved networks");
         } else {
             self.open_picker(Item::WlanForgetNet);
@@ -316,7 +176,7 @@ impl Ui {
     }
 
     pub(super) fn wlan_forget_pick(&mut self, k: usize) {
-        if let Some(n) = self.wlan.link.saved.get(k) {
+        if let Some(n) = self.wlan.link.saved().get(k) {
             let id = n.id;
             self.wlan_send(Job::Forget(id), "Forgetting");
         }
@@ -326,29 +186,29 @@ impl Ui {
     pub(super) fn wlan_lines(&self) -> Vec<String> {
         let l = &self.wlan.link;
         let mut d = vec!["WLAN".to_string()];
-        if !l.stick {
+        if !l.stick() {
             d.push("No stick in the front USB port".into());
             d.push("RTL8188EU sticks work, see the documentation".into());
-        } else if !l.ctrl {
+        } else if !l.ctrl() {
             d.push("Stick found, starting".into());
-        } else if l.status.connected() {
-            d.push(format!("Connected to {}", wlan::name(&l.status.ssid)));
-            if let Some(s) = l.signal {
-                d.push(format!("Signal {} dBm, {} MHz", s, l.status.freq));
+        } else if l.status().connected() {
+            d.push(format!("Connected to {}", wlan::name(&l.status().ssid)));
+            if let Some(s) = l.signal() {
+                d.push(format!("Signal {} dBm, {} MHz", s, l.status().freq));
             }
-            d.push(if l.status.ip.is_empty() {
+            d.push(if l.status().ip.is_empty() {
                 "Waiting for an address".to_string()
             } else {
-                format!("Address {}", l.status.ip)
+                format!("Address {}", l.status().ip)
             });
         } else {
-            d.push(format!("Not connected ({})", l.status.state.to_lowercase()));
+            d.push(format!("Not connected ({})", l.status().state.to_lowercase()));
         }
-        if !l.status.mac.is_empty() {
-            d.push(format!("Stick {}", l.status.mac));
+        if !l.status().mac.is_empty() {
+            d.push(format!("Stick {}", l.status().mac));
         }
-        if !l.saved.is_empty() {
-            d.push(format!("{} saved network{}", l.saved.len(), if l.saved.len() == 1 { "" } else { "s" }));
+        if !l.saved().is_empty() {
+            d.push(format!("{} saved network{}", l.saved().len(), if l.saved().len() == 1 { "" } else { "s" }));
         }
         if let Some(b) = self.wlan.busy {
             d.push(format!("{} ...", b));
@@ -362,7 +222,7 @@ impl Ui {
 #[cfg(test)]
 pub(super) fn tests_link(ssid: &str, ip: &str) -> Link {
     let status = wlan::parse_status(&format!("wpa_state=COMPLETED\nssid={}\nip_address={}\n", ssid, ip));
-    Link { stick: true, ctrl: true, status, ..Link::default() }
+    Link::new(true, true, status, None, vec![])
 }
 
 // ------------------------------------------------------------------ on-screen keyboard
@@ -854,6 +714,8 @@ impl Ui {
 mod tests {
     use super::*;
     use crate::wave::Source;
+    use oos_hal::wlan::Saved;
+    use std::time::{Duration, Instant};
 
     fn net(name: &str, s: Security) -> Net {
         Net { ssid: name.as_bytes().to_vec(), signal: -50, freq: 2437, security: s }
@@ -1041,8 +903,13 @@ mod tests {
     fn scan_list_and_the_way_to_each_network() {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.open_menu(MenuId::Network);
-        ui.wlan.link.stick = true;
-        ui.wlan.link.saved = vec![Saved { id: 7, ssid: b"Bekannt".to_vec(), temp_disabled: false, disabled: false }];
+        ui.wlan.link = Link::new(
+            true,
+            false,
+            wlan::Status::default(),
+            None,
+            vec![Saved { id: 7, ssid: b"Bekannt".to_vec(), temp_disabled: false, disabled: false }],
+        );
         let list = vec![
             net("Labor", Security::Psk),
             net("Gast", Security::Open),
@@ -1080,10 +947,16 @@ mod tests {
     fn forget_needs_a_saved_network() {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         ui.open_menu(MenuId::Network);
-        ui.wlan.link.stick = true;
+        ui.wlan.link = Link::new(true, false, wlan::Status::default(), None, vec![]);
         ui.wlan_forget_tap();
         assert_eq!(ui.menu, MenuId::Network);
-        ui.wlan.link.saved = vec![Saved { id: 1, ssid: b"A".to_vec(), temp_disabled: false, disabled: false }];
+        ui.wlan.link = Link::new(
+            true,
+            false,
+            wlan::Status::default(),
+            None,
+            vec![Saved { id: 1, ssid: b"A".to_vec(), temp_disabled: false, disabled: false }],
+        );
         ui.wlan_forget_tap();
         assert_eq!(ui.menu, MenuId::Pick);
         assert_eq!(ui.options(Item::WlanForgetNet), ["A"]);
@@ -1100,10 +973,10 @@ mod tests {
         ui.net_ifs = vec![("eth0".into(), "192.0.2.64".into())];
         assert_eq!(ui.value(Item::NetWeb), "http://192.0.2.64:8080");
         assert!(ui.value(Item::NetEth).starts_with("192.0.2.64"));
-        ui.wlan.link = Link { stick: true, ctrl: true, ..Link::default() };
-        ui.wlan.link.status = wlan::parse_status(
+        let status = wlan::parse_status(
             "wpa_state=COMPLETED\nssid=Ein sehr langer Netzname mit 32 Z\nip_address=198.51.100.200\n",
         );
+        ui.wlan.link = Link::new(true, true, status, None, vec![]);
         // the longest line fits its row
         let d = ui.dlg_layout().unwrap();
         let row = d.rows.iter().find(|r| r.it == Item::NetWlan).unwrap();
@@ -1125,13 +998,11 @@ mod tests {
     fn status_lines() {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
         assert!(ui.wlan_lines()[1].starts_with("No stick"));
-        ui.wlan.link = Link { stick: true, ctrl: true, signal: Some(-55), ..Link::default() };
-        ui.wlan.link.status = wlan::parse_status(
-            "wpa_state=COMPLETED\nssid=Labor\nip_address=10.0.0.7\nfreq=2437\naddress=00:11:22:33:44:55\n",
-        );
+        let status = wlan::parse_status("wpa_state=COMPLETED\nssid=Labor\nip_address=192.0.2.7\nfreq=2437\n");
+        ui.wlan.link = Link::new(true, true, status, Some(-55), vec![]);
         let l = ui.wlan_lines();
         assert_eq!(l[1], "Connected to Labor");
-        assert!(l.iter().any(|x| x.contains("10.0.0.7")) && l.iter().any(|x| x.contains("-55 dBm")));
+        assert!(l.iter().any(|x| x.contains("192.0.2.7")) && l.iter().any(|x| x.contains("-55 dBm")));
     }
 
     /// Whatever arrives on the touch panel and the knobs, with hostile names on the list.
@@ -1146,7 +1017,7 @@ mod tests {
             x ^= x << 17;
             x
         };
-        ui.wlan.link.stick = true;
+        ui.wlan.link = Link::new(true, false, wlan::Status::default(), None, vec![]);
         let mut names = vec![net("Küche 🏠", Security::Psk), net("Gast", Security::Open)];
         names.push(Net { ssid: vec![0xff; 32], signal: -90, freq: 2412, security: Security::Psk });
         names.push(Net {
@@ -1175,6 +1046,30 @@ mod tests {
         }
     }
 
+    fn link() -> ((), Link) {
+        ((), crate::netio::wlan::tests::link())
+    }
+    fn job(job: Job) -> Report {
+        crate::netio::wlan::tests::perform(job)
+    }
+    fn scan() -> Result<Vec<Net>, String> {
+        match job(Job::Scan) {
+            Report::Scan(r) => r,
+            _ => panic!("scan report"),
+        }
+    }
+    fn join(ssid: &[u8], how: How) -> Result<String, String> {
+        match job(Job::Join(ssid.to_vec(), how)) {
+            Report::Done(r) => r,
+            _ => panic!("join report"),
+        }
+    }
+    fn forget(id: u32) -> Result<String, String> {
+        match job(Job::Forget(id)) {
+            Report::Done(r) => r,
+            _ => panic!("forget report"),
+        }
+    }
     /// Against a real wpa_supplicant, `oos-wlan` and access points on simulated radios: tools/wlan-sim.sh runs this
     /// inside a virtual machine. Nothing here runs in a normal `cargo test`.
     #[test]
@@ -1190,7 +1085,7 @@ mod tests {
             }
             println!("ok: {}", what);
         };
-        wait("control socket", 40, &|| link().1.ctrl);
+        wait("control socket", 40, &|| link().1.ctrl());
 
         let nets = scan().unwrap();
         println!("scan: {:?}", nets);
@@ -1204,14 +1099,14 @@ mod tests {
         let e = join(b"OOS-Test", How::Pass("wrong-password".into())).unwrap_err();
         println!("wrong password: {}", e);
         assert!(e.contains("wrong password"), "{}", e);
-        assert!(link().1.saved.is_empty(), "a failed join must not stay");
+        assert!(link().1.saved().is_empty(), "a failed join must not stay");
         assert!(!std::fs::read_to_string(conf).unwrap().contains("network="), "a failed join must not be saved");
 
         // a password with the characters that would break a quoted file
         assert_eq!(join(b"OOS-Test", How::Pass("se\"cr#t p\\ss".into())).unwrap(), "Connected to OOS-Test");
         let st = link().1;
-        assert!(st.status.connected() && st.signal.is_some(), "{:?}", st);
-        wait("address over DHCP", 30, &|| link().1.status.ip.starts_with("192.168.50."));
+        assert!(st.status().connected() && st.signal().is_some(), "{:?}", st);
+        wait("address over DHCP", 30, &|| link().1.status().ip.starts_with("192.168.50."));
         let file = std::fs::read_to_string(conf).unwrap();
         println!(
             "{}",
@@ -1223,14 +1118,14 @@ mod tests {
         // a second network, then back to the first without a password
         assert_eq!(join(b"OOS-Open", How::Open).unwrap(), "Connected to OOS-Open");
         let l = link().1;
-        assert_eq!(l.saved.len(), 2);
-        assert!(l.saved.iter().all(|n| !n.disabled), "{:?}", l.saved);
-        let id = l.saved.iter().find(|n| n.ssid == b"OOS-Test").unwrap().id;
+        assert_eq!(l.saved().len(), 2);
+        assert!(l.saved().iter().all(|n| !n.disabled), "{:?}", l.saved());
+        let id = l.saved().iter().find(|n| n.ssid == b"OOS-Test").unwrap().id;
         assert_eq!(join(b"OOS-Test", How::Saved(id)).unwrap(), "Connected to OOS-Test");
 
         // a hidden network by name
         assert_eq!(join(b"OOS-Hidden", How::Pass("hidden-pass".into())).unwrap(), "Connected to OOS-Hidden");
-        assert_eq!(link().1.saved.len(), 3);
+        assert_eq!(link().1.saved().len(), 3);
         // this one has no DHCP server: oos-wlan has to go on all the same, which the steps below need
         wait("oos-wlan on the network without DHCP", 15, &|| {
             std::fs::read_to_string("/tmp/oos-wlan.log").is_ok_and(|t| t.contains("joined OOS-Hidden"))
@@ -1238,19 +1133,19 @@ mod tests {
         std::thread::sleep(Duration::from_secs(5));
 
         // forgetting the current one
-        let id = link().1.saved.iter().find(|n| n.ssid == b"OOS-Hidden").unwrap().id;
+        let id = link().1.saved().iter().find(|n| n.ssid == b"OOS-Hidden").unwrap().id;
         forget(id).unwrap();
-        assert_eq!(link().1.saved.len(), 2);
+        assert_eq!(link().1.saved().len(), 2);
         assert!(!std::fs::read_to_string(conf).unwrap().contains("hidden"));
-        wait("back on a saved network by itself", 40, &|| link().1.status.connected());
+        wait("back on a saved network by itself", 40, &|| link().1.status().connected());
 
         // wpa_supplicant dies: oos-wlan starts it again and the saved network comes back
         let pid = std::fs::read_to_string("/run/wpa_supplicant.pid").unwrap();
         std::process::Command::new("kill").args(["-9", pid.trim()]).status().unwrap();
         let _ = std::fs::remove_file(wlan::CTRL);
         std::thread::sleep(Duration::from_secs(3));
-        wait("restart and rejoin", 40, &|| link().1.status.connected());
-        wait("address after the restart", 30, &|| link().1.status.ip.starts_with("192.168.50."));
+        wait("restart and rejoin", 40, &|| link().1.status().connected());
+        wait("address after the restart", 30, &|| link().1.status().ip.starts_with("192.168.50."));
         println!("LIVE RADIO TEST PASSED");
     }
 
@@ -1264,7 +1159,7 @@ mod tests {
             let _ = crate::store::write(&dir.join(n), &crate::store::png_of(&cv));
         };
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        ui.wlan.link.stick = true;
+        ui.wlan.link = Link::new(true, false, wlan::Status::default(), None, vec![]);
         ui.open_menu(MenuId::Utility);
         shot(&mut ui, "wlan-0-system.png");
         ui.open_menu(MenuId::Network);

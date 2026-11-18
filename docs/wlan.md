@@ -47,8 +47,15 @@ when the network runs over the stick. With both, Ethernet stays the default rout
 | firmware | `lib/firmware/rtlwifi/rtl8188eufw.bin` | from linux-firmware, unchanged, with its licence beside it |
 | `/bin/wpa_supplicant`, `/bin/wpa_cli` | `rootfs/build-wlan-tools.sh`, into `rootfs/out/` | version 2.11, static, internal crypto, no EAP, no SAE, no P2P |
 | `/bin/oos-wlan` | started by `rcS` (5c) | driver, wpa_supplicant, DHCP, section 4 |
-| `oos_hal::wlan` | `hal/src/wlan.rs` | control socket, parsers, key derivation |
-| GUI | `ui/src/ui/wlan.rs` | worker thread, menu, keyboard |
+| `oos_hal::wlan` | `hal/src/wlan.rs` | response parsers, key derivation |
+| IO | `ui/src/netio/wlan/` | control socket, scans, status and join timers on shared netio |
+| Port | `ui/src/netport/wlan.rs` | bounded owned jobs/reports, frame wake and durable-save callback |
+| GUI | `ui/src/ui/wlan.rs` | menu and keyboard |
+
+The IO task starts on the first menu visit. It keeps the two-second status poll, four-second scan wait with one
+three-second retry, and 500 ms join checks with the existing 30-second deadline. Each socket send and receive has a
+five-second timeout. Blocking filesystem work, password key derivation and save-time disk sync stay off the IO
+executor. Host fixtures inject scan/join time; this IO migration is not yet verified on hardware.
 
 ## 4. `oos-wlan`
 

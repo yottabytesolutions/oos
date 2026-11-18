@@ -13,6 +13,7 @@ pub fn run(mut ui: Ui, sw: &sysconf::Switches) {
     let mut vxi = net6::host_or_exit(vxi11::Server::host(net6::host_or_exit(scpi.io_runtime()), web.wake_handle()));
     let mut hislip =
         hislip::Server::open_with_runtime(net6::Port::Host, net6::host_or_exit(scpi.io_runtime()), web.wake_handle());
+    ui.wlan_io(net6::host_or_exit(scpi.io_runtime()), web.wake_handle());
     web.offer(http::Offer { scpi_port: scpi.port(), vxi11: vxi.service_port().is_some(), hislip_port: hislip.port() });
     net6::host_or_exit(net6::host_ready(web.port(), scpi.port(), vxi.ports(), hislip.port()));
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);

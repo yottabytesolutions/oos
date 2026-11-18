@@ -2213,7 +2213,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
     assert!(u.wave_samples(u.last[0].as_ref().unwrap(), WaveId::Ref(9)).is_none());
     u.refs[0].as_mut().unwrap().on = false;
     assert_eq!(u.wave_samples(u.last[0].as_ref().unwrap(), WaveId::Ref(0)).unwrap().v, sine);
-    assert!(u.magnetic_options(Item::MagV).unwrap().iter().any(|s| s == "R1"));
+    assert!(u.options(Item::MagV).iter().any(|s| s == "R1"));
     u.m.mag_v = WaveId::Ch(n_ch() - 1);
     assert!(u.magnetic_adjust(Item::MagV, 1));
     assert_eq!(u.m.mag_v, WaveId::Ref(0));

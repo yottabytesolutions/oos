@@ -23,7 +23,7 @@
 611 file ui/src/ui/eyepage/automatic.rs
 451 file ui/src/ui/facts.rs
 495 file ui/src/ui/la.rs
-554 file ui/src/ui/magnetic.rs
+481 file ui/src/ui/magnetic.rs
 632 file ui/src/ui/meascatalog.rs
 462 file ui/src/ui/meascatalog/backend.rs
 712 file ui/src/ui/motor.rs

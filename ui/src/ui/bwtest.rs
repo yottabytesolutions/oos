@@ -16,63 +16,6 @@ pub(super) const HINTS: [f64; 16] =
 pub(super) const BINS: [usize; 5] = [250, 500, 1000, 2000, 5000];
 
 impl Ui {
-    pub(super) fn bw_items(&self) -> Vec<Item> {
-        vec![Item::BwOn, Item::BwSrc, Item::BwHint, Item::BwBins]
-    }
-
-    pub(super) fn bw_kind(it: Item) -> Option<Kind> {
-        Some(match it {
-            Item::BwOn | Item::BwSrc | Item::BwHint | Item::BwBins => Kind::Choice,
-            _ => return None,
-        })
-    }
-
-    pub(super) fn bw_label(it: Item) -> Option<&'static str> {
-        Some(match it {
-            Item::Open(MenuId::BwTest) => "Bandwidth",
-            Item::BwOn => "View",
-            Item::BwSrc => "Source",
-            Item::BwHint => "Signal freq",
-            Item::BwBins => "Bins / period",
-            _ => return None,
-        })
-    }
-
-    fn hint_name(h: f64) -> String {
-        if h == 0.0 {
-            "Auto".into()
-        } else {
-            si_short(h, "Hz")
-        }
-    }
-
-    pub(super) fn bw_value(&self, it: Item) -> Option<String> {
-        let m = &self.m;
-        Some(match it {
-            Item::BwOn => {
-                if m.view == AView::Step {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            Item::BwSrc => format!("CH{}", m.bw_src + 1),
-            Item::BwHint => Self::hint_name(m.bw_hint),
-            Item::BwBins => m.bw_bins.to_string(),
-            _ => return None,
-        })
-    }
-
-    pub(super) fn bw_options(&self, it: Item) -> Option<Vec<String>> {
-        Some(match it {
-            Item::BwOn => vec!["Off".into(), "On".into()],
-            Item::BwSrc => ch_names(),
-            Item::BwHint => HINTS.iter().map(|&h| Self::hint_name(h)).collect(),
-            Item::BwBins => BINS.iter().map(|b| b.to_string()).collect(),
-            _ => return None,
-        })
-    }
-
     pub(super) fn bw_adjust(&mut self, it: Item, d: i32) -> bool {
         let m = &mut self.m;
         let step = |i: usize, n: usize| (i as i32 + d).clamp(0, n as i32 - 1) as usize;

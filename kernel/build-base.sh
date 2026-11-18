@@ -14,11 +14,19 @@
 #   kernel/build-base.sh shell      open a shell in the build container
 #   kernel/build-base.sh image      only make sure the build image is there and print its name (boot/build-dev-image.sh
 #                                   compiles oos-hw with it)
+#   kernel/build-base.sh purge      remove the local kernel cache
+#   kernel/build-base.sh cache-dir  print its location
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tarball="$here/src/linux-6.12.115-base.tar.xz"
-out="$here/out/base"
 root=$(cd "$here/.." && pwd)
+case ${1:-} in
+    ''|purge|cache-dir|key|verify)
+        exec python3 -I "$root/tools/kernel_cache.py" "${1:-build}" ;;
+    image|shell|_build) ;;
+    *) echo "usage: kernel/build-base.sh [shell|image|purge|cache-dir|key|verify]" >&2; exit 2 ;;
+esac
+out=${2:-$here/out/base}
 . "$root/tools/lib/portable.sh"
 image=$("$root/tools/build-env.sh" prepare kernel)
 platform=$("$root/tools/build-env.sh" platform kernel)

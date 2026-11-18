@@ -32,6 +32,7 @@ expected_kernel=$("$root/tools/build-env.sh" identity kernel)
     echo "kernel compiler environment changed or is unrecorded; run kernel/build-base.sh" >&2
     exit 1
 }
+python3 -I "$root/tools/kernel_cache.py" verify
 # Docker on Linux: be in the docker group, not root (under sudo, HOME and PATH are root's, rustup's cargo is gone, and
 # the results would belong to root)
 if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then

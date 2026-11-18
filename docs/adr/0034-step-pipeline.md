@@ -2,7 +2,7 @@
 
 - Number: 0034
 - Category: code
-- State: target: M16
+- State: target: M16 (F7 supplies picture state)
 - Date: 2026-11-18
 
 ## Context
@@ -14,8 +14,10 @@ owner explicit instead of relying on incidental statement order.
 ## Decision
 
 A full step calls intake, change, acquire, records, accumulate, measure, views, compose, present, reply in that order.
-Each stage owns its state and exchanges typed values. Session holds only its stages and their channels. Every stage
-reads the single Settings snapshot taken by that step's change stage.
+Each stage owns its state and exchanges typed values. Session holds only its stages and their channels.
+Settings readers use the single snapshot taken by that step's change stage. Picture conversion and placement
+instead take BatchMeta and Projection, never live Settings or Model, as specified by the
+[frame pipeline](../architecture/frames.md). F7 supplies the picture-state part of M16b.
 
 Check: `architecture` layer rules per stage and order/snapshot tests required by M16.
 

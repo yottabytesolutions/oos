@@ -2,7 +2,7 @@
 
 - Number: 0031
 - Category: code
-- State: target: M3-M12 and performance-gate follow-up in docs/architecture/migration.md#adr-baseline-follow-ups
+- State: target: M3-M12, F0-F7 and performance-gate follow-up in docs/architecture/migration.md#adr-baseline-follow-ups
 - Date: 2026-11-18
 
 ## Context
@@ -15,14 +15,17 @@ rather than orchestration tails. Ownership alone did not bound latency or repeat
 
 Each thread blocks in one event/deadline wait. No sleep loops. Hardware polling exists only when the hardware exposes no
 event for the required condition, at the hardware period and interruptible by the same wait. Normal-boot DMA completion
-uses interrupts; kexec currently needs polling because MSI completion is unavailable (docs/update.md). The frame thread
+uses interrupts; kexec currently needs polling because MSI completion is unavailable (docs/update.md). The UI thread
 never waits for a client, disk or page flip. Remote requests can run [light steps](../architecture/README.md#waiting)
-without composing: apply settings and reply without a picture. Workers pre-sum; the frame thread adds at most 3 maps per
-step, independent of worker/channel count. Hot paths allocate zero per frame after warm-up. GPU work is proportional to
-change; no glFinish. Page-flip events pace full steps. Samples stay u16 until a consumer needs volts, immutable after
-read and shared by Arc; no sample copy under a lock. Lock-free primitives stay in oos_hal::sync and require a unit
-contention counter. Every budget has a number in architecture/README.md, a :SYSTem:STATe? counter and an assertion.
-Ratio-based host perf guards are required CI; unit budgets are required release evidence.
+without composing: apply settings and reply without a picture. The deposit pool writes exclusively owned
+column-difference tiles into one plane set, with no worker-map sum. The UI thread folds at most three deposits
+in one pass per channel over touched rows (F2/F6). Hot paths allocate zero per frame after warm-up. GPU work is
+proportional to change, with one exception: the [dirty-row hull](../architecture/frames.md#minimum-persistence-and-gpu-hand-off)
+also uploads unchanged rows between disjoint changed bands and can span the full height. Unchanged pictures upload
+nothing. No glFinish. Page-flip events pace full steps. Samples stay u16 until a consumer needs volts,
+immutable after read and shared by Arc; no sample copy under a lock. Lock-free primitives stay in oos_hal::sync and
+require a unit contention counter. Every budget has a number in architecture/README.md, a :SYSTem:STATe? counter and
+an assertion. Ratio-based host perf guards are required CI; unit budgets are required release evidence.
 
 Check: counting allocator tests, `perf` and unit release round; review. Production sleep ratchet and required host perf
 CI remain follow-ups.
@@ -35,4 +38,6 @@ Kernel-only best-round benchmarks: rejected because they miss orchestration stal
 
 ## Consequences
 
-Existing allocation and primitive-ratio tests are in force; ownership, pacing and whole-map bounds follow M3-M12.
+Existing allocation and primitive-ratio tests are in force. Ownership and pacing follow M3-M12; F0-F7 replace
+worker-map reduction with the [frame pipeline](../architecture/frames.md). Its slice counters and budgets remain
+targets until measured on hardware. Source waiting and capture-rate floors expose unsustainable throughput.

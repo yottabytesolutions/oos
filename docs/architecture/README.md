@@ -1,9 +1,12 @@
 # UI architecture: current state and target
 
-Source snapshot: 2026-11-17. Counts below describe this checkout, including the desktop removal,
+Source snapshot: 2026-11-17. The Current state section describes this checkout, including the desktop removal,
 shared `Worker`, field-table generation and DSP decoder moves. They are source evidence, not unit measurements.
 [Migration](migration.md) lists the remaining work. [Acquisition](acquisition.md), [picture](picture.md)
 and [records](records.md) describe the detailed target, not completed implementations.
+The owner-approved [frame pipeline](frames.md) replaces worker-share maps and read-and-drop overload in that
+target. F0-F7 are planned work; F4 is M12b and F7 supplies M16b picture state.
+Sections from Layers onward describe the target unless explicitly marked as current source or measured evidence.
 
 ## Why
 
@@ -148,7 +151,8 @@ queues the newest record. Batch is the code and image default; `acq.pipeline = s
 Standard. `fast_ok` selects eligible hardware views. `drawpipe::draw_frame` uses dense
 `fastdraw` spans, sparse interpolation or deep-record drawing; `Phosphor::draw_ex` handles record drawing.
 CPU rendering and GPU layer composition both exist. `Model::draw_batch` selects the hardware route;
-`draw.model` is absent from this checkout. M12 has not chosen which remaining routes to remove.
+`draw.model` is absent from this checkout. The owner selected Batch with the shared difference kernel;
+M12a unit acceptance still precedes deletion of Standard in F4 (M12b).
 
 Boot images contain shared model defaults; device identity and overrides stay in `/oos/system.conf`. Updates compare
 runtime hardware model detection with a signed model list and board target (ADR 0015). See [system](system.md).
@@ -176,7 +180,7 @@ flowchart TB
         parser["SCPI table + program interpreter"] -->|"Command / Query"| change
         change -->|"Settings + ChangeSet"| stages["Acquire / records / measure / views"]
         stages -->|"next-intake outbox"| change
-        stages -->|"BatchUnit or Replace"| picture["Accumulator owns Picture"]
+        stages -->|"Deposit or Replace"| picture["Accumulator owns Picture"]
         picture -->|"read-only Picture"| render["Compose / present"]
         stages -->|"query results / continuations"| parser
     end
@@ -185,7 +189,7 @@ flowchart TB
     io <-->|"async framing / socket IO"| peers["SCPI / VXI-11 / HiSLIP / HTTP / mDNS peers"]
     stages -->|"owned AcqRequest / DepositView"| acq["Acquisition + deposit workers"]
     acq -->|"typed frames / batches / readings"| stages
-    acq -->|"whole BatchUnit"| picture
+    acq -->|"whole-batch Deposit"| picture
     stages <-->|"bounded jobs / results"| cpu["CPU workers"]
     stages <-->|"owned snapshots / completion"| disk["Bounded storage worker"]
     render --> display["DRM / GPU / VPU"]
@@ -339,10 +343,10 @@ The unit gate must validate the fixed-cost allowance and acquisition/retained en
 M5b still owns the complete acquisition memory sweep. Host tests prove the raw queue and response bounds.
 
 The other buffers do not depend on the acquisition and are bounded by their own constants, each next to its owner:
-the share maps (workers x 2 maps x plot pixels x 4 B), the accumulator (3 units of maps plus 2 persistence maps), the
+the difference planes (open, slot and three window deposits, main and optional zoom), the accumulator Picture, the
 record store (`HISTORY_MAX` x screen record), and each view's maps (`EYE_MAX`, `SPECTRUM_MAX`). The memory budget
 in [Performance budgets](#performance-budgets) is `memplan`'s total plus these constants. The target picture window
-holds at most three whole units and 67 ms of age ([picture requirement](picture.md#window-and-grade)).
+holds at most three whole deposits and 67 ms of age ([picture requirement](picture.md#window-and-grade)).
 
 - Ring snapshot protocol: the writer appends chunks and never changes a published one. A sweep is a list of chunk
   `Arc`s. Only in-flight work (the records stage, a measure job's copy step) pins a sweep's chunks, for at most one
@@ -367,15 +371,21 @@ the sum for every reachable setting:
 | Term | Formula | Factors |
 |---|---|---|
 | base | process, fonts, layout, GPU arena | measured: 73 MB RSS with 4 channels in RUN on the panel (2026-11-14) |
-| maps | (workers + helper) x in-flight shares x map set, plus the accumulator's window (3 units) and 2 persistence maps; map set = 2 maps x channels x plot pixels x bytes per count | plot pixels: 1024 x 486 on the panel, up to 1920 x 1080 on HDMI; 2 B per count in the window, 4 B with decay |
+| maps | five difference-plane sets total, including hand-off and recycling, plus Placed arena and Picture; main plus zoom if enabled | difference set = channels x cols x (rows + 1) x 2 B; Picture counts use 2 B at Min, 4 B with decay; [frame memory estimates](frames.md#memory-estimates) |
 | acquisition | `dma` + `raw` + `ring` + `segments` + decoded copies | `dma` = pool (3) x batch bytes; decoded = 2 x code bytes (u16 codes to f32 volts) for every frame decoded at once; `raw` <= `deepmeas::MAX_BYTES` (24 MiB) per window |
 | retained | every retaining owner below at its limit | [Retaining owners](#retaining-owners) |
+
+The maps peak is one open set, one occupied slot and three window deposits. Before accepting a fourth window
+deposit, the UI recycles an old entry, then moves the accepted deposit out of the slot into the window. Refilling
+the slot moves the existing open set and reuses the recycled set; no sixth set is allocated during hand-off.
+The [frame memory contract](frames.md#memory-estimates) defines ownership and waiting when no recycled set is free.
 
 - **Buffer return.** A DMA buffer goes back to the pool only when its last reader drops it: the workers have
   deposited, the records stage has built its records, and every holder has made its copy. An `Arc` pins the whole
   allocation, not one frame, so the in-flight readers are kept to one step ([One ownership path per
-  batch](#one-ownership-path-per-batch)). When no buffer is free, the acquisition drops the next batch and counts it
-  (`drops batch`); it never overwrites a buffer a reader holds.
+  batch](#one-ownership-path-per-batch)). Acquisition reserves a free buffer before arming, including prearm.
+  With none free it waits in the command event wait, counts wait time and reports capture dead time (F3).
+  It never overwrites a held buffer or reads a batch merely to drop it under load.
 - **Reconfiguration overlap.** The acquisition thread allocates the new plan's buffers when the old plan's are back,
   while nothing is armed. Old buffers still in flight at the switch (at most the pool of 3, for at most one step) are
   counted in the `dma` class of both plans for that step; `memplan` adds the old pool to the new plan's total when it
@@ -413,14 +423,16 @@ Every owner that keeps acquired data past its step has a byte limit and a releas
 ### Queues
 
 Every channel between threads is bounded in count and in bytes, and has a stated overload policy. The acquisition
-thread never blocks on a full queue.
+thread may wait for buffer return at the source, interruptible by commands. The frame thread never waits for
+pipeline capacity.
 
 | Channel | Bound | When full |
 |---|---|---|
-| `Batch` into the pipe | the pool (count) and the `dma` class (bytes) | the acquisition thread drops the batch and counts it; deposit never moves to main |
-| `BatchUnit` to main | pool size | cannot fill: there are never more units than buffers in flight |
-| `RecordBatch` to main | 2 per step, `records` class | thin to the newest batch and count; a reader that needs every frame (mask, segments) counts the loss |
-| `Frame` (newest frame, live roll and scan sweeps) | latest-value cell: one frame | replaced; a sweep is screen-resolution min/max plus the `Arc`s of its ring chunks, never a copy |
+| `Batch` into the pipe | the pool (count) and the `dma` class (bytes) | source waits for a buffer before arming; commands share the wait; count dead time, never overload loss |
+| `Deposit` to main | one slot; five plane sets including open and up to three window entries | coalesce whole batches of one key/identity within per-plane column-hit bounds, then wait; the source eventually waits for buffer return |
+| newest-record taps to main | [plan-derived FIFO, storage and drain bounds](frames.md#tap-capacity) | pool waits; never replace a batch's unread tap; main polls without waiting |
+| `RecordBatch` to main | 2 per step, `records` class | workers wait for space, retaining whole batches; finite buffers propagate back-pressure to the source; no overload drops |
+| `Frame` (live roll and scan sweeps; batch newest records use the tap FIFO) | latest-value cell: one sweep | replaced; a sweep is screen-resolution min/max plus the `Arc`s of its ring chunks, never a copy |
 | segment read-back | 2 batches of segments, `segments` class | back-pressure: the read-back waits for space. Safe because acquisition is stopped during read-back |
 | `MeasRead` | latest-value cell per kind | replaced by the newer read |
 | `AcqCmd` | 16 | the sender gets an error; commands are never dropped silently; a superseded command is acknowledged as `Superseded` |
@@ -431,12 +443,11 @@ thread never blocks on a full queue.
 
 ### Degradation order
 
-Under overload the step sheds work in this order, and counts each shed:
-
-1. measurement reads (`MeasRead`): the newest wins;
-2. records beyond the newest per step, where no reader needs every frame;
-3. records that a reader needs (mask, zones, segments): counted as lost frames in that reader's statistics;
-4. whole batches at the pipe intake.
+Under overload, measurement reads (`MeasRead`) and pending measurement jobs keep the newest value and count
+replacements. `Deposit` and `RecordBatch` retain whole batches and wait on the worker side; finite buffers
+propagate back-pressure to the source. Readers such as mask, zones and segments lose no read records to overload.
+Source back-pressure reports reduced capture rate and dead time
+([conservation](frames.md#back-pressure-and-conservation)).
 
 The picture's newest batch and input handling are never shed.
 
@@ -461,7 +472,10 @@ The protection is in this order. The watchdog is the last line, never the design
 
 Each channel and each shed above has a drop counter. `:SYSTem:STATe?` prints them on one line,
 `drops batch=N recbatch=N frame=N measread=N acqcmd=N remote=N input=N measjob=N frozen=N`, next to RSS, the `memplan` total
-and the watchdog state. unitlab fails a run where a counter grows that must stay 0 in that mode.
+and the watchdog state. F0/F3 replace deposit-route overload drops with the
+[frame counters](frames.md#counters). Live pending counts and drained identities follow the canonical
+[conservation rule](frames.md#back-pressure-and-conservation), including separate RecordBatch accounting.
+unitlab fails a run where a counter grows that must stay 0 in that mode.
 
 ## Data path cost
 
@@ -471,10 +485,14 @@ Target batches retain their own conversion metadata and ownership through worker
 Long-lived history copies only its retained range. See [records](records.md).
 Today Shared publishes Arc frames; that does not establish zero copies for every record consumer.
 
-### Maps: workers pre-sum
+<a id="maps-workers-pre-sum"></a>
 
-Target workers complete/reduce whole batches before publication. Main adds at most three map sets per step.
-The accumulator owns weight/decay/grade. Current share merging and record drawing have not reached that target.
+### Maps: column differences and whole deposits
+
+The [frame pipeline](frames.md) supersedes worker pre-summing. The pool places records in slices and deposits
+exclusively owned column bands into one plane set. Whole batches coalesce into Deposit values. The UI takes at
+most one per step and folds up to three window deposits in one pass per channel over touched rows.
+The accumulator owns weight/decay/grade. Current share merging has not reached this target.
 
 ## Safe start and exit
 
@@ -494,7 +512,8 @@ accumulation/decay without maxima scans. Hot shared counters are per thread and 
 them. Each hand-off has a contention counter. A measured lock-free replacement lives in oos_hal::sync with its
 own tests and Miri coverage. These are ADR 0031 targets, accepted through the performance migration steps.
 
-
+Frame-pipeline stages use p50/p90/p99 over the last 256 observations, timed per slice, with the estimates in
+[frames](frames.md#performance-estimates). Other target budgets retain the reporting interval below.
 Every target budget must have a counter in `:SYSTem:STATe?` (p50 and p99 over the last 10 s, one line per thread)
 and a gate ([ADR 0031](../adr/0031-performance.md)). Host perf guards check primitive ratios and
 allocation counts; the absolute values must be asserted on the unit in each acceptance round. These are target
@@ -507,7 +526,7 @@ otherwise; the first unit round after each step may tighten them, never loosen t
 | intake + change | p99 <= 0.5 ms | `stage intake`, `stage change` | host timing guard, unitlab | M2.3 |
 | picture invalidation (main and zoom map clear) | p99 <= 3 ms, provisional 4x host estimate plus tail headroom | `stage picture` | host mapping-edit storm, mandatory unit storm | M2.3d |
 | records stage | p99 <= 1.5 ms off the fast path; records are built on the workers | `stage records` | host timing guard, unitlab | M6 |
-| accumulate (at most 3 map sets, touched rows, fused grade) | p99 <= 2 ms; <= 4 ms on HDMI | `stage accumulate` | host timing guard, unitlab | M9, M10 |
+| picture blend (Min: up to three deposits; decay: one new deposit; one touched-row pass) | estimated <= 3 ms at Min, <= 4 ms with decay | `picture.blend` | host ratio guard, unitlab | F2, F6 |
 | compose + present submission (sum) | p99 <= 4 ms; <= 6 ms on HDMI | `stage compose`, `stage present` | unitlab | M3d (counter), asserted from M9b |
 | light step (input or remote) | settings round trip p99 <= 2 ms when main is idle | `light` | host test, unitlab | M3d |
 | remote arrival to reply during full steps | p99 <= 3 ms, measured from the listener's read timestamp to the reply in the output queue | `remote latency` | unitlab (`ifload.py` with pictures running) | M3d |
@@ -516,8 +535,7 @@ otherwise; the first unit round after each step may tighten them, never loosen t
 | acquisition read chunk | p99 <= 20 ms per 4 MiB chunk; this bounds application and cancellation inside a read | `acq chunk` | unitlab | M3c |
 | acquisition overhead per batch (excluding DMA and rereads) | p99 <= 1 ms | `acq batch` | unitlab | M3c |
 | DMA completion | completion CPU <= 5 % of one A53; overhead <= 1 ms per 4 MiB beyond link time. Exception: a kexec session runs in poll mode, which burns an A53 per transfer, and is exempt; it normally ends with a warm reboot after the install | `xdma` | unitlab | M5c |
-| deposit worker, per frame | p99 <= 2.7 ms; load <= 70 % per little core with measurements | `worker` | perf guard (ratio), unitlab | M7 |
-| share reduction, per batch (1 and 2 channels; none at 3 and 4) | p99 <= 1.5 ms per worker | `reduce` | perf guard, unitlab | M9 |
+| place + deposit | estimated <= 0.25 ms CPU/record at 1 us/div, <= 0.5 ms at 10 us/div; pool <= 70 % per A53 | `deposit.place`, `deposit.tiles`, `pool.busy` | perf guard (ratio), unitlab | F2 |
 | measure job | cheap set p99 <= 2 ms; full set on 4 x 625 k p99 <= 40 ms; deep work per [Depth baselines](#depth-baselines) | `measure` | perf guard, unitlab | M6 |
 | GPU helper | CPU per composition <= 3 ms on the panel, <= 5 ms on HDMI; GPU time <= 10 ms | `gpu cpu`, `gpu time` | `gpu/test-host.sh` ratio, unitlab | M9b |
 | HDMI | >= 29.5 pictures/s alone; >= 15 with the panel, counted when halved | `hdmi` | unitlab | M9b |
@@ -616,7 +634,9 @@ an unresolved token accepts no records. Tokens are unique per request; several r
 Apply settings emitted with a token before resolving its epoch, so AcqIntent carries the new gen and epoch together.
 An epoch-only change drops armed-ahead batches and queued older-epoch frames. SINGLE arm, CLEAR and RUN after STOP
 resolve in the change stage itself. UiAcq is derived and diffed each step rather than stored. AcqIntent carries
-the route into BatchMeta; DepositView carries the mapping separately. In STOP a mapping change redraws the last record.
+the route into BatchMeta; DepositView carries the mapping and its acquisition pair in one snapshot. The pool checks
+that pair before painting ([projection identity](frames.md#projection-identity)). In STOP a mapping change redraws
+the last record.
 Tests must cover unresolved tokens, same-step settings/epoch association and epoch-only acquisition boundaries.
 
 ### Error recovery mechanics

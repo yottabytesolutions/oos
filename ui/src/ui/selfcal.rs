@@ -31,18 +31,6 @@ impl Ui {
         }
     }
 
-    pub(super) fn cal_items(&self) -> Vec<Item> {
-        // Start while nothing runs, Cancel only while it does
-        let run = self.cal_running();
-        vec![
-            Item::CalCh,
-            Item::CalAdc,
-            Item::CalZero,
-            if run { Item::CalCancel } else { Item::CalStart },
-            Item::CalStatus,
-        ]
-    }
-
     /// Text about the warm-up for the dialog before the start.
     fn cal_warmup(minutes: f64) -> String {
         if minutes < WARM_UP_MIN {
@@ -50,66 +38,6 @@ impl Ui {
         } else {
             format!("Warmed up: on for {:.0} minutes.", minutes)
         }
-    }
-
-    pub(super) fn cal_kind(it: Item) -> Option<Kind> {
-        Some(match it {
-            // the status is plain text (`Ctl::Text`)
-            Item::CalCh | Item::CalZero | Item::CalAdc | Item::CalStatus => Kind::Choice,
-            Item::CalStart | Item::CalCancel => Kind::Action,
-            _ => return None,
-        })
-    }
-
-    pub(super) fn cal_label(it: Item) -> Option<&'static str> {
-        Some(match it {
-            Item::Open(MenuId::SelfCal) => "Self-cal",
-            Item::CalCh => "Channels",
-            Item::CalZero => "AFE zero",
-            Item::CalAdc => "ADC cores",
-            Item::CalStart => "Start",
-            Item::CalCancel => "Cancel",
-            Item::CalStatus => "Status",
-            _ => return None,
-        })
-    }
-
-    pub(super) fn cal_options(&self, it: Item) -> Option<Vec<String>> {
-        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
-        Some(match it {
-            Item::CalCh => v(&["All", "CH1", "CH2", "CH3", "CH4"][..=n_ch()]),
-            Item::CalZero | Item::CalAdc => v(&["Off", "On"]),
-            _ => return None,
-        })
-    }
-
-    pub(super) fn cal_value(&self, it: Item) -> Option<String> {
-        Some(match it {
-            Item::CalCh => {
-                if self.cal.ch == 0 {
-                    "All".into()
-                } else {
-                    format!("CH{}", self.cal.ch)
-                }
-            }
-            Item::CalZero => {
-                if self.cal.zero {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            Item::CalAdc => {
-                if self.cal.adc {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            Item::CalStart | Item::CalCancel => String::new(),
-            Item::CalStatus => self.cal_status(),
-            _ => return None,
-        })
     }
 
     /// A self-calibration is requested or running.

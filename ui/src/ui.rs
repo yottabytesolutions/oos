@@ -11270,7 +11270,7 @@ mod tests {
         let kinds: Vec<String> =
             ui.azr.findings.iter().map(|f| format!("{:?} {:?} {:.2}", f.channels, f.kind, f.confidence)).collect();
         assert!(named.contains("CH3"), "toast: {:?}, seen {:?}, findings {:?}", named, ui.azr.watch_seen, kinds);
-        assert!(ui.identify_items().len() > 1);
+        assert!(ui.menu_items(MenuId::Identify).len() > 1);
     }
 
     #[test]

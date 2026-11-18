@@ -188,7 +188,7 @@ fn full_eye_has_optional_panes_compact_placement_picker_and_live_return() {
     assert!(!ui.record_mode());
     assert!(!ui.top_buttons().iter().any(|b| b.0 == TopBtn::Live));
     ui.set_offline(true);
-    assert_eq!(ui.sim_items()[0], Item::SimLive);
+    assert_eq!(ui.menu_items(MenuId::Sim)[0], Item::SimLive);
     ui.activate(Item::SimLive);
     assert!(!ui.record_mode());
     for value in ["Full", "Side", "Under"] {

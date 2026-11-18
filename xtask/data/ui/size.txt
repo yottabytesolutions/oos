@@ -15,7 +15,7 @@
 3279 file ui/src/scpi.rs
 1464 file ui/src/store.rs
 8877 file ui/src/ui.rs
-1747 file ui/src/ui/analysis.rs
+1715 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 992 file ui/src/ui/bode.rs
 475 file ui/src/ui/bus.rs
@@ -26,12 +26,12 @@
 554 file ui/src/ui/magnetic.rs
 632 file ui/src/ui/meascatalog.rs
 462 file ui/src/ui/meascatalog/backend.rs
-712 file ui/src/ui/motor.rs
+536 file ui/src/ui/motor.rs
 688 file ui/src/ui/panes.rs
 407 file ui/src/ui/reference_decode.rs
 701 file ui/src/ui/reflook.rs
 402 file ui/src/ui/remote.rs
-902 file ui/src/ui/sim.rs
+737 file ui/src/ui/sim.rs
 416 file ui/src/ui/startup.rs
 563 file ui/src/ui/time.rs
 1290 file ui/src/ui/tools.rs
@@ -109,7 +109,7 @@
 62 fn ui/src/ui.rs fast_plan
 66 fn ui/src/ui.rs packet_text
 121 fn ui/src/ui/analysis.rs Ui::ana_adjust
-93 fn ui/src/ui/analysis.rs Ui::ana_value
+84 fn ui/src/ui/analysis.rs Ui::ana_value
 66 fn ui/src/ui/analysis.rs Ui::apply_finding
 78 fn ui/src/ui/analysis.rs Ui::channel_measurement
 66 fn ui/src/ui/analysis.rs Ui::poll_reference_measurements

@@ -4,6 +4,7 @@
 use super::*;
 
 /// Read-only rows in display and navigation order. Visibility never changes option identity.
+#[derive(Clone, Copy)]
 pub(super) struct Descriptor {
     item: Item,
     kind: Kind,
@@ -23,6 +24,28 @@ impl Descriptor {
         visible: fn(&Ui) -> bool,
     ) -> Self {
         Self { item, kind, label, value, options, visible }
+    }
+
+    const fn action(item: Item, label: &'static str) -> Self {
+        Self::new(item, Kind::Action, label, |_| String::new(), |_| Vec::new(), |_| true)
+    }
+
+    const fn value(item: Item, label: &'static str, value: fn(&Ui) -> String) -> Self {
+        Self::new(item, Kind::Value, label, value, |_| Vec::new(), |_| true)
+    }
+
+    const fn choice(
+        item: Item,
+        label: &'static str,
+        value: fn(&Ui) -> String,
+        options: fn(&Ui) -> Vec<String>,
+    ) -> Self {
+        Self::new(item, Kind::Choice, label, value, options, |_| true)
+    }
+
+    const fn when(mut self, visible: fn(&Ui) -> bool) -> Self {
+        self.visible = visible;
+        self
     }
 }
 
@@ -45,6 +68,7 @@ struct Area {
     activate: fn(&mut Ui, Item) -> bool,
     options: fn(&Ui, Item) -> Option<Vec<String>>,
     menu_items: fn(&Ui, MenuId) -> Vec<Item>,
+    rows: fn(&Ui, MenuId) -> &'static [Descriptor],
 }
 
 impl Area {
@@ -58,6 +82,7 @@ impl Area {
         activate: |_, _| false,
         options: |_, _| None,
         menu_items: |_, _| Vec::new(),
+        rows: |_, _| &[],
     };
 }
 
@@ -215,10 +240,12 @@ pub(super) fn options(ui: &Ui, it: Item) -> Vec<String> {
 
 pub(super) fn items(ui: &Ui, menu: MenuId) -> Vec<Item> {
     let area = for_menu(menu);
-    if area.descriptors.is_empty() {
+    let rows = (area.rows)(ui, menu);
+    let rows = if rows.is_empty() { area.descriptors } else { rows };
+    if rows.is_empty() {
         (area.menu_items)(ui, menu)
     } else {
-        area.descriptors.iter().filter(|row| (row.visible)(ui)).map(|row| row.item).collect()
+        rows.iter().filter(|row| (row.visible)(ui)).map(|row| row.item).collect()
     }
 }
 
@@ -243,3 +270,6 @@ pub(super) fn off_sources(ui: &Ui, menu: MenuId) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod small_tests;

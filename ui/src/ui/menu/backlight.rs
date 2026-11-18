@@ -3,10 +3,9 @@
 
 use super::*;
 
-pub(super) const AREA: Area = Area {
-    kind: Ui::backlight_kind,
-    label: Ui::backlight_label,
-    value: Ui::backlight_value,
-    adjust: Ui::backlight_adjust,
-    ..Area::EMPTY
+pub(super) const AREA: Area = Area { descriptors: ROWS, adjust: Ui::backlight_adjust, ..Area::EMPTY };
+
+const ROWS: &[Descriptor] = {
+    use Item::*;
+    &[Descriptor::value(Backlight, "Backlight", |u| format!("{} %", u.sys.backlight))]
 };

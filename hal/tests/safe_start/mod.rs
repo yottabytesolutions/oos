@@ -35,7 +35,7 @@ impl Fake {
         f.exec(
             "host-bin/sync",
             r#"#!/bin/sh
-exec python3 - "$@" <<'PY_SYNC'
+exec python3 -S - "$@" <<'PY_SYNC'
 import os, sys
 for path in sys.argv[1:]:
     fd = os.open(path, os.O_RDONLY)

@@ -269,32 +269,30 @@ GitHub-hosted runners run the inventory as parallel jobs, each one `cargo xtask 
   depends on changed: documents, `.github/` (except `pr.yml` and files a Rust test includes) and `tools/ci/` skip
   clippy, the tests and cargo-deny. A merge-queue group whose tree equals its PR head skips the checks that passed
   on that head. Skipped jobs still report success under their required name.
-- `pr.yml` runs the tests in five parallel shards per profile (`OOS_TEST_PARTITION=K/N`). The last shard runs
-  the UI golden binary alone. With at least three shards, the penultimate shard runs only
-  `ui::lint::second_pane_fits_with_everything_else`; it skips the other crates and builds only the UI binary.
-  The remaining shards exclude those tests and use nextest `--partition hash:K/(N-2)` (N-1 with two shards).
-  This separates the second-pane test from large-monitor random input, which formerly shared hash shard 2/4.
-  Unsharded runs and 1/1 still run every test. The doctests run in shard 1. A shard's skipped count includes
-  tests excluded by its filter or partition.
-  Pull requests run the debug tests only; the merge queue adds the release tests. The required `test` check sums
-  up every shard.
+- `pr.yml` runs the tests in three parallel shards per profile (`OOS_TEST_PARTITION=K/N`). The last shard
+  runs the UI golden binary alone. The remaining shards exclude that binary and use nextest
+  `--partition hash:K/(N-1)`. Unsharded runs and 1/1 run every test. Doctests run in shard 1.
+  A shard's skipped count includes tests assigned to other shards. Pull requests run debug tests; the merge
+  queue adds release tests. The required `test` check covers every shard.
 - The release tests, locally and in CI, build with the Cargo profile `test-release`: the release optimisation level
   and no debug assertions, without a fat-LTO link per test binary (16 codegen units). HAL's perf guards share this
   profile: tests unwind, just as under the former `perf` profile. UI's perf guards and the scope
   build keep the shipping `release` profile. Workspace host dev/test builds use line-table debug info for file/line backtraces;
-  dependencies outside the workspace have no debug info.
+  dependencies outside the workspace have no debug info. The test profile optimizes SHA-2's compression rounds
+  and the UI's shared renderer/layout code (levels 2 and 1 respectively), retaining debug assertions and overflow
+  checks. Development and shipping profiles are unchanged.
   Full workspace variable/type debug info is available with `CARGO_PROFILE_DEV_DEBUG=2`.
 - The test and coverage steps run each crate's tests with cargo-nextest (pinned in `tools/build-tools.json`, installed
   by bootstrap, checked by the doctor): every test in its own process, all binaries in parallel, and the doctests
   with `cargo test --doc` (`cargo llvm-cov nextest` for coverage).
-  `.config/nextest.toml` reports a test as slow after 60 s and ends it after 10 minutes (a hang guard); the step lists
-  every test that ran 60 s or longer. A test that leaves a process holding its output fails. Tests kill a process
+  `.config/nextest.toml` reports a test as slow after 5 s and ends it after 10 minutes (a hang guard); the step lists
+  every test that ran 5 s or longer. A test that leaves a process holding its output fails. Tests kill a process
   group with `kill -KILL -- -<pgid>`: without `--`, the procps-ng `kill` of Ubuntu 24.04 signals the wrong group, or
   every process of the user (#23).
-- Standalone decoder builds run in three parallel clippy matrix rows (`OOS_DECODER_PARTITION=K/N`). The
+- Standalone decoder builds run in two parallel clippy matrix rows (`OOS_DECODER_PARTITION=K/N`). The
   core-only configuration and each optional feature alone are distributed round robin from the feature list.
   Unpartitioned gates still check every configuration. Host/ARM lint deduplication and ratchets remain in one
-  row; the required `clippy` result waits for all decoder groups, lints and register plans. Nightly also separates
+  row alongside register plans; the required `clippy` result waits for all decoder groups, lints and register plans. Nightly also separates
   the decoder matrix from lints.
 - A push to `main` runs `pr.yml` as the only writer of the PR Rust caches (one per job kind); its test jobs build the
   tests without running them, because the merge queue already ran them on that tree. Rust caches retain workspace

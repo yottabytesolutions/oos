@@ -472,6 +472,31 @@ fn card_bytes(fk: &Fake) -> Vec<u8> {
     std::fs::read(fk.dir.join("card")).unwrap()
 }
 
+/// Compare every byte outside the sorted writable regions, using slice equality rather than a per-byte closure.
+fn assert_changes_only(before: &[u8], after: &[u8], regions: &[(usize, usize)]) {
+    assert_eq!(before.len(), after.len());
+    let mut start = 0;
+    for &(from, to) in regions {
+        assert!(start <= from && from <= to && to <= before.len());
+        assert!(before[start..from] == after[start..from], "card changed in {start}..{from}");
+        start = to;
+    }
+    assert!(before[start..] == after[start..], "card changed after {start}");
+}
+
+#[test]
+fn card_comparison_checks_every_byte_outside_writable_regions() {
+    let before = [0; 12];
+    let regions = [(2, 4), (7, 9)];
+    for i in 0..before.len() {
+        let mut after = before;
+        after[i] = 1;
+        let result = std::panic::catch_unwind(|| assert_changes_only(&before, &after, &regions));
+        assert_eq!(result.is_ok(), (2..4).contains(&i) || (7..9).contains(&i), "byte {i}");
+    }
+    assert!(std::panic::catch_unwind(|| assert_changes_only(&before, &before[..11], &regions)).is_err());
+}
+
 #[test]
 fn first_install_from_stock() {
     let fk = stock_card("gel-stock");
@@ -503,9 +528,7 @@ fn first_install_writes_only_its_regions() {
         (RECOVERY_LBA as usize * s, (RECOVERY_LBA as usize) * s + IMAGE_MAX),
         (BACKUP_LBA as usize * s, BACKUP_LBA as usize * s + first::BOOT_BYTES),
     ];
-    let bad =
-        before.iter().zip(&after).enumerate().find(|(i, (a, b))| a != b && !ok.iter().any(|r| (r.0..r.1).contains(i)));
-    assert!(bad.is_none(), "byte {:?} changed", bad.map(|b| b.0));
+    assert_changes_only(&before, &after, &ok);
 }
 
 #[test]
@@ -554,12 +577,7 @@ fn the_stick_again_keeps_a_newer_build_and_only_selects_it() {
     assert_eq!(fk.card().read(RECOVERY_LBA, bootimg(3).len()).unwrap(), bootimg(3), "the newer build stays");
     let after = card_bytes(&fk);
     let s = SECTOR as usize;
-    let changed: Vec<usize> =
-        before.iter().zip(&after).enumerate().filter(|(_, (a, b))| a != b).map(|(i, _)| i).collect();
-    assert!(
-        changed.iter().all(|&i| (BOOT_LBA as usize * s..BOOT_LBA as usize * s + 4).contains(&i)),
-        "only the magic changes"
-    );
+    assert_changes_only(&before, &after, &[(BOOT_LBA as usize * s, BOOT_LBA as usize * s + 4)]);
     assert_eq!(&fk.card().boot_magic().unwrap(), b"OOSK");
 }
 
@@ -861,7 +879,8 @@ fn kexec_stage_writes_nothing_to_the_card() {
     assert_eq!(staged.kernel, k);
     assert_eq!(&staged.initrd[..rd.len()], rd);
     assert!(staged.initrd.windows(64).any(|w| w == &p[..64]), "the package rides along");
-    assert!(staged.initrd.windows(64).any(|w| w == hex(&pk()).as_bytes()), "and its key");
+    let key = hex(&pk());
+    assert!(staged.initrd.windows(key.len()).any(|w| w == key.as_bytes()), "and its key");
     // the card as it was, OOS still selected: a hang of the new kernel ends in the running build again
     assert!(std::fs::read(f.dir.join("card")).unwrap() == before);
     assert_eq!(&f.magic(), b"OOSK");

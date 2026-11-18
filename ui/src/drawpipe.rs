@@ -1063,6 +1063,7 @@ mod tests {
             for (name, sig) in
                 [("sine", &sine as &dyn Fn(usize, usize, usize) -> f64), ("square", &square), ("flat", &flat)]
             {
+                let (bytes, fb, s, p) = frames_of(mask, n, 6, sig);
                 // exact false: as a decimated read, where the wide search stays
                 for (src, dots, coup, exact) in [
                     (0usize, false, TrigCoup::Dc, true),
@@ -1081,7 +1082,6 @@ mod tests {
                     }
                     m.trig_src = src;
                     m.trig_coup = coup;
-                    let (bytes, fb, s, p) = frames_of(mask, n, 6, sig);
                     let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
                     let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
                     let (mut ta, mut tb) = (0, 0);

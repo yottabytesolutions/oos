@@ -78,7 +78,7 @@ jobs:
           printf '### Production code\n\nInformational (ADR 0007): the release, not each pull request, must shrink.\n\n%s\n' \
             "$table" >> "$GITHUB_STEP_SUMMARY"
 
-  # Cargo serializes builds in a target directory. Keep decoder builds and register plans off the lints' critical path.
+  # Combine the short register-plan check with lints; two decoder groups retain every feature configuration.
   clippy-run:
     name: clippy (${{ matrix.name }})
     runs-on: ubuntu-24.04
@@ -88,18 +88,13 @@ jobs:
       matrix:
         include:
           - name: lints
-            steps: clippy
-          - name: decoders 1/3
+            steps: clippy plan-matrix
+          - name: decoders 1/2
             steps: decoders
-            decoder-partition: 1/3
-          - name: decoders 2/3
+            decoder-partition: 1/2
+          - name: decoders 2/2
             steps: decoders
-            decoder-partition: 2/3
-          - name: decoders 3/3
-            steps: decoders
-            decoder-partition: 3/3
-          - name: plans
-            steps: plan-matrix
+            decoder-partition: 2/2
     permissions:
       contents: read
       checks: read
@@ -145,8 +140,8 @@ jobs:
           RESULT: ${{ needs.clippy-run.result }}
         run: test "$RESULT" = success
 
-  # Three hash shards exclude the second-pane layout test and golden tests; each has a dedicated shard
-  # (xtask/src/testrun.rs). The merge queue adds release tests, also sharded; main.yml runs them nightly.
+  # Two hash shards cover ordinary tests; golden tests keep their own shard (xtask/src/testrun.rs).
+  # The merge queue adds release tests, also sharded; main.yml runs them nightly.
   # A push to main builds both profiles unsharded for the caches.
   test-run:
     name: test (${{ matrix.profile }} ${{ matrix.shard }})
@@ -160,7 +155,7 @@ jobs:
       fail-fast: false
       matrix:
         profile: ${{ fromJSON(github.event_name == 'pull_request' && '["debug"]' || '["debug","release"]') }}
-        shard: ${{ fromJSON(github.event_name == 'push' && '["build"]' || '["1/5","2/5","3/5","4/5","5/5"]') }}
+        shard: ${{ fromJSON(github.event_name == 'push' && '["build"]' || '["1/3","2/3","3/3"]') }}
     env:
       # xtask/src/testrun.rs: cargo-nextest runs the test binaries in parallel; doctests through cargo test.
       OOS_TEST_PARTITION: ${{ matrix.shard != 'build' && matrix.shard || '' }}

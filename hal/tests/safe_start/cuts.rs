@@ -9,7 +9,7 @@ fn real(command: &str) -> String {
 }
 
 fn interrupt(f: &Fake, command: &str, call: u32, after: bool) {
-    let real = real(command);
+    let real = if command == "sync" { f.p("host-bin/sync").display().to_string() } else { real(command) };
     let cut = if after {
         format!("'{real}' \"$@\" || exit 1\nkill -KILL \"$PPID\"\nexit 1")
     } else {
@@ -39,6 +39,8 @@ fn ledger_kills_at_every_commit_boundary_count_exactly_once_after_retry() {
         for after in [false, true] {
             for lose_namespace in [false, true] {
                 let f = Fake::new("ledger-cuts");
+                // Only dead owners remain after each injected kill; their retry backoff need not elapse.
+                f.exec("host-bin/sleep", "#!/bin/sh\nexit 0\n");
                 f.count("old", "1");
                 let before = std::fs::read(f.p("oos/oos-ui.exits")).unwrap();
                 interrupt(&f, command, call, after);

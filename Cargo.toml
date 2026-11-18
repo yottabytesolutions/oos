@@ -41,3 +41,12 @@ opt-level = 2
 
 [profile.dev.package.proc-macro2]
 opt-level = 2
+
+# Rescue-set tests hash complete card regions; keep the compression rounds optimized without changing debug checks.
+[profile.test.package.sha2]
+opt-level = 2
+
+# UI tests exercise the software renderer and exhaustive layouts, also through the host-script and soak binaries.
+# Debug assertions and overflow checks remain enabled.
+[profile.test.package.oos-ui]
+opt-level = 1

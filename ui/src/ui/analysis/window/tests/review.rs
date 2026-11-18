@@ -33,13 +33,13 @@ fn span_label_follows_the_model_and_current_record_before_completion() {
     calculate(&mut ui);
     ui.m.spec_center = 2e6;
     ui.m.spec_span = 1e6;
-    assert_eq!(ui.ana_value(Item::SpecSpan).unwrap(), "1 MHz");
+    assert_eq!(ui.value(Item::SpecSpan), "1 MHz");
     ui.m.spec_center = 0.0;
     ui.m.spec_span = 1e9;
-    assert_eq!(ui.ana_value(Item::SpecSpan).unwrap(), "5 MHz");
+    assert_eq!(ui.value(Item::SpecSpan), "5 MHz");
     let rec = ui.last[0].as_mut().unwrap();
     Arc::make_mut(&mut rec.raw.as_mut().unwrap().frame).dt = 2e-7;
-    assert_eq!(ui.ana_value(Item::SpecSpan).unwrap(), "2.5 MHz");
+    assert_eq!(ui.value(Item::SpecSpan), "2.5 MHz");
 }
 
 #[test]

@@ -109,7 +109,7 @@ fn key(ui: &Ui) -> Key {
 }
 
 /// The spectrum is on screen and follows the signal's harmonics.
-pub(super) fn follows(ui: &Ui) -> bool {
+pub(in crate::ui) fn follows(ui: &Ui) -> bool {
     let shown = ui.m.view == AView::Spectrum
         || ui.m.view == AView::Scope && matches!(ui.m.pane, tables::PANE_SPECTRUM | tables::PANE_RESULTS);
     shown && ui.m.spec_span == 0.0 && PANE_HARMS[ui.m.spec_harm.min(PANE_HARMS.len() - 1)] > 0
@@ -297,7 +297,7 @@ pub(in crate::ui) fn updating(ui: &Ui) -> bool {
 }
 
 /// The requested band clipped exactly as DSP clips it, using the current record's measurement interval.
-pub(super) fn span(ui: &Ui, center: f64, requested: f64) -> f64 {
+pub(in crate::ui) fn span(ui: &Ui, center: f64, requested: f64) -> f64 {
     let (Some(rec), Some(c)) = (&ui.last[0], ui.m.spec_src.ch()) else { return requested };
     let dt = ui.meas_slice(rec, c).1;
     if !(dt > 0.0 && dt.is_finite()) {

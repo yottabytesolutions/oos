@@ -46,7 +46,7 @@ fn deep_spectrum_keeps_one_mhz_and_real_nyquist() {
     assert!(peak.dbv > -4.0, "{peak:?}");
     ui.m.spec_span = 1e9;
     calculate(&mut ui);
-    assert_eq!(ui.ana_value(Item::SpecSpan).unwrap(), "62.5 MHz");
+    assert_eq!(ui.value(Item::SpecSpan), "62.5 MHz");
 }
 
 #[test]

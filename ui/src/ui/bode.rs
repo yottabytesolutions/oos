@@ -238,176 +238,7 @@ fn gen_thread(
 pub(super) const BODE_MODES: [oos_dsp::bode::Mode; 3] =
     [oos_dsp::bode::Mode::Loop, oos_dsp::bode::Mode::Psrr, oos_dsp::bode::Mode::Z];
 
-fn bode_mode_name(m: oos_dsp::bode::Mode) -> &'static str {
-    match m {
-        oos_dsp::bode::Mode::Loop => "Loop",
-        oos_dsp::bode::Mode::Psrr => "PSRR",
-        oos_dsp::bode::Mode::Z => "Z",
-    }
-}
-
 impl Ui {
-    pub(super) fn bode_items(&self) -> Vec<Item> {
-        if self.bode_gen() == FREE {
-            use Item::*;
-            let mut v = vec![BodeOn, BodeRun, BodeStart, BodeStop, BodeSwTime, BodeSwLog, BodePoints, BodeIn];
-            // no input channel: the gain is against a level
-            if self.m.bode_sw_in == 0 {
-                v.push(BodeRef);
-            }
-            v.extend([BodeOut, BodeGen, BodeSync, BodeSyncEdge, BodeSyncLvl]);
-            if !self.bode.points.is_empty() {
-                v.push(BodeCur);
-            }
-            return v;
-        }
-        let mut v = vec![
-            Item::BodeOn,
-            Item::BodeMode,
-            Item::BodeRun,
-            Item::BodeStart,
-            Item::BodeStop,
-            Item::BodePoints,
-            Item::BodeAmp,
-            Item::BodeIn,
-            Item::BodeOut,
-            Item::BodeGen,
-        ];
-        // a cursor once there is something to read
-        if !self.bode.points.is_empty() {
-            v.push(Item::BodeCur);
-        }
-        // the connection only for an external generator, the address only on the network
-        if self.bode_gen() != BUILTIN {
-            v.push(Item::BodeLink);
-            if !self.m.bode_usb {
-                v.push(Item::BodeAddr);
-            }
-        }
-        v
-    }
-
-    pub(super) fn bode_kind(it: Item) -> Option<Kind> {
-        Some(match it {
-            Item::BodeStart
-            | Item::BodeStop
-            | Item::BodePoints
-            | Item::BodeAmp
-            | Item::BodeAddr
-            | Item::BodeCur
-            | Item::BodeSwTime
-            | Item::BodeSyncLvl
-            | Item::BodeRef => Kind::Value,
-            Item::BodeRun => Kind::Action,
-            Item::BodeOn
-            | Item::BodeIn
-            | Item::BodeOut
-            | Item::BodeGen
-            | Item::BodeMode
-            | Item::BodeLink
-            | Item::BodeSwLog
-            | Item::BodeSync
-            | Item::BodeSyncEdge => Kind::Choice,
-            _ => return None,
-        })
-    }
-
-    pub(super) fn bode_label(it: Item) -> Option<&'static str> {
-        Some(match it {
-            Item::Open(MenuId::Bode) => "Bode",
-            Item::BodeOn => "View",
-            Item::BodeMode => "Mode",
-            Item::BodeRun => "Start / stop sweep",
-            Item::BodeStart => "Start freq",
-            Item::BodeStop => "Stop freq",
-            Item::BodePoints => "Points",
-            Item::BodeAmp => "Amplitude",
-            Item::BodeIn => "Input (ref)",
-            Item::BodeOut => "Output",
-            Item::BodeGen => "Generator",
-            Item::BodeCur => "Cursor",
-            Item::BodeAddr => "Gen address",
-            Item::BodeLink => "Connection",
-            Item::BodeSwTime => "Sweep time",
-            Item::BodeSwLog => "Sweep",
-            Item::BodeSync => "Sync",
-            Item::BodeSyncEdge => "Sync edge",
-            Item::BodeSyncLvl => "Sync level",
-            Item::BodeRef => "Ref level",
-            _ => return None,
-        })
-    }
-
-    pub(super) fn bode_value(&self, it: Item) -> Option<String> {
-        let m = &self.m;
-        Some(match it {
-            Item::BodeOn => {
-                if m.view == AView::Bode {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            Item::BodeMode => bode_mode_name(m.bode_mode).into(),
-            Item::BodeRun => String::new(),
-            Item::BodeStart => si_short(m.bode_start, "Hz"),
-            Item::BodeStop => si_short(m.bode_stop, "Hz"),
-            Item::BodePoints => m.bode_points.to_string(),
-            Item::BodeAmp => si_short(m.bode_amp, "Vpp"),
-            Item::BodeIn if self.bode_gen() == FREE => match m.bode_sw_in {
-                0 => "Off".into(),
-                k => format!("CH{}", k),
-            },
-            Item::BodeIn => self.wave_name(m.bode_in),
-            Item::BodeOut => self.wave_name(m.bode_out),
-            Item::BodeGen => GENERATORS[m.bode_gen.min(GENERATORS.len() - 1)].name.into(),
-            Item::BodeAddr => m.bode_addr.clone(),
-            Item::BodeLink => {
-                if m.bode_usb {
-                    "USB".into()
-                } else {
-                    "LAN".into()
-                }
-            }
-            Item::BodeCur => self.bode_cursor_text(),
-            Item::BodeSwTime => si_short(m.bode_sw_time, "s"),
-            Item::BodeSwLog => {
-                if m.bode_sw_log {
-                    "Log".into()
-                } else {
-                    "Lin".into()
-                }
-            }
-            Item::BodeSync => format!("CH{}", m.bode_sync + 1),
-            Item::BodeSyncEdge => {
-                if m.bode_sync_slope == Slope::Fall {
-                    "Falling".into()
-                } else {
-                    "Rising".into()
-                }
-            }
-            Item::BodeSyncLvl => si_short(m.bode_sync_level as f64, "V"),
-            Item::BodeRef => format!("{:.1} dBV", m.bode_ref),
-            _ => return None,
-        })
-    }
-
-    pub(super) fn bode_options(&self, it: Item) -> Option<Vec<String>> {
-        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect();
-        Some(match it {
-            Item::BodeOn => v(&["Off", "On"]),
-            Item::BodeMode => BODE_MODES.iter().map(|m| bode_mode_name(*m).to_string()).collect(),
-            Item::BodeIn if self.bode_gen() == FREE => opt_ch_names("Off"),
-            Item::BodeIn | Item::BodeOut => self.wave_names(),
-            Item::BodeSync => ch_names(),
-            Item::BodeGen => GENERATORS.iter().map(|g| g.name.to_string()).collect(),
-            Item::BodeLink => v(&["LAN", "USB"]),
-            Item::BodeSwLog => v(&["Lin", "Log"]),
-            Item::BodeSyncEdge => v(&["Rising", "Falling"]),
-            _ => return None,
-        })
-    }
-
     pub(super) fn bode_adjust(&mut self, it: Item, d: i32) -> bool {
         let free = self.bode_gen() == FREE;
         // the free sweep's input is an optional channel (`bode_sw_in`); otherwise both are any wave, a ref too
@@ -494,7 +325,7 @@ impl Ui {
         true
     }
 
-    fn bode_gen(&self) -> usize {
+    pub(super) fn bode_gen(&self) -> usize {
         self.m.bode_gen.min(GENERATORS.len() - 1)
     }
 
@@ -871,7 +702,7 @@ impl Ui {
 
     /// Gain (top) and phase (bottom) over log frequency.
     /// The point under the cursor: frequency, gain, phase.
-    fn bode_cursor_text(&self) -> String {
+    pub(super) fn bode_cursor_text(&self) -> String {
         let z = self.bode_mode() == oos_dsp::bode::Mode::Z;
         match self.bode.points.get(self.bode.cursor) {
             Some(&(hz, g, p)) if z && p.is_nan() => format!("{} {:.3}", si_short(hz, "Hz"), g),

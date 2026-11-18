@@ -310,4 +310,6 @@ mod small_tests;
 pub(super) use serial::serial_items;
 
 #[cfg(test)]
+mod analysis_read;
+#[cfg(test)]
 mod read_tests;

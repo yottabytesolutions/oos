@@ -14,15 +14,13 @@
 516 file ui/src/measures/standard.rs
 3279 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8858 file ui/src/ui.rs
+8855 file ui/src/ui.rs
 1715 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 992 file ui/src/ui/bode.rs
-475 file ui/src/ui/bus.rs
 1840 file ui/src/ui/eyepage.rs
 611 file ui/src/ui/eyepage/automatic.rs
 451 file ui/src/ui/facts.rs
-495 file ui/src/ui/la.rs
 481 file ui/src/ui/magnetic.rs
 632 file ui/src/ui/meascatalog.rs
 462 file ui/src/ui/meascatalog/backend.rs

@@ -5,12 +5,9 @@
 //! type is I2C: a clock and a data line. Each line is a channel or a reference slot, with its own threshold.
 //! Decoded words are drawn in hex. The read/write bit can be part of the address byte or left out of it.
 
-use super::{
-    Canvas, Item, Kind, MenuId, Rect, Ui, BG, BUS_POS_MAX, BUS_POS_MIN, DARK_TEXT, GREEN, HDIV, LINE, NCH, NREF, RED,
-    TEXT,
-};
+use super::{Canvas, Item, Rect, Ui, BG, BUS_POS_MAX, BUS_POS_MIN, DARK_TEXT, GREEN, HDIV, LINE, NCH, NREF, RED, TEXT};
 use crate::gfx::{mix, rgb, scale, Rgb};
-use crate::model::{n_ch, si, BusKind, WaveId};
+use crate::model::{n_ch, BusKind, WaveId};
 use crate::ui::lifecycle::worker::Worker;
 use oos_dsp::decode::{i2c_at, Kind as DecKind, Packet};
 
@@ -66,79 +63,6 @@ struct Src<'a> {
 }
 
 impl Ui {
-    pub(super) fn bus_items(&self) -> Vec<Item> {
-        vec![
-            Item::BusOn,
-            Item::BusLabel,
-            Item::BusPos,
-            Item::BusClk,
-            Item::BusClkThr,
-            Item::BusData,
-            Item::BusDataThr,
-            Item::BusRw,
-        ]
-    }
-
-    pub(super) fn bus_kind(it: Item) -> Option<Kind> {
-        Some(match it {
-            Item::BusPos | Item::BusClkThr | Item::BusDataThr => Kind::Value,
-            Item::BusLabel => Kind::Action,
-            Item::BusOn | Item::BusClk | Item::BusData | Item::BusRw => Kind::Choice,
-            _ => return None,
-        })
-    }
-
-    pub(super) fn bus_label(it: Item) -> Option<&'static str> {
-        Some(match it {
-            Item::Open(MenuId::Bus) => "Bus",
-            Item::BusOn => "Bus",
-            Item::BusLabel => "Label",
-            Item::BusPos => "Position",
-            Item::BusClk => "Clock",
-            Item::BusClkThr => "Clock threshold",
-            Item::BusData => "Data",
-            Item::BusDataThr => "Data threshold",
-            Item::BusRw => "R/W bit",
-            _ => return None,
-        })
-    }
-
-    pub(super) fn bus_value(&self, it: Item) -> Option<String> {
-        let b = &self.m.bus;
-        Some(match it {
-            Item::BusOn => {
-                if b.on {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
-            Item::BusLabel => b.shown_label(),
-            Item::BusPos => format!("{:.1} div", b.pos),
-            Item::BusClk => self.wave_name(b.clk),
-            Item::BusData => self.wave_name(b.data),
-            Item::BusClkThr => si(b.clk_thr as f64, "V"),
-            Item::BusDataThr => si(b.data_thr as f64, "V"),
-            Item::BusRw => {
-                if b.addr_rw {
-                    "Included".into()
-                } else {
-                    "Left out".into()
-                }
-            }
-            _ => return None,
-        })
-    }
-
-    pub(super) fn bus_options(&self, it: Item) -> Option<Vec<String>> {
-        Some(match it {
-            Item::BusOn => vec!["Off".into(), "On".into()],
-            Item::BusRw => vec!["Left out".into(), "Included".into()],
-            Item::BusClk | Item::BusData => self.bus_ids().iter().map(|&id| self.wave_name(id)).collect(),
-            _ => return None,
-        })
-    }
-
     pub(super) fn bus_adjust(&mut self, it: Item, d: i32) -> bool {
         match it {
             Item::BusOn => {
@@ -501,9 +425,10 @@ mod tests {
         }
     }
 
-    use super::{Item, MenuId, Ui, BUS};
+    use super::{Item, Ui, BUS};
     use crate::gfx::{Canvas, Rgb};
     use crate::model::{bus_label, n_ch, WaveId, NCH};
+    use crate::ui::MenuId;
     use crate::wave::{Record, Source};
     use oos_dsp::sim::{i2c_logic, sample, I2cXfer};
 
@@ -638,7 +563,7 @@ mod tests {
         let mut u = ui();
         assert!(u.main_groups().iter().any(|(_, items)| items.contains(&Item::Open(MenuId::Bus))));
         assert_eq!(u.menu_title(MenuId::Bus), "Bus · I2C");
-        let items = u.bus_items();
+        let items = u.menu_items(MenuId::Bus);
         for want in [
             Item::BusOn,
             Item::BusLabel,
@@ -651,15 +576,12 @@ mod tests {
         ] {
             assert!(items.contains(&want));
         }
-        let text: String = items
-            .iter()
-            .map(|&it| format!("{} {}", Ui::bus_label(it).unwrap_or(""), u.bus_value(it).unwrap_or_default()))
-            .collect();
+        let text: String = items.iter().map(|&it| format!("{} {}", Ui::label(it), u.value(it))).collect();
         let low = text.to_ascii_lowercase();
         for banned in ["spi", "uart", "can", "rigol", "tek", "keysight", "siglent"] {
             assert!(!low.contains(banned), "{text}");
         }
-        assert_eq!(u.bus_value(Item::BusRw), Some("Left out".into()));
+        assert_eq!(u.value(Item::BusRw), "Left out");
         u.bus_adjust(Item::BusRw, 1);
         assert!(u.m.bus.addr_rw);
         u.bus_adjust(Item::BusPos, 5);

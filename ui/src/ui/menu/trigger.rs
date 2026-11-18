@@ -66,8 +66,10 @@ fn label(it: Item) -> Option<&'static str> {
 }
 
 fn value(ui: &Ui, it: Item) -> Option<String> {
-    if let Some(v) = ui.la_value(it) {
-        return Some(v);
+    if it == Item::TrigSrc {
+        if let Some(line) = ui.m.trig_line() {
+            return Some(la::NAMES[line as usize].into());
+        }
     }
     if let Some(v) = value_condition(ui, it) {
         return Some(v);
@@ -192,8 +194,8 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
 }
 
 fn options(ui: &Ui, it: Item) -> Option<Vec<String>> {
-    if let Some(v) = ui.la_options(it) {
-        return Some(v);
+    if it == Item::TrigSrc && ui.m.trig_la_ok() {
+        return Some(ch_names().into_iter().chain(la::NAMES.iter().map(|s| s.to_string())).collect());
     }
     let v: &[&str] = match it {
         Item::SearchOn => &["Off", "On"],

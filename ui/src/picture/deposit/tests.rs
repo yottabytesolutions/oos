@@ -189,9 +189,9 @@ fn projection_dimensions_do_not_truncate_at_u16_boundary() {
         assert_eq!((map.x0, map.y0), (w as f64 / 2.0, h as f32 / 2.0));
         let mut expected = vec![0; w * h];
         if dots {
-            crate::fastdraw::deposit_dots(&mut expected, w, h, &samples, &map, 24);
+            let _ = crate::fastdraw::deposit_dots(&mut expected, w, h, &samples, &map, 24);
         } else {
-            crate::fastdraw::deposit(&mut expected, w, h, &samples, &map, 24);
+            let _ = crate::fastdraw::deposit(&mut expected, w, h, &samples, &map, 24);
         }
         assert!(expected.iter().any(|&v| v != 0));
         let mut columns = vec![0; w * (h + 1)];
@@ -229,13 +229,13 @@ fn record_plan_bands_keep_the_placed_mapping_for_every_fallback() {
             let rec = crate::board::to_record(&f, &m, 3600, window, m.delay as f64 - window / 2.0);
             let mut expected = crate::wave::Phosphor::new(w, h);
             expected.draw_ex(0, &m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[0], 24, None, rec.pairs);
-            assert!(expected.map[0].iter().any(|&weight| weight > 0));
+            assert!(expected.maps()[0].iter().any(|&weight| weight > 0));
             m.delay += m.time_per_div();
             m.ch[0].offset += 2.0 * m.ch[0].volts_per_div();
             m.dots = if dots == DotsMode::On { DotsMode::Off } else { DotsMode::On };
             let mut remapped = crate::wave::Phosphor::new(w, h);
             remapped.draw_ex(0, &m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[0], 24, None, rec.pairs);
-            assert!(remapped.map[0] != expected.map[0]);
+            assert!(remapped.maps()[0] != expected.maps()[0]);
             check_record_bands(&f, &frame.plan, &expected);
         }
     }
@@ -246,10 +246,10 @@ fn check_record_bands(f: &crate::board::Frame, plan: &standard::FastPlan, expect
     for c in 0..3 {
         let mut row_map = vec![0; w * h];
         standard::fast_deposit(c, &mut row_map, 0, f, plan);
-        assert_eq!(row_map, expected.map[c]);
+        assert_eq!(row_map, expected.maps()[c]);
         let mut partial_rows = vec![0; 17 * w];
         standard::fast_deposit(c, &mut partial_rows, 3, f, plan);
-        assert_eq!(partial_rows, expected.map[c][3 * w..20 * w]);
+        assert_eq!(partial_rows, expected.maps()[c][3 * w..20 * w]);
         let mut columns = vec![0; w * (h + 1)];
         for (b, band) in columns.chunks_mut(13 * (h + 1)).enumerate() {
             standard::add_frame_band(c, band, b * 13, f, plan);
@@ -257,6 +257,6 @@ fn check_record_bands(f: &crate::board::Frame, plan: &standard::FastPlan, expect
         let mut actual = vec![0; w * h];
         let (lo, hi) = plan.rows(c);
         crate::fastdraw::fold_t(&mut actual, &mut columns, w, h, 13, lo..hi);
-        assert_eq!(actual, expected.map[c], "channel={c}");
+        assert_eq!(actual, expected.maps()[c], "channel={c}");
     }
 }

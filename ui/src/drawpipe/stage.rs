@@ -46,17 +46,9 @@ fn run(scratch: &mut Frame, job: &mut Job) {
                 let samples = p.codes.map_or(kernel::SamplesRef::Volts(&[]), |layout| {
                     kernel::SamplesRef::Codes(layout.channel(chunk(b, p.index), band.channel))
                 });
-                paint_band(band, samples, &plan.plan);
+                band.paint(samples, &plan.plan);
             }
         }
-    }
-}
-
-fn paint_band(band: &mut DiffBand, samples: kernel::SamplesRef<'_>, plan: &standard::FastPlan) {
-    let (a, z) = plan.rows(band.channel);
-    if a < z {
-        band.touch(a..z);
-        band.paint(samples, plan);
     }
 }
 
@@ -386,7 +378,7 @@ fn draw_tiles(
         });
         for band in &mut *planes {
             let samples = kernel::SamplesRef::Volts(&frame.ch[band.channel]);
-            paint_band(band, samples, &plan.plan);
+            band.paint(samples, &plan.plan);
         }
     }
 }

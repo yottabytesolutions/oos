@@ -2,9 +2,9 @@
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
 2054 file ui/src/board/dho/hw.rs
 568 file ui/src/drm.rs
-654 file ui/src/fastdraw.rs
+590 file ui/src/fastdraw.rs
 649 file ui/src/gfx.rs
-650 file ui/src/gpu.rs
+640 file ui/src/gpu.rs
 657 file ui/src/http.rs
 438 file ui/src/main.rs
 460 file ui/src/measures/jitter.rs
@@ -12,7 +12,7 @@
 516 file ui/src/measures/standard.rs
 3277 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8486 file ui/src/ui.rs
+8472 file ui/src/ui.rs
 1495 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -43,7 +43,7 @@
 91 fn ui/src/cmd.rs execute
 105 fn ui/src/drm.rs Display::on_fd
 63 fn ui/src/framestats.rs cheap_results
-237 fn ui/src/gpu.rs Gpu::submit
+224 fn ui/src/gpu.rs Gpu::submit
 71 fn ui/src/hislip.rs on_program_message
 108 fn ui/src/http.rs Http::poll
 88 fn ui/src/http.rs Shots::encoder

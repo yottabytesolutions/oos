@@ -13,9 +13,13 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_height(4)
+    }
+
+    fn with_height(h: usize) -> Self {
         let pipe = Pipe::start(0, 0, fresh());
-        pipe.set_view(Some(&Model::default()), 4, 4, Interp::Exact);
-        Self { pipe, window: Default::default(), picture: Phosphor::new(4, 4), origin: Instant::now(), edges: [0; 4] }
+        pipe.set_view(Some(&Model::default()), 4, h, Interp::Exact);
+        Self { pipe, window: Default::default(), picture: Phosphor::new(4, h), origin: Instant::now(), edges: [0; 4] }
     }
 
     fn put(&self, records: u64, hits: u64, row: usize, span_ms: std::ops::RangeInclusive<u64>) {
@@ -31,7 +35,7 @@ impl Fixture {
         format: crate::picture::deposit::count::CountFormat,
     ) {
         let gen = oos_hal::sync::lock(&self.pipe.view).gen;
-        let mut deposit = Deposit::new(gen, (4, 4), None, [true, false, false, false]);
+        let mut deposit = Deposit::new(gen, (4, self.picture.h), None, [true, false, false, false]);
         deposit.set_format(format);
         deposit.extent.include(self.origin + Duration::from_millis(*span_ms.start()));
         deposit.extent.include(self.origin + Duration::from_millis(*span_ms.end()));
@@ -39,7 +43,8 @@ impl Fixture {
         deposit.extent.add_hits(hits);
         deposit.edges[0] = records;
         // The pool can return bands in a different order, even with the same view.
-        deposit.planes.rotate_left(row);
+        let rotation = row % deposit.planes.len();
+        deposit.planes.rotate_left(rotation);
         for band in &mut deposit.planes {
             let mut left = hits;
             while left > 0 {
@@ -62,7 +67,7 @@ impl Fixture {
 
     fn rows(&self) -> [u16; 4] {
         std::array::from_fn(|row| {
-            let pixels = &self.picture.map[0][row * 4..(row + 1) * 4];
+            let pixels = &self.picture.maps()[0][row * 4..(row + 1) * 4];
             assert_eq!(pixels, [pixels[0]; 4]);
             pixels[0]
         })
@@ -147,6 +152,44 @@ fn dirty_publication_covers_disjoint_evicted_and_new_rows_then_expires() {
 }
 
 #[test]
+fn independent_uploads_include_retained_and_expired_deposits() {
+    let mut f = Fixture::new();
+    let initial = f.picture.upload_rows(0, None).0;
+    let mut stamps = [initial.clone(), initial];
+    let mut maps = [vec![0; 16], vec![0; 16]];
+    let steps = [
+        (0, [648, 0, 0, 0]),
+        (1, [648, 72, 0, 0]),
+        (2, [648, 72, 72, 0]),
+        (68, [0, 72, 72, 0]),
+        (69, [0, 0, 72, 0]),
+        (70, [0; 4]),
+    ];
+    for (step, (ms, expected)) in steps.into_iter().enumerate() {
+        if step < 3 {
+            let records = if step == 0 { 27 } else { 3 };
+            f.put(records, records, step, ms..=ms);
+        }
+        f.step(ms);
+        assert_eq!(f.rows(), expected);
+        for consumer in 0..2 {
+            if consumer == 1 && step % 2 == 0 {
+                continue;
+            }
+            let (stamp, rows) = f.picture.upload_rows(0, Some(&stamps[consumer]));
+            assert!(!rows.is_empty(), "consumer {consumer}, step {step}");
+            let range = rows.start * 4..rows.end * 4;
+            maps[consumer][range.clone()].copy_from_slice(&f.picture.maps()[0][range]);
+            stamps[consumer] = stamp;
+            assert_eq!(maps[consumer], f.picture.maps()[0], "consumer {consumer}, step {step}");
+        }
+    }
+    assert_eq!(maps, [vec![0; 16], vec![0; 16]]);
+    assert_eq!(f.edges[0], 33, "retained and expired records are counted once");
+    assert_eq!(f.pipe.counters.read().2, 0);
+}
+
+#[test]
 fn combined_capacity_evicts_the_oldest_whole_deposit() {
     let mut f = Fixture::new();
     f.put(27, 27, 0, 0..=0);
@@ -184,4 +227,37 @@ fn wide_combined_window_uses_its_own_limit_and_recycles_without_mixing_formats()
     assert!(!f.picture.is_wide());
     assert_eq!(f.rows(), [0, 0, 24, 0]);
     assert!(f.pipe.slot.spare().is_some());
+}
+
+#[test]
+fn retained_narrow_bands_publish_the_fold_hull_and_clear_the_gap() {
+    let mut f = Fixture::with_height(16);
+    let initial = f.picture.upload_rows(0, None).0;
+    let mut panel = initial.clone();
+    let mut uploaded = vec![0; 64];
+    for (records, row, ms, expected) in [(27, 2, 0, 2..3), (3, 12, 1, 2..13), (27, 8, 2, 2..13)] {
+        f.put(records, records, row, ms..=ms);
+        f.step(ms);
+        assert!(!f.picture.is_wide());
+        let (next, rows) = f.picture.upload_rows(0, Some(&panel));
+        assert_eq!(rows, expected);
+        let pixels = rows.start * 4..rows.end * 4;
+        uploaded[pixels.clone()].copy_from_slice(&f.picture.maps()[0][pixels]);
+        assert_eq!(uploaded, f.picture.maps()[0]);
+        panel = next;
+        if ms == 1 {
+            assert!(uploaded[8..12].iter().all(|&v| v == 27 * 24));
+            assert!(uploaded[48..52].iter().all(|&v| v == 3 * 24));
+            assert!(uploaded[12..48].iter().all(|&v| v == 0), "disjoint active bands keep their gap");
+        }
+    }
+    assert_eq!(f.picture.upload_rows(0, Some(&initial)).1, 2..13);
+    assert!(f.picture.maps()[0][8..32].iter().all(|&v| v == 0), "evicted rows and the gap clear");
+    assert!(f.picture.maps()[0][32..36].iter().all(|&v| v == 27 * 24));
+    assert!(f.picture.maps()[0][36..].iter().all(|&v| v == 0));
+    assert_eq!(f.step(2).window_frames, None);
+    assert!(f.picture.upload_rows(0, Some(&panel)).1.is_empty());
+    assert_eq!(f.step(70).window_frames, Some(0));
+    assert_eq!(f.picture.upload_rows(0, Some(&panel)).1, 8..9);
+    assert!(f.picture.maps()[0].iter().all(|&v| v == 0));
 }

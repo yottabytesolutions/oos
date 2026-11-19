@@ -110,7 +110,7 @@ fn check_lines_readout(tdiv: f32, compress: bool, match_cores: bool) {
     let mut picture = Phosphor::new(970, 448);
     let got = pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0));
     assert_eq!(got.frames, count as u64);
-    assert!(picture.map.iter().all(|ch| ch.iter().any(|&px| px > 0)));
+    assert!(picture.maps().iter().all(|ch| ch.iter().any(|&px| px > 0)));
     let newest = pipe.take_waveform((970, 448)).unwrap();
     assert_eq!(newest.seq, count as u64);
     assert_eq!(newest.dt, 1.0 / p.rate as f64);
@@ -234,13 +234,13 @@ fn newest(pipe: &Pipe, frames: Vec<Frame>, (replacement, drawn): (bool, usize), 
         assert_eq!(accepted.frames, drawn as u64 + 1);
         let newest = pipe.take_waveform((128, 64)).unwrap();
         let mut expected = Phosphor::new(128, 64);
-        expected.map.clone_from(&want.map);
+        expected.add_maps(want, [true; 4]);
         let mut model = Model::default();
         for (c, ch) in model.ch.iter_mut().enumerate() {
             ch.on = c == 0;
         }
         crate::drawpipe::draw_frame(&mut expected, &model, &newest, Interp::Exact, None);
-        assert_eq!(got.map, expected.map, "the complete batch includes its corrected newest frame");
+        assert_eq!(got.maps(), expected.maps(), "the complete batch includes its corrected newest frame");
         std::sync::Arc::try_unwrap(newest.into_frame()).ok().unwrap()
     } else {
         assert_eq!(frames.len(), 1);

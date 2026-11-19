@@ -219,10 +219,14 @@ pub(crate) fn add_placed_band<T: Count>(
     samples: &SamplesRef<'_>,
     proj: &Projection,
     p: &RawTrace,
-) {
-    let Some(map) = raw_map(proj, c, p.trigger_at) else { return };
+) -> std::ops::Range<usize> {
+    let Some(map) = raw_map(proj, c, p.trigger_at) else { return 0..0 };
     match &p.spans[c] {
-        Some(s) => fastdraw::add_spans_t(band, proj.rows, c_lo, s, 24),
+        Some(s) => {
+            fastdraw::add_spans_t(band, proj.rows, c_lo, s, 24);
+            let (start, end) = fastdraw::span_rows(s);
+            start.min(end)..end
+        }
         None => fastdraw::deposit_dots_t(band, proj.rows, c_lo, samples, &map, 24),
     }
 }

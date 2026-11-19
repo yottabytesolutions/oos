@@ -200,17 +200,23 @@ pub(crate) fn add_frame_band(c: usize, band: &mut [u16], c_lo: usize, f: &crate:
     add_sample_band(c, band, c_lo, SamplesRef::Volts(&f.ch[c]), p);
 }
 
-pub(crate) fn add_sample_band<T: Count>(c: usize, band: &mut [T], c_lo: usize, samples: SamplesRef<'_>, p: &FastPlan) {
+pub(crate) fn add_sample_band<T: Count>(
+    c: usize,
+    band: &mut [T],
+    c_lo: usize,
+    samples: SamplesRef<'_>,
+    p: &FastPlan,
+) -> std::ops::Range<usize> {
     match &p.route {
         FastRoute::Rec(rec) => {
             let bw = band.len() / (p.projection.rows + 1);
             p.trace_record(c, rec, (c_lo as i32, (c_lo + bw) as i32), |cx, r0, r1, wt| {
                 crate::fastdraw::diff_span(band, bw, cx as usize - c_lo, r0 as usize, r1 as usize, wt);
             });
+            let (start, end) = p.rows(c);
+            start.min(end)..end
         }
-        FastRoute::Raw(trace) => {
-            kernel::add_placed_band(c, band, c_lo, &samples, &p.projection, trace);
-        }
+        FastRoute::Raw(trace) => kernel::add_placed_band(c, band, c_lo, &samples, &p.projection, trace),
     }
 }
 
@@ -297,11 +303,7 @@ pub(crate) fn wide_frame(ph: &mut crate::wave::Phosphor, frame: &crate::board::F
     ph.set_format(CountFormat::Wide);
     for mut band in super::DiffBand::bands((ph.w, ph.h), plan.projection.ch.map(|ch| ch.is_some())) {
         band.set_format(CountFormat::Wide);
-        let (a, b) = plan.rows(band.channel);
-        if a < b {
-            band.touch(a..b);
-            band.paint(SamplesRef::Volts(&frame.ch[band.channel]), plan);
-            band.fold_picture([None, None], ph);
-        }
+        band.paint(SamplesRef::Volts(&frame.ch[band.channel]), plan);
+        band.fold_picture([None, None], ph);
     }
 }

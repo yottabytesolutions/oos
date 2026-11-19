@@ -346,6 +346,11 @@ are evicted. For disjoint old and new trace bands, it includes both bands and th
 ghosts. Publishing uploads the unchanged gap too; widely separated bands can therefore cost a full-height upload.
 This is the explicit exception to proportional GPU work in [ADR 0031](../adr/0031-performance.md).
 
+Issue #216 applies this publication contract to the current `Phosphor` before F2: mutations stamp per-channel rows,
+and every output/window keeps its own last publication revision. It copies the hull once into the existing shared
+arena. Map identity, channel order and arena layout changes force a full initial copy. This does not implement
+F2's accumulator ownership, deposit window or W grading.
+
 ## Performance estimates
 
 Performance budgets below are unverified targets; unit timing must establish feasibility. Capacity bounds above

@@ -195,8 +195,8 @@ fn running_analyzer_source_step_snaps_before_submitting_without_broad_resets() {
         ui.m.eye_src = WaveId::Ch(0);
         change::reset(&mut ui);
         ui.mstat = vec![MStat { n: 7, ..Default::default() }];
-        ui.ph.map[0][3] = 19;
-        let picture = ui.ph.map.clone();
+        ui.ph.channel_mut(0)[3] = 19;
+        let picture = ui.ph.maps().clone();
         ui.adjust(item, 1);
         assert!(ui.azr.work.accepted_key.is_none(), "input cannot submit before normalization");
         change::begin_step(&mut ui, 0.04).unwrap();
@@ -204,7 +204,7 @@ fn running_analyzer_source_step_snaps_before_submitting_without_broad_resets() {
         assert_eq!(ui.mstat[0].n, 7);
         change::begin_step(&mut ui, 0.04).unwrap();
         assert_eq!(ui.mstat[0].n, 7);
-        assert_eq!(ui.ph.map, picture);
+        assert_eq!(ui.ph.maps(), &picture);
         assert_eq!(change::counters(&ui).4, 0);
     }
 }

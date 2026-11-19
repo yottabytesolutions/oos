@@ -144,8 +144,8 @@ fn decoded_dots_use_one_scratch_frame_for_a_dense_slice() {
         decode(index, &[], &mut frame);
         super::super::draw_frame(&mut expected, &m, &frame, Interp::Exact, None);
     }
-    assert!(expected.map[0].iter().any(|&v| v > 0));
-    assert_eq!(actual.map, expected.map);
+    assert!(expected.maps()[0].iter().any(|&v| v > 0));
+    assert_eq!(actual.maps(), expected.maps());
 }
 
 #[test]

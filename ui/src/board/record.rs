@@ -562,7 +562,7 @@ mod dots {
         let mut ph = crate::wave::Phosphor::new(1000, 480);
         ph.draw_ex(0, &m, (m.time_per_div(), m.delay), rec.t0, rec.dt, &rec.ch[0], 24, None, rec.pairs);
         let (w, h) = (ph.w, ph.h);
-        let rows = |c: usize| (0..h).filter(|&r| ph.map[0][r * w + c] > 0).collect::<Vec<_>>();
+        let rows = |c: usize| (0..h).filter(|&r| ph.maps()[0][r * w + c] > 0).collect::<Vec<_>>();
         // the levels' rows from a column on a plateau: the first of the screen lies on the low level
         let (y_lo, y_hi) = (240.0 + 0.15 / 0.1 * 60.0, 240.0 - 0.15 / 0.1 * 60.0);
         let cols_per_s = w as f64 / window;
@@ -666,7 +666,7 @@ mod bench {
                     y_per_volt: -56.0,
                     y0: 224.0,
                 };
-                crate::fastdraw::deposit(&mut map, 970, 448, &fr.ch[0], &xm, 24);
+                let _ = crate::fastdraw::deposit(&mut map, 970, 448, &fr.ch[0], &xm, 24);
                 t_fast += t0.elapsed().as_secs_f64();
             }
             let us = |t: f64| t / n as f64 * 1e6;

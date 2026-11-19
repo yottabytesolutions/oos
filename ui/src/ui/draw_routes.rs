@@ -112,7 +112,7 @@ struct Picture {
 }
 
 fn picture(ui: &Ui) -> Picture {
-    Picture { main: ui.ph.map.clone(), zoom: ui.phz.map.clone(), frames: ui.batch_picture.frames }
+    Picture { main: ui.ph.maps().clone(), zoom: ui.phz.maps().clone(), frames: ui.batch_picture.frames }
 }
 
 fn weights(p: &Picture) -> [u64; NCH] {
@@ -131,7 +131,7 @@ fn batch_redraws_current_waveform_after_mapping_rejects_its_planes() {
     let _scope = Scope::new();
     let mut route = Route::new(BatchKind::Codes, true, 1, 10e-6);
     route.step(1);
-    assert!(route.ui.ph.map[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps()[0].iter().any(|&v| v > 0));
 
     let id = change::acquisition::identity(&route.ui);
     let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
@@ -153,8 +153,8 @@ fn batch_redraws_current_waveform_after_mapping_rejects_its_planes() {
     assert_eq!(shown.frame.seq, waveform.seq);
     let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
     drawpipe::draw_frame(&mut expected, &route.ui.m, &waveform, sw.interp, None);
-    assert!(expected.map[0].iter().any(|&v| v > 0));
-    assert!(route.ui.ph.map == expected.map, "the delivered waveform should be drawn with dots");
+    assert!(expected.maps()[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps() == expected.maps(), "the delivered waveform should be drawn with dots");
     assert_eq!(route.ui.batch_picture.frames, 1);
 }
 
@@ -188,8 +188,8 @@ fn batch_draws_newest_waveform_after_hit_budget_rejection() {
 
     let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
     drawpipe::draw_frame(&mut expected, &route.ui.m, &waveform, sw.interp, None);
-    assert!(expected.map[0].iter().any(|&v| v > 0));
-    assert!(route.ui.ph.map == expected.map, "the newest waveform should populate the picture");
+    assert!(expected.maps()[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps() == expected.maps(), "the newest waveform should populate the picture");
     assert_eq!(route.ui.batch_picture.frames, 1);
 }
 
@@ -206,14 +206,14 @@ fn batch_picture_keeps_recent_deposits_without_recounting_their_records() {
     route.step(3);
     assert_eq!(route.ui.batch_picture.frames, 9);
     assert_eq!(route.ui.wfm_total, 36);
-    assert!(route.ui.ph.map[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps()[0].iter().any(|&v| v > 0));
 
     for _ in 0..3 {
         route.ui.step(1.0 / 30.0);
     }
     assert_eq!(route.ui.batch_picture.frames, 0);
     assert_eq!(route.ui.wfm_total, 36);
-    assert!(route.ui.ph.map[0].iter().all(|&v| v == 0));
+    assert!(route.ui.ph.maps()[0].iter().all(|&v| v == 0));
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn draw_routes_raw_codes_pairs_dots_and_zoom() {
                 assert_eq!(r.ui.wfm_total, 3);
                 if zoom {
                     assert!(!r.ui.fast_ok(), "current zoom uses the shared record path");
-                    assert!(r.ui.phz.map[0].iter().any(|&v| v > 0));
+                    assert!(r.ui.phz.maps()[0].iter().any(|&v| v > 0));
                 }
                 let pic = picture(&r.ui);
                 if kind == BatchKind::LivePairs && !dots && !zoom && batch {
@@ -318,7 +318,7 @@ fn draw_routes_raw_codes_pairs_dots_and_zoom() {
                     for i in 0..3 {
                         drawpipe::draw_frame(&mut want, &r.ui.m, &b.frame(i, 0), r.ui.switches().interp, None);
                     }
-                    assert!(pic.main == want.map, "Batch pairs use one span per column per frame");
+                    assert!(&pic.main == want.maps(), "Batch pairs use one span per column per frame");
                 }
                 pic
             };
@@ -530,5 +530,30 @@ fn consumed_waveform_redraws_only_if_its_private_deposit_becomes_stale() {
         }
         route.ui.step(1.0 / 30.0);
         assert_eq!((route.ui.wfm_total, route.ui.history.len()), (2, 2));
+    }
+}
+
+#[test]
+fn batch_steps_keep_narrow_uploads_and_idle_pictures_need_no_upload() {
+    for channels in [1, 2, 4] {
+        for dots in [DotsMode::Off, DotsMode::On] {
+            let _scope = Scope::new();
+            let mut route = Route::new(BatchKind::Codes, true, channels, 1e-6);
+            route.ui.m.dots = dots;
+            route.step(1);
+            let stamps: [_; NCH] = std::array::from_fn(|c| route.ui.ph.upload_rows(c, None).0);
+            route.step(1);
+            assert!(!route.ui.ph.is_wide());
+            for (c, stamp) in stamps.iter().enumerate() {
+                let rows = route.ui.ph.upload_rows(c, Some(stamp)).1;
+                assert_eq!(rows.is_empty(), c >= channels);
+                assert!(rows.len() < route.ui.ph.h, "ordinary Batch steps keep their narrow hull");
+            }
+            let stamps: [_; NCH] = std::array::from_fn(|c| route.ui.ph.upload_rows(c, None).0);
+            route.ui.step(0.0);
+            for (c, stamp) in stamps.iter().enumerate() {
+                assert!(route.ui.ph.upload_rows(c, Some(stamp)).1.is_empty());
+            }
+        }
     }
 }

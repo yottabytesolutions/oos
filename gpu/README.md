@@ -64,8 +64,13 @@ The helper's GPU time per frame there: the panel 8 to 10 ms, the monitor 12 to 1
   reads the picture back, only when someone wants it. `OOS_GPU_LOG=1`: the GPU time of the layers on stderr.
 - **The protocol** (`ui/src/gpu.rs`): a Unix socket on the helper's stdin and one shared memory arena. Fixed C
   structs (`Hello`, `Target`, `Frame`, `Done`, `Cmd`), their sizes checked by a test on both sides. Each output keeps
-  its blocks in its half of the arena; of the maps only rows that changed since the last frame are copied and
-  uploaded. The commands, images and new glyphs lie at the top of the half.
+  its blocks and publication revisions in its half of the arena. Phosphor writes stamp rows during drawing, merge,
+  clear, decay and halving once a GPU consumer activates tracking. Worker maps allocate no upload history.
+  Publication copies the covering band changed since that block's last revision once,
+  without comparing the whole map with shared memory. Replaced maps, reordered channels and moved blocks receive
+  a full first copy. A skipped monitor frame retains all intervening changes; multiple windows retain independent
+  revisions. Cleared and newly drawn bands both enter the hull, including the unchanged gap between them.
+  The commands, images and new glyphs lie at the top of the half. Pixel layers retain row comparison.
 - **Pipelined**: while the GPU puts frame N together, the CPU draws frame N+1; frame N is shown when it is done
   (three scan-out buffers per output). A screenshot waits for its own frame.
 - **Clock**: the Mali's load governor only sees the short work of each frame and stays at 200 MHz (an 8 ms frame);
@@ -114,6 +119,21 @@ every test passed. Two checks since:
   each mode; a monitor frame may cost per pixel at most what a panel frame costs. Mesa's software renderer reads
   integer textures cheaply, so this catches only gross regressions (0.1.11's helper: 0.86 to 1.14; since: 0.5 to
   0.76).
+
+The host guards `perf_guard_upload_rows` and `perf_guard_upload_full` compare revision lookup plus a band copy
+with the previous full-map comparison in one run, for four channels with eight or all rows changed.
+They do not measure driver texture upload or prove unit timing.
+Host only, 2026-11-18: best candidate/reference ratios were 0.022 for eight rows and 0.397 for full height;
+p99 process-CPU ratios were 0.030 and 0.539. Each sample publishes four 970 x 448 maps with alternating contents.
+`:SYSTem:STATe?` reports `gpu ... copy` for publication into shared memory and `(upload ... draw ... read ...) ms`
+for the helper. Its upload interval includes the map-index prepass submission; these are wall times around GL
+calls, not GPU timer-query measurements. The maps cross shared memory as native `u16` counts; the helper uploads `GL_R16UI`, and its shader
+applies brightness and colour lookup. There is no CPU per-pixel format conversion on this path.
+
+The earlier 1.8 ms session cannot be attributed from its timing alone. `OOS_GPU_PIXELS=1` disables command layers
+and adds CPU pixel-layer comparisons/copies; changed-band height and channel count also change the upload cost.
+Those are source-supported explanations to check against the unit setup, not a verified reconstruction of that
+session. Confirm both `copy` and helper `upload` with the same setup on the unit. This change is host-tested only.
 
 ## Known limits
 

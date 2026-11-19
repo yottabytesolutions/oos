@@ -339,7 +339,7 @@ mod tests {
             ui.m.delay = delay;
             ui.step(0.02);
             assert!(ui.last[0].as_ref().unwrap().ch[0].iter().any(|&v| v > 0.2));
-            assert!(ui.ph.map[0].iter().any(|&p| p != 0));
+            assert!(ui.ph.maps()[0].iter().any(|&p| p != 0));
             let (window, _, _) = ui.measurement_channel_samples(ui.last[0].as_ref().unwrap(), 0).unwrap();
             assert!(window.iter().any(|&v| v > 0.2));
         }

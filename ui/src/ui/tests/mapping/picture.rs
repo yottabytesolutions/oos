@@ -18,13 +18,13 @@ fn running(batch: bool) -> Ui {
 fn seed(ui: &mut Ui) {
     for ph in [&mut ui.ph, &mut ui.phz] {
         for c in 0..NCH {
-            ph.map[c][0] = 97;
+            ph.channel_mut(c)[0] = 97;
         }
     }
 }
 
 fn empty(ui: &Ui) -> bool {
-    [&ui.ph, &ui.phz].iter().all(|p| p.map.iter().all(|m| m.iter().all(|&v| v == 0)))
+    [&ui.ph, &ui.phz].iter().all(|p| p.maps().iter().all(|m| m.iter().all(|&v| v == 0)))
 }
 
 #[test]
@@ -63,8 +63,8 @@ fn unrelated_edits_preserve_picture_and_only_trigger_resets_statistics() {
             }
             crate::ui::change::edited(&mut ui);
             ui.step(0.04);
-            assert_eq!(ui.ph.map[0][0], 97, "broad marks no longer erase the picture: {edit}");
-            assert_eq!(ui.phz.map[0][0], 97);
+            assert_eq!(ui.ph.maps()[0][0], 97, "broad marks no longer erase the picture: {edit}");
+            assert_eq!(ui.phz.maps()[0][0], 97);
             assert_eq!(ui.mstat.is_empty(), edit == 1, "only STATS edits clear statistics");
         }
     }
@@ -75,8 +75,8 @@ fn persistence_knob_defers_both_maps_to_acceptance() {
     let mut ui = running(false);
     seed(&mut ui);
     ui.adjust(Item::Persist, -1);
-    assert_eq!(ui.ph.map[0][0], 97, "input cannot clear ahead of acceptance");
-    assert_eq!(ui.phz.map[0][0], 97);
+    assert_eq!(ui.ph.maps()[0][0], 97, "input cannot clear ahead of acceptance");
+    assert_eq!(ui.phz.maps()[0][0], 97);
     change::begin_step(&mut ui, 0.04).unwrap();
     assert!(empty(&ui));
 }
@@ -89,16 +89,16 @@ fn min_replaces_only_with_a_new_record_and_decay_still_runs() {
         ui.step(0.04);
         seed(&mut ui);
         ui.step(0.04);
-        assert_eq!(ui.ph.map[0][0], 97, "Min without new data must retain the picture");
+        assert_eq!(ui.ph.maps()[0][0], 97, "Min without new data must retain the picture");
         ui.m.persist = 1;
         ui.step(0.04);
         seed(&mut ui);
-        let mut want = ui.ph.map[0][0];
+        let mut want = ui.ph.maps()[0][0];
         let factor = (-0.04 / PERSIST[1].1 as f64).exp() as f32;
         want = ((want as u32 * (factor * 65536.0) as u32) >> 16) as u16;
         ui.step(0.04);
-        assert_eq!(ui.ph.map[0][0], want);
-        assert_eq!(ui.phz.map[0][0], want);
+        assert_eq!(ui.ph.maps()[0][0], want);
+        assert_eq!(ui.phz.maps()[0][0], want);
     }
 }
 
@@ -114,7 +114,7 @@ fn clear_and_single_clear_once_per_accepted_request_even_at_equal_settings() {
                 } else {
                     ui.clear_display();
                 }
-                assert_eq!(ui.ph.map[0][0], 97, "intake must defer picture effects");
+                assert_eq!(ui.ph.maps()[0][0], 97, "intake must defer picture effects");
                 let (_, cleared) = change::begin_step(&mut ui, 0.04).unwrap();
                 assert!(cleared && empty(&ui), "same-value request still acts");
                 seed(&mut ui);

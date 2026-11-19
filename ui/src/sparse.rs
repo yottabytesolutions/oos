@@ -299,7 +299,7 @@ mod tests {
                                 assert_eq!(t, want, "{} s/div {} ch {} pt {:?}", tdiv, chans, len, slope);
                                 for c in 0..NCH {
                                     assert!(
-                                        a.map[c] == b.map[c],
+                                        a.maps()[c] == b.maps()[c],
                                         "{} s/div {} ch {} pt {:?} delay {} level {} dots {}: CH{} pixels differ",
                                         tdiv,
                                         chans,
@@ -437,7 +437,7 @@ mod tests {
                     lanczos8_many(&v, (0..4000).map(|k| x0 + k as f64 * step), &mut pe);
                     fast_many(&v, x0, step, 4000, &mut pf);
                     let dv = pe.iter().zip(&pf).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
-                    let dp = pixel_distance(&a.map[0], &b.map[0], w, h);
+                    let dp = pixel_distance(&a.maps()[0], &b.maps()[0], w, h);
                     if dp > worst_px || dv > worst_v {
                         at = format!("{} s/div {} ch {}", tdiv, chans, name);
                     }

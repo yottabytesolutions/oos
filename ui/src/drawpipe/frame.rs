@@ -40,14 +40,14 @@ pub(crate) fn draw_frame_reusing(
         return placed.triggered;
     }
     for c in 0..NCH {
-        if projection.ch[c].is_some() {
-            let (first, end) = placed.plan.rows(c);
-            ph.touch(first..end);
-        }
         if let Some(spans) = &trace.spans[c] {
-            crate::picture::deposit::kernel::paint_spans(&mut ph.map[c], w, 0, spans, 24);
+            ph.edit_channel(c, |map| {
+                crate::picture::deposit::kernel::paint_spans(map, w, 0, spans, 24);
+                let (start, end) = crate::fastdraw::span_rows(spans);
+                start.min(end)..end
+            });
         } else if let Some(map) = crate::picture::deposit::kernel::raw_map(projection, c, trace.trigger_at) {
-            crate::fastdraw::deposit_dots(&mut ph.map[c], w, h, &f.ch[c], &map, 24);
+            ph.edit_channel(c, |pixels| crate::fastdraw::deposit_dots(pixels, w, h, &f.ch[c], &map, 24));
         }
     }
     placed.triggered

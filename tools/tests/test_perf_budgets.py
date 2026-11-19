@@ -57,11 +57,11 @@ class PerfBudgets(unittest.TestCase):
 
     def test_pipeline_staging_limit_matches_executable_and_keeps_work_checks(self):
         source = (ROOT / 'ui/src/ui/draw_routes/counters.rs').read_text()
-        self.assertIn('pair.best.1.as_secs_f64() / pair.best.0.as_secs_f64() <= 1.02', source)
+        self.assertIn('assert!(ratio <= 1.02', source)
         self.assertIn('pair.check_tail(1.515)', source)
         for contract in ['for channels in [1, 2, 4]', 'for tdiv in [1e-6, 10e-6]',
                          'for _ in 0..8', 'measure(crate::perfguard::ROUNDS, 16, baseline, counted)',
-                         'assert_eq!(build.route.ui.pic_frames as usize, build.frames)',
+                         'assert_eq!(build.route.ui.batch_picture.frames as usize, build.frames)',
                          'build.route.ui.wfm_total - before',
                          '(2 * crate::perfguard::ROUNDS * 16 * build.frames) as u64',
                          'sampled claims must be exercised', 'compare(&picture(',

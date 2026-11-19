@@ -81,7 +81,7 @@ fn compare_planes(
             raw.fold[c].map(|f| (f.n, f.min, f.max, f.sum, f.sumsq)),
             decoded.fold[c].map(|f| (f.n, f.min, f.max, f.sum, f.sumsq))
         );
-        let mut a = vec![0; proj.cols * (proj.rows + 1)];
+        let mut a = vec![0u16; proj.cols * (proj.rows + 1)];
         let mut b = a.clone();
         if let Some(codes) = codes[c] {
             kernel::add_placed_band(c, &mut a, 0, &SamplesRef::Codes(codes), &raw.projection, &raw.trace);
@@ -138,6 +138,33 @@ fn raw_plan_reuses_placed_projection_for_every_band() {
         crate::fastdraw::fold_t(&mut band_map, &mut columns, w, h, band_cols, 0..h);
         assert_eq!(band_map, reference);
     }
+}
+
+#[test]
+fn pair_placement_reuses_and_clears_span_storage() {
+    let (w, h) = (97, 48);
+    let mut m = Model { dots: DotsMode::Off, ..Default::default() };
+    m.ch[0].on = true;
+    let mut f = crate::board::Frame {
+        dt: m.time_per_div() as f64 * HDIV as f64 / 512.0,
+        pre: 256,
+        ch: [vec![0.0; 512], Vec::new(), Vec::new(), Vec::new()],
+        envelope: true,
+        ..Default::default()
+    };
+    let first = standard::batch_plan(&m, (w, h), &f, None, None).plan.into_raw().unwrap();
+    let spans = first.spans[0].as_ref().unwrap();
+    assert!(spans.rows.iter().all(|&(lo, hi)| lo <= hi));
+    let storage = spans.rows.as_ptr();
+
+    f.ch[0].truncate(2);
+    f.pre = 1;
+    let fresh = standard::batch_plan(&m, (w, h), &f, None, None).plan.into_raw().unwrap();
+    let reused = standard::batch_plan(&m, (w, h), &f, None, Some(first)).plan.into_raw().unwrap();
+    let (fresh, reused) = (fresh.spans[0].as_ref().unwrap(), reused.spans[0].as_ref().unwrap());
+    assert!(fresh.rows.iter().any(|&(lo, hi)| lo > hi));
+    assert_eq!((reused.c0, &reused.rows), (fresh.c0, &fresh.rows));
+    assert_eq!(reused.rows.as_ptr(), storage);
 }
 
 #[test]

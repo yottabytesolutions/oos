@@ -39,7 +39,7 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 | `remote.rs` | firewall and SSH ACL helper |
 | `store.rs`, `store/`, `sysconf.rs` | setup codec, waveform/image files, durable startup state, system settings |
 | `board/`, `board/dho/` | Board port, Shared exchange, hardware configuration/readout and publication |
-| `picture/` | captured drawing inputs, shared placement and column-difference kernel, legacy route adapters (F1) |
+| `picture/` | captured drawing inputs, placement pool, owned column differences and UI accept/fold (F2) |
 | `wave.rs`, `drawpipe.rs`, `drawpipe/`, `fastdraw.rs`, `sparse.rs`, `compress.rs` | records, phosphor maps, batch deposits and drawing kernels |
 | `gfx.rs`, `font.rs`, `layout.rs`, `drm.rs`, `gpu.rs`, `vpu.rs` | software drawing, layout, scan-out, GPU helper and JPEG encoder |
 | `ui/lifecycle.rs`, `ui/lifecycle/` | lifecycle polls, watchdog, measurement worker and generic job worker |
@@ -85,7 +85,7 @@ Host `serve` has its own step/render/transport loop; scripts use the same `Ui` w
 
 `Ui::step` polls lifecycle services, accepts normalized changes, then handles records and drawing.
 It drains queued frames on the fast route or builds records on the frame loop.
-It merges worker deposits, updates history/mask/segments, measurements and analysers, queues internal proposals,
+It accepts whole deposits, updates history/mask/segments, measurements and analysers, queues internal proposals,
 updates panes, and grades/halves the maps. Rendering is a separate call.
 `ph` and `phz` are still public `Ui` fields with several writers.
 
@@ -96,7 +96,7 @@ flowchart LR
         scpi["One SCPI interpreter"]
         scpi -->|"setters and queries"| ui
         ui --> change["normalize / accept / reset / publish"]
-        ui --> draw["record drawing + fast drawing + pipe merge"]
+        ui --> draw["record drawing + fast drawing + deposit fold"]
         draw --> maps["ph / phz, grade"]
         maps --> render["Canvas or GPU layers"]
     end
@@ -107,8 +107,8 @@ flowchart LR
     shared --> acq["DHO acquisition thread"]
     acq -->|"Arc Frame queue / latest"| shared
     shared -->|"Source intake"| ui
-    acq -->|"batch buffer + published view"| workers["Deposit workers / acquisition helper"]
-    workers -->|"share maps + folds"| draw
+    acq -->|"batch buffer + published view"| workers["Deposit coordinator + workers"]
+    workers -->|"whole deposit slot + folds + newest waveform"| draw
     ui <-->|"jobs / results"| jobs["Measurement and analysis workers"]
     ui <-->|"owned setup snapshots / completions"| store[("Bounded setup storage worker")]
     ui -->|"synchronous exports"| exports[("Waveform and image storage")]
@@ -149,10 +149,18 @@ a 4 KiB path. Full manual queues fail immediately; automatic observations retain
 with every edit restarting its stability interval. Shutdown drains accepted writes before marker cleanup.
 Manual exports and screenshots still call synchronous file IO from UI actions.
 
-The draw routes also remain distinct. Standard/Frames queues frames; Batch feeds deposit workers and
-queues the newest record. Batch is the code and image default; `acq.pipeline = standard` or `frames` selects
-Standard. `fast_ok` selects eligible hardware views. `drawpipe::draw_frame` uses dense
-`fastdraw` spans, sparse interpolation or deep-record drawing; `Phosphor::draw_ex` handles record drawing.
+The draw routes also remain distinct. Standard/Frames queues frames. Batch places records in a persistent pool
+and hands whole deposits of owned column differences to the UI. At minimum persistence, the UI rebuilds the
+picture from a bounded window of recent deposits. A separate FIFO delivers the newest waveform of each batch
+to record readers, including when placement fails. A waveform read before picture acceptance can redraw from
+the existing last record if its projection becomes stale. Accepted deposits settle that obligation.
+Ordinary maps use u16 counts. Dense raw Dots whose reachable projection exceeds that representation use u32
+counts at the same weight. Wide GPU input carries the resulting lookup indices through the existing u16 upload.
+The analog batch readout reserves sample capacity before its newest decode. F2 still needs a production
+[plan-derived tap budget](frames.md#tap-capacity). Source-wide before-arm waiting belongs to F3.
+Batch is the code and image default; `acq.pipeline = standard` or `frames` selects
+Standard. `fast_ok` selects eligible hardware views. `drawpipe::draw_frame_reusing` uses dense `fastdraw` spans,
+sparse interpolation or deep-record drawing. `Phosphor::draw_ex` handles record drawing.
 CPU rendering and GPU layer composition both exist. `Model::draw_batch` selects the hardware route;
 `draw.model` is absent from this checkout. The owner selected Batch with the shared difference kernel;
 M12a unit acceptance still precedes deletion of Standard in F4 (M12b).
@@ -581,6 +589,10 @@ They are not runtime frame-event quantiles or proof of unit performance.
 | perf_guard_deposit_worker_per_frame | 1.5 | 2.25 | three depths, measurements off; one worker / frames mode | worker orchestration |
 | perf_guard_deep_record_reuse | 0.8 | 1.0 | 4 channels, 10M depth (625k pairs each); actual hw_record + reused draw / hw_record + independent draw_frame conversion | main-view conversion and draw |
 | perf_guard_framestats | 0.7 | 1.05 | 125 k points, cheap set; fused / reference statistics | measure primitive |
+
+The counters wall limit is an owner-approved intermediate allowance for live F2 evaluation. Reports retain raw
+paired timings and compare wall ratios with both 1.01 and 1.02. Restore the 1 % wall limit after cutover. The six
+workloads, sample counts, CPU-tail limit and four-channel 30 FPS hardware goal retain their existing budgets.
 
 Allocation probes require at least 64 allocation-free warmed frames for deposit spans/dots/codes,
 cheap measurements and both core-matching probes. HAL separately checks retained reads and decode.

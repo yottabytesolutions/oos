@@ -112,6 +112,9 @@ fn mode(kind: &str, name: &str, view: (&str, usize, &str), settings: &str, shots
     ));
     script.push_str(settings);
     script.push_str("menu close\n");
+    if name == kind && channels == 1 && dots != "On" && matches!(kind, "raw" | "codes" | "pairs" | "deep-pairs") {
+        script.push_str("# first acquisition\n");
+    }
     script.push_str(&recipe(shots));
     Case {
         name: format!(

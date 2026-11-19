@@ -360,25 +360,7 @@ impl Ui {
     }
 
     pub(super) fn measurement_bounds(&self, len: usize, t0: f64, dt: f64) -> (usize, usize) {
-        if self.m.meas_full_record {
-            return (0, len);
-        }
-        let (scale, delay) = self.view();
-        let half = scale as f64 * HDIV as f64 * 0.5;
-        let index = |time: f64| {
-            let fractional = (time - t0) / dt;
-            let integer = fractional.round();
-            // The view is f32: e.g. 200 ps/div expands an exact 100-sample
-            // window by ~0.00000067 samples. Snap only this numerical fringe,
-            // bounded to one hundred-thousandth of a sample, before ceil.
-            let fractional = if (fractional - integer).abs() <= 1e-5 { integer } else { fractional };
-            (fractional.ceil().max(0.0) as usize).min(len)
-        };
-        // Half-open physical time: left <= sample_time < right. Both ends use
-        // ceil, so neither an earlier left sample nor the right border leaks in.
-        let lo = index(delay as f64 - half);
-        let hi = index(delay as f64 + half).max(lo);
-        (lo, hi)
+        crate::framestats::measurement_bounds(&self.m, len, t0, dt)
     }
 
     /// The measurement gate is independent of replay routing, so live CH and R
@@ -392,12 +374,7 @@ impl Ui {
         } else {
             (screen.as_slice(), rec.t0, rec.dt)
         };
-        let t0 = self.source_time_origin(WaveId::Ch(c), t0);
-        if samples.len() < 2 || !dt.is_finite() || dt <= 0.0 {
-            return None;
-        }
-        let (lo, hi) = self.measurement_bounds(samples.len(), t0, dt);
-        (hi >= lo + 2).then_some((&samples[lo..hi], t0 + lo as f64 * dt, dt))
+        crate::framestats::measurement_slice(&self.m, samples, self.source_time_origin(WaveId::Ch(c), t0), dt)
     }
 
     fn reference_measurement_key(&self, slot: usize) -> Option<(RefMeasureKey, f64)> {
@@ -824,7 +801,7 @@ impl Ui {
         if changed {
             self.measure_channel_sources();
             self.measure_refs();
-            self.finish_deferred_capture_statistics();
+            deep_draw::finish_reader_statistics(self);
             change::mapping_observed(self, change::oracle::Row::Layout);
         }
         self.poll_pair_measurements();

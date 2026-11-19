@@ -96,6 +96,38 @@ full-width dimensions, and preserve all route, trigger and pixel policies. Valid
 and golden suites in debug and optimized profiles, add wide-dimension and record-band regressions, and run
 the fast gate plus generated changed-file ratchets.
 
+F2 (#204): replace per-worker maps and mailboxes with a persistent pool, owned column bands and one whole-deposit
+slot. Fold on the UI thread, preserve Standard and existing source/trigger/sparse policies, and compare raw/codes
+at 1, 2 and 4 channels. Source back-pressure belongs to F3. Reserved paths: `ui/src/drawpipe*`,
+`ui/src/picture/`, `ui/src/fastdraw.rs`, Batch callers in `ui/src/board/dho/`, `ui/src/ui.rs`,
+`ui/src/ui/draw_routes*`, `ui/src/ui/host.rs`, `ui/src/ui/script/`, related contract tests,
+`ui/tests/host_script.rs`, `ui/tests/golden/manifest.txt`, `ui/tests/golden/README.md`,
+`docs/architecture/README.md`, changed-file ratchets and this task. Validate UI debug/optimized suites,
+fast gate and four-channel host timing rows. Coordinator retains publication, independent review and unit acceptance.
+
+PR #224 review follow-up: exercise watchdog reset with public, private, recycled and in-flight deposits.
+Retain the current-identity waveform when a mapping or layout change rejects the painted planes.
+Keep the F2 paths and reserve `ui/src/drawpipe/shutdown.rs` for the reset. Run debug and optimized UI tests
+and the fast gate. The coordinator retains the hardware hold.
+
+PR #224 host performance follow-up in the existing F2 paths.
+Compare the shipping-profile compressed-frame guard serially on published F2 and its F1 parent.
+Drain the worker fixture's bounded deposit slot and remove redundant frame placement if confirmed by the comparison.
+Retain full host gate evidence for the coordinator before the combined unit trial.
+
+PR #224 intake review follow-up: return the newest waveform to the existing record path when the coordinator
+rejects a batch. Test full and disconnected intake, buffer return and unclaimed-record accounting.
+
+PR #224 window follow-up: prove the whole batch's hit bound before painting and preserve a delivered waveform's
+picture eligibility while it waits behind a fallback. Reserve the F2 producer, waveform queue and host fixture
+paths. Compare Auto and Off from equal startup settings and retain a separate mapping-transition regression.
+
+F2 staged tap funding integrates the verified fixture, admission and application inputs on `b10e6a4e`.
+Retain the accepted Handoff ordering, watchdog reset, redraw, and narrow and wide picture paths. Validate
+real board descriptors and full B-tap steps with explicit staged funding and legacy defaults. Reserved paths
+for this follow-up include the existing F2 paths, `ui/src/board/frame_summary.rs`, `ui/src/board/dho/hw.rs`,
+`ui/src/wave.rs`, `ui/src/ui.rs`, startup switches and mode reporting, and the changed-file ratchets.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -103,6 +135,234 @@ the fast gate plus generated changed-file ratchets.
   All production source, other budgets, unit acceptance and sampler/runner remain identical.
   No acceptance or review state changed. Native timing awaits experiment-supervisor release.
   The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
+
+- 2026-11-19: PR #224 placement borrows the supplied newest waveform. The host allocation fixture now exercises
+  supplied waveforms at 1, 2 and 4 channels. The warmed one-channel 100,000-sample row fell from 400,280 to 9,560
+  peak bytes above entry, and the four-channel 100,000-sample row passed at 9,752 bytes. DHO804 acceptance remains open.
+
+- 2026-11-19: PR #224 review fixes publish the row hull of cleared and drawn phosphor counts. The deposit
+  coordinator sends cheap measurement values with each waveform tap for the latest and displaced record gates.
+  Host regressions cover disjoint bands, expiry, idle publication, and tap statistics without reader-thread scans.
+  The fast gate and Clippy passed. Nextest passed 1,839 debug and 1,838 optimized UI tests, with 62 skips in
+  each profile. Shared-process test runs failed the wide-dot drop-counter assertion in both profiles.
+  The production delta is +158 UI Rust lines. DHO804 acceptance remains open.
+
+- 2026-11-19: Integrated the three SHA-256-verified F2 slices from `e15920b2` onto `b10e6a4e`, preserving
+  the ordering and reader changes through `cc7fa6f5` and `b10e6a4e`. Build input SHA-256
+  `d216d72448a49a282716bf6d9d4071d86e3cd2be870db6b191364b6626b15bd1`. Production UI Rust totals
+  74,217 lines by `cargo xtask loc`, up 638 from `b10e6a4e`, 2,459 from reviewed F1 `113ccb97`,
+  2,489 from replayed F1 `38defc1d`, and 2,790 from protected main `dd5bb013`.
+  The unconfigured path keeps its existing read, queue and fallback rules. The staged profile charges the existing
+  Handoff before readout and retains the grant through the last original waveform reader. Independent vector
+  copies use the declared copies allowance. STOP, identity retirement and watchdog reset wake staged waiters.
+  The four-channel 1 and 10 us/div Auto Lines rows keep 142 raw, 14 raw and 99 compressed records per
+  read respectively at 312.5 MSa/s. Raw and replay backing measured 56,784 and 563,024 bytes.
+  The synthetic 500 us interval gives B=70, 140 FIFO entries and 142 waveform slots, with software capacity
+  for 2,000 or 4,000 records/s at one or two useful records per read. Every whole-B UI fixture consumed 70 taps.
+  The 271-column raw Dots row needs 69,216 count units. It used a derived 16,666,667 ns cycle at B=5 with the larger
+  synthetic partition and used Standard fallback with the smaller partition.
+  The first fast run printed `gate FAILED in 17 s: size`. After splitting the new code and regenerating the
+  three changed-file size entries, fast printed `partial gate passed (not done): 12 steps in 30 s`.
+  Clippy printed `partial gate passed (not done): 1 steps in 61 s`. All 65 synthetic register plans matched.
+  Focused debug, test-release and ARM64 Linux container runs each passed 153 tests with 14 timing probes ignored.
+  The first container run needed a read-only source mount for the existing layout budget test.
+  Full UI Nextest suites passed 1,834 debug and 1,833 optimized tests, with 62 skipped in each run.
+  Plain parallel Cargo testing first saw a shared drop count in the existing wide-remap test. The gate's
+  process-isolated runner passed that test with the rest of the suite. Source receipts matched.
+  Device qualification needs an audited exclusive partition plus peak DMA, window/graphics, shared frame,
+  record/analysis copy and runtime bounds, including plan overlap. The one-byte owner declarations belong to
+  synthetic fixtures. On-device minimum cycle, whole-step timing, protected capture rates and 30 fps remain
+  open, along with full gate, independent review and the signed image. The hardware hold remains in place.
+
+- 2026-11-19: PR #224 integration uses the reachable projection envelope and preserves the four-channel normal
+  Lines read plans. The 271-column, four-channel raw Dots case at 500 us/div and fixed 1M depth needs up to 69,216
+  count units at q = 24. Host fixtures compare the wide picture with per-sample counts and verify the GPU indices.
+  The FIFO reserves analog readout sample capacity before newest decode. A consumed waveform keeps one preview
+  obligation until picture acceptance, so an intervening mapping change can redraw it once without repeating its
+  reader work. F2 still needs a production allocation owner for the plan-derived `2B + 2` waveform slots and
+  the `B`-tap drain bound. Source-wide buffer-before-arm and command-event waits remain F3 work. The hardware
+  hold remains in place.
+  On unchanged source, 118 focused checks passed in each profile, Linux cross-check passed, and both full
+  golden runs matched 1,314 reference captures across 284 cases. UI coverage was 90.2%. The full gate passed
+  its 22 non-performance steps and printed `gate FAILED in 736 s: perf` when the quiet-host wait was stopped
+  before timing. The separate ordinary performance step passed on the same source after other builds ended.
+  All 28 shipping UI guards passed. The worst diagnostics ratio was 1.004739, below both the original 1.01
+  target and temporary 1.02 limit. The 4 MB mask 3 learning p99 was 1.385 ms on the host, or 5.540 ms using
+  the provisional 4x A72 projection. This is host checkpoint evidence. Fresh review and unit acceptance remain open.
+
+- 2026-11-19: PR #224 cross-vendor follow-up makes the newest waveform drawable after whole-batch hit-budget
+  rejection. Tap accounting preserves eligibility for rejected batches interleaved with batches in a coalesced
+  deposit. The record consumer uses explicit picture eligibility, and host regressions exercise both cases.
+  The UI suites passed 1,786 debug and 1,785 optimized tests, with 62 skipped in each profile. The 12 fast
+  gate steps and Clippy passed. Unit timing remains open.
+
+- 2026-11-19: PR #224 review follow-up moves newest-record taps to a bounded FIFO independent of picture
+  coalescing and hit-budget rejection. The UI schedules readers for taps consumed on later steps. Decoded
+  dots use worker scratch for placement and reuse one scratch frame for painting across bands. The host
+  debug and optimized suites passed 1,733 and 1,732 unit tests respectively, plus 8 goldens, 17 scripts,
+  10 socket tests and 16 soak and support tests in each profile. All 12 fast gate steps passed after
+  regenerating the UI file and step size ratchets. Independent review and unit timing remain open.
+
+- 2026-11-19: The #224 admission follow-up preserves the pre-pacing Lines plans and checks the projection held at
+  worker claim. A 14-record, two-channel 10 us/div Lines read can exceed the u16 limit if claimed as Dots at 177
+  columns. Its conservative bound is 4,970 hits at q = 24, against the limit of 2,730 hits. The worker returns the
+  DMA buffer and accounts for the whole batch as `lost.budget`. A lossless claim of this geometry needs a wider
+  representation with a revised memory budget or an approved change to the projection lifetime. Live rate and F3
+  source waits remain unmeasured. The DHO804 hold remains in place.
+
+- 2026-11-19: Final PR #224 host verification passed. Active Batch reads reserve for the smallest live plot so a
+  mapping change during a read still fits. Standard reads keep their original size. An empty sparse record
+  preserves trigger status without painting. All six acquisitions and retained maps agree between Auto and Off
+  for each of raw, codes, live pairs and deep pairs at one channel.
+  Fast printed `partial gate passed (not done): 12 steps in 17 s`. The unchanged-source retry printed
+  `gate passed (default): 23 steps in 445 s` with matching source receipts, 1,775 debug and 1,774 optimized UI
+  tests passed, 90.1% UI coverage, all shipping guards passed and all 65 synthetic plans matched.
+  Full debug and optimized golden comparisons each matched 1,314 captures across 284 cases.
+  Earlier runs found a conservative sparse estimate that rejected the 500-record shipping fixture, a test
+  Clippy finding, and intermittent Python socket-pacing and diagnostics timing failures. The final run exercised
+  the original fixture and limits. Production Rust grew by 147 UI lines. The unit hold and review remain open.
+
+- 2026-11-19: PR #224 window follow-up reproduced the 32-record dot overflow and the delayed duplicate waveform
+  on the host. The full slot now hands off at 31 records and also separates the original two 16-record reads.
+  The tests wait for the blocked sender and verify buffer return, plane reuse and one wake publication.
+  Auto and Off start with the same settings and synthetic reads. At the one-channel settled capture both
+  retain the deposits ending at records 73 and 86. A newest-only control matches the pre-window RGB in all
+  26 reviewed cases. For multi-channel deep pairs the final map agrees with the control, but retention at
+  record 46 changes the running grade. Min persistence and grade cases retain the 13-record and 3-record
+  deposits together. The four Dots On transition fixtures whose original pixels match are restored.
+
+- 2026-11-19: PR #224 review follow-up retains up to three whole deposits at minimum persistence. The UI grades
+  the retained record count and counts each accepted deposit once. Injected-clock regressions cover the 67 ms
+  age boundary, expiry without a new batch and the combined u16 hit bound. Regenerated 26 changed golden captures
+  and verified debug and optimized golden comparisons. The fast gate passed all 12 selected steps.
+  Host evidence only. Independent review and the DHO804 unit round remain open.
+
+- 2026-11-18: PR #224 replays published F2 `20879ac4` from its exact F1 parent `113ccb97`
+  onto F1 `38defc1d`. The three F2 commits replay to `22ba4e1f` with the reviewed waveform delivery
+  and worker and compressed-frame repairs intact. The `ui.rs` size allowance carries the same 45-line
+  reduction from F1, ending at 8,623. Production delta over F1 is +298 UI Rust lines.
+  The fast gate passed all 12 selected steps. The full host gate passed all 23 steps in 607 s against F1.
+  UI nextest passed 1,766 debug and 1,765 optimized tests, with 62 skipped per profile and 90.1% coverage.
+  All 65 synthetic register plans matched. The compressed-frame ratio was 0.413, and the three guarded
+  worker ratios were 1.25, 1.08 and 0.72. Complete gate logs were retained. Renewed independent review and
+  the combined DHO804 unit trial remain open under the coordinator's hold.
+
+- 2026-11-18: PR #224 code-quality review uses one pool operation and one drawing trigger policy, reuses pair
+  span buffers, and submits only active placement slots. Deposit handoff returns rejected work by value.
+  The acquisition fill timings still feed pacing and cap accounting. Production delta is -11 UI Rust lines.
+  Fast gate and Clippy passed on the host. UI nextest passed 1,764 tests in each profile, with 62 skipped in each.
+  The debug run also saw one intermittent allocation census failure, which passed in isolation.
+  The shipping-profile codes guard measures the production worker against Frames mode and passed all five rows.
+  The worst best-of-rounds and p99 ratios were 0.739 and 0.843. Renewed review and DHO804 acceptance remain open.
+- 2026-11-18: PR #224 intake rejection returns the newest waveform through existing record publication and
+  counts only its undrawn neighbours as unclaimed. The acquisition regression reproduced the missing waveform
+  before the fix. Host tests cover full and disconnected intake for both decoder paths and buffer return.
+  Fast gate passed all 12 selected steps. UI nextest passed 1,767 debug and 1,766 optimized tests, with 62 skipped
+  in each profile. Production delta is +11 UI Rust lines. Renewed review and DHO804 acceptance remain open.
+
+- 2026-11-18: PR #224 host performance follow-up on published F2 `e13efdb0`, stacked on exact F1 `113ccb97`.
+  Three alternating shipping-profile guard runs on macOS arm64 measured best raw/compressed times of
+  32.556/12.098, 32.066/12.863 and 30.571/12.065 us on F1 (0.372, 0.401, 0.395), and
+  29.523/17.111, 28.903/16.705 and 31.798/18.658 us on F2 (0.580, 0.578, 0.587).
+  F2's shared placement built raw spans and then replaced them with pair spans. Select the pair builder
+  directly. Published F2's worker guard reached the
+  120 s buffer-return timeout. The fixture now takes and recycles each published deposit after that event,
+  checks its record count and keeps the UI fold outside the timed work. The first full run measured
+  30.768/12.850 us raw/compressed (0.418) after the fix, and the three guarded worker rows passed at
+  1.27, 1.00 and 0.71. The fast gate passed all 12 steps. Production Rust LOC delta is zero.
+  The first full gate failed an experimental allocation assertion, Python socket pacing, sparse interpolation and
+  the diagnostic-counter ratio. The existing pixel and timing tests cover pair placement.
+  The Python case passed in isolation. Serial sparse guards passed on F1, published F2 and the candidate;
+  the row that failed at 1.15 in the first gate measured 1.07, 1.06 and 1.07 respectively in isolation.
+  The second run passed every performance guard (compressed ratio 0.417) and Python tests. Its debug,
+  optimized and coverage test steps still included the experimental allocation probe, since removed.
+  The optimized run also observed an intermittent allocation census failure.
+  The coordinator retains the combined DHO804 trial and merge hold.
+
+- 2026-11-18: PR #224 review follow-up on `a6ff1fe7`. The UI redraws the delivered waveform under the current
+  mapping when the worker planes were rejected. The regression failed before the fix and passed after it.
+  Host `oos-ui` nextest passed 1,765 debug and 1,764 optimized tests, with 62 skipped in each. The fast gate
+  passed all 12 selected steps. Production delta is zero. Renewed review and DHO804 acceptance remain open.
+
+- 2026-11-18: PR #224 review fixes on published head `29bbadd57bad48fdd33d5b4a15469186c64de42a` above F1.
+  P1 reset disables the view and fences the handoff before waking the coordinator. Tests cover idle cleanup with
+  a full public slot and a private deposit, spare release, and rejection of in-flight and queued batches after reopen.
+  Both P2 findings are covered by current waveform delivery after a mapping or dimension rejection, including a
+  private deposit replaced before publication. The tests verify obsolete acquisition identity drops the waveform.
+  The two watchdog regressions and public waveform regression failed on the published code. All four passed in
+  both profiles. `oos-ui` nextest passed 1,764 debug and 1,763 optimized tests, with 62 skipped in each.
+  The fast gate and Clippy step passed. Production delta is +52 UI Rust lines against the published head.
+  Host only. Renewed review and coordinator DHO804 acceptance remain open.
+
+- 2026-11-18: PR #224 replays F2 `3f926b6c` on exact F1 `113ccb97ddea35284467d52f513d74e95f2937f6`
+  (F0 parent `9a802cfe`). The deposit coordinator publishes F0 record and measurement counts at batch completion.
+  The UI records sampled claim timing at picture acceptance. Obsolete intake still counts as a settings loss.
+  Invalid completed deposits retain separate stale-key and epoch counts at the coordinator and the UI.
+  The acquisition fixture checks that a whole deposit includes its newest record exactly once while preserving
+  the fallback buffer and frame-zero loss classifications. F1 projection and route tests and F2 pixel tests passed
+  in 54 isolated nextest processes. Against exact F1, the golden manifest changes only 18 decode-route entries.
+  Initial fast runs failed `size` on unused allowances and on the length of the draw function. The draw function
+  now delegates the tile phase, and `cargo xtask ratchet` tightened allowances for changed UI files.
+  `cargo xtask check --fast` with F1 as the gate base reported `partial gate passed (not done): 12 steps in 11 s`.
+  The Clippy step also passed against F1. Debug and `test-release` runs of `oos-ui` and `xtask` exited zero.
+  UI unit tests passed 1,709/1,708 with 61 ignored per profile. Each profile passed 8 goldens, 17 scripts,
+  10 sockets, 16 soak/support cases and 242 xtask tests. One golden was ignored in each profile.
+  The shipping-profile host probe matched Standard and Batch pixels at four channels and 48 records per picture.
+  At 1 us/div, build p50/p99 was 1.554/1.688 ms for Standard and 1.694/1.856 ms for Batch.
+  At 10 us/div, build p50/p99 was 8.971/10.315 ms for Standard and 7.120/8.225 ms for Batch.
+  The production delta is +246 UI Rust lines against exact F1. Host only. The DHO804 acceptance and merge hold remain.
+
+
+- 2026-11-18: PR #224 contains one F2 (#204) topic above the supplied F1 (#212) parent `ce496614`. Batch placement reuses
+  `RawTrace` span storage; Batch tiles, Standard and the newest-record adapter use F1's full-width projection
+  and shared trace representation. The pool retains F2's whole-deposit handoff. The F1 allocator probe now
+  runs the production F2 placement and tile phases synchronously. Its 12 geometry rows passed on the host,
+  with at most 9,672 bytes of warmed transient allocations. Calls using the old plan shape and worker helpers
+  had blocked the combined build. The first fast gate reported `gate FAILED in 9 s: size` for seven unused allowances.
+  `cargo xtask ratchet` regenerated the size, Clippy and mutable-static allowances for changed UI files.
+  `cargo xtask check --fast`: `partial gate passed (not done): 12 steps in 26 s`.
+  `cargo xtask step clippy`: `partial gate passed (not done): 1 steps in 3 s`.
+  `RUST_TEST_THREADS=1 cargo test --locked -p oos-ui` and the `--profile test-release` run passed
+  1,682/1,681 unit tests, 8 goldens, 17 scripts, 10 sockets and 16 soak/support tests per profile.
+  Both profiles retained 59 unit ignores and one golden ignore. The `xtask` suite passed 242 tests per profile.
+  The optimized four-channel host probe matched Standard and Batch pictures at 48 records per picture.
+  Host build p50/p99 at 1 us/div was 1.576/4.865 ms for Standard and 4.025/8.728 ms for Batch.
+  At 10 us/div it was 14.255/71.012 ms for Standard and 7.887/32.554 ms for Batch.
+  The production delta is +185 Rust lines against the supplied F1 parent. The four-channel DHO804 acceptance
+  and merge hold below still apply.
+
+- 2026-11-18: F2 (#204) host implementation verified before the stack was replayed onto current F1.
+  A persistent coordinator plus workers place slices of at most 64 records and move enabled-channel column bands
+  through synchronous `map`/`each` phases. One slot publishes whole deposits, coalesces complete batches and wakes
+  without another read. The UI accepts/folds the differences once and passes the newest waveform to readers without
+  drawing or counting it twice. Sparse interpolation, prepared corrections, pairs and the legacy Standard route remain.
+  Per-worker maps/mailboxes, partial merges, acquisition help, delivery callbacks and code thresholds are removed.
+  Deposits close before the fixed weight can wrap; shutdown retains in-flight owners. Statistics changes refresh
+  warm placement slots, and coalesced waveform taps retain their cheap folds.
+  Initial fast checks failed `size` and `mutable-statics`; changed-file ratchets were regenerated. Initial Clippy
+  dead-code/manual-contains findings were corrected. Early fixture assertions were corrected; golden/script contracts
+  were updated for whole-deposit counts and direct codes at all strides/dots. No limits or lints were loosened.
+  Final `cargo xtask check --fast`: `partial gate passed (not done): 12 steps in 13 s`.
+  Final `cargo xtask step clippy`: `partial gate passed (not done): 1 steps in 5 s`.
+  `RUST_TEST_THREADS=1 cargo test -p oos-ui` and the `--profile test-release` run both exited zero:
+  1,628/1,627 unit tests, 6 goldens, 15 scripts, 8 sockets and 14 soak/support tests per profile.
+  Each profile retains 59 ignored unit tests and one ignored golden; the additional ignored test is the F2 host probe.
+  The explicit full golden update passed 269 cases, 538 fresh processes and 1,266 exact-repeat captures.
+  All 633 RGB hashes and PNG files are unchanged; only 18 observed `decode_route` entries changed.
+  `cargo xtask loc --compare HEAD`: +185 production Rust lines, all UI, against the -200 to -350 estimate.
+  The owned pool/handoff and transitional source/reader adapters outweigh the removed mailboxes; this variance
+  remains explicit for review. No dependency or hardware-register change. Source back-pressure remains F3.
+  Final shipping-profile host probe passed on Darwin arm64, 4 channels, 48 records per picture. Times below are
+  elapsed best/p50/p90/p99 milliseconds, not unit acceptance:
+  Standard at 1 us/div: 1.987/3.623/6.123/80.358; Batch: 1.702/4.020/4.834/11.663.
+  Standard at 10 us/div: 9.326/24.048/80.594/189.735; Batch: 7.633/18.633/77.255/140.655.
+  Batch accept-block (`draw.merge`) p50/p99: 0.137/0.601 ms at 1 us/div, 0.075/18.508 ms at 10 us/div.
+  Elapsed tails varied substantially on this host. No hardware access or unit verification is claimed.
+  Coordinator retains independent review, the integrated full gate and the DHO804 Normal 4-channel 1/10 us/div
+  round: 30 fps, zero lost records and UI step p99 below 33 ms. Merge remains held until that evidence passes.
+
+- 2026-11-18: F2 plan recorded before code on `refactor/204-frames-f2`, stacked on F1. The implementation
+  used the supplied design in the earlier checkout. Host work only.
 
 - 2026-11-18: Replayed the published F1 delta for #212 onto F0 `65c45c47` using old F0 `9a802cfe`
   as the fork boundary. The new base carries the Telnet removal. The `ui.rs` size allowance is 8,668,

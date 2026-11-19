@@ -4,6 +4,7 @@ use super::*;
 
 /// One frame of the fast path into `ph`; false if its trigger edge was not found near the hardware trigger point.
 /// Sparse frames (fewer than 2 samples per column) take the record path (`sparse::draw_with`, else `board::to_record`).
+#[cfg(test)]
 pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, interp: Interp, stats: Option<Stats>) -> bool {
     draw_frame_reusing(ph, m, f, interp, stats, None)
 }
@@ -27,24 +28,29 @@ pub(crate) fn draw_frame_reusing(
     if !pairs && (x_per_sample > 0.5 || f.envelope || f.roll || f.scan || crate::deepmeas::deep_raw_frame(f)) {
         return fallback(ph, m, f, interp, saved);
     }
-    let src = &f.ch[m.trig_src];
-    let present: [bool; NCH] = std::array::from_fn(|c| !f.ch[c].is_empty());
-    let refine = |hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
-        let level = crate::board::sw_trig_level(m, f);
-        let trigger = crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either };
-        refine_near(src, 0, src.len(), f.pre, near_only(m, f), level, hyst, rising, either, half, col)
-            .unwrap_or_else(|| crate::fastdraw::edge_smooth(src.as_slice(), f.pre, trigger, half, col, |_| true))
+    let placed = crate::picture::deposit::standard::batch_plan(m, (w, h), f, None, None);
+    let Some((projection, trace)) = placed.plan.raw() else {
+        unreachable!("dense placement returns column spans or dots");
     };
-    let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
-        if pairs {
-            crate::compress::deposit_pairs(map, w, h, &f.ch[c], xm, 24, m.dots_at(x_per_sample));
-        } else if m.dots_at(x_per_sample) {
-            crate::fastdraw::deposit_dots(map, w, h, &f.ch[c], xm, 24);
-        } else {
-            crate::fastdraw::deposit(map, w, h, &f.ch[c], xm, 24);
+    if let Some(stats) = stats {
+        stats.record(&trace.outcome);
+    }
+    if ph.is_wide() || projection.format == crate::picture::deposit::count::CountFormat::Wide {
+        crate::picture::deposit::standard::wide_frame(ph, f, &placed.plan);
+        return placed.triggered;
+    }
+    for c in 0..NCH {
+        if projection.ch[c].is_some() {
+            let (first, end) = placed.plan.rows(c);
+            ph.touch(first..end);
         }
-    };
-    draw_projected(ph, m, f, ProjectedInput { x_per_sample, pairs, present }, stats, refine, deposit)
+        if let Some(spans) = &trace.spans[c] {
+            crate::picture::deposit::kernel::paint_spans(&mut ph.map[c], w, 0, spans, 24);
+        } else if let Some(map) = crate::picture::deposit::kernel::raw_map(projection, c, trace.trigger_at) {
+            crate::fastdraw::deposit_dots(&mut ph.map[c], w, h, &f.ch[c], &map, 24);
+        }
+    }
+    placed.triggered
 }
 
 fn fallback(
@@ -73,46 +79,6 @@ fn fallback(
     rec.triggered
 }
 
-// The Batch adapters keep their near-only search and whole-map deposit until F2.
-pub(super) struct ProjectedInput {
-    pub(super) x_per_sample: f64,
-    pub(super) pairs: bool,
-    pub(super) present: [bool; NCH],
-}
-
-pub(super) fn draw_projected(
-    ph: &mut Phosphor,
-    m: &Model,
-    f: &Frame,
-    input: ProjectedInput,
-    stats: Option<Stats>,
-    search: impl FnOnce(f32, bool, bool, usize, usize) -> (Option<f64>, Option<oos_dsp::edges::Edge>),
-    mut deposit: impl FnMut(usize, &mut [u16], &crate::fastdraw::Map),
-) -> bool {
-    use crate::picture::deposit::{kernel, standard};
-    let ProjectedInput { x_per_sample, pairs, present } = input;
-    let proj = standard::projection(m, ph.w, ph.h, x_per_sample);
-    let meta = standard::frame_timing(m, f);
-    let t = meta.trigger;
-    let col = if pairs {
-        crate::compress::smooth_len(x_per_sample)
-    } else {
-        (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize
-    };
-    let (ti, outcome) = kernel::refine(&meta, col, || {
-        search(t.hysteresis, t.rising, t.either, (proj.time_per_div * HDIV as f64 / 2.0 / meta.dt) as usize, col)
-    });
-    if let Some(s) = stats {
-        s.record(&outcome);
-    }
-    for (c, &present) in present.iter().enumerate() {
-        if let Some(map) = kernel::raw_map(&proj, c, ti).filter(|_| present) {
-            deposit(c, &mut ph.map[c], &map);
-        }
-    }
-    outcome.triggered(&meta)
-}
-
 impl Stats<'_> {
     pub(crate) fn record(self, outcome: &crate::picture::deposit::kernel::TrigOutcome) {
         use crate::picture::deposit::kernel::TrigOutcome;
@@ -129,36 +95,6 @@ impl Stats<'_> {
 mod tests {
     use super::*;
     use crate::picture::deposit::kernel::TrigOutcome;
-
-    #[test]
-    fn projected_maps_preserve_supplied_spacing_for_samples_and_pairs() {
-        let m = Model::default();
-        let f = Frame { dt: 1e-8, pre: 500, ..Default::default() };
-        let mut ph = Phosphor::new(97, 48);
-        let spacing = 0.125;
-        assert_ne!(spacing, f.dt / m.time_per_div() as f64 * ph.w as f64 / HDIV as f64);
-        for pairs in [false, true] {
-            let mut calls = 0;
-            assert!(draw_projected(
-                &mut ph,
-                &m,
-                &f,
-                ProjectedInput { x_per_sample: spacing, pairs, present: [true, false, false, false] },
-                None,
-                |_, _, _, _, col| {
-                    let want = if pairs { crate::compress::smooth_len(spacing) } else { 8 };
-                    assert_eq!(col, want);
-                    (Some(f.pre as f64), None)
-                },
-                |c, _, map| {
-                    assert_eq!(c, 0);
-                    assert_eq!(map.x_per_sample, spacing);
-                    calls += 1;
-                },
-            ));
-            assert_eq!(calls, 1);
-        }
-    }
 
     #[test]
     fn trigger_stats_count_classes_and_only_accumulate_moved_distances() {

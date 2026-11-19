@@ -3,7 +3,7 @@
 //! One scripted batch per UI step. The normal UI merges worker maps and draws the newest queued frame.
 
 use crate::board::scripted::{self, Batch, BatchKind, BatchSource, ScriptBytes, ScriptedBatchSource};
-use crate::drawpipe::{self, Counters};
+use crate::drawpipe::{self, Counters, RawBatch};
 use crate::model::RunState;
 use crate::ui::Ui;
 use crate::wave::Source;
@@ -34,9 +34,8 @@ pub struct BatchScript {
     record_only: bool,
     spare: Option<ScriptBytes>,
     id: usize,
-    delivered: Arc<AtomicU64>,
     pending: Option<Pending>,
-    decoded: Arc<AtomicU64>,
+    decoded_records: Arc<AtomicU64>,
     counts: Counts,
 }
 
@@ -52,9 +51,8 @@ impl BatchScript {
             record_only: matches!(kind, BatchKind::Roll | BatchKind::Scan | BatchKind::HardwareAverage),
             spare: None,
             id: 0,
-            delivered: Arc::new(AtomicU64::new(0)),
             pending: None,
-            decoded: Arc::default(),
+            decoded_records: Arc::default(),
             counts: Counts::default(),
         }
     }
@@ -84,27 +82,20 @@ impl BatchScript {
         let newest = Arc::new(newest);
         if pipe.accepting() {
             let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
-            self.decoded.store(0, Ordering::Relaxed);
-            let decoded = self.decoded.clone();
+            let raw = Box::new(batch.into_bytes());
+            let start = raw.bytes().as_ptr().addr();
+            self.decoded_records.store(0, Ordering::Relaxed);
+            let decoded = self.decoded_records.clone();
             let decode = Arc::new(move |bytes: &[u8], frame: &mut crate::board::Frame| {
-                decoded.fetch_add(1, Ordering::Relaxed);
+                let index = (bytes.as_ptr().addr() - start) / fb;
+                decoded.fetch_or(1 << index, Ordering::Relaxed);
                 decode(bytes, frame);
             });
-            let (shared, delivered) = (shared.clone(), self.delivered.clone());
-            pipe.feed_with(
-                Box::new(batch.into_bytes()),
-                fb,
-                0..frames - 1,
-                identity,
-                decode,
-                codes,
-                Box::new(move || {
-                    let mut g = lock(&shared);
-                    g.frame = newest.clone();
-                    g.queue.push_back(newest);
-                    delivered.fetch_add(1, Ordering::Relaxed);
-                }),
-            );
+            let at = ui.host.picture_time(ui.now);
+            let fallback = pipe.feed_at(raw, fb, 0..frames, (identity, at), decode, codes, Some(newest));
+            if fallback.is_some() {
+                return Err(format!("batch {}: deposit intake unavailable", self.id));
+            }
             let returned = drawpipe::host::finish_batch(pipe, self.id as u64)?;
             self.spare = Some(*returned.into_any().downcast::<ScriptBytes>().map_err(|_| "wrong scripted buffer")?);
         } else {
@@ -120,7 +111,7 @@ impl BatchScript {
         let Some(p) = self.pending.take() else { return Ok(()) };
         let after = drawpipe::counters().read();
         let Source::Hw { shared, seen } = &ui.src else { return Err("scripted source replaced".into()) };
-        let delivered = self.delivered.load(Ordering::Relaxed);
+        let delivered = self.counts.delivered + u64::from(p.workers && *seen == p.newest);
         let expected_delivered = self.counts.delivered + u64::from(p.workers);
         if (after.0 - p.before.0, after.1 - p.before.1, after.2 - p.before.2) != (p.frames, p.frames, 0)
             || *seen != p.newest
@@ -133,14 +124,15 @@ impl BatchScript {
             ));
         }
         self.counts.submitted += p.frames;
-        self.counts.deposited += if p.workers { p.frames - 1 } else { 0 };
+        self.counts.deposited += if p.workers { p.frames } else { 0 };
         self.counts.delivered = delivered;
-        let decoded = self.decoded.load(Ordering::Relaxed);
+        let decoded = u64::from(self.decoded_records.load(Ordering::Relaxed).count_ones());
         let route = if !p.workers {
             "records-decoded"
         } else if decoded == 0 {
             "codes"
         } else if decoded == p.frames - 1 {
+            // The newest waveform arrives decoded and skips the worker decoder.
             "decoded"
         } else {
             "mixed"

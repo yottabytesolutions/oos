@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Sampled claims travel with worker maps; only the picture owner updates shared timing rings.
+//! Sampled claims travel with deposits. The picture owner updates the shared timing rings.
 
 use crate::perfguard::ring::Ring;
 use oos_hal::sync::lock;

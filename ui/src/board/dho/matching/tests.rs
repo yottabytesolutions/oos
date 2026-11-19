@@ -136,8 +136,6 @@ fn batch_core_matching_workers_draw_the_standard_picture() {
     let records: Vec<_> = (0..10).map(|i| record(&s, &p, i)).collect();
     let bytes = records.concat();
     let fb = records[0].len();
-    // Above CODES_MIN_BYTES: this would silently draw uncorrected codes if preparation kept that shortcut.
-    assert!(fb >= drawpipe::CODES_MIN_BYTES);
     let mut m = Model {
         tscale: tscales()
             .iter()
@@ -153,9 +151,8 @@ fn batch_core_matching_workers_draw_the_standard_picture() {
     let mut last = Frame::default();
     for (i, r) in records.iter().enumerate() {
         let f = super::super::hw::decode_with(r, &s, &p, 0, HeaderProbe::Off, Some(&mut oracle));
-        if i < records.len() - 1 {
-            drawpipe::draw_frame(&mut want, &m, &f, Interp::Exact, None);
-        } else {
+        drawpipe::draw_frame(&mut want, &m, &f, Interp::Exact, None);
+        if i == records.len() - 1 {
             last = f;
         }
     }
@@ -166,22 +163,20 @@ fn batch_core_matching_workers_draw_the_standard_picture() {
         let (matched, newest) =
             prepare(&bytes, (fb, records.len(), 0), &s, &p, (10, HeaderProbe::Off, None), Some(&mut cores));
         assert_eq!(newest.ch, last.ch);
-        let delivered = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let done = delivered.clone();
         feed(
             &pipe,
-            (Box::new(Bytes(bytes.clone())), fb, 0..9),
-            Default::default(),
+            (Box::new(Bytes(bytes.clone())), fb, 0..10),
+            (Default::default(), std::time::Instant::now()),
             (s.clone(), p, HeaderProbe::Off),
             matched,
-            Box::new(move || done.store(true, std::sync::atomic::Ordering::Release)),
+            (Some(Arc::new(newest)), None),
         );
         finish(&pipe);
         let mut got = Phosphor::new(128, 64);
-        let n = pipe.merge(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
-        assert_eq!(n.frames, 9);
+        let n = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        assert_eq!(n.frames, 10);
         assert_eq!(got.map, want.map);
-        assert!(delivered.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(pipe.take_waveform((128, 64)).unwrap().ch, last.ch);
     }
 }
 
@@ -212,15 +207,7 @@ fn batch_core_matching_keeps_rejected_frames_and_clamps_codes() {
 }
 
 fn finish(pipe: &crate::drawpipe::Pipe) {
-    let mut helper = crate::drawpipe::Helper::default();
-    let deadline = crate::ui::lifecycle::test_wait::Wait::new("batch workers return the completed buffer");
-    while pipe.take_buffer().is_none() {
-        deadline.check();
-        if !pipe.help(&mut helper) {
-            deadline.poll();
-        }
-        pipe.help_done(&mut helper);
-    }
+    crate::drawpipe::host::finish_batch(pipe, 1).expect("the completed batch returns its buffer");
 }
 
 /// Full 4 MB batches, including the small frames that pay estimator and snapshot costs most often.

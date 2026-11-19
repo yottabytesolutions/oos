@@ -66,7 +66,7 @@ fn acquire_demo(job: DemoJob) -> DemoResult {
             stamp: job.identity.1,
             cfg: job.identity.0,
             pre_exact: false,
-            basic,
+            basic: basic.into(),
             la: rec.la.take(),
             fixed_ti: None,
             hw_avg: false,
@@ -546,7 +546,7 @@ mod tests {
         let frame = Arc::new(crate::board::Frame {
             dt: 1e-9,
             ch: [native, Vec::new(), Vec::new(), Vec::new()],
-            basic: [basic, Default::default(), Default::default(), Default::default()],
+            basic: [basic, Default::default(), Default::default(), Default::default()].into(),
             ..Default::default()
         });
         let mut record = Ui::blank_record();

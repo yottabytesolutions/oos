@@ -1,29 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Deposit pipeline (fork, docs/fork/perf-plan.md item 1): every acquired frame is used. In `batch` mode the
-//! acquisition thread decodes only the newest frame of a batch for the UI queue (the record for measurements, layers
-//! and the record path) and hands the read-out buffer itself (no copy) with the other frames to the deposit workers,
-//! one per little core. The workers claim the frames a few at a time; while the FPGA's ring fills with the next batch
-//! the acquisition thread claims single frames too (`help`, from `seq::acquire_batch_idle`). Each frame is
-//! decoded into kept vectors and drawn with the fast path (`draw_frame`, the same function as `Ui::fast_draw`) into
-//! the claimer's own maps, with the screen mapping the UI published (`View`); the trigger statistics and the cheap
-//! measurements (framestats.rs) are counted with it. Once per screen refresh the UI adds the maps to its phosphor
-//! (`merge`); it never iterates the frames.
-//!
-//! The picture is the one of the `frames` mode (every frame through the queue) for the same frames: the workers run
-//! `draw_frame` on the frames the UI would have fast-drawn, and the newest frame of each batch takes the UI's path.
-//! A batch whose workers are still busy, frames of older settings and maps of an older mapping are dropped and
-//! counted (`Counters`). Where the fast path does not apply (no view), the acquisition thread queues every frame as in
-//! `frames` mode. Batch is the default; `acq.pipeline = standard` or `frames` in system.conf (or OOS_PIPELINE)
-//! selects the old path for comparison until M12 chooses the retained path.
+//! Whole-batch placement and owned column differences. The UI takes one deposit per step.
 
 mod config;
+pub(crate) mod funding;
 pub use config::{conf_value, mode_from, Mode};
 mod decoder;
 mod frame;
+#[cfg(test)]
 pub use frame::draw_frame;
 pub(crate) use frame::draw_frame_reusing;
 mod feed;
 pub(crate) mod reuse;
+mod stage;
 pub use decoder::IndexedDecodeInto;
 mod losses;
 pub use losses::Losses;
@@ -34,33 +22,26 @@ mod budget_tests;
 mod counter_tests;
 #[cfg(test)]
 mod identity_tests;
-use feed::{accepts, fresh_acc, same_pair, Header};
+pub(crate) use feed::same_pair;
+use feed::Header;
 pub mod host;
 pub mod shutdown;
-use crate::board::Frame;
-use crate::claim_timing::{Progress, Sampler};
+use crate::board::{Frame, PictureEligibility, QueuedFrame};
 use crate::model::*;
+use crate::picture::deposit::{Deposit, Handoff, TapProjection, TapView};
+pub(crate) use crate::picture::deposit::{TapRead, TapReservation};
+use crate::picture::DepositWindow;
 use crate::sparse::Interp;
 use crate::wave::Phosphor;
 use std::any::Any;
-use std::ops::Range;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, TrySendError};
+use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// Trigger statistics of the fast path (`Ui::fast_edges`, `Ui::fast_off`).
 pub struct Stats<'a> {
     pub edges: &'a mut [u64; 4],
     pub off: &'a mut (f64, f64),
 }
-
-/// Smallest read-out the workers draw from its words (`draw_frame_codes`): 64 kB. Below it the f32 copy stays in the
-/// caches and decoding first was as fast or faster on the host (12.5 k points, 1 channel: 1.08x the time from the words).
-pub const CODES_MIN_BYTES: usize = 64 << 10;
-
-/// Most words per group the workers draw from the words: each channel's deposit reads every group, so with four
-/// channels the read-out is read four times; on the host that was 0.95x the decode path, too little to rely on.
-pub const CODES_MAX_STRIDE: usize = 2;
 
 /// Where a frame's read-out holds each channel (`fastdraw::Codes`), as the board gives it (`CodesInto`).
 #[derive(Clone, Copy)]
@@ -69,8 +50,6 @@ pub struct CodeLayout {
     pub word: [Option<usize>; NCH],
     pub affine: [(f32, f32); NCH],
     pub volt: fn(u16, (f32, f32)) -> f32,
-    /// volts of samples a..b of one channel (bytes, stride, word, a, b, affine, out): the board's decode loop
-    pub volts: fn(&[u8], usize, usize, usize, usize, (f32, f32), &mut Vec<f32>),
 }
 
 impl CodeLayout {
@@ -92,102 +71,6 @@ impl CodeLayout {
 /// empty) as the decode would, and says where the channels are; None where only the decode will do (compressed or
 /// with a header).
 pub type CodesInto = Arc<dyn Fn(&[u8], &mut Frame) -> Option<CodeLayout> + Send + Sync>;
-
-/// The trigger refinement of frame `f` searches the near window only (`trignear::edge_near`), never wide
-/// (docs/fork/ac-trig.md, docs/fork/trig-gate.md). AC or LF-reject coupling: the hardware comparators see a
-/// high-passed signal the samples do not hold, so a farther crossing is not the one they fired on. An edge trigger
-/// on a frame whose `pre` is exact: the edge is at `pre` (or in its pair), within the near window when the column
-/// average blurs it; with noise reject and with a holdoff too (measured at the full rate, trig-gate.md). Kept wide:
-/// other trigger types (they fire at the end of a condition, possibly far from the edge).
-// not inlined: inlined into the codes path it cost the two-channel deposit 6-7 us a frame on the host (perf guard
-// ratio 0.76 -> 0.90), the same code at run time either way
-#[inline(never)]
-fn near_only(m: &Model, f: &Frame) -> bool {
-    let filtered = !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject);
-    let exact = f.pre_exact && m.trig_type == TrigType::Edge;
-    filtered || exact
-}
-
-/// The near part of the dense path's trigger refinement on the source `v` (samples `base..` of `len`, covering
-/// `trignear::near_window`): with `near_only` it decides there alone (`trignear::edge_near`), else the near search of
-/// `trignear::edge_smooth_near`; None where the wide search (`fastdraw::edge_smooth`) must decide.
-#[allow(clippy::too_many_arguments)]
-fn refine_near(
-    v: &[f32],
-    base: usize,
-    len: usize,
-    pre: usize,
-    near_only: bool,
-    level: f32,
-    hyst: f32,
-    rising: bool,
-    either: bool,
-    half: usize,
-    col: usize,
-) -> Option<(Option<f64>, Option<oos_dsp::edges::Edge>)> {
-    if near_only {
-        Some(crate::trignear::edge_near(v, base, len, pre, level, hyst, rising, either, half, col))
-    } else {
-        crate::trignear::edge_near_window(v, base, len, pre, level, hyst, rising, either, half, col, |_| true)
-    }
-}
-
-#[cfg(test)]
-thread_local! {
-    /// wide searches of the codes path (tests)
-    static WIDE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-thread_local! {
-    /// the trigger source's volts that the codes path decodes (the near window, or all of them for the wide search)
-    static TRIG: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// `draw_frame` straight from the read-out `bytes` of a frame (`lay`, meta data in `f`, whose channel vectors stay
-/// empty): the same picture and statistics without the f32 copy of every channel. The trigger source is decoded only
-/// around the hardware trigger point (the near search, `trignear::edge_near_window`), all of it only when the wide
-/// search is needed (never with `near_only`); a filtered trigger path (AC, LF reject) takes its level from
-/// `board::MEAN_SAMPLES` words of the source. None where this path does not apply (sparse, pairs, roll or scan, dots): then decode and call
-/// `draw_frame`.
-pub fn draw_frame_codes(
-    ph: &mut Phosphor,
-    m: &Model,
-    f: &Frame,
-    bytes: &[u8],
-    lay: &CodeLayout,
-    stats: Option<Stats>,
-) -> Option<bool> {
-    let (w, h) = (ph.w, ph.h);
-    let tdiv = m.time_per_div() as f64;
-    let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.dots_at(x_per_sample) {
-        return None;
-    }
-    let present: [bool; NCH] = std::array::from_fn(|c| lay.channel(bytes, c).n > 0);
-    let refine = |hyst: f32, rising: bool, either: bool, half: usize, col: usize| {
-        use crate::fastdraw::Samples;
-        let src = lay.channel(bytes, m.trig_src);
-        let level = crate::board::sw_trig_level_of(m, src.n, |i| src.at(i));
-        let trigger = crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either };
-        TRIG.with(|t| {
-            let v = &mut *t.borrow_mut();
-            let (a, b) = crate::trignear::near_window(f.pre, src.n, col);
-            (lay.volts)(bytes, src.stride, src.word, a, b, src.affine, v);
-            if let Some(r) = refine_near(v, a, src.n, f.pre, near_only(m, f), level, hyst, rising, either, half, col) {
-                return r;
-            }
-            #[cfg(test)]
-            WIDE.with(|n| n.set(n.get() + 1));
-            (lay.volts)(bytes, src.stride, src.word, 0, src.n, src.affine, v);
-            crate::fastdraw::edge_smooth(v.as_slice(), f.pre, trigger, half, col, |_| true)
-        })
-    };
-    let deposit = |c: usize, map: &mut [u16], xm: &crate::fastdraw::Map| {
-        crate::fastdraw::deposit_codes(map, w, h, &lay.channel(bytes, c), xm, 24)
-    };
-    let input = frame::ProjectedInput { x_per_sample, pairs: false, present };
-    Some(frame::draw_projected(ph, m, f, input, stats, refine, deposit))
-}
 
 /// Frames acquired, used (drawn into the picture) and dropped, since the start; in both modes.
 #[derive(Default)]
@@ -240,59 +123,36 @@ impl Drop for Lease {
     }
 }
 
-/// A batch with the workers: its frames are claimed a few at a time by whoever is free (the workers, and the
-/// acquisition thread while it waits for the next batch: `help`). Frames never claimed count as dropped.
-pub(crate) struct Batch {
+enum Message {
+    Batch(Arc<Batch>),
+    Wake,
+    #[cfg(test)]
+    Barrier(Sender<()>),
+}
+
+struct Batch {
     fb: usize,
     frames: usize,
     decode: decoder::Decoder,
-    /// the board's view without decoding (`draw_frame_codes`), where it has one
     codes: Option<CodesInto>,
     header: Header,
+    view_gen_at_submit: u64,
     next: AtomicUsize,
     counters: &'static Counters,
-    /// batches not done yet (`Pipe::live`)
     live: Arc<AtomicUsize>,
-    /// what the acquisition thread wants done once every frame is drawn (the newest frame to the UI queue), put on
-    /// `ready` for the UI's next `merge`
-    deliver: Mutex<Option<Deliver>>,
-    ready: Arc<Mutex<Vec<Deliver>>>,
-    /// a number of its own (`Acc::batches`, partial merges), its settings generation (`pacing::APPLIED` when fed:
-    /// stale frames) and when it was fed, right after its read (picture age)
-    id: u64,
+    newest: Option<Arc<Frame>>,
     fed: std::time::Instant,
-    // Return the buffer only after the decoder and delivery captures have been dropped.
     lease: Lease,
-}
-
-/// Run by the UI after the merge that holds a batch's frames (`Pipe::feed_with`).
-pub type Deliver = Box<dyn FnOnce() + Send>;
-
-impl Batch {
-    /// The next `n` frames nobody has taken yet.
-    fn claim(&self, n: usize) -> Option<Range<usize>> {
-        let i = self.next.fetch_add(n, Ordering::Relaxed);
-        (i < self.frames).then(|| i..(i + n).min(self.frames))
-    }
 }
 
 impl Drop for Batch {
     fn drop(&mut self) {
         let left = self.frames.saturating_sub(self.next.load(Ordering::Relaxed));
         self.counters.discard(Lost::Unclaimed, left as u64);
-        // every frame is in a mailbox now (the workers hand on before they let go of the batch)
-        if let Some(d) = self.deliver.lock().unwrap().take() {
-            crate::pacing::ready();
-            self.ready.lock().unwrap().push(d);
-        }
         self.live.fetch_sub(1, Ordering::Release);
     }
 }
 
-/// Frames a worker claims at a time.
-const CLAIM: usize = 4;
-
-/// The screen mapping the workers draw with, and a generation that changes with anything the drawing depends on.
 struct View {
     gen: u64,
     m: Model,
@@ -301,108 +161,6 @@ struct View {
     h: usize,
 }
 
-/// What a worker drew and the UI has not merged yet.
-struct Acc {
-    gen: u64,
-    identity: Option<oos_core::change::Identity>,
-    ph: Phosphor,
-    /// statistics of the cheap measurements over the frames (framestats.rs)
-    folds: crate::framestats::Folds,
-    frames: u64,
-    triggered: u64,
-    edges: [u64; 4],
-    off: (f64, f64),
-    /// the channels drawn into (on in the view): only their maps are added and cleared
-    used: [bool; NCH],
-    /// the batches with frames in these maps (`Batch::id`) and when the newest of them was fed
-    batches: Vec<u64>,
-    newest: Option<std::time::Instant>,
-    /// Producer-local counts and sampled work, carried to the picture with these maps.
-    progress: Progress,
-}
-
-impl Acc {
-    fn new(gen: u64, w: usize, h: usize) -> Acc {
-        Acc {
-            gen,
-            identity: None,
-            ph: Phosphor { w, h, map: Default::default() },
-            folds: Vec::new(),
-            frames: 0,
-            triggered: 0,
-            edges: [0; 4],
-            off: (0.0, 0.0),
-            used: [false; NCH],
-            batches: Vec::new(),
-            newest: None,
-            progress: Default::default(),
-        }
-    }
-    /// Empty again, keeping the maps' memory.
-    fn reset(&mut self, gen: u64) {
-        self.ph.clear();
-        self.folds.clear();
-        self.batches.clear();
-        self.newest = None;
-        self.progress = Default::default();
-        (self.gen, self.frames, self.triggered, self.edges, self.off) = (gen, 0, 0, [0; 4], (0.0, 0.0));
-    }
-    fn add(&mut self, o: &Acc, counters: &Counters) {
-        add(&mut self.ph, &o.ph, o.used);
-        for (a, b) in self.used.iter_mut().zip(o.used) {
-            *a |= b;
-        }
-        if self.identity == o.identity {
-            crate::framestats::add_folds(&mut self.folds, &o.folds);
-        } else if o.identity.map(|id| id.stats_gen()) > self.identity.map(|id| id.stats_gen()) {
-            count_folds(counters, &self.folds);
-            self.folds.clone_from(&o.folds);
-            self.identity = o.identity;
-        } else {
-            count_folds(counters, &o.folds);
-        }
-        self.frames += o.frames;
-        self.triggered += o.triggered;
-        for (a, b) in self.edges.iter_mut().zip(o.edges) {
-            *a += b;
-        }
-        self.off = (self.off.0 + o.off.0, self.off.1.max(o.off.1));
-        for &b in &o.batches {
-            self.note(b, o.newest);
-        }
-        self.progress.stale += o.progress.stale;
-        self.progress.sample = o.progress.sample.or(self.progress.sample);
-    }
-    /// Frames of batch `id`, fed at `fed`, drawn into these maps.
-    fn note(&mut self, id: u64, fed: Option<std::time::Instant>) {
-        if !self.batches.contains(&id) {
-            self.batches.push(id);
-        }
-        self.newest = self.newest.max(fed);
-    }
-}
-
-/// A worker's mailbox: the drawn maps the UI takes, and the maps it gives back to be cleared and reused.
-#[derive(Default)]
-struct Mail {
-    /// handed on, in order; the worker never adds under the lock (the UI waited 18-34 ms for that on the unit)
-    full: Vec<Acc>,
-    spare: Vec<Acc>,
-}
-
-/// Maps handed on that a mailbox holds at most before a worker adds into the last one.
-const MAIL_MAX: usize = 4;
-
-/// The acquisition thread's state as a helper (`Pipe::help`): its maps and its kept frame.
-#[derive(Default)]
-pub struct Helper {
-    acc: Option<Acc>,
-    spare: Option<Acc>,
-    f: Frame,
-    sampler: Sampler,
-}
-
-/// The view and the settings stamp the UI is at; None while the fast path does not apply.
 #[derive(Default)]
 struct ViewState {
     view: Option<Arc<View>>,
@@ -411,46 +169,37 @@ struct ViewState {
     identity: Option<oos_core::change::Identity>,
     key: Option<oos_core::change::WorkerViewKey>,
     gen: u64,
+    mapping_key: Option<oos_core::change::MappingKey>,
+    mapping_gen: u64,
+}
+
+impl ViewState {
+    fn tap_view(&self, size: (usize, usize)) -> Option<TapView> {
+        self.view.as_ref().map(|v| TapView::new(v.gen, self.mapping_gen, size))
+    }
 }
 
 pub struct Pipe {
     view: Arc<Mutex<ViewState>>,
     counters: &'static Counters,
     workers: Mutex<shutdown::Workers>,
-    /// the workers' mailboxes and, last, the helper's
-    mails: Vec<Arc<Mutex<Mail>>>,
-    /// batches the helper may take frames of, oldest first
-    open: Mutex<std::collections::VecDeque<std::sync::Weak<Batch>>>,
-    /// batches fed and not done (drawn and handed on, or dropped)
+    slot: Arc<Handoff>,
     live: Arc<AtomicUsize>,
-    /// `Batch::deliver` of the batches done, for the next `merge`
-    ready: Arc<Mutex<Vec<Deliver>>>,
     home: Sender<Box<dyn RawBatch>>,
     pool: Mutex<Receiver<Box<dyn RawBatch>>>,
-    /// merges so far, and the batches seen in them: (`Batch::id`, merge, counted as partial)
-    merges: AtomicU64,
-    seen: Mutex<std::collections::VecDeque<(u64, u64, bool)>>,
-    /// batches of this pipe merged in parts (also counted in `pacing::PARTIAL`)
-    partial: AtomicU64,
 }
 
-/// Batches `Pipe::seen` remembers: more than are ever in flight.
-const SEEN_KEEP: usize = 64;
-
-/// Merged frames: how many, how many found their trigger, the statistics of the cheap measurements over them.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Merged {
+#[derive(Default)]
+pub struct Accepted {
     pub frames: u64,
     pub triggered: u64,
     pub folds: crate::framestats::Folds,
-    /// when the newest batch with frames in this merge was fed (picture age)
     pub newest: Option<std::time::Instant>,
-    /// frames in this merge acquired before the last settings change (`pacing::is_stale`)
     pub stale: u64,
+    pub(crate) window_frames: Option<u64>,
 }
 
 impl Pipe {
-    /// The UI's mapping for the frames to come (None: the fast path does not apply).
     pub fn set_view(&self, m: Option<&Model>, w: usize, h: usize, interp: Interp) {
         feed::set_view(self, m, w, h, interp, None);
     }
@@ -460,276 +209,180 @@ impl Pipe {
     }
 
     pub fn set_identity(&self, identity: oos_core::change::Identity) {
-        self.view.lock().unwrap().identity = Some(identity);
+        let mut view = oos_hal::sync::lock(&self.view);
+        view.identity = Some(identity);
+        self.slot.set_tap_identity(identity);
     }
 
-    /// The fast path applies: the workers take frames.
     pub fn accepting(&self) -> bool {
-        !oos_hal::sync::lock(&self.workers).closed && self.view.lock().unwrap().view.is_some()
+        !oos_hal::sync::lock(&self.workers).closed && oos_hal::sync::lock(&self.view).view.is_some()
     }
 
-    /// A buffer back from the workers, to read the next batch into (None: all are still out).
     pub fn take_buffer(&self) -> Option<Box<dyn Any + Send>> {
-        self.pool.lock().unwrap().try_recv().ok().map(|r| r.into_any())
+        oos_hal::sync::lock(&self.pool).try_recv().ok().map(|r| r.into_any())
     }
 
-    /// From the acquisition thread while the ring fills (`seq::acquire_batch_idle`): draws one frame of the oldest open batch into the
-    /// helper's maps. False when there is none (the helper's maps then go to the UI).
-    pub fn help(&self, h: &mut Helper) -> bool {
-        let b = {
-            let mut open = self.open.lock().unwrap();
-            loop {
-                match open.front().map(|w| w.upgrade()) {
-                    None => break None,
-                    Some(Some(b)) if b.next.load(Ordering::Relaxed) < b.frames => break Some(b),
-                    Some(_) => {
-                        open.pop_front();
-                    }
-                }
-            }
-        };
-        let Some(b) = b else {
-            self.help_done(h);
-            return false;
-        };
-        let Some(r) = b.claim(1) else { return true };
-        let (v, stamp, identity) = self.view_now();
-        let mails = self.mails.last().expect("helper mailbox");
-        match v.filter(|_| accepts(&b, stamp, identity)) {
-            None => {
-                if !same_pair(b.header.identity(), identity) {
-                    Counters::add(&self.counters.losses.pipe, r.len() as u64);
-                }
-                self.counters.discard(Lost::Settings, r.len() as u64);
-            }
-            Some(v) => {
-                if h.acc.as_ref().is_some_and(|a| a.gen != v.gen || a.identity != b.header.identity()) {
-                    self.help_done(h);
-                }
-                if h.acc.is_none() {
-                    let spare = h.spare.take().or_else(|| mails.lock().unwrap().spare.pop());
-                    h.acc = Some(fresh_acc(spare, &v));
-                }
-                let a = h.acc.as_mut().expect("helper maps");
-                a.identity = b.header.identity();
-                draw_range(&b, r, &v, a, &mut h.f, &mut h.sampler);
-            }
-        }
-        true
+    #[cfg(test)]
+    pub fn accept(&self, ph: &mut Phosphor, clear: &mut bool, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Accepted {
+        self.accept_into(ph, clear, Stats { edges, off }, None)
     }
 
-    /// The helper's maps to the UI.
-    pub fn help_done(&self, h: &mut Helper) {
-        match h.acc.take() {
-            Some(a) if a.frames > 0 => h.spare = publish(self.mails.last().expect("helper mailbox"), a, self.counters),
-            Some(a) => h.spare = Some(a),
-            None => {}
+    pub(crate) fn discard_window(&self, window: &mut DepositWindow) {
+        window.reset(&self.slot);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_recycled_deposit(&self) -> Option<Deposit> {
+        self.slot.spare()
+    }
+
+    pub(crate) fn tap_count(&self) -> usize {
+        self.slot.tap_count()
+    }
+
+    pub(crate) fn has_waveform(&self, identity: oos_core::change::Identity) -> bool {
+        self.slot.has_tap(identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_waveform(&self, size: (usize, usize)) -> Option<QueuedFrame> {
+        let identity = oos_hal::sync::lock(&self.view).identity;
+        match self.read_waveform(size, identity, None, true) {
+            TapRead::Ready((frame, _)) => Some(frame),
+            _ => None,
         }
     }
 
-    fn view_now(&self) -> (Option<Arc<View>>, u64, Option<oos_core::change::Identity>) {
-        let s = self.view.lock().unwrap();
-        (s.view.clone(), feed::legacy_stamp(&s), s.identity)
+    pub(crate) fn read_waveform(
+        &self,
+        size: (usize, usize),
+        identity: Option<oos_core::change::Identity>,
+        fallback: Option<u64>,
+        can_take: bool,
+    ) -> TapRead<(QueuedFrame, Option<crate::framestats::TapFolds>)> {
+        let state = oos_hal::sync::lock(&self.view);
+        let view = state.tap_view(size);
+        let (tap, charge) = match self.slot.take_tap(view, identity, fallback, can_take) {
+            TapRead::Ready(tap) => tap,
+            TapRead::Stale => return TapRead::Stale,
+            TapRead::Pending => return TapRead::Pending,
+            TapRead::Empty => return TapRead::Empty,
+        };
+        let eligibility = tap.projection.eligibility(view);
+        TapRead::Ready((QueuedFrame::from_tap(tap.frame, eligibility, charge), tap.folds))
     }
 
-    /// Adds what the workers drew under the current mapping to `ph` and the trigger statistics to `edges`, `off`.
-    /// `clear`: minimum persistence, the picture is replaced: cleared first if anything is merged.
-    pub fn merge(&self, ph: &mut Phosphor, clear: &mut bool, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Merged {
-        self.merges.fetch_add(1, Ordering::Relaxed);
-        let state = self.view.lock().unwrap();
-        let (gen, identity) = (state.view.as_ref().map(|v| v.gen), state.identity);
+    pub(crate) fn take_preview(&self, frame: &Arc<Frame>, size: (usize, usize)) -> Option<PictureEligibility> {
+        let state = oos_hal::sync::lock(&self.view);
+        let id = state.identity?;
+        if (id.gen(), id.epoch()) != (frame.cfg, frame.stamp) {
+            return None;
+        }
+        self.slot.take_preview(state.tap_view(size), frame)
+    }
+
+    pub(crate) fn accept_into(
+        &self,
+        ph: &mut Phosphor,
+        clear: &mut bool,
+        stats: Stats<'_>,
+        window: Option<(&mut DepositWindow, std::time::Instant)>,
+    ) -> Accepted {
+        let mut claim = self.slot.claim();
+        let mut window = window;
+        if claim.is_none() && window.as_ref().is_none_or(|(retained, _)| retained.is_empty()) {
+            if let Some((retained, _)) = window {
+                retained.idle();
+            }
+            return Accepted::default();
+        }
+        let state = oos_hal::sync::lock(&self.view);
+        let view = state.view.clone();
+        let mapping_gen = state.mapping_gen;
+        let identity = state.identity;
         drop(state);
-        let mut got = Merged::default();
-        let mut sample = None;
-        for mail in &self.mails {
-            let full = std::mem::take(&mut mail.lock().unwrap().full);
-            let mut back = Vec::with_capacity(full.len());
-            for a in full {
-                if Some(a.gen) == gen
-                    && same_pair(a.identity, identity)
-                    && (a.ph.w, a.ph.h) == (ph.w, ph.h)
-                    && a.frames > 0
-                {
-                    if *clear {
-                        ph.clear();
-                        *clear = false;
-                    }
-                    add(ph, &a.ph, a.used);
-                    for (x, y) in edges.iter_mut().zip(a.edges) {
-                        *x += y;
-                    }
-                    *off = (off.0 + a.off.0, off.1.max(a.off.1));
-                    sample = a.progress.sample.or(sample);
-                    got.frames += a.frames;
-                    got.triggered += a.triggered;
-                    got.newest = got.newest.max(a.newest);
-                    got.stale += a.progress.stale;
-                    self.note_merged(&a.batches);
-                    if a.identity == identity {
-                        crate::framestats::add_folds(&mut got.folds, &a.folds);
-                    } else {
-                        count_folds(self.counters, &a.folds);
-                    }
-                } else {
-                    if !same_pair(a.identity, identity) {
-                        Counters::add(&self.counters.losses.pipe, a.frames);
-                    }
-                    count_folds(self.counters, &a.folds);
-                    self.counters.reject(losses::Rejection::between(a.identity, identity), a.frames);
-                    Counters::add(&self.counters.dropped, a.frames);
-                }
-                back.push(a);
-            }
-            // back to the worker, which clears it
-            mail.lock().unwrap().spare.extend(back);
+        let size = (ph.w, ph.h);
+        let mapping_matches =
+            |d: &Deposit| d.size() == size && view.as_ref().is_some_and(|v| d.matches(v.gen, v.w, v.h));
+        let mut accepted = Accepted::default();
+        let mut rebuild = false;
+        if let Some((retained, now)) = &mut window {
+            rebuild = retained.expire(*now, &self.slot, |d| {
+                mapping_matches(d) && d.identity.map(|id| id.epoch()) == identity.map(|id| id.epoch())
+            });
         }
-        // after the maps: a batch hands its maps on before it goes on `ready`
-        self.release();
+        if let Some(deposit) = claim.as_mut().and_then(|claim| claim.deposit.take()) {
+            let same_acquisition = same_pair(deposit.identity, identity);
+            if mapping_matches(&deposit) && same_acquisition {
+                let taps = deposit.taps.clone();
+                accepted = self.fold_pending(deposit, ph, clear, stats, identity, window.as_mut());
+                self.slot.settle_taps(&taps, (accepted.frames > 0).then_some(mapping_gen));
+                rebuild |= accepted.frames > 0;
+            } else {
+                deposit.reject(identity, self.counters);
+                self.slot.recycle(deposit);
+            }
+        }
+        if claim.is_some() {
+            drop(claim);
+            self.wake();
+        }
+        if let Some((retained, _)) = window {
+            if accepted.frames == 0 {
+                retained.idle();
+            }
+            if rebuild {
+                *clear = false;
+                accepted.window_frames = Some(retained.rebuild(ph));
+            }
+        }
+        accepted
+    }
+
+    fn fold_pending(
+        &self,
+        mut deposit: Deposit,
+        ph: &mut Phosphor,
+        clear: &mut bool,
+        stats: Stats<'_>,
+        identity: Option<oos_core::change::Identity>,
+        window: Option<&mut (&mut DepositWindow, std::time::Instant)>,
+    ) -> Accepted {
+        if let Some((_, now)) = window.as_ref() {
+            if deposit.extent.expired(*now) {
+                self.counters.reject(losses::Rejection::Age, deposit.records);
+                Counters::add(&self.counters.dropped, deposit.records);
+                deposit.discard_folds(self.counters);
+                self.slot.recycle(deposit);
+                return Accepted::default();
+            }
+        }
+        let accepted = crate::picture::accept_deposit(&mut deposit, stats, identity, self.counters);
         if self.counters.diagnostics_enabled() {
-            self.counters.timing.picture(sample, got.newest.map(|fed| fed.elapsed()));
+            self.counters.timing.picture(deposit.progress.sample, accepted.newest.map(|fed| fed.elapsed()));
         }
-        got
-    }
-
-    /// Batches `ids` reached the picture in this merge; one that reached it in an earlier merge too came in parts
-    /// (`pacing::PARTIAL`, docs/architecture/drawing.md step 0).
-    fn note_merged(&self, ids: &[u64]) {
-        let n = self.merges.load(Ordering::Relaxed);
-        let mut seen = self.seen.lock().unwrap();
-        for &id in ids {
-            match seen.iter_mut().find(|e| e.0 == id) {
-                Some(e) if e.1 != n && !e.2 => {
-                    e.2 = true;
-                    self.partial.fetch_add(1, Ordering::Relaxed);
-                    crate::pacing::PARTIAL.fetch_add(1, Ordering::Relaxed);
-                }
-                Some(_) => {}
-                None => {
-                    if seen.len() >= SEEN_KEEP {
-                        seen.pop_front();
-                    }
-                    seen.push_back((id, n, false));
-                }
-            }
-        }
-    }
-
-    /// Runs the `deliver` of the batches done.
-    pub fn release(&self) {
-        let ready = std::mem::take(&mut *self.ready.lock().unwrap());
-        for d in ready {
-            d();
-        }
-    }
-}
-
-/// Frames `r` of batch `b` decoded into `f` and drawn into `a`.
-fn draw_range(b: &Batch, r: Range<usize>, v: &View, a: &mut Acc, f: &mut Frame, sampler: &mut Sampler) {
-    let Some(bytes) = b.lease.raw.as_ref().map(|x| x.bytes()) else { return };
-    a.identity = b.header.identity();
-    a.note(b.id, Some(b.fed));
-    if crate::pacing::is_stale(b.header.cfg()) {
-        a.progress.stale += r.len() as u64;
-    }
-    let started = b.counters.diagnostics_enabled().then(|| sampler.start()).flatten();
-    let records = r.len() as u64;
-    for i in r {
-        let chunk = &bytes[i * b.fb..(i + 1) * b.fb];
-        // without per-frame measurements a large frame is drawn from its read-out words where the board has a view of them
-        if a.folds.is_empty() && chunk.len() >= CODES_MIN_BYTES {
-            let lay = b.codes.as_ref().and_then(|c| c(chunk, f)).filter(|l| l.stride <= CODES_MAX_STRIDE);
-            b.header.tag(f);
-            let st = Stats { edges: &mut a.edges, off: &mut a.off };
-            if let Some(t) = lay.and_then(|l| draw_frame_codes(&mut a.ph, &v.m, f, chunk, &l, Some(st))) {
-                a.triggered += t as u64;
-                a.frames += 1;
-                continue;
-            }
-        }
-        b.decode.decode(i, chunk, f);
-        b.header.tag(f);
-        let st = Stats { edges: &mut a.edges, off: &mut a.off };
-        a.triggered += draw_frame(&mut a.ph, &v.m, f, v.interp, Some(st)) as u64;
-        if crate::framestats::fold_frame(f, &v.m, &mut a.folds) {
-            a.progress.measured += 1;
-        }
-        a.frames += 1;
-    }
-    if let Some(started) = started {
-        a.progress.sample = Some((started.elapsed(), records));
-    }
-}
-
-/// Hands drawn maps to `mail` (added to what the UI has not taken yet); returns maps to draw the next ones into.
-fn publish(mail: &Mutex<Mail>, a: Acc, counters: &Counters) -> Option<Acc> {
-    counters.publish(&a.progress, a.frames);
-    let mut mb = mail.lock().unwrap();
-    // maps of an older mapping: the UI would drop them
-    let (keep, old): (Vec<Acc>, Vec<Acc>) = std::mem::take(&mut mb.full)
-        .into_iter()
-        .partition(|f| f.gen == a.gen && same_pair(f.identity, a.identity) && (f.ph.w, f.ph.h) == (a.ph.w, a.ph.h));
-    mb.full = keep;
-    for o in old {
-        if !same_pair(o.identity, a.identity) {
-            Counters::add(&counters.losses.pipe, o.frames);
-        }
-        count_folds(counters, &o.folds);
-        counters.reject(losses::Rejection::between(o.identity, a.identity), o.frames);
-        Counters::add(&counters.dropped, o.frames);
-        mb.spare.push(o);
-    }
-    if mb.full.len() < MAIL_MAX {
-        mb.full.push(a);
-        return mb.spare.pop();
-    }
-    // the UI is far behind: added under the lock, rare
-    if let Some(last) = mb.full.last_mut() {
-        last.add(&a, counters);
-    }
-    Some(a)
-}
-
-/// A worker: claims frames of each batch until none are left, draws them into its own maps, then hands them on.
-fn work(rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>) {
-    let mut f = Frame::default();
-    let mut spare: Option<Acc> = None;
-    let mut sampler = Sampler::default();
-    while let Ok(b) = rx.recv() {
-        let (v, stamp, identity) = {
-            let s = view.lock().unwrap();
-            (s.view.clone(), feed::legacy_stamp(&s), s.identity)
-        };
-        let Some(v) = v.filter(|_| accepts(&b, stamp, identity)) else {
-            // older settings or no fast path: the frames are dropped (counted when the batch goes)
-            while let Some(r) = b.claim(b.frames.max(1)) {
-                if !same_pair(b.header.identity(), identity) {
-                    Counters::add(&b.counters.losses.pipe, r.len() as u64);
-                }
-                b.counters.discard(Lost::Settings, r.len() as u64);
-            }
-            continue;
-        };
-        let mut a = fresh_acc(spare.take().or_else(|| mail.lock().unwrap().spare.pop()), &v);
-        a.identity = b.header.identity();
-        while let Some(r) = b.claim(CLAIM) {
-            draw_range(&b, r, &v, &mut a, &mut f, &mut sampler);
-        }
-        // handed on before the batch goes: once it is gone, its frames are in a mailbox
-        if a.frames == 0 {
-            spare = Some(a);
+        if let Some((retained, _)) = window.filter(|_| accepted.frames > 0) {
+            retained.push(deposit, &self.slot);
         } else {
-            spare = publish(mail, a, b.counters);
-        }
-    }
-}
-
-/// `dst` += `src`, saturating, per channel map.
-fn add(dst: &mut Phosphor, src: &Phosphor, used: [bool; NCH]) {
-    for ((d, s), u) in dst.map.iter_mut().zip(src.map.iter()).zip(used) {
-        if u {
-            for (x, y) in d.iter_mut().zip(s.iter()) {
-                *x = x.saturating_add(*y);
+            if accepted.frames > 0 {
+                if std::mem::take(clear) {
+                    ph.clear();
+                }
+                if deposit.format() == crate::picture::deposit::count::CountFormat::Wide {
+                    ph.set_format(deposit.format());
+                }
+                for band in &mut deposit.planes {
+                    band.fold_picture([None, None], ph);
+                }
             }
+            self.slot.recycle(deposit);
+        }
+        accepted
+    }
+
+    fn wake(&self) {
+        if let Some(tx) = &oos_hal::sync::lock(&self.workers).sender {
+            let _ = tx.try_send(Message::Wake);
         }
     }
 }
@@ -755,53 +408,20 @@ pub fn pipe<'a>(access: impl Into<Access<'a>>) -> Option<&'static Pipe> {
     }
     static P: OnceLock<Pipe> = OnceLock::new();
     let Access::Start(sw) = access.into() else { return P.get() };
-    (sw.pipeline == Mode::Batch)
-        .then(|| P.get_or_init(|| Pipe::start(sw.cores.little_count().unwrap_or(WORKERS), sw.cores.little, counters())))
+    (sw.pipeline == Mode::Batch).then(|| P.get_or_init(|| funding::application(sw, counters())))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod deposit;
     mod publication;
+    mod window;
     use oos_hal::dho::hz;
     use oos_hal::dho::seq::Settings;
 
-    #[test]
-    fn reused_accumulators_release_disabled_planes_and_keep_enabled_buffers() {
-        let mut view = View { gen: 0, m: Model::default(), interp: Interp::Exact, w: 97, h: 48 };
-        let mut spare = None;
-        for channels in [4, 1, 2, 4, 0, 1] {
-            for (c, ch) in view.m.ch.iter_mut().enumerate() {
-                ch.on = c < channels;
-            }
-            view.gen += 1;
-            let kept = spare.as_ref().map(|a: &Acc| a.ph.map[0].as_ptr());
-            let was_on = spare.as_ref().is_some_and(|a| a.used[0]);
-            let mut a = fresh_acc(spare, &view);
-            if channels > 0 && was_on {
-                assert_eq!(Some(a.ph.map[0].as_ptr()), kept, "reuse across channel changes");
-            }
-            for (c, map) in a.ph.map.iter_mut().enumerate() {
-                if c < channels {
-                    assert_eq!(map.len(), view.w * view.h);
-                    assert!(map.iter().all(|&x| x == 0), "old picture must be cleared");
-                    map.fill(24);
-                } else {
-                    assert_eq!(map.capacity(), 0, "disabled channels must release their planes");
-                }
-            }
-            spare = Some(a);
-        }
-        view.w = 41;
-        view.h = 23;
-        let a = fresh_acc(spare, &view);
-        assert_eq!(a.ph.map[0].len(), view.w * view.h);
-        assert!(a.ph.map[0].iter().all(|&x| x == 0));
-        assert!(a.ph.map[1..].iter().all(|map| map.capacity() == 0));
-    }
-
     /// A read-out buffer for the tests.
-    struct Bytes(Vec<u8>);
+    pub(super) struct Bytes(pub(super) Vec<u8>);
 
     impl RawBatch for Bytes {
         fn bytes(&self) -> &[u8] {
@@ -816,14 +436,14 @@ mod tests {
         Box::leak(Box::default())
     }
 
-    fn dec(s: &Settings, p: &hz::Params) -> DecodeInto {
+    pub(super) fn dec(s: &Settings, p: &hz::Params) -> DecodeInto {
         let (s, p) = (s.clone(), *p);
         Arc::new(move |c: &[u8], f: &mut Frame| crate::board::dho::hw::decode_into(c, &s, &p, 0, f))
     }
 
     /// A raw batch of `frames` frames, CH1 (and CH2 with `two`): a sine with a rising zero crossing near the hardware
     /// trigger point, a per-frame jitter, every fifth frame shifted up, every seventh without the crossing.
-    fn batch(frames: usize, memsel: u32, two: bool) -> (Vec<u8>, usize, Settings, hz::Params) {
+    pub(super) fn batch(frames: usize, memsel: u32, two: bool) -> (Vec<u8>, usize, Settings, hz::Params) {
         let r = if two { 2 } else { 1 };
         let p = hz::Params {
             ratio: r,
@@ -857,7 +477,7 @@ mod tests {
         (bytes, fb, s, p)
     }
 
-    fn model(tdiv: f64, two: bool, dots: bool) -> Model {
+    pub(super) fn model(tdiv: f64, two: bool, dots: bool) -> Model {
         let mut m = Model::default();
         m.tscale = tscales().iter().position(|&t| (t as f64 - tdiv).abs() < tdiv * 1e-3).unwrap();
         (m.trig_level, m.dots) = (0.0, if dots { DotsMode::On } else { DotsMode::Off });
@@ -920,7 +540,6 @@ mod tests {
             let mut m = model(1e-5, mask == 3, false);
             m.meas = Vec::new();
             let (bytes, fb, s, p) = frames_of(mask, n, 9, &sig);
-            assert!(fb >= CODES_MIN_BYTES);
             let pipe = Pipe::start(2, 0, fresh());
             pipe.set_view(Some(&m), w, h, Interp::Exact);
             let (cs, cp) = (s.clone(), p);
@@ -930,7 +549,7 @@ mod tests {
             settle(&pipe);
             let mut got = Phosphor::new(w, h);
             let (mut clear, mut edges, mut off) = (false, [0u64; 4], (0.0, 0.0));
-            let n_got = pipe.merge(&mut got, &mut clear, &mut edges, &mut off);
+            let n_got = pipe.accept(&mut got, &mut clear, &mut edges, &mut off);
             let (want, trig, wedges, woff, _) = reference(&bytes, fb, &s, &p, &m, w, h);
             assert_eq!((n_got.frames, n_got.triggered, edges), (9, trig, wedges), "mask {}", mask);
             assert!((off.0 - woff.0).abs() <= 1e-9 * woff.0.abs().max(1.0) && off.1 == woff.1);
@@ -938,114 +557,6 @@ mod tests {
                 assert!(got.map[c] == want.map[c], "mask {}: CH{} differs", mask, c + 1);
             }
         }
-    }
-
-    // Break it catches (`draw_frame_codes`): a picture or trigger statistics from the read-out words that differ from
-    // decoding the frame first (column extremes, join, interleaved channels, the near window, the wide fallback),
-    // or the codes path taken where it must not be.
-    #[test]
-    fn drawing_from_the_codes_equals_drawing_the_decoded_frame() {
-        let (w, h) = (970, 448);
-        let sine = |k: usize, c: usize, i: usize| {
-            0.9 * (((i as f64 - 50_000.0 + (k % 7) as f64 * 0.13) / 400.0)
-                * (1.0 + c as f64 * 0.5)
-                * std::f64::consts::TAU)
-                .sin()
-        };
-        let square = |k: usize, c: usize, i: usize| {
-            let x = i as f64 + 37.0 * k as f64 + 101.0 * c as f64;
-            (if (x / 9_000.0).fract() < 0.5 { 1.2 } else { -1.2 }) + 0.03 * ((i * 7919 + k * 31) % 101) as f64 / 101.0
-        };
-        let flat = |_k: usize, c: usize, i: usize| 0.2 + 0.001 * (i % 3) as f64 + c as f64 * 0.1;
-        let mut taken = 0;
-        let mut cases = 0;
-        for (mask, n, tdiv) in [
-            (1u32, 100_000u32, 1e-5),
-            (1, 12_512, 1e-6),
-            (3, 70_312, 1e-5),
-            (3, 12_512, 1e-6),
-            (15, 30_000, 1e-5),
-            (5, 25_000, 1e-5),
-            (1, 1408, 1e-7),
-        ] {
-            for (name, sig) in
-                [("sine", &sine as &dyn Fn(usize, usize, usize) -> f64), ("square", &square), ("flat", &flat)]
-            {
-                let (bytes, fb, s, p) = frames_of(mask, n, 6, sig);
-                // exact false: as a decimated read, where the wide search stays
-                for (src, dots, coup, exact) in [
-                    (0usize, false, TrigCoup::Dc, true),
-                    (1, false, TrigCoup::Dc, true),
-                    (0, true, TrigCoup::Dc, true),
-                    (0, false, TrigCoup::Ac, true),
-                    (0, false, TrigCoup::LfReject, true),
-                    (0, false, TrigCoup::HfReject, true),
-                    (0, false, TrigCoup::Dc, false),
-                    (1, false, TrigCoup::Dc, false),
-                    (0, false, TrigCoup::HfReject, false),
-                ] {
-                    let mut m = model(tdiv, false, dots);
-                    for c in 0..NCH {
-                        m.ch[c].on = mask & (1 << c) != 0;
-                    }
-                    m.trig_src = src;
-                    m.trig_coup = coup;
-                    let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
-                    let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
-                    let (mut ta, mut tb) = (0, 0);
-                    for chunk in bytes.chunks_exact(fb) {
-                        let mut f = crate::board::dho::hw::decode(chunk, &s, &p, 0);
-                        f.pre_exact &= exact;
-                        ta +=
-                            draw_frame(&mut a, &m, &f, Interp::Exact, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }))
-                                as u32;
-                        let mut g = Frame::default();
-                        let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut g).expect("raw frame");
-                        g.pre_exact &= exact;
-                        assert!(g.ch.iter().all(|v| v.is_empty()) && (g.dt, g.pre, g.acq) == (f.dt, f.pre, f.acq));
-                        match draw_frame_codes(
-                            &mut b,
-                            &m,
-                            &g,
-                            chunk,
-                            &lay,
-                            Some(Stats { edges: &mut sb.0, off: &mut sb.1 }),
-                        ) {
-                            Some(t) => {
-                                tb += t as u32;
-                                taken += 1;
-                            }
-                            None => {
-                                assert!(
-                                    dots || f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64 > 0.5,
-                                    "{} {} codes path refused",
-                                    name,
-                                    mask
-                                );
-                                tb += draw_frame(
-                                    &mut b,
-                                    &m,
-                                    &f,
-                                    Interp::Exact,
-                                    Some(Stats { edges: &mut sb.0, off: &mut sb.1 }),
-                                ) as u32;
-                            }
-                        }
-                    }
-                    let what =
-                        format!("{} mask {} n {} src {} dots {} {:?} exact {}", name, mask, n, src, dots, coup, exact);
-                    assert_eq!((ta, sa.0), (tb, sb.0), "{}", what);
-                    assert!(sa.1 == sb.1, "{}: {:?} vs {:?}", what, sa.1, sb.1);
-                    for c in 0..NCH {
-                        assert!(a.map[c] == b.map[c], "{}: CH{} differs", what, c + 1);
-                    }
-                    cases += 1;
-                }
-            }
-        }
-        assert!(taken > 150, "codes path taken {} times in {} cases", taken, cases);
-        // the wide fallback was compared too
-        assert!(WIDE.with(|n| n.get()) > 5, "{} wide searches", WIDE.with(|n| n.get()));
     }
 
     // Break it catches: a frame moved to an edge outside the near window where the search must stay near (AC, LF
@@ -1084,15 +595,24 @@ mod tests {
             let mut m = model(1e-5, false, false);
             m.trig_coup = coup;
             set(&mut m);
-            let (mut fe, mut g) = (f.clone(), g0.clone());
-            (fe.pre_exact, g.pre_exact) = (exact, exact);
+            let mut fe = f.clone();
+            fe.pre_exact = exact;
             let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
             let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
             let ta = draw_frame(&mut a, &m, &fe, Interp::Exact, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }));
-            let tb =
-                draw_frame_codes(&mut b, &m, &g, &bytes[..fb], &lay, Some(Stats { edges: &mut sb.0, off: &mut sb.1 }))
-                    .expect("codes path");
-            assert!(ta == tb && a.map[0] == b.map[0] && sa == sb, "{}: codes path differs", name);
+            let mut meta = g0.clone();
+            meta.pre_exact = exact;
+            let codes = Arc::new(move |_: &[u8], f: &mut Frame| {
+                f.clone_from(&meta);
+                Some(lay)
+            });
+            let pipe = Pipe::start(1, 0, fresh());
+            pipe.set_view(Some(&m), w, h, Interp::Exact);
+            pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 1, 0, dec(&s, &p), Some(codes));
+            settle(&pipe);
+            let accepted = pipe.accept(&mut b, &mut false, &mut sb.0, &mut sb.1);
+            assert_eq!((accepted.frames, accepted.triggered), (1, u64::from(ta)), "{name}");
+            assert!(a.map[0] == b.map[0] && sa == sb, "{name}: codes path differs");
             if near {
                 assert_eq!(sa.0, [0, 0, 0, 1], "{}", name);
                 assert!(a.map[0] == at_pre.map[0], "{}: not drawn at the hardware point", name);
@@ -1115,40 +635,6 @@ mod tests {
                 rate,
                 compress
             );
-        }
-        // DC: the composed near and wide refinement is `edge_smooth_near`, wherever the hardware point lies
-        let sine: Vec<f32> = (0..100_000)
-            .map(|i| {
-                (0.9 * (i as f64 / 3000.0 * std::f64::consts::TAU).sin() + 0.2 * ((i * 7919) % 17) as f64 / 17.0) as f32
-            })
-            .collect();
-        for v in [&f.ch[0], &sine] {
-            for pre in (1000..99_000).step_by(3331) {
-                for (col, half) in [(1, 600), (16, 9000), (128, 62_500)] {
-                    for level in [0.0f32, 0.5, -0.99] {
-                        let got = refine_near(v, 0, v.len(), pre, false, level, 0.1, true, false, half, col)
-                            .unwrap_or_else(|| {
-                                crate::fastdraw::edge_smooth(
-                                    v.as_slice(),
-                                    pre,
-                                    crate::fastdraw::EdgeSearch { level, hysteresis: 0.1, rising: true, either: false },
-                                    half,
-                                    col,
-                                    |_| true,
-                                )
-                            });
-                        let want =
-                            crate::trignear::edge_smooth_near(v, pre, level, 0.1, true, false, half, col, |_| true);
-                        assert!(
-                            got.0 == want.0 && got.1.map(|e| (e.t, e.rising)) == want.1.map(|e| (e.t, e.rising)),
-                            "pre {} col {} level {}",
-                            pre,
-                            col,
-                            level
-                        );
-                    }
-                }
-            }
         }
     }
 
@@ -1249,12 +735,6 @@ mod tests {
         });
         pipe.feed(Box::new(Bytes(bytes)), fb, 20, 0, decode);
         blocked.recv_timeout(crate::ui::lifecycle::test_wait::HANG_GUARD).expect("a worker in its first decode");
-        let t0 = crate::ui::lifecycle::test_wait::Wait::new("unblocked deposit worker publishes its frames");
-        while pipe.mails.iter().map(|m| m.lock().unwrap().full.iter().map(|a| a.frames).sum::<u64>()).sum::<u64>() < 16
-        {
-            t0.check();
-            t0.poll();
-        }
         gate
     }
 
@@ -1298,7 +778,7 @@ mod tests {
         let pipe = Pipe::start(2, 0, fresh());
         pipe.set_view(Some(&m), 970, 448, Interp::Exact);
         let mut ph = Phosphor::new(970, 448);
-        let mut merge = |pipe: &Pipe| pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
+        let mut merge = |pipe: &Pipe| pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
         // whole: drawn, then merged once
         let (bytes, fb, s, p) = batch(20, 12_512, false);
         let before_feed = std::time::Instant::now();
@@ -1307,7 +787,7 @@ mod tests {
         let whole = merge(&pipe);
         assert_eq!(whole.frames, 20);
         assert!(whole.newest.is_some_and(|time| time >= before_feed), "picture age starts at feed");
-        assert_eq!(pipe.partial.load(Ordering::Relaxed), 0);
+        assert_eq!(crate::pacing::PARTIAL.load(Ordering::Relaxed), 0);
         // in parts: 16 frames in one merge, the held worker's 4 in the next
         let gate = one_worker_held(&pipe);
         let first = merge(&pipe).frames;
@@ -1315,8 +795,8 @@ mod tests {
         gate.1.notify_all();
         settle(&pipe);
         let second = merge(&pipe).frames;
-        assert_eq!((first, second), (16, 4));
-        assert_eq!(pipe.partial.load(Ordering::Relaxed), 1);
+        assert_eq!((first, second), (0, 20));
+        assert_eq!(crate::pacing::PARTIAL.load(Ordering::Relaxed), 0);
         // an empty merge reports no age
         assert_eq!(merge(&pipe).newest, None);
         // stale: frames acquired before a settings change count where their maps reach the picture, not where they
@@ -1348,55 +828,68 @@ mod tests {
     #[ignore = "host timing: set OOS_PERF_TESTS=1"]
     fn perf_guard_codes_per_frame() {
         assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
-        let (w, h) = (970, 448);
-        let sig = |k: usize, c: usize, i: usize| {
-            0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin()
-        };
-        let mut worst: f64 = 0.0;
-        for (mask, n, tdiv, coup) in [
+        let worst = [
             (1u32, 100_000u32, 1e-5, TrigCoup::Dc),
             (3, 70_312, 1e-5, TrigCoup::Dc),
             (5, 50_000, 1e-5, TrigCoup::Dc),
             (1, 40_000, 2e-6, TrigCoup::Dc),
             (1, 100_000, 1e-5, TrigCoup::Ac),
-        ] {
-            let mut m = model(tdiv, false, false);
-            m.trig_coup = coup;
-            for c in 0..NCH {
-                m.ch[c].on = mask & (1 << c) != 0;
-            }
-            let frames = (2_000_000 / (n as usize * 2 * hz::ratio(mask) as usize)).clamp(4, 100);
-            let (bytes, fb, s, p) = frames_of(mask, n, frames, &sig);
-            let (mut pa, mut pb) = (Phosphor::new(w, h), Phosphor::new(w, h));
-            let (mut fa, mut fbm) = (Frame::default(), Frame::default());
-            // one round: every frame once (each round's time divided by the frames below)
-            let (old, new) = crate::perfguard::guard_pair(
-                0.9,
-                crate::perfguard::ROUNDS,
-                1,
-                || {
-                    for chunk in bytes.chunks_exact(fb) {
-                        crate::board::dho::hw::decode_into(chunk, &s, &p, 0, &mut fa);
-                        std::hint::black_box(draw_frame(&mut pa, &m, &fa, Interp::Exact, None));
-                    }
-                },
-                || {
-                    for chunk in bytes.chunks_exact(fb) {
-                        let lay = crate::board::dho::hw::codes_into(chunk, &s, &p, 0, &mut fbm).unwrap();
-                        std::hint::black_box(draw_frame_codes(&mut pb, &m, &fbm, chunk, &lay, None).unwrap());
-                    }
-                },
-            );
-            let (old, new) = (old / frames as u32, new / frames as u32);
-            let r = new.as_secs_f64() / old.as_secs_f64();
-            worst = worst.max(r);
-            assert!(fb >= CODES_MIN_BYTES && hz::ratio(mask) as usize <= CODES_MAX_STRIDE);
-            println!(
-                "codes mask {:#x} {} pt {:?}: decode + draw {:?}/frame, from the codes {:?}/frame (ratio {:.2})",
-                mask, n, coup, old, new, r
-            );
-        }
+        ]
+        .into_iter()
+        .map(|(mask, n, tdiv, coup)| measure_codes_per_frame(mask, n, tdiv, coup))
+        .fold(0.0, f64::max);
         assert!(worst <= 0.9, "drawing from the codes must be cheaper: worst ratio {:.2}", worst);
+    }
+
+    fn measure_codes_per_frame(mask: u32, n: u32, tdiv: f64, coup: TrigCoup) -> f64 {
+        let (w, h) = (970, 448);
+        let sig = |k: usize, c: usize, i: usize| {
+            0.9 * (((i as f64 + (k % 7) as f64 * 0.13) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU).sin()
+        };
+        let mut m = model(tdiv, false, false);
+        m.trig_coup = coup;
+        m.meas.clear();
+        m.meas2.clear();
+        for c in 0..NCH {
+            m.ch[c].on = mask & (1 << c) != 0;
+        }
+        let frames = (2_000_000 / (n as usize * 2 * hz::ratio(mask) as usize)).clamp(4, 100);
+        let (bytes, fb, s, p) = frames_of(mask, n, frames, &sig);
+        let mut ph = Phosphor::new(w, h);
+        let mut frame = Frame::default();
+        let pipe = Pipe::start(1, 0, fresh());
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
+        let cs = s.clone();
+        let codes: CodesInto = Arc::new(move |bytes, f| crate::board::dho::hw::codes_into(bytes, &cs, &p, 0, f));
+        let decode = dec(&s, &p);
+        let mut buffer = Some(Box::new(Bytes(bytes.clone())));
+        let mut draw_codes = || {
+            let bytes = buffer.take().expect("the previous round returned its buffer");
+            pipe.feed_codes(bytes, fb, frames, m.hw_stamp, decode.clone(), Some(codes.clone()));
+            buffer = Some(recycle_worker_round(&pipe, frames));
+        };
+        draw_codes();
+        // one round: every frame once (each round's time divided by the frames below)
+        let (old, new) = crate::perfguard::guard_pair(
+            0.9,
+            crate::perfguard::ROUNDS,
+            1,
+            || {
+                for chunk in bytes.chunks_exact(fb) {
+                    crate::board::dho::hw::decode_into(chunk, &s, &p, 0, &mut frame);
+                    std::hint::black_box(draw_frame(&mut ph, &m, &frame, Interp::Exact, None));
+                }
+            },
+            draw_codes,
+        );
+        assert_eq!(pipe.counters.read().2, 0);
+        let (old, new) = (old / frames as u32, new / frames as u32);
+        let r = new.as_secs_f64() / old.as_secs_f64();
+        println!(
+            "codes mask {:#x} {} pt {:?}: decode + draw {:?}/frame, from the codes {:?}/frame (ratio {:.2})",
+            mask, n, coup, old, new, r
+        );
+        r
     }
 
     /// Until every batch fed is done (drawn and handed on, or dropped).
@@ -1405,6 +898,28 @@ mod tests {
         while p.live.load(Ordering::Acquire) > 0 {
             t0.check();
             t0.poll();
+        }
+    }
+
+    fn collect(
+        pipe: &Pipe,
+        ph: &mut Phosphor,
+        clear: &mut bool,
+        edges: &mut [u64; 4],
+        off: &mut (f64, f64),
+    ) -> Accepted {
+        let mut total = Accepted::default();
+        loop {
+            host::barrier(pipe);
+            let next = pipe.accept(ph, clear, edges, off);
+            if next.frames == 0 {
+                return total;
+            }
+            total.frames += next.frames;
+            total.triggered += next.triggered;
+            total.newest = total.newest.max(next.newest);
+            total.stale += next.stale;
+            crate::framestats::add_folds(&mut total.folds, &next.folds);
         }
     }
 
@@ -1417,6 +932,15 @@ mod tests {
             .into_any()
             .downcast::<Bytes>()
             .expect("the benchmark feeds Bytes buffers")
+    }
+
+    fn recycle_worker_round(pipe: &Pipe, frames: usize) -> Box<Bytes> {
+        let buffer = recycled(pipe);
+        // The fixture has one batch in flight. Consume its handoff without timing the UI fold.
+        let deposit = pipe.slot.take().expect("worker published the deposit before returning the buffer");
+        assert_eq!(deposit.records, frames as u64);
+        pipe.slot.recycle(deposit);
+        buffer
     }
 
     /// The frames mode for the same frames: `Ui::fast_draw` and the per-frame statistics on every frame.
@@ -1459,8 +983,7 @@ mod tests {
         pipe.feed(Box::new(Bytes(bytes.clone())), fb, 13, 0, dec(&s, &p));
         settle(&pipe);
         let mut warm = Phosphor::new(w, h);
-        pipe.merge(&mut warm, &mut false, &mut [0; 4], &mut (0.0, 0.0));
-        pipe.release();
+        pipe.accept(&mut warm, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         m.trig_level = 0.6;
         assert_eq!(MappingKey::of(&m, Layout::default()), old_mapping);
         if refresh && std::env::var_os("OOS_MAPPING_ONLY_PROBE").is_none() {
@@ -1469,7 +992,7 @@ mod tests {
         pipe.feed(Box::new(Bytes(bytes.clone())), fb, 13, 0, dec(&s, &p));
         settle(&pipe);
         let mut got = Phosphor::new(w, h);
-        let result = pipe.merge(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        let result = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         let (want, trig, _, _, _) = reference(&bytes, fb, &s, &p, &m, w, h);
         if refresh {
             assert_eq!((result.frames, result.triggered), (13, trig));
@@ -1477,7 +1000,6 @@ mod tests {
         } else {
             assert_ne!(got.map, want.map, "negative control must actually distinguish the levels");
         }
-        pipe.release();
         got.map[0].clone()
     }
 
@@ -1507,17 +1029,11 @@ mod tests {
             assert!(pipe.accepting());
             pipe.feed(Box::new(Bytes(bytes[..17 * fb].to_vec())), fb, 17, 0, dec(&s, &p));
             pipe.feed(Box::new(Bytes(bytes[17 * fb..].to_vec())), fb, 24, 0, dec(&s, &p));
-            // the acquisition thread's share, as while it waits for the next batch
-            let mut hp = Helper::default();
-            if helper {
-                while pipe.help(&mut hp) {}
-            }
             settle(&pipe);
-            pipe.help_done(&mut hp);
             let mut got = Phosphor::new(w, h);
             got.map[0][0] = 7;
             let (mut clear, mut edges, mut off) = (true, [0u64; 4], (0.0, 0.0));
-            let n = pipe.merge(&mut got, &mut clear, &mut edges, &mut off);
+            let n = collect(&pipe, &mut got, &mut clear, &mut edges, &mut off);
             let (want, trig, wedges, woff, folds) = reference(&bytes, fb, &s, &p, &m, w, h);
             let what = format!("{} s/div, {} workers, helper {}", tdiv, workers, helper);
             assert_eq!((n.frames, n.triggered), (41, trig), "{}", what);
@@ -1540,7 +1056,7 @@ mod tests {
             assert_eq!(c.read(), (0, 0, 0), "{}: nothing dropped", what);
             assert_eq!(c.measured.load(Ordering::Relaxed), folds.first().map_or(0, |x| x.1.n));
             // merged once; both buffers back in the pool
-            assert_eq!(pipe.merge(&mut got, &mut clear, &mut edges, &mut off), Merged::default());
+            assert_eq!(pipe.accept(&mut got, &mut clear, &mut edges, &mut off).frames, 0);
             let back: Vec<_> = std::iter::from_fn(|| pipe.take_buffer()).collect();
             assert_eq!(back.len(), 2);
             assert!(back.into_iter().all(|b| b.downcast::<Bytes>().is_ok()));
@@ -1555,70 +1071,32 @@ mod tests {
         let m = model(1e-6, false, false);
         let (bytes, fb, s, p) = batch(30, 12_512, false);
         let pipe = Pipe::start(2, 0, fresh());
-        pipe.set_view(Some(&m), w, h, Interp::Exact);
-        let got = Arc::new(Mutex::new(Vec::new()));
-        for k in 0..3u32 {
-            let g = got.clone();
-            pipe.set_identity(Default::default());
-            pipe.feed_with(
-                Box::new(Bytes(bytes.clone())),
-                fb,
-                0..30,
-                Default::default(),
-                dec(&s, &p),
-                None,
-                Box::new(move || g.lock().unwrap().push(k)),
-            );
-        }
-        // nothing before a merge, even with every frame drawn
+        pipe.publish_view(&m, w, h, Interp::Exact, Default::default());
+        let newest = Arc::new(Frame { seq: 30, ..crate::board::dho::hw::decode(&bytes[29 * fb..], &s, &p, 0) });
+        pipe.feed_with(Box::new(Bytes(bytes)), fb, 0..30, Default::default(), dec(&s, &p), None, Some(newest.clone()));
         settle(&pipe);
-        assert!(got.lock().unwrap().is_empty());
         let mut ph = Phosphor::new(w, h);
-        let n = pipe.merge(&mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
-        assert_eq!(n.frames, 90);
-        let mut d = got.lock().unwrap().clone();
-        d.sort();
-        assert_eq!(d, [0, 1, 2]);
-        // no view any more: what is done is delivered too
-        let g = got.clone();
-        pipe.set_identity(Default::default());
-        pipe.feed_with(
-            Box::new(Bytes(bytes.clone())),
-            fb,
-            0..30,
-            Default::default(),
-            dec(&s, &p),
-            None,
-            Box::new(move || g.lock().unwrap().push(9)),
-        );
-        settle(&pipe);
-        pipe.set_view(None, 0, 0, Interp::Exact);
-        assert_eq!(got.lock().unwrap().last(), Some(&9));
+        let n = pipe.accept(&mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        assert_eq!(n.frames, 30);
+        assert!(Arc::ptr_eq(&pipe.take_waveform((w, h)).unwrap(), &newest));
+        assert_eq!(pipe.accept(&mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
     }
 
-    // Break it catches: the acquisition thread's share drawn differently from the workers', or not handed to the UI.
     #[test]
-    fn the_helper_alone_draws_the_same_picture() {
+    fn coordinator_alone_draws_the_same_picture() {
         let (w, h) = (970, 448);
         for (tdiv, memsel) in [(1e-6, 12_512u32), (1e-7, 1408)] {
-            let mut m = model(tdiv, false, false);
-            m.meas = vec![(Meas::Vpp, crate::model::WaveId::Ch(0))];
+            let m = model(tdiv, false, false);
             let (bytes, fb, s, p) = batch(20, memsel, false);
-            let pipe = Pipe::start(0, 0, fresh());
+            let pipe = Pipe::start(1, 0, fresh());
             pipe.set_view(Some(&m), w, h, Interp::Exact);
-            let b = pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 0..20, (0, None), dec(&s, &p), None);
-            let mut hp = Helper::default();
-            let mut k = 0;
-            while pipe.help(&mut hp) {
-                k += 1;
-                assert!(k < 100);
-            }
-            drop(b);
+            pipe.feed(Box::new(Bytes(bytes.clone())), fb, 20, 0, dec(&s, &p));
+            settle(&pipe);
             let mut got = Phosphor::new(w, h);
-            let n = pipe.merge(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+            let n = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
             let (want, trig, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
-            assert_eq!((k, n.frames, n.triggered), (20, 20, trig), "{} s/div", tdiv);
-            assert!((0..NCH).all(|c| got.map[c] == want.map[c]), "{} s/div", tdiv);
+            assert_eq!((n.frames, n.triggered), (20, trig));
+            assert!(got.map == want.map);
         }
     }
 
@@ -1632,21 +1110,21 @@ mod tests {
         let c = fresh();
         let pipe = Pipe::start(2, 0, c);
         let mut ph = Phosphor::new(w, h);
-        let merge = |ph: &mut Phosphor| pipe.merge(ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        let merge = |ph: &mut Phosphor| pipe.accept(ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert!(!pipe.accepting());
         // settings stamp older than the view's: dropped
         m.hw_stamp = 3;
         pipe.set_view(Some(&m), w, h, Interp::Exact);
         pipe.feed(Box::new(Bytes(bytes.clone())), fb, 10, 2, dec(&s, &p));
         settle(&pipe);
-        assert_eq!(merge(&mut ph), Merged::default());
+        assert_eq!(merge(&mut ph).frames, 0);
         assert_eq!(c.read(), (0, 0, 10));
         // drawn, then the mapping changes before the merge: dropped at the merge
         pipe.feed(Box::new(Bytes(bytes.clone())), fb, 10, 3, dec(&s, &p));
         settle(&pipe);
         m.ch[0].offset = 0.5;
         pipe.set_view(Some(&m), w, h, Interp::Exact);
-        assert_eq!(merge(&mut ph), Merged::default());
+        assert_eq!(merge(&mut ph).frames, 0);
         assert!(ph.map.iter().all(|x| x.iter().all(|&y| y == 0)));
         assert_eq!(c.read(), (0, 0, 20));
         // a change the drawing does not depend on keeps the maps
@@ -1661,7 +1139,7 @@ mod tests {
             pipe.feed(Box::new(Bytes(big.clone())), fb2, 200, 3, dec(&s2, &p2));
         }
         settle(&pipe);
-        assert_eq!(merge(&mut ph).frames, 1200);
+        assert_eq!(collect(&pipe, &mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 1200);
         assert_eq!(c.read().2, 20);
         // a batch dropped before anybody claimed a frame counts all of them
         let pipe0 = Pipe::start(0, 0, c);
@@ -1727,9 +1205,10 @@ mod tests {
                         0,
                         dec(&s, &p),
                     );
-                    buffer = Some(recycled(&one));
+                    buffer = Some(recycle_worker_round(&one, frames));
                 },
             );
+            assert_eq!(one.counters.read().2, 0);
             let (old, mut per) = (old / frames as u32, vec![one_t / frames as u32]);
             for n in [2usize, 4] {
                 let pipe = Pipe::start(n, 0, fresh());
@@ -1737,9 +1216,10 @@ mod tests {
                 let t0 = std::time::Instant::now();
                 for _ in 0..3 {
                     pipe.feed(Box::new(Bytes(bytes.clone())), fb, frames, 0, dec(&s, &p));
-                    drop(recycled(&pipe));
+                    drop(recycle_worker_round(&pipe, frames));
                 }
                 per.push(t0.elapsed() / (3 * frames) as u32);
+                assert_eq!(pipe.counters.read().2, 0);
             }
             let r = per[0].as_secs_f64() / old.as_secs_f64();
             println!("{} s/div {} pt, frame statistics {}: frames mode {:?}/frame; one core in the pipeline {:?}/frame (ratio {:.2}); 1/2/4 workers {:.0}/{:.0}/{:.0} frames/s", tdiv, memsel, meas, old, per[0], r, 1.0 / per[0].as_secs_f64(), 1.0 / per[1].as_secs_f64(), 1.0 / per[2].as_secs_f64());
@@ -1754,10 +1234,6 @@ mod tests {
             shutdown_leaves_a_busy_deposit_workers_buffers_owned,
         );
     }
-}
-
-fn count_folds(counters: &Counters, folds: &crate::framestats::Folds) {
-    Counters::add(&counters.losses.folds, folds.iter().map(|(_, f)| f.n).sum());
 }
 
 #[cfg(test)]

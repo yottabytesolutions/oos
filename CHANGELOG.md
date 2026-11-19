@@ -65,6 +65,8 @@ Changed:
 
 Fixed:
 
+- At minimum persistence, Batch combines up to three recent deposits so sparse updates keep their trace density.
+  Deposits expire after 67 ms. Host-tested only (#204).
 - `:SYSTem:STATe?` reports the active hardware draw pipeline after live changes through `:SYSTem:PIPeline` (#182).
   Non-hardware sources still report the startup pipeline switch.
 - RUN after SINGLE restores the previous NORMAL or AUTO sweep, including after STOP (#183). Host-tested only.

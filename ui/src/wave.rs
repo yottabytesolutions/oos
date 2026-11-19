@@ -4,6 +4,10 @@
 //! Waveform sources (demo generator, replay of a captured frame), phosphor (hit-count) maps, measurements.
 //! The live FPGA source (oos-fpgad, Phase 4) will plug in as another `Source`.
 
+mod phosphor;
+pub use phosphor::Phosphor;
+mod hw_queue;
+
 use crate::board::{board, Board};
 use crate::model::*;
 
@@ -383,9 +387,7 @@ impl Source {
     /// drops what was queued during the hold: the thread does so on its next pass, but the UI takes frames at once.
     pub fn hw_hold(&self, hold: bool, req: u64) -> bool {
         if let Source::Hw { shared, .. } = self {
-            let mut g = crate::perfguard::deep::ui_lock(shared);
-            (g.hold, g.final_req) = (hold, req);
-            return g.final_ack >= req && g.queue.is_empty();
+            return hw_queue::hold(shared, hold, req);
         }
         true
     }
@@ -481,31 +483,6 @@ impl Source {
         }
     }
 
-    /// Hardware source: takes the newest `max` queued frames but the newest one (the fast display path draws them;
-    /// the newest stays for `acquire`, which makes the full record for measurements, decoding and history). Older
-    /// ones are dropped and counted.
-    pub fn drain_newest(&mut self, max: usize) -> Vec<std::sync::Arc<crate::board::Frame>> {
-        if let Source::Hw { shared, .. } = self {
-            let mut g = crate::perfguard::deep::ui_lock(shared);
-            // the thread decodes no more than this of a batch (the record takes one more)
-            g.take = max + 1;
-            let id = g.acquisition.identity();
-            let before = g.queue.len();
-            g.queue.retain(|f| (f.cfg, f.stamp) == (id.gen(), id.epoch()));
-            crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, (before - g.queue.len()) as u64);
-            crate::drawpipe::Counters::add(
-                &crate::drawpipe::counters().losses.queue_pop,
-                (before - g.queue.len()) as u64,
-            );
-            let n = g.queue.len().saturating_sub(1);
-            let skip = n.saturating_sub(max);
-            crate::drawpipe::counters().lose(crate::drawpipe::Lost::Budget, g.queue.drain(..skip).count() as u64);
-            g.dropped += skip as u64;
-            return g.queue.drain(..n - skip).collect();
-        }
-        Vec::new()
-    }
-
     /// One acquisition for the current settings, or None if Normal/Single mode found no trigger.
     pub fn acquire(&mut self, m: &Model, dt_wall: f64, rng: &mut Rng, sw: &crate::sysconf::Switches) -> Option<Record> {
         self.acquire_impl(m, dt_wall, rng, sw, false)
@@ -540,37 +517,8 @@ impl Source {
         let dt = window / n as f64;
         let t_first = m.delay as f64 - window / 2.0; // relative to the trigger
         let level = m.trig_level as f64;
-        if let Source::Hw { shared, seen } = self {
-            let mut g = crate::perfguard::deep::ui_lock(shared);
-            // Publication belongs to the change point, including requests at equal settings.
-            let fresh = loop {
-                match g.queue.pop_front() {
-                    Some(f)
-                        if (f.cfg, f.stamp) != (g.acquisition.identity().gen(), g.acquisition.identity().epoch()) =>
-                    {
-                        crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.queue_pop, 1);
-                        crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, 1);
-                    }
-                    f => break f,
-                }
-            };
-            let Some(f) = fresh else {
-                // a SINGLE scan is complete and SINGLE was pressed again: next sweep
-                if g.halted {
-                    g.halted = false;
-                    g.rearm = true;
-                }
-                return None;
-            };
-            *seen = f.seq;
-            drop(g);
-            let deep = crate::deepmeas::deep_raw_frame(&f);
-            let t = std::time::Instant::now();
-            let r = hw_record(m, f);
-            if deep {
-                crate::deepmeas::cost::set(&crate::deepmeas::cost::RECORD_US, t.elapsed());
-            }
-            return Some(r);
+        if self.is_hw() {
+            return self.acquire_hw(m, |_, _| crate::drawpipe::TapRead::Empty).map(|(record, ..)| record);
         }
         if let Source::Live { shared, seen, words, xinc, yinc, yorg, yref } = self {
             let g = shared.lock().unwrap();
@@ -765,7 +713,7 @@ impl Source {
                     // a replay record is made on the step that shows it: `change::acquisition::record` takes it
                     cfg: 0,
                     pre_exact: false,
-                    basic,
+                    basic: basic.into(),
                     la: None,
                     fixed_ti: None,
                     hw_avg: false,
@@ -805,122 +753,6 @@ pub fn condition(m: &Model, c: usize, v: &mut Vec<f32>, dt: f64) {
     if ch.invert {
         v.iter_mut().for_each(|x| *x = -*x);
     }
-}
-
-/// Hit-count maps (one per channel) of the waveform area: the digital phosphor.
-pub struct Phosphor {
-    pub w: usize,
-    pub h: usize,
-    pub map: [Vec<u16>; NCH],
-}
-
-impl Phosphor {
-    pub fn new(w: usize, h: usize) -> Phosphor {
-        Phosphor { w, h, map: Default::default() }.init()
-    }
-    fn init(mut self) -> Phosphor {
-        for c in 0..NCH {
-            self.map[c] = vec![0; self.w * self.h];
-        }
-        self
-    }
-    pub fn clear(&mut self) {
-        for m in self.map.iter_mut() {
-            m.iter_mut().for_each(|x| *x = 0);
-        }
-    }
-
-    /// Multiplies every count by f (0..1).
-    pub fn decay(&mut self, f: f32) {
-        let k = (f.clamp(0.0, 1.0) * 65536.0) as u32;
-        if k >= 65536 {
-            return;
-        }
-        for m in self.map.iter_mut() {
-            for x in m.iter_mut() {
-                if *x != 0 {
-                    *x = ((*x as u32 * k) >> 16) as u16;
-                }
-            }
-        }
-    }
-
-    /// Halves every count (non-zero counts stay >= 1, so rare hits survive): keeps the density ratios when the
-    /// counts approach saturation under long persistence.
-    pub fn halve(&mut self) {
-        for m in self.map.iter_mut() {
-            for x in m.iter_mut() {
-                if *x != 0 {
-                    *x = (*x >> 1).max(1);
-                }
-            }
-        }
-    }
-
-    /// Highest sum of the maps of the channels in `on` at one pixel (colour grade).
-    pub fn merged_max(&self, on: [bool; NCH]) -> u32 {
-        let maps: Vec<&[u16]> = (0..NCH).filter(|&c| on[c]).map(|c| self.map[c].as_slice()).collect();
-        match maps.len() {
-            0 => 0,
-            1 => maps[0].iter().copied().max().unwrap_or(0) as u32,
-            _ => (0..self.w * self.h).map(|i| maps.iter().map(|m| m[i] as u32).sum::<u32>()).max().unwrap_or(0),
-        }
-    }
-
-    /// Draws a record channel into the map: every segment between two samples adds `w` to the pixels it covers,
-    /// so the brightness follows the dwell time of the trace like on an analog/digital-phosphor screen. Display
-    /// options: dots (`Model::dots_at`, one pixel per sample) and per-sample brightness weights 0..1 (Z input).
-    /// `pairs` (`Record::pairs`): with dots, each min/max pair is one vertical span, since it stands for every sample
-    /// between its extremes; two dots would drop the edges of a slow time base.
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_ex(
-        &mut self,
-        c: usize,
-        m: &Model,
-        view: (f32, f32),
-        rec_t0: f64,
-        dt: f64,
-        v: &[f32],
-        w: u16,
-        z: Option<&[f32]>,
-        pairs: bool,
-    ) {
-        let (pw, ph) = (self.w, self.h);
-        draw_trace(&mut self.map[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs);
-    }
-}
-
-/// `Phosphor::draw_ex` on one band of one channel's map (`pw` x `ph`, row-major): `band` holds the rows `r_lo` ..
-/// `r_lo + band.len() / pw` (the whole map: `r_lo` 0).
-#[allow(clippy::too_many_arguments)]
-pub fn draw_trace(
-    band: &mut [u16],
-    pw: usize,
-    ph: usize,
-    r_lo: usize,
-    c: usize,
-    m: &Model,
-    view: (f32, f32),
-    rec_t0: f64,
-    dt: f64,
-    v: &[f32],
-    w: u16,
-    z: Option<&[f32]>,
-    pairs: bool,
-) {
-    let (b0, b1) = (r_lo as i32, (r_lo + band.len() / pw.max(1)).min(ph) as i32);
-    let wi = pw as i32;
-    let put = |cx, r0: i32, r1: i32, weight| {
-        for r in r0.max(b0)..=r1.min(b1 - 1) {
-            let idx = ((r - b0) * wi + cx) as usize;
-            band[idx] = band[idx].saturating_add(weight);
-        }
-    };
-    let ch = &m.ch[c];
-    let vertical = (ch.volts_per_div(), ch.offset);
-    let view = (view.0 as f64, view.1 as f64);
-    let dots = m.dots_at(dt / view.0 * (pw as f32 as f64 / HDIV as f64));
-    trace_columns(pw, ph, vertical, dots, view, rec_t0, dt, v, w, z, pairs, (0, wi), put);
 }
 
 /// The pixels of a trace on a `pw` x `ph` map, column by column: `put(column, first row, last row, weight)` for every

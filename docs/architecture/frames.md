@@ -287,8 +287,8 @@ checking and sleeping. Publication must not require another batch or a capacity 
 available after hand-off, wait for its return before starting another batch; keep the five-set bound.
 
 Batches coalesce when the UI is slow. The UI takes at most one deposit per step; coalescing never thins records.
-The pool needs two primitives with owned or `Arc` arguments: map over indices and each over owned tiles.
-They replace `fastdraw::together`, `par_map`, `par_each`, worker mailboxes and #186's `Reduction`, without `unsafe`.
+The pool maps jobs over record indices and owned tiles, with owned or `Arc` arguments.
+It replaces `fastdraw::together`, `par_map`, `par_each`, worker mailboxes and #186's `Reduction`, without `unsafe`.
 The acquisition helper is removed in the first cut. Stateless placement allows later measured helper work without
 private maps; it is not part of F0-F7.
 
@@ -398,6 +398,19 @@ Include processing B taps in the UI step budget and verify the M12 rate floor wi
 admitting it. Charge `(2B + 2) * maximum decoded record bytes` to decoded copies, including metadata and container
 capacity. Budget overlap with outstanding old-plan taps on reconfiguration; keep their drain limit until they return.
 The memory sweep must cover these bounds and reject a plan that cannot fit, rather than silently reducing B.
+
+The unconfigured acquisition keeps its legacy queue limits. The explicit `f2.stage=configured-evaluation`
+startup profile requires `f2.envelope_bytes`, `f2.tap_bytes`, `f2.tap_entries` and `f2.min_cycle_ns`.
+It also requires positive bounds for the other owners in `f2.window_graphics_bytes`, `f2.dma_bytes`,
+`f2.shared_bytes`, `f2.copies_analysis_bytes` and `f2.runtime_bytes`. The Handoff charges decoded capacity
+and control storage against the tap partition, including raw newest replay and retained old plans. It can
+lengthen the enforced cycle to fit the current geometry, subject to the useful-record floors of the four-channel
+1 and 10 us/div Auto plans. An unfunded or unsupported staged plan uses the existing record path and reports
+the effective route.
+
+These declarations check arithmetic and ownership at the Handoff. The device still needs measured
+exclusive shares, DMA and graphics overlap bounds, independent copy and analysis bounds, and verification
+of whole-step cost and capture rate. No boot profile is supplied.
 
 ### Memory estimates
 

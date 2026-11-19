@@ -144,8 +144,23 @@ pub fn ranges(v: &[f32], m: &Map, w: usize) -> Vec<Option<(f32, f32)>> {
 /// that pair). With `dots` (`Model::dots`) no join: each column is the span its samples cover, as the record path
 /// draws pairs in dots mode (`Phosphor::draw_ex`); the dot density of a raw frame is not in the pairs. Needs at least
 /// one pair per column (`x_per_sample` <= 0.5).
+#[cfg(test)]
 pub fn deposit_pairs(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16, dots: bool) {
+    let mut spans = crate::fastdraw::Spans::default();
+    spans_into(w, h, v, m, dots, &mut spans);
+    for (c, &(r0, r1)) in spans.rows.iter().enumerate() {
+        for r in r0..=r1 {
+            let pixel = &mut map[r as usize * w + c];
+            *pixel = pixel.saturating_add(wgt);
+        }
+    }
+}
+
+pub(crate) fn spans_into(w: usize, h: usize, v: &[f32], m: &Map, dots: bool, spans: &mut crate::fastdraw::Spans) {
     let cols = ranges(v, m, w);
+    spans.c0 = 0;
+    spans.rows.clear();
+    spans.rows.resize(w, (1, 0));
     let hh = h as i32;
     for (c, r) in cols.iter().enumerate() {
         let Some((mut mn, mut mx)) = *r else { continue };
@@ -159,10 +174,8 @@ pub fn deposit_pairs(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wg
         let (ya, yb) = (mn * m.y_per_volt + m.y0, mx * m.y_per_volt + m.y0);
         let r0 = (ya.min(yb).round() as i32).max(0);
         let r1 = (ya.max(yb).round() as i32).min(hh - 1);
-        let mut i = r0.max(0) as usize * w + c;
-        for _ in r0..=r1 {
-            map[i] = map[i].saturating_add(wgt);
-            i += w;
+        if r0 <= r1 {
+            spans.rows[c] = (r0 as i16, r1 as i16);
         }
     }
 }

@@ -25,8 +25,8 @@ pub const NEAR_PAD: usize = 64;
 
 /// `fastdraw::edge_smooth` with the same arguments and the same result, searched near `pre` first.
 #[allow(clippy::too_many_arguments)]
-pub fn edge_smooth_near(
-    v: &[f32],
+pub fn edge_smooth_near<S: crate::fastdraw::Samples + ?Sized>(
+    v: &S,
     pre: usize,
     level: f32,
     hyst: f32,
@@ -47,6 +47,7 @@ pub fn edge_smooth_near(
 }
 
 /// Samples `edge_near_window` needs of a frame of `len` samples: `near_window(pre, len, l)` = start..end.
+#[cfg(test)]
 pub fn near_window(pre: usize, len: usize, l: usize) -> (usize, usize) {
     let l = l.max(1);
     let near = NEAR_COLS * l + NEAR_PAD;
@@ -57,8 +58,8 @@ pub fn near_window(pre: usize, len: usize, l: usize) -> (usize, usize) {
 /// `len` samples and covers `near_window`. Some where `edge_smooth_near` answers from the near search (the same
 /// answer, the same arithmetic), None where it runs the wide search (then call it on all samples).
 #[allow(clippy::too_many_arguments)]
-pub fn edge_near_window(
-    v: &[f32],
+pub fn edge_near_window<S: crate::fastdraw::Samples + ?Sized>(
+    v: &S,
     base: usize,
     len: usize,
     pre: usize,
@@ -81,8 +82,8 @@ pub fn edge_near_window(
 /// The near search: Some only when its answer is the wide search's (module comment). `v` holds samples `base..` of
 /// `len`.
 #[allow(clippy::too_many_arguments)]
-fn near_only(
-    v: &[f32],
+fn near_only<S: crate::fastdraw::Samples + ?Sized>(
+    v: &S,
     base: usize,
     len: usize,
     pre: usize,
@@ -131,8 +132,8 @@ fn nearest(
 /// `v` holds samples `base..` of a frame of `len` samples and covers `near_window(pre, len, l)`. Returns the edge and
 /// the nearest edge of either direction, as `edge_smooth`.
 #[allow(clippy::too_many_arguments)]
-pub fn edge_near(
-    v: &[f32],
+pub fn edge_near<S: crate::fastdraw::Samples + ?Sized>(
+    v: &S,
     base: usize,
     len: usize,
     pre: usize,
@@ -154,8 +155,8 @@ pub fn edge_near(
 
 /// The samples around `pre` (+-`span`, plus `l` for the average) smoothed by a centred moving average of `l` samples,
 /// as `edge_smooth` computes them: the first index and the smoothed values (NaN where the window is incomplete).
-fn smoothed(
-    v: &[f32],
+fn smoothed<S: crate::fastdraw::Samples + ?Sized>(
+    v: &S,
     base: usize,
     len: usize,
     pre: usize,
@@ -169,7 +170,7 @@ fn smoothed(
         return None;
     }
     let x = |i: usize| {
-        let y = v[i - base];
+        let y = v.at(i - base);
         if y.is_finite() {
             y as f64
         } else {

@@ -17,7 +17,7 @@ pub(super) struct Runtime {
     pub(super) crash: Option<crate::store::startup::crash::Crash>,
     pub(super) clocks: Option<crate::system::clocks::Handle>,
     pub(super) storage: Option<crate::store::startup::worker::Worker>,
-    started: Instant,
+    pub(super) started: Instant,
     pub(in crate::ui) query_time: query_time::QueryTime,
     pub(super) gpu: String,
     pub(super) persistence: bool,
@@ -131,6 +131,7 @@ pub(super) fn reset(ui: &mut Ui) {
     ui.m.run = RunState::Stop;
     ui.was_running = false;
     ui.stop_final = None;
+    super::step_draw::release_window(ui);
     if let Some(pipe) = crate::drawpipe::pipe(crate::drawpipe::Access::Existing) {
         crate::drawpipe::shutdown::reset(pipe);
     }
@@ -184,6 +185,7 @@ pub(super) struct MeasWorker {
     /// a job is out
     pub(super) busy: bool,
     pub(super) accept: bool,
+    pub(super) tap: Option<std::sync::Weak<crate::board::Frame>>,
     pub(super) join: std::thread::JoinHandle<()>,
 }
 
@@ -223,7 +225,7 @@ impl MeasWorker {
                 }
             })
             .ok()?;
-        Some(MeasWorker { tx, rx, analysis_rx, analysis_busy: false, busy: false, accept: false, join })
+        Some(MeasWorker { tx, rx, analysis_rx, analysis_busy: false, busy: false, accept: false, tap: None, join })
     }
 }
 

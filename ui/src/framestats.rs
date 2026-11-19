@@ -18,6 +18,14 @@
 use crate::board::Frame;
 use crate::model::*;
 
+mod tap;
+pub(crate) use tap::{measurement_bounds, measurement_slice, measurement_view, TapFolds};
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static SAMPLE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Measurements that weigh every sample (mean, RMS, deviation, area). The min/max pairs of an envelope frame (FPGA
 /// compression of records above 1 M points, roll, scan) are no samples of the signal: these come out wrong on them,
 /// while maximum, minimum and peak-peak stay right.
@@ -83,10 +91,13 @@ pub type Folds = Vec<((Meas, usize), Fold)>;
 
 /// Empty statistics for the measurements of `m` made per frame.
 pub fn folds_for(m: &Model) -> Folds {
+    empty_folds(m).collect()
+}
+
+fn empty_folds(m: &Model) -> impl Iterator<Item = ((Meas, usize), Fold)> + '_ {
     m.meas
         .iter()
         .filter_map(|&(k, s)| s.ch().filter(|&c| CHEAP.contains(&k) && m.ch[c].on).map(|c| ((k, c), Fold::default())))
-        .collect()
 }
 
 /// Adds `b` to `a` (the same measurements: merged by key).
@@ -170,7 +181,7 @@ pub fn cheap_results(v: &[f32]) -> Option<(crate::wave::Stats, oos_dsp::measure:
 
 /// What `analyze_min` gives for the cheap measurements of `v`; None where it gives nothing (too few samples) or the
 /// record path would measure a filtered copy (a gap).
-struct Values {
+pub(crate) struct Values {
     vmax: f64,
     vmin: f64,
     avg: f64,
@@ -179,7 +190,9 @@ struct Values {
 }
 
 impl Values {
-    fn of(v: &[f32], std: bool) -> Option<Values> {
+    pub(crate) fn of(v: &[f32], std: bool) -> Option<Values> {
+        #[cfg(test)]
+        SAMPLE_SCANS.with(|count| count.set(count.get() + 1));
         if v.len() < 4 {
             return None;
         }
@@ -242,7 +255,7 @@ impl Values {
         (d.iter().sum::<f64>() / v.len() as f64).sqrt()
     }
 
-    fn get(&self, k: Meas) -> f64 {
+    pub(crate) fn get(&self, k: Meas) -> f64 {
         match k {
             Meas::Vmax => self.vmax,
             Meas::Vmin => self.vmin,
@@ -261,7 +274,6 @@ pub fn fold_frame(f: &Frame, m: &Model, folds: &mut Folds) -> bool {
     if folds.is_empty() {
         return false;
     }
-    let n = crate::sparse::POINTS;
     let window = m.time_per_div() as f64 * HDIV as f64;
     let t_first = m.delay as f64 - window / 2.0;
     // the record's trigger point and screen window (`board::to_record`; roll and scan do not take the fast path)
@@ -269,11 +281,15 @@ pub fn fold_frame(f: &Frame, m: &Model, folds: &mut Folds) -> bool {
     if f.roll || f.scan || crate::compress::live(f) {
         return false;
     }
-    let ti = crate::board::trigger_point(f, m, n, window, t_first).unwrap_or(f.pre as f64);
+    let ti = crate::board::trigger_point(f, m, crate::sparse::POINTS, window, t_first).unwrap_or(f.pre as f64);
+    fold_at(f, m, folds, window, t_first, ti)
+}
+
+fn fold_at(f: &Frame, m: &Model, folds: &mut Folds, window: f64, t_first: f64, ti: f64) -> bool {
     let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
     let i0 = (ti + t_first / f.dt).floor().max(0.0) as usize;
     let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(len);
-    if i1 <= i0 + 1 || i1 - i0 <= n {
+    if i1.saturating_sub(i0) <= crate::sparse::POINTS {
         return false;
     }
     let mut counted = false;

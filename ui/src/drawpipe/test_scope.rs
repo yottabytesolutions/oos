@@ -2,7 +2,7 @@
 
 //! Scoped test counters and pipeline; worker batches retain the injected counters.
 
-use super::{Access, Counters, Mode, Pipe};
+use super::{funding, Access, Counters, Mode, Pipe};
 use std::cell::Cell;
 use std::sync::OnceLock;
 
@@ -22,11 +22,7 @@ pub(super) fn state() -> Option<&'static State> {
 impl State {
     pub(super) fn pipe(&'static self, access: Access<'_>) -> Option<&'static Pipe> {
         let Access::Start(sw) = access else { return self.pipe.get() };
-        (sw.pipeline == Mode::Batch).then(|| {
-            self.pipe.get_or_init(|| {
-                Pipe::start(sw.cores.little_count().unwrap_or(super::WORKERS), sw.cores.little, self.counters)
-            })
-        })
+        (sw.pipeline == Mode::Batch).then(|| self.pipe.get_or_init(|| funding::application(sw, self.counters)))
     }
 }
 

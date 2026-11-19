@@ -4,7 +4,6 @@
 1 static ui/src/board/dho/hw/header.rs log::LINES
 1 static ui/src/compress.rs LAST_K
 1 static ui/src/drawpipe.rs pipe::P
-1 static ui/src/drawpipe/feed.rs Pipe::feed_batch::IDS
 1 static ui/src/input.rs STOP
 1 static ui/src/mdns.rs STATUS
 1 static ui/src/netport/http.rs SENDERS

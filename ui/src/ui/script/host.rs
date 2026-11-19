@@ -197,8 +197,15 @@ pub fn run_script(
 ) -> Result<(), String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("read script {}: {}", path, e))?;
     let mut host = HostScript::new(ui, gpu, kind, metadata)?;
+    // The mode comparison fixtures apply their settings before the first synthetic read.
+    let (setup, script) = kind.and_then(|_| text.split_once("\n# first acquisition\n")).unwrap_or(("", &text));
+    for line in setup.lines() {
+        if !matches!(cmd::run(ui, line), cmd::Out::None) {
+            return Err("scripted batch setup must precede frames and captures".into());
+        }
+    }
     host.render_step(ui)?;
-    for line in text.lines() {
+    for line in script.lines() {
         match cmd::run(ui, line) {
             cmd::Out::Frames(n) => {
                 for _ in 0..n {

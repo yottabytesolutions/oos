@@ -12,8 +12,9 @@ use crate::system::test_allocator::Counting;
 #[global_allocator]
 static HEAP: Counting = Counting::new();
 mod counters;
-mod memory;
+mod funding;
 mod perf;
+mod tap_recovery;
 
 struct Route {
     ui: Ui,
@@ -73,25 +74,13 @@ impl Route {
         let bytes = if let Some(pipe) = pipe {
             let newest = tag(batch.newest(id.epoch()));
             let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
-            let shared = shared.clone();
-            pipe.feed_with(
-                batch.into_bytes().into(),
-                fb,
-                0..frames - 1,
-                id,
-                decode,
-                codes,
-                Box::new(move || {
-                    let mut g = lock(&shared);
-                    g.frame = newest.clone();
-                    g.queue.push_back(newest);
-                }),
-            );
+            let at = self.ui.host.picture_time(self.ui.now);
+            pipe.feed_at(batch.into_bytes().into(), fb, 0..frames, (id, at), decode, codes, Some(newest));
             drawpipe::host::finish_batch(pipe, 1).unwrap()
         } else {
             let mut g = lock(shared);
             g.queue.extend((0..frames).map(|i| tag(batch.frame(i, id.epoch()))));
-            g.frame = g.queue.back().unwrap().clone();
+            g.frame = Arc::clone(g.queue.back().unwrap());
             batch.into_bytes().into()
         };
         self.ui.step(1.0 / 30.0);
@@ -123,7 +112,7 @@ struct Picture {
 }
 
 fn picture(ui: &Ui) -> Picture {
-    Picture { main: ui.ph.map.clone(), zoom: ui.phz.map.clone(), frames: ui.pic_frames }
+    Picture { main: ui.ph.map.clone(), zoom: ui.phz.map.clone(), frames: ui.batch_picture.frames }
 }
 
 fn weights(p: &Picture) -> [u64; NCH] {
@@ -135,6 +124,167 @@ fn compare(a: &Picture, b: &Picture, label: &str) {
     assert_eq!(weights(a), weights(b), "{label}: total deposited weight");
     assert!(a.main == b.main && a.zoom == b.zoom, "{label}: pixel maps");
     assert!(weights(a)[0] > 0, "{label}: nonempty negative control");
+}
+
+#[test]
+fn batch_redraws_current_waveform_after_mapping_rejects_its_planes() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Codes, true, 1, 10e-6);
+    route.step(1);
+    assert!(route.ui.ph.map[0].iter().any(|&v| v > 0));
+
+    let id = change::acquisition::identity(&route.ui);
+    let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
+    let pipe = drawpipe::pipe(&sw).unwrap();
+    let batch = route.source.next_batch(&route.ui.m, &sw, 1, route.spare.take()).unwrap();
+    let mut waveform = batch.newest(id.epoch());
+    waveform.cfg = id.gen();
+    let waveform = Arc::new(waveform);
+    let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
+    let at = route.ui.host.picture_time(route.ui.now);
+    pipe.feed_at(batch.into_bytes().into(), fb, 0..1, (id, at), decode, codes, Some(waveform.clone()));
+    drawpipe::host::finish_batch(pipe, 2).unwrap();
+
+    route.ui.m.dots = DotsMode::On;
+    route.ui.step(1.0 / 30.0);
+
+    assert!(drawpipe::counters().records_text().contains("rejected.stale_key=1 "));
+    let shown = route.ui.last[0].as_ref().unwrap().raw.as_ref().unwrap();
+    assert_eq!(shown.frame.seq, waveform.seq);
+    let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
+    drawpipe::draw_frame(&mut expected, &route.ui.m, &waveform, sw.interp, None);
+    assert!(expected.map[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.map == expected.map, "the delivered waveform should be drawn with dots");
+    assert_eq!(route.ui.batch_picture.frames, 1);
+}
+
+#[test]
+fn batch_draws_newest_waveform_after_hit_budget_rejection() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Raw, true, 1, 10e-6);
+    route.ui.m.dots = DotsMode::On;
+    let id = change::acquisition::script_prepare(&mut route.ui);
+    let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
+    let pipe = drawpipe::pipe(&sw).unwrap();
+    let frames = 32;
+    let batch = route.source.next_batch(&route.ui.m, &sw, frames, None).unwrap();
+    let mut waveform = batch.newest(id.epoch());
+    waveform.cfg = id.gen();
+    // A hundred samples per column fit for one waveform but exceed the batch hit budget.
+    let samples = route.ui.ph.w * 100;
+    waveform.dt = f64::from(route.ui.m.time_per_div()) * f64::from(HDIV) / samples as f64;
+    waveform.pre = samples / 2;
+    waveform.ch[0] = vec![0.25; samples];
+    let waveform = Arc::new(waveform);
+    let captured = waveform.clone();
+    let decode = Arc::new(move |_: &[u8], frame: &mut crate::board::Frame| frame.clone_from(&captured));
+    let fb = batch.frame_bytes();
+    let at = route.ui.host.picture_time(route.ui.now);
+    pipe.feed_at(batch.into_bytes().into(), fb, 0..frames, (id, at), decode, None, Some(waveform.clone()));
+    drawpipe::host::finish_batch(pipe, 1).unwrap();
+    assert!(drawpipe::counters().records_text().contains("lost.budget=32 "));
+
+    route.ui.step(1.0 / 30.0);
+
+    let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
+    drawpipe::draw_frame(&mut expected, &route.ui.m, &waveform, sw.interp, None);
+    assert!(expected.map[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.map == expected.map, "the newest waveform should populate the picture");
+    assert_eq!(route.ui.batch_picture.frames, 1);
+}
+
+#[test]
+fn batch_picture_keeps_recent_deposits_without_recounting_their_records() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Codes, true, 1, 1e-6);
+    route.step(27);
+    assert!(!route.ui.ph.published_rows().is_empty());
+    route.step(3);
+    assert_eq!(route.ui.batch_picture.frames, 30);
+    route.step(3);
+    assert_eq!(route.ui.batch_picture.frames, 33);
+    route.step(3);
+    assert_eq!(route.ui.batch_picture.frames, 9);
+    assert_eq!(route.ui.wfm_total, 36);
+    assert!(route.ui.ph.map[0].iter().any(|&v| v > 0));
+
+    for _ in 0..3 {
+        route.ui.step(1.0 / 30.0);
+    }
+    assert_eq!(route.ui.batch_picture.frames, 0);
+    assert_eq!(route.ui.wfm_total, 36);
+    assert!(route.ui.ph.map[0].iter().all(|&v| v == 0));
+}
+
+#[test]
+fn batch_waveform_delayed_by_a_fallback_is_measured_without_redrawing() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
+    let id = change::acquisition::script_prepare(&mut route.ui);
+    let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
+    let pipe = drawpipe::pipe(&sw).unwrap();
+    let batch = route.source.next_batch(&route.ui.m, &sw, 4, None).unwrap();
+    let mut fallback = batch.frame(0, id.epoch());
+    fallback.cfg = id.gen();
+    fallback.ch[0].fill(0.25);
+    let mut newest = batch.newest(id.epoch());
+    newest.cfg = id.gen();
+    newest.ch[0].fill(0.75);
+    let newest = Arc::new(newest);
+    let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
+    let at = route.ui.host.picture_time(route.ui.now);
+    pipe.feed_at(batch.into_bytes().into(), fb, 1..4, (id, at), decode.clone(), codes.clone(), Some(newest.clone()));
+    let buffer = drawpipe::host::finish_batch(pipe, 1).unwrap();
+    let Source::Hw { shared, .. } = &route.ui.src else { unreachable!() };
+    let shared = shared.clone();
+    lock(&shared).queue.push_back(fallback.into());
+
+    route.ui.step(1.0 / 30.0);
+    let first = picture(&route.ui);
+    assert_eq!((first.frames, route.ui.wfm_total, route.ui.history.len()), (4, 4, 1));
+    assert!(weights(&first)[0] > 0);
+    assert_eq!(pipe.tap_count(), 1);
+    assert!((route.ui.ana_get(0, Meas::Vavg) - 0.25).abs() < 1e-5);
+
+    route.ui.step(1.0 / 30.0);
+    assert_eq!(route.ui.wfm_total, 4);
+    assert_eq!(picture(&route.ui), first);
+    assert_eq!(route.ui.history.len(), 2);
+    assert_eq!(route.ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.seq, newest.seq);
+    assert!((route.ui.ana_get(0, Meas::Vavg) - 0.75).abs() < 1e-5);
+    assert!(Arc::ptr_eq(&lock(&shared).frame, &newest));
+    assert_eq!(pipe.tap_count(), 0);
+    assert!(lock(&shared).queue.is_empty());
+    let samples = route.ui.mstat[0].n;
+    let at = route.ui.host.picture_time(route.ui.now);
+    pipe.feed_at(buffer, fb, 0..1, (id, at), decode, codes, None);
+    drawpipe::host::finish_batch(pipe, 2).unwrap();
+    route.ui.step(1.0 / 30.0);
+    assert_eq!(route.ui.wfm_total, 5);
+    assert_eq!(route.ui.mstat[0].n, samples + 1, "only the newly folded frame counts");
+}
+
+#[test]
+fn auto_to_lines_transition_resets_the_batch_window() {
+    let run = |transition| {
+        let _scope = Scope::new();
+        let mut route = Route::new(BatchKind::Raw, true, 1, 200e-6);
+        route.ui.m.dots = DotsMode::Auto;
+        route.step(27);
+        assert_eq!(route.ui.batch_picture.frames, 27);
+        if transition {
+            route.ui.m.dots = DotsMode::Off;
+        }
+        route.step(3);
+        assert_eq!(route.ui.wfm_total, 30);
+        picture(&route.ui)
+    };
+    let auto = run(false);
+    let lines = run(true);
+    assert_eq!((auto.frames, lines.frames), (30, 3));
+    assert_ne!(weights(&auto), weights(&lines));
+    assert!(weights(&lines)[0] > 0);
 }
 
 #[test]
@@ -287,4 +437,98 @@ fn draw_routes_deep_raw_measurement_still_changes_the_picture() {
         after
     };
     compare(&run(false), &run(true), "deep raw window");
+}
+
+#[test]
+fn full_picture_slot_preserves_each_coalesced_batch_for_record_readers() {
+    for records in [1, 2, 4] {
+        let _scope = Scope::new();
+        let tdiv = if records == 1 { 1e-6 } else { 10e-6 };
+        let mut route = Route::new(BatchKind::Raw, true, 1, tdiv);
+        route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
+        let id = change::acquisition::script_prepare(&mut route.ui);
+        let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
+        let pipe = drawpipe::pipe(&sw).unwrap();
+        let mut expected = Vec::new();
+        let mut samples = Vec::new();
+        for batch_id in 0..3 {
+            let batch = route.source.next_batch(&route.ui.m, &sw, records, None).unwrap();
+            let mut newest = batch.newest(id.epoch());
+            newest.cfg = id.gen();
+            // Distinct owned waveforms make history order observable after history drops raw metadata.
+            for value in &mut newest.ch[0] {
+                *value += batch_id as f32 * 0.05;
+            }
+            expected.push(newest.seq);
+            samples.push(crate::wave::hw_record(&route.ui.m, Arc::new(newest.clone())).ch);
+            let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
+            let at = route.ui.host.picture_time(route.ui.now);
+            assert!(pipe
+                .feed_at(batch.into_bytes().into(), fb, 0..records, (id, at), decode, codes, Some(Arc::new(newest)))
+                .is_none());
+            // Completion returns DMA while the first deposit still occupies the UI slot.
+            drawpipe::host::finish_batch(pipe, batch_id).unwrap();
+        }
+        route.ui.step(1.0 / 30.0);
+        let received: Vec<_> = route.ui.history.iter().map(|r| r.ch.clone()).collect();
+        assert_eq!(expected, [records as u64, 2 * records as u64, 3 * records as u64]);
+        assert!(samples.windows(2).all(|pair| pair[0] != pair[1]));
+        let observed: Vec<_> =
+            received.iter().map(|ch| expected[samples.iter().position(|s| s == ch).unwrap()]).collect();
+        assert_eq!(observed, expected, "real history observes every tap in FIFO order");
+        assert_eq!(
+            route.ui.mstat[0].n,
+            records as u64 + 2,
+            "the first picture contributes its siblings and all three taps"
+        );
+        assert_eq!(route.ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.seq, 3 * records as u64);
+        assert_eq!(route.ui.history.len(), 3);
+        drawpipe::host::barrier(pipe);
+        route.ui.step(1.0 / 30.0);
+        assert_eq!(route.ui.history.len(), 3, "taps consumed exactly once");
+        assert_eq!(route.ui.mstat[0].n, 3 * records as u64, "all records measured once, without displaced-tap folds");
+        assert_eq!(route.ui.wfm_total, 3 * records as u64, "coalesced picture records count once");
+    }
+}
+
+#[test]
+fn consumed_waveform_redraws_only_if_its_private_deposit_becomes_stale() {
+    for remap in [false, true] {
+        let _scope = Scope::new();
+        let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+        route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
+        let id = change::acquisition::script_prepare(&mut route.ui);
+        let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
+        let pipe = drawpipe::pipe(&sw).unwrap();
+        let mut last = None;
+        for seq in 1..=2 {
+            let batch = route.source.next_batch(&route.ui.m, &sw, 1, None).unwrap();
+            let mut frame = batch.newest(id.epoch());
+            frame.cfg = id.gen();
+            frame.ch[0].fill(seq as f32 / 4.0);
+            let frame = Arc::new(frame);
+            let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
+            let at = route.ui.host.picture_time(route.ui.now);
+            pipe.feed_at(batch.into_bytes().into(), fb, 0..1, (id, at), decode, codes, Some(frame.clone()));
+            drawpipe::host::finish_batch(pipe, seq).unwrap();
+            last = Some(frame);
+        }
+
+        route.ui.step(1.0 / 30.0);
+        assert_eq!((route.ui.wfm_total, route.ui.history.len(), pipe.tap_count()), (1, 2, 0));
+        assert!((route.ui.ana_get(0, Meas::Vavg) - 0.5).abs() < 1e-5);
+        drawpipe::host::barrier(pipe);
+        if remap {
+            route.ui.m.dots = DotsMode::On;
+        }
+        route.ui.step(1.0 / 30.0);
+        assert_eq!((route.ui.wfm_total, route.ui.history.len()), (2, 2));
+        if remap {
+            let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
+            drawpipe::draw_frame(&mut expected, &route.ui.m, &last.unwrap(), sw.interp, None);
+            assert_eq!(route.ui.ph.map, expected.map);
+        }
+        route.ui.step(1.0 / 30.0);
+        assert_eq!((route.ui.wfm_total, route.ui.history.len()), (2, 2));
+    }
 }

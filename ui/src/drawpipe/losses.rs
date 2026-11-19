@@ -62,14 +62,16 @@ impl Lost {
 pub(super) enum Rejection {
     StaleKey,
     Epoch,
+    Age,
 }
 impl Rejection {
-    const ALL: [Self; 2] = [Self::StaleKey, Self::Epoch];
+    const ALL: [Self; 3] = [Self::StaleKey, Self::Epoch, Self::Age];
 
     fn label(self) -> &'static str {
         match self {
             Self::StaleKey => "stale_key",
             Self::Epoch => "epoch",
+            Self::Age => "age",
         }
     }
 
@@ -111,7 +113,7 @@ impl super::Counters {
         }
         self.losses.source[reason as usize].fetch_add(records, Ordering::Relaxed).wrapping_add(records)
     }
-    pub(super) fn discard(&self, reason: Lost, records: u64) {
+    pub(crate) fn discard(&self, reason: Lost, records: u64) {
         Self::add(&self.dropped, records);
         self.lose(reason, records);
     }
@@ -119,6 +121,18 @@ impl super::Counters {
         if self.diagnostics_enabled() {
             Self::add(&self.losses.rejected[reason as usize], records);
         }
+    }
+    pub(crate) fn reject_deposit(
+        &self,
+        previous: Option<oos_core::change::Identity>,
+        current: Option<oos_core::change::Identity>,
+        records: u64,
+    ) {
+        if !super::same_pair(previous, current) {
+            Self::add(&self.losses.pipe, records);
+        }
+        self.reject(Rejection::between(previous, current), records);
+        Self::add(&self.dropped, records);
     }
     pub(crate) fn records_text(&self) -> String {
         let n = |a: &AtomicU64| a.load(Ordering::Relaxed);
@@ -173,7 +187,7 @@ mod tests {
         {
             assert!(text.contains(&format!(" lost.{label}={} ", i + 2)), "{text}");
         }
-        assert!(text.ends_with("rejected.stale_key=11 rejected.epoch=13"), "{text}");
+        assert!(text.ends_with("rejected.stale_key=11 rejected.epoch=13 rejected.age=0"), "{text}");
         assert_eq!(counters.read().2, 0, "selection buckets preserve the legacy dropped aggregate");
     }
 }

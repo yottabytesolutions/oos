@@ -2,6 +2,7 @@
 
 //! Placement and column differences, independent of live settings and decoded frame ownership.
 
+use super::count::{Count, CountFormat};
 use crate::fastdraw::{self, Fold, Map, Samples, Spans};
 use oos_core::model::{HDIV, NCH, VDIV};
 
@@ -52,6 +53,7 @@ pub(crate) struct Projection {
     pub(crate) delay: f64,
     pub(crate) ch: [Option<Vertical>; NCH],
     pub(crate) dots: bool,
+    pub(crate) format: CountFormat,
 }
 
 impl Projection {
@@ -163,7 +165,6 @@ pub(crate) fn place(
     want_fold: [bool; NCH],
 ) -> Placed {
     let window = proj.time_per_div * HDIV as f64;
-    let t_first = proj.delay - window / 2.0;
     let col = (1.0 / proj.x_per_sample).floor().clamp(1.0, 256.0) as usize;
     let t = meta.trigger;
     let (ti, outcome) = refine(meta, col, || {
@@ -176,11 +177,28 @@ pub(crate) fn place(
             |_| true,
         )
     });
+    place_at(samples, meta, proj, want_fold, ti, outcome, None)
+}
+
+pub(crate) fn place_at(
+    samples: [SamplesRef<'_>; NCH],
+    meta: &FrameTiming,
+    proj: &Projection,
+    want_fold: [bool; NCH],
+    ti: f64,
+    outcome: TrigOutcome,
+    previous: Option<RawTrace>,
+) -> Placed {
+    let window = proj.time_per_div * HDIV as f64;
+    let t_first = proj.delay - window / 2.0;
+    let mut reused = previous.map_or_else(|| std::array::from_fn(|_| None), |trace| trace.spans);
     let used = |c: usize| proj.ch[c].is_some() && samples[c].len() > 0;
     let spans = std::array::from_fn(|c| {
-        raw_map(proj, c, ti)
-            .filter(|_| used(c) && !proj.dots)
-            .map(|map| fastdraw::spans(proj.cols, proj.rows, &samples[c], &map))
+        raw_map(proj, c, ti).filter(|_| used(c) && !proj.dots).map(|map| {
+            let mut spans = reused[c].take().unwrap_or_default();
+            fastdraw::spans_into(proj.cols, proj.rows, &samples[c], &map, &mut spans);
+            spans
+        })
     });
     let fold = std::array::from_fn(|c| {
         (want_fold[c] && used(c)).then(|| {
@@ -194,9 +212,9 @@ pub(crate) fn place(
     Placed { projection: *proj, trace: RawTrace { trigger_at: ti, outcome, spans }, fold }
 }
 
-pub(crate) fn add_placed_band(
+pub(crate) fn add_placed_band<T: Count>(
     c: usize,
-    band: &mut [u16],
+    band: &mut [T],
     c_lo: usize,
     samples: &SamplesRef<'_>,
     proj: &Projection,
@@ -206,5 +224,82 @@ pub(crate) fn add_placed_band(
     match &p.spans[c] {
         Some(s) => fastdraw::add_spans_t(band, proj.rows, c_lo, s, 24),
         None => fastdraw::deposit_dots_t(band, proj.rows, c_lo, samples, &map, 24),
+    }
+}
+
+/// Prefix differences and blend into row-major pixels. Recycled pool planes are cleared by their next owner.
+pub(crate) fn fold_band<T: Count>(
+    map: &mut [T],
+    diff: &mut [T],
+    run: &mut [T],
+    (cols, rows, first): (usize, usize, usize),
+    touched: std::ops::Range<usize>,
+    clear: bool,
+) -> std::ops::Range<usize> {
+    let width = run.len();
+    fold_rows(map, run, (cols, rows, first), touched, |r, run| {
+        let mut occupied = false;
+        for (sum, delta) in run.iter_mut().zip(&mut diff[r * width..][..width]) {
+            *sum = sum.wrapping_add(*delta);
+            if clear {
+                *delta = T::default();
+            }
+            occupied |= *sum != T::default();
+        }
+        occupied
+    })
+}
+
+pub(super) fn fold_rows<T: Count, M: Count>(
+    map: &mut [M],
+    run: &mut [T],
+    (cols, rows, first): (usize, usize, usize),
+    touched: std::ops::Range<usize>,
+    mut prefix: impl FnMut(usize, &mut [T]) -> bool,
+) -> std::ops::Range<usize> {
+    let width = run.len();
+    let mut painted = rows..0;
+    run.fill(T::default());
+    for r in touched.start.min(rows)..(touched.end.min(rows) + 1).min(rows + 1) {
+        let occupied = prefix(r, run);
+        if occupied && r < rows {
+            painted.start = painted.start.min(r);
+            painted.end = r + 1;
+            for (pixel, sum) in map[r * cols + first..][..width].iter_mut().zip(run.iter()) {
+                *pixel = pixel.saturating_add(M::from_value(sum.value()));
+            }
+        }
+    }
+    painted
+}
+
+impl Samples for Vec<f32> {
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+    fn at(&self, i: usize) -> f32 {
+        self[i]
+    }
+    fn extremes(&self, a: usize, b: usize) -> (f32, f32) {
+        self.as_slice().extremes(a, b)
+    }
+}
+
+pub(crate) fn paint_spans(band: &mut [u16], w: usize, r_lo: usize, s: &Spans, wgt: u16) {
+    let r_hi = r_lo + band.len() / w;
+    if r_hi == r_lo {
+        return;
+    }
+    for (k, &(a, b)) in s.rows.iter().enumerate() {
+        // rows are never negative (`spans` clamps them); an empty column has a > b
+        let (a, b) = ((a as usize).max(r_lo), (b as usize).min(r_hi - 1));
+        if a > b {
+            continue;
+        }
+        let mut i = (a - r_lo) * w + s.c0 + k;
+        for _ in a..=b {
+            band[i] = band[i].saturating_add(wgt);
+            i += w;
+        }
     }
 }

@@ -107,7 +107,7 @@ fn perf_guard_draw_routes() {
                             crate::claim_timing::summary()
                         );
                     }
-                    assert_eq!(build.route.ui.pic_frames as usize, frames);
+                    assert_eq!(build.route.ui.batch_picture.frames as usize, frames);
                     pictures.push(picture(&build.route.ui));
                 }
                 compare(&pictures[0], &pictures[1], "warmed production-plan route build");
@@ -208,5 +208,63 @@ fn quiescent_live_routes_conserve_read_deposited_and_shown_records() {
         assert_eq!(counters.read(), (28, 28, 0));
         let text = counters.records_text();
         assert!(text.contains("records read=28 deposited=28 shown=28"), "{text}");
+    }
+}
+
+#[test]
+#[ignore = "host F2 evidence: release, OOS_PERF_TESTS=1, one test thread"]
+fn perf_guard_batch_picture_four_channels() {
+    assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"));
+    for tdiv in [1e-6, 10e-6] {
+        let mut pictures = Vec::new();
+        for batch in [false, true] {
+            let _scope = Scope::new();
+            let mut build = Build::new(batch, 4, tdiv, 48);
+            for _ in 0..8 {
+                build.run();
+            }
+            let mut times = Vec::new();
+            for _ in 0..crate::perfguard::ROUNDS {
+                let started = Instant::now();
+                build.run();
+                times.push(started.elapsed().as_nanos());
+            }
+            times.sort_unstable();
+            println!(
+                "BATCH_PICTURE channels=4 tdiv={tdiv} batch={batch} frames=48 best_ns={} p50_ns={} p90_ns={} p99_ns={}",
+                times[0], times[50], times[90], times[99]
+            );
+            println!(
+                "BATCH_PICTURE_PHASES batch={batch} tdiv={tdiv} {}",
+                change::timing(&build.route.ui).diagnostics_text()
+            );
+            pictures.push(picture(&build.route.ui));
+        }
+        compare(&pictures[0], &pictures[1], "F2 four-channel production-plan picture");
+    }
+}
+
+#[test]
+fn deposit_waveform_tap_counts_cheap_statistics_once() {
+    let run = |batch| {
+        let _scope = Scope::new();
+        let mut build = Build::new(batch, 2, 10e-6, 48);
+        build.route.ui.m.meas = crate::framestats::CHEAP.iter().map(|&kind| (kind, WaveId::Ch(0))).collect();
+        build.run();
+        build.route.ui.mstat.fill(MStat::default());
+        for _ in 0..3 {
+            build.run();
+        }
+        let counted = build.route.ui.measurement_statistics_snapshot_for_test();
+        build.route.ui.step(1.0 / 30.0);
+        assert_eq!(build.route.ui.measurement_statistics_snapshot_for_test(), counted);
+        build.route.ui.mstat
+    };
+    let (standard, deposit) = (run(false), run(true));
+    assert!(!standard.is_empty());
+    for (a, b) in standard.iter().zip(&deposit) {
+        assert_eq!(a.n, b.n, "the pool and waveform reader must count each record once");
+        assert_eq!(b.n, 144);
+        assert!(a.sum.is_finite() && b.sum.is_finite());
     }
 }

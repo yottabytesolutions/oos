@@ -96,9 +96,8 @@ fn old_stamp(ui: &mut Ui) -> Result<(), String> {
     let (fb, decode) = (batch.frame_bytes(), batch.decode());
     let before = drawpipe::counters().read();
     drawpipe::Counters::add(&drawpipe::counters().acquired, 3);
-    pipe.feed_with(Box::new(batch.into_bytes()), fb, 0..3, Default::default(), decode, None, Box::new(|| {}));
+    pipe.feed_with(Box::new(batch.into_bytes()), fb, 0..3, Default::default(), decode, None, None);
     drop(drawpipe::host::finish_batch(pipe, 0)?);
-    pipe.release();
     let after = drawpipe::counters().read();
     if (after.0 - before.0, after.1 - before.1, after.2 - before.2) != (3, 0, 3) {
         return Err(format!("planned old-stamp drop: {:?} -> {:?}", before, after));

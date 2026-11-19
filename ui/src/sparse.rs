@@ -26,6 +26,31 @@ thread_local! {
 /// Draws a sparse frame into `ph` like `to_record` + `draw_ex` with weight `wgt` and interpolation `mode`
 /// (`Switches::interp`): Some(triggered), or None when the frame needs `to_record`.
 pub fn draw_with(ph: &mut Phosphor, m: &Model, f: &Frame, wgt: u16, mode: Interp) -> Option<bool> {
+    project(m, f, mode, |c, t0, dt, samples| {
+        ph.draw_ex(c, m, (m.time_per_div(), m.delay), t0, dt, samples, wgt, None, false);
+    })
+}
+
+pub(crate) fn record_with(m: &Model, f: &Frame, mode: Interp) -> Option<crate::wave::Record> {
+    let mut record = crate::wave::Record {
+        t0: 0.0,
+        dt: 0.0,
+        ch: Default::default(),
+        triggered: true,
+        partial: f.partial,
+        raw: None,
+        la: None,
+        pairs: false,
+    };
+    project(m, f, mode, |c, t0, dt, samples| {
+        record.t0 = t0;
+        record.dt = dt;
+        record.ch[c].extend_from_slice(samples);
+    })?;
+    Some(record)
+}
+
+fn project(m: &Model, f: &Frame, mode: Interp, mut emit: impl FnMut(usize, f64, f64, &[f32])) -> Option<bool> {
     let tdiv = m.time_per_div() as f64;
     let window = tdiv * HDIV as f64;
     let t_first = m.delay as f64 - window / 2.0;
@@ -54,7 +79,7 @@ pub fn draw_with(ph: &mut Phosphor, m: &Model, f: &Frame, wgt: u16, mode: Interp
             } else {
                 out.extend(xs.map(|x| oos_dsp::interp::linear(v, x).unwrap_or(f32::NAN)));
             }
-            ph.draw_ex(c, m, (m.time_per_div(), m.delay), t_first, dt, &out, wgt, None, false);
+            emit(c, t_first, dt, &out);
         }
     });
     Some(true)

@@ -200,6 +200,7 @@ fn queued_raw_before_pair_keeps_measurement_sample_identity() {
         analysis_busy: false,
         busy: true,
         accept: true,
+        tap: None,
         join: std::thread::spawn(|| {}),
     });
     assert!(ui.fast_ok());

@@ -107,7 +107,7 @@ mod tests {
         let frame = frame(points, byte, sequence, change::acquisition::script_prepare(ui));
         let mut state = shared.lock().unwrap();
         state.frame = frame.clone();
-        state.queue.push_back(frame.clone());
+        state.queue.push_back(frame);
     }
     fn until(ui: &mut Ui, condition: impl Fn(&Ui) -> bool) {
         let deadline = crate::ui::lifecycle::test_wait::Wait::new("until");

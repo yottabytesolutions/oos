@@ -9,6 +9,7 @@ pub(super) fn apply(ui: &mut Ui) -> bool {
     let Some(p) = &ui.host.runtime().change.prepared else { return false };
     let classes = p.changes.classes();
     if (classes.contains(C::MAPPING) || classes.contains(C::PHOSPHOR)) && (!p.stopped || ui.record_mode()) {
+        step_draw::reset_window(ui);
         ui.ph.clear();
         ui.phz.clear();
         return true;

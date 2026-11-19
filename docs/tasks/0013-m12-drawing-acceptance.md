@@ -208,6 +208,13 @@ replayed full-map mark, place record drawing with its sole phosphor caller, and 
 without growing existing size allowances. Run debug/optimized UI tests, both allocation
 censuses, host/ARM Clippy, shipping upload/F2 guards and the fast gate. No hardware access or hold changes.
 
+PR #221 replay through the current #224 queue-order and measurement layer:
+reserve `ui/src/ui/draw_routes/tap_recovery.rs` and this task. Preserve the six upload topics and all incoming
+reader, watchdog and measurement fixes. Extend the reader/fallback regression to check independent incremental
+consumers across remapping and an unchanged publication. Run the combined drawing checks, complete UI tests and
+both six-region allocation censuses in debug and optimized profiles, the fast gate and serial shipping guards
+on frozen source. The runner owns Git refs and publication. No hardware access or hold changes.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -253,6 +260,24 @@ censuses, host/ARM Clippy, shipping upload/F2 guards and the fast gate. No hardw
   record/analysis copy and runtime bounds, including plan overlap. The one-byte owner declarations belong to
   synthetic fixtures. On-device minimum cycle, whole-step timing, protected capture rates and 30 fps remain
   open, along with full gate, independent review and the signed image. The hardware hold remains in place.
+
+- 2026-11-19: PR #221 replay through the current #224 reader layer preserves all six upload topics from
+  checkpoint `0284498d` on F2 `cc7fa6f5`; the runner supplied replay head `ddbe573e` with no stopped conflicts.
+  Extended the reader/fallback regression to compare independent incremental consumers before and after remapping,
+  including a skipped consumer and empty unchanged revisions. The first added fixture failed because enabling
+  measurements resized the picture but its simulated arena retained the old length; resizing that arena corrected
+  the fixture. Production Rust delta is zero; no golden, timing limit, allocation assertion or hardware policy changed.
+  Final focused debug/optimized checks each passed 93 tests with nine existing timing skips. Complete UI suites
+  passed 1,839 debug and 1,838 optimized tests, with 64 existing skips each, including unchanged golden references.
+  Both explicit allocation censuses reported 256 calls and zero caller-thread allocations in all six regions.
+  Host/ARM Clippy printed `partial gate passed (not done): 1 steps in 33 s` (exit 0); fast printed
+  `partial gate passed (not done): 12 steps in 8 s` (exit 0), with no ratchet updates needed.
+  All 30 serial shipping UI guards passed, including narrow/full uploads and the original counter target.
+  Worst counter overhead was 0.8594%; mask-3 learning p99 CPU was 1.158333 ms on the host.
+  Source fingerprints remained unchanged for every final check. Complete logs: `target/replay224-*.log`;
+  command/source receipts: `target/replay224-receipts.json`. The initial fixture failure is retained separately.
+  Independent review, the combined full gate and coordinator/owner hardware acceptance hold remain open.
+  Host only; no hardware was accessed.
 
 - 2026-11-19: PR #221 official-F2 final host checks passed: complete UI suites ran 1,830 debug and
   1,829 optimized tests, with 64 existing skips per profile. All 30 shipping UI guards passed serially.

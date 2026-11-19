@@ -181,6 +181,20 @@ profiles on this intermediate tree.
 The F2 admission follow-up remains active; its published head needs an exact final restack and the full
 combined host, image, independent review and unit gates. The coordinator's hold remains in place. No scope access.
 
+PR #221 final combined validation on F2 `43d85974b4efebb1c01e4c5f0b2a27b933ece10e`:
+retain the runner-selected upload topics through `1eb18ea51b3d3f08217afd9dda97285574b4eb21`.
+Reserved paths: this task for exact-tree host evidence and `ui/src/board/dho/hw/batch/tests.rs` for the replayed
+private-map assertion. The verified #230 caller-thread census patch is already
+present and will be reused without modifying its six 256-call regions, strict zero checks or process counters.
+Run combined upload/window/capacity/waveform regressions and the census in debug and optimized profiles, serial
+shipping upload/dots/F2 guards, the fast gate and the full normal host gate. Freeze source and runner metadata
+before builds and verify their fingerprint afterwards. Retain prior failures separately. No scope access.
+
+PR #221 clippy compile follow-up: reserve `ui/src/ui/draw_routes.rs` and this task.
+Adapt the hit-budget rejection regression to the existing read-only phosphor map accessor, preserving its
+nonempty and exact-pixel assertions. Run host/ARM Clippy, the fast gate and UI debug/optimized tests.
+The runner retains Git operations and publication; hardware acceptance remains with the coordinator and owner.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -243,6 +257,20 @@ combined host, image, independent review and unit gates. The coordinator's hold 
   target and temporary 1.02 limit. The 4 MB mask 3 learning p99 was 1.385 ms on the host, or 5.540 ms using
   the provisional 4x A72 projection. This is host checkpoint evidence. Fresh review and unit acceptance remain open.
 
+- 2026-11-19: PR #221 clippy compile repair uses `maps()` in both hit-budget rejection assertions.
+  Production behavior and the regression's nonempty/exact-pixel checks are unchanged; production LOC delta is zero.
+  Host/ARM Clippy printed `partial gate passed (not done): 1 steps in 31 s` (exit 0).
+  Fast printed `partial gate passed (not done): 12 steps in 9 s` (exit 0), with no lowered ratchets.
+  Complete UI nextest suites passed 1,808 debug and 1,807 optimized tests, with 64 skipped in each profile (exit 0).
+  The repaired regression passed in both profiles. Logs: `target/pr221-clippy-fix-{clippy,fast,debug,optimized,loc}.log`.
+  Host only. Runner synchronization, final CI and independent review remain open; the earlier learning-budget
+  failure and coordinator/owner hardware hold are unchanged.
+
+- 2026-11-19: PR #221 failed-check reproduction printed `gate FAILED in 34 s: clippy` (exit 1).
+  Both host and ARM compilation report E0616 for three private map reads in the hit-budget rejection test.
+  Repair only those reads through `maps()`; retain the original waveform, nonempty and pixel-equality checks.
+  Fetch was sandbox-blocked; HEAD matches the cached feature ref. Runner owns remote synchronization.
+
 - 2026-11-19: PR #224 cross-vendor follow-up makes the newest waveform drawable after whole-batch hit-budget
   rejection. Tap accounting preserves eligibility for rejected batches interleaved with batches in a coalesced
   deposit. The record consumer uses explicit picture eligibility, and host regressions exercise both cases.
@@ -255,6 +283,47 @@ combined host, image, independent review and unit gates. The coordinator's hold 
   debug and optimized suites passed 1,733 and 1,732 unit tests respectively, plus 8 goldens, 17 scripts,
   10 socket tests and 16 soak and support tests in each profile. All 12 fast gate steps passed after
   regenerating the UI file and step size ratchets. Independent review and unit timing remain open.
+
+- 2026-11-19: Final combined upload/F2 host validation used exact F2 base
+  `43d85974b4efebb1c01e4c5f0b2a27b933ece10e`, upload head
+  `1eb18ea51b3d3f08217afd9dda97285574b4eb21` and the one-line read-only-map test repair below.
+  Source receipt `c637f7f701a0b20915b7910f90c570b1e0112a94e2b7275cd8e3031218d26164` remained unchanged
+  after every validation command, including the full gate; runner metadata stayed fixed during builds.
+  Focused debug and optimized regressions each passed all 79 selected tests. Both census profiles reported
+  256 calls and zero calling-thread allocations in each of six regions. The already-present #230 patch
+  reverse-checks cleanly against the verified handoff; all process-wide counters and tests remain intact.
+  Serial shipping upload/dots/F2 guards passed all 10 selected tests with unchanged limits.
+  Final handoff fast printed `partial gate passed (not done): 12 steps in 9 s` (exit 0), retained in
+  `target/replay221-final-v2-fast-handoff.log`.
+  The full normal host gate printed `gate FAILED in 913 s: perf` (exit 1). Its UI tests passed
+  1,804 debug and 1,803 optimized cases, with 64 ignored in each profile. All other selected steps passed,
+  including 65 synthetic register plans, host/ARM Clippy, decoder variants, Python and 90.2% UI coverage.
+  The full performance step passed 29 UI guards and failed `perf_guard_batch_core_learning` at mask 3:
+  host p99 CPU 2.304 ms projected to 9.216 ms, exceeding the unchanged 9 ms A72 projection limit.
+  The measured learning implementation and guard are unchanged from exact F2; the overrun is not attributed.
+  No retry, baseline result, fixture change or relaxed limit replaces this failed combined result.
+  Complete evidence: `target/replay221-final-v2-{focused-debug,focused-optimized,census-debug,census-optimized,
+  shipping,full}.log`, command/source manifest `target/replay221-final-v2.json`, retained performance output
+  `target/replay221-final-v2-perf-step.log` and `target/check-logs/33769-1795051346181340000/`.
+  Earlier census failures, the interrupted receipt and this job's pre-repair compile failure remain separate.
+  Production delta for this repair is zero; the retained upload stack is +255 UI Rust lines over F2, zero
+  elsewhere. Changed files: `ui/src/board/dho/hw/batch/tests.rs` and this task. No ratchet reductions occurred.
+  The combined gate remains blocked by the learning budget. The coordinator owns its disposition, renewed
+  independent review, image-tier validation and the DHO804 unit round under the unchanged hold. No scope access.
+
+- 2026-11-19: The first final-tree focused debug build exited 101 with E0616 in the replayed
+  `four_channel_line_batches_keep_every_record_with_matching_and_raw_newest` test. Its assertion still accessed the private
+  phosphor map; it now reads `maps()` without changing the asserted pixels or acquisition behavior.
+  Evidence: `target/replay221-final-focused-debug.log` and `target/replay221-final.json`.
+  The source fingerprint remained stable throughout this failed build. Restart all final validation on the
+  corrected combined tree; no partial suite is a pass.
+
+- 2026-11-19: Combined validation starts from exact upload head
+  `1eb18ea51b3d3f08217afd9dda97285574b4eb21`, with exact F2 base
+  `43d85974b4efebb1c01e4c5f0b2a27b933ece10e`. The supplied #230 patch reverse-checks cleanly:
+  the calling-thread counter, census documentation and soak callback are already present. No replay or
+  census source modification is needed. Retain all previous census and receipt failures as separate evidence.
+  The coordinator retains Git operations, independent review and the existing unit hold.
 
 - 2026-11-19: The #224 admission follow-up preserves the pre-pacing Lines plans and checks the projection held at
   worker claim. A 14-record, two-channel 10 us/div Lines read can exceed the u16 limit if claimed as Dots at 177

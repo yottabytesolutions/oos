@@ -233,6 +233,8 @@ scope explicitly changes behaviour. No step claims implementation or unit accept
   - Retain existing drop counters while legacy overload routes remain. F3 enforces the target
     [conservation rule](frames.md#back-pressure-and-conservation).
   - Empty pictures count zero records; state reports the live route.
+  - Temporary F0 counter guard: best elapsed <= 1.02, CPU p99 <= 1.515 with all six original workloads and
+    actual picture/record checks, per ADR 0031. This staging allowance does not waive matched unit acceptance.
   - Slice rings replace per-record timing calls at the covered sites.
 - **Remove:** replaced framecost per-record parts.
 - **Delta:** +60..+100 production lines.
@@ -296,6 +298,9 @@ scope explicitly changes behaviour. No step claims implementation or unit accept
 - **Files:** `ui/src/board/dho/hw.rs`, `ui/src/board/dho/hw/batch.rs`, drawpipe buffer return,
   state counters and trigger-status display.
 - **Acceptance:**
+  - Restore the F0 counter guard to best elapsed <= 1.01 in code, architecture table and fixtures before
+    frame cutover acceptance. Task 0013 owns recovery evidence for all six original cases; CPU p99 stays
+    <= 1.515, actual picture/record checks and matched unit acceptance remain required (ADR 0031).
   - Scripted buffer exhaustion performs no extra read, wakes on return/STOP/settings, and conserves records
     after drain. No overload bucket exists.
   - Authorized unit round shows zero losses under load, visible capture rate and the

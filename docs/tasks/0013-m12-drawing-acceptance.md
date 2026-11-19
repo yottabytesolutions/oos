@@ -75,6 +75,27 @@ Validate source identity and synthetic acceptance/rejection fixtures without com
 At F3 frame cutover restore 1.01 in the assertion, table and fixtures, and provide all-six-row evidence before
 cutover acceptance. Existing unit, independent review and integrated full-gate holds remain.
 
+F1 (#203), assigned separately from F0: extract placement, projection and difference deposition into
+`picture/deposit/kernel.rs`, with frozen inputs and a Standard adapter. Share spans and the dense mapping/trigger
+logic without changing route choice, weights, trigger search policy or sparse-record rendering.
+Reserved F1 paths: `ui/src/picture.rs`, `ui/src/picture/`, `ui/src/main.rs`, `ui/src/ui.rs`,
+`ui/src/drawpipe.rs`, `ui/src/drawpipe/frame.rs`, `ui/src/fastdraw.rs`,
+`ui/src/fastdraw/validation.rs`, `ui/src/trignear.rs` (generic sample test call sites),
+`docs/architecture/README.md`, changed-file ratchets and this task.
+PR #212 memory fix: reserve `ui/src/drawpipe.rs`, `ui/src/drawpipe/feed.rs`, `ui/src/ui/draw_routes.rs`,
+`ui/src/ui/draw_routes/memory.rs` and `ui/src/system/test_allocator.rs` as well.
+Size retained worker maps for enabled channels, release disabled planes on reuse, and measure allocator
+high-water bounds for 1/2/4 channels at current sample geometry. Keep enabled buffers across pictures.
+Validate unchanged route pictures, debug/optimized UI tests, the fast gate and host deposit timings.
+Coordinator owns cross-vendor review, the full gate and the required DHO804 unit round before merge.
+
+PR #212 quality fixes: keep the same reserved F1 paths. Replace the test-only opaque batch hold with its
+named type, remove duplicate trigger classes, group projected-frame and trigger-search inputs, and share
+record-band geometry and trace handling. Store one projection and fold layout for both plan routes, use
+full-width dimensions, and preserve all route, trigger and pixel policies. Validate the existing route/oracle
+and golden suites in debug and optimized profiles, add wide-dimension and record-band regressions, and run
+the fast gate plus generated changed-file ratchets.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -82,6 +103,31 @@ cutover acceptance. Existing unit, independent review and integrated full-gate h
   All production source, other budgets, unit acceptance and sampler/runner remain identical.
   No acceptance or review state changed. Native timing awaits experiment-supervisor release.
   The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
+
+- 2026-11-18: Replayed the published F1 delta for #212 onto F0 `65c45c47` using old F0 `9a802cfe`
+  as the fork boundary. The new base carries the Telnet removal. The `ui.rs` size allowance is 8,668,
+  preserving F1's reduction of 157 lines from the new F0 allowance. F0 loss accounting and claim timing,
+  the reviewed F1 kernel, and the golden references are intact. Production delta over F0 is +106 UI Rust
+  lines. The fast gate passed all 12 selected steps. `cargo test --locked -p oos-ui` with one test thread
+  passed in debug and `test-release`: 1,705/1,704 unit tests, plus 8 golden, 17 script, 10 socket and 16
+  soak/support tests per profile. `cargo test --locked -p xtask` passed 242 tests in each profile.
+  Independent review, the integrated full gate and the required DHO804 unit run remain open. Host validation only.
+
+- 2026-11-18: Stack #212 over #213 conflict resolution validated on exact F0 base
+  `9a802cfef9a8f27bc6db48cc23da17afd35f6367`. Preserve both task sections and host golden evidence.
+  Keep F0 record reuse, intentional-loss accounting, producer-local claim timing and the shared enabled-channel
+  accumulator initializer. Adapt direct near/wide searches to F1 grouped inputs without restoring per-frame clocks;
+  retain F1 immutable projection/kernel inputs and both counter and allocator route test modules.
+  Generated ratchets reconcile drawpipe.rs to 627 and ui.rs to 8,670; no unrelated ratchet changes.
+  `RUST_TEST_THREADS=1 cargo test --locked -p oos-ui` and the `--profile test-release` run both exited 0:
+  1,704/1,703 unit tests, 8 goldens, 17 scripts, 10 sockets and 16 soak/support tests per profile.
+  Existing 60 unit and one golden ignores remain. Record reuse, intentional selection/loss conservation, frozen
+  projection, near/wide trigger policy, counter equivalence and allocator high-water tests pass in both profiles.
+  No golden reference changed. Production delta over this F0 base: +106 UI Rust lines, zero elsewhere.
+  Fast gate passed all 12 selected steps (exit 0). Initial fast gate failed only size slack; regeneration fixed it.
+  Initial host compilation and ratchet attempts required explicit slices at the newly generic search call sites;
+  those conflict resolutions are corrected. Complete host logs: `target/f1-stack-rebase-evidence/`.
+  No hardware access. Independent review, integrated full gate and coordinator/owner DHO804 unit acceptance remain held.
 
 - 2026-11-18: PR #213 inline-storage sentence corrected without code changes. The existing compiled-layout
   assertion proves the draw timing owner's bound below 17 KiB with all eight rings and bookkeeping retained.
@@ -211,6 +257,92 @@ cutover acceptance. Existing unit, independent review and integrated full-gate h
 - 2026-11-18: F0 owner assignment claimed on `refactor/202-frames-f0`, base `a8eb80da`. Plan above written before code.
   F1 kernel extraction remains outside this job; only obsolete timing is removed from the existing kernel callers.
   No Git writes, publication or hardware access; the runner and coordinator own those actions.
+
+- 2026-11-18: PR #212 quality follow-up: the test-only codes feeder returns its named batch lease;
+  trigger outcomes supply statistics indices directly. Projected-frame, trigger-search and band geometry inputs
+  are grouped without argument-count exemptions. Record and raw plans share projection/fold storage; record row
+  bounds have one projection helper, and both deposit layouts share channel admission and record tracing.
+  Projection dimensions use `usize`. Added regressions for dimensions above 65,535 and record fallbacks
+  (sparse, envelope, roll, scan), partial bands, disabled channels and empty channels. Existing route, oracle,
+  allocator and golden tests remain unchanged apart from the grouped-input call sites. The crate documentation
+  spacing is restored. Production delta: +12 lines. `cargo xtask ratchet` lowered only the changed drawpipe file
+  allowance, 659 to 657; no other ratchet changed.
+  `RUST_TEST_THREADS=1 cargo test --locked -p oos-ui` and the `--profile test-release` run passed:
+  1,625/1,624 unit tests, 8 goldens, 17 scripts, 10 sockets and 16 soak/support tests per profile, with the existing
+  58 unit and one golden ignores. Final test-only shorthand/input-reuse edits also passed focused near/wide and
+  independent raw/smoothed oracle checks in both profiles. Fast gate passed all 12 steps; Clippy printed
+  `partial gate passed (not done): 1 steps in 42 s`. Complete logs: `target/cx-debug-final.log`,
+  `target/cx-release-final.log`, `target/cx-fast-final.log` and `target/cx-clippy-final.log`.
+  Initial fast gates failed size growth, then unused slack; grouping call sites and the generated ratchet fixed
+  both. Initial test builds found an inaccessible codes feeder and one unmigrated caller; both were corrected.
+  The wide-dimension fixture initially assumed the default channel offset was zero; its explicit zero offset now
+  isolates truncation. Initial Clippy failed redundant field spelling and an expanded test's line count;
+  shorthand and reused trigger inputs fixed both. Host only, no unit access or hardware acceptance.
+  Fetch was denied by the sandbox before shared Git metadata could be written; remote freshness is unverified.
+  Coordinator retains independent review, the full integration gate and the DHO804 unit round.
+
+- 2026-11-18: PR #212 memory fix: worker accumulators now allocate phosphor planes only for enabled channels,
+  release disabled planes on reuse, and retain enabled buffers across pictures. Geometry changes replace the spare.
+  Captured samples remain borrowed; spans remain bounded by the projected screen columns. A synchronous production
+  helper probe measures the calling thread's allocator high-water increase after input, view and display-map setup,
+  over four cold and four warmed pictures. It covers 1/2/4 channels, 100 ns/div, 10 us/div and 200 us/div, and
+  automatic versus explicit 1,000-point depth. Its limits allow one plane per enabled channel, current decoded
+  sample storage and 256 KiB first-use bookkeeping; warmed transient allocations are capped at 32 KiB.
+  A separate regression verifies channel transitions, zero capacity for disabled planes, enabled-buffer reuse,
+  cleared picture contents and changed geometry. The following host allocator values are requested live bytes,
+  not process RSS; each cell is cold peak / warmed transient peak. No unit access or RSS recovery is claimed.
+
+  | Timebase / depth | 1 channel | 2 channels | 4 channels |
+  |---|---:|---:|---:|
+  | 100 ns/div / auto | 1,089,792 / 1,584 | 1,747,840 / 1,584 | 3,486,592 / 1,584 |
+  | 10 us/div / auto | 894,216 / 9,616 | 1,750,240 / 9,616 | 4,046,688 / 5,264 |
+  | 10 us/div / 1,000 points | 877,088 / 1,584 | 1,750,208 / 1,584 | 3,496,448 / 1,584 |
+  | 200 us/div / auto | 881,312 / 9,808 | 1,750,432 / 9,808 | 5,088,672 / 9,808 |
+
+  The focused probe passes all 12 rows, including a freed-transient allocator control. Initial fixture stamp and
+  batch-lifetime failures were corrected. Initial fast gates failed size growth, then unused size slack; reuse of
+  `Phosphor::clear` and the generated ratchet update corrected both. Only the changed file's size allowance fell,
+  from 661 to 659. Production delta is -2 lines. Final debug/optimized UI suites passed: 1,623/1,622 unit tests,
+  6 goldens, 15 scripts, 8 sockets and 14 soak/support tests per profile; 58 unit tests and one golden remain ignored.
+  The isolated optimized probe reproduces every debug allocator value above. Host Clippy completed without new
+  findings in the changed code. Fast gate: `partial gate passed (not done): 12 steps in 38 s`.
+  Coordinator retains rebase/integration, cross-vendor review, the full gate and matched DHO804 RSS A/B acceptance.
+
+- 2026-11-18: PR #212 cross-vendor review fixes: `SamplesRef` implements `Samples`; generic edge search and
+  fold helpers replace wrapper dispatch. `FrameTiming` separates the software trigger level from captured timing;
+  `Projection` retains caller spacing and is reused for placed bands. Typed trigger classes feed shared statistics
+  recording; row bounds and deposit names have one clear owner. Deterministic regressions cover explicit spacing
+  for samples/pairs, class/distance accounting and projection reuse across bands after settings changes.
+  Fast gate: `partial gate passed (not done): 12 steps in 55 s`; Clippy:
+  `partial gate passed (not done): 1 steps in 208 s`. Initial size and Clippy failures were corrected before these
+  passing checks. `cargo xtask ratchet` tightened only three size entries for the changed files; production delta +6.
+  Optimized UI tests passed: 1,620 unit tests, 6 goldens, 15 scripts, 8 sockets and 14 soak/support tests.
+  Final-source debug UI tests passed: 1,621 unit tests and the same golden/script/socket/soak counts. All five
+  focused optimized kernel/frame regressions also passed on final source. Both full profiles retain 58 ignored
+  unit tests and one ignored golden. Host only; no unit access. Coordinator retains review, full gate and unit acceptance.
+
+- 2026-11-18: F1 kernel extraction implemented with captured `SamplesRef`, `BatchMeta`, `Projection` and
+  `Placed` inputs/results. Standard retains its sparse-record adapter; Batch retains its search policy and painter,
+  sharing trigger classification and projection. One generic spans representation serves both painters.
+  Codes/volts placement, folds and difference planes agree at 1/2/4 channels with lines/dots and both conversion
+  signs. Captured-input and existing route/golden tests pass. No route, weight or concurrency change intended.
+  `cargo xtask loc --compare HEAD`: +111 production Rust lines, all in UI, above the F1 -30 to +30 estimate;
+  the frozen input types and transitional route adapters account for the growth. Variance remains for review.
+  Initial fast runs failed size checks; those findings were fixed and `cargo xtask ratchet` tightened only the
+  changed UI files. Fast gate evidence: `partial gate passed (not done): 12 steps in 16 s`.
+  Final-source `RUST_TEST_THREADS=1 cargo test -p oos-ui` and the `--profile test-release` run passed:
+  1,618/1,617 unit tests, 6 goldens, 15 scripts, 8 sockets and 14 soak/support tests per profile; 58 unit tests
+  and one golden remain ignored as before. `cargo clippy -p oos-ui --all-targets` completed with no new findings.
+  Optimized host probes (`OOS_PERF_TESTS=1`, one test thread) passed pixel/step picture equality and all 18
+  deposit-span timing rows per test target. On this Darwin arm64 host, 4 channels, 35,160 samples/channel,
+  48 records: before F1, pixel best 2.79-2.80 ms, step differences best 2.19-2.42 ms; after F1,
+  pixel best 3.01-3.04 ms, step differences best 1.59-1.63 ms. Final pixel p99 4.91-5.65 ms,
+  step differences p99 9.51-10.70 ms. Host timings are observations, not hardware acceptance.
+  Cross-vendor review, full integration gate and the DHO804 unit round remain with the coordinator; merge held.
+
+- 2026-11-18: F1 (#203) started on `refactor/203-frames-f1`, base `a8eb80da`. The supplied frame design
+  is the specification because frames.md, migration F1, rust-style.md and the glossary are not in this checkout.
+  F0 counters and perf-guard work remain outside this claim. Plan recorded before implementation.
 
 - 2026-11-18: PR #161 review fix: both M12a fixture types now use `Route::dispatch` for acquisition preparation,
   route selection, frame delivery, the buffer-return barrier and UI stepping. The production-plan fixture implements

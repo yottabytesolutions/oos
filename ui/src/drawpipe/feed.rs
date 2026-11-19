@@ -40,7 +40,7 @@ impl Pipe {
     /// drawn from their words with `codes` (`draw_frame_codes`). The buffer comes back through `take_buffer` when the
     /// batch is done. Frames nobody claims are counted as dropped. The unit feeds with `feed_with`.
     #[cfg(test)]
-    pub fn feed_codes(
+    pub(crate) fn feed_codes(
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
@@ -48,8 +48,8 @@ impl Pipe {
         stamp: u64,
         decode: DecodeInto,
         codes: Option<CodesInto>,
-    ) {
-        self.feed_batch(raw, fb, 0..frames, (stamp, None), decode, codes);
+    ) -> Arc<Batch> {
+        self.feed_batch(raw, fb, 0..frames, (stamp, None), decode, codes)
     }
 
     /// `feed_codes` for frames `frames` (those before its start stay out: frame 0 of a batch, and a frame 1 without

@@ -50,6 +50,14 @@ pub fn edge_near(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, eit
     best
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct EdgeSearch {
+    pub(crate) level: f32,
+    pub(crate) hysteresis: f32,
+    pub(crate) rising: bool,
+    pub(crate) either: bool,
+}
+
 /// Where the edge of the set direction is, seen at the resolution of the screen: `v` around `pre` (+-`span` samples)
 /// smoothed by a centred moving average of `l` samples (one screen column), then the hardware's comparators with
 /// hysteresis `hyst` (`oos_dsp::edges::trigger_edges`: a rising edge arms below level - `hyst` and fires at the level),
@@ -57,32 +65,24 @@ pub fn edge_near(v: &[f32], pre: usize, level: f32, hyst: f32, rising: bool, eit
 /// (a slow sine at a high rate) cannot make an edge of the other direction look right, which a test on single samples
 /// cannot rule out. Only edges at times `fits` accepts count. Returns the edge and the nearest edge of either direction
 /// (for the statistics).
-#[allow(clippy::too_many_arguments)]
-pub fn edge_smooth(
-    v: &[f32],
+pub(crate) fn edge_smooth<S: Samples + ?Sized>(
+    v: &S,
     pre: usize,
-    level: f32,
-    hyst: f32,
-    rising: bool,
-    either: bool,
+    trigger: EdgeSearch,
     span: usize,
     l: usize,
     fits: impl Fn(f64) -> bool,
 ) -> (Option<f64>, Option<oos_dsp::edges::Edge>) {
-    let l = l.max(1);
-    let a = pre.saturating_sub(span + l);
-    let b = (pre + span + l).min(v.len());
+    let (l, EdgeSearch { level, hysteresis: hyst, rising, either }) = (l.max(1), trigger);
+    let (a, b) = (pre.saturating_sub(span + l), (pre + span + l).min(v.len()));
     if b <= a + 2 * l {
         return (None, None);
     }
     // running sum over the window; NaN samples count as the level (none in hardware frames)
-    let x = |i: usize| if v[i].is_finite() { v[i] as f64 } else { level as f64 };
+    let x = |i: usize| if v.at(i).is_finite() { v.at(i) as f64 } else { level as f64 };
     let mut s = Vec::with_capacity(b - a);
-    let mut sum = 0.0;
+    let mut sum = (a..(a + l).min(b)).fold(0.0, |sum, i| sum + x(i));
     let half = l / 2;
-    for i in a..(a + l).min(b) {
-        sum += x(i);
-    }
     // s[j] = mean of v[a + j - half .. a + j - half + l], defined from j = half
     for j in 0..(b - a) {
         let lo = a + j;
@@ -229,23 +229,31 @@ pub struct Map {
 /// One channel of a frame as `deposit` puts it on the screen: for each column from `c0` on, the first and last row its
 /// samples cover (first > last: nothing in that column). Worked out once per frame; the rows are then added band by
 /// band (`add_spans`), so even one channel is drawn on several cores.
+#[derive(Default)]
 pub struct Spans {
     pub c0: usize,
     pub rows: Vec<(i16, i16)>,
 }
 
 /// The `Spans` of `v` on a `w` x `h` map.
-pub fn spans(w: usize, h: usize, v: &[f32], m: &Map) -> Spans {
-    let mut out = Spans { c0: 0, rows: Vec::new() };
-    if v.is_empty() || m.x_per_sample <= 0.0 {
-        return out;
+pub fn spans<S: Samples + ?Sized>(w: usize, h: usize, v: &S, m: &Map) -> Spans {
+    let mut out = Spans::default();
+    spans_into(w, h, v, m, &mut out);
+    out
+}
+
+fn spans_into<S: Samples + ?Sized>(w: usize, h: usize, v: &S, m: &Map, out: &mut Spans) {
+    out.c0 = 0;
+    out.rows.clear();
+    if v.len() == 0 || m.x_per_sample <= 0.0 || w == 0 || h == 0 {
+        return;
     }
     let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
     let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(v.len());
     let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(0);
     let c1 = ((((v.len() as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(w as i64);
     if c1 <= c0 {
-        return out;
+        return;
     }
     out.c0 = c0 as usize;
     out.rows.reserve((c1 - c0) as usize);
@@ -257,10 +265,10 @@ pub fn spans(w: usize, h: usize, v: &[f32], m: &Map) -> Spans {
             out.rows.push((1, 0));
             continue;
         }
-        let (mut mn, mut mx) = min_max_scalar(&v[ka..kb]);
-        if ka > 0 && v[ka - 1].is_finite() {
-            mn = mn.min(v[ka - 1]);
-            mx = mx.max(v[ka - 1]);
+        let (mut mn, mut mx) = v.extremes(ka, kb);
+        if ka > 0 && v.at(ka - 1).is_finite() {
+            mn = mn.min(v.at(ka - 1));
+            mx = mx.max(v.at(ka - 1));
         }
         ka = kb;
         if mn.partial_cmp(&mx).is_none_or(|o| o.is_gt()) {
@@ -272,7 +280,6 @@ pub fn spans(w: usize, h: usize, v: &[f32], m: &Map) -> Spans {
         let r1 = (ya.max(yb).round() as i32).min(hh - 1);
         out.rows.push(if r0 <= r1 { (r0 as i16, r1 as i16) } else { (1, 0) });
     }
-    out
 }
 
 #[cfg(test)]
@@ -321,8 +328,8 @@ pub fn add_spans_t(band: &mut [u16], h: usize, c_lo: usize, s: &Spans, wgt: u16)
 }
 
 /// `deposit_dots` into a band of the collecting differences (`add_spans_t`): only the samples of its columns.
-pub fn deposit_dots_t(band: &mut [u16], h: usize, c_lo: usize, v: &[f32], m: &Map, wgt: u16) {
-    if v.is_empty() || m.x_per_sample <= 0.0 {
+pub(crate) fn deposit_dots_t<S: Samples + ?Sized>(band: &mut [u16], h: usize, c_lo: usize, v: &S, m: &Map, wgt: u16) {
+    if v.len() == 0 || m.x_per_sample <= 0.0 {
         return;
     }
     let bw = band.len() / (h + 1);
@@ -338,7 +345,8 @@ pub fn deposit_dots_t(band: &mut [u16], h: usize, c_lo: usize, v: &[f32], m: &Ma
     for c in c0..c1 {
         let kb = first(c + 1);
         let xc = c as usize - c_lo;
-        for &x in &v[ka..kb.max(ka)] {
+        for i in ka..kb.max(ka) {
+            let x = v.at(i);
             let r = (x * m.y_per_volt + m.y0).round();
             // NaN fails both comparisons
             if r >= 0.0 && r < h as f32 {
@@ -464,13 +472,14 @@ pub struct Fold {
 }
 
 impl Fold {
-    pub fn of(v: &[f32]) -> Fold {
+    pub fn of<S: Samples + ?Sized>(v: &S, range: std::ops::Range<usize>) -> Fold {
         let (mut mn, mut mx) = (f32::INFINITY, f32::NEG_INFINITY);
         // four partial sums in f32 per block of 4096, added up in f64: vector registers, no loss over long records
         let (mut sum, mut sumsq, mut n) = (0.0f64, 0.0f64, 0u32);
-        for blk in v.chunks(4096) {
+        for start in (range.start..range.end).step_by(4096) {
             let (mut s, mut q) = ([0.0f32; 4], [0.0f32; 4]);
-            for (j, &x) in blk.iter().enumerate() {
+            for (j, i) in (start..(start + 4096).min(range.end)).enumerate() {
+                let x = v.at(i);
                 if x.is_finite() {
                     mn = mn.min(x);
                     mx = mx.max(x);
@@ -516,7 +525,7 @@ impl Fold {
 /// The live picture goes through the bands above (`spans`, `diff_span`, `fold_t`); these serve the min/max
 /// compression, the frame statistics and the tests, and are the reference for both.
 pub mod whole {
-    use super::Map;
+    use super::{Map, Spans};
 
     /// Adds `w` to every pixel of `map` (w x h, row-major) the trace covers: per column the span of its samples, joined
     /// to the last sample of the column before (so steep edges stay connected). Needs at least one sample per column
@@ -533,7 +542,7 @@ pub mod whole {
 
     /// `deposit` straight from a frame's read-out words (`Codes`): the same picture, without the f32 copy of the channel.
     pub fn deposit_codes(map: &mut [u16], w: usize, h: usize, v: &Codes, m: &Map, wgt: u16) {
-        deposit_from(map, w, h, v, m, wgt);
+        deposit_from(map, w, h, &crate::picture::deposit::kernel::SamplesRef::Codes(*v), m, wgt);
     }
 
     /// The samples of one channel as `deposit` needs them: their number, the extremes of a range and one sample.
@@ -561,6 +570,7 @@ pub mod whole {
     /// One channel of a read-out (16-bit little-endian words, `stride` words per group, this channel's at `word`) with the
     /// board's word-to-volt mapping. The mapping is monotone (a multiply by `scale` and a subtraction, each rounded
     /// monotonically), so the extremes of the volts are the volts of the extreme words: exact, without converting every word.
+    #[derive(Clone, Copy)]
     pub struct Codes<'a> {
         pub bytes: &'a [u8],
         /// the same bytes as words when they are 2-byte aligned (the read-out buffers are): the vector loops
@@ -691,21 +701,18 @@ pub mod whole {
         SPANS.with(|sp| {
             let sp = &mut *sp.borrow_mut();
             let Some((c0, c1, rmin, rmax, pixels)) = spans(v, m, w, h, sp) else { return };
-            let (lo, hi) = (&sp.lo[..], &sp.hi[..]);
             if pixels > sweep_cost(rmax - rmin + 1, c1 - c0) {
                 for r in rmin..=rmax {
                     let row = &mut map[r * w + c0..r * w + c1];
                     let r = r as i16;
-                    for ((px, &a), &b) in row.iter_mut().zip(&lo[c0..c1]).zip(&hi[c0..c1]) {
-                        // wgt where a <= r <= b, else 0: no branch per pixel
+                    for (px, &(a, b)) in row.iter_mut().zip(&sp.rows) {
                         let inside = ((a <= r) & (r <= b)) as u16;
                         *px = px.saturating_add(wgt & 0u16.wrapping_sub(inside));
                     }
                 }
             } else {
-                for c in c0..c1 {
-                    let (a, b) = (lo[c], hi[c]);
-                    let mut i = a.max(0) as usize * w + c;
+                for (c, &(a, b)) in sp.rows.iter().enumerate() {
+                    let mut i = a.max(0) as usize * w + c0 + c;
                     for _ in a..=b {
                         map[i] = map[i].saturating_add(wgt);
                         i += w;
@@ -713,13 +720,6 @@ pub mod whole {
                 }
             }
         });
-    }
-
-    /// Per column the rows of `deposit` (`lo`..=`hi`, empty when lo > hi), kept per thread so a frame allocates nothing.
-    #[derive(Default)]
-    pub struct Spans {
-        lo: Vec<i16>,
-        hi: Vec<i16>,
     }
 
     thread_local! {
@@ -741,56 +741,10 @@ pub mod whole {
         h: usize,
         sp: &mut Spans,
     ) -> Option<(usize, usize, usize, usize, usize)> {
-        if v.len() == 0 || m.x_per_sample <= 0.0 || w == 0 || h == 0 {
-            return None;
-        }
-        // first sample of column c: ceil(k_of(c)); per column one min/max over a slice (no per-sample screen math)
-        let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
-        let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(v.len());
-        let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(0);
-        let c1 = ((((v.len() as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(w as i64);
-        if c1 <= c0 {
-            return None;
-        }
-        if sp.lo.len() < w {
-            sp.lo.resize(w, i16::MAX);
-            sp.hi.resize(w, i16::MIN);
-        }
-        let hh = h as i32;
-        let (mut rmin, mut rmax, mut pixels) = (usize::MAX, 0usize, 0usize);
-        let mut ka = first(c0);
-        for c in c0..c1 {
-            let (lo, hi) = (&mut sp.lo[c as usize], &mut sp.hi[c as usize]);
-            (*lo, *hi) = (i16::MAX, i16::MIN);
-            let kb = first(c + 1);
-            if kb <= ka {
-                continue;
-            }
-            let (mut mn, mut mx) = v.extremes(ka, kb);
-            // the join to the previous column's last sample
-            if ka > 0 {
-                let j = v.at(ka - 1);
-                if j.is_finite() {
-                    mn = mn.min(j);
-                    mx = mx.max(j);
-                }
-            }
-            ka = kb;
-            if !(mn <= mx) {
-                continue;
-            }
-            let (ya, yb) = (mn * m.y_per_volt + m.y0, mx * m.y_per_volt + m.y0);
-            let r0 = (ya.min(yb).round() as i32).max(0);
-            let r1 = (ya.max(yb).round() as i32).min(hh - 1);
-            if r0 > r1 {
-                continue;
-            }
-            (*lo, *hi) = (r0 as i16, r1 as i16);
-            rmin = rmin.min(r0 as usize);
-            rmax = rmax.max(r1 as usize);
-            pixels += (r1 - r0 + 1) as usize;
-        }
-        (pixels > 0).then_some((c0 as usize, c1 as usize, rmin, rmax, pixels))
+        super::spans_into(w, h, v, m, sp);
+        let (rmin, end) = super::span_rows(sp);
+        let pixels = sp.rows.iter().filter(|(a, b)| a <= b).map(|&(a, b)| (b - a + 1) as usize).sum::<usize>();
+        (pixels > 0).then_some((sp.c0, sp.c0 + sp.rows.len(), rmin, end.saturating_sub(1), pixels))
     }
 
     /// `deposit` as it was before the span pass (one scattered write per pixel, one compare chain per sample): the
@@ -850,6 +804,7 @@ pub mod whole {
     }
 
     /// `min_max` as one chain: the reference, and the code on other targets.
+    #[cfg(any(test, not(target_arch = "aarch64")))]
     pub fn min_max_scalar(s: &[f32]) -> (f32, f32) {
         let (mut a, mut b) = (f32::INFINITY, f32::NEG_INFINITY);
         for &x in s {
@@ -1187,7 +1142,7 @@ pub mod whole {
     }
 }
 
-pub use whole::{deposit, deposit_codes, deposit_dots, min_max, min_max_scalar, Codes, Samples};
+pub use whole::{deposit, deposit_codes, deposit_dots, min_max, Codes, Samples};
 
 #[cfg(test)]
 mod validation;
@@ -1329,19 +1284,50 @@ mod tests {
             })
             .collect();
         for pre in [6250 + 130, 6250 - 40, 6250, 18750 + 200] {
-            let (e, any) = edge_smooth(&v, pre, 0.0, 0.06, true, false, 31_250, 62, |_| true);
+            let (e, any) = edge_smooth(
+                v.as_slice(),
+                pre,
+                crate::fastdraw::EdgeSearch { level: 0.0, hysteresis: 0.06, rising: true, either: false },
+                31_250,
+                62,
+                |_| true,
+            );
             let t = e.unwrap();
             assert!((t - 12500.0).abs() < 60.0 || (t - 25000.0).abs() < 60.0, "pre {}: {}", pre, t);
             assert!(!any.unwrap().rising, "pre {}: the nearest edge is the falling one", pre);
         }
         // at the rising edge itself
         assert!(
-            (edge_smooth(&v, 12_480, 0.0, 0.06, true, false, 31_250, 62, |_| true).0.unwrap() - 12500.0).abs() < 60.0
+            (edge_smooth(
+                v.as_slice(),
+                12_480,
+                crate::fastdraw::EdgeSearch { level: 0.0, hysteresis: 0.06, rising: true, either: false },
+                31_250,
+                62,
+                |_| true
+            )
+            .0
+            .unwrap()
+                - 12500.0)
+                .abs()
+                < 60.0
         );
         // falling, nearer the one at 6250 than the one at 18750 (from 12480 both are about as far: the comparators fire
         // at the first crossing, so the noise decides which is nearer)
         assert!(
-            (edge_smooth(&v, 11_000, 0.0, 0.06, false, false, 31_250, 62, |_| true).0.unwrap() - 6250.0).abs() < 60.0
+            (edge_smooth(
+                v.as_slice(),
+                11_000,
+                crate::fastdraw::EdgeSearch { level: 0.0, hysteresis: 0.06, rising: false, either: false },
+                31_250,
+                62,
+                |_| true
+            )
+            .0
+            .unwrap()
+                - 6250.0)
+                .abs()
+                < 60.0
         );
     }
 
@@ -1359,14 +1345,28 @@ mod tests {
             .collect();
         for l in [1usize, 4, 16] {
             for pre in [1000, 2500, 12_000] {
-                let (e, any) = edge_smooth(&v, pre, 0.15, 0.3, true, false, 9000, l, |_| true);
+                let (e, any) = edge_smooth(
+                    v.as_slice(),
+                    pre,
+                    crate::fastdraw::EdgeSearch { level: 0.15, hysteresis: 0.3, rising: true, either: false },
+                    9000,
+                    l,
+                    |_| true,
+                );
                 assert_eq!(e, None, "l {} pre {}", l, pre);
                 // the falling edges arm (from 5 V) and fire
                 assert!(any.is_some_and(|x| !x.rising), "l {} pre {}", l, pre);
             }
         }
         // the level in the middle: the rising edges are found at their crossings
-        let (e, _) = edge_smooth(&v, 5100, 2.5, 0.3, true, false, 9000, 1, |_| true);
+        let (e, _) = edge_smooth(
+            v.as_slice(),
+            5100,
+            crate::fastdraw::EdgeSearch { level: 2.5, hysteresis: 0.3, rising: true, either: false },
+            9000,
+            1,
+            |_| true,
+        );
         assert!((e.unwrap() - 5000.0).abs() < 1.0);
     }
 

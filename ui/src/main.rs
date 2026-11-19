@@ -13,7 +13,6 @@
 
 // SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
-
 mod board;
 mod claim_timing;
 mod clock;
@@ -47,6 +46,7 @@ pub mod netio;
 mod netport;
 mod pacing;
 mod perfguard;
+mod picture;
 mod placement;
 mod protocols;
 mod remote;

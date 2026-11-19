@@ -39,6 +39,7 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 | `remote.rs` | firewall and SSH ACL helper |
 | `store.rs`, `store/`, `sysconf.rs` | setup codec, waveform/image files, durable startup state, system settings |
 | `board/`, `board/dho/` | Board port, Shared exchange, hardware configuration/readout and publication |
+| `picture/` | captured drawing inputs, shared placement and column-difference kernel, legacy route adapters (F1) |
 | `wave.rs`, `drawpipe.rs`, `drawpipe/`, `fastdraw.rs`, `sparse.rs`, `compress.rs` | records, phosphor maps, batch deposits and drawing kernels |
 | `gfx.rs`, `font.rs`, `layout.rs`, `drm.rs`, `gpu.rs`, `vpu.rs` | software drawing, layout, scan-out, GPU helper and JPEG encoder |
 | `ui/lifecycle.rs`, `ui/lifecycle/` | lifecycle polls, watchdog, measurement worker and generic job worker |

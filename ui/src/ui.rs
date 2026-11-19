@@ -3,6 +3,10 @@
 
 //! Layout, rendering, menus and input handling of the OOS scope screen (1024 x 600).
 
+#[cfg(test)]
+use crate::picture::deposit::standard::fast_deposit;
+use crate::picture::deposit::standard::{add_frame_band, fast_plan};
+
 use crate::board::{board, Board};
 use crate::font::{Font, Fonts};
 use crate::gfx::*;
@@ -3385,11 +3389,8 @@ impl Ui {
         let mut trig = 0;
         for (p, f) in placed.iter().zip(&frames) {
             trig += p.triggered as usize;
-            if let FastPlan::Raw { class: Some(k), off, .. } = p.plan {
-                self.fast_edges[k] += 1;
-                if k == 2 {
-                    self.fast_off = (self.fast_off.0 + off, self.fast_off.1.max(off));
-                }
+            if let Some(outcome) = p.plan.outcome() {
+                crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off }.record(outcome);
             }
             // as the deposit workers (`framestats::fold_frame`): nothing of live-compression pairs (the raw newest
             // frame of the batch counts), of other min/max pairs only what pairs give (Max, Min, Pk-pk)
@@ -3399,7 +3400,7 @@ impl Ui {
                     if f.envelope && crate::framestats::needs_samples(k) {
                         continue;
                     }
-                    if let Some(v) = p.fold[c].and_then(|f| f.get(k)).filter(|v| v.is_finite()) {
+                    if let Some(v) = p.plan.fold(c).and_then(|f| f.get(k)).filter(|v| v.is_finite()) {
                         self.mstat[i].add(v);
                     }
                 }
@@ -3407,7 +3408,6 @@ impl Ui {
         }
         // the maps: each channel's frames collected as differences (`fastdraw::diff_span`), in bands of columns so one
         // channel alone also spreads over the cores, then summed into the map once
-        let m = &self.m;
         let on: Vec<usize> = (0..NCH).filter(|&c| m.ch[c].on).collect();
         for &c in &on {
             if self.acc_t[c].len() != w * (h + 1) {
@@ -3425,17 +3425,13 @@ impl Ui {
         }
         crate::fastdraw::par_each(jobs, |(c, c_lo, band)| {
             for (f, p) in frames.iter().zip(&placed) {
-                fast_deposit_t(m, w, h, c, band, c_lo, f, &p.plan);
+                add_frame_band(c, band, c_lo, f, &p.plan);
             }
         });
         // the rows the frames touched, per channel: only those are added (a trace covers a part of the height)
         let rows: [(usize, usize); NCH] = std::array::from_fn(|c| {
             placed.iter().fold((usize::MAX, 0), |(a, b), p| {
-                let (x, y) = match &p.plan {
-                    FastPlan::Raw { spans, .. } => spans[c].as_ref().map_or((0, h), crate::fastdraw::span_rows),
-                    // a screen record: its points' rows (a segment between two points stays between them)
-                    FastPlan::Rec(rec) => rec_rows(m, h, c, &rec.ch[c]),
-                };
+                let (x, y) = p.plan.rows(c);
                 (a.min(x), b.max(y))
             })
         });
@@ -9622,229 +9618,6 @@ fn fast_take_next(take: f32, n: usize, ms: f32, budget: f32) -> f32 {
     }
 }
 
-/// What the fast display path does with one frame (`fast_plan`).
-pub enum FastPlan {
-    /// sparse views (fewer than 2 samples a column), envelopes, roll and scan: a screen record, drawn as a trace
-    /// (made here, so the interpolation is spread over the frames, not the channels)
-    Rec(crate::wave::Record),
-    /// dense views: the raw samples with the trigger at sample `ti`; `class`: the `Ui::fast_edges` index (None: the
-    /// source is an LA line), `off`: how far the edge was from the hardware point (class 2); per channel the columns'
-    /// spans (None: dots, drawn sample by sample)
-    Raw { ti: f64, class: Option<usize>, off: f64, spans: [Option<crate::fastdraw::Spans>; NCH] },
-}
-
-/// One frame placed by `fast_plan`: how to draw it, whether it counts as triggered (false if its trigger edge was not
-/// found near the hardware trigger point), and per channel the voltage values of the statistics (where wanted).
-pub struct FastFrame {
-    pub plan: FastPlan,
-    pub triggered: bool,
-    pub fold: [Option<crate::fastdraw::Fold>; NCH],
-}
-
-/// Where channel `c` of a dense frame lands on the `w` x `h` map with the trigger at sample `ti`.
-fn raw_map(m: &Model, w: usize, h: usize, c: usize, f: &crate::board::Frame, ti: f64) -> crate::fastdraw::Map {
-    let ch = &m.ch[c];
-    let tdiv = m.time_per_div() as f64;
-    let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    let x0 = w as f64 / 2.0 - m.delay as f64 / tdiv * w as f64 / HDIV as f64;
-    let ppd_y = h as f32 / VDIV;
-    let vpd = ch.volts_per_div();
-    crate::fastdraw::Map {
-        ti,
-        x_per_sample,
-        x0,
-        y_per_volt: -ppd_y / vpd,
-        y0: h as f32 / 2.0 - ch.offset / vpd * ppd_y,
-    }
-}
-
-/// One frame of the fast path placed on the screen (`w` x `h` map): the trigger, the columns of a dense frame or the
-/// screen record of a sparse one, and the statistics of the channels in `fold`. Touches nothing but the frame, so the
-/// frames of a batch are placed on several cores; this is where most of the work is.
-pub fn fast_plan(
-    m: &Model,
-    w: usize,
-    h: usize,
-    f: &std::sync::Arc<crate::board::Frame>,
-    fold: [bool; NCH],
-) -> FastFrame {
-    let tdiv = m.time_per_div() as f64;
-    let window = tdiv * HDIV as f64;
-    let t_first = m.delay as f64 - window / 2.0;
-    let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
-        // the record's 3600 points: fewer thin out the picture of a fast signal (at 8 samples a period, two points a
-        // column lit a fifth fewer pixels than 3600, and those a sixth fewer than a nearly continuous curve)
-        let rec = crate::board::to_record(f, m, 3600, window, t_first);
-        // the statistics on the screen record, as the measurements of a sparse record
-        let fold = std::array::from_fn(|c| (fold[c] && m.ch[c].on).then(|| crate::fastdraw::Fold::of(&rec.ch[c])));
-        let triggered = rec.triggered;
-        return FastFrame { plan: FastPlan::Rec(rec), triggered, fold };
-    }
-    let src = &f.ch[m.trig_src];
-    // an LA line as the source: the hardware trigger point stands, the analog samples cannot refine it
-    let on_la = m.trig_on_la();
-    // the edge of the set direction nearest the hardware trigger point, up to half a screen away, on the signal smoothed
-    // to one screen column: at decimated rates the hardware point lands near the level on either edge (trigger.md 8)
-    let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
-    let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
-    let half = (window / 2.0 / f.dt) as usize;
-    let col = (1.0 / x_per_sample).floor().clamp(1.0, 256.0) as usize;
-    let (edge, class, off) = if on_la {
-        (None, None, 0.0)
-    } else {
-        let (e, any) = crate::fastdraw::edge_smooth(
-            src,
-            f.pre,
-            crate::board::sw_trig_level(m, f),
-            hyst,
-            rising,
-            either,
-            half,
-            col,
-            |_| true,
-        );
-        let (k, d) = match (e, any) {
-            (None, _) => (3, 0.0),
-            (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => (0, 0.0),
-            (Some(_), Some(n)) if !either && n.rising != rising => (1, 0.0),
-            (Some(t), _) => (2, (t - f.pre as f64).abs()),
-        };
-        (e, Some(k), d)
-    };
-    let ti = edge.unwrap_or(f.pre as f64);
-    let used = |c: usize| m.ch[c].on && !f.ch[c].is_empty();
-    let spans = std::array::from_fn(|c| {
-        (used(c) && !m.dots_at(x_per_sample))
-            .then(|| crate::fastdraw::spans(w, h, &f.ch[c], &raw_map(m, w, h, c, f, ti)))
-    });
-    // the statistics on the samples of the screen window, as the measurements of a dense record
-    let fold = std::array::from_fn(|c| {
-        (fold[c] && used(c)).then(|| {
-            let v = &f.ch[c];
-            let i0 = ((ti + t_first / f.dt).floor().max(0.0) as usize).min(v.len());
-            let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(v.len());
-            crate::fastdraw::Fold::of(&v[i0..i1.max(i0)])
-        })
-    });
-    // a filtered trigger path (coupling): the hardware point stands where the samples show no crossing
-    let triggered = edge.is_some() || on_la || m.trig_coupling() != TrigCoup::Dc;
-    FastFrame { plan: FastPlan::Raw { ti, class, off, spans }, triggered, fold }
-}
-
-/// The rows (first, last + 1) the points `v` of channel `c` of a screen record fall on, within a map `h` high.
-fn rec_rows(m: &Model, h: usize, c: usize, v: &[f32]) -> (usize, usize) {
-    let ch = &m.ch[c];
-    let (vpd, ppd_y) = (ch.volts_per_div(), h as f32 / VDIV);
-    let (lo, hi) =
-        v.iter().filter(|x| x.is_finite()).fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
-    if lo > hi {
-        return (usize::MAX, 0);
-    }
-    let y = |val: f32| h as f32 / 2.0 - (val + ch.offset) / vpd * ppd_y;
-    // rounded as `wave::trace_columns`, one row of slack each side
-    let (a, b) = (y(hi).round() - 1.0, y(lo).round() + 1.0);
-    (a.max(0.0) as usize, (b.max(-1.0) + 1.0).min(h as f32) as usize)
-}
-
-/// Channel `c` of a placed frame into a band of its collected differences (`fastdraw::diff_span`): the columns
-/// `c_lo ..` of a map `w` x `h`, `h + 1` rows of them.
-#[allow(clippy::too_many_arguments)]
-pub fn fast_deposit_t(
-    m: &Model,
-    w: usize,
-    h: usize,
-    c: usize,
-    band: &mut [u16],
-    c_lo: usize,
-    f: &crate::board::Frame,
-    p: &FastPlan,
-) {
-    if !m.ch[c].on {
-        return;
-    }
-    match p {
-        FastPlan::Rec(rec) => {
-            if !rec.ch[c].is_empty() {
-                let bw = band.len() / (h + 1);
-                let c_hi = (c_lo + bw) as i32;
-                crate::wave::trace_columns(
-                    w,
-                    h,
-                    c,
-                    m,
-                    (m.time_per_div(), m.delay),
-                    rec.t0,
-                    rec.dt,
-                    &rec.ch[c],
-                    24,
-                    None,
-                    rec.pairs,
-                    (c_lo as i32, c_hi),
-                    |cx, r0, r1, wt| {
-                        crate::fastdraw::diff_span(band, bw, cx as usize - c_lo, r0 as usize, r1 as usize, wt);
-                    },
-                );
-            }
-        }
-        FastPlan::Raw { ti, spans, .. } => match &spans[c] {
-            Some(s) => crate::fastdraw::add_spans_t(band, h, c_lo, s, 24),
-            None if !f.ch[c].is_empty() => {
-                crate::fastdraw::deposit_dots_t(band, h, c_lo, &f.ch[c], &raw_map(m, w, h, c, f, *ti), 24)
-            }
-            None => {}
-        },
-    }
-}
-
-/// Channel `c` of a placed frame into the rows `r_lo` .. `r_lo + band.len() / w` of that channel's map (`w` x `h`),
-/// held in `band` (the whole map: `r_lo` 0): one frame after the other straight into the row-major map, the tests'
-/// reference for the fast path's drawing.
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-pub fn fast_deposit(
-    m: &Model,
-    w: usize,
-    h: usize,
-    c: usize,
-    band: &mut [u16],
-    r_lo: usize,
-    f: &crate::board::Frame,
-    p: &FastPlan,
-) {
-    if !m.ch[c].on {
-        return;
-    }
-    match p {
-        FastPlan::Rec(rec) => {
-            if !rec.ch[c].is_empty() {
-                crate::wave::draw_trace(
-                    band,
-                    w,
-                    h,
-                    r_lo,
-                    c,
-                    m,
-                    (m.time_per_div(), m.delay),
-                    rec.t0,
-                    rec.dt,
-                    &rec.ch[c],
-                    24,
-                    None,
-                    rec.pairs,
-                );
-            }
-        }
-        FastPlan::Raw { ti, spans, .. } => match &spans[c] {
-            Some(s) => crate::fastdraw::add_spans(band, w, r_lo, s, 24),
-            None if !f.ch[c].is_empty() => {
-                crate::fastdraw::deposit_dots_band(band, w, r_lo, h, &f.ch[c], &raw_map(m, w, h, c, f, *ti), 24)
-            }
-            None => {}
-        },
-    }
-}
-
 /// The count a trace pixel is graded against (full brightness), from the brightest pixel `mx` of the picture. It
 /// follows a higher `mx` at once and a lower one slowly (`prev`, no flicker). Minimum persistence (`frames` > 0, the
 /// frames in the picture): the picture holds as many frames as arrived since the last screen refresh, in batches, so
@@ -11898,7 +11671,7 @@ mod tests {
                 let f = std::sync::Arc::new(f.clone());
                 let p = fast_plan(&ui.m, w, h, &f, [false; NCH]);
                 for c in 0..NCH {
-                    fast_deposit(&ui.m, w, h, c, &mut want.map[c], 0, &f, &p.plan);
+                    fast_deposit(c, &mut want.map[c], 0, &f, &p.plan);
                 }
             }
             ui.ph.clear();
@@ -11976,7 +11749,7 @@ mod tests {
                 for f in &frames {
                     let f = std::sync::Arc::new(f.clone());
                     let p = fast_plan(&ui.m, w, h, &f, [false; NCH]);
-                    fast_deposit(&ui.m, w, h, 0, &mut want, 0, &f, &p.plan);
+                    fast_deposit(0, &mut want, 0, &f, &p.plan);
                 }
                 ui.ph.clear();
                 ui.fast_draw_all(frames.into_iter().map(std::sync::Arc::new).collect());
@@ -12049,7 +11822,7 @@ mod tests {
         );
         // a frame's fold gives the values of the measurements on the same samples
         let f = frame(7);
-        let fo = crate::fastdraw::Fold::of(&f.ch[0][1000..9000]);
+        let fo = crate::fastdraw::Fold::of(f.ch[0].as_slice(), 1000..9000);
         let an = oos_dsp::measure::analyze(&f.ch[0][1000..9000], dt);
         for k in [Meas::Vmax, Meas::Vmin, Meas::Vpp, Meas::Vavg, Meas::Vrms, Meas::StdDev, Meas::VrmsAc] {
             let (a, b) = (fo.get(k).unwrap(), an.get(k));

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use super::RowBand;
 use crate::model::NCH;
 use std::ops::Range;
 use std::sync::{Arc, OnceLock};
@@ -12,21 +13,37 @@ pub(crate) struct Stamp {
     channel: usize,
 }
 
-/// Workers never publish their maps. Allocate and maintain history only after a GPU consumer first asks for it.
+/// Channel edits feed picture publication and, once a GPU consumer asks, retained upload history.
 pub(super) struct Dirty {
     height: usize,
+    pending: RowBand,
     revisions: OnceLock<Revisions>,
 }
 
 impl Dirty {
     pub(super) fn new(height: usize) -> Self {
-        Self { height, revisions: OnceLock::new() }
+        Self { height, pending: RowBand::empty(), revisions: OnceLock::new() }
     }
 
     #[inline]
     pub(super) fn mark(&mut self, channel: usize, rows: Range<usize>) {
+        let rows = rows.start.min(self.height)..rows.end.min(self.height);
+        self.pending.include(rows.clone());
         if let Some(revisions) = self.revisions.get_mut() {
             revisions.mark(channel, rows);
+        }
+    }
+
+    pub(super) fn publish(&mut self) -> Range<usize> {
+        std::mem::replace(&mut self.pending, RowBand::empty()).into_range()
+    }
+
+    /// Storage changes invalidate consumers even when the logical counts are preserved.
+    pub(super) fn invalidate(&mut self) {
+        if let Some(revisions) = self.revisions.get_mut() {
+            for c in 0..NCH {
+                revisions.mark(c, 0..self.height);
+            }
         }
     }
 
@@ -47,8 +64,6 @@ impl Revisions {
     }
 
     fn mark(&mut self, channel: usize, rows: Range<usize>) {
-        let height = self.rows[channel].len();
-        let rows = rows.start.min(height)..rows.end.min(height);
         if rows.is_empty() {
             return;
         }

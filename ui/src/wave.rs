@@ -4,17 +4,14 @@
 //! Waveform sources (demo generator, replay of a captured frame), phosphor (hit-count) maps, measurements.
 //! The live FPGA source (oos-fpgad, Phase 4) will plug in as another `Source`.
 
-mod phosphor;
+pub(crate) mod phosphor;
 pub use phosphor::Phosphor;
 mod hw_queue;
 
 use crate::board::{board, Board};
 use crate::model::*;
 
-pub(crate) mod dirty;
 mod hw_reads;
-mod rows;
-pub(crate) use rows::RowBand;
 
 pub struct Rng(u64);
 impl Rng {

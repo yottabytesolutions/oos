@@ -40,10 +40,6 @@ pub(crate) fn draw_frame_reusing(
         return placed.triggered;
     }
     for c in 0..NCH {
-        if projection.ch[c].is_some() {
-            let (first, end) = placed.plan.rows(c);
-            ph.touch(first..end);
-        }
         if let Some(spans) = &trace.spans[c] {
             ph.edit_channel(c, |map| {
                 crate::picture::deposit::kernel::paint_spans(map, w, 0, spans, 24);

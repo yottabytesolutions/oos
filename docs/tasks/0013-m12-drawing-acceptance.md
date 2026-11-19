@@ -221,6 +221,15 @@ Keep the upload implementation and funded-plan parent unchanged. With the correc
 run focused upload, deposit, reader and allocation regressions in debug and optimized profiles plus the normal
 fast gate. Record exact source receipts; defer full host and timing suites to the subsequent exact F2 restack.
 
+PR #221 corrected funded-F2 validation: reserve this task for exact-tree host evidence.
+The runner completed the unchanged eight-topic upload replay on corrected F2
+`bbece988a741098d6994019d03a8bc67fdecc99b`; validate head
+`f16b588f0bc85fd4d928536d7570664adfaa6da5` without changing either implementation.
+Freeze the file manifest, source receipt and exact refs before the fast and bare full host gates.
+Inspect all 23 normal stage results, complete UI suites, ordinary goldens and shipping guards;
+retain each original 1% and temporary 2% counter observation and both six-region allocation censuses.
+Record actual production LOC against corrected F2 and protected main. No scope access or hold changes.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -239,6 +248,59 @@ fast gate. Record exact source receipts; defer full host and timing suites to th
   The fast gate and Clippy passed. Nextest passed 1,839 debug and 1,838 optimized UI tests, with 62 skips in
   each profile. Shared-process test runs failed the wide-dot drop-counter assertion in both profiles.
   The production delta is +158 UI Rust lines. DHO804 acceptance remains open.
+
+- 2026-11-19: PR #221 corrected funded-F2 host validation qualifies source head
+  `f16b588f0bc85fd4d928536d7570664adfaa6da5` on exact F2
+  `bbece988a741098d6994019d03a8bc67fdecc99b`, against protected main
+  `dd5bb013b11714668345683b32ca1927e6a8a810`. The eight upload topics compare unchanged with the prior
+  transfer stack, and golden references are identical to corrected F2. This job changes this task only.
+  Fast printed `partial gate passed (not done): 12 steps in 8 s` (exit 0). The single bare
+  `cargo xtask check` printed `gate passed (default): 23 steps in 646 s` (exit 0), under the ordinary
+  profile with no ambient-idle prerequisite or timing/selection overrides. All 23 results were inspected:
+  fmt, size, architecture, mutable-statics, unsafe, method-exceptions, known-failures, agent-rules,
+  test-time, links, text, protected-storage, doctor-base, clippy, plan-matrix, decoders, tests-debug,
+  tests-release, perf-build, perf, coverage, script-syntax and python-tests passed. No ratchet change was needed.
+  Complete UI suites passed 1,864 debug and 1,863 optimized tests, with 64 existing skips per profile.
+  Normal golden comparisons and the optimized composed soak passed. Extended image/unit selections were not
+  requested. UI coverage was 90.4% against the unchanged 86.2% floor; every crate met its coverage floor.
+  Host/ARM Clippy and all 65 synthetic register plans passed. The shipping UI run passed all 30 guards.
+  STOP/resume reservation cancellation, counted Standard redraw, direct newest-waveform reuse, whole-B staged
+  funding, original final-reader lifetimes, tap/Shared fallback ordering, frozen routes, current route labels,
+  three-deposit and per-channel boundaries all passed in the complete debug and optimized suites.
+  The existing upload regressions passed for separate-band row hulls, cleared gaps/full clears, skipped narrow/wide
+  consumers, true narrow Dots, indexed wide counts and no-op frames. Both explicit observer censuses passed:
+  prepare_keys, compare, finish_capture, stage, live_normalize and consumers each made 256 calls with zero
+  caller-thread allocations. Process-wide accounting and all census assertions remain unchanged.
+  Every counter workload passed both the original 1% best-wall target and temporary 2% limit:
+
+  | Channels | Time/div | Reference / counted best (ns) | Ratio | 1% | 2% |
+  |---|---|---|---|---|---|
+  | 1 | 1 us | 2,283,559 / 2,288,309 | 1.002080086 | pass | pass |
+  | 1 | 10 us | 8,360,140 / 8,339,606 | 0.997543821 | pass | pass |
+  | 2 | 1 us | 3,057,041 / 3,053,437 | 0.998821082 | pass | pass |
+  | 2 | 10 us | 6,999,140 / 7,027,955 | 1.004116934 | pass | pass |
+  | 4 | 1 us | 3,891,559 / 3,902,114 | 1.002712281 | pass | pass |
+  | 4 | 10 us | 6,176,710 / 6,168,575 | 0.998682956 | pass | pass |
+
+  Counter p99 CPU passed the unchanged 1.515 limit for all six rows. Step-p99, CPU and every other timing
+  threshold are unchanged. No unrelated builds were launched before the timing stage finished.
+  Actual production code is 111,084 lines, including 74,500 UI Rust lines: +262 against corrected F2
+  (110,822 total; 74,238 UI), +3,073 against protected main (108,011 total; 71,427 UI), zero elsewhere.
+  This evidence update adds zero production lines. Every command retained exact head/base and a complete file
+  manifest; manifests and source receipts matched before/after. The build-input SHA-256 remained
+  `e0ff2aae018f638a04206158114b21c2d088beafe7d0d3bcdabf7274385abde7` throughout.
+  Evidence: `target/corrected-upload/fast.log`, `target/corrected-upload/full.log`,
+  `target/corrected-upload/full-steps.log`, `target/corrected-upload/perf-guard.log`,
+  `target/corrected-upload/perf-guard-step.log`, `target/corrected-upload/counter-results.json`,
+  `target/corrected-upload/census-debug.log`, `target/corrected-upload/census-optimized.log`,
+  `target/corrected-upload/loc-f2.log`, `target/corrected-upload/loc-main.log`,
+  `target/corrected-upload/contract-results.json`, `target/corrected-upload/upload-range-diff.txt`,
+  `target/corrected-upload/receipts.json` and per-command `*-manifest.json` in that directory.
+  Complete gate subprocess logs are in `target/check-logs/43889-1795065034482276000/`.
+  Evidence documentation was updated after the builds; production/build inputs were not edited.
+  Independent review, exact-candidate publication, image qualification and coordinator/owner hardware acceptance
+  remain open. A newer F2 head requires another exact replay and validation. Host only; no scope access,
+  combined unit round, tag, release or hold change is authorized here.
 
 - 2026-11-19: PR #221 funded-F2 transfer checkpoint has no active rebase or unresolved paths. Exact source head
   `75ff5031d2bb10a8a88b178559feea0974233398` has immediate parent

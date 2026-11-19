@@ -77,6 +77,9 @@ impl Phosphor {
                 self.map = std::array::from_fn(|_| vec![0; self.w * self.h]);
             }
         }
+        for c in 0..NCH {
+            self.uploads.mark(c, 0..self.h);
+        }
     }
 
     pub(crate) fn wide_map_mut(&mut self, c: usize) -> &mut [u32] {
@@ -104,9 +107,6 @@ impl Phosphor {
     pub fn clear(&mut self) {
         if self.is_wide() {
             self.set_format(crate::picture::deposit::count::CountFormat::Narrow);
-            for c in 0..NCH {
-                self.uploads.mark(c, 0..self.h);
-            }
         }
         self.clear_counts();
     }
@@ -229,6 +229,11 @@ impl Phosphor {
     /// Edits one channel; the closure returns the range of rows it changed.
     pub(crate) fn edit_channel(&mut self, channel: usize, apply: impl FnOnce(&mut [u16]) -> Range<usize>) {
         let rows = apply(&mut self.map[channel]);
+        self.mark_rows(channel, rows);
+    }
+
+    pub(crate) fn edit_wide_channel(&mut self, channel: usize, apply: impl FnOnce(&mut [u32]) -> Range<usize>) {
+        let rows = apply(self.wide_map_mut(channel));
         self.mark_rows(channel, rows);
     }
 

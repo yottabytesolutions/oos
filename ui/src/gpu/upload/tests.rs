@@ -179,3 +179,54 @@ fn new_moved_resized_and_reordered_blocks_initialize_every_row() {
         0..8
     );
 }
+
+#[test]
+fn count_sources_use_narrow_revisions_and_preserve_wide_indices() {
+    let mut ph = Phosphor::new(2, 8);
+    ph.edit_channel(0, |map| {
+        map[4] = 24;
+        2..3
+    });
+    let mut arena = vec![0; 32];
+    let (block, _) = Block::publish(0, &mut arena, UploadData::counts(&ph, 0, &[]), None);
+    assert!(block.stamp.is_some());
+    ph.set_format(crate::picture::deposit::count::CountFormat::Wide);
+    ph.wide_map_mut(0)[12] = 70_000;
+    let mut encoded = vec![0; 16];
+    encoded[12] = 2047;
+    let (block, rows) = Block::publish(0, &mut arena, UploadData::counts(&ph, 0, &encoded), Some(&block));
+    assert!(block.stamp.is_none());
+    assert_eq!(rows, 2..7);
+    assert_eq!(arena, super::super::bytes(encoded.as_slice()));
+    assert_eq!(Block::publish(0, &mut arena, UploadData::counts(&ph, 0, &encoded), Some(&block)).1, 0..0);
+    ph.clear();
+    assert_eq!(Block::publish(0, &mut arena, UploadData::counts(&ph, 0, &[]), Some(&block)).1, 0..8);
+    assert!(arena.iter().all(|&v| v == 0));
+}
+
+#[test]
+fn a_monitor_skipping_wide_pictures_clears_its_old_narrow_rows() {
+    use crate::picture::deposit::count::CountFormat;
+    let mut ph = Phosphor::new(2, 16);
+    ph.edit_channel(0, |map| {
+        map[4] = 24;
+        2..3
+    });
+    let mut arena = vec![0; 64];
+    let (block, _) = Block::publish(0, &mut arena, UploadData::counts(&ph, 0, &[]), None);
+    ph.set_format(CountFormat::Wide);
+    ph.clear_counts();
+    ph.edit_wide_channel(0, |map| {
+        map[24] = 70_000;
+        12..13
+    });
+    ph.clear_counts();
+    ph.set_format(CountFormat::Narrow);
+    ph.edit_channel(0, |map| {
+        map[16] = 24;
+        8..9
+    });
+    let (_, rows) = Block::publish(0, &mut arena, UploadData::counts(&ph, 0, &[]), Some(&block));
+    assert_eq!(rows, 0..16, "storage changes invalidate a skipped consumer's old narrow stamp");
+    assert_eq!(arena, super::super::bytes(ph.maps()[0].as_slice()));
+}

@@ -2895,12 +2895,6 @@ impl Ui {
             let mut window_frames = None;
             if fast {
                 let f = step_draw::fast(self, &sw, &mut clear_pending, window_now, &mut composition, &mut draw);
-                // Owned deposit bands still fold directly into the base picture storage.
-                if composition.merged > 0 {
-                    for c in 0..NCH {
-                        self.ph.mark_rows(c, 0..self.ph.h);
-                    }
-                }
                 (got, td, window_frames, raw_rec) = (f.frames, f.ms, f.window_frames, f.raw);
             }
             let mut received_record = false;

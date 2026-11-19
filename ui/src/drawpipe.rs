@@ -372,11 +372,7 @@ impl Pipe {
                     ph.set_format(deposit.format());
                 }
                 for band in &mut deposit.planes {
-                    if ph.is_wide() {
-                        band.fold_picture([None, None], ph);
-                    } else {
-                        ph.edit_channel(band.channel, |map| band.fold(map));
-                    }
+                    band.fold_picture([None, None], ph);
                 }
             }
             self.slot.recycle(deposit);

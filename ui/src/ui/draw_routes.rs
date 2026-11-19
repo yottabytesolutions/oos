@@ -532,3 +532,28 @@ fn consumed_waveform_redraws_only_if_its_private_deposit_becomes_stale() {
         assert_eq!((route.ui.wfm_total, route.ui.history.len()), (2, 2));
     }
 }
+
+#[test]
+fn batch_steps_keep_narrow_uploads_and_idle_pictures_need_no_upload() {
+    for channels in [1, 2, 4] {
+        for dots in [DotsMode::Off, DotsMode::On] {
+            let _scope = Scope::new();
+            let mut route = Route::new(BatchKind::Codes, true, channels, 1e-6);
+            route.ui.m.dots = dots;
+            route.step(1);
+            let stamps: [_; NCH] = std::array::from_fn(|c| route.ui.ph.upload_rows(c, None).0);
+            route.step(1);
+            assert!(!route.ui.ph.is_wide());
+            for (c, stamp) in stamps.iter().enumerate() {
+                let rows = route.ui.ph.upload_rows(c, Some(stamp)).1;
+                assert_eq!(rows.is_empty(), c >= channels);
+                assert!(rows.len() < route.ui.ph.h, "ordinary Batch steps keep their narrow hull");
+            }
+            let stamps: [_; NCH] = std::array::from_fn(|c| route.ui.ph.upload_rows(c, None).0);
+            route.ui.step(0.0);
+            for (c, stamp) in stamps.iter().enumerate() {
+                assert!(route.ui.ph.upload_rows(c, Some(stamp)).1.is_empty());
+            }
+        }
+    }
+}

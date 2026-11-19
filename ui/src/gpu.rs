@@ -220,7 +220,7 @@ mod imp {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
-    use upload::UploadData::{self as Source, Channel, Pixels};
+    use upload::UploadData::{self as Source, Pixels};
 
     pub struct Gpu {
         child: std::process::Child,
@@ -552,12 +552,7 @@ mod imp {
                     };
                     for c in 0..NCH {
                         if job.show[c] && !q.reuse {
-                            let source = if ph.is_wide() {
-                                Pixels { bytes: bytes(job.count_map(ph, c)), row_bytes: ph.w * 2 }
-                            } else {
-                                Channel { phosphor: ph, channel: c }
-                            };
-                            let (o, y0, y1) = put(source, &mut blocks)?;
+                            let (o, y0, y1) = put(Source::counts(ph, c, job.count_map(ph, c)), &mut blocks)?;
                             (j.map_off[c], j.map_y0[c], j.map_y1[c]) = (o, y0, y1);
                         } else if job.show[c] {
                             j.map_off[c] = 0;

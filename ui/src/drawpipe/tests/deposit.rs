@@ -301,46 +301,59 @@ fn single_oversized_dot_submission_returns_its_slot_and_accounts_every_record() 
 
 #[test]
 fn whole_deposits_publish_changed_rows_to_independent_gpu_consumers() {
-    let (w, h) = (97, 48);
-    for dots in [false, true] {
-        let mut m = model(1e-6, false, dots);
-        for channel in &mut m.ch {
-            channel.on = true;
-        }
-        let pipe = Pipe::start(4, 0, fresh());
-        pipe.set_view(Some(&m), w, h, Interp::Exact);
-        let mut picture = Phosphor::new(w, h);
-        let initial: [_; NCH] = std::array::from_fn(|c| picture.upload_rows(c, None).0);
-        let mut panel = initial.clone();
-        let mut panel_maps = picture.maps().clone();
-        let mut monitor_maps = panel_maps.clone();
-        for (step, level) in [-0.5, 0.5].into_iter().enumerate() {
-            let (bytes, fb, s, p) = frames_of(15, 12_512, 3, &|_, c, _| level + c as f64 * 0.1);
-            pipe.feed(Box::new(Bytes(bytes)), fb, 3, 0, dec(&s, &p));
-            drop(recycled(&pipe));
-            let accepted = pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0));
-            assert_eq!(accepted.frames, 3);
-            for c in 0..NCH {
-                let (stamp, rows) = picture.upload_rows(c, Some(&panel[c]));
-                assert!(!rows.is_empty(), "channel {c}, dots={dots}, step={step}");
-                if dots {
-                    assert_eq!(rows, 0..h, "the existing dots plane uses the full-upload fallback");
-                } else {
-                    assert!(rows.len() < h, "flat spans retain a narrow upload band");
-                }
-                let range = rows.start * w..rows.end * w;
-                panel_maps[c][range.clone()].copy_from_slice(&picture.maps()[c][range]);
-                panel[c] = stamp;
-                if step == 1 {
-                    let (_, rows) = picture.upload_rows(c, Some(&initial[c]));
-                    let range = rows.start * w..rows.end * w;
-                    monitor_maps[c][range.clone()].copy_from_slice(&picture.maps()[c][range]);
-                }
+    for channels in [1, 2, 4] {
+        for dots in [false, true] {
+            for tdiv in [1e-6, 1e-8] {
+                check_upload_rows(channels, dots, tdiv);
             }
-            assert_eq!(&panel_maps, picture.maps(), "cleared and newly deposited rows must both reach the panel");
         }
-        assert_eq!(&monitor_maps, picture.maps(), "a skipped monitor frame retains every intervening row change");
-        assert_eq!(pipe.counters.deposited.load(Ordering::Relaxed), 6);
-        assert_eq!(pipe.counters.read().2, 0);
     }
+}
+
+fn check_upload_rows(channels: usize, dots: bool, tdiv: f64) {
+    let (w, h) = (97, 48);
+    let mut m = model(tdiv, false, dots);
+    for (c, channel) in m.ch.iter_mut().enumerate() {
+        channel.on = c < channels;
+    }
+    let pipe = Pipe::start(4, 0, fresh());
+    pipe.set_view(Some(&m), w, h, Interp::Exact);
+    let mut picture = Phosphor::new(w, h);
+    let initial: [_; NCH] = std::array::from_fn(|c| picture.upload_rows(c, None).0);
+    let mut panel = initial.clone();
+    let mut panel_maps = picture.maps().clone();
+    let mut monitor_maps = panel_maps.clone();
+    for (step, level) in [-0.5, 0.5].into_iter().enumerate() {
+        let (bytes, fb, s, p) = frames_of((1 << channels) - 1, 12_512, 3, &|_, c, _| level + c as f64 * 0.1);
+        pipe.feed(Box::new(Bytes(bytes)), fb, 3, 0, dec(&s, &p));
+        drop(recycled(&pipe));
+        let accepted = pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0));
+        assert_eq!(accepted.frames, 3);
+        for c in 0..NCH {
+            let (stamp, rows) = picture.upload_rows(c, Some(&panel[c]));
+            if c >= channels {
+                assert!(rows.is_empty(), "disabled channels need no upload");
+                continue;
+            }
+            assert!(!rows.is_empty(), "channel {c}, dots={dots}, step={step}");
+            assert!(!picture.is_wide(), "this fixture must exercise ordinary narrow storage");
+            assert!(rows.len() < h, "flat traces retain a narrow upload band, dots={dots}");
+            let range = rows.start * w..rows.end * w;
+            panel_maps[c][range.clone()].copy_from_slice(&picture.maps()[c][range]);
+            panel[c] = stamp;
+            if step == 1 {
+                let (_, rows) = picture.upload_rows(c, Some(&initial[c]));
+                let range = rows.start * w..rows.end * w;
+                monitor_maps[c][range.clone()].copy_from_slice(&picture.maps()[c][range]);
+            }
+        }
+        assert_eq!(&panel_maps, picture.maps(), "cleared and newly deposited rows must both reach the panel");
+    }
+    assert_eq!(&monitor_maps, picture.maps(), "a skipped monitor frame retains every intervening row change");
+    assert_eq!(pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
+    for (c, stamp) in panel.iter().enumerate() {
+        assert!(picture.upload_rows(c, Some(stamp)).1.is_empty(), "unchanged pictures need no upload");
+    }
+    assert_eq!(pipe.counters.deposited.load(Ordering::Relaxed), 6);
+    assert_eq!(pipe.counters.read().2, 0);
 }

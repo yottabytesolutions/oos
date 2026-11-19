@@ -8,7 +8,15 @@ pub(super) enum UploadData<'a> {
     Channel { phosphor: &'a Phosphor, channel: usize },
 }
 
-impl UploadData<'_> {
+impl<'a> UploadData<'a> {
+    pub(super) fn counts(phosphor: &'a Phosphor, channel: usize, encoded: &'a [u16]) -> Self {
+        if phosphor.is_wide() {
+            Self::Pixels { bytes: super::bytes(encoded), row_bytes: phosphor.w * 2 }
+        } else {
+            Self::Channel { phosphor, channel }
+        }
+    }
+
     pub(super) fn bytes(&self) -> &[u8] {
         match self {
             Self::Pixels { bytes, .. } => bytes,

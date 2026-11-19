@@ -83,14 +83,15 @@ impl DiffBand {
     }
 
     pub(crate) fn paint(&mut self, samples: super::kernel::SamplesRef<'_>, plan: &super::standard::FastPlan) {
-        match &mut self.wide {
+        let rows = match &mut self.wide {
             Some((diff, _)) => super::standard::add_sample_band(self.channel, diff, self.first, samples, plan),
             None => super::standard::add_sample_band(self.channel, &mut self.plane.d, self.first, samples, plan),
-        }
+        };
+        self.touch(rows);
     }
 
     pub(crate) fn fold_picture(&mut self, prior: [Option<&Self>; 2], ph: &mut crate::wave::Phosphor) {
-        let painted = match &mut self.wide {
+        match &mut self.wide {
             Some((diff, run)) => {
                 let mut touched = self.plane.touched.clone();
                 let diffs = prior.map(|band| {
@@ -99,34 +100,34 @@ impl DiffBand {
                         b.wide.as_ref().expect("window formats match").0.as_slice()
                     })
                 });
-                fold_window(
-                    diff,
-                    diffs,
-                    run,
-                    ph.wide_map_mut(self.channel),
-                    (self.picture_cols, self.plane.rows, self.first),
-                    touched,
-                )
+                ph.edit_wide_channel(self.channel, |map| {
+                    fold_window(diff, diffs, run, map, (self.picture_cols, self.plane.rows, self.first), touched)
+                });
             }
             None if ph.is_wide() => {
                 assert!(prior.iter().all(Option::is_none), "mixed window formats are evicted before folding");
-                fold_window(
-                    &self.plane.d,
-                    [None, None],
-                    &mut self.run,
-                    ph.wide_map_mut(self.channel),
-                    (self.picture_cols, self.plane.rows, self.first),
-                    self.plane.touched.clone(),
-                )
+                ph.edit_wide_channel(self.channel, |map| {
+                    fold_window(
+                        &self.plane.d,
+                        [None, None],
+                        &mut self.run,
+                        map,
+                        (self.picture_cols, self.plane.rows, self.first),
+                        self.plane.touched.clone(),
+                    )
+                });
             }
-            None if prior.iter().all(Option::is_none) => self.fold(&mut ph.map[self.channel]),
-            None => self.fold_window(prior, &mut ph.map[self.channel]),
-        };
-        ph.touch(painted);
+            None if prior.iter().all(Option::is_none) => {
+                ph.edit_channel(self.channel, |map| self.fold(map));
+            }
+            None => ph.edit_channel(self.channel, |map| self.fold_window(prior, map)),
+        }
     }
 
     pub(crate) fn touch(&mut self, rows: Range<usize>) {
-        self.plane.touched = self.plane.touched.start.min(rows.start)..self.plane.touched.end.max(rows.end);
+        if !rows.is_empty() {
+            self.plane.touched = self.plane.touched.start.min(rows.start)..self.plane.touched.end.max(rows.end);
+        }
     }
 
     pub(crate) fn clear(&mut self) {
@@ -173,7 +174,7 @@ fn fold_window<T: Count, M: Count>(
     touched: Range<usize>,
 ) -> Range<usize> {
     let width = run.len();
-    super::kernel::fold_rows(map, run, geometry, touched, |r, run| {
+    super::kernel::fold_rows(map, run, geometry, touched.clone(), |r, run| {
         let start = r * width;
         let mut occupied = false;
         for diff in diffs.into_iter().flatten() {

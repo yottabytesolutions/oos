@@ -65,7 +65,8 @@ fn drawn_rows_cover_every_changed_pixel_in_dense_and_sparse_routes() {
     for ch in &mut model.ch {
         ch.on = true;
     }
-    for dt in [1e-9, 1e-3] {
+    for x_per_sample in [0.25, 4.0] {
+        let dt = x_per_sample * model.time_per_div() as f64 * HDIV as f64 / 64.0;
         for dots in [DotsMode::Off, DotsMode::On] {
             model.dots = dots;
             let mut ph = Phosphor::new(64, 32);
@@ -75,6 +76,7 @@ fn drawn_rows_cover_every_changed_pixel_in_dense_and_sparse_routes() {
             }
             let frame = Frame { dt, pre: 512, ch: std::array::from_fn(|_| vec![0.0; 1024]), ..Frame::default() };
             crate::drawpipe::draw_frame(&mut ph, &model, &frame, Interp::Exact, None);
+            assert!(!ph.is_wide(), "this fixture must exercise ordinary narrow storage");
             for (c, stamp) in stamps.iter_mut().enumerate() {
                 let band = take(&ph, stamp, c);
                 assert!(!band.is_empty());

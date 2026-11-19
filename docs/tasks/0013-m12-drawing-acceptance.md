@@ -195,6 +195,19 @@ Adapt the hit-budget rejection regression to the existing read-only phosphor map
 nonempty and exact-pixel assertions. Run host/ARM Clippy, the fast gate and UI debug/optimized tests.
 The runner retains Git operations and publication; hardware acceptance remains with the coordinator and owner.
 
+PR #221 official-F2 replay: reserve `ui/src/picture/deposit/{planes.rs,kernel.rs,standard.rs}`,
+`ui/src/fastdraw/difference.rs`, `ui/src/drawpipe.rs`, `ui/src/drawpipe/stage.rs`,
+`ui/src/wave/{phosphor.rs,dirty/tests.rs}`, `ui/src/drawpipe/tests/{deposit.rs,window.rs}`
+and generated changed-file ratchets.
+Publish the existing fold hull through the phosphor edit boundary for single and retained deposits.
+Collect dot rows during existing painting, invalidate stamps at storage-format changes, preserve exact wide counts,
+and test old clears, new rows,
+disjoint bands, skipped consumers and unchanged pictures. Also reserve `ui/src/ui.rs`,
+`ui/src/ui/draw_routes.rs`, `ui/src/wave.rs` and `ui/src/gpu{.rs,/upload.rs,/upload/tests.rs}` to remove the
+replayed full-map mark, place record drawing with its sole phosphor caller, and share GPU count-source selection
+without growing existing size allowances. Run debug/optimized UI tests, both allocation
+censuses, host/ARM Clippy, shipping upload/F2 guards and the fast gate. No hardware access or hold changes.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -240,6 +253,39 @@ The runner retains Git operations and publication; hardware acceptance remains w
   record/analysis copy and runtime bounds, including plan overlap. The one-byte owner declarations belong to
   synthetic fixtures. On-device minimum cycle, whole-step timing, protected capture rates and 30 fps remain
   open, along with full gate, independent review and the signed image. The hardware hold remains in place.
+
+- 2026-11-19: PR #221 official-F2 final host checks passed: complete UI suites ran 1,830 debug and
+  1,829 optimized tests, with 64 existing skips per profile. All 30 shipping UI guards passed serially.
+  Host/ARM Clippy printed `partial gate passed (not done): 1 steps in 32 s` (exit 0); fast printed
+  `partial gate passed (not done): 12 steps in 8 s` (exit 0). Both explicit observer censuses reported
+  256 calls and zero allocations in all six regions. Production delta against the replayed head is -6 UI Rust
+  lines, zero elsewhere. No golden reference changed. The retained-band and skipped-format regressions failed
+  before their fixes and pass now. Ordinary narrow dense/fallback, one/two/four-channel and idle-picture checks
+  remain strict; independent wide count/index, capacity, settlement and measurement-order checks pass.
+  The worst counter best-time overhead was 0.4746%, below the original 1% target. Mask-3 learning p99 CPU was
+  1.150666 ms on the host; the provisional 4x estimate remains unverified on hardware. Historical failures remain
+  separate. The command receipts confirm unchanged input fingerprints during optimized tests, Clippy, fast,
+  both censuses and shipping guards. Logs: `target/e159-qualified-{ui-debug,ui-optimized,clippy,fast,`
+  `census-debug,census-optimized,shipping,loc}.log`; receipts: `target/e159-qualified-receipts.json`.
+  This evidence update changes documentation only. The combined full gate, independent review and the existing
+  coordinator/owner hardware acceptance hold remain open. Host only; no hardware was accessed.
+
+- 2026-11-19: PR #221 official-F2 reconciliation publishes single and retained fold hulls through phosphor edits,
+  collects dot rows during the existing painting pass, and removes the replayed whole-picture dirty mark.
+  The retained disjoint-band regression failed before the repair (empty upload instead of rows 2..3).
+  A skipped wide/narrow storage transition also reproduced a stale monitor upload; format changes now invalidate
+  all narrow stamps. Ordinary narrow deposits remain bounded to their touched rows. Added dense/fallback,
+  one/two/four-channel, idle-picture, wide-index and skipped-consumer comparisons. No golden, timing threshold,
+  depth/geometry policy, measurement order or allocation-census assertion changed.
+  Intermediate UI suites passed 1,829 debug and 1,828 optimized tests, with 64 skips in each. Both explicit
+  six-region censuses reported 256 calls and zero allocations. Host/ARM Clippy and all 30 shipping UI guards passed.
+  The initial fast gate printed `gate FAILED in 8 s: size`; the next printed `gate FAILED in 13 s: size` for
+  unused allowances. A helper relocation initially missed its HDIV import; it is corrected. Generated ratchets
+  lower four entries in changed files only. The first final debug run passed 1,829 tests and failed the old narrow-row
+  fixture: its fixed sample interval selected wide storage at the default timebase. Dense and sparse spacing are now
+  explicit, with a narrow-format assertion; the independent legal wide test is unchanged. The corrected full debug
+  suite passed 1,830 tests with 64 skips. Final-source validation continues. Review, the combined full gate
+  and the coordinator/owner hardware hold remain open. Host only; no hardware was accessed.
 
 - 2026-11-19: PR #224 integration uses the reachable projection envelope and preserves the four-channel normal
   Lines read plans. The 271-column, four-channel raw Dots case at 500 us/div and fixed 1M depth needs up to 69,216

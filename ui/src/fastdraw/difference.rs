@@ -48,9 +48,9 @@ pub(crate) fn deposit_dots_t<T: crate::picture::deposit::count::Count, S: Sample
     v: &S,
     m: &Map,
     wgt: u16,
-) {
+) -> Range<usize> {
     if v.len() == 0 || m.x_per_sample <= 0.0 {
-        return;
+        return 0..0;
     }
     let bw = band.len() / (h + 1);
     let c_hi = (c_lo + bw) as i64;
@@ -59,8 +59,9 @@ pub(crate) fn deposit_dots_t<T: crate::picture::deposit::count::Count, S: Sample
     let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(c_lo as i64);
     let c1 = ((((v.len() as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(c_hi);
     if c1 <= c0 {
-        return;
+        return 0..0;
     }
+    let mut rows = crate::wave::RowBand::empty();
     let mut ka = first(c0);
     for c in c0..c1 {
         let kb = first(c + 1);
@@ -71,8 +72,10 @@ pub(crate) fn deposit_dots_t<T: crate::picture::deposit::count::Count, S: Sample
             // NaN fails both comparisons
             if r >= 0.0 && r < h as f32 {
                 diff_span(band, bw, xc, r as usize, r as usize, wgt);
+                rows.include(r as usize..r as usize + 1);
             }
         }
         ka = kb.max(ka);
     }
+    rows.into_range()
 }

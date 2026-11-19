@@ -245,6 +245,16 @@ censuses and the fast gate on frozen source. The runner has completed the replay
 The coordinator's 06:46 instruction defers full host/timing validation until the replacement F2 parent arrives.
 Keep acquisition, metadata lifetime/order, pacing and hardware holds unchanged.
 
+PR #221 final replay on reviewed F2 `821fea897a80758e0ca57598f20a9c59db9d372d`:
+reserve this task for the exact-tree validation record. The runner replayed only the ten verified upload topics
+from the incoming `cf11c36be40e95ffc47ad9a7c13cd16a495f6888` fork. Preserve borrowed supplied newest placement,
+ordinary decoder scratch, ordering, counted statistics, consolidated channel edits, retained consumer revisions,
+minimum row hulls and all window/trim/funding semantics. Freeze source and runner metadata before one ordinary
+23-step full host gate. Retain complete source/test receipts, debug/optimized UI and golden results, both explicit
+six-region allocation censuses, shipping guards, original 1% and interim 2% diagnostics observations, and production
+LOC against exact F2 and protected main. The interim ratio applies only to the staged diagnostics wall guard;
+all physical CPU/p99 and release limits remain unchanged. No idle threshold, scope access or hold changes.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -252,6 +262,62 @@ Keep acquisition, metadata lifetime/order, pacing and hardware holds unchanged.
   All production source, other budgets, unit acceptance and sampler/runner remain identical.
   No acceptance or review state changed. Native timing awaits experiment-supervisor release.
   The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
+
+- 2026-11-19: PR #221 host validation qualifies the ten-topic consolidated upload replay at
+  `07344bca1c21459382d5737752a9fd07cec6a3e7` on reviewed F2
+  `821fea897a80758e0ca57598f20a9c59db9d372d`, against protected main
+  `dd5bb013b11714668345683b32ca1927e6a8a810`. The actual incoming fork is
+  `cf11c36be40e95ffc47ad9a7c13cd16a495f6888`; the amend-sibling merge base was not used.
+  No implementation change was needed. Source receipt
+  `af1ba09878fd3e232616db8dae143b51c678a1269124d317b4802b9635b86ae2` and all 4,302 manifest
+  entries matched before/after the full gate, both explicit censuses and three LOC comparisons (all exit 0).
+  The one ordinary `cargo xtask check` printed `gate passed (default): 23 steps in 658 s` (exit 0).
+  Every selected step passed: fmt, size, architecture, mutable-statics, unsafe, method-exceptions,
+  known-failures, agent-rules, test-time, links, text, protected-storage, doctor-base, clippy, plan-matrix,
+  decoders, tests-debug, tests-release, perf-build, perf, coverage, script-syntax and python-tests.
+  Complete UI suites passed 1,871 debug and 1,870 optimized tests, with 64 existing skips in each profile.
+  Ordinary golden comparisons passed and references are identical to reviewed F2. Host/ARM Clippy,
+  all decoder variants and all 65 synthetic acquisition plans passed. Every crate met its coverage floor;
+  UI coverage was 90.4% against the unchanged 86.2% floor. All 30 shipping UI guards passed, including
+  upload, dots, F2 and ordered learning, with the existing physical CPU/p99 limits unchanged.
+  Debug and optimized observer censuses each reported 256 calls and zero caller-thread allocations for
+  prepare_keys, compare, finish_capture, stage, live_normalize and consumers. Both separate process-wide
+  warmed snapshot probes reported reused=0, naive=220. Assertions and accounting are unchanged.
+  Every staged diagnostics workload passed both the original 1% and interim 2% best-wall observations:
+
+  | Channels | Time/div | Reference / counted best (ns) | Ratio | 1% | 2% |
+  |---|---|---|---|---|---|
+  | 1 | 1 us | 1,814,927 / 1,820,208 | 1.002909759 | pass | pass |
+  | 1 | 10 us | 7,758,057 / 7,744,731 | 0.998282302 | pass | pass |
+  | 2 | 1 us | 2,645,705 / 2,639,244 | 0.997557929 | pass | pass |
+  | 2 | 10 us | 6,653,593 / 6,686,255 | 1.004908927 | pass | pass |
+  | 4 | 1 us | 3,591,997 / 3,587,312 | 0.998695712 | pass | pass |
+  | 4 | 10 us | 5,906,536 / 5,921,502 | 1.002533803 | pass | pass |
+
+  All six diagnostics CPU-tail rows passed the unchanged 1.515 limit. The interim 2% ratio applies only to
+  that staged diagnostics wall guard. No release acceptance, physical performance limit, timing assertion,
+  selection or ambient-idle prerequisite changed. No unrelated builds ran during the shipping timing stage.
+  Production totals are 111,202 lines, including 74,618 UI Rust lines: +223 against exact reviewed F2
+  (110,979 total), +3,191 against protected main (108,011 total), and -50 against the upload head's parent
+  (111,252 total). Differences are confined to UI Rust; all other production and tooling counts are unchanged.
+  This validation-only job adds zero production lines and updates this task only. Its final evidence prose
+  is appended after all qualifying commands exited; the build-input receipt remains unchanged. The separate
+  final fast request/result checks that documentation update without repeating the full or performance suites.
+  Evidence: `target/upload-reviewed-f2/full.log`, `full-steps.log`, `perf-guard.log`, `perf-guard-step.log`,
+  `counter-results.json`, `census-debug.log`, `census-optimized.log`, `loc-f2.log`, `loc-main.log`,
+  `loc-parent.log`, `replay-proof.json`, `replay-range-diff.txt`, `validation-results.json`, and immutable
+  matching command `*-request.json` / `*-result.json` manifests in the same directory.
+  Independent review, normal approvals, image/unit acceptance, publication, tagging and release remain open
+  with the coordinator and owner. No hardware access, Git mutation, network publication or tag was performed.
+
+- 2026-11-19: Exact-tree validation starts from upload head `07344bca1c21459382d5737752a9fd07cec6a3e7`
+  on reviewed F2 `821fea897a80758e0ca57598f20a9c59db9d372d`, with no rebase or unresolved paths.
+  The verified incoming upload ancestor is `cf11c36be40e95ffc47ad9a7c13cd16a495f6888`.
+  Range comparison shows the same ten upload topics; the incoming and replayed final trees differ only by
+  F2's stage methods/tests and its four dated evidence lines. No implementation edit is needed in this round.
+  Earlier transfer receipts remain historical. Fresh command requests/results, file manifests, source receipts,
+  full gate logs, counter observations and production counts are retained under `target/upload-reviewed-f2/`.
+  Independent review, image/unit acceptance, publication, tagging and release remain with the coordinator and owner.
 
 - 2026-11-19: PR #224 placement borrows the supplied newest waveform. The host allocation fixture now exercises
   supplied waveforms at 1, 2 and 4 channels. The warmed one-channel 100,000-sample row fell from 400,280 to 9,560

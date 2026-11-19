@@ -19,19 +19,34 @@ impl Fixture {
     }
 
     fn put(&self, records: u64, hits: u64, row: usize, span_ms: std::ops::RangeInclusive<u64>) {
+        self.put_format(records, hits, row, span_ms, crate::picture::deposit::count::CountFormat::Narrow);
+    }
+
+    fn put_format(
+        &self,
+        records: u64,
+        hits: u64,
+        row: usize,
+        span_ms: std::ops::RangeInclusive<u64>,
+        format: crate::picture::deposit::count::CountFormat,
+    ) {
         let gen = oos_hal::sync::lock(&self.pipe.view).gen;
         let mut deposit = Deposit::new(gen, (4, 4), None, [true, false, false, false]);
+        deposit.set_format(format);
         deposit.extent.include(self.origin + Duration::from_millis(*span_ms.start()));
         deposit.extent.include(self.origin + Duration::from_millis(*span_ms.end()));
         deposit.records = records;
         deposit.extent.add_hits(hits);
         deposit.edges[0] = records;
-        deposit.newest = Some(Arc::new(Frame { seq: records, ..Frame::default() }));
         // The pool can return bands in a different order, even with the same view.
         deposit.planes.rotate_left(row);
         for band in &mut deposit.planes {
-            crate::fastdraw::diff_span(&mut band.plane.d, 1, 0, row, row, (24 * hits) as u16);
-            band.touch(row..row + 1);
+            let mut left = hits;
+            while left > 0 {
+                let chunk = left.min(2730);
+                band.test_span(row, (24 * chunk) as u16);
+                left -= chunk;
+            }
         }
         assert!(self.pipe.slot.put(deposit).is_ok());
     }
@@ -85,10 +100,18 @@ fn oldest_read_bounds_age_at_acceptance_and_without_new_input() {
     assert_eq!(f.rows(), [0; 4]);
 
     f.put(8, 8, 1, 70..=138);
+    let gen = oos_hal::sync::lock(&f.pipe.view).gen;
+    let tap = crate::picture::deposit::Tap {
+        frame: Arc::new(Frame { seq: 8, ..Frame::default() }),
+        identity: None,
+        projection: TapProjection::Projected { gen, size: (4, 4) },
+    };
+    assert!(f.pipe.slot.send_tap(tap, gen, None).is_some());
     let rejected = f.step(138);
     assert_eq!(rejected.frames, 0);
-    assert!(rejected.age_rejected);
-    assert_eq!(rejected.waveform.unwrap().seq, 8);
+    let tap = f.pipe.take_waveform((4, 4)).unwrap();
+    assert_eq!(tap.seq, 8);
+    assert_eq!(tap.eligibility(), PictureEligibility::Pending);
     assert_eq!(f.edges[0], 9);
     assert!(f.pipe.counters.records_text().ends_with("rejected.age=8"));
     assert_eq!(f.pipe.counters.read().2, 8);
@@ -108,4 +131,28 @@ fn combined_capacity_evicts_the_oldest_whole_deposit() {
     f.put(3, 1366, 1, 3..=3);
     assert_eq!(f.step(3).window_frames, Some(3));
     assert_eq!(f.rows(), [0, 32_784, 0, 0]);
+}
+
+#[test]
+fn wide_combined_window_uses_its_own_limit_and_recycles_without_mixing_formats() {
+    use crate::picture::deposit::count::CountFormat;
+    let mut f = Fixture::new();
+    let put = |f: &Fixture, records, hits, row, ms| f.put_format(records, hits, row, ms..=ms, CountFormat::Wide);
+    put(&f, 27, 2884, 0, 0);
+    assert_eq!(f.step(0).window_frames, Some(27));
+    assert_eq!(f.picture.count(0, 0), 69_216);
+    let half = CountFormat::Wide.hit_limit() / 2;
+    put(&f, 3, half, 1, 1);
+    assert_eq!(f.step(1).window_frames, Some(30));
+    put(&f, 3, half, 1, 2);
+    assert_eq!(f.step(2).window_frames, Some(6));
+    assert_eq!(f.picture.count(0, 4), (2 * half * 24) as u32);
+    put(&f, 3, half + 2, 1, 3);
+    assert_eq!(f.step(3).window_frames, Some(3));
+    assert_eq!(f.picture.count(0, 4), ((half + 2) * 24) as u32);
+    f.put(3, 1, 2, 4..=4);
+    assert_eq!(f.step(4).window_frames, Some(3));
+    assert!(!f.picture.is_wide());
+    assert_eq!(f.rows(), [0, 0, 24, 0]);
+    assert!(f.pipe.slot.spare().is_some());
 }

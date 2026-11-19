@@ -11,8 +11,16 @@ use oos_core::change::Identity;
 use oos_hal::dho::{hz, seq::Settings};
 use std::time::Instant;
 
+mod tap;
 #[cfg(test)]
 mod tests;
+
+pub(super) fn deposit_plan(s: &Settings, p: &hz::Params, id: Identity, route: bool) -> (Option<&'static Pipe>, u32) {
+    let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).filter(|pipe| route && pipe.accepting());
+    let Some(pipe) = pipe else { return (None, s.frames) };
+    let live = (p.memsel <= crate::compress::MAX_DEPTH).then(|| (p.rate, oos_hal::dho::seq::compress_k(s, p)));
+    pipe.read_limit(id, live).map_or((None, s.frames), |limit| (Some(pipe), s.frames.min(limit)))
+}
 
 pub(super) struct Readout<'a> {
     pipe: &'a Pipe,
@@ -42,20 +50,31 @@ impl<'a> Readout<'a> {
         tag: impl FnOnce(Frame) -> Frame,
     ) -> Vec<Frame> {
         let (fb, avail, frame0_drop) = self.geometry;
+        let counters = crate::drawpipe::counters();
+        if avail == 0 || fb == 0 || avail > dma.bytes().len() / fb {
+            counters.discard(crate::drawpipe::Lost::Error, avail as u64);
+            return Vec::new();
+        }
         // frame 0, and a frame 1 without its edge at the trigger point, reach neither the workers nor the matcher
         let start = frame1::first_kept(dma.bytes(), fb, avail, frame0_drop, (self.settings, self.params));
-        let counters = crate::drawpipe::counters();
         counters.lose(crate::drawpipe::Lost::Frame0, u64::from(frame0_drop && avail > 1));
         // Without a replacement buffer the neighbours cannot draw, so only the newest may teach.
         let first = if next.is_some() { 0 } else { avail - 1 };
         let probe = self.newest.1;
-        let (matched, newest) = matching::prepare(
+        let deposit = next.is_some().then_some(self.batch.0);
+        let Ok((storage, reservation)) = tap::reserve(self.pipe, self.settings, fb, self.newest.2.as_ref(), deposit)
+            .inspect_err(|&lost| counters.discard(lost, avail.saturating_sub(start) as u64))
+        else {
+            return Vec::new();
+        };
+        let (matched, newest) = matching::prepare_into(
             &dma.bytes()[first * fb..avail * fb],
             (fb, avail - first, start.saturating_sub(first)),
             self.settings,
             self.params,
             self.newest,
             cores,
+            storage,
         );
         // with two frames the newest is frame 1
         let keep = frame1::newest_kept(&newest, avail, frame0_drop, self.settings);
@@ -70,7 +89,7 @@ impl<'a> Readout<'a> {
                     self.batch,
                     (self.settings.clone(), *self.params, probe),
                     matched,
-                    keep.then(|| std::sync::Arc::new(newest)),
+                    (keep.then(|| std::sync::Arc::new(newest)), reservation),
                 )
                 .into_iter()
                 .map(std::sync::Arc::unwrap_or_clone)

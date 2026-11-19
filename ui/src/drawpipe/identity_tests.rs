@@ -57,8 +57,20 @@ fn rejecting_painted_planes_keeps_only_current_waveforms() {
     {
         let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
         pipe.publish_view(&model, 8, 8, Interp::Exact, current);
-        let mut deposit = accumulator(oos_hal::sync::lock(&pipe.view).gen, current);
-        deposit.newest = Some(waveform.clone());
+        let gen = oos_hal::sync::lock(&pipe.view).gen;
+        let deposit = accumulator(gen, current);
+        assert!(pipe
+            .slot
+            .send_tap(
+                crate::picture::deposit::Tap {
+                    frame: waveform.clone(),
+                    identity: Some(current),
+                    projection: TapProjection::Projected { gen, size: (8, 8) },
+                },
+                gen,
+                None,
+            )
+            .is_some());
         assert!(pipe.slot.put(deposit).is_ok());
 
         pipe.publish_view(view, view_width, 8, Interp::Exact, identity);
@@ -68,12 +80,58 @@ fn rejecting_painted_planes_keeps_only_current_waveforms() {
         assert_eq!((accepted.frames, accepted.triggered, accepted.newest), (0, 0, None));
         assert!(clear && accepted.folds.is_empty());
         assert_eq!(pipe.counters.losses.folds.load(Ordering::Relaxed), 1);
+        let tap = pipe.take_waveform((picture_width, 8));
         if identity == cleared {
-            assert!(accepted.waveform.is_none());
+            assert!(tap.is_none());
         } else {
-            assert!(Arc::ptr_eq(&accepted.waveform.unwrap(), &waveform));
+            let tap = tap.unwrap();
+            assert!(Arc::ptr_eq(&tap, &waveform));
+            assert_eq!(tap.eligibility(), PictureEligibility::Drawable);
         }
     }
+}
+
+#[test]
+fn coalesced_deposit_leaves_an_interleaved_unpainted_tap_drawable() {
+    let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+    let model = Model::default();
+    let id = Identity::default();
+    let size = (8, 8);
+    pipe.publish_view(&model, size.0, size.1, Interp::Exact, id);
+    let gen = oos_hal::sync::lock(&pipe.view).gen;
+    let mut deposit = accumulator(gen, id);
+    deposit.records = 3;
+    for seq in 1..=4 {
+        let painted = seq != 2;
+        let tap = crate::picture::deposit::Tap {
+            frame: Arc::new(Frame { seq, ..Default::default() }),
+            identity: Some(id),
+            projection: if painted { TapProjection::Projected { gen, size } } else { TapProjection::Unpainted },
+        };
+        let number = pipe.slot.send_tap(tap, gen, None).unwrap();
+        if painted {
+            deposit.include_tap(number);
+        }
+    }
+    assert!(pipe.slot.put(deposit).is_ok());
+    let mut ph = Phosphor::new(size.0, size.1);
+    assert_eq!(pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames, 3);
+
+    let mut changed = model;
+    changed.ch[0].unit = AmpUnit::A;
+    pipe.publish_view(&changed, 8, 8, Interp::Exact, id);
+    let tap = pipe.take_waveform(size).unwrap();
+    assert_eq!((tap.seq, tap.eligibility()), (1, PictureEligibility::AlreadyDeposited));
+
+    pipe.publish_view(&changed, 9, 8, Interp::Exact, id);
+    use PictureEligibility::{Drawable, Redraw};
+    for (seq, eligibility) in [(2, Drawable), (3, Redraw)] {
+        let tap = pipe.take_waveform((9, 8)).unwrap();
+        assert_eq!((tap.seq, tap.eligibility()), (seq, eligibility));
+    }
+    let (_, cleared) = identities(Request::Clear);
+    pipe.set_identity(cleared);
+    assert!(pipe.take_waveform((9, 8)).is_none(), "an accepted tap from the old epoch stays stale");
 }
 
 #[test]
@@ -100,14 +158,17 @@ fn remapping_a_private_deposit_keeps_its_waveform_without_a_newer_tap() {
         host::finish_batch(&pipe, 0).unwrap();
 
         let mut picture = Phosphor::new(98, 48);
-        assert!(pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0)).waveform.is_none());
+        assert_eq!(pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
         host::barrier(&pipe);
         let accepted = pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(accepted.frames, 0);
+        let tap = pipe.take_waveform((98, 48));
         if identity == current {
-            assert!(Arc::ptr_eq(&accepted.waveform.unwrap(), &waveform));
+            let tap = tap.unwrap();
+            assert!(Arc::ptr_eq(&tap, &waveform));
+            assert_eq!(tap.eligibility(), PictureEligibility::Drawable);
         } else {
-            assert!(accepted.waveform.is_none());
+            assert!(tap.is_none());
         }
     }
 }

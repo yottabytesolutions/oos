@@ -21,12 +21,14 @@ mod budget_tests;
 mod counter_tests;
 #[cfg(test)]
 mod identity_tests;
-use feed::{accepts, same_pair, Header};
+pub(crate) use feed::same_pair;
+use feed::Header;
 pub mod host;
 pub mod shutdown;
-use crate::board::Frame;
+use crate::board::{Frame, PictureEligibility, QueuedFrame};
 use crate::model::*;
-use crate::picture::deposit::{Deposit, Handoff};
+use crate::picture::deposit::{Deposit, Handoff, TapProjection, TapView};
+pub(crate) use crate::picture::deposit::{TapRead, TapReservation};
 use crate::picture::DepositWindow;
 use crate::sparse::Interp;
 use crate::wave::Phosphor;
@@ -166,6 +168,14 @@ struct ViewState {
     identity: Option<oos_core::change::Identity>,
     key: Option<oos_core::change::WorkerViewKey>,
     gen: u64,
+    mapping_key: Option<oos_core::change::MappingKey>,
+    mapping_gen: u64,
+}
+
+impl ViewState {
+    fn tap_view(&self, size: (usize, usize)) -> Option<TapView> {
+        self.view.as_ref().map(|v| TapView::new(v.gen, self.mapping_gen, size))
+    }
 }
 
 pub struct Pipe {
@@ -185,8 +195,6 @@ pub struct Accepted {
     pub folds: crate::framestats::Folds,
     pub newest: Option<std::time::Instant>,
     pub stale: u64,
-    pub waveform: Option<Arc<Frame>>,
-    pub(crate) age_rejected: bool,
     pub(crate) window_frames: Option<u64>,
 }
 
@@ -200,7 +208,9 @@ impl Pipe {
     }
 
     pub fn set_identity(&self, identity: oos_core::change::Identity) {
-        oos_hal::sync::lock(&self.view).identity = Some(identity);
+        let mut view = oos_hal::sync::lock(&self.view);
+        view.identity = Some(identity);
+        self.slot.set_tap_identity(identity);
     }
 
     pub fn accepting(&self) -> bool {
@@ -220,6 +230,56 @@ impl Pipe {
         window.reset(&self.slot);
     }
 
+    #[cfg(test)]
+    pub(crate) fn take_recycled_deposit(&self) -> Option<Deposit> {
+        self.slot.spare()
+    }
+
+    pub(crate) fn tap_count(&self) -> usize {
+        self.slot.tap_count()
+    }
+
+    pub(crate) fn has_waveform(&self, identity: oos_core::change::Identity) -> bool {
+        self.slot.has_tap(identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_waveform(&self, size: (usize, usize)) -> Option<QueuedFrame> {
+        let identity = oos_hal::sync::lock(&self.view).identity;
+        match self.read_waveform(size, identity, None, true) {
+            TapRead::Ready(frame) => Some(frame),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn read_waveform(
+        &self,
+        size: (usize, usize),
+        identity: Option<oos_core::change::Identity>,
+        fallback: Option<u64>,
+        can_take: bool,
+    ) -> TapRead<QueuedFrame> {
+        let state = oos_hal::sync::lock(&self.view);
+        let view = state.tap_view(size);
+        let (tap, charge) = match self.slot.take_tap(view, identity, fallback, can_take) {
+            TapRead::Ready(tap) => tap,
+            TapRead::Stale => return TapRead::Stale,
+            TapRead::Pending => return TapRead::Pending,
+            TapRead::Empty => return TapRead::Empty,
+        };
+        let eligibility = tap.projection.eligibility(view);
+        TapRead::Ready(QueuedFrame::from_tap(tap.frame, eligibility, charge))
+    }
+
+    pub(crate) fn take_preview(&self, frame: &Arc<Frame>, size: (usize, usize)) -> Option<PictureEligibility> {
+        let state = oos_hal::sync::lock(&self.view);
+        let id = state.identity?;
+        if (id.gen(), id.epoch()) != (frame.cfg, frame.stamp) {
+            return None;
+        }
+        self.slot.take_preview(state.tap_view(size), frame)
+    }
+
     pub(crate) fn accept_into(
         &self,
         ph: &mut Phosphor,
@@ -237,6 +297,7 @@ impl Pipe {
         }
         let state = oos_hal::sync::lock(&self.view);
         let view = state.view.clone();
+        let mapping_gen = state.mapping_gen;
         let identity = state.identity;
         drop(state);
         let size = (ph.w, ph.h);
@@ -249,17 +310,17 @@ impl Pipe {
                 mapping_matches(d) && d.identity.map(|id| id.epoch()) == identity.map(|id| id.epoch())
             });
         }
-        if let Some(mut deposit) = claim.as_mut().and_then(|claim| claim.deposit.take()) {
+        if let Some(deposit) = claim.as_mut().and_then(|claim| claim.deposit.take()) {
             let same_acquisition = same_pair(deposit.identity, identity);
-            let waveform = deposit.newest.take().filter(|_| same_acquisition);
             if mapping_matches(&deposit) && same_acquisition {
+                let taps = deposit.taps.clone();
                 accepted = self.fold_pending(deposit, ph, clear, stats, identity, window.as_mut());
+                self.slot.settle_taps(&taps, (accepted.frames > 0).then_some(mapping_gen));
                 rebuild |= accepted.frames > 0;
             } else {
                 deposit.reject(identity, self.counters);
                 self.slot.recycle(deposit);
             }
-            accepted.waveform = waveform;
         }
         if claim.is_some() {
             drop(claim);
@@ -292,7 +353,7 @@ impl Pipe {
                 Counters::add(&self.counters.dropped, deposit.records);
                 deposit.discard_folds(self.counters);
                 self.slot.recycle(deposit);
-                return Accepted { age_rejected: true, ..Accepted::default() };
+                return Accepted::default();
             }
         }
         let accepted = crate::picture::accept_deposit(&mut deposit, stats, identity, self.counters);
@@ -306,8 +367,11 @@ impl Pipe {
                 if std::mem::take(clear) {
                     ph.clear();
                 }
+                if deposit.format() == crate::picture::deposit::count::CountFormat::Wide {
+                    ph.set_format(deposit.format());
+                }
                 for band in &mut deposit.planes {
-                    band.fold(&mut ph.map[band.channel]);
+                    band.fold_picture([None, None], ph);
                 }
             }
             self.slot.recycle(deposit);
@@ -1014,7 +1078,7 @@ mod tests {
         let mut ph = Phosphor::new(w, h);
         let n = pipe.accept(&mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(n.frames, 30);
-        assert!(Arc::ptr_eq(&n.waveform.unwrap(), &newest));
+        assert!(Arc::ptr_eq(&pipe.take_waveform((w, h)).unwrap(), &newest));
         assert_eq!(pipe.accept(&mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
     }
 

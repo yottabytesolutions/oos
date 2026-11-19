@@ -7,7 +7,7 @@
 use crate::picture::deposit::standard::fast_deposit;
 use crate::picture::deposit::standard::{add_frame_band, fast_plan};
 
-use crate::board::{board, Board};
+use crate::board::{board, Board, PictureEligibility};
 use crate::font::{Font, Fonts};
 use crate::gfx::*;
 use crate::math::*;
@@ -112,6 +112,13 @@ pub use crate::layout::{Frame, Screen, METRICS, PANEL_H, PANEL_W};
 const MARK_W: i32 = 26;
 /// Width of the measurement strip when it is docked on the left or the right.
 const STRIP_SIDE: i32 = 220;
+/// Conservative width reachable by a Batch mapping without changing acquisition identity.
+/// Reserve both side docks even when fewer are visible. Eye has one window, at least 360 columns.
+pub(crate) fn batch_min_columns() -> usize {
+    let card = LAYS.iter().map(|lay| lay.results_w + 6).max().unwrap_or(0);
+    ((Screen::PANEL.w - STRIP_SIDE - card - crate::layout::WINDOW_GAP) / 2) as usize
+}
+
 /// Height of the fork's compact bottom bar (Menu, source pills, Overlay / Stacked, time, trigger) that replaces the
 /// cards: `Ui::frame` gives the body the rest of `METRICS.bottom_h`.
 pub const BOTTOM_H: i32 = 36;
@@ -158,7 +165,10 @@ pub struct TraceJob {
     pub colours: Vec<u32>,
     pub shift: [u32; NCH],
     pub col: [u32; NCH],
+    /// Exceptional wide counts composed to exact LUT indices, encoded as 2*i+1 for lit pixels.
+    pub indexed: Option<[Vec<u16>; NCH]>,
 }
+mod wide_trace;
 /// Layout sizes that grow with the text (Display > Text size). Everything else keeps its place: touch targets are
 /// 40 px high at every size, and the larger fonts are set into them.
 pub struct Lay {
@@ -1852,7 +1862,7 @@ impl Ui {
         let top = self.plot_top();
         let (plot_x, plot_w) = self.plot_span();
         if self.eye_open() && self.eye_side() && self.workspace.eye_float.is_none() {
-            let wave_w = (plot_w * 58 / 100).clamp(360, plot_w - 300);
+            let wave_w = (plot_w * 58 / 100).clamp(crate::layout::MIN_EYE_TRACE_WIDTH, plot_w - 300);
             let h = (avail / 8 * 8).max(160);
             return Rect::new(if self.workspace.eye_left { plot_x + plot_w - wave_w } else { plot_x }, top, wave_w, h);
         }
@@ -1972,7 +1982,7 @@ impl Ui {
 
     /// The windows in the plot `g`, all of the same size (they share the phosphor size), in reading order.
     fn split_wins(&self, g: Rect) -> Vec<Rect> {
-        const GAP: i32 = 6;
+        let gap = crate::layout::WINDOW_GAP;
         if self.stacked() {
             let n = self.n_wins() as i32;
             let gap = if n > 8 { 2 } else { 4 };
@@ -1985,13 +1995,13 @@ impl Ui {
             (_, WinLayout::Rows) => (1, 2),
             _ => (2, 2),
         };
-        let w = (g.w - (cols - 1) * GAP) / cols;
+        let w = (g.w - (cols - 1) * gap) / cols;
         // a whole number of pixels per division keeps the graticule even
-        let h = ((g.h - (rows - 1) * GAP) / rows / 8 * 8).max(64);
+        let h = ((g.h - (rows - 1) * gap) / rows / 8 * 8).max(64);
         let mut v = Vec::new();
         for r in 0..rows {
             for c in 0..cols {
-                v.push(Rect::new(g.x + c * (w + GAP), g.y + r * (h + GAP), w, h));
+                v.push(Rect::new(g.x + c * (w + gap), g.y + r * (h + gap), w, h));
             }
         }
         v
@@ -2867,10 +2877,10 @@ impl Ui {
             if !fast {
                 self.src.hw_take_all();
             }
+            let mut taps = deep_draw::ReaderTaps::new(self);
             let k = match self.m.trig_type {
-                // fast path: it draws the queue on several cores, the record is the newest frame only (frames that
-                // come in meanwhile wait for the next screen's fast path instead of a full record each, one by one)
-                _ if fast => 1,
+                // The fast path reserves one ordinary record and can drain a backlog of batch taps.
+                _ if fast => taps.len().max(1),
                 // the hardware source delivers batches: draw up to 48 queued records per frame
                 _ if matches!(self.src, Source::Hw { .. }) => crate::board::RECORDS_PER_STEP,
                 TrigType::Edge | TrigType::Pattern => 6,
@@ -2886,12 +2896,12 @@ impl Ui {
             // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
             let deep_raw = crate::deepmeas::want(&self.m).is_some();
             let mut raw_rec: Option<Record> = None;
-            let (mut deposited_newest, mut window_frames) = (None, None);
+            let mut window_frames = None;
             if fast {
                 let f = step_draw::fast(self, &sw, &mut clear_pending, window_now, &mut composition, &mut draw);
-                (got, td, deposited_newest, window_frames, raw_rec) =
-                    (f.frames, f.ms, f.newest, f.window_frames, f.raw);
+                (got, td, window_frames, raw_rec) = (f.frames, f.ms, f.window_frames, f.raw);
             }
+            let mut received_record = false;
             let t_records = std::time::Instant::now();
             for _ in 0..k {
                 // the records of a step within a time budget: where every frame takes the record path, 48 of them a step
@@ -2903,20 +2913,20 @@ impl Ui {
                     break;
                 }
                 let t0 = std::time::Instant::now();
-                let (r, drawing_input) = deep_draw::acquire(self, dt_wall / k as f64);
+                let (r, drawing_input) = deep_draw::acquire(self, dt_wall / k as f64, &mut taps);
                 ta += t0.elapsed().as_secs_f32() * 1000.0;
                 if r.is_none() && self.bus_candidate_waiting() {
                     break;
                 }
                 match r {
-                    Some(mut rec) if !crate::zone::pass(&self.m.zones, &rec.ch, rec.t0, rec.dt) => {
+                    Some((mut rec, ..)) if !crate::zone::pass(&self.m.zones, &rec.ch, rec.t0, rec.dt) => {
                         // zone trigger: not a qualifying record
                         let _ = &mut rec;
                         self.zone_drops += 1;
                     }
                     // protocol trigger, Normal and Single: the hardware fires on every edge of the line, only the decoder
                     // decides; Single waits on for the record that holds the event
-                    Some(rec)
+                    Some((rec, ..))
                         if self.m.trig_type == TrigType::Bus
                             && !self.mixed_bus_mode()
                             && self.m.trig_mode != TrigMode::Auto
@@ -2926,7 +2936,7 @@ impl Ui {
                     {
                         self.m.status = TrigStatus::Wait;
                     }
-                    Some(mut rec) => {
+                    Some((mut rec, eligibility, tap)) => {
                         self.bus_candidate_committed();
                         self.m.status = if rec.triggered { TrigStatus::Triggered } else { TrigStatus::Auto };
                         for c in 0..NCH {
@@ -2957,17 +2967,14 @@ impl Ui {
                         }
                         // minimum persistence: the picture of this step is every frame of it (the fast path's and this
                         // record), cleared once before the first of them
-                        let deposited = rec.raw.as_ref().is_some_and(|r| Some(r.frame.seq) == deposited_newest);
-                        if clear_pending && !deposited {
+                        if clear_pending && eligibility.draws() {
                             step_draw::reset_window(self);
                             self.ph.clear();
                             self.phz.clear();
                             clear_pending = false;
                         }
                         let t1 = std::time::Instant::now();
-                        let (dep, records) = deep_draw::record(self, &rec, sw.interp, drawing_input, deposited);
-                        composition.deposit += dep;
-                        composition.record += records;
+                        got += composition.draw_record(self, &rec, sw.interp, drawing_input, eligibility);
                         td += t1.elapsed().as_secs_f32() * 1000.0;
                         if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
                             self.history.pop_front();
@@ -2980,9 +2987,10 @@ impl Ui {
                         if deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
                             raw_rec = Some(rec.clone());
                         }
+                        taps.next_record(self, tap);
                         self.last[0] = Some(rec);
                         self.cleared = false;
-                        got += usize::from(!deposited);
+                        received_record = true;
                         self.records += 1;
                         if self.m.segments > 0 {
                             self.seg_n += 1;
@@ -3009,6 +3017,7 @@ impl Ui {
                     break;
                 }
             }
+            got += if fast { step_draw::replay(self, &sw, &mut clear_pending, &mut composition) } else { 0 };
             draw[3] += t_records.elapsed();
             // WAIT only when the whole frame brought nothing (the hardware source delivers a new record only every
             // few attempts; an empty attempt must not override TRIG'D)
@@ -3044,52 +3053,14 @@ impl Ui {
             }
             self.t_acq += 0.05 * (ta - self.t_acq);
             self.t_draw += 0.05 * (td - self.t_draw);
-            let rate = got as f32 / dt_wall.max(1e-3) as f32;
+            let counted = got - composition.redrawn;
+            let rate = counted as f32 / dt_wall.max(1e-3) as f32;
             self.wfm_rate += 0.1 * (rate - self.wfm_rate);
-            self.wfm_total += got as u64;
-            step_draw::account_picture(self, got, composition);
-            // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
-            // measurement stays that of the last raw record
-            let shown = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
-            let hold =
-                crate::deepmeas::hold(&self.m, shown, self.src.hw_deep_ok()) || crate::compress::hold(&self.m, shown);
-            if got > 0 {
-                let p0 = std::time::Instant::now();
-                if hold {
-                    // the measurement shown stays that of the last raw deep record, or of this step's
-                    if let Some(r) = raw_rec.take() {
-                        if self.meas_bg.is_some() {
-                            self.meas_want = true;
-                            self.meas_pending = Some(r);
-                        } else {
-                            self.meas_new |= self.measure_rec(&r, usize::MAX);
-                        }
-                    }
-                } else if self.meas_bg.is_some() {
-                    // A previous record's result remains useful within the same acquisition/statistics identity.
-                    self.meas_want = true;
-                    // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
-                    // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
-                    // (only a raw deep record: a clone of every record cost the screen rate, 26 instead of 27 frames a
-                    // second with GPU and HDMI Layout, unit 2026-11-15)
-                    let raw_deep = self.last[0]
-                        .as_ref()
-                        .and_then(|r| r.raw.as_ref())
-                        .is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame));
-                    if raw_deep && crate::deepmeas::want(&self.m).is_some() {
-                        self.meas_pending = self.last[0].clone();
-                    }
-                } else {
-                    self.meas_new |= self.measure_last();
-                }
-                let p1 = std::time::Instant::now();
-                self.analyzer_update();
-                self.monitor_analyzer_update();
-                self.protocol_watch();
-                change::proposals::bode(self);
-                let p2 = std::time::Instant::now();
-                self.prof_add(0, p1 - p0);
-                self.prof_add(1, p2 - p1);
+            self.wfm_total += counted as u64;
+            step_draw::account_picture(self, counted, composition);
+            taps.fold(self, raw_rec.as_ref());
+            if received_record || raw_rec.is_some() {
+                deep_draw::update_readers(self, raw_rec);
             }
         } else if !self.record_mode() {
             let started = std::time::Instant::now();
@@ -3103,20 +3074,7 @@ impl Ui {
         if std::mem::take(&mut self.meas_new) {
             let rows = self.meas_rows();
             self.trend_update(&rows);
-            self.mstat.resize(rows.len(), MStat::default());
-            self.counter_update();
-            for (i, row) in rows.iter().enumerate() {
-                if row.computing {
-                    if let Some(entry) =
-                        i.checked_sub(self.m.meas.len() + self.m.meas2.len()).and_then(|i| self.m.cat.get(i)).copied()
-                    {
-                        self.queue_catalog_statistics(entry, self.wfm_total);
-                    }
-                }
-                if row.v.is_finite() {
-                    self.mstat[i].add(row.v);
-                }
-            }
+            deep_draw::account_live_statistics(self, &rows);
         }
         // Terminal autoset marks clear statistics now and the picture on the next step.
         // Finish all old-pair drawing and measurement folds before emitting those marks.
@@ -3311,6 +3269,26 @@ impl Ui {
                 }
             }
         }
+        if self.ph.is_wide()
+            || placed.iter().any(|p| p.plan.format() == crate::picture::deposit::count::CountFormat::Wide)
+        {
+            for (p, f) in placed.iter().zip(&frames) {
+                crate::picture::deposit::standard::wide_frame(&mut self.ph, f, &p.plan);
+            }
+            return trig;
+        }
+        self.draw_standard_bands(&frames, &placed, (t0, t1));
+        trig
+    }
+
+    fn draw_standard_bands(
+        &mut self,
+        frames: &[std::sync::Arc<crate::board::Frame>],
+        placed: &[crate::picture::deposit::standard::FastFrame],
+        (t0, t1): (std::time::Instant, std::time::Instant),
+    ) {
+        let (w, h) = (self.ph.w, self.ph.h);
+        let m = &self.m;
         // the maps: each channel's frames collected as differences (`fastdraw::diff_span`), in bands of columns so one
         // channel alone also spreads over the cores, then summed into the map once
         let on: Vec<usize> = (0..NCH).filter(|&c| m.ch[c].on).collect();
@@ -3329,7 +3307,7 @@ impl Ui {
             }
         }
         crate::fastdraw::par_each(jobs, |(c, c_lo, band)| {
-            for (f, p) in frames.iter().zip(&placed) {
+            for (f, p) in frames.iter().zip(placed) {
                 add_frame_band(c, band, c_lo, f, &p.plan);
             }
         });
@@ -3358,7 +3336,6 @@ impl Ui {
         self.t_fast_ab.1 += 0.05 * (b - self.t_fast_ab.1);
         self.t_fast_fold += 0.05 * (t2.elapsed().as_secs_f32() * 1e3 - self.t_fast_fold);
         self.fast_n += 0.05 * (frames.len() as f32 - self.fast_n);
-        trig
     }
 
     // ------------------------------------------------------------------ rendering
@@ -3524,7 +3501,7 @@ impl Ui {
         let (ph, vmax, vmax_cg) =
             if zoom { (&self.phz, &self.vmaxz, self.vmaxz_cg) } else { (&self.ph, &self.vmax, self.vmax_cg) };
         if l.over.is_none() {
-            return self.draw_traces(l.under, area, ph, vmax, vmax_cg, all_sources);
+            return wide_trace::draw_traces(self, l.under, area, ph, vmax, vmax_cg, all_sources);
         }
         let show: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on && (all_sources || self.shows(c)));
         if !show.iter().any(|&s| s) {
@@ -3546,7 +3523,11 @@ impl Ui {
                 shift[c] = sh;
             }
         }
-        l.jobs.push(TraceJob { area, zoom, graded, show, alpha, colours, shift, col: CH_COLORS });
+        let mut job = TraceJob { area, zoom, graded, show, alpha, colours, shift, col: CH_COLORS, indexed: None };
+        if ph.is_wide() {
+            job.index_wide(ph);
+        }
+        l.jobs.push(job);
     }
 
     /// The screen once more, laid out for the size of `cv` (Display > HDMI = Layout): the same settings, menus and
@@ -3747,61 +3728,6 @@ impl Ui {
         }
     }
 
-    fn draw_traces(
-        &self,
-        cv: &mut Canvas,
-        area: Rect,
-        ph: &Phosphor,
-        vmaxs: &[u32; NCH],
-        vmax_cg: u32,
-        all_sources: bool,
-    ) {
-        if self.m.color_grade {
-            return self.draw_graded(cv, area, ph, vmax_cg, all_sources);
-        }
-        let (w, h) = (ph.w, ph.h);
-        for c in (0..NCH).rev() {
-            if !self.m.ch[c].on || (!all_sources && !self.shows(c)) {
-                continue;
-            }
-            let col = CH_COLORS[c];
-            let (cr, cg, cb) = ((col >> 16) & 255, (col >> 8) & 255, col & 255);
-            let (lut, shift, least) = self.trace_lut(vmaxs[c]);
-            let map = &ph.map[c];
-            let put = |p: &mut u32, v: u16| {
-                if v == 0 {
-                    return;
-                }
-                let a = lut[((v as usize) >> shift).min(1023)].max(least);
-                // additive with saturation, but channels on top of each other mix towards the newer one
-                let d = *p;
-                let r = (((d >> 16) & 255) * (255 - a) / 255 + cr * a / 255).min(255);
-                let g = (((d >> 8) & 255) * (255 - a) / 255 + cg * a / 255).min(255);
-                let b = ((d & 255) * (255 - a) / 255 + cb * a / 255).min(255);
-                *p = rgb(r, g, b);
-            };
-            match Self::stretch(area, w, h) {
-                None => {
-                    for y in 0..h {
-                        let row = &map[y * w..(y + 1) * w];
-                        let o = ((area.y + y as i32) * cv.w + area.x) as usize;
-                        for (x, &v) in row.iter().enumerate() {
-                            put(&mut cv.px[o + x], v);
-                        }
-                    }
-                }
-                Some((xs, ys)) => {
-                    for (y, &sy) in ys.iter().enumerate() {
-                        let o = ((area.y + y as i32) * cv.w + area.x) as usize;
-                        for (x, &sx) in xs.iter().enumerate() {
-                            put(&mut cv.px[o + x], map[sy * w + sx]);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     /// One part of `step` into `t_parts` (`:SYSTem:STATe?`).
     fn prof_add(&mut self, i: usize, d: std::time::Duration) {
         self.t_parts[i] += 0.05 * (d.as_secs_f32() * 1e3 - self.t_parts[i]);
@@ -3817,13 +3743,13 @@ impl Ui {
         let (mut full, mut fullz) = (false, false);
         for c in 0..NCH {
             if self.m.ch[c].on {
-                let mx = self.ph.map[c].iter().copied().max().unwrap_or(0) as u32;
+                let mx = self.ph.channel_max(c);
                 self.vmax[c] = picture_ref(self.vmax[c], &mut self.per_frame[c], mx, n);
-                full |= mx > 0xc000;
+                full |= self.ph.near_full(mx) && (!self.ph.is_wide() || self.m.persist != 0);
                 if self.m.zoom {
-                    let mz = self.phz.map[c].iter().copied().max().unwrap_or(0) as u32;
+                    let mz = self.phz.channel_max(c);
                     self.vmaxz[c] = picture_ref(self.vmaxz[c], &mut self.per_framez[c], mz, n);
-                    fullz |= mz > 0xc000;
+                    fullz |= self.phz.near_full(mz) && (!self.phz.is_wide() || self.m.persist != 0);
                 }
             }
         }
@@ -3885,43 +3811,6 @@ impl Ui {
             return None;
         }
         Some(((0..aw).map(|x| x * w / aw).collect(), (0..ah).map(|y| y * h / ah).collect()))
-    }
-
-    /// Colour-graded persistence: the hit maps of all enabled channels are added up and every pixel is coloured by its
-    /// density relative to the densest pixel (blue = rare .. red = frequent). Per frame only a 1024-entry LUT is
-    /// built; per pixel it is an add per channel and one table look-up.
-    fn draw_graded(&self, cv: &mut Canvas, area: Rect, ph: &Phosphor, vmax: u32, all_sources: bool) {
-        let maps: Vec<&[u16]> = (0..NCH)
-            .filter(|&c| self.m.ch[c].on && (all_sources || self.shows(c)))
-            .map(|c| ph.map[c].as_slice())
-            .collect();
-        if maps.is_empty() {
-            return;
-        }
-        let (lut, shift) = self.grade_lut(vmax);
-        let w = ph.w;
-        if let Some((xs, ys)) = Self::stretch(area, w, ph.h) {
-            for (y, &sy) in ys.iter().enumerate() {
-                let o = ((area.y + y as i32) * cv.w + area.x) as usize;
-                for (x, &sx) in xs.iter().enumerate() {
-                    let s: u32 = maps.iter().map(|m| m[sy * w + sx] as u32).sum();
-                    if s != 0 {
-                        cv.px[o + x] = lut[((s >> shift) as usize).min(1023)];
-                    }
-                }
-            }
-            return;
-        }
-        for y in 0..ph.h {
-            let o = ((area.y + y as i32) * cv.w + area.x) as usize;
-            let row = y * w;
-            for (x, d) in cv.px[o..o + w].iter_mut().enumerate() {
-                let s: u32 = maps.iter().map(|m| m[row + x] as u32).sum();
-                if s != 0 {
-                    *d = lut[((s >> shift) as usize).min(1023)];
-                }
-            }
-        }
     }
 
     /// Mask test of one acquisition (live records only): counts passed / failed, stops on a failure if set.
@@ -4122,10 +4011,9 @@ impl Ui {
         let area = self.source_area(WaveId::Ch(c)).unwrap_or(self.wave_area());
         let phosphor = if self.m.zoom { &self.phz } else { &self.ph };
         let (w, h) = (phosphor.w, phosphor.h);
-        let map = &phosphor.map[c];
         let bins: Vec<u64> = match self.m.hist {
             Hist::Off => return None,
-            Hist::Vertical => (0..h).map(|r| map[r * w..(r + 1) * w].iter().map(|&x| x as u64).sum()).collect(),
+            Hist::Vertical => (0..h).map(|r| (0..w).map(|x| u64::from(phosphor.count(c, r * w + x))).sum()).collect(),
             Hist::Horizontal => {
                 let ch = &self.m.ch[c];
                 let ppd = h as f32 / VDIV;
@@ -4133,7 +4021,7 @@ impl Ui {
                 let yl =
                     h as f32 / 2.0 - ((self.m.trig_level + ch.offset) / ch.volts_per_div() - center) * factor * ppd;
                 let (r0, r1) = (((yl - ppd / 2.0).max(0.0)) as usize, ((yl + ppd / 2.0).max(0.0) as usize).min(h));
-                (0..w).map(|x| (r0..r1).map(|r| map[r * w + x] as u64).sum()).collect()
+                (0..w).map(|x| (r0..r1).map(|r| u64::from(phosphor.count(c, r * w + x))).sum()).collect()
             }
         };
         let n: u64 = bins.iter().sum();
@@ -6344,11 +6232,10 @@ impl Ui {
         true
     }
 
-    /// Statistics of measurements made on every frame by the deposit workers (framestats.rs) into the Measure page's
-    /// statistics, once these exist (the first measured record starts them).
+    /// Merge statistics for the configured channel measurements from deposits and reader taps.
     fn mstat_fold(&mut self, folds: &crate::framestats::Folds) {
-        if self.mstat.len() < self.m.meas.len() {
-            return;
+        if self.mstat.len() < self.m.meas.len() && folds.iter().any(|(_, fold)| fold.n > 0) {
+            self.mstat.resize(self.m.meas.len(), MStat::default());
         }
         for (key, f) in folds.iter().filter(|x| x.1.n > 0) {
             if let Some(i) = self.m.meas.iter().position(|e| *e == (key.0, WaveId::Ch(key.1))) {
@@ -6430,10 +6317,13 @@ impl Ui {
         if let Ok((n, done)) = w.rx.try_recv() {
             w.busy = false;
             let accept = std::mem::take(&mut w.accept);
+            let tap = w.tap.take();
             if accept && n == change::acquisition::identity(self) {
                 // of the record shown when it was sent: in Run a few frames old, the newest result there is
                 self.meas_set(done);
-                self.meas_new = true;
+                // The tap's cheap statistics already counted. Rows read the current record,
+                // so this completion must not sample a newer fallback's rows.
+                self.meas_new |= deep_draw::measurement_rows_ready(self, tap.as_ref());
             }
         }
         let w = self.meas_bg.as_mut().expect("worker");
@@ -6470,6 +6360,7 @@ impl Ui {
         if w.tx.send(lifecycle::WorkerJob::Measure((identity, cheap, job))).is_ok() {
             w.accept = true;
             w.busy = true;
+            w.tap = self.batch_picture.tap_statistics.as_ref().and_then(|stats| stats.frame_for(rec));
             self.meas_env_sent = env;
         } else {
             // the thread is gone: measure here again
@@ -9530,7 +9421,7 @@ fn fast_take_next(take: f32, n: usize, ms: f32, budget: f32) -> f32 {
 /// way) times `frames`, equal frames give equal brightness whatever their number. Without this a refresh with one
 /// frame after one with several came out dim: the trace pumped at the batch rate (docs/fork/trigger-lockin.md).
 fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
-    let follow = |v: u32, mx: u32| if mx >= v { mx } else { (v * 7 + mx) / 8 }.max(1);
+    let follow = |v: u32, mx: u32| if mx >= v { mx } else { ((u64::from(v) * 7 + u64::from(mx)) / 8) as u32 }.max(1);
     if frames == 0 {
         return follow(prev, mx);
     }
@@ -9540,6 +9431,7 @@ fn picture_ref(prev: u32, per_frame: &mut u32, mx: u32, frames: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    mod admission;
     mod allocation_budget;
     mod change;
     mod change_consumers;
@@ -11152,7 +11044,7 @@ mod tests {
             let a = ui.area;
             let ph = if zoom { &ui.phz } else { &ui.ph };
             let mut direct = Canvas::new(W, H);
-            ui.draw_graded(&mut direct, a, ph, if zoom { ui.vmaxz_cg } else { ui.vmax_cg }, false);
+            wide_trace::draw_graded(&ui, &mut direct, a, ph, if zoom { ui.vmaxz_cg } else { ui.vmax_cg }, false);
             let mut active = 0;
             for y in 0..ph.h {
                 for x in 0..ph.w {
@@ -11502,7 +11394,7 @@ mod tests {
                 basic: Default::default(),
             }
         };
-        shared.lock().unwrap().queue.extend((1..=10).map(frame).map(std::sync::Arc::new));
+        shared.lock().unwrap().queue.extend((1..=10).map(frame).map(Into::into));
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
         ui.m.trig_level = 0.0;
@@ -11586,7 +11478,7 @@ mod tests {
                 assert!(ui.ph.map[c] == want.map[c], "{} s/div CH{}: maps differ", tdiv, c + 1);
             }
             // through `step`: 41 queued frames, 40 by the fast path, the newest as the record; nothing left
-            shared.lock().unwrap().queue.extend((1..=41).map(frame).map(std::sync::Arc::new));
+            shared.lock().unwrap().queue.extend((1..=41).map(frame).map(Into::into));
             // the take of this screen (the step adapts it to the time the draw took afterwards: debug builds miss the
             // budget)
             let max = ui.fast_max();
@@ -11714,7 +11606,7 @@ mod tests {
         assert_eq!(ui.mstat.len(), 5);
         assert_eq!(ui.mstat[0].n, 1);
         // 20 more: 19 by the fast path, the newest as the record
-        shared.lock().unwrap().queue.extend((1..=20).map(frame).map(std::sync::Arc::new));
+        shared.lock().unwrap().queue.extend((1..=20).map(frame).map(Into::into));
         ui.producer_step(0.05);
         assert_eq!(ui.mstat[0].n, 21, "Pk-pk over every frame");
         assert_eq!(ui.mstat[4].n, 2, "Freq only over the records");
@@ -11765,7 +11657,7 @@ mod tests {
         shared.lock().unwrap().queue.push_back(frame(0, true, 10_000_000).into());
         ui.producer_step(0.05);
         assert_eq!(counts(&ui), [0, 1, 0]);
-        shared.lock().unwrap().queue.extend((1..=10).map(|s| frame(s, true, 10_000_000)).map(std::sync::Arc::new));
+        shared.lock().unwrap().queue.extend((1..=10).map(|s| frame(s, true, 10_000_000)).map(Into::into));
         ui.producer_step(0.05);
         assert_eq!(counts(&ui), [0, 11, 0], "Max of every frame, no Mean or Std dev of pairs");
         // live-compression pairs: a raw record, then pair frames; only the raw one counts
@@ -11774,7 +11666,7 @@ mod tests {
         shared.lock().unwrap().queue.push_back(frame(11, false, n).into());
         ui.producer_step(0.05);
         assert_eq!(counts(&ui), [1, 1, 1]);
-        shared.lock().unwrap().queue.extend((12..=21).map(|s| frame(s, true, n)).map(std::sync::Arc::new));
+        shared.lock().unwrap().queue.extend((12..=21).map(|s| frame(s, true, n)).map(Into::into));
         ui.producer_step(0.05);
         assert_eq!(counts(&ui), [1, 1, 1], "values of live-compression pairs counted");
     }
@@ -12054,7 +11946,7 @@ mod tests {
             ch: [vec![0.0; 100], Vec::new(), Vec::new(), Vec::new()],
             ..Default::default()
         };
-        shared.lock().unwrap().queue.extend((1..=100).map(frame).map(std::sync::Arc::new));
+        shared.lock().unwrap().queue.extend((1..=100).map(frame).map(Into::into));
         let mut src = Source::Hw { shared: shared.clone(), seen: 0 };
         let got = src.drain_newest(30);
         assert_eq!(got.iter().map(|f| f.seq).collect::<Vec<_>>(), (70..=99).collect::<Vec<_>>());

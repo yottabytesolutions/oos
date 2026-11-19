@@ -2,6 +2,7 @@
 
 //! Adapters from the existing Standard and Batch routes to frozen kernel inputs.
 
+use super::count::{Count, CountFormat};
 use super::kernel::{self, FrameTiming, Placed, Projection, RawTrace, SamplesRef, TrigSnapshot, Vertical};
 use crate::model::*;
 
@@ -16,6 +17,11 @@ pub(crate) fn projection(m: &Model, w: usize, h: usize, x_per_sample: f64) -> Pr
             m.ch[c].on.then(|| Vertical { volts_per_div: m.ch[c].volts_per_div(), offset: m.ch[c].offset })
         }),
         dots: m.dots_at(x_per_sample),
+        format: CountFormat::for_hits(if m.dots_at(x_per_sample) && x_per_sample > 0.0 && x_per_sample <= 0.5 {
+            dot_hit_bound(x_per_sample * w.min(crate::ui::batch_min_columns()).max(1) as f64 / w.max(1) as f64)
+        } else {
+            1
+        }),
     }
 }
 
@@ -37,6 +43,20 @@ pub(crate) fn frame_timing(m: &Model, f: &crate::board::Frame) -> FrameTiming {
 enum FastRoute {
     Rec(crate::wave::Record),
     Raw(RawTrace),
+}
+
+pub(crate) fn dot_hit_bound(spacing: f64) -> u64 {
+    // The rounded sample-index edges can include an extra sample.
+    ((1.0 / spacing).ceil().max(1.0) as u64).saturating_add(1)
+}
+
+pub(crate) fn record_hit_bound(cols: usize, points: f64, delay_in_windows: f64) -> u64 {
+    let columns = cols as f64;
+    // trace_columns computes x in f64 before rounding to f32 at the column edges.
+    let rounding = f32::EPSILON as f64 + (1.0 + delay_in_windows.abs()) * 8.0 * f64::EPSILON;
+    let vertices = ((1.0 + (columns + 1.0) * rounding) * points / columns).ceil().max(1.0) as u64;
+    // A column with n vertices intersects at most n + 1 adjacent segments.
+    vertices.saturating_add(1)
 }
 
 pub(crate) struct FastPlan {
@@ -75,20 +95,23 @@ impl FastPlan {
         }
     }
 
+    pub(crate) fn format(&self) -> CountFormat {
+        self.projection.format
+    }
+
     pub(crate) fn hit_bound(&self) -> u64 {
         let proj = &self.projection;
         match &self.route {
             FastRoute::Raw(trace)
                 if proj.dots && (0..NCH).any(|c| proj.ch[c].is_some() && trace.spans[c].is_none()) =>
             {
-                // The rounded sample-index edges can include an extra sample.
-                ((1.0 / proj.x_per_sample).ceil().max(1.0) as u64).saturating_add(1)
+                dot_hit_bound(proj.x_per_sample)
             }
             FastRoute::Raw(_) => 1,
+            FastRoute::Rec(rec) if rec.dt == 0.0 && rec.ch.iter().all(Vec::is_empty) => 1,
             FastRoute::Rec(rec) => {
-                let spacing = rec.dt * proj.cols as f64 / (proj.time_per_div * HDIV as f64);
-                // The legacy record rasterizer can include the segments on both column edges.
-                ((1.0 / spacing).ceil().max(1.0) as u64).saturating_add(2)
+                let window = proj.time_per_div * HDIV as f64;
+                record_hit_bound(proj.cols, window / rec.dt, proj.delay / window)
             }
         }
     }
@@ -177,7 +200,7 @@ pub(crate) fn add_frame_band(c: usize, band: &mut [u16], c_lo: usize, f: &crate:
     add_sample_band(c, band, c_lo, SamplesRef::Volts(&f.ch[c]), p);
 }
 
-pub(crate) fn add_sample_band(c: usize, band: &mut [u16], c_lo: usize, samples: SamplesRef<'_>, p: &FastPlan) {
+pub(crate) fn add_sample_band<T: Count>(c: usize, band: &mut [T], c_lo: usize, samples: SamplesRef<'_>, p: &FastPlan) {
     match &p.route {
         FastRoute::Rec(rec) => {
             let bw = band.len() / (p.projection.rows + 1);
@@ -267,4 +290,18 @@ pub(crate) fn batch_plan(
 // AC and LF reject hide the comparator's signal from software. An exact edge trigger is already at `pre`.
 fn near_only(m: &Model, f: &crate::board::Frame) -> bool {
     !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject) || (f.pre_exact && m.trig_type == TrigType::Edge)
+}
+
+/// Exceptional direct-frame consumer shares the same differences and prefix kernels as Batch.
+pub(crate) fn wide_frame(ph: &mut crate::wave::Phosphor, frame: &crate::board::Frame, plan: &FastPlan) {
+    ph.set_format(CountFormat::Wide);
+    for mut band in super::DiffBand::bands((ph.w, ph.h), plan.projection.ch.map(|ch| ch.is_some())) {
+        band.set_format(CountFormat::Wide);
+        let (a, b) = plan.rows(band.channel);
+        if a < b {
+            band.touch(a..b);
+            band.paint(SamplesRef::Volts(&frame.ch[band.channel]), plan);
+            band.fold_picture([None, None], ph);
+        }
+    }
 }

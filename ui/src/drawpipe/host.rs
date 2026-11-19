@@ -18,7 +18,7 @@ pub fn finish_batch(pipe: &Pipe, id: u64) -> Result<Box<dyn RawBatch>, String> {
 }
 
 #[cfg(test)]
-pub(super) fn barrier(pipe: &Pipe) {
+pub(crate) fn barrier(pipe: &Pipe) {
     let (tx, rx) = std::sync::mpsc::channel();
     if let Some(sender) = &oos_hal::sync::lock(&pipe.workers).sender {
         sender.send(super::Message::Barrier(tx)).unwrap();
@@ -126,7 +126,14 @@ mod tests {
         // Buffer return does not consume the pending whole deposit.
         let merged = pipe.accept(&mut crate::wave::Phosphor::new(970, 448), &mut true, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(merged.frames, 27);
-        assert_eq!(merged.waveform.as_ref().unwrap().seq, 27);
+        pipe.set_view(Some(&m), 969, 448, Interp::Exact);
+        let tap = pipe.take_waveform((969, 448)).unwrap();
+        assert_eq!(tap.seq, 27);
+        assert_eq!(
+            tap.eligibility(),
+            crate::board::PictureEligibility::Redraw,
+            "a delayed tap can replace pixels cleared by a resize"
+        );
         assert_eq!(pipe.counters.read().2, 0);
         let next = source.next_batch(&m, &Default::default(), 3, Some(*back)).unwrap();
         assert_eq!(next.newest(0).seq, 30);

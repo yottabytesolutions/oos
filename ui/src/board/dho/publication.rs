@@ -31,7 +31,7 @@ pub(super) fn push_frames(out: &HwShared, mut frames: Vec<Frame>, mode: Mode) {
     let mut g = lock(out);
     frames.retain(|f| current(&g, f));
     let max = if mode == Mode::Peak { super::PEAK_BATCH_MAX } else { QUEUE_MAX };
-    g.queue.extend(frames.into_iter().map(std::sync::Arc::new));
+    g.queue.extend(frames.into_iter().map(Into::into));
     let size = |f: &std::sync::Arc<Frame>| f.ch.iter().map(Vec::len).sum::<usize>();
     let mut held: usize = g.queue.iter().map(size).sum();
     let mut over = 0u64;
@@ -290,7 +290,7 @@ mod conservation_tests {
         let _scope = crate::drawpipe::test_scope::Scope::new();
         read(64, 0, 0);
         let mut shared = crate::board::Shared::default();
-        shared.queue.extend([Frame::default(), Frame::default()].map(std::sync::Arc::new));
+        shared.queue.extend([Frame::default(), Frame::default()].map(Into::into));
         read(2, 2, 2);
         shared.clear_queue(crate::drawpipe::Lost::Settings);
         let counters = crate::drawpipe::counters();

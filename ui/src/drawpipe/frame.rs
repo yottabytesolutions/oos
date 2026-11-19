@@ -35,6 +35,10 @@ pub(crate) fn draw_frame_reusing(
     if let Some(stats) = stats {
         stats.record(&trace.outcome);
     }
+    if ph.is_wide() || projection.format == crate::picture::deposit::count::CountFormat::Wide {
+        crate::picture::deposit::standard::wide_frame(ph, f, &placed.plan);
+        return placed.triggered;
+    }
     for c in 0..NCH {
         if let Some(spans) = &trace.spans[c] {
             crate::picture::deposit::kernel::paint_spans(&mut ph.map[c], w, 0, spans, 24);

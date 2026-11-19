@@ -6,13 +6,15 @@ use std::time::Instant;
 pub(super) struct Header {
     pair: (u64, u64),
     identity: Option<oos_core::change::Identity>,
+    pub(super) tap: Option<Arc<TapReservation>>,
+    pub(super) order: Option<crate::picture::deposit::TapOrder>,
 }
 impl Header {
     fn new(stamp: u64, identity: Option<oos_core::change::Identity>) -> Self {
         let cfg = identity.map_or(0, |id| id.gen());
         #[cfg(test)]
         let cfg = if identity.is_none() { crate::pacing::APPLIED.load(Ordering::Relaxed) } else { cfg };
-        Self { pair: (cfg, stamp), identity }
+        Self { pair: (cfg, stamp), identity, tap: None, order: None }
     }
     pub(super) fn identity(&self) -> Option<oos_core::change::Identity> {
         self.identity
@@ -30,6 +32,55 @@ impl Header {
 }
 
 impl Pipe {
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn reserve_waveform(
+        &self,
+        frame: &Frame,
+        identity: oos_core::change::Identity,
+    ) -> Option<Arc<TapReservation>> {
+        let submitted = oos_hal::sync::lock(&self.view).gen;
+        self.slot.reserve_tap(frame.ch.iter().map(Vec::capacity).sum(), submitted, Some(identity))
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn read_limit(&self, identity: oos_core::change::Identity, live: Option<(u64, u32)>) -> Option<u32> {
+        let state = oos_hal::sync::lock(&self.view);
+        let view = state.view.as_ref().filter(|_| same_pair(state.identity, Some(identity)))?;
+        // An unclaimed batch may acquire any same-identity mapping. Bound the whole reachable
+        // envelope before arm; the worker still verifies its immutable claim before writing tiles.
+        use crate::picture::deposit::{count::CountFormat, standard};
+        let columns = view.w.min(crate::ui::batch_min_columns()).max(1);
+        let window = view.m.time_per_div() as f64 * HDIV as f64;
+        let fallback = standard::record_hit_bound(columns, crate::sparse::POINTS as f64, view.m.delay as f64 / window);
+        let hits = |rate: u64, k: u32, dots: bool| {
+            let spacing = k as f64 / rate as f64 / window;
+            // Screen::of_size caps layout width at 7680. Wider projections can select the
+            // legacy sparse record even when the smallest projection uses dense placement.
+            let sparse = if spacing * 7680.0 > 0.5 { fallback } else { 1 };
+            let dense = if dots { standard::dot_hit_bound(spacing * columns as f64) } else { 1 };
+            sparse.max(dense)
+        };
+        let (per_record, newest_extra) = live.map_or_else(
+            || (fallback, 0),
+            |(rate, k)| {
+                // Explicit Dots disables compression and changes effective read format/gen.
+                // Pair reads can remap geometry, but cannot become raw Dots under this identity.
+                let per_record = hits(rate, k, k == 1);
+                let newest = hits(rate, 1, k == 1);
+                (per_record, newest.saturating_sub(per_record))
+            },
+        );
+        let limit = CountFormat::for_hits(per_record.saturating_add(newest_extra)).hit_limit();
+        let records = limit.saturating_sub(newest_extra) / per_record;
+        // Same-identity Lines must also fit their unchanged narrow format, including sparse fallback.
+        let records = if limit > crate::picture::deposit::HIT_LIMIT {
+            records.min(crate::picture::deposit::HIT_LIMIT / fallback)
+        } else {
+            records
+        };
+        Some(records.max(1) as u32)
+    }
+
     /// `feed_codes` without the board's view of the read-out words (tests).
     #[cfg(test)]
     pub fn feed(&self, raw: Box<dyn RawBatch>, fb: usize, frames: usize, stamp: u64, decode: DecodeInto) {
@@ -81,7 +132,7 @@ impl Pipe {
             .1
     }
 
-    #[cfg(any(target_os = "linux", test))]
+    #[cfg(test)]
     pub fn feed_prepared(
         &self,
         raw: Box<dyn RawBatch>,
@@ -91,16 +142,21 @@ impl Pipe {
         decode: IndexedDecodeInto,
         newest: Option<Arc<Frame>>,
     ) -> Option<Arc<Frame>> {
-        self.submit(
-            raw,
-            fb,
-            frames,
-            (Header::new(identity.epoch(), Some(identity)), fed),
-            decoder::Decoder::Prepared(decode),
-            None,
-            newest,
-        )
-        .1
+        self.feed_readout((raw, fb, frames), (identity, fed), decode, None, (newest, None))
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn feed_readout(
+        &self,
+        (raw, fb, frames): (Box<dyn RawBatch>, usize, std::ops::Range<usize>),
+        (identity, fed): (oos_core::change::Identity, Instant),
+        decode: IndexedDecodeInto,
+        codes: Option<CodesInto>,
+        (newest, tap): (Option<Arc<Frame>>, Option<Arc<TapReservation>>),
+    ) -> Option<Arc<Frame>> {
+        let mut header = Header::new(identity.epoch(), Some(identity));
+        header.tap = tap;
+        self.submit(raw, fb, frames, (header, fed), decoder::Decoder::Prepared(decode), codes, newest).1
     }
 
     #[cfg(test)]
@@ -122,13 +178,17 @@ impl Pipe {
         raw: Box<dyn RawBatch>,
         fb: usize,
         frames: std::ops::Range<usize>,
-        (header, fed): (Header, Instant),
+        (mut header, fed): (Header, Instant),
         decode: decoder::Decoder,
         codes: Option<CodesInto>,
         newest: Option<Arc<Frame>>,
     ) -> (Arc<Batch>, Option<Arc<Frame>>) {
         let first = frames.start;
         let frames = frames.end.min(raw.bytes().len().checked_div(fb).unwrap_or(0));
+        let view_gen_at_submit =
+            header.tap.as_ref().map_or_else(|| oos_hal::sync::lock(&self.view).gen, |tap| tap.submitted());
+        // The acquisition thread can publish a newer fallback as soon as submit returns.
+        header.order = newest.as_ref().and_then(|f| self.slot.track_tap(view_gen_at_submit, header.identity(), f.seq));
         let mut b = Arc::new(Batch {
             lease: Lease { raw: Some(raw), home: self.home.clone() },
             fb,
@@ -136,7 +196,7 @@ impl Pipe {
             decode,
             codes,
             header,
-            view_gen_at_submit: oos_hal::sync::lock(&self.view).gen,
+            view_gen_at_submit,
             next: AtomicUsize::new(first.min(frames)),
             counters: self.counters,
             live: self.live.clone(),
@@ -165,6 +225,21 @@ pub(crate) fn same_pair(a: Option<oos_core::change::Identity>, b: Option<oos_cor
         (None, None) => true,
         _ => false,
     }
+}
+
+pub(super) fn batch_view(b: &Batch, state: &ViewState, reset_before: u64) -> Option<Arc<View>> {
+    let v = state
+        .view
+        .clone()
+        .filter(|_| b.view_gen_at_submit >= reset_before && accepts(b, legacy_stamp(state), state.identity));
+    if v.is_none() {
+        let records = b.frames.saturating_sub(b.next.swap(b.frames, Ordering::Relaxed)) as u64;
+        if !same_pair(b.header.identity(), state.identity) {
+            Counters::add(&b.counters.losses.pipe, records);
+        }
+        b.counters.discard(Lost::Settings, records);
+    }
+    v
 }
 
 pub(super) fn accepts(b: &Batch, legacy_stamp: u64, identity: Option<oos_core::change::Identity>) -> bool {
@@ -207,11 +282,16 @@ pub(super) fn set_view(
     };
     let layout = oos_core::change::Layout::new((w, h), (0, 0), (0, 0), None, 0, 0);
     let key = oos_core::change::WorkerViewKey::of(m, layout, &crate::model::config());
-    let mapping = v.key.as_ref() != Some(&key);
+    let worker_changed = v.key.as_ref() != Some(&key);
     let statistics = identity.is_some_and(|id| v.identity.map(|old| old.stats_gen()) != Some(id.stats_gen()));
-    if mapping || statistics {
+    if worker_changed {
+        let mapping_key = oos_core::change::MappingKey::of(m, layout);
+        v.mapping_gen += u64::from(v.mapping_key.as_ref() != Some(&mapping_key));
+        v.mapping_key = Some(mapping_key);
+    }
+    if worker_changed || statistics {
         crate::pacing::VIEWS.fetch_add(1, Ordering::Relaxed);
-        v.gen += u64::from(mapping);
+        v.gen += u64::from(worker_changed);
         v.view = Some(Arc::new(View { gen: v.gen, m: m.clone(), interp, w, h }));
         v.key = Some(key);
     }
@@ -220,6 +300,9 @@ pub(super) fn set_view(
         v.stamp = m.hw_stamp;
     }
     if let Some(id) = identity {
+        if !same_pair(v.identity, Some(id)) {
+            pipe.slot.set_tap_identity(id);
+        }
         v.identity = Some(id);
     }
 }

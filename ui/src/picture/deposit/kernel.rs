@@ -2,6 +2,7 @@
 
 //! Placement and column differences, independent of live settings and decoded frame ownership.
 
+use super::count::{Count, CountFormat};
 use crate::fastdraw::{self, Fold, Map, Samples, Spans};
 use oos_core::model::{HDIV, NCH, VDIV};
 
@@ -52,6 +53,7 @@ pub(crate) struct Projection {
     pub(crate) delay: f64,
     pub(crate) ch: [Option<Vertical>; NCH],
     pub(crate) dots: bool,
+    pub(crate) format: CountFormat,
 }
 
 impl Projection {
@@ -210,9 +212,9 @@ pub(crate) fn place_at(
     Placed { projection: *proj, trace: RawTrace { trigger_at: ti, outcome, spans }, fold }
 }
 
-pub(crate) fn add_placed_band(
+pub(crate) fn add_placed_band<T: Count>(
     c: usize,
-    band: &mut [u16],
+    band: &mut [T],
     c_lo: usize,
     samples: &SamplesRef<'_>,
     proj: &Projection,
@@ -226,42 +228,42 @@ pub(crate) fn add_placed_band(
 }
 
 /// Prefix differences and blend into row-major pixels. Recycled pool planes are cleared by their next owner.
-pub(crate) fn fold_band(
-    map: &mut [u16],
-    diff: &mut [u16],
-    run: &mut [u16],
+pub(crate) fn fold_band<T: Count>(
+    map: &mut [T],
+    diff: &mut [T],
+    run: &mut [T],
     (cols, rows, first): (usize, usize, usize),
     touched: std::ops::Range<usize>,
     clear: bool,
 ) {
     let width = run.len();
     fold_rows(map, run, (cols, rows, first), touched, |r, run| {
-        let mut occupied = 0;
+        let mut occupied = false;
         for (sum, delta) in run.iter_mut().zip(&mut diff[r * width..][..width]) {
             *sum = sum.wrapping_add(*delta);
             if clear {
-                *delta = 0;
+                *delta = T::default();
             }
-            occupied |= *sum;
+            occupied |= *sum != T::default();
         }
         occupied
     });
 }
 
-pub(super) fn fold_rows(
-    map: &mut [u16],
-    run: &mut [u16],
+pub(super) fn fold_rows<T: Count, M: Count>(
+    map: &mut [M],
+    run: &mut [T],
     (cols, rows, first): (usize, usize, usize),
     touched: std::ops::Range<usize>,
-    mut prefix: impl FnMut(usize, &mut [u16]) -> u16,
+    mut prefix: impl FnMut(usize, &mut [T]) -> bool,
 ) {
     let width = run.len();
-    run.fill(0);
+    run.fill(T::default());
     for r in touched.start.min(rows)..(touched.end.min(rows) + 1).min(rows + 1) {
         let occupied = prefix(r, run);
-        if occupied != 0 && r < rows {
+        if occupied && r < rows {
             for (pixel, sum) in map[r * cols + first..][..width].iter_mut().zip(run.iter()) {
-                *pixel = pixel.saturating_add(*sum);
+                *pixel = pixel.saturating_add(M::from_value(sum.value()));
             }
         }
     }

@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use super::feed::batch_view;
 use super::*;
 use crate::claim_timing::Sampler;
-use crate::picture::deposit::{kernel, pool::Pool, standard, DiffBand, HIT_LIMIT};
+use crate::picture::deposit::count::CountFormat;
+use crate::picture::deposit::{kernel, pool::Pool, standard, DiffBand, Tap, HIT_LIMIT};
 
 #[cfg(test)]
 mod tests;
 
 struct Prepared {
     index: usize,
-    samples: Option<Frame>,
+    decoded_dots: bool,
     plan: Option<standard::FastFrame>,
     codes: Option<CodeLayout>,
     folds: crate::framestats::Folds,
@@ -17,6 +19,15 @@ struct Prepared {
 }
 
 type Arena = Arc<Vec<Option<Box<Prepared>>>>;
+const SLICE: usize = 64;
+
+impl View {
+    pub(super) fn record_hit_bound(&self) -> u64 {
+        let window = self.m.time_per_div() as f64 * HDIV as f64;
+        let dt = window / crate::sparse::POINTS as f64;
+        standard::record_hit_bound(self.w, window / dt, self.m.delay as f64 / window)
+    }
+}
 
 enum Job {
     Place(Arc<Batch>, Arc<View>, Box<Prepared>),
@@ -28,22 +39,29 @@ fn run(scratch: &mut Frame, job: &mut Job) {
         Job::Place(b, v, p) => place(b, v, p, scratch),
         Job::Tile(b, placed, count, band) => {
             for p in placed[..*count].iter().flatten() {
-                let Some(plan) = &p.plan else { continue };
-                let (a, z) = plan.plan.rows(band.channel);
-                if a >= z {
+                if p.decoded_dots {
                     continue;
                 }
-                band.touch(a..z);
-                let samples = match p.codes {
-                    Some(layout) => kernel::SamplesRef::Codes(layout.channel(chunk(b, p.index), band.channel)),
-                    None => {
-                        kernel::SamplesRef::Volts(p.samples.as_ref().map_or(&[], |f| f.ch[band.channel].as_slice()))
-                    }
-                };
-                standard::add_sample_band(band.channel, &mut band.plane.d, band.first, samples, &plan.plan);
+                let Some(plan) = &p.plan else { continue };
+                let samples = p.codes.map_or(kernel::SamplesRef::Volts(&[]), |layout| {
+                    kernel::SamplesRef::Codes(layout.channel(chunk(b, p.index), band.channel))
+                });
+                paint_band(band, samples, &plan.plan);
             }
         }
     }
+}
+
+fn paint_band(band: &mut DiffBand, samples: kernel::SamplesRef<'_>, plan: &standard::FastPlan) {
+    let (a, z) = plan.rows(band.channel);
+    if a < z {
+        band.touch(a..z);
+        band.paint(samples, plan);
+    }
+}
+
+fn newest_at(b: &Batch, index: usize) -> Option<&Frame> {
+    b.newest.as_deref().filter(|_| index + 1 == b.frames)
 }
 
 fn chunk(b: &Batch, i: usize) -> &[u8] {
@@ -57,40 +75,34 @@ fn place(b: &Batch, v: &View, p: &mut Prepared, scratch: &mut Frame) {
     let f = &*scratch;
     let spacing = f.dt / v.m.time_per_div() as f64 * v.w as f64 / HDIV as f64;
     let pairs = crate::compress::live(f) && spacing <= 0.5;
+    p.decoded_dots = false;
     if !pairs && (spacing > 0.5 || f.envelope || f.roll || f.scan || crate::deepmeas::deep_raw_frame(f)) {
         let rec = crate::sparse::record_with(&v.m, f, v.interp).unwrap_or_else(|| {
             let window = v.m.time_per_div() as f64 * HDIV as f64;
-            crate::board::display_record(f, &v.m, 3600, window, v.m.delay as f64 - window / 2.0)
+            crate::board::display_record(f, &v.m, crate::sparse::POINTS, window, v.m.delay as f64 - window / 2.0)
         });
         p.plan = Some(standard::FastFrame::record(rec, standard::projection(&v.m, v.w, v.h, spacing), [None; NCH]));
         return;
     }
     p.plan = Some(standard::batch_plan(&v.m, (v.w, v.h), f, p.codes.map(|layout| (bytes, layout)), previous));
-    if v.m.dots_at(spacing) && p.codes.is_none() && !pairs {
-        p.samples = Some(std::mem::take(scratch));
-    }
+    p.decoded_dots = v.m.dots_at(spacing) && p.codes.is_none() && !pairs;
 }
 
 fn decode(b: &Batch, v: &View, p: &mut Prepared, f: &mut Frame) {
     let bytes = chunk(b, p.index);
-    if let Some(samples) = p.samples.take() {
-        *f = samples;
-    }
     p.codes = b.codes.as_ref().and_then(|codes| codes(bytes, f));
     let spacing = f.dt / v.m.time_per_div() as f64 * v.w as f64 / HDIV as f64;
     if p.codes.is_none() || spacing > 0.5 || f.envelope || f.roll || f.scan || !p.folds.is_empty() {
         b.decode.decode(p.index, bytes, f);
         p.codes = None;
     }
-    if p.index + 1 == b.frames {
-        if let Some(newest) = &b.newest {
-            f.clone_from(newest);
-            p.codes = None;
-        }
+    let newest = newest_at(b, p.index);
+    if let Some(newest) = newest {
+        f.clone_from(newest);
+        p.codes = None;
     }
     b.header.tag(f);
-    p.measured =
-        (p.index + 1 != b.frames || b.newest.is_none()) && crate::framestats::fold_frame(f, &v.m, &mut p.folds);
+    p.measured = newest.is_none() && crate::framestats::fold_frame(f, &v.m, &mut p.folds);
 }
 
 pub(super) fn work(
@@ -101,12 +113,9 @@ pub(super) fn work(
     little: u64,
     counters: &'static Counters,
 ) {
-    let mut pool = Pool::new(n, little, run);
+    let mut painter = Painter::new(n, little);
     let mut current: Option<Deposit> = None;
-    let mut arena = Arena::default();
-    let mut jobs = Vec::new();
     let mut statistics = None;
-    let mut sampler = Sampler::default();
     while let Ok(message) = rx.recv() {
         let state = oos_hal::sync::lock(view);
         let reset_before = slot.reset_before();
@@ -123,30 +132,32 @@ pub(super) fn work(
             }
             #[cfg(test)]
             Message::Barrier(reply) => {
-                if let Some(d) = current.take() {
-                    current = slot.put(d).err();
-                }
                 let _ = reply.send(());
                 continue;
             }
         };
-        let Some(v) = batch_view(&b, &state, reset_before) else { continue };
+        let v = batch_view(&b, &state, reset_before);
         let identity = state.identity;
         drop(state);
+        let Some(v) = v else {
+            if same_pair(b.header.identity(), identity) {
+                let _ = send_tap(slot, &b, TapProjection::Unpainted);
+            }
+            continue;
+        };
         let key = (v.gen, b.header.identity().map(|id| id.stats_gen()));
         if statistics != Some(key) {
-            for p in Arc::get_mut(&mut arena).expect("all previous batch jobs returned").iter_mut().flatten() {
+            for p in Arc::get_mut(&mut painter.arena).expect("all previous batch jobs returned").iter_mut().flatten() {
                 p.folds = crate::framestats::folds_for(&v.m);
             }
             statistics = Some(key);
         }
-        let Some(mut deposit) = prepare(current.take(), slot, &b, &v, identity) else {
+        let Some(deposit) = painter.batch(current.take(), slot, &b, &v, identity) else {
             if slot.closed() {
                 break;
             }
             continue;
         };
-        draw(&b, &v, &mut deposit, &mut pool, &mut arena, &mut jobs, &mut sampler);
         current = slot.put(deposit).err();
     }
     if let Some(deposit) = current {
@@ -154,19 +165,10 @@ pub(super) fn work(
     }
 }
 
-fn batch_view(b: &Batch, state: &ViewState, reset_before: u64) -> Option<Arc<View>> {
-    let v = state
-        .view
-        .clone()
-        .filter(|_| b.view_gen_at_submit >= reset_before && accepts(b, feed::legacy_stamp(state), state.identity));
-    if v.is_none() {
-        let records = b.frames.saturating_sub(b.next.swap(b.frames, Ordering::Relaxed)) as u64;
-        if !same_pair(b.header.identity(), state.identity) {
-            Counters::add(&b.counters.losses.pipe, records);
-        }
-        b.counters.discard(Lost::Settings, records);
-    }
-    v
+fn send_tap(slot: &Handoff, b: &Batch, projection: TapProjection) -> Option<u64> {
+    let frame = b.newest.clone()?;
+    let tap = Tap { frame, identity: b.header.identity(), projection };
+    slot.publish_tap(tap, b.view_gen_at_submit, b.header.tap.as_ref(), b.header.order.as_ref())
 }
 
 fn prepare(
@@ -175,18 +177,14 @@ fn prepare(
     b: &Batch,
     v: &View,
     identity: Option<oos_core::change::Identity>,
+    (hits, format): (u64, CountFormat),
 ) -> Option<Deposit> {
-    let mut waveform = None;
     if current.as_ref().is_some_and(|d| !d.matches(v.gen, v.w, v.h) || !same_pair(d.identity, b.header.identity())) {
-        let mut old = current.take().expect("the preceding check found a deposit");
+        let old = current.take().expect("the preceding check found a deposit");
         old.reject(identity, b.counters);
-        if b.newest.is_none() && same_pair(old.identity, identity) {
-            waveform = old.newest.take();
-        }
         slot.recycle(old);
     }
-    let records = b.frames.saturating_sub(b.next.load(Ordering::Relaxed)) as u64;
-    if current.as_ref().is_some_and(|d| d.records + records > HIT_LIMIT) {
+    if current.as_ref().is_some_and(|d| d.format() != format || d.extent.hits() + hits > format.hit_limit()) {
         let full = current.take().expect("the weight limit applies to an existing deposit");
         if let Err(full) = slot.send(full) {
             full.reject(identity, b.counters);
@@ -206,17 +204,7 @@ fn prepare(
             }
         }
     });
-    if waveform.is_some() {
-        deposit.newest = waveform;
-    }
-    // Only the final waveform is measured by UI readers. Earlier coalesced taps belong in the pool folds.
-    if b.newest.is_some() {
-        if let Some(prior) = &deposit.newest {
-            if crate::framestats::fold_frame(prior, &v.m, &mut deposit.folds) {
-                deposit.progress.measured += 1;
-            }
-        }
-    }
+    deposit.set_format(format);
     if b.header.identity().map(|id| id.stats_gen()) > deposit.identity.map(|id| id.stats_gen()) {
         Counters::add(&b.counters.losses.folds, deposit.folds.iter().map(|(_, f)| f.n).sum());
         deposit.folds.clear();
@@ -225,33 +213,116 @@ fn prepare(
     current
 }
 
-fn draw(
-    b: &Arc<Batch>,
-    v: &Arc<View>,
-    d: &mut Deposit,
-    pool: &mut Pool<Job, Frame>,
-    arena: &mut Arena,
-    jobs: &mut Vec<Job>,
-    sampler: &mut Sampler,
-) {
-    let start = b.next.load(Ordering::Relaxed);
-    if start == b.frames {
-        return;
-    }
-    let before = d.records;
-    for first in (start..b.frames).step_by(64) {
-        let count = (b.frames - first).min(64);
-        let started = b.counters.diagnostics_enabled().then(|| sampler.start()).flatten();
-        if crate::pacing::is_stale(b.header.cfg()) {
-            d.progress.stale += count as u64;
+struct Painter {
+    pool: Pool<Job, Frame>,
+    arena: Arena,
+    jobs: Vec<Job>,
+    sampler: Sampler,
+}
+
+impl Painter {
+    fn new(workers: usize, little: u64) -> Self {
+        Self {
+            pool: Pool::new(workers, little, run),
+            arena: Arena::default(),
+            jobs: Vec::new(),
+            sampler: Sampler::default(),
         }
-        let placed = Arc::get_mut(arena).expect("all tile jobs returned their arena references");
+    }
+
+    fn batch(
+        &mut self,
+        current: Option<Deposit>,
+        slot: &Handoff,
+        b: &Arc<Batch>,
+        v: &Arc<View>,
+        identity: Option<oos_core::change::Identity>,
+    ) -> Option<Deposit> {
+        let start = b.next.load(Ordering::Relaxed);
+        if start == b.frames {
+            let _ = send_tap(slot, b, TapProjection::Unpainted);
+            return current;
+        }
+        let slices = (start..b.frames).step_by(SLICE);
+        let sampled = b.counters.diagnostics_enabled();
+        let prior_hits = current.as_ref().map_or(0, |d| d.extent.hits());
+        let frames = b.frames - start;
+        // Lines use one span per column or a fallback resampled to POINTS, including any newest replacement.
+        // The latter bounds every tile of either route for this claimed view.
+        let line_hits = || v.record_hit_bound().saturating_mul(frames as u64);
+        let preflight = frames <= SLICE || v.m.dots_at(0.0) || line_hits() > HIT_LIMIT.saturating_sub(prior_hits);
+        let started = (sampled && preflight && frames > 0).then(|| self.sampler.start()).flatten();
+        let bound = if preflight { self.plan(b, v, slices.clone()) } else { (0, CountFormat::Narrow) };
+        let placement = started.map(|t| t.elapsed());
+        if bound.0 > bound.1.hit_limit() {
+            let records = b.frames.saturating_sub(b.next.swap(b.frames, Ordering::Relaxed)) as u64;
+            b.counters.discard(Lost::Budget, records);
+            let _ = send_tap(slot, b, TapProjection::Unpainted);
+            return current;
+        }
+        let tap = send_tap(slot, b, TapProjection::Projected { gen: v.gen, size: (v.w, v.h) });
+        let mut d = prepare(current, slot, b, v, identity, bound)?;
+        if let Some(number) = tap {
+            d.include_tap(number);
+        }
+        let before = d.records;
+        for first in slices {
+            let started = if first == start && preflight {
+                placement.map(|_| std::time::Instant::now())
+            } else {
+                sampled.then(|| self.sampler.start()).flatten()
+            };
+            let count =
+                if first == start && preflight { (b.frames - first).min(SLICE) } else { self.place_slice(b, v, first) };
+            if crate::pacing::is_stale(b.header.cfg()) {
+                d.progress.stale += count as u64;
+            }
+            draw_tiles(b, &mut d.planes, &mut self.pool, &self.arena, count, &mut self.jobs);
+            account(b, &mut d, &self.arena[..count]);
+            if let Some(started) = started {
+                let elapsed = started.elapsed() + placement.filter(|_| first == start).unwrap_or_default();
+                d.progress.sample = Some((elapsed, count as u64));
+            }
+        }
+        b.next.store(b.frames, Ordering::Relaxed);
+        d.extent.include(b.fed);
+        b.counters.publish(&d.progress, d.records - before);
+        d.progress.measured = 0;
+        Some(d)
+    }
+
+    fn plan(
+        &mut self,
+        b: &Arc<Batch>,
+        v: &Arc<View>,
+        slices: impl DoubleEndedIterator<Item = usize>,
+    ) -> (u64, CountFormat) {
+        // Keep at most one slice of plans. Reuse the first slice when painting starts.
+        let mut hits = 0u64;
+        let mut format = CountFormat::Narrow;
+        for first in slices.rev() {
+            let count = self.place_slice(b, v, first);
+            for p in self.arena[..count].iter().flatten() {
+                if let Some(frame) = &p.plan {
+                    hits = hits.saturating_add(frame.plan.hit_bound());
+                    if frame.plan.format() == CountFormat::Wide {
+                        format = CountFormat::Wide;
+                    }
+                }
+            }
+        }
+        (hits, format)
+    }
+
+    fn place_slice(&mut self, b: &Arc<Batch>, v: &Arc<View>, first: usize) -> usize {
+        let count = (b.frames - first).min(SLICE);
+        let placed = Arc::get_mut(&mut self.arena).expect("all tile jobs returned their arena references");
         placed.resize_with(placed.len().max(count), || None);
         for (index, slot) in (first..first + count).zip(&mut placed[..count]) {
             let mut p = slot.take().unwrap_or_else(|| {
                 Box::new(Prepared {
                     index,
-                    samples: None,
+                    decoded_dots: false,
                     plan: None,
                     codes: None,
                     folds: crate::framestats::folds_for(&v.m),
@@ -259,31 +330,19 @@ fn draw(
                 })
             });
             p.index = index;
-            jobs.push(Job::Place(b.clone(), v.clone(), p));
+            for (_, fold) in &mut p.folds {
+                *fold = Default::default();
+            }
+            self.jobs.push(Job::Place(b.clone(), v.clone(), p));
         }
-        pool.map(jobs);
-        for (slot, job) in placed[..count].iter_mut().zip(jobs.drain(..)) {
+        self.pool.map(&mut self.jobs);
+        for (slot, job) in placed[..count].iter_mut().zip(self.jobs.drain(..)) {
             if let Job::Place(_, _, p) = job {
                 *slot = Some(p);
             }
         }
-        draw_tiles(b, &mut d.planes, pool, arena, count, jobs);
-        account(b, d, &arena[..count]);
-        let placed = Arc::get_mut(arena).expect("tile jobs released the arena");
-        for p in placed[..count].iter_mut().flatten() {
-            for (_, fold) in &mut p.folds {
-                *fold = Default::default();
-            }
-        }
-        if let Some(started) = started {
-            d.progress.sample = Some((started.elapsed(), count as u64));
-        }
+        count
     }
-    b.next.store(b.frames, Ordering::Relaxed);
-    d.newest = b.newest.clone().or_else(|| d.newest.take());
-    d.extent.include(b.fed);
-    b.counters.publish(&d.progress, d.records - before);
-    d.progress.measured = 0;
 }
 
 fn draw_tiles(
@@ -301,6 +360,19 @@ fn draw_tiles(
     for job in jobs.drain(..) {
         if let Job::Tile(.., band) = job {
             planes.push(band);
+        }
+    }
+    // Keep only one decoded record in scratch while painting its dots across the bands.
+    let scratch = pool.scratch();
+    for p in arena[..count].iter().flatten().filter(|p| p.decoded_dots) {
+        let Some(plan) = &p.plan else { continue };
+        let frame = newest_at(b, p.index).unwrap_or_else(|| {
+            b.decode.decode(p.index, chunk(b, p.index), scratch);
+            scratch
+        });
+        for band in &mut *planes {
+            let samples = kernel::SamplesRef::Volts(&frame.ch[band.channel]);
+            paint_band(band, samples, &plan.plan);
         }
     }
 }

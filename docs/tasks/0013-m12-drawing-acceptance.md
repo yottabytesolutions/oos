@@ -118,6 +118,10 @@ Retain full host gate evidence for the coordinator before the combined unit tria
 PR #224 intake review follow-up: return the newest waveform to the existing record path when the coordinator
 rejects a batch. Test full and disconnected intake, buffer return and unclaimed-record accounting.
 
+PR #224 window follow-up: prove the whole batch's hit bound before painting and preserve a delivered waveform's
+picture eligibility while it waits behind a fallback. Reserve the F2 producer, waveform queue and host fixture
+paths. Compare Auto and Off from equal startup settings and retain a separate mapping-transition regression.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -125,6 +129,63 @@ rejects a batch. Test full and disconnected intake, buffer return and unclaimed-
   All production source, other budgets, unit acceptance and sampler/runner remain identical.
   No acceptance or review state changed. Native timing awaits experiment-supervisor release.
   The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
+
+- 2026-11-19: PR #224 integration uses the reachable projection envelope and preserves the four-channel normal
+  Lines read plans. The 271-column, four-channel raw Dots case at 500 us/div and fixed 1M depth needs up to 69,216
+  count units at q = 24. Host fixtures compare the wide picture with per-sample counts and verify the GPU indices.
+  The FIFO reserves analog readout sample capacity before newest decode. A consumed waveform keeps one preview
+  obligation until picture acceptance, so an intervening mapping change can redraw it once without repeating its
+  reader work. F2 still needs a production allocation owner for the plan-derived `2B + 2` waveform slots and
+  the `B`-tap drain bound. Source-wide buffer-before-arm and command-event waits remain F3 work. The hardware
+  hold remains in place.
+  On unchanged source, 118 focused checks passed in each profile, Linux cross-check passed, and both full
+  golden runs matched 1,314 reference captures across 284 cases. UI coverage was 90.2%. The full gate passed
+  its 22 non-performance steps and printed `gate FAILED in 736 s: perf` when the quiet-host wait was stopped
+  before timing. The separate ordinary performance step passed on the same source after other builds ended.
+  All 28 shipping UI guards passed. The worst diagnostics ratio was 1.004739, below both the original 1.01
+  target and temporary 1.02 limit. The 4 MB mask 3 learning p99 was 1.385 ms on the host, or 5.540 ms using
+  the provisional 4x A72 projection. This is host checkpoint evidence. Fresh review and unit acceptance remain open.
+
+- 2026-11-19: PR #224 cross-vendor follow-up makes the newest waveform drawable after whole-batch hit-budget
+  rejection. Tap accounting preserves eligibility for rejected batches interleaved with batches in a coalesced
+  deposit. The record consumer uses explicit picture eligibility, and host regressions exercise both cases.
+  The UI suites passed 1,786 debug and 1,785 optimized tests, with 62 skipped in each profile. The 12 fast
+  gate steps and Clippy passed. Unit timing remains open.
+
+- 2026-11-19: PR #224 review follow-up moves newest-record taps to a bounded FIFO independent of picture
+  coalescing and hit-budget rejection. The UI schedules readers for taps consumed on later steps. Decoded
+  dots use worker scratch for placement and reuse one scratch frame for painting across bands. The host
+  debug and optimized suites passed 1,733 and 1,732 unit tests respectively, plus 8 goldens, 17 scripts,
+  10 socket tests and 16 soak and support tests in each profile. All 12 fast gate steps passed after
+  regenerating the UI file and step size ratchets. Independent review and unit timing remain open.
+
+- 2026-11-19: The #224 admission follow-up preserves the pre-pacing Lines plans and checks the projection held at
+  worker claim. A 14-record, two-channel 10 us/div Lines read can exceed the u16 limit if claimed as Dots at 177
+  columns. Its conservative bound is 4,970 hits at q = 24, against the limit of 2,730 hits. The worker returns the
+  DMA buffer and accounts for the whole batch as `lost.budget`. A lossless claim of this geometry needs a wider
+  representation with a revised memory budget or an approved change to the projection lifetime. Live rate and F3
+  source waits remain unmeasured. The DHO804 hold remains in place.
+
+- 2026-11-19: Final PR #224 host verification passed. Active Batch reads reserve for the smallest live plot so a
+  mapping change during a read still fits. Standard reads keep their original size. An empty sparse record
+  preserves trigger status without painting. All six acquisitions and retained maps agree between Auto and Off
+  for each of raw, codes, live pairs and deep pairs at one channel.
+  Fast printed `partial gate passed (not done): 12 steps in 17 s`. The unchanged-source retry printed
+  `gate passed (default): 23 steps in 445 s` with matching source receipts, 1,775 debug and 1,774 optimized UI
+  tests passed, 90.1% UI coverage, all shipping guards passed and all 65 synthetic plans matched.
+  Full debug and optimized golden comparisons each matched 1,314 captures across 284 cases.
+  Earlier runs found a conservative sparse estimate that rejected the 500-record shipping fixture, a test
+  Clippy finding, and intermittent Python socket-pacing and diagnostics timing failures. The final run exercised
+  the original fixture and limits. Production Rust grew by 147 UI lines. The unit hold and review remain open.
+
+- 2026-11-19: PR #224 window follow-up reproduced the 32-record dot overflow and the delayed duplicate waveform
+  on the host. The full slot now hands off at 31 records and also separates the original two 16-record reads.
+  The tests wait for the blocked sender and verify buffer return, plane reuse and one wake publication.
+  Auto and Off start with the same settings and synthetic reads. At the one-channel settled capture both
+  retain the deposits ending at records 73 and 86. A newest-only control matches the pre-window RGB in all
+  26 reviewed cases. For multi-channel deep pairs the final map agrees with the control, but retention at
+  record 46 changes the running grade. Min persistence and grade cases retain the 13-record and 3-record
+  deposits together. The four Dots On transition fixtures whose original pixels match are restored.
 
 - 2026-11-19: PR #224 review follow-up retains up to three whole deposits at minimum persistence. The UI grades
   the retained record count and counts each accepted deposit once. Injected-clock regressions cover the 67 ms

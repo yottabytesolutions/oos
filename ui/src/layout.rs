@@ -14,6 +14,8 @@ use crate::gfx::Rect;
 
 /// The built-in panel of the DHO800/DHO900.
 pub const PANEL_W: i32 = 1024;
+pub(crate) const MIN_EYE_TRACE_WIDTH: i32 = 360;
+pub(crate) const WINDOW_GAP: i32 = 6;
 pub const PANEL_H: i32 = 600;
 
 /// The size of the screen the GUI is laid out for.

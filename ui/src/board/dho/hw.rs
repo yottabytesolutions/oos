@@ -2074,9 +2074,9 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
             let mut b = batch_plan(&s, &p, switches.board.zone_batch);
             // fewer frames where the read would take the screen frame (pacing.rs; not the hardware average, whose
             // batches count triggers)
-            let uncapped = b.frames;
+            let (deposit_pipe, uncapped) = batch::deposit_plan(&b, &p, identity, route);
             if !matches!(b.mode, oos_hal::dho::acq::Mode::Average { .. }) {
-                b.frames = cap.apply(b.frames);
+                b.frames = cap.apply(uncapped);
             }
             if poll == single::Poll::Wait {
                 disarm(&mut armed, &mut state, &mut bar, &mut c2h);
@@ -2297,7 +2297,7 @@ pub fn spawn(o: crate::board::Spawn, switches: crate::sysconf::Switches) -> HwSh
                     super::publication::read(count, shown, avail);
                     // batch mode (drawpipe.rs): the newest frame to the queue, the others with the buffer itself to the
                     // deposit workers, the next batch read into a buffer they gave back
-                    let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).filter(|x| route && after.is_none() && avail > 1 && x.accepting());
+                    let pipe = deposit_pipe.filter(|x| after.is_none() && avail > 1 && x.accepting());
                     // the raw newest frame stands for the newest compressed one (same record)
                     let raw_frame = raw_frame.filter(|_| avail as u32 == count);
                     let mut la_words = la_words;

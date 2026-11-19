@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+pub(crate) mod count;
 pub(crate) mod kernel;
 mod planes;
 pub(crate) mod pool;
 pub(crate) mod standard;
+mod tap;
 pub(crate) use planes::DiffBand;
+pub(crate) use tap::{TapOrder, TapRead, TapReservation};
 #[cfg(test)]
 mod tests;
 
@@ -56,9 +59,9 @@ pub(crate) struct Deposit {
     pub(crate) folds: crate::framestats::Folds,
     pub(crate) edges: [u64; 4],
     pub(crate) off: (f64, f64),
-    pub(crate) newest: Option<Arc<crate::board::Frame>>,
     pub(crate) extent: Extent,
     pub(crate) progress: crate::claim_timing::Progress,
+    pub(crate) taps: std::ops::Range<u64>,
 }
 
 impl Deposit {
@@ -73,14 +76,24 @@ impl Deposit {
             folds: Vec::new(),
             edges: [0; 4],
             off: (0.0, 0.0),
-            newest: None,
             extent: Extent::default(),
             progress: Default::default(),
+            taps: 0..0,
         }
     }
 
     pub(crate) fn matches(&self, gen: u64, w: usize, h: usize) -> bool {
         self.gen == gen && self.size == (w, h)
+    }
+
+    pub(crate) fn format(&self) -> count::CountFormat {
+        self.planes.first().map_or(count::CountFormat::Narrow, |band| band.format())
+    }
+
+    pub(crate) fn set_format(&mut self, format: count::CountFormat) {
+        for band in &mut self.planes {
+            band.set_format(format);
+        }
     }
 
     pub(crate) fn size(&self) -> (usize, usize) {
@@ -101,9 +114,16 @@ impl Deposit {
         self.folds.clear();
         self.edges = [0; 4];
         self.off = (0.0, 0.0);
-        self.newest = None;
         self.extent = Extent::default();
         self.progress = Default::default();
+        self.taps = 0..0;
+    }
+
+    pub(crate) fn include_tap(&mut self, number: u64) {
+        if self.taps.is_empty() {
+            self.taps.start = number;
+        }
+        self.taps.end = number + 1;
     }
 
     pub(crate) fn reject(&self, identity: Option<Identity>, counters: &Counters) {
@@ -116,13 +136,49 @@ impl Deposit {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct TapView {
+    worker_gen: u64,
+    mapping_gen: u64,
+    size: (usize, usize),
+}
+
+impl TapView {
+    pub(crate) fn new(worker_gen: u64, mapping_gen: u64, size: (usize, usize)) -> Self {
+        Self { worker_gen, mapping_gen, size }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum TapProjection {
+    Unpainted,
+    Projected { gen: u64, size: (usize, usize) },
+    Accounted { mapping_gen: u64, size: (usize, usize) },
+    Expired,
+}
+
+pub(crate) struct Tap {
+    pub(crate) frame: Arc<crate::board::Frame>,
+    pub(crate) identity: Option<Identity>,
+    pub(crate) projection: TapProjection,
+}
+
+impl Tap {
+    fn samples(&self) -> usize {
+        self.frame.ch.iter().map(Vec::capacity).sum()
+    }
+}
+
 #[derive(Default)]
 struct Slot {
     closed: bool,
     claimed: bool,
+    #[cfg(test)]
+    waiting: bool,
     reset_before: u64,
     pending: Option<Deposit>,
     spare: Vec<Deposit>,
+    taps: tap::Queue,
 }
 
 impl Slot {
@@ -152,7 +208,7 @@ impl Drop for Claim<'_> {
     }
 }
 
-/// Only the u16 weight limit waits for space. Reset and close also release that wait.
+/// The picture slot and waveform FIFO have independent capacity. Reset and close release both waits.
 #[derive(Default)]
 pub(crate) struct Handoff {
     state: std::sync::Mutex<Slot>,
@@ -190,7 +246,16 @@ impl Handoff {
     pub(crate) fn send(&self, deposit: Deposit) -> Result<(), Deposit> {
         let mut state = oos_hal::sync::lock(&self.state);
         while state.occupied() && !state.closed && !deposit.predates(state.reset_before) {
+            #[cfg(test)]
+            {
+                state.waiting = true;
+                self.space.notify_all();
+            }
             state = self.space.wait(state).unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        #[cfg(test)]
+        {
+            state.waiting = false;
         }
         if state.closed {
             return Err(deposit);
@@ -198,11 +263,22 @@ impl Handoff {
         state.put(deposit).inspect(|()| crate::pacing::ready())
     }
 
+    #[cfg(test)]
+    pub(crate) fn wait_for_sender(&self) {
+        let state = oos_hal::sync::lock(&self.state);
+        let (state, _) =
+            self.space.wait_timeout_while(state, crate::ui::lifecycle::test_wait::HANG_GUARD, |s| !s.waiting).unwrap();
+        assert!(state.waiting, "the capacity handoff must wait while the UI slot is occupied");
+    }
+
     pub(crate) fn reset(&self, reset_before: u64) -> Option<Deposit> {
         let mut state = oos_hal::sync::lock(&self.state);
         state.reset_before = reset_before;
         state.spare = Vec::new();
+        let taps = state.taps.clear();
         let pending = state.pending.take();
+        drop(state);
+        drop(taps);
         self.space.notify_all();
         pending
     }
@@ -216,7 +292,11 @@ impl Handoff {
     }
 
     pub(crate) fn close(&self) {
-        oos_hal::sync::lock(&self.state).closed = true;
+        let mut state = oos_hal::sync::lock(&self.state);
+        state.closed = true;
+        let taps = state.taps.clear();
+        drop(state);
+        drop(taps);
         self.space.notify_all();
     }
 }

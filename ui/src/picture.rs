@@ -4,7 +4,7 @@ pub(crate) mod deposit;
 
 use crate::drawpipe::{Accepted, Counters, Stats};
 use crate::wave::Phosphor;
-use deposit::{Deposit, Handoff, HIT_LIMIT};
+use deposit::{Deposit, Handoff};
 use oos_core::change::Identity;
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -52,7 +52,10 @@ impl DepositWindow {
         let (mut records, mut hits) = (deposit.records, deposit.extent.hits());
         let mut keep = 0;
         for older in self.deposits.iter().rev().take(MAX_DEPOSITS - 1) {
-            if records >= target || hits.saturating_add(older.extent.hits()) > HIT_LIMIT {
+            if records >= target
+                || older.format() != deposit.format()
+                || hits.saturating_add(older.extent.hits()) > deposit.format().hit_limit()
+            {
                 break;
             }
             records += older.records;
@@ -68,15 +71,11 @@ impl DepositWindow {
     }
 
     pub(crate) fn rebuild(&mut self, ph: &mut Phosphor) -> u64 {
-        ph.clear();
+        ph.clear_counts();
         let Some((newest, prior)) = self.deposits.make_contiguous().split_last_mut() else { return 0 };
+        ph.set_format(newest.format());
         for (i, band) in newest.planes.iter_mut().enumerate() {
-            let map = &mut ph.map[band.channel];
-            if prior.is_empty() {
-                band.fold(map);
-            } else {
-                band.fold_window(std::array::from_fn(|j| prior.get(j).map(|deposit| &deposit.planes[i])), map);
-            }
+            band.fold_picture(std::array::from_fn(|j| prior.get(j).map(|deposit| &deposit.planes[i])), ph);
         }
         newest.records + prior.iter().map(|deposit| deposit.records).sum::<u64>()
     }

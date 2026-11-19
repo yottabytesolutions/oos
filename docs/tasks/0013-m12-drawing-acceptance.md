@@ -170,6 +170,17 @@ Also reserve `ui/src/system/test_allocator.rs`, `ui/src/ui/change/census.rs`, `u
 assertions and process-wide accounting. Run the fast gate, UI debug/optimized tests and serial shipping upload
 guards. The coordinator retains independent review, the final combined full gate and the DHO804 unit round.
 
+PR #221 three-topic replay on F2 `7c7135e7`: retain the upload edit boundary, retained/expired
+window regression and #230 calling-thread census with all six strict zero checks. Preserve F2 capacity,
+hidden-trigger and delayed-waveform corrections and both layers' existing task evidence. Reserve this task
+and generated changed-file size ratchets for integration reconciliation. Also reserve `ui/src/gpu.rs`,
+`ui/src/gpu/upload.rs` and its tests for the private upload-source name collision found by the fast gate.
+Reserve `ui/src/drawpipe/tests/deposit.rs` to adapt the new hidden-channel regression to read-only map access.
+Validate the fast gate and targeted upload, dirty-row, window, deposit and census checks in debug and optimized
+profiles on this intermediate tree.
+The F2 admission follow-up remains active; its published head needs an exact final restack and the full
+combined host, image, independent review and unit gates. The coordinator's hold remains in place. No scope access.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -251,6 +262,31 @@ guards. The coordinator retains independent review, the final combined full gate
   DMA buffer and accounts for the whole batch as `lost.budget`. A lossless claim of this geometry needs a wider
   representation with a revised memory budget or an approved change to the projection lifetime. Live rate and F3
   source waits remain unmeasured. The DHO804 hold remains in place.
+
+- 2026-11-19: PR #221's three upload topics are replayed through `d3d68b55` on published F2 `7c7135e7`.
+  Both layers' prior task evidence is preserved. The new hidden-channel trigger test now reads `maps()`;
+  its first ratchet build failed with E0616 before that adaptation. The private GPU upload type is named
+  `UploadData`, retaining the local `Source` alias without changing behavior. This separates its size census
+  from the acquisition `Source` impls. Producer capacity, hidden-trigger and delayed-waveform corrections,
+  the upload edit boundary, retained/expired-deposit regression and all six strict #230 zero checks remain intact.
+  Initial fast gate printed `gate FAILED in 8 s: size` (exit 1), for the impl-name collision and stale size slack.
+  Intermediate formatting attempts printed `gate FAILED in 8 s: size` and `gate FAILED in 27 s: size` (exit 1).
+  The final alias avoids that extra production line. `cargo xtask ratchet` generated only the `ui.rs` allowance
+  reduction from 8,576 to 8,574. Final-source fast printed
+  `partial gate passed (not done): 12 steps in 9 s` (exit 0).
+  Targeted debug and optimized upload, dirty-row, window, deposit and delayed-waveform checks each passed 28 tests;
+  their two ignored upload timing cases passed separately in the shipping profile. Debug and optimized observer
+  censuses each reported 256 calls and zero allocations for all six regions. Optimized UI nextest passed
+  1,796 tests with 64 skipped (exit 0). Serial shipping-profile dots and both upload guards passed all three
+  tests (exit 0) with unchanged limits. Eight-row best/CPU-tail ratios were 0.029/0.037; full-upload ratios were
+  0.431/0.493. The validation driver verified an unchanged source fingerprint after each final command.
+  Production delta for this repair is zero; the three-topic stack is +255 UI Rust lines over F2, zero elsewhere.
+  Files: `ui/src/gpu.rs`, `ui/src/gpu/upload.rs`, `ui/src/gpu/upload/tests.rs`,
+  `ui/src/drawpipe/tests/deposit.rs`, `xtask/data/ui/size.txt` and this task.
+  Complete logs and the source fingerprint use `target/replay221-f2-intake-*`.
+  This is intermediate host evidence only. The F2 admission follow-up is active. Its published head still needs
+  an exact final restack and full combined host, image, independent review and DHO804 unit gates.
+  The existing coordinator hold remains. No scope access or Git index writes.
 
 - 2026-11-19: Final PR #224 host verification passed. Active Batch reads reserve for the smallest live plot so a
   mapping change during a read still fits. Standard reads keep their original size. An empty sparse record

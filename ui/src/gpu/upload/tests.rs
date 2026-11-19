@@ -6,7 +6,7 @@ use crate::wave::Phosphor;
 #[test]
 fn empty_pixel_sources_need_no_rows_on_first_or_repeated_publication() {
     let mut dst = [];
-    let pixels = || Source::Pixels { bytes: &[], row_bytes: 0 };
+    let pixels = || UploadData::Pixels { bytes: &[], row_bytes: 0 };
     let (block, rows) = Block::publish(0, &mut dst, pixels(), None);
     assert_eq!(rows, 0..0);
     assert_eq!(Block::publish(0, &mut dst, pixels(), Some(&block)).1, 0..0);
@@ -34,8 +34,8 @@ fn dirty_copy_touches_only_the_band_and_pixel_fallback_finds_the_same_hull() {
 fn pixel_blocks_initialize_then_compare_rows() {
     let mut src = vec![7; 32];
     let mut dst = vec![99; 32];
-    fn pixels(bytes: &[u8]) -> Source<'_> {
-        Source::Pixels { bytes, row_bytes: 4 }
+    fn pixels(bytes: &[u8]) -> UploadData<'_> {
+        UploadData::Pixels { bytes, row_bytes: 4 }
     }
     let (block, band) = Block::publish(64, &mut dst, pixels(&src), None);
     assert_eq!(band, 0..8);
@@ -48,7 +48,7 @@ fn pixel_blocks_initialize_then_compare_rows() {
 }
 
 fn publish(ph: &Phosphor, previous: &mut Option<Block>, arena: &mut [u8]) -> Range<usize> {
-    let (block, band) = Block::publish(0, arena, Source::Channel { phosphor: ph, channel: 0 }, previous.as_ref());
+    let (block, band) = Block::publish(0, arena, UploadData::Channel { phosphor: ph, channel: 0 }, previous.as_ref());
     *previous = Some(block);
     band
 }
@@ -103,7 +103,7 @@ fn upload_ratio(band: Range<usize>, limit: f64, id: &str) {
     let empty = vec![0; w * h * 2];
     let old: [[_; 4]; 2] = std::array::from_fn(|i| {
         std::array::from_fn(|c| {
-            Block::publish(0, &mut empty.clone(), Source::Channel { phosphor: &pictures[i], channel: c }, None).0
+            Block::publish(0, &mut empty.clone(), UploadData::Channel { phosphor: &pictures[i], channel: c }, None).0
         })
     });
     for (i, ph) in pictures.iter_mut().enumerate() {
@@ -134,7 +134,7 @@ fn upload_ratio(band: Range<usize>, limit: f64, id: &str) {
                 black_box(Block::publish(
                     0,
                     black_box(dst),
-                    Source::Channel { phosphor: black_box(&pictures[frame]), channel: c },
+                    UploadData::Channel { phosphor: black_box(&pictures[frame]), channel: c },
                     Some(black_box(&old[frame][c])),
                 ));
             }
@@ -151,28 +151,31 @@ fn new_moved_resized_and_reordered_blocks_initialize_every_row() {
     let mut ph = Phosphor::new(4, 16);
     ph.channel_mut(0).fill(24);
     let mut dst = vec![99; 128];
-    let (block, band) = Block::publish(64, &mut dst, Source::Channel { phosphor: &ph, channel: 0 }, None);
+    let (block, band) = Block::publish(64, &mut dst, UploadData::Channel { phosphor: &ph, channel: 0 }, None);
     assert_eq!(band, 0..16);
     let expected: Vec<_> = ph.maps()[0].iter().flat_map(|value| value.to_ne_bytes()).collect();
     assert_eq!(dst, expected);
-    assert_eq!(Block::publish(64, &mut dst, Source::Channel { phosphor: &ph, channel: 0 }, Some(&block)).1, 0..0);
+    assert_eq!(Block::publish(64, &mut dst, UploadData::Channel { phosphor: &ph, channel: 0 }, Some(&block)).1, 0..0);
     assert_eq!(
         Block::publish(
             128,
             &mut dst,
-            Source::Channel { phosphor: &ph, channel: 0 },
+            UploadData::Channel { phosphor: &ph, channel: 0 },
             Some(&block).filter(|block| block.matches(128, 128))
         )
         .1,
         0..16
     );
-    assert_eq!(Block::publish(64, &mut dst, Source::Channel { phosphor: &ph, channel: 1 }, Some(&block)).1, 0..16);
+    assert_eq!(Block::publish(64, &mut dst, UploadData::Channel { phosphor: &ph, channel: 1 }, Some(&block)).1, 0..16);
     assert!(dst.iter().all(|&byte| byte == 0), "the selected channel supplies the bytes");
     let other = Phosphor::new(4, 16);
-    assert_eq!(Block::publish(64, &mut dst, Source::Channel { phosphor: &other, channel: 0 }, Some(&block)).1, 0..16);
+    assert_eq!(
+        Block::publish(64, &mut dst, UploadData::Channel { phosphor: &other, channel: 0 }, Some(&block)).1,
+        0..16
+    );
     let smaller = Phosphor::new(4, 8);
     assert_eq!(
-        Block::publish(64, &mut dst[..64], Source::Channel { phosphor: &smaller, channel: 0 }, Some(&block)).1,
+        Block::publish(64, &mut dst[..64], UploadData::Channel { phosphor: &smaller, channel: 0 }, Some(&block)).1,
         0..8
     );
 }

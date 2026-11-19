@@ -170,7 +170,7 @@ fn sparse_batch_keeps_trigger_status_when_no_channel_is_shown() {
     let mut picture = Phosphor::new(w, h);
     let accepted = pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0));
     assert_eq!((accepted.frames, accepted.triggered), (1, 1));
-    assert!(picture.map.iter().flatten().all(|&counts| counts == 0));
+    assert!(picture.maps().iter().flatten().all(|&counts| counts == 0));
     assert_eq!(pipe.counters.read().2, 0);
 }
 

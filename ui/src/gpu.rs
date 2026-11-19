@@ -220,7 +220,7 @@ mod imp {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
-    use upload::Source::{self, Channel, Pixels};
+    use upload::UploadData::{self as Source, Channel, Pixels};
 
     pub struct Gpu {
         child: std::process::Child,

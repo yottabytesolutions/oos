@@ -149,9 +149,10 @@ pub fn stat_text(ui: &Ui) -> String {
     let (acq, used, dropped) = crate::drawpipe::counters().read();
     let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
     let gpu = format!(
-        "{} pipeline {:?} interp {:?} acquired {} used {} dropped {} measured {} compress k {}{}",
+        "{} pipeline {:?} route={} interp {:?} acquired {} used {} dropped {} measured {} compress k {}{}",
         gpu,
         crate::ui::change::acquisition::accepted_draw_switches(ui).pipeline,
+        crate::ui::draw_route(ui),
         ui.switches().interp,
         acq,
         used,
@@ -167,11 +168,10 @@ pub fn stat_text(ui: &Ui) -> String {
         format!(" gpu panel {:.1}{} ms", p, m.map_or(String::new(), |m| format!(" monitor {:.1}", m)))
     });
     let gpu = format!(
-        "{}{}{}{} {}{} graphics {}{}",
+        "{}{}{} {}{} graphics {}{}",
         gpu,
         screens,
         crate::pacing::summary(),
-        crate::framecost::summary(),
         ui.lifecycle_text(),
         crate::ui::change::text(ui),
         if ui.sys.gpu { "gpu" } else { "cpu" },

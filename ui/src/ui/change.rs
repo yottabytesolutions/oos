@@ -279,6 +279,7 @@ pub(crate) fn text(ui: &Ui) -> String {
     text.push_str(&observer.timing.stage_text());
     text.push_str(&crate::drawpipe::counters().losses.text());
     text.push_str(&crate::drawpipe::counters().acquisition.text());
+    text.push_str(&crate::drawpipe::counters().records_text());
     let [autoset, bode] = proposals::restart_counts(ui);
     let _ = write!(text, " stage_restart_autoset={autoset} stage_restart_bode={bode}");
     text.push_str(&observer.timing.diagnostics_text());

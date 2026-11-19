@@ -99,5 +99,5 @@ fn draw_timing_recording_allocates_nothing() {
         }
     });
     assert_eq!(allocations, 0, "step/render recording, including ring wrap, must allocate nothing");
-    assert!(timing.diagnostics_text().contains("draw.grade n=256 total=1024 p50_ns=17 p99_ns=17"));
+    assert!(timing.diagnostics_text().contains("draw.grade n=256 total=1024 p50_ns=17 p90_ns=17 p99_ns=17"));
 }

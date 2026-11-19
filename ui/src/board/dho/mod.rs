@@ -19,6 +19,7 @@ pub(super) mod peak_tests;
 mod publication;
 #[cfg(any(target_os = "linux", test))]
 mod replay;
+#[cfg(any(target_os = "linux", test))]
 pub(crate) mod roll;
 pub(crate) mod scripted;
 pub mod switches;

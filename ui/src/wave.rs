@@ -499,7 +499,7 @@ impl Source {
             );
             let n = g.queue.len().saturating_sub(1);
             let skip = n.saturating_sub(max);
-            g.queue.drain(..skip);
+            crate::drawpipe::counters().lose(crate::drawpipe::Lost::Budget, g.queue.drain(..skip).count() as u64);
             g.dropped += skip as u64;
             return g.queue.drain(..n - skip).collect();
         }

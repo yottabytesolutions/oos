@@ -46,6 +46,8 @@ fn stale_frame(bytes: &[u8], s: &Settings, p: &hz::Params, warm: bool) -> Frame 
 }
 
 fn run(frame0_drop: bool, replacement: bool, warm: bool) {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let counters = crate::drawpipe::counters();
     // AC coupling: frame 1 is not checked for its edge here (frame1.rs has those tests)
     let s = Settings {
         mask: 1,
@@ -83,7 +85,7 @@ fn run(frame0_drop: bool, replacement: bool, warm: bool) {
         crate::drawpipe::draw_frame(&mut want, &model, &frame, Interp::Exact, None);
     }
     let expected_newest = super::super::decode_with(&good, &s, &p, 3, HeaderProbe::Off, Some(&mut oracle));
-    let pipe = Pipe::start(1, 0, Box::leak(Box::default()));
+    let pipe = Pipe::start(1, 0, counters);
     pipe.publish_view(&model, 128, 64, Interp::Exact, Default::default());
     let delivered = Arc::new(Mutex::new(None));
     let done = delivered.clone();
@@ -101,6 +103,19 @@ fn run(frame0_drop: bool, replacement: bool, warm: bool) {
     let newest = newest(&pipe, frames, (replacement, drawn), &delivered, &want);
     assert_eq!((newest.seq, newest.stamp, newest.cfg), (3, 17, 23));
     assert_eq!(newest.ch, expected_newest.ch);
+    accounted(counters, replacement, frame0_drop);
+}
+
+fn accounted(counters: &crate::drawpipe::Counters, replacement: bool, frame0_drop: bool) {
+    let dropped = counters.read().2;
+    let deposited = counters.deposited.load(std::sync::atomic::Ordering::Relaxed);
+    let selected = u64::from(replacement && frame0_drop);
+    assert_eq!(deposited + 1 + dropped + selected, 3, "every read record is deposited, newest, or lost");
+    assert_eq!(dropped, if replacement { 0 } else { 2 });
+    assert!(counters.records_text().contains(&format!("lost.frame0={}", u64::from(frame0_drop))));
+    assert!(counters
+        .records_text()
+        .contains(&format!("lost.buffer={}", if replacement { 0 } else { 2 - u64::from(frame0_drop) })));
 }
 
 fn newest(

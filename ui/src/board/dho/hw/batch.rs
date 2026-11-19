@@ -44,6 +44,8 @@ impl<'a> Readout<'a> {
         let (fb, avail, frame0_drop) = self.geometry;
         // frame 0, and a frame 1 without its edge at the trigger point, reach neither the workers nor the matcher
         let start = frame1::first_kept(dma.bytes(), fb, avail, frame0_drop, (self.settings, self.params));
+        let counters = crate::drawpipe::counters();
+        counters.lose(crate::drawpipe::Lost::Frame0, u64::from(frame0_drop && avail > 1));
         // Without a replacement buffer the neighbours cannot draw, so only the newest may teach.
         let first = if next.is_some() { 0 } else { avail - 1 };
         let probe = self.newest.1;
@@ -73,7 +75,8 @@ impl<'a> Readout<'a> {
                 Vec::new()
             }
             None => {
-                crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, avail as u64 - 1);
+                crate::drawpipe::Counters::add(&counters.dropped, avail as u64 - 1);
+                counters.lose(crate::drawpipe::Lost::Buffer, (avail - 1).saturating_sub(start) as u64);
                 if keep {
                     vec![newest]
                 } else {

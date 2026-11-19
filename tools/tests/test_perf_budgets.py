@@ -18,9 +18,9 @@ class PerfBudgets(unittest.TestCase):
         self.lines += [f'ALLOC_BUDGET {name} 64 0' for name in BUDGET.ALLOCATIONS]
 
     def test_real_table_and_samplers(self):
-        self.assertEqual(len(self.rows), 12)
+        self.assertEqual(len(self.rows), 13)
         BUDGET.sampler_copies_match(ROOT)
-        self.assertIn('12 timing budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
+        self.assertIn('13 timing budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
 
     def test_missing_unknown_and_nonpositive_fail(self):
         for lines in [[], self.lines[1:], self.lines + ['PERF_BUDGET unknown 1 1 1 1'],
@@ -40,6 +40,44 @@ class PerfBudgets(unittest.TestCase):
         lines = [line for line in self.lines if not line.startswith(f'PERF_BUDGET {name} ')]
         with self.assertRaises(ValueError):
             BUDGET.check(self.rows, '\n'.join(lines))
+
+    def test_pipeline_counter_staging_overhead_is_required_and_capped_at_two_percent(self):
+        name = 'perf_guard_pipeline_counters'
+        self.assertEqual(self.rows[name], (1.02, 1.515))
+        missing = [line for line in self.lines if not line.startswith(f'PERF_BUDGET {name} ')]
+        with self.assertRaises(ValueError):
+            BUDGET.check(self.rows, '\n'.join(missing))
+        for candidate in [1021, 1030]:
+            with self.assertRaises(ValueError):
+                BUDGET.check(self.rows, '\n'.join(self.lines + [f'PERF_BUDGET {name} 1000 {candidate} 1000 1000']))
+        for candidate in [1010, 1017, 1020]:
+            BUDGET.check(self.rows, '\n'.join(self.lines + [f'PERF_BUDGET {name} 1000 {candidate} 1000 1515']))
+        with self.assertRaises(ValueError):
+            BUDGET.check(self.rows, '\n'.join(self.lines + [f'PERF_BUDGET {name} 1000 1020 1000 1516']))
+
+    def test_pipeline_staging_limit_matches_executable_and_keeps_work_checks(self):
+        source = (ROOT / 'ui/src/ui/draw_routes/counters.rs').read_text()
+        self.assertIn('pair.best.1.as_secs_f64() / pair.best.0.as_secs_f64() <= 1.02', source)
+        self.assertIn('pair.check_tail(1.515)', source)
+        for contract in ['for channels in [1, 2, 4]', 'for tdiv in [1e-6, 10e-6]',
+                         'for _ in 0..8', 'measure(crate::perfguard::ROUNDS, 16, baseline, counted)',
+                         'assert_eq!(build.route.ui.pic_frames as usize, build.frames)',
+                         'build.route.ui.wfm_total - before',
+                         '(2 * crate::perfguard::ROUNDS * 16 * build.frames) as u64',
+                         'sampled claims must be exercised', 'compare(&picture(',
+                         'reference.route.ui.fast_take, candidate.route.ui.fast_take',
+                         'reference.route.ui.wfm_total, candidate.route.ui.wfm_total']:
+            self.assertIn(contract, source)
+
+    def test_each_pipeline_case_still_rejects_best_or_cpu_tail_regression(self):
+        name = 'perf_guard_pipeline_counters'
+        good = f'PERF_BUDGET {name} 1000 1020 1000 1515'
+        for case in range(6):
+            for values in ['1000 1021 1000 1515', '1000 1020 1000 1516']:
+                cases = [good] * 6
+                cases[case] = f'PERF_BUDGET {name} {values}'
+                with self.subTest(case=case, values=values), self.assertRaises(ValueError):
+                    BUDGET.check(self.rows, '\n'.join(self.lines + cases))
 
     def test_freed_allocations_and_missing_paths_fail(self):
         for lines in [self.lines[:-1], self.lines + ['ALLOC_BUDGET deposit_spans 64 1'],

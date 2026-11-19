@@ -26,9 +26,6 @@ static ui/src/deepmeas.rs DECODE_US
 static ui/src/deepmeas.rs RECORD_US
 static ui/src/deepmeas.rs MEASURE_US
 static ui/src/deepmeas.rs MEASURE_N
-static ui/src/framecost.rs NS
-static ui/src/framecost.rs FRAMES
-static ui/src/framecost.rs WIDES
 static ui/src/pacing.rs VIEWS
 static ui/src/pacing.rs WANTED
 static ui/src/pacing.rs APPLIED

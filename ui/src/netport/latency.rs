@@ -38,7 +38,7 @@ impl Latency {
                 ring.add(elapsed);
             }
         }
-        ring.text("remote.enqueue", "ns")
+        ring.format("remote.enqueue", "ns")
     }
 }
 
@@ -53,14 +53,17 @@ mod tests {
         let now = Arc::new(Mutex::new(start));
         let clock = now.clone();
         let latency = Latency { clock: Clock::new(move || *lock(&clock)), ..Default::default() };
-        assert!(latency.text().contains("n=0 total=0 p50_ns=pending p99_ns=pending"));
+        assert!(latency.text().contains("n=0 total=0 p50_ns=pending p90_ns=pending p99_ns=pending"));
         for millis in 1..=100 {
             *lock(&now) = start + Duration::from_millis(millis);
             latency.record(start);
         }
         let text = latency.text();
-        assert!(text.contains("remote.enqueue n=100 total=100 p50_ns=50000000 p99_ns=99000000"), "{text}");
+        assert!(
+            text.contains("remote.enqueue n=100 total=100 p50_ns=50000000 p90_ns=90000000 p99_ns=99000000"),
+            "{text}"
+        );
         *lock(&now) += Duration::from_secs(10);
-        assert!(latency.text().contains("n=0 total=0 p50_ns=pending p99_ns=pending"));
+        assert!(latency.text().contains("n=0 total=0 p50_ns=pending p90_ns=pending p99_ns=pending"));
     }
 }

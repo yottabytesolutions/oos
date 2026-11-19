@@ -3,6 +3,43 @@
 use super::*;
 use oos_core::change::{Identity, Request, Shadow, UiAcq};
 
+#[test]
+fn stop_wakes_a_legacy_waveform_reservation_and_preserves_the_queued_tap() {
+    use crate::picture::deposit::Tap;
+    use crate::ui::lifecycle::test_wait::HANG_GUARD;
+
+    let _scope = test_scope::Scope::new();
+    let sw = crate::sysconf::Switches { pipeline: Mode::Batch, ..Default::default() };
+    let pipe = pipe(&sw).unwrap();
+    let id = Identity::default();
+    pipe.publish_view(&Model::default(), 8, 8, Interp::Exact, id);
+    let submitted = oos_hal::sync::lock(&pipe.view).gen;
+    let charge = pipe.slot.reserve_tap(crate::board::QUEUE_SAMPLES, submitted, Some(id)).unwrap();
+    let frame = Arc::new(Frame { seq: 1, ..Default::default() });
+    let tap = Tap { frame, identity: Some(id), projection: TapProjection::Unpainted, folds: None };
+    pipe.slot.send_tap(tap, submitted, Some(&charge)).unwrap();
+    drop(charge);
+
+    let source = crate::wave::Source::Hw { shared: Default::default(), seen: 0 };
+    let mut next = Frame::default();
+    next.ch[0].push(0.0);
+    let (done, result) = channel();
+    std::thread::scope(|threads| {
+        threads.spawn(|| done.send(pipe.reserve_waveform(&next, id).is_none()).unwrap());
+        pipe.slot.wait_for_sender();
+        source.hw_hold(true, 0);
+        let stopped = result.recv_timeout(HANG_GUARD);
+        if stopped.is_err() {
+            pipe.slot.close();
+        }
+        assert!(stopped.expect("STOP releases the blocked reservation"));
+    });
+    assert_eq!(pipe.take_waveform((8, 8)).unwrap().seq, 1);
+    assert!(pipe.reserve_waveform(&next, id).is_none());
+    source.hw_hold(false, 0);
+    assert!(pipe.reserve_waveform(&next, id).is_some());
+}
+
 pub(super) fn identities(request: Request) -> (Model, Identity) {
     let model = Model::default();
     let config = crate::model::config();
@@ -66,6 +103,7 @@ fn rejecting_painted_planes_keeps_only_current_waveforms() {
                     frame: waveform.clone(),
                     identity: Some(current),
                     projection: TapProjection::Projected { gen, size: (8, 8) },
+                    folds: None,
                 },
                 gen,
                 None,
@@ -107,6 +145,7 @@ fn coalesced_deposit_leaves_an_interleaved_unpainted_tap_drawable() {
             frame: Arc::new(Frame { seq, ..Default::default() }),
             identity: Some(id),
             projection: if painted { TapProjection::Projected { gen, size } } else { TapProjection::Unpainted },
+            folds: None,
         };
         let number = pipe.slot.send_tap(tap, gen, None).unwrap();
         if painted {

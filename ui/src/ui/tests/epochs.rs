@@ -17,7 +17,16 @@ fn frame(ui: &Ui, seq: u64) -> crate::board::Frame {
     let ch: [Vec<f32>; NCH] = std::array::from_fn(|c| if c == 0 { vec![1.0; 64] } else { Vec::new() });
     // the acquisition thread fills the six full-frame readings of every frame (PR #8, `BasicStats`)
     let basic = std::array::from_fn(|c| crate::board::BasicStats::of(&ch[c]));
-    crate::board::Frame { seq, cfg: id.gen(), stamp: id.epoch(), dt: 1e-6, pre: 32, ch, basic, ..Default::default() }
+    crate::board::Frame {
+        seq,
+        cfg: id.gen(),
+        stamp: id.epoch(),
+        dt: 1e-6,
+        pre: 32,
+        ch,
+        basic: basic.into(),
+        ..Default::default()
+    }
 }
 
 #[test]

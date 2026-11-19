@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+pub(crate) mod admission;
 pub(crate) mod count;
 pub(crate) mod kernel;
 mod planes;
@@ -161,6 +162,7 @@ pub(crate) struct Tap {
     pub(crate) frame: Arc<crate::board::Frame>,
     pub(crate) identity: Option<Identity>,
     pub(crate) projection: TapProjection,
+    pub(crate) folds: Option<crate::framestats::TapFolds>,
 }
 
 impl Tap {
@@ -275,10 +277,11 @@ impl Handoff {
         let mut state = oos_hal::sync::lock(&self.state);
         state.reset_before = reset_before;
         state.spare = Vec::new();
-        let taps = state.taps.clear();
+        let mut taps = state.taps.clear();
         let pending = state.pending.take();
         drop(state);
-        drop(taps);
+        taps.clear();
+        oos_hal::sync::lock(&self.state).taps.restore_storage(taps);
         self.space.notify_all();
         pending
     }

@@ -124,6 +124,11 @@ impl Host {
     }
 
     #[cfg(test)]
+    pub(super) fn with_switches(self, switches: crate::sysconf::Switches) -> Self {
+        Self { switches, ..self }
+    }
+
+    #[cfg(test)]
     pub fn fixture() -> Self {
         let switches = crate::sysconf::Switches::default();
         Self { unix: || 946_684_800.0, time_budgets: true, switches, ..Self::headless() }

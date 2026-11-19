@@ -105,6 +105,7 @@ fn oldest_read_bounds_age_at_acceptance_and_without_new_input() {
         frame: Arc::new(Frame { seq: 8, ..Frame::default() }),
         identity: None,
         projection: TapProjection::Projected { gen, size: (4, 4) },
+        folds: None,
     };
     assert!(f.pipe.slot.send_tap(tap, gen, None).is_some());
     let rejected = f.step(138);
@@ -115,6 +116,34 @@ fn oldest_read_bounds_age_at_acceptance_and_without_new_input() {
     assert_eq!(f.edges[0], 9);
     assert!(f.pipe.counters.records_text().ends_with("rejected.age=8"));
     assert_eq!(f.pipe.counters.read().2, 8);
+}
+
+#[test]
+fn dirty_publication_covers_disjoint_evicted_and_new_rows_then_expires() {
+    let mut f = Fixture::new();
+    f.put(1, 1, 1, 0..=0);
+    f.step(0);
+    f.picture.publish();
+    assert_eq!(f.picture.published_rows(), 1..2);
+
+    f.put(1, 1, 3, 1..=1);
+    f.step(1);
+    f.picture.publish();
+    assert_eq!(f.picture.published_rows(), 1..4);
+    assert_eq!(f.rows(), [0, 0, 0, 24]);
+
+    f.step(2);
+    f.picture.publish();
+    assert!(f.picture.published_rows().is_empty());
+
+    f.step(69);
+    f.picture.publish();
+    assert_eq!(f.picture.published_rows(), 3..4);
+    assert_eq!(f.rows(), [0; 4]);
+
+    f.step(70);
+    f.picture.publish();
+    assert!(f.picture.published_rows().is_empty());
 }
 
 #[test]

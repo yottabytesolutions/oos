@@ -2,6 +2,7 @@
 //! Whole-batch placement and owned column differences. The UI takes one deposit per step.
 
 mod config;
+pub(crate) mod funding;
 pub use config::{conf_value, mode_from, Mode};
 mod decoder;
 mod frame;
@@ -247,7 +248,7 @@ impl Pipe {
     pub(crate) fn take_waveform(&self, size: (usize, usize)) -> Option<QueuedFrame> {
         let identity = oos_hal::sync::lock(&self.view).identity;
         match self.read_waveform(size, identity, None, true) {
-            TapRead::Ready(frame) => Some(frame),
+            TapRead::Ready((frame, _)) => Some(frame),
             _ => None,
         }
     }
@@ -258,7 +259,7 @@ impl Pipe {
         identity: Option<oos_core::change::Identity>,
         fallback: Option<u64>,
         can_take: bool,
-    ) -> TapRead<QueuedFrame> {
+    ) -> TapRead<(QueuedFrame, Option<crate::framestats::TapFolds>)> {
         let state = oos_hal::sync::lock(&self.view);
         let view = state.tap_view(size);
         let (tap, charge) = match self.slot.take_tap(view, identity, fallback, can_take) {
@@ -268,7 +269,7 @@ impl Pipe {
             TapRead::Empty => return TapRead::Empty,
         };
         let eligibility = tap.projection.eligibility(view);
-        TapRead::Ready(QueuedFrame::from_tap(tap.frame, eligibility, charge))
+        TapRead::Ready((QueuedFrame::from_tap(tap.frame, eligibility, charge), tap.folds))
     }
 
     pub(crate) fn take_preview(&self, frame: &Arc<Frame>, size: (usize, usize)) -> Option<PictureEligibility> {
@@ -407,8 +408,7 @@ pub fn pipe<'a>(access: impl Into<Access<'a>>) -> Option<&'static Pipe> {
     }
     static P: OnceLock<Pipe> = OnceLock::new();
     let Access::Start(sw) = access.into() else { return P.get() };
-    (sw.pipeline == Mode::Batch)
-        .then(|| P.get_or_init(|| Pipe::start(sw.cores.little_count().unwrap_or(WORKERS), sw.cores.little, counters())))
+    (sw.pipeline == Mode::Batch).then(|| P.get_or_init(|| funding::application(sw, counters())))
 }
 
 #[cfg(test)]

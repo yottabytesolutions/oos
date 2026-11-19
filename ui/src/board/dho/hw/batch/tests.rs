@@ -9,15 +9,26 @@ use crate::{model::Model, sparse::Interp, wave::Phosphor};
 
 #[test]
 fn normal_lines_four_channel_admission_preserves_the_real_read_plans() {
+    for staged in [false, true] {
+        check_normal_lines_plans(staged);
+    }
+}
+
+fn check_normal_lines_plans(staged: bool) {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     for compress in [false, true] {
         let slow = if compress { (99, 112) } else { (14, 16) };
         for (tdiv, (frames, nominal_frames)) in [(1e-6, (142, 160)), (10e-6, slow)] {
-            let (m, sw, b, p) = normal_lines_plan(tdiv, compress);
+            let (m, mut sw, b, p) = normal_lines_plan(tdiv, compress);
             let id = Identity::default();
             assert_eq!(b.mask, 15);
             assert_eq!(oos_hal::dho::seq::compress_k(&b, &p) > 1, compress && tdiv == 10e-6);
             assert_eq!(b.frames, frames);
+            sw.f2_funding = if staged {
+                crate::drawpipe::funding::Profile::parse(crate::drawpipe::funding::TEST_PROFILE)
+            } else {
+                Default::default()
+            };
             let pipe = crate::drawpipe::pipe(&sw).unwrap();
             pipe.publish_view(&m, 970, 448, sw.interp, id);
             let (worker, limited) = deposit_plan(&b, &p, id, true);
@@ -294,13 +305,15 @@ fn publish_readout(
     let raw = record(geometry.memsel, 200);
     let mut dma = Bytes(raw.repeat(3));
     publication::read(3, 3, 3);
+    let reservation = pipe.staged_taps().then(|| pipe.reserve_plan(id).unwrap());
     let readout = Readout::new(
         pipe,
         (settings, geometry),
         (raw.len(), 3, false),
         (seq, HeaderProbe::Off, None),
         (id, Instant::now()),
-    );
+    )
+    .reserved(reservation);
     publication::push_frames(
         shared,
         readout.dispatch(&mut dma, replacement, None, |f| publication::tag(f, id)),
@@ -310,12 +323,20 @@ fn publish_readout(
 
 #[test]
 fn replacement_dma_refusal_waits_for_the_older_unpublished_tap() {
+    for profile in [crate::drawpipe::funding::TEST_PROFILE, ""] {
+        replacement_dma_refusal(profile);
+    }
+}
+
+fn replacement_dma_refusal(profile: &str) {
     use crate::ui::{host::Host, lifecycle::test_wait::HANG_GUARD, Ui};
     use crate::wave::Source;
     use oos_hal::sync::lock;
     use std::sync::{mpsc, Arc, Mutex};
 
     let _scope = crate::drawpipe::test_scope::Scope::new();
+    let sw = crate::sysconf::Switches::parse(&|_| None, profile, "", Default::default());
+    let pipe = crate::drawpipe::pipe(&sw).unwrap();
     let shared = crate::board::HwShared::default();
     let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 }, Host::headless());
     let (m, _, mut s, p) = normal_lines_plan(1e-6, false);
@@ -323,8 +344,8 @@ fn replacement_dma_refusal_waits_for_the_older_unpublished_tap() {
     ui.m.draw_batch = true;
     s.header = false;
     ui.step(0.03);
-    let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).unwrap();
     let id = lock(&shared).acquisition.identity();
+    assert!(deposit_plan(&s, &p, id, true).0.is_some());
     let (entered, started) = mpsc::sync_channel(1);
     let (release, resume) = mpsc::channel();
     let gate = Mutex::new(Some((entered, resume)));
@@ -395,3 +416,7 @@ fn one_raw_dot_record_selects_lossless_wide_admission() {
     assert_eq!(pipe.read_limit(id, Some((p.rate, 1))), Some((crate::picture::deposit::HIT_LIMIT / 15) as u32));
     assert!(hits > crate::picture::deposit::HIT_LIMIT);
 }
+
+mod tap_contract;
+
+mod admission;

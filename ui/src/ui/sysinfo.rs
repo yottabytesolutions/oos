@@ -18,6 +18,15 @@ pub(super) enum Row {
     Note(String, Rgb),
 }
 
+fn sysinfo_pipeline(ui: &Ui) -> crate::drawpipe::Mode {
+    let switches = ui.switches();
+    if switches.f2_funding == crate::drawpipe::funding::Profile::Unconfigured {
+        switches.pipeline
+    } else {
+        super::step_draw::status(ui).0
+    }
+}
+
 fn kv(k: &str, v: impl Into<String>) -> Row {
     Row::Kv(k.into(), v.into(), TEXT)
 }
@@ -271,11 +280,11 @@ impl Ui {
                     fmt_count(used as f64),
                     fmt_count(acq as f64),
                     fmt_count(dropped as f64),
-                    self.host.switches().pipeline
+                    sysinfo_pipeline(self)
                 ),
             ));
             let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
-            if self.host.switches().pipeline == crate::drawpipe::Mode::Batch {
+            if sysinfo_pipeline(self) == crate::drawpipe::Mode::Batch {
                 // short time bases measure the interpolated record: those frames stay out of the statistics
                 d.push(kv(
                     "Frames in statistics",

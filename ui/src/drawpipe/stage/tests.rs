@@ -5,6 +5,39 @@ use crate::board::scripted::{self, Batch as _};
 use crate::system::test_allocator::own_high_water;
 
 #[test]
+fn short_batches_decode_only_records_without_a_supplied_waveform() {
+    use super::super::tests::{model, Bytes};
+
+    for frames in [1, 2] {
+        let pipe = Pipe::start(1, 0, Box::leak(Box::default()));
+        let m = model(1e-6, false, false);
+        let id = oos_core::change::Identity::default();
+        let (w, h) = (97, 48);
+        pipe.publish_view(&m, w, h, Interp::Exact, id);
+        let mut newest = Frame { dt: 4e-9, pre: 150, ..Default::default() };
+        newest.ch[0] = vec![0.5; 300];
+        let newest = Arc::new(newest);
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let decode: IndexedDecodeInto = Arc::new({
+            let calls = calls.clone();
+            let template = newest.clone();
+            move |index, _, frame| {
+                oos_hal::sync::lock(&calls).push(index);
+                frame.clone_from(&template);
+            }
+        });
+        let raw = Box::new(Bytes(vec![0; frames]));
+        assert!(pipe
+            .feed_readout((raw, 1, 0..frames), (id, std::time::Instant::now()), decode, None, (Some(newest), None))
+            .is_none());
+        host::finish_batch(&pipe, 0).unwrap();
+        let accepted = pipe.accept(&mut Phosphor::new(w, h), &mut true, &mut [0; 4], &mut (0.0, 0.0));
+        assert_eq!(accepted.frames, frames as u64);
+        assert_eq!(*oos_hal::sync::lock(&calls), (0..frames - 1).collect::<Vec<_>>());
+    }
+}
+
+#[test]
 fn batch_allocator_high_water_scales_with_enabled_channels_and_sample_geometry() {
     let _scope = test_scope::Scope::new();
     let (peak, ()) = own_high_water(|| {
@@ -28,6 +61,7 @@ fn batch_allocator_high_water_scales_with_enabled_channels_and_sample_geometry()
 fn measure_batch(m: &Model, channels: usize) {
     let (input, frames, plan) = scripted::draw_route_batch(m, &Default::default(), 4);
     let (fb, decode, codes) = (input.frame_bytes(), input.decode(), input.codes());
+    let newest = Arc::new(input.newest(m.hw_stamp));
     let mut bytes: Option<Box<dyn RawBatch>> = Some(Box::new(input.into_bytes()));
     // Run the production placement and tile jobs on the measuring thread.
     let pipe = Pipe::start(0, 0, counters());
@@ -37,8 +71,9 @@ fn measure_batch(m: &Model, channels: usize) {
     let mut painter = Painter::new(1, 0);
     let mut ph = Phosphor::new(w, h);
     let mut picture = || {
-        let batch =
+        let mut batch =
             pipe.feed_batch(bytes.take().unwrap(), fb, 0..frames, (m.hw_stamp, None), decode.clone(), codes.clone());
+        Arc::get_mut(&mut batch).unwrap().newest = Some(newest.clone());
         let deposit = painter.batch(None, &pipe.slot, &batch, &view, None).unwrap();
         assert_eq!(deposit.planes.iter().map(|b| b.plane.d.len()).sum::<usize>(), channels * w * (h + 1));
         assert!(deposit.planes.iter().all(|b| m.ch[b.channel].on));
@@ -47,6 +82,7 @@ fn measure_batch(m: &Model, channels: usize) {
         bytes = Some(host::finish_batch(&pipe, 0).unwrap());
         let got = pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(got.frames, frames as u64);
+        assert!(Arc::ptr_eq(&pipe.take_waveform((w, h)).unwrap(), &newest));
     };
     let (peak, ()) = own_high_water(|| {
         for _ in 0..4 {

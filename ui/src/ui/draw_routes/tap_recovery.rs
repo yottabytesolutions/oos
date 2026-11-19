@@ -153,6 +153,30 @@ fn accepted_tap_redraws_once_after_remap() {
 }
 
 #[test]
+fn accepted_queued_tap_redraws_after_switching_to_standard() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    let tap = submit(&mut route, 2, vec![0.75; 12_512]);
+    fallback(&route.ui, &tap, 1, 0.25);
+    route.ui.step(STEP);
+    let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
+    assert_eq!((route.ui.batch_picture.frames, pipe.tap_count(), last_seq(&route.ui)), (2, 1, 1));
+    let identity = change::acquisition::identity(&route.ui);
+    let count = route.ui.wfm_total;
+
+    route.ui.m.draw_batch = false;
+    route.ui.step(STEP);
+
+    let current = change::acquisition::identity(&route.ui);
+    assert_eq!((current.gen(), current.epoch()), (identity.gen(), identity.epoch()));
+    let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
+    drawpipe::draw_frame(&mut expected, &route.ui.m, &tap, crate::sparse::Interp::Exact, None);
+    assert!(expected.map[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.map == expected.map, "Standard draws the accepted tap once");
+    assert_eq!((pipe.tap_count(), last_seq(&route.ui), route.ui.wfm_total), (0, 2, count));
+}
+
+#[test]
 fn pending_tap_remaps_before_its_deposit_is_accepted() {
     let _scope = Scope::new();
     let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
@@ -255,6 +279,29 @@ fn single_tap_folds_now_and_expensive_measurement_completes_once() {
         assert_eq!(route.ui.mstat[1].n, 1);
         assert_mean_stats(&route.ui, 1, 0.25, 0.0625, 0.25, 0.25);
     }
+}
+
+#[test]
+fn tap_statistics_keep_both_gates_without_scanning_on_the_reader() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
+    route.ui.m.meas_full_record = true;
+    route.ui.measure_in_background();
+    let mut samples = vec![0.75; 200_000];
+    samples[80_000..120_000].fill(0.25);
+    let configure = |f: &mut Frame| {
+        f.fixed_ti = Some(f.pre as f64);
+        f.dt = 1e-9;
+    };
+    submit_charged(&mut route, 1, samples.clone(), configure);
+    submit_charged(&mut route, 2, samples, configure);
+
+    let before = crate::framestats::SAMPLE_SCANS.with(std::cell::Cell::get);
+    route.ui.step(STEP);
+    assert_eq!(crate::framestats::SAMPLE_SCANS.with(std::cell::Cell::get), before);
+    assert_eq!(last_seq(&route.ui), 2);
+    assert_mean_stats(&route.ui, 2, 0.9, 0.485, 0.25, 0.65);
 }
 
 #[test]

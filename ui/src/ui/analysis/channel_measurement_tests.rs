@@ -15,7 +15,7 @@ fn native(count: usize) -> Ui {
         dt: 1e-9,
         pre: count / 2,
         ch: [values, Vec::new(), Vec::new(), Vec::new()],
-        basic: [basic, Default::default(), Default::default(), Default::default()],
+        basic: [basic, Default::default(), Default::default(), Default::default()].into(),
         ..Default::default()
     });
     let mut record = crate::board::to_record(&frame, &ui.m, 3600, count as f64 * 1e-9, -(count as f64) * 0.5e-9);

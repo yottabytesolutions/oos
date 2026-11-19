@@ -70,9 +70,7 @@ fn chunk(b: &Batch, i: usize) -> &[u8] {
 
 fn place(b: &Batch, v: &View, p: &mut Prepared, scratch: &mut Frame) {
     let previous = p.plan.take().and_then(|frame| frame.plan.into_raw());
-    decode(b, v, p, scratch);
-    let bytes = chunk(b, p.index);
-    let f = &*scratch;
+    let f = placement_frame(b, v, p, scratch);
     let spacing = f.dt / v.m.time_per_div() as f64 * v.w as f64 / HDIV as f64;
     let pairs = crate::compress::live(f) && spacing <= 0.5;
     p.decoded_dots = false;
@@ -84,25 +82,27 @@ fn place(b: &Batch, v: &View, p: &mut Prepared, scratch: &mut Frame) {
         p.plan = Some(standard::FastFrame::record(rec, standard::projection(&v.m, v.w, v.h, spacing), [None; NCH]));
         return;
     }
-    p.plan = Some(standard::batch_plan(&v.m, (v.w, v.h), f, p.codes.map(|layout| (bytes, layout)), previous));
+    let words = p.codes.map(|layout| (chunk(b, p.index), layout));
+    p.plan = Some(standard::batch_plan(&v.m, (v.w, v.h), f, words, previous));
     p.decoded_dots = v.m.dots_at(spacing) && p.codes.is_none() && !pairs;
 }
 
-fn decode(b: &Batch, v: &View, p: &mut Prepared, f: &mut Frame) {
+fn placement_frame<'a>(b: &'a Batch, v: &View, p: &mut Prepared, scratch: &'a mut Frame) -> &'a Frame {
+    if let Some(newest) = newest_at(b, p.index) {
+        p.codes = None;
+        p.measured = false;
+        return newest;
+    }
     let bytes = chunk(b, p.index);
-    p.codes = b.codes.as_ref().and_then(|codes| codes(bytes, f));
-    let spacing = f.dt / v.m.time_per_div() as f64 * v.w as f64 / HDIV as f64;
-    if p.codes.is_none() || spacing > 0.5 || f.envelope || f.roll || f.scan || !p.folds.is_empty() {
-        b.decode.decode(p.index, bytes, f);
+    p.codes = b.codes.as_ref().and_then(|codes| codes(bytes, scratch));
+    let spacing = scratch.dt / v.m.time_per_div() as f64 * v.w as f64 / HDIV as f64;
+    if p.codes.is_none() || spacing > 0.5 || scratch.envelope || scratch.roll || scratch.scan || !p.folds.is_empty() {
+        b.decode.decode(p.index, bytes, scratch);
         p.codes = None;
     }
-    let newest = newest_at(b, p.index);
-    if let Some(newest) = newest {
-        f.clone_from(newest);
-        p.codes = None;
-    }
-    b.header.tag(f);
-    p.measured = newest.is_none() && crate::framestats::fold_frame(f, &v.m, &mut p.folds);
+    b.header.tag(scratch);
+    p.measured = crate::framestats::fold_frame(scratch, &v.m, &mut p.folds);
+    scratch
 }
 
 pub(super) fn work(
@@ -138,10 +138,11 @@ pub(super) fn work(
         };
         let v = batch_view(&b, &state, reset_before);
         let identity = state.identity;
+        let reader = v.is_none().then(|| state.view.clone()).flatten();
         drop(state);
         let Some(v) = v else {
             if same_pair(b.header.identity(), identity) {
-                let _ = send_tap(slot, &b, TapProjection::Unpainted);
+                let _ = painter.send_tap(slot, &b, TapProjection::Unpainted, reader.as_deref(), identity);
             }
             continue;
         };
@@ -163,12 +164,6 @@ pub(super) fn work(
     if let Some(deposit) = current {
         deposit.reject(oos_hal::sync::lock(view).identity, counters);
     }
-}
-
-fn send_tap(slot: &Handoff, b: &Batch, projection: TapProjection) -> Option<u64> {
-    let frame = b.newest.clone()?;
-    let tap = Tap { frame, identity: b.header.identity(), projection };
-    slot.publish_tap(tap, b.view_gen_at_submit, b.header.tap.as_ref(), b.header.order.as_ref())
 }
 
 fn prepare(
@@ -218,6 +213,7 @@ struct Painter {
     arena: Arena,
     jobs: Vec<Job>,
     sampler: Sampler,
+    tap_folds: crate::framestats::Folds,
 }
 
 impl Painter {
@@ -227,7 +223,25 @@ impl Painter {
             arena: Arena::default(),
             jobs: Vec::new(),
             sampler: Sampler::default(),
+            tap_folds: Vec::new(),
         }
+    }
+
+    fn send_tap(
+        &mut self,
+        slot: &Handoff,
+        b: &Batch,
+        projection: TapProjection,
+        view: Option<&View>,
+        identity: Option<oos_core::change::Identity>,
+    ) -> Option<u64> {
+        let frame = b.newest.clone()?;
+        let reader = view.map(|v| (v, identity)).or_else(|| b.header.reader.as_ref().map(|(v, id)| (&**v, *id)));
+        let folds = reader.and_then(|(v, id)| {
+            crate::framestats::TapFolds::compute(&frame, &v.m, id.map(|id| id.stats_gen()), &mut self.tap_folds)
+        });
+        let tap = Tap { frame, identity: b.header.identity(), projection, folds };
+        slot.publish_tap(tap, b.view_gen_at_submit, b.header.tap.as_ref(), b.header.order.as_ref())
     }
 
     fn batch(
@@ -240,7 +254,7 @@ impl Painter {
     ) -> Option<Deposit> {
         let start = b.next.load(Ordering::Relaxed);
         if start == b.frames {
-            let _ = send_tap(slot, b, TapProjection::Unpainted);
+            let _ = self.send_tap(slot, b, TapProjection::Unpainted, Some(v), identity);
             return current;
         }
         let slices = (start..b.frames).step_by(SLICE);
@@ -257,10 +271,10 @@ impl Painter {
         if bound.0 > bound.1.hit_limit() {
             let records = b.frames.saturating_sub(b.next.swap(b.frames, Ordering::Relaxed)) as u64;
             b.counters.discard(Lost::Budget, records);
-            let _ = send_tap(slot, b, TapProjection::Unpainted);
+            let _ = self.send_tap(slot, b, TapProjection::Unpainted, Some(v), identity);
             return current;
         }
-        let tap = send_tap(slot, b, TapProjection::Projected { gen: v.gen, size: (v.w, v.h) });
+        let tap = self.send_tap(slot, b, TapProjection::Projected { gen: v.gen, size: (v.w, v.h) }, Some(v), identity);
         let mut d = prepare(current, slot, b, v, identity, bound)?;
         if let Some(number) = tap {
             d.include_tap(number);

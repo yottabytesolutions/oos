@@ -189,7 +189,7 @@ pub fn display_record(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64)
     resample(f, m, n, window, t_first, ti, triggered)
 }
 
-fn record_trigger(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> (f64, bool) {
+pub(crate) fn record_trigger(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> (f64, bool) {
     let found = trigger_point(f, m, n, window, t_first);
     // roll: right-aligned like a chart recorder, the start of the stream may be left of the buffer (blank)
     let ti = if f.roll {
@@ -218,17 +218,16 @@ pub fn resample_record(
     let mut rec = resample(f, m, n, window, t_first, ti, triggered);
     let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
     // the frame's samples inside the screen window
-    let i0 = ((ti + t_first / f.dt).floor().max(0.0) as usize).min(len);
-    let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(len);
+    let (i0, i1, t0) = raw_window(ti, t_first, window, f.dt, len);
     // Keep the acquisition even for a window outside it: navigation can return.
-    rec.raw = (len > 1).then(|| crate::wave::Raw {
-        frame: f.clone(),
-        i0,
-        i1: i1.max(i0),
-        t0: (i0 as f64 - ti) * f.dt,
-        conditioned: true,
-    });
+    rec.raw = (len > 1).then(|| crate::wave::Raw { frame: f.clone(), i0, i1, t0, conditioned: true });
     rec
+}
+
+pub(crate) fn raw_window(ti: f64, t_first: f64, window: f64, dt: f64, len: usize) -> (usize, usize, f64) {
+    let i0 = ((ti + t_first / dt).floor().max(0.0) as usize).min(len);
+    let i1 = ((ti + (t_first + window) / dt).ceil().max(0.0) as usize).clamp(i0, len);
+    (i0, i1, (i0 as f64 - ti) * dt)
 }
 
 #[cfg(test)]

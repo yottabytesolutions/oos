@@ -35,6 +35,7 @@ pub struct Switches {
     /// the board's own switches
     pub board: crate::board::BoardSwitches,
     pub memory: crate::system::memory::Limits,
+    pub(crate) f2_funding: crate::drawpipe::funding::Profile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -80,6 +81,7 @@ impl Switches {
             ipv6: crate::net6::enabled_from(flag(env, "OOS_IPV6"), conf),
             board: crate::board::BoardSwitches::parse(env, conf, settings),
             memory: crate::system::memory::Limits::parse(conf),
+            f2_funding: crate::drawpipe::funding::Profile::parse(conf),
         }
     }
 

@@ -90,7 +90,7 @@ impl DiffBand {
     }
 
     pub(crate) fn fold_picture(&mut self, prior: [Option<&Self>; 2], ph: &mut crate::wave::Phosphor) {
-        match &mut self.wide {
+        let painted = match &mut self.wide {
             Some((diff, run)) => {
                 let mut touched = self.plane.touched.clone();
                 let diffs = prior.map(|band| {
@@ -106,7 +106,7 @@ impl DiffBand {
                     ph.wide_map_mut(self.channel),
                     (self.picture_cols, self.plane.rows, self.first),
                     touched,
-                );
+                )
             }
             None if ph.is_wide() => {
                 assert!(prior.iter().all(Option::is_none), "mixed window formats are evicted before folding");
@@ -117,11 +117,12 @@ impl DiffBand {
                     ph.wide_map_mut(self.channel),
                     (self.picture_cols, self.plane.rows, self.first),
                     self.plane.touched.clone(),
-                );
+                )
             }
             None if prior.iter().all(Option::is_none) => self.fold(&mut ph.map[self.channel]),
             None => self.fold_window(prior, &mut ph.map[self.channel]),
-        }
+        };
+        ph.touch(painted);
     }
 
     pub(crate) fn touch(&mut self, rows: Range<usize>) {
@@ -140,7 +141,7 @@ impl DiffBand {
         self.plane.touched = self.plane.rows..0;
     }
 
-    pub(crate) fn fold(&mut self, map: &mut [u16]) {
+    pub(crate) fn fold(&mut self, map: &mut [u16]) -> Range<usize> {
         super::kernel::fold_band(
             map,
             &mut self.plane.d,
@@ -148,10 +149,10 @@ impl DiffBand {
             (self.picture_cols, self.plane.rows, self.first),
             self.plane.touched.clone(),
             false,
-        );
+        )
     }
 
-    pub(crate) fn fold_window(&mut self, prior: [Option<&Self>; 2], map: &mut [u16]) {
+    pub(crate) fn fold_window(&mut self, prior: [Option<&Self>; 2], map: &mut [u16]) -> Range<usize> {
         let mut touched = self.plane.touched.clone();
         let diffs = prior.map(|band| {
             band.map(|band| {
@@ -159,14 +160,7 @@ impl DiffBand {
                 band.plane.d.as_slice()
             })
         });
-        fold_window(
-            &self.plane.d,
-            diffs,
-            &mut self.run,
-            map,
-            (self.picture_cols, self.plane.rows, self.first),
-            touched,
-        );
+        fold_window(&self.plane.d, diffs, &mut self.run, map, (self.picture_cols, self.plane.rows, self.first), touched)
     }
 }
 
@@ -177,7 +171,7 @@ fn fold_window<T: Count, M: Count>(
     map: &mut [M],
     geometry: (usize, usize, usize),
     touched: Range<usize>,
-) {
+) -> Range<usize> {
     let width = run.len();
     super::kernel::fold_rows(map, run, geometry, touched, |r, run| {
         let start = r * width;
@@ -192,7 +186,7 @@ fn fold_window<T: Count, M: Count>(
             occupied |= *sum != T::default();
         }
         occupied
-    });
+    })
 }
 
 #[cfg(test)]

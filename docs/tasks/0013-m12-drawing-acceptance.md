@@ -215,6 +215,12 @@ consumers across remapping and an unchanged publication. Run the combined drawin
 both six-region allocation censuses in debug and optimized profiles, the fast gate and serial shipping guards
 on frozen source. The runner owns Git refs and publication. No hardware access or hold changes.
 
+PR #221 funded-F2 transfer checkpoint on `bb96f34f`: reserve this task only.
+Verify the runner-completed replay against the exact seven upload topics from the `b10e6a4e` fork.
+Keep the upload implementation and funded-plan parent unchanged. With the corrective F2 job active,
+run focused upload, deposit, reader and allocation regressions in debug and optimized profiles plus the normal
+fast gate. Record exact source receipts; defer full host and timing suites to the subsequent exact F2 restack.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -233,6 +239,27 @@ on frozen source. The runner owns Git refs and publication. No hardware access o
   The fast gate and Clippy passed. Nextest passed 1,839 debug and 1,838 optimized UI tests, with 62 skips in
   each profile. Shared-process test runs failed the wide-dot drop-counter assertion in both profiles.
   The production delta is +158 UI Rust lines. DHO804 acceptance remains open.
+
+- 2026-11-19: PR #221 funded-F2 transfer checkpoint has no active rebase or unresolved paths. Exact source head
+  `75ff5031d2bb10a8a88b178559feea0974233398` has immediate parent
+  `f668b75f0a36095bc5119a075be78d976bcea79d`; the exact F2 stack parent remains
+  `bb96f34f1cb19e4bb145676aa2d7a67f76d477d3`. Range comparison against the seven upload topics from
+  `b10e6a4e6405a1b8308462d832f632bda3448846` through `2d28d0bad583ea92fae3d62a460ffc5e73d2ee1a`
+  shows only task-context and inherited size-baseline adjustments. No production changes were needed.
+  The 06:05 coordination record confirms current-head F2 review is failing and the corrective F2 job is active.
+  Focused process-isolated upload, deposit, reader and batch regressions passed 114 tests in each of debug and
+  optimized profiles; the selection skipped 1,759 and 1,758 tests respectively, including timing guards.
+  Both explicit observer allocation censuses passed, each with 256 calls and zero caller-thread allocations
+  in all six regions. Every test's before/after source receipt matched
+  `7fcb92d94569753981a31262aa915c50fdaea6ef18ebb3f95d08c18cb2c58aa5`; the Git head also stayed unchanged.
+  Fast printed `partial gate passed (not done): 12 steps in 8 s` (exit 0), with the same before/after source
+  receipt and no ratchet updates needed. Logs and command/source receipts are `target/funded-upload-transfer-*`;
+  the fast log is `target/check-logs/50081-1795064805867398000`.
+  Net production delta is +262 UI Rust lines over exact F2, zero elsewhere; this checkpoint adds zero production
+  lines. Full host and performance suites were deliberately not selected while the F2 correction is active.
+  The prior 30 shipping guards remain intermediate evidence for their actual earlier source, with no new
+  original 1% or temporary 2% counter observations here. Subsequent exact F2 restack, full combined host gate,
+  independent review, signed qualification and hardware acceptance remain open. Host only; hardware holds remain.
 
 - 2026-11-19: Integrated the three SHA-256-verified F2 slices from `e15920b2` onto `b10e6a4e`, preserving
   the ordering and reader changes through `cc7fa6f5` and `b10e6a4e`. Build input SHA-256

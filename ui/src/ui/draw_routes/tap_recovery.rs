@@ -207,6 +207,19 @@ fn reader_merge_counts_taps_and_keeps_the_newer_fallback_preview() {
     let _scope = Scope::new();
     let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
     route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
+    let initial = route.ui.ph.upload_rows(0, None).0;
+    let mut stamps = [initial.clone(), initial];
+    let mut maps = [route.ui.ph.maps()[0].clone(), route.ui.ph.maps()[0].clone()];
+    let mut publish = |ph: &Phosphor, consumer: usize| {
+        assert!(!ph.is_wide(), "this reader fixture exercises narrow row revisions");
+        let (stamp, rows) = ph.upload_rows(0, Some(&stamps[consumer]));
+        maps[consumer].resize(ph.maps()[0].len(), 0);
+        let pixels = rows.start * ph.w..rows.end * ph.w;
+        maps[consumer][pixels.clone()].copy_from_slice(&ph.maps()[0][pixels]);
+        stamps[consumer] = stamp;
+        assert!(maps[consumer] == ph.maps()[0], "consumer {consumer} differs from the picture");
+        rows
+    };
     let first = submit(&mut route, 1, vec![0.25; 12_512]);
     let second = submit(&mut route, 2, vec![0.5; 12_512]);
     let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
@@ -214,6 +227,7 @@ fn reader_merge_counts_taps_and_keeps_the_newer_fallback_preview() {
     assert_eq!(last_seq(&route.ui), second.seq);
     assert_eq!(route.ui.wfm_total, 1, "tap 1 is deposited while tap 2's deposit is still private");
     assert_mean_stats(&route.ui, 2, 0.75, 0.3125, 0.25, 0.5);
+    assert!(!publish(&route.ui.ph, 0).is_empty());
     let third = fallback(&route.ui, &first, 3, 0.75);
     route.ui.m.dots = DotsMode::On;
     route.ui.step(STEP);
@@ -222,6 +236,10 @@ fn reader_merge_counts_taps_and_keeps_the_newer_fallback_preview() {
     let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
     drawpipe::draw_frame(&mut expected, &route.ui.m, &third, crate::sparse::Interp::Exact, None);
     assert_eq!(route.ui.ph.map, expected.map, "remapping does not replay a superseded tap");
+    for consumer in 0..2 {
+        assert!(!publish(&route.ui.ph, consumer).is_empty(), "remapping reaches skipped consumers");
+        assert!(publish(&route.ui.ph, consumer).is_empty(), "unchanged revisions need no upload");
+    }
     assert!(matches!(route.ui.src, Source::Hw { seen: 3, .. }));
     let history: Vec<_> = route.ui.history.iter().map(|r| r.ch[0][r.ch[0].len() / 2]).collect();
     assert_eq!(history, [0.25, 0.5, 0.75]);

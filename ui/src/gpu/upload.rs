@@ -35,7 +35,7 @@ impl<'a> UploadData<'a> {
 pub(super) struct Block {
     offset: usize,
     len: usize,
-    stamp: Option<crate::wave::dirty::Stamp>,
+    stamp: Option<crate::wave::phosphor::dirty::Stamp>,
 }
 
 impl Block {

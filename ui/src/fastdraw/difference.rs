@@ -61,7 +61,7 @@ pub(crate) fn deposit_dots_t<T: crate::picture::deposit::count::Count, S: Sample
     if c1 <= c0 {
         return 0..0;
     }
-    let mut rows = crate::wave::RowBand::empty();
+    let mut rows = crate::wave::phosphor::RowBand::empty();
     let mut ka = first(c0);
     for c in c0..c1 {
         let kb = first(c + 1);

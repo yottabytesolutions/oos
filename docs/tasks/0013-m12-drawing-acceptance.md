@@ -230,6 +230,21 @@ Inspect all 23 normal stage results, complete UI suites, ordinary goldens and sh
 retain each original 1% and temporary 2% counter observation and both six-region allocation censuses.
 Record actual production LOC against corrected F2 and protected main. No scope access or hold changes.
 
+PR #221 publication/upload consolidation on exact F2 `cf11c36b`:
+reserve `ui/src/wave/{phosphor.rs,dirty.rs,dirty/tests.rs}`, `ui/src/drawpipe/frame.rs`,
+`ui/src/ui.rs` (remove duplicate pre-fold marks only), changed-file ratchets and this task.
+Also reserve `ui/src/wave.rs`, `ui/src/wave/phosphor/`, `ui/src/wave/rows.rs`,
+`ui/src/fastdraw/{difference.rs,whole/dots.rs}` and `ui/src/gpu/upload.rs` for placing the dirty-row helpers
+under their phosphor owner and updating the three qualified references. This avoids the replay's inherited
+three-line growth beyond the existing `wave.rs` allowance without raising a limit.
+Derive resettable picture publication and retained per-consumer revisions from the same channel edit events.
+Remove picture-wide write instrumentation and track wide clear/decay/halve at the existing mutation boundary.
+Prove channel isolation, exact changed/cleared rows and unchanged publications alongside the existing upload,
+window, reader and frozen-statistics regressions. Run debug/optimized focused tests, both independent allocation
+censuses and the fast gate on frozen source. The runner has completed the replay; no unresolved paths remain.
+The coordinator's 06:46 instruction defers full host/timing validation until the replacement F2 parent arrives.
+Keep acquisition, metadata lifetime/order, pacing and hardware holds unchanged.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -241,6 +256,60 @@ Record actual production LOC against corrected F2 and protected main. No scope a
 - 2026-11-19: PR #224 placement borrows the supplied newest waveform. The host allocation fixture now exercises
   supplied waveforms at 1, 2 and 4 channels. The warmed one-channel 100,000-sample row fell from 400,280 to 9,560
   peak bytes above entry, and the four-channel 100,000-sample row passed at 9,752 bytes. DHO804 acceptance remains open.
+
+- 2026-11-19: PR #221 publication/upload consolidation is ready for transfer on exact F2
+  `cf11c36be40e95ffc47ad9a7c13cd16a495f6888`. Head remains
+  `6fd1f34451d4a794b4543a8c22790389be6d6588`, parent
+  `0741298fe531cb74a56d1aafdc82d4115e9ce33b`; protected main remains
+  `dd5bb013b11714668345683b32ca1927e6a8a810`. No active conflict or Git mutation was needed.
+  Final source receipt is `84b6cfedf144d9efd7d3f9aad5ff27a2fa06c6089f4d8e705403895467ab91fc`.
+  All nine qualified command requests/results preserve their complete file manifests, head, parent and source
+  receipt before/after (exit 0, unchanged). Host and ARM Clippy printed
+  `partial gate passed (not done): 1 steps in 93 s`; fast printed
+  `partial gate passed (not done): 12 steps in 8 s`. Complete nextest UI suites passed 1,871 debug and
+  1,870 optimized tests, with 64 skipped each and unchanged golden references. Both explicit observer censuses
+  again reported 256 calls and zero caller-thread allocations in each of all six regions; both process-wide
+  warmed snapshot probes reported reused=0, naive=220. No allocation assertion or counter was changed.
+  Production totals are 111,203 (UI 74,619): this change is -50 UI Rust lines, the upload layer is +223 over
+  exact F2 (110,980 total), and the stack is +3,192 over protected main (108,011 total), zero elsewhere.
+  No local prior-final tag is present. The two before-fix regression failures and initial size/Clippy failures
+  remain separate evidence. The generated ratchet changes only the touched `ui.rs` allowance.
+  Original 1% and interim 2% diagnostic wall thresholds were not measured at this transfer checkpoint;
+  both thresholds, six workloads and 1.515 CPU-tail limit remain unchanged. All other host CPU/p99 limits,
+  ordered learning (best 1.0, p99 CPU 1.5, projected A72 p99 <= 9 ms/4 MB at 4x host CPU), main-step
+  p50 <= 8 ms/p99 <= 15 ms, four-channel 30 FPS and zero-loss acceptance constraints remain unchanged.
+  The coordinator's 06:46 instruction defers the bare 23-stage normal full host gate, timing, coverage and
+  shipping/native-link results to the next exact F2 restack. Earlier passed receipts do not qualify this source.
+  Independent review, combined hardware/image acceptance, tag and release holds remain open. No hardware access.
+  Evidence: `target/upload-consolidation/fast-verified.log`, `clippy-verified.log`,
+  `ui-debug-verified.log`, `ui-optimized-verified.log`, `censuses-debug-verified.log`,
+  `censuses-optimized-verified.log`, `loc-f2-verified.log`, `loc-main-verified.log`, `loc-head-verified.log`,
+  and each matching immutable `*-request.json` / `*-result.json` in the same directory.
+  Final task-only documentation is checked by `target/upload-consolidation/fast-handoff.log` with its own
+  request/result; `target/upload-consolidation/handoff.json` freezes the resulting complete file manifest.
+
+- 2026-11-19: Consolidation preserves all 1,871 debug and 1,870 optimized UI tests (64 skipped in each),
+  including ordinary golden selection, frozen/deep statistics gates, reader ordering and retained consumer uploads.
+  Both explicit observer censuses report all six regions at 256 calls and zero caller-thread allocations in
+  each profile; the separate process-wide warmed snapshot probe also reports zero reused allocations.
+  The initial fast gate failed inherited `wave.rs` growth (1069 to 1072) and unused `ui.rs` allowance.
+  Dirty/row helpers now live under phosphor, the existing allowance holds, and `cargo xtask ratchet` (exit 0)
+  changes only the `ui.rs` file allowance from 8475 to 8472. Fast then passed all 12 steps.
+  Clippy found test-module ordering after the helper relocation; tests now follow the production helpers.
+  The shared edit boundary also owns row clipping, avoiding a duplicate clamp in retained revisions.
+  Final checks on this source follow. No timing measurements or full host gate were started on superseded F2.
+
+- 2026-11-19: PR #221's two new deterministic regressions failed before consolidation: Standard marked an
+  inactive channel and halve published the unchanged single-hit row. After consolidation, all 159 focused
+  upload/picture/drawpipe/route checks passed, including frozen statistics and retained taps (exit 0).
+  Publication now takes its union from channel edits in the same dirty state that retains consumer revisions;
+  wide transforms and clears use the shared row operation. Storage changes still invalidate old stamps.
+  Final debug/optimized suites, both allocation censuses, generated ratchets and fast validation follow.
+
+- 2026-11-19: PR #221 consolidation starts from `6fd1f34451d4a794b4543a8c22790389be6d6588`
+  on exact F2 `cf11c36be40e95ffc47ad9a7c13cd16a495f6888`, branch `perf/216-upload-rows`.
+  The index has no unmerged paths and the worktree has no source edits. This is a transfer checkpoint;
+  the old full-gate receipt does not qualify the consolidation or the pending replacement F2 parent.
 
 - 2026-11-19: PR #224 review fixes publish the row hull of cleared and drawn phosphor counts. The deposit
   coordinator sends cheap measurement values with each waveform tap for the latest and displaced record gates.

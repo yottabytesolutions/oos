@@ -3314,9 +3314,6 @@ impl Ui {
                 (a.min(x), b.max(y))
             })
         });
-        for &c in &on {
-            self.ph.touch(rows[c].0..rows[c].1);
-        }
         let t2 = std::time::Instant::now();
         self.ph.fold_rows(&mut self.acc_t, &on, band_cols, rows);
         let (a, b) = ((t1 - t0).as_secs_f32() * 1e3, t1.elapsed().as_secs_f32() * 1e3);

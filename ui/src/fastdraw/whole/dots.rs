@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::{Map, Range};
-use crate::wave::RowBand;
+use crate::wave::phosphor::RowBand;
 
 /// Draw every sample as a pixel and return the exact hull of its on-map rows.
 ///

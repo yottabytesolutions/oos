@@ -176,6 +176,8 @@ fn row_marks_clamp_to_the_map_height_without_advancing_empty_revisions() {
         }
         dirty.mark(0, 2..height + 4);
         assert_eq!(dirty.since(0, Some(&stamp)).1, if height == 0 { 0..0 } else { 2..height });
+        assert_eq!(dirty.publish(), if height == 0 { 0..0 } else { 2..height });
+        assert_eq!(dirty.publish(), 0..0);
     }
 }
 
@@ -212,4 +214,109 @@ fn unary_transforms_leave_zero_and_single_hit_rows_clean() {
     assert!(ph.map[0].iter().all(|&value| value == 0));
     ph.decay(0.0);
     assert_eq!(take(&ph, &mut stamp, 0), 0..0);
+}
+
+#[test]
+fn standard_draws_publish_only_the_active_channels_exact_rows() {
+    use crate::{board::Frame, model::*, sparse::Interp};
+    let mut model = Model::default();
+    for (c, ch) in model.ch.iter_mut().enumerate() {
+        ch.on = c == 1;
+        ch.offset = 0.0;
+    }
+    for dots in [DotsMode::Off, DotsMode::On] {
+        model.dots = dots;
+        let dt = 0.25 * model.time_per_div() as f64 * HDIV as f64 / 64.0;
+        let frame = Frame { dt, pre: 512, ch: std::array::from_fn(|_| vec![0.0; 1024]), ..Frame::default() };
+        let mut ph = Phosphor::new(64, 32);
+        let stamps: [_; NCH] = std::array::from_fn(|c| ph.upload_rows(c, None).0);
+        crate::drawpipe::draw_frame(&mut ph, &model, &frame, Interp::Exact, None);
+        assert!(!ph.is_wide(), "exercise true narrow Dots as well as Lines");
+        ph.publish();
+        assert_eq!(ph.published_rows(), 16..17);
+        for (c, stamp) in stamps.iter().enumerate() {
+            assert_eq!(ph.upload_rows(c, Some(stamp)).1, if c == 1 { 16..17 } else { 0..0 });
+        }
+        ph.publish();
+        assert_eq!(ph.published_rows(), 0..0);
+        assert_eq!(ph.upload_rows(1, Some(&stamps[1])).1, 16..17);
+    }
+}
+
+#[test]
+fn count_transforms_publish_the_same_exact_channel_changes_in_both_formats() {
+    use crate::picture::deposit::count::CountFormat;
+    for format in [CountFormat::Narrow, CountFormat::Wide] {
+        let mut ph = Phosphor::new(4, 16);
+        ph.set_format(format);
+        for (c, row, value) in [(0, 2, 24), (1, 12, 1)] {
+            if ph.is_wide() {
+                ph.edit_wide_channel(c, |map| {
+                    map[row * 4] = value;
+                    row..row + 1
+                });
+            } else {
+                ph.edit_channel(c, |map| {
+                    map[row * 4] = value as u16;
+                    row..row + 1
+                });
+            }
+        }
+        ph.publish();
+        let mut stamps: [_; NCH] = std::array::from_fn(|c| Some(ph.upload_rows(c, None).0));
+        ph.halve();
+        ph.publish();
+        assert_eq!(ph.published_rows(), 2..3);
+        for (c, stamp) in stamps.iter_mut().enumerate() {
+            assert_eq!(take(&ph, stamp, c), if c == 0 { 2..3 } else { 0..0 });
+        }
+        ph.decay(0.5);
+        ph.publish();
+        assert_eq!(ph.published_rows(), 2..13);
+        for (c, stamp) in stamps.iter_mut().enumerate() {
+            assert_eq!(
+                take(&ph, stamp, c),
+                match c {
+                    0 => 2..3,
+                    1 => 12..13,
+                    _ => 0..0,
+                }
+            );
+        }
+        ph.clear_counts();
+        ph.publish();
+        assert_eq!(ph.published_rows(), 2..3);
+        assert_eq!(take(&ph, &mut stamps[0], 0), 2..3);
+        ph.clear_counts();
+        ph.halve();
+        ph.decay(0.0);
+        ph.publish();
+        assert_eq!(ph.published_rows(), 0..0);
+        for (c, stamp) in stamps.iter_mut().enumerate() {
+            assert_eq!(take(&ph, stamp, c), 0..0);
+        }
+    }
+}
+
+#[test]
+fn format_changes_invalidate_uploads_without_publishing_unchanged_counts() {
+    use crate::picture::deposit::count::CountFormat;
+    let mut ph = Phosphor::new(4, 16);
+    ph.edit_channel(1, |map| {
+        map[48] = 24;
+        12..13
+    });
+    ph.publish();
+    let mut stamps: [_; NCH] = std::array::from_fn(|c| Some(ph.upload_rows(c, None).0));
+    for format in [CountFormat::Wide, CountFormat::Wide, CountFormat::Narrow, CountFormat::Narrow] {
+        let changed = ph.is_wide() != (format == CountFormat::Wide);
+        let cleared = changed && format == CountFormat::Narrow;
+        ph.set_format(format);
+        ph.publish();
+        assert_eq!(ph.published_rows(), if cleared { 12..13 } else { 0..0 });
+        assert_eq!(ph.count(1, 48), if ph.is_wide() { 24 } else { 0 });
+        for (c, stamp) in stamps.iter_mut().enumerate() {
+            assert_eq!(take(&ph, stamp, c), if changed { 0..16 } else { 0..0 });
+        }
+    }
 }

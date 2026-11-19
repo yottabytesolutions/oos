@@ -6,20 +6,38 @@ use crate::board::{
     dho::{cores::Cores, frame1, matching, switches::HeaderProbe},
     Frame,
 };
-use crate::drawpipe::{Pipe, RawBatch};
+use crate::drawpipe::{Pipe, RawBatch, TapReservation};
 use oos_core::change::Identity;
 use oos_hal::dho::{hz, seq::Settings};
+use std::sync::Arc;
 use std::time::Instant;
 
 mod tap;
+#[cfg(target_os = "linux")]
+pub(super) use tap::{source_reservation, storage};
 #[cfg(test)]
 mod tests;
 
 pub(super) fn deposit_plan(s: &Settings, p: &hz::Params, id: Identity, route: bool) -> (Option<&'static Pipe>, u32) {
-    let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).filter(|pipe| route && pipe.accepting());
-    let Some(pipe) = pipe else { return (None, s.frames) };
+    let Some(pipe) = crate::drawpipe::pipe(crate::drawpipe::Access::Existing) else { return (None, s.frames) };
     let live = (p.memsel <= crate::compress::MAX_DEPTH).then(|| (p.rate, oos_hal::dho::seq::compress_k(s, p)));
-    pipe.read_limit(id, live).map_or((None, s.frames), |limit| (Some(pipe), s.frames.min(limit)))
+    if let Some(limit) = (route && pipe.accepting()).then(|| pipe.read_limit(id, live)).flatten() {
+        if !pipe.staged_taps() || tap::admit(pipe, s, p, id) {
+            return (Some(pipe), s.frames.min(limit));
+        }
+    }
+    pipe.retire_tap_plan();
+    (None, s.frames)
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn readout_pipe(
+    pipe: Option<&Pipe>,
+    count: usize,
+    average: bool,
+    funded_single_record: bool,
+) -> Option<&Pipe> {
+    pipe.filter(|pipe| !average && (count > 1 || (count == 1 && funded_single_record)) && pipe.accepting())
 }
 
 pub(super) struct Readout<'a> {
@@ -29,6 +47,7 @@ pub(super) struct Readout<'a> {
     geometry: (usize, usize, bool),
     newest: (u64, HeaderProbe, Option<Frame>),
     batch: (Identity, Instant),
+    reserved: Option<Arc<TapReservation>>,
 }
 
 impl<'a> Readout<'a> {
@@ -39,7 +58,12 @@ impl<'a> Readout<'a> {
         newest: (u64, HeaderProbe, Option<Frame>),
         batch: (Identity, Instant),
     ) -> Self {
-        Self { pipe, settings: settings.0, params: settings.1, geometry, newest, batch }
+        Self { pipe, settings: settings.0, params: settings.1, geometry, newest, batch, reserved: None }
+    }
+
+    pub(super) fn reserved(mut self, reservation: Option<Arc<TapReservation>>) -> Self {
+        self.reserved = reservation;
+        self
     }
 
     pub(super) fn dispatch<T: RawBatch + 'static>(
@@ -60,10 +84,10 @@ impl<'a> Readout<'a> {
         counters.lose(crate::drawpipe::Lost::Frame0, u64::from(frame0_drop && avail > 1));
         // Without a replacement buffer the neighbours cannot draw, so only the newest may teach.
         let first = if next.is_some() { 0 } else { avail - 1 };
-        let probe = self.newest.1;
-        let deposit = next.is_some().then_some(self.batch.0);
-        let Ok((storage, reservation)) = tap::reserve(self.pipe, self.settings, fb, self.newest.2.as_ref(), deposit)
-            .inspect_err(|&lost| counters.discard(lost, avail.saturating_sub(start) as u64))
+        let (probe, deposit) = (self.newest.1, next.is_some().then_some(self.batch.0));
+        let Ok((storage, reservation)) =
+            tap::reserve(self.pipe, self.settings, fb, self.newest.2.as_ref(), deposit, self.reserved)
+                .inspect_err(|&lost| counters.discard(lost, avail.saturating_sub(start) as u64))
         else {
             return Vec::new();
         };
@@ -78,7 +102,7 @@ impl<'a> Readout<'a> {
         );
         // with two frames the newest is frame 1
         let keep = frame1::newest_kept(&newest, avail, frame0_drop, self.settings);
-        let newest = tag(newest);
+        let newest = tap::retain(tag(newest), reservation.as_ref());
         match next {
             Some(next) => {
                 let full = std::mem::replace(dma, next);
@@ -89,21 +113,29 @@ impl<'a> Readout<'a> {
                     self.batch,
                     (self.settings.clone(), *self.params, probe),
                     matched,
-                    (keep.then(|| std::sync::Arc::new(newest)), reservation),
+                    (keep.then(|| Arc::new(newest)), reservation),
                 )
                 .into_iter()
-                .map(std::sync::Arc::unwrap_or_clone)
+                .map(Arc::unwrap_or_clone)
                 .collect()
             }
             None => {
-                crate::drawpipe::Counters::add(&counters.dropped, avail as u64 - 1);
-                counters.lose(crate::drawpipe::Lost::Buffer, (avail - 1).saturating_sub(start) as u64);
-                if keep {
-                    vec![newest]
-                } else {
-                    Vec::new()
-                }
+                drop(reservation.inspect(|charge| charge.fallback()));
+                fallback(counters, avail, start, keep.then_some(newest))
             }
         }
+    }
+}
+
+fn fallback(counters: &crate::drawpipe::Counters, avail: usize, start: usize, newest: Option<Frame>) -> Vec<Frame> {
+    crate::drawpipe::Counters::add(&counters.dropped, avail as u64 - 1);
+    counters.lose(crate::drawpipe::Lost::Buffer, (avail - 1).saturating_sub(start) as u64);
+    newest.into_iter().collect()
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn summarize(frames: &mut [Frame]) {
+    if let Some(frame) = frames.last_mut() {
+        *frame.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&frame.ch[c]));
     }
 }

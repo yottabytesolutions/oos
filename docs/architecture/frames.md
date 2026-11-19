@@ -399,6 +399,19 @@ admitting it. Charge `(2B + 2) * maximum decoded record bytes` to decoded copies
 capacity. Budget overlap with outstanding old-plan taps on reconfiguration; keep their drain limit until they return.
 The memory sweep must cover these bounds and reject a plan that cannot fit, rather than silently reducing B.
 
+The unconfigured acquisition keeps its legacy queue limits. The explicit `f2.stage=configured-evaluation`
+startup profile requires `f2.envelope_bytes`, `f2.tap_bytes`, `f2.tap_entries` and `f2.min_cycle_ns`.
+It also requires positive bounds for the other owners in `f2.window_graphics_bytes`, `f2.dma_bytes`,
+`f2.shared_bytes`, `f2.copies_analysis_bytes` and `f2.runtime_bytes`. The Handoff charges decoded capacity
+and control storage against the tap partition, including raw newest replay and retained old plans. It can
+lengthen the enforced cycle to fit the current geometry, subject to the useful-record floors of the four-channel
+1 and 10 us/div Auto plans. An unfunded or unsupported staged plan uses the existing record path and reports
+the effective route.
+
+These declarations check arithmetic and ownership at the Handoff. The device still needs measured
+exclusive shares, DMA and graphics overlap bounds, independent copy and analysis bounds, and verification
+of whole-step cost and capture rate. No boot profile is supplied.
+
 ### Memory estimates
 
 | Buffer | Size at four channels, 970 x 448 | Bound |

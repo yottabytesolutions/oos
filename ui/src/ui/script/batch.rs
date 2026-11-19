@@ -131,7 +131,8 @@ impl BatchScript {
             "records-decoded"
         } else if decoded == 0 {
             "codes"
-        } else if decoded == p.frames {
+        } else if decoded == p.frames - 1 {
+            // The newest waveform arrives decoded and skips the worker decoder.
             "decoded"
         } else {
             "mixed"

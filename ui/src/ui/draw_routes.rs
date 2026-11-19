@@ -12,6 +12,7 @@ use crate::system::test_allocator::Counting;
 #[global_allocator]
 static HEAP: Counting = Counting::new();
 mod counters;
+mod funding;
 mod perf;
 mod tap_recovery;
 
@@ -197,6 +198,7 @@ fn batch_picture_keeps_recent_deposits_without_recounting_their_records() {
     let _scope = Scope::new();
     let mut route = Route::new(BatchKind::Codes, true, 1, 1e-6);
     route.step(27);
+    assert!(!route.ui.ph.published_rows().is_empty());
     route.step(3);
     assert_eq!(route.ui.batch_picture.frames, 30);
     route.step(3);

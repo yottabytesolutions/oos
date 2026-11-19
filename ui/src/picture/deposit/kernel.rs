@@ -235,7 +235,7 @@ pub(crate) fn fold_band<T: Count>(
     (cols, rows, first): (usize, usize, usize),
     touched: std::ops::Range<usize>,
     clear: bool,
-) {
+) -> std::ops::Range<usize> {
     let width = run.len();
     fold_rows(map, run, (cols, rows, first), touched, |r, run| {
         let mut occupied = false;
@@ -247,7 +247,7 @@ pub(crate) fn fold_band<T: Count>(
             occupied |= *sum != T::default();
         }
         occupied
-    });
+    })
 }
 
 pub(super) fn fold_rows<T: Count, M: Count>(
@@ -256,17 +256,21 @@ pub(super) fn fold_rows<T: Count, M: Count>(
     (cols, rows, first): (usize, usize, usize),
     touched: std::ops::Range<usize>,
     mut prefix: impl FnMut(usize, &mut [T]) -> bool,
-) {
+) -> std::ops::Range<usize> {
     let width = run.len();
+    let mut painted = rows..0;
     run.fill(T::default());
     for r in touched.start.min(rows)..(touched.end.min(rows) + 1).min(rows + 1) {
         let occupied = prefix(r, run);
         if occupied && r < rows {
+            painted.start = painted.start.min(r);
+            painted.end = r + 1;
             for (pixel, sum) in map[r * cols + first..][..width].iter_mut().zip(run.iter()) {
                 *pixel = pixel.saturating_add(M::from_value(sum.value()));
             }
         }
     }
+    painted
 }
 
 impl Samples for Vec<f32> {

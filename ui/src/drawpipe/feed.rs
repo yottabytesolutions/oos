@@ -8,13 +8,14 @@ pub(super) struct Header {
     identity: Option<oos_core::change::Identity>,
     pub(super) tap: Option<Arc<TapReservation>>,
     pub(super) order: Option<crate::picture::deposit::TapOrder>,
+    pub(super) reader: Option<(Arc<View>, Option<oos_core::change::Identity>)>,
 }
 impl Header {
     fn new(stamp: u64, identity: Option<oos_core::change::Identity>) -> Self {
         let cfg = identity.map_or(0, |id| id.gen());
         #[cfg(test)]
         let cfg = if identity.is_none() { crate::pacing::APPLIED.load(Ordering::Relaxed) } else { cfg };
-        Self { pair: (cfg, stamp), identity, tap: None, order: None }
+        Self { pair: (cfg, stamp), identity, tap: None, order: None, reader: None }
     }
     pub(super) fn identity(&self) -> Option<oos_core::change::Identity> {
         self.identity
@@ -32,6 +33,56 @@ impl Header {
 }
 
 impl Pipe {
+    pub(crate) fn fund_taps(
+        &self,
+        share: crate::picture::deposit::admission::Share,
+        interval: std::time::Duration,
+    ) -> Option<()> {
+        self.slot.fund_taps(share, interval)
+    }
+    pub(crate) fn staged_taps(&self) -> bool {
+        self.slot.staged_taps()
+    }
+    pub(crate) fn has_funded_taps(&self, id: oos_core::change::Identity) -> bool {
+        self.slot.has_funded_taps(id)
+    }
+    pub(crate) fn retire_tap_plan(&self) {
+        self.slot.retire_tap_plan();
+    }
+    pub(crate) fn hold_taps(&self, hold: bool) {
+        self.slot.hold_taps(hold);
+    }
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn has_tap_plan(&self, id: oos_core::change::Identity, format: [u64; 6]) -> bool {
+        self.slot.has_tap_plan(id, format)
+    }
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn admit_taps(
+        &self,
+        id: oos_core::change::Identity,
+        format: [u64; 6],
+        samples: usize,
+        limit: std::time::Duration,
+    ) -> bool {
+        self.slot.admit_taps(id, format, samples, limit)
+    }
+    pub(crate) fn tap_drain(&self) -> usize {
+        self.slot.tap_drain()
+    }
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn reserve_plan(&self, id: oos_core::change::Identity) -> Option<Arc<TapReservation>> {
+        let submitted = oos_hal::sync::lock(&self.view).gen;
+        self.slot.reserve_plan(submitted, id)
+    }
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn wait_for_tap_cycle(&self, reservation: &TapReservation) -> Option<()> {
+        self.slot.wait_for_cycle(reservation, Instant::now)
+    }
+    #[cfg(test)]
+    pub(crate) fn tap_start(&self, id: oos_core::change::Identity, now: Instant) -> Option<std::time::Duration> {
+        self.slot.tap_start(id, now)
+    }
+
     #[cfg(any(target_os = "linux", test))]
     pub(crate) fn reserve_waveform(
         &self,
@@ -185,8 +236,12 @@ impl Pipe {
     ) -> (Arc<Batch>, Option<Arc<Frame>>) {
         let first = frames.start;
         let frames = frames.end.min(raw.bytes().len().checked_div(fb).unwrap_or(0));
-        let view_gen_at_submit =
-            header.tap.as_ref().map_or_else(|| oos_hal::sync::lock(&self.view).gen, |tap| tap.submitted());
+        let state = oos_hal::sync::lock(&self.view);
+        if newest.is_some() && same_pair(state.identity, header.identity()) {
+            header.reader = state.view.as_ref().map(|view| (view.clone(), state.identity));
+        }
+        let view_gen_at_submit = header.tap.as_ref().map_or(state.gen, |tap| tap.submitted());
+        drop(state);
         // The acquisition thread can publish a newer fallback as soon as submit returns.
         header.order = newest.as_ref().and_then(|f| self.slot.track_tap(view_gen_at_submit, header.identity(), f.seq));
         let mut b = Arc::new(Batch {
@@ -212,6 +267,10 @@ impl Pipe {
         }
         let batch = Arc::get_mut(&mut b).expect("rejected intake did not share the batch");
         let fallback = batch.newest.take();
+        drop(batch.header.order.take());
+        if let Some(charge) = &batch.header.tap {
+            charge.fallback();
+        }
         let next = batch.next.get_mut();
         // The record path accounts for the returned waveform.
         *next += usize::from(fallback.is_some() && *next < batch.frames);
@@ -277,7 +336,7 @@ pub(super) fn set_view(
     let mut v = oos_hal::sync::lock(&pipe.view);
     let Some(m) = m else {
         (v.view, v.key) = (None, None);
-        drop(v);
+        pipe.retire_tap_plan();
         return;
     };
     let layout = oos_core::change::Layout::new((w, h), (0, 0), (0, 0), None, 0, 0);

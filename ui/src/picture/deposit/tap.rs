@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+mod funding;
+
+use super::admission::{Funding, Plan};
 use super::{Handoff, Tap, TapProjection, TapView};
 use crate::board::{PictureEligibility, QUEUE_MAX, QUEUE_SAMPLES};
 use oos_core::change::Identity;
@@ -10,8 +13,8 @@ use std::sync::{
     Arc, Weak,
 };
 
-type Entry = (u64, Tap, Option<Arc<TapReservation>>);
-type Unpublished = (u64, Option<Identity>, u64);
+pub(super) type Entry = (u64, Tap, Option<Arc<TapReservation>>);
+pub(super) type Unpublished = (u64, Option<Identity>, u64);
 
 pub(crate) enum TapRead<T> {
     Ready(T),
@@ -47,11 +50,11 @@ impl TapProjection {
         use PictureEligibility::*;
         match self {
             Self::Accounted { mapping_gen, size }
-                if view.is_some_and(|view| (view.mapping_gen, view.size) != (mapping_gen, size)) =>
+                if view.is_some_and(|view| (view.mapping_gen, view.size) == (mapping_gen, size)) =>
             {
-                Redraw
+                AlreadyDeposited
             }
-            Self::Accounted { .. } => AlreadyDeposited,
+            Self::Accounted { .. } => Redraw,
             Self::Expired => Expired,
             Self::Projected { gen, size } if view.is_some_and(|view| (view.worker_gen, view.size) == (gen, size)) => {
                 Pending
@@ -78,6 +81,17 @@ pub(super) struct Queue {
     unpublished: Vec<Unpublished>,
     preview: Option<Preview>,
     identity: Option<Identity>,
+    admission: Admission,
+}
+
+#[derive(Default)]
+struct Admission {
+    held: bool,
+    stop_generation: u64,
+    staged: bool,
+    funding: Option<Arc<Funding>>,
+    plan: Option<Arc<Plan>>,
+    plans: Vec<Weak<Plan>>,
 }
 
 impl Queue {
@@ -87,7 +101,10 @@ impl Queue {
         }
     }
 
-    fn fits(&self, samples: usize) -> bool {
+    fn fits(&self, samples: usize, plan: Option<&Arc<Plan>>) -> bool {
+        if let Some(plan) = plan {
+            return self.entries.len() + self.reserved < self.entries.capacity() && plan.fits();
+        }
         self.entries.len() + self.reserved < QUEUE_MAX
             && (self.charged == 0 && self.entries.is_empty()
                 || self.samples.checked_add(samples).is_some_and(|total| total <= QUEUE_SAMPLES))
@@ -95,14 +112,27 @@ impl Queue {
 
     pub(super) fn clear(&mut self) -> VecDeque<Entry> {
         self.preview = None;
+        self.admission.plan = None;
         self.unpublished.clear();
         let entries = std::mem::take(&mut self.entries);
         for (_, tap, charge) in &entries {
-            if charge.is_none() {
-                self.samples -= tap.samples();
-            }
+            self.release_entry(tap, charge.as_deref());
         }
         entries
+    }
+
+    fn release_entry(&mut self, tap: &Tap, charge: Option<&TapReservation>) {
+        if let Some(charge) = charge {
+            charge.dequeued();
+        } else {
+            self.samples -= tap.samples();
+        }
+    }
+
+    pub(super) fn restore_storage(&mut self, entries: VecDeque<Entry>) {
+        if self.admission.staged && self.entries.capacity() < entries.capacity() {
+            self.entries = entries;
+        }
     }
 }
 
@@ -112,9 +142,28 @@ pub(crate) struct TapReservation {
     samples: usize,
     submitted: u64,
     pending: AtomicBool,
+    plan: Option<Arc<Plan>>,
+    queued: AtomicBool,
 }
 
 impl TapReservation {
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn covers(&self, frame: &crate::board::Frame) -> bool {
+        frame.ch.iter().map(Vec::capacity).sum::<usize>() <= self.samples
+    }
+
+    pub(crate) fn funded(&self) -> bool {
+        self.plan.is_some()
+    }
+
+    fn dequeued(&self) {
+        if let Some(plan) = &self.plan {
+            if self.queued.swap(false, Ordering::Relaxed) {
+                plan.dequeued();
+            }
+        }
+    }
+
     pub(crate) fn submitted(&self) -> u64 {
         self.submitted
     }
@@ -122,9 +171,15 @@ impl TapReservation {
 
 impl Drop for TapReservation {
     fn drop(&mut self) {
-        if let Some(handoff) = self.handoff.upgrade() {
-            let mut state = lock(&handoff.state);
-            state.taps.samples -= self.samples;
+        let handoff = self.handoff.upgrade();
+        let mut state = handoff.as_ref().map(|handoff| lock(&handoff.state));
+        if let Some(plan) = &self.plan {
+            plan.release(*self.queued.get_mut());
+        }
+        if let (Some(handoff), Some(state)) = (&handoff, &mut state) {
+            if self.plan.is_none() {
+                state.taps.samples -= self.samples;
+            }
             state.taps.reserved -= usize::from(*self.pending.get_mut());
             state.taps.charged -= 1;
             handoff.space.notify_all();
@@ -135,7 +190,10 @@ impl Drop for TapReservation {
 impl Handoff {
     pub(crate) fn track_tap(self: &Arc<Self>, submitted: u64, id: Option<Identity>, seq: u64) -> Option<TapOrder> {
         let mut state = lock(&self.state);
-        if state.closed || submitted < state.reset_before {
+        if state.closed
+            || submitted < state.reset_before
+            || (state.taps.admission.staged && state.taps.unpublished.len() == state.taps.unpublished.capacity())
+        {
             return None;
         }
         let number = state.taps.next_order;
@@ -148,54 +206,9 @@ impl Handoff {
         let mut state = lock(&self.state);
         if !crate::drawpipe::same_pair(state.taps.identity, Some(identity)) {
             state.taps.identity = Some(identity);
+            state.taps.admission.plan = None;
             self.space.notify_all();
         }
-    }
-
-    #[cfg(any(target_os = "linux", test))]
-    pub(crate) fn reserve_tap(
-        self: &Arc<Self>,
-        samples: usize,
-        submitted: u64,
-        identity: Option<Identity>,
-    ) -> Option<Arc<TapReservation>> {
-        let mut state = self.wait_for_tap(samples, submitted, identity)?;
-        state.taps.samples += samples;
-        state.taps.reserved += 1;
-        state.taps.charged += 1;
-        Some(Arc::new(TapReservation {
-            handoff: Arc::downgrade(self),
-            samples,
-            submitted,
-            pending: AtomicBool::new(true),
-        }))
-    }
-
-    fn wait_for_tap(
-        &self,
-        samples: usize,
-        submitted: u64,
-        identity: Option<Identity>,
-    ) -> Option<std::sync::MutexGuard<'_, super::Slot>> {
-        let mut state = lock(&self.state);
-        let current = |state: &super::Slot| {
-            !state.closed
-                && submitted >= state.reset_before
-                && identity.is_none_or(|id| crate::drawpipe::same_pair(state.taps.identity, Some(id)))
-        };
-        while current(&state) && !state.taps.fits(samples) {
-            #[cfg(test)]
-            {
-                state.waiting = true;
-                self.space.notify_all();
-            }
-            state = self.space.wait(state).unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
-        #[cfg(test)]
-        {
-            state.waiting = false;
-        }
-        current(&state).then_some(state)
     }
 
     #[cfg(test)]
@@ -213,7 +226,12 @@ impl Handoff {
         let samples = tap.samples();
         let mut state = if let Some(charge) = charge {
             let mut state = lock(&self.state);
-            if state.closed || submitted < state.reset_before || samples > charge.samples {
+            if state.closed
+                || submitted < state.reset_before
+                || samples > charge.samples
+                || !std::ptr::eq(self, charge.handoff.as_ptr())
+                || charge.plan.as_ref().is_some_and(|p| tap.identity.is_none_or(|id| !p.identity(id)))
+            {
                 return None;
             }
             if !charge.pending.swap(false, Ordering::Relaxed) {
@@ -222,7 +240,8 @@ impl Handoff {
             state.taps.reserved -= 1;
             state
         } else {
-            let mut state = self.wait_for_tap(samples, submitted, None)?;
+            // The worker can publish an already submitted waveform while the source is held.
+            let mut state = self.wait_for_tap(samples, submitted, None, None, false)?;
             state.taps.samples += samples;
             state
         };
@@ -284,9 +303,7 @@ impl Handoff {
             state.taps.preview =
                 Some(Preview { number, projection: tap.projection, frame: Arc::downgrade(&tap.frame) });
         }
-        if charge.is_none() {
-            state.taps.samples -= tap.samples();
-        }
+        state.taps.release_entry(&tap, charge.as_deref());
         self.space.notify_all();
         drop(state);
         if valid {
@@ -350,6 +367,7 @@ mod tests {
                 frame: frame.clone(),
                 identity: None,
                 projection: TapProjection::Projected { gen: 1, size: (8, 8) },
+                folds: None,
             };
             let n = handoff.send_tap(tap(), 1, None).unwrap();
             let last = handoff.send_tap(tap(), 1, None).unwrap();
@@ -387,10 +405,36 @@ mod tests {
     }
 
     #[test]
+    fn capacity_release_and_close_wake_blocked_reservations() {
+        let handoff = Arc::new(Handoff::default());
+        let mut held = (0..QUEUE_MAX).map(|_| handoff.reserve_tap(1, 0, None).unwrap()).collect::<Vec<_>>();
+        std::thread::scope(|threads| {
+            let next = threads.spawn(|| handoff.reserve_tap(1, 0, None));
+            handoff.wait_for_sender();
+            drop(held.pop());
+            held.push(next.join().unwrap().unwrap());
+            assert_eq!(lock(&handoff.state).taps.charged, QUEUE_MAX);
+
+            let cancelled = threads.spawn(|| handoff.reserve_tap(1, 0, None));
+            handoff.wait_for_sender();
+            handoff.close();
+            assert!(cancelled.join().unwrap().is_none());
+        });
+        assert_eq!(lock(&handoff.state).taps.charged, QUEUE_MAX);
+        drop(held);
+        assert_eq!(lock(&handoff.state).taps.samples, 0);
+    }
+
+    #[test]
     fn reset_releases_waiters_but_keeps_old_source_and_reader_charged() {
         let handoff = Arc::new(Handoff::default());
         let old = handoff.reserve_tap(QUEUE_SAMPLES, 0, None).unwrap();
-        let tap = Tap { frame: Arc::new(Frame::default()), identity: None, projection: TapProjection::Unpainted };
+        let tap = Tap {
+            frame: Arc::new(Frame::default()),
+            identity: None,
+            projection: TapProjection::Unpainted,
+            folds: None,
+        };
         assert!(handoff.send_tap(tap, 0, Some(&old)).is_some());
         let TapRead::Ready((_, reader)) = handoff.take_tap(None, None, None, true) else { panic!("missing tap") };
         std::thread::scope(|threads| {

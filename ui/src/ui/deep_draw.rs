@@ -11,6 +11,8 @@ pub(super) struct ReaderTaps {
     ready: usize,
     attempts: usize,
     previous_tap: Option<bool>,
+    ready_folds: Option<crate::framestats::TapFolds>,
+    previous_folds: Option<crate::framestats::TapFolds>,
     folds: Option<crate::framestats::Folds>,
     deep: Option<TapStatistics>,
 }
@@ -18,9 +20,18 @@ pub(super) struct ReaderTaps {
 impl ReaderTaps {
     pub(super) fn new(ui: &Ui) -> Self {
         let pipe = ui.src.is_hw().then(|| drawpipe::pipe(Access::Existing)).flatten();
-        let attempts = crate::board::QUEUE_MAX / 2;
+        let attempts = pipe.map_or(0, Pipe::tap_drain);
         let ready = pipe.map_or(0, |pipe| pipe.tap_count().min(attempts));
-        Self { pipe, ready, attempts, previous_tap: None, folds: None, deep: None }
+        Self {
+            pipe,
+            ready,
+            attempts,
+            previous_tap: None,
+            ready_folds: None,
+            previous_folds: None,
+            folds: None,
+            deep: None,
+        }
     }
 
     pub(super) fn len(&self) -> usize {
@@ -38,11 +49,13 @@ impl ReaderTaps {
             let result = pipe.read_waveform(size, Some(id), fallback, self.attempts > 0);
             match result {
                 TapRead::Stale => self.attempts -= 1,
-                TapRead::Ready(_) => {
+                TapRead::Ready((frame, folds)) => {
                     self.attempts -= 1;
-                    return result;
+                    self.ready_folds = folds;
+                    return TapRead::Ready(frame);
                 }
-                _ => return result,
+                TapRead::Pending => return TapRead::Pending,
+                TapRead::Empty => return TapRead::Empty,
             }
         }
     }
@@ -55,25 +68,33 @@ impl ReaderTaps {
                 }
             }
         }
+        self.previous_folds = self.ready_folds.take().filter(|_| tap);
     }
 
     fn fold_displaced(&mut self, ui: &Ui, record: &Record) -> bool {
+        let Some(raw) = &record.raw else { return false };
+        let identity = change::acquisition::identity(ui);
+        let tap = self.previous_folds.as_ref().filter(|folds| folds.current(identity.stats_gen()));
+        if crate::deepmeas::deep_raw_frame(&raw.frame) {
+            // A newer pair record can own the picture while this tap still owns its measurements.
+            let counted =
+                ui.m.meas
+                    .iter()
+                    .map(|&(kind, source)| {
+                        source.ch().is_none_or(|c| tap.and_then(|folds| folds.displaced(kind, c)).is_some())
+                    })
+                    .collect();
+            self.deep = Some(TapStatistics::new(ui, &raw.frame, counted));
+        }
+        let Some(tap) = tap else { return false };
         let folds = self.folds.get_or_insert_with(|| crate::framestats::folds_for(&ui.m));
-        let Some(raw) = record.raw.as_ref().filter(|r| crate::deepmeas::deep_raw_frame(&r.frame)) else {
-            return fold_tap(record, &ui.m, folds);
-        };
-        // A newer pair record can own the picture while this tap still owns its measurements.
-        let mut own = crate::framestats::folds_for(&ui.m);
-        let measured = fold_tap(record, &ui.m, &mut own);
-        let counted =
-            ui.m.meas
-                .iter()
-                .map(|&(kind, source)| {
-                    source.ch().is_none_or(|c| own.iter().any(|&(key, fold)| key == (kind, c) && fold.n > 0))
-                })
-                .collect();
-        self.deep = Some(TapStatistics::new(ui, &raw.frame, counted));
-        crate::framestats::add_folds(folds, &own);
+        let mut measured = false;
+        for ((kind, channel), fold) in folds {
+            if let Some(value) = tap.displaced(*kind, *channel) {
+                fold.push(value);
+                measured = true;
+            }
+        }
         measured
     }
 
@@ -86,34 +107,10 @@ impl ReaderTaps {
                 ui.batch_picture.tap_statistics = self.deep.filter(|stats| matches_tap(Some(record), &stats.frame));
             }
         } else if let Some(tap) = self.previous_tap {
-            ui.batch_picture.tap_statistics = if tap { TapStatistics::fold_latest(ui) } else { None };
+            ui.batch_picture.tap_statistics =
+                if tap { TapStatistics::fold_latest(ui, self.previous_folds.as_ref()) } else { None };
         }
     }
-}
-
-fn fold_tap(record: &Record, m: &Model, folds: &mut crate::framestats::Folds) -> bool {
-    let Some(raw) = &record.raw else { return false };
-    if folds.is_empty() || crate::compress::live(&raw.frame) {
-        return false;
-    }
-    if crate::framestats::fold_frame(&raw.frame, m, folds) {
-        return true;
-    }
-    // Short records are measured on their interpolated points rather than on raw samples.
-    let mut samples: [Option<crate::fastdraw::Fold>; NCH] = [None; NCH];
-    let mut measured = false;
-    for ((kind, channel), fold) in folds {
-        if record.pairs && crate::framestats::needs_samples(*kind) {
-            continue;
-        }
-        let values = &record.ch[*channel];
-        let sample = samples[*channel].get_or_insert_with(|| crate::fastdraw::Fold::of(values, 0..values.len()));
-        if let Some(value) = sample.get(*kind).filter(|value| value.is_finite()) {
-            fold.push(value);
-            measured = true;
-        }
-    }
-    measured
 }
 
 pub(super) struct TapStatistics {
@@ -128,7 +125,7 @@ impl TapStatistics {
     }
 
     // The generic reader uses the selected physical gate, including full-record measurements.
-    fn fold_latest(ui: &mut Ui) -> Option<Self> {
+    fn fold_latest(ui: &mut Ui, folds: Option<&crate::framestats::TapFolds>) -> Option<Self> {
         let rec = ui.last[0].as_ref()?;
         let raw = rec.raw.as_ref()?;
         if crate::compress::live(&raw.frame) || !ui.m.meas.iter().any(|(_, source)| source.ch().is_some()) {
@@ -136,28 +133,14 @@ impl TapStatistics {
         }
         let mut counted = Vec::with_capacity(ui.m.meas.len());
         let mut measured = false;
-        let mut values: [Option<Option<crate::framestats::Values>>; NCH] = Default::default();
+        let folds = folds
+            .filter(|folds| folds.current(change::acquisition::identity(ui).stats_gen()) && folds.matches_gate(&ui.m));
         for (i, &(kind, source)) in ui.m.meas.iter().enumerate() {
             let Some(c) = source.ch() else {
                 counted.push(true);
                 continue;
             };
-            let value = (crate::framestats::CHEAP.contains(&kind)
-                && ui.m.ch[c].on
-                && !(ui.meas_on_pairs(rec, c) && crate::framestats::needs_samples(kind)))
-            .then(|| {
-                values[c]
-                    .get_or_insert_with(|| {
-                        let (samples, ..) = ui.measurement_channel_samples(rec, c)?;
-                        let std =
-                            ui.m.meas.iter().any(|&(k, s)| s == source && matches!(k, Meas::StdDev | Meas::VrmsAc));
-                        crate::framestats::Values::of(samples, std)
-                    })
-                    .as_ref()
-                    .map(|values| values.get(kind))
-                    .filter(|value| value.is_finite())
-            })
-            .flatten();
+            let value = folds.and_then(|folds| folds.latest(kind, c));
             if let Some(value) = value {
                 if ui.mstat.len() <= i {
                     ui.mstat.resize(ui.m.meas.len(), MStat::default());

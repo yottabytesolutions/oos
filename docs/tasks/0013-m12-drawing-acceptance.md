@@ -122,6 +122,12 @@ PR #224 window follow-up: prove the whole batch's hit bound before painting and 
 picture eligibility while it waits behind a fallback. Reserve the F2 producer, waveform queue and host fixture
 paths. Compare Auto and Off from equal startup settings and retain a separate mapping-transition regression.
 
+F2 staged tap funding integrates the verified fixture, admission and application inputs on `b10e6a4e`.
+Retain the accepted Handoff ordering, watchdog reset, redraw, and narrow and wide picture paths. Validate
+real board descriptors and full B-tap steps with explicit staged funding and legacy defaults. Reserved paths
+for this follow-up include the existing F2 paths, `ui/src/board/frame_summary.rs`, `ui/src/board/dho/hw.rs`,
+`ui/src/wave.rs`, `ui/src/ui.rs`, startup switches and mode reporting, and the changed-file ratchets.
+
 ## Status
 
 - 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
@@ -129,6 +135,44 @@ paths. Compare Auto and Off from equal startup settings and retain a separate ma
   All production source, other budgets, unit acceptance and sampler/runner remain identical.
   No acceptance or review state changed. Native timing awaits experiment-supervisor release.
   The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
+
+- 2026-11-19: PR #224 placement borrows the supplied newest waveform. The host allocation fixture now exercises
+  supplied waveforms at 1, 2 and 4 channels. The warmed one-channel 100,000-sample row fell from 400,280 to 9,560
+  peak bytes above entry, and the four-channel 100,000-sample row passed at 9,752 bytes. DHO804 acceptance remains open.
+
+- 2026-11-19: PR #224 review fixes publish the row hull of cleared and drawn phosphor counts. The deposit
+  coordinator sends cheap measurement values with each waveform tap for the latest and displaced record gates.
+  Host regressions cover disjoint bands, expiry, idle publication, and tap statistics without reader-thread scans.
+  The fast gate and Clippy passed. Nextest passed 1,839 debug and 1,838 optimized UI tests, with 62 skips in
+  each profile. Shared-process test runs failed the wide-dot drop-counter assertion in both profiles.
+  The production delta is +158 UI Rust lines. DHO804 acceptance remains open.
+
+- 2026-11-19: Integrated the three SHA-256-verified F2 slices from `e15920b2` onto `b10e6a4e`, preserving
+  the ordering and reader changes through `cc7fa6f5` and `b10e6a4e`. Build input SHA-256
+  `d216d72448a49a282716bf6d9d4071d86e3cd2be870db6b191364b6626b15bd1`. Production UI Rust totals
+  74,217 lines by `cargo xtask loc`, up 638 from `b10e6a4e`, 2,459 from reviewed F1 `113ccb97`,
+  2,489 from replayed F1 `38defc1d`, and 2,790 from protected main `dd5bb013`.
+  The unconfigured path keeps its existing read, queue and fallback rules. The staged profile charges the existing
+  Handoff before readout and retains the grant through the last original waveform reader. Independent vector
+  copies use the declared copies allowance. STOP, identity retirement and watchdog reset wake staged waiters.
+  The four-channel 1 and 10 us/div Auto Lines rows keep 142 raw, 14 raw and 99 compressed records per
+  read respectively at 312.5 MSa/s. Raw and replay backing measured 56,784 and 563,024 bytes.
+  The synthetic 500 us interval gives B=70, 140 FIFO entries and 142 waveform slots, with software capacity
+  for 2,000 or 4,000 records/s at one or two useful records per read. Every whole-B UI fixture consumed 70 taps.
+  The 271-column raw Dots row needs 69,216 count units. It used a derived 16,666,667 ns cycle at B=5 with the larger
+  synthetic partition and used Standard fallback with the smaller partition.
+  The first fast run printed `gate FAILED in 17 s: size`. After splitting the new code and regenerating the
+  three changed-file size entries, fast printed `partial gate passed (not done): 12 steps in 30 s`.
+  Clippy printed `partial gate passed (not done): 1 steps in 61 s`. All 65 synthetic register plans matched.
+  Focused debug, test-release and ARM64 Linux container runs each passed 153 tests with 14 timing probes ignored.
+  The first container run needed a read-only source mount for the existing layout budget test.
+  Full UI Nextest suites passed 1,834 debug and 1,833 optimized tests, with 62 skipped in each run.
+  Plain parallel Cargo testing first saw a shared drop count in the existing wide-remap test. The gate's
+  process-isolated runner passed that test with the rest of the suite. Source receipts matched.
+  Device qualification needs an audited exclusive partition plus peak DMA, window/graphics, shared frame,
+  record/analysis copy and runtime bounds, including plan overlap. The one-byte owner declarations belong to
+  synthetic fixtures. On-device minimum cycle, whole-step timing, protected capture rates and 30 fps remain
+  open, along with full gate, independent review and the signed image. The hardware hold remains in place.
 
 - 2026-11-19: PR #224 integration uses the reachable projection envelope and preserves the four-channel normal
   Lines read plans. The 271-column, four-channel raw Dots case at 500 us/div and fixed 1M depth needs up to 69,216

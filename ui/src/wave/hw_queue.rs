@@ -79,3 +79,14 @@ impl Source {
         Some((r, eligibility, tap))
     }
 }
+
+pub(super) fn hold(shared: &crate::board::HwShared, hold: bool, req: u64) -> bool {
+    let mut g = crate::perfguard::deep::ui_lock(shared);
+    if g.hold != hold {
+        if let Some(pipe) = drawpipe::pipe(drawpipe::Access::Existing) {
+            pipe.hold_taps(hold);
+        }
+    }
+    (g.hold, g.final_req) = (hold, req);
+    g.final_ack >= req && g.queue.is_empty()
+}

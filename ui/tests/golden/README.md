@@ -13,9 +13,9 @@ cover every legacy screen script. `demo/matrix` and `batch` cover the M1 matrix 
 Dots `Off` means lines, `On` means dots and `Auto` means the current lines outside XY. The runner requires
 exact decoded equality between corresponding Auto and Off matrix cases. The F2 deposit kernel reads codes
 at all channel strides and in dots mode. Sparse records retain their interpolation adapter. The scripted driver observes
-`decode_route` by counting distinct records passed to the worker decoder. `codes` means all deposited worker frames
-bypassed decoding, `decoded` means all used decoding and
-`mixed` means both ran. `records-decoded` identifies the queued-record route; `source_route` separately
+`decode_route` by counting distinct records passed to the worker decoder. The newest waveform arrives already decoded.
+For the other records, `codes` means none used the worker decoder, `decoded` means all used it, and `mixed` means
+both paths ran. `records-decoded` identifies the queued-record route; `source_route` separately
 records workers versus queued records. Zoom and average use records. Roll/scan inject synthetic partial and complete
 snapshots into the consumer route; they do not simulate the real producer loops. The `hw-average` fixture
 marks a deterministic decoded record as pre-averaged; it does not implement FPGA averaging.

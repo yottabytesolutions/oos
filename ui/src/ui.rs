@@ -62,7 +62,7 @@ mod sertrig;
 mod sim;
 pub mod startup;
 mod step_draw;
-pub(crate) use step_draw::route as draw_route;
+pub(crate) use step_draw::status as draw_status;
 mod sysinfo;
 mod tables;
 mod tools;
@@ -2462,11 +2462,7 @@ impl Ui {
 
     /// Time base of the main waveform area: (s/div, delay).
     fn view(&self) -> (f32, f32) {
-        if self.m.zoom {
-            (tscales()[self.m.zscale], self.m.zdelay)
-        } else {
-            (self.m.time_per_div(), self.m.delay)
-        }
+        crate::framestats::measurement_view(&self.m)
     }
 
     /// The last record for the web page, as Storage > CSV writes it. A long record is refused rather than cut: making
@@ -3113,7 +3109,7 @@ impl Ui {
             self.vmaxz_cg = (self.vmaxz_cg / 2).max(1);
         }
         draw[4] += halve_zoom.elapsed();
-        step_draw::timing(self, draw, got);
+        step_draw::finish(self, draw, got);
     }
 
     /// One line of settings for the HDMI workspace: channels, time base, trigger, state, rate.
@@ -3318,6 +3314,9 @@ impl Ui {
                 (a.min(x), b.max(y))
             })
         });
+        for &c in &on {
+            self.ph.touch(rows[c].0..rows[c].1);
+        }
         let t2 = std::time::Instant::now();
         let pairs: Vec<(usize, &mut Vec<u16>, &mut Vec<u16>)> = self
             .ph

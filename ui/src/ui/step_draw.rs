@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
-use crate::drawpipe::{Accepted, Pipe, Stats};
+use crate::drawpipe::{self, Accepted, Access, Pipe, Stats};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -201,21 +201,28 @@ pub(super) fn render_start(ui: &mut Ui, l: &mut Layers) -> bool {
     false
 }
 
-pub(crate) fn route(ui: &Ui) -> &'static str {
-    if ui.record_mode() {
-        return "replay";
-    }
-    if ui.m.run == RunState::Stop {
-        return "stopped";
-    }
-    if !ui.fast_ok() {
-        return "records";
-    }
-    if ui.m.draw_batch {
+pub(crate) fn status(ui: &Ui) -> (drawpipe::Mode, &'static str) {
+    use crate::drawpipe::{funding::Profile, Mode};
+    let switches = change::acquisition::accepted_draw_switches(ui);
+    let staged = ui.src.is_hw() && switches.f2_funding != Profile::Unconfigured;
+    let funded = staged
+        && switches.pipeline == Mode::Batch
+        && drawpipe::pipe(Access::Existing).is_some_and(|pipe| pipe.has_funded_taps(change::acquisition::identity(ui)));
+    let pipeline = if staged && !funded { Mode::Frames } else { switches.pipeline };
+    let route = if ui.record_mode() {
+        "replay"
+    } else if ui.m.run == RunState::Stop {
+        "stopped"
+    } else if !ui.fast_ok() {
+        "records"
+    } else if funded {
+        "batch-funded"
+    } else if ui.m.draw_batch && !staged {
         "batch"
     } else {
         "standard"
-    }
+    };
+    (pipeline, route)
 }
 
 #[derive(Default)]
@@ -259,7 +266,9 @@ pub(super) fn account_picture(ui: &Ui, records: usize, composition: Composition)
     crate::pacing::picture(records + redrawn);
 }
 
-pub(super) fn timing(ui: &mut Ui, parts: [std::time::Duration; 5], records: usize) {
+pub(super) fn finish(ui: &mut Ui, parts: [std::time::Duration; 5], records: usize) {
+    ui.ph.publish();
+    ui.phz.publish();
     let timing = change::timing_mut(ui);
     timing.draw_step(parts);
     if crate::drawpipe::counters().diagnostics_enabled() {

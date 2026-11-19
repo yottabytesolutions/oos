@@ -226,6 +226,8 @@ impl BasicStats {
     }
 }
 
+mod frame_summary;
+
 /// One decoded record: volts per enabled channel, sample period and trigger index.
 #[derive(Clone, Default)]
 pub struct Frame {
@@ -247,7 +249,7 @@ pub struct Frame {
     pub stamp: u64,
     /// Full-frame summaries computed before publication; callers must still
     /// apply the physical measurement gate before using them for a screen read.
-    pub basic: [BasicStats; NCH],
+    pub basic: frame_summary::FrameSummary,
     /// logic analyser words of the acquisition, times relative to the hardware trigger point (la.md 4.2; the last
     /// frame of a batch only, roll/scan: none yet)
     pub la: Option<crate::ui::la::LaRec>,

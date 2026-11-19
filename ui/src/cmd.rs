@@ -148,11 +148,12 @@ pub fn stat_text(ui: &Ui) -> String {
     let gpu = format!(" parts meas {:.1} analyse {:.1} pane {:.1} max {:.1} ms{}", p[0], p[1], p[2], p[3], gpu);
     let (acq, used, dropped) = crate::drawpipe::counters().read();
     let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
+    let (pipeline, route) = crate::ui::draw_status(ui);
     let gpu = format!(
         "{} pipeline {:?} route={} interp {:?} acquired {} used {} dropped {} measured {} compress k {}{}",
         gpu,
-        crate::ui::change::acquisition::accepted_draw_switches(ui).pipeline,
-        crate::ui::draw_route(ui),
+        pipeline,
+        route,
         ui.switches().interp,
         acq,
         used,

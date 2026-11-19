@@ -387,9 +387,7 @@ impl Source {
     /// drops what was queued during the hold: the thread does so on its next pass, but the UI takes frames at once.
     pub fn hw_hold(&self, hold: bool, req: u64) -> bool {
         if let Source::Hw { shared, .. } = self {
-            let mut g = crate::perfguard::deep::ui_lock(shared);
-            (g.hold, g.final_req) = (hold, req);
-            return g.final_ack >= req && g.queue.is_empty();
+            return hw_queue::hold(shared, hold, req);
         }
         true
     }
@@ -715,7 +713,7 @@ impl Source {
                     // a replay record is made on the step that shows it: `change::acquisition::record` takes it
                     cfg: 0,
                     pre_exact: false,
-                    basic,
+                    basic: basic.into(),
                     la: None,
                     fixed_ti: None,
                     hw_avg: false,
@@ -755,39 +753,6 @@ pub fn condition(m: &Model, c: usize, v: &mut Vec<f32>, dt: f64) {
     if ch.invert {
         v.iter_mut().for_each(|x| *x = -*x);
     }
-}
-
-/// `Phosphor::draw_ex` on one band of one channel's map (`pw` x `ph`, row-major): `band` holds the rows `r_lo` ..
-/// `r_lo + band.len() / pw` (the whole map: `r_lo` 0).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_trace<T: crate::picture::deposit::count::Count>(
-    band: &mut [T],
-    pw: usize,
-    ph: usize,
-    r_lo: usize,
-    c: usize,
-    m: &Model,
-    view: (f32, f32),
-    rec_t0: f64,
-    dt: f64,
-    v: &[f32],
-    w: u16,
-    z: Option<&[f32]>,
-    pairs: bool,
-) {
-    let (b0, b1) = (r_lo as i32, (r_lo + band.len() / pw.max(1)).min(ph) as i32);
-    let wi = pw as i32;
-    let put = |cx, r0: i32, r1: i32, weight| {
-        for r in r0.max(b0)..=r1.min(b1 - 1) {
-            let idx = ((r - b0) * wi + cx) as usize;
-            band[idx] = band[idx].saturating_add(T::weight(weight));
-        }
-    };
-    let ch = &m.ch[c];
-    let vertical = (ch.volts_per_div(), ch.offset);
-    let view = (view.0 as f64, view.1 as f64);
-    let dots = m.dots_at(dt / view.0 * (pw as f32 as f64 / HDIV as f64));
-    trace_columns(pw, ph, vertical, dots, view, rec_t0, dt, v, w, z, pairs, (0, wi), put);
 }
 
 /// The pixels of a trace on a `pw` x `ph` map, column by column: `put(column, first row, last row, weight)` for every

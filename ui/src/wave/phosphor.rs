@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{draw_trace, Model, NCH};
+use super::{trace_columns, Model, HDIV, NCH};
+use std::ops::Range;
 
 /// Hit-count maps (one per channel) of the waveform area: the digital phosphor.
 pub struct Phosphor {
@@ -8,17 +9,38 @@ pub struct Phosphor {
     pub h: usize,
     pub map: [Vec<u16>; NCH],
     wide: Option<[Vec<u32>; NCH]>,
+    occupied: Range<usize>,
+    dirty: Range<usize>,
+    published: Range<usize>,
 }
 
 impl Phosphor {
     pub fn new(w: usize, h: usize) -> Phosphor {
-        Phosphor { w, h, map: Default::default(), wide: None }.init()
+        Phosphor { w, h, map: Default::default(), wide: None, occupied: 0..0, dirty: 0..0, published: 0..0 }.init()
     }
     fn init(mut self) -> Phosphor {
         for c in 0..NCH {
             self.map[c] = vec![0; self.w * self.h];
         }
         self
+    }
+
+    pub(crate) fn touch(&mut self, rows: Range<usize>) {
+        include(&mut self.occupied, &rows);
+        include(&mut self.dirty, &rows);
+    }
+
+    pub(crate) fn publish(&mut self) {
+        self.published = std::mem::take(&mut self.dirty);
+    }
+
+    /// The covering row range of count changes in the last picture publication.
+    pub fn published_rows(&self) -> Range<usize> {
+        self.published.clone()
+    }
+
+    fn clear_rows(&mut self) {
+        include(&mut self.dirty, &std::mem::take(&mut self.occupied));
     }
     pub(crate) fn is_wide(&self) -> bool {
         self.wide.is_some()
@@ -35,6 +57,7 @@ impl Phosphor {
                 self.map = Default::default();
             }
             CountFormat::Narrow => {
+                self.clear_rows();
                 self.wide = None;
                 self.map = std::array::from_fn(|_| vec![0; self.w * self.h]);
             }
@@ -69,6 +92,7 @@ impl Phosphor {
     }
 
     pub(crate) fn clear_counts(&mut self) {
+        self.clear_rows();
         if let Some(maps) = &mut self.wide {
             for map in maps {
                 map.fill(0);
@@ -85,23 +109,30 @@ impl Phosphor {
         if k >= 65536 {
             return;
         }
+        let mut changed = false;
         if let Some(maps) = &mut self.wide {
             for x in maps.iter_mut().flatten() {
+                changed |= *x != 0;
                 *x = ((u64::from(*x) * u64::from(k)) >> 16) as u32;
             }
         }
         for m in self.map.iter_mut() {
             for x in m.iter_mut() {
                 if *x != 0 {
+                    changed = true;
                     *x = ((*x as u32 * k) >> 16) as u16;
                 }
             }
+        }
+        if changed {
+            include(&mut self.dirty, &self.occupied);
         }
     }
 
     /// Halves every count (non-zero counts stay >= 1, so rare hits survive): keeps the density ratios when the
     /// counts approach saturation under long persistence.
     pub fn halve(&mut self) {
+        include(&mut self.dirty, &self.occupied);
         if let Some(maps) = &mut self.wide {
             for x in maps.iter_mut().flatten().filter(|x| **x != 0) {
                 *x = (*x >> 1).max(1);
@@ -151,9 +182,88 @@ impl Phosphor {
         pairs: bool,
     ) {
         let (pw, ph) = (self.w, self.h);
-        match &mut self.wide {
+        let rows = match &mut self.wide {
             Some(maps) => draw_trace(&mut maps[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs),
             None => draw_trace(&mut self.map[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs),
+        };
+        self.touch(rows);
+    }
+}
+
+fn include(hull: &mut Range<usize>, rows: &Range<usize>) {
+    if !rows.is_empty() {
+        *hull = if hull.start == hull.end { rows.clone() } else { hull.start.min(rows.start)..hull.end.max(rows.end) };
+    }
+}
+
+/// `Phosphor::draw_ex` on one band of one channel's map (`pw` x `ph`, row-major): `band` holds the rows `r_lo` ..
+/// `r_lo + band.len() / pw` (the whole map: `r_lo` 0).
+#[allow(clippy::too_many_arguments)]
+fn draw_trace<T: crate::picture::deposit::count::Count>(
+    band: &mut [T],
+    pw: usize,
+    ph: usize,
+    r_lo: usize,
+    c: usize,
+    m: &Model,
+    view: (f32, f32),
+    rec_t0: f64,
+    dt: f64,
+    v: &[f32],
+    w: u16,
+    z: Option<&[f32]>,
+    pairs: bool,
+) -> std::ops::Range<usize> {
+    let (b0, b1) = (r_lo as i32, (r_lo + band.len() / pw.max(1)).min(ph) as i32);
+    let wi = pw as i32;
+    let mut rows = ph..0;
+    let put = |cx, r0: i32, r1: i32, weight| {
+        let (first, last) = (r0.max(b0), r1.min(b1 - 1));
+        if first > last || weight == 0 {
+            return;
+        }
+        rows = rows.start.min(first as usize)..rows.end.max(last as usize + 1);
+        for r in first..=last {
+            let idx = ((r - b0) * wi + cx) as usize;
+            band[idx] = band[idx].saturating_add(T::weight(weight));
+        }
+    };
+    let ch = &m.ch[c];
+    let vertical = (ch.volts_per_div(), ch.offset);
+    let view = (view.0 as f64, view.1 as f64);
+    let dots = m.dots_at(dt / view.0 * (pw as f32 as f64 / HDIV as f64));
+    trace_columns(pw, ph, vertical, dots, view, rec_t0, dt, v, w, z, pairs, (0, wi), put);
+    rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::picture::deposit::count::CountFormat;
+
+    #[test]
+    fn fully_decayed_traces_stop_publishing_rows() {
+        for format in [CountFormat::Narrow, CountFormat::Wide] {
+            let mut ph = Phosphor::new(2, 4);
+            ph.map[NCH - 1][4] = 2;
+            ph.touch(2..3);
+            ph.set_format(format);
+            ph.publish();
+            assert_eq!(ph.published_rows(), 2..3);
+            ph.decay(1.0);
+            ph.publish();
+            assert!(ph.published_rows().is_empty());
+            for expected in [1, 0] {
+                ph.decay(0.5);
+                ph.publish();
+                assert_eq!(ph.count(NCH - 1, 4), expected);
+                assert_eq!(ph.published_rows(), 2..3);
+            }
+            for factor in [0.5, 0.0, 0.5] {
+                ph.decay(factor);
+                ph.publish();
+                assert!(ph.published_rows().is_empty());
+            }
         }
     }
 }

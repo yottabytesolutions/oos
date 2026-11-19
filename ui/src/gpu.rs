@@ -567,7 +567,7 @@ mod imp {
                     };
                     for c in 0..NCH {
                         if job.show[c] && !q.reuse {
-                            let (o, y0, y1) = put(ph.map[c].as_ptr() as *const u8, ph.w * 2, ph.h, &mut blocks)?;
+                            let (o, y0, y1) = put(job.count_map(ph, c).as_ptr().cast(), ph.w * 2, ph.h, &mut blocks)?;
                             (j.map_off[c], j.map_y0[c], j.map_y1[c]) = (o, y0, y1);
                         } else if job.show[c] {
                             j.map_off[c] = 0;

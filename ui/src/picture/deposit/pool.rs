@@ -64,6 +64,10 @@ impl<J: Send + 'static, S: Default + Send + 'static> Pool<J, S> {
             jobs.append(shard);
         }
     }
+
+    pub(crate) fn scratch(&mut self) -> &mut S {
+        &mut self.scratch
+    }
 }
 
 impl<J, S> Drop for Pool<J, S> {

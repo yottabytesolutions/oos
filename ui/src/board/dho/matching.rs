@@ -98,7 +98,7 @@ impl BatchMatch {
         Self { frames }
     }
 
-    #[cfg(any(target_os = "linux", test))]
+    #[cfg(test)]
     pub(super) fn newest(
         &self,
         bytes: &[u8],
@@ -158,7 +158,7 @@ pub(crate) fn allocation_probe(mut sample: impl FnMut(&str, &mut dyn FnMut())) {
 }
 
 /// Prepare before any worker can observe the batch, then decode its final record with its own snapshot.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(test)]
 pub(super) fn prepare(
     bytes: &[u8],
     geometry: (usize, usize, usize),
@@ -167,15 +167,37 @@ pub(super) fn prepare(
     newest: (u64, super::switches::HeaderProbe, Option<Frame>),
     cores: Option<&mut Cores>,
 ) -> (Option<BatchMatch>, Frame) {
+    prepare_into(bytes, geometry, s, p, newest, cores, Frame::default())
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[allow(clippy::too_many_arguments)] // A captured batch plus its reserved decode storage.
+pub(super) fn prepare_into(
+    bytes: &[u8],
+    geometry: (usize, usize, usize),
+    s: &Settings,
+    p: &hz::Params,
+    newest: (u64, super::switches::HeaderProbe, Option<Frame>),
+    cores: Option<&mut Cores>,
+    mut storage: Frame,
+) -> (Option<BatchMatch>, Frame) {
     // `skip`: the frames left out of the batch (frame 0, a frame 1 without its edge) teach nothing
     let (fb, frames, skip) = geometry;
     let (seq, probe, raw) = newest;
     let matched =
         cores.filter(|_| eligible(s)).map(|c| BatchMatch::learn(bytes, fb, skip.min(frames)..frames, s, p, c));
     let bytes = &bytes[(frames - 1) * fb..frames * fb];
-    let frame = raw.unwrap_or_else(|| match &matched {
-        Some(matched) => matched.newest(bytes, s, p, seq, probe),
-        None => super::hw::decode_probed(bytes, s, p, seq, probe),
+    let frame = raw.unwrap_or_else(|| {
+        super::hw::decode_into_matched(
+            bytes,
+            s,
+            p,
+            seq,
+            &mut storage,
+            probe,
+            matched.as_ref().and_then(|m| m.frames.last()),
+        );
+        storage
     });
     (matched, Frame { seq, ..frame })
 }
@@ -188,19 +210,19 @@ pub(super) fn feed(
     batch: (oos_core::change::Identity, std::time::Instant),
     settings: (Settings, hz::Params, super::switches::HeaderProbe),
     matched: Option<BatchMatch>,
-    newest: Option<Arc<Frame>>,
+    waveform: (Option<Arc<Frame>>, Option<Arc<crate::drawpipe::TapReservation>>),
 ) -> Option<Arc<Frame>> {
-    let (raw, fb, frames) = raw;
     let (s, p, probe) = settings;
-    match matched {
-        Some(matched) => pipe.feed_prepared(raw, fb, frames, batch, matched.decoder(s, p, probe), newest),
+    let (decode, codes) = match matched {
+        Some(matched) => (matched.decoder(s, p, probe), None),
         None => {
             let (cs, cp) = (s.clone(), p);
             let codes: crate::drawpipe::CodesInto =
                 Arc::new(move |bytes, f| super::hw::codes_into(bytes, &cs, &cp, 0, f));
-            let decode: crate::drawpipe::DecodeInto =
-                Arc::new(move |bytes, f| super::hw::decode_into_probed(bytes, &s, &p, 0, f, probe));
-            pipe.feed_at(raw, fb, frames, batch, decode, Some(codes), newest)
+            let decode: crate::drawpipe::IndexedDecodeInto =
+                Arc::new(move |_, bytes, f| super::hw::decode_into_probed(bytes, &s, &p, 0, f, probe));
+            (decode, Some(codes))
         }
-    }
+    };
+    pipe.feed_readout(raw, batch, decode, codes, waveform)
 }

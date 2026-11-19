@@ -824,7 +824,7 @@ impl Ui {
         if changed {
             self.measure_channel_sources();
             self.measure_refs();
-            self.finish_deferred_capture_statistics();
+            deep_draw::finish_reader_statistics(self);
             change::mapping_observed(self, change::oracle::Row::Layout);
         }
         self.poll_pair_measurements();

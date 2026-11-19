@@ -170,7 +170,7 @@ pub fn cheap_results(v: &[f32]) -> Option<(crate::wave::Stats, oos_dsp::measure:
 
 /// What `analyze_min` gives for the cheap measurements of `v`; None where it gives nothing (too few samples) or the
 /// record path would measure a filtered copy (a gap).
-struct Values {
+pub(crate) struct Values {
     vmax: f64,
     vmin: f64,
     avg: f64,
@@ -179,7 +179,7 @@ struct Values {
 }
 
 impl Values {
-    fn of(v: &[f32], std: bool) -> Option<Values> {
+    pub(crate) fn of(v: &[f32], std: bool) -> Option<Values> {
         if v.len() < 4 {
             return None;
         }
@@ -242,7 +242,7 @@ impl Values {
         (d.iter().sum::<f64>() / v.len() as f64).sqrt()
     }
 
-    fn get(&self, k: Meas) -> f64 {
+    pub(crate) fn get(&self, k: Meas) -> f64 {
         match k {
             Meas::Vmax => self.vmax,
             Meas::Vmin => self.vmin,

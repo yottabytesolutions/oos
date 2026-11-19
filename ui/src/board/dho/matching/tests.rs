@@ -169,14 +169,14 @@ fn batch_core_matching_workers_draw_the_standard_picture() {
             (Default::default(), std::time::Instant::now()),
             (s.clone(), p, HeaderProbe::Off),
             matched,
-            Some(Arc::new(newest)),
+            (Some(Arc::new(newest)), None),
         );
         finish(&pipe);
         let mut got = Phosphor::new(128, 64);
         let n = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(n.frames, 10);
         assert_eq!(got.map, want.map);
-        assert_eq!(n.waveform.as_ref().unwrap().ch, last.ch);
+        assert_eq!(pipe.take_waveform((128, 64)).unwrap().ch, last.ch);
     }
 }
 

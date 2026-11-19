@@ -81,7 +81,7 @@ fn compare_planes(
             raw.fold[c].map(|f| (f.n, f.min, f.max, f.sum, f.sumsq)),
             decoded.fold[c].map(|f| (f.n, f.min, f.max, f.sum, f.sumsq))
         );
-        let mut a = vec![0; proj.cols * (proj.rows + 1)];
+        let mut a = vec![0u16; proj.cols * (proj.rows + 1)];
         let mut b = a.clone();
         if let Some(codes) = codes[c] {
             kernel::add_placed_band(c, &mut a, 0, &SamplesRef::Codes(codes), &raw.projection, &raw.trace);

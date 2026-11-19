@@ -123,6 +123,7 @@ fn delayed_measurements_require_gen_epoch_and_stats_gen() {
             analysis_busy: false,
             busy: true,
             accept: true,
+            tap: None,
             join: std::thread::spawn(|| {}),
         });
         match boundary {

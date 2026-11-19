@@ -265,6 +265,7 @@ fn stats_class_retains_pending_measurements_but_clear_removes_values() {
         analysis_busy: false,
         busy: true,
         accept: true,
+        tap: None,
         join: std::thread::spawn(|| {}),
     });
     change::consumers::apply_classes(&mut ui, C::STATS);

@@ -250,15 +250,21 @@ fn deposit_waveform_tap_counts_cheap_statistics_once() {
         let _scope = Scope::new();
         let mut build = Build::new(batch, 2, 10e-6, 48);
         build.route.ui.m.meas = crate::framestats::CHEAP.iter().map(|&kind| (kind, WaveId::Ch(0))).collect();
+        build.run();
+        build.route.ui.mstat.fill(MStat::default());
         for _ in 0..3 {
             build.run();
         }
+        let counted = build.route.ui.measurement_statistics_snapshot_for_test();
+        build.route.ui.step(1.0 / 30.0);
+        assert_eq!(build.route.ui.measurement_statistics_snapshot_for_test(), counted);
         build.route.ui.mstat
     };
     let (standard, deposit) = (run(false), run(true));
     assert!(!standard.is_empty());
     for (a, b) in standard.iter().zip(&deposit) {
         assert_eq!(a.n, b.n, "the pool and waveform reader must count each record once");
+        assert_eq!(b.n, 144);
         assert!(a.sum.is_finite() && b.sum.is_finite());
     }
 }

@@ -379,6 +379,65 @@ pub struct MaskRead {
     pub chans: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PictureEligibility {
+    Drawable,
+    /// The original deposit has already contributed its picture statistics.
+    Redraw,
+    Pending,
+    AlreadyDeposited,
+    Expired,
+}
+
+impl PictureEligibility {
+    pub(crate) fn draws(self) -> bool {
+        matches!(self, Self::Drawable | Self::Redraw)
+    }
+}
+
+/// Picture eligibility travels with the waveform until a record reader consumes it.
+pub(crate) struct QueuedFrame {
+    frame: Arc<Frame>,
+    eligibility: PictureEligibility,
+    _charge: Option<Arc<crate::drawpipe::TapReservation>>,
+}
+
+impl QueuedFrame {
+    pub(crate) fn new(frame: Arc<Frame>, eligibility: PictureEligibility) -> Self {
+        Self::from_tap(frame, eligibility, None)
+    }
+
+    pub(crate) fn from_tap(
+        frame: Arc<Frame>,
+        eligibility: PictureEligibility,
+        charge: Option<Arc<crate::drawpipe::TapReservation>>,
+    ) -> Self {
+        Self { frame, eligibility, _charge: charge }
+    }
+
+    pub(crate) fn eligibility(&self) -> PictureEligibility {
+        self.eligibility
+    }
+
+    pub(crate) fn read<T>(self, read: impl FnOnce(Arc<Frame>) -> T) -> T {
+        let Self { frame, _charge, .. } = self;
+        read(frame)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn into_frame(self) -> Arc<Frame> {
+        self.frame
+    }
+}
+
+impl std::ops::Deref for QueuedFrame {
+    type Target = Arc<Frame>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.frame
+    }
+}
+
 /// Shared between UI and the acquisition thread: the settings the UI wants, the latest frame, a status line.
 #[derive(Default)]
 pub struct Shared {
@@ -389,8 +448,8 @@ pub struct Shared {
     pub rearm: bool,
     /// the latest frame (auto set-up and the replay of the screen look at it)
     pub frame: std::sync::Arc<Frame>,
-    /// frames not drawn yet, oldest first (one batch delivers many)
-    pub queue: std::collections::VecDeque<std::sync::Arc<Frame>>,
+    /// Frames awaiting drawing, oldest first.
+    pub(crate) queue: std::collections::VecDeque<Arc<Frame>>,
     /// STOP: the view the UI shows (time per div, delay); the thread acquires nothing and reads the last record again
     /// for it when it changes, into `replay` (`hw::stop_window`)
     pub stop_view: Option<(f64, f64)>,

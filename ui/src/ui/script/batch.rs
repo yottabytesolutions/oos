@@ -3,7 +3,7 @@
 //! One scripted batch per UI step. The normal UI merges worker maps and draws the newest queued frame.
 
 use crate::board::scripted::{self, Batch, BatchKind, BatchSource, ScriptBytes, ScriptedBatchSource};
-use crate::drawpipe::{self, Counters};
+use crate::drawpipe::{self, Counters, RawBatch};
 use crate::model::RunState;
 use crate::ui::Ui;
 use crate::wave::Source;
@@ -35,7 +35,7 @@ pub struct BatchScript {
     spare: Option<ScriptBytes>,
     id: usize,
     pending: Option<Pending>,
-    decoded: Arc<AtomicU64>,
+    decoded_records: Arc<AtomicU64>,
     counts: Counts,
 }
 
@@ -52,7 +52,7 @@ impl BatchScript {
             spare: None,
             id: 0,
             pending: None,
-            decoded: Arc::default(),
+            decoded_records: Arc::default(),
             counts: Counts::default(),
         }
     }
@@ -82,15 +82,17 @@ impl BatchScript {
         let newest = Arc::new(newest);
         if pipe.accepting() {
             let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
-            self.decoded.store(0, Ordering::Relaxed);
-            let decoded = self.decoded.clone();
+            let raw = Box::new(batch.into_bytes());
+            let start = raw.bytes().as_ptr().addr();
+            self.decoded_records.store(0, Ordering::Relaxed);
+            let decoded = self.decoded_records.clone();
             let decode = Arc::new(move |bytes: &[u8], frame: &mut crate::board::Frame| {
-                decoded.fetch_add(1, Ordering::Relaxed);
+                let index = (bytes.as_ptr().addr() - start) / fb;
+                decoded.fetch_or(1 << index, Ordering::Relaxed);
                 decode(bytes, frame);
             });
             let at = ui.host.picture_time(ui.now);
-            let fallback =
-                pipe.feed_at(Box::new(batch.into_bytes()), fb, 0..frames, (identity, at), decode, codes, Some(newest));
+            let fallback = pipe.feed_at(raw, fb, 0..frames, (identity, at), decode, codes, Some(newest));
             if fallback.is_some() {
                 return Err(format!("batch {}: deposit intake unavailable", self.id));
             }
@@ -124,7 +126,7 @@ impl BatchScript {
         self.counts.submitted += p.frames;
         self.counts.deposited += if p.workers { p.frames } else { 0 };
         self.counts.delivered = delivered;
-        let decoded = self.decoded.load(Ordering::Relaxed);
+        let decoded = u64::from(self.decoded_records.load(Ordering::Relaxed).count_ones());
         let route = if !p.workers {
             "records-decoded"
         } else if decoded == 0 {

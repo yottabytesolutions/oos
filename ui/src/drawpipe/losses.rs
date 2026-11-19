@@ -113,7 +113,7 @@ impl super::Counters {
         }
         self.losses.source[reason as usize].fetch_add(records, Ordering::Relaxed).wrapping_add(records)
     }
-    pub(super) fn discard(&self, reason: Lost, records: u64) {
+    pub(crate) fn discard(&self, reason: Lost, records: u64) {
         Self::add(&self.dropped, records);
         self.lose(reason, records);
     }

@@ -276,60 +276,6 @@ pub fn add_spans(band: &mut [u16], w: usize, r_lo: usize, s: &Spans, wgt: u16) {
     crate::picture::deposit::kernel::paint_spans(band, w, r_lo, s, wgt);
 }
 
-/// The fast path collects a screen's frames as differences: a span of rows r0..=r1 with weight w is +w at r0 and -w
-/// at r1 + 1 of its column (wrapping u16), whatever its height; `fold_t` sums them up once a screen into the map.
-/// Written into the map directly, every pixel of a tall span was another cache line (10 us/div, 4 channels, a 1 MHz
-/// sine: about 2 ms a frame on the scope). A band of `bw` columns holds `h + 1` rows of them, row by row, so the sums
-/// go down a row at a time over all its columns.
-#[inline(always)]
-pub fn diff_span(band: &mut [u16], bw: usize, x: usize, r0: usize, r1: usize, wgt: u16) {
-    band[r0 * bw + x] = band[r0 * bw + x].wrapping_add(wgt);
-    band[(r1 + 1) * bw + x] = band[(r1 + 1) * bw + x].wrapping_sub(wgt);
-}
-
-/// `add_spans` into a band of the collecting differences (`diff_span`): `band` holds the columns `c_lo ..`, `h + 1`
-/// rows of them.
-pub fn add_spans_t(band: &mut [u16], h: usize, c_lo: usize, s: &Spans, wgt: u16) {
-    let bw = band.len() / (h + 1);
-    let c_hi = c_lo + bw;
-    for c in s.c0.max(c_lo)..(s.c0 + s.rows.len()).min(c_hi) {
-        let (r0, r1) = s.rows[c - s.c0];
-        if r0 <= r1 {
-            diff_span(band, bw, c - c_lo, r0 as usize, r1 as usize, wgt);
-        }
-    }
-}
-
-/// `deposit_dots` into a band of the collecting differences (`add_spans_t`): only the samples of its columns.
-pub(crate) fn deposit_dots_t<S: Samples + ?Sized>(band: &mut [u16], h: usize, c_lo: usize, v: &S, m: &Map, wgt: u16) {
-    if v.len() == 0 || m.x_per_sample <= 0.0 {
-        return;
-    }
-    let bw = band.len() / (h + 1);
-    let c_hi = (c_lo + bw) as i64;
-    let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
-    let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(v.len());
-    let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(c_lo as i64);
-    let c1 = ((((v.len() as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(c_hi);
-    if c1 <= c0 {
-        return;
-    }
-    let mut ka = first(c0);
-    for c in c0..c1 {
-        let kb = first(c + 1);
-        let xc = c as usize - c_lo;
-        for i in ka..kb.max(ka) {
-            let x = v.at(i);
-            let r = (x * m.y_per_volt + m.y0).round();
-            // NaN fails both comparisons
-            if r >= 0.0 && r < h as f32 {
-                diff_span(band, bw, xc, r as usize, r as usize, wgt);
-            }
-        }
-        ka = kb.max(ka);
-    }
-}
-
 /// Sums the collected differences `acc` (`diff_span`, bands of `band_cols` columns) of the rows `rows` up into the
 /// row-major `map` (`w` x `h`) and clears them: down each band a row at a time, its columns side by side (vector
 /// instructions), rows with nothing running pass the map by.
@@ -487,7 +433,9 @@ impl Fold {
 /// and maximum of a column with NEON, the spans added column by column or in a vectorised row sweep, dots in runs.
 /// The live picture goes through the bands above (`spans`, `diff_span`, `fold_t`); these serve the min/max
 /// compression, the frame statistics and the tests, and are the reference for both.
-pub mod whole {
+pub mod difference;
+pub(crate) use difference::{add_spans_t, deposit_dots_t, diff_span};
+mod whole {
     use super::{Map, Spans};
 
     /// Adds `w` to every pixel of `map` (w x h, row-major) the trace covers: per column the span of its samples, joined

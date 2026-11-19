@@ -151,7 +151,13 @@ Manual exports and screenshots still call synchronous file IO from UI actions.
 
 The draw routes also remain distinct. Standard/Frames queues frames. Batch places records in a persistent pool
 and hands whole deposits of owned column differences to the UI. At minimum persistence, the UI rebuilds the
-picture from a bounded window of recent deposits. It sends each accepted deposit's newest waveform to record readers.
+picture from a bounded window of recent deposits. A separate FIFO delivers the newest waveform of each batch
+to record readers, including when placement fails. A waveform read before picture acceptance can redraw from
+the existing last record if its projection becomes stale. Accepted deposits settle that obligation.
+Ordinary maps use u16 counts. Dense raw Dots whose reachable projection exceeds that representation use u32
+counts at the same weight. Wide GPU input carries the resulting lookup indices through the existing u16 upload.
+The analog batch readout reserves sample capacity before its newest decode. F2 still needs a production
+[plan-derived tap budget](frames.md#tap-capacity). Source-wide before-arm waiting belongs to F3.
 Batch is the code and image default; `acq.pipeline = standard` or `frames` selects
 Standard. `fast_ok` selects eligible hardware views. `drawpipe::draw_frame_reusing` uses dense `fastdraw` spans,
 sparse interpolation or deep-record drawing. `Phosphor::draw_ex` handles record drawing.
@@ -583,6 +589,10 @@ They are not runtime frame-event quantiles or proof of unit performance.
 | perf_guard_deposit_worker_per_frame | 1.5 | 2.25 | three depths, measurements off; one worker / frames mode | worker orchestration |
 | perf_guard_deep_record_reuse | 0.8 | 1.0 | 4 channels, 10M depth (625k pairs each); actual hw_record + reused draw / hw_record + independent draw_frame conversion | main-view conversion and draw |
 | perf_guard_framestats | 0.7 | 1.05 | 125 k points, cheap set; fused / reference statistics | measure primitive |
+
+The counters wall limit is an owner-approved intermediate allowance for live F2 evaluation. Reports retain raw
+paired timings and compare wall ratios with both 1.01 and 1.02. Restore the 1 % wall limit after cutover. The six
+workloads, sample counts, CPU-tail limit and four-channel 30 FPS hardware goal retain their existing budgets.
 
 Allocation probes require at least 64 allocation-free warmed frames for deposit spans/dots/codes,
 cheap measurements and both core-matching probes. HAL separately checks retained reads and decode.

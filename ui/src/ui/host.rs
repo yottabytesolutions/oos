@@ -140,6 +140,11 @@ impl Host {
     pub fn fixture_with_text(text: fn(&str) -> Option<String>) -> Self {
         Self { text, ..Self::fixture() }.cache_firmware()
     }
+
+    #[cfg(test)]
+    pub(super) fn set_text_reader(&mut self, text: fn(&str) -> Option<String>) {
+        self.text = text;
+    }
 }
 
 #[cfg(test)]
@@ -588,7 +593,7 @@ mod auto_timeout {
         let _returned = drawpipe::host::finish_batch(&pipe, 1).unwrap();
         assert!(delivered.try_recv().is_err(), "buffer return alone does not deliver the newest frame");
         let merged = pipe.accept(&mut worker_map, &mut true, &mut [0; 4], &mut (0.0, 0.0));
-        let newest = merged.waveform.as_ref().unwrap();
+        let newest = pipe.take_waveform((worker_map.w, worker_map.h)).unwrap();
         deliver(&shared, (**newest).clone(), false);
         delivered_tx.send(newest.seq).unwrap();
         assert_eq!(delivered.recv_timeout(HANG_LIMIT).unwrap(), frames as u64);

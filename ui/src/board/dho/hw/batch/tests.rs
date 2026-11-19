@@ -110,7 +110,7 @@ fn check_lines_readout(tdiv: f32, compress: bool, match_cores: bool) {
     let mut picture = Phosphor::new(970, 448);
     let got = pipe.accept(&mut picture, &mut true, &mut [0; 4], &mut (0.0, 0.0));
     assert_eq!(got.frames, count as u64);
-    assert!(picture.map.iter().all(|ch| ch.iter().any(|&px| px > 0)));
+    assert!(picture.maps().iter().all(|ch| ch.iter().any(|&px| px > 0)));
     let newest = pipe.take_waveform((970, 448)).unwrap();
     assert_eq!(newest.seq, count as u64);
     assert_eq!(newest.dt, 1.0 / p.rate as f64);

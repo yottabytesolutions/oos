@@ -188,8 +188,8 @@ fn batch_draws_newest_waveform_after_hit_budget_rejection() {
 
     let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
     drawpipe::draw_frame(&mut expected, &route.ui.m, &waveform, sw.interp, None);
-    assert!(expected.map[0].iter().any(|&v| v > 0));
-    assert!(route.ui.ph.map == expected.map, "the newest waveform should populate the picture");
+    assert!(expected.maps()[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps() == expected.maps(), "the newest waveform should populate the picture");
     assert_eq!(route.ui.batch_picture.frames, 1);
 }
 

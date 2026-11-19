@@ -40,7 +40,7 @@ fn perf_guard_pipeline_counters() {
         for tdiv in [1e-6, 10e-6] {
             let _scope = Scope::new();
             let counters = drawpipe::counters();
-            // Both sides reuse the same workers, buffers and maps; allocation placement must not decide a 1 % guard.
+            // Both sides reuse the same workers, buffers and maps; allocation placement must not decide the staged guard.
             let build = std::cell::RefCell::new(Build::new(true, channels, tdiv, 0));
             let baseline = || {
                 counters.diagnostics_disabled.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -59,7 +59,8 @@ fn perf_guard_pipeline_counters() {
             let build = build.borrow();
             println!("PIPELINE_COUNTERS channels={channels} tdiv={tdiv} frames={}", build.frames);
             pair.report("perf_guard_pipeline_counters");
-            assert!(pair.best.1.as_secs_f64() / pair.best.0.as_secs_f64() <= 1.01, "{pair:?}");
+            // ADR 0031: temporary F0 staging headroom; restore 1.01 at F3 frame cutover.
+            assert!(pair.best.1.as_secs_f64() / pair.best.0.as_secs_f64() <= 1.02, "{pair:?}");
             pair.check_tail(1.515);
             assert_eq!(build.route.ui.pic_frames as usize, build.frames);
             assert_eq!(build.route.ui.wfm_total - before, (2 * crate::perfguard::ROUNDS * 16 * build.frames) as u64);

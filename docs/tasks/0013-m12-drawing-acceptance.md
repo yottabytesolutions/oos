@@ -65,7 +65,23 @@ PR #213 failed-check follow-up: accept each pipeline edit through the existing c
 route-reporting test reads status. Reproduce with nextest's process isolation, then run the UI tests in debug
 and optimized profiles and the fast gate. No production behavior change.
 
+Private staged-budget proposal, exact #213 base: reserve this task, `docs/adr/0031-performance.md`,
+`docs/architecture/README.md`, `docs/architecture/migration.md`,
+`ui/src/ui/draw_routes/counters.rs` and `tools/tests/test_perf_budgets.py` in a private source snapshot.
+Apply the owner's explicit instruction to allow recoverable overhead before cutover: propose 1.02 best elapsed
+for F0 staging only, retaining 1.515 CPU p99. Preserve the six cases, sampler and actual picture/record checks.
+Exclude the separately retained RMW optimization: disassembly proves fewer RMWs, not a causal timing benefit.
+Validate source identity and synthetic acceptance/rejection fixtures without compilation or native timing.
+At F3 frame cutover restore 1.01 in the assertion, table and fixtures, and provide all-six-row evidence before
+cutover acceptance. Existing unit, independent review and integrated full-gate holds remain.
+
 ## Status
+
+- 2026-11-19: Owner-authorized private staged-budget proposal prepared against exact #213 base.
+  Source/fixture validation passed: 11 budget and 17 perfmap tests; exact-base patch applies.
+  All production source, other budgets, unit acceptance and sampler/runner remain identical.
+  No acceptance or review state changed. Native timing awaits experiment-supervisor release.
+  The earlier counter-owner candidate remains separate and unaccepted; this proposal has no production edits.
 
 - 2026-11-18: PR #213 inline-storage sentence corrected without code changes. The existing compiled-layout
   assertion proves the draw timing owner's bound below 17 KiB with all eight rings and bookkeeping retained.

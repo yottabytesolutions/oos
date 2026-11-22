@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
-use crate::pacing::{ClockMode, FlipDivisor, FrameClock, Picture};
+use crate::pacing::{ClockMode, FlipDivisor, FrameClock, FrameSlot, Picture};
 use std::time::Duration;
 
 fn picture(now: Instant) -> Picture {
@@ -31,9 +31,9 @@ fn available_requires_both_helper_targets_and_panel_staging_to_be_free() {
         });
         graphics.monitor = helper_monitor.then(|| TargetRender { ticket: gpu::Ticket::fixture(now), back: 0 });
         if panel_ready {
-            panel.stage(0, picture(now));
+            panel.stage(0, picture(now), now);
         }
-        assert_eq!(graphics.available(&panel), !(helper_panel || helper_monitor || panel_ready));
+        assert_eq!(graphics.slot(&panel) == FrameSlot::Ready, !(helper_panel || helper_monitor || panel_ready));
     }
 }
 
@@ -60,7 +60,7 @@ fn helper_failure_and_switching_to_cpu_release_both_targets_for_the_next_frame()
         } else {
             graphics.select(&mut ui, &out, &switches, now);
         }
-        assert!(graphics.available(&out.panel));
+        assert!(graphics.slot(&out.panel) == FrameSlot::Ready);
 
         let mut canvas = Canvas::new(ui.scr.w, ui.scr.h);
         let mut web = http::Http::open(net6::Port::Host, &switches);

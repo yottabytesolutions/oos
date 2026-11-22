@@ -55,8 +55,14 @@ impl Graphics {
         }
     }
 
-    pub(super) fn available(&self, panel: &pacing::Panel) -> bool {
-        self.deadline().is_none() && panel.ready_for_picture()
+    pub(super) fn slot(&self, panel: &pacing::Panel) -> pacing::FrameSlot {
+        if self.deadline().is_some() {
+            pacing::FrameSlot::HelperBusy
+        } else if panel.ready_for_picture() {
+            pacing::FrameSlot::Ready
+        } else {
+            pacing::FrameSlot::PanelBusy
+        }
     }
 
     pub(super) fn reply_fd(&self) -> Option<i32> {

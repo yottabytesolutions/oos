@@ -15,15 +15,15 @@ type Triggers = [Option<Instant>; 20];
 #[derive(Clone, Copy)]
 pub(crate) struct Picture {
     seal: Instant,
-    target: Option<u32>,
     composed: Instant,
+    ready: Instant,
     helper: Option<(Instant, Instant)>,
     triggers: Triggers,
 }
 
 impl Picture {
-    pub(super) fn new(seal: Instant, target: Option<u32>) -> Self {
-        Self { seal, target, composed: seal, helper: None, triggers: Default::default() }
+    pub(super) fn new(seal: Instant) -> Self {
+        Self { seal, composed: seal, ready: seal, helper: None, triggers: Default::default() }
     }
 
     pub(crate) fn composed(&mut self, at: Instant) {
@@ -60,8 +60,9 @@ impl Panel {
         self.ready.is_none()
     }
 
-    pub(crate) fn stage(&mut self, back: usize, picture: Picture) {
+    pub(crate) fn stage(&mut self, back: usize, mut picture: Picture, now: Instant) {
         debug_assert!(self.ready_for_picture());
+        picture.ready = picture.helper.map_or(now, |(_, done)| done);
         self.ready = Some((back, picture));
     }
 
@@ -92,7 +93,7 @@ impl Panel {
         if let Some((requested, picture)) = self.flipping {
             if let Some(flip) = event {
                 self.flipping = None;
-                report(Outcome::Shown(&picture, requested, flip));
+                report(Outcome::Shown(&picture, requested, flip.at, refresh));
             } else if now >= requested + FLIP_TIMEOUT {
                 self.flipping = None;
                 report(Outcome::Timeout);
@@ -116,7 +117,7 @@ impl Panel {
 }
 
 enum Outcome<'a> {
-    Shown(&'a Picture, Instant, Flip),
+    Shown(&'a Picture, Instant, Instant, Duration),
     Timeout,
     Modeset,
     Failed,
@@ -125,7 +126,7 @@ enum Outcome<'a> {
 #[derive(Clone, Default)]
 pub(super) struct History {
     triggers: Option<Triggers>,
-    stages: VecDeque<[Option<f32>; 5]>,
+    stages: VecDeque<(Instant, [Option<f32>; 6])>,
     trigger_flip: VecDeque<f32>,
     late: u64,
     timeout: u64,
@@ -137,11 +138,10 @@ pub(super) struct History {
 impl History {
     fn record(&mut self, outcome: Outcome<'_>) {
         match outcome {
-            Outcome::Shown(picture, requested, flip) => {
+            Outcome::Shown(picture, requested, flipped, refresh) => {
                 self.shown += 1;
-                self.late +=
-                    u64::from(picture.target.is_some_and(|target| (flip.sequence.wrapping_sub(target) as i32) > 0));
-                let mut stages = [None; 5];
+                self.late += u64::from(flipped.saturating_duration_since(picture.ready) > refresh);
+                let mut stages = [None; 6];
                 if let Some((submitted, done)) = picture.helper {
                     stages[..3].copy_from_slice(&[
                         micros(submitted, picture.composed),
@@ -149,11 +149,12 @@ impl History {
                         micros(requested, done),
                     ]);
                 }
-                stages[3] = micros(flip.at, requested);
-                stages[4] = micros(flip.at, picture.seal);
-                push(&mut self.stages, stages);
+                stages[3] = micros(flipped, requested);
+                stages[4] = micros(flipped, picture.seal);
+                stages[5] = micros(flipped, picture.ready);
+                push(&mut self.stages, (flipped, stages));
                 for trigger in picture.triggers.into_iter().flatten() {
-                    if let Some(age) = micros(flip.at, trigger) {
+                    if let Some(age) = micros(flipped, trigger) {
                         push(&mut self.trigger_flip, age);
                     }
                 }
@@ -164,17 +165,26 @@ impl History {
         }
     }
 
-    fn write(&self, text: &mut String) {
+    fn write(&self, text: &mut String, helper_skipped: u64) {
+        let hz = self.stages.front().zip(self.stages.back()).map_or(0.0, |(first, last)| {
+            let elapsed = last.0.saturating_duration_since(first.0).as_secs_f32();
+            if elapsed > 0.0 {
+                (self.stages.len() - 1) as f32 / elapsed
+            } else {
+                0.0
+            }
+        });
         let _ = write!(
             text,
-            " present.v1 flip.shown={} flip.late={} flip.timeout={} flip.modeset={} flip.failed={}",
+            " present.v1 flip.shown={} flip.late={} flip.timeout={} flip.modeset={} flip.failed={} flip.hz={hz:.1} helper.skipped={helper_skipped}",
             self.shown, self.late, self.timeout, self.modeset, self.failed
         );
-        for (i, name) in ["composed_submitted", "submitted_done", "done_requested", "requested_flip", "seal_flip"]
-            .into_iter()
-            .enumerate()
+        for (i, name) in
+            ["composed_submitted", "submitted_done", "done_requested", "requested_flip", "seal_flip", "done_flip"]
+                .into_iter()
+                .enumerate()
         {
-            quantiles(text, name, self.stages.iter().filter_map(|row| row[i]).collect());
+            quantiles(text, name, self.stages.iter().filter_map(|(_, row)| row[i]).collect());
         }
         quantiles(text, "trigger_flip", self.trigger_flip.iter().copied().collect());
     }
@@ -203,7 +213,7 @@ pub(crate) fn note_picture_triggers(triggers: impl Iterator<Item = Instant>) {
 
 pub(crate) fn append_presentation(text: &mut String) {
     let history = oos_hal::sync::lock(state()).compose.presentation.clone();
-    history.write(text);
+    history.write(text, super::CLOCK.helper_skipped());
 }
 
 #[cfg(test)]

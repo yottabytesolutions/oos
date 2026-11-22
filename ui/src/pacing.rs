@@ -242,7 +242,7 @@ use frame_clock::ClockPublication;
 pub(crate) use frame_clock::PictureRate;
 pub(crate) use frame_clock::{step_missed, ClockMode, FlipDivisor};
 #[cfg(any(target_os = "linux", test))]
-pub(crate) use frame_clock::{Flip, FrameClock};
+pub(crate) use frame_clock::{Flip, FrameClock, FrameSlot};
 
 pub(crate) const TIMER_PERIOD: Duration = Duration::from_nanos(1_000_000_000 / 30);
 

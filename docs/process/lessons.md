@@ -48,6 +48,8 @@ pull request that fixes a mistake: what happened, then the rule.
   runner once at a time for each profile and target directory.
 - Even vblank sequences ran the UI at 48.7 Hz on the DHO900 timing. Derive the flip stride from the mode timing
   and test it with the actual totals as well as a 60 Hz mode.
+- The test-time guard flagged a simulated rate window compared to a clock-derived instant. Use the injected
+  vblank sequence to delimit the window.
 - Sealing a picture could stage a sixth deposit even though compose tracks five inputs. Check queue capacity
   before taking the pending slot.
 - A panel timeout left a stale DRM cookie, which cut short the next flip's EBUSY grace period. Read pending

@@ -40,6 +40,20 @@ pub(crate) struct Flip {
     pub(crate) at: Instant,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FrameSlot {
+    Ready,
+    HelperBusy,
+    PanelBusy,
+}
+
+#[derive(Default)]
+struct MissedSteps {
+    total: u64,
+    at_step: u64,
+    helper: u64,
+}
+
 pub(crate) struct FrameClock {
     mode: ClockMode,
     refresh: Duration,
@@ -51,8 +65,8 @@ pub(crate) struct FrameClock {
     last_flip: Option<Flip>,
     flip_timeout: Instant,
     fallback: bool,
-    skipped: u64,
-    skipped_at_step: u64,
+    deferred: bool,
+    skipped: MissedSteps,
 }
 
 impl FrameClock {
@@ -69,8 +83,8 @@ impl FrameClock {
             last_flip: None,
             flip_timeout: now + FLIP_TIMEOUT,
             fallback: false,
-            skipped: 0,
-            skipped_at_step: 0,
+            deferred: false,
+            skipped: MissedSteps::default(),
         }
     }
 
@@ -88,67 +102,84 @@ impl FrameClock {
     /// Returns elapsed time for a due step and whether the clock just entered timer fallback.
     #[cfg(test)]
     pub(crate) fn advance(&mut self, now: Instant, flip: Option<Flip>) -> (Option<Duration>, bool) {
-        self.advance_available(now, flip, true)
+        self.advance_available(now, flip, FrameSlot::Ready)
     }
 
     pub(crate) fn advance_available(
         &mut self,
         now: Instant,
         flip: Option<Flip>,
-        available: bool,
+        slot: FrameSlot,
     ) -> (Option<Duration>, bool) {
         let was_fallback = self.fallback;
         let ready = match self.mode {
-            ClockMode::Timer => available && now >= self.timer_deadline(),
-            ClockMode::Flip => self.flip_ready(now, flip, available),
+            ClockMode::Timer => slot == FrameSlot::Ready && now >= self.timer_deadline(),
+            ClockMode::Flip => self.flip_ready(now, flip, slot),
         };
         let elapsed = ready.then(|| {
             let period = self.period();
             let elapsed = now.duration_since(std::mem::replace(&mut self.last_step, now));
             if self.mode == ClockMode::Timer || self.fallback {
                 let missed = (elapsed.as_nanos() / period.as_nanos()).saturating_sub(1);
-                let already_counted = self.skipped - self.skipped_at_step;
-                self.skipped += (missed as u64).saturating_sub(already_counted);
+                let already_counted = self.skipped.total - self.skipped.at_step;
+                self.skipped.total += (missed as u64).saturating_sub(already_counted);
             }
-            self.skipped_at_step = self.skipped;
+            self.skipped.at_step = self.skipped.total;
             self.resume_after = self.fallback.then(|| now + period);
             elapsed
         });
         (elapsed, self.fallback && !was_fallback)
     }
 
-    fn flip_ready(&mut self, now: Instant, flip: Option<Flip>, available: bool) -> bool {
+    fn flip_ready(&mut self, now: Instant, flip: Option<Flip>, slot: FrameSlot) -> bool {
         if let Some(flip) = flip.filter(|event| self.last_flip.is_none_or(|last| event.sequence != last.sequence)) {
             let divisor = u64::from(self.divisor);
             let refreshes = self.last_flip.map_or(u64::from(flip.sequence) % divisor, |last| {
                 u64::from(self.phase) + u64::from(flip.sequence.wrapping_sub(last.sequence))
             });
             self.phase = (refreshes % divisor) as u32;
-            let ready = available
-                && self.phase == 0
-                && flip.at >= self.flip_ready_after()
+            let can_defer = slot == FrameSlot::HelperBusy
+                && flip.at >= self.last_step
+                && self.idle_since.saturating_duration_since(self.last_step) < self.period()
+                && self.resume_after.is_none();
+            let due = self.phase == 0
+                && (flip.at >= self.flip_ready_after() || can_defer)
                 && now.saturating_duration_since(flip.at) < self.period();
+            let keep = due && slot != FrameSlot::PanelBusy;
+            let periods = refreshes / divisor;
             // Timer fallback supplies its own steps until the flip clock resumes.
             if self.resume_after.is_none() {
-                self.skipped += (refreshes / divisor).saturating_sub(u64::from(ready));
+                let superseded = u64::from(periods > 0 && self.deferred);
+                self.skipped.total += periods.saturating_sub(u64::from(keep)) + superseded;
+                self.skipped.helper += superseded;
+            }
+            // Keep one due step for the helper reply, even between vblank events.
+            if periods > 0 || due {
+                self.deferred = keep;
             }
             self.last_flip = Some(flip);
             self.flip_timeout = now + FLIP_TIMEOUT;
             self.fallback = false;
-            return ready;
+        } else {
+            self.fallback = now >= self.flip_timeout;
         }
-        self.fallback = now >= self.flip_timeout;
-        available && self.fallback && now >= self.timer_deadline()
+        if self.fallback {
+            self.deferred = false;
+            return slot == FrameSlot::Ready && now >= self.timer_deadline();
+        }
+        slot == FrameSlot::Ready && std::mem::take(&mut self.deferred)
     }
 
     pub(crate) fn seal(&self) -> Picture {
-        let edge = self.last_flip.filter(|_| self.mode == ClockMode::Flip && !self.fallback);
-        let target = edge.map(|vblank| vblank.sequence.wrapping_add(2.min(self.divisor - 1)));
-        Picture::new(edge.map_or(self.last_step, |vblank| vblank.at), target)
+        Picture::new(self.last_step)
     }
 
     pub(crate) fn skipped(&self) -> u64 {
-        self.skipped
+        self.skipped.total
+    }
+
+    pub(super) fn helper_skipped(&self) -> u64 {
+        self.skipped.helper
     }
 
     pub(crate) fn wait_until(&self) -> Instant {
@@ -225,6 +256,7 @@ pub(super) struct ClockPublication {
     period: OnceLock<Duration>,
     fallbacks: AtomicU64,
     skipped: AtomicU64,
+    helper_skipped: AtomicU64,
 }
 
 impl ClockPublication {
@@ -235,6 +267,7 @@ impl ClockPublication {
             period: OnceLock::new(),
             fallbacks: AtomicU64::new(0),
             skipped: AtomicU64::new(0),
+            helper_skipped: AtomicU64::new(0),
         }
     }
 
@@ -244,6 +277,7 @@ impl ClockPublication {
         let ns = clock.deadline(now).saturating_duration_since(self.origin).as_nanos();
         let ns = ns.clamp(1, u128::from(u64::MAX)) as u64;
         self.skipped.store(clock.skipped(), Ordering::Relaxed);
+        self.helper_skipped.store(clock.helper_skipped(), Ordering::Relaxed);
         self.deadline_ns.store(ns, Ordering::Release);
     }
 
@@ -266,6 +300,10 @@ impl ClockPublication {
 
     pub(super) fn skipped(&self) -> u64 {
         self.skipped.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn helper_skipped(&self) -> u64 {
+        self.helper_skipped.load(Ordering::Relaxed)
     }
 }
 

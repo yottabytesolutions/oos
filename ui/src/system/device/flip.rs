@@ -28,7 +28,7 @@ pub(super) fn instant(timestamp: Duration) -> Instant {
 impl Outputs {
     pub(super) fn queue_panel(&mut self, back: usize, picture: Picture, now: Instant) {
         let event = self.read_panel_event();
-        self.panel.stage(back, picture);
+        self.panel.stage(back, picture, now);
         self.service_panel(now, event);
     }
 

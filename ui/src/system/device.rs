@@ -77,7 +77,7 @@ pub fn run(mut ui: Ui, args: &[String], sw: sysconf::Switches, state: Option<sto
 
 impl Device {
     fn available(&self) -> bool {
-        self.graphics.available(&self.outputs.panel)
+        self.graphics.slot(&self.outputs.panel) == pacing::FrameSlot::Ready
     }
 
     fn intake(&mut self) -> Option<pacing::Flip> {
@@ -136,7 +136,8 @@ impl Device {
 
     fn frame(&mut self, vblank: Option<pacing::Flip>) {
         let t0 = Instant::now();
-        let (elapsed, fell_back) = self.frame_clock.advance_available(t0, vblank, self.available());
+        let slot = self.graphics.slot(&self.outputs.panel);
+        let (elapsed, fell_back) = self.frame_clock.advance_available(t0, vblank, slot);
         if fell_back {
             pacing::note_flip_fallback();
         }

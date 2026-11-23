@@ -193,8 +193,10 @@ impl Inputs {
         timeout_ms: i32,
         wake: &crate::system::intake::Wake,
         display_fds: [Option<i32>; 2],
-    ) -> Vec<In> {
+        judgment_fd: Option<i32>,
+    ) -> (Vec<In>, bool) {
         let mut fds = [
+            judgment_fd,
             Some(wake.fd()),
             display_fds[0],
             display_fds[1],
@@ -209,7 +211,7 @@ impl Inputs {
         self.read_touch(&mut out);
         self.read_panel(&mut out);
         self.read_ctl(&mut out);
-        out
+        (out, fds[0].revents != 0)
     }
 
     fn read_touch(&mut self, out: &mut Vec<In>) {
@@ -341,7 +343,8 @@ mod tests {
         let thread = std::thread::spawn(move || {
             let mut inputs = Inputs { touch: None, panel: -1, panel_buf: Vec::new(), ctl: -1, ctl_buf: Vec::new() };
             ready.send(()).unwrap();
-            assert!(inputs.poll(-1, worker.wake(), [None; 2]).is_empty());
+            let (input, judged) = inputs.poll(-1, worker.wake(), [None; 2], None);
+            assert!(input.is_empty() && !judged);
             worker.wake().drain();
             assert_eq!(worker.take(1), vec![7]);
             done.send(()).unwrap();

@@ -129,9 +129,9 @@ fn software(ui: &Ui) -> Vec<Row> {
     a
 }
 
-fn unit(p: &oos_hal::model::Platform, sd: oos_hal::bootcard::Status) -> Vec<Row> {
+fn unit(ui: &Ui, p: &oos_hal::model::Platform) -> Vec<Row> {
     let c = &p.caps;
-    vec![
+    let mut rows = vec![
         Row::Head("Unit".into()),
         kv("Model", format!("Rigol {}", c.name)),
         kv("Serial", p.serial.clone().unwrap_or("-".into())),
@@ -147,8 +147,12 @@ fn unit(p: &oos_hal::model::Platform, sd: oos_hal::bootcard::Status) -> Vec<Row>
             oos_hal::model::Source::Forced => kvc("Identified", "forced (--model / limits.conf)", AMBER),
             oos_hal::model::Source::Assumed => kvc("Identified", "assumed (no vendor.bin)", AMBER),
         },
-        sd_card(sd),
-    ]
+        sd_card(ui.host.runtime().sd_card),
+    ];
+    if ui.upd.power.deferred() {
+        rows.push(Row::Note("SD card is in slow mode. Restart or power off when convenient.".into(), AMBER));
+    }
+    rows
 }
 
 fn sd_card(sd: oos_hal::bootcard::Status) -> Row {
@@ -209,7 +213,7 @@ impl Ui {
         let readings = self.src.hw_board();
 
         // ---- column 1: unit and software
-        let mut a = unit(p, self.host.runtime().sd_card);
+        let mut a = unit(self, p);
         a.extend(software(self));
         a.push(match readings {
             Some((0, _)) => kvc("FPGA", "not reached", AMBER),

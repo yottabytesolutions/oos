@@ -326,6 +326,7 @@ Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POD<n>:THRe
 
 A card previously seen in SDR104 that has just started slowly for the first time reports
 `sd.mode=hs sd.expected=sdr104 sd.state=degraded sd.degraded_in_a_row=1 sd.repair=none`.
+SCPI remains active while the panel warning is displayed.
 
 ## Errors and compatibility limits
 

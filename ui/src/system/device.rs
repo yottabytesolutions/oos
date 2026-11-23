@@ -2,6 +2,7 @@
 //! Scope startup, main intake and ordered process teardown.
 mod flip;
 mod graphics;
+mod judgment;
 mod outputs;
 mod remote;
 mod startup;
@@ -62,6 +63,8 @@ pub fn run(mut ui: Ui, args: &[String], sw: sysconf::Switches, state: Option<sto
         power_request: None,
         buffers_released: false,
     };
+    ui::power::restore_warning_marker(&mut device.ui);
+    device.timers.judgment_ready(&mut device.ui, true);
     while !device.ui.quit && !input::stop_requested() {
         let vblank = device.intake();
         if device.ui.quit || input::stop_requested() {
@@ -96,7 +99,9 @@ impl Device {
         .min()
         .unwrap_or(now);
         let wait_ms = deadline.saturating_duration_since(now).as_nanos().div_ceil(1_000_000) as i32;
-        let input = self.inp.poll(wait_ms, self.remote.wake(), display_fds);
+        let (input, judgment_ready) =
+            self.inp.poll(wait_ms, self.remote.wake(), display_fds, self.timers.judgment_fd());
+        self.timers.judgment_ready(&mut self.ui, judgment_ready);
         let flipped = self.outputs.read_panel_event();
         self.outputs.service_panel(Instant::now(), flipped);
         self.service_graphics();

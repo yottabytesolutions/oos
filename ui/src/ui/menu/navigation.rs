@@ -65,9 +65,7 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
         }
         Item::PowerAct => {
             // the dialog of the POWER key, without the MCU answer that belongs to a key press
-            ui.close_menu();
-            ui.dialog = None;
-            ui.power_dlg = true;
+            crate::ui::power::open(ui);
         }
         Item::SrcOn => {
             let v = ui.off_sources(ui.menu);

@@ -164,6 +164,14 @@ Unverified and unknown ordinary starts break it. Kexec starts leave it unchanged
 caches it at launch and shows the SD card under System > System info and in `:SYSTem:STATe?`. The card key stays in
 the history file. Detection and learning still need verification on hardware.
 
+An ordinary degraded or worse start can show a panel warning once after startup and the update watcher's verdict.
+It offers Restart and Later in persistent mode for the first two consecutive slow starts. In one-shot mode or
+after three consecutive slow starts it offers Power off and Later and recommends removing power for 10 s. Later
+leaves a note in System info for the rest of the boot. A front-panel or web remote key or knob also dismisses the
+warning and performs its usual action.
+The warning uses the same screen overlay as the Power dialog, which can appear in captures and live mirrors.
+Acquisition and SCPI continue while the warning is on screen.
+
 ## OOS start-up after the kernel (rcS)
 
 Not yet verified on hardware in this order.

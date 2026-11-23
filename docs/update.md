@@ -400,6 +400,9 @@ Logs: `/tmp/oos-update.log` (start count, watcher), `/tmp/oos-update.job` (GUI /
 - If the watcher cannot open the card for a persist arm, it logs the failure and publishes completion with boot
   selection unverified. If it cannot open the card for a failed trial's rollback, it issues the same rollback-failed
   notice as a restore error. A failed open leaves boot selection and trial state as they were before the attempt.
+- The Power dialog offers Restart after the watcher finishes. If the marker is missing, Restart becomes available
+  190 seconds after the UI starts, with a warning that the stock system may start. The active-update lock still
+  gates the action. The watcher completes the power gate after any kexec persist arm and skips the trial verdict.
 
 Install keeps the image in `recovery` as the rollback image only when it is confirmed or was put there by hand
 (`untracked-<sha>`); over an image still on trial the slot keeps the last good one. `--force` with the image already in

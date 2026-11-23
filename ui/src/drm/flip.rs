@@ -126,10 +126,11 @@ impl Display {
     }
 
     /// Shows a rendered buffer on the next vblank, retaining both scanout buffers while busy.
-    pub(crate) fn request_flip(&mut self, back: usize, now: Instant) -> FlipRequest {
+    pub(crate) fn request_flip(&mut self, back: usize, now: Instant, modeset_due: bool) -> FlipRequest {
         self.request_flip_with(
             back,
             now,
+            modeset_due,
             |display, page_cookie| {
                 #[cfg(all(test, target_os = "linux"))]
                 if display.flips.emulate_scanout {
@@ -157,6 +158,7 @@ impl Display {
         &mut self,
         back: usize,
         now: Instant,
+        modeset_due: bool,
         mut ioctl: impl FnMut(&mut Self, Option<u64>) -> io::Result<()>,
         report_failure: impl FnOnce(io::Error),
     ) -> FlipRequest {
@@ -165,7 +167,7 @@ impl Display {
         }
         self.flips.flip = None;
         let result = if self.flips.modeset {
-            self.modeset_flip(ioctl, report_failure)
+            self.modeset_flip(modeset_due, ioctl, report_failure)
         } else {
             let user_data = self.flips.cookie();
             match ioctl(self, Some(user_data)) {
@@ -184,7 +186,7 @@ impl Display {
                     if self.flips.modeset {
                         eprintln!("oos-ui: page flip failed ({e}), using SETCRTC");
                     }
-                    self.modeset_flip(ioctl, report_failure)
+                    self.modeset_flip(modeset_due, ioctl, report_failure)
                 }
             }
         };
@@ -198,9 +200,13 @@ impl Display {
 
     fn modeset_flip(
         &mut self,
+        due: bool,
         ioctl: impl FnOnce(&mut Self, Option<u64>) -> io::Result<()>,
         report_failure: impl FnOnce(io::Error),
     ) -> FlipRequest {
+        if !due {
+            return FlipRequest::AwaitTarget;
+        }
         if let Err(error) = ioctl(self, None) {
             if !std::mem::replace(&mut self.flips.modeset_failed, true) {
                 report_failure(error);

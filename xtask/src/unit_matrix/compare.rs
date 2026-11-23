@@ -2,13 +2,14 @@
 
 use super::{
     report::{GroupReport, Report},
+    state::require_presentation,
     window::{per_minute, WindowSample},
 };
 use crate::unit_tools::report::{read, same_keys};
 use std::{fmt::Write, path::Path, process::ExitCode};
 
-// The paired 26-group runs differed by 1.998 percentage points (535/12058 vs 294/12054).
-const LATE_FLIP_FLOOR_DIVISOR: u128 = 50;
+// On-time groups should miss almost no targets. Allow one miss per 100 shown pictures pending unit runs.
+const LATE_FLIP_LIMIT_DIVISOR: u128 = 100;
 
 #[derive(Debug)]
 struct Row<'a> {
@@ -39,21 +40,13 @@ impl Flips {
         self.shown += other.shown;
     }
 
-    fn regression_against(&self, reference: &Self) -> Result<bool, String> {
-        if reference.shown == 0 || self.shown == 0 {
-            let side = if reference.shown == 0 { "reference" } else { "result" };
-            return Err(format!("{side} run has no shown pictures"));
-        }
-        let denominator = self.shown.checked_mul(reference.shown).ok_or("picture totals are too large to compare")?;
-        // Both late counts are bounded by their shown counts. Compare the exact fractions at a common denominator.
-        let old = reference.late * self.shown;
-        let new = self.late * reference.shown;
-        let increase = new.saturating_sub(old);
-        Ok(increase > old && increase > denominator / LATE_FLIP_FLOOR_DIVISOR)
+    fn exceeds_late_limit(&self) -> bool {
+        self.late > self.shown / LATE_FLIP_LIMIT_DIVISOR
     }
 
-    fn percentage(&self) -> f64 {
-        100.0 * self.late as f64 / self.shown as f64
+    fn percentage_text(&self) -> String {
+        let percent = 100.0 * self.late as f64 / self.shown as f64;
+        format!("{percent:.2}%")
     }
 }
 
@@ -62,12 +55,11 @@ struct Comparison<'a> {
     rows: Vec<Row<'a>>,
     reference: Flips,
     result: Flips,
-    late_regression: bool,
 }
 
 impl Comparison<'_> {
     fn exit(&self) -> ExitCode {
-        if self.late_regression || self.rows.iter().any(|row| row.regression) {
+        if self.rows.iter().any(|row| row.regression) {
             ExitCode::FAILURE
         } else {
             ExitCode::SUCCESS
@@ -115,8 +107,7 @@ fn compare<'a>(reference: &'a Report, result: &Report, floor: f64) -> Result<Com
         reference.add(&row.reference.flips);
         result.add(&row.result.flips);
     }
-    let late_regression = result.regression_against(&reference)?;
-    Ok(Comparison { rows, reference, result, late_regression })
+    Ok(Comparison { rows, reference, result })
 }
 
 impl<'a> Row<'a> {
@@ -127,18 +118,31 @@ impl<'a> Row<'a> {
         if old.expected_windows != new.expected_windows {
             return Err(format!("group '{id}' uses different window counts"));
         }
-        let reference = Metrics::from(old).ok_or_else(|| format!("missing or invalid reference metrics for '{id}'"))?;
-        let result = Metrics::from(new).ok_or_else(|| format!("missing or invalid result metrics for '{id}'"))?;
+        let reference = Metrics::read(old).map_err(|error| format!("reference group '{id}': {error}"))?;
+        let result = Metrics::read(new).map_err(|error| format!("result group '{id}': {error}"))?;
         let ratio = result.first_records_per_s / reference.first_records_per_s;
         if !ratio.is_finite() {
             return Err(format!("group '{id}' requires a positive reference first-use records/s rate"));
         }
-        let regression = ratio < floor || reference.fps - result.fps > 1.0;
+        let regression = ratio < floor || reference.fps - result.fps > 1.0 || result.flips.exceeds_late_limit();
         Ok(Self { group: id, reference, result, ratio, regression })
     }
 }
 
 impl Metrics {
+    fn read(group: &GroupReport) -> Result<Self, String> {
+        for window in &group.windows {
+            if let WindowSample::Valid(sample) = &window.sample {
+                require_presentation(&sample.sections)?;
+            }
+        }
+        let metrics = Self::from(group).ok_or("missing or invalid metrics")?;
+        if metrics.flips.shown == 0 {
+            return Err("no shown pictures".into());
+        }
+        Ok(metrics)
+    }
+
     fn from(group: &GroupReport) -> Option<Self> {
         if group.error.is_some() || group.expected_windows == 0 || group.windows.len() != group.expected_windows {
             return None;
@@ -150,7 +154,7 @@ impl Metrics {
         }
         let mut flips = Flips::default();
         for window in &group.windows {
-            // Older reports retain presentation counters only in the windows.
+            // Presentation deltas are retained in the windows.
             let WindowSample::Valid(sample) = &window.sample else { return None };
             let late = u64::try_from(*sample.delta.get("flip.late")?).ok()?;
             let shown = u64::try_from(*sample.delta.get("flip.shown")?).ok()?;
@@ -176,16 +180,32 @@ fn table(comparison: &Comparison<'_>) -> String {
     let rows = &comparison.rows;
     let width = rows.iter().map(|row| row.group.len()).max().unwrap_or_default().max(5);
     let mut text = format!(
-        "{:<width$}  {:>10}  {:>10}  {:>8}  {:>8}  {:>8}  {:>12}  {:>12}  {}\n",
-        "Group", "Ref first/s", "New first/s", "Ratio", "Ref fps", "New fps", "Ref late/min", "New late/min", "Status"
+        "{:<width$}  {:>10}  {:>10}  {:>8}  {:>8}  {:>8}  {:>12}  {:>12}  {:>9}  {:>9}  {}\n",
+        "Group",
+        "Ref first/s",
+        "New first/s",
+        "Ratio",
+        "Ref fps",
+        "New fps",
+        "Ref late/min",
+        "New late/min",
+        "Ref late",
+        "New late",
+        "Status"
     );
     for row in rows {
         let old = &row.reference;
         let new = &row.result;
-        let verdict = if row.regression { "REGRESSION: repeat group, then investigate" } else { "pass" };
+        let verdict = if new.flips.exceeds_late_limit() {
+            "REGRESSION (late flip limit): repeat group, then investigate"
+        } else if row.regression {
+            "REGRESSION: repeat group, then investigate"
+        } else {
+            "pass"
+        };
         writeln!(
             text,
-            "{:<width$}  {:>10.1}  {:>10.1}  {:>8.3}  {:>8.2}  {:>8.2}  {:>12.2}  {:>12.2}  {verdict}",
+            "{:<width$}  {:>10.1}  {:>10.1}  {:>8.3}  {:>8.2}  {:>8.2}  {:>12.2}  {:>12.2}  {:>9}  {:>9}  {verdict}",
             row.group,
             old.first_records_per_s,
             new.first_records_per_s,
@@ -193,18 +213,19 @@ fn table(comparison: &Comparison<'_>) -> String {
             old.fps,
             new.fps,
             old.late_per_minute,
-            new.late_per_minute
+            new.late_per_minute,
+            old.flips.percentage_text(),
+            new.flips.percentage_text()
         )
         .expect("writing to a String succeeds");
     }
-    let totals = |flips: &Flips| format!("{}/{} ({:.2}%)", flips.late, flips.shown, flips.percentage());
-    let status = if comparison.late_regression { "REGRESSION" } else { "pass" };
+    let totals = |flips: &Flips| format!("{}/{} ({})", flips.late, flips.shown, flips.percentage_text());
     writeln!(
         text,
-        "Run late flips/pictures  reference {}  result {}  {status} (floor {:.1} percentage points)",
+        "Run late flips/pictures  reference {}  result {}  (group limit {:.2}%)",
         totals(&comparison.reference),
         totals(&comparison.result),
-        100.0 / LATE_FLIP_FLOOR_DIVISOR as f64
+        100.0 / LATE_FLIP_LIMIT_DIVISOR as f64
     )
     .expect("writing to a String succeeds");
     text

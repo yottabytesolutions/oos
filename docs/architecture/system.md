@@ -294,8 +294,11 @@ counts each transition to the timer.
 The device publishes the period and the next predicted step deadline for acquisition pacing. While a step
 is deferred, the published deadline is the current time. `:SYSTem:STATe?`
 reports the startup switches, `pacing.period_us`, `pacing.pipeline_budget_us` and `fps` measured from step intervals.
-`present.v1` reports the completed panel flip rate in `flip.hz`. It counts superseded helper-deferred
-steps in `helper.skipped`. See the [frame counter reference](frame-counters.md#presentv1) for
+`present.v2` reports the completed panel flip rate in `flip.hz`. It counts superseded helper-deferred
+steps in `helper.skipped`. On-time pictures flip at the target refresh, normally two refreshes
+after the step vblank and three refreshes apart. Early pictures can wait one additional refresh
+compared with immediate submission.
+See the [frame counter reference](frame-counters.md#presentv2) for
 `seal_flip`, `done_flip` and `flip.late` observation points.
 With private picture counts enabled, the `fresh.v1` counters and elapsed nanoseconds give the observed fresh rate
 over a query window.

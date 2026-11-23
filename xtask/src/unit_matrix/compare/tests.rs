@@ -3,6 +3,7 @@
 use super::*;
 use crate::unit_matrix::{
     report::Summary,
+    state::PRESENTATION,
     window::{Rates, Sample, Window, WindowSample},
 };
 
@@ -27,10 +28,10 @@ fn group((seconds, records, fresh, shown, late): RecordedMetrics) -> GroupReport
             rates: Rates::calculate(host_s, &delta).unwrap(),
             delta: delta.clone(),
             fallback_delta: Default::default(),
-            sections: Default::default(),
+            sections: [(PRESENTATION.into(), Default::default())].into(),
         }),
     };
-    // The original reports omitted flip counters from the pooled summary.
+    // Only the per-window deltas carry flip counters.
     let mut delta = delta;
     delta.remove("flip.shown");
     delta.remove("flip.late");
@@ -52,9 +53,9 @@ fn report(seconds: f64, records: i128, pictures: i128, late: i128) -> Report {
 
 #[test]
 fn compares_threshold_boundaries_and_normalizes_for_measured_duration() {
-    let reference = report(10.0, 1000, 300, 10);
+    let reference = report(10.0, 1000, 300, 0);
     for (records, pictures, expected) in [(2000, 600, 0), (1900, 580, 0), (1899, 600, 1), (2000, 579, 1)] {
-        let result = report(20.0, records, pictures, 20);
+        let result = report(20.0, records, pictures, 0);
         let comparison = compare(&reference, &result, 0.95).unwrap();
         assert_eq!(comparison.exit(), ExitCode::from(expected));
         let text = table(&comparison);
@@ -65,53 +66,62 @@ fn compares_threshold_boundaries_and_normalizes_for_measured_duration() {
 }
 
 #[test]
-fn applies_both_late_flip_thresholds_strictly() {
-    for (shown, reference_late, result_late, expected) in [
-        (300, 0, 0, 0),
-        (300, 0, 6, 0),
-        (300, 0, 7, 1),
-        (300, 3, 9, 0),
-        (300, 3, 10, 1),
-        (300, 12, 24, 0),
-        (300, 12, 25, 1),
-        (1000, 9, 29, 0),
-    ] {
+fn applies_an_absolute_late_flip_limit_to_the_result_group() {
+    for (shown, reference_late, result_late, expected) in
+        [(300, 0, 0, 0), (300, 10, 3, 0), (300, 0, 4, 1), (300, 4, 4, 1), (300, 10, 4, 1), (399, 4, 4, 1)]
+    {
         let reference = report(10.0, 100, shown, reference_late);
         let result = report(10.0, 100, shown, result_late);
         let comparison = compare(&reference, &result, 0.95).unwrap();
         assert_eq!(comparison.exit(), ExitCode::from(expected), "{reference_late} vs {result_late}");
-        assert!(!comparison.rows[0].regression);
+        assert_eq!(comparison.rows[0].regression, expected == 1);
     }
 }
 
 #[test]
-fn recorded_bursts_pass_but_a_more_than_doubled_run_fraction_fails() {
-    let recorded: Vec<(String, RecordedMetrics, RecordedMetrics)> =
-        serde_json::from_str(include_str!("recorded.json")).unwrap();
-    let mut reference = report(5.0, 0, 0, 0);
-    let mut result = report(5.0, 0, 0, 0);
-    let mut doubled = report(5.0, 0, 0, 0);
-    [&mut reference, &mut result, &mut doubled].into_iter().for_each(|report| report.groups.clear());
-    for (name, old, new) in recorded {
-        reference.groups.insert(name.clone(), group(old));
-        result.groups.insert(name.clone(), group(new));
-        let (seconds, records, fresh, shown, late) = new;
-        // Doubling the count with one fewer picture makes the run fraction strictly more than double.
-        doubled
-            .groups
-            .insert(name.clone(), group((seconds, records, fresh, shown - i128::from(name == "deep"), late * 2)));
+fn a_group_over_the_late_limit_fails_even_if_the_run_total_is_below_it() {
+    let mut reference = report(10.0, 100, 300, 0);
+    let mut result = report(10.0, 100, 300, 4);
+    for report in [&mut reference, &mut result] {
+        report.groups.insert("sparse".into(), group((10.0, 100, 300, 700, 0)));
     }
-    for (old, new, counts, expected) in [
-        (&reference, &result, ["535/12058", "294/12054"], ExitCode::SUCCESS),
-        (&result, &doubled, ["294/12054", "588/12053"], ExitCode::FAILURE),
-    ] {
-        let comparison = compare(old, new, 0.95).unwrap();
-        assert_eq!(comparison.exit(), expected);
-        assert!(comparison.rows.iter().all(|row| !row.regression));
-        let text = table(&comparison);
-        let summary = text.lines().last().unwrap();
-        assert!(counts.iter().all(|count| summary.contains(count)), "{summary}");
-    }
+    let comparison = compare(&reference, &result, 0.95).unwrap();
+    assert_eq!(comparison.exit(), ExitCode::FAILURE);
+    let text = table(&comparison);
+    let mut lines = text.lines().skip(1);
+    assert!(lines.next().unwrap().contains("REGRESSION (late flip limit)"));
+    assert!(lines.next().unwrap().ends_with("pass"));
+    let summary = lines.next().unwrap();
+    assert!(summary.contains("reference 0/1000 (0.00%)"));
+    assert!(summary.contains("result 4/1000 (0.40%)"));
+}
+
+#[test]
+fn a_group_without_shown_pictures_cannot_be_compared() {
+    let mut reference = report(10.0, 100, 300, 0);
+    let mut result = report(10.0, 100, 300, 0);
+    reference.groups.insert("sparse".into(), group((10.0, 100, 0, 0, 0)));
+    result.groups.insert("sparse".into(), group((10.0, 100, 300, 300, 0)));
+    let error = compare(&reference, &result, 0.95).unwrap_err();
+    assert_eq!(error, "reference group 'sparse': no shown pictures");
+    let error = compare(&result, &reference, 0.95).unwrap_err();
+    assert_eq!(error, "result group 'sparse': no shown pictures");
+}
+
+#[test]
+fn needs_target_refresh_counts_in_every_window_and_prints_group_percentages() {
+    let mut reference = report(10.0, 100, 300, 3);
+    let result = report(10.0, 100, 300, 6);
+    let table = table(&compare(&reference, &result, 0.95).unwrap());
+    let row = table.lines().nth(1).unwrap();
+    assert!(row.contains("1.00%"));
+    assert!(row.contains("2.00%"));
+    let WindowSample::Valid(sample) = &mut reference.groups.get_mut("dense").unwrap().windows[0].sample else {
+        panic!("expected a valid window");
+    };
+    sample.sections = [("present.v1".into(), Default::default())].into();
+    let error = compare(&reference, &result, 0.95).unwrap_err();
+    assert!(error.contains("reference group 'dense': requires present.v2"));
 }
 
 #[test]

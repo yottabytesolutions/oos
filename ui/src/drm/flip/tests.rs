@@ -84,6 +84,7 @@ fn a_stale_cookie_gives_the_next_busy_request_a_full_grace_period() {
             let got = display.request_flip_with(
                 1,
                 start + offset,
+                true,
                 |_, _| results.next().unwrap().map_or(Ok(()), |errno| Err(io::Error::from_raw_os_error(errno))),
                 |_| panic!("SETCRTC succeeds"),
             );
@@ -114,6 +115,7 @@ fn failed_modesets_report_once_until_scanout_recovers() {
         let got = display.request_flip_with(
             1,
             now,
+            true,
             |_, request| {
                 requests.push(request);
                 match request {
@@ -132,6 +134,36 @@ fn failed_modesets_report_once_until_scanout_recovers() {
         assert_eq!(reports, expected_reports);
         assert_eq!(got, if fails { FlipRequest::Failed } else { FlipRequest::Modeset });
     }
+}
+
+#[test]
+fn immediate_modeset_waits_until_the_target_refresh() {
+    let mut display = display(FlipState::default());
+    let start = Instant::now();
+    let flip = display.request_flip_with(
+        1,
+        start,
+        false,
+        |_, cookie| {
+            assert!(cookie.is_some());
+            Err(io::Error::from_raw_os_error(libc::EINVAL))
+        },
+        |_| panic!("unexpected failure"),
+    );
+    assert_eq!(flip, FlipRequest::AwaitTarget);
+    assert_eq!(display.front, 0);
+    let flip = display.request_flip_with(
+        1,
+        start + Duration::from_millis(10),
+        true,
+        |_, cookie| {
+            assert!(cookie.is_none());
+            Ok(())
+        },
+        |_| panic!("unexpected failure"),
+    );
+    assert_eq!(flip, FlipRequest::Modeset);
+    assert_eq!(display.front, 1);
 }
 
 #[cfg(target_os = "linux")]

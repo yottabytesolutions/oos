@@ -428,7 +428,7 @@ impl Display {
     /// Copies the splash into a spare buffer and requests a vblank flip.
     pub fn present(&mut self, cv: &Canvas) {
         let back = self.copy(cv);
-        self.request_flip(back, std::time::Instant::now());
+        self.request_flip(back, std::time::Instant::now(), true);
     }
 
     pub(crate) fn copy(&mut self, cv: &Canvas) -> usize {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{pct, push, state};
+use super::{frame_clock::Flip, pct, push, state};
 use std::{
     collections::VecDeque,
     fmt::Write,
@@ -13,8 +13,37 @@ pub(crate) const FLIP_TIMEOUT: Duration = Duration::from_millis(50);
 type Triggers = [Option<Instant>; 20];
 
 #[derive(Clone, Copy)]
+struct FlipTarget {
+    at: Instant,
+    sequence: Option<u32>,
+}
+
+impl FlipTarget {
+    fn reached(self, edge: Flip, refreshes_before: u32) -> bool {
+        self.sequence.is_some_and(|seq| edge.sequence.wrapping_sub(seq.wrapping_sub(refreshes_before)) < (1 << 31))
+    }
+
+    fn request_deadline(self, refresh: Duration) -> Instant {
+        // The midpoint leaves time to queue for the target if the preceding vblank event is unavailable.
+        self.at - refresh / 2
+    }
+
+    fn late(self, flip: Flip, refresh: Duration) -> bool {
+        self.sequence.map_or(flip.at > self.window_end(refresh), |seq| {
+            let after = flip.sequence.wrapping_sub(seq);
+            after != 0 && after < (1 << 31)
+        })
+    }
+
+    fn window_end(self, refresh: Duration) -> Instant {
+        self.at + (refresh - refresh / 2)
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct Picture {
     seal: Instant,
+    target: FlipTarget,
     composed: Instant,
     ready: Instant,
     helper: Option<(Instant, Instant)>,
@@ -22,8 +51,12 @@ pub(crate) struct Picture {
 }
 
 impl Picture {
-    pub(super) fn new(seal: Instant) -> Self {
-        Self { seal, composed: seal, ready: seal, helper: None, triggers: Default::default() }
+    pub(super) fn new(seal: Instant, vblank: Option<Flip>, refresh: Duration, refreshes: u32) -> Self {
+        let target = FlipTarget {
+            at: vblank.map_or(seal, |edge| edge.at) + refresh * refreshes,
+            sequence: vblank.map(|edge| edge.sequence.wrapping_add(refreshes)),
+        };
+        Self { seal, target, composed: seal, ready: seal, helper: None, triggers: Default::default() }
     }
 
     pub(crate) fn composed(&mut self, at: Instant) {
@@ -43,6 +76,7 @@ impl Picture {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FlipRequest {
     Busy,
+    AwaitTarget,
     Queued,
     Modeset,
     Failed,
@@ -53,6 +87,7 @@ pub(crate) struct Panel {
     ready: Option<(usize, Picture)>,
     flipping: Option<(Instant, Picture)>,
     retry: Option<Instant>,
+    latest_edge: Option<Flip>,
 }
 
 impl Panel {
@@ -73,11 +108,12 @@ impl Panel {
     pub(crate) fn service(
         &mut self,
         now: Instant,
-        flipped: Option<Instant>,
+        vblank: Option<Flip>,
+        flipped: Option<Flip>,
         refresh: Duration,
-        mut request: impl FnMut(usize) -> FlipRequest,
+        mut request: impl FnMut(usize, bool) -> FlipRequest,
     ) {
-        self.service_with(now, flipped, refresh, &mut request, &mut |report| {
+        self.service_with(now, vblank, flipped, refresh, &mut request, &mut |report| {
             oos_hal::sync::lock(state()).compose.presentation.record(report);
         });
     }
@@ -85,15 +121,21 @@ impl Panel {
     fn service_with(
         &mut self,
         now: Instant,
-        flipped: Option<Instant>,
+        vblank: Option<Flip>,
+        flipped: Option<Flip>,
         refresh: Duration,
-        request: &mut impl FnMut(usize) -> FlipRequest,
+        request: &mut impl FnMut(usize, bool) -> FlipRequest,
         report: &mut impl FnMut(Outcome<'_>),
     ) {
+        for edge in [vblank, flipped].into_iter().flatten() {
+            if self.latest_edge.is_none_or(|last| edge.at >= last.at) {
+                self.latest_edge = Some(edge);
+            }
+        }
         if let Some((requested, picture)) = self.flipping {
-            if let Some(at) = flipped {
+            if let Some(flip) = flipped {
                 self.flipping = None;
-                report(Outcome::Shown(&picture, requested, at, refresh));
+                report(Outcome::Shown(&picture, requested, flip, refresh));
             } else if now >= requested + FLIP_TIMEOUT {
                 self.flipping = None;
                 report(Outcome::Timeout);
@@ -101,23 +143,45 @@ impl Panel {
         }
         self.retry = None;
         if self.flipping.is_none() {
-            if let Some((back, picture)) = self.ready.take() {
-                match request(back) {
-                    FlipRequest::Busy => {
-                        self.ready = Some((back, picture));
-                        self.retry = Some(now + refresh);
-                    }
-                    FlipRequest::Queued => self.flipping = Some((now, picture)),
-                    FlipRequest::Modeset => report(Outcome::Modeset),
-                    FlipRequest::Failed => report(Outcome::Failed),
-                }
+            self.request_ready(now, refresh, request, report);
+        }
+    }
+
+    fn request_ready(
+        &mut self,
+        now: Instant,
+        refresh: Duration,
+        request: &mut impl FnMut(usize, bool) -> FlipRequest,
+        report: &mut impl FnMut(Outcome<'_>),
+    ) {
+        let Some((back, picture)) = self.ready.as_ref() else { return };
+        let target = picture.target;
+        let deadline = target.request_deadline(refresh);
+        if now < deadline && !self.latest_edge.is_some_and(|edge| target.reached(edge, 1)) {
+            self.retry = Some(deadline);
+            return;
+        }
+        // SETCRTC can change scanout immediately, so it must wait for the target itself.
+        let modeset_deadline = target.window_end(refresh);
+        let modeset_due = now >= modeset_deadline || self.latest_edge.is_some_and(|edge| target.reached(edge, 0));
+        match request(*back, modeset_due) {
+            FlipRequest::Busy => self.retry = Some(now + refresh),
+            FlipRequest::AwaitTarget => self.retry = Some(modeset_deadline),
+            FlipRequest::Queued => self.flipping = self.ready.take().map(|(_, picture)| (now, picture)),
+            FlipRequest::Modeset => {
+                self.ready = None;
+                report(Outcome::Modeset);
+            }
+            FlipRequest::Failed => {
+                self.ready = None;
+                report(Outcome::Failed);
             }
         }
     }
 }
 
 enum Outcome<'a> {
-    Shown(&'a Picture, Instant, Instant, Duration),
+    Shown(&'a Picture, Instant, Flip, Duration),
     Timeout,
     Modeset,
     Failed,
@@ -138,9 +202,10 @@ pub(super) struct History {
 impl History {
     fn record(&mut self, outcome: Outcome<'_>) {
         match outcome {
-            Outcome::Shown(picture, requested, flipped, refresh) => {
+            Outcome::Shown(picture, requested, flip, refresh) => {
                 self.shown += 1;
-                self.late += u64::from(flipped.saturating_duration_since(picture.ready) > refresh);
+                self.late += u64::from(picture.target.late(flip, refresh));
+                let flipped = flip.at;
                 let mut stages = [None; 6];
                 if let Some((submitted, done)) = picture.helper {
                     stages[..3].copy_from_slice(&[
@@ -176,7 +241,7 @@ impl History {
         });
         let _ = write!(
             text,
-            " present.v1 flip.shown={} flip.late={} flip.timeout={} flip.modeset={} flip.failed={} flip.hz={hz:.1} helper.skipped={helper_skipped}",
+            " present.v2 flip.shown={} flip.late={} flip.timeout={} flip.modeset={} flip.failed={} flip.hz={hz:.1} helper.skipped={helper_skipped}",
             self.shown, self.late, self.timeout, self.modeset, self.failed
         );
         for (i, name) in

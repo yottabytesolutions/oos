@@ -1,7 +1,7 @@
 # Frame pipeline counters
 
 `:SYSTem:STATe?` appends these versioned groups. The groups appear in the order
-`stage.v1`, `present.v1`, `work.v1`, `route.v1`, `source.v1` and `fallback.v1`. The
+`stage.v1`, `present.v2`, `work.v1`, `route.v1`, `source.v1` and `fallback.v1`. The
 [state-query reference](../spec/state-query.md) covers the other fields.
 
 Stage, work and source observations reset on an acquisition generation or epoch change.
@@ -30,7 +30,7 @@ outcome timestamp is the rejection time.
 See [batch clocks](../../ui/src/drawpipe/clock.rs), [UI owner composition](../../ui/src/drawpipe/stage/owner/compose.rs)
 and [histograms](../../ui/src/drawpipe/metrics.rs).
 
-## present.v1
+## present.v2
 
 Presentation timings use p50/p90/p99 in microseconds. They describe DRM panel flips that
 completed. Helper-only intervals require helper timestamps. The history holds the last 300
@@ -39,7 +39,7 @@ completed flips and a separate 300-observation history for trigger-to-flip.
 | Field | Unit | Observation |
 |---|---|---|
 | `flip.shown` | Pictures | Queued panel requests with a matching completed flip. |
-| `flip.late` | Pictures | Completed flips more than one panel refresh after the picture became ready. Ready means helper completion, or panel staging on the CPU path. |
+| `flip.late` | Pictures | Completed flips with a DRM vblank sequence after the target sequence, or a timestamp after the target window for steps without a vblank. |
 | `flip.timeout` | Requests | Queued requests that reach the 50 ms wait limit without completion. |
 | `flip.modeset` | Requests | Panel requests that complete via a modeset. |
 | `flip.failed` | Requests | Requests returning failure. A busy request remains staged for retry. |
@@ -53,8 +53,17 @@ completed flips and a separate 300-observation history for trigger-to-flip.
 | `done_flip` | µs | Ready timestamp to DRM completion, using helper completion or CPU panel staging. |
 | `trigger_flip` | µs | Sampled first-record host observation to DRM completion. The picture carries up to 20 accepted batch timestamps from composition. |
 
-`seal_flip` starts at the actual UI step, including when the helper defers the step.
-`flip.late` measures the time from picture readiness to flip completion.
+`seal_flip` starts at the actual UI step, including when the helper defers the step. At seal,
+the target is fixed to the step's vblank plus the number of full refreshes in the pipeline
+budget (at least one, normally two with divisor three). A deferred step keeps its original
+vblank. CPU and helper output both wait for the preceding vblank before requesting a
+next-refresh flip. If that event is lost, the queue can submit half a refresh before the predicted target time.
+An immediate modeset waits for the target itself or the end of its estimated refresh window.
+
+Timer steps without a step vblank target the first refresh after the midpoint preceding the
+nominal target time. A completion beyond that one-refresh window is late. Helper completion
+time contributes to `done_flip` and `done_requested`. The former `present.v1` late count
+measured readiness to flip and cannot be compared with `present.v2` target misses.
 See [presentation](../../ui/src/pacing/presentation.rs),
 [frame clock](../../ui/src/pacing/frame_clock.rs) and [panel events](../../ui/src/system/device/flip.rs).
 

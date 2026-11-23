@@ -192,7 +192,7 @@ counters invalidate the window with `counter reset` and fail the group. Sampling
 The per-window `records.deposited` delta can be negative when previously pending deposits are rejected.
 Older reports use the raw worker placement and direct draw total, so raw deposit deltas across the two
 accounting methods have different meanings. The `compare` metrics use first-use, fresh-picture and flip
-counters and remain compatible with older reports that include those metrics.
+counters. Sampling and comparison require `present.v2` target-refresh counters in every window.
 A missing `watchdog ok` aborts sampling. The tool restores setup in two passes with offsets last and
 verifies each saved key and RUN/STOP once. A snapshot value resembling an address or hostname causes
 the tool to skip that key and print its name. After three consecutive SCPI transport failures,
@@ -207,18 +207,17 @@ decoder selection and configured slots are compatible with the archived setup be
 Finish any armed SINGLE capture before running the matrix.
 
 `compare` requires the same bench setup, requested window length and window count per group. It reports
-first-use records/s, midpoint fresh pictures/s and late flips per minute for each group. A group fails
+first-use records/s, midpoint fresh pictures/s, late flips per minute and the percentage of shown panel
+pictures that missed their target refresh for each group. A group fails
 if its first-use rate falls below the floor (95% of the reference by default) or it loses more than one
-fresh picture per second. Repeat that group, then investigate.
+fresh picture per second. It also fails if more than 1% of shown pictures in the result group miss
+their target refresh. The absolute limit is `LATE_FLIP_LIMIT_DIVISOR = 100` because on-time groups
+should have near-zero misses. The limit is provisional until the first unit runs. It also applies
+to four-channel groups with known target misses. Repeat a failing group, then investigate.
 
-The run summary gives the total late flips and shown pictures for each side. The late-flip verdict uses
-the fraction of shown panel pictures that flipped late. It fails if that fraction more than doubles and
-rises by more than 2 percentage points. The two 26-group runs on 2026-11-23 measured 535/12,058 (4.44%)
-and 294/12,054 (2.44%), a 1.998 percentage point difference. The floor rounds that observed difference.
-Two runs cannot establish how much variation to expect in future sessions. Late flips come in bursts within
-a 15 s window. Judged per group, two runs of builds with equal record rates disagreed on 7 of 26 groups in
-both directions, so per-group late flips are reported only. Exit 1 means a group or the
-run regressed. Exit 2 means the reports are incompatible or lack complete measurements.
+The run summary gives the total target misses and shown pictures for each side. Each group's late percentage
+uses the totals from all its windows. Exit 1 means a group failed. Exit 2 means the reports are incompatible
+or lack complete measurements.
 
 ## Setup
 

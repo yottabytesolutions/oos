@@ -16,8 +16,6 @@ mod source;
 pub(crate) use cpu::GpuCpu;
 pub(crate) use dump::BatchDump;
 use source::SourceOverhead;
-#[cfg(any(target_os = "linux", test))]
-pub(crate) use source::StopSlot;
 
 /// An environment lookup: the variable's value as the OS has it, None when it is not set.
 pub type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
@@ -76,10 +74,9 @@ pub fn flag(env: Env, key: &str) -> Option<&'static str> {
 }
 
 fn report_obsolete_keys(conf: &str, mut report: impl FnMut(&'static str)) {
-    if conf_value(None, conf, "acq.pipeline").is_some() {
-        report("acq.pipeline");
-    }
-    if let Some(key) = ["acq.play", "acq.play.inferred"].into_iter().find(|key| conf_value(None, conf, key).is_some()) {
+    let present = |key: &&str| conf_value(None, conf, key).is_some();
+    ["acq.pipeline", "acq.stop_slot"].into_iter().filter(present).for_each(&mut report);
+    if let Some(key) = ["acq.play", "acq.play.inferred"].into_iter().find(present) {
         report(key);
     }
 }
@@ -193,6 +190,23 @@ mod tests {
         assert_eq!(reports, ["acq.play.inferred"]);
         let switches = Switches::parse(&|_| None, &merged, conf, Default::default());
         assert_eq!(switches, Switches::default());
+    }
+
+    #[test]
+    fn obsolete_stop_slot_is_ignored_with_one_notice() {
+        for slot in ["zero", "alternate", "invalid", ""] {
+            let conf = format!("acq.stop_slot = {slot} # old user setting\nntp = on\n");
+            let (system, errors) = super::super::SysConf::parse(&conf);
+            assert!(errors.is_empty(), "{errors:?}");
+            assert!(system.ntp);
+            assert!(!system.text().contains("acq.stop_slot"));
+
+            let merged = super::super::fork_text_of(&conf, "acq.stop_slot = zero\n");
+            let mut reports = Vec::new();
+            report_obsolete_keys(&merged, |key| reports.push(key));
+            assert_eq!(reports, ["acq.stop_slot"]);
+            assert_eq!(Switches::parse(&|_| None, &merged, &conf, Default::default()), Switches::default());
+        }
     }
 
     #[test]

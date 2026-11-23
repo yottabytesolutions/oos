@@ -135,7 +135,7 @@ pub fn spawn(cfg: Cfg, period_ms: u64) -> Shared {
             let mut count = 1;
             if cfg.arm {
                 let (stopped, st, _) = wait_bit(0x4034, 13, 30, 500);
-                wr(&oos_hal::dho::scu::arm(cfg.fsm, &mut sh, 0, 1));
+                wr(&oos_hal::dho::scu::arm(cfg.fsm, &mut sh, 1));
                 let (done, v, ms) = wait_bit(0x4080, 30, 1000, 2000);
                 if done {
                     sh.s4080 = v;

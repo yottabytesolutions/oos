@@ -2,8 +2,7 @@
 
 use super::{comparator::is_stall, dma_source::ArmPlan, Settings};
 use crate::board::{Shared, Slow};
-use crate::sysconf::switches::StopSlot;
-use oos_hal::dho::{acq::Mode, hz, seq};
+use oos_hal::dho::seq;
 use std::{
     cell::Cell,
     time::{Duration, Instant},
@@ -11,36 +10,8 @@ use std::{
 
 pub(super) type Asked<'a> = (Option<&'a Settings>, Slow);
 
-/// Reserve a different frame when the documented stock ring has space for both records.
-pub(super) fn first_frame(
-    slot: StopSlot,
-    settings: &Settings,
-    params: &hz::Params,
-    previous: Option<u32>,
-    serial: bool,
-) -> u32 {
-    if slot == StopSlot::Alternate
-        && serial
-        && previous == Some(0)
-        && settings.playback.is_play4()
-        && settings.mode == Mode::Normal
-        && settings.hwmask.is_none()
-        && settings.hwzone.is_none()
-        && hz::max_record_frames(params.seg) >= 2
-    {
-        params.max_frames.max(1)
-    } else {
-        0
-    }
-}
-
-pub(super) fn retain_replay(
-    last_batch: &mut Option<super::super::replay::Batch>,
-    first: u32,
-    count: u32,
-    fresh: bool,
-) -> bool {
-    if last_batch.as_ref().is_some_and(|batch| (first..first + count).contains(&batch.index)) {
+pub(super) fn retain_replay(last_batch: &mut Option<super::super::replay::Batch>, count: u32, fresh: bool) -> bool {
+    if last_batch.as_ref().is_some_and(|batch| batch.index < count) {
         *last_batch = None;
     }
     fresh && last_batch.is_some()

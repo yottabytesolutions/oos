@@ -32,17 +32,11 @@ pub(super) const STOP_POLL: Duration = Duration::from_millis(10);
 pub struct BatchWait {
     fill: Duration,
     armed_at: Option<Instant>,
-    pub(super) first: u32,
 }
 
 impl BatchWait {
     pub fn new(fill_ms: u64, armed_at: Option<Instant>) -> Self {
-        Self { fill: Duration::from_millis(fill_ms), armed_at, first: 0 }
-    }
-
-    /// Apply the same ring start to arm, fill count and playback.
-    pub fn from_frame(self, first: u32) -> Self {
-        Self { first, ..self }
+        Self { fill: Duration::from_millis(fill_ms), armed_at }
     }
 
     pub(super) fn fill(self) -> Duration {
@@ -69,7 +63,7 @@ pub(super) fn fill_count(
     let step = Duration::from_micros(200);
     let mut next_stop = started + STOP_POLL;
     loop {
-        let count = bar.rd(0x4010).wrapping_add(1).saturating_sub(wait.first).clamp(1, nf);
+        let count = bar.rd(0x4010).wrapping_add(1).clamp(1, nf);
         let now = clock.now();
         let left = wait.fill().saturating_sub(now.saturating_duration_since(started));
         if count == nf || left.is_zero() {

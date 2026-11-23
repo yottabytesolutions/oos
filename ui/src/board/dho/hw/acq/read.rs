@@ -49,7 +49,6 @@ pub(super) struct Capture<'a> {
     pub(super) params: &'a hz::Params,
     pub(super) request: &'a Request,
     pub(super) uncapped: u32,
-    pub(super) first: u32,
 }
 
 pub(super) struct Completed {
@@ -123,7 +122,7 @@ impl BatchState {
                 io.c2h,
                 self.dma.destination(),
                 ahead,
-                (timing.wait(fill_ms).from_frame(capture.first), clock),
+                (timing.wait(fill_ms), clock),
                 |_| {},
                 changed,
                 (|| plan.serial() && plan.capture_changed(&lock(out), asked), allowed),
@@ -197,7 +196,7 @@ impl BatchState {
     ) -> Option<batch::DecodedRecord> {
         let p = capture.params;
         let started = deep.then(|| io.clock.now());
-        let index = capture.first + count - 1;
+        let index = count - 1;
         let read = seq::time::read_raw_again_with_clock(
             io.state,
             b,

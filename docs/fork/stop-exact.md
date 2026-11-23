@@ -1,7 +1,6 @@
 # STOP and the retained record
 
-Register behavior behind alternate-slot preservation and replay is **assumed** on hardware. A
-unit report from 2026-11-13 covers the [10 M point stopped-window
+A unit report from 2026-11-13 covers the [10 M point stopped-window
 test](../protocols/acquisition-start.md#reading-a-stored-frame-again-stop).
 
 Normal hardware batch acquisition holds the source on STOP. The final read can provide a raw frame for
@@ -29,15 +28,9 @@ Single scan only).
   and the worker answers without the 200 ms retry delay. In overlapping Normal-trigger acquisition, a first-record
   wait with no signal ends at the next control poll (up to 10 ms), followed by the disarm poll (up to 10 ms).
   A completed overlapping record-queue batch follows normal publication and retains all its eligible records.
-- `acq.stop_slot = zero` is the default in `system.conf`. Each live batch arms at frame zero. After an
+- Each live batch arms at frame zero. After an
   untriggered serial STOP, the host copy of the last record stays on screen. The arm can overwrite the FPGA
   copy before a trigger, so firmware ring reread eligibility is cleared.
-- `acq.stop_slot = alternate` is an experiment that needs an operator at the unit. An eligible serial capture
-  starts at a second frame index when the previous record is at zero, so it can preserve the previous slot for
-  raw replay on timeout. The HAL bounds the index by the stock segmented-ring capacity. The
-  [two-slot sequence](../protocols/acquisition-start.md#next-frame) still needs live hardware verification,
-  including slot selection with LA enabled.
-  `:SYSTem:STATe?` reports the selected startup value.
 - An eligible STOP raises `final_req` when a serial capture can still arrive, the displayed record needs a raw
   reread, or Auto trigger is showing LA or a deep record. An overlapping Normal-trigger STOP on an already-raw
   deep record or LA view can settle in the first step. With a final request pending, the UI keeps taking data
@@ -84,7 +77,7 @@ Single scan only).
   frame holds pairs, with deep measurements enabled and no successor armed. `prearm_keeps_replay` skips prearm
   for this batch. Prearm stays available for shallow records and for captures with deep measurements off.
 - `ui/src/board/dho/hw/stop/tests.rs` scripts trigger completion and timeouts with an injected clock. It verifies
-  slot preservation, counted disarm, calibration and hardware-control interruption. The UI STOP tests cover the
+  slot invalidation, counted disarm, calibration and hardware-control interruption. The UI STOP tests cover the
   immediate settlement of overlapping Normal-trigger STOP and draining a shallow serial capture.
 
 ## On-unit verification
@@ -104,8 +97,7 @@ Single scan only).
    stays 0 while nothing else changes. 10 us/div (a raw window): values of that window; back to 1 ms/div: the values
    of the STOP again. RUN: the values update again.
 4. Normal trigger without a signal, STOP. Verify immediate settlement for overlapping raw or LA views and settlement
-   within 3 s for serial capture, with the last host record still displayed. With an operator
-   present, repeat with `acq.stop_slot = alternate` and check zoom, reread and save of the preceding record.
+   within 3 s for serial capture, with the last host record still displayed.
    Repeat with a trigger arriving during STOP and verify all three use the completed capture.
 5. `acq.prearm = on` (the unit's set-up): step 3 again, same result; wfm/s at 1 us/div unchanged against prearm without
    the deep measurements (prearm stays on there); no `disarm` errors.

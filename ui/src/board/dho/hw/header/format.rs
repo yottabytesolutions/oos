@@ -107,15 +107,6 @@ fn write_read_layout(out: &mut String, s: &seq::Settings, p: &hz::Params) {
         seq::compress_k(s, p),
         s.window.is_some()
     );
-    if let Some(play) = seq::stock_play(s, p) {
-        let (points, start) = play.window();
-        let _ = writeln!(
-            out,
-            "play=stock\nplay_inferred=true\nplay_window={points} {start}\nplay_linear_step={}\nplay_frame_len={}",
-            play.linear_step(),
-            play.frame_len()
-        );
-    }
 }
 
 fn write_pattern(out: &mut String, c: usize, pattern: Pattern) {

@@ -47,3 +47,27 @@ fn capture_switch_leaves_explicit_depth_and_special_acquisition_alone() {
         assert_eq!(settings(&m, false, &sw), settings(&m, false, &Switches::default()));
     }
 }
+
+#[test]
+fn capture_state_reports_geometry_only_for_current_frames() {
+    let board = crate::board::board();
+    let shared = crate::board::HwShared::default();
+    let source = crate::wave::Source::Hw { shared: shared.clone(), seen: 0 };
+    let state = || board.capture_state(&source);
+    assert_eq!(state(), " acq.capture=pending acq.capture.stored_points=0");
+
+    let model = at_1us();
+    let reduced = settings(&model, false, &switches("acq.capture = peak:4\nacq.capture.inferred = on"));
+    let mut g = crate::perfguard::deep::acq_lock(&shared);
+    let id = g.acquisition.identity();
+    g.want = Some(reduced);
+    g.frame = std::sync::Arc::new(crate::board::Frame {
+        seq: 1,
+        cfg: id.gen(),
+        stamp: id.epoch(),
+        acq: (312_500_000.0, 3512),
+        ..Default::default()
+    });
+    drop(g);
+    assert_eq!(state(), " acq.capture=peak:4 acq.capture.stored_points=3512");
+}

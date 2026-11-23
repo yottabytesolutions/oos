@@ -15,8 +15,6 @@ use std::{collections::BTreeMap, fs, io::Read, ops::Range, path::Path, str::From
 
 #[cfg(test)]
 mod capture_tests;
-#[cfg(test)]
-mod play_tests;
 mod trigger;
 mod view;
 use view::{view, PictureView};
@@ -210,7 +208,6 @@ fn geometry(fields: &Fields<'_>) -> Result<(seq::Settings, hz::Params), String> 
     };
     restore_channels(fields, &mut s.ch)?;
     restore_capture(fields, &mut s, p)?;
-    restore_play(fields, &mut s, &p)?;
     if seq::compress_k(&s, &p) != value(fields, "effective_compression")?
         || seq::window(&s, &p) != (cast("window points", points)?, cast("window start", start)?)
     {
@@ -232,23 +229,6 @@ fn restore_channels(fields: &Fields<'_>, channels: &mut [seq::Chan; NCH]) -> Res
             _ => return Err("invalid channel coupling".into()),
         };
         channel.bw = cast("bandwidth", bw)?;
-    }
-    Ok(())
-}
-
-fn restore_play(fields: &Fields<'_>, s: &mut seq::Settings, p: &hz::Params) -> Result<(), String> {
-    let Some(&mode) = fields.get("play") else { return Ok(()) };
-    if mode != "stock" || s.playback != Playback::Raw || !value::<bool>(fields, "play_inferred")? {
-        return Err("invalid fixture playback mode".into());
-    }
-    s.playback = Playback::StockInferred;
-    let play = seq::stock_play(s, p).ok_or("unsupported fixture playback profile")?;
-    let [points, start] = words(fields, "play_window")?;
-    if play.window() != (cast("play points", points)?, cast("play start", start)?)
-        || play.linear_step() != value(fields, "play_linear_step")?
-        || play.frame_len() != value(fields, "play_frame_len")?
-    {
-        return Err("inconsistent fixture playback geometry".into());
     }
     Ok(())
 }

@@ -94,6 +94,36 @@ fn make_input_with<'a>(s: &'a seq::Settings, p: &'a oos_hal::dho::hz::Params, co
     BatchInput::new((s, p), (3, 3, false), (cores, true))
 }
 
+#[test]
+fn v2_fixture_ignores_retired_play_metadata_and_checks_the_dma_layout() {
+    let scratch = Scratch::new();
+    let expected = synthetic(&scratch, false, false, 7032);
+    let path = scratch.0.join("batch-000");
+    let sidecar = path.join("fixture.txt");
+    let meta = fs::read_to_string(&sidecar).unwrap();
+    assert_eq!(meta.lines().next(), Some("oos-batch.v2"));
+    for key in ["play=", "play_inferred=", "play_window=", "play_linear_step=", "play_frame_len="] {
+        assert!(meta.lines().all(|line| !line.starts_with(key)));
+    }
+    let legacy = format!(
+        "{meta}play=stock\nplay_inferred=true\nplay_window=6250 391\nplay_linear_step=3834792227\nplay_frame_len=7000\nfuture_layout=extra\n"
+    );
+    fs::write(&sidecar, &legacy).unwrap();
+    let loaded = Fixture::load(&path).unwrap();
+    assert_eq!(loaded.settings(), expected.settings());
+    assert!(loaded.records().eq(expected.records()));
+
+    let raw_bytes = expected.records().next().unwrap().len();
+    let interpolated_bytes = 2 * 7000;
+    assert_ne!(raw_bytes, interpolated_bytes);
+    let legacy = legacy
+        .replace(&format!("frame_bytes={raw_bytes}\n"), &format!("frame_bytes={interpolated_bytes}\n"))
+        .replace(&format!("frame_stride={raw_bytes}\n"), &format!("frame_stride={interpolated_bytes}\n"));
+    fs::write(&sidecar, legacy).unwrap();
+    fs::write(path.join("dma.bin"), vec![0; 3 * interpolated_bytes]).unwrap();
+    assert_eq!(Fixture::load(&path).err().as_deref(), Some("invalid DMA size, frame count or stride"));
+}
+
 fn publish(
     model: &Model,
     (s, p): (&seq::Settings, &oos_hal::dho::hz::Params),

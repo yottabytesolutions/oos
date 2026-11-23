@@ -89,7 +89,7 @@ fn commands(ui: &mut Ui, text: &str) -> Result<(), String> {
 }
 
 fn old_stamp(ui: &mut Ui) -> Result<(), String> {
-    let pipe = drawpipe::pipe(ui.switches()).ok_or("soak needs workers")?;
+    let pipe = drawpipe::start_pipe(ui.switches());
     pipe.set_identity(super::super::super::change::acquisition::identity(ui));
     pipe.set_view(Some(&ui.m), ui.ph.w, ui.ph.h, ui.switches().interp);
     let mut source = scripted::source(BatchKind::Raw, 123);

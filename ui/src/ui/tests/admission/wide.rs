@@ -34,7 +34,7 @@ fn legal_one_meg_depth_dots_reach_main_picture_and_cpu_layers_losslessly() {
     assert_eq!(projection.format, CountFormat::Wide);
     assert_eq!(standard::dot_hit_bound(spacing), 2884);
     let expected = reference(&ui, &frame, &projection);
-    let pipe = crate::drawpipe::pipe(&switches).unwrap();
+    let pipe = crate::drawpipe::start_pipe(&switches);
     let identity = oos_core::change::Identity::default();
     pipe.publish_view(&ui.m, ui.ph.w, ui.ph.h, switches.interp, identity);
     assert!(pipe.read_limit(identity, Some((156_250_000, 1))).unwrap() >= frames as u32);

@@ -82,7 +82,7 @@ impl Dump {
         newest: (Option<&Frame>, Option<&[u16]>),
     ) -> Option<Pending> {
         use crate::drawpipe::{self, Pipe};
-        let view_gen = drawpipe::pipe(drawpipe::Access::Existing).map_or(0, Pipe::fixture_view_generation);
+        let view_gen = drawpipe::pipe().map_or(0, Pipe::fixture_view_generation);
         self.capture((pair, view_gen), input, bytes, newest)
     }
 

@@ -14,7 +14,7 @@ fn value(text: &str, name: &str) -> u64 {
 #[test]
 fn actual_hw_compositions_count_first_use_once_and_retained_redraw_stays_empty() {
     let _scope = Scope::new();
-    let mut r = Route::new(BatchKind::Raw, true, 4, 1e-6);
+    let mut r = Route::new(BatchKind::Raw, 4, 1e-6);
     r.ui.m.persist = 0;
     let counts = drawpipe::counters().timing.picture_counts();
     r.step(32);

@@ -1,5 +1,8 @@
 # Board management (fan, temperatures, voltages, power key / MCU power commands, beeper, probes)
 
+Register behavior described by the stock reconstruction is **decoded from stock** for the values shown.
+Untraced acquisition and trigger effects are **assumed**.
+
 Certainty: "verified on the unit" means seen on a running DHO924S. Anything else in this file was not exercised under
 OOS unless stated (section 8.6 lists what is built).
 

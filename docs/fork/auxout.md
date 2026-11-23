@@ -1,5 +1,8 @@
 # AUX OUT
 
+Register effects are **assumed** for acquisition and trigger routing. The host code and fixtures
+describe the requested writes.
+
 The rear AUX OUT BNC. System > AUX out, `:SYSTem:AOUTput`, setup key `aux_out`. Code: `hal/src/dho/auxout.rs`,
 written by `seq::State::configure`.
 

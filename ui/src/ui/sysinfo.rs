@@ -18,17 +18,31 @@ pub(super) enum Row {
     Note(String, Rgb),
 }
 
-fn sysinfo_pipeline(ui: &Ui) -> crate::drawpipe::Mode {
-    let switches = ui.switches();
-    if switches.f2_funding == crate::drawpipe::funding::Profile::Unconfigured {
-        switches.pipeline
-    } else {
-        super::step_draw::status(ui).0
-    }
-}
-
 fn kv(k: &str, v: impl Into<String>) -> Row {
     Row::Kv(k.into(), v.into(), TEXT)
+}
+
+fn append_frame_counts(ui: &Ui, rows: &mut Vec<Row>) {
+    let counters = crate::drawpipe::counters();
+    let (acq, used, dropped) = counters.read();
+    if acq == 0 {
+        return;
+    }
+    rows.push(kv(
+        "Frames used",
+        format!("{} of {} ({} dropped)", fmt_count(used as f64), fmt_count(acq as f64), fmt_count(dropped as f64)),
+    ));
+    if !ui.src.is_hw()
+        || ui.switches().f2_funding == crate::drawpipe::funding::Profile::Unconfigured
+        || step_draw::funded_taps(ui)
+    {
+        let measured = counters.measured.load(std::sync::atomic::Ordering::Relaxed);
+        // Short time bases measure the interpolated record separately.
+        rows.push(kv(
+            "Frames in statistics",
+            format!("{} of {} (not at short time bases)", fmt_count(measured as f64), fmt_count(used as f64)),
+        ));
+    }
 }
 
 fn kvc(k: &str, v: impl Into<String>, c: Rgb) -> Row {
@@ -271,27 +285,7 @@ impl Ui {
         d.push(kv("Record", si_short(depth as f64, "pts")));
         d.push(kv("Waveforms/s", format!("{:.0}", self.wfm_rate)));
         d.push(kv("Waveforms", fmt_count(self.wfm_total as f64)));
-        let (acq, used, dropped) = crate::drawpipe::counters().read();
-        if acq > 0 {
-            d.push(kv(
-                "Frames used",
-                format!(
-                    "{} of {} ({} dropped, {:?} pipeline)",
-                    fmt_count(used as f64),
-                    fmt_count(acq as f64),
-                    fmt_count(dropped as f64),
-                    sysinfo_pipeline(self)
-                ),
-            ));
-            let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
-            if sysinfo_pipeline(self) == crate::drawpipe::Mode::Batch {
-                // short time bases measure the interpolated record: those frames stay out of the statistics
-                d.push(kv(
-                    "Frames in statistics",
-                    format!("{} of {} (not at short time bases)", fmt_count(measured as f64), fmt_count(used as f64)),
-                ));
-            }
-        }
+        append_frame_counts(self, &mut d);
         d.push(kv("Screen", format!("{:.0} fps", self.fps)));
         d.extend(device_overrides(p));
         if !p.warnings.is_empty() {

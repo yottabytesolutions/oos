@@ -9,7 +9,6 @@ fn start(logic: bool) -> (Ui, HwShared) {
     let shared = HwShared::default();
     let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
     ui.m.run = RunState::Run;
-    ui.m.draw_batch = false;
     ui.m.meas.clear();
     ui.m.meas2.clear();
     ui.m.tscale = tscales().iter().position(|&s| (s - 100e-6).abs() < 1e-10).unwrap();

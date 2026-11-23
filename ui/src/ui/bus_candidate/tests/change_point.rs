@@ -21,7 +21,7 @@ fn mixed_bus_publication_is_ready_before_record_intake() {
     let before = change::acquisition::identity(&ui);
     let id = change::acquisition::script_prepare(&mut ui);
     let g = lock(&shared);
-    assert_eq!(g.want, Some(candidate(&ui.m, &change::acquisition::draw_switches(&ui, &ui.m))));
+    assert_eq!(g.want, Some(candidate(&ui.m, ui.switches())));
     assert_eq!(g.acquisition.identity(), id);
     assert_eq!(id.gen(), before.gen() + 1);
     assert_eq!(ui.m.trig_type, TrigType::Bus);
@@ -43,7 +43,7 @@ fn mixed_bus_intake_cannot_publish_without_generation_or_class() {
     let changes = ui.host.runtime().change.last.as_ref().unwrap();
     assert_eq!(changes.identity().gen(), before.gen() + 1);
     assert!(changes.classes().contains(Classes::ACQ | Classes::STATS));
-    assert_eq!(lock(&shared).want, Some(candidate(&ui.m, &change::acquisition::draw_switches(&ui, &ui.m))));
+    assert_eq!(lock(&shared).want, Some(candidate(&ui.m, ui.switches())));
     let id = changes.identity();
     ui.step(0.001);
     assert_eq!(change::acquisition::identity(&ui), id, "unchanged candidate policy must be idempotent");
@@ -88,7 +88,7 @@ fn mixed_bus_single_and_stop_use_accepted_transition_effects() {
     assert_eq!(armed.epoch(), before.epoch() + 1);
     assert_eq!(lock(&shared).avg_clear, avg + 1);
     assert!(!lock(&shared).hold);
-    assert_eq!(lock(&shared).want, Some(candidate(&ui.m, &change::acquisition::draw_switches(&ui, &ui.m))));
+    assert_eq!(lock(&shared).want, Some(candidate(&ui.m, ui.switches())));
     assert!(ui.mixed_bus_command(0));
     ui.step(0.001);
     assert!(lock(&shared).hold, "STOP hold must precede publication");

@@ -1,5 +1,8 @@
 # Trigger refinement: near-only at the full rate (2026-11-14)
 
+Explanations of the hardware trigger position and register effects beyond the dated trigger captures are
+**assumed**.
+
 Follows docs/fork/ac-trig.md. Two costs left in the dense path's trigger refinement after that change.
 
 ## Cause

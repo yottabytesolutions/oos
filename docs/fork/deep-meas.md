@@ -1,5 +1,8 @@
 # Mean-type measurements of deep records from raw samples
 
+The raw deep measurement behavior was **verified on the unit (2026-11-15)** for the reported setups.
+Generalizations about read-out register effects are **assumed**.
+
 Raw deep measurements were verified on the unit 2026-11-15. The configuration switch and its off path were
 removed on 2026-11-17 (#124); Normal acquisition requests raw reads when a shown measurement or the software
 DVM needs samples.
@@ -23,9 +26,9 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
   (12,582,912 points of one lane). The quarter-screen margins of the first version are gone (see "Cost on the unit").
   The C2H path splits it into reads of at most 4 MiB.
 - Rate: once per `deepmeas::PERIOD` = 1 s while running; every batch in Single.
-- The raw frame replaces the newest frame of its batch, so its record is an ordinary raw record: measurements,
-  cursors, FFT, decode and history get samples. The picture of that record goes through the record path like the
-  pair records (same style).
+- The raw read can replace the newest frame in the record queue or supply the newest waveform tap on the
+  deposit route. Measurement and record consumers can use the raw window. The deposit can still use pairs
+  from the batch. See the [newest-record contract](../architecture/frames.md#newest-record-in-a-picture).
 - While raw deep reads come (`deepmeas::hold`: running, not Single, a pair record whose window fits the budget) the UI
   does not measure the pair records in between. Every value shown belongs to one raw record, at most about 1 s old,
   and the Measure statistics count each raw record once. Max, Min and Pk-pk then update once a second instead of per

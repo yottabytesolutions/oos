@@ -5,11 +5,11 @@ fn start() -> (Route, oos_core::change::Identity, crate::sysconf::Switches) {
     start_at(1e-6)
 }
 fn start_at(tdiv: f32) -> (Route, oos_core::change::Identity, crate::sysconf::Switches) {
-    let mut r = Route::new(BatchKind::Raw, true, 4, tdiv);
+    let mut r = Route::new(BatchKind::Raw, 4, tdiv);
     r.ui.m.persist = 0;
     r.ui.m.run = RunState::Run;
     let id = change::acquisition::script_prepare_route(&mut r.ui, false);
-    let sw = change::acquisition::draw_switches(&r.ui, &r.ui.m);
+    let sw = r.ui.switches().clone();
     crate::ui::step_draw::owner::set_render_owner_wake(
         &mut r.ui,
         Arc::new(crate::system::intake::Wake::new().unwrap()),
@@ -71,7 +71,7 @@ fn submit_readout(
 ) -> Box<dyn RawBatch> {
     let (fb, decode) = (b.frame_bytes(), b.decode());
     let codes = codes_available.then(|| b.codes()).flatten();
-    let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
+    let pipe = drawpipe::pipe().unwrap();
     pipe.feed_at(b.into_bytes().into(), fb, selected, (id, r.ui.host.picture_time(r.ui.now)), decode, codes, newest);
     let result = drawpipe::host::finish_batch(pipe, 0);
     if result.is_err() {
@@ -82,7 +82,7 @@ fn submit_readout(
 
 fn wait_for_publication() {
     // The DMA buffer can return before the coordinator publishes to the picture slot.
-    let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
+    let pipe = drawpipe::pipe().unwrap();
     drawpipe::host::barrier(pipe);
 }
 
@@ -157,7 +157,7 @@ fn skipped_steps_preserve_records_and_pixels_in_the_next_picture() {
 fn completed_raw_recycles_once_before_real_output_wait_and_alias_survives_reset() {
     let _scope = Scope::new();
     let (mut r, id, sw) = start();
-    let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
+    let pipe = drawpipe::pipe().unwrap();
     drop(submit_records(&mut r, id, &sw, 32, None));
     drop(submit_records(&mut r, id, &sw, 32, None));
     pipe.wait_owner_output();
@@ -294,9 +294,6 @@ fn owner_groups_minimum_persistence_with_or_without_zoom() {
     r.ui.m = saved.clone();
     r.ui.m.persist = 1;
     assert!(!active(&r.ui));
-    r.ui.m = saved.clone();
-    r.ui.m.draw_batch = false;
-    assert!(!active(&r.ui));
     r.ui.m = saved;
     crate::ui::change::intake(&mut r.ui, |ui| crate::store::set(&mut ui.m, "tdiv", "0.2").unwrap());
     assert!((r.ui.m.time_per_div() - 0.2).abs() < 1e-6);
@@ -331,7 +328,7 @@ fn accepted_ten_us_reconfiguration_rejects_late_one_us_cohort_before_first_use()
     r.ui.step(1.0 / 30.0);
     assert_eq!(drawpipe::counters().read().1, shown, "old timespec cannot receive first-use credit");
     assert!(drawpipe::counters().records_text().contains("lost.settings=32"));
-    let sw = change::acquisition::draw_switches(&r.ui, &r.ui.m);
+    let sw = r.ui.switches().clone();
     let (input, selected, newest, _) = crate::board::dho::scripted::evidence::planned_picture_cohort(&r.ui.m, &sw);
     let records = selected.len() as u64;
     drop(submit_cohort(&mut r, current, input, selected, false, newest, None));
@@ -365,12 +362,12 @@ fn composition_probe(channels: usize, tdiv: f32, records: usize) {
     use std::time::Instant;
 
     let _scope = Scope::new();
-    let mut r = Route::new(BatchKind::Codes, true, channels, tdiv);
+    let mut r = Route::new(BatchKind::Codes, channels, tdiv);
     r.ui.m.persist = 0;
     r.ui.m.run = RunState::Run;
     r.ui.m.trig_src = 0;
     let id = change::acquisition::script_prepare_route(&mut r.ui, false);
-    let sw = change::acquisition::draw_switches(&r.ui, &r.ui.m);
+    let sw = r.ui.switches().clone();
     crate::ui::step_draw::owner::set_render_owner_wake(
         &mut r.ui,
         Arc::new(crate::system::intake::Wake::new().unwrap()),

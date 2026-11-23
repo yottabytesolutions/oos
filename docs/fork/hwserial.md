@@ -1,5 +1,8 @@
 # Hardware SPI and I2C triggers
 
+The SPI and I2C register claims below are **assumed** on hardware. Their evidence is netlist simulation
+and the host implementation.
+
 The SPI and I2C protocol triggers in the TPU's receivers, next to the UART (`hwuart.md`). Opt-in with the same switch,
 `trig.serial_hw = on` in system.conf. Code: `hal/src/dho/serialtrig.rs` (words), `tpu::spi`, `tpu::i2c`,
 `seq::Trig::Spi`/`I2c`, `ui/src/board/dho/hw.rs` (`spi_of`, `i2c_of`, `serial_debug`). Register facts: below, indexed from

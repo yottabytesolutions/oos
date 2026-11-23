@@ -5,7 +5,7 @@ use super::*;
 fn worker(build: &mut Build) -> u128 {
     let ui = &mut build.route.ui;
     let id = change::acquisition::script_prepare_route(ui, false);
-    let sw = change::acquisition::draw_switches(ui, &ui.m);
+    let sw = ui.switches().clone();
     build.input.first = ui.wfm_total + 1;
     let batch = &mut build.input;
     let mut newest = batch.newest(id.epoch());
@@ -13,7 +13,7 @@ fn worker(build: &mut Build) -> u128 {
     let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
     let at = ui.host.picture_time(ui.now);
     let bytes = batch.into_bytes();
-    let pipe = drawpipe::pipe(&sw).unwrap();
+    let pipe = drawpipe::start_pipe(&sw);
     let started = Instant::now();
     pipe.feed_at(bytes, fb, 0..32, (id, at), decode, codes, Some(Arc::new(newest)));
     let result = drawpipe::host::finish_batch(pipe, 1);
@@ -33,7 +33,7 @@ fn worker(build: &mut Build) -> u128 {
 fn worker_route_short_extrema_compare() {
     assert_eq!(std::env::var("OOS_WORKER_COMPARE").as_deref(), Ok("1"));
     let _scope = Scope::new();
-    let mut build = Build::new(true, 4, 1e-6, 32);
+    let mut build = Build::new(false, 4, 1e-6, 32);
     build.route.ui.m.persist = 0;
     build.route.ui.m.run = RunState::Run;
     build.route.ui.m.dots = DotsMode::Auto;

@@ -67,7 +67,7 @@ pub(super) fn stop_workers(ui: &mut Ui, deadline: Instant) {
         drop(worker.tx);
         joins.push(worker.join);
     }
-    if let Some(pipe) = crate::drawpipe::pipe(crate::drawpipe::Access::Existing) {
+    if let Some(pipe) = crate::drawpipe::pipe() {
         crate::drawpipe::shutdown::close(pipe, deadline);
     }
     crate::system::shutdown::join(joins, deadline);
@@ -139,7 +139,7 @@ pub(super) fn reset(ui: &mut Ui) {
     ui.was_running = false;
     ui.stop_final = None;
     super::step_draw::release_window(ui);
-    if let Some(pipe) = crate::drawpipe::pipe(crate::drawpipe::Access::Existing) {
+    if let Some(pipe) = crate::drawpipe::pipe() {
         crate::drawpipe::shutdown::reset(pipe);
     }
     release_board(ui);

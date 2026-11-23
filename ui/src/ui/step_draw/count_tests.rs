@@ -4,7 +4,6 @@ use super::*;
 fn fresh_membership_excludes_retained_redraw_stop_single_and_disabled_observer() {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let mut ui = Ui::new(Source::Hw { shared: Default::default(), seen: 0 }, host::Host::headless());
-    ui.m.draw_batch = true;
     ui.m.acq = AcqMode::Normal;
     ui.m.trig_type = TrigType::Edge;
     ui.m.trig_mode = TrigMode::Normal;

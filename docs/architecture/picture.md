@@ -3,8 +3,8 @@
 Target architecture of the path from acquired frames to the phosphor maps the grade and the GPU read. Part of
 [README.md](README.md). Derivations, measurements and the step plan are in
 [drawing.md](drawing.md). The owner-approved [frame pipeline](frames.md) supersedes the worker-share kernel,
-publication and window unit. Its F0-F7 are target work, not completed implementation. This page keeps the
-picture lifetime and record-route rules consistent with that target.
+publication and window unit. See its status labels for implementation progress. This page describes
+the target picture lifetime and record-route rules.
 
 ## Owners
 
@@ -70,8 +70,8 @@ UI: ChangeSet -> accept -> fold window or decay/add -> W grade -> publish dirty 
 - **Conversion.** Volts, sample time and trigger refinement come from BatchMeta, never live Settings. An already
   painted deposit from an older hardware generation with its original mapping key and current epoch remains valid
   for the picture if that key still matches.
-- **Standard.** Keep it as the equality oracle through F2/F3 and M12a acceptance. F4 (M12b) deletes it and its
-  selectors. It is not a second target composition path. See [F0-F7](migration.md#f0-f7-frame-pipeline).
+- **Decoded fallback.** Reads ineligible for deposits still use the bounded record hand-off. The UI consumes
+  those records under the same identity checks as the rest of the batch pipeline.
 - **Route per batch, from the batch's own tag.** The acquisition thread sends every `Batch` to the pipe and knows
   nothing about drawing policy. `AcqWant` carries the `route` tag from the change stage, and the thread copies it into
   the `BatchMeta` of each batch it arms (README.md,
@@ -137,6 +137,9 @@ persistence, not a single record. Nothing is redrawn on every step.
 RUN, SINGLE and CLEAR leave `Frozen`.
 
 ## Records and measurement reads
+
+The rules below describe the target. See [the newest-record contract](frames.md#newest-record-in-a-picture)
+for current deposit and record drawing.
 
 - Records never draw on the fast path. The decoded newest `Frame` is for measurement.
 - A `MeasRead` (raw newest, deep window, STOP final) is never part of a live picture. It is drawn only alone, through

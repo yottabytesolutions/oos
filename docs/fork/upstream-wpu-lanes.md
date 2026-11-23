@@ -1,5 +1,9 @@
 # Two-channel read-path gain lanes (report for upstream)
 
+The gain-lane symptom was **verified on the unit (DHO804, 2026-11-13)** for the stated pair.
+The stock read-path order is **decoded from stock**. The specific correction test below is **assumed**
+on hardware in this report.
+
 ## Symptom
 
 With two channels acquired at different V/div, each channel's DC level is wrong by an amount proportional to its

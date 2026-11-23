@@ -1,7 +1,11 @@
 # Record -> play: why the read-out after an own arm stalls
 
-Status: the fix of section 6.1 is verified on the unit and is what OOS runs (`scu::passthrough`, `scu::readout_play4`).
-Register meanings marked "assumed" are inferred. Notation as in `acquisition-start.md` (`sN` = software copy of register N).
+Unlabelled register claims and interpretations of undated unit observations are **assumed**. The
+evidence notes below identify which write sequences came from stock.
+
+An undated unit test reported working raw read-out after the pass-through writes. OOS implements
+that sequence in `scu::passthrough` and `scu::readout_play4`. In the examples, `sN` is the software
+copy of register N.
 
 ## 0. Result in short
 
@@ -21,6 +25,9 @@ Register meanings marked "assumed" are inferred. Notation as in `acquisition-sta
 5. Fix (section 6): the pass-through writes, then the unchanged `readout_play4`.
 
 ## 1. Per-frame path between "done" and `read()`
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 ### 1.1 Frame loop
 
@@ -101,6 +108,9 @@ sequence + the same 12 writes. It is identical except for the window/header writ
 
 ## 2. The export path
 
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
+
 The export path is the raw memory read in STOP: pass-through writes, export, return.
 
 Pass-through writes:
@@ -134,6 +144,9 @@ unchanged values.
 
 ### 3.1 Play-side ("Tx/Proc") registers
 
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
+
 Roles are assumed unless stated.
 
 | register | live value (200 us/div, 1 ch) | export value | role |
@@ -159,6 +172,9 @@ TPU.
 
 ### 3.2 TX length model and the stall
 
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
+
 The FPGA sends **exactly** one frame of the TX length with EOP. A longer read fails with "stopped half-way" (EIO), and
 the rest of a frame comes with the next read (verified on the unit). Example: block 1 (4096 bytes) arrives and block 2
 fails half-way, which fits an 8000-byte frame (4000-point TX length left in place). Frames are padded to 8 bytes in the
@@ -172,6 +188,9 @@ select.
 
 ### 3.3 Hand-over history against this model
 
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
+
 All rows are verified on the unit, after a hand-over from the stock OS.
 
 | state of the chain before the read-out | result |
@@ -182,6 +201,9 @@ All rows are verified on the unit, after a hand-over from the stock OS.
 | live, compression 4, pass-through writes before the play | every own acquisition delivers its data |
 
 ## 4. 0x4034 bits
+
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
 
 Meanings are assumed, inferred from observed values. Bits 6/7 and bit 13 are confirmed by the bisect in 6.3.
 
@@ -204,6 +226,9 @@ state while a frame is being sent. It only gets stuck if the frame cannot comple
 
 ## 5. Done after 2.3 ms or 162 ms
 
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
+
 - 2.3 ms is the **expected** time for 2.5 M points at 1.25 GSa/s: 1 ms pre-trigger fill + <= 1 ms to the next rising edge
   of the 1 kHz probe signal + 1 ms post-trigger. It is a real edge-triggered acquisition (verified on the unit, 6.3).
 - 162 ms is a record without the TPU edge set-up: the auto trigger ends it (verified on the unit, 6.3). The record has no
@@ -216,6 +241,9 @@ state while a frame is being sent. It only gets stuck if the frame cannot comple
 - A memory burst is 10 points (`horizontal-config.md` 1.4).
 
 ## 6. Unit test of the read-out (concrete writes, in order)
+
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
 
 Precondition: own arm done (0x4080 bit30), 0x4034 bit13 = 1. 0x1170/0x1174/0x1154 have no OOS shadow: the values below
 assume bits 28-29 of 0x1170/0x1174 = 0 and 0x1154 upper bits = 0 (x2 interpolation off at 1.25 GSa/s).
@@ -276,6 +304,9 @@ So 0x31c0 means triggered and stopped. A pre-processing reset without a followin
 full plan with the pass-through writes delivers frames (verified on the unit).
 
 ## 7. Small differences in `hal` worth knowing
+
+**Assumed** for the register sequence or effect on hardware. Code and host fixtures establish the
+intended software writes.
 
 1. `readout_window`: for roundup4(n)/ratio == 8 it writes 0x11f0 = 128. The exact form is 128/ratio with a read of 256
    bytes. This only matters for tiny windows.

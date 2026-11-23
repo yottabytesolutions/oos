@@ -80,7 +80,7 @@ fn measured_over_budget_reads_are_serial_and_stay_fresh() {
     for (cost_ms, expected) in [(27, Grant::Serial), (6, Grant::Overlapping(1))] {
         let _scope = Scope::new();
         let switches = Switches::parse(&|_| None, "acq.work_budget_ms = 20", "", Default::default());
-        let pipe = drawpipe::pipe(&switches).unwrap();
+        let pipe = drawpipe::start_pipe(&switches);
         let id = Default::default();
         let mut model = Model::default();
         crate::store::set(&mut model, "tdiv", "0.000001").unwrap();

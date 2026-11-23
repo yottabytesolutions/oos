@@ -43,12 +43,12 @@ impl Coverage {
         Self { columns, lit_columns, lit_pixels, longest_gap }
     }
 
-    fn assert_matches(&self, standard: &Self, enabled: bool, label: &str) {
-        assert_eq!(self.lit_columns, standard.lit_columns, "{label}: lit columns");
-        assert_eq!(self.longest_gap, standard.longest_gap, "{label}: longest interior gap");
-        assert_eq!(standard.lit_pixels > 0, enabled, "{label}: Standard channel occupancy");
+    fn assert_matches(&self, records: &Self, enabled: bool, label: &str) {
+        assert_eq!(self.lit_columns, records.lit_columns, "{label}: lit columns");
+        assert_eq!(self.longest_gap, records.longest_gap, "{label}: longest interior gap");
+        assert_eq!(records.lit_pixels > 0, enabled, "{label}: Records channel occupancy");
         let mut pixel_tolerance = 0;
-        for (x, (&batch, &reference)) in self.columns.iter().zip(&standard.columns).enumerate() {
+        for (x, (&batch, &reference)) in self.columns.iter().zip(&records.columns).enumerate() {
             match (batch.bounds, reference.bounds) {
                 (Some((lo, hi)), Some((ref_lo, ref_hi))) => {
                     let (lo_delta, hi_delta) = (lo.abs_diff(ref_lo), hi.abs_diff(ref_hi));
@@ -66,20 +66,20 @@ impl Coverage {
         }
         // Only pixels at the rounded endpoints may change the lit-pixel count.
         assert!(
-            self.lit_pixels.abs_diff(standard.lit_pixels) <= pixel_tolerance,
+            self.lit_pixels.abs_diff(records.lit_pixels) <= pixel_tolerance,
             "{label}: lit pixels {} vs {}, tolerance {pixel_tolerance}",
             self.lit_pixels,
-            standard.lit_pixels
+            records.lit_pixels
         );
     }
 }
 
-pub(super) fn compare(standard: &Picture, batch: &Picture, width: usize, channels: usize, label: &str) {
-    assert_eq!(batch.frames, standard.frames, "{label}: counted frames");
-    assert!(batch.zoom == standard.zoom, "{label}: zoom pixel maps");
-    for (c, (standard, batch)) in standard.main.iter().zip(&batch.main).enumerate() {
+pub(super) fn compare(records: &Picture, batch: &Picture, width: usize, channels: usize, label: &str) {
+    assert_eq!(batch.frames, records.frames, "{label}: counted frames");
+    assert!(batch.zoom == records.zoom, "{label}: zoom pixel maps");
+    for (c, (records, batch)) in records.main.iter().zip(&batch.main).enumerate() {
         Coverage::of(batch, width).assert_matches(
-            &Coverage::of(standard, width),
+            &Coverage::of(records, width),
             c < channels,
             &format!("{label} CH{}", c + 1),
         );

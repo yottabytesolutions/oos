@@ -1,5 +1,8 @@
 # Trigger unit (TPU, BAR1 0x2000 block)
 
+Register fields and hardware effects are **assumed** unless their section identifies stock decoding or a
+dated observation. A stock hand-over readback by itself does not establish a field's meaning.
+
 Status: unless a statement says otherwise, the sequences in this file are not yet verified on hardware. "Assumed" marks an
 interpretation of a field or a behaviour. The values called "hand-over state" are the register contents left by the stock
 system in its default configuration.
@@ -18,6 +21,9 @@ The notation `source(...)`, `pattern(...)`, `trigger(...)`, `mode(...)` and so o
 prints the ordered writes for every type below. `hal/src/dho/tpu.rs` is the implementation.
 
 ## 1. TPU register map
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 | offset | bits | meaning |
 |---|---|---|
@@ -64,6 +70,9 @@ SCU registers that belong to the trigger: 0x4020 bit0 / 0x4060 / 0x4064 (auto tr
 trigger length (section 4 below), 0x4058 scan-mode trigger position.
 
 ## 2. Edge trigger
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 ### 2.1 Configuration order
 
@@ -191,6 +200,9 @@ the trigger channel must be in the acquisition channel mask (0x4008[3:0] / chmas
 
 ### 2.5 Coupling
 
+**Verified on the unit (DHO924S, 2026-11-13)** for the coupling responses in the measurement table. The
+write encoding is **decoded from stock**.
+
 | coupling | TPU code (0x208c[1:0]) | 0x205c bit12 |
 |---|---|---|
 | DC | 0 | 0 |
@@ -236,6 +248,9 @@ Only through the hysteresis (2.3). No separate TPU bit. (0x2264 bit16 is cleared
 
 ## 3. Sweep (auto / normal / single) and force
 
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
+
 - Sweep: AUTO, NORMAL, SINGLE. The TPU itself has **no sweep bit**. AUTO vs NORMAL is only the SCU auto-trigger enable
   0x4020 bit0 plus 0x4060/0x4064, written on every RUN/SINGLE command. See `acquisition-start.md` section 3: auto = (sweep ==
   AUTO), t1 = clamp(20 x tb, 10 ms, 500 ms), t2 = max(holdoff, clamp(10 x tb, 100 ms, 250 ms)). A change to AUTO or NORMAL
@@ -247,6 +262,9 @@ Only through the hysteresis (2.3). No separate TPU bit. (0x2264 bit16 is cleared
 - Status: 0x4034 (`acquisition-start.md` section 2: bit4 waiting, bits 6/7 triggered/auto, bit13 stopped).
 
 ## 4. Trigger position (pre-trigger)
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 This is not set in the TPU. The computation:
 
@@ -266,6 +284,9 @@ Also with these: 0x404c (pre-sample compensation) = 5 (10 in average mode). Scan
 Details of D, k and d are in `horizontal-config.md`.
 
 ## 5. Other trigger types (overview)
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 ### 5.1 Type codes
 
@@ -311,6 +332,9 @@ serial receivers need is not yet verified on hardware.
   Logic operator: OR -> 1, NOR -> 2, AND and NAND -> 0, so there is no NAND in this path.
 
 ## 6. OOS implementation: edge trigger
+
+**Assumed** for the register sequence or effect on hardware. Code and host fixtures establish the
+intended software writes.
 
 Goal: CH1, rising, level L (nV at the BNC), DC coupling, noise reject off, holdoff 8 ns, sweep AUTO or NORMAL.
 For a warm hand-over the AFE and scale are set by the stock system and CH1 is acquired. All registers are write-only. OOS keeps
@@ -363,6 +387,9 @@ Other choices:
   trigger/no trigger in NORMAL.
 
 ## 7. Where the trigger lands in the read-out (measured on a DHO924S, 2026-11-10)
+
+**Verified on the unit (DHO924S, 2026-11-10)** for the trigger positions in the reported captures.
+Proposed explanations and other modes are **assumed**.
 
 OOS takes the trigger point of a frame as sample `pre` = 0x4050 / compression of the read-out window (`hw::decode`).
 Measured with the generator on CH1 (1 kHz sine, 1 Vpp, about 150 mVpp noise at full bandwidth), edge trigger rising, level
@@ -425,6 +452,9 @@ log it per frame with the edge offsets to `/tmp/oos-hdr.log`; `:SYSTem:STATe?` e
 
 ## 8. Not yet verified on hardware
 
+**Assumed** for the register sequence or effect on hardware. Code and host fixtures establish the
+intended software writes.
+
 1. Meaning of p0/p2 and of the edge bits [7:6]/[15:14] beyond the observed combinations (10.13).
 2. Which comparator of a channel the pattern H/L test uses (10.8).
 3. Whether 0x208c[3:2] (channel) is used when bit12 = 0 (assumed not).
@@ -439,6 +469,9 @@ log it per frame with the edge offsets to `/tmp/oos-hdr.log`; `:SYSTem:STATe?` e
    point, 0 farther). Whether it is the comparator band at decimated rates or the noise is not settled.
 
 ## 10. Other trigger types (register level)
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 Numbered 10 because it continues section 6 for the non-edge types. `tools/tpumodel.py` prints the ordered writes for every type
 below (`tpumodel.py selftest` checks the edge case against `hal/src/dho/tpu.rs`). Times in fs, levels in nV.

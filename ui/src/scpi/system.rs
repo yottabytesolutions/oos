@@ -97,11 +97,6 @@ fn settings(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str
         );
         return Some(text_reply(&text));
     }
-    // Acquire > Draw path: FRAMes (Standard) or BATCh (default); the `pipe` part of
-    // :SYSTem:STATe? says which runs
-    if kw(nodes[1], "PIPeline") {
-        return pipeline(scpi, ui, query, arg);
-    }
     // System > Graphics: CPU or GPU (whether the GPU really draws: the `gpu` part of :SYSTem:STATe?)
     if kw(nodes[1], "GRAPhics") {
         return graphics(scpi, ui, query, arg);
@@ -131,41 +126,34 @@ fn mask_map(scpi: &mut Scpi, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<
 }
 
 fn set(scpi: &mut Scpi, ui: &mut Ui, arg: &str) -> Option<Option<Vec<u8>>> {
-    let r = arg.split_once('=').ok_or("no '='".to_string()).and_then(|(k, v)| {
-        if k.trim() == "trig_mode" {
-            ui.set_sweep(crate::store::parse_sweep(v.trim())?);
-        } else {
-            crate::store::set(&mut ui.m, k.trim(), v.trim())?;
-        }
-        Ok(())
-    });
-    match r {
-        Ok(()) => change::edited(ui),
-        Err(e) => scpi.push_err(format!("-224,\"Illegal parameter value\" {}", e)),
+    let Some((key, value)) = arg.split_once('=') else {
+        scpi.push_err("-224,\"Illegal parameter value\" no '='".into());
+        return Some(None);
+    };
+    let (key, value) = (key.trim(), value.trim());
+    if crate::store::setup::is_retired_setup_key(key) {
+        eprintln!("oos-ui: ignoring retired setup key {key}");
+        return Some(None);
     }
-    // a setup file may hold keys of newer versions, here a typo must not pass for a setting; the keys that
-    // are only written when they differ from their default do not show
-    let k = arg.split('=').next().unwrap_or("").trim();
-    let optional = ["vfine", "unit", "bias", "skew", "label", "tfine"].iter().any(|s| k.ends_with(s))
-        || k.starts_with("math_expr")
-        || k == "cat";
-    if !optional && !crate::store::setup_text(&ui.m).lines().any(|l| l.split('=').next().unwrap_or("").trim() == k) {
-        scpi.push_err(format!("-224,\"Illegal parameter value\" unknown key {}", k));
-    }
-    Some(None)
-}
-
-fn pipeline(scpi: &mut Scpi, ui: &mut Ui, query: bool, arg: &str) -> Option<Option<Vec<u8>>> {
-    if query {
-        return Some(text_reply(if ui.m.draw_batch { "BATC" } else { "FRAM" }));
-    }
-    let a = arg.trim().to_ascii_uppercase();
-    if a.starts_with("BATC") {
-        ui.m.draw_batch = true;
-    } else if a.starts_with("FRAM") || a.starts_with("STAN") {
-        ui.m.draw_batch = false;
+    let applied = if key == "trig_mode" {
+        crate::store::parse_sweep(value).map(|mode| {
+            ui.set_sweep(mode);
+            true
+        })
     } else {
-        scpi.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+        crate::store::setup::set_known(&mut ui.m, key, value)
+    };
+    let applied = match applied {
+        // Keep the original setup application and edit bookkeeping for optional field suffixes.
+        Ok(false) if ["label", "unit", "bias", "skew", "vfine", "tfine"].iter().any(|s| key.ends_with(s)) => {
+            crate::store::set(&mut ui.m, key, value).map(|()| true)
+        }
+        result => result,
+    };
+    match applied {
+        Ok(true) => change::edited(ui),
+        Ok(false) => scpi.push_err(format!("-224,\"Illegal parameter value\" unknown key {key}")),
+        Err(e) => scpi.push_err(format!("-224,\"Illegal parameter value\" {}", e)),
     }
     Some(None)
 }
@@ -223,6 +211,87 @@ fn dvm_lane(scpi: &mut Scpi, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_setup_key_is_ignored_and_queries_empty() {
+        let mut scpi = Scpi::disconnected();
+        let canvas = Canvas::new(1, 1);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
+        let before = crate::store::setup_text(&ui.m);
+        assert!(scpi.exec_line(&mut ui, &canvas, ":SYSTem:SET draw_path = batch").is_empty());
+        assert_eq!(scpi.exec_line(&mut ui, &canvas, ":SYSTem:ERRor?"), b"0,\"No error\"");
+        assert!(scpi.exec_line(&mut ui, &canvas, ":SYSTem:GET? draw_path").is_empty());
+        assert_eq!(scpi.exec_line(&mut ui, &canvas, ":SYSTem:ERRor?"), b"0,\"No error\"");
+        assert_eq!(crate::store::setup_text(&ui.m), before);
+    }
+
+    #[test]
+    fn unknown_setup_keys_are_rejected() {
+        let mut scpi = Scpi::disconnected();
+        let canvas = Canvas::new(1, 1);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
+        for key in ["draw_paths", "ch1.unknown", "d2.unknown"] {
+            scpi.exec_line(&mut ui, &canvas, &format!(":SYSTem:SET {key} = batch"));
+            assert_eq!(
+                scpi.exec_line(&mut ui, &canvas, ":SYSTem:ERRor?"),
+                format!("-224,\"Illegal parameter value\" unknown key {key}").as_bytes()
+            );
+        }
+        assert!(ui.m.decs[1].is_none());
+    }
+
+    #[test]
+    fn optional_setup_suffixes_keep_legacy_scpi_behavior() {
+        let mut scpi = Scpi::disconnected();
+        let canvas = Canvas::new(1, 1);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
+        assert!(ui.m.decs[1].is_none());
+        for prefix in ["", "ch1.", "d2."] {
+            for suffix in ["label", "unit", "bias", "skew", "vfine", "tfine"] {
+                scpi.exec_line(&mut ui, &canvas, &format!(":SYSTem:SET {prefix}unknown_{suffix} = ignored"));
+                assert_eq!(scpi.exec_line(&mut ui, &canvas, ":SYSTem:ERRor?"), b"0,\"No error\"");
+            }
+        }
+        assert!(ui.m.decs[1].is_some());
+        scpi.exec_line(&mut ui, &canvas, ":SYSTem:SET ch0.unknown_label = ignored");
+        assert_eq!(
+            scpi.exec_line(&mut ui, &canvas, ":SYSTem:ERRor?"),
+            b"-224,\"Illegal parameter value\" unknown channel"
+        );
+    }
+
+    #[test]
+    fn known_setup_key_applies_even_if_omitted_at_default() {
+        let mut scpi = Scpi::disconnected();
+        let canvas = Canvas::new(1, 1);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
+        scpi.exec_line(&mut ui, &canvas, ":SYSTem:SET ch1.vfine = 1.5");
+        assert_eq!(scpi.exec_line(&mut ui, &canvas, ":SYSTem:ERRor?"), b"0,\"No error\"");
+        assert_eq!(scpi.exec_line(&mut ui, &canvas, ":SYSTem:GET? ch1.vfine"), b"1.5");
+    }
+
+    #[test]
+    fn setup_file_aliases_are_rejected_without_applying_over_scpi() {
+        let mut scpi = Scpi::disconnected();
+        let canvas = Canvas::new(1, 1);
+        let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
+        let before = crate::store::setup_text(&ui.m);
+        for (key, value) in [
+            ("tscale", "0"),
+            ("zscale", "0"),
+            ("cur_b_ch", "2"),
+            ("hdmi_wave", "true"),
+            ("ch1.vscale", "0"),
+            ("ch1.bw20", "true"),
+        ] {
+            scpi.exec_line(&mut ui, &canvas, &format!(":SYSTem:SET {key} = {value}"));
+            assert_eq!(
+                scpi.exec_line(&mut ui, &canvas, ":SYSTem:ERRor?"),
+                format!("-224,\"Illegal parameter value\" unknown key {key}").as_bytes()
+            );
+            assert_eq!(crate::store::setup_text(&ui.m), before);
+        }
+    }
 
     #[test]
     fn state_reports_startup_diagnostics_switches() {

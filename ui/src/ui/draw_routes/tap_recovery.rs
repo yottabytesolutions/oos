@@ -11,9 +11,9 @@ fn watchdog_step_frees_the_window_and_restart_retains_only_new_deposits() {
     use crate::system::memory::{Action, Limits, Watchdog};
 
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
     route.step(1);
-    let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
+    let pipe = drawpipe::pipe().unwrap();
     step_draw::reset_window(&mut route.ui);
     assert!(pipe.take_recycled_deposit().is_some(), "normal clearing keeps a reusable deposit");
     route.step(1);
@@ -56,8 +56,8 @@ fn submit_charged(
     configure: impl FnOnce(&mut Frame),
 ) -> (Arc<Frame>, std::sync::Weak<drawpipe::TapReservation>) {
     let id = change::acquisition::script_prepare(&mut route.ui);
-    let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
-    let pipe = drawpipe::pipe(&sw).unwrap();
+    let sw = route.ui.switches().clone();
+    let pipe = drawpipe::start_pipe(&sw);
     let batch = route.source.next_batch(&route.ui.m, &sw, 1, None).unwrap();
     let mut frame = batch.newest(id.epoch());
     (frame.cfg, frame.seq) = (id.gen(), seq);
@@ -133,14 +133,14 @@ fn assert_observer_redraw_accounting(before: &str, after: &str) {
 fn accepted_tap_redraws_once_after_remap() {
     for queued in [true, false] {
         let _scope = Scope::new();
-        let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+        let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
         route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
         let tap = submit(&mut route, 2, vec![0.75; 12_512]);
         if queued {
             fallback(&route.ui, &tap, 1, 0.25);
         }
         route.ui.step(STEP);
-        let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
+        let pipe = drawpipe::pipe().unwrap();
         assert_eq!(pipe.tap_count(), usize::from(queued));
         assert_eq!(last_seq(&route.ui), if queued { 1 } else { 2 });
         assert_eq!(route.ui.wfm_total, 1 + u64::from(queued));
@@ -181,39 +181,15 @@ fn accepted_tap_redraws_once_after_remap() {
 }
 
 #[test]
-fn accepted_queued_tap_redraws_after_switching_to_standard() {
-    let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
-    let tap = submit(&mut route, 2, vec![0.75; 12_512]);
-    fallback(&route.ui, &tap, 1, 0.25);
-    route.ui.step(STEP);
-    let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
-    assert_eq!((route.ui.batch_picture.frames, pipe.tap_count(), last_seq(&route.ui)), (2, 1, 1));
-    let identity = change::acquisition::identity(&route.ui);
-    let count = route.ui.wfm_total;
-
-    route.ui.m.draw_batch = false;
-    route.ui.step(STEP);
-
-    let current = change::acquisition::identity(&route.ui);
-    assert_eq!((current.gen(), current.epoch()), (identity.gen(), identity.epoch()));
-    let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
-    drawpipe::draw_frame(&mut expected, &route.ui.m, &tap, crate::sparse::Interp::Exact, None);
-    assert!(expected.maps()[0].iter().any(|&v| v > 0));
-    assert!(route.ui.ph.maps() == expected.maps(), "Standard draws the accepted tap once");
-    assert_eq!((pipe.tap_count(), last_seq(&route.ui), route.ui.wfm_total), (0, 2, count));
-}
-
-#[test]
 fn pending_tap_remaps_before_its_deposit_is_accepted() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
     route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
     submit(&mut route, 1, vec![0.25; 12_512]);
     let tap = submit(&mut route, 2, vec![0.75; 12_512]);
     route.ui.step(STEP);
     assert_eq!((last_seq(&route.ui), route.ui.wfm_total, route.ui.history.len()), (2, 1, 2));
-    let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
+    let pipe = drawpipe::pipe().unwrap();
     drawpipe::host::barrier(pipe);
 
     route.ui.m.dots = DotsMode::On;
@@ -233,7 +209,7 @@ fn pending_tap_remaps_before_its_deposit_is_accepted() {
 #[test]
 fn reader_merge_counts_taps_and_keeps_the_newer_fallback_preview() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
     route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
     let initial = route.ui.ph.upload_rows(0, None).0;
     let mut stamps = [initial.clone(), initial];
@@ -250,7 +226,7 @@ fn reader_merge_counts_taps_and_keeps_the_newer_fallback_preview() {
     };
     let first = submit(&mut route, 1, vec![0.25; 12_512]);
     let second = submit(&mut route, 2, vec![0.5; 12_512]);
-    let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
+    let pipe = drawpipe::pipe().unwrap();
     route.ui.step(STEP);
     assert_eq!(last_seq(&route.ui), second.seq);
     assert_eq!(route.ui.wfm_total, 1, "tap 1 is deposited while tap 2's deposit is still private");
@@ -277,7 +253,7 @@ fn reader_merge_counts_taps_and_keeps_the_newer_fallback_preview() {
 #[test]
 fn drawable_fallback_after_a_pending_tap_does_not_replace_its_statistics() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
     route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
     let first = submit(&mut route, 1, vec![0.25; 12_512]);
     let second = submit(&mut route, 2, vec![0.5; 12_512]);
@@ -287,7 +263,7 @@ fn drawable_fallback_after_a_pending_tap_does_not_replace_its_statistics() {
     assert_eq!(last_seq(&route.ui), 3);
     assert_mean_stats(&route.ui, 3, 1.5, 0.875, 0.25, 0.75);
     assert!((route.ui.ana_get(0, Meas::Vavg) - 0.75).abs() < 1e-5);
-    let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
+    let pipe = drawpipe::pipe().unwrap();
     drawpipe::host::barrier(pipe);
     route.ui.step(STEP);
     assert!(pipe.take_preview(&second, (route.ui.ph.w - 1, route.ui.ph.h)).is_none());
@@ -301,7 +277,7 @@ fn drawable_fallback_after_a_pending_tap_does_not_replace_its_statistics() {
 fn single_tap_folds_now_and_expensive_measurement_completes_once() {
     for background in [false, true] {
         let _scope = Scope::new();
-        let mut route = Route::new(BatchKind::Raw, true, 1, 50e-6);
+        let mut route = Route::new(BatchKind::Raw, 1, 50e-6);
         route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0))];
         route.ui.m.meas_full_record = true;
         if background {
@@ -330,7 +306,7 @@ fn single_tap_folds_now_and_expensive_measurement_completes_once() {
 #[test]
 fn tap_statistics_keep_both_gates_without_scanning_on_the_reader() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
     route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
     route.ui.m.meas_full_record = true;
     route.ui.measure_in_background();
@@ -353,7 +329,7 @@ fn tap_statistics_keep_both_gates_without_scanning_on_the_reader() {
 #[test]
 fn stale_tap_attempt_releases_its_charge_without_counting_a_second_loss() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
     route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
     let (old, receipt) = submit_charged(&mut route, 1, vec![0.25; 12_512], |_| {});
     assert_eq!(receipt.strong_count(), 1, "the pending reader owns the charge after DMA return");
@@ -373,7 +349,7 @@ fn stale_tap_attempt_releases_its_charge_without_counting_a_second_loss() {
 #[test]
 fn old_tap_worker_completion_cannot_count_the_new_fallback_twice() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
     route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
     route.ui.measure_in_background();
     let tap = submit(&mut route, 1, vec![0.25; 12_512]);
@@ -392,7 +368,7 @@ fn old_tap_worker_completion_cannot_count_the_new_fallback_twice() {
 fn held_deep_measurement_uses_the_raw_taps_statistics_once() {
     for background in [false, true] {
         let _scope = Scope::new();
-        let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+        let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
         route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
         if background {
             route.ui.measure_in_background();

@@ -1,5 +1,7 @@
 # :SYSTem:STATe? response schema
 
+See the [frame counter reference](../architecture/frame-counters.md) for the five versioned frame pipeline groups.
+
 Source baseline: merged `overhaul` c59b71d5, 2026-11-16. Extracted from source, not
 verified on hardware in this task. This is the current diagnostic wire format
 and the coordinator-decided version boundary for M15/unitlab. It does not
@@ -25,7 +27,7 @@ fps F frames N records N run R status S t T step X ms (acq A draw D)
 render X ms present X ms edges A B C D off SUM MAX
 parts meas X analyse X pane X max X ms
 [gpu layers X copy X wait X (upload X draw X read X) ms]
-pipeline MODE route=ROUTE interp MODE acquired N used N dropped N measured N compress k K
+route=ROUTE interp MODE acquired N used N dropped N measured N compress k K
 deep reads N dma X decode X record X measure X ms (N pts)
 [gpu panel X [monitor X] ms]
 pacing ... picture ... settle ...
@@ -93,7 +95,7 @@ so the whole diagnostic answer is not an atomic multi-counter snapshot.
 | state-query-25 | `gpu.upload` | optional f1, ms | ui.t_gpu[3]; last panel helper frame upload timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
 | state-query-26 | `gpu.draw` | optional f1, ms | ui.t_gpu[4]; last panel helper frame draw timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
 | state-query-27 | `gpu.read` | optional f1, ms | ui.t_gpu[5]; last panel helper frame readback timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
-| state-query-28 | `pipeline` | enum Frames/Batch | accepted draw_switches route; hardware uses accepted m.draw_batch, other sources use startup switches.pipeline | `ui/src/ui/change/acquisition.rs:18` |
+| state-query-28 | `route=` | enum batch/batch-funded/records/stopped/replay | current picture route | `ui/src/ui/step_draw.rs` |
 | state-query-29 | `interp` | enum Exact/Fast | switches.interp; sparse interpolation policy | `ui/src/sparse.rs:161` |
 | state-query-30 | `acquired` | u64, frames | drawpipe::Counters.acquired; process aggregate of frames acquired | `ui/src/drawpipe.rs:320` |
 | state-query-31 | `used` | u64, frames | drawpipe::Counters.used; process aggregate of frames drawn into picture | `ui/src/drawpipe.rs:320` |
@@ -109,15 +111,8 @@ so the whole diagnostic answer is not an atomic multi-counter snapshot.
 | state-query-41 | `gpu.panel` | optional f1, ms | ui.t_gpu_screens.0; helper time of last panel frame | `ui/src/cmd.rs:168` |
 | state-query-42 | `gpu.monitor` | optional f1, ms | ui.t_gpu_screens.1 when Some; helper time of last monitor frame; monitor is every second frame | `ui/src/cmd.rs:167` |
 
-The `pipeline` diagnostic (state-query-28) reads the accepted draw route from
-`accepted_draw_switches`, while `:SYST:PIPeline?` reads `m.draw_batch`. Hardware uses the
-accepted model preference, including accepted changes through `:SYST:PIPeline`.
-Non-hardware sources retain the startup pipeline switch, so their diagnostic
-can differ from the model preference. Evidence: `ui/src/cmd.rs:154`,
-`ui/src/ui/change/acquisition.rs:18`.
-`route=` reports the current UI path: `batch`, `standard`, `records`, `stopped` or `replay`.
-Batch still delivers its newest record through the queue. This names the selected path,
-not a promise that a worker has a pending batch. Source: `ui/src/ui/step_draw.rs`.
+`route=` includes `batch-funded` when the staged profile has admitted the current geometry or `records` while
+admission is unavailable. Batch deposits have a separate newest-record tap for analysis and history.
 
 ## Pacing, composition and frame costs
 

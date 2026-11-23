@@ -12,7 +12,7 @@ pub struct Limits {
 impl Limits {
     pub fn parse(conf: &str) -> Self {
         let mb = |key, default| {
-            crate::drawpipe::conf_value(None, conf, key)
+            crate::sysconf::conf_value(None, conf, key)
                 .and_then(|s| s.parse::<u64>().ok())
                 .filter(|n| *n > 0 && *n <= 4096)
                 .unwrap_or(default)

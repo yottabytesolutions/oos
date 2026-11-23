@@ -79,7 +79,16 @@ pub(in crate::drawpipe) fn set_view(
     if worker_changed || statistics {
         crate::pacing::VIEWS.fetch_add(1, Ordering::Relaxed);
         v.gen += u64::from(worker_changed);
-        v.view = Some(Arc::new(View { gen: v.gen, m: m.clone(), interp, w, h, zoom }));
+        let mut spare = v.spare.take();
+        // Readers may still hold the retired projection. Reuse its storage only when the publisher owns it alone.
+        let view = if let Some(view) = spare.as_mut().and_then(Arc::get_mut) {
+            oos_core::change::refresh(&mut view.m, m);
+            (view.gen, view.interp, view.w, view.h, view.zoom) = (v.gen, interp, w, h, zoom);
+            spare
+        } else {
+            Some(Arc::new(View { gen: v.gen, m: m.clone(), interp, w, h, zoom }))
+        };
+        v.spare = std::mem::replace(&mut v.view, view);
         v.key = Some(key);
     }
     #[cfg(test)]

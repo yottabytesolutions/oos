@@ -1,5 +1,8 @@
 # Unit support: DHO804
 
+Register results tied to a dated DHO804 round are **verified on the unit** for that setup. Planned
+register writes and untraced hardware effects are **assumed**.
+
 Private fork notes for one unit. The mechanisms are generic and documented in the upstream docs; this page lists what
 this unit uses, how to build its image, and what is still unverified.
 
@@ -210,6 +213,8 @@ for the first 32 batches after every clear. Calibrator square on CH1 unless stat
     average runs. The LA is not testable on this unit.
 
 ## On-unit session: next-round table 1 (2026-11-13)
+
+**Verified on the unit (DHO804, 2026-11-13)** for the completed observations in the dated rounds below.
 
 Build 20261113-170512 (dho804 d1f76c6, default DTB). Full numbers, per-run tables and method: private RE notes
 `docs/logs/oos_unitlab_20261113.md`. Source: the 1 kHz probe-comp square, Auto, rising edge, so at most 1000

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
-use crate::drawpipe::{self, Accepted, Access, Pipe, Stats};
+use crate::drawpipe::{self, Accepted, Pipe, Stats};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -22,7 +22,7 @@ pub(super) fn release_window(ui: &mut Ui) {
 }
 
 pub(super) fn reset_window(ui: &mut Ui) {
-    if let Some(pipe) = crate::drawpipe::pipe(crate::drawpipe::Access::Existing) {
+    if let Some(pipe) = crate::drawpipe::pipe() {
         pipe.discard_window(&mut ui.batch_picture.window);
     }
 }
@@ -78,7 +78,7 @@ pub(super) struct Fast {
 
 pub(super) fn intake_count(ui: &Ui, fast: bool, taps: usize) -> usize {
     match ui.m.trig_type {
-        // Peak read-outs that reach the legacy queue are still consumed in FIFO order.
+        // Peak read-outs on the record route are still consumed in FIFO order.
         _ if fast && (ui.m.acq == AcqMode::Peak || ui.m.zoom) => taps.max(crate::board::RECORDS_PER_STEP),
         _ if fast => taps.max(1),
         _ if ui.src.is_hw() => crate::board::RECORDS_PER_STEP,
@@ -148,8 +148,8 @@ pub(super) fn fast(
     let started = Instant::now();
     let frames = if ui.m.acq == AcqMode::Peak || ui.m.zoom { Vec::new() } else { ui.src.drain_newest() };
     let before_merge = Instant::now();
-    let pipe = crate::drawpipe::pipe(sw);
-    let merged = pipe.map(|pipe| merge(ui, pipe, clear, keep_window));
+    let pipe = drawpipe::start_pipe(sw);
+    let merged = merge(ui, pipe, clear, keep_window);
     let after_merge = Instant::now();
     if !frames.is_empty() && std::mem::take(clear) {
         reset_window(ui);
@@ -166,7 +166,7 @@ pub(super) fn fast(
         result.raw = Some(crate::wave::hw_record(&ui.m, f.clone()));
         crate::deepmeas::cost::set(&crate::deepmeas::cost::RECORD_US, t.elapsed());
     }
-    if result.frames > 0 && ui.fast_draw_all(frames) > 0 {
+    if result.frames > 0 && ui.draw_queued_prefix(frames) > 0 {
         ui.m.status = TrigStatus::Triggered;
     }
     draw[1] += before_merge - started + after_merge.elapsed();
@@ -174,11 +174,9 @@ pub(super) fn fast(
     ui.t_fast += 0.05 * (ms - ui.t_fast);
 
     let processing = Instant::now();
-    if let Some(d) = merged {
-        result.window_frames = d.window_frames;
-        result.frames += d.frames as usize;
-        accept(ui, d, composition);
-    }
+    result.window_frames = merged.window_frames;
+    result.frames += merged.frames as usize;
+    accept(ui, merged, composition);
     draw[2] += after_merge - before_merge + processing.elapsed();
     let merge_ms = draw[2].as_secs_f32() * 1e3;
     result.ms = ms + merge_ms;
@@ -192,7 +190,7 @@ pub(super) fn replay(
     clear: &mut bool,
     composition: &mut Composition,
 ) -> usize {
-    let Some(pipe) = crate::drawpipe::pipe(sw) else { return 0 };
+    let pipe = drawpipe::start_pipe(sw);
     let Some(frame) = ui.last[0].as_ref().and_then(|rec| rec.raw.as_ref()).map(|raw| &raw.frame) else {
         return 0;
     };
@@ -277,28 +275,26 @@ pub(super) fn render_start(ui: &mut Ui, l: &mut Layers) -> bool {
     false
 }
 
-pub(crate) fn status(ui: &Ui) -> (drawpipe::Mode, &'static str) {
-    use crate::drawpipe::{funding::Profile, Mode};
-    let switches = change::acquisition::accepted_draw_switches(ui);
-    let staged = ui.src.is_hw() && switches.f2_funding != Profile::Unconfigured;
-    let funded = staged
-        && switches.pipeline == Mode::Batch
-        && drawpipe::pipe(Access::Existing).is_some_and(|pipe| pipe.has_funded_taps(change::acquisition::identity(ui)));
-    let pipeline = if staged && !funded { Mode::Frames } else { switches.pipeline };
-    let route = if ui.record_mode() {
-        "replay"
-    } else if ui.m.run == RunState::Stop {
-        "stopped"
-    } else if !ui.fast_ok() {
-        "records"
-    } else if funded {
-        "batch-funded"
-    } else if ui.m.draw_batch && !staged {
-        "batch"
-    } else {
-        "standard"
-    };
-    (pipeline, route)
+pub(super) fn funded_taps(ui: &Ui) -> bool {
+    drawpipe::pipe().is_some_and(|pipe| pipe.has_funded_taps(change::acquisition::identity(ui)))
+}
+
+pub(crate) fn status(ui: &Ui) -> &'static str {
+    use crate::drawpipe::funding::Profile;
+    if ui.record_mode() {
+        return "replay";
+    }
+    if ui.m.run == RunState::Stop {
+        return "stopped";
+    }
+    if !ui.fast_ok() {
+        return "records";
+    }
+    match ui.switches().f2_funding {
+        Profile::Unconfigured => "batch",
+        _ if funded_taps(ui) => "batch-funded",
+        _ => "records",
+    }
 }
 
 #[derive(Default)]
@@ -358,7 +354,6 @@ pub(super) fn account_picture(ui: &Ui, records: usize, composition: Composition)
     if ui.src.is_hw()
         && ui.m.run == RunState::Run
         && !ui.record_mode()
-        && ui.m.draw_batch
         && ui.fast_ok()
         && counters.diagnostics_enabled()
     {

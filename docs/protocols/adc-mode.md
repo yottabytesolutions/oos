@@ -1,5 +1,9 @@
 # ADC channel mode: what changes when the set of enabled channels changes
 
+ADC and SPU register effects are **assumed** unless specifically dated. The mode settings and filter
+write values are **decoded from stock**. Readbacks in the undated unit account apply to the modes stated
+there.
+
 The code is in `hal::dho::adc` (mode writes, `cal_adc.hex`) and `hal::dho::seq` (when they run).
 Status: the register values below are consistent with live values on the unit for mode 0 (marked in the text). A
 complete mode switch is not yet verified on hardware against a known signal (5.4).
@@ -226,6 +230,9 @@ sample delays, 0x10d0/0x10d8/0x10d4, 0x1148, 0x10e4, 0x4050/0x4054, 0x10e0, read
 mask to 0x4008[3:0] (`acquisition-start.md`).
 
 ## 5. OOS implementation
+
+**Assumed** for the register sequence or effect on hardware. Code and host fixtures establish the
+intended software writes.
 
 ### 5.1 State to keep
 

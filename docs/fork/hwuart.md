@@ -1,5 +1,8 @@
 # Hardware UART trigger
 
+UART register fields below are **assumed** on hardware. Their evidence is netlist simulation and the
+host implementation.
+
 The UART protocol trigger in the TPU's receiver. Opt-in: `trig.serial_hw = on` in system.conf, read once at start,
 off by default. Code: `hal/src/dho/uarttrig.rs` (words, timing), `tpu::uart` (the write sequence),
 `seq::Trig::Uart`, `ui/src/board/dho/hw.rs` (`hw_uart`, `uart_debug`). Register facts: below, indexed from

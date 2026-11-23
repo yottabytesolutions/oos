@@ -14,7 +14,6 @@ fn fixture() -> (Pipe, Settings, hz::Params, Identity, Model) {
         ("acq", "Normal"),
         ("mdepth", "0"),
         ("cores", "true"),
-        ("draw_path", "batch"),
         ("dots", "Auto"),
         ("persist", "0"),
         ("meas", ""),

@@ -3,13 +3,6 @@
 use super::*;
 pub(super) const CASES: &[Case] = &[
     (
-        "draw_batch",
-        |m| {
-            m.draw_batch = !m.draw_batch;
-        },
-        C::PHOSPHOR,
-    ),
-    (
         "bar_compact",
         |m| {
             m.bar_compact = !m.bar_compact;

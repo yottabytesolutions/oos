@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Staged application input, not automatic physical-memory discovery.
 
-use super::{conf_value, Counters, Pipe};
+use super::{Counters, Pipe};
 use crate::picture::deposit::admission::Share;
+use crate::sysconf::conf_value;
 use std::{sync::Arc, time::Duration};
 
 /// All bounds are supplied by the application qualification profile. No RSS,

@@ -1,59 +1,110 @@
-# Temporary system.conf keys
+# UI system.conf keys
 
-Removal backlog for [ADR 0012](adr/0012-hardware-verification.md).
-Each row is a candidate for one coordinator-owned removal issue. Removal means choosing the supported path from
-unit evidence and deleting the alternate path and its switch; this inventory does not change any defaults.
-Hardware verification is limited to the evidence linked here, not a new unit run.
+This inventory covers [SysConf](../ui/src/sysconf.rs), its [startup switches](../ui/src/sysconf/switches.rs)
+and the parsers they call. Run `python3 docs/check-system-conf-keys.py` from the repository root to check
+that those parsers' keys have table rows.
 
-Defaults below are the parser defaults without environment overrides, image defaults or user configuration.
-Batch drawing is the code default. The [shared image defaults](../rootfs/initramfs/etc/oos/system.conf) enable
-`acq.prearm = on`, `acq.compress = on` and `perf.place = on`. The user's system.conf wins over image defaults.
-For `acq.pipeline`, `OOS_PIPELINE` overrides system.conf; an invalid value (including empty) is logged and uses Batch.
-`acq.frame0`, `trig.serial_hw`, `zone.batch` and `mask.map.*` are read only from the user's settings file;
-the other rows use the combined settings and image text. These switches are read at startup.
+Defaults are built-in values before the image, user settings or environment overrides. The user file takes
+precedence over the [shared image defaults](../rootfs/initramfs/etc/oos/system.conf). The startup switches
+take the first matching line in that order, even if its value is empty. `acq.frame0`, `trig.serial_hw`,
+`zone.batch` and `mask.map.*` use only the user file. Ordinary settings use the last valid assignment and
+can also be changed through the UI where supported. See [network settings](network.md) for keys read by
+image scripts and [ADR 0012](adr/0012-hardware-verification.md) for experimental switch removal.
 
-| Key | Purpose | Default | Why temporary / removal issue scope |
+## Acquisition and rendering switches
+
+| Key | Values | Default | Effect | Unit evidence |
+|---|---|---|---|---|
+| `acq.prearm` | `on`, `off` | `off` (image `on`) | Allow eligible batches to arm ahead. Presence of `OOS_PREARM` enables it. | Prior DHO804 checks in [transfer efficiency](fork/unit-dho804.md#transfer-efficiency-spec-10-verification-on-hardware). |
+| `acq.compress` | `on`, `off` | `off` (image `on`) | Allow live play-side min/max compression. `OOS_COMPRESS` overrides the file. | Pair layout and representative reads were checked on the unit. See [compression evidence](fork/compress.md#evidence). |
+| `acq.interp` | `exact`, `fast` | `exact` | Select sparse interpolation. `OOS_INTERP` overrides the file. | Fast-mode acceptance on the unit is unconfirmed here. |
+| `acq.frame0` | `keep` enables the override. Other values use the default rule. | Drop suspect first frames | Bypass the first-frame exclusion for multi-frame batches and the first short frame after a settings change. | Stray frames verified on DHO924S on 2026-11-16. See [frames 0 and 1](protocols/acquisition-start.md#frames-0-and-1-of-a-batch-issue-5). |
+| `acq.capture` | `full`, `decimate:n`, `peak:n` with n = 2, 4, 8, 16, 32 or 64 | `full` | Request reduced storage for eligible full-rate Normal captures. Unsupported plans fall back to full. | Reduced capture is unverified on the unit. See [capture reduction](fork/capture-reduction.md). |
+| `acq.capture.inferred` | `on`, `off` | `off` | Permit inferred reduction profiles, including every Peak request. | Unverified on the unit. |
+| `acq.play` | `raw`, `stock` | `raw` | Request the stock display-read sequence for eligible live Normal edge captures at Auto depth. All current stock-play profiles also require inferred opt-in. Other plans use raw. | The switch's profiles are unverified on the unit. See [FPGA interpolation](fork/fpga-interpolation.md). |
+| `acq.play.inferred` | `on`, `off` | `off` | Permit the computed linear play profiles when `acq.play = stock`. Off leaves play on the raw path. | Unverified on the unit. |
+| `acq.stop_slot` | `zero`, `alternate` | `zero` | Permit a second ring slot for eligible serial captures when the prior record occupies slot 0. | Alternate-slot STOP and replay await [unit verification](fork/stop-exact.md#on-unit-verification). |
+| `acq.dump` | `on`, `off` | `off` | Enable the bounded acquisition fixture dump. `OOS_BATCH_DUMP` overrides it (only `1` and `on` enable it). | No dated unit evidence located for this switch. |
+| `acq.dump.count` | Nonnegative `usize` | `4` | Set the count per capture or view change, clamped to 1 through 32. `OOS_BATCH_DUMP_COUNT` overrides it. The default destination is `/tmp/oos-batches`, overridden by `OOS_BATCH_DUMP_DIR`. | No dated unit evidence located. See the [fixture reference](architecture/fixture-benchmark.md). |
+| `acq.frame_header` | `on`, `off` | `off` | Request and log frame headers. `OOS_FRAME_HEADER=off` requests headers with selective logging. Any other set value requests all-frame logging. | Header observations were verified on DHO924S on 2026-11-16. See [frames 0 and 1](protocols/acquisition-start.md#frames-0-and-1-of-a-batch-issue-5). |
+| `acq.write_gap` | `0`, `10` (µs) | `0` | Group ordinary batch writes with one 10 µs settle per sequence, or delay 10 µs after each write. `OOS_ACQ_WRITE_GAP` overrides it. | No dated unit comparison located for the two policies. |
+| `acq.sched` | `fifo`, `other` | `fifo` | Request acquisition on the second A72 with Linux `SCHED_FIFO` priority 1. Use normal scheduling if the request fails or `other` is selected. `OOS_ACQ_SCHED` overrides it. | No dated unit comparison located for the two policies. |
+| `acq.work_budget_ms` | Integer 4 through 20 (ms) | 36% of the picture period | Set the source's measured-service work grant. `OOS_ACQ_WORK_BUDGET_MS` overrides it. | No dated unit limit sweep located. |
+| `gpu.cpu` | `ui`, `hw` | `ui` | Inherit UI affinity. With `hw`, request the distinct acquisition core when available (the second A72 on RK3399). `OOS_GPU_CPU` overrides it. | No dated unit comparison located. |
+| `pacing.clock` | `flip`, `timer` | `flip` | Use vblank-paced picture steps with timer fallback, or the 30 Hz timer. `OOS_PACING_CLOCK` overrides it. | No dated panel verification located for the current helper-deferred pacing. |
+| `pacing.flip_divisor` | `2`, `3`, `4` | `3` | Set the number of refresh intervals per flip-paced picture. `OOS_PACING_FLIP_DIVISOR` overrides it. | No dated unit comparison located for all three divisors. |
+| `perf.place` | `on`, `off` | `off` (image `on`) | Enable fixed thread and DMA interrupt placement. `OOS_PLACE` overrides it. | No dated unit acceptance located for the current policy. See [placement](architecture/system.md). |
+| `perf.cpu_floor` | `on`, `off` | `on` | Request a reversible 1,416,000 kHz policy4 minimum during hardware RUN. | See the [RUN clock-floor evidence](architecture/system.md#run-clock-floors). |
+| `perf.gpu_floor` | `on`, `off` | `on` | Request a reversible 600,000,000 Hz GPU minimum during hardware RUN. | See the [RUN clock-floor evidence](architecture/system.md#run-clock-floors). |
+| `cal.core_offset` | `tight` enables it. Other values disable it. | Disabled | Match ADC core offsets on first configuration of each ADC mode. | See the dated [DHO804 core-offset rounds](fork/core-offset.md). |
+| `trig.serial_hw` | `on`, `off` | `off` | Use the FPGA UART receiver for serial triggering. | See [UART evidence](fork/hwuart.md). Unit acceptance of the switch remains open. |
+| `dvm.hw` | `on`, `off` | `off` | Use the FPGA DVM block. | See the [DHO804 comparison](fork/unit-dho804.md#round-5-on-dho804-da8e2a0-build-20261113-193501) on 2026-11-13. |
+| `mask.hw` | `on`, `off` | `off` | Use the FPGA comparator for mask testing. | Comparator mapping was explored on the unit. See [mask evidence](fork/hwmask.md). |
+| `zone.hw` | `on`, `off` | `off` | Use the FPGA comparator for zone qualification. | See [zone evidence](fork/hwzone.md). |
+| `zone.batch` | Unsigned 32-bit integer clamped to 1 through 1000 | `1` | Limit frames per batch while the hardware zone trigger runs. | See [zone rate observations](fork/hwzone.md#rate). |
+| `mask.map.domain` | `readout`, `pregain` | `readout` | Select read-out or pre-gain comparator codes. | [Mapping sweep](fork/hwmask.md#sweep-of-the-mapping-unit-round-2). |
+| `mask.map.cpd` | Finite number, minimum 1 | `7500` | Set comparator codes per division. | Mapping sweep. |
+| `mask.map.mid` | Finite number | `32768` | Set the comparator code at screen centre. | Mapping sweep. |
+| `mask.map.shift` | Finite number clamped to 0 through 16 and truncated to an integer | `8` | Shift comparator codes into eight bits. | Mapping sweep. |
+| `mask.map.offs` | Finite number | `0` | Add an offset to each eight-bit comparator code. | Mapping sweep. |
+| `mask.map.invert` | `1`, `on`, `true` enable it. Other values disable it. | `0` | Reverse the comparator code axis. | Mapping sweep. |
+| `mask.map.cols` | `record`, `clocks`, `stock`, count, or `raw:count:samples_per_strobe` | `record` | Choose column strobe layout. An explicit raw count takes a positive sample interval. | [Strobe sweep](fork/hwmask.md#strobe-sweep-round-8). |
+| `mask.map.range` | Two finite column indices as `a-b`, converted to unsigned 16-bit integers and sorted | `0-999` | Restrict comparator testing to selected columns. | Mapping sweep. |
+
+## Configured tap funding
+
+These are host-checked declarations for [F2 evaluation](architecture/frames.md#tap-capacity).
+Unit memory shares and acceptance remain unverified. Each numeric declaration is required in the profile.
+Byte and entry counts must be positive integers representable as `usize`.
+
+| Key | Values | Default | Effect |
 |---|---|---|---|
-| `acq.pipeline` | Choose Batch or Standard (`standard` / `frames`) drawing. | `batch` | Two draw paths remain under docs/architecture/migration.md#m12; finish the [batch migration](architecture/migration.md) and remove the alternate path. |
-| `acq.prearm` | Arm the next batch before decoding the current batch. | `off` | Hardware opt-in under ADR 0012; [transfer efficiency](fork/specs/10-transfer-efficiency.md) needs one supported arm order after unit verification. |
-| `acq.compress` | Read live FPGA min/max pairs instead of every sample where possible. | `off` | Experimental acquisition alternative; use the [compression evidence](fork/compress.md) to settle the supported path and remove the switch. |
-| `acq.interp` | Choose exact or fast sparse-frame interpolation. | `exact` | Fast alternative remains opt-in under ADR 0012; settle interpolation after validation and remove the alternate path. |
-| `acq.frame0` | Keep frame 0 instead of dropping the suspect first frame of a batch and first short record after settings changes. | Drop; only `keep` disables it. | Diagnostic escape hatch for [stray frames](protocols/acquisition-start.md#frames-0-and-1-of-a-batch-issue-5); remove the override after the workaround is settled. |
-| `meas.deep_raw` | Use raw deep reads for mean-type measurements instead of displayed min/max pairs. | `on` | Verified on the unit on 2026-11-15 per ADR 0012; the temporary `off` rollback and old path remain to be removed. |
-| `perf.place` | Enable fixed thread and DMA interrupt placement. | `off` | Placement experiment under ADR 0012; consolidate the [placement policy](architecture/system.md) after unit acceptance. |
-| `perf.cpu_floor` | Request a reversible 1,416,000 kHz policy4 minimum during hardware RUN. | `on` | Independent opt-out for the [RUN clock-floor rollout](architecture/system.md#run-clock-floors); remove the switch once the supported CPU policy is accepted. |
-| `perf.gpu_floor` | Request a reversible 600,000,000 Hz GPU minimum during hardware RUN. | `on` | Independent opt-out for the same rollout; remove the switch once the supported GPU policy is accepted. |
-| `trig.serial_hw` | Use the FPGA UART receiver for serial triggering. | `off` | Hardware opt-in under ADR 0012; settle the [UART trigger](fork/hwuart.md) after unit verification. |
-| `cal.core_offset` | Match ADC core offsets at first configuration of each ADC mode. | Disabled; only `tight` enables it. | Experimental [core-offset trim](fork/core-offset.md); settle the verified correction policy and remove the opt-in path. |
-| `dvm.hw` | Use the FPGA DVM block. | `off` | Experimental [hardware DVM](fork/dvm.md); verify or remove it with its switch under ADR 0012. |
-| `mask.hw` | Run the mask test in the FPGA mask unit. | `off` | Experimental [hardware mask](fork/hwmask.md), with mapping and stall limits; settle support and remove the alternate path. |
-| `zone.hw` | Qualify zone-trigger frames in the FPGA. | `off` | Experimental [hardware zone trigger](fork/hwzone.md); settle support and remove the opt-in path. |
-| `zone.batch` | Limit frames per batch while the zone trigger runs. | `1` (clamped to 1..1000). | Manual [zone throughput tuning](fork/hwzone.md); replace the experimental override with the accepted batch policy. |
-| `mask.map.domain` | Select read-out or pre-gain comparator codes for mask and zone tests. | `readout` | [Mapping sweep](fork/hwmask.md#sweep-of-the-mapping-unit-round-2) override; remove after the comparator domain is settled. |
-| `mask.map.cpd` | Set comparator codes per division. | `7500` | Mapping sweep override; remove after the code scale is settled. |
-| `mask.map.mid` | Set the comparator code at screen centre. | `32768` | Mapping sweep override; remove after the midpoint is settled. |
-| `mask.map.shift` | Shift comparator codes into eight bits. | `8` | Mapping sweep override; remove after the code width is settled. |
-| `mask.map.offs` | Add an offset to each eight-bit comparator code. | `0` | Mapping sweep override; remove after the code offset is settled. |
-| `mask.map.invert` | Reverse the comparator code axis. | `0` (false) | Mapping sweep override; remove after the code polarity is settled. |
-| `mask.map.cols` | Choose column strobe layout or an explicit experimental count. | `record` | [Strobe experiments](fork/hwmask.md#strobe-sweep-round-8) remain selectable; remove alternatives after the layout is settled. |
-| `mask.map.range` | Restrict comparator testing to selected columns. | `0-999` | Diagnostic localisation of mapping failures; remove the range override once the mapping is accepted. |
+| `f2.stage` | `configured-evaluation` enables the staged profile | Unconfigured | Require tap funding before staged acquisition. |
+| `f2.envelope_bytes` | Bytes | Unset | Total declared memory envelope. |
+| `f2.tap_bytes` | Bytes | Unset | Tap, retained old plans and control storage partition. |
+| `f2.tap_entries` | Entries | Unset | Tap capacity declaration. Fewer than eight cannot fund a profile. |
+| `f2.min_cycle_ns` | Positive nanoseconds, at most 1,000,000,000 | Unset | Minimum batch cycle for the evaluation profile. |
+| `f2.window_graphics_bytes` | Bytes | Unset | Window and graphics reservation. |
+| `f2.dma_bytes` | Bytes | Unset | DMA reservation. |
+| `f2.shared_bytes` | Bytes | Unset | Shared newest and STOP ownership reservation. |
+| `f2.copies_analysis_bytes` | Bytes | Unset | Decoded copies, analysis and scratch reservation. |
+| `f2.runtime_bytes` | Bytes | Unset | Runtime reservation. |
 
-The mask-map defaults above come from `oos_hal::dho::mask::Map::default()`; the parser accepts only the eight
-`MASK_MAP_KEYS` in `ui/src/board/dho/hw.rs`. In particular, `mask.map.skew` is not a system.conf key.
+The tap partition and the five owner reservations must fit in the envelope.
 
-The other system.conf keys reached through `ui/src/sysconf/switches.rs` were checked:
-`net.ipv6` (default `off`) is the documented [IPv6 service setting](network.md#8-ipv6), and `mem.soft_mb` / `mem.hard_mb`
-(default 768 / 1024 MiB, with soft capped at hard) configure the memory watchdog. They are operating settings,
-not alternate experimental paths in this removal backlog. Environment-only switches such as `OOS_HWAVG` and
-`OOS_FRAME_HEADER` are outside this system.conf inventory.
+## Operating settings
 
-The brief's names `acq.frame`, `acq.wait` and `acq.held` are not system.conf keys in this tree. The frame override
-is `acq.frame0`, listed above. `acq.wait` and `acq.held` are acquisition shared-lock timing probes, exposed as
-`diag lock.acq.wait` and `diag lock.acq.held` in the [state query](spec/state-query.md). They have no configuration
-default or key-removal issue; any removal of those metrics is a separate diagnostics decision.
+These are software controls. Unit verification is unrecorded in this inventory unless linked below.
+The ordinary boolean settings accept `on`, `true`, `1` and `off`, `false`, `0`.
+
+| Key | Values | Default | Effect |
+|---|---|---|---|
+| `ntp` | Boolean | `off` (image `on`) | Enable time synchronisation. |
+| `ntp.server` | Hostname, address, or `dhcp` | `dhcp` | Select the server or take it from a lease. |
+| `tz` | POSIX time zone or `dhcp` | `UTC0` (image `dhcp`) | Select local time or take the zone from a lease. |
+| `tz.fallback` | POSIX time zone | `UTC0` (image CET/CEST) | Select the zone used when DHCP supplies no usable zone. |
+| `eth.retry_10m` | Boolean | `on` | Enable the Ethernet 10 Mbit retry. |
+| `remote.web` | Boolean | `on` | Enable the web service. |
+| `remote.scpi` | Boolean | `on` | Enable the raw SCPI socket. |
+| `remote.hislip` | Boolean | `off` | Enable HiSLIP. |
+| `remote.vxi11` | Boolean | `on` | Enable VXI-11. |
+| `remote.ssh` | Boolean | `off` | Enable SSH. |
+| `ssh.password` | Boolean | `on` | Allow password login when SSH is enabled. |
+| `remote.mdns` | Boolean | `on` | Enable multicast DNS service discovery. |
+| `net.name` | Valid host label | Empty, device-derived name | Set the DHCP and mDNS name. The parser lowercases the value. |
+| `net.allow` | Network allowlist syntax | Image allowlist when the user line is absent | Restrict network access. See the [allowlist reference](network.md). |
+| `net.ipv6` | `on`, `off` | `off` (image `on`) | Enable IPv6 services. `OOS_IPV6` overrides the file. |
+| `graphics` | `gpu`, `cpu` | `gpu` | Choose GPU or CPU rendering. |
+| `backlight` | Integer percentage 10 through 100 | `100` | Set display backlight. |
+| `features.off` | Space-separated feature IDs | Empty | Hide selected UI features. |
+| `decoders.off` | Space-separated decoder IDs | Empty | Hide selected protocol decoders. |
+| `mem.soft_mb` | Integer 1 through 4096 MiB | `768`, capped at hard limit | Set the memory watchdog warning threshold. |
+| `mem.hard_mb` | Integer 1 through 4096 MiB | `1024` | Set the memory watchdog hold threshold. |
 
 ## Removed temporary paths
 
-The hardware-status trigger hint `trig.hw_status` and failed `autoset.levels = unit` measure-unit path were
-removed on 2026-11-17 (#124). They are not opt-in functions and are not supported keys.
-The current image selects Batch; the Standard-versus-Batch comparison and final deletion remain M12 work.
+The obsolete `acq.pipeline` setting is ignored and logged once at startup. Batch is the sole pipeline.
+
+`meas.deep_raw` no longer selects a path. The UI derives raw deep reads from measurement and view
+requirements. `trig.hw_status` and `autoset.levels = unit` were removed on 2026-11-17 (#124).
+`acq.wait` and `acq.held` are [state-query](spec/state-query.md) lock timing probes.

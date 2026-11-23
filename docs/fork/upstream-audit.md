@@ -1,5 +1,7 @@
 # Fork vs upstream audit (P1, 2026-11-13)
 
+The audit compares source paths. Any acquisition or play register effect on the unit is **assumed**.
+
 Base: `dho804` after the 0.1.11 merge (089577e). Scope: everything both the fork and upstream implement or touch.
 Read-only. Nothing verified on hardware. Host: Apple M3 Max, release build.
 

@@ -1,5 +1,8 @@
 # Performance plan (P2, 2026-11-13)
 
+This is a historical performance plan. Acquisition, trigger and play register effects in proposed items
+are **assumed**.
+
 Goal: the highest waveform rate per time base and channel count, and a responsive UI, on this DHO804. Inputs: the
 fork at 0.1.11 + fork features, `fpga.md` (private RE notes), specs 01-10, `upstream-audit.md` (P1). Static
 analysis plus host timings. Nothing here is measured on the unit yet.

@@ -2,9 +2,9 @@
 
 //! One of three DMA destinations must be source-owned before the FPGA arms.
 
-use crate::drawpipe::{self, Pipe, RawBatch, TapReservation};
 #[cfg(any(target_os = "linux", test))]
-use crate::drawpipe::{admission::Grant, Access};
+use crate::drawpipe::admission::Grant;
+use crate::drawpipe::{self, Pipe, RawBatch, TapReservation};
 use oos_hal::dho::seq::Settings;
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,7 +38,7 @@ impl<T: Default + RawBatch + 'static> DmaSource<T> {
     /// The existing board loop rechecks mode/commands after any wake, including a ready-before-wait race.
     #[cfg(any(target_os = "linux", test))]
     pub(super) fn ready(&mut self, identity: oos_core::change::Identity, canceled: impl Fn() -> bool) -> bool {
-        let pipe = self.current.is_none().then(|| drawpipe::pipe(Access::Existing)).flatten();
+        let pipe = self.current.is_none().then(drawpipe::pipe).flatten();
         self.ready_from(pipe, identity, canceled, HOUSEKEEPING)
     }
 
@@ -204,7 +204,7 @@ fn prearm_requires_the_captured_route_and_a_current_funded_plan() {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let profile = crate::drawpipe::funding::TEST_PROFILE;
     let sw = crate::sysconf::Switches::parse(&|_| None, profile, "", Default::default());
-    let pipe = drawpipe::pipe(&sw).unwrap();
+    let pipe = drawpipe::start_pipe(&sw);
     let identity = Identity::default();
     pipe.publish_view(&crate::model::Model::default(), 128, 64, sw.interp, identity);
     assert!(pipe.admit_taps(identity, [0; 6], 64, Duration::from_secs(1)));
@@ -403,7 +403,7 @@ fn calibration_cancels_prepare_with_every_funded_grant_held() {
     use oos_core::change::Identity;
     let _scope = drawpipe::test_scope::Scope::new();
     let sw = crate::sysconf::Switches::default();
-    let pipe = drawpipe::pipe(&sw).unwrap();
+    let pipe = drawpipe::start_pipe(&sw);
     let id = Identity::default();
     let held = full_tap_plan(pipe, id);
     let shared: HwShared = Default::default();
@@ -450,7 +450,7 @@ fn full_tap_plan(pipe: &Pipe, id: oos_core::change::Identity) -> Vec<Arc<TapRese
 #[test]
 fn force_keeps_waiting_for_funded_capacity_before_prepare_can_arm() {
     let _scope = drawpipe::test_scope::Scope::new();
-    let pipe = drawpipe::pipe(&crate::sysconf::Switches::default()).unwrap();
+    let pipe = drawpipe::start_pipe(&crate::sysconf::Switches::default());
     let id = oos_core::change::Identity::default();
     let mut held = full_tap_plan(pipe, id);
     let shared: crate::board::HwShared = Default::default();

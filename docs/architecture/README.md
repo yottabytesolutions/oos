@@ -149,8 +149,8 @@ a 4 KiB path. Full manual queues fail immediately; automatic observations retain
 with every edit restarting its stability interval. Shutdown drains accepted writes before marker cleanup.
 Manual exports and screenshots still call synchronous file IO from UI actions.
 
-The draw routes also remain distinct. Standard/Frames queues frames. Batch places records in a persistent pool
-and hands whole deposits of owned column differences to the UI. At minimum persistence, the UI rebuilds the
+Batch places eligible records in a persistent pool and hands whole deposits of owned column differences to the UI.
+Reads that cannot use the pool deliver decoded records through a bounded hand-off. At minimum persistence, the UI rebuilds the
 picture from a bounded window of recent deposits. A separate FIFO delivers the newest waveform of each batch
 to record readers, including when placement fails. A waveform read before picture acceptance can redraw from
 the existing last record if its projection becomes stale. Accepted deposits settle that obligation.
@@ -158,12 +158,10 @@ Ordinary maps use u16 counts. Dense raw Dots whose reachable projection exceeds 
 counts at the same weight. Wide GPU input carries the resulting lookup indices through the existing u16 upload.
 The analog batch readout reserves sample capacity before its newest decode. F2 still needs a production
 [plan-derived tap budget](frames.md#tap-capacity). Source-wide before-arm waiting belongs to F3.
-Batch is the code and image default; `acq.pipeline = standard` or `frames` selects
-Standard. `fast_ok` selects eligible hardware views. `drawpipe::draw_frame_reusing` uses dense `fastdraw` spans,
+`fast_ok` selects eligible hardware views. `drawpipe::draw_frame_reusing` uses dense `fastdraw` spans,
 sparse interpolation or deep-record drawing. `Phosphor::draw_ex` handles record drawing.
-CPU rendering and GPU layer composition both exist. `Model::draw_batch` selects the hardware route;
-`draw.model` is absent from this checkout. The owner selected Batch with the shared difference kernel;
-M12a unit acceptance still precedes deletion of Standard in F4 (M12b).
+Both CPU rendering and GPU layer composition use the resulting picture.
+See the [frame pipeline](frames.md) for publication, back-pressure and acceptance.
 
 Boot images contain shared model defaults; device identity and overrides stay in `/oos/system.conf`. Updates compare
 runtime hardware model detection with a signed model list and board target (ADR 0015). See [system](system.md).

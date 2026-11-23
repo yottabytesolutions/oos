@@ -2,14 +2,14 @@
 use super::*;
 use std::sync::Arc;
 pub(crate) fn render_owner_active(ui: &Ui) -> bool {
-    PERSIST[ui.m.persist].1 == 0.0 && ui.m.run == RunState::Run && !ui.record_mode() && ui.m.draw_batch && ui.fast_ok()
+    PERSIST[ui.m.persist].1 == 0.0 && ui.m.run == RunState::Run && !ui.record_mode() && ui.fast_ok()
 }
 pub(crate) fn set_render_owner_wake(ui: &mut Ui, wake: Arc<crate::system::intake::Wake>) {
     ui.batch_picture.owner.set_wake(wake);
 }
 pub(crate) fn intake_render_owner(ui: &mut Ui) {
     let active = render_owner_active(ui);
-    if let Some(pipe) = drawpipe::pipe(Access::Existing) {
+    if let Some(pipe) = drawpipe::pipe() {
         ui.batch_picture.owner.intake_owned(pipe, active);
     }
 }

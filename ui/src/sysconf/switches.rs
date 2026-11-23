@@ -5,7 +5,7 @@
 //! the platform, read once at start (`Switches::read`) and passed in. `Switches::default()` is the empty
 //! configuration: what a scope without a system.conf and without overrides does. Tests use it.
 
-use crate::drawpipe::{conf_value, Mode};
+use super::conf_value;
 use crate::pacing::{ClockMode, FlipDivisor};
 use crate::sparse::Interp;
 use std::ffi::OsString;
@@ -29,8 +29,6 @@ pub struct Switches {
     pub demo_loop: u32,
     /// live compression (`compress::enabled_from`)
     pub compress: bool,
-    /// pipeline mode (`drawpipe::mode_from`)
-    pub pipeline: Mode,
     /// the big and little cores (`placement::Cores`): batch workers, background threads, placement
     pub cores: crate::placement::Cores,
     /// OOS_FIXED_TIME: the clock of the UI stands at these seconds since 1970, for host test runs whose pictures must
@@ -81,10 +79,12 @@ impl Switches {
     /// The switches from an environment lookup, the fork's system.conf text (`fork_text`), the settings file alone
     /// and the cores.
     pub fn parse(env: Env, conf: &str, settings: &str, cores: crate::placement::Cores) -> Self {
+        if conf_value(None, conf, "acq.pipeline").is_some() {
+            eprintln!("oos-ui: ignoring obsolete system.conf key acq.pipeline");
+        }
         Switches {
             demo_loop: text(env, "OOS_DEMO_LOOP").and_then(|v| v.parse().ok()).unwrap_or(0),
             compress: crate::compress::enabled_from(flag(env, "OOS_COMPRESS"), conf),
-            pipeline: crate::drawpipe::mode_from(text(env, "OOS_PIPELINE").as_deref(), conf),
             cores,
             fixed_time: text(env, "OOS_FIXED_TIME").and_then(|v| v.parse().ok()),
             interp: crate::sparse::interp_from(text(env, "OOS_INTERP").as_deref(), conf),
@@ -150,9 +150,23 @@ mod tests {
     #[test]
     fn empty_configuration_is_the_default() {
         let s = Switches::default();
-        assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (0, false, Mode::Batch, Interp::Exact));
+        assert_eq!((s.demo_loop, s.compress, s.interp), (0, false, Interp::Exact));
         assert!(!s.perf.place() && !s.ipv6);
         assert_eq!(s.board, crate::board::BoardSwitches::parse(&|_| None, "", ""));
+    }
+
+    #[test]
+    fn obsolete_pipeline_key_is_ignored_with_other_settings_intact() {
+        let conf = "acq.pipeline = frames # old user setting\nntp = on\nacq.interp = fast\n";
+        let image = "acq.pipeline = batch\n";
+        let (system, errors) = super::super::SysConf::parse(conf);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(system.ntp);
+        assert!(!system.text().contains("acq.pipeline"));
+        let merged = super::super::fork_text_of(conf, image);
+        let switches = Switches::parse(&|_| None, &merged, conf, Default::default());
+        let current = Switches::parse(&|_| None, "acq.interp = fast", "", Default::default());
+        assert_eq!(switches, current);
     }
 
     #[test]
@@ -194,14 +208,13 @@ mod tests {
         let env = |k: &str| match k {
             "OOS_DEMO_LOOP" => Some("15".into()),
             "OOS_COMPRESS" | "OOS_PLACE" => Some("1".into()),
-            "OOS_PIPELINE" => Some("batch".into()),
             "OOS_FIXED_TIME" => Some("946684800".into()),
             _ => None,
         };
         let conf = "net.ipv6 = on\nacq.interp = fast\n";
         let cores = crate::placement::Cores { big: 0b11_0000, little: 0b1111 };
         let s = Switches::parse(&env, conf, "", cores);
-        assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (15, true, Mode::Batch, Interp::Fast));
+        assert_eq!((s.demo_loop, s.compress, s.interp), (15, true, Interp::Fast));
         assert!(s.perf.place() && s.ipv6);
         assert_eq!((s.cores, s.fixed_time), (cores, Some(946_684_800.0)));
     }

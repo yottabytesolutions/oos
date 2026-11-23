@@ -1,10 +1,9 @@
 # Acquisition
 
 Target architecture of the acquisition thread and its port to the UI. Part of [README.md](README.md).
-Drawing is in [picture.md](picture.md), records and measurements in [records.md](records.md). Today's code is
-referenced as of dho804 32041d0. The owner-approved [frame pipeline](frames.md) updates the deposit path:
-F2 removes acquisition helper work and moves newest-record decoding to the pool; F3 waits for a free buffer
-before arming, including prearm; F4 removes Standard and the no-buffer fallback. These remain targets.
+Drawing is in [picture.md](picture.md). Records and measurements are in [records.md](records.md).
+Historical comparisons use dho804 32041d0. See [frame pipeline status](frames.md) for the current
+deposit path, source admission and decoded-record hand-off.
 
 ## Role
 
@@ -159,8 +158,9 @@ The current worker uses `Shared` for its snapshots and bounded hand-offs.
 4. Drop what the older `gen` or `epoch` left in flight: the queued `Frame`s and a fill that `NEW_SETTINGS` ended.
    Today both are still read and queued ([current data flow](drawing.md#current-data-flow-dho804-32041d0)). The ended fill is not read at all.
 
-The invariant: after `apply` returns, nothing the thread publishes carries a (`gen`, `epoch`) older than the applied
-pair. The thread publishes the applied pair in `Readings::applied`; `*OPC?` and remote waits read it.
+The target invariant is that after `apply` returns, nothing the thread publishes carries a (`gen`, `epoch`) older
+than the applied pair. The target publishes the pair in `Readings::applied` for `*OPC?` and remote waits.
+The current operation barrier is described in [SCPI operation completion](../scpi.md#operation-completion).
 
 `Board::want` is pure: the same `AcqIntent` gives the same `AcqWant`, so `gen` and `epoch` stay the only change
 signals.
@@ -169,8 +169,10 @@ signals.
 
 One batch: arm, fill, read, post-read reads, publish. In order:
 
-1. STOP (`hold` set in `AcqWant`): finish the batch in progress, do the final raw read if a `Final` asks for it
-   (stop-exact.md), then no arming while `hold` is set.
+1. STOP: hold prevents normal batch arming. A serial capture already armed can finish, and an eligible
+   last batch can supply a final raw reread. A stopped-view request takes the replay path. Without that
+   view, the pass can still reach configuration before batch intake checks the hold. RUN releases the
+   hold before publishing the new epoch. See [STOP and RUN](frames.md#stop-and-run).
 2. SINGLE: one batch per epoch (`single_wants_more`).
 3. Hardware average: clear on `AvgClear`.
 4. Cap the plan by measured cost, hardware, read time and plane capacity. Reserve a DMA destination and any
@@ -222,6 +224,9 @@ What changes against today:
 
 `acq.write_gap` defaults to `0`, grouping writes for the ordinary batch. Set it to `10` for the per-write delay.
 `acq.sched` defaults to `fifo` for real-time acquisition scheduling. Set it to `other` for normal scheduling.
+
+See the [configuration inventory](../system-conf-keys.md#acquisition-and-rendering-switches) for
+the other startup switches and their unit evidence.
 See [acquisition source overhead](system.md#acquisition-source-overhead).
 
 ## Rules

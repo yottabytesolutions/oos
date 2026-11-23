@@ -1,5 +1,7 @@
 # AC trigger coupling on the dense path (2026-11-14)
 
+Hardware interpretations of trigger coupling are **assumed** beyond the stated measurements.
+
 Setup A of docs/fork/stutter.md: CH2 ripple, AC, BW 20M, 20 mV/div, trigger AC 30 mV, Normal, 5-50 us/div. After the
 stutter fixes it ran at 30 fps with even pictures, but about a quarter of the acquired frames were dropped: the deposit
 workers needed 25-32 ms per batch, against about 6 ms for setup B (DC trigger).

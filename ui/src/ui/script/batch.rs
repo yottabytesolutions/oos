@@ -77,7 +77,7 @@ impl BatchScript {
         if !lock(shared).queue.is_empty() {
             return Err(format!("batch {} left queued frames", self.id));
         }
-        let pipe = drawpipe::pipe(ui.switches()).ok_or("scripted source needs batch pipeline")?;
+        let pipe = drawpipe::start_pipe(ui.switches());
         let frames =
             if ui.m.trig_mode == crate::model::TrigMode::Single { 1 } else { SCHEDULE[self.id % SCHEDULE.len()] };
         let batch = self.source.next_batch(&ui.m, ui.switches(), frames, self.spare.take())?;

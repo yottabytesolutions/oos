@@ -1,5 +1,8 @@
 # Live display compression (next round 2.2, perf plan item 7)
 
+Register behavior outside the dated compression trials is **assumed**. The table and procedures also
+describe the software constraints.
+
 Switch: `acq.compress = on` in /oos/system.conf, or `OOS_COMPRESS=1` for oos-ui alone. Without the line the parser
 keeps it off (`compress::enabled_from`). The DHO804 unit image sets `acq.compress = on`
 (`rootfs/initramfs/etc/oos/system.conf`) since the procedure below passed in round 5 (`unit-dho804.md`).
@@ -51,28 +54,21 @@ raw final frame (docs/fork/stop-exact.md).
 
 ## What stays raw
 
-Every record the UI measures is raw. At most once per `compress::RAW_PERIOD` (200 ms) the acquisition thread plays
-the newest frame of a compressed batch once more without compression (`seq::read_raw_again`, before the next arm and
-before prearm), and that frame takes the newest frame's place in the queue. `acquire` makes the record from it:
-measurements, cursors, FFT, decode, history, autoset. If the second read fails, the compressed frame is used and the
-status line says so. A raw read after every batch cost 7-9 % of the frames at 1 channel, 1 and 100 us/div (unitlab
-round 2); once per 200 ms it is a few reads a second.
+During RUN, measurements on live-compression pairs hold their last raw result.
+The acquisition thread can replay the newest stored frame without compression before the next arm.
+It attempts this at most once every `compress::RAW_PERIOD` (200 ms). A failed raw read leaves pairs
+available. The record queue can substitute the raw reread for the newest frame. The deposit path
+can keep drawing the original compressed batch while giving consumers a raw tap. Between raw
+reads the newest tap can carry pairs. See the [newest-record contract](../architecture/frames.md#newest-record-in-a-picture).
 
-Between two raw records the newest record is of pairs. While running the UI does not measure those
-(`compress::hold`): the measurement shown stays that of the last raw record, so every value belongs to one record and
-the statistics count each raw record once; measurements update up to 5 times a second. STOP on a pair record asks the
-thread for the final frame raw (docs/fork/stop-exact.md: `final_replay` reads the whole newest frame of the last batch
-raw), so the record left on screen is raw; views read again as pairs after it are drawn while that raw record stays
-the one measured. Batches of the live compression are not armed ahead (`acq.prearm`), so that
-read is always possible.
+STOP can request a final raw replay of the newest stored frame. Its success depends on the replay
+slot still being valid and on read completion. Later stopped views can draw a new pair picture
+while measurements keep their raw STOP record. See [STOP](stop-exact.md).
 
-The compressed frames are only drawn. `drawpipe::draw_frame` sends a frame of the live compression (`compress::live`:
-envelope, not roll or scan, at most 1 M deep) through the dense path: trigger refinement on the pairs with an even
-smoothing length (`compress::smooth_len`, whole pairs), then `compress::deposit_pairs` (per column the span of the
-pairs whose centre lies in it, joined to the nearest end of the last pair before it). The
-per-frame statistics skip these frames, both those of the deposit workers (`framestats`) and those of the fast path
-(`Ui::fast_draw_all`, which also leaves out Mean, RMS, Std dev and AC RMS of deep pairs, upstream 42e6e5d6); the raw
-newest frame of each batch counts through the record path.
+Live pairs use a column envelope and are skipped by the per-frame measurement folds.
+This differs from a raw waveform tap, which can provide data to those measurements.
+A raw read after every batch cost 7 to 9% of the frames on DHO804 at one channel and
+1 and 100 µs/div on 2026-11-13. See [round 2](unit-dho804.md#round-2-on-dho804-47223f9-build-20261113-181907).
 
 Live frames in Dots On stay raw. An earlier version compressed them too: raw frames deposited one dot per sample, pair
 frames one span per column, and the mix flickered (docs/fork/flicker.md).
@@ -104,9 +100,12 @@ off.
 
 ## Evidence
 
+**Verified on the unit (DHO804, 2026-11-13)** for the round 2 and round 5 observations identified below.
+Interpretations beyond those cases are **assumed**.
+
 | claim | level |
 |---|---|
-| 0x1170 = 0xc0000000 \| k compresses the play: one point per k samples, aligned with the record. 0x11f0 sets how many points are sent; OOS asks for floor(memsel / k / 8) x 8 (`compressed_len`) | unit, k = 4 at 1 M (acquisition-start.md); time axis exact for k 16..200 at deep records |
+| 0x1170 = 0xc0000000 \| k compresses the play: one point per k samples, aligned with the record. 0x11f0 sets how many points are sent; OOS asks for floor(memsel / k / 8) x 8 (`compressed_len`) | Undated unit observations cover k = 4 at 1 M and the deep-record time axis. See [acquisition start](../protocols/acquisition-start.md#fpga-compression--minmax-peak-decimation). |
 | pair = min and max of 2k samples from the window start, in time order | unit, 100 % of the points for k 3, 4, 15, 16, 64, 128, 1 and 2 ch (unitlab round 2); netlist simulation (k up to 16383, k = 0 stalls) |
 | k = 256 at 1 M time-out = TX length beyond the window | unit: 3912 points timed out twice (round 2); 3904 points read without a time-out and compress-check passed at k = 4, 16, 64, 256 (round 5) |
 | a frame of the ring can be played again after a batch read | unit: the raw replay returns the same record (round 2) |
@@ -165,7 +164,7 @@ Probe on the 1 kHz compensation output, CH1 and CH2 on the same probe or a secon
 5. Glitch: a pulse source with a narrow pulse (generator option if fitted, or a 20 ns pulse into CH1) at 1 ms/div, k =
    64: the compressed read holds the pulse top in the pair of its block (`compress-check` covers it when the pulse is
    in the compared middle of the record). Without a pulse source: skip and leave the glitch claim at host level.
-6. Waveform rate before / after. Restart oos-ui with `acq.pipeline = batch`. Per time base 1 us, 10 us, 100 us/div,
+6. Waveform rate before / after. Per time base 1 us, 10 us, 100 us/div,
    1 and 2 channels, Auto depth, probe comp on CH1 (CH2), Normal trigger: read `:SYSTem:STATe?` twice 10 s apart
    (frames acquired / used per second) with `acq.compress` absent, then with `acq.compress = on` and a restart.
    Record: frames per batch (`acquire_batch` log line), acquired/s, used/s, dropped/s, CPU of oos-ui (`top -H -d 1`).

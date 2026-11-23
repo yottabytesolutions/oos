@@ -41,8 +41,7 @@ Changed:
   names and TXT records remain. Long advertised names are shortened to leave room for conflict suffixes.
   Reverse PTR, QU unicast replies and host publication without registered services are dropped. Host-tested only.
 
-- Batch is the code default draw pipeline, matching shipped images. `acq.pipeline = standard` or `frames`
-  keeps Standard available for comparison until M12; invalid values are logged and fall back to Batch (#159).
+- Batch is the sole acquisition pipeline. Startup logs and ignores the retired `acq.pipeline` key.
 
 - Boot card mode is a device setting (`sd.mode = hs|sdr104`, default HS). The updater selects the next boot DTB
   from the generic image and keeps HS for trial rollback. Device capability overrides are labelled as device
@@ -67,8 +66,6 @@ Fixed:
 
 - At minimum persistence, Batch combines up to three recent deposits so sparse updates keep their trace density.
   Deposits expire after 67 ms. Host-tested only (#204).
-- `:SYSTem:STATe?` reports the active hardware draw pipeline after live changes through `:SYSTem:PIPeline` (#182).
-  Non-hardware sources still report the startup pipeline switch.
 - RUN after SINGLE restores the previous NORMAL or AUTO sweep, including after STOP (#183). Host-tested only.
 
 - The expand button in the plot's corner enlarges the panel also while HDMI is on Waveform or Layout. Before, it

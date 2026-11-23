@@ -2,7 +2,7 @@
 
 //! Scoped test counters and pipeline; worker batches retain the injected counters.
 
-use super::{funding, Access, Counters, Mode, Pipe};
+use super::{Counters, Pipe};
 use std::cell::Cell;
 use std::sync::OnceLock;
 
@@ -13,7 +13,7 @@ thread_local! {
 
 pub(super) struct State {
     pub(super) counters: &'static Counters,
-    pipe: OnceLock<Pipe>,
+    pub(super) pipe: OnceLock<Pipe>,
 }
 
 pub(super) fn state() -> Option<&'static State> {
@@ -35,13 +35,6 @@ impl WorkerCounters {
 impl Drop for WorkerCounters {
     fn drop(&mut self) {
         WORKER_COUNTERS.set(self.0);
-    }
-}
-
-impl State {
-    pub(super) fn pipe(&'static self, access: Access<'_>) -> Option<&'static Pipe> {
-        let Access::Start(sw) = access else { return self.pipe.get() };
-        (sw.pipeline == Mode::Batch).then(|| self.pipe.get_or_init(|| funding::application(sw, self.counters)))
     }
 }
 

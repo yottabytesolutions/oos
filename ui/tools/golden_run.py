@@ -15,7 +15,7 @@ import tempfile
 import time
 import unittest
 
-from golden import compare_rgb, read_png, require_captures, write_png, write_report
+from golden import compare_rgb, read_png, reference_capture, require_captures, write_png, write_report
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -83,7 +83,7 @@ def capture_case(row, args, out, candidate):
         child(args.binary, script, kind, case / repeat)
         require_captures(case / repeat, shots)
     result, failures = [], []
-    routes, route, decode = {}, 'Demo records; acq.pipeline=batch', 'Demo records'
+    routes, route, decode = {}, 'Demo records', 'Demo records'
     for line in (case / 'one/stdout.log').read_text().splitlines():
         if line.startswith('batch '):
             route, decode = line.rsplit(' route ', 1)[-1].split(' decode ')
@@ -131,7 +131,7 @@ def manifest(captures):
                 reference_base='2b5d170fd59d487bbf8851eab84820b9bd07a24c', hermetic_inputs='4b505b411c99f69ed8e834fbdd5e6bfc68ea8521 (task-0030 integration)',
                 seed='0x9e3779b97f4a7c15', schedule=[27, 3, 13, 3, 27, 13],
                 clock=1762862400, dt='1/30', tolerance='exact decoded RGB bytes; no exceptions',
-                scope='synthetic host characterisation; no hardware verification; Demo acq.pipeline=batch',
+                scope='synthetic host characterisation; no hardware verification',
                 captures=captures)
 
 
@@ -232,7 +232,7 @@ def main():
         previous = {c['path']: c for c in json.loads((reference / 'manifest.txt').read_text())['captures']}
         # Reference hashes describe the baseline; ordinary comparisons require exact decoded RGB bytes.
         for new in captures:
-            old = previous[new['path']]
+            old = reference_capture(previous[new['path']])
             for key in ('path', 'regions', 'settings', 'script_sha256', 'provenance', 'source_route', 'decode_route'):
                 if old[key] != json.loads(json.dumps(new[key])):
                     raise ValueError(f'capture contract changed: {new["path"]} {key}; explicit update required')

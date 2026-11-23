@@ -1,5 +1,8 @@
 # ADC (RT8847IQ) and acquisition unit (SPU) init
 
+The register sequence comes from the stock reconstruction where cited and is **decoded from stock**
+there. Inferred effects and generalizations from the undated unit observations are **assumed**.
+
 Init order: AFE x4, **ADC**, **SPU**, WPU (no hardware write), SCU, front-panel status. The complete cold-boot sequence
 is in `cold-boot.md`.
 

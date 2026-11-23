@@ -24,7 +24,7 @@ pub fn metadata(ui: &Ui, path: &str) -> Result<(), String> {
                 g.frame.acq, g.frame.envelope, g.frame.roll, g.frame.scan, g.frame.partial, g.frame.hw_avg
             )
         }
-        _ => "Demo acq.pipeline=batch".into(),
+        _ => "Demo records".into(),
     };
     let settings = format!(
         "settings dots={:?} channels={} tdiv={} persist={:?} grade={} zoom={} acquisition={:?} run={:?} frames={} records={} menu_open={} {}\n",

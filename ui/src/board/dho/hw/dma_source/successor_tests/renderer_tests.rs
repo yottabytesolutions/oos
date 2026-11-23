@@ -11,7 +11,6 @@ fn unit(mask: u32) -> Unit {
     model.trig_mode = TrigMode::Normal;
     model.tscale = crate::model::TIME_SCALES.iter().position(|&v| v == 1e-6).unwrap();
     model.cores = true;
-    model.draw_batch = true;
     for c in 0..4 {
         model.ch[c].on = mask & (1 << c) != 0;
     }

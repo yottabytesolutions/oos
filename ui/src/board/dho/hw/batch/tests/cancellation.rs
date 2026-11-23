@@ -65,7 +65,7 @@ fn check(command: Command, race: bool, single: bool) {
     (b.header, b.single) = (false, single);
     let (batch, count, _) = scripted::draw_route_batch(&m, &sw, 0);
     let fb = batch.frame_bytes();
-    let pipe = crate::drawpipe::pipe(&sw).unwrap();
+    let pipe = crate::drawpipe::start_pipe(&sw);
     let id = Identity::default();
     pipe.publish_view(&m, 128, 64, sw.interp, id);
     assert!(!pipe.staged_taps(), "the default plain route is essential to this regression");

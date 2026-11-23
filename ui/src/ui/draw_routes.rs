@@ -25,9 +25,8 @@ struct Route {
 }
 
 impl Route {
-    fn new(kind: BatchKind, batch: bool, channels: usize, tdiv: f32) -> Self {
+    fn new(kind: BatchKind, channels: usize, tdiv: f32) -> Self {
         let mut ui = Ui::new(Source::Hw { shared: Default::default(), seen: 0 }, host::Host::headless());
-        ui.m.draw_batch = batch;
         ui.m.auto_roll = kind == BatchKind::Roll;
         ui.m.meas.clear();
         ui.m.meas2.clear();
@@ -63,15 +62,15 @@ impl Route {
     {
         // Fixed intake count and injected dt: elapsed draw time cannot alter picture membership.
         let id = change::acquisition::script_prepare_route(&mut self.ui, self.records);
-        let sw = change::acquisition::draw_switches(&self.ui, &self.ui.m);
+        let sw = self.ui.switches().clone();
         let batch = fixture(self, &sw);
         let Source::Hw { shared, .. } = &self.ui.src else { unreachable!() };
         let tag = |mut f: crate::board::Frame| {
             (f.cfg, f.stamp) = (id.gen(), id.epoch());
             Arc::new(f)
         };
-        let pipe = drawpipe::pipe(&sw).filter(|p| self.ui.m.draw_batch && p.accepting());
-        let bytes = if let Some(pipe) = pipe {
+        let pipe = drawpipe::start_pipe(&sw);
+        let bytes = if pipe.accepting() {
             let newest = tag(batch.newest(id.epoch()));
             let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
             let at = self.ui.host.picture_time(self.ui.now);
@@ -129,13 +128,13 @@ fn compare(a: &Picture, b: &Picture, label: &str) {
 #[test]
 fn batch_redraws_current_waveform_after_mapping_rejects_its_planes() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Codes, true, 1, 10e-6);
+    let mut route = Route::new(BatchKind::Codes, 1, 10e-6);
     route.step(1);
     assert!(route.ui.ph.maps()[0].iter().any(|&v| v > 0));
 
     let id = change::acquisition::identity(&route.ui);
-    let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
-    let pipe = drawpipe::pipe(&sw).unwrap();
+    let sw = route.ui.switches().clone();
+    let pipe = drawpipe::start_pipe(&sw);
     let batch = route.source.next_batch(&route.ui.m, &sw, 1, route.spare.take()).unwrap();
     let mut waveform = batch.newest(id.epoch());
     waveform.cfg = id.gen();
@@ -161,11 +160,11 @@ fn batch_redraws_current_waveform_after_mapping_rejects_its_planes() {
 #[test]
 fn batch_draws_newest_waveform_after_hit_budget_rejection() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 1, 10e-6);
+    let mut route = Route::new(BatchKind::Raw, 1, 10e-6);
     route.ui.m.dots = DotsMode::On;
     let id = change::acquisition::script_prepare(&mut route.ui);
-    let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
-    let pipe = drawpipe::pipe(&sw).unwrap();
+    let sw = route.ui.switches().clone();
+    let pipe = drawpipe::start_pipe(&sw);
     let frames = 32;
     let batch = route.source.next_batch(&route.ui.m, &sw, frames, None).unwrap();
     let mut waveform = batch.newest(id.epoch());
@@ -196,7 +195,7 @@ fn batch_draws_newest_waveform_after_hit_budget_rejection() {
 #[test]
 fn batch_picture_keeps_recent_deposits_without_recounting_their_records() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Codes, true, 1, 1e-6);
+    let mut route = Route::new(BatchKind::Codes, 1, 1e-6);
     route.step(27);
     assert!(!route.ui.ph.published_rows().is_empty());
     route.step(3);
@@ -219,11 +218,11 @@ fn batch_picture_keeps_recent_deposits_without_recounting_their_records() {
 #[test]
 fn batch_waveform_delayed_by_a_fallback_is_measured_without_redrawing() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+    let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
     route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
     let id = change::acquisition::script_prepare(&mut route.ui);
-    let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
-    let pipe = drawpipe::pipe(&sw).unwrap();
+    let sw = route.ui.switches().clone();
+    let pipe = drawpipe::start_pipe(&sw);
     let batch = route.source.next_batch(&route.ui.m, &sw, 4, None).unwrap();
     let mut fallback = batch.frame(0, id.epoch());
     fallback.cfg = id.gen();
@@ -269,7 +268,7 @@ fn batch_waveform_delayed_by_a_fallback_is_measured_without_redrawing() {
 fn auto_to_lines_transition_resets_the_batch_window() {
     let run = |transition| {
         let _scope = Scope::new();
-        let mut route = Route::new(BatchKind::Raw, true, 1, 200e-6);
+        let mut route = Route::new(BatchKind::Raw, 1, 200e-6);
         route.ui.m.dots = DotsMode::Auto;
         route.step(27);
         assert_eq!(route.ui.batch_picture.frames, 27);
@@ -317,10 +316,10 @@ fn draw_routes_raw_codes_pairs_dots_and_zoom() {
             (BatchKind::Codes, false, true),
             (BatchKind::Codes, true, true),
         ] {
-            let run = |batch| {
+            let run = |batch: bool| {
                 let _scope = Scope::new();
-                let mut r =
-                    Route::new(kind, batch, channels, if kind == BatchKind::LivePairs { 200e-6 } else { 10e-6 });
+                let mut r = Route::new(kind, channels, if kind == BatchKind::LivePairs { 200e-6 } else { 10e-6 });
+                r.records = !batch;
                 r.ui.m.dots = if dots { DotsMode::On } else { DotsMode::Off };
                 if zoom {
                     r.ui.m.zoom = true;
@@ -347,13 +346,13 @@ fn draw_routes_raw_codes_pairs_dots_and_zoom() {
                 }
                 pic
             };
-            let (standard, batch) = (run(false), run(true));
+            let (records, batch) = (run(false), run(true));
             if kind == BatchKind::LivePairs {
-                assert_eq!(standard.frames, batch.frames);
-                assert!(weights(&standard)[0] > weights(&batch)[0]);
-                println!("LivePairs {channels}ch Standard {:?}, Batch {:?}", weights(&standard), weights(&batch));
+                assert_eq!(records.frames, batch.frames);
+                assert!(weights(&records)[0] > weights(&batch)[0]);
+                println!("LivePairs {channels}ch Records {:?}, Batch {:?}", weights(&records), weights(&batch));
             } else {
-                compare(&standard, &batch, &format!("{kind:?} {channels}ch dots={dots} zoom={zoom}"));
+                compare(&records, &batch, &format!("{kind:?} {channels}ch dots={dots} zoom={zoom}"));
             }
         }
     }
@@ -362,7 +361,7 @@ fn draw_routes_raw_codes_pairs_dots_and_zoom() {
 #[test]
 fn both_zoom_maps_follow_the_same_retained_window() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Codes, true, 1, 10e-6);
+    let mut route = Route::new(BatchKind::Codes, 1, 10e-6);
     route.ui.m.zoom = true;
     route.ui.m.zscale = tscales().iter().position(|&t| t == 5e-6).unwrap();
     for (records, retained) in [(27, 27), (3, 30), (3, 33)] {
@@ -386,9 +385,10 @@ fn both_zoom_maps_follow_the_same_retained_window() {
 
 #[test]
 fn zoom_deposits_blend_with_nonminimum_persistence() {
-    let run = |batch| {
+    let run = |batch: bool| {
         let _scope = Scope::new();
-        let mut route = Route::new(BatchKind::Codes, batch, 2, 10e-6);
+        let mut route = Route::new(BatchKind::Codes, 2, 10e-6);
+        route.records = !batch;
         route.ui.m.zoom = true;
         route.ui.m.zscale = tscales().iter().position(|&t| t == 5e-6).unwrap();
         route.ui.m.persist = 1;
@@ -404,14 +404,14 @@ fn zoom_deposits_blend_with_nonminimum_persistence() {
 #[test]
 fn draw_routes_roll_scan_stop_single_and_replay() {
     for mode in ["roll", "scan", "stop", "single", "history", "segments"] {
-        let run = |batch| {
+        let run = || {
             let _scope = Scope::new();
             let kind = match mode {
                 "roll" => BatchKind::Roll,
                 "scan" => BatchKind::Scan,
                 _ => BatchKind::Raw,
             };
-            let mut r = Route::new(kind, batch, 2, if mode == "roll" || mode == "scan" { 0.2 } else { 10e-6 });
+            let mut r = Route::new(kind, 2, if mode == "roll" || mode == "scan" { 0.2 } else { 10e-6 });
             if mode == "history" {
                 r.ui.m.zoom = true;
                 r.records = true;
@@ -448,16 +448,15 @@ fn draw_routes_roll_scan_stop_single_and_replay() {
                 r.ui.step(1.0 / 30.0);
                 compare(&frozen, &picture(&r.ui), mode);
             }
-            frozen
         };
-        compare(&run(false), &run(true), mode);
+        run();
     }
 }
 
 #[test]
-fn draw_routes_stop_redraw_is_equal_but_does_not_freeze_the_live_picture() {
+fn stop_redraw_does_not_freeze_the_live_picture() {
     let _scope = Scope::new();
-    let mut r = Route::new(BatchKind::Raw, false, 1, 10e-6);
+    let mut r = Route::new(BatchKind::Raw, 1, 10e-6);
     r.step(3);
     let live = picture(&r.ui);
     r.ui.m.run = RunState::Stop;
@@ -469,9 +468,10 @@ fn draw_routes_stop_redraw_is_equal_but_does_not_freeze_the_live_picture() {
 
 #[test]
 fn draw_routes_deep_raw_measurement_still_changes_the_picture() {
-    let run = |batch| {
+    let run = |batch: bool| {
         let _scope = Scope::new();
-        let mut r = Route::new(BatchKind::DeepPairs, batch, 1, 1e-3);
+        let mut r = Route::new(BatchKind::DeepPairs, 1, 1e-3);
+        r.records = !batch;
         r.step(3);
         let before = picture(&r.ui);
         let id = change::acquisition::script_prepare(&mut r.ui);
@@ -512,11 +512,11 @@ fn full_picture_slot_preserves_each_coalesced_batch_for_record_readers() {
     for records in [1, 2, 4] {
         let _scope = Scope::new();
         let tdiv = if records == 1 { 1e-6 } else { 10e-6 };
-        let mut route = Route::new(BatchKind::Raw, true, 1, tdiv);
+        let mut route = Route::new(BatchKind::Raw, 1, tdiv);
         route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
         let id = change::acquisition::script_prepare(&mut route.ui);
-        let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
-        let pipe = drawpipe::pipe(&sw).unwrap();
+        let sw = route.ui.switches().clone();
+        let pipe = drawpipe::start_pipe(&sw);
         let mut expected = Vec::new();
         let mut samples = Vec::new();
         for batch_id in 0..3 {
@@ -563,11 +563,11 @@ fn full_picture_slot_preserves_each_coalesced_batch_for_record_readers() {
 fn consumed_waveform_redraws_only_if_its_private_deposit_becomes_stale() {
     for remap in [false, true] {
         let _scope = Scope::new();
-        let mut route = Route::new(BatchKind::Raw, true, 1, 1e-6);
+        let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
         route.ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
         let id = change::acquisition::script_prepare(&mut route.ui);
-        let sw = change::acquisition::draw_switches(&route.ui, &route.ui.m);
-        let pipe = drawpipe::pipe(&sw).unwrap();
+        let sw = route.ui.switches().clone();
+        let pipe = drawpipe::start_pipe(&sw);
         let mut last = None;
         for seq in 1..=2 {
             let batch = route.source.next_batch(&route.ui.m, &sw, 1, None).unwrap();
@@ -606,7 +606,7 @@ fn batch_steps_keep_narrow_uploads_and_idle_pictures_need_no_upload() {
     for channels in [1, 2, 4] {
         for dots in [DotsMode::Off, DotsMode::On] {
             let _scope = Scope::new();
-            let mut route = Route::new(BatchKind::Codes, true, channels, 1e-6);
+            let mut route = Route::new(BatchKind::Codes, channels, 1e-6);
             route.ui.m.dots = dots;
             route.step(1);
             let stamps: [_; NCH] = std::array::from_fn(|c| route.ui.ph.upload_rows(c, None).0);

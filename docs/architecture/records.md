@@ -6,7 +6,9 @@ Target architecture of compression, deep memory, records and the measurement pat
 
 ## Data kinds
 
-The acquisition produces three kinds of data (acquisition.md). Their roles do not overlap:
+The target separates three kinds of acquisition data. See
+[the newest-record contract](frames.md#newest-record-in-a-picture) for how current readers and
+drawing share batch data.
 
 | Kind | Content | Drawn | Becomes a record |
 |---|---|---|---|
@@ -154,6 +156,9 @@ clears `mstat` on every settings change, including changes that alter no measure
 is decided in `classify`.
 
 ## STOP and Single
+
+This section describes the target port. The current `Shared` hand-off and final-read wait are documented in
+[STOP and the retained record](../fork/stop-exact.md).
 
 - STOP (`hold` in `AcqWant`): the thread finishes the batch, then reads the final frame raw when the record shown is of
   pairs (`Final(id)`). That `MeasRead` becomes `last[0]` and is measured. The wait is state across steps, never a block: the record

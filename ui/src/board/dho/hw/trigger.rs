@@ -101,7 +101,7 @@ fn pattern(m: &Model) -> ([tpu::Pat; NCH], [tpu::Pat; 16]) {
 
 /// The `trig.serial_hw` line of system.conf; off unless `on`.
 pub(in crate::board::dho) fn serial_hw_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "trig.serial_hw").as_deref() == Some("on")
+    crate::sysconf::conf_value(None, conf, "trig.serial_hw").as_deref() == Some("on")
 }
 
 /// The relation of the TPU's receivers for a model relation.

@@ -1,5 +1,7 @@
 # Roll and scan mode (slow time bases)
 
+Unlabelled register details and interpretations of undated unit observations are **assumed**.
+
 Status: sections 8 and 9 hold the results on the unit: the roll stream (sequence of section 6) and scan mode are verified there.
 Anything else is not yet verified on hardware unless it says so. "Assumed" marks an inference.
 
@@ -31,6 +33,9 @@ copy of register N, memsel = record length, ratio = interleave factor, dot = sam
    SCAN. OOS rolls from 200 ms/div (section 8).
 
 ## 1. When to switch to roll / scan
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 ### 1.1 Time modes
 
@@ -69,6 +74,9 @@ Unchanged: RUN, SINGLE and STOP work as in `acquisition-start.md`. Only the read
 read. "Scan sweep done" (section 5) exists only in scan.
 
 ## 2. Register sequence: start and read
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 ### 2.1 Start (RUN in roll)
 
@@ -147,6 +155,9 @@ reads.
 
 ## 3. Acquisition and horizontal values in roll
 
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
+
 ### 3.1 Acquisition block
 
 Analog only: **identical to normal mode** (same rate 0x10d0/0x10d8/0x10d4, 0x10e4 = memsel, 0x10e0 = segment size,
@@ -215,6 +226,9 @@ only runs when the rate was remapped). The display stays right through xinc. All
 
 ## 4. Stop and back to normal
 
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
+
 ### 4.1 STOP from roll
 
 ```
@@ -237,6 +251,9 @@ be overwritten (assumed; see experiment E2).
 
 ## 5. Scan mode (differences from roll)
 
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
+
 - SCU block: bit17 = 0, bit22 = 1 (0x4008).
 - **0x4058** = `pos | en << 31` with pos = (offset − 5·time/div) / dot. Stock, reconstructed: en = 0 (and pos 0) if
   −(screen start / column time) >= 1, column = time/div / 100 (assumed meaning: samples from trigger to scan start). OOS
@@ -248,6 +265,9 @@ be overwritten (assumed; see experiment E2).
   block), sleep 500 ms, then RUN (new sweep) and sleep 15 ms. In SINGLE: STOP.
 
 ## 6. OOS sequence: roll, CH1, 100 ms/div, Auto depth
+
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
 
 Precondition: FPGA stopped (warm hand-over or after own normal acquisitions), ADC in CH1 mode, AFE set, copies in
 `scu::Shadows`. Values from 3.4. Registers without an OOS copy (0x1154, 0x1170) are written absolute, with the same assumption as
@@ -330,6 +350,9 @@ set-up rewrites 0x400c), and the read-out with `scu::passthrough` (which resets 
 
 ## 7. Minimal unit experiments (read-only first)
 
+**Assumed** for the register sequence or effect on hardware. Code and host fixtures establish the
+intended software writes.
+
 All of them with the probe compensation signal (1 kHz) on CH1. E4 and E6 are done, see sections 8 and 9.
 
 | # | type | what | expected |
@@ -352,6 +375,9 @@ All of them with the probe compensation signal (1 kHz) on CH1. E4 and E6 are don
 
 ## 8. Unit result: roll streaming works
 
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
+
 `oos-fpgad roll --afe --scale 1 --offset -1.5 --tdiv 0.1 --secs 3 --execute` (OOS after the cold boot, `hal::dho::roll`:
 normal configuration, then A, B, C, D of section 6; parameters from `roll::params`):
 
@@ -373,6 +399,9 @@ normal configuration, then A, B, C, D of section 6; parameters from `roll::param
   100 ms/div: 999.9 Hz; at 0.5 / 1 s/div the band is drawn correctly but Freq is nonsense, as on any scope).
 
 ## 9. Scan mode in OOS (verified on the unit)
+
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
 
 - `hal::dho::roll::config_scan(sh, rp, memsel, pos)` = A of section 6 with the last write (roll bit) replaced by bit22,
   then **0x4058** = `scan_trig_pos(delay, time/div, dot)`: 0 when delay - 5 time/div < time/div / 10 (a tenth of a
@@ -415,6 +444,9 @@ Counting them as analog columns writes the sweep with gaps. The LA words go to t
 Verified on the unit: 100,000 LA words per sweep at 200 and 500 ms/div, 50 Hz on D0 reads 50.0 Hz.
 
 ## 10. Depth readback compatibility
+
+**Assumed** for the register sequence or effect on hardware. Code and host fixtures establish the
+intended software writes.
 
 Decision for [task 0036](../tasks/done/0036-roll-depth-readback.md): preserve the acquired-record readback, in both roll
 and normal acquisition. This pins existing OOS behavior; it does not change drawing or acquisition settings.

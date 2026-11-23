@@ -199,7 +199,6 @@ pub struct Model {
     pub color_grade: bool, // colour-graded persistence: trace pixels coloured by hit density (temperature map)
     pub dots: DotsMode,    // Display > Dots: lines, dots, or Auto (`trace_style`)
     pub hdmi: HdmiMode,    // what an HDMI monitor shows (Display > HDMI)
-    pub draw_batch: bool,  // Acquire > Draw path: Batch (drawpipe workers on the hardware) instead of Standard
     pub bar_compact: bool, // Display > Bottom bar: the compact bar instead of the cards
     pub hdmi_view: usize,  // Display > Monitor view: the view (1-based) an HDMI monitor in Layout shows; 0: the panel's
     /// Display > Views: how many screen arrangements there are to switch between (1: off; ui/views.rs)

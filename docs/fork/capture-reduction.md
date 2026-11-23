@@ -1,29 +1,32 @@
 # X2 capture-side reduction
 
+The documented stock-driver write rules below are **decoded from stock**. Computed capture tuples,
+inferred Peak word layout and unlabeled register effects are **assumed**.
+
 The 156.25 MHz FPGA read-out scans stored words before play-side compression. X2 measures whether a smaller capture
 shortens that scan. A 14,064-word record corresponds to about 90 µs of scan at that clock. These are prior sweep
 measurements. X2 has not been run on hardware.
 
 ## Register evidence
 
-The repository's stock-driver reconstruction gives the following rules. The stock trace evidence column identifies
-which claims have a recorded stock capture. Inferred items require an explicit opt-in when used by the experiment.
+The repository's stock-driver reconstruction gives the following rules. The evidence column names the
+source for each claim. **Assumed** items require explicit opt-in when used by the experiment.
 
-| Register | Value or role | Repository source | Stock trace evidence |
+| Register | Value or role | Repository source | Evidence |
 |---|---|---|---|
-| `0x10d0`, `0x10d8`, `0x10d4` | Above 62.5 MSa/s, `0x8000` OR `max_rate/rate`, then `1`, `0`. At or below 62.5 MSa/s, `0`, `62.5 M/rate`, `0`. | `docs/protocols/horizontal-config.md:181–197`, `docs/fork/specs/04-peak-decimation.md:9–18` | Stock driver reconstruction. The CH1 Average 16 fixture includes `0x8002, 1, 0` but is a hand-checked OOS sequence (`hal/testdata/avg-writes.txt:14–16`, `hal/src/dho/avg.rs:127–135`). |
-| `0x1004` bit 1 | Set in Peak below the maximum rate, cleared in Normal and at the maximum rate. | `docs/protocols/horizontal-config.md:251–262`, `docs/fork/specs/04-peak-decimation.md:13–18` | Stock driver reconstruction. A 2.4 µs pulse at 50 kSa/s was visible in OOS Peak on a unit on 2026-11-07. |
-| `0x1004` bit 2 | Set when `rate < max_rate/8`. An averaging filter interpretation is **inferred**. OOS unit measurements at 31.25 MSa/s found full-amplitude aliasing. | `docs/protocols/horizontal-config.md:193–197,262`, `docs/fork/specs/02-hires-fir.md:24–29` | Stock driver reconstruction and OOS measurements. |
-| `0x1004`, `0x1120` family | HiRes clears the same mode bits as Normal. Stock shifts the play-side fine delay by `−T/2`; attributing that correction to a capture filter is **inferred**. The HiRes bits UI choice does not select a capture register. | `docs/fork/specs/02-hires-fir.md:9–29`, `docs/protocols/horizontal-config.md:350–351` | Stock driver reconstruction. |
-| `0x10dc` | Stock writes `1` when anti-aliasing is switched off. The effect of the register is **inferred**. OOS leaves it alone. | `docs/fork/specs/04-peak-decimation.md:18,29–32,69–73`, `docs/protocols/horizontal-config.md:193–197,263` | Stock driver reconstruction. |
-| `0x10e4`, `0x4050`, `0x4054` | Stored points per channel and pre/post point counts. At the centre, pre and post split the depth. | `docs/protocols/horizontal-config.md:59–90,163–179,332–335` | The documentation reports 2.5 M, 6.25 M and 25 k points for one channel, and 6,250 points/channel for four channels. See lines 110–111. |
-| `0x10e0` | Segment size in bursts, calculated from `stored_points × ratio + 384`. Ten stored words per burst is **inferred** from the arithmetic. | `docs/protocols/horizontal-config.md:114–142`, `docs/hardware/fpga.md:228–235` | Stock model and OOS unit checks. |
-| `0x1100`, `0x1108`, `0x11f0`, `0x1170` | Raw play uses the stored-word window and pass-through. Play-side compression emits min/max from that window. | `docs/protocols/horizontal-config.md:269–271,388–389`, `docs/protocols/acquisition-start.md:386–397`, `hal/testdata/second-frame-writes.txt` | OOS unit read-out evidence. The play-side pair observation gives no capture-side byte layout. |
+| `0x10d0`, `0x10d8`, `0x10d4` | Above 62.5 MSa/s, `0x8000` OR `max_rate/rate`, then `1`, `0`. At or below 62.5 MSa/s, `0`, `62.5 M/rate`, `0`. | `docs/protocols/horizontal-config.md:181–197`, `docs/fork/specs/04-peak-decimation.md:9–18` | **Decoded from stock**. The CH1 Average 16 fixture includes `0x8002, 1, 0` but is a hand-checked OOS sequence (`hal/testdata/avg-writes.txt:14–16`, `hal/src/dho/avg.rs:127–135`). |
+| `0x1004` bit 1 | Set in Peak below the maximum rate, cleared in Normal and at the maximum rate. | `docs/protocols/horizontal-config.md:251–262`, `docs/fork/specs/04-peak-decimation.md:13–18` | **Decoded from stock**. A 2.4 µs pulse at 50 kSa/s was visible in OOS Peak on a unit on 2026-11-07. |
+| `0x1004` bit 2 | Set when `rate < max_rate/8`. An averaging filter interpretation is **assumed**. OOS unit measurements at 31.25 MSa/s found full-amplitude aliasing. | `docs/protocols/horizontal-config.md:193–197,262`, `docs/fork/specs/02-hires-fir.md:24–29` | **Decoded from stock**. The separate OOS observations are undated here. |
+| `0x1004`, `0x1120` family | HiRes clears the same mode bits as Normal. Stock shifts the play-side fine delay by `−T/2`; attributing that correction to a capture filter is **assumed**. The HiRes bits UI choice does not select a capture register. | `docs/fork/specs/02-hires-fir.md:9–29`, `docs/protocols/horizontal-config.md:350–351` | **Decoded from stock**. |
+| `0x10dc` | Stock writes `1` when anti-aliasing is switched off. The effect of the register is **assumed**. OOS leaves it alone. | `docs/fork/specs/04-peak-decimation.md:18,29–32,69–73`, `docs/protocols/horizontal-config.md:193–197,263` | **Decoded from stock**. |
+| `0x10e4`, `0x4050`, `0x4054` | Stored points per channel and pre/post point counts. At the centre, pre and post split the depth. | `docs/protocols/horizontal-config.md:59–90,163–179,332–335` | **Decoded from stock**. The earlier unit account reports 2.5 M, 6.25 M and 25 k points for one channel, and 6,250 points/channel for four channels. See lines 110–111. |
+| `0x10e0` | Segment size in bursts, calculated from `stored_points × ratio + 384`. Ten stored words per burst is **assumed** from the arithmetic. | `docs/protocols/horizontal-config.md:114–142`, `docs/hardware/fpga.md:228–235` | **Decoded from stock** for the computation. The word-per-burst interpretation is **assumed**. |
+| `0x1100`, `0x1108`, `0x11f0`, `0x1170` | Raw play uses the stored-word window and pass-through. Play-side compression emits min/max from that window. | `docs/protocols/horizontal-config.md:269–271,388–389`, `docs/protocols/acquisition-start.md:386–397`, `hal/testdata/second-frame-writes.txt` | **Decoded from stock** for the mode and window writes. The compression experiments describe play-side pairs. Capture-side byte layout remains **assumed**. |
 
 Normal capture keeps one sample per decimation interval. The raw read has 16-bit words, interleaved by the hardware
 ratio of 1, 2 or 4 for one, two or three/four channels. The raw Peak payload is believed to contain min/max pairs
 (`docs/fork/deep-meas.md:38`). Consecutive pair boundaries, order and the relation of each pair to the programmed
-divider are **inferred** for X2, and the Peak window beyond factor 8 is unknown (`docs/hardware/fpga.md:468`).
+divider are **assumed** for X2, and the Peak window beyond factor 8 is unknown (`docs/hardware/fpga.md:468`).
 
 Stock uses the fixed depth list and 1-2-5 time bases, choosing the lesser of full rate and depth divided by the
 ten-division screen time, then applying its exact decimal-to-divider remaps. Auto instead uses one screen at maximum
@@ -56,7 +59,7 @@ depths to keep the same divider. These profiles use Normal mode. Their exact cap
 | CH1–CH4 | 2 | 500 ns | 200 → 156.25 | `0x8002` |
 
 With explicit `acq.capture.inferred = on`, use `floor(full_points / n / 8) × 8` stored points per channel. This
-depth and the 78.125 MSa/s profiles (one channel at 16, two at 8 and four at 4) are **inferred**. The opt-in is also
+depth and the 78.125 MSa/s profiles (one channel at 16, two at 8 and four at 4) are **assumed**. The opt-in is also
 required for every Peak request. Peak uses one stored word per programmed point and lane. The display treats
 consecutive words as minimum then maximum, at one pair per two stored words. Pool placement sends the pairs to
 the column envelope, using the hardware trigger position on that pair grid. The raw word order, pair rate
@@ -74,7 +77,7 @@ bytes and is equal to frame size for X2. The dump sidecar carries `capture`, `ca
 
 1. With the owner present and the scope released for X2, save `/oos/system.conf` and the UI setup. Use the
    owner-approved signed build. Start with `acq.capture = full`, `acq.capture.inferred = off`, `acq.compress = off`,
-   `acq.prearm = off`, `acq.stop_slot = zero`, `acq.pipeline = frames`, `acq.frame_header = on`, `acq.dump = on`
+   `acq.prearm = off`, `acq.stop_slot = zero`, `acq.frame_header = on`, `acq.dump = on`
    and `acq.dump.count = 4`. Restart `oos-ui` through the approved workflow after each switch change. Keep the
    generator settings, clocks and capture route fixed between A/B runs.
 2. Set `:ACQuire:TYPE NORM`, `:ACQuire:MDEPth AUTO` and `:TRIGger:SWEep NORM`. Set CH1 only, delay zero, DC coupling

@@ -81,28 +81,25 @@ mod tests;
 
 /// The `cal.core_offset` line; `tight` or not.
 pub(super) fn core_offset_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "cal.core_offset").as_deref() == Some("tight")
+    crate::sysconf::conf_value(None, conf, "cal.core_offset").as_deref() == Some("tight")
 }
 /// The `dvm.hw` line of system.conf; off unless `on`.
 pub(super) fn dvm_hw_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "dvm.hw").as_deref() == Some("on")
+    crate::sysconf::conf_value(None, conf, "dvm.hw").as_deref() == Some("on")
 }
 /// OOS_PREARM set, else the `acq.prearm` line of system.conf; off unless `on`.
 pub(super) fn prearm_from(env_set: bool, conf: &str) -> bool {
-    env_set || crate::drawpipe::conf_value(None, conf, "acq.prearm").as_deref() == Some("on")
+    env_set || crate::sysconf::conf_value(None, conf, "acq.prearm").as_deref() == Some("on")
 }
 
 /// Whether frame 0 of a batch of several frames is left out (issue #5): on unless `acq.frame0 = keep` in the settings
 /// file (`BoardSwitches::frame0_drop`).
 pub(super) fn frame0_drop_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "acq.frame0").as_deref() != Some("keep")
+    crate::sysconf::conf_value(None, conf, "acq.frame0").as_deref() != Some("keep")
 }
 
 pub(super) fn zone_batch_from(conf: &str) -> u32 {
-    crate::drawpipe::conf_value(None, conf, "zone.batch")
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(1)
-        .clamp(1, 1000)
+    crate::sysconf::conf_value(None, conf, "zone.batch").and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).clamp(1, 1000)
 }
 /// A returned batch suppresses further SINGLE arms only for its captured pair. A new pair
 /// must replace an obsolete batch that the UI cannot complete with. Accepted completion

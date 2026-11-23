@@ -9,12 +9,12 @@ use oos_hal::sync::lock;
 
 /// The `mask.hw` line of system.conf; off unless `on`.
 pub(in crate::board::dho) fn mask_hw_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "mask.hw").as_deref() == Some("on")
+    crate::sysconf::conf_value(None, conf, "mask.hw").as_deref() == Some("on")
 }
 
 /// The `zone.hw` line of system.conf; off unless `on`.
 pub(in crate::board::dho) fn zone_hw_from(conf: &str) -> bool {
-    crate::drawpipe::conf_value(None, conf, "zone.hw").as_deref() == Some("on")
+    crate::sysconf::conf_value(None, conf, "zone.hw").as_deref() == Some("on")
 }
 
 /// Keys of the comparator mapping in system.conf: `mask.map.<key> = <value>` (`mask::Map::set`).
@@ -24,7 +24,7 @@ const MASK_MAP_KEYS: [&str; 8] = ["domain", "cpd", "mid", "shift", "offs", "inve
 pub(in crate::board::dho) fn mask_map_from(conf: &str) -> oos_hal::dho::mask::Map {
     let mut m = oos_hal::dho::mask::Map::default();
     for k in MASK_MAP_KEYS {
-        if let Some(v) = crate::drawpipe::conf_value(None, conf, &format!("mask.map.{}", k)) {
+        if let Some(v) = crate::sysconf::conf_value(None, conf, &format!("mask.map.{}", k)) {
             if let Err(e) = m.set(&format!("{}={}", k, v)) {
                 eprintln!("oos-ui: system.conf mask.map.{}: {}", k, e);
             }

@@ -78,14 +78,6 @@ const ROWS: &[Descriptor] = {
             |_| true,
         ),
         Descriptor::new(
-            AcqDrawPath,
-            Choice,
-            "Draw path",
-            |u| if u.m.draw_batch { "Batch" } else { "Standard" }.into(),
-            |_| ["Standard", "Batch"].into_iter().map(String::from).collect(),
-            |_| true,
-        ),
-        Descriptor::new(
             AcqAlias,
             Choice,
             "Aliasing",
@@ -116,10 +108,6 @@ fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
         }
         Item::AcqDepth => m.mdepth = cyc(m.mdepth, mdepths().len(), d),
         Item::AcqCores => m.cores = !m.cores,
-        Item::AcqDrawPath => {
-            m.draw_batch = !m.draw_batch;
-            change::mapping_observed(ui, change::oracle::Row::Layout);
-        }
         _ => {}
     }
     false

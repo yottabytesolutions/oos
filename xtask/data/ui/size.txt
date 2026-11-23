@@ -9,9 +9,9 @@
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
-3266 file ui/src/scpi.rs
+3265 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8436 file ui/src/ui.rs
+8434 file ui/src/ui.rs
 1495 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -64,7 +64,7 @@
 146 fn ui/src/scpi.rs Scpi::sim_cmd
 171 fn ui/src/scpi.rs Scpi::timebase_more
 223 fn ui/src/scpi/ser.rs trig
-66 fn ui/src/sysconf.rs SysConf::parse_over
+61 fn ui/src/sysconf.rs SysConf::parse_over
 62 fn ui/src/ui.rs Ui::cursor_values
 73 fn ui/src/ui.rs Ui::dlg_layout
 73 fn ui/src/ui.rs Ui::draw_axes
@@ -81,7 +81,7 @@
 117 fn ui/src/ui.rs Ui::knob
 76 fn ui/src/ui.rs Ui::menu_title
 100 fn ui/src/ui.rs Ui::multi_touch
-252 fn ui/src/ui.rs Ui::new
+251 fn ui/src/ui.rs Ui::new
 76 fn ui/src/ui.rs Ui::pointer_wheel_motion
 135 fn ui/src/ui.rs Ui::render_layers
 121 fn ui/src/ui.rs Ui::set_dec_proto
@@ -134,7 +134,7 @@
 63 fn ui/src/ui/sim/sim_bus_candidate.rs Ui::sim_bus_guard
 117 fn ui/src/ui/startup.rs Ui::draw_start_up
 66 fn ui/src/ui/sysinfo.rs Ui::draw_sysinfo
-149 fn ui/src/ui/sysinfo.rs Ui::sysinfo_rows
+130 fn ui/src/ui/sysinfo.rs Ui::sysinfo_rows
 74 fn ui/src/ui/tables.rs Ui::draw_table
 75 fn ui/src/ui/tools.rs Ui::hist_stat
 64 fn ui/src/ui/wlan.rs Ui::osk_done

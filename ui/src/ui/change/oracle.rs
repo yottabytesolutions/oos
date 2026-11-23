@@ -185,7 +185,7 @@ pub fn dirty_contracts(old: C, geometry: bool, persistence: bool) -> C {
 
 #[cfg(test)]
 pub fn persistence_field(name: &str) -> bool {
-    matches!(name, "persist" | "color_grade" | "acq" | "avg_count" | "avg_hw" | "draw_batch" | "deskew_ch")
+    matches!(name, "persist" | "color_grade" | "acq" | "avg_count" | "avg_hw" | "deskew_ch")
 }
 #[cfg(test)]
 pub fn geometry_field(name: &str) -> bool {

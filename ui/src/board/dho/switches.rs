@@ -5,7 +5,7 @@
 
 use super::hw;
 use crate::{
-    drawpipe::conf_value,
+    sysconf::conf_value,
     sysconf::switches::{text, BatchDump, Env},
 };
 

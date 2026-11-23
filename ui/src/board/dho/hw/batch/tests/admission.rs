@@ -101,9 +101,8 @@ fn application_profile_drives_real_board_admission_and_source_pacing() {
     for configured in [false, true] {
         let _scope = crate::drawpipe::test_scope::Scope::new();
         let conf = if configured { crate::drawpipe::funding::TEST_PROFILE } else { "" };
-        let mut sw = crate::sysconf::Switches::parse(&|_| None, conf, "", Default::default());
-        sw.pipeline = crate::drawpipe::Mode::Batch;
-        let pipe = crate::drawpipe::pipe(&sw).unwrap();
+        let sw = crate::sysconf::Switches::parse(&|_| None, conf, "", Default::default());
+        let pipe = crate::drawpipe::start_pipe(&sw);
         let id = Identity::default();
         for compress in [false, true] {
             for tdiv in [1e-6, 10e-6] {
@@ -189,7 +188,7 @@ fn configured_cold_remap_and_held_depth_use_final_board_geometry() {
                 "",
                 Default::default(),
             );
-            let pipe = crate::drawpipe::pipe(&sw).unwrap();
+            let pipe = crate::drawpipe::start_pipe(&sw);
             let (mut m, geometry, b, p) = normal_lines_plan(tdiv, compress);
             let id = Identity::default();
             for width in [970, 271, 1920, 7680, 970] {
@@ -233,7 +232,7 @@ fn wide_board_geometry_uses_a_slower_funded_plan_or_the_existing_fallback() {
         let s = super::super::super::settings(&m, false, &sw);
         let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
         let b = super::super::super::batch_plan(&s, &p, sw.board.zone_batch);
-        let pipe = crate::drawpipe::pipe(&sw).unwrap();
+        let pipe = crate::drawpipe::start_pipe(&sw);
         let id = Identity::default();
         pipe.publish_view(&m, 271, 448, sw.interp, id);
         let hits = standard::dot_hit_bound(271.0 / (p.rate as f64 * s.tdiv * 10.0));

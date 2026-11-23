@@ -371,9 +371,8 @@ macro_rules! field_table {
                 341 SimCorrHz(sim_corr_hz: f64) copy [ACQ|STATS];
             }
             Display2P0 display2_p0 {
-                342 DrawBatch(draw_batch: bool) copy [PHOSPHOR];
-                343 BarCompact(bar_compact: bool) copy [NONE];
-                344 HdmiView(hdmi_view: usize) copy [NONE];
+                342 BarCompact(bar_compact: bool) copy [NONE];
+                343 HdmiView(hdmi_view: usize) copy [NONE];
             }
         }
     };

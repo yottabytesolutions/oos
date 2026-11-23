@@ -321,9 +321,8 @@ scope explicitly changes behaviour. No step claims implementation or unit accept
   - One live deposit path; obsolete selectors gone; setup compatibility has an explicit tested outcome.
   - Remaining behaviour matches M12a pictures/perf; full gate and approved unit evidence.
     Host equality alone cannot allow deletion.
-- **Remove:** drawpipe::Mode/config.rs, acq.pipeline, Model::draw_batch, :SYSTem:PIPeline, UI fast_draw_all,
-  fast_take/fast_budget/fast_max, acc_t, together/par_map/par_each, helper_cores, route D in Ui::step and
-  newest-record drawing.
+- **Remove:** the Standard pipeline selectors and any code exclusive to them. Preserve the decoded-record
+  hand-off and drawing helpers where the batch fallback uses them.
 - **Delta:** -300..-450 production lines.
 - **Risk:** medium.
 - **Depends:** F2, F3 and M12a approval. No parallel draw-path edits.
@@ -428,7 +427,6 @@ Parallel: evidence preparation only alongside draw-path changes; acceptance is o
 <a id="m12b"></a>
 
 **M12b, approved deletion.** Exactly F4 above. The selected route is no longer an open owner question.
-Standard and selectors remain until M12a/F2/F3 pass; no draw.model switch is present or introduced.
 M12 completes after accepted evidence and F4 deletion. F5 follows immediately; F6/F7 complete the target.
 
 ### E1: dispatch extraction before parallel families

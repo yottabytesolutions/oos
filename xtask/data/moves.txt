@@ -1,18 +1,4 @@
 # Planned moves of this branch: <old key or file> -> <new key or file> (docs/development.md).
 # The integrator applies them with `cargo xtask ratchet --move` at merge, which empties this file.
-fn ui/src/scpi.rs Scpi::exec_cmd -> fn ui/src/scpi/dispatch.rs exec
-ui ui/src/scpi.rs clippy::unnecessary_cast -> ui ui/src/scpi/trigger.rs clippy::unnecessary_cast
-fn ui/src/store.rs parse_wfm -> fn ui/src/store/import.rs parse_wfm
-fn ui/src/store.rs parse_isf -> fn ui/src/store/import.rs parse_isf
-fn ui/src/store.rs parse_ag -> fn ui/src/store/import.rs parse_ag
-ui ui/src/store.rs clippy::cognitive_complexity -> ui ui/src/store/codec_tests/legacy.rs clippy::cognitive_complexity
-ui ui/src/store.rs clippy::manual_pattern_char_comparison -> ui ui/src/store/import.rs clippy::manual_pattern_char_comparison
-ui ui/src/store.rs clippy::manual_range_patterns -> ui ui/src/store/import.rs clippy::manual_range_patterns
-fn ui/src/ui.rs Ui::adjust -> fn ui/src/ui/menu/trigger.rs adjust
-fn ui/src/ui.rs Ui::trigger_items -> fn ui/src/ui/menu/trigger/rows.rs trigger_items
-fn ui/src/ui.rs Ui::value -> fn ui/src/ui/menu/trigger.rs value
-fn fpgad/src/main.rs selfcal -> fn fpgad/src/cmd/selfcal.rs run
-fpgad fpgad/src/main.rs clippy::too_many_lines -> fpgad fpgad/src/cmd/selfcal.rs clippy::too_many_lines
-fpgad/src/board.rs -> fpgad/src/cmd/board.rs
-static ui/src/http.rs SENDERS -> static ui/src/netport/http.rs SENDERS
 static ui/src/board/dho/hw.rs mask_map_cell::MAP -> static ui/src/board/dho/hw/comparator.rs mask_map_cell::MAP
+static ui/src/drawpipe.rs pipe::P -> static ui/src/drawpipe.rs pipe_slot::P

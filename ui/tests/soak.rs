@@ -227,17 +227,6 @@ fn cycle_row(
 
 #[test]
 fn change_snapshots_reuse_allocations_after_warmup() {
-    if std::env::var_os("OOS_CHANGE_ALLOC").is_none() {
-        let inputs = support::isolated_inputs();
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        command
-            .args(["--exact", "change_snapshots_reuse_allocations_after_warmup", "--nocapture"])
-            .env("OOS_CHANGE_ALLOC", "1");
-        let out = support::run_command(&inputs, command, 120);
-        print!("{}", String::from_utf8_lossy(&out.stdout));
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        return;
-    }
     snapshots::change_alloc::check();
 }
 

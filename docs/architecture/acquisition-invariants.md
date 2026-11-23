@@ -42,3 +42,14 @@ four records are available after the fixture truncates the completed DMA buffer.
 `lost.error` and selection uses the available count, so any tap carries the last available record that survives
 selection.
 [Host test](../../ui/src/board/dho/hw/acq/tests/deposit.rs) · [Read accounting](../../ui/src/board/dho/publication.rs#L373)
+
+## STOP and RUN boundaries
+
+The source defers the normal configuration plan while held. After STOP handling finishes, a held pass
+with no stopped view or side work pending only polls the hold, including after a settings edit. If
+the effective settings changed, the first running pass applies the latest request once before arming.
+Calibration, generator dispatch, frequency-counter control and XADC service remain reachable while
+held. The DVM control test covers the no-view path.
+[Held trace](../../ui/src/board/dho/hw/acq/tests/stopped_pass.rs) ·
+[Side service](../../ui/src/board/dho/hw/acq/tests/side_service.rs)
+

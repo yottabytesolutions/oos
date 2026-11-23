@@ -170,16 +170,13 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
             let mut last_read = std::mem::take(&mut self.replay.fresh);
             let Some(request) = self.service(io, counter) else { continue };
             let Some((settings, params)) = self.reconfigure(io, &request, &mut last_read) else { continue };
-            let recording = self.segrun.as_ref().is_some_and(SegRun::recording);
-            if !recording {
-                self.units.poll(
-                    io,
-                    &mut self.batch.armed,
-                    &self.out,
-                    (&settings, self.configured.mode),
-                    (&request, self.service.generator_on()),
-                );
-            }
+            self.units.poll(
+                io,
+                (&mut self.batch.armed, self.segrun.as_ref()),
+                &self.out,
+                (&settings, self.configured.mode),
+                (&request, self.service.generator_on()),
+            );
             if self.configured.mode != Slow::Off {
                 if !self.stream.poll(
                     io,

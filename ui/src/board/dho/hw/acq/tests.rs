@@ -15,6 +15,7 @@ mod picture;
 mod raw;
 mod side_service;
 mod sim;
+mod stopped_pass;
 mod stopped_raw;
 
 #[derive(Debug, PartialEq)]
@@ -138,7 +139,10 @@ fn run(
 fn capture(source: &mut AcqLoop<FixedPacing>, io: &mut Io<sim::Sim>) {
     let request = Request::read(&lock(&source.out));
     let mut last_read = std::mem::take(&mut source.replay.fresh);
-    let (settings, params) = source.reconfigure(io, &request, &mut last_read).unwrap();
+    let Some((settings, params)) = source.reconfigure(io, &request, &mut last_read) else {
+        assert!(request.run.hold);
+        return;
+    };
     source.batch(io, (&settings, &params), request, last_read);
 }
 

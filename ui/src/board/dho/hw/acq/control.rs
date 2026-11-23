@@ -68,8 +68,15 @@ impl<T: PacingPolicy> AcqLoop<T> {
             self.stream.restart_scan(io, want_mode);
         }
         self.apply_overrides(io, request, &mut want);
-        self.hold(io, request, *last_read);
+        let held = request.run.hold;
+        if held && !self.replay.paused {
+            self.enter_hold(io, request, *last_read);
+        }
         if self.stopped_view(io, request.run.stop_view, want_mode) {
+            return None;
+        }
+        if held {
+            self.poll_held(io, request, &want);
             return None;
         }
         if publication::reconfigure(
@@ -111,10 +118,21 @@ impl<T: PacingPolicy> AcqLoop<T> {
         }
     }
 
-    fn hold(&mut self, io: &mut Io<impl Port>, request: &Request, last_read: bool) {
-        if !request.run.hold || self.replay.paused {
-            return;
-        }
+    fn poll_held(&mut self, io: &mut Io<impl Port>, request: &Request, want: &Settings) {
+        let settings = self.configured.current.as_ref().map_or(want, |(applied, _)| applied);
+        self.units.poll(
+            io,
+            (&mut self.batch.armed, self.segrun.as_ref()),
+            &self.out,
+            (settings, self.configured.mode),
+            (request, self.service.generator_on()),
+        );
+        self.stream.poll_control(io, &self.out, self.configured.mode);
+        lock(&self.out).final_ack = request.run.final_req;
+        io.clock.wait(Duration::from_millis(5));
+    }
+
+    fn enter_hold(&mut self, io: &mut Io<impl Port>, request: &Request, last_read: bool) {
         // An armed successor has already started overwriting the ring.
         let ahead = self.batch.armed.is_some();
         io.disarm(&mut self.batch.armed);

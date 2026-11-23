@@ -38,8 +38,8 @@ impl<T: PacingPolicy> AcqLoop<T> {
         last_read: bool,
     ) {
         let out = &self.out;
-        if !self.batch.ready(out, settings, &request, &mut self.replay.paused, &io.clock) {
-            return;
+        if std::mem::take(&mut self.replay.paused) {
+            lock(out).clear_queue(drawpipe::Lost::Settings);
         }
         let mut b = batch_plan(settings, params, self.switches.board.zone_batch);
         let (deposit, uncapped) = batch::deposit_plan(&b, params, request.identity, request.route);
@@ -142,25 +142,6 @@ impl BatchState {
             Mode::Average { count } => Some((avg::Tracker::new(kind, count), avg_clear, 0)),
             _ => None,
         };
-    }
-
-    fn ready(
-        &mut self,
-        out: &HwShared,
-        settings: &Settings,
-        request: &Request,
-        paused: &mut bool,
-        clock: &impl Clock,
-    ) -> bool {
-        if single::progress(settings, self.single_done, request.pair(), request.run.hold, 0).1 == single::Poll::Hold {
-            lock(out).final_ack = request.run.final_req;
-            clock.wait(Duration::from_millis(5));
-            return false;
-        }
-        if std::mem::take(paused) {
-            lock(out).clear_queue(drawpipe::Lost::Settings);
-        }
-        true
     }
 
     fn single_ready(&mut self, io: &mut Io<impl Port>, settings: &Settings, request: &Request) -> bool {

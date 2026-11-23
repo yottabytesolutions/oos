@@ -2,6 +2,7 @@
 
 use super::super::{
     dma_source::ArmedBatch,
+    segmented::SegRun,
     trim::{self, TrimPending},
     units::{dvm_reading, dvm_step, DvmKey, DvmStep},
 };
@@ -38,11 +39,14 @@ impl Units {
     pub(super) fn poll<P: Port>(
         &mut self,
         io: &mut Io<P>,
-        armed: &mut Option<ArmedBatch>,
+        (armed, segments): (&mut Option<ArmedBatch>, Option<&SegRun>),
         out: &HwShared,
         (settings, mode): (&Settings, Slow),
         (request, generator_on): (&Request, bool),
     ) {
+        if segments.is_some_and(SegRun::recording) {
+            return;
+        }
         self.dvm(io, armed, out, settings, request.dvm);
         if mode != Slow::Off {
             return;

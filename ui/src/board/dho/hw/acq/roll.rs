@@ -111,6 +111,10 @@ impl Stream {
         }
     }
 
+    pub(super) fn poll_control(&mut self, io: &mut Io<impl Port>, out: &HwShared, mode: Slow) -> bool {
+        output::poll(mode, out, &mut self.rolling, &mut self.ring, &mut self.ring_la, &mut io.state.sh, &mut io.bar)
+    }
+
     /// Returns false if a read error requires the acquisition to be configured again.
     pub(super) fn poll(
         &mut self,
@@ -120,8 +124,7 @@ impl Stream {
         (settings, params, mode): (&Settings, &hz::Params, Slow),
         (seq, identity): (&mut u64, Identity),
     ) -> bool {
-        if !output::poll(mode, out, &mut self.rolling, &mut self.ring, &mut self.ring_la, &mut io.state.sh, &mut io.bar)
-        {
+        if !self.poll_control(io, out, mode) {
             std::thread::sleep(Duration::from_millis(5));
             return true;
         }

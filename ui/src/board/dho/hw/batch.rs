@@ -34,7 +34,13 @@ mod tests;
 pub(super) fn deposit_plan(s: &Settings, p: &hz::Params, id: Identity, route: bool) -> (Option<&'static Pipe>, u32) {
     let Some(pipe) = crate::drawpipe::pipe() else { return (None, s.frames) };
     let live = (p.memsel <= crate::compress::MAX_DEPTH).then(|| (p.rate, oos_hal::dho::seq::compress_k(s, p)));
-    if let Some(limit) = (route && pipe.accepting()).then(|| pipe.read_limit(id, live)).flatten() {
+    let step = super::decode::pair_step(s, p);
+    if let Some(limit) = (route
+        && pipe.accepting()
+        && crate::drawpipe::average::geometry_ok(pipe, id, step as f64 / p.rate as f64, step > 1))
+    .then(|| pipe.read_limit(id, live))
+    .flatten()
+    {
         if !pipe.staged_taps() || tap::admit(pipe, s, p, id) {
             return (Some(pipe), s.frames.min(limit));
         }
@@ -47,10 +53,10 @@ pub(super) fn deposit_plan(s: &Settings, p: &hz::Params, id: Identity, route: bo
 pub(super) fn readout_pipe(
     pipe: Option<&Pipe>,
     count: usize,
-    average: bool,
+    hardware_average: bool,
     funded_single_record: bool,
 ) -> Option<&Pipe> {
-    pipe.filter(|pipe| !average && (count > 1 || (count == 1 && funded_single_record)) && pipe.accepting())
+    pipe.filter(|pipe| !hardware_average && (count > 1 || (count == 1 && funded_single_record)) && pipe.accepting())
 }
 
 pub(super) struct Readout<'a> {

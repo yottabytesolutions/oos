@@ -40,6 +40,10 @@ pub(in crate::drawpipe) fn work(
         };
         let clock = b.clock.dequeue(dequeued);
         let Some((v, identity)) = claim_batch(&mut painter, slot, &b, state, reset_before, clock) else { continue };
+        if crate::drawpipe::average::software(&v.m) {
+            average::publish_average(&mut painter, slot, &b, &v, clock);
+            continue;
+        }
         painter.prepare_statistics(&mut statistics, &b, &v);
         let Some(deposit) = painter.batch_with_clock(current.take(), slot, &b, &v, identity, clock) else {
             if slot.closed() {

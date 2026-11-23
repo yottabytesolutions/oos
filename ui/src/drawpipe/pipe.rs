@@ -7,7 +7,7 @@ use super::{
 use super::{stage, test_scope, Accepted, Stats};
 use crate::board::{Frame, PictureEligibility, QueuedFrame};
 use crate::model::Model;
-use crate::picture::deposit::{Handoff, TapRead, TapView};
+use crate::picture::deposit::{Handoff, TapProjection, TapRead, TapView};
 #[cfg(test)]
 use crate::{picture::deposit::Deposit, wave::Phosphor};
 use crate::{picture::DepositWindow, sparse::Interp};
@@ -197,7 +197,11 @@ impl Pipe {
             TapRead::Empty => return TapRead::Empty,
         };
         let eligibility = tap.projection.eligibility(view);
-        TapRead::Ready((QueuedFrame::from_tap(tap.frame, eligibility, charge), tap.folds))
+        let average = match tap.projection {
+            TapProjection::Average(output) => Some(output),
+            _ => None,
+        };
+        TapRead::Ready((QueuedFrame::from_tap(tap.frame, eligibility, charge, average), tap.folds))
     }
 
     pub(crate) fn take_preview(&self, frame: &Arc<Frame>, size: (usize, usize)) -> Option<PictureEligibility> {

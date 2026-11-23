@@ -82,6 +82,7 @@ fn exercise_session(
         rounds: if ab { 5 } else { 2 },
         cpu: 2,
         stop: allow_stop,
+        average: false,
     };
     for name in ["short", "dense"] {
         let group = options.fixtures.join(name);
@@ -313,6 +314,7 @@ fn validates_output_before_build_and_preserves_an_existing_report_on_error() {
         rounds: 1,
         cpu: 2,
         stop: false,
+        average: false,
     };
     assert!(run(&missing_checkout, &options).unwrap_err().starts_with("open --out:"));
     options.out = scratch.path().join("missing.json/");

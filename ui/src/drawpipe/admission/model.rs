@@ -24,11 +24,16 @@ impl PoolPlan {
         let spacing = frame.dt / f64::from(view.m.time_per_div()) * view.w as f64 / f64::from(HDIV);
         let projection = crate::picture::deposit::standard::projection(&view.m, view.w, view.h, spacing);
         let main = route::route(&frame, &projection, view.m.acq, projection.code_geometry());
+        let average = crate::drawpipe::average::software(&view.m);
         Self {
-            route: view.zoom.map_or(main, |_| Route::Zoom),
+            route: if average { Route::Average } else { view.zoom.map_or(main, |_| Route::Zoom) },
             channels: view.m.n_on().max(1) as u64,
             points,
-            columns: (view.w + view.zoom.map_or(0, |zoom| zoom.size().0)) as u64,
+            columns: if average {
+                crate::board::record::HW_POINTS as u64
+            } else {
+                (view.w + view.zoom.map_or(0, |zoom| zoom.size().0)) as u64
+            },
         }
     }
 
@@ -38,6 +43,7 @@ impl PoolPlan {
         let (point_ns, column_ns) = match self.route {
             Route::Boxcar => (120, 300),
             Route::Screen => (65, 100),
+            Route::Average => (24, 100),
             Route::Dots => (12, 900),
             Route::Upsampled => (24, 900),
             // The second map reduces only its own window, then publishes one span per column.

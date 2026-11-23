@@ -8,6 +8,13 @@ use super::Frame;
 use crate::model::*;
 use std::sync::Arc;
 
+pub(crate) const HW_POINTS: usize = 3600;
+
+pub(crate) fn hw_grid(m: &Model) -> (usize, f64, f64) {
+    let window = m.time_per_div() as f64 * crate::model::HDIV as f64;
+    (HW_POINTS, window, m.delay as f64 - window / 2.0)
+}
+
 /// Maximum hardware records consumed by the UI in one step, before its time budget.
 pub const RECORDS_PER_STEP: usize = 48;
 
@@ -262,7 +269,15 @@ pub fn resample_record(
     ti: f64,
     triggered: bool,
 ) -> crate::wave::Record {
-    let mut rec = resample(f, m, n, window, t_first, ti, triggered);
+    let rec = resample(f, m, n, window, t_first, ti, triggered);
+    attach_raw(rec, f, (window, t_first, ti))
+}
+
+pub(crate) fn attach_raw(
+    mut rec: crate::wave::Record,
+    f: &Arc<Frame>,
+    (window, t_first, ti): (f64, f64, f64),
+) -> crate::wave::Record {
     let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
     // the frame's samples inside the screen window
     let (i0, i1, t0) = raw_window(ti, t_first, window, f.dt, len);

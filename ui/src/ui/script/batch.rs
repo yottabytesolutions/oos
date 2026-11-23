@@ -86,9 +86,10 @@ impl BatchScript {
         Counters::add(&drawpipe::counters().acquired, frames as u64);
         let mut newest = batch.newest(identity.epoch());
         newest.cfg = identity.gen();
-        self.pending = Some(Pending { before, frames: frames as u64, newest: newest.seq, workers: pipe.accepting() });
+        let workers = pipe.accepting() && drawpipe::average::geometry_ok(pipe, identity, newest.dt, newest.envelope);
+        self.pending = Some(Pending { before, frames: frames as u64, newest: newest.seq, workers });
         let newest = Arc::new(newest);
-        if pipe.accepting() {
+        if workers {
             let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
             let raw = Box::new(batch.into_bytes());
             let start = raw.bytes().as_ptr().addr();

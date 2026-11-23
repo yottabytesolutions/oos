@@ -193,9 +193,9 @@ impl TapView {
     }
 }
 
-#[derive(Clone, Copy)]
 pub(crate) enum TapProjection {
     Unpainted,
+    Average(crate::drawpipe::average::Output),
     Projected { gen: u64, size: (usize, usize) },
     Accounted { mapping_gen: u64, size: (usize, usize) },
     Recoverable,
@@ -211,7 +211,11 @@ pub(crate) struct Tap {
 
 impl Tap {
     fn samples(&self) -> usize {
-        self.frame.ch.iter().map(Vec::capacity).sum()
+        let raw = self.frame.ch.iter().map(Vec::capacity).sum::<usize>();
+        raw + match &self.projection {
+            TapProjection::Average(output) => output.capacity(),
+            _ => 0,
+        }
     }
 }
 

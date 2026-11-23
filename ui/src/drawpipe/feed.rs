@@ -158,8 +158,12 @@ impl Pipe {
         identity: Identity,
         canceled: &dyn Fn() -> bool,
     ) -> Option<Arc<TapReservation>> {
-        let submitted = oos_hal::sync::lock(&self.view).gen;
-        self.slot.reserve_tap_until(frame.ch.iter().map(Vec::capacity).sum(), submitted, Some(identity), canceled)
+        let (submitted, screen) = {
+            let view = oos_hal::sync::lock(&self.view);
+            (view.gen, view.average_samples(identity))
+        };
+        let raw = frame.ch.iter().map(Vec::capacity).sum::<usize>();
+        self.slot.reserve_tap_until(raw.checked_add(screen)?, submitted, Some(identity), canceled)
     }
 
     #[cfg(any(target_os = "linux", test))]

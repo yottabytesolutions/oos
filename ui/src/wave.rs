@@ -338,8 +338,8 @@ fn demo_la(t: f64) -> u16 {
 
 /// The record `Source::acquire` makes of a hardware frame: 3600 points across the screen.
 pub fn hw_record(m: &Model, f: std::sync::Arc<crate::board::Frame>) -> Record {
-    let window = m.time_per_div() as f64 * HDIV as f64;
-    crate::board::to_record(&f, m, 3600, window, m.delay as f64 - window / 2.0)
+    let (points, window, first) = crate::board::record::hw_grid(m);
+    crate::board::to_record(&f, m, points, window, first)
 }
 
 impl Source {

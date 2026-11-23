@@ -72,6 +72,10 @@ impl StageClock {
         Self { dequeued: Some(at), ..self }
     }
 
+    pub(super) fn publish(&mut self) {
+        self.published = Some(Instant::now());
+    }
+
     pub(super) fn deposit(&mut self) {
         self.deposited = Some(Instant::now());
     }

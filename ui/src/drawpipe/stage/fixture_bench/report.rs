@@ -15,6 +15,7 @@ pub(crate) enum Stage {
     CodeToRow,
     FusedReduceMap,
     Resample,
+    Accumulate,
     Split,
     Writes,
     Reset,
@@ -23,7 +24,7 @@ pub(crate) enum Stage {
 }
 
 impl Stage {
-    pub(super) const ALL: [Self; 16] = [
+    pub(super) const ALL: [Self; 17] = [
         Self::Core,
         Self::Decode,
         Self::Geometry,
@@ -35,13 +36,14 @@ impl Stage {
         Self::CodeToRow,
         Self::FusedReduceMap,
         Self::Resample,
+        Self::Accumulate,
         Self::Split,
         Self::Writes,
         Self::Reset,
         Self::Place,
         Self::Remainder,
     ];
-    pub(super) const PLACEMENT: [Self; 12] = [
+    pub(super) const PLACEMENT: [Self; 13] = [
         Self::Core,
         Self::Decode,
         Self::Geometry,
@@ -53,6 +55,7 @@ impl Stage {
         Self::CodeToRow,
         Self::FusedReduceMap,
         Self::Resample,
+        Self::Accumulate,
         Self::Split,
     ];
 
@@ -69,6 +72,7 @@ impl Stage {
             Self::CodeToRow => "code_to_row",
             Self::FusedReduceMap => "fused_reduce_map",
             Self::Resample => "resample",
+            Self::Accumulate => "average_accumulate",
             Self::Split => "split_columns",
             Self::Writes => "tile_writes",
             Self::Reset => "plane_reset",

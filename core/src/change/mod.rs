@@ -84,7 +84,20 @@ fn classify_boundary(a: &Model, b: &Model, old: UiAcq, new: UiAcq, requests: &[R
     if previous != MappingKey::of(b, new.layout()) {
         c |= Classes::MAPPING;
     }
-    if old.acquisition() != new.acquisition() {
+    let (mut before, after) = (old.acquisition(), new.acquisition());
+    let single_arm = a.trig_mode != b.trig_mode
+        && b.trig_mode == crate::model::TrigMode::Single
+        && requests.contains(&Request::Single);
+    if (sweep_companion || single_arm)
+        && a.acq == crate::model::AcqMode::Average
+        && b.acq == a.acq
+        && !a.avg_hw
+        && !b.avg_hw
+    {
+        // A software Average sweep companion only switches its scheduling route.
+        before.1 = after.1;
+    }
+    if before != after {
         c |= Classes::ACQ | Classes::STATS;
     }
     c

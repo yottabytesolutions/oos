@@ -20,7 +20,7 @@ pub(super) struct Columns {
 }
 
 struct Dispatch<'a> {
-    pool: &'a mut Pool<Job, Frame>,
+    pool: &'a mut Pool<Job, super::average::Scratch>,
     jobs: &'a mut Vec<Job>,
     worker_time: Duration,
     wall: Duration,

@@ -53,7 +53,7 @@ fn zoom_tiles_reuse_the_four_workers_scratch() {
     assert_eq!(allocations, 0, "coordinator placement and tiles");
 }
 
-fn run_counted(scratch: &mut Frame, job: &mut Job) {
+fn run_counted(scratch: &mut crate::drawpipe::stage::average::Scratch, job: &mut Job) {
     // Each worker places four records and paints one channel of each map per pass.
     const WARMUP_JOBS: usize = WARMUP * (RECORDS / 4 + 2);
     thread_local! {
@@ -114,7 +114,7 @@ fn time(mut sample: impl FnMut() -> [Duration; 4]) -> [f64; 4] {
     })
 }
 
-fn run_reference(scratch: &mut Frame, job: &mut Job) {
+fn run_reference(scratch: &mut crate::drawpipe::stage::average::Scratch, job: &mut Job) {
     let Job::Tile(_, placed, (count, zoom), band, elapsed) = job else {
         run(scratch, job);
         return;

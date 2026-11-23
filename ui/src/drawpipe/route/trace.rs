@@ -62,7 +62,11 @@ impl RouteTrace {
     }
 
     pub(in crate::drawpipe) fn add(&self, route: Route) {
-        self.totals.add(route, 1);
+        self.count(route, 1);
+    }
+
+    pub(in crate::drawpipe) fn count(&self, route: Route, records: u64) {
+        self.totals.add(route, records);
     }
 
     pub(in crate::drawpipe) fn add_wide_searches(&self, searches: u64) {
@@ -110,7 +114,7 @@ impl RouteReport {
 const VIEW_KEYS: &str = concat!(
     "holdoff trig_mode la dec_la dec_thr dec_opt dec_diff dec_src2 dec_cs dec_mode dec_bits dec_parity ",
     "dec_arate dec_tick dec_nibbles dec_uspeed dec_cphy_rate ",
-    "tdiv tfine delay dots acq zoom zoom_tdiv zdelay trig_src trig_ref trig_la pat_la trig_level slope ",
+    "tdiv tfine delay dots acq avg_count avg_hw zoom zoom_tdiv zdelay trig_src trig_ref trig_la pat_la trig_level slope ",
     "trig_type trig_level2 trig_nrej auto_nrej trig_coup trig_src2 trig_ref2 trig_slope2 trig_pol trig_when ",
     "trig_t1 trig_t2 video_std video_sync video_line pat pat_levels win_mode nth_idle nth_n setup hold meas ",
     "meas2 cat meas_full_record trig_bus trig_bus_val dec_sel dec_src dec_baud dec_proto dec_canrate dec_canh ",

@@ -21,6 +21,7 @@ mod samples;
 pub mod scripted;
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
+pub(crate) use record::attach_raw;
 pub use record::{display_record, sw_trig_level, sw_trig_level_of, to_record, trigger_point};
 pub use record::{resample_record, RECORDS_PER_STEP};
 use std::sync::{Arc, Mutex};
@@ -29,7 +30,7 @@ use std::sync::{Arc, Mutex};
 pub type Active = dho::Dho;
 pub type BoardSwitches = dho::switches::Switches;
 
-pub(crate) use record_flow::{PictureEligibility, QueuedFrame};
+pub(crate) use record_flow::{Acquired, PictureEligibility, QueuedFrame};
 pub(crate) use samples::{correct_adc_code, word_volts_f64};
 
 /// The board of this build.

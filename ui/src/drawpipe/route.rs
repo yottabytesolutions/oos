@@ -33,6 +33,7 @@ pub(crate) enum Route {
     Boxcar,
     Screen,
     Zoom,
+    Average,
 }
 
 /// Pick the placement adapter from the record's own form and the frozen view.
@@ -160,8 +161,8 @@ fn cached_layout(batch: &Arc<Batch>, raw: &CodeLayout) -> Option<Layout> {
     })
 }
 
-const LABELS: [&str; 10] =
-    ["dense", "peak", "volts", "pairs", "dots", "upsampled", "record", "boxcar", "screen", "zoom"];
+const LABELS: [&str; 11] =
+    ["dense", "peak", "volts", "pairs", "dots", "upsampled", "record", "boxcar", "screen", "zoom", "average"];
 
 #[derive(Default)]
 pub(crate) struct RouteCounters {

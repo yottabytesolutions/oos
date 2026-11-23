@@ -147,7 +147,9 @@ and [owner composition](../../ui/src/drawpipe/stage/owner/compose.rs).
 can use the zoom route. Other eligible hardware triggers use the captured trigger position with zoom
 off. Shifted enabled channels in newly eligible mode and trigger combinations can require the record
 route. Single, segments, Bus, Video All Fields, software mask or zones, XY, Z input, roll and scan stay
-on record or stream paths. Average also stays on the record path. See
+on record or stream paths. Software Average on a plain sample grid folds contiguous record ranges in
+the batch pool and sends one screen average with the newest raw waveform tap. The records path still
+handles hardware Average and software Average on min/max pairs. See
 [`Ui::fast_ok`](../../ui/src/ui.rs) and [hardware trigger selection](../../ui/src/drawpipe/route.rs).
 Taps feed record consumers. Display overlays are composed separately from the deposit planes.
 

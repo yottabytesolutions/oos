@@ -81,8 +81,7 @@ fn retaining_overlap(bytes: usize, entries: usize) {
     drop(charge);
     assert!(!tap::admit(&pipe, &raw, &p, id), "old and new FIFO grants overlap");
     assert_eq!(pipe.tap_drain(), drain, "old reader retains its drain contract");
-    let result = crate::board::QueuedFrame::new(retained.clone(), crate::board::PictureEligibility::Pending)
-        .read(|f| crate::wave::hw_record(&m, f));
+    let result = crate::board::QueuedFrame::new(retained.clone(), crate::board::PictureEligibility::Pending).read(&m).0;
     assert!(result.raw.is_some());
     drop(retained);
     let config = crate::model::config();
@@ -265,5 +264,39 @@ fn wide_board_geometry_uses_a_slower_funded_plan_or_the_existing_fallback() {
             assert_eq!(pipe.take_waveform((271, 448)).unwrap().seq, 1);
             println!("F2_WIDE hits={hits} B={} interval_ns={}", pipe.tap_drain(), interval.as_nanos());
         }
+    }
+}
+
+#[test]
+fn software_average_readout_uses_normal_frame_zero_selection() {
+    use crate::model::AcqMode;
+    use oos_hal::dho::{seq, tpu::Coupling};
+
+    for (records, drop_frame0) in [(1, false), (1, true), (3, false), (3, true)] {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
+        let (mut m, switches, mut settings, params) = normal_lines_plan(100e-9, false);
+        m.acq = AcqMode::Average;
+        settings.trig_couple = Coupling::Ac;
+        let pipe = crate::drawpipe::start_pipe(&switches);
+        let id = Identity::default();
+        pipe.publish_view(&m, 128, 64, switches.interp, id);
+        assert!(deposit_plan(&settings, &params, id, true).0.is_some());
+        let fb = seq::frame_bytes(&settings, &params);
+        let mut bytes = Some(Bytes(vec![0; fb * records]));
+        let read = Readout::new(
+            pipe,
+            (&settings, &params),
+            (fb, records, drop_frame0),
+            (records as u64, HeaderProbe::Off, None),
+            (id, Instant::now()),
+        );
+        assert!(read.dispatch(&mut bytes, None, |frame| frame, &|| false).is_empty());
+        crate::drawpipe::host::finish_batch(pipe, 1).unwrap();
+        let (_, output) = pipe.take_waveform((128, 64)).unwrap().read(&m);
+        let dropped = usize::from(records > 1 && drop_frame0);
+        assert_eq!(output.unwrap().shown().0, records - dropped);
+        let counts = pipe.batch_counters().records_text();
+        assert!(counts.contains(&format!("lost.frame0={dropped} ")), "{counts}");
+        assert!(counts.contains("lost.unclaimed=0 "), "{counts}");
     }
 }

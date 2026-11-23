@@ -14,6 +14,7 @@ pub(super) struct Keys {
     math: [MathOp; NMATH],
     mask_source: usize,
     run: RunState,
+    sweep: TrigMode,
 }
 impl Keys {
     pub(super) fn of(ui: &Ui) -> Self {
@@ -27,6 +28,7 @@ impl Keys {
             math: std::array::from_fn(|k| ui.m.math_ch(k).op),
             mask_source: ui.m.mask_src,
             run: ui.m.run,
+            sweep: ui.m.trig_mode,
         }
     }
 }
@@ -47,11 +49,18 @@ impl Keys {
     pub(super) fn compress(&self) -> u32 {
         self.want.compress
     }
-    pub(super) fn changed(&self, other: &Self, transition: bool) -> bool {
+    pub(super) fn changed(&self, other: &Self, pending: &[Command]) -> bool {
+        let transition = pending.iter().any(|c| matches!(c, Command::Request(Request::Run | Request::Single)));
+        let resume = pending.contains(&Command::Request(Request::ResumeSweep(other.sweep)));
         let mut a = self.want.clone();
         let mut b = other.want.clone();
         let (mut slow, mut old_slow) = (self.slow, other.slow);
-        if transition && (self.run != other.run || b.single || (a.single && b.auto)) {
+        let average_sweep = (AcqMode::Average, false);
+        let average_transition = a.single != b.single
+            && (resume || transition && b.single)
+            && (self.acquisition.0, self.acquisition.2) == average_sweep
+            && (other.acquisition.0, other.acquisition.2) == average_sweep;
+        if average_transition || transition && (self.run != other.run || b.single || (a.single && b.auto)) {
             // Only run edges, SINGLE arms and restored sweep companions suppress sweep invalidation.
             a.auto = false;
             b.auto = false;
@@ -67,6 +76,6 @@ impl Keys {
             || slow != old_slow
             || self.generator != other.generator
             || self.raw != other.raw
-            || self.route != other.route
+            || self.route != other.route && !average_transition
     }
 }

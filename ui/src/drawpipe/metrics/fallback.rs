@@ -51,6 +51,7 @@ causes! {
     ZoomSinc => "zoom_sinc",
     MeasurementDecode => "measurement_decode",
     ZoomMeasurementDecode => "zoom_measurement_decode",
+    AveragePairs => "average_pairs",
     DirectRecord => "direct_record",
 }
 

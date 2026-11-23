@@ -76,6 +76,12 @@ pull request that fixes a mistake: what happened, then the rule.
 - A missed SINGLE handoff wrote the UI's hold field and repeated the wake after each UI publication. Keep expiry in
   source-owned state and check that repeated UI publications leave it quiescent.
 
+- Storing an Average grid inline enlarged every waveform tap. Keep optional batch results in recycled
+  storage and run the tap size guard before accepting publication changes.
+
+- Average history slots grew over several channel-mask cycles because only the evicted slot was resized.
+  Reserve the newly seen channel in every history slot at first use.
+
 - A zero-allocation check assumed eight warm-up passes set up the reply channel's waiter storage. With replies
   already queued, `recv` skipped that setup, and the first waiting receive allocated inside the measured pass.
   Count allocations inside `recv` separately from the pass under test.

@@ -107,7 +107,7 @@ fn capture(
             for round in 1..=options.rounds {
                 for (side, capture) in captures.round_order(round) {
                     let operation = format!("group '{name}',{side} round {round}");
-                    let output = capture.round(remote, cpu, &path, &operation)?;
+                    let output = capture.round(remote, cpu, &path, &operation, options.average)?;
                     capture
                         .groups
                         .entry(name.clone())
@@ -181,11 +181,19 @@ impl Capture {
         Ok(Self { commit: build.commit, runner, binary_sha256, groups: BTreeMap::new() })
     }
 
-    fn round(&self, remote: &mut impl Remote, cpu: u32, path: &str, operation: &str) -> Result<String, String> {
+    fn round(
+        &self,
+        remote: &mut impl Remote,
+        cpu: u32,
+        path: &str,
+        operation: &str,
+        average: bool,
+    ) -> Result<String, String> {
+        let mode = if average { "OOS_BENCH_AVERAGE_16=1 " } else { "" };
         let runner = &self.runner;
         let script = format!(
             "exec timeout -s KILL 120 env -u OOS_BENCH_STAGE OOS_FIXTURES={path} OOS_BENCH_CPU={cpu} \
-             OOS_BENCH_REPEATS=1 {runner} {BENCHMARK} --ignored --nocapture --exact --test-threads=1"
+             OOS_BENCH_REPEATS=1 {mode}{runner} {BENCHMARK} --ignored --nocapture --exact --test-threads=1"
         );
         remote.run(operation, &script, 135, None)
     }

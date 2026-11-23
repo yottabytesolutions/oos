@@ -18,11 +18,15 @@ use oos_hal::dho::{
     hz,
     seq::{self, time::Clock, Settings},
 };
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 impl<T: PacingPolicy> AcqLoop<T> {
     pub(super) fn service<P: Port>(&mut self, io: &mut Io<P>, counter: Option<CounterWant>) -> Option<Request> {
-        self.service.readings(io, &self.out, counter);
+        if self.configured.current.is_some() {
+            self.service.counter(io, &self.out, counter);
+        }
+        self.service.readings(io, &self.out);
         let request = {
             let mut g = lock(&self.out);
             match g.cal_req.take() {
@@ -36,10 +40,12 @@ impl<T: PacingPolicy> AcqLoop<T> {
                 io.disarm(&mut self.batch.armed);
                 io.abort_segments(&mut self.segrun, &self.out);
                 self.stream.stop(io);
+                self.configured.current = None;
+                (self.replay.last_batch, self.replay.replayed) = (None, None);
+                lock(&self.out).replay = None;
                 if P::calibrate(io, &self.options.cal_dir, &self.out, req) {
                     self.units.reset_trim();
                 }
-                self.configured.current = None;
                 return None;
             }
         };
@@ -62,21 +68,30 @@ impl<T: PacingPolicy> AcqLoop<T> {
             io.clock.wait(Duration::from_millis(50));
             return None;
         };
+        let held = request.run.hold;
+        if held && !self.replay.paused {
+            self.enter_hold(io, request, *last_read);
+        }
         let want_mode = request.mode;
         if self.stream.boundary(self.configured.applied_pair, request.identity) {
             io.disarm(&mut self.batch.armed);
             self.stream.restart_scan(io, want_mode);
         }
         self.apply_overrides(io, request, &mut want);
-        let held = request.run.hold;
-        if held && !self.replay.paused {
-            self.enter_hold(io, request, *last_read);
+        // STOP defers edits to an applied configuration and keeps the batch captured with it.
+        // At startup or after calibration, restore a missing configuration before serving the hold.
+        if held && self.configured.current.is_none() {
+            if !self.configure(io, want.clone(), want_mode, request.avg_clear) {
+                return None;
+            }
+            self.configured.applied_pair = Some(request.pair());
+            crate::pacing::APPLIED.store(request.identity.gen(), Ordering::Relaxed);
         }
         if self.stopped_view(io, request.run.stop_view, want_mode) {
             return None;
         }
         if held {
-            self.poll_held(io, request, &want);
+            self.poll_held(io, request);
             return None;
         }
         if publication::reconfigure(
@@ -89,9 +104,8 @@ impl<T: PacingPolicy> AcqLoop<T> {
                 return None;
             }
         }
-        let gen = request.identity.gen();
-        self.configured.applied_pair = Some((gen, request.identity.epoch()));
-        crate::pacing::APPLIED.store(gen, std::sync::atomic::Ordering::Relaxed);
+        self.configured.applied_pair = Some(request.pair());
+        crate::pacing::APPLIED.store(request.identity.gen(), Ordering::Relaxed);
         self.configured.current.clone()
     }
 
@@ -118,17 +132,21 @@ impl<T: PacingPolicy> AcqLoop<T> {
         }
     }
 
-    fn poll_held(&mut self, io: &mut Io<impl Port>, request: &Request, want: &Settings) {
-        let settings = self.configured.current.as_ref().map_or(want, |(applied, _)| applied);
+    fn poll_held(&mut self, io: &mut Io<impl Port>, request: &Request) {
+        let Some((settings, _)) = self.configured.current.as_ref() else { return };
+        let mode = self.configured.mode;
         self.units.poll(
             io,
             (&mut self.batch.armed, self.segrun.as_ref()),
             &self.out,
-            (settings, self.configured.mode),
+            (settings, mode),
             (request, self.service.generator_on()),
         );
-        self.stream.poll_control(io, &self.out, self.configured.mode);
-        lock(&self.out).final_ack = request.run.final_req;
+        self.stream.poll_control(io, &self.out, mode);
+        // Roll and scan keep the acknowledgement from entering STOP.
+        if mode == Slow::Off {
+            lock(&self.out).final_ack = request.run.final_req;
+        }
         io.clock.wait(Duration::from_millis(5));
     }
 
@@ -213,7 +231,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
         io.disarm(&mut self.batch.armed);
         lock(&self.out).record_flow.serial = false;
         io.abort_segments(&mut self.segrun, &self.out);
-        self.configured.mode = mode;
+        self.configured.current = None;
         self.replay.last_batch = None;
         self.stream.stop(io);
         let configured = lifecycle::configure(&mut io.state, &want, io.cal.as_ref(), io.cal_adc.as_ref())
@@ -234,6 +252,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
         self.batch.la_fails = 0;
         self.units.configured(io.state.mode.min(10), want.mask, self.switches.board.core_offset_tight, io.clock.now());
         self.batch.configured(want.mode, self.switches.board.avg_kind(), avg_clear);
+        self.configured.mode = mode;
         self.configured.current = Some((want, params));
         true
     }

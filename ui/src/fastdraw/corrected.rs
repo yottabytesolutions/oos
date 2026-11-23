@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Immutable per-record interleave correction and the original f64 calibrated conversion.
+
+use crate::board::{correct_adc_code, word_volts_f64};
+
 #[derive(Clone, Copy)]
 pub(crate) struct CorrectedCodes {
     pub offsets: [i32; 8],
@@ -9,11 +12,11 @@ pub(crate) struct CorrectedCodes {
 impl CorrectedCodes {
     #[inline]
     pub fn code(&self, index: usize, raw: u16) -> u16 {
-        (raw as i32 - self.offsets[index % 8]).clamp(0, 65535) as u16
+        correct_adc_code(raw, self.offsets[index % 8])
     }
     #[inline]
     pub fn volts(&self, code: u16) -> f32 {
-        ((code as f64 - 32768.0) / 7500.0 * self.scale - self.offset) as f32
+        word_volts_f64(code, self.scale, self.offset)
     }
 }
 

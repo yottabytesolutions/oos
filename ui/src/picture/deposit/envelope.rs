@@ -65,6 +65,7 @@ impl<const N: usize> Correction<N> {
     #[inline]
     fn row(&self, sample: [u16; N], index: usize) -> [u16; N] {
         let phase = self.offsets[index % PHASES];
+        // Saturating subtraction handles wide offsets, pinned by masked_neon_columns_match_scalar_at_both_record_ends.
         std::array::from_fn(|lane| (i32::from(sample[lane]).saturating_sub(phase[lane])).clamp(0, 65535) as u16)
     }
 }

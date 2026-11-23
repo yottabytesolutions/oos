@@ -254,6 +254,32 @@ fn batch_core_matching_keeps_rejected_frames_and_clamps_codes() {
     }
 }
 
+#[test]
+fn matched_decode_keeps_voltage_bits_with_and_without_lane_correction() {
+    let (mut settings, _) = setup(0b1010, false, 17);
+    settings.ch[1].scale = -std::f64::consts::PI;
+    settings.ch[1].offset = 0.0;
+    settings.ch[3].scale = 1.0;
+    settings.ch[3].offset = -1.5;
+    let pattern = [1.0, -1.0, 25.0, -25.0, 0.0, 17.0, -19.0, 32768.0];
+    let mut matched = FrameMatch::default();
+    matched.channels[1] = Some(Correction::new(&pattern, 0));
+    let words: [[u16; 2]; 17] = std::array::from_fn(|i| [[0, 1], [u16::MAX, 32768], [32768, u16::MAX]][i % 3]);
+    let bytes: Vec<u8> = words.as_flattened().iter().flat_map(|word| word.to_le_bytes()).collect();
+    let mut frame = Frame::default();
+    matched.decode(&bytes, &settings, &mut frame);
+
+    for (lane, channel) in [1, 3].into_iter().enumerate() {
+        let cal = &settings.ch[channel];
+        let expected = words.iter().enumerate().map(|(i, row)| {
+            let offset = if channel == 1 { pattern[i % pattern.len()] as i32 } else { 0 };
+            let code = (i32::from(row[lane]) - offset).clamp(0, 65535);
+            (((f64::from(code) - 32768.0) / 7500.0 * cal.scale - cal.offset) as f32).to_bits()
+        });
+        assert!(frame.ch[channel].iter().map(|value| value.to_bits()).eq(expected));
+    }
+}
+
 fn finish(pipe: &crate::drawpipe::Pipe) {
     crate::drawpipe::host::finish_batch(pipe, 1).expect("the completed batch returns its buffer");
 }

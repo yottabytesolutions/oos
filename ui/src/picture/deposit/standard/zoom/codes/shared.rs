@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::{Codes, EnvelopeGrid, ScreenGrid, NCH};
+use crate::board::correct_adc_code;
 
 type Extrema = ([u16; NCH], [u16; NCH]);
 
@@ -47,7 +48,7 @@ pub(super) fn append(
 }
 
 fn corrected(words: [u16; NCH], offsets: [i32; NCH]) -> [u16; NCH] {
-    std::array::from_fn(|c| (i32::from(words[c]) - offsets[c]).clamp(0, 65535) as u16)
+    std::array::from_fn(|c| correct_adc_code(words[c], offsets[c]))
 }
 
 fn walk(
@@ -71,3 +72,6 @@ fn walk(
         write(channels, pair * 2, (lo, hi));
     }
 }
+
+#[cfg(test)]
+mod tests;

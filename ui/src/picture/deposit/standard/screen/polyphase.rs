@@ -170,6 +170,7 @@ struct RowScale {
 
 impl RowScale {
     fn new(codes: &Codes<'_>, map: &Map) -> Self {
+        // Pre-divide the gain for the fixed-point slope, pinned by corrected_samples_use_calibrated_row_gain.
         let gain = codes.corrected.map_or(f64::from(codes.affine.0), |cal| cal.scale / 7500.0);
         let scale = f64::from(map.y_per_volt) * gain;
         let center = f64::from(codes.volts(32768)) * f64::from(map.y_per_volt) + f64::from(map.y0);
@@ -281,7 +282,24 @@ fn spans_into(edges: &[Edge], first: usize, rows: &[i32], height: usize, out: &m
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{model::Model, picture::deposit::standard};
+    use crate::{fastdraw::CorrectedCodes, model::Model, picture::deposit::standard};
+
+    #[test]
+    fn corrected_samples_use_calibrated_row_gain() {
+        let codes = Codes {
+            bytes: &[],
+            words: None,
+            stride: 1,
+            word: 0,
+            n: 0,
+            affine: (0.0, 0.0),
+            corrected: Some(CorrectedCodes { offsets: [0; 8], scale: 7500.0 / 16384.0, offset: 0.25 }),
+            volt: |_, _| 0.0,
+        };
+        let map = Map { ti: 0.0, x_per_sample: 1.0, x0: 0.0, y_per_volt: 64.0, y0: 128.0 };
+        let row = RowScale::new(&codes, &map);
+        assert_eq!(row.row(8192 * COEFFICIENT_UNIT), 144 << ROW_BITS);
+    }
 
     #[test]
     fn fixed_spans_track_the_exact_screen_grid_within_one_row() {

@@ -17,6 +17,7 @@ pub mod dho;
 pub(crate) mod identity;
 pub(crate) mod record;
 mod record_flow;
+mod samples;
 pub mod scripted;
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
@@ -27,6 +28,8 @@ use std::sync::{Arc, Mutex};
 /// The board this build drives, and its part of the switches (`sysconf::Switches`).
 pub type Active = dho::Dho;
 pub type BoardSwitches = dho::switches::Switches;
+
+pub(crate) use samples::{correct_adc_code, word_volts_f64};
 
 /// The board of this build.
 pub fn board() -> &'static Active {

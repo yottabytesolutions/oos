@@ -11,6 +11,7 @@
 //! Learn offsets from one Hann-weighted record per batch. The remaining records use a bounded
 //! phase estimate against that pattern. Core gains differ too and are left to calibration.
 
+use oos_hal::dho::samples::correct_adc_code;
 use std::collections::HashMap;
 
 mod phase;
@@ -180,7 +181,7 @@ impl Correction {
     }
 
     pub(super) fn word(&self, i: usize, word: u16) -> u16 {
-        (word as i32 - self.offsets[i % P]).clamp(0, 65535) as u16
+        correct_adc_code(word, self.offsets[i % P])
     }
 }
 

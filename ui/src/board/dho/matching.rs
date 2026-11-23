@@ -7,6 +7,7 @@ use crate::board::Frame;
 use oos_hal::dho::{
     acq::Mode,
     hz,
+    samples::word_volts_f64,
     seq::{self, CodeMap, Settings},
 };
 #[cfg(any(target_os = "linux", test))]
@@ -52,7 +53,7 @@ impl FrameMatch {
             out.extend(bytes.as_chunks::<2>().0.iter().skip(word).step_by(map.ratio).enumerate().map(|(i, b)| {
                 let raw = u16::from_le_bytes([b[0], b[1]]);
                 let code = self.channels[c].map_or(raw, |correction| correction.word(i, raw));
-                ((code as f64 - 32768.0) / 7500.0 * s.ch[c].scale - s.ch[c].offset) as f32
+                word_volts_f64(code, s.ch[c].scale, s.ch[c].offset)
             }));
         }
     }

@@ -232,6 +232,8 @@ fn scalar_reduction_clamps_the_range_and_keeps_record_relative_phase() {
     {
         assert_eq!(scalar::reduce(&words, &correction, start..end), expected);
     }
+    let correction = Correction::new([[i32::MIN]; PHASES]);
+    assert_eq!(correction.row([0], 0), [u16::MAX]);
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -254,6 +256,58 @@ fn masked_neon_columns_match_scalar_at_both_record_ends() {
                             actual.clear();
                             neon::reduce(words, &correction, &[start, end], join, &mut actual);
                             assert_eq!(actual, [expected], "lanes={N} len={len} range={start}..{end} join={join}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    check::<1>();
+    check::<2>();
+    check::<4>();
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn neon_matches_sample_correction_at_every_phase_and_clamp_boundary() {
+    use crate::board::correct_adc_code;
+
+    fn check<const N: usize>() {
+        let mut actual = Vec::new();
+        for pattern in [
+            [0; PHASES],
+            [1, -1, 17, -17, 32768, -32767, 803, -509],
+            [32769, -32768, 65535, -65535, 65536, -65536, 97, -113],
+        ] {
+            let correction = Correction::new(std::array::from_fn(|phase| {
+                std::array::from_fn(|lane| pattern[(phase + lane) % PHASES])
+            }));
+            for case in 0..5 {
+                let words: [[u16; N]; 35] = std::array::from_fn(|i| {
+                    correction.offsets[i % PHASES].map(|offset| {
+                        let boundary = if offset < 0 { 65535 + offset } else { offset }.clamp(0, 65535) as u16;
+                        [0, boundary.saturating_sub(1), boundary, boundary.saturating_add(1), u16::MAX][case]
+                    })
+                });
+                for (i, &row) in words.iter().enumerate() {
+                    let offsets = correction.offsets[i % PHASES];
+                    let expected = std::array::from_fn(|lane| correct_adc_code(row[lane], offsets[lane]));
+                    assert_eq!(correction.row(row, i), expected);
+                }
+                for len in [1, 3, 7, 9, words.len()] {
+                    for start in 0..len {
+                        for end in start + 1..=len {
+                            for join in [false, true] {
+                                let first = start.saturating_sub(usize::from(join));
+                                let expected = scalar::reduce(&words[..len], &correction, first..end);
+                                actual.clear();
+                                neon::reduce(&words[..len], &correction, &[start, end], join, &mut actual);
+                                assert_eq!(
+                                    actual,
+                                    [expected],
+                                    "lanes={N} len={len} range={start}..{end} join={join} case={case}"
+                                );
+                            }
                         }
                     }
                 }

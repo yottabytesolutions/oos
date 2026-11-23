@@ -25,7 +25,7 @@ pub fn check() {
             .expect("bounded test fixture must fit the shadow and outbox");
     }
     let naive_probe = std::env::var_os("OOS_NAIVE_CHANGE_PROBE").is_some();
-    let before = HEAP.allocations();
+    let before = HEAP.own_allocations();
     for step in 0..1000 {
         if naive_probe {
             std::hint::black_box(model.clone());
@@ -41,17 +41,17 @@ pub fn check() {
             .observe(std::hint::black_box(&model), UiAcq::default(), &[], &config)
             .expect("bounded test fixture must fit the shadow and outbox");
     }
-    let reused = HEAP.allocations() - before;
+    let reused = HEAP.own_allocations() - before;
     assert_eq!(reused, 0, "unchanged and warmed bounded snapshot/normalize updates must not allocate or reallocate");
-    let before = HEAP.allocations();
+    let before = HEAP.own_allocations();
     for _ in 0..10 {
         std::hint::black_box(model.clone());
     }
-    let naive = HEAP.allocations() - before;
+    let naive = HEAP.own_allocations() - before;
     assert!(naive > 0, "the allocator must reject naive derived Model clones");
     let (previous, scratch) = shadow.bytes();
     assert!(previous < 64 * 1024 && scratch < 64 * 1024);
-    println!("snapshot allocations reused={reused} naive={naive} previous_bytes={previous} scratch_bytes={scratch}; backend=process-wide System successful alloc/alloc_zeroed/realloc");
+    println!("snapshot allocations reused={reused} naive={naive} previous_bytes={previous} scratch_bytes={scratch}; backend=calling-thread System successful alloc/alloc_zeroed/realloc");
 }
 fn warm(model: &mut Model) {
     for s in model

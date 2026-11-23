@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Process isolation keeps unrelated test threads out of the allocation census.
+//! Allocation checks for synchronous kernels and an isolated large-copy census.
 
 use crate::{support, HEAP};
+use std::{hint::black_box, sync::Barrier, thread, time::Duration};
 
 #[test]
 fn hot_paths_allocate_nothing_after_warmup() {
@@ -38,7 +39,7 @@ fn hot_paths_allocate_nothing_after_warmup() {
             frame();
         }
         for index in 0..64 {
-            let (allocations, ()) = HEAP.count(&mut *frame);
+            let (allocations, ()) = HEAP.count_own(&mut *frame);
             assert_eq!(allocations, 0, "{name}: post-warmup frame {index}");
         }
         paths += 1;
@@ -80,23 +81,29 @@ fn deep_census() {
 
 #[test]
 fn draw_timing_recording_allocates_nothing() {
-    if std::env::var_os("OOS_DRAW_ALLOC_CHILD").is_none() {
-        let inputs = support::isolated_inputs();
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        command
-            .args(["--exact", "snapshots::hot_paths::draw_timing_recording_allocates_nothing", "--nocapture"])
-            .env("OOS_DRAW_ALLOC_CHILD", "1");
-        let output = support::run_command(&inputs, command, 120);
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
-        return;
-    }
     let mut timing = oos_ui::StageTiming::default();
-    let (allocations, ()) = HEAP.count(|| {
-        for _ in 0..1024 {
-            timing.draw_step([std::time::Duration::from_nanos(17); 5]);
-            timing.draw_render(std::time::Duration::ZERO, false);
-            timing.draw_render(std::time::Duration::ZERO, true);
-        }
+    let rendezvous = Barrier::new(2);
+    let allocations = thread::scope(|scope| {
+        let other = scope.spawn(|| {
+            rendezvous.wait();
+            rendezvous.wait();
+            let (allocations, ()) = HEAP.count_own(|| drop(black_box(Vec::<u8>::with_capacity(16))));
+            rendezvous.wait();
+            assert_eq!(allocations, 1, "the other thread must allocate during the measured region");
+        });
+        // Initialize the barrier before counting. The next two waits bracket the other thread's allocation.
+        rendezvous.wait();
+        let (allocations, ()) = HEAP.count_own(|| {
+            rendezvous.wait();
+            rendezvous.wait();
+            for _ in 0..1024 {
+                timing.draw_step([Duration::from_nanos(17); 5]);
+                timing.draw_render(Duration::ZERO, false);
+                timing.draw_render(Duration::ZERO, true);
+            }
+        });
+        other.join().unwrap();
+        allocations
     });
     assert_eq!(allocations, 0, "step/render recording, including ring wrap, must allocate nothing");
     assert!(timing.diagnostics_text().contains("draw.grade n=256 total=1024 p50_ns=17 p90_ns=17 p99_ns=17"));

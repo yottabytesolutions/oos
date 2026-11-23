@@ -54,7 +54,7 @@ impl Counting {
             large_min: AtomicUsize::new(2_000_000),
         }
     }
-    /// Counts transient allocations and reallocations too, not just retained bytes.
+    /// Counts process-wide allocations and reallocations, including freed transients.
     pub fn count<T>(&self, f: impl FnOnce() -> T) -> (usize, T) {
         let before = self.allocations();
         let result = f();

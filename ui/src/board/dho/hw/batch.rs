@@ -16,13 +16,13 @@ use std::time::Instant;
 #[cfg(any(target_os = "linux", test))]
 mod admission;
 mod tap;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) use admission::grant;
 #[cfg(test)]
 pub(super) use admission::read_grant;
 #[cfg(any(target_os = "linux", test))]
 pub(super) use tap::source_reservation;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) use tap::storage;
 #[cfg(test)]
 mod tests;
@@ -202,7 +202,7 @@ pub(super) fn decode_record(
     (frame, uncorrected)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn summarize(frames: &mut [Frame]) {
     if let Some(frame) = frames.last_mut() {
         *frame.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&frame.ch[c]));
@@ -210,7 +210,7 @@ pub(super) fn summarize(frames: &mut [Frame]) {
 }
 
 /// Read the sticky trigger status and clear it before arming a successor.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn read_trigger(bar: &mut impl oos_hal::dho::bus::Bus) -> Option<bool> {
     use oos_hal::dho::scu;
     let value = bar.rd(0x4034);
@@ -223,18 +223,22 @@ pub(super) fn read_trigger(bar: &mut impl oos_hal::dho::bus::Bus) -> Option<bool
 }
 
 /// Read the logic analyser data before the next register operation can replace this record.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn read_la(
     state: &mut oos_hal::dho::seq::State,
     (settings, params): (&Settings, &hz::Params),
-    (bar, c2h): (&mut impl oos_hal::dho::bus::Bus, &mut std::fs::File),
+    (bar, c2h, clock): (
+        &mut impl oos_hal::dho::bus::Bus,
+        &mut impl std::io::Read,
+        &impl oos_hal::dho::seq::time::Clock,
+    ),
     fails: &mut u32,
     status: impl FnOnce(String),
 ) -> Option<Vec<u16>> {
     if settings.la.is_none() || *fails >= 3 {
         return None;
     }
-    match oos_hal::dho::seq::acquire_la(state, settings, params, bar, c2h, |_| {}) {
+    match oos_hal::dho::seq::time::acquire_la_with_clock(state, settings, params, bar, c2h, |_| {}, clock) {
         Ok(words) => {
             *fails = 0;
             Some(words)

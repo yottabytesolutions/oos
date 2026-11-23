@@ -215,7 +215,7 @@ Not changed, for the next step:
 
 Done, opt-in `acq.compress = on` (`docs/fork/compress.md`): FPGA compression at k = floor(samples per column / 4) for
 records up to 1 M points where the dense fast path applies; the newest frame of each batch is read again raw
-(`seq::read_raw_again`) for the record; pairs drawn by `compress::deposit_pairs`. Host: 10 us/div 1 ch 20 -> 299
+(`seq::time::read_raw_again_with_clock`) for the record; pairs drawn by `compress::deposit_pairs`. Host: 10 us/div 1 ch 20 -> 299
 frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in compress.md, not run.
 
 ## Status of the UI items (branch perf/ui)
@@ -268,8 +268,8 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   at 1 us/div, 163 us at 10 us/div; 4 workers 75 k / 116 k / 16 k frames/s. Estimate (not measured; A72 about 4x the host, A53
   about 8x): 4 A53 reach about 10 k frames/s at 100 ns/div, 20 k at 1 us/div, 3 k at 10 us/div; the A72 helper adds up
   to 5 k / 10 k / 1.5 k when its wait is long.
-  Arm ahead, opt-in `acq.prearm = on` in system.conf or OOS_PREARM (any value; set wins over the key): `seq::prearm`
-  arms the next batch before the decode of the current one. Default off until the unit check
+  With `acq.prearm = on` in system.conf or OOS_PREARM set, the source runs `State::arm_only_steps` for the next
+  batch before decoding the current one. Default off until the unit check
   (unit-dho804.md, arm ahead).
   Fast interpolation, opt-in `acq.interp = fast` / OOS_INTERP=fast (`sparse::fast_many`): the exact 16-tap sinc
   on a grid of 24 points per sample (one fixed filter per phase over consecutive samples, vectorised), linear in

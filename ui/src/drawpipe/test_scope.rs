@@ -2,9 +2,12 @@
 
 //! Scoped test counters and pipeline; worker batches retain the injected counters.
 
-use super::{Counters, Pipe};
+use super::{Counters, Message, Pipe};
 use std::cell::Cell;
-use std::sync::OnceLock;
+use std::{
+    ops::Range,
+    sync::{atomic::Ordering, mpsc, OnceLock},
+};
 
 thread_local! {
     static CURRENT: Cell<Option<&'static State>> = const { Cell::new(None) };
@@ -56,6 +59,15 @@ impl Scope {
         let state = Box::leak(Box::new(State { counters: Box::leak(Box::new(counters)), pipe: OnceLock::new() }));
         Self { previous: CURRENT.with(|c| c.replace(Some(state))), state, thread: Default::default() }
     }
+    /// Install the real intake with a receiver the test can drive on its own thread.
+    pub(crate) fn install_intake(&self) -> Intake {
+        let pipe = self.state.pipe.get_or_init(|| Pipe::start(0, 0, self.state.counters));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let mut workers = oos_hal::sync::lock(&pipe.workers);
+        assert!(workers.sender.replace(sender).is_none());
+        Intake { pipe, receiver }
+    }
+
     /// Select one of two live fixtures for paired observations; scopes still drop in reverse creation order.
     pub(crate) fn select(&self) {
         CURRENT.with(|c| c.set(Some(self.state)));
@@ -68,6 +80,53 @@ impl Drop for Scope {
             super::shutdown::close(pipe, std::time::Instant::now() + std::time::Duration::from_secs(5));
         }
         CURRENT.with(|c| c.set(self.previous));
+    }
+}
+
+pub(crate) struct Intake {
+    pipe: &'static Pipe,
+    receiver: mpsc::Receiver<Message>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Submission {
+    range: Range<usize>,
+    first_words: Vec<u16>,
+    newest_seq: Option<u64>,
+}
+
+impl Submission {
+    pub(crate) fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
+    pub(crate) fn first_words(&self) -> &[u16] {
+        &self.first_words
+    }
+
+    pub(crate) fn newest_seq(&self) -> Option<u64> {
+        self.newest_seq
+    }
+}
+
+impl Intake {
+    /// Drain one accepted batch and release its flight and DMA lease.
+    pub(crate) fn take(&self) -> Option<Submission> {
+        let batch = loop {
+            match self.receiver.try_recv().ok()? {
+                Message::Batch(batch) => break batch,
+                Message::Wake => {
+                    oos_hal::sync::lock(&self.pipe.workers).wake_pending.store(false, Ordering::Release);
+                }
+                Message::Barrier(_) => panic!("unexpected worker barrier"),
+            }
+        };
+        oos_hal::sync::lock(&self.pipe.workers).queued.fetch_sub(1, Ordering::AcqRel);
+        let range = batch.next.swap(batch.frames, Ordering::Relaxed)..batch.frames;
+        let bytes = batch.lease.raw.as_ref().unwrap().bytes();
+        let first_words =
+            range.clone().map(|index| u16::from_le_bytes(bytes[index * batch.fb..][..2].try_into().unwrap())).collect();
+        Some(Submission { range, first_words, newest_seq: batch.newest.as_ref().map(|frame| frame.seq) })
     }
 }
 

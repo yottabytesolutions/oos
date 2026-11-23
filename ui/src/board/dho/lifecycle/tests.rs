@@ -100,7 +100,7 @@ fn prearm_disarm_and_single_count_hardware_arms_instead_of_reads() {
     let p = state.configure(&s, None, None).unwrap().1;
     let (_, mut bus, mut c2h) = sim::engine(sim::Engine::new(0, 1_000_000_000_000, 1, p.ratio));
     let mut dma = DmaBuf::new();
-    // Host equivalent of seq::prearm: the exact steps with the bus executor.
+    // Run the arm-only steps with the host bus executor.
     prearm(false, || seq::execute_bus(&state.arm_only_steps(&s, &p), &mut bus, &mut c2h, &mut dma, |_| {})).unwrap();
     assert_eq!(counts(), [0, 0, 0, 0, 1, 0, 0, 0]);
     disarm(|| seq::execute_bus(&state.disarm_steps(), &mut bus, &mut c2h, &mut dma, |_| {})).unwrap();

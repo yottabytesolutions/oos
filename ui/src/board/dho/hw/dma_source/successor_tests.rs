@@ -59,8 +59,15 @@ impl Unit {
         let pair = (id.gen(), id.epoch());
         limit_frames(&mut current, proposed, armed.as_ref(), (pair, true, Some(pipe)));
         let plan = ArmPlan::new(&current, *id, true, Some(pipe), false);
-        let (ahead, _) =
-            plan.prepare(source, armed, || false, |_| panic!("resize cannot discard a captured ring")).unwrap();
+        let (ahead, _) = plan
+            .prepare(
+                source,
+                armed,
+                &oos_hal::dho::seq::time::Real,
+                || false,
+                |_| panic!("resize cannot discard a captured ring"),
+            )
+            .unwrap();
         assert!(ahead);
         let got =
             seq::acquire_batch(state, &current, params, bus, input, source.destination(), ahead, 0, |_| {}).unwrap();

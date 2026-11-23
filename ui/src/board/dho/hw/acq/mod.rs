@@ -4,6 +4,7 @@
 //! Acquisition thread and its worker-owned state.
 
 use super::super::{
+    clock::LoopClock,
     cores::Cores,
     publication::{self, Request},
     replay,
@@ -11,42 +12,63 @@ use super::super::{
 use super::{
     comparator::UnitGuard,
     dma_source::{ArmedBatch, DmaSource},
-    lifecycle, overlay,
+    lifecycle,
     segmented::{seg_abort, SegRun, SegmentIo},
-    startup, Settings,
+    Settings,
 };
 use crate::{
-    board::{HwShared, Shared, Slow, Spawn},
+    board::{HwShared, Slow, Spawn},
     sysconf::Switches,
 };
 use oos_core::change::Identity;
 use oos_hal::dho::{
     adc, afe, avg,
-    bus::{Bar1, DmaBuf},
-    hz, la, seq,
+    bus::{Bus, DmaBuf},
+    hz, la,
+    seq::{self, time::Clock},
 };
 use std::{
-    fs::File,
-    sync::{Arc, Mutex},
+    io::Read,
     time::{Duration, Instant},
 };
 
 mod batch;
 mod control;
 mod dispatch;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::spawn;
+mod pacing;
 mod read;
 mod roll;
 mod service;
+#[cfg(test)]
+mod tests;
 mod units;
 
 use roll::Stream;
 use service::Service;
 use units::Units;
 
-struct Io {
-    bar: Bar1,
-    c2h: File,
-    afe_bus: Option<afe::GpioAfe>,
+trait Port: Sized {
+    type Bus: Bus;
+    type Stream: Read;
+    type Clock: LoopClock;
+
+    fn batch_bus<'a>(&self, bus: &'a mut Self::Bus) -> impl Bus + 'a;
+    fn apply_settings(io: &mut Io<Self>, steps: &[seq::Step]) -> Result<(), String>;
+    fn calibrate(io: &mut Io<Self>, cal_dir: &str, out: &HwShared, req: service::CalRequest) -> bool;
+    fn generator(service: &mut Service, bar: &mut Self::Bus, out: &HwShared, want: Option<crate::board::Gen>);
+    fn probe_la() -> Option<Option<bool>>;
+    fn trim(io: &mut Io<Self>, mask: u32) -> bool;
+}
+
+struct Io<P: Port> {
+    bar: P::Bus,
+    c2h: P::Stream,
+    port: P,
+    clock: P::Clock,
     cal: Option<afe::Cal>,
     cal_adc: Option<adc::CalAdc>,
     trim_overlay: oos_hal::dho::coretrim::Overlay,
@@ -101,7 +123,7 @@ struct Raw {
     dump: Option<super::header::dump::Dump>,
 }
 
-struct AcqLoop {
+struct AcqLoop<T: pacing::PacingPolicy> {
     options: Spawn,
     switches: Switches,
     out: HwShared,
@@ -113,13 +135,20 @@ struct AcqLoop {
     service: Service,
     units: Units,
     segrun: Option<SegRun>,
+    pacing: T,
 }
 
-impl AcqLoop {
-    fn new(options: Spawn, switches: Switches, out: HwShared) -> Self {
-        let stream = Stream::default();
-        let service = Service::new(&options.cal_dir);
-        let dump = super::header::dump::Dump::from_switch(&switches.board.batch_dump);
+impl<T: pacing::PacingPolicy> AcqLoop<T> {
+    fn new(
+        options: Spawn,
+        switches: Switches,
+        out: HwShared,
+        service: Service,
+        dump: Option<super::header::dump::Dump>,
+        now: Instant,
+        pacing: T,
+    ) -> Self {
+        let stream = Stream::new(now);
         Self {
             options,
             switches,
@@ -132,10 +161,11 @@ impl AcqLoop {
             stream,
             units: Units::default(),
             segrun: None,
+            pacing,
         }
     }
 
-    fn run(&mut self, io: &mut Io) {
+    fn run(&mut self, io: &mut Io<impl Port>) {
         while let Some(counter) = Service::before_pass(&self.out) {
             let mut last_read = std::mem::take(&mut self.replay.fresh);
             let Some(request) = self.service(io, counter) else { continue };
@@ -171,9 +201,9 @@ impl AcqLoop {
         }
     }
 
-    fn segments(&mut self, io: &mut Io, settings: &Settings, params: &hz::Params, identity: Identity) {
+    fn segments(&mut self, io: &mut Io<impl Port>, settings: &Settings, params: &hz::Params, identity: Identity) {
         io.disarm(&mut self.batch.armed);
-        if !self.batch.dma.ready(identity, || {
+        if !self.batch.dma.ready(identity, &io.clock, || {
             let g = crate::perfguard::deep::acq_lock(&self.out);
             publication::boundary(Some((identity.gen(), identity.epoch())), g.acquisition.identity())
                 || g.hold
@@ -197,49 +227,13 @@ impl AcqLoop {
     }
 }
 
-impl Io {
-    fn open(o: &Spawn, switches: &Switches, out: &HwShared) -> Result<Self, String> {
-        let (bar, c2h) = startup::open_acquisition(switches, out)?;
-        let afe_bus =
-            if o.program_afe { Some(afe::GpioAfe::open().map_err(|e| format!("AFE GPIO: {}", e))?) } else { None };
-        let cal = match afe::Cal::load_from(&o.cal_dir) {
-            Ok((c, from)) => {
-                status(
-                    out,
-                    format!(
-                        "calibration: {}",
-                        from.iter().map(|(n, d)| format!("{} from {}", n, d)).collect::<Vec<_>>().join(", ")
-                    ),
-                );
-                Some(c)
-            }
-            Err(_) => None,
-        };
-        let mut cal_adc = adc::CalAdc::load(&o.cal_dir).ok();
-        // the matched core offsets: only with `cal.core_offset = tight` (key off = the cal_adc.hex above, unchanged)
-        let trim_overlay = overlay::in_use(switches.board.core_offset_tight, overlay::load);
-        if let Some(c) = cal_adc.as_mut() {
-            trim_overlay.apply(c);
-        }
-        // LA pod zero codes (cal_la.hex, read only); without the file the middle of the DAC range (la.md 8.1)
-        let la_cal = if oos_hal::model::platform().caps.la {
-            oos_hal::dho::la::Cal::load(&o.cal_dir).unwrap_or_else(|| {
-                status(out, "cal_la.hex not found: LA thresholds with the zero code 0x2180".into());
-                oos_hal::dho::la::Cal { zero: [0x2180; 2] }
-            })
-        } else {
-            oos_hal::dho::la::Cal::default()
-        };
-        let state = seq::State::handover(o.mask, cal_adc.as_ref());
-        Ok(Self { bar, c2h, afe_bus, cal, cal_adc, trim_overlay, la_cal, state })
+impl<P: Port> Io<P> {
+    fn execute(&mut self, steps: &[seq::Step]) -> Result<Vec<u8>, String> {
+        execute(steps, &mut self.bar, &mut self.c2h, &self.clock)
     }
 
-    fn disarm(&mut self, armed: &mut Option<super::dma_source::ArmedBatch>) {
-        if armed.take().is_some() {
-            if let Err(e) = lifecycle::disarm(|| seq::disarm(&mut self.state, &mut self.bar, &mut self.c2h, |_| {})) {
-                eprintln!("oos-ui hw: disarm: {}", e);
-            }
-        }
+    fn disarm(&mut self, armed: &mut Option<ArmedBatch>) {
+        disarm(armed, &mut self.state, &mut self.bar, &mut self.c2h, &self.clock);
     }
 
     fn abort_segments(&mut self, run: &mut Option<SegRun>, out: &HwShared) {
@@ -247,39 +241,32 @@ impl Io {
     }
 }
 
+fn execute(
+    steps: &[seq::Step],
+    bar: &mut impl Bus,
+    c2h: &mut impl Read,
+    clock: &impl Clock,
+) -> Result<Vec<u8>, String> {
+    let mut dma = DmaBuf::new();
+    seq::time::execute_bus_with_clock(steps, bar, c2h, &mut dma, &mut |_| {}, &|| false, clock)?;
+    Ok(dma.into_vec())
+}
+
+fn disarm(
+    armed: &mut Option<ArmedBatch>,
+    state: &mut seq::State,
+    bar: &mut impl Bus,
+    c2h: &mut impl Read,
+    clock: &impl Clock,
+) {
+    if armed.take().is_some() {
+        if let Err(e) = lifecycle::disarm(|| execute(&state.disarm_steps(), bar, c2h, clock)) {
+            eprintln!("oos-ui hw: disarm: {}", e);
+        }
+    }
+}
+
 fn status(out: &HwShared, message: String) {
     eprintln!("oos-ui hw: {}", message);
     crate::perfguard::deep::acq_lock(out).status = message;
-}
-
-fn wait_for_startup(path: Option<&std::path::Path>, out: &HwShared) -> Result<(), String> {
-    let Some(path) = path else { return Ok(()) };
-    status(out, "waiting for the start-up".into());
-    loop {
-        let v = oos_hal::bootstatus::parse(&std::fs::read_to_string(path).unwrap_or_default());
-        match v.finished {
-            Some(Ok(())) => return Ok(()),
-            Some(Err(e)) => return Err(format!("acquisition hardware not started: {}", e)),
-            None => std::thread::sleep(Duration::from_millis(100)),
-        }
-    }
-}
-
-/// Starts the acquisition thread with the hardware left by startup.
-pub fn spawn(options: Spawn, switches: Switches) -> HwShared {
-    let shared = Arc::new(Mutex::new(Shared::default()));
-    let out = shared.clone();
-    let spawned = std::thread::Builder::new().name("acq".into()).spawn(move || {
-        crate::placement::place_acquisition(&switches);
-        let io = wait_for_startup(options.start_up.as_deref().map(std::path::Path::new), &out)
-            .and_then(|()| Io::open(&options, &switches, &out));
-        match io {
-            Ok(mut io) => AcqLoop::new(options, switches, out).run(&mut io),
-            Err(error) => status(&out, error),
-        }
-    });
-    if let Err(e) = spawned {
-        eprintln!("oos-ui hw: no acquisition thread: {}", e);
-    }
-    shared
 }

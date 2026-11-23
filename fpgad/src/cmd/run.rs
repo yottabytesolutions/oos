@@ -60,6 +60,7 @@ fn execute(
     cal_adc: Option<&adc::CalAdc>,
 ) -> Result<(), String> {
     use oos_hal::dho::bus::{Bar1, Bus, FPGA_VERSION};
+    use oos_hal::dho::seq::time::{read_raw_again_with_clock, RawReadIo, Real};
     let mut bar = Bar1::open().map_err(|e| format!("/dev/xdma0_bypass: {}", e))?;
     let v = bar.rd(0x4000);
     if v != FPGA_VERSION {
@@ -79,13 +80,27 @@ fn execute(
         let n = seq::acquire_batch(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut dma, false, 30, log)?;
         eprintln!("{:8.1} ms  {} frames of {} bytes", t0.elapsed().as_secs_f64() * 1e3, n, seq::frame_bytes(&o.s, &p));
         if o.raw_too {
-            seq::read_raw_again(&mut state, &o.s, &p, &mut bar, &mut c2h, &mut raw, n.max(1) - 1, log)?;
+            read_raw_again_with_clock(
+                &mut state,
+                &o.s,
+                &p,
+                RawReadIo::new(&mut bar, &mut c2h, &mut raw, &Real),
+                n.max(1) - 1,
+                log,
+            )?;
         }
         dma.into_vec()
     } else {
         let b = seq::execute(st, &mut bar, afe_bus.as_mut(), &mut c2h, log)?;
         if o.raw_too {
-            seq::read_raw_again(&mut state, &o.s, &plan_p, &mut bar, &mut c2h, &mut raw, 0, log)?;
+            read_raw_again_with_clock(
+                &mut state,
+                &o.s,
+                &plan_p,
+                RawReadIo::new(&mut bar, &mut c2h, &mut raw, &Real),
+                0,
+                log,
+            )?;
         }
         b
     };

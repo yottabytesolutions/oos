@@ -5,6 +5,8 @@
 //! (`oos_hal::dho::afg`), the front ends (`oos_hal::dho::afe`), the panel MCU (`oos_hal::dho::panel`) and the board
 //! readings (`oos_hal::dho::board`, `oos_hal::dho::bus`). The only part of the UI that uses `oos_hal::dho`.
 
+#[cfg(any(target_os = "linux", test))]
+mod clock;
 pub mod cores;
 pub mod fpga;
 #[cfg(any(target_os = "linux", test))]

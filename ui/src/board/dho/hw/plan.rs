@@ -281,7 +281,7 @@ pub(super) fn raw_for_ui(s: &mut Settings, needs_raw: bool) {
 }
 
 /// The batch was read with the live compression (`live_compress`): its newest frame is read again raw
-/// (`seq::read_raw_again`) for the record the UI keeps.
+/// (`seq::time::read_raw_again_with_clock`) for the record the UI keeps.
 pub(in crate::board::dho) fn raw_newest(b: &Settings, p: &hz::Params) -> bool {
     b.compress > 1 && p.memsel <= crate::compress::MAX_DEPTH
 }

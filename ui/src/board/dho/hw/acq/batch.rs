@@ -9,8 +9,9 @@ use super::super::{
     Settings,
 };
 use super::dispatch::{Handoff, Published};
+use super::pacing::PacingPolicy;
 use super::read::{Capture, ReadIo};
-use super::{replay, status, AcqLoop, BatchState, Io, Request};
+use super::{replay, status, AcqLoop, BatchState, Io, LoopClock, Port, Request};
 use crate::sysconf::{switches::StopSlot, Switches};
 use crate::{
     board::HwShared,
@@ -21,25 +22,23 @@ use oos_hal::dho::{
     acq::Mode,
     avg,
     bus::{Bus, DmaBuf},
-    hz, seq,
+    hz,
+    seq::{self, time::Clock},
 };
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{io::Read, sync::Arc, time::Duration};
 
 pub(super) type Reserved = Option<Arc<TapReservation>>;
 
-impl AcqLoop {
+impl<T: PacingPolicy> AcqLoop<T> {
     pub(super) fn batch(
         &mut self,
-        io: &mut Io,
+        io: &mut Io<impl Port>,
         (settings, params): (&Settings, &hz::Params),
         request: Request,
         last_read: bool,
     ) {
         let out = &self.out;
-        if !self.batch.ready(out, settings, &request, &mut self.replay.paused) {
+        if !self.batch.ready(out, settings, &request, &mut self.replay.paused, &io.clock) {
             return;
         }
         let mut b = batch_plan(settings, params, self.switches.board.zone_batch);
@@ -82,7 +81,7 @@ impl AcqLoop {
 
     fn capture(
         &mut self,
-        io: &mut Io,
+        io: &mut Io<impl Port>,
         capture: Capture<'_>,
         (plan, deposit): (&ArmPlan<'_>, Option<&'static Pipe>),
         (ahead, tap, timing, last_read): (bool, Reserved, batch_timing::SourceTiming, bool),
@@ -90,11 +89,11 @@ impl AcqLoop {
         let out = &self.out;
         let Capture { settings: b, params, request, .. } = capture;
         let obsolete = || plan.handoff_obsolete(&lock(out), (request.want.as_ref(), request.mode));
-        let mut read_io = ReadIo::new(io);
+        let mut read_io = io.batch_io();
         let completed = match self.batch.fill(
             &mut read_io,
             &capture,
-            (ahead, timing),
+            (ahead, timing, &self.pacing),
             (out, tap.is_some(), self.switches.board.prearm && !plan.serial()),
             plan,
         ) {
@@ -111,7 +110,7 @@ impl AcqLoop {
             }
         };
         let unit = read_io.state.mask_ctrl().is_some() || read_io.state.zone_ctrl().is_some();
-        self.batch.guard.batch(false, unit, unit_key(b, mask_map()), Instant::now());
+        self.batch.guard.batch(false, unit, unit_key(b, mask_map()), read_io.clock.now());
         let readout =
             self.batch.read(&mut read_io, &capture, &completed, (out, self.switches.board.header_probe), tap.as_ref());
         let record = (capture.first + completed.count - 1, readout.raw_frame.is_some());
@@ -145,10 +144,17 @@ impl BatchState {
         };
     }
 
-    fn ready(&mut self, out: &HwShared, settings: &Settings, request: &Request, paused: &mut bool) -> bool {
+    fn ready(
+        &mut self,
+        out: &HwShared,
+        settings: &Settings,
+        request: &Request,
+        paused: &mut bool,
+        clock: &impl Clock,
+    ) -> bool {
         if single::progress(settings, self.single_done, request.pair(), request.run.hold, 0).1 == single::Poll::Hold {
             lock(out).final_ack = request.run.final_req;
-            std::thread::sleep(Duration::from_millis(5));
+            clock.wait(Duration::from_millis(5));
             return false;
         }
         if std::mem::take(paused) {
@@ -157,19 +163,20 @@ impl BatchState {
         true
     }
 
-    fn single_ready(&mut self, io: &mut Io, settings: &Settings, request: &Request) -> bool {
+    fn single_ready(&mut self, io: &mut Io<impl Port>, settings: &Settings, request: &Request) -> bool {
         if single::progress(settings, self.single_done, request.pair(), false, 0).1 == single::Poll::Wait {
             io.disarm(&mut self.armed);
-            std::thread::sleep(Duration::from_millis(2));
+            io.clock.wait(Duration::from_millis(2));
             return false;
         }
         true
     }
 
-    fn clear_average(&mut self, io: &mut Io, out: &HwShared, clear: u64) {
+    fn clear_average(&mut self, io: &mut Io<impl Port>, out: &HwShared, clear: u64) {
         if let Some((tracker, seen, logged)) = self.avg.as_mut().filter(|avg| avg.1 != clear) {
             io.disarm(&mut self.armed);
-            if let Err(e) = seq::execute(&io.state.avg_clear_steps(), &mut io.bar, None, &mut io.c2h, |_| {}) {
+            let steps = io.state.avg_clear_steps();
+            if let Err(e) = io.execute(&steps) {
                 status(out, format!("average clear: {}", e));
             }
             tracker.reset();
@@ -177,9 +184,9 @@ impl BatchState {
         }
     }
 
-    fn arm(
+    fn arm<P: Port>(
         &mut self,
-        io: &mut Io,
+        io: &mut Io<P>,
         out: &HwShared,
         (b, p): (&Settings, &hz::Params),
         (plan, deposit, grant, has_records): (&ArmPlan<'_>, Option<&Pipe>, drawpipe::admission::Grant, bool),
@@ -188,7 +195,8 @@ impl BatchState {
     ) -> Option<(bool, u32, Reserved, batch_timing::SourceTiming)> {
         let records_can_arm = plan.read_ahead();
         if !has_records
-            || (!records_can_arm && self.record_wait.poll(out, deposit, &obsolete, |message| status(out, message)))
+            || (!records_can_arm
+                && self.record_wait.poll(out, deposit, &io.clock, &obsolete, |message| status(out, message)))
         {
             return None;
         }
@@ -199,7 +207,9 @@ impl BatchState {
             }
             g.record_flow.serial = plan.serial();
         }
-        let (mut ahead, tap) = plan.prepare(&mut self.dma, &mut self.armed, obsolete, |armed| io.disarm(armed))?;
+        let (mut ahead, tap) = plan.prepare(&mut self.dma, &mut self.armed, &io.clock, obsolete, |armed| {
+            super::disarm(armed, &mut io.state, &mut io.bar, &mut io.c2h, &io.clock);
+        })?;
         let first = stop::first_frame(slot, b, p, previous, plan.serial() && !ahead);
         let prearm = self.prearm_timing.take().filter(|_| ahead);
         let mut timing = batch_timing::SourceTiming::new(prearm, grant);
@@ -207,14 +217,22 @@ impl BatchState {
         if std::mem::take(&mut lock(out).force) && self.avg.is_none() {
             let armed = ahead
                 || timing
-                    .arm(|| {
+                    .arm(&io.clock, || {
                         lifecycle::prearm(b.single, || {
                             let steps = if first == 0 {
                                 io.state.arm_only_steps(b, p)
                             } else {
                                 io.state.arm_only_steps_at(b, p, first)?
                             };
-                            seq::execute_bus(&steps, &mut io.bar.batch(), &mut io.c2h, self.dma.destination(), |_| {})
+                            seq::time::execute_bus_with_clock(
+                                &steps,
+                                &mut io.port.batch_bus(&mut io.bar),
+                                &mut io.c2h,
+                                self.dma.destination(),
+                                &mut |_| {},
+                                &|| false,
+                                &io.clock,
+                            )
                         })
                     })
                     .map_err(|e| status(out, format!("force: arm: {}", e)))
@@ -227,7 +245,13 @@ impl BatchState {
         Some((ahead, first, tap, timing))
     }
 
-    fn failed(&mut self, io: &ReadIo<'_, impl Bus>, capture: &Capture<'_>, out: &HwShared, error: String) {
+    fn failed(
+        &mut self,
+        io: &ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
+        capture: &Capture<'_>,
+        out: &HwShared,
+        error: String,
+    ) {
         if error == seq::NEW_SETTINGS {
             return;
         }
@@ -236,17 +260,17 @@ impl BatchState {
         if logs_acquire_error(stalled, unit) {
             status(out, format!("acquire: {}", error));
         }
-        if self.guard.batch(stalled, unit, unit_key(capture.settings, mask_map()), Instant::now()) {
+        if self.guard.batch(stalled, unit, unit_key(capture.settings, mask_map()), io.clock.now()) {
             status(out, "mask/zone unit: no acquisition twice, software fallback for these settings".into());
         }
         if !lock(out).hold {
-            std::thread::sleep(Duration::from_millis(200));
+            io.clock.wait(Duration::from_millis(200));
         }
     }
 
     pub(super) fn successor(
         &mut self,
-        io: &mut ReadIo<'_, impl Bus>,
+        io: &mut ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
         handoff: &Handoff<'_>,
         pipe: Option<&Pipe>,
         (out, switches): (&HwShared, &Switches),
@@ -268,8 +292,10 @@ impl BatchState {
                 switches.source.work_budget(),
             )
         });
+        let clock = io.clock;
         handoff.plan.prearm_and_wait(
             pipe,
+            clock,
             || {
                 handoff.plan.prearm(&mut self.dma, &mut self.armed, pipe, next, &obsolete, |successor, _| {
                     let interrupted = {
@@ -279,9 +305,10 @@ impl BatchState {
                     if interrupted {
                         return false;
                     }
-                    batch_timing::timed_arm(&mut self.prearm_timing, || {
+                    batch_timing::timed_arm(&mut self.prearm_timing, clock, || {
                         lifecycle::prearm(successor.single, || {
-                            seq::prearm(io.state, successor, p, &mut io.bar, io.c2h, |_| {})
+                            let steps = io.state.arm_only_steps(successor, p);
+                            io.execute(&steps, &mut DmaBuf::new())
                         })
                     })
                     .map_err(|e| status(out, format!("prearm: {}", e)))

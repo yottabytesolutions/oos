@@ -41,13 +41,16 @@ fn prepare_read<T>(
     let (mut dma, mut armed) = (DmaSource::default(), None);
     plan.prearm(&mut dma, &mut armed, None, Some(grant), || false, |_, _| pipe.in_flight());
     assert_eq!(armed.take().is_some(), !grant.serial());
-    assert!(plan.prepare(&mut dma, &mut armed, || true, |_| panic!("canceled before arm")).is_none());
+    assert!(plan
+        .prepare(&mut dma, &mut armed, &oos_hal::dho::seq::time::Real, || true, |_| panic!("canceled before arm"))
+        .is_none());
 
     let armed_at = Cell::new(None);
     assert!(plan
         .prepare(
             &mut dma,
             &mut armed,
+            &oos_hal::dho::seq::time::Real,
             || false,
             |_| {
                 assert!(pipe.in_flight(), "the FPGA can arm while the previous batch is in flight");
@@ -60,6 +63,7 @@ fn prepare_read<T>(
 
     let interrupt = Cell::new(true);
     assert!(plan.read_allowed(
+        &oos_hal::dho::seq::time::Real,
         || {
             if grant.serial() && pipe.in_flight() {
                 if interrupt.replace(false) {
@@ -142,8 +146,12 @@ fn complete_serial_capture_bypasses_admission_on_hold_and_only_settings_refuse_r
     let serial = ArmPlan::new(&settings, Default::default(), false, Some(&pipe), true);
     let overlapping = ArmPlan::new(&settings, Default::default(), false, Some(&pipe), false);
     oos_hal::sync::lock(&out).hold = true;
-    assert!(serial.read_allowed(|| serial.obsolete(&out, asked), || control(&serial)));
-    assert!(overlapping.read_allowed(|| overlapping.obsolete(&out, asked), || control(&overlapping)));
+    assert!(serial.read_allowed(&oos_hal::dho::seq::time::Real, || serial.obsolete(&out, asked), || control(&serial)));
+    assert!(overlapping.read_allowed(
+        &oos_hal::dho::seq::time::Real,
+        || overlapping.obsolete(&out, asked),
+        || control(&overlapping)
+    ));
 
     {
         let mut g = oos_hal::sync::lock(&out);
@@ -155,6 +163,10 @@ fn complete_serial_capture_bypasses_admission_on_hold_and_only_settings_refuse_r
     assert!(serial.obsolete(&out, asked), "calibration still prevents the next arm");
 
     oos_hal::sync::lock(&out).want = Some(Settings { mask: 2, ..settings.clone() });
-    assert!(!serial.read_allowed(|| serial.obsolete(&out, asked), || control(&serial)));
-    assert!(overlapping.read_allowed(|| overlapping.obsolete(&out, asked), || control(&overlapping)));
+    assert!(!serial.read_allowed(&oos_hal::dho::seq::time::Real, || serial.obsolete(&out, asked), || control(&serial)));
+    assert!(overlapping.read_allowed(
+        &oos_hal::dho::seq::time::Real,
+        || overlapping.obsolete(&out, asked),
+        || control(&overlapping)
+    ));
 }

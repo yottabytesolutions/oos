@@ -13,7 +13,7 @@ mod batch_timing;
 mod dma_source;
 pub(crate) mod header;
 mod overlay;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 mod raw;
 #[cfg(any(target_os = "linux", test))]
 mod segmented;
@@ -23,7 +23,7 @@ mod startup;
 #[cfg(any(target_os = "linux", test))]
 mod stop;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 mod acq;
 mod comparator;
 mod decode;
@@ -38,7 +38,7 @@ mod trim;
 mod units;
 mod window;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use super::lifecycle;
 #[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::seq::Settings;
@@ -52,7 +52,7 @@ pub use comparator::mask_map_test_lock;
 pub(super) use comparator::{mask_hw_from, mask_map_from, zone_hw_from};
 pub use comparator::{mask_map, mask_map_set};
 pub(super) use decode::decode_into_matched;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use decode::decode_into_with;
 pub use decode::{codes_into, decode_into_probed};
 #[cfg(test)]

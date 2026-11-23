@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Typed observations of the batch acquisition sequence.
-#![cfg(target_os = "linux")]
 
 use crate::drawpipe::admission::Grant;
-use oos_hal::dho::seq::time::{BatchPhase, BatchWait};
+use oos_hal::dho::seq::time::{BatchPhase, BatchWait, Clock};
 use std::time::{Duration, Instant};
 
 pub(super) struct SourceTiming {
@@ -33,9 +32,9 @@ impl SourceTiming {
         }
     }
 
-    pub(super) fn arm<T>(&mut self, arm: impl FnOnce() -> T) -> T {
+    pub(super) fn arm<T>(&mut self, clock: &impl Clock, arm: impl FnOnce() -> T) -> T {
         let mut timing = None;
-        let result = timed_arm(&mut timing, arm);
+        let result = timed_arm(&mut timing, clock, arm);
         if let Some((at, duration)) = timing {
             self.armed_at = Some(at);
             self.arm = duration;
@@ -96,10 +95,10 @@ impl SourceTiming {
     }
 }
 
-pub(super) fn timed_arm<T>(timing: &mut Option<(Instant, Duration)>, arm: impl FnOnce() -> T) -> T {
-    let started = Instant::now();
+pub(super) fn timed_arm<T>(timing: &mut Option<(Instant, Duration)>, clock: &impl Clock, arm: impl FnOnce() -> T) -> T {
+    let started = clock.now();
     let result = arm();
-    let at = Instant::now();
+    let at = clock.now();
     *timing = Some((at, at - started));
     result
 }

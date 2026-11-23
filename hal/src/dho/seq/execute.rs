@@ -172,7 +172,7 @@ fn acquire_batch_phases<B: crate::dho::bus::Bus, R: std::io::Read>(
     if let Some((observe, _, _)) = observed.as_mut() {
         first_record(&arm, wait.armed_at(), p, (bar, c2h, dma), (&mut log, &stop, clock), observe)?;
     } else {
-        execute_with_clock(&arm, bar, c2h, dma, &mut log, &stop, clock)?;
+        execute_bus_with_clock(&arm, bar, c2h, dma, &mut log, &stop, clock)?;
     }
     let started = clock.now();
     if let Some((observe, _, _)) = observed.as_mut() {
@@ -205,7 +205,7 @@ fn first_record(
     let at = arm.iter().position(|step| matches!(step, Step::Poll { .. })).unwrap_or(arm.len());
     let (writes, steps) = arm.split_at(at);
     let started = clock.now();
-    execute_with_clock(writes, bar, c2h, dma, log, stop, clock)?;
+    execute_bus_with_clock(writes, bar, c2h, dma, log, stop, clock)?;
     let now = clock.now();
     if !writes.is_empty() {
         observe(BatchPhase::Arm(now.saturating_duration_since(started)));
@@ -215,7 +215,7 @@ fn first_record(
         let delay =
             record_time(p.memsel.saturating_sub(p.pre), p.rate).saturating_sub(now.saturating_duration_since(armed_at));
         poll_after(step, bar, log, stop, clock, delay)?;
-        execute_with_clock(tail, bar, c2h, dma, log, stop, clock)?;
+        execute_bus_with_clock(tail, bar, c2h, dma, log, stop, clock)?;
     }
     observe(BatchPhase::FirstTrigger(clock.now().saturating_duration_since(armed_at)));
     Ok(())
@@ -231,15 +231,15 @@ fn read_batch<B: crate::dho::bus::Bus, R: std::io::Read>(
     observe: Option<impl FnMut(BatchPhase)>,
 ) -> Result<(), String> {
     let Some(mut observe) = observe else {
-        return execute_with_clock(steps, bar, c2h, dma, log, &|| false, clock);
+        return execute_bus_with_clock(steps, bar, c2h, dma, log, &|| false, clock);
     };
     let start = steps.iter().position(|step| matches!(step, Step::Wr(_))).unwrap_or(steps.len());
     let (before, rest) = steps.split_at(start);
     let writes = rest.iter().take_while(|step| matches!(step, Step::Wr(_))).count();
     let (registers, rest) = rest.split_at(writes);
-    execute_with_clock(before, bar, c2h, dma, log, &|| false, clock)?;
+    execute_bus_with_clock(before, bar, c2h, dma, log, &|| false, clock)?;
     let started = clock.now();
-    execute_with_clock(registers, bar, c2h, dma, log, &|| false, clock)?;
+    execute_bus_with_clock(registers, bar, c2h, dma, log, &|| false, clock)?;
     observe(BatchPhase::Readout(clock.now().saturating_duration_since(started)));
     for step in rest {
         let read =
@@ -273,10 +273,11 @@ pub fn execute_bus_until<B: crate::dho::bus::Bus, R: std::io::Read>(
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
 ) -> Result<(), String> {
-    execute_with_clock(steps, bar, c2h, dma, log, stop, &time::Real)
+    execute_bus_with_clock(steps, bar, c2h, dma, log, stop, &time::Real)
 }
 
-fn execute_with_clock<B: crate::dho::bus::Bus, R: std::io::Read>(
+/// Runs bus-only steps using the supplied clock for polls and delays.
+pub fn execute_bus_with_clock<B: crate::dho::bus::Bus, R: std::io::Read>(
     steps: &[Step],
     bar: &mut B,
     c2h: &mut R,
@@ -326,20 +327,67 @@ fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
     Ok(())
 }
 
-/// A second read of frame `index` of the batch just read with FPGA compression (`s.compress` > 1), this time raw: the
-/// same record, every sample (fork, docs/fork/compress.md). The ring is played again as for the LA read and the stamp
-/// plays of hardware segments; nothing may arm or write the FPGA in between. The frame lands in `dma`
-/// (`frame_bytes` of `raw_settings(s)`).
-#[allow(clippy::too_many_arguments)] // Shares the acquisition register, DMA and logging ports.
-pub fn read_raw_again<B: crate::dho::bus::Bus, R: std::io::Read>(
+/// The register, stream, DMA and clock ports used to replay a raw frame.
+pub struct RawReadIo<'a, B, R, C> {
+    bar: &'a mut B,
+    stream: &'a mut R,
+    dma: &'a mut crate::dho::bus::DmaBuf,
+    clock: &'a C,
+}
+
+impl<B, R, C> std::fmt::Debug for RawReadIo<'_, B, R, C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RawReadIo").field("dma_len", &self.dma.data().len()).finish_non_exhaustive()
+    }
+}
+
+impl<'a, B, R, C> RawReadIo<'a, B, R, C> {
+    pub fn new(bar: &'a mut B, stream: &'a mut R, dma: &'a mut crate::dho::bus::DmaBuf, clock: &'a C) -> Self {
+        Self { bar, stream, dma, clock }
+    }
+}
+
+/// Replay frame `index` of the current batch without FPGA compression, using the supplied clock.
+/// Nothing may arm or write the FPGA between the original read and replay. The frame lands in the supplied DMA
+/// buffer (`frame_bytes` of `raw_settings(s)`).
+pub fn read_raw_again_with_clock(
     st: &mut State,
     s: &Settings,
     p: &hz::Params,
-    bar: &mut B,
-    c2h: &mut R,
-    dma: &mut crate::dho::bus::DmaBuf,
+    io: RawReadIo<'_, impl crate::dho::bus::Bus, impl std::io::Read, impl Clock>,
     index: u32,
-    log: impl FnMut(String),
+    mut log: impl FnMut(String),
 ) -> Result<(), String> {
-    execute_bus(&st.read_steps_at(&raw_settings(s), p, index, 1), bar, c2h, dma, log)
+    execute_bus_with_clock(
+        &st.read_steps_at(&raw_settings(s), p, index, 1),
+        io.bar,
+        io.stream,
+        io.dma,
+        &mut log,
+        &|| false,
+        io.clock,
+    )
+}
+
+/// Reads LA words using the supplied clock, restoring the analog stream after a failed read.
+pub fn acquire_la_with_clock(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
+    bar: &mut impl crate::dho::bus::Bus,
+    c2h: &mut impl std::io::Read,
+    mut log: impl FnMut(String),
+    clock: &impl Clock,
+) -> Result<Vec<u16>, String> {
+    use crate::dho::la;
+    let (n, _) = la::window(&la::timing(p, s.mask));
+    let mut dma = crate::dho::bus::DmaBuf::new();
+    match execute_bus_with_clock(&st.la_read_steps(s, p), bar, c2h, &mut dma, &mut log, &|| false, clock) {
+        Ok(()) => Ok(la::words(dma.data(), n as usize)),
+        Err(e) => {
+            // The read failed before the analog stream was restored.
+            bar.apply(&la::restore(&mut st.sh));
+            Err(e)
+        }
+    }
 }

@@ -63,7 +63,7 @@ pub struct Switches {
     pub mask: bool,
     /// `zone.hw = on`: the zone trigger qualifies frames in the FPGA (docs/fork/hwzone.md)
     pub zone: bool,
-    /// `acq.prearm = on` or OOS_PREARM set: arm the next batch before the decode of the current one (`seq::prearm`;
+    /// `acq.prearm = on` or OOS_PREARM set: arm the next batch before the decode of the current one (see
     /// docs/fork/specs/10-transfer-efficiency.md)
     pub prearm: bool,
     /// `zone.batch` of the settings file: frames per batch while the zone trigger runs (docs/fork/hwzone.md "Rate")

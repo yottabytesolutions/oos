@@ -6,7 +6,7 @@ use super::super::{
     lifecycle,
     roll::{roll_la_t0, scan_gap, scan_la_pos, scan_write},
 };
-use super::{status, Io};
+use super::{status, Io, Port};
 use crate::{
     board::{Frame, HwShared, Slow},
     model::NCH,
@@ -38,8 +38,8 @@ pub(super) struct Stream {
     published: Instant,
 }
 
-impl Default for Stream {
-    fn default() -> Self {
+impl Stream {
+    pub(super) fn new(now: Instant) -> Self {
         Self {
             rolling: None,
             ring: Default::default(),
@@ -50,7 +50,7 @@ impl Default for Stream {
             last_info: Default::default(),
             halted: false,
             done_seen: None,
-            published: Instant::now(),
+            published: now,
         }
     }
 }
@@ -64,7 +64,7 @@ struct Sweep<'a> {
 }
 
 impl Sweep<'_> {
-    fn start(&self, io: &mut Io, rp: &roll::Params) {
+    fn start(&self, io: &mut Io<impl Port>, rp: &roll::Params) {
         match self.scan {
             Some((delay_fs, _)) => {
                 let pos = roll::scan_trig_pos(delay_fs, self.tdiv_fs, self.params.dot_fs);
@@ -99,13 +99,13 @@ impl Stream {
         )
     }
 
-    pub(super) fn restart_scan(&mut self, io: &mut Io, mode: Slow) {
+    pub(super) fn restart_scan(&mut self, io: &mut Io<impl Port>, mode: Slow) {
         if output::restart_scan(mode, self.halted, &mut self.rolling) {
             io.bar.apply(&lifecycle::roll_stop(&mut io.state.sh));
         }
     }
 
-    pub(super) fn stop(&mut self, io: &mut Io) {
+    pub(super) fn stop(&mut self, io: &mut Io<impl Port>) {
         if self.rolling.take().is_some() {
             io.bar.apply(&lifecycle::roll_stop(&mut io.state.sh));
         }
@@ -114,7 +114,7 @@ impl Stream {
     /// Returns false if a read error requires the acquisition to be configured again.
     pub(super) fn poll(
         &mut self,
-        io: &mut Io,
+        io: &mut Io<impl Port>,
         armed: &mut Option<ArmedBatch>,
         out: &HwShared,
         (settings, params, mode): (&Settings, &hz::Params, Slow),
@@ -173,7 +173,7 @@ impl Stream {
         true
     }
 
-    fn start(&mut self, io: &mut Io, out: &HwShared, sweep: &Sweep<'_>) -> roll::Params {
+    fn start(&mut self, io: &mut Io<impl Port>, out: &HwShared, sweep: &Sweep<'_>) -> roll::Params {
         if let Some(rp) = self.rolling {
             return rp;
         }
@@ -200,7 +200,7 @@ impl Stream {
         rp
     }
 
-    fn read_chunks(&mut self, io: &mut Io, out: &HwShared, sweep: &Sweep<'_>, g: &Geometry) -> bool {
+    fn read_chunks(&mut self, io: &mut Io<impl Port>, out: &HwShared, sweep: &Sweep<'_>, g: &Geometry) -> bool {
         io.bar.apply(&roll::fill_pulse(&io.state.sh));
         let chunks = roll::chunks(io.bar.rd(0x11e8));
         let has_la = sweep.la.is_some();
@@ -273,7 +273,7 @@ impl Stream {
         self.cursor = (self.cursor + fresh) % g.keep;
     }
 
-    fn scan_done(&mut self, io: &mut Io, out: &HwShared, single: bool, keep: usize) -> bool {
+    fn scan_done(&mut self, io: &mut Io<impl Port>, out: &HwShared, single: bool, keep: usize) -> bool {
         if self.done_seen.is_none() {
             let r = roll::SCAN_INFO_REGS.map(|a| io.bar.rd(a));
             let info = roll::scan_info(r[0], r[1]);

@@ -73,6 +73,7 @@ fn notify_while_waiting(
         assert!(wait.poll(
             out,
             None,
+            &oos_hal::dho::seq::time::Real,
             || {
                 boundary.wait();
                 boundary.wait();
@@ -90,7 +91,13 @@ fn a_queued_fallback_does_not_gate_the_deposit_source() {
     let out = HwShared::default();
     lock(&out).queue.push_back(Frame::default().into());
     let pipe = crate::drawpipe::Pipe::start(0, 0, Box::leak(Box::default()));
-    assert!(!RecordWait::default().poll(&out, Some(&pipe), || panic!("deposit bypasses the record wait"), |_| {}));
+    assert!(!RecordWait::default().poll(
+        &out,
+        Some(&pipe),
+        &oos_hal::dho::seq::time::Real,
+        || panic!("deposit bypasses the record wait"),
+        |_| {}
+    ));
     assert_eq!(lock(&out).queue.len(), 1);
 }
 

@@ -5,7 +5,7 @@
 //! holds k times more frames for the same read. Opt-in: `acq.compress = on` in system.conf or OOS_COMPRESS.
 //!
 //! Every record the UI keeps stays raw: the acquisition thread reads the newest frame of each compressed batch a
-//! second time without compression (`seq::read_raw_again`), and that frame is the one `acquire` makes the record of
+//! second time without compression (`seq::time::read_raw_again_with_clock`). That frame becomes the record of
 //! (measurements, cursors, FFT, decode, history, the record shown after STOP). The compressed frames are only drawn
 //! (`deposit_pairs`, from `drawpipe::draw_frame`). Where even that is not the same picture, compression stays off
 //! (`allowed`).
@@ -28,7 +28,7 @@ pub const SCREEN_COLUMNS: f64 = 1000.0;
 pub const K_MIN: u32 = 2;
 /// Largest factor: 0x1170 holds k in bits 13:0 (`seq::COMPRESS_K_MAX`; larger values wrap, assumed).
 pub const K_MAX: u32 = 16383;
-/// Least time between two raw reads of a compressed batch's newest frame (`seq::read_raw_again`). A read after every
+/// Least time between raw replays of a compressed batch's newest frame. A read after every
 /// batch cost 7-9 % of the frames at 1 channel, 1 and 100 us/div (unitlab round 2); between the raw records the UI
 /// keeps the measurement of the last one (`hold`), so measurements follow at up to 5 a second.
 pub const RAW_PERIOD: std::time::Duration = std::time::Duration::from_millis(200);

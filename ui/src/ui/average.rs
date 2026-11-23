@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
-use crate::{drawpipe::average, picture::FirstDraw};
+use crate::{
+    drawpipe::{average, Lost},
+    picture::FirstDraw,
+};
 
 pub(super) fn batch_average_ok(ui: &Ui) -> bool {
     average::software(&ui.m)
@@ -14,17 +17,60 @@ pub(super) fn batch_average_ok(ui: &Ui) -> bool {
         && !ui.m.zones.iter().any(|z| z.usable())
 }
 
-pub(super) fn blend_record_average(ui: &Ui, rec: &mut Record, first: FirstDraw) {
+#[derive(Default)]
+pub(super) struct State {
+    screen: [Vec<f32>; NCH],
+    grid: Option<Grid>,
+    history_channels: Option<[bool; NCH]>,
+}
+
+pub(super) fn reset_history_channels(state: &mut State) {
+    state.history_channels = None;
+}
+
+#[derive(PartialEq)]
+struct Grid {
+    time: (f64, f64, bool),
+    zoom: Option<(f32, f32)>,
+    depth: usize,
+    channels: [bool; NCH],
+    trigger: (TrigType, oos_dsp::trigger::Trigger, TrigCoup, Option<u8>, bool),
+}
+
+impl Grid {
+    fn of(m: &Model, rec: &Record) -> Self {
+        Self {
+            time: (rec.t0, rec.dt, rec.pairs),
+            zoom: m.zoom.then(|| (TIME_SCALES[m.zscale], m.zdelay)),
+            depth: m.mdepth,
+            channels: m.ch.each_ref().map(|c| c.on),
+            trigger: (m.trig_type, m.trigger(), m.trig_coupling(), m.trig_line(), m.trig_nrej),
+        }
+    }
+
+    fn matches(&self, rec: &Record) -> bool {
+        self.time == (rec.t0, rec.dt, rec.pairs)
+    }
+}
+
+fn previous<'a>(ui: &'a Ui, grid: &Grid, first: FirstDraw) -> Option<&'a Record> {
+    ui.last[0]
+        .as_ref()
+        .filter(|prev| !first.waiting() && ui.batch_picture.average.grid.as_ref() == Some(grid) && grid.matches(prev))
+}
+
+pub(super) fn blend_record_average(ui: &mut Ui, rec: &mut Record, first: FirstDraw) {
+    let grid = Grid::of(&ui.m, rec);
     if ui.m.acq != AcqMode::Average {
+        ui.batch_picture.average.grid = Some(grid);
         return;
     }
     if ui.src.is_hw() {
         average::record_fallback(&ui.m, rec);
     }
-    if rec.raw.as_ref().is_some_and(|r| r.frame.hw_avg) || first.waiting() {
-        return;
-    }
-    if let Some(prev) = &ui.last[0] {
+    let hw_avg = rec.raw.as_ref().is_some_and(|raw| raw.frame.hw_avg);
+    let seed = if hw_avg { None } else { previous(ui, &grid, first) };
+    if let Some(prev) = seed {
         let a = 1.0 / ui.m.avg_count as f32;
         for (values, previous) in rec.ch.iter_mut().zip(&prev.ch) {
             if values.len() == previous.len() {
@@ -36,36 +82,12 @@ pub(super) fn blend_record_average(ui: &Ui, rec: &mut Record, first: FirstDraw) 
             }
         }
     }
-}
-
-pub(super) fn prepare_batch_average(ui: &mut Ui, rec: &mut Record, average: &average::Output, first: FirstDraw) {
-    let previous = ui.last[0].as_ref().filter(|_| !first.waiting());
-    average.apply(previous, &mut ui.batch_picture.average_screen);
-    std::mem::swap(&mut ui.batch_picture.average_screen, &mut rec.ch);
-}
-
-pub(super) fn store_average_screen(ui: &mut Ui, batched: bool) {
-    if batched {
-        if let Some(previous) = &mut ui.last[0] {
-            ui.batch_picture.average_screen = std::mem::take(&mut previous.ch);
-        }
-    }
-}
-
-pub(super) fn remember_after_draw(ui: &mut Ui, rec: &Record, hw_seg: bool, batched: bool) {
-    if batched {
-        remember_average(ui, rec);
-        ui.hist_pos = None;
-        ui.mask_test(rec);
-    } else {
-        ui.batch_picture.average_history_channels.fill(false);
-        deep_draw::remember_record(ui, rec, hw_seg);
-    }
+    ui.batch_picture.average.grid = Some(grid);
 }
 
 fn remember_average(ui: &mut Ui, rec: &Record) {
     use crate::board::record::HW_POINTS;
-    let seen = &mut ui.batch_picture.average_history_channels;
+    let seen = ui.batch_picture.average.history_channels.get_or_insert([false; NCH]);
     // Size existing slots when a channel first appears, before rotating them
     // through several batches with different active channel masks.
     for (c, values) in rec.ch.iter().enumerate() {
@@ -88,27 +110,41 @@ fn remember_average(ui: &mut Ui, rec: &Record) {
     ui.history.push_back(Record { ch: channels, raw: None, la: None, ..*rec });
 }
 
-pub(super) fn prepare(ui: &mut Ui, record: &mut Option<crate::board::Acquired>, first: FirstDraw) {
-    if let Some((rec, _, _, Some(output))) = record {
-        prepare_batch_average(ui, rec, output, first);
-    }
-}
-
-pub(super) fn filtered(
+pub(super) fn consume_batch(
     ui: &mut Ui,
-    rec: &mut Record,
+    (mut rec, eligibility, mut output): (Record, PictureEligibility, average::Output),
     composition: &mut step_draw::Composition,
-    batched: bool,
-    eligibility: PictureEligibility,
-) {
-    if batched {
-        // The unshown batch accounts for all its records when its output drops.
+    first: &mut FirstDraw,
+    taps: &mut deep_draw::ReaderTaps,
+) -> Option<(usize, std::time::Duration)> {
+    let mut screen = std::mem::take(&mut ui.batch_picture.average.screen);
+    let grid = Grid::of(&ui.m, &rec);
+    output.apply(previous(ui, &grid, *first), &mut screen);
+    rec.ch = screen;
+    if composition.filter_record(ui, &rec, eligibility, first) {
         composition.filtered -= usize::from(eligibility == PictureEligibility::Drawable);
-        std::mem::swap(&mut ui.batch_picture.average_screen, &mut rec.ch);
+        ui.batch_picture.average.screen = rec.ch;
+        output.set_loss(Lost::Average);
+        return None;
     }
+
+    ui.m.status = if rec.triggered { TrigStatus::Triggered } else { TrigStatus::Auto };
+    let started = std::time::Instant::now();
+    let drawn = draw_average(ui, composition, &rec, output, first);
+    let elapsed = started.elapsed();
+    remember_average(ui, &rec);
+    taps.next_record(ui, true);
+    if let Some(previous) = ui.last[0].replace(rec) {
+        ui.batch_picture.average.screen = previous.ch;
+    }
+    ui.batch_picture.average.grid = Some(grid);
+    ui.hist_pos = None;
+    ui.cleared = false;
+    ui.records += 1;
+    Some((drawn, elapsed))
 }
 
-pub(super) fn draw_average(
+fn draw_average(
     ui: &mut Ui,
     composition: &mut step_draw::Composition,
     rec: &Record,

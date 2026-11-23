@@ -258,7 +258,7 @@ impl Handoff {
 
     pub(crate) fn publish_tap(
         &self,
-        tap: Tap,
+        mut tap: Tap,
         submitted: u64,
         charge: Option<&Arc<TapReservation>>,
         order: Option<&TapOrder>,
@@ -269,10 +269,15 @@ impl Handoff {
             if state.closed
                 || submitted < state.reset_before
                 || !state.taps.accepts_deposit(tap.identity)
-                || samples > charge.samples
                 || !std::ptr::eq(self, charge.handoff.as_ptr())
                 || charge.plan.as_ref().is_some_and(|p| tap.identity.is_none_or(|id| !p.identity(id)))
             {
+                return None;
+            }
+            if samples > charge.samples {
+                if let TapProjection::Average(output) = &mut tap.projection {
+                    output.set_loss(crate::drawpipe::Lost::Buffer);
+                }
                 return None;
             }
             if !charge.pending.swap(false, Ordering::Relaxed) {

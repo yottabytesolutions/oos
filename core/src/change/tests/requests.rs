@@ -237,3 +237,32 @@ fn explicit_sweep_after_restoration_retains_its_classes() {
         assert_eq!((changes.identity().gen(), changes.identity().stats_gen()), (1, 1));
     }
 }
+
+#[test]
+fn software_average_single_route_changes_preserve_the_acquisition_class_boundary() {
+    use Request::{ResumeSweep, Run, Single};
+
+    for sweep in [TrigMode::Auto, TrigMode::Normal] {
+        let single = Model { acq: AcqMode::Average, avg_hw: false, trig_mode: TrigMode::Single, ..Model::default() };
+        let continuous = Model { trig_mode: sweep, ..single.clone() };
+        let resume = ResumeSweep(sweep);
+        let cases: [(bool, &[Request], Classes, u64, u64); 5] = [
+            (true, &[Single], Single.classes(), 0, 1),
+            (false, &[resume], Classes::NONE, 0, 0),
+            (false, &[Run, resume], Run.classes(), 0, 1),
+            (true, &[], Classes::ACQ | Classes::STATS, 1, 0),
+            (false, &[], Classes::ACQ | Classes::STATS, 1, 0),
+        ];
+        for (arm, requests, classes, gen, epoch) in cases {
+            let (initial, current) = if arm { (&continuous, &single) } else { (&single, &continuous) };
+            let batch = UiAcq::of(false, true, false, false, Layout::default());
+            let record = UiAcq::default();
+            let (before, after) = if arm { (batch, record) } else { (record, batch) };
+            let cfg = config(4);
+            let mut shadow = Shadow::new(initial, before, &cfg).unwrap();
+            let changes = shadow.observe(current, after, requests, &cfg).unwrap();
+            let id = changes.identity();
+            assert_eq!((changes.classes(), id.gen(), id.epoch()), (classes, gen, epoch), "{sweep:?}, {requests:?}");
+        }
+    }
+}

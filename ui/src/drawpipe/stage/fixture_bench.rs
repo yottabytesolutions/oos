@@ -149,7 +149,7 @@ fn run_average_fixture(fixture: &Fixture, options: &Options) -> bool {
     for pass in options.passes() {
         let (samples, reset) = measure(replay.range.clone(), &pass, || {
             let (output, _) = average::average_batch(&mut replay.painter, &replay.batch, &view);
-            std::hint::black_box(output.shown().0);
+            std::hint::black_box(output.expect("the fixture needs a plain DMA grid").shown().0);
             Duration::ZERO
         });
         let samples = probe::account(samples, reset, &pass);

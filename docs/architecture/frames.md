@@ -148,8 +148,10 @@ can use the zoom route. Other eligible hardware triggers use the captured trigge
 off. Shifted enabled channels in newly eligible mode and trigger combinations can require the record
 route. Single, segments, Bus, Video All Fields, software mask or zones, XY, Z input, roll and scan stay
 on record or stream paths. Software Average on a plain sample grid folds contiguous record ranges in
-the batch pool and sends one screen average with the newest raw waveform tap. The records path still
-handles hardware Average and software Average on min/max pairs. See
+the batch pool and sends one screen average with the newest raw waveform tap. The fold uses the same
+DMA samples as placement. Both software routes seed a fresh average when the time grid, trigger
+alignment, record depth or enabled channels change. Vertical scale and offset changes preserve the
+voltage seed. The records path still handles hardware Average and software Average on min/max pairs. See
 [`Ui::fast_ok`](../../ui/src/ui.rs) and [hardware trigger selection](../../ui/src/drawpipe/route.rs).
 Taps feed record consumers. Display overlays are composed separately from the deposit planes.
 

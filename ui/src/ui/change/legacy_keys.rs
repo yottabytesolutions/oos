@@ -51,13 +51,13 @@ impl Keys {
     }
     pub(super) fn changed(&self, other: &Self, pending: &[Command]) -> bool {
         let transition = pending.iter().any(|c| matches!(c, Command::Request(Request::Run | Request::Single)));
+        let single = pending.contains(&Command::Request(Request::Single));
         let resume = pending.contains(&Command::Request(Request::ResumeSweep(other.sweep)));
         let mut a = self.want.clone();
         let mut b = other.want.clone();
         let (mut slow, mut old_slow) = (self.slow, other.slow);
         let average_sweep = (AcqMode::Average, false);
-        let average_transition = a.single != b.single
-            && (resume || transition && b.single)
+        let average_transition = (a.single && !b.single && resume || !a.single && b.single && single)
             && (self.acquisition.0, self.acquisition.2) == average_sweep
             && (other.acquisition.0, other.acquisition.2) == average_sweep;
         if average_transition || transition && (self.run != other.run || b.single || (a.single && b.auto)) {

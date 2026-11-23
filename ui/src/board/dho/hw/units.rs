@@ -3,9 +3,9 @@
 
 //! DVM and frequency counter service on the acquisition thread.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use crate::board::HwShared;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::seq::Settings;
 
 /// Seconds between two readings of the DVM block, and from its (re)start to the first one. The window of 2^28 samples
@@ -49,7 +49,7 @@ pub(super) fn dvm_step(
 
 /// One reading of the DVM block for the UI: the raw registers and, when the decode takes them, the three values in the
 /// volts of channel `ch` of `s`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn dvm_reading(
     raw: &oos_hal::dho::dvm::Raw,
     key: DvmKey,
@@ -72,15 +72,14 @@ pub(super) fn dvm_reading(
     }
 }
 /// read once a gate (and 0.1 s) has passed since the start or the last reading (docs/protocols/counter.md).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn counter_tick(
-    bar: &mut oos_hal::dho::bus::Bar1,
+    bar: &mut impl oos_hal::dho::bus::Bus,
     out: &HwShared,
     want: Option<crate::board::CounterWant>,
     counting: &mut Option<(crate::board::CounterWant, std::time::Instant)>,
     n: &mut u64,
 ) {
-    use oos_hal::dho::bus::Bus;
     use oos_hal::dho::counter;
     if want != counting.map(|c| c.0) {
         match want {

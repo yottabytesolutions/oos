@@ -30,9 +30,15 @@ pub(super) fn decode_raw(
     Some((frame, uncorrected))
 }
 
-pub(super) fn replay_due(count: u32, live: bool, last: &mut Option<std::time::Instant>) -> bool {
-    if live && count > 0 && last.is_none_or(|t| t.elapsed() >= crate::compress::RAW_PERIOD) {
-        *last = Some(std::time::Instant::now());
+pub(super) fn replay_due(
+    count: u32,
+    live: bool,
+    last: &mut Option<std::time::Instant>,
+    clock: &impl oos_hal::dho::seq::time::Clock,
+) -> bool {
+    if live && count > 0 && last.is_none_or(|t| clock.now().saturating_duration_since(t) >= crate::compress::RAW_PERIOD)
+    {
+        *last = Some(clock.now());
         return true;
     }
     false

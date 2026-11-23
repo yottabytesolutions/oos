@@ -19,7 +19,7 @@ a record leave out what pairs cannot give: Mean, RMS, AC RMS, Std dev, Area and 
 - The UI publishes `Shared::deep_raw` (`deepmeas::want`): Normal acquisition, and a shown measurement or the
   software DVM needs samples. `every` in Single.
 - After a compressed deep batch (`deep_raw_settings`: compression on, no window, record above 1 M, Normal, no LA) the
-  acquisition thread reads the screen window of the newest frame once more, raw (`seq::read_raw_again` with a window),
+  acquisition thread reads the screen window of the newest frame once more, raw (`seq::time::read_raw_again_with_clock` with a window),
   before the next arm, as the live compression's raw newest frame does. Window: the screen and 4096 points each side,
   widened to keep 4096 points around the hardware trigger point, aligned to 8 points and clipped to the record; or the
   whole record if it fits. The selected window across all `ratio` acquired lanes must fit `deepmeas::MAX_BYTES` = 24 MiB

@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The live compression's second read (fork, docs/fork/compress.md): a batch read with FPGA compression, then the
-//! newest frame of the same batch read again raw (`seq::read_raw_again`), against the host model of the FPGA.
+//! newest frame of the same batch read again raw (`seq::time::read_raw_again_with_clock`), against the host model of the FPGA.
 //! Break it catches: the raw read leaving the compression on, reading another frame than asked, or a wrong length.
+
+mod support;
 
 use oos_hal::dho::bus::DmaBuf;
 use oos_hal::dho::pairs;
 use oos_hal::dho::seg::sim::{engine, Engine};
-use oos_hal::dho::seq::{acquire_batch, compressed_len, frame_bytes, raw_settings, read_raw_again, Settings, State};
+use oos_hal::dho::seq::time::{read_raw_again_with_clock, RawReadIo};
+use oos_hal::dho::seq::{acquire_batch_with_clock, compressed_len, frame_bytes, raw_settings, Settings, State};
 
 fn words(b: &[u8]) -> Vec<u16> {
     b.chunks_exact(2).map(|x| u16::from_le_bytes([x[0], x[1]])).collect()
@@ -22,8 +25,23 @@ fn compressed_batch_then_the_newest_frame_raw() {
     assert_eq!(p.ratio, 1);
     // every frame recorded at the first look at the done flag
     let (eng, mut bar, mut c2h) = engine(Engine::new(0, 1_000_000_000, 10, p.ratio));
+    let clock = support::clock::Manual::new(std::time::Instant::now());
     let mut dma = DmaBuf::new();
-    let n = acquire_batch(&mut st, &s, &p, &mut bar, &mut c2h, &mut dma, false, 25, |_| {}).unwrap();
+    let n = acquire_batch_with_clock(
+        &mut st,
+        &s,
+        &p,
+        &mut bar,
+        &mut c2h,
+        &mut dma,
+        false,
+        25,
+        |_| {},
+        || false,
+        || false,
+        &clock,
+    )
+    .unwrap();
     assert_eq!(n, 10);
     let fb = frame_bytes(&s, &p);
     assert_eq!(fb, 2 * compressed_len(&s, &p) as usize);
@@ -35,7 +53,8 @@ fn compressed_batch_then_the_newest_frame_raw() {
     assert_eq!(comp, pairs::model(&raw_newest, k as usize, pairs::LAYOUT)[..len]);
 
     let mut raw = DmaBuf::new();
-    read_raw_again(&mut st, &s, &p, &mut bar, &mut c2h, &mut raw, n - 1, |_| {}).unwrap();
+    read_raw_again_with_clock(&mut st, &s, &p, RawReadIo::new(&mut bar, &mut c2h, &mut raw, &clock), n - 1, |_| {})
+        .unwrap();
     let rs = raw_settings(&s);
     assert_eq!(raw.data().len(), frame_bytes(&rs, &p));
     assert_eq!(frame_bytes(&rs, &p), 2 * p.memsel as usize);

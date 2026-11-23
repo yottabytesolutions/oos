@@ -5,7 +5,7 @@ use super::super::{
     trim::{self, TrimPending},
     units::{dvm_reading, dvm_step, DvmKey, DvmStep},
 };
-use super::{Io, Request};
+use super::{Io, Port, Request};
 use crate::{
     board::{HwShared, Slow},
     perfguard::deep::acq_lock as lock,
@@ -35,9 +35,9 @@ impl Units {
             .then_some(TrimPending { mode, mask, since: now });
     }
 
-    pub(super) fn poll(
+    pub(super) fn poll<P: Port>(
         &mut self,
-        io: &mut Io,
+        io: &mut Io<P>,
         armed: &mut Option<ArmedBatch>,
         out: &HwShared,
         (settings, mode): (&Settings, Slow),
@@ -51,11 +51,8 @@ impl Units {
             self.trim_pending = None;
             if !generator_on && pending.mode == io.state.mode.min(10) && io.cal_adc.is_some() {
                 io.disarm(armed);
-                if let Some(cal) = io.cal_adc.as_mut() {
-                    self.trim_tries[pending.mode] += 1;
-                    self.trim_done[pending.mode] =
-                        trim::core_trim(&mut io.bar, &mut io.state, cal, &mut io.trim_overlay, pending.mask);
-                }
+                self.trim_tries[pending.mode] += 1;
+                self.trim_done[pending.mode] = P::trim(io, pending.mask);
             }
         }
         if let Some(id) = request.slots.filter(|&id| self.slots_done != Some(id)) {
@@ -71,7 +68,7 @@ impl Units {
 
     fn dvm(
         &mut self,
-        io: &mut Io,
+        io: &mut Io<impl Port>,
         armed: &mut Option<ArmedBatch>,
         out: &HwShared,
         settings: &Settings,

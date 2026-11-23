@@ -193,7 +193,7 @@ impl crate::drawpipe::RawBatch for oos_hal::dho::bus::DmaBuf {
     }
 }
 
-/// The LA words of the acquisition `p` (read with `seq::acquire_la`) as a record: word j of the window at
+/// The LA words of the acquisition `p` (read with `seq::time::acquire_la_with_clock`) as a record: word j of the window at
 /// (start + j - trigger index) / LA rate from the hardware trigger point (la.md 3.3; the trigger index is [A] until
 /// test T1).
 pub fn la_record(words: Vec<u16>, s: &Settings, p: &hz::Params) -> crate::ui::la::LaRec {

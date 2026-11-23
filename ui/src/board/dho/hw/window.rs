@@ -108,7 +108,7 @@ pub(in crate::board::dho) fn raw_replay_settings(b: &Settings, p: &hz::Params, d
 
 /// The raw read of a deep record's screen window for the measurements (deepmeas.rs): the batch `b` read the whole
 /// record through the compression (`batch_plan`, above 1 M points), Normal acquisition, no LA; the window of
-/// `screen_window` with the record's edge allowed, at most `deepmeas::MAX_BYTES`. Settings for `seq::read_raw_again`.
+/// `screen_window` with the record's edge allowed, at most `deepmeas::MAX_BYTES`. Settings for `seq::time::read_raw_again_with_clock`.
 pub(in crate::board::dho) fn deep_raw_settings(b: &Settings, p: &hz::Params) -> Option<Settings> {
     if b.compress < 2
         || b.window.is_some()

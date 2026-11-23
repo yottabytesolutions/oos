@@ -329,6 +329,7 @@ fn serial_record_admission_yields_to_calibration_force_epoch_and_route() {
         assert!(wait.poll(
             &out,
             None,
+            &oos_hal::dho::seq::time::Real,
             || {
                 script.wait(ms(1));
                 let mut g = lock(&out);
@@ -340,7 +341,10 @@ fn serial_record_admission_yields_to_calibration_force_epoch_and_route() {
             },
             |_| {}
         ));
-        assert!(!plan.read_allowed(|| true, || read_obsolete(&lock(&out), &plan, asked)), "control {step}");
+        assert!(
+            !plan.read_allowed(&oos_hal::dho::seq::time::Real, || true, || read_obsolete(&lock(&out), &plan, asked)),
+            "control {step}"
+        );
     }
 }
 

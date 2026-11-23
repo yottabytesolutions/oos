@@ -73,7 +73,7 @@ impl Dump {
         })
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", test))]
     pub(in crate::board::dho::hw) fn capture_live(
         &mut self,
         pair: (u64, u64),
@@ -81,8 +81,10 @@ impl Dump {
         bytes: &[u8],
         newest: (Option<&Frame>, Option<&[u16]>),
     ) -> Option<Pending> {
-        use crate::drawpipe::{self, Pipe};
-        let view_gen = drawpipe::pipe().map_or(0, Pipe::fixture_view_generation);
+        #[cfg(target_os = "linux")]
+        let view_gen = crate::drawpipe::pipe().map_or(0, crate::drawpipe::Pipe::fixture_view_generation);
+        #[cfg(not(target_os = "linux"))]
+        let view_gen = 0;
         self.capture((pair, view_gen), input, bytes, newest)
     }
 

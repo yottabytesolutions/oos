@@ -29,7 +29,6 @@ pub(super) struct Run {
     pub(super) segment_bound: Option<u32>,
 }
 
-#[cfg(target_os = "linux")]
 impl Request {
     pub(super) fn pair(&self) -> (u64, u64) {
         (self.identity.gen(), self.identity.epoch())
@@ -174,10 +173,12 @@ impl RecordWait {
         &mut self,
         out: &HwShared,
         deposit: Option<&crate::drawpipe::Pipe>,
+        clock: &impl super::clock::LoopClock,
         obsolete: impl FnOnce() -> bool,
         status: impl FnOnce(String),
     ) -> bool {
-        use std::time::{Duration, Instant};
+        use super::clock::Wake;
+        use std::time::Duration;
         if deposit.is_some() {
             self.started = None;
             return false;
@@ -186,27 +187,27 @@ impl RecordWait {
         let (local, seen, identity, queued, segment_drawing, segment_exhausted) = {
             let g = lock(out);
             let local = g.record_flow.source.clone();
-            let seen = pipe_event.unwrap_or(&local).generation();
+            let seen = Wake::generation(pipe_event.unwrap_or(&local));
             let drawing = g.record_flow.segments_pending();
             let exhausted = !drawing && g.record_flow.segment_bound() == Some(0);
             (local, seen, g.acquisition.identity(), g.queue.len(), drawing, exhausted)
         };
         let event = pipe_event.unwrap_or(&local);
         let waiting = queued != 0 || segment_drawing;
-        if let Some(message) = self.observe(Instant::now(), identity, waiting, queued) {
+        if let Some(message) = self.observe(clock.now(), identity, waiting, queued) {
             status(message);
         }
         if obsolete() {
             return true;
         }
         if waiting {
-            if let Some(elapsed) = event.wait(seen, Duration::from_millis(100)) {
+            if let Some(elapsed) = clock.park(event, seen, Duration::from_millis(100)) {
                 crate::drawpipe::counters().metrics.source_wait(identity, elapsed);
             }
         }
         if segment_exhausted {
             // The UI has already queued STOP for the completed recording.
-            event.wait(seen, Duration::from_millis(100));
+            clock.park(event, seen, Duration::from_millis(100));
         }
         waiting || segment_exhausted
     }

@@ -312,7 +312,7 @@ section 8.3 says).
 | analog parameters with the LA | `hal::dho::la::prep` | rate halved with a channel shown (156.25 M -> 62.5 M), memsel kept, segment x2, frame ring from the doubled segment (assumed) |
 | acquisition additions | `hal::dho::acq::configure_la`, `hal::dho::la::config` | 0x4008 bit26/bit23/bit24 (roll only), 0x128c 424/145, rate block 3.2, 0x131c, 0x10e4 x2 (not roll), 0x4050/0x4054 x2, 0x10e0 doubled |
 | thresholds | `hal::dho::la::thresholds`, with every set-up while the LA is on | 5.1 bit-exact; zero codes from `cal_la.hex` (fallback 0x2180) |
-| raw LA read | `hal::dho::la::passthrough`, `readout`, `restore`; `seq::State::la_read_steps`, `seq::acquire_la` | 4.2 steps 1-6, then 0x4008 bit23 = 1 / bit24 = 0 |
+| raw LA read | `hal::dho::la::passthrough`, `readout`, `restore`; `seq::State::la_read_steps`, `seq::time::acquire_la_with_clock` | 4.2 steps 1-6, then 0x4008 bit23 = 1 / bit24 = 0 |
 | batch | `seq::frames` | one frame per batch while the LA is on (only the last frame of a batch has its LA, 4.1) |
 | depth / rate limits | `oos-ui` `Model::max_mem` (`Limits::mem(n, la)`), `max_srate` halved, `board::dho::hw::settings` caps the depth | 31.25 / 12.5 / 10 M |
 | probe detect | `board/dho/hw.rs`, GPIO `LA_PROBE_DETECT` once a second | LA page title; without a probe the LA does not come on from the panel or the screen |
@@ -379,7 +379,7 @@ Details that section 10 relies on:
 - **0x131c:** `la::wave_early`, x = 4 again when the LA goes off (`State::la_was_on`).
 - **Read limit:** the stock system stops at 1,000,000 words, the hardware does not: OOS reads the whole record from word 0.
 - **Stop poll** before the LA read (0x4034 bit13, OOS allows 30 ms).
-- **Failure paths:** a failed LA read restores the analog stream (`seq::acquire_la`) and after three failures in a row
+- **Failure paths:** a failed LA read restores the analog stream (`seq::time::acquire_la_with_clock`) and after three failures in a row
   the LA read pauses until the next set-up, so that the analog keeps running.
 - **Roll / scan:** the trigger stays on the channel there, which also keeps the acquisition running.
 - **LA alone:** the trigger source channel is acquired hidden, not always CH1.

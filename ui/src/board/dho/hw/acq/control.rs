@@ -8,19 +8,20 @@ use super::super::{
     plan::raw_for_ui,
     stop_plan,
 };
-use super::{status, AcqLoop, Io, Request};
+use super::pacing::PacingPolicy;
+use super::{status, AcqLoop, Io, Port, Request};
 use crate::{
     board::{CounterWant, Slow},
     perfguard::deep::acq_lock as lock,
 };
 use oos_hal::dho::{
     hz,
-    seq::{self, Settings},
+    seq::{self, time::Clock, Settings},
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-impl AcqLoop {
-    pub(super) fn service(&mut self, io: &mut Io, counter: Option<CounterWant>) -> Option<Request> {
+impl<T: PacingPolicy> AcqLoop<T> {
+    pub(super) fn service<P: Port>(&mut self, io: &mut Io<P>, counter: Option<CounterWant>) -> Option<Request> {
         self.service.readings(io, &self.out, counter);
         let request = {
             let mut g = lock(&self.out);
@@ -35,7 +36,7 @@ impl AcqLoop {
                 io.disarm(&mut self.batch.armed);
                 io.abort_segments(&mut self.segrun, &self.out);
                 self.stream.stop(io);
-                if self.service.calibrate(io, &self.options.cal_dir, &self.out, req) {
+                if P::calibrate(io, &self.options.cal_dir, &self.out, req) {
                     self.units.reset_trim();
                 }
                 self.configured.current = None;
@@ -52,13 +53,13 @@ impl AcqLoop {
 
     pub(super) fn reconfigure(
         &mut self,
-        io: &mut Io,
+        io: &mut Io<impl Port>,
         request: &Request,
         last_read: &mut bool,
     ) -> Option<(Settings, hz::Params)> {
         let Some(mut want) = request.want.clone() else {
             io.disarm(&mut self.batch.armed);
-            std::thread::sleep(Duration::from_millis(50));
+            io.clock.wait(Duration::from_millis(50));
             return None;
         };
         let want_mode = request.mode;
@@ -87,11 +88,11 @@ impl AcqLoop {
         self.configured.current.clone()
     }
 
-    fn apply_overrides(&mut self, io: &Io, request: &Request, want: &mut Settings) {
+    fn apply_overrides(&mut self, io: &Io<impl Port>, request: &Request, want: &mut Settings) {
         want.afe = self.options.program_afe;
         raw_for_ui(want, request.needs_raw);
         let map = mask_map();
-        let blocked = self.batch.guard.blocks(&unit_key(want, map), Instant::now());
+        let blocked = self.batch.guard.blocks(&unit_key(want, map), io.clock.now());
         if blocked {
             hw_merge(want, None, None, map);
         } else {
@@ -110,7 +111,7 @@ impl AcqLoop {
         }
     }
 
-    fn hold(&mut self, io: &mut Io, request: &Request, last_read: bool) {
+    fn hold(&mut self, io: &mut Io<impl Port>, request: &Request, last_read: bool) {
         if !request.run.hold || self.replay.paused {
             return;
         }
@@ -123,13 +124,11 @@ impl AcqLoop {
         let last = self.replay.last_batch.as_ref().filter(|_| last_read).and_then(|read| {
             let settings = read.plan(request.run.deep)?;
             let params = &read.params;
-            match seq::read_raw_again(
+            match seq::time::read_raw_again_with_clock(
                 &mut io.state,
                 &settings,
                 params,
-                &mut io.bar,
-                &mut io.c2h,
-                &mut self.batch.raw.dma,
+                seq::time::RawReadIo::new(&mut io.bar, &mut io.c2h, &mut self.batch.raw.dma, &io.clock),
                 read.index,
                 |_| {},
             ) {
@@ -155,7 +154,7 @@ impl AcqLoop {
         self.replay.paused = true;
     }
 
-    fn stopped_view(&mut self, io: &mut Io, view: Option<(f64, f64)>, want_mode: Slow) -> bool {
+    fn stopped_view(&mut self, io: &mut Io<impl Port>, view: Option<(f64, f64)>, want_mode: Slow) -> bool {
         let Some(view) = view.filter(|_| self.configured.mode == Slow::Off && want_mode == Slow::Off) else {
             self.replay.replayed = None;
             return false;
@@ -170,7 +169,7 @@ impl AcqLoop {
             let params = &batch.params;
             let (settings, point) = stop_plan(&batch.settings, params, view.0, view.1);
             let steps = io.state.reread_steps(&settings, params, batch.index);
-            match seq::execute(&steps, &mut io.bar, None, &mut io.c2h, |_| {}) {
+            match io.execute(&steps) {
                 Ok(bytes) => {
                     let fb = seq::frame_bytes(&settings, params);
                     self.seq += 1;
@@ -187,12 +186,12 @@ impl AcqLoop {
                 Err(e) => status(&self.out, format!("STOP read: {}", e)),
             }
         } else {
-            std::thread::sleep(Duration::from_millis(20));
+            io.clock.wait(Duration::from_millis(20));
         }
         true
     }
 
-    fn configure(&mut self, io: &mut Io, want: Settings, mode: Slow, avg_clear: u64) -> bool {
+    fn configure<P: Port>(&mut self, io: &mut Io<P>, want: Settings, mode: Slow, avg_clear: u64) -> bool {
         io.disarm(&mut self.batch.armed);
         lock(&self.out).record_flow.serial = false;
         io.abort_segments(&mut self.segrun, &self.out);
@@ -202,22 +201,20 @@ impl AcqLoop {
         let configured = lifecycle::configure(&mut io.state, &want, io.cal.as_ref(), io.cal_adc.as_ref())
             .map_err(|e| format!("settings: {}", e))
             .and_then(|(steps, params)| {
-                seq::execute(&steps, &mut io.bar, io.afe_bus.as_mut(), &mut io.c2h, |_| {})
-                    .map(|_| params)
-                    .map_err(|e| format!("configure: {}", e))
+                P::apply_settings(io, &steps).map(|()| params).map_err(|e| format!("configure: {}", e))
             });
         let params = match configured {
             Ok(params) => params,
             Err(e) => {
                 status(&self.out, e);
-                std::thread::sleep(Duration::from_millis(500));
+                io.clock.wait(Duration::from_millis(500));
                 return false;
             }
         };
         status(&self.out, format!("configured: mask {:#x}, {} Sa/s, {} points", want.mask, params.rate, params.memsel));
-        crate::pacing::configured();
+        crate::pacing::configured(|| io.clock.now());
         self.batch.la_fails = 0;
-        self.units.configured(io.state.mode.min(10), want.mask, self.switches.board.core_offset_tight, Instant::now());
+        self.units.configured(io.state.mode.min(10), want.mask, self.switches.board.core_offset_tight, io.clock.now());
         self.batch.configured(want.mode, self.switches.board.avg_kind(), avg_clear);
         self.configured.current = Some((want, params));
         true

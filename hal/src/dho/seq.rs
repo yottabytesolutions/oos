@@ -21,10 +21,9 @@ pub use super::samples::{
 pub use arm::{frames, record_frames};
 pub use capture::CaptureReduction;
 #[cfg(target_os = "linux")]
-pub use execute::linux::{acquire_la, disarm, execute, execute_into_until, execute_until, prearm};
+pub use execute::linux::{execute, execute_into_until, execute_until};
 pub use execute::{
     acquire_batch, acquire_batch_idle, acquire_batch_until, acquire_batch_with_clock, execute_bus, execute_bus_until,
-    read_raw_again,
 };
 pub use readout::{
     compress_k, compress_word, compressed_len, frame_bytes, frame_stride, read_len, unpad, unpad_in, window, Playback,

@@ -75,7 +75,7 @@
 //!   --la               logic analyser on (la.md, UNTESTED): LA set-up and a second, raw LA read after the analog one
 //!                      (run writes the bytes of that last read, the LA words); --la-thr 1.4 threshold of both pods in V
 //!                      (--la-alone: no analog channel shown, the analog rate is not halved)
-//!   --raw-too          with --compress k > 1: read the newest frame once more, raw (seq::read_raw_again), to --out.raw
+//!   --raw-too          with --compress k > 1: read the newest frame once more without compression, to --out.raw
 //!   --out /tmp/frame.bin
 //!   oos-fpgad compress-check <raw.bin> <compressed.bin> --k K [--mask 1]
 //!                                          offline (runs anywhere): which min/max pair layout explains the compressed

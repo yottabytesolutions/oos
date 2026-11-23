@@ -10,7 +10,7 @@ use super::{
     batch::Reserved,
     publication,
     read::{Capture, Completed, ReadIo, Readout},
-    status, BatchState,
+    status, BatchState, LoopClock,
 };
 use crate::{
     board::{dho::switches::HeaderProbe, Frame, HwShared},
@@ -19,6 +19,7 @@ use crate::{
     sysconf::Switches,
 };
 use oos_hal::dho::{avg, bus::Bus, seq};
+use std::io::Read;
 
 pub(super) struct Handoff<'a> {
     pub(super) capture: Capture<'a>,
@@ -46,7 +47,7 @@ struct Selection {
 impl BatchState {
     pub(super) fn publish(
         &mut self,
-        io: &mut ReadIo<'_, impl Bus>,
+        io: &mut ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
         handoff: Handoff<'_>,
         (out, switches): (&HwShared, &Switches),
         seq: &mut u64,
@@ -89,7 +90,7 @@ impl BatchState {
 
     fn publish_running(
         &mut self,
-        io: &mut ReadIo<'_, impl Bus>,
+        io: &mut ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
         handoff: Handoff<'_>,
         selection: Selection,
         (out, switches): (&HwShared, &Switches),
@@ -134,7 +135,7 @@ impl BatchState {
 
     fn publish_held(
         &mut self,
-        io: &mut ReadIo<'_, impl Bus>,
+        io: &mut ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
         handoff: Handoff<'_>,
         selection: &Selection,
         (out, probe): (&HwShared, HeaderProbe),
@@ -172,11 +173,15 @@ impl BatchState {
         publication::publish_held(out, frame, final_req);
     }
 
-    fn clear_completed_average(&mut self, io: &mut ReadIo<'_, impl Bus>, out: &HwShared, average: Option<avg::After>) {
+    fn clear_completed_average(
+        &mut self,
+        io: &mut ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
+        out: &HwShared,
+        average: Option<avg::After>,
+    ) {
         if average.is_some_and(|a| a.clear) {
-            if let Err(e) =
-                seq::execute_bus(&io.state.avg_clear_steps(), &mut io.bar, io.c2h, self.dma.destination(), |_| {})
-            {
+            let steps = io.state.avg_clear_steps();
+            if let Err(e) = io.execute(&steps, self.dma.destination()) {
                 status(out, format!("average clear: {}", e));
             }
         }
@@ -184,7 +189,7 @@ impl BatchState {
 
     fn select(
         &mut self,
-        io: &mut ReadIo<'_, impl Bus>,
+        io: &mut ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
         capture: &Capture<'_>,
         count: u32,
         frame0_drop: bool,

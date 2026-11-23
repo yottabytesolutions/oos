@@ -14,7 +14,7 @@ pub(in crate::board::dho::hw) fn read_grant(
     pipe.map_or(Grant::Overlapping(bound), |pipe| pipe.grant(identity, bound, budget))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(in crate::board::dho::hw) fn grant(
     (pipe, uncapped): (Option<&Pipe>, u32),
     cap: &crate::pacing::FrameCap,

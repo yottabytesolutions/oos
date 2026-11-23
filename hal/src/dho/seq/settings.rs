@@ -286,7 +286,7 @@ pub fn tdiv_fs(tdiv: f64) -> i128 {
     ((tdiv / q).round() * q * 1e15).round() as i128
 }
 
-/// `s` without the FPGA compression: what `read_raw_again` reads with.
+/// `s` without the FPGA compression: what `time::read_raw_again_with_clock` reads with.
 pub fn raw_settings(s: &Settings) -> Settings {
     Settings { compress: 1, frames: 1, ..s.clone() }
 }

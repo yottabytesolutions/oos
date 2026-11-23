@@ -2,6 +2,7 @@
 
 //! One of three DMA destinations must be source-owned before the FPGA arms.
 
+use super::super::clock::{LoopClock, Wake};
 #[cfg(any(target_os = "linux", test))]
 use crate::drawpipe::admission::Grant;
 use crate::drawpipe::{self, Pipe, RawBatch, TapReservation};
@@ -37,22 +38,28 @@ impl<T: Default + RawBatch + 'static> DmaSource<T> {
 
     /// The existing board loop rechecks mode/commands after any wake, including a ready-before-wait race.
     #[cfg(any(target_os = "linux", test))]
-    pub(super) fn ready(&mut self, identity: oos_core::change::Identity, canceled: impl Fn() -> bool) -> bool {
+    pub(super) fn ready(
+        &mut self,
+        identity: oos_core::change::Identity,
+        clock: &impl LoopClock,
+        canceled: impl Fn() -> bool,
+    ) -> bool {
         let pipe = self.current.is_none().then(drawpipe::pipe).flatten();
-        self.ready_from(pipe, identity, canceled, HOUSEKEEPING)
+        self.ready_from(pipe, identity, clock, canceled, HOUSEKEEPING)
     }
 
     fn ready_from(
         &mut self,
         pipe: Option<&Pipe>,
         identity: oos_core::change::Identity,
+        clock: &impl LoopClock,
         canceled: impl Fn() -> bool,
         deadline: Duration,
     ) -> bool {
         if self.current.is_some() {
             return !canceled();
         }
-        let observed = pipe.map(Pipe::source_generation);
+        let observed = pipe.map(Wake::generation);
         self.current = self.take(pipe);
         if canceled() {
             return false;
@@ -62,7 +69,7 @@ impl<T: Default + RawBatch + 'static> DmaSource<T> {
         }
         // All materialized destinations are leased through the process pipe.
         if let Some((pipe, observed)) = pipe.zip(observed) {
-            pipe.note_source_wait(identity, pipe.wait_source(observed, deadline));
+            pipe.note_source_wait(identity, clock.park(pipe, observed, deadline));
         }
         false
     }
@@ -152,7 +159,13 @@ mod tests {
         let two = source.spare(&pipe).unwrap();
         let three = source.spare(&pipe).unwrap();
         let attempt = |source: &mut DmaSource<DmaBuf>, changed| {
-            source.ready_from(Some(&pipe), Default::default(), || changed, Duration::ZERO)
+            source.ready_from(
+                Some(&pipe),
+                Default::default(),
+                &oos_hal::dho::seq::time::Real,
+                || changed,
+                Duration::ZERO,
+            )
         };
         assert!(!attempt(&mut source, false), "no arm/read when all three destinations are owned");
         let observed = pipe.source_generation();
@@ -245,7 +258,6 @@ impl<'a> ArmPlan<'a> {
         self.serial
     }
 
-    #[cfg(target_os = "linux")]
     pub(super) fn read_ahead(&self) -> bool {
         self.serial && !self.settings.single && self.settings.mode == oos_hal::dho::acq::Mode::Normal
     }
@@ -285,23 +297,28 @@ impl<'a> ArmPlan<'a> {
             || g.acquisition.route() != self.route
     }
 
-    pub(super) fn wait_to_submit(&self, pipe: &Pipe, canceled: impl Fn() -> bool) -> bool {
+    pub(super) fn wait_to_submit(&self, pipe: &Pipe, clock: &impl LoopClock, canceled: impl Fn() -> bool) -> bool {
         loop {
-            let observed = pipe.source_generation();
+            let observed = Wake::generation(pipe);
             if canceled() || !pipe.accepting() {
                 return false;
             }
             if !pipe.in_flight() {
                 return true;
             }
-            pipe.note_source_wait(self.identity, pipe.wait_source(observed, HOUSEKEEPING));
+            pipe.note_source_wait(self.identity, clock.park(pipe, observed, HOUSEKEEPING));
         }
     }
 
     /// Stop waiting for admission on a control request, then check if the read still has a destination.
-    pub(super) fn read_allowed(&self, interrupted: impl Fn() -> bool, obsolete: impl Fn() -> bool) -> bool {
+    pub(super) fn read_allowed(
+        &self,
+        clock: &impl LoopClock,
+        interrupted: impl Fn() -> bool,
+        obsolete: impl Fn() -> bool,
+    ) -> bool {
         if let Some(pipe) = self.deposit.filter(|_| self.serial()) {
-            self.wait_to_submit(pipe, interrupted);
+            self.wait_to_submit(pipe, clock, interrupted);
         }
         !self.serial() || !obsolete()
     }
@@ -318,11 +335,12 @@ impl<'a> ArmPlan<'a> {
     pub(super) fn prearm_and_wait(
         &self,
         loan: Option<&Pipe>,
+        clock: &impl LoopClock,
         prearm: impl FnOnce() -> Option<oos_hal::dho::bus::DmaBuf>,
         canceled: impl Fn() -> bool,
     ) -> Result<Option<oos_hal::dho::bus::DmaBuf>, ()> {
         let next = prearm();
-        if let Some(pipe) = loan.filter(|pipe| !self.wait_to_submit(pipe, canceled)) {
+        if let Some(pipe) = loan.filter(|pipe| !self.wait_to_submit(pipe, clock, canceled)) {
             if let Some(spare) = next {
                 pipe.return_buffer(Box::new(spare));
             }
@@ -335,10 +353,11 @@ impl<'a> ArmPlan<'a> {
         &self,
         dma: &mut DmaSource<oos_hal::dho::bus::DmaBuf>,
         armed: &mut Option<ArmedBatch>,
+        clock: &impl LoopClock,
         obsolete: impl Fn() -> bool,
         disarm: impl FnOnce(&mut Option<ArmedBatch>),
     ) -> Option<(bool, Option<Arc<TapReservation>>)> {
-        if !dma.ready(self.identity, &obsolete) {
+        if !dma.ready(self.identity, clock, &obsolete) {
             return None;
         }
         let ahead = armed.as_ref().is_some_and(|a| a.matches(self.settings, self.pair(), self.route, self.deposit));
@@ -414,8 +433,13 @@ fn calibration_cancels_prepare_with_every_funded_grant_held() {
         let worker = threads.spawn(|| {
             let mut dma = DmaSource::default();
             let mut armed = None;
-            let result =
-                plan.prepare(&mut dma, &mut armed, || plan.obsolete(&shared, (None, Default::default())), |_| {});
+            let result = plan.prepare(
+                &mut dma,
+                &mut armed,
+                &oos_hal::dho::seq::time::Real,
+                || plan.obsolete(&shared, (None, Default::default())),
+                |_| {},
+            );
             tx.send(result.is_none()).unwrap();
         });
         pipe.wait_tap_sender();
@@ -461,8 +485,13 @@ fn force_keeps_waiting_for_funded_capacity_before_prepare_can_arm() {
         let worker = threads.spawn(|| {
             let mut dma = DmaSource::default();
             let mut armed = None;
-            let result =
-                plan.prepare(&mut dma, &mut armed, || plan.obsolete(&shared, (None, Default::default())), |_| {});
+            let result = plan.prepare(
+                &mut dma,
+                &mut armed,
+                &oos_hal::dho::seq::time::Real,
+                || plan.obsolete(&shared, (None, Default::default())),
+                |_| {},
+            );
             tx.send(result.is_some()).unwrap();
         });
         pipe.wait_tap_sender();
@@ -566,10 +595,10 @@ fn deposit_admission_rechecks_cancellation_and_pipe_shutdown() {
     let settings = Settings::default();
     pipe.publish_view(&crate::model::Model::default(), 16, 16, crate::sparse::Interp::Exact, id);
     let plan = ArmPlan::new(&settings, id, true, Some(&pipe), false);
-    assert!(plan.wait_to_submit(&pipe, || false));
-    assert!(!plan.wait_to_submit(&pipe, || true));
+    assert!(plan.wait_to_submit(&pipe, &oos_hal::dho::seq::time::Real, || false));
+    assert!(!plan.wait_to_submit(&pipe, &oos_hal::dho::seq::time::Real, || true));
     crate::drawpipe::shutdown::close(&pipe, std::time::Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD);
-    assert!(!plan.wait_to_submit(&pipe, || false));
+    assert!(!plan.wait_to_submit(&pipe, &oos_hal::dho::seq::time::Real, || false));
 }
 
 #[cfg(test)]
@@ -586,6 +615,7 @@ fn prearm_runs_before_the_admission_check_and_cancellation_returns_its_spare() {
     let did_arm = Cell::new(false);
     let result = plan.prearm_and_wait(
         Some(&pipe),
+        &oos_hal::dho::seq::time::Real,
         || {
             plan.prearm(
                 &mut dma,

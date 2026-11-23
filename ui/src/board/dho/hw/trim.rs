@@ -8,7 +8,7 @@ use super::overlay;
 
 /// Tries per ADC mode and session: a mode whose channels sit far from mid-scale or clip is tried again at the next
 /// configurations, at most this often.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(super) const TRIM_TRIES: u8 = 5;
 
 #[cfg(any(target_os = "linux", test))]

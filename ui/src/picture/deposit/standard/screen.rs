@@ -7,6 +7,8 @@ use crate::board::{record, Frame};
 use crate::sparse::{self, Interp, POINTS};
 
 mod polyphase;
+#[cfg(test)]
+mod trigger_tests;
 
 pub(crate) fn trigger(
     m: &Model,

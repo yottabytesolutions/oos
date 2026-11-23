@@ -310,7 +310,7 @@ fn rejected_handoff_disarms_the_unread_successor() {
     io.clock.compose();
 }
 
-fn is_disarm(event: &Event) -> bool {
+pub(super) fn is_disarm(event: &Event) -> bool {
     matches!(event, Event::Write(0x4004, value) if value >> 31 != 0)
 }
 

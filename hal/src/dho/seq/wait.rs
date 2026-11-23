@@ -27,6 +27,9 @@ pub fn wait_steps(p: &hz::Params) -> Vec<Step> {
 
 pub(super) const STOP_POLL: Duration = Duration::from_millis(10);
 pub(super) const RECORD_POSITION: u32 = 0x4010;
+const POLL_INTERVAL: Duration = Duration::from_micros(500);
+const FIRST_INTERVAL: Duration = Duration::from_micros(50);
+const FIRST_WINDOW: Duration = Duration::from_micros(200);
 
 pub(super) fn record_count(position: u32) -> u32 {
     position.wrapping_add(1)
@@ -95,18 +98,18 @@ pub(super) fn poll<B: crate::dho::bus::Bus>(
     stop: &impl Fn() -> bool,
     clock: &impl Clock,
 ) -> Result<(), String> {
-    poll_after(step, bar, log, stop, clock, Duration::ZERO)
+    poll_with(step, |reg| Ok(bar.rd(reg)), log, stop, clock, None)
 }
 
-pub(super) fn poll_after(
+pub(super) fn poll_first(
     step: &Step,
     bar: &mut impl crate::dho::bus::Bus,
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
     clock: &impl Clock,
-    delay: Duration,
+    estimate: Instant,
 ) -> Result<(), String> {
-    poll_with(step, |reg| Ok(bar.rd(reg)), log, stop, clock, delay)
+    poll_with(step, |reg| Ok(bar.rd(reg)), log, stop, clock, Some(estimate))
 }
 
 pub(super) fn poll_checked(step: &Step, bar: &mut impl crate::dho::bus::Bus, clock: &impl Clock) -> Result<(), String> {
@@ -116,7 +119,7 @@ pub(super) fn poll_checked(step: &Step, bar: &mut impl crate::dho::bus::Bus, clo
         &mut |_| {},
         &|| false,
         clock,
-        Duration::ZERO,
+        None,
     )
 }
 
@@ -126,25 +129,26 @@ fn poll_with(
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
     clock: &impl Clock,
-    delay: Duration,
+    first_estimate: Option<Instant>,
 ) -> Result<(), String> {
     let Step::Poll { reg, bit, ms, what } = step else { return Ok(()) };
     let t = clock.now();
     let mut last = read(*reg)?;
-    let delay = delay.min(STOP_POLL);
-    if last & bit == 0 && !delay.is_zero() {
-        if stop() {
-            return Err(NEW_SETTINGS.into());
-        }
-        clock.wait(delay);
-        last = read(*reg)?;
-        if last & bit == 0 && stop() {
-            return Err(NEW_SETTINGS.into());
-        }
+    let mut delay = POLL_INTERVAL;
+    if let Some(estimate) = first_estimate.filter(|estimate| last & bit == 0 && t < *estimate + FIRST_WINDOW) {
+        let limit = t + STOP_POLL;
+        let first = estimate.clamp(t, limit);
+        let end = (estimate + FIRST_WINDOW).min(limit);
+        last = near_estimate((first, end), *bit, last, || read(*reg), stop, clock)?;
+        // Fit the fine polls inside the first coarse interval, keeping its control and timeout cadence.
+        delay = (first + POLL_INTERVAL).saturating_duration_since(clock.now());
     }
     let mut k = 0u32;
     while last & bit == 0 && clock.now().saturating_duration_since(t).as_millis() < *ms as u128 {
-        clock.wait(std::time::Duration::from_micros(500));
+        if !delay.is_zero() {
+            clock.wait(delay);
+        }
+        delay = POLL_INTERVAL;
         last = read(*reg)?;
         k += 1;
         if k.is_multiple_of(20) && last & bit == 0 && stop() {
@@ -178,4 +182,30 @@ fn poll_with(
     }
 
     Ok(())
+}
+
+fn near_estimate(
+    (first, end): (Instant, Instant),
+    bit: u32,
+    mut last: u32,
+    mut read: impl FnMut() -> Result<u32, String>,
+    stop: &impl Fn() -> bool,
+    clock: &impl Clock,
+) -> Result<u32, String> {
+    if stop() {
+        return Err(NEW_SETTINGS.into());
+    }
+    while last & bit == 0 {
+        let now = clock.now();
+        if now >= end {
+            break;
+        }
+        let next = if now < first { first } else { (now + FIRST_INTERVAL).min(end) };
+        clock.wait(next - now);
+        last = read()?;
+        if last & bit == 0 && stop() {
+            return Err(NEW_SETTINGS.into());
+        }
+    }
+    Ok(last)
 }

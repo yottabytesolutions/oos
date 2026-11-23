@@ -5,7 +5,7 @@
 
 use super::arm::batch_arm;
 use super::time::{self, Clock};
-use super::wait::{fill_count, poll, poll_after, record_time, BatchWait};
+use super::wait::{fill_count, poll, poll_first, record_time, BatchWait};
 use super::{frames, raw_settings, read_len, unpad_in, Settings, State, Step, NEW_SETTINGS};
 use crate::dho::hz;
 use std::time::{Duration, Instant};
@@ -212,9 +212,8 @@ fn first_record(
     }
     let armed_at = armed_at.unwrap_or(now);
     if let Some((step, tail)) = steps.split_first() {
-        let delay =
-            record_time(p.memsel.saturating_sub(p.pre), p.rate).saturating_sub(now.saturating_duration_since(armed_at));
-        poll_after(step, bar, log, stop, clock, delay)?;
+        let estimate = armed_at + record_time(p.memsel.saturating_sub(p.pre), p.rate);
+        poll_first(step, bar, log, stop, clock, estimate)?;
         execute_bus_with_clock(tail, bar, c2h, dma, log, stop, clock)?;
     }
     observe(BatchPhase::FirstTrigger(clock.now().saturating_duration_since(armed_at)));

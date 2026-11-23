@@ -114,6 +114,9 @@ impl Replay {
 
 /// Whether the fixture was measured; a skipped one says why on stderr.
 fn run_fixture(fixture: &Fixture, options: &Options) -> bool {
+    if std::env::var_os("OOS_BENCH_AVERAGE_16").is_some() {
+        return run_average_fixture(fixture, options);
+    }
     let Some(mut replay) = Replay::new(fixture) else {
         return false;
     };
@@ -125,6 +128,33 @@ fn run_fixture(fixture: &Fixture, options: &Options) -> bool {
         replay = Replay::new(fixture).expect("a replayed fixture replays again");
     }
     replay.verify_route(fixture);
+    true
+}
+
+fn run_average_fixture(fixture: &Fixture, options: &Options) -> bool {
+    let Some(mut replay) = Replay::new(fixture) else { return false };
+    let v = &replay.view;
+    let view = Arc::new(View {
+        gen: v.gen,
+        m: Model { acq: AcqMode::Average, avg_count: 16, avg_hw: false, ..v.m.clone() },
+        interp: v.interp,
+        w: v.w,
+        h: v.h,
+        zoom: v.zoom,
+    });
+    if !newest(&replay.batch).is_some_and(|f| crate::drawpipe::average::accepts_grid(&view.m, f.dt, f.envelope)) {
+        eprintln!("{}: needs plain screen samples for Average 16", fixture.name());
+        return false;
+    }
+    for pass in options.passes() {
+        let (samples, reset) = measure(replay.range.clone(), &pass, || {
+            let (output, _) = average::average_batch(&mut replay.painter, &replay.batch, &view);
+            std::hint::black_box(output.shown().0);
+            Duration::ZERO
+        });
+        let samples = probe::account(samples, reset, &pass);
+        pass.report(fixture.name(), replay.range.clone(), view.m.ch.each_ref().map(|ch| ch.on), &samples);
+    }
     true
 }
 

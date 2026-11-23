@@ -181,9 +181,8 @@ fn prepare_inner(ui: &mut Ui) {
     let needs = needs(ui, &keys);
     let stopped = ui.m.run == RunState::Stop;
     let observer = &mut ui.host.runtime_mut().change;
-    let transition =
-        observer.pending.entries().iter().any(|c| matches!(c, Command::Request(Request::Run | Request::Single)));
-    if observer.legacy.as_ref().is_some_and(|old| old.changed(&keys, transition)) {
+    let pending = observer.pending.entries();
+    if observer.legacy.as_ref().is_some_and(|old| old.changed(&keys, pending)) {
         observer.signals.effects |= C::ACQ;
         observer.signals.effects_by_row[Row::Publication as usize] |= C::ACQ;
         observer.signals.rows |= 1 << Row::Publication as usize;

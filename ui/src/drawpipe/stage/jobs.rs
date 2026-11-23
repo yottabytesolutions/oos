@@ -4,23 +4,25 @@ use super::*;
 
 pub(super) enum Job {
     Place(Arc<Batch>, Arc<View>, Box<Prepared>),
+    Average(Arc<Batch>, Arc<View>, std::ops::Range<usize>, average::Partial),
     Columns(Box<preparation_columns::Task>),
     Tile(Arc<Batch>, Arena, (usize, bool), DiffBand, Duration),
 }
 
-pub(super) fn run(scratch: &mut Frame, job: &mut Job) {
+pub(super) fn run(scratch: &mut average::Scratch, job: &mut Job) {
     match job {
         Job::Place(b, v, p) => {
             #[cfg(test)]
             let _counters = b.header.trace.as_ref().map(|_| test_scope::WorkerCounters::enter(b.counters));
             let (_, marks) = fallback::capture(|| {
                 #[cfg(test)]
-                fixture_bench::record(p.index, || place(b, v, p, scratch));
+                fixture_bench::record(p.index, || place(b, v, p, &mut scratch.frame));
                 #[cfg(not(test))]
-                place(b, v, p, scratch);
+                place(b, v, p, &mut scratch.frame);
             });
             *p.fallbacks.get_mut() = marks;
         }
+        Job::Average(b, v, range, partial) => partial.run(scratch, b, v, range.clone()),
         Job::Columns(task) => task.run(),
         Job::Tile(b, placed, (count, zoom), band, elapsed) => {
             let started = Instant::now();

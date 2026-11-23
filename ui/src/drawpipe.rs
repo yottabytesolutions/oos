@@ -4,6 +4,7 @@
 
 mod accepted;
 pub(crate) mod admission;
+pub(crate) mod average;
 mod batch;
 pub(crate) mod budget;
 pub(crate) mod clock;

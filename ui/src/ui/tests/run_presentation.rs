@@ -31,6 +31,7 @@ fn held(worker: bool, zoom: bool, persist: usize) -> (Ui, HwShared, Arc<Frame>) 
     ui.m.trig_mode = TrigMode::Normal;
     ui.m.ch.iter_mut().skip(1).for_each(|ch| ch.on = false);
     ui.m.acq = if worker { AcqMode::Normal } else { AcqMode::Average };
+    ui.m.avg_hw = !worker;
     ui.m.persist = persist;
     ui.set_zoom(zoom);
     ui.step(0.04);

@@ -31,7 +31,7 @@ fn bounded_record_handoff_waits_for_the_ui_and_yields_to_stop_or_settings() {
         let record = notify_while_waiting(&mut wait, &out, old, || match index {
             0 => source
                 .acquire_hw(&crate::model::Model::default(), |_, _| crate::drawpipe::TapRead::Empty)
-                .and_then(|(record, _, _)| record.raw.map(|raw| raw.frame.seq)),
+                .and_then(|(record, ..)| record.raw.map(|raw| raw.frame.seq)),
             1 => {
                 let mut g = lock(&out);
                 g.hold = true;

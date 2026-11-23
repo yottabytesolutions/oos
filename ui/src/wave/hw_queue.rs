@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{hw_record, Model, Record, Source};
+use super::{Model, Source};
 use crate::board::{
     identity::{ReplayLoss, StopView},
-    Frame, PictureEligibility, QueuedFrame,
+    Acquired, Frame, PictureEligibility, QueuedFrame,
 };
 use crate::drawpipe::{self, TapRead};
 
@@ -97,7 +97,7 @@ impl Source {
         &mut self,
         m: &Model,
         take_tap: impl FnOnce(oos_core::change::Identity, Option<u64>) -> TapRead<QueuedFrame>,
-    ) -> Option<(Record, PictureEligibility, bool)> {
+    ) -> Option<Acquired> {
         let Source::Hw { shared, seen } = self else { return None };
         let mut g = crate::perfguard::deep::ui_lock(shared);
         let id = g.acquisition.identity();
@@ -139,11 +139,11 @@ impl Source {
         let eligibility = f.eligibility();
         let deep = crate::deepmeas::deep_raw_frame(&f);
         let t = std::time::Instant::now();
-        let r = f.read(|frame| hw_record(m, frame));
+        let (r, average) = f.read(m);
         if deep {
             crate::deepmeas::cost::set(&crate::deepmeas::cost::RECORD_US, t.elapsed());
         }
-        Some((r, eligibility, tap))
+        Some((r, eligibility, tap, average))
     }
 }
 

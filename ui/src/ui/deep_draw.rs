@@ -234,16 +234,26 @@ pub(super) fn acquire(
     elapsed: f64,
     taps: &mut ReaderTaps,
     filtered: &mut usize,
-) -> (Option<(Record, PictureEligibility, bool)>, Option<EdgeInputs>) {
+) -> (Option<crate::board::Acquired>, Option<EdgeInputs>) {
     // Capture before conversion and compare again at drawing. Intervening routing
     // or settings changes cannot silently reuse a different view.
     let input = if ui.fast_ok() { EdgeInputs::of(&ui.m) } else { None };
     let record = if ui.src.is_hw() && !ui.mixed_bus_mode() {
         ui.src.acquire_hw(&ui.m, |id, fallback| taps.take((ui.ph.w, ui.ph.h), id, fallback))
     } else {
-        ui.acquire_bus_candidate(elapsed, filtered).map(|record| (record, PictureEligibility::Drawable, false))
+        ui.acquire_bus_candidate(elapsed, filtered).map(|record| (record, PictureEligibility::Drawable, false, None))
     };
     (record, input)
+}
+
+pub(super) fn condition_record(ui: &Ui, rec: &mut Record) {
+    if !ui.src.is_hw() && !rec.raw.as_ref().is_some_and(|raw| raw.conditioned) {
+        for (c, channel) in rec.ch.iter_mut().enumerate() {
+            if ui.m.ch[c].on && !channel.is_empty() {
+                condition(&ui.m, c, channel, rec.dt);
+            }
+        }
+    }
 }
 
 pub(super) fn remember_record(ui: &mut Ui, record: &Record, hw_seg: bool) {
@@ -272,7 +282,11 @@ pub(super) fn record(
         if count {
             crate::pacing::drawn(raw.frame.cfg, 1);
         }
-        if ui.fast_ok() && !ui.m.zoom && ui.m.acq != AcqMode::Peak && !crate::deepmeas::deep_raw_frame(&raw.frame) {
+        if ui.fast_ok()
+            && !ui.m.zoom
+            && !matches!(ui.m.acq, AcqMode::Peak | AcqMode::Average)
+            && !crate::deepmeas::deep_raw_frame(&raw.frame)
+        {
             let stats = count.then_some(crate::drawpipe::Stats { edges: &mut ui.fast_edges, off: &mut ui.fast_off });
             let saved = input.map(|input| (rec, input));
             crate::drawpipe::draw_frame_reusing(&mut ui.ph, &ui.m, &raw.frame, interp, stats, saved);
@@ -283,11 +297,10 @@ pub(super) fn record(
     (0, 1)
 }
 
-fn draw_record(ui: &mut Ui, rec: &Record) {
+pub(super) fn draw_record(ui: &mut Ui, rec: &Record) {
     let mainv = (ui.m.time_per_div(), ui.m.delay);
-    let zv = (tscales()[ui.m.zscale], ui.m.zdelay);
-    let zoom_model = ui.zoom_display_model();
-    let detail = ui.captured_record_view(rec, zv);
+    let zv = (TIME_SCALES[ui.m.zscale], ui.m.zdelay);
+    let zoom = ui.m.zoom.then(|| (ui.zoom_display_model(), ui.captured_record_view(rec, zv)));
     let zw = ui.z_weights(rec);
     for c in 0..NCH {
         if ui.m.ch[c].on && !rec.ch[c].is_empty() && ui.m.z_src != Some(c) {
@@ -304,12 +317,12 @@ fn draw_record(ui: &mut Ui, rec: &Record) {
                 if shifted_main.is_some() { None } else { zw.as_deref() },
                 main.pairs,
             );
-            if ui.m.zoom {
+            if let Some((zoom_model, detail)) = &zoom {
                 let shifted = ui.deskew_channel_view(rec, c, zv);
                 let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(rec);
                 ui.phz.draw_ex(
                     c,
-                    &zoom_model,
+                    zoom_model,
                     zv,
                     z.t0 - ui.m.deskew_ch[c],
                     z.dt,

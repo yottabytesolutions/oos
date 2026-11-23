@@ -21,6 +21,7 @@ mod afg;
 mod analysers;
 mod analysis;
 mod autoset;
+mod average;
 #[cfg(test)]
 mod batch1_tests;
 #[cfg(test)]
@@ -2858,7 +2859,7 @@ impl Ui {
             let deep_raw = crate::deepmeas::want(&self.m).is_some();
             let mut raw_rec: Option<Record> = None;
             let mut window_frames = None;
-            if fast {
+            if fast && self.m.acq != AcqMode::Average {
                 let f = step_draw::fast(self, &sw, &mut first, keep_window, &mut composition, &mut draw);
                 (got, td, window_frames, raw_rec) = (f.frames, f.ms, f.window_frames, f.raw);
             }
@@ -2868,52 +2869,42 @@ impl Ui {
             let t_records = std::time::Instant::now();
             for _ in 0..k {
                 let t0 = std::time::Instant::now();
-                let (r, drawing_input) =
+                let (mut r, drawing_input) =
                     deep_draw::acquire(self, dt_wall / k as f64, &mut taps, &mut composition.filtered);
                 ta += t0.elapsed().as_secs_f32() * 1000.0;
-                let bill_record = record_draw.acquired(r.as_ref().map(|(_, _, tap)| *tap), || t0.elapsed());
+                let bill_record = record_draw.acquired(r.as_ref().map(|(_, _, tap, _)| *tap), || t0.elapsed());
+                average::prepare(self, &mut r, first);
                 if r.is_none() && self.bus_candidate_waiting() {
                     break;
                 }
                 match r {
-                    Some((rec, eligibility, _)) if composition.filter_record(self, &rec, eligibility, &first) => {}
-                    Some((mut rec, eligibility, tap)) => {
+                    Some((mut rec, eligibility, _, average))
+                        if composition.filter_record(self, &rec, eligibility, &first) =>
+                    {
+                        average::filtered(self, &mut rec, &mut composition, average.is_some(), eligibility);
+                    }
+                    Some((mut rec, eligibility, tap, average)) => {
                         self.bus_candidate_committed();
                         self.m.status = if rec.triggered { TrigStatus::Triggered } else { TrigStatus::Auto };
-                        for c in 0..NCH {
-                            if self.m.ch[c].on
-                                && !rec.ch[c].is_empty()
-                                && !self.src.is_hw()
-                                && !rec.raw.as_ref().is_some_and(|raw| raw.conditioned)
-                            {
-                                let dt = rec.dt;
-                                condition(&self.m, c, &mut rec.ch[c], dt);
-                            }
-                        }
-                        // the FPGA averaged the frame already: blending would average the average
-                        let hw_avg = rec.raw.as_ref().is_some_and(|r| r.frame.hw_avg);
-                        if self.m.acq == AcqMode::Average && !hw_avg && !first.waiting() {
-                            if let Some(prev) = &self.last[0] {
-                                let a = 1.0 / self.m.avg_count as f32;
-                                for c in 0..NCH {
-                                    if rec.ch[c].len() == prev.ch[c].len() {
-                                        for (x, p) in rec.ch[c].iter_mut().zip(prev.ch[c].iter()) {
-                                            if p.is_finite() {
-                                                *x = p + (*x - p) * a;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        deep_draw::condition_record(self, &mut rec);
+                        let batched = average.is_some();
+                        if !batched {
+                            average::blend_record_average(self, &mut rec, first);
                         }
                         let t1 = std::time::Instant::now();
-                        got += composition.draw_record(self, &rec, sw.interp, drawing_input, eligibility, &mut first);
+                        got += match average {
+                            Some(average) => average::draw_average(self, &mut composition, &rec, average, &mut first),
+                            None => {
+                                composition.draw_record(self, &rec, sw.interp, drawing_input, eligibility, &mut first)
+                            }
+                        };
                         td += record_draw.placed(bill_record, t1.elapsed()).as_secs_f32() * 1000.0;
-                        deep_draw::remember_record(self, &rec, hw_seg);
+                        average::remember_after_draw(self, &rec, hw_seg, batched);
                         if deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
                             raw_rec = Some(rec.clone());
                         }
                         taps.next_record(self, tap);
+                        average::store_average_screen(self, batched);
                         self.last[0] = Some(rec);
                         self.cleared = false;
                         received_record = true;
@@ -3063,7 +3054,7 @@ impl Ui {
         matches!(self.src, Source::Hw { .. })
             // Zoom uses the records route's fractional trigger. Non-edge record searches allocate.
             && (m.trig_type == TrigType::Edge || (!m.zoom && crate::drawpipe::route::hardware_trigger(m)))
-            && matches!(m.acq, AcqMode::Normal | AcqMode::Peak | AcqMode::HiRes)
+            && (matches!(m.acq, AcqMode::Normal | AcqMode::Peak | AcqMode::HiRes) || average::batch_average_ok(self))
             && !deskew
             && m.trig_mode != TrigMode::Single
             && m.segments == 0
@@ -11116,8 +11107,10 @@ mod tests {
         let (w, h) = (ui.ph.w, ui.ph.h);
         let lit: Vec<usize> = (0..h).filter(|&r| ui.ph.maps()[0][r * w + w / 2] > 0).collect();
         assert!(lit.iter().any(|&r| (r as i32 - h as i32 / 2).abs() <= 2), "{:?}", lit);
-        // averaging needs every record: back to the record path
         ui.m.acq = AcqMode::Average;
+        ui.m.avg_hw = false;
+        assert!(ui.fast_ok());
+        ui.m.avg_hw = true;
         assert!(!ui.fast_ok());
     }
 

@@ -58,7 +58,7 @@ impl Painter {
 
     fn paint_decoded_dots(&mut self, b: &Batch, planes: &mut [DiffBand], count: usize) {
         // Keep only one decoded record in scratch while painting its dots across the bands.
-        let scratch = self.pool.scratch();
+        let scratch = &mut self.pool.scratch().frame;
         let mut dots = self.arena[..count].iter().flatten().filter(|p| p.decoded_dots).peekable();
         let started = dots.peek().map(|_| Instant::now());
         for p in dots {

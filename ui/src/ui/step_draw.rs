@@ -12,6 +12,8 @@ pub(super) struct BatchPicture {
     pub(super) layout_changed: bool,
     pub(super) tap_statistics: Option<deep_draw::TapStatistics>,
     window: crate::picture::DepositWindow,
+    pub(super) average_screen: [Vec<f32>; NCH],
+    pub(super) average_history_channels: [bool; NCH],
     owner: crate::drawpipe::stage::owner::Owner,
     capture: capture::CaptureStatus,
 }
@@ -112,7 +114,9 @@ fn capture_can_replace(
 pub(super) fn intake_count(ui: &Ui, fast: bool, taps: usize) -> usize {
     match ui.m.trig_type {
         // Peak read-outs on the record route are still consumed in FIFO order.
-        _ if fast && (ui.m.acq == AcqMode::Peak || ui.m.zoom) => taps.max(crate::board::RECORDS_PER_STEP),
+        _ if fast && (ui.m.acq == AcqMode::Peak || ui.m.acq == AcqMode::Average || ui.m.zoom) => {
+            taps.max(crate::board::RECORDS_PER_STEP)
+        }
         _ if fast => taps.max(1),
         _ if ui.src.is_hw() => crate::board::RECORDS_PER_STEP,
         TrigType::Edge | TrigType::Pattern => 6,

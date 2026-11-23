@@ -2,7 +2,11 @@
 use super::*;
 use std::sync::Arc;
 pub(crate) fn render_owner_active(ui: &Ui) -> bool {
-    PERSIST[ui.m.persist].1 == 0.0 && ui.m.run == RunState::Run && !ui.record_mode() && ui.fast_ok()
+    PERSIST[ui.m.persist].1 == 0.0
+        && ui.m.run == RunState::Run
+        && !ui.record_mode()
+        && ui.fast_ok()
+        && ui.m.acq != AcqMode::Average
 }
 pub(crate) fn set_render_owner_wake(ui: &mut Ui, wake: Arc<crate::system::intake::Wake>) {
     ui.batch_picture.owner.set_wake(wake);

@@ -64,7 +64,8 @@ pub(super) fn admit(pipe: &Pipe, s: &Settings, p: &hz::Params, id: Identity) -> 
     let Some(maximum) = samples(s, fb).zip(samples(raw, replay)).map(|(a, b)| a.max(b)).filter(|&n| n > 0) else {
         return false;
     };
-    if !pipe.admit_taps(id, format, maximum, Duration::from_secs(1)) {
+    let charged = maximum + crate::drawpipe::average::samples_for(pipe, id);
+    if !pipe.admit_taps(id, format, charged, Duration::from_secs(1)) {
         return false;
     }
     // The two extra funded slots cover these temporary descriptor probes, one at a time.

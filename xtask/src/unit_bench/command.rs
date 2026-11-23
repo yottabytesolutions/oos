@@ -7,7 +7,7 @@ pub(super) const DEFAULT_ROUNDS: usize = super::report::MIN_ROUNDS;
 
 pub(super) const USAGE: &str = "\
 usage: cargo xtask unit-bench run --unit <ssh destination> --fixtures <dir> --out <file.json>
-           [--group <name>]... [--rounds N] [--cpu N] [--stop]
+           [--group <name>]... [--rounds N] [--cpu N] [--average-16] [--stop]
        cargo xtask unit-bench ab --unit <ssh destination> --fixtures <dir>
            --reference-checkout <path> --out <file.json>
            [--group <name>]... [--rounds N] [--cpu N] [--tolerance 0.02]
@@ -31,6 +31,7 @@ pub(super) struct Run<'a> {
     pub(super) rounds: usize,
     pub(super) cpu: u32,
     pub(super) stop: bool,
+    pub(super) average: bool,
 }
 
 pub(super) struct Compare {
@@ -54,10 +55,16 @@ impl<'a> Options<'a> {
         if ab {
             allowed.extend(["--reference-checkout", "--tolerance"]);
         } else {
-            allowed.push("--stop");
+            allowed.extend(["--stop", "--average-16"]);
         }
-        let mut flags = Flags::parse(args, &allowed, Some("--stop"))?;
+        let average = !ab && args.contains(&"--average-16");
+        let filtered = args.iter().copied().filter(|arg| !average || *arg != "--average-16").collect::<Vec<_>>();
+        if args.len() - filtered.len() > 1 {
+            return Err("--average-16 supplied twice".into());
+        }
+        let mut flags = Flags::parse(&filtered, &allowed, Some("--stop"))?;
         let mut run = Run::parse(&mut flags)?;
+        run.average = average;
         if !ab {
             return Ok(Self::Run(run));
         }
@@ -95,6 +102,7 @@ impl<'a> Run<'a> {
             rounds,
             cpu,
             stop: flags.get("--stop").is_some(),
+            average: false,
         })
     }
 }
@@ -133,6 +141,9 @@ mod tests {
         let Options::Run(run) = Options::parse(&args).unwrap() else { panic!("expected run") };
         assert_eq!(run.groups, ["short", "dense"]);
         assert!(run.stop);
+        let args = ["run", "--unit", "example.invalid", "--fixtures", "fixtures", "--out", "data.json", "--average-16"];
+        let Options::Run(run) = Options::parse(&args).unwrap() else { panic!("expected run") };
+        assert!(run.average);
     }
 
     #[test]

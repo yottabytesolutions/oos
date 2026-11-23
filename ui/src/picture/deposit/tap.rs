@@ -52,9 +52,9 @@ pub(crate) enum TapSettlement {
 }
 
 impl TapProjection {
-    pub(crate) fn eligibility(self, view: Option<TapView>) -> PictureEligibility {
+    pub(crate) fn eligibility(&self, view: Option<TapView>) -> PictureEligibility {
         use PictureEligibility::*;
-        match self {
+        match *self {
             Self::Accounted { mapping_gen, size }
                 if view.is_some_and(|view| (view.mapping_gen, view.size) == (mapping_gen, size)) =>
             {
@@ -68,7 +68,18 @@ impl TapProjection {
             // A projected tap may reach the reader before its obsolete planes reach compose.
             Self::Projected { .. } => ShownOnly,
             Self::Recoverable => Recoverable,
-            Self::Unpainted => Drawable,
+            Self::Unpainted | Self::Average(_) => Drawable,
+        }
+    }
+
+    fn preview(&self, view: Option<TapView>) -> Option<Self> {
+        let view = view?;
+        match self.eligibility(Some(view)) {
+            PictureEligibility::Pending => Some(Self::Projected { gen: view.worker_gen, size: view.size }),
+            PictureEligibility::AlreadyDeposited => {
+                Some(Self::Accounted { mapping_gen: view.mapping_gen, size: view.size })
+            }
+            _ => None,
         }
     }
 
@@ -323,15 +334,8 @@ impl Handoff {
         }
         let (number, tap, charge) = state.taps.entries.pop_front().expect("checked tap FIFO head");
         let valid = current(tap.identity);
-        if valid
-            && view.is_some()
-            && matches!(
-                tap.projection.eligibility(view),
-                PictureEligibility::Pending | PictureEligibility::AlreadyDeposited
-            )
-        {
-            state.taps.preview =
-                Some(Preview { number, projection: tap.projection, frame: Arc::downgrade(&tap.frame) });
+        if let Some(projection) = valid.then(|| tap.projection.preview(view)).flatten() {
+            state.taps.preview = Some(Preview { number, projection, frame: Arc::downgrade(&tap.frame) });
         }
         state.taps.release_entry(&tap, charge.as_deref());
         self.space.notify_all();

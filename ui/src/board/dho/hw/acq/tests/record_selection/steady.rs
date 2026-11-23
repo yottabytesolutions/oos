@@ -37,6 +37,55 @@ fn steady_batches_use_slot_zero_after_the_first_read() {
 }
 
 #[test]
+fn software_average_folds_only_slots_selected_by_steady_frame_zero() {
+    let case = Case { signal: Signal::Both, ..Case::new(2) };
+    let off_edge = Case { signal: Signal::First, ..Case::new(2) };
+    let mut changed = Case { signal: Signal::Both, ..Case::new(2) };
+    changed.settings.ch[0].scale *= 1.2;
+    fixture::series(&case, true, "", |source, io, trace| {
+        let mut model = picture::model(case.settings.tdiv);
+        model.acq = crate::model::AcqMode::Average;
+        model.avg_hw = false;
+        model.avg_count = 2;
+        let pipe = drawpipe::pipe().unwrap();
+        let (w, h) = picture::SIZE;
+        pipe.publish_view(&model, w, h, source.switches.interp, Identity::default());
+
+        for (step, (trial, slots, deposited, frame0, frame1)) in [
+            (&case, &[1][..], 1, 1, 0),
+            (&case, &[0, 1], 3, 1, 0),
+            (&off_edge, &[], 3, 2, 1),
+            (&changed, &[1], 4, 3, 1),
+            (&changed, &[0, 1], 6, 3, 1),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if step == 3 {
+                lock(&source.out).want = Some(changed.settings.clone());
+            }
+            fixture::dispatch(trial, source, io);
+            assert_eq!(io.clock.take_submission(), !slots.is_empty());
+            let folded = pipe.take_waveform(picture::SIZE).map(|tap| {
+                let (_, output) = tap.read(&model);
+                output.expect("a software Average submission must publish a fold").shown().0
+            });
+            assert_eq!(folded, (!slots.is_empty()).then_some(slots.len()));
+
+            let result = fixture::observed(source, io, trace, false);
+            assert_eq!(selections(&result, true), slots);
+            assert!(result.queue.is_empty());
+            let counts = result.counters;
+            assert_eq!(counts.read, 2 * (step as u64 + 1));
+            assert_eq!(counts.deposited, deposited);
+            assert_eq!(counts.loss("lost.frame0"), frame0);
+            assert_eq!(counts.loss("lost.frame1"), frame1);
+            assert_eq!(counts.read, counts.deposited + counts.losses.iter().map(|(_, n)| n).sum::<u64>());
+        }
+    });
+}
+
+#[test]
 fn rejected_last_slot_leaves_picture_and_readback_on_the_previous_batch() {
     let first = Case { signal: Signal::Both, ..Case::new(2) };
     let next = Case { signal: Signal::First, ..Case::new(2) };

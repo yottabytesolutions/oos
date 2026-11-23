@@ -3,6 +3,8 @@
 use super::Frame;
 use std::sync::Arc;
 
+pub(crate) type Acquired = (crate::wave::Record, PictureEligibility, bool, Option<crate::drawpipe::average::Output>);
+
 #[cfg(test)]
 pub(crate) type CommandGenerations = (u64, Option<(u64, u64)>);
 
@@ -96,28 +98,37 @@ pub(crate) struct QueuedFrame {
     frame: Arc<Frame>,
     eligibility: PictureEligibility,
     _charge: Option<Arc<crate::drawpipe::TapReservation>>,
+    average: Option<crate::drawpipe::average::Output>,
 }
 
 impl QueuedFrame {
     pub(crate) fn new(frame: Arc<Frame>, eligibility: PictureEligibility) -> Self {
-        Self::from_tap(frame, eligibility, None)
+        Self::from_tap(frame, eligibility, None, None)
     }
 
     pub(crate) fn from_tap(
         frame: Arc<Frame>,
         eligibility: PictureEligibility,
         charge: Option<Arc<crate::drawpipe::TapReservation>>,
+        average: Option<crate::drawpipe::average::Output>,
     ) -> Self {
-        Self { frame, eligibility, _charge: charge }
+        Self { frame, eligibility, _charge: charge, average }
     }
 
     pub(crate) fn eligibility(&self) -> PictureEligibility {
         self.eligibility
     }
 
-    pub(crate) fn read<T>(self, read: impl FnOnce(Arc<Frame>) -> T) -> T {
-        let Self { frame, _charge, .. } = self;
-        read(frame)
+    pub(crate) fn read(
+        self,
+        m: &crate::model::Model,
+    ) -> (crate::wave::Record, Option<crate::drawpipe::average::Output>) {
+        let Self { frame, _charge, average, .. } = self;
+        let record = match &average {
+            Some(average) => average.record(&frame),
+            None => crate::wave::hw_record(m, frame),
+        };
+        (record, average)
     }
 
     #[cfg(test)]

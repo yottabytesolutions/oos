@@ -86,6 +86,10 @@ impl<J: Send + 'static, S: Default + Send + 'static> Pool<J, S> {
         Timing { wall: started.elapsed(), worker_time }
     }
 
+    pub(crate) fn shards(&self) -> usize {
+        self.shards.len()
+    }
+
     pub(crate) fn scratch(&mut self) -> &mut S {
         &mut self.scratch
     }

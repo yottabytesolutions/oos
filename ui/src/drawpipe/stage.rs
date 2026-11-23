@@ -47,6 +47,7 @@ macro_rules! fixture_stage {
 }
 pub(crate) use fixture_stage;
 
+mod average;
 mod jobs;
 use jobs::{run, Job};
 mod preparation;
@@ -210,7 +211,9 @@ mod intake;
 pub(super) use intake::work;
 
 struct Painter {
-    pool: Pool<Job, Frame>,
+    pool: Pool<Job, average::Scratch>,
+    averages: Vec<average::Partial>,
+    average_storage: super::average::Storage,
     columns: preparation_columns::Columns,
     arena: Arena,
     jobs: Vec<Job>,
@@ -232,6 +235,8 @@ impl Painter {
     fn new(workers: usize, little: u64) -> Self {
         Self {
             pool: Pool::new(workers, little, run),
+            averages: Vec::new(),
+            average_storage: Default::default(),
             columns: preparation_columns::Columns::new(workers),
             arena: Arena::default(),
             jobs: Vec::new(),

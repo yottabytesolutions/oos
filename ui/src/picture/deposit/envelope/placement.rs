@@ -192,7 +192,14 @@ impl Scratch {
             let out = span.get_or_insert_with(Spans::default);
             if let SamplesRef::Codes(codes) = sample {
                 if let Some(rows) = self.rows[c].get(codes, &map, proj.rows) {
-                    adapt::pairs::code_spans_into(codes, &self.edges, proj.cols, proj.dots, rows, out);
+                    adapt::pairs::code_spans_into(
+                        codes,
+                        &self.edges,
+                        (proj.cols, map.x_per_sample),
+                        proj.dots,
+                        rows,
+                        out,
+                    );
                     continue;
                 }
             }
@@ -309,7 +316,7 @@ fn place<const N: usize>(
             fixture_stage!(ColumnEdges, edges.update_for(width, words.len(), map, true));
             fixture_stage!(MinMax, {
                 reduce_columns(words, &correction, (edges.ranges().c0, &edges.ranges().first, false), &lanes, out);
-                adapt::pairs::join_codes(words, &correction, edges, dots, out);
+                adapt::pairs::join_codes(words, &correction, edges, (dots, map.x_per_sample), out);
             });
         }
         Edges::Record(edges) => {

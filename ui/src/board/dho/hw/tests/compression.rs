@@ -43,6 +43,36 @@ fn auto_dots_never_meet_the_live_compression() {
 }
 
 #[test]
+fn horizontal_fine_keeps_a_live_compressed_trace_continuous() {
+    use crate::drawpipe::route::Route;
+    use crate::picture::deposit::standard;
+    use oos_hal::dho::seq;
+
+    let m = Model {
+        tscale: tscales().iter().position(|&scale| scale == 5e-6).unwrap(),
+        tfine: 0.42,
+        fine_t: true,
+        ..Default::default()
+    };
+    let switches = crate::sysconf::Switches { compress: true, ..Default::default() };
+    let settings = settings(&m, false, &switches);
+    let params = hz::prep(settings.mask, seq::tdiv_fs(settings.tdiv), settings.depth, 0);
+    let batch = batch_plan(&settings, &params, 1);
+    assert_eq!((params.rate, seq::compress_k(&batch, &params)), (1_250_000_000, 15));
+    let mut frame = decode(&vec![0; seq::frame_bytes(&batch, &params)], &batch, &params, 0);
+    assert!(frame.envelope);
+    frame.fixed_ti = Some(frame.pre as f64);
+    frame.ch[0].fill(0.0);
+
+    let placed = standard::batch_plan(&m, (1024, 480), &frame, None, None);
+    assert_eq!(placed.route, Route::Pairs);
+    let (projection, trace) = placed.plan.raw().unwrap();
+    let density = 0.5 / projection.x_per_sample;
+    assert!((0.85..0.86).contains(&density));
+    assert!(trace.spans[0].as_ref().unwrap().rows.iter().all(|&(low, high)| low <= high));
+}
+
+#[test]
 fn live_compression_plan_by_time_base() {
     let plan = |tdiv: f64, two: bool| {
         let mut m = Model {

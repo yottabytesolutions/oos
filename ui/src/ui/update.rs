@@ -30,6 +30,7 @@ struct PendingUpload {
 
 #[derive(Default)]
 pub(super) struct UpdateUi {
+    pub(super) power: super::power::BootPower,
     job: Option<(std::process::Child, String)>,
     #[cfg(test)]
     trusted_keys: Option<Vec<[u8; 32]>>,
@@ -268,11 +269,12 @@ impl Ui {
                 self.dialog = Some(d);
             }
         }
+        super::power::poll(self);
     }
 }
 
 /// Text wrapped at word boundaries to `w` characters.
-fn wrap_lines(t: &str, w: usize) -> Vec<String> {
+pub(super) fn wrap_lines(t: &str, w: usize) -> Vec<String> {
     let mut out = Vec::new();
     for para in t.lines().filter(|l| !l.trim().is_empty()) {
         let mut cur = String::new();

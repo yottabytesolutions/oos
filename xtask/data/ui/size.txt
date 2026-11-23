@@ -10,7 +10,7 @@
 516 file ui/src/measures/standard.rs
 3265 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8379 file ui/src/ui.rs
+8354 file ui/src/ui.rs
 1495 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -33,7 +33,7 @@
 804 file ui/src/ui/workspace.rs
 1047 file ui/src/wave.rs
 138 fn ui/src/board/dho/fpga.rs spawn
-91 fn ui/src/cmd.rs execute
+83 fn ui/src/cmd.rs execute
 103 fn ui/src/drm.rs Display::on_fd
 63 fn ui/src/framestats.rs cheap_results
 224 fn ui/src/gpu.rs Gpu::submit
@@ -86,7 +86,7 @@
 121 fn ui/src/ui.rs Ui::set_dec_proto
 133 fn ui/src/ui.rs Ui::set_trig_type
 237 fn ui/src/ui.rs Ui::step
-214 fn ui/src/ui.rs Ui::tap
+204 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 409 fn ui/src/ui.rs Ui::touch_in
 66 fn ui/src/ui.rs packet_text

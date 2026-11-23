@@ -10,6 +10,7 @@ type Space = Option<(u64, u64)>;
 
 pub struct Host {
     text: fn(&str) -> Option<String>,
+    marker: fn(&str, bool) -> bool,
     space: fn(&str) -> Space,
     temperatures: fn() -> Vec<Zone>,
     unix: fn() -> f64,
@@ -34,6 +35,13 @@ impl Host {
             runtime,
             firmware: String::new(),
             text: |p| std::fs::read_to_string(p).ok(),
+            marker: |path, later| {
+                if later {
+                    std::fs::write(path, "later\n").is_ok()
+                } else {
+                    std::fs::File::create_new(path).is_ok()
+                }
+            },
             space: super::sysinfo::disk,
             temperatures: || board().thermal_zones(),
             unix: crate::clock::unix_now,
@@ -78,6 +86,9 @@ impl Host {
     pub fn text(&self, path: &str) -> Option<String> {
         (self.text)(path)
     }
+    pub(super) fn sd_shown(&self, later: bool) -> bool {
+        (self.marker)(super::power::SHOWN_PATH, later)
+    }
     pub fn disk(&self, path: &str) -> Space {
         (self.space)(path)
     }
@@ -106,6 +117,7 @@ impl Host {
             runtime: super::lifecycle::Runtime::new(crate::system::memory::Limits::parse("")),
             firmware: format!("oos-ui {}", env!("CARGO_PKG_VERSION")),
             text: |_| None,
+            marker: |_, _| true,
             space: |_| None,
             temperatures: Vec::new,
             unix: || 1_762_862_400.0,
@@ -156,6 +168,12 @@ impl Host {
     #[cfg(test)]
     pub(super) fn set_text_reader(&mut self, text: fn(&str) -> Option<String>) {
         self.text = text;
+    }
+
+    #[cfg(test)]
+    pub(super) fn enable_fixture_services(&mut self) {
+        self.services = true;
+        self.time_budgets = false;
     }
 }
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Device process wiring, extracted from main.
+use super::judgment::JudgmentWatch;
 use crate::*;
 use std::time::Instant;
 
@@ -13,6 +14,7 @@ pub(super) struct Timers {
     eth_t: Option<Instant>,
     start_up_t: Instant,
     start_up: Option<String>,
+    judgment: Option<JudgmentWatch>,
 }
 impl Timers {
     pub(super) fn new(start_up: Option<String>) -> Self {
@@ -26,7 +28,21 @@ impl Timers {
             eth_t0: now,
             eth_t: None,
             start_up,
+            judgment: JudgmentWatch::open().map_err(|e| eprintln!("oos-ui: watch start-up judgment: {e}")).ok(),
             start_up_t: now.checked_sub(std::time::Duration::from_millis(300)).unwrap_or(now),
+        }
+    }
+    pub(super) fn judgment_fd(&self) -> Option<i32> {
+        self.judgment.as_ref().map(JudgmentWatch::fd)
+    }
+    pub(super) fn judgment_ready(&mut self, ui: &mut Ui, ready: bool) {
+        if ready {
+            if let Some(watch) = self.judgment.as_mut() {
+                watch.drain();
+            }
+            if ui::power::refresh(ui) {
+                self.judgment = None;
+            }
         }
     }
     pub(super) fn startup_status(&mut self, ui: &mut Ui) {

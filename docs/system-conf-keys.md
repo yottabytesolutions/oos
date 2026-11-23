@@ -15,7 +15,7 @@ Startup ignores the retired `acq.play` and `acq.play.inferred` keys and logs one
 
 The updater reads `sd.mode = hs|sdr104` from the device-local file. It defaults to `hs` and selects the device tree
 for the next image. After a persistently slow start, choose `hs` and follow the restaging procedure in
-[Device boot card mode](boot.md#device-boot-card-mode).
+[Device boot card mode](boot.md#device-boot-card-mode). The startup warning uses the running device tree and the card's recorded history.
 
 ## Acquisition and rendering switches
 

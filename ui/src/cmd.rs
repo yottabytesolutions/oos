@@ -45,30 +45,21 @@ fn execute(ui: &mut Ui, line: &str) -> Out {
     if w.is_empty() || w[0].starts_with('#') {
         return Out::None;
     }
-    let num = |s: &str| -> i32 { s.trim_start_matches('+').parse().unwrap_or(0) };
     match w[0] {
-        "workflow" if remote_ok(line) => ui.workflow_command(w[1]),
+        "workflow" if remote_ok(line) => {
+            power::defer(ui);
+            ui.workflow_command(w[1]);
+        }
         "key" if w.len() > 1 => {
             let code = if let Some(h) = w[1].strip_prefix("0x") {
                 u8::from_str_radix(h, 16).unwrap_or(0)
             } else {
                 KEY_NAMES.iter().find(|(n, _)| *n == w[1]).map(|x| x.1).unwrap_or(0)
             };
-            ui.key(code);
+            press_key(ui, code);
         }
         "knob" if w.len() > 2 => {
-            if let Some(&(_, cw)) = KNOB_NAMES.iter().find(|(n, _)| *n == w[1]) {
-                if w[2] == "push" {
-                    ui.key(cw + 2);
-                } else {
-                    // a turn, not a loop that stops the screen for minutes
-                    let n = num(w[2]).clamp(-100, 100);
-                    for _ in 0..n.abs() {
-                        ui.key(if n > 0 { cw } else { cw + 1 });
-                        ui.now += 0.2; // no acceleration for scripted turns
-                    }
-                }
-            }
+            turn_knob(ui, w[1], w[2]);
         }
         "tap" if w.len() > 2 => {
             let (x, y) = (num(w[1]), num(w[2]));
@@ -133,6 +124,31 @@ fn execute(ui: &mut Ui, line: &str) -> Out {
         _ => eprintln!("oos-ui: unknown command: {}", line),
     }
     Out::None
+}
+
+fn press_key(ui: &mut Ui, code: u8) {
+    if !power::handle_warning(ui, &Ev::Key(code)) {
+        ui.key(code);
+    }
+}
+
+fn num(text: &str) -> i32 {
+    text.trim_start_matches('+').parse().unwrap_or(0)
+}
+
+fn turn_knob(ui: &mut Ui, name: &str, action: &str) {
+    let Some(&(_, cw)) = KNOB_NAMES.iter().find(|(n, _)| *n == name) else { return };
+    if action == "push" {
+        press_key(ui, cw + 2);
+        return;
+    }
+    // Bound the number of turns and keep scripted timing independent of knob acceleration.
+    let turns = num(action).clamp(-100, 100);
+    let code = if turns > 0 { cw } else { cw + 1 };
+    for _ in 0..turns.abs() {
+        press_key(ui, code);
+        ui.now += 0.2;
+    }
 }
 
 /// The running state in one line: the `stat` command and `:SYSTem:STATe?`.

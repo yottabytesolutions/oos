@@ -54,6 +54,7 @@ mod motor;
 mod offline;
 mod overclock;
 mod panes;
+pub(crate) mod power;
 mod reflook;
 mod scpi_operations;
 mod scroll;
@@ -7593,27 +7594,10 @@ impl Ui {
         self.pick = None;
     }
 
-    /// Power dialog in the middle of the screen: its box, and the buttons Power off, Restart, Cancel.
-    fn pwr_layout(&self) -> (Rect, [Rect; 3]) {
-        let b = self.scr.rect().center(500, 200);
-        let btn = |dx: i32| Rect::new(b.x + 250 + dx, b.y + 90, 140, 64);
-        (b, [btn(-230), btn(-70), btn(90)])
-    }
-
     fn draw_overlay(&self, cv: &mut Canvas) {
         let f = self.fonts();
         self.draw_osk(cv);
-        if self.power_dlg {
-            cv.blend(self.scr.rect(), rgb(0, 0, 0), 160);
-            let (r, [off, restart, cancel]) = self.pwr_layout();
-            cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
-            cv.text_in(&f.lb, Rect::new(r.x, r.y + 18, r.w, 28), 1, "Power", ACCENT);
-            cv.text_in(&f.m, Rect::new(r.x, r.y + 52, r.w, 24), 1, "Power key again or tap outside to cancel", DIM);
-            for (b, t, c) in [(off, "Power off", RED), (restart, "Restart", ACCENT), (cancel, "Cancel", TEXT)] {
-                btn(cv, b, mix(DLG_BG, c, 40), c);
-                cv.text_in(&f.mb, b, 1, t, c);
-            }
-        }
+        power::draw(self, cv);
         if self.dialog.is_some() && self.sysinfo.is_some() {
             self.draw_sysinfo(cv);
         } else if let Some(lines) = &self.dialog {
@@ -7646,7 +7630,7 @@ impl Ui {
     }
 
     pub fn handle(&mut self, ev: Ev) {
-        if self.start_up_input(&ev) {
+        if power::handle_warning(self, &ev) || self.start_up_input(&ev) {
             return;
         }
         change::intake(self, |ui| match ev {
@@ -7764,10 +7748,10 @@ impl Ui {
             // the stock Launcher answers every power-key press with "cancel power-down" (FA 05 02); the MCU very
             // likely cuts power by itself otherwise (board.md section 4)
             self.panel_tx.push(crate::board::PanelCmd::CancelPowerDown);
-            self.power_dlg = !self.power_dlg;
             if self.power_dlg {
-                self.dialog = None;
-                self.close_menu();
+                self.power_dlg = false;
+            } else {
+                power::open(self);
             }
             return;
         }
@@ -8741,18 +8725,7 @@ impl Ui {
             return;
         }
         if self.power_dlg {
-            self.power_dlg = false;
-            let (_, [off, restart, _]) = self.pwr_layout();
-            if (off.contains(x, y) || restart.contains(x, y)) && self.update_busy() {
-                // a cut now leaves recovery half-written (docs/update.md)
-                self.toast("Update running: wait until it is done");
-            } else if off.contains(x, y) {
-                self.power_action = Some(PowerAction::Off);
-                self.toast("Powering off ...");
-            } else if restart.contains(x, y) {
-                self.power_action = Some(PowerAction::Restart);
-                self.toast("Restarting ...");
-            }
+            power::tap(self, x, y);
             return;
         }
         if self.wlan.osk.is_some() {
@@ -10846,7 +10819,7 @@ mod tests {
         assert_eq!(ui.panel_tx.len(), 2);
         // tap on "Power off"
         ui.key(key::POWER);
-        let b = ui.pwr_layout().1[0];
+        let b = power::layout(&ui).1[0];
         ui.tap(b.x + b.w / 2, b.y + b.h / 2);
         assert_eq!(ui.power_action, Some(PowerAction::Off));
         assert!(!ui.power_dlg);
@@ -10859,7 +10832,7 @@ mod tests {
         ui.key(key::POWER);
         ui.key(key::RUNSTOP);
         assert!(!ui.power_dlg && ui.power_action.is_none());
-        let b = ui.pwr_layout().1[1];
+        let b = power::layout(&ui).1[1];
         ui.key(key::POWER);
         ui.tap(b.x + 5, b.y + 5);
         assert_eq!(ui.power_action, Some(PowerAction::Restart));

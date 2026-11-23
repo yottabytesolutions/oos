@@ -114,19 +114,18 @@ fn batches_repeat_and_account_for_every_frame() {
 }
 
 #[test]
-fn average_and_slow_timebases_drain_records_while_zoom_uses_workers() {
-    for (commands, result) in [
-        (
-            "menu Acquire\nset Mode = Average\nset Averages = 16\n",
-            "deposited 27 delivered 1 dropped 0 newest 46 route records",
-        ),
-        ("knob hscale push\n", "deposited 46 delivered 4 dropped 0 newest 46 route workers"),
-        ("knob hscale -9\n", "deposited 27 delivered 1 dropped 0 newest 46 route records"),
+fn average_and_zoom_use_workers_and_record_routes_remain_repeatable() {
+    const AVERAGE: &str = "menu Acquire\nset Mode = Average\nset Averages = 16\n";
+    for (kind, commands, result) in [
+        ("raw", AVERAGE, "deposited 46 delivered 4 dropped 0 newest 46 route workers"),
+        ("raw-average-records", AVERAGE, "deposited 27 delivered 1 dropped 0 newest 46 route records"),
+        ("raw", "knob hscale push\n", "deposited 46 delivered 4 dropped 0 newest 46 route workers"),
+        ("raw", "knob hscale -9\n", "deposited 27 delivered 1 dropped 0 newest 46 route records"),
     ] {
         let a = isolated_inputs();
         let b = isolated_inputs();
         let script = format!("{commands}frames 2\nshot records.ppm\n");
-        let args = ["--scripted-batch", "raw"];
+        let args = ["--scripted-batch", kind];
         let log = success(&run_host(&a, &script, &args));
         assert_eq!(log, success(&run_host(&b, &script, &args)));
         assert!(log.contains(&format!("batch 4 submitted 46 {result}")), "{log}");

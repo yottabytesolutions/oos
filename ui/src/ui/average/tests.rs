@@ -137,18 +137,19 @@ fn software_average_pairs_and_incompatible_modes_keep_the_record_route() {
     let pipe: &Pipe = drawpipe::pipe().unwrap();
     let id = change::acquisition::identity(&ui);
     let (n, window, _) = crate::board::record::hw_grid(&ui.m);
-    assert!(average::geometry_ok(pipe, id, window / n as f64, false));
-    assert!(!average::geometry_ok(pipe, id, window / n as f64 / 2.0, false));
-    assert!(!average::geometry_ok(pipe, id, window / n as f64, true));
+    assert!(average::input_ok(pipe, id, false));
+    assert!(!average::input_ok(pipe, id, true));
     let raw = Arc::new(Frame {
         dt: window / n as f64 / 4.0,
+        envelope: true,
+        acq: (625e6, 2_000_000),
         pre: 7_500,
         ch: [vec![0.25; 15_000], Vec::new(), Vec::new(), Vec::new()],
         ..Default::default()
     });
-    let mut pair = crate::wave::hw_record(&ui.m, raw);
+    let pair = crate::wave::hw_record(&ui.m, raw);
     assert!(pair.pairs);
-    blend_record_average(&mut ui, &mut pair, FirstDraw::Keep);
+    count_record_fallback(&ui, &pair);
     let counters = drawpipe::counters().pipeline_text(std::time::Duration::ZERO, 0);
     assert!(counters.contains("average_pairs=1 "), "{counters}");
 
@@ -163,14 +164,27 @@ fn software_average_pairs_and_incompatible_modes_keep_the_record_route() {
 
 #[test]
 fn warmed_average_picture_reuses_screen_and_history_storage() {
+    for zoom in [false, true] {
+        check_warmed_picture(zoom);
+    }
+}
+
+fn check_warmed_picture(zoom: bool) {
     let _scope = drawpipe::test_scope::Scope::new();
     let mut ui = ui();
-    advance(&mut ui, 0, &[4, 8]);
+    crate::store::set(&mut ui.m, "tdiv", "0.000001").unwrap();
+    ui.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))];
+    ui.set_zoom(zoom);
+    ui.step(0.04);
+    assert!(ui.fast_ok());
+    assert_eq!(ui.m.zoom, zoom);
+    submit_with(&ui, 0, &[0, 1], readers::dense_signal);
+    ui.step(0.04);
     let stored = Record { raw: None, ..ui.history.front().unwrap().clone() };
     ui.history.resize(HISTORY, stored);
     let pipe = drawpipe::pipe().unwrap();
     for i in 0..8 {
-        submit(&ui, i + 2, &[8]);
+        submit_with(&ui, i + 2, &[0, 1], readers::dense_signal);
         let tap = pipe.take_waveform((ui.ph.w, ui.ph.h)).unwrap();
         let eligibility = tap.eligibility();
         let (rec, output) = tap.read(&ui.m);
@@ -180,9 +194,9 @@ fn warmed_average_picture_reuses_screen_and_history_storage() {
         let (allocations, accepted) = crate::system::test_allocator::count_own(|| {
             consume_batch(&mut ui, (rec, eligibility, output.unwrap()), &mut composition, &mut first, &mut taps)
         });
-        assert_eq!(accepted.unwrap().0, 1);
+        assert_eq!(accepted.unwrap().0, 2);
         if i > 1 {
-            assert_eq!(allocations, 0, "screen transform, draw, and history");
+            assert_eq!(allocations, 0, "screen transform, draw, and history; zoom={zoom}");
         }
     }
 }

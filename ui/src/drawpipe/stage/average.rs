@@ -77,14 +77,18 @@ fn decoded_screen(
         fixture_stage!(Decode, b.decode.decode(index, chunk(b, index), &mut scratch.frame));
         &scratch.frame
     });
-    if !average::accepts_samples(screen_dt, frame.dt, frame.envelope) {
+    if frame.envelope || !valid_geometry(screen_dt, frame.dt, grid.2) {
         return None;
     }
     let (points, window, first) = grid;
     let (ti, triggered) =
         fixture_stage!(Trigger, crate::board::record::record_trigger(frame, m, points, window, first));
-    crate::board::record::resample_channels(frame, m, grid, ti, &mut scratch.screen);
+    crate::board::record::point_channels(frame, grid, ti, &mut scratch.screen);
     Some((frame.dt, frame.pre, ti, triggered))
+}
+
+fn valid_geometry(screen_dt: f64, sample_dt: f64, first: f64) -> bool {
+    screen_dt.is_finite() && screen_dt > 0.0 && sample_dt.is_finite() && sample_dt > 0.0 && first.is_finite()
 }
 
 pub(super) fn average_batch(
@@ -155,6 +159,11 @@ pub(super) fn publish_average(
     output.publish_clock(b.header.identity(), clock);
     let started = Instant::now();
     let published = painter.send_tap(slot, b, TapProjection::Average(output), Some(v), b.header.identity());
+    #[cfg(test)]
+    let timing = clock.pool_override().map_or(timing, |wall| crate::picture::deposit::pool::Timing {
+        wall,
+        worker_time: wall * painter.pool.shards().min(records) as u32,
+    });
     if published.is_some() {
         b.counters.routes.add(route::Route::Average, records as u64);
         #[cfg(any(target_os = "linux", test))]
@@ -168,7 +177,10 @@ pub(super) fn publish_average(
     if let Some(flight) = oos_hal::sync::lock(&b.header.flight).as_mut() {
         flight.worked(records as u64, timing.wall);
         if published.is_some() {
-            flight.published(started.elapsed());
+            let publication = started.elapsed();
+            #[cfg(test)]
+            let publication = if clock.pool_override().is_some() { Duration::ZERO } else { publication };
+            flight.published(publication);
         }
     }
 }

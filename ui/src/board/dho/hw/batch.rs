@@ -34,12 +34,10 @@ mod tests;
 pub(super) fn deposit_plan(s: &Settings, p: &hz::Params, id: Identity, route: bool) -> (Option<&'static Pipe>, u32) {
     let Some(pipe) = crate::drawpipe::pipe() else { return (None, s.frames) };
     let live = (p.memsel <= crate::compress::MAX_DEPTH).then(|| (p.rate, oos_hal::dho::seq::compress_k(s, p)));
-    let step = super::decode::pair_step(s, p);
-    if let Some(limit) = (route
-        && pipe.accepting()
-        && crate::drawpipe::average::geometry_ok(pipe, id, step as f64 / p.rate as f64, step > 1))
-    .then(|| pipe.read_limit(id, live))
-    .flatten()
+    let pairs = super::decode::pair_step(s, p) > 1;
+    if let Some(limit) = (route && pipe.accepting() && crate::drawpipe::average::input_ok(pipe, id, pairs))
+        .then(|| pipe.read_limit(id, live))
+        .flatten()
     {
         if !pipe.staged_taps() || tap::admit(pipe, s, p, id) {
             return (Some(pipe), s.frames.min(limit));

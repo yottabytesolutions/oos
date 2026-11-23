@@ -180,6 +180,10 @@ impl Pipe {
     pub(crate) fn read_limit(&self, identity: Identity, live: Option<(u64, u32)>) -> Option<u32> {
         let state = oos_hal::sync::lock(&self.view);
         let view = state.view.as_ref().filter(|_| same_pair(state.identity, Some(identity)))?;
+        // Average sends one voltage transform per batch, independent of its record count.
+        if super::average::software(&view.m) {
+            return Some(u32::MAX);
+        }
         // An unclaimed batch may acquire any same-identity mapping. Bound the whole reachable
         // envelope before arm; the worker still verifies its immutable claim before writing tiles.
         use crate::picture::deposit::{count::CountFormat, standard};

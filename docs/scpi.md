@@ -113,8 +113,11 @@ Choose a level inside the actual waveform range. Use `*OPC?` only when willing t
 For CH inputs, NORM reads the interpolated display record; RAW uses retained native acquisition memory when available, including points outside the screen. If no native record exists, it falls back to the available processed record. References use their native arrays in all three modes, restricted by the chosen transfer page. Do not assume `:ACQ:SRAT?` describes a reference: read its preamble. RAW is permitted while running in OOS; stock Rigol stop-only transfer assumptions differ. Multiple queries while running can observe different accepted captures; Stop first when metadata and data must match.
 
 In Average, NORM and MAX transfer the accepted 3600-point average grid for each
-channel, with its original interval and origin in the preamble. STOP freezes
-that grid. Panning and zooming view the frozen grid without changing the
+channel, with its original interval and origin in the preamble. In the live
+software batch route, each grid point is an exponential moving average of the
+trigger-aligned acquisitions. At two or more native samples per grid point, the
+input is a linear interpolation of the two adjacent samples at that point.
+STOP freezes that grid. Panning and zooming view the frozen grid without changing the
 transfer. Use RAW for the newest unaveraged native record in software Average
 when one is retained. With FPGA averaging enabled, native samples have already
 been averaged by the FPGA.

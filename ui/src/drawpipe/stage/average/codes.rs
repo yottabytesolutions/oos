@@ -23,10 +23,10 @@ pub(super) fn read(
         Ok::<_, Cause>((channels, len))
     })?;
     let frame = &scratch.frame;
-    if !super::average::accepts_samples(screen_dt, frame.dt, frame.envelope) {
+    if frame.envelope {
         return Err(Cause::AveragePairs);
     }
-    if !frame.dt.is_finite() || frame.dt <= 0.0 || !screen_dt.is_finite() || screen_dt <= 0.0 || !grid.2.is_finite() {
+    if !super::valid_geometry(screen_dt, frame.dt, grid.2) {
         return Err(Cause::InvalidGeometry);
     }
     let (ti, triggered) = fixture_stage!(AverageCodeTrigger, {
@@ -37,7 +37,7 @@ pub(super) fn read(
         return Err(Cause::InvalidGeometry);
     }
     let grid = AverageGrid::new(grid, frame.dt, ti);
-    if !grid.supports(len) {
+    if !grid.supports_lanczos_edges(len) {
         return Err(Cause::ShortInterpolation);
     }
     for (channel, (codes, out)) in channels.iter().zip(&mut scratch.screen).enumerate() {

@@ -116,8 +116,14 @@ fn mode(kind: &str, name: &str, view: (&str, usize, &str), settings: &str, shots
         script.push_str("# first acquisition\n");
     }
     script.push_str(&recipe(shots));
-    // The reference zoom cases cover the records renderer and its per-record history.
-    let input = if name.starts_with("zoom-") { format!("{kind}-zoom-records") } else { kind.into() };
+    // These references compare the records renderer and its per-record history.
+    let input = if name.starts_with("zoom-") {
+        format!("{kind}-zoom-records")
+    } else if name == "average" {
+        format!("{kind}-average-records")
+    } else {
+        kind.into()
+    };
     Case {
         name: format!(
             "{}/{}/{}-{}ch-{}",

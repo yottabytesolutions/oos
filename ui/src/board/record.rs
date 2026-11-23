@@ -9,8 +9,10 @@ use crate::model::*;
 use std::sync::Arc;
 
 mod edge;
+mod points;
 pub(crate) use edge::record_trigger_codes;
 use edge::{event_bounds, event_near};
+pub(crate) use points::point_channels;
 
 pub(crate) const HW_POINTS: usize = 3600;
 
@@ -350,13 +352,8 @@ fn resample_volts(
                 f32::NAN
             }
         }));
-    } else if !envelope && sample_dt > 2.0 * dt {
-        oos_dsp::interp::lanczos8_grid(values, ti + first / sample_dt, dt / sample_dt, n, out);
     } else {
-        out.extend((0..n).map(|k| {
-            let x = ti + (first + k as f64 * dt) / sample_dt;
-            oos_dsp::interp::linear(values, x).unwrap_or(f32::NAN)
-        }));
+        points::channel(values, (sample_dt, envelope), (n, dt, first), ti, out);
     }
 }
 

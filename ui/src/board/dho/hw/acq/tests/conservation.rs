@@ -38,7 +38,7 @@ fn assert_conservation(fields: &Fields, pictured: u64) {
 }
 
 #[test]
-fn software_average_raw_readout_reaches_a_picture_or_reports_its_fallback() {
+fn software_average_raw_readout_reaches_a_worker_picture_at_dense_time_bases() {
     for (channels, tdiv) in [(1, 1e-6), (1, 10e-6), (4, 1e-6), (4, 10e-6)] {
         assert_average_raw_readout(channels, tdiv);
     }
@@ -66,20 +66,18 @@ fn assert_average_raw_readout(channels: usize, tdiv: f64) {
     let (mut source, _) = source(&out, &io);
     capture(&mut source, &mut io);
     assert!(!lock(&out).record_flow.serial);
-    let batch = io.clock.take_submission();
-    if channels == 4 && tdiv == 1e-6 {
-        assert!(batch, "the raw 4-channel sample grid fits the Average worker");
-    }
+    assert!(lock(&out).queue.is_empty());
+    assert!(io.clock.take_submission(), "{channels} channels at {tdiv} s/div");
     ui.step(1.0 / 30.0);
     let fields = record_fields(&mut ui);
     assert_eq!(fields["read"], 4);
     assert_eq!(fields["shown"], 4);
     assert_conservation(&fields, 4);
     let text = drawpipe::counters().pipeline_text(Duration::ZERO, 0);
-    let fallback = if batch { 0 } else { 4 };
-    assert!(text.contains(&format!(" average_pairs={fallback} ")), "{text}");
+    assert!(text.contains(" average=4 "), "{text}");
+    assert!(text.ends_with(" average_pairs=0 direct_record=0"), "{text}");
     #[cfg(feature = "private-picture-counts")]
-    if batch {
+    {
         let pictures = drawpipe::counters().timing.picture_counts().text();
         assert!(pictures.contains(" fresh=1 "), "{pictures}");
         assert!(pictures.contains(" first_records=4 "), "{pictures}");

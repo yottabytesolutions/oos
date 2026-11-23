@@ -247,6 +247,9 @@ pub(super) fn acquire(
     } else {
         ui.acquire_bus_candidate(elapsed, filtered).map(|record| (record, PictureEligibility::Drawable, false, None))
     };
+    if let Some((record, _, _, None)) = &record {
+        average::count_record_fallback(ui, record);
+    }
     (record, input)
 }
 
@@ -309,7 +312,7 @@ pub(super) fn draw_record(ui: &mut Ui, rec: &Record) {
 pub(super) fn draw_record_weighted(ui: &mut Ui, rec: &Record, weight: u16) {
     let mainv = (ui.m.time_per_div(), ui.m.delay);
     let zv = (TIME_SCALES[ui.m.zscale], ui.m.zdelay);
-    let zoom = ui.m.zoom.then(|| (ui.zoom_display_model(), ui.reader_capture_view(rec, zv)));
+    let zoom = ui.m.zoom.then(|| (step_draw::zoom_view(ui), ui.reader_capture_view(rec, zv)));
     let zw = ui.z_weights(rec);
     for c in 0..NCH {
         if ui.m.ch[c].on && !rec.ch[c].is_empty() && ui.m.z_src != Some(c) {
@@ -326,19 +329,17 @@ pub(super) fn draw_record_weighted(ui: &mut Ui, rec: &Record, weight: u16) {
                 if shifted_main.is_some() { None } else { zw.as_deref() },
                 main.pairs,
             );
-            if let Some((zoom_model, detail)) = &zoom {
+            if let Some((view, detail)) = &zoom {
                 let shifted = ui.deskew_channel_view(rec, c, zv);
                 let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(rec);
-                ui.phz.draw_ex(
-                    c,
-                    zoom_model,
+                let mut channel = ui.m.ch[c].clone();
+                view.transform(&mut channel);
+                ui.phz.draw_ex_vertical(
+                    (c, (channel.volts_per_div(), channel.offset)),
+                    &ui.m,
                     zv,
-                    z.t0 - ui.m.deskew_ch[c],
-                    z.dt,
-                    &z.ch[c],
-                    weight,
-                    if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() },
-                    z.pairs,
+                    (z.t0 - ui.m.deskew_ch[c], z.dt, &z.ch[c], z.pairs),
+                    (weight, if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() }),
                 );
             }
         }

@@ -101,6 +101,8 @@ fn run_and_armed_single_retry_without_a_trigger_or_completion_acknowledgement() 
     for single in [false, true] {
         let outcome = twice(|| missing_trigger(single));
         let wake = outcome.events.iter().position(|event| *event == Event::SourceWake).unwrap();
+        assert_eq!(trigger_plans(&outcome.events[..wake]), 1);
+        assert_eq!(trigger_plans(&outcome.events[wake..]), 0);
         let retries: Vec<_> = outcome.events[wake + 1..].split(|event| *event == Event::Wait(RETRY)).collect();
         let [first, second, []] = retries.as_slice() else { panic!("expected two acquisition attempts and backoffs") };
         for attempt in [first, second] {

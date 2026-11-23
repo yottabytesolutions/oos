@@ -10,6 +10,7 @@ use oos_hal::{
 use sim::{Event, FixedPacing, Frame, Pause, Run};
 
 mod bounds;
+mod calibration_hold;
 mod deposit;
 mod picture;
 mod raw;
@@ -17,6 +18,20 @@ mod side_service;
 mod sim;
 mod stopped_pass;
 mod stopped_raw;
+
+const HELD_POLL: Duration = Duration::from_millis(5);
+
+fn is_arm(event: &Event) -> bool {
+    matches!(event, Event::Write(0x400c, value) if value & 0x6200_0000 == 0x2200_0000)
+}
+
+fn trigger_plans(trace: &[Event]) -> usize {
+    trace.iter().filter(|event| is_trigger_plan(event)).count()
+}
+
+fn is_trigger_plan(event: &Event) -> bool {
+    matches!(event, Event::Write(0x2004, _))
+}
 
 #[derive(Debug, PartialEq)]
 struct Outcome {

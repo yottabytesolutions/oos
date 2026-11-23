@@ -11,7 +11,11 @@ use crate::{
     board::{HwShared, Slow},
     perfguard::deep::acq_lock as lock,
 };
-use oos_hal::dho::{bus::Bus, dvm, seq::Settings};
+use oos_hal::dho::{
+    bus::Bus,
+    dvm,
+    seq::{time::Clock, Settings},
+};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -51,7 +55,7 @@ impl Units {
         if mode != Slow::Off {
             return;
         }
-        if let Some(pending) = self.trim_pending.filter(|t| t.due(Instant::now())) {
+        if let Some(pending) = self.trim_pending.filter(|t| t.due(io.clock.now())) {
             self.trim_pending = None;
             if !generator_on && pending.mode == io.state.mode.min(10) && io.cal_adc.is_some() {
                 io.disarm(armed);
@@ -61,9 +65,8 @@ impl Units {
         }
         if let Some(id) = request.slots.filter(|&id| self.slots_done != Some(id)) {
             io.disarm(armed);
-            let result = oos_hal::dho::levels::run(&mut io.bar, &mut |us| {
-                std::thread::sleep(Duration::from_micros(u64::from(us)))
-            });
+            let result =
+                oos_hal::dho::levels::run(&mut io.bar, &mut |us| io.clock.wait(Duration::from_micros(us.into())));
             lock(out).slots =
                 Some((id, result.map(|slots| slots.map(|s| [s.min as f32, s.max as f32, s.mean as f32]))));
             self.slots_done = Some(id);
@@ -78,7 +81,7 @@ impl Units {
         settings: &Settings,
         want: Option<crate::board::DvmWant>,
     ) {
-        let elapsed = self.dvm_run.map_or(0.0, |run| run.1.elapsed().as_secs_f64());
+        let elapsed = self.dvm_run.map_or(0.0, |run| io.clock.now().duration_since(run.1).as_secs_f64());
         let (step, key) = dvm_step(want, settings.mask, self.configs, self.dvm_run.map(|run| run.0), elapsed);
         let reading = match step {
             DvmStep::Idle => return,
@@ -99,6 +102,6 @@ impl Units {
             }
         };
         lock(out).dvm = reading;
-        self.dvm_run = key.map(|key| (key, Instant::now()));
+        self.dvm_run = key.map(|key| (key, io.clock.now()));
     }
 }

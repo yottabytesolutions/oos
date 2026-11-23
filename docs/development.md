@@ -326,8 +326,11 @@ for correctness tests and HAL timing guards; a separate `perf` profile no longer
 duplicates those dependencies. UI timing guards retain fat LTO because their
 ratios were qualified with it. Shipped binaries retain optimization level 3,
 `lto=true`, `codegen-units=1`, and `panic=abort`. All musl AArch64 Cargo builds
-inherit `target-cpu=cortex-a72`, static linking and `rust-lld` from
-`.cargo/config.toml`, including `oos-fpgad`, `oos-ui` and `oos-update`.
+inherit `target-cpu=cortex-a53`, static linking and `rust-lld` from
+`.cargo/config.toml`, including `oos-fpgad`, `oos-ui` and `oos-update`. Record placement runs on
+the four A53 cores, so the build is tuned for them. Against the same source built for `cortex-a72`, the
+unit stage benchmark on an A53 core measured 4 to 9 % less time per record, and 42 % less on deep memory.
+The same binary measured within noise on the A72 cores.
 
 Coverage keeps its per-crate directories: concurrent `cargo-llvm-cov` runs clean
 workspace artifacts, so sharing one would invalidate another run. After a valid
@@ -434,7 +437,7 @@ The separate ARM release-link step verified receipts and static AArch64 ELFs for
 | after | 105.6 | 2.8 | 16.6/7.1 | 7.1/7.1 |
 
 All three shipped executables were byte-identical before/after (SHA-256),
-with the existing Cortex-A72 flags and full release optimization unchanged.
+with the existing target flags and full release optimization unchanged.
 No alternate release linker flags were introduced. Host builds only; no unit
 installation, reboot or hardware run was performed.
 
@@ -542,7 +545,7 @@ prove that a client loaded or obeyed the rules.
 One root workspace (`Cargo.toml`): `hal`, `dsp`, `core`, `ui`, `fpgad` and `xtask`, with one `Cargo.lock`, one `target/`
 and the release profile of the scope binaries. `gpu` is C (`gpu/oos-gpu.c`), built in its own container by
 `gpu/build.sh` and `gpu/test-host.sh`, so it is no member. The scope's binaries land in
-`target/aarch64-unknown-linux-musl/release/`; the target flags (rust-lld, static, Cortex-A72) are in the root
+`target/aarch64-unknown-linux-musl/release/`; the target flags (rust-lld, static, Cortex-A53) are in the root
 `.cargo/config.toml`. The gate runs each step crate by crate (`CRATES` in `xtask/src/repo.rs`), so its counts and
 ratchets stay per crate; a workspace member without an entry there fails the architecture step. `rustfmt.toml` and
 `clippy.toml` sit at the root.

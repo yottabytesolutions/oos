@@ -17,6 +17,9 @@ Until 0.2.0, repository CI is off and local evidence is authoritative. The coord
 suites and logs in the task Status. Completion requires independent review and the full
 gate on the final integrated candidate; `--fast`, `--no-coverage` and `--list` are partial feedback.
 
+The full gate runs `perf-build` and `perf`. The fast gate skips both. Run
+`cargo xtask step perf-build perf` to check the host performance guards separately.
+
 Run from the repository root. Each executed step reports its time and failures, and a failed step
 makes the command exit nonzero. A successful full run names its tier: `gate passed (default)`
 or `gate passed (image)`. Hooks use the same command. Missing Docker cannot fail the default gate.

@@ -5,6 +5,8 @@ use crate::board::Frame;
 use crate::drawpipe::{CodesInto, DecodeInto};
 use std::time::Instant;
 
+mod coverage;
+
 pub(super) struct Build {
     pub(super) route: Route,
     input: Input,
@@ -68,52 +70,140 @@ impl Batch for &mut Input {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Expectation {
+    Exact,
+    Coverage,
+}
+
+struct Case {
+    channels: usize,
+    tdiv: f32,
+    requested: usize,
+    frames: usize,
+    weight_per_record: u64,
+    expectation: Expectation,
+}
+
+impl Case {
+    const fn new(
+        channels: usize,
+        tdiv: f32,
+        (requested, frames): (usize, usize),
+        weight_per_record: u64,
+        expectation: Expectation,
+    ) -> Self {
+        Self { channels, tdiv, requested, frames, weight_per_record, expectation }
+    }
+
+    fn build(&self, batch: bool, label: &str) -> Build {
+        let build = Build::new(batch, self.channels, self.tdiv, self.requested);
+        assert_eq!(build.frames, self.frames, "{label}: planned frames (batch={batch})");
+        build
+    }
+}
+
+const CASES: [Case; 21] = {
+    use Expectation::{Coverage, Exact};
+    [
+        Case::new(1, 200e-9, (1, 1), 27_456, Exact),
+        Case::new(1, 200e-9, (48, 48), 27_456, Exact),
+        Case::new(1, 10e-6, (1, 1), 79_296, Exact),
+        Case::new(1, 10e-6, (48, 48), 79_296, Exact),
+        Case::new(1, 10e-6, (0, 20), 79_296, Exact),
+        Case::new(1, 200e-6, (1, 1), 1_173_696, Exact),
+        Case::new(1, 200e-6, (48, 48), 1_173_696, Exact),
+        Case::new(2, 200e-9, (1, 1), 30_048, Coverage),
+        Case::new(2, 200e-9, (48, 48), 30_048, Coverage),
+        Case::new(2, 10e-6, (1, 1), 79_296, Exact),
+        Case::new(2, 10e-6, (48, 48), 79_296, Exact),
+        Case::new(2, 10e-6, (0, 14), 79_296, Exact),
+        Case::new(2, 200e-6, (1, 1), 1_173_696, Exact),
+        Case::new(2, 200e-6, (48, 48), 1_173_696, Exact),
+        Case::new(4, 200e-9, (1, 1), 30_624, Coverage),
+        Case::new(4, 200e-9, (48, 48), 30_624, Coverage),
+        Case::new(4, 10e-6, (1, 1), 79_296, Exact),
+        Case::new(4, 10e-6, (48, 48), 79_296, Exact),
+        Case::new(4, 10e-6, (0, 14), 79_296, Exact),
+        Case::new(4, 200e-6, (1, 1), 1_173_696, Exact),
+        Case::new(4, 200e-6, (48, 48), 1_173_696, Exact),
+    ]
+};
+
 #[test]
 #[ignore = "host route evidence: release, OOS_PERF_TESTS=1, one test thread"]
 fn perf_guard_draw_routes() {
+    use drawpipe::route::Route::{Dense, Upsampled};
+
     assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"));
-    for channels in [1, 2, 4] {
-        for tdiv in [200e-9, 10e-6, 200e-6] {
-            for frames in [1, 48].into_iter().chain((tdiv == 10e-6).then_some(0)) {
-                let mut pictures = Vec::new();
-                // Each scope owns its pipe. Sampling is isolated from other test cases by --test-threads=1.
-                for batch in [false, true] {
-                    let _scope = Scope::new();
-                    let mut build = Build::new(batch, channels, tdiv, frames);
-                    let frames = build.frames;
-                    for _ in 0..8 {
-                        build.run();
-                    }
-                    let cost_before = crate::claim_timing::summary();
-                    let mut times = Vec::new();
-                    let mut allocations = Vec::new();
-                    for _ in 0..crate::perfguard::ROUNDS {
-                        let start = Instant::now();
-                        let (count, ()) = HEAP.count(|| build.run());
-                        times.push(start.elapsed().as_nanos());
-                        allocations.push(count);
-                    }
-                    times.sort_unstable();
-                    allocations.sort_unstable();
-                    println!("DRAW_ROUTE {} channels={channels} tdiv={tdiv} frames={frames} build_ns_best={} build_ns_p50={} build_ns_p99={} allocations_min={} allocations_max={}",
-                        if batch { "Batch" } else { "Standard" }, times[0], times[50], times[99], allocations[0], allocations[100]);
-                    if channels == 4 && tdiv == 10e-6 && frames == 48 {
-                        println!(
-                            "DRAW_ROUTE_PHASES batch={batch} {}",
-                            change::timing(&build.route.ui).diagnostics_text()
-                        );
-                        println!(
-                            "DRAW_ROUTE_COST batch={batch} before={cost_before} after={}",
-                            crate::claim_timing::summary()
-                        );
-                    }
-                    assert_eq!(build.route.ui.batch_picture.frames as usize, frames);
-                    pictures.push(picture(&build.route.ui));
-                }
-                compare(&pictures[0], &pictures[1], "warmed production-plan route build");
+    for case in CASES {
+        let Case { channels, tdiv, requested, frames, weight_per_record, expectation } = case;
+        let label = format!("channels={channels} tdiv={tdiv} requested={requested}");
+        let (standard, size) = {
+            let _scope = Scope::new();
+            let mut build = case.build(false, &label);
+            build.run();
+            let ui = &build.route.ui;
+            assert!(!ui.ph.is_wide(), "{label}: Standard counts must be narrow");
+            (picture(ui), (ui.ph.w, ui.ph.h))
+        };
+
+        let _scope = Scope::new();
+        let mut build = case.build(true, &label);
+        let steps = sample_batch_route(&mut build, channels, tdiv);
+        let ui = &build.route.ui;
+        assert!(!ui.ph.is_wide(), "{label}: Batch counts must be narrow");
+        assert_eq!((ui.ph.w, ui.ph.h), size, "{label}: plot size");
+        let batch = picture(ui);
+        let route = match expectation {
+            Expectation::Exact => {
+                compare(&standard, &batch, &label);
+                Dense
             }
-        }
+            Expectation::Coverage => {
+                coverage::compare(&standard, &batch, size.0, channels, &label);
+                Upsampled
+            }
+        };
+
+        // At minimum persistence each map contains only the current batch of identical records.
+        let want = std::array::from_fn(|c| if c < channels { weight_per_record * frames as u64 } else { 0 });
+        assert_eq!(batch.frames as usize, frames, "{label}: picture frames");
+        assert_eq!(weights(&batch), want, "{label}: total deposited weight");
+        assert_eq!(
+            drawpipe::counters().routes.count(route),
+            (steps * frames) as u64,
+            "{label}: records through {route:?}"
+        );
     }
+}
+
+fn sample_batch_route(build: &mut Build, channels: usize, tdiv: f32) -> usize {
+    const WARMUP: usize = 8;
+    let frames = build.frames;
+    for _ in 0..WARMUP {
+        build.run();
+    }
+    let cost_before = crate::claim_timing::summary();
+    let mut times = Vec::new();
+    let mut allocations = Vec::new();
+    for _ in 0..crate::perfguard::ROUNDS {
+        let start = Instant::now();
+        let (count, ()) = HEAP.count(|| build.run());
+        times.push(start.elapsed().as_nanos());
+        allocations.push(count);
+    }
+    times.sort_unstable();
+    allocations.sort_unstable();
+    println!(
+        "DRAW_ROUTE Batch channels={channels} tdiv={tdiv} frames={frames} build_ns_best={} build_ns_p50={} build_ns_p99={} allocations_min={} allocations_max={}",
+        times[0], times[50], times[99], allocations[0], allocations[100]
+    );
+    if channels == 4 && tdiv == 10e-6 && frames == 48 {
+        println!("DRAW_ROUTE_PHASES batch=true {}", change::timing(&build.route.ui).diagnostics_text());
+        println!("DRAW_ROUTE_COST batch=true before={cost_before} after={}", crate::claim_timing::summary());
+    }
+    WARMUP + crate::perfguard::ROUNDS
 }
 
 #[test]

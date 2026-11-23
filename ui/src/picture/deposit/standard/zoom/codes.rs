@@ -3,6 +3,7 @@
 use super::*;
 use crate::drawpipe::stage::fixture_stage;
 use crate::fastdraw::{Codes, Samples};
+use crate::picture::deposit::envelope::adapt::pairs::screen_pair_range;
 use oos_dsp::interp::{linear_pair, Lanczos8Grid};
 use std::ops::Range;
 
@@ -268,13 +269,7 @@ impl EnvelopeGrid {
         let per = key.dt / key.sample_dt;
         // These overlapping pairs are the legacy screen envelope, spaced every two screen points.
         self.ranges.extend((0..key.n).step_by(2).map(|k| {
-            let x = key.ti + (key.first + k as f64 * key.dt + 0.5 * key.dt) / key.sample_dt;
-            if x < -per || x >= key.len as f64 + per {
-                return 0..0;
-            }
-            let start = (x - per).max(0.0) as usize;
-            let end = ((x + per).ceil() as usize).min(key.len);
-            start.min(end)..end
+            screen_pair_range(k, (key.sample_dt, per), (key.dt, key.first), key.ti, key.len).unwrap_or_default()
         }));
     }
 
@@ -297,6 +292,54 @@ impl EnvelopeGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zoom_pair_ranges_match_decoded_screen_windows() {
+        use crate::picture::deposit::envelope::adapt::pairs::screen_envelope;
+
+        let values: Vec<f32> = (0..257).map(|i| i as f32).collect();
+        let mut zoom = EnvelopeGrid::default();
+        let mut decoded = Vec::new();
+        let mut seed = 0xfac3_0e19_u32;
+        let mut random = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            f64::from(seed) / f64::from(u32::MAX)
+        };
+        for len in [0, 1, 2, 3, 16, 257] {
+            for n in [1, 2, 7, 32] {
+                for _ in 0..32 {
+                    let sample_dt = [1.0, 3.2e-9, 1e-6][(random() * 2.99) as usize];
+                    let dt = sample_dt * (0.0625 + 32.0 * random());
+                    let first = sample_dt * (random() - 0.5) * len as f64;
+                    let per = dt / sample_dt;
+                    let left = -per - (first + 0.5 * dt) / sample_dt;
+                    let right = len as f64 + per - (first + 0.5 * dt) / sample_dt;
+                    let interior = left + (right - left) * random();
+                    for ti in
+                        [left.next_down(), left, left.next_up(), interior, right.next_down(), right, right.next_up()]
+                    {
+                        let key = ScreenGrid { ti, first, dt, sample_dt, n, len };
+                        zoom.prepare(key);
+                        screen_envelope(&values[..len], (sample_dt, per), (n, dt, first), ti, &mut decoded);
+                        assert_eq!((decoded.len(), zoom.ranges.len()), (n, n.div_ceil(2)));
+                        for (j, (pair, range)) in decoded.chunks(2).zip(&zoom.ranges).enumerate() {
+                            // An ascending input reveals the exact start and last included index.
+                            let expected = if range.is_empty() {
+                                [f32::NAN; 2]
+                            } else {
+                                [values[range.start], values[range.end - 1]]
+                            };
+                            assert!(
+                                pair.iter().zip(expected).all(|(a, b)| a.to_bits() == b.to_bits()),
+                                "{key:?} pair={j} range={range:?} decoded={pair:?}",
+                                key = (len, n, dt, sample_dt, first, ti)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn corrected_grids_keep_decoded_samples_at_the_edges_and_after_the_trigger_moves() {

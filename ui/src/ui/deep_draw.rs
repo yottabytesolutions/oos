@@ -246,6 +246,17 @@ pub(super) fn acquire(
     (record, input)
 }
 
+pub(super) fn remember_record(ui: &mut Ui, record: &Record, hw_seg: bool) {
+    if ui.history.len() >= if hw_seg { super::HISTORY } else { super::HISTORY.max(ui.seg_count()) } {
+        ui.history.pop_front();
+    }
+    // The history retains only short LA records.
+    let la = record.la.clone().filter(|l| l.words.len() <= super::HISTORY_LA_WORDS);
+    ui.history.push_back(Record { raw: None, la, ..record.clone() });
+    ui.hist_pos = None;
+    ui.mask_test(record);
+}
+
 pub(super) fn record(
     ui: &mut Ui,
     rec: &Record,

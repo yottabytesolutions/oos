@@ -21,6 +21,7 @@ pub(super) struct Header {
     pub(super) flight: Mutex<Option<admission::Flight>>,
     pub(super) order: Option<crate::picture::deposit::TapOrder>,
     pub(super) newest_from_dma: bool,
+    skip_second: bool,
     pub(super) reader: Option<(Arc<View>, Option<Identity>)>,
     #[cfg(any(target_os = "linux", test))]
     pub(super) trace: Option<Box<route::RouteTrace>>,
@@ -37,6 +38,7 @@ impl Header {
             order: None,
             flight: Mutex::default(),
             newest_from_dma: false,
+            skip_second: false,
             reader: None,
             #[cfg(any(target_os = "linux", test))]
             trace: None,
@@ -64,6 +66,10 @@ impl Header {
     }
     pub(super) fn cfg(&self) -> u64 {
         self.pair.0
+    }
+
+    pub(super) fn dma_slot(&self, index: usize) -> usize {
+        super::dma_slot(index, self.skip_second)
     }
 }
 
@@ -288,13 +294,13 @@ impl Pipe {
         codes: Option<CodesInto>,
         (newest, tap): (Option<Arc<Frame>>, Option<Arc<TapReservation>>),
     ) -> Option<Arc<Frame>> {
-        self.feed_source((raw, fb, frames), (identity, clock), (decode, codes), (newest, tap), false)
+        self.feed_source((raw, fb, frames, false), (identity, clock), (decode, codes), (newest, tap), false)
     }
 
     #[cfg(any(target_os = "linux", test))]
     pub(crate) fn feed_source(
         &self,
-        (raw, fb, frames): (Box<dyn RawBatch>, usize, Range<usize>),
+        (raw, fb, frames, skip_second): (Box<dyn RawBatch>, usize, Range<usize>, bool),
         (identity, clock): (Identity, impl Into<StageClock>),
         (decode, codes): (IndexedDecodeInto, Option<CodesInto>),
         (newest, tap): (Option<Arc<Frame>>, Option<Arc<TapReservation>>),
@@ -303,6 +309,7 @@ impl Pipe {
         let mut header = Header::new(identity.epoch(), Some(identity));
         header.tap = tap;
         header.newest_from_dma = newest_from_dma;
+        header.skip_second = skip_second;
         self.submit(raw, fb, frames, (header, clock.into()), decoder::Decoder::Prepared(decode), codes, newest).1
     }
 
@@ -340,7 +347,8 @@ impl Pipe {
         newest: Option<Arc<Frame>>,
     ) -> (Arc<Batch>, Option<Arc<Frame>>) {
         let first = frames.start;
-        let frames = frames.end.min(raw.bytes().len().checked_div(fb).unwrap_or(0));
+        let available = raw.bytes().len().checked_div(fb).unwrap_or(0);
+        let frames = frames.end.min(available.saturating_sub(usize::from(header.skip_second)));
         #[cfg(any(target_os = "linux", test))]
         let raw = header.attach_trace(raw, first.min(frames)..frames);
         let state = oos_hal::sync::lock(&self.view);

@@ -139,8 +139,11 @@ impl Intake {
         };
         let range = batch.next.load(Ordering::Relaxed)..batch.frames;
         let bytes = batch.lease.raw.as_ref().unwrap().bytes();
-        let first_words =
-            range.clone().map(|index| u16::from_le_bytes(bytes[index * batch.fb..][..2].try_into().unwrap())).collect();
+        let first_words = range
+            .clone()
+            .map(|index| batch.header.dma_slot(index))
+            .map(|slot| u16::from_le_bytes(bytes[slot * batch.fb..][..2].try_into().unwrap()))
+            .collect();
         let submission = Submission { range, first_words, newest_seq: batch.newest.as_ref().map(|frame| frame.seq) };
         if let Some(worker) = &self.worker {
             let batch_mut = std::sync::Arc::get_mut(&mut batch).unwrap();

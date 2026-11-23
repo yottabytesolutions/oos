@@ -13,7 +13,10 @@ use super::{
     status, BatchState, LoopClock, SingleCompletion, SingleHandoff,
 };
 use crate::{
-    board::{dho::switches::HeaderProbe, Frame, HwShared},
+    board::{
+        dho::switches::{FrameZero, HeaderProbe},
+        Frame, HwShared, Slow,
+    },
     drawpipe::{self, Pipe},
     perfguard::deep::acq_lock as lock,
     sysconf::Switches,
@@ -41,6 +44,7 @@ struct Selection {
     avail: usize,
     fb: usize,
     first_unreliable: bool,
+    frame0: FrameZero,
     average: Option<avg::After>,
 }
 
@@ -54,7 +58,11 @@ impl BatchState {
         obsolete: impl Fn() -> bool,
     ) -> Published {
         let count = handoff.completed.count;
-        let selection = self.select(io, &handoff.capture, count, switches.board.frame0_drop);
+        let selection = self.select(io, &handoff.capture, (count, handoff.readout.failed), switches.board.frame0);
+        // Extra playback and latch writes occurred after these bytes were captured.
+        if handoff.readout.wrote_after_dma {
+            self.first.proven = None;
+        }
         let pipe = batch::readout_pipe(
             handoff.deposit,
             selection.avail,
@@ -63,24 +71,9 @@ impl BatchState {
         );
         let next = self.successor(io, &handoff, pipe, (out, switches), &obsolete);
         let request = handoff.capture.request;
-        let (stale, held) = if handoff.plan.serial() {
-            let mut g = lock(out);
-            let stale = publication::boundary(Some(request.pair()), g.acquisition.identity());
-            let held = if stale {
-                if g.hold {
-                    // The accepted boundary discarded the final record. Complete any pending STOP request.
-                    g.final_ack = g.final_ack.max(g.final_req);
-                }
-                None
-            } else {
-                let asked = (request.want.as_ref(), request.mode);
-                stop::held_request(&g, handoff.plan, asked, count, self.armed.is_some())
-            };
-            (stale, held)
-        } else {
-            (false, None)
-        };
+        let (stale, held) = self.serial_handoff(&handoff, out);
         if stale {
+            self.first.proven = None;
             drawpipe::counters().discard(drawpipe::Lost::Settings, selection.avail as u64);
             if let Some((pipe, spare)) = pipe.zip(next.ok().flatten()) {
                 pipe.return_buffer(Box::new(spare));
@@ -88,6 +81,7 @@ impl BatchState {
             return Published::Rejected;
         }
         if let Some(final_req) = held {
+            self.first.proven = None;
             self.publish_held(io, handoff, &selection, (out, switches.board.header_probe), (seq, final_req));
             if let Some((pipe, spare)) = pipe.zip(next.ok().flatten()) {
                 pipe.return_buffer(Box::new(spare));
@@ -95,6 +89,7 @@ impl BatchState {
             return Published::Held;
         }
         let Ok(next) = next else {
+            self.first.proven = None;
             drawpipe::counters().discard(drawpipe::Lost::Settings, selection.avail as u64);
             publication::finish_batch(out, Vec::new(), handoff.capture.settings.mode, |g| {
                 handoff.readout.readings.publish(g, request.identity, io.state.mask_cols.as_deref(), None);
@@ -102,7 +97,27 @@ impl BatchState {
             return Published::Rejected;
         };
         self.publish_running(io, handoff, selection, (out, switches), (pipe, next), (seq, &obsolete));
+        if obsolete() {
+            self.first.proven = None;
+        }
         Published::Running
+    }
+
+    fn serial_handoff(&self, handoff: &Handoff<'_>, out: &HwShared) -> (bool, Option<u64>) {
+        if !handoff.plan.serial() {
+            return (false, None);
+        }
+        let request = handoff.capture.request;
+        let mut g = lock(out);
+        if publication::boundary(Some(request.pair()), g.acquisition.identity()) {
+            if g.hold {
+                // The accepted boundary discarded the final record. Complete any pending STOP request.
+                g.final_ack = g.final_ack.max(g.final_req);
+            }
+            return (true, None);
+        }
+        let asked = (request.want.as_ref(), request.mode);
+        (false, stop::held_request(&g, handoff.plan, asked, handoff.completed.count, self.armed.is_some()))
     }
 
     fn publish_running(
@@ -116,7 +131,7 @@ impl BatchState {
     ) {
         let Capture { settings: b, request, .. } = handoff.capture;
         let count = handoff.completed.count;
-        let Handoff { tap, readout: Readout { readings, raw_frame, mut la }, completed, .. } = handoff;
+        let Handoff { tap, readout: Readout { readings, raw_frame, mut la, .. }, completed, .. } = handoff;
         // Trigger status and raw availability must be visible before the pool can hand off a deposit.
         let mut readings = Some(readings);
         if let Some(readings) = pipe.and_then(|_| readings.take()) {
@@ -125,7 +140,7 @@ impl BatchState {
         let (mut frames, skip) = self.dispatch(
             (&selection, &completed),
             &handoff.capture,
-            (switches.board.header_probe, switches.board.frame0_drop),
+            switches.board.header_probe,
             (pipe, tap, raw_frame),
             (&mut la, seq),
             obsolete,
@@ -133,7 +148,7 @@ impl BatchState {
         self.keep_first(&selection, &mut frames);
         self.first.settings = Some(selection.captured);
         self.clear_completed_average(io, out, selection.average);
-        if let (Some(la), Some(frame)) = (la, frames.last_mut()) {
+        if let (Some(la), Some(frame)) = (la, frames.last_mut().filter(|frame| frame.seq == *seq)) {
             frame.la = Some(la);
         }
         batch::summarize(&mut frames);
@@ -164,13 +179,15 @@ impl BatchState {
     ) {
         let Handoff { capture, completed, readout, tap, .. } = handoff;
         let Capture { settings: b, params: p, request, .. } = capture;
-        let Readout { readings, raw_frame, la } = readout;
+        let Readout { readings, raw_frame, la, .. } = readout;
         let avail = selection.avail;
         let frame = avail.checked_sub(1).map(|index| {
             *sequence += avail as u64;
             let raw = raw_frame.or_else(|| {
                 let settings = super::super::window::raw_replay_settings(b, p, request.run.deep.is_some())?;
                 self.read_raw(io, &capture, (&settings, completed.count), (out, probe), (tap.as_ref(), false))
+                    .ok()
+                    .flatten()
             });
             let (mut frame, uncorrected) = raw.unwrap_or_else(|| {
                 batch::decode_record(
@@ -220,8 +237,8 @@ impl BatchState {
         &mut self,
         io: &mut ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
         capture: &Capture<'_>,
-        count: u32,
-        frame0_drop: bool,
+        (count, read_failed): (u32, bool),
+        policy: FrameZero,
     ) -> Selection {
         let (b, p) = (capture.settings, capture.params);
         let fb = seq::frame_bytes(b, p);
@@ -240,6 +257,7 @@ impl BatchState {
         let shown = if average.is_some_and(|a| !a.show) { 0 } else { count };
         let avail = self.dma.destination().data().len().checked_div(fb).map_or(0, |len| (shown as usize).min(len));
         publication::read(crate::drawpipe::counters(), count, shown, avail);
+        let frame0 = self.frame_zero(capture, policy, count != 0 && avail == count as usize && !read_failed);
         let captured = Settings { frames: 0, ..b.clone() };
         // The FPGA can retain frame zero from the settings that preceded the arm.
         const FIRST_LEFT_MAX_S: f64 = 0.05;
@@ -247,8 +265,31 @@ impl BatchState {
             && !self.first.dropped
             && (p.memsel as f64) < FIRST_LEFT_MAX_S * p.rate as f64
             && !b.single
-            && frame0_drop;
-        Selection { captured, avail, fb, first_unreliable, average }
+            && policy != FrameZero::Keep;
+        Selection { captured, avail, fb, first_unreliable, frame0, average }
+    }
+
+    fn frame_zero(&mut self, capture: &Capture<'_>, policy: FrameZero, complete: bool) -> FrameZero {
+        let b = capture.settings;
+        let request = capture.request;
+        let ordinary = !b.single
+            && self.avg.is_none()
+            && b.segments.is_none()
+            && request.run.segment_bound.is_none()
+            && request.mode == Slow::Off
+            && !request.run.hold;
+        let previous = self.first.proven.take();
+        if policy != FrameZero::Steady {
+            return policy;
+        }
+        let pair = request.pair();
+        if complete && ordinary {
+            self.first.proven = Some(pair);
+            if previous == Some(pair) {
+                return FrameZero::Steady;
+            }
+        }
+        FrameZero::Drop
     }
 
     fn keep_first(&mut self, selection: &Selection, frames: &mut Vec<Frame>) {
@@ -269,19 +310,18 @@ impl BatchState {
         &mut self,
         (selection, completed): (&Selection, &Completed),
         capture: &Capture<'_>,
-        (probe, frame0_drop): (HeaderProbe, bool),
+        probe: HeaderProbe,
         (pipe, tap, raw_frame): (Option<&Pipe>, Reserved, Option<batch::DecodedRecord>),
         (la, seq): (&mut Option<crate::ui::la::LaRec>, &mut u64),
         obsolete: &dyn Fn() -> bool,
     ) -> (Vec<Frame>, usize) {
         let (b, p, request) = (capture.settings, capture.params, capture.request);
-        let Selection { fb, avail, average, .. } = *selection;
+        let Selection { fb, avail, average, frame0, .. } = *selection;
         let id = request.identity;
         let raw_frame = raw_frame.filter(|_| avail as u32 == completed.count);
         let cores = &mut self.raw.cores;
         let capture = self.raw.dump.as_mut().and_then(|dump| {
-            let input =
-                BatchInput::new((b, p), (completed.count as usize, avail, frame0_drop), (cores, request.run.cores));
+            let input = BatchInput::new((b, p), (completed.count as usize, avail, frame0), (cores, request.run.cores));
             let newest = (raw_frame.as_ref().map(|(frame, _)| frame), la.as_ref().map(|la| la.words.as_slice()));
             dump.capture_live(request.pair(), input, self.dma.destination().data(), newest)
         });
@@ -290,7 +330,7 @@ impl BatchState {
             let readout = batch::Readout::new(
                 pipe,
                 (b, p),
-                (fb, avail, frame0_drop),
+                (fb, avail, frame0),
                 (*seq, probe, raw_frame.map(|(frame, _)| frame)),
                 (id, completed.clock.with_admission()),
             )
@@ -317,7 +357,7 @@ impl BatchState {
                 (request.run.cores, id),
                 (b, p, probe),
                 (self.dma.destination().data(), fb, avail),
-                (frame0_drop, average.is_some()),
+                (frame0, average.is_some()),
                 raw_frame,
                 (seq, cores),
             )

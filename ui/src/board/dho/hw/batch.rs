@@ -3,7 +3,11 @@
 //! Batch dispatch in the acquisition loop. Buffer acceptance precedes matcher learning.
 
 use crate::board::{
-    dho::{cores::Cores, frame1, matching, switches::HeaderProbe},
+    dho::{
+        cores::Cores,
+        frame1, matching,
+        switches::{FrameZero, HeaderProbe},
+    },
     Frame,
 };
 use crate::drawpipe::{clock::StageClock, Pipe, RawBatch, TapReservation};
@@ -53,7 +57,7 @@ pub(super) struct Readout<'a> {
     pipe: &'a Pipe,
     settings: &'a Settings,
     params: &'a hz::Params,
-    geometry: (usize, usize, bool),
+    geometry: (usize, usize, FrameZero),
     newest: (u64, HeaderProbe, Option<Frame>),
     batch: (Identity, StageClock),
     reserved: Option<Arc<TapReservation>>,
@@ -64,7 +68,7 @@ impl<'a> Readout<'a> {
     pub(super) fn new(
         pipe: &'a Pipe,
         settings: (&'a Settings, &'a hz::Params),
-        geometry: (usize, usize, bool),
+        (fb, avail, frame0): (usize, usize, impl Into<FrameZero>),
         newest: (u64, HeaderProbe, Option<Frame>),
         (identity, clock): (Identity, impl Into<StageClock>),
     ) -> Self {
@@ -72,7 +76,7 @@ impl<'a> Readout<'a> {
             pipe,
             settings: settings.0,
             params: settings.1,
-            geometry,
+            geometry: (fb, avail, frame0.into()),
             newest,
             batch: (identity, clock.into()),
             reserved: None,
@@ -97,52 +101,39 @@ impl<'a> Readout<'a> {
         tag: impl FnOnce(Frame) -> Frame,
         canceled: &dyn Fn() -> bool,
     ) -> Vec<Frame> {
-        let (fb, avail, frame0_drop) = self.geometry;
+        let (fb, avail, policy) = self.geometry;
         let counters = self.pipe.batch_counters();
         let bytes = dma.as_ref().expect("a completed read still owns its DMA destination").bytes();
         if avail == 0 || fb == 0 || avail > bytes.len() / fb {
             counters.discard(crate::drawpipe::Lost::Error, avail as u64);
             return Vec::new();
         }
-        // frame 0, and a frame 1 without its edge at the trigger point, reach neither the workers nor the matcher
-        let start = frame1::first_kept(bytes, fb, avail, frame0_drop, (self.settings, self.params));
-        counters.lose(crate::drawpipe::Lost::Frame0, u64::from(frame0_drop && avail > 1));
-
-        let newest_bytes = &bytes[(avail - 1) * fb..avail * fb];
-        let keep = frame1::newest_kept(
-            (self.newest.2.as_ref(), newest_bytes),
-            (avail, frame0_drop),
-            (self.settings, self.params),
-        );
-        let end = avail - usize::from(!keep);
-        if start == end {
+        let selection =
+            frame1::dma_selection((bytes, fb, avail), self.newest.2.as_ref(), policy, (self.settings, self.params));
+        counters.lose(crate::drawpipe::Lost::Frame0, u64::from(selection.drop_first));
+        if selection.range.is_empty() {
             // Releasing the output slot wakes the coordinator to retry any retained deposit.
             return Vec::new();
         }
 
-        let probe = self.newest.1;
-        let deposit = Some(self.batch.0);
+        let (seq, probe, raw) = self.newest;
+        let from_dma = raw.is_none();
         let Ok((storage, reservation)) =
-            tap::reserve(self.pipe, self.settings, fb, self.newest.2.as_ref(), deposit, self.reserved, canceled)
-                .inspect_err(|&lost| counters.discard(lost, (end - start) as u64))
+            tap::reserve(self.pipe, self.settings, fb, raw.as_ref(), Some(self.batch.0), self.reserved, canceled)
+                .inspect_err(|&lost| counters.discard(lost, selection.range.len() as u64))
         else {
             return Vec::new();
         };
-        let (seq, _, raw) = self.newest;
-        let from_dma = raw.is_none();
-        let newest = keep.then(|| {
-            let mut newest = raw.unwrap_or(storage);
-            newest.seq = seq;
-            newest
-        });
+        let mut newest = raw.unwrap_or(storage);
+        newest.seq = seq;
         let full = dma.take().expect("the validated read still owns its DMA destination");
         matching::submit(
             self.pipe,
-            (super::header::dump::Captured::wrap(full, self.trace), fb, start..end),
+            (super::header::dump::Captured::wrap(full, self.trace), fb, selection.range, selection.skip_second),
             self.batch,
             (self.settings.clone(), *self.params, probe),
             cores,
-            (newest, reservation.clone(), from_dma, |frame| tap::retain(tag(frame), reservation.as_ref())),
+            (Some(newest), reservation.clone(), from_dma, |frame| tap::retain(tag(frame), reservation.as_ref())),
         )
         .into_iter()
         .map(Arc::unwrap_or_clone)
@@ -158,39 +149,52 @@ pub(super) fn decode_records(
     (match_cores, identity): (bool, Identity),
     (settings, params, probe): (&Settings, &hz::Params, HeaderProbe),
     (bytes, fb, count): (&[u8], usize, usize),
-    (frame0_drop, average): (bool, bool),
+    (frame0, average): (impl Into<FrameZero>, bool),
     raw: Option<DecodedRecord>,
     (seq, cores): (&mut u64, &mut Cores),
 ) -> (Vec<Frame>, usize) {
     use crate::board::dho::publication;
-    let skipped = publication::record_decode(count, average, frame0_drop);
+    let policy = frame0.into();
+    let skipped = publication::record_decode(count, average, policy == FrameZero::Drop);
     let mut skip = publication::account_skipped(skipped, average);
     *seq += skip as u64;
     let mut uncorrected = 0;
-    let mut first_uncorrected = false;
     let mut last_uncorrected = false;
     let mut frames: Vec<_> = bytes
         .chunks_exact(fb.max(1))
         .take(count)
-        .skip(skip)
         .enumerate()
-        .map(|(i, bytes)| {
+        .skip(skip)
+        .filter_map(|(slot, bytes)| {
             *seq += 1;
             let (frame, missed) =
                 decode_record(bytes, (settings, params, probe), match_cores.then_some(&mut *cores), *seq);
+            if !average
+                && count > 1
+                && slot < 2
+                && frame1::off_trigger_if_checked(
+                    (slot, count),
+                    policy,
+                    (&frame, raw.as_ref().map(|(f, _)| f)),
+                    settings,
+                )
+            {
+                skip += 1;
+                return None;
+            }
             uncorrected += usize::from(missed);
             last_uncorrected = missed;
-            first_uncorrected |= i == 0 && missed;
-            publication::tag(Frame { hw_avg: average, ..frame }, identity)
+            Some(publication::tag(Frame { hw_avg: average, ..frame }, identity))
         })
         .collect();
-    let bad_edge = frame1::drop_frame1(&mut frames, skip, frame0_drop && !average, settings);
-    skip += bad_edge;
-    uncorrected -= usize::from(first_uncorrected && bad_edge > 0);
-    let raw = raw.map(|(frame, missed)| {
-        if !frames.is_empty() {
-            uncorrected = uncorrected - usize::from(last_uncorrected) + usize::from(missed);
-        }
+    // A two-slot batch whose newest record failed the edge check cannot publish an older picture.
+    if count == 2 && frames.last().is_some_and(|f| f.seq != *seq) {
+        crate::drawpipe::counters().lose(crate::drawpipe::Lost::Frame0, 1);
+        // The uncorrected metric counts records selected for publication, so this suppressed slot zero is excluded.
+        return (Vec::new(), skip + 1);
+    }
+    let raw = raw.filter(|_| frames.last().is_some_and(|f| f.seq == *seq)).map(|(frame, missed)| {
+        uncorrected = uncorrected - usize::from(last_uncorrected) + usize::from(missed);
         frame
     });
     crate::drawpipe::counters().metrics.source_uncorrected(identity, uncorrected);

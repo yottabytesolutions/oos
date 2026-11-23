@@ -151,7 +151,7 @@ fn mixed_outcomes() -> Fields {
     let run = Run::Pictures(picture::StopAt::Between);
     let (mut io, trace) = sim::fixture(&want, out.clone(), (run, 4, false), Some(intake));
     let (mut source, _) = source(&out, &io);
-    source.switches.board.frame0_drop = true;
+    source.switches.board.frame0 = crate::board::dho::switches::FrameZero::Drop;
     let (w, h) = picture::SIZE;
     let identity = lock(&out).acquisition.identity();
     drawpipe::pipe().unwrap().publish_view(&ui.m, w, h, source.switches.interp, identity);

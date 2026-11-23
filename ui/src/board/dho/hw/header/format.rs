@@ -3,6 +3,7 @@
 //! Batch fixture v2, with capture geometry and the inputs for decode, selection and matching.
 
 use crate::board::dho::cores::{Cores, Pattern};
+use crate::board::dho::switches::FrameZero;
 use oos_hal::dho::{acq::Mode, hz, seq};
 use std::fmt::Write;
 
@@ -15,7 +16,7 @@ pub(in crate::board::dho::hw) struct Input<'a> {
     params: &'a hz::Params,
     frames: usize,
     avail: usize,
-    frame0_drop: bool,
+    frame0: FrameZero,
     cores: &'a Cores,
     matching: bool,
 }
@@ -23,10 +24,10 @@ pub(in crate::board::dho::hw) struct Input<'a> {
 impl<'a> Input<'a> {
     pub(in crate::board::dho::hw) fn new(
         (settings, params): (&'a seq::Settings, &'a hz::Params),
-        (frames, avail, frame0_drop): (usize, usize, bool),
+        (frames, avail, frame0): (usize, usize, impl Into<FrameZero>),
         (cores, matching): (&'a Cores, bool),
     ) -> Self {
-        Self { settings, params, frames, avail, frame0_drop, cores, matching }
+        Self { settings, params, frames, avail, frame0: frame0.into(), cores, matching }
     }
 
     pub(super) fn aligned_len(&self) -> Option<usize> {
@@ -84,8 +85,12 @@ impl<'a> Input<'a> {
         let _ = writeln!(
             out,
             "mode={mode}\naverage={average}\nmatching={}\nframe0_drop={}",
-            self.matching, self.frame0_drop
+            self.matching,
+            self.frame0 == FrameZero::Drop
         );
+        if self.frame0 == FrameZero::Steady {
+            let _ = writeln!(out, "frame0_check=true");
+        }
         for (c, ch) in s.ch.iter().enumerate() {
             let _ = writeln!(out, "channel{c}={} {} {} {:?} {}", ch.scale, ch.offset, ch.invert, ch.couple, ch.bw);
             if let Some(pattern) = self.cores.fixture_pattern((s.mask, c, p.rate)) {

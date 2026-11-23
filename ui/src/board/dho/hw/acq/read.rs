@@ -62,6 +62,8 @@ pub(super) struct Readout {
     pub(super) readings: Readings,
     pub(super) raw_frame: Option<batch::DecodedRecord>,
     pub(super) la: Option<crate::ui::la::LaRec>,
+    pub(super) failed: bool,
+    pub(super) wrote_after_dma: bool,
 }
 
 pub(super) struct Readings {
@@ -140,6 +142,7 @@ impl BatchState {
             )
         })
         .inspect_err(|message| {
+            self.first.proven = None;
             if stop::needs_disarm(message) {
                 super::disarm(io.state, &mut io.bar, clock, out);
             }
@@ -173,26 +176,38 @@ impl BatchState {
         let count = completed.count;
         let live = raw_newest(b, p);
         crate::compress::note_batch_k(if live { b.compress } else { 1 });
+        let mut failed = false;
         let la = batch::read_la(io.state, (b, p), (&mut io.bar, io.c2h, io.clock), &mut self.la_fails, |message| {
+            failed = true;
             status(out, message);
         })
         .map(|words| la_record(words, b, p));
-        let raw_frame = raw::replay_due(count, live, &mut self.raw.live, io.clock)
-            .then(|| seq::raw_settings(b))
-            .and_then(|settings| self.read_raw(io, capture, (&settings, count), (out, probe), (tap, false)));
+        let replay = raw::replay_due(count, live, &mut self.raw.live, io.clock);
+        let mut wrote_after_dma = la.is_some() || replay;
+        let raw_frame = replay.then(|| seq::raw_settings(b)).and_then(|settings| {
+            self.read_raw(io, capture, (&settings, count), (out, probe), (tap, false))
+                .inspect_err(|()| failed = true)
+                .ok()
+                .flatten()
+        });
         let deep_settings = deep_raw_settings(b, p);
         let deep_ok = deep_settings.is_some();
         let raw_frame = raw_frame.or_else(|| {
             let want = capture.request.run.deep.filter(|_| count > 0)?;
             let settings = deep_settings
                 .filter(|ds| crate::deepmeas::due(want, self.raw.deep, io.clock.now(), seq::frame_bytes(ds, p)))?;
+            wrote_after_dma = true;
             self.raw.deep = Some(io.clock.now());
             self.read_raw(io, capture, (&settings, count), (out, probe), (tap, true))
+                .inspect_err(|()| failed = true)
+                .ok()
+                .flatten()
         });
         let fired = batch::read_trigger(&mut io.bar);
         let mask = mask_read(io, b, p);
         let zone = zone_read(io, b, (count, completed.batch_ms));
-        Readout { readings: Readings { mask, zone, fired, deep_ok }, raw_frame, la }
+        wrote_after_dma |= mask.is_some() || zone.is_some();
+        Readout { readings: Readings { mask, zone, fired, deep_ok }, raw_frame, la, failed, wrote_after_dma }
     }
 
     pub(super) fn read_raw(
@@ -202,7 +217,7 @@ impl BatchState {
         (b, count): (&Settings, u32),
         (out, probe): (&HwShared, crate::board::dho::switches::HeaderProbe),
         (tap, deep): (Option<&std::sync::Arc<TapReservation>>, bool),
-    ) -> Option<batch::DecodedRecord> {
+    ) -> Result<Option<batch::DecodedRecord>, ()> {
         let p = capture.params;
         let started = deep.then(|| io.clock.now());
         let index = count - 1;
@@ -217,7 +232,7 @@ impl BatchState {
         if let Err(e) = read {
             let what = if deep { "deep window" } else { "newest frame" };
             status(out, format!("raw read of the {}: {}", what, e));
-            return None;
+            return Err(());
         }
         let decoded_at = started.map(|_| io.clock.now());
         let cores = capture.request.run.cores.then_some(&mut self.raw.cores);
@@ -228,7 +243,7 @@ impl BatchState {
             cost::set(&cost::DECODE_US, io.clock.now().saturating_duration_since(at));
             cost::READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
-        frame
+        Ok(frame)
     }
 }
 

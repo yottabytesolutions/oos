@@ -92,12 +92,6 @@ pub(super) fn prearm_from(env_set: bool, conf: &str) -> bool {
     env_set || crate::sysconf::conf_value(None, conf, "acq.prearm").as_deref() == Some("on")
 }
 
-/// Whether frame 0 of a batch of several frames is left out (issue #5): on unless `acq.frame0 = keep` in the settings
-/// file (`BoardSwitches::frame0_drop`).
-pub(super) fn frame0_drop_from(conf: &str) -> bool {
-    crate::sysconf::conf_value(None, conf, "acq.frame0").as_deref() != Some("keep")
-}
-
 pub(super) fn zone_batch_from(conf: &str) -> u32 {
     crate::sysconf::conf_value(None, conf, "zone.batch").and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).clamp(1, 1000)
 }

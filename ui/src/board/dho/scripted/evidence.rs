@@ -56,7 +56,11 @@ pub(crate) fn planned_picture_cohort(
 ) -> (ScriptBatch, std::ops::Range<usize>, bool, String) {
     let (input, count, plan) = draw_route_batch(m, sw, 0);
     let (s, p) = (&input.settings, &input.params);
-    let start = super::super::frame1::first_kept(&input.bytes.0, input.fb, count, sw.board.frame0_drop, (s, p));
-    let keep = super::super::frame1::newest_kept((Some(&input.newest(0)), &[]), (count, sw.board.frame0_drop), (s, p));
-    (input, start..if keep { count } else { count - 1 }, keep, plan)
+    use crate::board::dho::switches::FrameZero;
+    // This synthetic cohort starts without a preceding arm.
+    let policy = FrameZero::from(sw.board.frame0 != FrameZero::Keep);
+    let selection =
+        super::super::frame1::dma_selection((&input.bytes.0, input.fb, count), Some(&input.newest(0)), policy, (s, p));
+    let newest = !selection.range.is_empty();
+    (input, selection.range, newest, plan)
 }

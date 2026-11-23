@@ -15,6 +15,7 @@ pub(super) fn newest(b: &Batch) -> Option<&Arc<Frame>> {
 }
 
 pub(super) fn chunk(b: &Batch, i: usize) -> &[u8] {
+    let i = b.header.dma_slot(i);
     &b.lease.raw.as_ref().expect("batch owns its buffer until every job returns").bytes()[i * b.fb..(i + 1) * b.fb]
 }
 

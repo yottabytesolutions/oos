@@ -62,6 +62,14 @@ impl Virtual {
         self.engine.borrow_mut().per_poll = 0;
     }
 
+    pub(in super::super) fn resume_triggers(&self, count: u32) {
+        self.engine.borrow_mut().per_poll = count;
+    }
+
+    pub(in super::super) fn capture_mask(&self, mask: u32) {
+        self.engine.borrow_mut().ratio = oos_hal::dho::hz::ratio(mask);
+    }
+
     pub(in super::super) fn release(&self) {
         let event = lock(&self.out).record_flow.source.clone();
         let seen = event.generation();

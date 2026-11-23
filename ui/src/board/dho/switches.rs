@@ -44,6 +44,24 @@ impl HeaderProbe {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FrameZero {
+    Keep,
+    Drop,
+    #[default]
+    Steady,
+}
+
+impl From<bool> for FrameZero {
+    fn from(drop: bool) -> Self {
+        if drop {
+            Self::Drop
+        } else {
+            Self::Keep
+        }
+    }
+}
+
 /// The board's part of `sysconf::Switches`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Switches {
@@ -68,9 +86,7 @@ pub struct Switches {
     pub prearm: bool,
     /// `zone.batch` of the settings file: frames per batch while the zone trigger runs (docs/fork/hwzone.md "Rate")
     pub zone_batch: u32,
-    /// `acq.frame0 = keep` in the settings file turns it off: frame 0 of a batch of several frames, and the first
-    /// short record after a change of settings, are left out (upstream issue #5)
-    pub frame0_drop: bool,
+    pub(crate) frame0: FrameZero,
     /// `trig.serial_hw = on` in the settings file: the UART protocol trigger runs in the TPU's receiver
     /// (docs/fork/hwuart.md)
     pub serial_hw: bool,
@@ -92,7 +108,11 @@ impl Switches {
             zone: hw::zone_hw_from(conf),
             prearm: hw::prearm_from(env("OOS_PREARM").is_some(), conf),
             zone_batch: hw::zone_batch_from(settings),
-            frame0_drop: hw::frame0_drop_from(settings),
+            frame0: match conf_value(None, settings, "acq.frame0").as_deref() {
+                Some("keep") => FrameZero::Keep,
+                Some("drop") => FrameZero::Drop,
+                _ => FrameZero::Steady,
+            },
             serial_hw: hw::serial_hw_from(settings),
             mask_map: hw::mask_map_from(settings),
         }

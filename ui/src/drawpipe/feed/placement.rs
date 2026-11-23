@@ -54,7 +54,7 @@ fn placement_reuses_the_source_waveform_when_a_code_view_is_unavailable() {
     newest.ch[0].resize(1024, 0.0);
     let raw = Box::new(crate::drawpipe::tests::Bytes(vec![0]));
     let fallback = pipe.feed_source(
-        (raw, 1, 0..1),
+        (raw, 1, 0..1, false),
         (identity, Instant::now()),
         (decode, Some(Arc::new(|_, _, _| None))),
         (Some(Arc::new(newest)), None),

@@ -154,9 +154,16 @@ pub fn volts_f64(w: &[u16], scale: f64, offset: f64) -> Vec<f32> {
     w.iter().map(|&x| word_volts_f64(x, scale, offset)).collect()
 }
 
+/// Subtract the selected ADC core offset and clamp the result to the word range.
+/// The difference must fit in `i32` before clamping.
+#[inline]
+pub fn correct_adc_code(raw: u16, offset: i32) -> u16 {
+    (i32::from(raw) - offset).clamp(0, i32::from(u16::MAX)) as u16
+}
+
 /// Volts of one read-out word (`volts_f64`).
 #[inline]
-fn word_volts_f64(x: u16, scale: f64, offset: f64) -> f32 {
+pub fn word_volts_f64(x: u16, scale: f64, offset: f64) -> f32 {
     ((x as f64 - 32768.0) / 7500.0 * scale - offset) as f32
 }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::{smooth_run, sum_window, Codes, EdgeSearch, Samples};
+use crate::board::correct_adc_code;
 use std::ops::Range;
 
 const BLOCK: usize = 128;
@@ -58,7 +59,7 @@ pub(super) fn smooth(
     let raw = Codes { corrected: None, ..*codes };
     let band_of = |first, last| {
         let (lo, hi) = raw.code_extremes(first - base, last + l - 1 - base);
-        let (lo, hi) = codes.calibrated(correct(lo, offsets.1), correct(hi, offsets.0));
+        let (lo, hi) = codes.calibrated(correct_adc_code(lo, offsets.1), correct_adc_code(hi, offsets.0));
         Band::of(lo, hi, trigger)
     };
     let mut add = |first, band| {
@@ -117,10 +118,6 @@ fn offset_bounds(codes: &Codes<'_>) -> Option<(i32, i32)> {
     // Match the i32 subtraction in at_code throughout the word domain.
     i32::from(u16::MAX).checked_sub(lo)?;
     Some((lo, hi))
-}
-
-fn correct(raw: u16, offset: i32) -> u16 {
-    (i32::from(raw) - offset).clamp(0, i32::from(u16::MAX)) as u16
 }
 
 fn exact_sum(codes: &Codes<'_>, l: usize) -> bool {

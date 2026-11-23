@@ -30,7 +30,7 @@ mod tests;
 
 use super::{Board, PanelCmd, Slow, Zone};
 use crate::model::{Coupling, GenCh, Model};
-use oos_hal::dho::{afe, afg, board, bus, panel};
+use oos_hal::dho::{afe, afg, board, bus, panel, samples};
 
 /// One hardware batch at most, before read-size and ratio limits.
 const BATCH_MAX: usize = 1000;
@@ -39,6 +39,18 @@ const PEAK_BATCH_MAX: usize = crate::board::RECORDS_PER_STEP;
 
 /// The Rigol DHO800/DHO900.
 pub struct Dho;
+
+impl Dho {
+    #[inline]
+    pub(super) fn correct_adc_code(raw: u16, offset: i32) -> u16 {
+        samples::correct_adc_code(raw, offset)
+    }
+
+    #[inline]
+    pub(super) fn word_volts_f64(code: u16, scale: f64, offset: f64) -> f32 {
+        samples::word_volts_f64(code, scale, offset)
+    }
+}
 
 /// The generator's wave shape.
 pub fn wave(g: &GenCh) -> afg::Wave {

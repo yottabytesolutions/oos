@@ -129,6 +129,7 @@ impl<const N: usize> Boxcar<N> {
         calibration: Codes<'a>,
         map: Map,
     ) -> Filtered<'a, N, F> {
+        // Pre-divide the gain for the boxcar sum, pinned by boxcar_matches_decoded_hires_on_one_two_and_four_channels.
         let (gain, offset) = calibration.corrected.map_or_else(
             || (f64::from(calibration.affine.0), f64::from(calibration.affine.1)),
             |c| (c.scale / 7500.0, c.offset),

@@ -367,7 +367,7 @@ impl Ui {
     /// overlays use the same physical screen times at their own sample intervals.
     pub(super) fn measurement_channel_samples<'a>(&self, rec: &'a Record, c: usize) -> Option<(&'a [f32], f64, f64)> {
         let screen = rec.ch.get(c)?;
-        let (samples, t0, dt) = if let Some(raw) = rec.raw.as_ref().filter(|raw| {
+        let (samples, t0, dt) = if let Some(raw) = self.reader_raw(rec).filter(|raw| {
             self.m.acq != AcqMode::HiRes && !raw.frame.envelope && raw.frame.ch.get(c).is_some_and(|v| v.len() >= 2)
         }) {
             (raw.frame.ch.get(c)?.as_slice(), raw.t0 - raw.i0 as f64 * raw.frame.dt, raw.frame.dt)
@@ -502,7 +502,7 @@ impl Ui {
             return None;
         }
         let record = self.measurement_record()?;
-        let raw = record.raw.as_ref()?;
+        let raw = self.reader_raw(record)?;
         let full = raw.frame.ch.get(channel)?;
         let (samples, _, _) = self.measurement_channel_samples(record, channel)?;
         let basic = raw.frame.basic[channel];
@@ -642,7 +642,7 @@ impl Ui {
         for channel in 0..NCH {
             let full = self.channel_needs_full_analysis(channel);
             let analysis = self.channel_measurement(channel, full).map(|(analysis, _)| analysis);
-            if analysis.is_none() && self.m.ch[channel].on && self.last[0].is_some() {
+            if analysis.is_none() && self.m.ch[channel].on && self.last[0].is_some() && !self.readers_use_average() {
                 // the analysis job is still running: the record's own measurement (`measure_rec`) stays meanwhile
                 continue;
             }

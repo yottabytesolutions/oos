@@ -73,6 +73,23 @@ it carries its `BatchMeta` (`id`, `gen`, `epoch`, `mode`).
 | decode | any; the cache is keyed by record `id` and decoder settings, so it needs no invalidation |
 | history | per route: off the fast path every record of the `RecordBatch`; on it the newest `Frame` per batch. History density therefore follows the route, and each entry carries its `BatchMeta` so replay knows which it is |
 
+In Average, the accepted 3600-point volts grid is the source for channel
+measurements, tracked cursors, software DVM, and NORM/MAX waveform transfers.
+This applies to both software and FPGA averaging. The latest native acquisition
+remains available to RAW when retained. STOP keeps the accepted grid and its
+original time axis. Pan and zoom render that grid at the requested view.
+Vector traces interpolate between grid points, and zoom has the resolution of
+the grid at acquisition time. Screen measurements gate the grid to the current
+view, and Full Record uses the complete acquired grid.
+
+Timing measurements use the existing threshold-crossing interpolation with the
+grid interval. A faster edge can therefore read as an interpolated grid-scale
+rise time. A gate with too few points or an unresolved crossing returns the
+usual unavailable value. The regular screen-resolution measurement path has
+no separate grid-limit flag.
+An averaged min/max grid keeps the usual pair restrictions on sample-weighted
+measurements such as mean and RMS.
+
 ## The measurement path
 
 ```
@@ -150,6 +167,10 @@ Rule: every raw frame counts once. Per route:
 - `MeasRead`: always counts once. It is made only of pair batches (the `RAW_PERIOD` read with live compression, the
   deep window of deep pairs, the STOP final when the record shown is pairs), whose frames are never folded.
 
+In Average, statistics use each measured update of the displayed average.
+Native-frame folds are excluded, and changing the stopped view adds no
+observations.
+
 The `stats` class of `ChangeSet` resets `mstat` and raises the statistics generation, `stats_gen`, the third number
 owned by `Generations` (README.md, [Generations](README.md#generations)). Today `settings_changed`
 clears `mstat` on every settings change, including changes that alter no measurement. Which fields belong to `stats`
@@ -166,6 +187,8 @@ This section describes the target port. The current `Shared` hand-off and final-
   the last record it has. The step never sleeps on it.
 - Batches that a STOP may need to replay are not armed ahead (`prearm_keeps_replay`). Open lever: let the armed batch
   finish and replay its newest frame instead (deep-meas.md, open levers).
+- Average STOP holds the accepted grid in the UI. It needs no final native read
+  or hardware replay for its stopped view.
 - Single: one batch per `epoch`. In Single, deep raw windows come with every batch.
 
 ## Rules

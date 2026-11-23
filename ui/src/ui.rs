@@ -2650,7 +2650,7 @@ impl Ui {
 
     /// (points, dt, time of the first point relative to the trigger) of the last record of channel c.
     pub fn record_info(&self, c: usize) -> Option<(usize, f64, f64)> {
-        let r = self.last[0].as_ref()?;
+        let r = self.displayed_reader_record()?;
         if r.ch[c].is_empty() {
             return None;
         }
@@ -2684,44 +2684,9 @@ impl Ui {
     }
 
     pub fn record_volts(&self, c: usize) -> Vec<f32> {
-        self.last[0]
-            .as_ref()
+        self.displayed_reader_record()
             .map(|r| r.ch[c].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect())
             .unwrap_or_default()
-    }
-
-    /// The samples a `:WAVeform` read uses. `memory` is RAW, or MAXimum while stopped: the deep record when the
-    /// acquisition kept one, otherwise the screen record.
-    fn channel_view(&self, c: usize, memory: bool) -> Option<(&[f32], f64, f64)> {
-        let rec = if memory { self.raw_read_record() } else { self.last[0].as_ref() }?;
-        if memory {
-            if let Some(raw) = rec.raw.as_ref().filter(|r| !r.frame.envelope) {
-                if let Some(v) = raw.frame.ch.get(c) {
-                    if !v.is_empty() && raw.frame.dt.is_finite() && raw.frame.dt > 0.0 {
-                        return Some((v.as_slice(), raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt));
-                    }
-                }
-            }
-        }
-        let v = rec.ch.get(c)?;
-        (!v.is_empty()).then_some((v.as_slice(), rec.dt, rec.t0))
-    }
-
-    /// How many points `channel_page` can walk. Zero when that source has no record.
-    pub fn channel_points(&self, c: usize, memory: bool) -> usize {
-        self.channel_view(c, memory).map(|(v, _, _)| v.len()).unwrap_or(0)
-    }
-
-    /// `(dt, t0)` of that same record. None when it is empty.
-    pub fn channel_origin(&self, c: usize, memory: bool) -> Option<(f64, f64)> {
-        self.channel_view(c, memory).map(|(_, dt, t0)| (dt, t0))
-    }
-
-    /// One page of a channel, 1-based inclusive, the same numbering as `:WAVeform:STARt` and `:WAVeform:STOP`.
-    /// `stop == 0` reads through the last point. The time is the first sample of the page.
-    pub fn channel_page(&self, c: usize, memory: bool, start: u64, stop: u64) -> Option<(Vec<f32>, f64, f64)> {
-        let (v, dt, t0) = self.channel_view(c, memory)?;
-        Some(copy_page(v, dt, t0, start, stop))
     }
 
     #[cfg(test)]
@@ -5936,12 +5901,27 @@ impl Ui {
     pub(crate) fn measure_last(&mut self) -> bool {
         // a raw window above the background size goes to the measurement worker (`measure_channel_sources`)
         let limit = analysis::BACKGROUND_MEASUREMENT_POINTS;
-        let measured = self.last[0].clone().is_some_and(|rec| self.measure_rec(&rec, limit));
-        if measured {
-            self.measure_channel_sources();
-        }
+        let measured = if self.readers_use_average() {
+            self.measure_average()
+        } else {
+            let measured = self.last[0].clone().is_some_and(|rec| self.measure_rec(&rec, limit));
+            if measured {
+                self.measure_channel_sources();
+            }
+            measured
+        };
         self.measure_refs();
         measured
+    }
+
+    fn measure_average(&mut self) -> bool {
+        let record = self.displayed_reader_record();
+        let present = record.is_some();
+        self.meas_env = std::array::from_fn(|c| record.is_some_and(|r| self.meas_on_pairs(r, c)));
+        change::acquisition::cancel_measurement(self);
+        self.meas_want = false;
+        self.measure_channel_sources();
+        present
     }
 
     /// The measurements of `rec` now, on this thread, of the channels with at most `limit` samples (`measure_work`).
@@ -6111,7 +6091,7 @@ impl Ui {
 
     /// The window of the hardware frame `meas_slice` measures channel `c` on, if it does.
     fn meas_frame(&self, rec: &Record, c: usize) -> Option<(std::sync::Arc<crate::board::Frame>, usize, usize)> {
-        let r = rec.raw.as_ref().filter(|_| self.m.acq != AcqMode::HiRes)?;
+        let r = self.reader_raw(rec).filter(|_| self.m.acq != AcqMode::HiRes)?;
         (r.i1 <= r.frame.ch[c].len() && r.i1 - r.i0 > rec.ch[c].len()).then(|| (r.frame.clone(), r.i0, r.i1))
     }
 
@@ -6119,7 +6099,7 @@ impl Ui {
     /// than the screen record (conditioned like the record), else the screen record.
     fn meas_slice<'a>(&self, rec: &'a Record, c: usize) -> (&'a [f32], f64) {
         // high res: the screen record is the mean of those samples, the measurements follow it
-        if let Some(r) = rec.raw.as_ref().filter(|_| self.m.acq != AcqMode::HiRes) {
+        if let Some(r) = self.reader_raw(rec).filter(|_| self.m.acq != AcqMode::HiRes) {
             if self.meas_frame(rec, c).is_some() {
                 return (&r.frame.ch[c][r.i0..r.i1], r.frame.dt);
             }

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The retained acquisition is independent of the screen's interpolated points.
+//! Retained captures and their stopped views.
 use super::*;
 use crate::board::identity::StopView;
 use crate::ui::lifecycle::worker::Worker;
@@ -91,6 +91,25 @@ fn acquire_demo(job: DemoJob) -> DemoResult {
 }
 
 impl Ui {
+    /// Both Average acquisition paths publish the displayed volts in the record's screen grid.
+    pub(super) fn readers_use_average(&self) -> bool {
+        self.m.acq == AcqMode::Average && !self.record_mode()
+    }
+
+    pub(super) fn reader_raw<'a>(&self, record: &'a Record) -> Option<&'a crate::wave::Raw> {
+        record.raw.as_ref().filter(|_| !self.readers_use_average())
+    }
+
+    /// During RUN, wait for the first record on a changed grid. STOP keeps the accepted grid
+    /// and its time origin while the viewport moves over it.
+    pub(super) fn displayed_reader_record(&self) -> Option<&Record> {
+        let record = self.last[0].as_ref()?;
+        if self.readers_use_average() && self.m.run == RunState::Run {
+            return average::current_grid(self, record).then_some(record);
+        }
+        Some(record)
+    }
+
     pub(super) fn cancel_demo_acquisition(&mut self) {
         if let Some(worker) = self.capture_views.borrow_mut().demo.as_mut() {
             if worker.thread.busy() {
@@ -275,14 +294,21 @@ impl Ui {
         Some(display)
     }
 
+    pub(super) fn reader_capture_view(&self, rec: &Record, view: (f32, f32)) -> Option<Arc<Record>> {
+        self.reader_raw(rec)?;
+        self.captured_record_view(rec, view)
+    }
+
     pub(super) fn captured_view(&self, view: (f32, f32)) -> Option<Arc<Record>> {
         self.captured_record_view(self.last[0].as_ref()?, view)
     }
 
     pub(super) fn refresh_capture_view(&mut self) {
-        let view = (self.m.time_per_div(), self.m.delay);
-        if let Some(rec) = self.captured_view(view) {
-            self.replace_stopped_view(rec.as_ref().clone());
+        if !self.readers_use_average() {
+            let view = (self.m.time_per_div(), self.m.delay);
+            if let Some(rec) = self.captured_view(view) {
+                self.replace_stopped_view(rec.as_ref().clone());
+            }
         }
     }
 
@@ -323,10 +349,10 @@ impl Ui {
     }
 
     pub(in crate::ui) fn measurement_record(&self) -> Option<&Record> {
-        if self.m.meas_full_record {
+        if self.m.meas_full_record && !self.readers_use_average() {
             self.raw_read_record()
         } else {
-            self.last[0].as_ref()
+            self.displayed_reader_record()
         }
     }
 

@@ -56,19 +56,48 @@ impl Operations {
     }
 }
 impl Ui {
-    /// The interpreter encodes this frame-owned view before returning to intake; IO receives owned bytes only.
-    pub(crate) fn scpi_wave_samples(&self, source: WaveId, memory: bool) -> &[f32] {
-        match source {
-            WaveId::Ch(channel) => {
-                self.channel_view(channel, memory).map(|(samples, _, _)| samples).unwrap_or_default()
+    /// The samples a `:WAVeform` read uses. `memory` is RAW, or MAXimum while stopped: the deep record when the
+    /// acquisition kept one, otherwise the screen record.
+    fn channel_view(&self, c: usize, memory: bool) -> Option<(&[f32], f64, f64)> {
+        let rec = if memory { self.raw_read_record() } else { self.displayed_reader_record() }?;
+        if memory {
+            if let Some(raw) = rec.raw.as_ref().filter(|r| !r.frame.envelope) {
+                if let Some(v) = raw.frame.ch.get(c) {
+                    if !v.is_empty() && raw.frame.dt.is_finite() && raw.frame.dt > 0.0 {
+                        return Some((v.as_slice(), raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt));
+                    }
+                }
             }
-            WaveId::Ref(slot) => self
-                .refs
-                .get(slot)
-                .and_then(Option::as_ref)
-                .filter(|record| record.v.len() >= 2 && record.dt > 0.0)
-                .map(|record| record.v.as_slice())
-                .unwrap_or_default(),
+        }
+        let v = rec.ch.get(c)?;
+        (!v.is_empty()).then_some((v.as_slice(), rec.dt, rec.t0))
+    }
+
+    /// How many points `channel_page` can walk. Zero when that source has no record.
+    pub fn channel_points(&self, c: usize, memory: bool) -> usize {
+        self.channel_view(c, memory).map(|(v, _, _)| v.len()).unwrap_or(0)
+    }
+
+    /// `(dt, t0)` of that same record. None when it is empty.
+    pub fn channel_origin(&self, c: usize, memory: bool) -> Option<(f64, f64)> {
+        self.channel_view(c, memory).map(|(_, dt, t0)| (dt, t0))
+    }
+
+    /// One page of a channel, 1-based inclusive, the same numbering as `:WAVeform:STARt` and `:WAVeform:STOP`.
+    /// `stop == 0` reads through the last point. The time is the first sample of the page.
+    pub fn channel_page(&self, c: usize, memory: bool, start: u64, stop: u64) -> Option<(Vec<f32>, f64, f64)> {
+        let (v, dt, t0) = self.channel_view(c, memory)?;
+        Some(copy_page(v, dt, t0, start, stop))
+    }
+
+    /// Borrow samples and timing together so points, metadata and data select the same record.
+    pub(crate) fn scpi_wave_view(&self, source: WaveId, memory: bool, raw: bool) -> Option<(&[f32], f64, f64)> {
+        match source {
+            WaveId::Ch(c) => self.channel_view(c, memory && (raw || !self.readers_use_average())),
+            WaveId::Ref(slot) => {
+                let record = self.refs.get(slot)?.as_ref()?;
+                (record.v.len() >= 2 && record.dt > 0.0).then_some((record.v.as_slice(), record.dt, record.t0))
+            }
         }
     }
 

@@ -2621,16 +2621,15 @@ impl Scpi {
         }
     }
 
-    /// RAW, or MAXimum while stopped: the deep record. NORMal, and MAXimum while running: the screen.
-    fn wave_memory(&self, ui: &Ui) -> bool {
-        self.waveform.read().mode == 2 || (self.waveform.read().mode == 1 && ui.m.run == RunState::Stop)
+    fn wave_view<'a>(&self, ui: &'a Ui) -> Option<(&'a [f32], f64, f64)> {
+        let selection = self.waveform.read();
+        let raw = selection.mode == 2;
+        let memory = raw || (selection.mode == 1 && ui.m.run == RunState::Stop);
+        ui.scpi_wave_view(selection.source, memory, raw)
     }
 
     fn wave_len(&self, ui: &Ui) -> u64 {
-        match self.waveform.read().source {
-            WaveId::Ch(c) => ui.channel_points(c, self.wave_memory(ui)) as u64,
-            WaveId::Ref(i) => ui.ref_info(i).map(|(n, _, _, _, _)| n as u64).unwrap_or(0),
-        }
+        self.wave_view(ui).map_or(0, |(samples, _, _)| samples.len() as u64)
     }
 
     /// How many points the current STARt/STOP page holds, without copying them.
@@ -2682,11 +2681,8 @@ impl Scpi {
 
     /// Sample interval and the time of the first point of the current page. Does not copy the samples.
     fn wave_origin(&self, ui: &Ui) -> (f64, f64) {
-        let (dt, t0) = match self.waveform.read().source {
-            WaveId::Ch(c) => ui.channel_origin(c, self.wave_memory(ui)).unwrap_or((0.0, 0.0)),
-            WaveId::Ref(i) => ui.ref_info(i).map(|(_, dt, t0, _, _)| (dt, t0)).unwrap_or((0.0, 0.0)),
-        };
-        let n = self.wave_len(ui);
+        let Some((samples, dt, t0)) = self.wave_view(ui) else { return (0.0, 0.0) };
+        let n = samples.len() as u64;
         let a = self.waveform.read().start.max(1);
         if n == 0 || a > n {
             (dt, t0)
@@ -3205,7 +3201,7 @@ impl Scpi {
         }
         let (vpd, offset) = self.wave_scale(ui);
         let (yinc, yorg, yref) = self.y_codes(vpd, offset);
-        let samples = ui.scpi_wave_samples(self.waveform.read().source, self.wave_memory(ui));
+        let samples = self.wave_view(ui).map(|(samples, _, _)| samples).unwrap_or_default();
         let start = (self.waveform.read().start.max(1) - 1).min(samples.len() as u64) as usize;
         let count = self.page_count(ui) as usize;
         let v = samples.get(start..start + count).unwrap_or_default();

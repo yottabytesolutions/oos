@@ -186,13 +186,18 @@ picture can therefore come from pairs, a window or full raw samples. STOP-time r
 See [placement input](../../ui/src/drawpipe/stage.rs), [tap provenance](../../ui/src/drawpipe/stage/readout.rs),
 [record drawing](../../ui/src/ui/step_draw.rs) and [STOP](../fork/stop-exact.md).
 
+In Average, the displayed grid also supplies measurements, tracked cursors, zoom and
+NORM/MAX waveform transfers. The newest native tap supplies RAW when available.
+See [records and measurements](records.md#records).
+
 ### STOP and RUN
 
 In normal hardware batch acquisition, STOP holds the source once there is a displayed record or the
 screen has been cleared. For captures that need a final record, the UI keeps taking data until the
 final request is acknowledged and the decoded-record queue drains, or until three seconds elapse.
 A stopped view can request a reread of the stored frame. Calibration, generator updates and side
-readings continue during the hold.
+readings continue during the hold. Average freezes the accepted grid at STOP and
+renders stopped pan and zoom from that grid.
 
 RUN publishes the new acquisition epoch before releasing the hold. RUN itself leaves the phosphor
 and window contents to the usual picture rules. Pending deposits and queued records are subject to

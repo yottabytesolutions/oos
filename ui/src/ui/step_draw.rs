@@ -230,7 +230,7 @@ pub(super) fn replay(
     first: &mut FirstDraw,
     composition: &mut Composition,
 ) -> usize {
-    if first.waiting() {
+    if first.waiting() || ui.readers_use_average() {
         return 0;
     }
     let pipe = drawpipe::start_pipe(sw);

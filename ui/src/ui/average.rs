@@ -31,6 +31,7 @@ pub(super) fn reset_history_channels(state: &mut State) {
 #[derive(PartialEq)]
 struct Grid {
     time: (f64, f64, bool),
+    main: (f32, f32),
     zoom: Option<(f32, f32)>,
     depth: usize,
     channels: [bool; NCH],
@@ -41,6 +42,7 @@ impl Grid {
     fn of(m: &Model, rec: &Record) -> Self {
         Self {
             time: (rec.t0, rec.dt, rec.pairs),
+            main: (m.time_per_div(), m.delay),
             zoom: m.zoom.then(|| (TIME_SCALES[m.zscale], m.zdelay)),
             depth: m.mdepth,
             channels: m.ch.each_ref().map(|c| c.on),
@@ -51,6 +53,10 @@ impl Grid {
     fn matches(&self, rec: &Record) -> bool {
         self.time == (rec.t0, rec.dt, rec.pairs)
     }
+}
+
+pub(super) fn current_grid(ui: &Ui, record: &Record) -> bool {
+    ui.batch_picture.average.grid.as_ref().is_some_and(|grid| *grid == Grid::of(&ui.m, record))
 }
 
 fn previous<'a>(ui: &'a Ui, grid: &Grid, first: FirstDraw) -> Option<&'a Record> {

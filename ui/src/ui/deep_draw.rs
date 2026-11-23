@@ -61,7 +61,7 @@ impl ReaderTaps {
     }
 
     pub(super) fn next_record(&mut self, ui: &Ui, tap: bool) {
-        if self.previous_tap.replace(tap) == Some(true) {
+        if self.previous_tap.replace(tap) == Some(true) && !ui.readers_use_average() {
             if let Some(record) = &ui.last[0] {
                 if self.fold_displaced(ui, record) {
                     drawpipe::Counters::add(&drawpipe::counters().measured, 1);
@@ -99,6 +99,10 @@ impl ReaderTaps {
     }
 
     pub(super) fn fold(self, ui: &mut Ui, raw_record: Option<&Record>) {
+        if ui.readers_use_average() {
+            ui.batch_picture.tap_statistics = None;
+            return;
+        }
         if let Some(folds) = self.folds {
             ui.mstat_fold(&folds);
         }
@@ -299,9 +303,13 @@ pub(super) fn record(
 }
 
 pub(super) fn draw_record(ui: &mut Ui, rec: &Record) {
+    draw_record_weighted(ui, rec, 24);
+}
+
+pub(super) fn draw_record_weighted(ui: &mut Ui, rec: &Record, weight: u16) {
     let mainv = (ui.m.time_per_div(), ui.m.delay);
     let zv = (TIME_SCALES[ui.m.zscale], ui.m.zdelay);
-    let zoom = ui.m.zoom.then(|| (ui.zoom_display_model(), ui.captured_record_view(rec, zv)));
+    let zoom = ui.m.zoom.then(|| (ui.zoom_display_model(), ui.reader_capture_view(rec, zv)));
     let zw = ui.z_weights(rec);
     for c in 0..NCH {
         if ui.m.ch[c].on && !rec.ch[c].is_empty() && ui.m.z_src != Some(c) {
@@ -314,7 +322,7 @@ pub(super) fn draw_record(ui: &mut Ui, rec: &Record) {
                 main.t0 - ui.m.deskew_ch[c],
                 main.dt,
                 &main.ch[c],
-                24,
+                weight,
                 if shifted_main.is_some() { None } else { zw.as_deref() },
                 main.pairs,
             );
@@ -328,7 +336,7 @@ pub(super) fn draw_record(ui: &mut Ui, rec: &Record) {
                     z.t0 - ui.m.deskew_ch[c],
                     z.dt,
                     &z.ch[c],
-                    24,
+                    weight,
                     if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() },
                     z.pairs,
                 );
@@ -343,7 +351,9 @@ pub(super) fn update_readers(ui: &mut Ui, raw_rec: Option<Record>) {
     let shown = ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
     let hold = held_deep(ui) || crate::compress::hold(&ui.m, shown);
     let p0 = std::time::Instant::now();
-    if hold {
+    if ui.readers_use_average() {
+        ui.meas_new |= ui.measure_last();
+    } else if hold {
         // the measurement shown stays that of the last raw deep record, or of this step's
         if let Some(r) = raw_rec {
             if ui.meas_bg.is_some() {

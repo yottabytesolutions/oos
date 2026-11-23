@@ -81,7 +81,7 @@ impl Ui {
         if shift == 0.0 {
             return None;
         }
-        self.captured_record_view(record, (view.0, (view.1 as f64 + shift) as f32))
+        self.reader_capture_view(record, (view.0, (view.1 as f64 + shift) as f32))
     }
 
     pub(super) fn deskew_samples(&self, source: WaveId) -> Option<(&[f32], f64, f64)> {
@@ -91,8 +91,8 @@ impl Ui {
                 Some((&r.v, r.dt, self.source_time_origin(source, r.t0)))
             }
             WaveId::Ch(c) => {
-                let r = self.last[0].as_ref()?;
-                if let Some(raw) = r.raw.as_ref().filter(|raw| !raw.frame.envelope && raw.frame.ch[c].len() >= 4) {
+                let r = self.displayed_reader_record()?;
+                if let Some(raw) = self.reader_raw(r).filter(|raw| !raw.frame.envelope && raw.frame.ch[c].len() >= 4) {
                     Some((
                         &raw.frame.ch[c],
                         raw.frame.dt,
@@ -104,6 +104,26 @@ impl Ui {
             }
         }
     }
+    /// A source at physical time, interpolated from the selected record with deskew.
+    pub(crate) fn wave_at_source(&self, source: WaveId, t: f64) -> Option<f32> {
+        if matches!(source, WaveId::Ch(c) if c >= n_ch() || !self.m.ch[c].on) {
+            return None;
+        }
+        let (w, dt, t0) = self.deskew_samples(source)?;
+        if w.is_empty() || !dt.is_finite() || dt <= 0.0 {
+            return None;
+        }
+        let index = (t - t0) / dt;
+        if !index.is_finite() || index < 0.0 || index > w.len().saturating_sub(1) as f64 {
+            return None;
+        }
+        let i = index.floor() as usize;
+        let a = *w.get(i)?;
+        let b = w.get(i + 1).copied().unwrap_or(a);
+        let value = a + index.fract() as f32 * (b - a);
+        value.is_finite().then_some(value)
+    }
+
     pub(super) fn auto_deskew(&mut self) {
         let center = self.view().1 as f64;
         let sources = (0..n_ch())

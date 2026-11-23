@@ -162,3 +162,6 @@ fn word_volts_f64(x: u16, scale: f64, offset: f64) -> f32 {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(super) mod test_support;

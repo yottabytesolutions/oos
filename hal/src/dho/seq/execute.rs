@@ -1,48 +1,20 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Generic acquisition and step execution; the clock is supplied at the IO boundary.
-use super::time::{fill_count, BatchWait, STOP_POLL};
-use super::*;
+
+//! Batch acquisition and execution of register and DMA steps.
+
+use super::arm::batch_arm;
+use super::time::{self, Clock};
+use super::wait::{fill_count, poll, poll_after, record_time, BatchWait};
+use super::{frames, raw_settings, read_len, unpad_in, Settings, State, Step, NEW_SETTINGS};
+use crate::dho::hz;
 use std::time::{Duration, Instant};
 
-impl State {
-    /// Arm at frame zero and wait for the first frame to complete.
-    pub fn arm_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
-        let mut st = self.arm_only_steps(s, p);
-        st.extend(wait_steps(p));
-        st
-    }
+#[cfg(target_os = "linux")]
+pub(super) mod linux;
+#[cfg(test)]
+mod tests;
 
-    /// Arm at frame zero without waiting, before the host decodes the previous batch.
-    pub fn arm_only_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
-        // A deep live capture can occupy frame zero beyond the stock segmented-record ring.
-        self.arm_record_steps(s, 0, frames(s, p))
-    }
-
-    /// Arm without waiting, starting at the given frame within the stock segmented-record ring.
-    pub fn arm_only_steps_at(&mut self, s: &Settings, p: &hz::Params, first: u32) -> Result<Vec<Step>, String> {
-        let nf = frames(s, p);
-        validate_ring_arm(p, first, nf)?;
-        Ok(self.arm_record_steps(s, first, nf))
-    }
-}
-
-fn batch_arm(st: &mut State, s: &Settings, p: &hz::Params, first: u32, armed: bool) -> Result<Vec<Step>, String> {
-    let mut steps = if armed {
-        if first != 0 {
-            validate_ring_arm(p, first, frames(s, p))?;
-        }
-        Vec::new()
-    } else if first == 0 {
-        st.arm_only_steps(s, p)
-    } else {
-        st.arm_only_steps_at(s, p, first)?
-    };
-    steps.extend(wait_steps(p));
-    Ok(steps)
-}
-
-/// Host observations of the unchanged acquisition sequence.
 #[derive(Debug)]
 pub enum BatchPhase {
     Arm(Duration),
@@ -64,7 +36,7 @@ pub fn acquire_batch_observed<B: crate::dho::bus::Bus, R: std::io::Read>(
     c2h: &mut R,
     dma: &mut crate::dho::bus::DmaBuf,
     armed: bool,
-    (wait, clock): (BatchWait, &impl super::time::Clock),
+    (wait, clock): (BatchWait, &impl Clock),
     log: impl FnMut(String),
     stop: impl Fn() -> bool,
     (stop_fill, before_read): (impl Fn() -> bool, impl FnMut(u32) -> bool),
@@ -90,7 +62,7 @@ pub fn acquire_batch_observed<B: crate::dho::bus::Bus, R: std::io::Read>(
 /// One batch on the unit: arm `frames(s, p)` frames, wait for the first, then let the ring fill until all frames are
 /// recorded or `wait_ms` have passed since the first one (0x4010 reads back the last recorded frame, so the count is
 /// `0x4010 - first + 1`), then play and read exactly those frames into `dma`.
-/// `armed`: `prearm` already armed this batch with the same `s` and `p`; only the wait is left.
+/// `armed`: `arm_only_steps` already armed this batch with the same `s` and `p`; only the wait is left.
 /// Returns the count; the bytes (`count` x `frame_bytes`) are `dma.data()`.
 /// Generic over the bus, so the host model (`seg::sim::Engine`) runs it too.
 #[allow(clippy::too_many_arguments)] // Retains the existing register, DMA, logging and cancellation boundary.
@@ -143,7 +115,7 @@ pub fn acquire_batch_idle<B: crate::dho::bus::Bus, R: std::io::Read>(
     stop: impl Fn() -> bool,
     idle: impl FnMut() -> bool,
 ) -> Result<u32, String> {
-    acquire_batch_with_clock(st, s, p, bar, c2h, dma, armed, wait_ms, log, stop, idle, &super::time::Real)
+    acquire_batch_with_clock(st, s, p, bar, c2h, dma, armed, wait_ms, log, stop, idle, &time::Real)
 }
 
 /// Same acquisition using an explicit clock, including all arm/read polls.
@@ -160,7 +132,7 @@ pub fn acquire_batch_with_clock<B: crate::dho::bus::Bus, R: std::io::Read>(
     log: impl FnMut(String),
     stop: impl Fn() -> bool,
     idle: impl FnMut() -> bool,
-    clock: &impl super::time::Clock,
+    clock: &impl Clock,
 ) -> Result<u32, String> {
     acquire_batch_phases(
         st,
@@ -192,7 +164,7 @@ fn acquire_batch_phases<B: crate::dho::bus::Bus, R: std::io::Read>(
     mut log: impl FnMut(String),
     stop: impl Fn() -> bool,
     mut idle: impl FnMut() -> bool,
-    clock: &impl super::time::Clock,
+    clock: &impl Clock,
     mut observed: Option<(impl FnMut(BatchPhase), impl Fn() -> bool, impl FnMut(u32) -> bool)>,
 ) -> Result<u32, String> {
     let arm = batch_arm(st, s, p, wait.first, armed)?;
@@ -227,7 +199,7 @@ fn first_record(
     armed_at: Option<Instant>,
     p: &hz::Params,
     (bar, c2h, dma): (&mut impl crate::dho::bus::Bus, &mut impl std::io::Read, &mut crate::dho::bus::DmaBuf),
-    (log, stop, clock): (&mut impl FnMut(String), &impl Fn() -> bool, &impl super::time::Clock),
+    (log, stop, clock): (&mut impl FnMut(String), &impl Fn() -> bool, &impl Clock),
     observe: &mut impl FnMut(BatchPhase),
 ) -> Result<(), String> {
     let at = arm.iter().position(|step| matches!(step, Step::Poll { .. })).unwrap_or(arm.len());
@@ -240,8 +212,8 @@ fn first_record(
     }
     let armed_at = armed_at.unwrap_or(now);
     if let Some((step, tail)) = steps.split_first() {
-        let delay = super::time::record_time(p.memsel.saturating_sub(p.pre), p.rate)
-            .saturating_sub(now.saturating_duration_since(armed_at));
+        let delay =
+            record_time(p.memsel.saturating_sub(p.pre), p.rate).saturating_sub(now.saturating_duration_since(armed_at));
         poll_after(step, bar, log, stop, clock, delay)?;
         execute_with_clock(tail, bar, c2h, dma, log, stop, clock)?;
     }
@@ -255,7 +227,7 @@ fn read_batch<B: crate::dho::bus::Bus, R: std::io::Read>(
     c2h: &mut R,
     dma: &mut crate::dho::bus::DmaBuf,
     log: &mut impl FnMut(String),
-    clock: &impl super::time::Clock,
+    clock: &impl Clock,
     observe: Option<impl FnMut(BatchPhase)>,
 ) -> Result<(), String> {
     let Some(mut observe) = observe else {
@@ -301,7 +273,7 @@ pub fn execute_bus_until<B: crate::dho::bus::Bus, R: std::io::Read>(
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
 ) -> Result<(), String> {
-    execute_with_clock(steps, bar, c2h, dma, log, stop, &super::time::Real)
+    execute_with_clock(steps, bar, c2h, dma, log, stop, &time::Real)
 }
 
 fn execute_with_clock<B: crate::dho::bus::Bus, R: std::io::Read>(
@@ -311,7 +283,7 @@ fn execute_with_clock<B: crate::dho::bus::Bus, R: std::io::Read>(
     dma: &mut crate::dho::bus::DmaBuf,
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
-    clock: &impl super::time::Clock,
+    clock: &impl Clock,
 ) -> Result<(), String> {
     let mut steps = steps.iter().peekable();
     while let Some(s) = steps.next() {
@@ -324,14 +296,14 @@ fn execute_with_clock<B: crate::dho::bus::Bus, R: std::io::Read>(
 }
 
 /// One step of `execute_bus` / `execute_into_until` other than the AFE steps.
-pub(super) fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
+fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
     s: &Step,
     bar: &mut B,
     c2h: &mut R,
     dma: &mut crate::dho::bus::DmaBuf,
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
-    clock: &impl super::time::Clock,
+    clock: &impl Clock,
 ) -> Result<(), String> {
     match s {
         Step::Wr((off, v)) => bar.wr(*off, *v),
@@ -354,75 +326,20 @@ pub(super) fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
     Ok(())
 }
 
-fn poll<B: crate::dho::bus::Bus>(
-    step: &Step,
+/// A second read of frame `index` of the batch just read with FPGA compression (`s.compress` > 1), this time raw: the
+/// same record, every sample (fork, docs/fork/compress.md). The ring is played again as for the LA read and the stamp
+/// plays of hardware segments; nothing may arm or write the FPGA in between. The frame lands in `dma`
+/// (`frame_bytes` of `raw_settings(s)`).
+#[allow(clippy::too_many_arguments)] // Shares the acquisition register, DMA and logging ports.
+pub fn read_raw_again<B: crate::dho::bus::Bus, R: std::io::Read>(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
     bar: &mut B,
-    log: &mut impl FnMut(String),
-    stop: &impl Fn() -> bool,
-    clock: &impl super::time::Clock,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    index: u32,
+    log: impl FnMut(String),
 ) -> Result<(), String> {
-    poll_after(step, bar, log, stop, clock, Duration::ZERO)
+    execute_bus(&st.read_steps_at(&raw_settings(s), p, index, 1), bar, c2h, dma, log)
 }
-
-fn poll_after(
-    step: &Step,
-    bar: &mut impl crate::dho::bus::Bus,
-    log: &mut impl FnMut(String),
-    stop: &impl Fn() -> bool,
-    clock: &impl super::time::Clock,
-    delay: Duration,
-) -> Result<(), String> {
-    let Step::Poll { reg, bit, ms, what } = step else { return Ok(()) };
-    let t = clock.now();
-    let mut last = bar.rd(*reg);
-    let delay = delay.min(STOP_POLL);
-    if last & bit == 0 && !delay.is_zero() {
-        if stop() {
-            return Err(NEW_SETTINGS.into());
-        }
-        clock.wait(delay);
-        last = bar.rd(*reg);
-        if last & bit == 0 && stop() {
-            return Err(NEW_SETTINGS.into());
-        }
-    }
-    let mut k = 0u32;
-    while last & bit == 0 && clock.now().saturating_duration_since(t).as_millis() < *ms as u128 {
-        clock.wait(std::time::Duration::from_micros(500));
-        last = bar.rd(*reg);
-        k += 1;
-        if k.is_multiple_of(20) && last & bit == 0 && stop() {
-            log(format!(
-                "{} {} ({:.1} ms)",
-                what,
-                NEW_SETTINGS,
-                clock.now().saturating_duration_since(t).as_secs_f64() * 1e3
-            ));
-            return Err(NEW_SETTINGS.into());
-        }
-    }
-    let ok = last & bit != 0;
-    log(format!(
-        "{} {} ({:#x} = {:#010x}, {:.1} ms)",
-        what,
-        if ok { "ok" } else { "TIMEOUT" },
-        reg,
-        last,
-        clock.now().saturating_duration_since(t).as_secs_f64() * 1e3
-    ));
-    if !ok && *reg == 0x4080 {
-        // 0x4030 bit 20 = mask/zone read-back started, [3:0] = FSM state (5 = waiting for the column window)
-        let st = bar.rd(0x4030);
-        return Err(format!(
-            "no acquisition (0x4080 bit30 not set; 0x4030 = {:#010x}, readback {}, state {})",
-            st,
-            st >> 20 & 1,
-            st & 0xf
-        ));
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests;

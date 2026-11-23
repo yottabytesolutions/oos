@@ -44,7 +44,7 @@ measured on the unit.
 | `acquire_batch(_until)` | `Bar1` + `File`, returns `(Vec<u8>, u32)`, linux only | generic `Bus`/`Read`, writes into `DmaBuf`, `armed` flag, returns count | fork | host model runs it; zero-copy into the decode | keep; highest merge-conflict spot (upstream edited it in f1b2d6c) |
 | Early trigger end (NEW_SETTINGS) | upstream f1b2d6c, in `execute_until` Poll | ported into `plain_step` Poll, same 10 ms check | equal | same code moved | keep; guard 3 so a future upstream edit to the Poll body is not lost |
 | Prearm | none | `arm_only_steps` after the read (and LA read), `disarm_steps` before any other FPGA write; opt-in `OOS_PREARM` | fork, unverified | `prearm_writes_the_same_sequence_as_the_plain_batch_loop` | keep opt-in until the unit check; see open risk below |
-| LA read | `execute` -> new buffer per read | unchanged (`acquire_la` still allocates) | equal | n/a on this unit (`la = no`) | low: pass a second `DmaBuf` |
+| LA read | `execute` -> new buffer per read | unchanged (`acquire_la_with_clock` still allocates) | equal | n/a on this unit (`la = no`) | low: pass a second `DmaBuf` |
 | Roll/scan read | `read_dma` + `deinterleave` + `volts` per chunk read | unchanged upstream path | upstream path left | small reads, ~30/s | low: switch to a kept `DmaBuf` and `decode_volts` |
 | xdma params | `insmod xdma.ko poll_mode=1` fixed | `xdma.params` system key, default `poll_mode=1`, validated in `oos-fpga-up` (sh) and `fpgad::xdma_params` (Rust) | fork, opt-in, unverified | default identical to upstream | keep; validation exists twice, add one test that feeds both the same bad inputs |
 | MaxPayload 256 | none | `OOS_BOOTARGS_EXTRA` in unit `build.env`, commented out | fork, opt-in | perf-plan.md | keep |

@@ -15,9 +15,9 @@ const ERROR: &str = ":SYSTem:ERRor?";
 const STOPPED: &str = "fps 30 frames 1 records 1 run Stop watchdog ok";
 const RUNNING: &str = "fps 30 frames 1 records 1 run Run watchdog ok";
 const BEFORE: &str = "fps 30 frames 1 records 1 run Run watchdog ok fresh=1 first_records=1 \
-    records read=2 deposited=2 shown=1 rejected.stale_key=0 records.recovered=0 flip.late=1 fallback.v1 decoded_lines=2 decoded_dots=5";
+    records read=2 deposited=2 shown=1 rejected.stale_key=0 records.recovered=0 present.v2 flip.shown=30 flip.late=1 fallback.v1 decoded_lines=2 decoded_dots=5";
 const AFTER: &str = "fps 30 frames 2 records 7 run Run watchdog ok fresh=31 first_records=101 \
-    records read=132 deposited=112 shown=111 rejected.stale_key=0 records.recovered=1 flip.late=3 fallback.v1 decoded_lines=5 decoded_dots=5";
+    records read=132 deposited=112 shown=111 rejected.stale_key=0 records.recovered=1 present.v2 flip.shown=180 flip.late=3 fallback.v1 decoded_lines=5 decoded_dots=5";
 
 type Replies = VecDeque<(String, Result<String, String>)>;
 

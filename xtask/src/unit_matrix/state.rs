@@ -2,7 +2,8 @@
 
 use std::{collections::BTreeMap, iter::Peekable};
 
-const SECTIONS: &[&str] = &["stage.v1", "work.v1", "route.v1", "source.v1", "present.v1", "fallback.v1"];
+pub(super) const PRESENTATION: &str = "present.v2";
+const SECTIONS: &[&str] = &["stage.v1", "work.v1", "route.v1", "source.v1", "present.v1", PRESENTATION, "fallback.v1"];
 const DISARM_KEYS: [&str; 5] = ["total", "unknown", "no_completed_record", "recorded", "dropped"];
 pub(super) const DEPOSITED: &str = "records.deposited";
 const RECORD_KEYS: [&str; 3] = ["records.read", DEPOSITED, "records.shown"];
@@ -24,6 +25,14 @@ pub(super) const SUMMARY_KEYS: &[&str] = &[
 
 pub(super) type Counters = BTreeMap<String, i128>;
 pub(super) type Sections = BTreeMap<String, BTreeMap<String, String>>;
+
+pub(super) fn require_presentation(sections: &Sections) -> Result<(), String> {
+    if sections.contains_key(PRESENTATION) {
+        Ok(())
+    } else {
+        Err(format!("requires {PRESENTATION} target-refresh flip counters"))
+    }
+}
 
 #[derive(Debug, Default)]
 pub(super) struct State {
@@ -108,6 +117,9 @@ impl State {
 
 fn cumulative_counter(section: Option<&str>, key: &str) -> bool {
     // Integer gauges and rolling statistics can fall during normal acquisition.
+    if matches!(key, "flip.late" | "flip.shown") {
+        return section == Some(PRESENTATION);
+    }
     SUMMARY_KEYS.contains(&key)
         || key.starts_with("lost.")
         || key.starts_with("rejected.")
@@ -127,8 +139,6 @@ fn cumulative_counter(section: Option<&str>, key: &str) -> bool {
                 | "queue_overflow"
                 | "fold_drops"
                 | "stage.truncated"
-                | "flip.shown"
-                | "flip.late"
                 | "flip.timeout"
                 | "flip.modeset"
                 | "flip.failed"
@@ -167,7 +177,6 @@ mod tests {
             ("records.recovered", 0),
             ("first_records", 492795),
             ("fresh", 5635),
-            ("flip.late", 335),
             ("acq_batch_prearm", 6588),
             ("source.wait_admission", 17),
             ("step.missed", 149),
@@ -184,6 +193,16 @@ mod tests {
         ] {
             assert_eq!(state.sections[section][key], value);
         }
+        assert!(!state.counters.contains_key("flip.late"));
+        assert!(require_presentation(&state.sections).is_err());
+    }
+
+    #[test]
+    fn reads_target_miss_counts_only_from_present_v2() {
+        let state = State::parse("present.v2 flip.shown=10 flip.late=1 present.v3 flip.late=9");
+        assert!(require_presentation(&state.sections).is_ok());
+        assert_eq!(state.counters["flip.shown"], 10);
+        assert_eq!(state.counters["flip.late"], 1);
     }
 
     #[test]

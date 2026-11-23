@@ -10,7 +10,8 @@ fn queue_panel_accounts_for_a_delivered_flip_before_timing_out() {
     let (rx, mut tx) = UnixStream::pair().unwrap();
     let mut out = Outputs::new(Display::scanout_fixture(rx.as_raw_fd()), false);
     let now = Instant::now();
-    let clock = FrameClock::new(ClockMode::Flip, FlipDivisor::Three, now, Duration::from_millis(10));
+    let refresh = out.disp.refresh_period();
+    let clock = FrameClock::new(ClockMode::Flip, FlipDivisor::Three, now - refresh * 2, refresh);
     out.panel.stage(1, clock.seal(), now);
     out.service_panel(now, None);
     let mut before = String::new();

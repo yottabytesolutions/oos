@@ -25,15 +25,18 @@ impl Outputs {
         self.service_panel(now, flipped);
     }
 
-    pub(super) fn read_panel_event(&mut self) -> Option<Instant> {
+    pub(super) fn read_panel_event(&mut self) -> Option<Flip> {
         let events = self.disp.read_flips(0);
-        self.vblank =
-            events.vblank.map(|event| Flip { sequence: event.sequence, at: instant(event.monotonic) }).or(self.vblank);
-        events.flip.map(|event| instant(event.monotonic))
+        let [vblank, flipped] = [events.vblank, events.flip]
+            .map(|event| event.map(|event| Flip { sequence: event.sequence, at: instant(event.monotonic) }));
+        self.vblank = vblank.or(self.vblank);
+        flipped
     }
 
-    pub(super) fn service_panel(&mut self, now: Instant, flipped: Option<Instant>) {
-        self.panel.service(now, flipped, self.disp.refresh_period(), |back| self.disp.request_flip(back, now));
+    pub(super) fn service_panel(&mut self, now: Instant, flipped: Option<Flip>) {
+        self.panel.service(now, self.vblank, flipped, self.disp.refresh_period(), |back, modeset_due| {
+            self.disp.request_flip(back, now, modeset_due)
+        });
     }
 }
 

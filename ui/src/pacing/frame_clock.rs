@@ -54,30 +54,44 @@ struct MissedSteps {
     helper: u64,
 }
 
-pub(crate) struct FrameClock {
-    mode: ClockMode,
+struct Step {
+    at: Instant,
+    vblank: Option<Flip>,
+}
+
+struct Cadence {
     refresh: Duration,
     divisor: u32,
+    period: Duration,
+    target_refreshes: u32,
+}
+
+pub(crate) struct FrameClock {
+    mode: ClockMode,
+    cadence: Cadence,
     phase: u32,
-    last_step: Instant,
+    last_step: Step,
     resume_after: Option<Instant>,
     idle_since: Instant,
     last_flip: Option<Flip>,
     flip_timeout: Instant,
     fallback: bool,
-    deferred: Option<FrameSlot>,
+    deferred: Option<(FrameSlot, Flip)>,
     skipped: MissedSteps,
 }
 
 impl FrameClock {
     pub(crate) fn new(mode: ClockMode, divisor: FlipDivisor, now: Instant, refresh: Duration) -> Self {
         let refresh = if refresh.is_zero() { TIMER_PERIOD / 2 } else { refresh };
+        let divisor = divisor as u32;
+        let period = if mode == ClockMode::Timer { TIMER_PERIOD } else { refresh * divisor };
+        let budget = crate::drawpipe::budget::pipeline_budget(period);
+        let target_refreshes = (budget.as_nanos() / refresh.as_nanos()).clamp(1, u128::from(u32::MAX)) as u32;
         Self {
             mode,
-            refresh,
-            divisor: divisor as u32,
+            cadence: Cadence { refresh, divisor, period, target_refreshes },
             phase: 0,
-            last_step: now,
+            last_step: Step { at: now, vblank: None },
             resume_after: None,
             idle_since: now,
             last_flip: None,
@@ -93,10 +107,7 @@ impl FrameClock {
     }
 
     pub(crate) fn period(&self) -> Duration {
-        match self.mode {
-            ClockMode::Timer => TIMER_PERIOD,
-            ClockMode::Flip => self.refresh * self.divisor,
-        }
+        self.cadence.period
     }
 
     /// Returns elapsed time for a due step and whether the clock just entered timer fallback.
@@ -118,7 +129,8 @@ impl FrameClock {
         };
         let elapsed = ready.then(|| {
             let period = self.period();
-            let elapsed = now.duration_since(std::mem::replace(&mut self.last_step, now));
+            let elapsed = now.duration_since(self.last_step.at);
+            self.last_step = Step { at: now, vblank: self.deferred.take().map(|(_, edge)| edge) };
             if self.mode == ClockMode::Timer || self.fallback {
                 let missed = (elapsed.as_nanos() / period.as_nanos()).saturating_sub(1);
                 let already_counted = self.skipped.total - self.skipped.at_step;
@@ -133,14 +145,14 @@ impl FrameClock {
 
     fn flip_ready(&mut self, now: Instant, flip: Option<Flip>, slot: FrameSlot) -> bool {
         if let Some(flip) = flip.filter(|event| self.last_flip.is_none_or(|last| event.sequence != last.sequence)) {
-            let divisor = u64::from(self.divisor);
+            let divisor = u64::from(self.cadence.divisor);
             let refreshes = self.last_flip.map_or(u64::from(flip.sequence) % divisor, |last| {
                 u64::from(self.phase) + u64::from(flip.sequence.wrapping_sub(last.sequence))
             });
             self.phase = (refreshes % divisor) as u32;
             let can_defer = slot != FrameSlot::Ready
-                && flip.at >= self.last_step
-                && self.idle_since.saturating_duration_since(self.last_step) < self.period()
+                && flip.at >= self.last_step.at
+                && self.idle_since.saturating_duration_since(self.last_step.at) < self.period()
                 && self.resume_after.is_none();
             let due = self.phase == 0
                 && (flip.at >= self.flip_ready_after() || can_defer)
@@ -150,11 +162,11 @@ impl FrameClock {
             if self.resume_after.is_none() {
                 let superseded = self.deferred.filter(|_| periods > 0);
                 self.skipped.total += periods.saturating_sub(u64::from(due)) + u64::from(superseded.is_some());
-                self.skipped.helper += u64::from(superseded == Some(FrameSlot::HelperBusy));
+                self.skipped.helper += u64::from(superseded.is_some_and(|(slot, _)| slot == FrameSlot::HelperBusy));
             }
             // Keep one due step until the display can accept it, even between vblanks.
             if periods > 0 || due {
-                self.deferred = due.then_some(slot);
+                self.deferred = due.then_some((slot, flip));
             }
             self.last_flip = Some(flip);
             self.flip_timeout = now + FLIP_TIMEOUT;
@@ -166,11 +178,11 @@ impl FrameClock {
             self.deferred = None;
             return slot == FrameSlot::Ready && now >= self.timer_deadline();
         }
-        slot == FrameSlot::Ready && self.deferred.take().is_some()
+        slot == FrameSlot::Ready && self.deferred.is_some()
     }
 
     pub(crate) fn seal(&self) -> Picture {
-        Picture::new(self.last_step)
+        Picture::new(self.last_step.at, self.last_step.vblank, self.cadence.refresh, self.cadence.target_refreshes)
     }
 
     pub(crate) fn skipped(&self) -> u64 {
@@ -197,8 +209,8 @@ impl FrameClock {
             return self.timer_deadline();
         }
         let next = self.last_flip.map_or(self.flip_timeout, |flip| {
-            let refreshes = self.divisor - self.phase;
-            at_or_after(flip.at + self.refresh * refreshes, self.period(), now.max(self.flip_ready_after()))
+            let refreshes = self.cadence.divisor - self.phase;
+            at_or_after(flip.at + self.cadence.refresh * refreshes, self.period(), now.max(self.flip_ready_after()))
         });
         let fallback = self.flip_timeout.max(self.timer_deadline());
         if next >= self.flip_timeout {
@@ -213,7 +225,7 @@ impl FrameClock {
     }
 
     fn timer_deadline(&self) -> Instant {
-        self.last_step + self.period()
+        self.last_step.at + self.period()
     }
 }
 

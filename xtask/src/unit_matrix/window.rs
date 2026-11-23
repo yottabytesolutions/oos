@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::state::{Counters, Sections, State, DEPOSITED};
+use super::state::{require_presentation, Counters, Sections, State, DEPOSITED};
 use crate::unit_tools::scpi::{parse_state, Scpi, STATE};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -123,6 +123,7 @@ fn checked_state(reply: &str) -> Result<State, Failure> {
     if parse_state(reply) != Ok(true) {
         return Err("unit did not report RUN during the sampling window".to_owned().into());
     }
+    require_presentation(&state.sections)?;
     Ok(state)
 }
 

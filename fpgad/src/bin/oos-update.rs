@@ -16,6 +16,7 @@
 //!   oos-update kexec-check FILE.oosupd     load the package's kernel and initramfs for a kexec start and unload them
 //!                                          again: nothing written, no restart
 //!   oos-update sd-mode [--execute]         restage sd.mode from system.conf for the next boot, on trial
+//!   oos-update card-check                  record the running boot card mode for diagnostics
 //!   oos-update rollback [--execute]        write the rollback image back to recovery and arm OOS
 //!   oos-update gel-install FILE.oosupd --save DIR [--any-model] [--reinstall] [--execute]
 //!                                          first install from the running stock system, rescue set in DIR; again on
@@ -77,12 +78,7 @@ fn put(w: &mut dyn std::io::Write, closed: &std::sync::atomic::AtomicBool, a: st
     }
 }
 
-mod oos_update {
-    pub(crate) mod args;
-    pub(crate) mod messages;
-    pub(crate) mod sign;
-    pub(crate) mod storage;
-}
+mod oos_update;
 
 use oos_update::{
     messages,
@@ -179,8 +175,7 @@ fn read_file(p: &str) -> Vec<u8> {
 
 fn main() {
     let a = Args::parse();
-    let cmd = a.command();
-    match cmd {
+    match a.command() {
         "status" => status(&a),
         "verify" => {
             let f = a.rest.get(1).unwrap_or_else(|| die("verify FILE"));
@@ -200,6 +195,7 @@ fn main() {
         "install" => install(&a),
         "gel-install" => gel_install(&a),
         "kexec-check" => kexec_check(&a),
+        "card-check" => oos_update::card_check::run(),
         "sd-mode" | "rollback" | "storage-write" | "storage-data" => oos_update::storage::run(&a),
         "confirm" => {
             need_data(&a);
@@ -251,7 +247,7 @@ fn main() {
         "watch" => watch(&a),
         "keygen" => keygen(&a),
         "pack" => pack(&a),
-        _ => die(&format!("unknown command '{}' (see the head of fpgad/src/bin/oos-update.rs)", cmd)),
+        cmd => die(&format!("unknown command '{}' (see the head of fpgad/src/bin/oos-update.rs)", cmd)),
     }
 }
 

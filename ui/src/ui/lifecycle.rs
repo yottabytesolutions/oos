@@ -15,6 +15,7 @@ pub(super) struct Runtime {
     pub(super) change: super::change::Observer,
     pub(super) memory: crate::system::memory::Watchdog,
     pub(super) crash: Option<crate::store::startup::crash::Crash>,
+    pub(super) sd_card: oos_hal::bootcard::Status,
     pub(super) clocks: Option<crate::system::clocks::Handle>,
     pub(super) storage: Option<crate::store::startup::worker::Worker>,
     pub(super) started: Instant,
@@ -31,6 +32,7 @@ impl Runtime {
             change: Default::default(),
             memory: crate::system::memory::Watchdog::new(limits),
             crash: None,
+            sd_card: Default::default(),
             clocks: None,
             storage: None,
             gpu: String::new(),
@@ -44,11 +46,14 @@ impl Runtime {
 
     pub(super) fn text(&self) -> String {
         format!(
-            "{} {} persistence {} last_crash {}",
+            "{} {} persistence {} last_crash {} sd.mode={} sd.expected={} sd.state={} sd.degraded_in_a_row=0 sd.repair=none",
             self.memory.status(),
             self.gpu,
             if self.persistence { "on" } else { "off" },
-            self.crash.as_ref().map_or("none".into(), |c| c.text())
+            self.crash.as_ref().map_or("none".into(), |c| c.text()),
+            self.sd_card.mode().as_str(),
+            self.sd_card.expected().as_str(),
+            self.sd_card.state().as_str(),
         )
     }
 }

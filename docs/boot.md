@@ -144,6 +144,17 @@ An initial kexec trial from HS leaves that installed HS image untouched; remove 
 A directly restaged cold trial that hangs before rcS still requires the owner's card-reader recovery procedure.
 The existing trial mechanism does not guarantee automatic HS selection in that case. Unit acceptance remains open.
 
+On each start, including kexec, `oos-update card-check` records the negotiated mode in `/tmp/oos-sd.state`. It
+resolves the host through `/sys/class/block/mmcblk0/device`, mounts debugfs if needed, and reads that host's `ios`
+timing. If `ios` is unavailable, the check uses the card-add message for that host from the kernel log. The
+expected mode comes from the running controller's device-tree node. SDR104 takes precedence over SDR50. If the
+node exists and neither property is present, the ceiling is High speed.
+
+The record has four lines in order, for example `mode=hs`, `expected=sdr104`, `state=degraded`, `reason=none`.
+A failed probe records `state=unknown` and a fixed reason. The check stores no card identifiers. If the command
+exits nonzero, rcS logs one warning and continues. The UI caches this record on launch and shows it in System
+info under Unit and in `:SYSTem:STATe?`. The detection paths still need verification on hardware.
+
 ## OOS start-up after the kernel (rcS)
 
 Not yet verified on hardware in this order.
@@ -156,7 +167,8 @@ from `/etc/oos-board` ([porting.md](porting.md)):
 1. `Linux` (uptime at the start of rcS).
 2. `oos-oneshot` (boot magic back to `KRNL`), as the very first program, so a hanging new build on trial is followed
    by stock at the next power-on (`update.md`), then the hardware watchdog (`oos-watchdog`, see below), then `/oos`,
-   the crash records of the last start in the background (`oos-crash-save`, below) and the start count of 4c.
+   `oos-update card-check`, the crash records of the last start in the background (`oos-crash-save`, below) and the
+   start count of 4c.
    Then **`oos-fpgad fpga-boot`**: only the
    BOOT command (spidev1.0, slot 0x400000), its uptime to `/tmp/oos-fpga-booted`. The bitstream loads while the rest of
    rcS runs; the fixed 3 s FPGA wait is counted from this command.

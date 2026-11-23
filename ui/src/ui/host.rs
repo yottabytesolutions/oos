@@ -3,6 +3,7 @@
 //! Host inputs, the switches read at start and permission to run OS services, supplied when constructing the UI.
 
 use crate::board::{board, Board, Zone};
+use oos_hal::bootcard;
 use std::path::{Path, PathBuf};
 
 type Space = Option<(u64, u64)>;
@@ -43,6 +44,12 @@ impl Host {
             switches,
         }
         .cache_firmware()
+        .cache_sd_card(Path::new(bootcard::STATE_PATH))
+    }
+
+    fn cache_sd_card(mut self, path: &Path) -> Self {
+        self.runtime.sd_card = bootcard::read_state(path);
+        self
     }
 
     fn cache_firmware(mut self) -> Self {
@@ -172,6 +179,7 @@ impl super::Ui {
 mod tests {
     mod clocks;
     mod publication;
+    mod sd_card;
     use super::*;
     use crate::ui::Item;
     use crate::ui::{sysinfo::Row, Ui};

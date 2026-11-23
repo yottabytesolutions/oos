@@ -22,15 +22,17 @@ fi
 #     panic resets the SoC; a panic restarts after 10 s (enabled above after stock selection is safe).
 #     Before anything that may take long, and independent of oos-ui
 [ "$boot_safe" = 0 ] || (setsid sh -c '/bin/oos-watchdog >> /tmp/oos-watchdog.log 2>&1' < /dev/null > /dev/null 2>&1 &)
-# 0b) OOS's own data partition at /oos (own calibration, setups, power-on picture; log in /tmp/oos-data.log) and the
-#     signed updates (oos-update, docs/update.md): count this start of an image on trial right here, so that a hang
-#     in anything below still counts; one that already started once without being confirmed is rolled back (log
-#     /tmp/oos-update.log)
+# 0b) OOS's own data partition at /oos (own calibration, setups, power-on picture; log in /tmp/oos-data.log)
 /bin/oos-mount-data > /tmp/oos-data.log 2>&1
-# Crash archiving/counting runs in oos-ui-loop after trial bookkeeping, before any setup is applied.
-# 0c) the stock partition, read only: oos-ui reads the model and the serial number from it when it starts
+# 0c) stock partition, read only: kexec installation reads the device model from /rigol/data/vendor.bin.
 /bin/oos-mount-rigol >> /tmp/oos-data.log 2>&1
+# Count or roll back a trial before the rest of startup. See docs/update.md and /tmp/oos-update.log.
 [ -x /bin/oos-update ] && /bin/oos-update boot >> /tmp/oos-update.log 2>&1
+# Record the negotiated SD mode after trial bookkeeping.
+if ! /bin/oos-update card-check >> /tmp/oos-update.log 2>&1; then
+	echo "oos: warning: SD card check failed" > /dev/kmsg
+fi
+# Crash archiving/counting runs in oos-ui-loop after trial bookkeeping, before any setup is applied.
 # 0d) experimental ADC clock (limits.conf adc.clock_hz): a start that did not reach the end leaves its mark, and the next
 #     one goes back to the stock clock by itself, so a clock that hangs the scope cannot keep it hanging
 if grep -q '^ *adc\.clock_hz' /oos/limits.conf 2>/dev/null; then

@@ -181,7 +181,7 @@ fn initial_timed_wait_keeps_the_ten_millisecond_stop_bound() {
     let poll = Step::Poll { reg: 0x4080, bit: scu::PLAYINFO_DONE, ms: 2000, what: "test" };
     let stop = || !clock.elapsed.get().is_zero();
     assert_eq!(
-        poll_after(&poll, &mut bar, &mut |_| {}, &stop, &clock, Duration::from_millis(100)),
+        poll_first(&poll, &mut bar, &mut |_| {}, &stop, &clock, clock.start + Duration::from_millis(100)),
         Err(NEW_SETTINGS.to_string())
     );
     assert_eq!(clock.elapsed.get(), Duration::from_millis(10));

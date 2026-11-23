@@ -14,37 +14,56 @@ pub(super) struct Scratch {
 pub(super) struct Partial {
     start: usize,
     fold: Fold,
-    trigger: (f64, bool),
+    trigger: Option<(f64, bool)>,
 }
 
 impl Partial {
     pub(super) fn run(&mut self, scratch: &mut Scratch, b: &Batch, v: &View, range: Range<usize>) {
         self.start = range.start;
         self.fold.reset();
+        self.trigger = None;
+        let grid = crate::board::record::hw_grid(&v.m);
+        let screen_dt = grid.1 / grid.0 as f64;
         for index in range {
             #[cfg(test)]
-            fixture_bench::record(index, || self.push(scratch, b, v, index));
+            let trigger = {
+                let mut trigger = None;
+                fixture_bench::record(index, || trigger = self.push(scratch, b, &v.m, (grid, screen_dt), index));
+                trigger
+            };
             #[cfg(not(test))]
-            self.push(scratch, b, v, index);
+            let trigger = self.push(scratch, b, &v.m, (grid, screen_dt), index);
+            self.trigger = trigger;
+            if trigger.is_none() {
+                break;
+            }
         }
     }
 
-    fn push(&mut self, scratch: &mut Scratch, b: &Batch, v: &View, index: usize) {
-        let frame = newest_at(b, index).unwrap_or_else(|| {
+    fn push(
+        &mut self,
+        scratch: &mut Scratch,
+        b: &Batch,
+        m: &Model,
+        (grid, screen_dt): ((usize, f64, f64), f64),
+        index: usize,
+    ) -> Option<(f64, bool)> {
+        let frame = decoded_newest_at(b, index).unwrap_or_else(|| {
             fixture_stage!(Decode, b.decode.decode(index, chunk(b, index), &mut scratch.frame));
             &scratch.frame
         });
-        let (points, window, first) = crate::board::record::hw_grid(&v.m);
-        self.trigger =
-            fixture_stage!(Trigger, crate::board::record::record_trigger(frame, &v.m, points, window, first));
-        crate::board::record::resample_channels(
-            frame,
-            &v.m,
-            (points, window, first),
-            self.trigger.0,
-            &mut scratch.screen,
-        );
-        fixture_stage!(Accumulate, self.fold.push(&scratch.screen, v.m.avg_count));
+        if !average::accepts_samples(screen_dt, frame.dt, frame.envelope) {
+            return None;
+        }
+        let (points, window, first) = grid;
+        let (ti, triggered) =
+            fixture_stage!(Trigger, crate::board::record::record_trigger(frame, m, points, window, first));
+        crate::board::record::resample_channels(frame, m, grid, ti, &mut scratch.screen);
+        fixture_stage!(Accumulate, self.fold.push(&scratch.screen, m.avg_count));
+        let tap_ti = newest_at(b, index)
+            .filter(|tap| (tap.dt, tap.pre) != (frame.dt, frame.pre))
+            .map_or(ti, |tap| tap.pre as f64 + (ti - frame.pre as f64) * frame.dt / tap.dt);
+        Some((tap_ti, triggered))
     }
 }
 
@@ -52,7 +71,7 @@ pub(super) fn average_batch(
     painter: &mut Painter,
     b: &Arc<Batch>,
     v: &Arc<View>,
-) -> (average::Output, crate::picture::deposit::pool::Timing) {
+) -> (Option<average::Output>, crate::picture::deposit::pool::Timing) {
     let first = b.next.load(Ordering::Relaxed);
     let records = b.frames - first;
     let width = records.div_ceil(painter.pool.shards()).max(1);
@@ -68,15 +87,22 @@ pub(super) fn average_batch(
         _ => unreachable!("only average jobs were dispatched"),
     });
     let mut output = painter.average_storage.take(b.counters);
-    let mut trigger = (0.0, false);
+    let mut trigger = None;
+    let mut compatible = true;
     for job in painter.jobs.drain(..) {
         if let Job::Average(_, _, _, partial) = job {
-            output.join(&partial.fold);
             trigger = partial.trigger;
+            compatible &= trigger.is_some();
+            if compatible {
+                output.join(&partial.fold);
+            }
             painter.averages.push(partial);
         }
     }
-    output.finish(trigger, crate::board::record::hw_grid(&v.m));
+    let output = trigger.filter(|_| compatible).map(|trigger| {
+        output.finish(trigger, crate::board::record::hw_grid(&v.m));
+        output
+    });
     timing.wall += combining.elapsed();
     (output, timing)
 }
@@ -92,14 +118,19 @@ pub(super) fn publish_average(
     if records == 0 {
         return;
     }
-    if !newest(b).is_some_and(|f| average::accepts_grid(&v.m, f.dt, f.envelope)) {
+    if newest(b).is_none() {
         b.next.store(b.frames, Ordering::Relaxed);
         b.counters.discard(Lost::Error, records as u64);
         b.counters.metrics.discarded(b.header.identity(), clock);
         return;
     }
-    let (mut output, timing) = average_batch(painter, b, v);
+    let (output, timing) = average_batch(painter, b, v);
     b.next.store(b.frames, Ordering::Relaxed);
+    let Some(mut output) = output else {
+        b.counters.reject_batch(false, records as u64);
+        b.counters.metrics.discarded(b.header.identity(), clock);
+        return;
+    };
     clock.deposit();
     output.publish_clock(b.header.identity(), clock);
     let started = Instant::now();

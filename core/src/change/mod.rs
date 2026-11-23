@@ -94,7 +94,7 @@ fn classify_boundary(a: &Model, b: &Model, old: UiAcq, new: UiAcq, requests: &[R
         && !a.avg_hw
         && !b.avg_hw
     {
-        // A software Average sweep companion only switches its scheduling route.
+        // The Single request already advances the epoch. The Average route flip only changes scheduling.
         before.1 = after.1;
     }
     if before != after {

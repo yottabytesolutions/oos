@@ -30,17 +30,29 @@ fn ui() -> Ui {
     ui
 }
 
+fn decode(value: u8, f: &mut Frame) {
+    f.dt = 2e-9;
+    f.pre = 280;
+    f.ch[0].clear();
+    f.ch[0].resize(560, f32::from(value) / 16.0);
+}
+
+fn frame(ui: &Ui, seq: u64, code: u8) -> Frame {
+    let id = change::acquisition::identity(ui);
+    let mut frame = Frame { seq, cfg: id.gen(), stamp: id.epoch(), ..Default::default() };
+    decode(code, &mut frame);
+    frame
+}
+
+fn queue_record(ui: &Ui, seq: u64, code: u8) {
+    let Source::Hw { shared, .. } = &ui.src else { panic!("requires scripted hardware") };
+    crate::perfguard::deep::ui_lock(shared).queue.push_back(Arc::new(frame(ui, seq, code)));
+    Counters::add(&drawpipe::counters().acquired, 1);
+}
+
 fn submit(ui: &Ui, first: usize, codes: &[u8]) {
     let id = change::acquisition::identity(ui);
-    let decode = |value, f: &mut Frame| {
-        f.dt = 2e-9;
-        f.pre = 280;
-        f.ch[0].clear();
-        f.ch[0].resize(560, f32::from(value) / 16.0);
-    };
-    let mut newest =
-        Frame { seq: (first + codes.len()) as u64, cfg: id.gen(), stamp: id.epoch(), ..Default::default() };
-    decode(*codes.last().unwrap(), &mut newest);
+    let newest = frame(ui, (first + codes.len()) as u64, *codes.last().unwrap());
     let pipe = drawpipe::pipe().unwrap();
     Counters::add(&pipe.batch_counters().acquired, codes.len() as u64);
     assert!(pipe
@@ -49,7 +61,7 @@ fn submit(ui: &Ui, first: usize, codes: &[u8]) {
             1,
             0..codes.len(),
             (id, std::time::Instant::now()),
-            Arc::new(move |_, bytes, f| decode(bytes[0], f)),
+            Arc::new(|_, bytes, f| decode(bytes[0], f)),
             Some(Arc::new(newest)),
         )
         .is_none());
@@ -85,17 +97,17 @@ fn batch_average_counts_every_fold_and_retains_the_newest_raw_for_readers() {
 }
 
 #[test]
-fn batch_average_preserves_legacy_settings_count_clear_and_run_seeding() {
+fn batch_average_reseeds_for_trigger_clear_and_run_but_keeps_count_changes() {
     let _scope = drawpipe::test_scope::Scope::new();
     let mut ui = ui();
     let close = |actual: f32, expected: f32| assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
     close(advance(&mut ui, 0, &[4, 8]), 0.375);
     ui.m.trig_level += 0.1;
     ui.step(0.04);
-    close(advance(&mut ui, 2, &[8]), 0.4375);
+    close(advance(&mut ui, 2, &[12]), 0.75);
     ui.m.avg_count = 4;
     ui.step(0.04);
-    close(advance(&mut ui, 3, &[8]), 0.453125);
+    close(advance(&mut ui, 3, &[8]), 0.6875);
 
     // Clear invalidates both the UI seed and any published old-epoch batch.
     submit(&ui, 4, &[12, 14]);
@@ -131,7 +143,7 @@ fn software_average_pairs_and_incompatible_modes_keep_the_record_route() {
     });
     let mut pair = crate::wave::hw_record(&ui.m, raw);
     assert!(pair.pairs);
-    blend_record_average(&ui, &mut pair, FirstDraw::Keep);
+    blend_record_average(&mut ui, &mut pair, FirstDraw::Keep);
     let counters = drawpipe::counters().pipeline_text(std::time::Duration::ZERO, 0);
     assert!(counters.contains("average_pairs=1 "), "{counters}");
 
@@ -154,20 +166,161 @@ fn warmed_average_picture_reuses_screen_and_history_storage() {
     let pipe = drawpipe::pipe().unwrap();
     for i in 0..8 {
         submit(&ui, i + 2, &[8]);
-        let (mut rec, output) = pipe.take_waveform((ui.ph.w, ui.ph.h)).unwrap().read(&ui.m);
-        let output = output.unwrap();
-        use crate::system::test_allocator::count_own;
+        let tap = pipe.take_waveform((ui.ph.w, ui.ph.h)).unwrap();
+        let eligibility = tap.eligibility();
+        let (rec, output) = tap.read(&ui.m);
         let mut first = FirstDraw::Minimum;
-        let (screen, ()) = count_own(|| prepare_batch_average(&mut ui, &mut rec, &output, first));
-        let (draw, _) =
-            count_own(|| draw_average(&mut ui, &mut step_draw::Composition::default(), &rec, output, &mut first));
-        let (history, ()) = count_own(|| {
-            remember_average(&mut ui, &rec);
-            store_average_screen(&mut ui, true);
-            ui.last[0] = Some(rec);
+        let mut taps = deep_draw::ReaderTaps::new(&ui);
+        let mut composition = step_draw::Composition::default();
+        let (allocations, accepted) = crate::system::test_allocator::count_own(|| {
+            consume_batch(&mut ui, (rec, eligibility, output.unwrap()), &mut composition, &mut first, &mut taps)
         });
+        assert_eq!(accepted.unwrap().0, 1);
         if i > 1 {
-            assert_eq!((screen, draw, history), (0, 0, 0), "screen transform, draw, and history");
+            assert_eq!(allocations, 0, "screen transform, draw, and history");
         }
+    }
+}
+
+#[test]
+fn hardware_average_preserves_fallback_counters_even_for_a_non_fpga_record() {
+    let _scope = drawpipe::test_scope::Scope::new();
+    let mut ui = ui();
+    ui.m.avg_hw = true;
+    ui.step(0.04);
+    queue_record(&ui, 1, 4);
+    ui.step(0.04);
+    let counters = drawpipe::counters().pipeline_text(std::time::Duration::ZERO, 0);
+    assert!(counters.contains("average_pairs=0 direct_record=0"), "{counters}");
+    assert_eq!(ui.records, 1);
+}
+
+#[test]
+fn single_epoch_rejects_a_queued_average_tap() {
+    let _scope = drawpipe::test_scope::Scope::new();
+    let mut ui = ui();
+    submit(&ui, 0, &[4, 8]);
+    let pipe = drawpipe::pipe().unwrap();
+    assert_eq!(pipe.tap_count(), 1);
+    let before = change::acquisition::identity(&ui);
+
+    ui.key(key::SINGLE);
+    ui.step(0.04);
+
+    let armed = change::acquisition::identity(&ui);
+    assert_eq!(armed.gen(), before.gen());
+    assert_eq!(armed.epoch(), before.epoch() + 1);
+    assert_eq!(ui.m.run, RunState::Run);
+    assert_eq!(ui.m.trig_mode, TrigMode::Single);
+    assert!(ui.last[0].is_none());
+    assert_eq!(pipe.tap_count(), 0);
+    let counters = drawpipe::counters().records_text();
+    assert!(counters.contains("lost.settings=2 "), "{counters}");
+
+    queue_record(&ui, 3, 12);
+    ui.step(0.04);
+    let record = ui.last[0].as_ref().unwrap();
+    assert_eq!(record.raw.as_ref().unwrap().frame.seq, 3);
+    assert_eq!(record.ch[0][1800], 0.75);
+}
+
+#[test]
+fn average_grid_changes_reseed_on_both_routes_but_vertical_mapping_keeps_the_seed() {
+    for batch in [true, false] {
+        let _scope = drawpipe::test_scope::Scope::new();
+        let mut ui = ui();
+        ui.m.mask_on = !batch;
+        ui.step(0.04);
+        let mut seq = 0;
+        let next = |ui: &mut Ui, seq: &mut usize, code| {
+            assert_eq!(ui.fast_ok(), batch);
+            if batch {
+                advance(ui, *seq, &[code])
+            } else {
+                queue_record(ui, (*seq + 1) as u64, code);
+                ui.step(0.04);
+                ui.last[0].as_ref().unwrap().ch[0][1800]
+            }
+        };
+        let mut check_next = |ui: &mut Ui, code: u8, expected: f32| {
+            let actual = next(ui, &mut seq, code);
+            assert!((actual - expected).abs() < 1e-6, "batch={batch} seq={seq} {actual} != {expected}");
+            seq += 1;
+        };
+
+        check_next(&mut ui, 4, 0.25);
+        ui.m.ch[0].vscale += 1;
+        ui.m.ch[0].offset += 0.01;
+        ui.step(0.04);
+        check_next(&mut ui, 8, 0.375);
+
+        let settings: [fn(&mut Model); 7] = [
+            |m| m.tscale += 1,
+            |m| m.delay += 5e-9,
+            |m| m.zoom = true,
+            |m| m.zdelay += 5e-9,
+            |m| m.mdepth = 1,
+            |m| m.slope = Slope::Fall,
+            |m| m.ch[1].on = true,
+        ];
+        for change in settings {
+            check_next(&mut ui, 4, 0.3125);
+            change(&mut ui.m);
+            ui.step(0.04);
+            check_next(&mut ui, 6, 0.375);
+        }
+    }
+}
+
+#[test]
+fn filtered_average_batch_is_a_selection_loss_without_changing_the_seed() {
+    let _scope = drawpipe::test_scope::Scope::new();
+    let mut ui = ui();
+    assert_eq!(advance(&mut ui, 0, &[4]), 0.25);
+    submit(&ui, 1, &[14, 16]);
+    let (rec, output) = drawpipe::pipe().unwrap().take_waveform((ui.ph.w, ui.ph.h)).unwrap().read(&ui.m);
+    let mut taps = deep_draw::ReaderTaps::new(&ui);
+    let mut composition = step_draw::Composition::default();
+    let mut first = FirstDraw::Replace;
+    ui.m.z_src = Some(0);
+    assert!(consume_batch(
+        &mut ui,
+        (rec, PictureEligibility::Drawable, output.unwrap()),
+        &mut composition,
+        &mut first,
+        &mut taps,
+    )
+    .is_none());
+    assert_eq!(composition.filtered, 0);
+    ui.m.z_src = None;
+    assert_eq!(advance(&mut ui, 3, &[12]), 0.5);
+    let counters = drawpipe::counters();
+    assert_eq!(counters.read(), (4, 2, 2));
+    let text = counters.records_text();
+    assert!(text.contains("records read=4 deposited=2 shown=2"), "{text}");
+    assert!(text.contains("lost.settings=0 "), "{text}");
+    assert!(text.contains("lost.average=2 "), "{text}");
+}
+
+#[test]
+fn first_average_batch_only_reuses_a_compatible_normal_record() {
+    for change_grid in [false, true] {
+        let _scope = drawpipe::test_scope::Scope::new();
+        let mut ui = ui();
+        ui.m.acq = AcqMode::Normal;
+        ui.step(0.04);
+        queue_record(&ui, 1, 4);
+        ui.step(0.04);
+        assert_eq!(ui.last[0].as_ref().unwrap().ch[0][1800], 0.25);
+
+        ui.m.acq = AcqMode::Average;
+        if change_grid {
+            ui.m.tscale += 1;
+            ui.m.ch[1].on = true;
+        }
+        ui.step(0.04);
+        let expected = if change_grid { 0.5 } else { 0.375 };
+        let actual = advance(&mut ui, 1, &[8]);
+        assert!((actual - expected).abs() < 1e-6, "change_grid={change_grid} {actual} != {expected}");
     }
 }

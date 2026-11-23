@@ -135,6 +135,7 @@ impl Storage {
         let mut data = oos_hal::sync::lock(&self.0).pop_back().unwrap_or_default();
         data.fold.reset();
         data.pending = 0;
+        data.loss = None;
         data.context = Some((self.0.clone(), counters));
         Output(Some(data))
     }
@@ -145,6 +146,7 @@ struct BatchResult {
     fold: Fold,
     trigger: (f64, bool),
     pending: u64,
+    loss: Option<Lost>,
     timing: Option<(Option<Identity>, clock::StageClock)>,
     grid: (usize, f64, f64),
     context: Option<(Arc<Mutex<FreeResults>>, &'static Counters)>,
@@ -204,6 +206,10 @@ impl Output {
         points * (size_of::<Point>() / size_of::<f32>()) + METADATA_SAMPLES
     }
 
+    pub(crate) fn set_loss(&mut self, loss: Lost) {
+        self.data_mut().loss = Some(loss);
+    }
+
     pub(crate) fn shown(mut self) -> (usize, Option<Instant>) {
         let records = std::mem::take(&mut self.data_mut().pending);
         let data = self.data_mut();
@@ -233,7 +239,7 @@ impl Drop for Output {
         let Some(mut data) = self.0.take() else { return };
         let (home, counters) = data.context.take().expect("a live output belongs to a pool");
         if data.pending != 0 {
-            counters.discard(Lost::Settings, data.pending);
+            counters.discard(data.loss.unwrap_or(Lost::Settings), data.pending);
             data.finish_picture(counters, false);
         }
         oos_hal::sync::lock(&home).push_back(data);
@@ -265,16 +271,19 @@ pub(crate) fn geometry_ok(pipe: &super::Pipe, id: oos_core::change::Identity, dt
 
 pub(super) fn accepts_grid(m: &crate::model::Model, dt: f64, pairs: bool) -> bool {
     let (points, window, _) = crate::board::record::hw_grid(m);
-    !pairs && window / points as f64 / dt < 2.0
+    accepts_samples(window / points as f64, dt, pairs)
+}
+
+pub(super) fn accepts_samples(screen_dt: f64, dt: f64, pairs: bool) -> bool {
+    !pairs && screen_dt / dt < 2.0
 }
 
 pub(crate) fn record_fallback(m: &crate::model::Model, rec: &Record) {
     use super::metrics::fallback::Cause;
-    let cause = if software(m) && rec.raw.as_ref().is_some_and(|raw| !accepts_grid(m, raw.frame.dt, raw.frame.envelope))
-    {
-        Cause::AveragePairs
-    } else {
-        Cause::DirectRecord
-    };
+    if !software(m) {
+        return;
+    }
+    let pairs = rec.raw.as_ref().is_some_and(|raw| !accepts_grid(m, raw.frame.dt, raw.frame.envelope));
+    let cause = if pairs { Cause::AveragePairs } else { Cause::DirectRecord };
     super::counters().routes.fallbacks.add(cause.bit());
 }

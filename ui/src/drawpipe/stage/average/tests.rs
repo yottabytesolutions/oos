@@ -90,6 +90,7 @@ fn worker_average_matches_ordered_record_ema_to_one_hundredth_adc_count() {
                     expected = Some(original(expected.as_ref(), hw_record(&m, raw), count));
                 }
                 let (output, _) = average_batch(&mut painter, &b, &view);
+                let output = output.unwrap();
                 let raw = newest(&b).unwrap().clone();
                 let mut rec = output.record(&raw);
                 output.apply(actual.as_ref(), &mut rec.ch);
@@ -139,6 +140,7 @@ fn warmed_average_reuses_worker_and_output_buffers() {
     let mut screen = Default::default();
     let mut pass = || {
         let (output, _) = average_batch(&mut painter, &b, &view);
+        let output = output.unwrap();
         output.apply(None, &mut screen);
         assert_eq!(output.shown().0, 48);
     };
@@ -146,4 +148,86 @@ fn warmed_average_reuses_worker_and_output_buffers() {
         pass();
     }
     assert_eq!(count_own(pass).0, 0, "coordinator and UI screen transform");
+}
+
+#[test]
+fn average_folds_the_dma_decode_when_the_newest_tap_is_a_separate_replay() {
+    let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+    let m = Model { acq: AcqMode::Average, avg_count: 2, ..model(100e-9, false, false) };
+    pipe.publish_view(&m, 128, 64, Interp::Exact, Default::default());
+    let view = oos_hal::sync::lock(&pipe.view).view.clone().unwrap();
+    let decode: DecodeInto = Arc::new(|_, frame| {
+        frame.dt = 2e-9;
+        frame.pre = 280;
+        frame.ch[0].resize(560, 0.25);
+    });
+    let codes: CodesInto = Arc::new(|_, _, _| None);
+    let mut batch = pipe.feed_batch(Box::new(Bytes(vec![0])), 1, 0..1, (0, None), decode, Some(codes));
+    let replay = Arc::new(Frame {
+        dt: 1e-9,
+        pre: 560,
+        ch: [vec![0.75; 1120], Vec::new(), Vec::new(), Vec::new()],
+        ..Default::default()
+    });
+    Arc::get_mut(&mut batch).unwrap().newest = Some(replay.clone());
+
+    assert!(decoded_newest_at(&batch, 0).is_none());
+    let (output, _) = average_batch(&mut Painter::new(1, 0), &batch, &view);
+    let output = output.unwrap();
+    let mut record = output.record(&replay);
+    output.apply(None, &mut record.ch);
+    assert_eq!(record.ch[0][1800], 0.25);
+    let raw = record.raw.as_ref().unwrap();
+    assert!(Arc::ptr_eq(&raw.frame, &replay));
+    assert_eq!((raw.i0, raw.i1, raw.t0), crate::board::record::raw_window(560.0, record.t0, hw_grid(&m).1, 1e-9, 1120));
+}
+
+#[test]
+fn average_claim_on_a_pairs_grid_is_a_settings_loss() {
+    let counters = Box::leak(Box::<Counters>::default());
+    let pipe = Pipe::start(0, 0, counters);
+    let id = oos_core::change::Identity::default();
+    let m = Model { acq: AcqMode::Average, ..model(2e-6, true, false) };
+    let batch = fixture(&pipe, 0, 2);
+    let dt = newest(&batch).unwrap().dt;
+    assert!(average::geometry_ok(&pipe, id, dt, false));
+    pipe.publish_view(&m, 128, 64, Interp::Exact, id);
+    assert!(!average::geometry_ok(&pipe, id, dt, false));
+    let view = batch_view(&batch, &oos_hal::sync::lock(&pipe.view), pipe.slot.reset_before()).unwrap();
+    Counters::add(&counters.acquired, 2);
+
+    publish_average(&mut Painter::new(1, 0), &pipe.slot, &batch, &view, batch.clock);
+    drop(batch);
+
+    assert!(pipe.take_waveform((128, 64)).is_none());
+    assert_eq!(counters.read(), (2, 0, 2));
+    let text = counters.records_text();
+    assert!(text.contains("records read=2 deposited=0 shown=0"), "{text}");
+    assert!(text.contains("lost.settings=2 "), "{text}");
+    assert!(text.contains("lost.error=0 "), "{text}");
+}
+
+#[test]
+fn average_tap_exceeding_its_reservation_is_a_buffer_loss() {
+    let counters = Box::leak(Box::<Counters>::default());
+    let pipe = Pipe::start(0, 0, counters);
+    let id = oos_core::change::Identity::default();
+    let m = Model { acq: AcqMode::Average, ..model(100e-9, true, false) };
+    pipe.publish_view(&m, 128, 64, Interp::Exact, id);
+    let view = oos_hal::sync::lock(&pipe.view).view.clone().unwrap();
+    let mut batch = fixture(&pipe, 0, 3);
+    let raw_samples = newest(&batch).unwrap().ch.iter().map(Vec::capacity).sum();
+    let charge = pipe.slot.reserve_tap(raw_samples, batch.view_gen_at_submit, Some(id)).unwrap();
+    Arc::get_mut(&mut batch).unwrap().header.tap = Some(charge);
+    Counters::add(&counters.acquired, 3);
+
+    publish_average(&mut Painter::new(1, 0), &pipe.slot, &batch, &view, batch.clock);
+    drop(batch);
+
+    assert!(pipe.take_waveform((128, 64)).is_none());
+    assert_eq!(counters.read(), (3, 0, 3));
+    let text = counters.records_text();
+    assert!(text.contains("records read=3 deposited=0 shown=0"), "{text}");
+    assert!(text.contains("lost.settings=0 "), "{text}");
+    assert!(text.contains("lost.buffer=3 "), "{text}");
 }

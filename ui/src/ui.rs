@@ -2869,42 +2869,42 @@ impl Ui {
             let t_records = std::time::Instant::now();
             for _ in 0..k {
                 let t0 = std::time::Instant::now();
-                let (mut r, drawing_input) =
+                let (r, drawing_input) =
                     deep_draw::acquire(self, dt_wall / k as f64, &mut taps, &mut composition.filtered);
                 ta += t0.elapsed().as_secs_f32() * 1000.0;
                 let bill_record = record_draw.acquired(r.as_ref().map(|(_, _, tap, _)| *tap), || t0.elapsed());
-                average::prepare(self, &mut r, first);
                 if r.is_none() && self.bus_candidate_waiting() {
                     break;
                 }
                 match r {
-                    Some((mut rec, eligibility, _, average))
-                        if composition.filter_record(self, &rec, eligibility, &first) =>
-                    {
-                        average::filtered(self, &mut rec, &mut composition, average.is_some(), eligibility);
+                    Some((rec, eligibility, _, Some(output))) => {
+                        if let Some((drawn, elapsed)) = average::consume_batch(
+                            self,
+                            (rec, eligibility, output),
+                            &mut composition,
+                            &mut first,
+                            &mut taps,
+                        ) {
+                            got += drawn;
+                            td += elapsed.as_secs_f32() * 1000.0;
+                            received_record = true;
+                        }
                     }
-                    Some((mut rec, eligibility, tap, average)) => {
+                    Some((rec, eligibility, _, None)) if composition.filter_record(self, &rec, eligibility, &first) => {
+                    }
+                    Some((mut rec, eligibility, tap, None)) => {
                         self.bus_candidate_committed();
                         self.m.status = if rec.triggered { TrigStatus::Triggered } else { TrigStatus::Auto };
                         deep_draw::condition_record(self, &mut rec);
-                        let batched = average.is_some();
-                        if !batched {
-                            average::blend_record_average(self, &mut rec, first);
-                        }
+                        average::blend_record_average(self, &mut rec, first);
                         let t1 = std::time::Instant::now();
-                        got += match average {
-                            Some(average) => average::draw_average(self, &mut composition, &rec, average, &mut first),
-                            None => {
-                                composition.draw_record(self, &rec, sw.interp, drawing_input, eligibility, &mut first)
-                            }
-                        };
+                        got += composition.draw_record(self, &rec, sw.interp, drawing_input, eligibility, &mut first);
                         td += record_draw.placed(bill_record, t1.elapsed()).as_secs_f32() * 1000.0;
-                        average::remember_after_draw(self, &rec, hw_seg, batched);
+                        deep_draw::remember_record(self, &rec, hw_seg);
                         if deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
                             raw_rec = Some(rec.clone());
                         }
                         taps.next_record(self, tap);
-                        average::store_average_screen(self, batched);
                         self.last[0] = Some(rec);
                         self.cleared = false;
                         received_record = true;

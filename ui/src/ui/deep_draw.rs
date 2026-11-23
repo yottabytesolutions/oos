@@ -257,6 +257,7 @@ pub(super) fn condition_record(ui: &Ui, rec: &mut Record) {
 }
 
 pub(super) fn remember_record(ui: &mut Ui, record: &Record, hw_seg: bool) {
+    average::reset_history_channels(&mut ui.batch_picture.average);
     if ui.history.len() >= if hw_seg { super::HISTORY } else { super::HISTORY.max(ui.seg_count()) } {
         ui.history.pop_front();
     }

@@ -12,8 +12,7 @@ pub(super) struct BatchPicture {
     pub(super) layout_changed: bool,
     pub(super) tap_statistics: Option<deep_draw::TapStatistics>,
     window: crate::picture::DepositWindow,
-    pub(super) average_screen: [Vec<f32>; NCH],
-    pub(super) average_history_channels: [bool; NCH],
+    pub(super) average: average::State,
     owner: crate::drawpipe::stage::owner::Owner,
     capture: capture::CaptureStatus,
 }

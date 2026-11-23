@@ -2,7 +2,8 @@
 
 //! X2 shares the ordinary capture and play sequences. Only their horizontal parameters and mode change.
 
-use super::{acq::Mode, hz, tdiv_fs, time_fs, Settings, Trig};
+use super::{tdiv_fs, time_fs, Settings, Trig};
+use crate::dho::{acq::Mode, hz};
 use crate::dho::{clock, spu};
 use std::fmt;
 
@@ -108,3 +109,6 @@ pub(super) fn horizontal(s: &Settings) -> Result<hz::Params, String> {
     }
     Ok(p)
 }
+
+#[cfg(test)]
+mod tests;

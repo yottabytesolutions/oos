@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::dho::acq;
+use crate::dho::seq::{frame_stride, plan, read_len, State, Step};
 use std::fmt::Write as _;
 
 fn full_steps() -> String {
@@ -19,7 +21,7 @@ fn full_steps() -> String {
 
 #[test]
 fn full_capture_matches_the_baseline_steps() {
-    assert_eq!(full_steps(), include_str!("full-capture-steps.txt"));
+    assert_eq!(full_steps(), include_str!("../full-capture-steps.txt"));
 }
 
 #[test]

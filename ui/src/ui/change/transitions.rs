@@ -4,8 +4,21 @@
 
 use super::*;
 
-pub(in crate::ui) fn wants_final_record(ui: &Ui, frame: Option<&crate::board::Frame>) -> bool {
+/// A plain STOP drains a serial capture or waits for the final read needed by the current view.
+fn wants_final_record(ui: &Ui) -> bool {
     let m = &ui.m;
+    let Some(record) = ui.last[0].as_ref() else { return false };
+    if !ui.src.is_hw()
+        || board().slow_mode(m) != crate::board::Slow::Off
+        || m.trig_mode == TrigMode::Single
+        || m.segments != 0
+        || (m.mask_on && m.mask_stop)
+        || ui.hist_pos.is_some()
+        || ui.seg_pos.is_some()
+    {
+        return false;
+    }
+    let frame = record.raw.as_ref().map(|raw| raw.frame.as_ref());
     ui.src.hw_serial()
         || frame.is_some_and(|f| {
             crate::compress::live(f) || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(f))
@@ -45,7 +58,7 @@ pub(super) fn apply(ui: &mut Ui) -> bool {
     let hold = !running && (ui.last[0].is_some() || ui.cleared);
     let mut final_done = ui.src.hw_hold(hold, ui.final_req);
     // Freeze the source before checking whether a serial capture can still arrive.
-    if hold && ui.was_running && ui.stop_wants_final() {
+    if hold && ui.was_running && wants_final_record(ui) {
         ui.final_req += 1;
         ui.stop_final = Some(ui.now + STOP_FINAL_WAIT);
         final_done = ui.src.hw_hold(hold, ui.final_req);

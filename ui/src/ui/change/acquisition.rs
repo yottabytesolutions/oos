@@ -17,7 +17,8 @@ pub(crate) fn identity(ui: &Ui) -> Identity {
 }
 
 pub(in crate::ui) fn publish(ui: &mut Ui) {
-    let Some(id) = ui.host.runtime().change.prepared.as_ref().map(|p| p.changes.identity()) else { return };
+    let Some(prepared) = ui.host.runtime().change.prepared.as_ref() else { return };
+    let id = prepared.changes.identity();
     let Some(shadow) = &ui.host.runtime().change.shadow else { return };
     let (model, needs) = (shadow.accepted(), shadow.needs());
     if let Some(clocks) = &ui.host.runtime().clocks {
@@ -33,7 +34,7 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
         if ui.src.is_hw()
             && (model.run == RunState::Run || ui.stop_final.is_some())
             && needs.route()
-            && ui.host.runtime().change.prepared.as_ref().is_some_and(|p| p.workers)
+            && prepared.workers
         {
             let zoom = model.zoom.then(|| step_draw::zoom_view(ui));
             pipe.publish_picture_view(model, (ui.ph.w, ui.ph.h), sw.interp, id, zoom);

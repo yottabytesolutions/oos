@@ -6,8 +6,8 @@ mod report;
 mod scope;
 
 use self::command::Options;
-use self::report::Report;
-use std::{fs, path::Path, process::ExitCode};
+use crate::unit_tools::report::read;
+use std::{path::Path, process::ExitCode};
 
 pub(super) fn run(root: &Path, args: &[&str]) -> ExitCode {
     match Options::parse(args) {
@@ -16,7 +16,11 @@ pub(super) fn run(root: &Path, args: &[&str]) -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(Options::Run(options)) => finish(scope::run(root, &options).map(|()| ExitCode::SUCCESS)),
-        Ok(Options::Compare(options)) => finish(compare(&options.reference, &options.result, options.tolerance)),
+        Ok(Options::Compare(options)) => finish(compare_files(&options)),
+        Ok(Options::Ab { run, reference_checkout, tolerance }) => finish(
+            scope::ab(root, &run, &reference_checkout)
+                .and_then(|reports| compare(&reports.reference, &reports.result, tolerance)),
+        ),
         Err(error) => {
             eprintln!("unit-bench: {error}\n{}", command::USAGE);
             ExitCode::from(2)
@@ -34,18 +38,18 @@ fn finish(result: Result<ExitCode, String>) -> ExitCode {
     }
 }
 
-fn read(path: &Path, label: &str) -> Result<Report, String> {
-    let data = fs::read(path).map_err(|e| format!("read {label} report: {e}"))?;
-    serde_json::from_slice(&data).map_err(|e| format!("invalid {label} report: {e}"))
+fn compare_files(options: &command::Compare) -> Result<ExitCode, String> {
+    compare(&read(&options.reference, "reference")?, &read(&options.result, "result")?, options.tolerance)
 }
 
-fn compare(reference: &Path, result: &Path, tolerance: f64) -> Result<ExitCode, String> {
-    let reference = read(reference, "reference")?;
-    let rows = report::compare(&reference, &read(result, "result")?, tolerance)?;
+fn compare(reference: &report::Report, result: &report::Report, tolerance: f64) -> Result<ExitCode, String> {
+    let rows = report::compare(reference, result, tolerance)?;
+    let placement = report::Placement::summarize(&rows, tolerance);
     print!("{}", report::table(&rows));
+    println!("{}", placement.summary());
     Ok(if rows.iter().any(report::Row::insufficient) {
         ExitCode::from(2)
-    } else if rows.iter().any(report::Row::regression) {
+    } else if placement.regression() || rows.iter().any(report::Row::regression) {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS

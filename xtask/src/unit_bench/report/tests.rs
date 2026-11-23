@@ -70,10 +70,22 @@ fn recorded() -> BTreeMap<String, Report> {
     serde_json::from_str(include_str!("fixtures/recorded.json")).unwrap()
 }
 
+fn deep_runs(reports: &BTreeMap<String, Report>) -> (&Report, [&Report; 3]) {
+    let reference = reports
+        .iter()
+        .find(|(name, _)| name.strip_prefix("ref-").is_some_and(|tag| tag.bytes().all(|b| b.is_ascii_hexdigit())))
+        .unwrap()
+        .1;
+    // The first run has no repetition suffix. The other two sort in run order.
+    let runs: Vec<_> = reports.iter().filter(|(name, _)| name.starts_with("int1-")).map(|(_, report)| report).collect();
+    (reference, runs.try_into().unwrap())
+}
+
 #[test]
 fn archived_deep_summaries_need_fresh_counts() {
     let reports = recorded();
-    let rows = compare(&reports["ref-1eed2bdb"], &reports["int1-fb9dbc0a"], 0.02).unwrap();
+    let (reference, [first, _, _]) = deep_runs(&reports);
+    let rows = compare(reference, first, 0.02).unwrap();
     assert!(rows.iter().all(Row::insufficient));
     assert!(table(&rows).contains("reference counts unavailable, rerun with at least 5 rounds and 10 samples"));
     assert!(table(&rows).contains("result counts unavailable, rerun with at least 5 rounds and 10 samples"));
@@ -82,16 +94,16 @@ fn archived_deep_summaries_need_fresh_counts() {
 #[test]
 fn archived_deep_tile_changes_are_below_the_placement_floor() {
     let reports = recorded();
-    for (reference, result, expected) in [
-        ("ref-1eed2bdb", "int1-fb9dbc0a", Verdict::WithinLimits),
-        ("ref-deep", "int1-fb9dbc0a-2", Verdict::Same),
-        ("ref-deep", "int1-fb9dbc0a-3", Verdict::Same),
-    ] {
-        let old = &reports[reference].groups["deep"].stages;
-        let new = &reports[result].groups["deep"].stages;
+    let (reference, [first, second, third]) = deep_runs(&reports);
+    let repeat = &reports["ref-deep"];
+    let pairs =
+        [(reference, first, Verdict::WithinLimits), (repeat, second, Verdict::Same), (repeat, third, Verdict::Same)];
+    for (index, (reference, result, expected)) in pairs.into_iter().enumerate() {
+        let old = &reference.groups["deep"].stages;
+        let new = &result.groups["deep"].stages;
         let place = old["place"].unwrap().median;
         let (old, new) = (old["tile_writes"].unwrap(), new["tile_writes"].unwrap());
-        assert_eq!(timing_verdict("tile_writes", old, new, place, 0.02), expected, "{result}");
+        assert_eq!(timing_verdict("tile_writes", old, new, place, 0.02), expected, "run {}", index + 1);
     }
 }
 
@@ -107,6 +119,32 @@ fn recorded_same_binary_reports_have_no_change_beyond_the_spread() {
             table(&rows)
         );
         assert!(rows.iter().all(|row| matches!(row.verdict, Verdict::Same | Verdict::Unmeasured)), "{}", table(&rows));
+    }
+}
+
+#[test]
+fn placement_median_catches_a_common_shift_inside_every_group_spread() {
+    let mut reports = recorded();
+    let mut reference = reports.remove("ref-cpu2").unwrap();
+    for group in reference.groups.values_mut() {
+        group.stages.get_mut("place").unwrap().as_mut().unwrap().sampling = Some(Sampling { rounds: 5, samples: 10 });
+    }
+    for (changes, median, slower, faster, exit) in
+        [([0.025; 4], 0.025, 4, 0, 1), ([-0.025, -0.025, 0.025, 0.025], 0.0, 2, 2, 0), ([-0.025; 4], -0.025, 0, 4, 0)]
+    {
+        let mut result: Report = serde_json::from_value(serde_json::to_value(&reference).unwrap()).unwrap();
+        for (group, change) in result.groups.values_mut().zip(changes) {
+            let timing = group.stages.get_mut("place").unwrap().as_mut().unwrap();
+            timing.median *= 1.0 + change;
+            timing.min_round_median *= 1.0 + change;
+            timing.max_round_median *= 1.0 + change;
+        }
+        let rows = compare(&reference, &result, 0.02).unwrap();
+        assert!(rows.iter().all(|row| row.verdict == Verdict::Same), "{}", table(&rows));
+        let placement = Placement::summarize(&rows, 0.02);
+        assert_eq!((placement.slower, placement.faster), (slower, faster));
+        assert!((placement.median - median).abs() < 1e-12);
+        assert_eq!(super::super::compare(&reference, &result, 0.02).unwrap(), std::process::ExitCode::from(exit));
     }
 }
 

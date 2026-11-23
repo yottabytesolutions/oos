@@ -1,121 +1,81 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+mod build;
 mod cache;
-mod output;
 mod process;
-mod scpi;
 mod ssh;
 
 use super::{
     command::Run,
     measure,
-    report::{Group, Report},
+    report::{AbReport, Group, Report},
 };
-use output::PendingReport;
+use crate::unit_tools::{
+    report::PendingReport,
+    scpi::{Scpi, TcpScpi, PORT},
+    with_restore,
+};
+use build::Build;
 use process::Scratch;
-use scpi::{Scpi, TcpScpi};
 use ssh::{Remote, Ssh};
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-};
+use std::{collections::BTreeMap, path::Path};
 
 const BENCHMARK: &str = "drawpipe::stage::fixture_bench::raw_batch_stage_benchmark";
 const RESTART: &str = r#"printf ':RUN\n' | nc -w 2 "$SCPI_HOST" 5555"#;
 
 pub(super) fn run(root: &Path, options: &Run<'_>) -> Result<(), String> {
     let pending = PendingReport::open(&options.out).map_err(|e| format!("open --out: {e}"))?;
-    let binary = build(root)?;
-    let commit = commit(root)?;
+    let reports = session(root, options, None)?;
+    pending.write(&reports.result).map_err(|e| format!("write result: {e}"))
+}
+
+pub(super) fn ab(root: &Path, options: &Run<'_>, reference_checkout: &Path) -> Result<AbReport, String> {
+    let pending = PendingReport::open(&options.out).map_err(|e| format!("open --out: {e}"))?;
+    let reports = session(root, options, Some(reference_checkout))?;
+    let reference = reports.reference.expect("the A/B session includes a reference checkout");
+    let report = AbReport { reference, result: reports.result };
+    pending.write(&report).map_err(|e| format!("write A/B result: {e}"))?;
+    Ok(report)
+}
+
+fn session(root: &Path, options: &Run<'_>, reference_checkout: Option<&Path>) -> Result<Sides<Report>, String> {
+    let target = root.join("target");
+    let result = Build::prepare(root, &target)?;
     let groups = cache::groups(&options.fixtures, &options.groups)?;
-    let scratch = Scratch::new(&root.join("target"))?;
+    let scratch = Scratch::new(&target)?;
+    let reference = reference_checkout
+        .map(|path| Build::prepare(path, &scratch.path().join("reference-target")))
+        .transpose()
+        .map_err(|error| format!("reference checkout: {error}"))?;
     let mut remote = Ssh::new(options.unit, &scratch);
-    let mut scpi = TcpScpi::connect(remote.hostname()?)?;
-    let capture = capture(&mut remote, &mut scpi, &scratch, options, &binary, &groups)?;
-    let report = capture.summarize(options, commit)?;
-    pending.write(&report).map_err(|e| format!("write result: {e}"))
+    let mut scpi = TcpScpi::connect(remote.hostname()?, PORT)?;
+    let (core_type, captures) =
+        capture(&mut remote, &mut scpi, &scratch, options, Sides { reference, result }, &groups)?;
+    captures.try_map(|capture| capture.summarize(options.cpu, &core_type))
 }
 
-fn build(root: &Path) -> Result<PathBuf, String> {
-    let toolchain = toolchain(root)?;
-    let output = Command::new("cargo")
-        .arg(format!("+{toolchain}"))
-        .args([
-            "test",
-            "--locked",
-            "-p",
-            "oos-ui",
-            "--lib",
-            "--release",
-            "--target",
-            crate::repo::TARGET,
-            "--features",
-            "private-picture-counts",
-            "--no-run",
-            "--message-format=json-render-diagnostics",
-        ])
-        .current_dir(root)
-        .env("CARGO_TARGET_DIR", root.join("target"))
-        .env("CARGO_INCREMENTAL", "0")
-        .env("CARGO_PROFILE_DEV_DEBUG", "0")
-        .env("CARGO_PROFILE_TEST_DEBUG", "0")
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|e| format!("start benchmark build: {e}"))?;
-    if !output.status.success() {
-        return Err(format!("benchmark build failed with {}", output.status));
-    }
-    executable(&String::from_utf8_lossy(&output.stdout))
+#[derive(Debug)]
+struct Sides<T> {
+    reference: Option<T>,
+    result: T,
 }
 
-fn toolchain(root: &Path) -> Result<String, String> {
-    let pins = std::fs::read_to_string(root.join("rust-toolchain.toml")).map_err(|_| "read rust-toolchain.toml")?;
-    let channel = pins
-        .lines()
-        .map(|line| line.split('#').next().unwrap_or_default().trim())
-        .skip_while(|line| *line != "[toolchain]")
-        .skip(1)
-        .take_while(|line| !line.starts_with('['))
-        .filter_map(|line| line.split_once('='))
-        .find(|(key, _)| key.trim() == "channel")
-        .and_then(|(_, value)| value.trim().strip_prefix('"')?.strip_suffix('"'))
-        .ok_or("rust-toolchain.toml must set a quoted toolchain channel")?;
-    let parts: Vec<_> = channel.split('.').collect();
-    if parts.len() != 3 || parts.iter().any(|part| part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit())) {
-        return Err("rust-toolchain.toml must pin an exact Rust version".into());
+impl<T> Sides<T> {
+    fn try_map<U>(self, mut map: impl FnMut(T) -> Result<U, String>) -> Result<Sides<U>, String> {
+        Ok(Sides { reference: self.reference.map(&mut map).transpose()?, result: map(self.result)? })
     }
-    Ok(channel.to_owned())
-}
 
-fn executable(cargo_json: &str) -> Result<PathBuf, String> {
-    let mut artifacts = cargo_json
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|item| {
-            item["reason"] == "compiler-artifact"
-                && item["target"]["name"] == "oos_ui"
-                && item["target"]["kind"].as_array().is_some_and(|kinds| kinds.iter().any(|kind| kind == "lib"))
-                && item["profile"]["test"] == true
-        })
-        .filter_map(|item| item["executable"].as_str().map(PathBuf::from));
-    match (artifacts.next(), artifacts.next()) {
-        (Some(path), None) => Ok(path),
-        _ => Err("Cargo did not identify exactly one oos-ui library test executable".into()),
+    fn round_order(&mut self, round: usize) -> impl Iterator<Item = (&'static str, &mut T)> {
+        let paired = self.reference.is_some();
+        let mut order = [
+            self.reference.as_mut().map(|side| (" reference", side)),
+            Some((if paired { " result" } else { "" }, &mut self.result)),
+        ];
+        if round.is_multiple_of(2) {
+            order.reverse();
+        }
+        order.into_iter().flatten()
     }
-}
-
-fn commit(root: &Path) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["log", "-1", "--format=%H"])
-        .current_dir(root)
-        .output()
-        .map_err(|e| format!("read checkout commit: {e}"))?;
-    let commit = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if !output.status.success() || !hex(&commit, 40) {
-        return Err("could not read checkout commit".into());
-    }
-    Ok(commit)
 }
 
 fn capture(
@@ -123,9 +83,9 @@ fn capture(
     scpi: &mut impl Scpi,
     scratch: &Scratch,
     options: &Run<'_>,
-    binary: &Path,
+    builds: Sides<Build>,
     groups: &[String],
-) -> Result<Capture, String> {
+) -> Result<(String, Sides<Capture>), String> {
     with_scope_stopped(scpi, options.stop, || {
         let cpu = options.cpu;
         let core_type = remote.run(
@@ -138,28 +98,26 @@ fn capture(
         if !core_type.strip_prefix("0x").is_some_and(|midr| hex(midr, 16)) {
             return Err("CPU has no kernel-reported MIDR".into());
         }
-        let (runner, binary_sha256) = cache::binary(remote, scratch, binary)?;
-        let listed =
-            remote.run("list benchmark test", &format!("{runner} {BENCHMARK} --ignored --exact --list"), 15, None)?;
-        if !listed.lines().any(|line| line.strip_suffix(": test") == Some(BENCHMARK)) {
-            return Err("built library test executable does not list the benchmark".into());
-        }
+        let mut captures = builds.try_map(|build| Capture::prepare(remote, scratch, build))?;
         let cached = groups
             .iter()
             .map(|name| cache::fixture(remote, scratch, &options.fixtures.join(name)).map(|path| (name, path)))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut outputs = BTreeMap::new();
         for (name, cache::Fixture { path, sha256 }) in cached {
-            let script = format!(
-                "exec timeout -s KILL 120 env -u OOS_BENCH_STAGE OOS_FIXTURES={path} OOS_BENCH_CPU={cpu} \
-                 OOS_BENCH_REPEATS=1 {runner} {BENCHMARK} --ignored --nocapture --exact --test-threads=1"
-            );
-            let rounds = (1..=options.rounds)
-                .map(|round| remote.run(&format!("group '{name}', round {round}"), &script, 135, None))
-                .collect::<Result<Vec<_>, _>>()?;
-            outputs.insert(name.clone(), GroupCapture { sha256, rounds });
+            for round in 1..=options.rounds {
+                for (side, capture) in captures.round_order(round) {
+                    let operation = format!("group '{name}',{side} round {round}");
+                    let output = capture.round(remote, cpu, &path, &operation)?;
+                    capture
+                        .groups
+                        .entry(name.clone())
+                        .or_insert_with(|| GroupCapture { sha256: sha256.clone(), rounds: Vec::new() })
+                        .rounds
+                        .push(output);
+                }
+            }
         }
-        Ok(Capture { binary_sha256, core_type: core_type.into(), groups: outputs })
+        Ok((core_type.into(), captures))
     })
 }
 
@@ -175,41 +133,22 @@ fn with_scope_stopped<T>(
         return Err("scope is acquiring; stop it or use --stop".into());
     }
     eprintln!("If interrupted, set SCPI_HOST to the unit's SCPI hostname and run: {RESTART}");
-    let mut restoration = Ok(());
-    let result = {
-        let mut guard = RestoreRun { scpi, restoration: &mut restoration };
-        guard.stop().and_then(|()| work())
-    };
-    match (result, restoration) {
-        (Err(error), Err(restore)) => Err(format!("{error}; {restore}")),
-        (Ok(_), Err(restore)) => Err(restore),
-        (result, Ok(())) => result,
-    }
-}
-
-struct RestoreRun<'a, S: Scpi> {
-    scpi: &'a mut S,
-    restoration: &'a mut Result<(), String>,
-}
-
-impl<S: Scpi> RestoreRun<'_, S> {
-    fn stop(&mut self) -> Result<(), String> {
-        self.scpi.send(":STOP")?;
-        if self.scpi.acquiring()? {
+    with_restore(scpi, resume, |scpi| {
+        scpi.send(":STOP")?;
+        if scpi.acquiring()? {
             return Err("scope did not stop acquiring".into());
         }
-        Ok(())
-    }
+        work()
+    })
 }
 
-impl<S: Scpi> Drop for RestoreRun<'_, S> {
-    fn drop(&mut self) {
-        if let Err(first) = restore_run(self.scpi) {
-            *self.restoration = self.scpi.reconnect().and_then(|()| restore_run(self.scpi)).map_err(|retry| {
-                format!("could not confirm :RUN restoration: {first}; retry: {retry}. Set SCPI_HOST and run: {RESTART}")
-            });
-        }
+fn resume(scpi: &mut impl Scpi) -> Result<(), String> {
+    if let Err(first) = restore_run(scpi) {
+        return scpi.reconnect().and_then(|()| restore_run(scpi)).map_err(|retry| {
+            format!("could not confirm :RUN restoration: {first}; retry: {retry}. Set SCPI_HOST and run: {RESTART}")
+        });
     }
+    Ok(())
 }
 
 fn restore_run(scpi: &mut impl Scpi) -> Result<(), String> {
@@ -225,19 +164,39 @@ struct GroupCapture {
 
 #[derive(Debug)]
 struct Capture {
+    commit: String,
+    runner: String,
     binary_sha256: String,
-    core_type: String,
     groups: BTreeMap<String, GroupCapture>,
 }
 
 impl Capture {
-    fn summarize(self, options: &Run<'_>, commit: String) -> Result<Report, String> {
+    fn prepare(remote: &mut impl Remote, scratch: &Scratch, build: Build) -> Result<Self, String> {
+        let (runner, binary_sha256) = cache::binary(remote, scratch, &build.binary)?;
+        let listed =
+            remote.run("list benchmark test", &format!("{runner} {BENCHMARK} --ignored --exact --list"), 15, None)?;
+        if !listed.lines().any(|line| line.strip_suffix(": test") == Some(BENCHMARK)) {
+            return Err("built library test executable does not list the benchmark".into());
+        }
+        Ok(Self { commit: build.commit, runner, binary_sha256, groups: BTreeMap::new() })
+    }
+
+    fn round(&self, remote: &mut impl Remote, cpu: u32, path: &str, operation: &str) -> Result<String, String> {
+        let runner = &self.runner;
+        let script = format!(
+            "exec timeout -s KILL 120 env -u OOS_BENCH_STAGE OOS_FIXTURES={path} OOS_BENCH_CPU={cpu} \
+             OOS_BENCH_REPEATS=1 {runner} {BENCHMARK} --ignored --nocapture --exact --test-threads=1"
+        );
+        remote.run(operation, &script, 135, None)
+    }
+
+    fn summarize(self, cpu: u32, core_type: &str) -> Result<Report, String> {
         let mut reports = BTreeMap::new();
         for (name, GroupCapture { sha256, rounds }) in self.groups {
             let stages = measure::summarize(rounds).map_err(|e| format!("group '{name}': {e}"))?;
             reports.insert(name, Group::new(sha256, stages));
         }
-        Ok(Report::new(commit, self.binary_sha256, options.cpu, self.core_type, reports))
+        Ok(Report::new(self.commit, self.binary_sha256, cpu, core_type.into(), reports))
     }
 }
 

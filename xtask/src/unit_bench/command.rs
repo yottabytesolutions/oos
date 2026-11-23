@@ -1,19 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use std::{collections::BTreeMap, path::PathBuf};
+use crate::unit_tools::Flags;
+use std::path::PathBuf;
 
 pub(super) const DEFAULT_ROUNDS: usize = super::report::MIN_ROUNDS;
 
 pub(super) const USAGE: &str = "\
 usage: cargo xtask unit-bench run --unit <ssh destination> --fixtures <dir> --out <file.json>
            [--group <name>]... [--rounds N] [--cpu N] [--stop]
+       cargo xtask unit-bench ab --unit <ssh destination> --fixtures <dir>
+           --reference-checkout <path> --out <file.json>
+           [--group <name>]... [--rounds N] [--cpu N] [--tolerance 0.02]
        cargo xtask unit-bench compare --reference <file.json> --result <file.json> [--tolerance 0.02]
 
---stop pauses and restores an acquiring unit.";
+ab interleaves at least five rounds per checkout and pauses and restores acquisition if needed.
+For run, --stop opts in to pausing and restoring acquisition. Compare stored runs from one session.";
 
 pub(super) enum Options<'a> {
     Help,
     Run(Run<'a>),
+    Ab { run: Run<'a>, reference_checkout: PathBuf, tolerance: f64 },
     Compare(Compare),
 }
 
@@ -36,57 +42,39 @@ pub(super) struct Compare {
 impl<'a> Options<'a> {
     pub(super) fn parse(args: &[&'a str]) -> Result<Self, String> {
         match args {
-            ["--help" | "-h"] | ["run" | "compare", "--help" | "-h"] => Ok(Self::Help),
-            ["run", args @ ..] => Run::parse(args).map(Self::Run),
+            ["--help" | "-h"] | ["run" | "ab" | "compare", "--help" | "-h"] => Ok(Self::Help),
+            [mode @ ("run" | "ab"), args @ ..] => Self::capture(args, *mode == "ab"),
             ["compare", args @ ..] => Compare::parse(args).map(Self::Compare),
-            _ => Err("expected run or compare".into()),
+            _ => Err("expected run, ab, or compare".into()),
         }
     }
-}
 
-#[derive(Default)]
-struct Flags<'a>(BTreeMap<&'a str, Vec<&'a str>>);
-
-impl<'a> Flags<'a> {
-    fn parse(mut args: &[&'a str], allowed: &[&str], switch: Option<&str>) -> Result<Self, String> {
-        let mut flags = Self::default();
-        while let [flag, rest @ ..] = args {
-            if !allowed.contains(flag) {
-                return Err("unknown option or unexpected argument".into());
-            }
-            let values = flags.0.entry(flag).or_default();
-            if !values.is_empty() && *flag != "--group" {
-                return Err(format!("{flag} was specified more than once"));
-            }
-            if switch == Some(*flag) {
-                values.push("");
-                args = rest;
-            } else if let [value, remaining @ ..] = rest {
-                if value.is_empty() || value.starts_with("--") {
-                    return Err(format!("{flag} requires a value"));
-                }
-                values.push(value);
-                args = remaining;
-            } else {
-                return Err(format!("{flag} requires a value"));
-            }
+    fn capture(args: &[&'a str], ab: bool) -> Result<Self, String> {
+        let mut allowed = vec!["--unit", "--fixtures", "--out", "--group", "--rounds", "--cpu"];
+        if ab {
+            allowed.extend(["--reference-checkout", "--tolerance"]);
+        } else {
+            allowed.push("--stop");
         }
-        Ok(flags)
-    }
-
-    fn get(&self, flag: &str) -> Option<&'a str> {
-        self.0.get(flag)?.first().copied()
-    }
-
-    fn required(&self, flag: &str) -> Result<&'a str, String> {
-        self.get(flag).ok_or_else(|| format!("{flag} is required"))
+        let mut flags = Flags::parse(args, &allowed, Some("--stop"))?;
+        let mut run = Run::parse(&mut flags)?;
+        if !ab {
+            return Ok(Self::Run(run));
+        }
+        if run.rounds < super::report::MIN_ROUNDS {
+            return Err(format!("ab requires at least {} rounds per checkout", super::report::MIN_ROUNDS));
+        }
+        run.stop = true;
+        Ok(Self::Ab {
+            run,
+            reference_checkout: flags.required("--reference-checkout")?.into(),
+            tolerance: tolerance(&flags)?,
+        })
     }
 }
 
 impl<'a> Run<'a> {
-    fn parse(args: &[&'a str]) -> Result<Self, String> {
-        let allowed = ["--unit", "--fixtures", "--out", "--group", "--rounds", "--cpu", "--stop"];
-        let mut flags = Flags::parse(args, &allowed, Some("--stop"))?;
+    fn parse(flags: &mut Flags<'a>) -> Result<Self, String> {
         let unit = flags.required("--unit")?;
         if unit.starts_with('-') || unit.chars().any(|c| c.is_whitespace() || c.is_control()) {
             return Err("invalid SSH destination".into());
@@ -103,7 +91,7 @@ impl<'a> Run<'a> {
             unit,
             fixtures: flags.required("--fixtures")?.into(),
             out: flags.required("--out")?.into(),
-            groups: flags.0.remove("--group").unwrap_or_default(),
+            groups: flags.groups(),
             rounds,
             cpu,
             stop: flags.get("--stop").is_some(),
@@ -114,19 +102,22 @@ impl<'a> Run<'a> {
 impl Compare {
     fn parse(args: &[&str]) -> Result<Self, String> {
         let flags = Flags::parse(args, &["--reference", "--result", "--tolerance"], None)?;
-        let tolerance = flags
-            .get("--tolerance")
-            .unwrap_or("0.02")
-            .parse::<f64>()
-            .ok()
-            .filter(|&n| n.is_finite() && n >= 0.0)
-            .ok_or("--tolerance must be a finite, nonnegative fraction")?;
         Ok(Self {
             reference: flags.required("--reference")?.into(),
             result: flags.required("--result")?.into(),
-            tolerance,
+            tolerance: tolerance(&flags)?,
         })
     }
+}
+
+fn tolerance(flags: &Flags<'_>) -> Result<f64, String> {
+    flags
+        .get("--tolerance")
+        .unwrap_or("0.02")
+        .parse::<f64>()
+        .ok()
+        .filter(|&n| n.is_finite() && n >= 0.0)
+        .ok_or_else(|| "--tolerance must be a finite, nonnegative fraction".into())
 }
 
 #[cfg(test)]
@@ -155,6 +146,21 @@ mod tests {
         ] {
             let error = Options::parse(args).err().expect("invalid options");
             assert!(!error.contains("example.invalid"), "{error}");
+        }
+    }
+
+    #[test]
+    fn ab_requires_a_reference_and_at_least_five_rounds() {
+        let args = ["ab", "--unit", "example.invalid", "--fixtures", "fixtures", "--out", "data.json"];
+        assert_eq!(Options::parse(&args).err().unwrap(), "--reference-checkout is required");
+        let args = [args.as_slice(), &["--reference-checkout", "reference"]].concat();
+        let Options::Ab { run, reference_checkout, tolerance } = Options::parse(&args).unwrap() else {
+            panic!("expected ab")
+        };
+        assert_eq!((run.rounds, run.cpu, run.stop, tolerance), (5, 2, true, 0.02));
+        assert_eq!(reference_checkout, PathBuf::from("reference"));
+        for (extra, valid) in [(["--rounds", "4"], false), (["--rounds", "6"], true), (["--tolerance", "NaN"], false)] {
+            assert_eq!(Options::parse(&[args.as_slice(), &extra].concat()).is_ok(), valid);
         }
     }
 }

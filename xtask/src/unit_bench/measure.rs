@@ -43,7 +43,7 @@ fn parse(output: &str) -> Result<Round, String> {
     Ok(stages.into_iter().map(|(stage, samples)| (stage.into(), samples.into_values().flatten().collect())).collect())
 }
 
-fn median(values: &mut [f64]) -> Option<f64> {
+pub(super) fn median(values: &mut [f64]) -> Option<f64> {
     values.sort_unstable_by(f64::total_cmp);
     let middle = values.len() / 2;
     let &upper = values.get(middle)?;
@@ -76,7 +76,7 @@ pub(super) fn summarize(rounds: impl IntoIterator<Item = impl AsRef<str>>) -> Re
         if index == 0 {
             stages.extend(round.keys().map(|stage| (stage.clone(), AcrossRounds::default())));
         }
-        super::report::same_keys(&stages, &round, "stage", "first round", "later round")?;
+        crate::unit_tools::report::same_keys(&stages, &round, "stage", "first round", "later round")?;
         for (stage, values) in round {
             stages.get_mut(&stage).expect("stage keys match the first round").add(values);
         }

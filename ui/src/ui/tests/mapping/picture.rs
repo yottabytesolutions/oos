@@ -77,6 +77,22 @@ fn persistence_knob_defers_both_maps_to_acceptance() {
 }
 
 #[test]
+fn run_preserves_the_stopped_picture_without_a_mapping_change() {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let mut ui = running();
+    ui.m.run = RunState::Stop;
+    ui.step(0.04);
+    seed(&mut ui);
+
+    ui.key(key::RUNSTOP);
+    let (_, cleared) = change::begin_step(&mut ui, 0.04).unwrap();
+    assert_eq!(ui.m.run, RunState::Run);
+    assert!(!cleared);
+    assert_eq!(ui.ph.maps()[0][0], 97);
+    assert_eq!(ui.phz.maps()[0][0], 97);
+}
+
+#[test]
 fn min_replaces_only_with_a_new_record_and_decay_still_runs() {
     let mut ui = running();
     ui.m.persist = 0;

@@ -100,6 +100,24 @@ fn delayed_positive_deposits_share_the_next_picture() {
 }
 
 #[test]
+fn run_epoch_rejects_staged_and_pending_deposits_from_before_run() {
+    use oos_core::change::{Request, Shadow, UiAcq};
+    let mut f = Fixture::new();
+    f.put(20, 0, 0);
+    f.publish(32, 1, 1);
+    let model = Model::default();
+    let config = crate::model::config();
+    let mut shadow = Shadow::new(&model, UiAcq::default(), &config).unwrap();
+    f.id = shadow.observe(&model, UiAcq::default(), &[Request::Run], &config).unwrap().identity();
+    f.pipe.publish_view(&model, 4, 4, crate::sparse::Interp::Exact, f.id);
+    assert_eq!(f.compose().frames, 0);
+    assert!(f.window.is_empty());
+    f.put(3, 2, 2);
+    assert_eq!(f.compose().frames, 3);
+    assert_eq!(f.window.rebuild(&mut f.ph), 3);
+}
+
+#[test]
 fn fresh_deposits_above_the_combined_narrow_bound_share_the_same_picture() {
     let mut f = Fixture::new();
     f.put(1500, 0, 0);

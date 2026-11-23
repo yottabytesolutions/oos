@@ -2629,21 +2629,6 @@ impl Ui {
         self.azr.watch || self.xy
     }
 
-    /// A plain STOP drains a serial capture, or waits for the final read needed by the current view.
-    fn stop_wants_final(&self) -> bool {
-        let m = &self.m;
-        let frame = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
-        self.src.is_hw()
-            && board().slow_mode(m) == crate::board::Slow::Off
-            && m.trig_mode != TrigMode::Single
-            && m.segments == 0
-            && !(m.mask_on && m.mask_stop)
-            && self.hist_pos.is_none()
-            && self.seg_pos.is_none()
-            && self.last[0].is_some()
-            && change::transitions::wants_final_record(self, frame)
-    }
-
     /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
     pub(crate) fn ana_get(&self, c: usize, k: Meas) -> f64 {
         if self.meas_env[c] && crate::framestats::needs_samples(k) {
@@ -3112,59 +3097,6 @@ impl Ui {
         }
         parts.push(format!("{:.0} wfm/s", self.wfm_rate));
         parts.join("   \u{b7}   ")
-    }
-
-    /// STOP on the hardware: the thread acquires nothing and reads the stored record again for every view (time base,
-    /// delay), as much of it as the view shows: zoomed out the whole record, zoomed in every sample of the part on
-    /// screen. The trigger stays where the last record had it (software trigger included).
-    fn stop_replay(&mut self) {
-        let ok = self.src.is_hw()
-            && board().slow_mode(&self.m) == crate::board::Slow::Off
-            && self.m.segments == 0
-            && self.hist_pos.is_none()
-            && self.last[0].as_ref().is_some_and(|r| r.raw.is_some() || r.la.is_some());
-        if !ok {
-            self.src.hw_stop(None);
-            self.stop_ti_off = None;
-            (self.stop_raw, self.stop_pic) = (None, None);
-            return;
-        }
-        // the software trigger of the record shown at the stop, as a time from the hardware trigger point
-        if self.stop_ti_off.is_none() {
-            // and that record itself when it is of samples: measured while the views come as pairs
-            self.stop_raw = self.last[0].clone().filter(|r| r.raw.as_ref().is_some_and(|x| !x.frame.envelope));
-            self.stop_pic = None;
-            self.stop_ti_off = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|raw| {
-                let f = &raw.frame;
-                let ti = raw.i0 as f64 - raw.t0 / f.dt;
-                (ti - f.fixed_ti.unwrap_or(f.pre as f64)) * f.dt
-            });
-        }
-        let view = (self.m.time_per_div() as f64, self.m.delay as f64);
-        let Some(mut f) = self.src.hw_stop(Some(view)) else { return };
-        if let (Some(t), Some(off)) = (f.fixed_ti, self.stop_ti_off) {
-            f.fixed_ti = Some(t + off / f.dt);
-        }
-        let window = view.0 * HDIV as f64;
-        let rec = crate::board::to_record(&std::sync::Arc::new(f), &self.m, 3600, window, view.1 - window / 2.0);
-        // a view read as min/max pairs (zoomed out on a record above `LIVE_READ`: the whole record compressed) after a
-        // STOP on a raw record (the final frame of a deep record): the pairs are drawn, the raw record stays the one
-        // measured and read out; pairs hold no Mean, RMS or Std dev (A3 of the 2026-11-16 review). A view read raw (far
-        // zoomed in) is the record shown and measured, as before
-        match self.stop_raw.as_ref().filter(|_| rec.raw.as_ref().is_some_and(|r| r.frame.envelope)) {
-            Some(raw) => (self.last[0], self.stop_pic) = (Some(raw.clone()), Some(rec)),
-            None => (self.last[0], self.stop_pic) = (Some(rec), None),
-        }
-        // the record counted when it came in RUN: its values for the view, not a new one for the statistics, the trend
-        // and the catalog (as `refresh_stopped_measurements`)
-        self.measure_last();
-    }
-
-    /// STOP: the pair record to draw for the view (`stop_pic`) while the raw record of the stop is the record shown.
-    fn stop_picture(&self) -> Option<&Record> {
-        let frame = |r: Option<&Record>| r.and_then(|r| r.raw.as_ref()).map(|r| std::sync::Arc::as_ptr(&r.frame));
-        let same = frame(self.last[0].as_ref()).is_some_and(|f| Some(f) == frame(self.stop_raw.as_ref()));
-        self.stop_pic.as_ref().filter(|_| same)
     }
 
     /// Continuous hardware views that can draw with the deposit pool.

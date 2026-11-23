@@ -24,6 +24,9 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- System information and `:SYSTem:STATe?` show the boot SD card's negotiated speed and running device-tree
+  ceiling. Host-tested only.
+
 - System > Network > Remote services > HiSLIP enables TCP 4880 independently with `remote.hislip`. It is off by
   default until verified on the unit. The listener, sessions, firewall and discovery follow the switch. Host-tested only.
 

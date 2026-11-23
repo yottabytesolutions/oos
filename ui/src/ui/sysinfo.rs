@@ -18,6 +18,8 @@ pub(super) enum Row {
     Note(String, Rgb),
 }
 
+const SD_CARD: &str = "SD card";
+
 fn kv(k: &str, v: impl Into<String>) -> Row {
     Row::Kv(k.into(), v.into(), TEXT)
 }
@@ -127,6 +129,51 @@ fn software(ui: &Ui) -> Vec<Row> {
     a
 }
 
+fn unit(p: &oos_hal::model::Platform, sd: oos_hal::bootcard::Status) -> Vec<Row> {
+    let c = &p.caps;
+    vec![
+        Row::Head("Unit".into()),
+        kv("Model", format!("Rigol {}", c.name)),
+        kv("Serial", p.serial.clone().unwrap_or("-".into())),
+        kv("MAC", p.mac.clone().unwrap_or("-".into())),
+        kv("Series", c.series),
+        kv("Rated bandwidth", format!("{} MHz", c.rated_bw_mhz)),
+        kv("Analog channels", c.channels.to_string()),
+        kv("Logic analyser", yes_no(c.la)),
+        kv("Generator", yes_no(c.has_gen())),
+        kv("EXT trigger", yes_no(c.ext_trig)),
+        match p.source {
+            oos_hal::model::Source::Vendor => kvc("Identified", "vendor.bin", GREEN),
+            oos_hal::model::Source::Forced => kvc("Identified", "forced (--model / limits.conf)", AMBER),
+            oos_hal::model::Source::Assumed => kvc("Identified", "assumed (no vendor.bin)", AMBER),
+        },
+        sd_card(sd),
+    ]
+}
+
+fn sd_card(sd: oos_hal::bootcard::Status) -> Row {
+    use oos_hal::bootcard::CardState;
+    let observed = sd.mode().label();
+    let expected = sd.expected().label();
+    match sd.state() {
+        CardState::Ok => kv(SD_CARD, observed),
+        CardState::Degraded => kvc(SD_CARD, format!("{observed} (expected {expected})"), AMBER),
+        CardState::Worse => kvc(SD_CARD, "Default speed", RED),
+        CardState::Unverified => kvc(SD_CARD, format!("Not yet seen in {expected}"), DIM),
+        CardState::Unknown => kvc(SD_CARD, "Unknown", DIM),
+    }
+}
+
+fn value_font(f: &'static Fonts, size: TextSize, label: &str, value: &str, room: i32) -> &'static Font {
+    if label == SD_CARD {
+        super::fit_font(&[&f.m, &f.s, &Fonts::get(0).s], room, value)
+    } else if size == TextSize::Normal {
+        &f.m
+    } else {
+        super::fit_font(&[&f.m, &f.s, &Fonts::get(0).m], room, value)
+    }
+}
+
 impl Ui {
     /// Firmware identity captured through the Host at start; remote queries do no file IO.
     pub fn firmware_version(&self) -> &str {
@@ -162,21 +209,7 @@ impl Ui {
         let readings = self.src.hw_board();
 
         // ---- column 1: unit and software
-        let mut a = vec![Row::Head("Unit".into())];
-        a.push(kv("Model", format!("Rigol {}", c.name)));
-        a.push(kv("Serial", p.serial.clone().unwrap_or("-".into())));
-        a.push(kv("MAC", p.mac.clone().unwrap_or("-".into())));
-        a.push(kv("Series", c.series));
-        a.push(kv("Rated bandwidth", format!("{} MHz", c.rated_bw_mhz)));
-        a.push(kv("Analog channels", c.channels.to_string()));
-        a.push(kv("Logic analyser", yes_no(c.la)));
-        a.push(kv("Generator", yes_no(c.has_gen())));
-        a.push(kv("EXT trigger", yes_no(c.ext_trig)));
-        a.push(match p.source {
-            oos_hal::model::Source::Vendor => kvc("Identified", "vendor.bin", GREEN),
-            oos_hal::model::Source::Forced => kvc("Identified", "forced (--model / limits.conf)", AMBER),
-            oos_hal::model::Source::Assumed => kvc("Identified", "assumed (no vendor.bin)", AMBER),
-        });
+        let mut a = unit(p, self.host.runtime().sd_card);
         a.extend(software(self));
         a.push(match readings {
             Some((0, _)) => kvc("FPGA", "not reached", AMBER),
@@ -333,12 +366,7 @@ impl Ui {
                     }
                     Row::Kv(k, v, c) => {
                         cv.text_in(&f.s, Rect::new(x, y, kw, kv_h - 1), 0, k, DIM);
-                        // a value that would be cut off takes a smaller size
-                        let vf = if self.m.text_size == TextSize::Normal {
-                            &f.m
-                        } else {
-                            super::fit_font(&[&f.m, &f.s, &crate::font::Fonts::get(0).m], cw - kw, v)
-                        };
+                        let vf = value_font(f, self.m.text_size, k, v, cw - kw);
                         cv.text_in(vf, Rect::new(x + kw, y, cw - kw, kv_h - 1), 0, v, *c);
                         y += kv_h;
                     }

@@ -314,6 +314,19 @@ Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POD<n>:THRe
 
 `:SYSTem:STATe?` returns app diagnostic state. `:SYSTem:GET? <key>` and `:SYSTem:SET <key> = <value>` access the explicit setup schema, including Math configuration that has no dedicated stock-compatible command subtree here. Key names and internal indices are implementation-specific: see [setup serialization](../ui/src/store.rs), rather than assuming a Rigol syntax. `:SYSTem:LOG ON|OFF` controls the measurement logger.
 
+`:SYSTem:STATe?` includes a boot SD card snapshot read once when the UI starts.
+
+| Field | Values |
+| --- | --- |
+| `sd.mode` | `legacy`, `hs`, `sdr12`, `sdr25`, `sdr50`, `ddr50`, `sdr104`, `unknown` |
+| `sd.expected` | Running device-tree ceiling `hs`, `sdr50`, `sdr104`, or `unknown` |
+| `sd.state` | `ok` at or above the ceiling, `degraded` at least as fast as High speed but below the ceiling, `worse` below High speed, or `unknown` when either input is unavailable. `unverified` is reserved for per-card history. |
+| `sd.degraded_in_a_row` | `0` |
+| `sd.repair` | `none` |
+
+A boot that negotiated High speed against an SDR104 ceiling reports
+`sd.mode=hs sd.expected=sdr104 sd.state=degraded sd.degraded_in_a_row=0 sd.repair=none`.
+
 ## Errors and compatibility limits
 
 Read `:SYSTem:ERRor?` until `0,"No error"`. Each read removes one queued error. The queue holds at most 20 bounded messages; overflow is -350. Errors latch their event bit once; draining old errors does not relatch it. Unsupported or failed queries reply with specific error text as well as queuing it, even when full. Legitimate pending `*OPC?` keeps its deferred response. Typical errors include -113 undefined header, -224 invalid parameter, -230 unavailable analysis, -241 missing hardware, -256 missing file, and -350 queue overflow. Action queries such as `:RUN?`, `:STOP?`, `:SING?`, `*CLS?` and `*RST?` are unsupported and do not execute the action.

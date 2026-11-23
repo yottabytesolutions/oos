@@ -155,7 +155,7 @@ impl Board for Dho {
         let mut sh = c.shadows();
         for (title, seq) in [
             ("read-out (play last), from the stock values", scu::readout(&win, &mut c.shadows())),
-            ("arm (first 0, n 1)", scu::arm(c.fsm, &mut sh, 0, 1)),
+            ("arm (first 0, n 1)", scu::arm(c.fsm, &mut sh, 1)),
             ("then: read-out (play last)", scu::readout(&win, &mut sh.clone())),
             ("or: read-out with type-4 play", scu::readout_play4(&win, &mut sh, 0, 1)),
         ] {

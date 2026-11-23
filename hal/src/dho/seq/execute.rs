@@ -61,7 +61,7 @@ pub fn acquire_batch_observed<B: crate::dho::bus::Bus, R: std::io::Read>(
 
 /// One batch on the unit: arm `frames(s, p)` frames, wait for the first, then let the ring fill until all frames are
 /// recorded or `wait_ms` have passed since the first one (0x4010 reads back the last recorded frame, so the count is
-/// `0x4010 - first + 1`), then play and read exactly those frames into `dma`.
+/// `0x4010 + 1`), then play and read exactly those frames into `dma`.
 /// `armed`: `arm_only_steps` already armed this batch with the same `s` and `p`; only the wait is left.
 /// Returns the count; the bytes (`count` x `frame_bytes`) are `dma.data()`.
 /// Generic over the bus, so the host model (`seg::sim::Engine`) runs it too.
@@ -167,7 +167,7 @@ fn acquire_batch_phases<B: crate::dho::bus::Bus, R: std::io::Read>(
     clock: &impl Clock,
     mut observed: Option<(impl FnMut(BatchPhase), impl Fn() -> bool, impl FnMut(u32) -> bool)>,
 ) -> Result<u32, String> {
-    let arm = batch_arm(st, s, p, wait.first, armed)?;
+    let arm = batch_arm(st, s, p, armed);
     let observed_fill = observed.is_some();
     if let Some((observe, _, _)) = observed.as_mut() {
         first_record(&arm, wait.armed_at(), p, (bar, c2h, dma), (&mut log, &stop, clock), observe)?;
@@ -189,7 +189,7 @@ fn acquire_batch_phases<B: crate::dho::bus::Bus, R: std::io::Read>(
             return Err(NEW_SETTINGS.into());
         }
     }
-    let steps = st.read_steps_at(s, p, wait.first, count);
+    let steps = st.read_steps(s, p, count);
     read_batch(&steps, bar, c2h, dma, &mut log, clock, observed.map(|(observe, _, _)| observe))?;
     Ok(count)
 }

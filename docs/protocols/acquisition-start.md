@@ -311,13 +311,7 @@ Repeat the arm sequence, starting with its stop sequence. **Decoded from stock.*
 two-slot layout starts slot 0 at frame 0 and slot 1 at `max_frames`. A disjoint slot
 can preserve the preceding record.
 
-OOS defaults to `acq.stop_slot = zero`. With `alternate`, the serial Normal path can
-start at `max_frames.max(1)` when the previous stored record was at frame 0. The code
-requires Play4, room for at least two records, and no hardware mask or zone.
-An overlapping capture or an ineligible plan starts at zero. **Assumed on hardware.**
-Preservation for STOP replay under alternate-slot operation still needs a unit run.
-See [STOP and replay](../fork/stop-exact.md#now) and
-[`first_frame`](../../ui/src/board/dho/hw/stop.rs).
+OOS arms each batch at frame zero. See [STOP and replay](../fork/stop-exact.md#now).
 
 ### Out of scope
 
@@ -394,7 +388,7 @@ The dated check used CH1, 10 M points at 1.25 GSa/s and a 100 kHz square wave. I
 100 ns/div and checked 10 us/div, 1 ms/div, and 1 us/div with and without a 3 ms delay.
 
 An arm clears reread eligibility for an overlapping frame range.
-Alternate-slot preservation for serial STOP remains **assumed**. See [Next frame](#next-frame).
+OOS arms every capture at frame zero, so a serial arm always clears reread eligibility for the programmed range.
 
 ## Memory depth beyond 50 M on the unit
 

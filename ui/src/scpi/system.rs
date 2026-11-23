@@ -83,10 +83,9 @@ fn settings(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str
         let switches = ui.switches();
         let _ = write!(
             text,
-            " acq.dump={} acq.frame_header={} acq.stop_slot={} gpu.cpu={} gpu.pinned_cpu={}",
+            " acq.dump={} acq.frame_header={} gpu.cpu={} gpu.pinned_cpu={}",
             on_off(switches.board.batch_dump.on()),
             on_off(switches.board.header_probe.on()),
-            switches.source.stop_slot().as_str(),
             switches.perf.gpu_cpu.as_str(),
             ui.gpu_pinned_cpu().map_or_else(|| "none".into(), |cpu| cpu.to_string()),
         );
@@ -298,15 +297,15 @@ mod tests {
         let _scope = crate::drawpipe::test_scope::Scope::new();
         let mut scpi = Scpi::open(0u16, false);
         let canvas = Canvas::new(1, 1);
-        for (value, slot, reported) in [("off", "", "zero"), ("on", "acq.stop_slot = alternate", "alternate")] {
-            let conf = format!("acq.dump = {value}\nacq.frame_header = {value}\n{slot}");
+        for value in ["off", "on"] {
+            let conf = format!("acq.dump = {value}\nacq.frame_header = {value}");
             let switches = crate::sysconf::Switches::parse(&|_| None, &conf, "", Default::default());
             let host = crate::ui::host::Host::headless().with_switches(switches);
             let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, host);
             let reply = scpi.exec_line(&mut ui, &canvas, ":SYSTem:STATe?");
             let state = String::from_utf8(reply).unwrap();
             assert!(state.contains(&format!("acq.dump={value} acq.frame_header={value}")), "{state}");
-            assert!(state.split_whitespace().any(|word| word == format!("acq.stop_slot={reported}")), "{state}");
+            assert!(!state.contains("acq.stop_slot="), "{state}");
         }
     }
 

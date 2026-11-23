@@ -4,7 +4,7 @@ use super::*;
 use crate::board::{dho::replay::Batch, identity::Publication, Frame, HwShared};
 use oos_hal::dho::{
     bus::{Bus, DmaBuf, Recorder},
-    scu,
+    hz, scu,
     seq::time::{BatchWait, Clock},
 };
 use oos_hal::sync::lock;
@@ -108,7 +108,7 @@ fn ms(value: u64) -> Duration {
 
 fn run(
     script: &Script<'_>,
-    (serial, slot): (bool, StopSlot),
+    serial: bool,
     done_at: Duration,
     check: impl FnOnce(&mut Ring<'_>, &mut seq::State, Option<Batch>, Result<u32, String>, bool),
 ) {
@@ -118,7 +118,6 @@ fn run(
     let mut state = seq::State::handover(1, None);
     let previous = Batch::new(settings.clone(), params, (0, false), Default::default(), None);
     let plan = ArmPlan::new(&settings, Default::default(), false, None, serial);
-    let first = first_frame(slot, &settings, &params, Some(previous.index), plan.serial());
     let played = Cell::new(0);
     let mut ring = Ring {
         clock: script,
@@ -140,7 +139,7 @@ fn run(
         &mut Codes(&played),
         &mut dma,
         false,
-        (BatchWait::new(20, None).from_frame(first), script),
+        (BatchWait::new(20, None), script),
         |_| {},
         || wait.canceled(&lock(script.out), &plan, asked, (settings.auto, false), script.now()),
         (|| false, |_| !read_obsolete(&lock(script.out), &plan, asked)),
@@ -149,9 +148,9 @@ fn run(
     let mut previous = Some(previous);
     let fresh = match &result {
         Ok(count) => {
-            assert_eq!(dma.data().first(), Some(&29), "capture at frame {first}");
+            assert_eq!(dma.data().first(), Some(&29));
             assert!(dma.data().iter().all(|&byte| byte == 29));
-            previous = Some(Batch::new(settings, params, (first + count - 1, false), Default::default(), None));
+            previous = Some(Batch::new(settings, params, (count - 1, false), Default::default(), None));
             true
         }
         Err(error) => {
@@ -161,7 +160,7 @@ fn run(
                 })
                 .unwrap();
             }
-            retain_replay(&mut previous, first, 1, serial)
+            retain_replay(&mut previous, 1, serial)
         }
     };
     check(&mut ring, &mut state, previous, result, fresh);
@@ -180,29 +179,12 @@ fn reread(ring: &mut Ring<'_>, state: &mut seq::State, batch: Batch, expected: u
 fn serial_stop_reads_a_trigger_that_completes_after_hold() {
     let out = HwShared::default();
     let script = Script::new(&out, Some(ms(1)), None);
-    run(&script, (true, StopSlot::Alternate), ms(40), |ring, state, batch, result, fresh| {
+    run(&script, true, ms(40), |ring, state, batch, result, fresh| {
         assert_eq!(result, Ok(1));
         let batch = batch.unwrap();
-        assert_ne!(batch.index, 0);
+        assert_eq!(batch.index, 0);
         assert!(fresh && lock(&out).hold);
         reread(ring, state, batch, 29);
-    });
-}
-
-#[test]
-fn serial_stop_without_a_trigger_disarms_and_rereads_the_previous_slot() {
-    let out = HwShared::default();
-    let script = Script::new(&out, Some(ms(1)), None);
-    run(&script, (true, StopSlot::Alternate), ms(100_000), |ring, state, batch, result, fresh| {
-        assert!(is_stall(&result.unwrap_err()));
-        assert!(script.elapsed.get() < ms(2010));
-        assert_eq!(ring.armed, None);
-        assert!(fresh);
-        let batch = batch.unwrap();
-        assert_eq!(batch.index, 0);
-        reread(ring, state, batch, 17);
-        crate::board::dho::publication::publish_held(&out, None, 1);
-        assert_eq!(lock(&out).final_ack, 1);
     });
 }
 
@@ -210,7 +192,7 @@ fn serial_stop_without_a_trigger_disarms_and_rereads_the_previous_slot() {
 fn overlapping_normal_stop_cancels_at_the_next_control_poll() {
     let out = HwShared::default();
     let script = Script::new(&out, Some(ms(1)), None);
-    run(&script, (false, StopSlot::Zero), ms(100_000), |ring, _, _, result, _| {
+    run(&script, false, ms(100_000), |ring, _, _, result, _| {
         assert_eq!(result, Err(seq::NEW_SETTINGS.into()));
         assert!(script.elapsed.get() <= ms(11));
         assert_eq!(ring.armed, None);
@@ -221,7 +203,7 @@ fn overlapping_normal_stop_cancels_at_the_next_control_poll() {
 fn overlapping_trigger_timeout_disarms_even_before_hold_is_seen() {
     let out = HwShared::default();
     let script = Script::new(&out, None, None);
-    run(&script, (false, StopSlot::Zero), ms(100_000), |ring, _, _, result, _| {
+    run(&script, false, ms(100_000), |ring, _, _, result, _| {
         assert!(is_stall(&result.unwrap_err()));
         assert_eq!(ring.armed, None);
         let text = crate::drawpipe::counters().acquisition.text();
@@ -233,7 +215,7 @@ fn overlapping_trigger_timeout_disarms_even_before_hold_is_seen() {
 fn calibration_waits_for_first_record_and_does_not_disarm_it() {
     let out = HwShared::default();
     let script = Script::new(&out, None, Some(ms(1)));
-    run(&script, (false, StopSlot::Zero), ms(40), |_, _, _, result, _| {
+    run(&script, false, ms(40), |_, _, _, result, _| {
         assert_eq!(result, Ok(1));
         assert_eq!(script.elapsed.get(), ms(40));
         assert!(lock(&out).cal_req.is_some());
@@ -242,7 +224,7 @@ fn calibration_waits_for_first_record_and_does_not_disarm_it() {
     });
 }
 
-// Writes from d60a21d's one-frame arm after State::handover(1, None).
+// Expected writes for a one-frame arm after State::handover(1, None).
 const ZERO_ARM: [(u32, u32); 29] = [
     (0x4004, 0),
     (0x4004, 0),
@@ -277,11 +259,10 @@ const ZERO_ARM: [(u32, u32); 29] = [
 
 #[test]
 fn default_serial_and_overlapping_arms_match_the_recorded_writes() {
-    let slot = crate::sysconf::Switches::default().source.stop_slot();
     for serial in [true, false] {
         let out = HwShared::default();
         let script = Script::new(&out, None, None);
-        run(&script, (serial, slot), ms(40), |ring, _, batch, result, _| {
+        run(&script, serial, ms(40), |ring, _, batch, result, _| {
             assert_eq!(result, Ok(1));
             assert_eq!(batch.unwrap().index, 0);
             assert_eq!(&ring.bus.writes[..ring.writes_before_poll.unwrap()], &ZERO_ARM, "serial={serial}");
@@ -293,7 +274,7 @@ fn default_serial_and_overlapping_arms_match_the_recorded_writes() {
 fn default_serial_stop_invalidates_the_overwritten_slot_on_timeout() {
     let out = HwShared::default();
     let script = Script::new(&out, Some(ms(1)), None);
-    run(&script, (true, StopSlot::Zero), ms(100_000), |ring, _, batch, result, fresh| {
+    run(&script, true, ms(100_000), |ring, _, batch, result, fresh| {
         assert!(is_stall(&result.unwrap_err()));
         assert_eq!(ring.armed, None);
         assert_eq!(ring.slots[&0], 0);

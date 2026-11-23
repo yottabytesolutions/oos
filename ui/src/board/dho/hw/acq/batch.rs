@@ -12,7 +12,7 @@ use super::dispatch::{Handoff, Published};
 use super::pacing::PacingPolicy;
 use super::read::{Capture, ReadIo};
 use super::{replay, status, AcqLoop, BatchState, Io, LoopClock, Port, Request};
-use crate::sysconf::{switches::StopSlot, Switches};
+use crate::sysconf::Switches;
 use crate::{
     board::HwShared,
     drawpipe::{self, Pipe, TapReservation},
@@ -63,19 +63,13 @@ impl<T: PacingPolicy> AcqLoop<T> {
         self.batch.clear_average(io, out, request.avg_clear);
         let plan = ArmPlan::new(&b, request.identity, request.route, deposit, grant.serial());
         let obsolete = || plan.obsolete(out, (request.want.as_ref(), request.mode));
-        let previous = self.replay.last_batch.as_ref().map(|batch| batch.index);
-        let Some((ahead, first, tap, timing)) = self.batch.arm(
-            io,
-            out,
-            (&b, params),
-            (&plan, deposit, grant, uncapped > 0),
-            (self.switches.source.stop_slot(), previous),
-            obsolete,
-        ) else {
+        let Some((ahead, tap, timing)) =
+            self.batch.arm(io, out, (&b, params), (&plan, deposit, grant, uncapped > 0), obsolete)
+        else {
             self.replay.fresh = last_read;
             return;
         };
-        let capture = Capture { settings: &b, params, request: &request, uncapped, first };
+        let capture = Capture { settings: &b, params, request: &request, uncapped };
         self.capture(io, capture, (&plan, deposit), (ahead, tap, timing, last_read));
     }
 
@@ -104,7 +98,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
                 } else {
                     seq::frames(b, params)
                 };
-                self.replay.fresh = stop::retain_replay(&mut self.replay.last_batch, capture.first, frames, last_read);
+                self.replay.fresh = stop::retain_replay(&mut self.replay.last_batch, frames, last_read);
                 self.batch.failed(&read_io, &capture, out, error);
                 return;
             }
@@ -113,7 +107,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
         self.batch.guard.batch(false, unit, unit_key(b, mask_map()), read_io.clock.now());
         let readout =
             self.batch.read(&mut read_io, &capture, &completed, (out, self.switches.board.header_probe), tap.as_ref());
-        let record = (capture.first + completed.count - 1, readout.raw_frame.is_some());
+        let record = (completed.count - 1, readout.raw_frame.is_some());
         let batch = replay::Batch::new(b.clone(), *params, record, request.identity, readout.la.clone());
         (self.replay.last_batch, self.replay.fresh) = (Some(batch), true);
         let handoff = Handoff { capture, completed, plan, deposit, tap, readout };
@@ -171,9 +165,8 @@ impl BatchState {
         out: &HwShared,
         (b, p): (&Settings, &hz::Params),
         (plan, deposit, grant, has_records): (&ArmPlan<'_>, Option<&Pipe>, drawpipe::admission::Grant, bool),
-        (slot, previous): (StopSlot, Option<u32>),
         obsolete: impl Fn() -> bool,
-    ) -> Option<(bool, u32, Reserved, batch_timing::SourceTiming)> {
+    ) -> Option<(bool, Reserved, batch_timing::SourceTiming)> {
         let records_can_arm = plan.read_ahead();
         if !has_records
             || (!records_can_arm
@@ -191,7 +184,6 @@ impl BatchState {
         let (mut ahead, tap) = plan.prepare(&mut self.dma, &mut self.armed, &io.clock, obsolete, |armed| {
             super::disarm(armed, &mut io.state, &mut io.bar, &mut io.c2h, &io.clock);
         })?;
-        let first = stop::first_frame(slot, b, p, previous, plan.serial() && !ahead);
         let prearm = self.prearm_timing.take().filter(|_| ahead);
         let mut timing = batch_timing::SourceTiming::new(prearm, grant);
         // Force uses a single pulse after arming, except when a hardware average counts triggers.
@@ -200,11 +192,7 @@ impl BatchState {
                 || timing
                     .arm(&io.clock, || {
                         lifecycle::prearm(b.single, || {
-                            let steps = if first == 0 {
-                                io.state.arm_only_steps(b, p)
-                            } else {
-                                io.state.arm_only_steps_at(b, p, first)?
-                            };
+                            let steps = io.state.arm_only_steps(b, p);
                             seq::time::execute_bus_with_clock(
                                 &steps,
                                 &mut io.port.batch_bus(&mut io.bar),
@@ -223,7 +211,7 @@ impl BatchState {
                 ahead = true;
             }
         }
-        Some((ahead, first, tap, timing))
+        Some((ahead, tap, timing))
     }
 
     fn failed(

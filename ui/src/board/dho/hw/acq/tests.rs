@@ -198,7 +198,7 @@ fn short_buffer(
     let settings = super::super::batch_plan(settings, params, source.switches.board.zone_batch);
     let (deposit, uncapped) = super::super::batch::deposit_plan(&settings, params, request.identity, request.route);
     let plan = ArmPlan::new(&settings, request.identity, request.route, deposit, false);
-    let capture = Capture { settings: &settings, params, request, uncapped, first: 0 };
+    let capture = Capture { settings: &settings, params, request, uncapped };
     let timing = batch_timing::SourceTiming::new(None, Grant::Overlapping(records));
     let mut io = io.batch_io();
     let batch = &mut source.batch;

@@ -242,19 +242,19 @@ pub fn readout_play4(win: &Window, sh: &mut Shadows, first: u32, count: u32) -> 
     w
 }
 
-/// Arm `n` frames from frame `first` (stop sequence, type-2 run, record sequence with position 0, FSM run); 29 writes. Then poll 0x4080 for `PLAYINFO_DONE`.
-pub fn arm(fsm: u32, sh: &mut Shadows, first: u32, n: u32) -> Vec<Write> {
-    record_run(fsm, sh, first, n, 0)
+/// Arm `n` frames from frame zero (29 writes), then poll 0x4080 for `PLAYINFO_DONE`.
+pub fn arm(fsm: u32, sh: &mut Shadows, n: u32) -> Vec<Write> {
+    record_run(fsm, sh, n, 0)
 }
 
 /// Hardware segmented recording (stock record state 0xb):
 /// `n` frames from frame 0, the FPGA re-arms itself between them and waits `interval_ticks` x 6.4 ns (0x4068) after
 /// each. The same 29 writes as `arm`; with interval 0 they are identical.
 pub fn record_arm(fsm: u32, sh: &mut Shadows, n: u32, interval_ticks: u32) -> Vec<Write> {
-    record_run(fsm, sh, 0, n, interval_ticks)
+    record_run(fsm, sh, n, interval_ticks)
 }
 
-fn record_run(fsm: u32, sh: &mut Shadows, first: u32, n: u32, interval_ticks: u32) -> Vec<Write> {
+fn record_run(fsm: u32, sh: &mut Shadows, n: u32, interval_ticks: u32) -> Vec<Write> {
     let mut w = Vec::new();
     stop_sequence(&mut w, sh);
     set_run_prologue(&mut w, sh);
@@ -262,9 +262,9 @@ fn record_run(fsm: u32, sh: &mut Shadows, first: u32, n: u32, interval_ticks: u3
     w.push((0x4068, interval_ticks));
     sh.s400c = (sh.s400c & 0x89ff_ffff) | 0x3000_0000;
     w.push((0x400c, sh.s400c));
-    w.push((0x4010, first));
-    w.push((0x4014, first));
-    w.push((0x4018, first + n.max(1) - 1));
+    w.push((0x4010, 0));
+    w.push((0x4014, 0));
+    w.push((0x4018, n.max(1) - 1));
     sh.s400c &= !0x1000_0000;
     w.push((0x400c, sh.s400c));
     sh.s400c |= 0x2200_0000;
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn arm_record_values() {
         let mut sh = Shadows::HANDOVER;
-        let w = arm(1, &mut sh, 0, 1);
+        let w = arm(1, &mut sh, 1);
         assert_eq!(w.len(), 29);
         let c: Vec<u32> = w.iter().filter(|x| x.0 == 0x400c).map(|x| x.1).collect();
         assert_eq!(c, [0x3000_0000, 0x2000_0000, 0x2200_0000]);
@@ -384,14 +384,14 @@ mod tests {
     #[test]
     fn record_arm_is_the_batch_arm_with_an_interval() {
         let (mut a, mut b) = (Shadows::HANDOVER, Shadows::HANDOVER);
-        assert_eq!(record_arm(1, &mut a, 100, 0), arm(1, &mut b, 0, 100));
+        assert_eq!(record_arm(1, &mut a, 100, 0), arm(1, &mut b, 100));
         assert_eq!(a, b);
         // 1 ms = 156,250 ticks of 6.4 ns
         assert_eq!(interval_ticks(1_000_000_000_000), 156_250);
         assert_eq!((interval_ticks(-5), interval_ticks(6_399_999), interval_ticks(i128::MAX)), (0, 0, u32::MAX));
         let mut c = Shadows::HANDOVER;
         let w = record_arm(1, &mut c, 100, 156_250);
-        let d = arm(1, &mut Shadows::HANDOVER.clone(), 0, 100);
+        let d = arm(1, &mut Shadows::HANDOVER.clone(), 100);
         let diff: Vec<usize> = (0..w.len()).filter(|&i| w[i] != d[i]).collect();
         assert_eq!(diff.len(), 1);
         assert_eq!(w[diff[0]], (0x4068, 156_250));
@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn play4_ends_in_play_mode() {
         let mut sh = Shadows::HANDOVER;
-        arm(1, &mut sh, 0, 1);
+        arm(1, &mut sh, 1);
         let w = readout_play4(&WIN, &mut sh, 0, 1);
         assert_eq!(w.len(), 36);
         assert!(w.contains(&(0x400c, 0x6000_0000)));

@@ -6,22 +6,6 @@ use std::fmt;
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum StopSlot {
-    #[default]
-    Zero,
-    Alternate,
-}
-
-impl StopSlot {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Zero => "zero",
-            Self::Alternate => "alternate",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Capture {
     reduction: Option<(bool, u32)>,
     inferred: bool,
@@ -79,19 +63,12 @@ pub(crate) struct SourceOverhead {
     batch_settle: bool,
     fifo: bool,
     work_budget: Option<Duration>,
-    stop_slot: StopSlot,
     capture: Capture,
 }
 
 impl Default for SourceOverhead {
     fn default() -> Self {
-        Self {
-            batch_settle: true,
-            fifo: true,
-            work_budget: None,
-            stop_slot: StopSlot::Zero,
-            capture: Capture::default(),
-        }
+        Self { batch_settle: true, fifo: true, work_budget: None, capture: Capture::default() }
     }
 }
 
@@ -116,14 +93,6 @@ impl SourceOverhead {
                     report("acq.work_budget_ms", &value, "36% of the picture period");
                     None
                 }),
-            stop_slot: match conf_value(None, conf, "acq.stop_slot").as_deref() {
-                Some("alternate") => StopSlot::Alternate,
-                Some("zero") | None => StopSlot::Zero,
-                Some(value) => {
-                    report("acq.stop_slot", value, "zero");
-                    StopSlot::Zero
-                }
-            },
             capture: Capture::parse(conf, &mut report),
         }
     }
@@ -140,10 +109,6 @@ impl SourceOverhead {
 
     pub(crate) fn work_budget(self) -> Duration {
         self.work_budget.unwrap_or_else(|| default_work_budget(crate::pacing::picture_period()))
-    }
-
-    pub(crate) fn stop_slot(self) -> StopSlot {
-        self.stop_slot
     }
 
     pub(crate) fn capture(self) -> Capture {
@@ -176,7 +141,7 @@ mod tests {
         batch_settle: false,
         fifo: false,
         work_budget: None,
-        stop_slot: StopSlot::Zero,
+
         capture: Capture { reduction: None, inferred: false },
     };
 
@@ -204,13 +169,13 @@ mod tests {
 
     #[test]
     fn invalid_source_switches_are_reported_and_use_defaults() {
-        let conf = "acq.write_gap = 5\nacq.sched = idle\nacq.stop_slot = other\n";
+        let conf = "acq.write_gap = 5\nacq.sched = idle";
         let mut reported = Vec::new();
         let source = SourceOverhead::parse(&|_| None, conf, |key, value, default| {
             reported.push(format!("{key} {value} -> {default}"));
         });
         assert_eq!(source, SourceOverhead::default());
-        assert_eq!(reported, ["acq.write_gap 5 -> 0", "acq.sched idle -> fifo", "acq.stop_slot other -> zero"]);
+        assert_eq!(reported, ["acq.write_gap 5 -> 0", "acq.sched idle -> fifo"]);
     }
 
     #[test]

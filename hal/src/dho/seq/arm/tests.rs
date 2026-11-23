@@ -99,26 +99,11 @@ fn disarm_is_the_stop_sequence_of_an_arm() {
 }
 
 #[test]
-fn explicit_arm_rejects_frames_outside_the_segmented_ring() {
-    let settings = Settings { frames: 2, ..Settings::default() };
-    let params = hz::prep(1, 400_000_000_000, 4000, 0);
-    let capacity = hz::max_record_frames(params.seg);
-    let mut state = State::handover(1, None);
-    let before = state.sh;
-    assert!(state.arm_only_steps_at(&settings, &params, capacity - 1).is_err());
-    assert!(state.arm_only_steps_at(&settings, &params, u32::MAX).is_err());
-    assert_eq!(state.sh, before);
-    let steps = state.arm_only_steps_at(&settings, &params, capacity - 2).unwrap();
-    assert!(steps.iter().any(|step| matches!(step, Step::Wr((0x4018, end)) if *end == capacity - 1)));
-}
-
-#[test]
-fn legacy_slot_zero_arms_a_live_record_larger_than_the_segmented_ring() {
+fn slot_zero_arms_a_live_record_larger_than_the_segmented_ring() {
     let settings = Settings::default();
     let params = hz::prep(1, 100_000_000_000_000, 125_000_000, 0);
     assert_eq!(hz::max_record_frames(params.seg), 0);
     let mut state = State::handover(1, None);
-    assert!(state.arm_only_steps_at(&settings, &params, 0).is_err());
     let steps = state.arm_only_steps(&settings, &params);
     assert!(steps.iter().any(|step| matches!(step, Step::Wr((0x4018, 0)))));
 }

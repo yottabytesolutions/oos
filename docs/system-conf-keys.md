@@ -11,7 +11,10 @@ take the first matching line in that order, even if its value is empty. `acq.fra
 can also be changed through the UI where supported. See [network settings](network.md) for keys read by
 image scripts and [ADR 0012](adr/0012-hardware-verification.md) for experimental switch removal.
 
-Startup ignores the retired `acq.play` and `acq.play.inferred` keys and logs one notice for the pair.
+Startup skips the retired `acq.play` and `acq.play.inferred` keys with one notice for the pair.
+It also skips `acq.pipeline` and `acq.stop_slot` with one notice each. Batch starts every capture at ring
+slot zero, so the programmed range is `[0, count)`. Unrecognized `key = value` lines produce no UI
+configuration error and are preserved when the UI saves the file.
 
 The updater reads `sd.mode = hs|sdr104` from the device-local file. It defaults to `hs` and selects the device tree
 for the next image. After a persistently slow start, choose `hs` and follow the restaging procedure in
@@ -27,7 +30,6 @@ for the next image. After a persistently slow start, choose `hs` and follow the 
 | `acq.frame0` | `keep` enables the override. Other values use the default rule. | Drop suspect first frames | Bypass the first-frame exclusion for multi-frame batches and the first short frame after a settings change. | Stray frames verified on DHO924S on 2026-11-16. See [frames 0 and 1](protocols/acquisition-start.md#frames-0-and-1-of-a-batch-issue-5). |
 | `acq.capture` | `full`, `decimate:n`, `peak:n` with n = 2, 4, 8, 16, 32 or 64 | `full` | Request reduced storage for eligible full-rate Normal captures. Unsupported plans fall back to full. | Reduced capture is unverified on the unit. See [capture reduction](fork/capture-reduction.md). |
 | `acq.capture.inferred` | `on`, `off` | `off` | Permit inferred reduction profiles, including every Peak request. | Unverified on the unit. |
-| `acq.stop_slot` | `zero`, `alternate` | `zero` | Permit a second ring slot for eligible serial captures when the prior record occupies slot 0. | Alternate-slot STOP and replay await [unit verification](fork/stop-exact.md#on-unit-verification). |
 | `acq.dump` | `on`, `off` | `off` | Enable the bounded acquisition fixture dump. `OOS_BATCH_DUMP` overrides it (only `1` and `on` enable it). | No dated unit evidence located for this switch. |
 | `acq.dump.count` | Nonnegative `usize` | `4` | Set the count per capture or view change, clamped to 1 through 32. `OOS_BATCH_DUMP_COUNT` overrides it. The default destination is `/tmp/oos-batches`, overridden by `OOS_BATCH_DUMP_DIR`. | No dated unit evidence located. See the [fixture reference](architecture/fixture-benchmark.md). |
 | `acq.frame_header` | `on`, `off` | `off` | Request and log frame headers. `OOS_FRAME_HEADER=off` requests headers with selective logging. Any other set value requests all-frame logging. | Header observations were verified on DHO924S on 2026-11-16. See [frames 0 and 1](protocols/acquisition-start.md#frames-0-and-1-of-a-batch-issue-5). |

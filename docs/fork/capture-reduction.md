@@ -77,7 +77,7 @@ bytes and is equal to frame size for X2. The dump sidecar carries `capture`, `ca
 
 1. With the owner present and the scope released for X2, save `/oos/system.conf` and the UI setup. Use the
    owner-approved signed build. Start with `acq.capture = full`, `acq.capture.inferred = off`, `acq.compress = off`,
-   `acq.prearm = off`, `acq.stop_slot = zero`, `acq.frame_header = on`, `acq.dump = on`
+   `acq.prearm = off`, `acq.frame_header = on`, `acq.dump = on`
    and `acq.dump.count = 4`. Restart `oos-ui` through the approved workflow after each switch change. Keep the
    generator settings, clocks and capture route fixed between A/B runs.
 2. Set `:ACQuire:TYPE NORM`, `:ACQuire:MDEPth AUTO` and `:TRIGger:SWEep NORM`. Set CH1 only, delay zero, DC coupling

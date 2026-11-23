@@ -41,6 +41,9 @@ its original credit. `wide_search` counts calls into the trigger fallback.
   trigger lane for optional header logging. `readout::fold_codes` can decode a frame for measurements
   that need it. `BatchMatch::submit` decodes the newest DMA waveform for record consumers even when the
   worker paints from codes.
+  On the interpolated route the trigger position is computed in volts. A search on raw codes is not
+  bit-identical: the rounded level can miss an edge that sits exactly on the threshold, and the crossing
+  differs in the ninth decimal. Host tests pin the volts result.
   [Trigger refinement](../../ui/src/picture/deposit/standard.rs),
   [header probe](../../ui/src/board/dho/hw/decode.rs),
   [worker measurements](../../ui/src/drawpipe/stage/readout.rs),

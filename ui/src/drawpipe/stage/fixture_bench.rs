@@ -190,6 +190,62 @@ fn captured_interpolated_spans_match_the_legacy_screen_grid() {
     });
 }
 
+#[test]
+#[ignore = "set OOS_FIXTURES to captured short time-base batches with analog edge triggers"]
+fn captured_screen_refinement_has_identical_bits_when_the_shared_search_reads_codes() {
+    assert!(std::env::var_os("OOS_FIXTURES").is_some(), "set OOS_FIXTURES");
+    for_each_fixture(&mut |fixture| {
+        let replay = Replay::new(fixture).expect("capture has the worker view");
+        let mut scratch = Frame::default();
+        let mut p = Prepared::reuse(&mut None, &replay.view, 0);
+        let mut checked = 0;
+        for index in replay.range.clone() {
+            p.index = index;
+            let bytes = chunk(&replay.batch, index);
+            let (frame, placement) = placement_frame(&replay.batch, &replay.view, &mut p, &mut scratch, bytes);
+            if placement.route != route::Route::Upsampled {
+                continue;
+            }
+            if let Some((bytes, raw, _)) = placement.words {
+                checked +=
+                    usize::from(compare_screen_refinement(&replay.view.m, frame, placement.projection, bytes, raw));
+            }
+        }
+        assert!(checked > 0, "{}: capture must exercise interpolated analog edge refinement", fixture.name());
+    });
+}
+
+fn compare_screen_refinement(
+    m: &Model,
+    frame: &Frame,
+    projection: kernel::Projection,
+    bytes: &[u8],
+    raw: CodeLayout,
+) -> bool {
+    use crate::board::record::smoothed_edge;
+    let decoded = frame.ch[m.trig_src].as_slice();
+    if m.trig_type != TrigType::Edge
+        || m.trig_on_la()
+        || frame.fixed_ti.is_some()
+        || crate::deepmeas::deep_raw_frame(frame)
+        || decoded.len() <= 1
+    {
+        return false;
+    }
+    let codes = raw.channel(bytes, m.trig_src);
+    let len = frame.ch.iter().map(Vec::len).max().unwrap();
+    let window = projection.time_per_div * f64::from(HDIV);
+    let geometry = (crate::sparse::POINTS, window, projection.delay - window / 2.0);
+    let code_position = smoothed_edge(frame, m, &codes, len, geometry, false);
+    let volt_position = smoothed_edge(frame, m, decoded, len, geometry, false);
+    assert_eq!(code_position.map(f64::to_bits), volt_position.map(f64::to_bits), "record {}", frame.seq);
+    if let Some(position) = volt_position {
+        let (placed, _) = standard::screen_trigger(m, frame, &projection, None, None);
+        assert_eq!(placed.to_bits(), position.to_bits(), "record {}", frame.seq);
+    }
+    true
+}
+
 pub(crate) fn legacy_hull(
     p: &kernel::Projection,
     channel: usize,

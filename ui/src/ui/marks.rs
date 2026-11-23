@@ -43,7 +43,7 @@ impl Ui {
     /// Auto with samples at least `MARK_SPACING_PX` apart in `area` at `view` (s/div, delay): each sample of the newest
     /// record's frame marked over the line of its channel, lighter than the trace.
     pub(super) fn draw_sample_marks(&self, cv: &mut Canvas, area: Rect, view: (f32, f32)) {
-        let Some(raw) = self.last[0].as_ref().and_then(|r| r.raw.as_ref()) else { return };
+        let Some(raw) = self.displayed_reader_record().and_then(|r| self.reader_raw(r)) else { return };
         let f = &raw.frame;
         if f.envelope || f.roll || f.scan {
             return;

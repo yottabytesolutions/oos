@@ -8,9 +8,9 @@
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
-3265 file ui/src/scpi.rs
+3262 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8231 file ui/src/ui.rs
+8217 file ui/src/ui.rs
 1495 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -27,7 +27,7 @@
 737 file ui/src/ui/sim.rs
 416 file ui/src/ui/startup.rs
 498 file ui/src/ui/time.rs
-1290 file ui/src/ui/tools.rs
+1277 file ui/src/ui/tools.rs
 772 file ui/src/ui/wlan.rs
 653 file ui/src/ui/workflow.rs
 804 file ui/src/ui/workspace.rs

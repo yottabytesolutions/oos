@@ -191,7 +191,7 @@ impl Ui {
             if let Some(record) = self.measurement_record().filter(|r| self.meas_on_pairs(r, channel)) {
                 // raw reads of a deep or compressed record (`deepmeas`, `acq.compress`): the measurement stays
                 // that of the last raw record (`measure_rec` in the step's hold) between the pair records
-                let shown = record.raw.as_ref().map(|r| r.frame.as_ref());
+                let shown = self.reader_raw(record).map(|r| r.frame.as_ref());
                 if crate::deepmeas::hold(&self.m, shown, self.src.hw_deep_ok()) || crate::compress::hold(&self.m, shown)
                 {
                     // before the first raw record Max, Min and Pk-pk still come from the pairs
@@ -206,7 +206,13 @@ impl Ui {
             }
             if Self::channel_basic_kind(k) {
                 // the full-record job still running: the record's own measurement (`measure_rec`) meanwhile
-                return self.channel_basic_reading(channel, k).unwrap_or_else(|| self.ana_get(channel, k));
+                return self.channel_basic_reading(channel, k).unwrap_or_else(|| {
+                    if self.readers_use_average() {
+                        f64::NAN
+                    } else {
+                        self.ana_get(channel, k)
+                    }
+                });
             }
         }
         match self.meas_analysis(id) {
@@ -693,26 +699,6 @@ impl Ui {
             }
         }
         v
-    }
-
-    /// A source at physical time, using original native samples and deskew.
-    pub(crate) fn wave_at_source(&self, source: WaveId, t: f64) -> Option<f32> {
-        if matches!(source, WaveId::Ch(c) if c >= n_ch() || !self.m.ch[c].on) {
-            return None;
-        }
-        let (w, dt, t0) = self.deskew_samples(source)?;
-        if w.is_empty() || !dt.is_finite() || dt <= 0.0 {
-            return None;
-        }
-        let index = (t - t0) / dt;
-        if !index.is_finite() || index < 0.0 || index > w.len().saturating_sub(1) as f64 {
-            return None;
-        }
-        let i = index.floor() as usize;
-        let a = *w.get(i)?;
-        let b = w.get(i + 1).copied().unwrap_or(a);
-        let value = a + index.fract() as f32 * (b - a);
-        value.is_finite().then_some(value)
     }
 
     #[cfg(test)]

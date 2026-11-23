@@ -9,6 +9,7 @@ pub(super) fn wants_final_record(ui: &Ui, serial: bool) -> bool {
     let m = &ui.m;
     let Some(record) = ui.last[0].as_ref() else { return false };
     if !ui.src.is_hw()
+        || ui.readers_use_average()
         || board().slow_mode(m) != crate::board::Slow::Off
         || m.trig_mode == TrigMode::Single
         || m.segments != 0

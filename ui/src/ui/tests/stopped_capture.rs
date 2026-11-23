@@ -37,13 +37,9 @@ fn settle_stop(ui: &mut Ui, shared: &HwShared) {
 #[test]
 fn full_record_and_raw_answers_survive_hardware_stop_rereads() {
     for _ in 0..2 {
-        for (mode, pairs) in [
-            (AcqMode::Normal, false),
-            (AcqMode::Normal, true),
-            (AcqMode::HiRes, false),
-            (AcqMode::Peak, true),
-            (AcqMode::Average, false),
-        ] {
+        for (mode, pairs) in
+            [(AcqMode::Normal, false), (AcqMode::Normal, true), (AcqMode::HiRes, false), (AcqMode::Peak, true)]
+        {
             exercise_full_record(mode, pairs);
         }
     }
@@ -76,7 +72,6 @@ fn full_record_fixture(mode: AcqMode, pairs: bool) -> (Ui, HwShared, crate::boar
             .into(),
         ch: [values, Vec::new(), Vec::new(), Vec::new()],
         envelope: pairs,
-        hw_avg: mode == AcqMode::Average,
         ..Default::default()
     };
     (ui, shared, frame)

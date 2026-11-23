@@ -8,11 +8,23 @@ pub(in crate::ui) fn stopped(ui: &mut Ui) {
             ui.batch_picture.owner.retire_inputs(pipe, false);
         }
     }
-    // stopped: the whole stored record for the view shown (read again by the thread, `stop_replay`), then
-    // redraw the stored record with the current scale/offset
-    ui.stop_replay();
+    let average = ui.readers_use_average();
+    if !average {
+        ui.stop_replay();
+    }
     ui.ph.clear();
     ui.phz.clear();
+    if average {
+        if let Some(record) = ui.last[0].take() {
+            deep_draw::draw_record_weighted(ui, &record, 24 * 6);
+            ui.last[0] = Some(record);
+        }
+    } else {
+        draw_native_capture(ui);
+    }
+}
+
+fn draw_native_capture(ui: &mut Ui) {
     let mainv = (ui.m.time_per_div(), ui.m.delay);
     let zv = (tscales()[ui.m.zscale], ui.m.zdelay);
     let zoom_model = ui.zoom_display_model();

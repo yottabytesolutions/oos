@@ -51,8 +51,14 @@ fn queue_record(ui: &Ui, seq: u64, code: u8) {
 }
 
 fn submit(ui: &Ui, first: usize, codes: &[u8]) {
+    submit_with(ui, first, codes, decode);
+}
+
+fn submit_with(ui: &Ui, first: usize, codes: &[u8], fill: fn(u8, &mut Frame)) {
     let id = change::acquisition::identity(ui);
-    let newest = frame(ui, (first + codes.len()) as u64, *codes.last().unwrap());
+    let code = *codes.last().unwrap();
+    let mut newest = frame(ui, (first + codes.len()) as u64, code);
+    fill(code, &mut newest);
     let pipe = drawpipe::pipe().unwrap();
     Counters::add(&pipe.batch_counters().acquired, codes.len() as u64);
     assert!(pipe
@@ -61,7 +67,7 @@ fn submit(ui: &Ui, first: usize, codes: &[u8]) {
             1,
             0..codes.len(),
             (id, std::time::Instant::now()),
-            Arc::new(|_, bytes, f| decode(bytes[0], f)),
+            Arc::new(move |_, bytes, f| fill(bytes[0], f)),
             Some(Arc::new(newest)),
         )
         .is_none());
@@ -75,7 +81,7 @@ fn advance(ui: &mut Ui, first: usize, codes: &[u8]) -> f32 {
 }
 
 #[test]
-fn batch_average_counts_every_fold_and_retains_the_newest_raw_for_readers() {
+fn batch_average_counts_every_fold_and_retains_the_newest_raw_for_raw_readout() {
     let _scope = drawpipe::test_scope::Scope::new();
     let mut ui = ui();
     let value = advance(&mut ui, 0, &[2, 4, 6, 8]);
@@ -86,14 +92,13 @@ fn batch_average_counts_every_fold_and_retains_the_newest_raw_for_readers() {
     assert_eq!(ui.history.len(), 1);
     assert_eq!(ui.wfm_total, 4);
     assert_eq!(ui.raw_read_record().unwrap().raw.as_ref().unwrap().frame.ch[0][280], 0.5);
-    assert_eq!(ui.measurement_record().unwrap().raw.as_ref().unwrap().frame.ch[0][280], 0.5);
-    let zoom = ui.captured_record_view(rec, (10e-9, 0.0)).unwrap();
-    assert!((zoom.ch[0][1800] - 0.5).abs() < 1e-6);
+    assert_eq!(ui.measurement_record().unwrap().ch[0][1800], value);
+    assert!(ui.reader_capture_view(rec, (10e-9, 0.0)).is_none());
     let counters = drawpipe::counters().records_text();
     assert!(counters.contains("records read=4 deposited=4 shown=4"), "{counters}");
     ui.m.run = RunState::Stop;
     ui.step(0.04);
-    assert!((ui.last[0].as_ref().unwrap().ch[0][1800] - 0.5).abs() < 1e-6);
+    assert_eq!(ui.last[0].as_ref().unwrap().ch[0][1800], value);
 }
 
 #[test]
@@ -324,3 +329,5 @@ fn first_average_batch_only_reuses_a_compatible_normal_record() {
         assert!((actual - expected).abs() < 1e-6, "change_grid={change_grid} {actual} != {expected}");
     }
 }
+
+mod readers;

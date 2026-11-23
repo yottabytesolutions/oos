@@ -7,12 +7,17 @@ use oos_hal::{
     dho::{acq::Mode, tpu},
     sync::lock,
 };
-use sim::{Event, FixedPacing, Frame, Run};
+use sim::{Event, FixedPacing, Frame, Pause, Run};
 
+mod bounds;
 mod deposit;
+mod picture;
+mod raw;
+mod side_service;
 mod sim;
+mod stopped_raw;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 struct Outcome {
     events: Vec<Event>,
     screens: Vec<Vec<Frame>>,
@@ -21,7 +26,55 @@ struct Outcome {
     final_ack: u64,
     decoded: u64,
     dropped: u64,
+    counters: RecordCounts,
     elapsed: Duration,
+}
+
+impl Outcome {
+    fn snapshot(trace: &mut sim::Trace, shared: &crate::board::Shared, elapsed: Duration) -> Self {
+        Self {
+            events: std::mem::take(&mut trace.events),
+            screens: std::mem::take(&mut trace.screens),
+            queue: shared.queue.iter().map(|f| Frame::read(f)).collect(),
+            latest: (shared.frame.seq != 0).then(|| Frame::read(&shared.frame)),
+            final_ack: shared.final_ack,
+            decoded: shared.decoded,
+            dropped: shared.dropped,
+            counters: RecordCounts::read(),
+            elapsed,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RecordCounts {
+    read: u64,
+    deposited: u64,
+    dropped: u64,
+    losses: Vec<(String, u64)>,
+}
+
+impl RecordCounts {
+    fn loss(&self, name: &str) -> u64 {
+        self.losses.iter().find(|(key, _)| key == name).map_or(0, |(_, count)| *count)
+    }
+
+    fn read() -> Self {
+        use std::sync::atomic::Ordering;
+        let counters = drawpipe::counters();
+        let (read, _, dropped) = counters.read();
+        let losses = counters
+            .records_text()
+            .split_whitespace()
+            .filter_map(|field| field.split_once('='))
+            .filter(|(name, _)| name.starts_with("lost.") || name.starts_with("rejected."))
+            .filter_map(|(name, count)| {
+                let count = count.parse().unwrap();
+                (count != 0).then(|| (name.to_owned(), count))
+            })
+            .collect();
+        Self { read, deposited: counters.deposited.load(Ordering::Relaxed), dropped, losses }
+    }
 }
 
 fn run(
@@ -47,8 +100,13 @@ fn run(
     let settings_text = if keep { "acq.frame0 = keep" } else { "" };
     let switches = Switches::parse(&|_| None, "acq.work_budget_ms = 12", settings_text, Default::default());
     let intake = deposit.then(|| {
-        let intake = scope.install_intake();
-        drawpipe::pipe().unwrap().publish_view(&crate::model::Model::default(), 128, 64, switches.interp, id);
+        let (intake, model) = if script.draws() {
+            (scope.gated_worker(), picture::model(settings.tdiv))
+        } else {
+            (scope.install_intake(), crate::model::Model::default())
+        };
+        let (w, h) = picture::SIZE;
+        drawpipe::pipe().unwrap().publish_view(&model, w, h, switches.interp, id);
         intake
     });
     let (mut io, trace) = sim::fixture(&settings, out.clone(), (script, records, on_trigger), intake);
@@ -56,33 +114,57 @@ fn run(
     let mut source = AcqLoop::new(options, switches, out.clone(), Service::default(), None, started, FixedPacing);
     match script {
         Run::Selection | Run::DepositBackpressure => {
-            let request = Request::read(&lock(&out));
-            let (settings, params) = source.reconfigure(&mut io, &request, &mut false).unwrap();
             if available < records {
+                let request = Request::read(&lock(&out));
+                let (settings, params) = source.reconfigure(&mut io, &request, &mut false).unwrap();
                 short_buffer(&mut source, &mut io, (&settings, &params), &request, (records, available));
             } else {
-                source.batch(&mut io, (&settings, &params), request, false);
+                capture(&mut source, &mut io);
                 if matches!(script, Run::DepositBackpressure) {
-                    let request = Request::read(&lock(&out));
-                    source.batch(&mut io, (&settings, &params), request, true);
+                    capture(&mut source, &mut io);
                 }
             }
             io.clock.take_submission();
         }
+        Run::Pictures(stop) => picture::script(&mut source, &mut io, stop, records),
+        Run::CompressedTap => raw::script(&mut source, &mut io),
         _ => source.run(&mut io),
     }
     let mut trace = trace.borrow_mut();
-    let g = lock(&out);
-    Outcome {
-        events: std::mem::take(&mut trace.events),
-        screens: std::mem::take(&mut trace.screens),
-        queue: g.queue.iter().map(|f| Frame::read(f)).collect(),
-        latest: (g.frame.seq != 0).then(|| Frame::read(&g.frame)),
-        final_ack: g.final_ack,
-        decoded: g.decoded,
-        dropped: g.dropped,
-        elapsed: io.clock.now().duration_since(started),
+    let shared = lock(&out);
+    Outcome::snapshot(&mut trace, &shared, io.clock.now().duration_since(started))
+}
+
+fn capture(source: &mut AcqLoop<FixedPacing>, io: &mut Io<sim::Sim>) {
+    let request = Request::read(&lock(&source.out));
+    let mut last_read = std::mem::take(&mut source.replay.fresh);
+    let (settings, params) = source.reconfigure(io, &request, &mut last_read).unwrap();
+    source.batch(io, (&settings, &params), request, last_read);
+}
+
+fn requested(want: &Settings, identity: Identity, deposit: bool) -> HwShared {
+    let out = HwShared::default();
+    {
+        let mut g = lock(&out);
+        g.want = Some(want.clone());
+        g.acquisition = crate::board::identity::Publication::new(identity, deposit);
     }
+    out
+}
+
+fn drive(
+    out: &HwShared,
+    (mut io, trace): sim::Fixture,
+    advance: impl FnMut(&sim::Virtual, Pause) + 'static,
+) -> Outcome {
+    let switches = Switches::parse(&|_| None, "acq.work_budget_ms = 12", "acq.frame0 = keep", Default::default());
+    let mask = lock(out).want.as_ref().unwrap().mask;
+    let options = Spawn { mask, program_afe: false, cal_dir: String::new(), start_up: None };
+    let started = io.clock.now();
+    io.clock.drive(advance);
+    let mut source = AcqLoop::new(options, switches, out.clone(), Service::default(), None, started, FixedPacing);
+    source.run(&mut io);
+    Outcome::snapshot(&mut trace.borrow_mut(), &lock(out), io.clock.now().duration_since(started))
 }
 
 // C2H requires a complete transfer. Truncate after the real fill to exercise a short completed DMA buffer.
@@ -115,7 +197,7 @@ fn settings() -> Settings {
     Settings { tdiv: 100e-9, depth: 1000, window: None, level: 0.0, ..Settings::default() }
 }
 
-fn twice(test: impl Fn() -> Outcome) -> Outcome {
+fn twice<T: std::fmt::Debug + PartialEq>(test: impl Fn() -> T) -> T {
     let first = test();
     assert_eq!(first, test());
     first

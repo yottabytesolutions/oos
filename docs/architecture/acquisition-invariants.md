@@ -47,14 +47,21 @@ selection.
 
 The source defers settings edits while held with an applied configuration. A held pass without an applied
 configuration, such as after calibration or at source startup, applies the current request once before
-servicing a stopped view or polling the acquisition side units. DVM uses the applied settings, and levels
-reads the configured ADC layout. Counter service waits for an applied configuration. Generator dispatch
-and XADC service remain available. RUN or SINGLE applies the latest request before arming if the
-effective settings still differ.
+polling the acquisition side units. The mask/zone fallback status stays with the applied configuration
+while held. DVM uses its channel mask, scale and gain, and levels reads the configured ADC layout.
+Side units run before a stopped-view read or its 20 ms unchanged-view poll.
+Counter service waits for an applied configuration. Generator dispatch and XADC service remain available.
+Automatic ADC core trim waits for RUN or SINGLE because it writes offsets. RUN or SINGLE applies the
+latest request before arming if the effective settings still differ.
 
-Calibration invalidates the retained ring batch and pending replay. Unapplied edits preserve the batch
-and its capture identity. An eligible stopped view selects a window in the captured batch and reads
-it using the captured channel layout, memory depth, sample rate and acquisition mode.
+Each calibration invalidates the retained ring batch and pending replay, including during a completed
+SINGLE hold. When restoring configuration fails, the loop retries after 500 ms and can leave a newer
+hold request unacknowledged. The UI's final-record drain still expires after 3 s.
+
+Unapplied edits preserve a valid batch and its capture identity. An eligible stopped view selects a
+window in that batch and reads it using the captured channel layout, memory depth, sample rate and
+acquisition mode. An already armed successor makes the ring reference unsafe even when STOP coincides
+with an identity change. The source keeps the last published frame for that case.
 [Held trace](../../ui/src/board/dho/hw/acq/tests/stopped_pass.rs) ·
 [Calibration and held startup traces](../../ui/src/board/dho/hw/acq/tests/calibration_hold.rs) ·
 [Side service](../../ui/src/board/dho/hw/acq/tests/side_service.rs)

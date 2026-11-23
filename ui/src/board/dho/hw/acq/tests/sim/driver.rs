@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::{lock, Event, Pause, Virtual};
+use std::time::Duration;
 
 impl Virtual {
     pub(in super::super) fn drive(&mut self, advance: impl FnMut(&Self, Pause) + 'static) {
@@ -17,6 +18,10 @@ impl Virtual {
 
     pub(in super::super) fn suppress_stopped_status(&self) {
         self.hide_stopped.set(true);
+    }
+
+    pub(in super::super) fn advance(&self, duration: Duration) {
+        self.elapse(duration, Event::Wait(duration));
     }
 
     pub(in super::super) fn release(&self) {

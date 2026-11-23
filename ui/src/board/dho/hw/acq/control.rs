@@ -77,15 +77,19 @@ impl<T: PacingPolicy> AcqLoop<T> {
             io.disarm(&mut self.batch.armed);
             self.stream.restart_scan(io, want_mode);
         }
-        self.apply_overrides(io, request, &mut want);
+        let blocked = self.apply_overrides(io, request, &mut want);
         // STOP defers edits to an applied configuration and keeps the batch captured with it.
         // At startup or after calibration, restore a missing configuration before serving the hold.
         if held && self.configured.current.is_none() {
             if !self.configure(io, want.clone(), want_mode, request.avg_clear) {
                 return None;
             }
+            self.publish_unit_blocked(blocked);
             self.configured.applied_pair = Some(request.pair());
             crate::pacing::APPLIED.store(request.identity.gen(), Ordering::Relaxed);
+        }
+        if held {
+            self.poll_units(io, request);
         }
         if self.stopped_view(io, request.run.stop_view, want_mode) {
             return None;
@@ -104,12 +108,24 @@ impl<T: PacingPolicy> AcqLoop<T> {
                 return None;
             }
         }
+        self.publish_unit_blocked(blocked);
         self.configured.applied_pair = Some(request.pair());
         crate::pacing::APPLIED.store(request.identity.gen(), Ordering::Relaxed);
         self.configured.current.clone()
     }
 
-    fn apply_overrides(&mut self, io: &Io<impl Port>, request: &Request, want: &mut Settings) {
+    fn poll_units(&mut self, io: &mut Io<impl Port>, request: &Request) {
+        let Some((settings, _)) = self.configured.current.as_ref() else { return };
+        self.units.poll(
+            io,
+            (&mut self.batch.armed, self.segrun.as_ref()),
+            &self.out,
+            (settings, self.configured.mode),
+            (request, self.service.generator_on()),
+        );
+    }
+
+    fn apply_overrides(&self, io: &Io<impl Port>, request: &Request, want: &mut Settings) -> bool {
         want.afe = self.options.program_afe;
         raw_for_ui(want, request.needs_raw);
         let map = mask_map();
@@ -119,43 +135,40 @@ impl<T: PacingPolicy> AcqLoop<T> {
         } else {
             hw_merge(want, request.mask.as_ref(), request.zone.as_ref(), map);
         }
+        if let Some(la) = want.la.as_mut() {
+            la.cal = io.la_cal;
+        }
         // The flush batch leaves the hardware view in the UI.
-        let blocked = blocked && !self.batch.guard.flush;
+        blocked && !self.batch.guard.flush
+    }
+
+    fn publish_unit_blocked(&mut self, blocked: bool) {
         if self.configured.unit_blocked != blocked {
             self.configured.unit_blocked = blocked;
             lock(&self.out).unit_blocked = blocked.then(|| {
                 "the mask/zone unit stopped the acquisition with these settings: tested in software".to_string()
             });
         }
-        if let Some(la) = want.la.as_mut() {
-            la.cal = io.la_cal;
-        }
     }
 
     fn poll_held(&mut self, io: &mut Io<impl Port>, request: &Request) {
-        let Some((settings, _)) = self.configured.current.as_ref() else { return };
-        let mode = self.configured.mode;
-        self.units.poll(
-            io,
-            (&mut self.batch.armed, self.segrun.as_ref()),
-            &self.out,
-            (settings, mode),
-            (request, self.service.generator_on()),
-        );
-        self.stream.poll_control(io, &self.out, mode);
-        // Roll and scan keep the acknowledgement from entering STOP.
-        if mode == Slow::Off {
-            lock(&self.out).final_ack = request.run.final_req;
+        if self.configured.current.is_some() {
+            let mode = self.configured.mode;
+            self.stream.poll_control(io, &self.out, mode);
+            // Roll and scan keep the acknowledgement from entering STOP.
+            if mode == Slow::Off {
+                lock(&self.out).final_ack = request.run.final_req;
+            }
         }
         io.clock.wait(Duration::from_millis(5));
     }
 
     fn enter_hold(&mut self, io: &mut Io<impl Port>, request: &Request, last_read: bool) {
-        // An armed successor has already started overwriting the ring.
-        let ahead = self.batch.armed.is_some();
-        io.disarm(&mut self.batch.armed);
-        if ahead {
+        // Check before the identity boundary can disarm the successor. Its writes may have
+        // overwritten the ring, so keep the last published frame for this STOP.
+        if self.batch.armed.is_some() {
             self.replay.last_batch = None;
+            io.disarm(&mut self.batch.armed);
         }
         let last = self.replay.last_batch.as_ref().filter(|_| last_read).and_then(|read| {
             let settings = read.plan(request.run.deep)?;
@@ -191,7 +204,8 @@ impl<T: PacingPolicy> AcqLoop<T> {
     }
 
     fn stopped_view(&mut self, io: &mut Io<impl Port>, view: Option<(f64, f64)>, want_mode: Slow) -> bool {
-        let Some(view) = view.filter(|_| self.configured.mode == Slow::Off && want_mode == Slow::Off) else {
+        let view = view.filter(|_| self.configured.mode == Slow::Off && want_mode == Slow::Off);
+        let Some((view, batch)) = view.zip(self.replay.last_batch.as_ref()) else {
             self.replay.replayed = None;
             return false;
         };
@@ -200,7 +214,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
             g.final_ack = g.final_req;
             g.cores
         };
-        if let Some(batch) = self.replay.last_batch.as_ref().filter(|_| self.replay.replayed != Some(view)) {
+        if self.replay.replayed != Some(view) {
             self.replay.replayed = Some(view);
             let params = &batch.params;
             let (settings, point) = stop_plan(&batch.settings, params, view.0, view.1);

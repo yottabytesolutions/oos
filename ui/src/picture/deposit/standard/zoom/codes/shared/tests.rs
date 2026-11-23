@@ -42,3 +42,47 @@ fn four_lane_overview_keeps_corrected_voltage_bits() {
         }
     }
 }
+
+#[test]
+#[ignore = "release microbenchmark for a synthetic four-channel zoom overview"]
+fn zoom_overview_microbenchmark() {
+    use std::{hint::black_box, time::Instant};
+
+    let len = 31_250;
+    let n = crate::sparse::POINTS;
+    let words: Vec<u16> = (0..len * NCH).map(|i| (i * 1973) as u16).collect();
+    let key = ScreenGrid { ti: 0.381, first: 0.0, dt: len as f64 / n as f64, sample_dt: 1.0, n, len };
+    for corrected in [false, true] {
+        let samples = std::array::from_fn(|lane| Codes {
+            bytes: &[],
+            words: Some(&words),
+            stride: NCH,
+            word: lane,
+            n: len,
+            affine: (1.0 / 16384.0, 0.0),
+            corrected: corrected.then_some(CorrectedCodes {
+                offsets: [17, -82, 5, 43, -53, 12, 29, -1],
+                scale: 0.25,
+                offset: 0.0,
+            }),
+            volt: |word, _| (f32::from(word) - 32768.0) / 16384.0,
+        });
+        let mut grid = EnvelopeGrid::default();
+        let mut channels = std::array::from_fn(|_| Vec::new());
+        let mut run = || {
+            assert!(append(&mut grid, black_box(key), black_box(&samples), &mut channels));
+            black_box(&channels);
+        };
+        run();
+        let mut elapsed = std::array::from_fn::<_, 9, _>(|_| {
+            let start = Instant::now();
+            for _ in 0..500 {
+                run();
+            }
+            start.elapsed().as_secs_f64() * 2e6
+        });
+        elapsed.sort_by(f64::total_cmp);
+        let visits: usize = grid.ranges.iter().map(std::ops::Range::len).sum();
+        println!("zoom overview: {NCH}x{len}, {n} points/lane, {visits} sample groups visited, corrected={corrected}, {:.0} ns", elapsed[4]);
+    }
+}

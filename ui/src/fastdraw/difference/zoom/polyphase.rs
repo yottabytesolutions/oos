@@ -2,6 +2,7 @@
 
 use crate::fastdraw::{clip_rows, Codes, Spans};
 use crate::model::VDIV;
+use crate::picture::deposit::interpolation::{dot, fill_sample_runs, Taps};
 use crate::picture::deposit::kernel::Vertical;
 
 const PHASE_BITS: u32 = 10;
@@ -17,7 +18,7 @@ const COLUMN_ONE: i64 = 1 << COLUMN_BITS;
 
 #[derive(Default)]
 pub(crate) struct Filter {
-    phases: Vec<[i16; TAPS]>,
+    phases: Vec<Taps>,
     support: Vec<i16>,
     points: Vec<i32>,
 }
@@ -51,8 +52,7 @@ impl Filter {
         let last = (codes.n as i64 - 1).saturating_mul(SAMPLE_ONE);
         let step = step.max(1);
         let project = RowProjection::new(codes, vertical, height);
-        self.points.clear();
-        self.points.reserve(points + 1);
+        self.points.reserve((points + 1).saturating_sub(self.points.len()));
         if window.column_origin == 0.0 && self.column_spans(codes, (start, step), size, &project, &mut out.rows) {
             return;
         }
@@ -60,12 +60,14 @@ impl Filter {
         let first = index(start.saturating_neg().saturating_add(step - 1));
         let end = index(last.saturating_sub(start).saturating_add(step));
         if end.saturating_sub(first) < 2 {
+            self.points.clear();
             return;
         }
         let start = start + step * first as i64;
         if window.step < 0.5 {
             self.interpolate(codes, (start, step, start + step * (end - first - 1) as i64), end - first);
         } else {
+            self.points.clear();
             self.points.extend((0..end - first).map(|i| linear(codes, start + step * i as i64)));
         }
         let scale = points as f64 / width as f64;
@@ -125,29 +127,32 @@ impl Filter {
         const PHASE_SHIFT: u32 = SAMPLE_BITS - PHASE_BITS;
         let support = self.support.as_slice();
         let phases = self.phases.as_slice();
-        let input = |i: usize| {
-            let coordinate = (start + step * i as i64).min(last_knot);
-            let index = (coordinate >> SAMPLE_BITS) as usize - base;
-            let phase = (((coordinate & (SAMPLE_ONE - 1)) + (1 << (PHASE_SHIFT - 1))) >> PHASE_SHIFT) as usize;
+        let in_grid = (((last_knot - start) / step + 1) as usize).min(count);
+        let mut fill = |sample: usize, x: i64, run: &mut [i32]| {
+            let index = sample - base;
             let samples = support[index..].first_chunk().expect("support is padded for all taps");
-            (index, samples, &phases[phase])
-        };
-        if valid == (0..support.len()) {
-            self.points.extend((0..count).map(|i| {
-                let (_, samples, weights) = input(i);
-                dot(samples, weights)
-            }));
-        } else {
-            self.points.extend((0..count).map(|i| {
-                let (index, samples, weights) = input(i);
-                let range = valid.start.saturating_sub(index)..(valid.end - index).min(TAPS);
-                let sum = dot(samples, weights);
-                if range.len() == TAPS {
-                    sum
-                } else {
-                    normalise(sum, &weights[range])
+            let range = valid.start.saturating_sub(index)..(valid.end - index).min(TAPS);
+            let weights = |k: usize| {
+                let coordinate = x + step * k as i64;
+                let phase = (((coordinate & (SAMPLE_ONE - 1)) + (1 << (PHASE_SHIFT - 1))) >> PHASE_SHIFT) as usize;
+                &phases[phase]
+            };
+            if range.len() == TAPS {
+                for (k, value) in run.iter_mut().enumerate() {
+                    *value = dot(samples, weights(k));
                 }
-            }));
+            } else {
+                for (k, value) in run.iter_mut().enumerate() {
+                    let weights = weights(k);
+                    *value = normalise(dot(samples, weights), &weights[range.clone()]);
+                }
+            }
+        };
+        fill_sample_runs::<SAMPLE_BITS>(&mut self.points, (start, step, in_grid), &mut fill);
+        if in_grid < count {
+            let mut value = 0;
+            fill(end, last_knot, std::slice::from_mut(&mut value));
+            self.points.resize(count, value);
         }
     }
 }
@@ -161,7 +166,7 @@ fn linear(codes: &Codes<'_>, coordinate: i64) -> i32 {
     ((a << WEIGHT_BITS) + (((b - a) * fraction) >> (SAMPLE_BITS - WEIGHT_BITS))) as i32
 }
 
-fn taps(phase: usize) -> [i16; TAPS] {
+fn taps(phase: usize) -> Taps {
     let fraction = phase as f64 / PHASES as f64;
     let sinc = |x: f64| {
         let angle = x * std::f64::consts::PI;
@@ -180,11 +185,6 @@ fn taps(phase: usize) -> [i16; TAPS] {
     let residual = WEIGHT_ONE - weights.iter().copied().map(i32::from).sum::<i32>();
     weights[LEFT + usize::from(phase > PHASES / 2)] += residual as i16;
     weights
-}
-
-#[inline]
-fn dot(input: &[i16; TAPS], weights: &[i16; TAPS]) -> i32 {
-    input.iter().zip(weights).map(|(&code, &weight)| i32::from(code) * i32::from(weight)).sum()
 }
 
 #[cold]

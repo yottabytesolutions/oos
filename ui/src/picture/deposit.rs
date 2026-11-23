@@ -4,6 +4,7 @@ pub(crate) mod admission;
 mod backing;
 pub(crate) mod count;
 pub(crate) mod envelope;
+pub(crate) mod interpolation;
 pub(crate) mod kernel;
 mod maps;
 mod planes;

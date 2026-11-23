@@ -1,0 +1,213 @@
+{
+  "ref-1eed2bdb": {
+    "commit": "c8e44668dba3fc1f7a937bba1b066d79cc9fd071",
+    "binary_sha256": "821e2ea7a4e7d744207bcf382fb2c79aafc7e5f925111e84e8c86f0ad7da7b90",
+    "cpu": 2,
+    "core_type": "0x00000000410fd034",
+    "groups": {
+      "deep": {
+        "fixture_sha256": "70a7512efa96b3b5d29ad7c30c151dc59bcc06316c651fa84ae35363572502f4",
+        "stages": {
+          "place": {
+            "median": 21277229.5,
+            "min_round_median": 20979291.5,
+            "max_round_median": 21277229.5
+          },
+          "tile_writes": {
+            "median": 1634501.0,
+            "min_round_median": 1632749.5,
+            "max_round_median": 1634501.0
+          }
+        }
+      }
+    }
+  },
+  "int1-fb9dbc0a": {
+    "commit": "fb9dbc0a8b3c96226853c52f33c920acdd844502",
+    "binary_sha256": "4b5fa1ddbaa7f6d6aa4f9f710a79eb822f2b543758e22ff82f306bac49012182",
+    "cpu": 2,
+    "core_type": "0x00000000410fd034",
+    "groups": {
+      "deep": {
+        "fixture_sha256": "70a7512efa96b3b5d29ad7c30c151dc59bcc06316c651fa84ae35363572502f4",
+        "stages": {
+          "place": {
+            "median": 20372770.5,
+            "min_round_median": 20266750.0,
+            "max_round_median": 20432708.0
+          },
+          "tile_writes": {
+            "median": 1681895.5,
+            "min_round_median": 1677375.5,
+            "max_round_median": 1712375.0
+          }
+        }
+      }
+    }
+  },
+  "ref-deep": {
+    "commit": "c8e44668dba3fc1f7a937bba1b066d79cc9fd071",
+    "binary_sha256": "821e2ea7a4e7d744207bcf382fb2c79aafc7e5f925111e84e8c86f0ad7da7b90",
+    "cpu": 2,
+    "core_type": "0x00000000410fd034",
+    "groups": {
+      "deep": {
+        "fixture_sha256": "70a7512efa96b3b5d29ad7c30c151dc59bcc06316c651fa84ae35363572502f4",
+        "stages": {
+          "place": {
+            "median": 20376562.5,
+            "min_round_median": 20212500.0,
+            "max_round_median": 20678729.5
+          },
+          "tile_writes": {
+            "median": 1688603.5,
+            "min_round_median": 1647625.0,
+            "max_round_median": 1764147.0
+          }
+        }
+      }
+    }
+  },
+  "int1-fb9dbc0a-2": {
+    "commit": "fb9dbc0a8b3c96226853c52f33c920acdd844502",
+    "binary_sha256": "4b5fa1ddbaa7f6d6aa4f9f710a79eb822f2b543758e22ff82f306bac49012182",
+    "cpu": 2,
+    "core_type": "0x00000000410fd034",
+    "groups": {
+      "deep": {
+        "fixture_sha256": "70a7512efa96b3b5d29ad7c30c151dc59bcc06316c651fa84ae35363572502f4",
+        "stages": {
+          "place": {
+            "median": 20147166.5,
+            "min_round_median": 19875916.0,
+            "max_round_median": 20480833.0
+          },
+          "tile_writes": {
+            "median": 1744749.5,
+            "min_round_median": 1638438.0,
+            "max_round_median": 1894666.5
+          }
+        }
+      }
+    }
+  },
+  "int1-fb9dbc0a-3": {
+    "commit": "fb9dbc0a8b3c96226853c52f33c920acdd844502",
+    "binary_sha256": "4b5fa1ddbaa7f6d6aa4f9f710a79eb822f2b543758e22ff82f306bac49012182",
+    "cpu": 2,
+    "core_type": "0x00000000410fd034",
+    "groups": {
+      "deep": {
+        "fixture_sha256": "70a7512efa96b3b5d29ad7c30c151dc59bcc06316c651fa84ae35363572502f4",
+        "stages": {
+          "place": {
+            "median": 20204187.5,
+            "min_round_median": 20019270.5,
+            "max_round_median": 20402666.5
+          },
+          "tile_writes": {
+            "median": 1612041.5,
+            "min_round_median": 1599062.0,
+            "max_round_median": 1735562.5
+          }
+        }
+      }
+    }
+  },
+  "ref-cpu2": {
+    "commit": "c8e44668dba3fc1f7a937bba1b066d79cc9fd071",
+    "binary_sha256": "821e2ea7a4e7d744207bcf382fb2c79aafc7e5f925111e84e8c86f0ad7da7b90",
+    "cpu": 2,
+    "core_type": "0x00000000410fd034",
+    "groups": {
+      "dense-2ch-1us": {
+        "fixture_sha256": "b48bb42aaecb95a877f5ad830359afece6da6106f9f0fc921901080e6865417f",
+        "stages": {
+          "place": {
+            "median": 152979.0,
+            "min_round_median": 151229.0,
+            "max_round_median": 156917.0
+          }
+        }
+      },
+      "dense-4ch-10us": {
+        "fixture_sha256": "e35b162cb7ce6bdb0959779047518ee852a22d71295b00453fc88ec863cd0eab",
+        "stages": {
+          "place": {
+            "median": 231291.0,
+            "min_round_median": 223709.0,
+            "max_round_median": 250833.0
+          }
+        }
+      },
+      "hires-200ns": {
+        "fixture_sha256": "970d68389fc97e8d8a317b4c175bcdce2c03d602a77a5918bf74755ea5306899",
+        "stages": {
+          "place": {
+            "median": 587271.0,
+            "min_round_median": 581583.5,
+            "max_round_median": 590916.5
+          }
+        }
+      },
+      "short-4ch-50ns": {
+        "fixture_sha256": "dea75c6ea131a8f19e8e35bb86749dcd74ef0569a358acc2bc42dc1930a966c7",
+        "stages": {
+          "place": {
+            "median": 1087041.0,
+            "min_round_median": 1066333.0,
+            "max_round_median": 1105708.0
+          }
+        }
+      }
+    }
+  },
+  "a53-cpu2": {
+    "commit": "c8e44668dba3fc1f7a937bba1b066d79cc9fd071",
+    "binary_sha256": "8371539f2f3039e32683448d8cf62295621aa2bbfe534f7f904f29340dc55d00",
+    "cpu": 2,
+    "core_type": "0x00000000410fd034",
+    "groups": {
+      "dense-2ch-1us": {
+        "fixture_sha256": "b48bb42aaecb95a877f5ad830359afece6da6106f9f0fc921901080e6865417f",
+        "stages": {
+          "place": {
+            "median": 142479.5,
+            "min_round_median": 138687.5,
+            "max_round_median": 155167.0
+          }
+        }
+      },
+      "dense-4ch-10us": {
+        "fixture_sha256": "e35b162cb7ce6bdb0959779047518ee852a22d71295b00453fc88ec863cd0eab",
+        "stages": {
+          "place": {
+            "median": 221958.0,
+            "min_round_median": 207375.0,
+            "max_round_median": 245292.0
+          }
+        }
+      },
+      "hires-200ns": {
+        "fixture_sha256": "970d68389fc97e8d8a317b4c175bcdce2c03d602a77a5918bf74755ea5306899",
+        "stages": {
+          "place": {
+            "median": 557958.5,
+            "min_round_median": 551250.0,
+            "max_round_median": 564521.5
+          }
+        }
+      },
+      "short-4ch-50ns": {
+        "fixture_sha256": "dea75c6ea131a8f19e8e35bb86749dcd74ef0569a358acc2bc42dc1930a966c7",
+        "stages": {
+          "place": {
+            "median": 1026084.0,
+            "min_round_median": 1009458.0,
+            "max_round_median": 1044167.0
+          }
+        }
+      }
+    }
+  }
+}

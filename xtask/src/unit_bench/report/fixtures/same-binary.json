@@ -1,0 +1,186 @@
+{
+  "reference": {
+    "commit": "63f82b80bd12a13b7baed41ecd65ef1fcc00c387",
+    "binary_sha256": "df79df2400ce0533a70a6e62647e3573ecb42c22363b71f3e8bddeda1d48edc2",
+    "cpu": 2,
+    "core_type": "0x00000000410fd034",
+    "groups": {
+      "deep": {
+        "fixture_sha256": "70a7512efa96b3b5d29ad7c30c151dc59bcc06316c651fa84ae35363572502f4",
+        "stages": {
+          "code_to_row": null,
+          "column_edges": null,
+          "core_estimate": null,
+          "decode": null,
+          "fused_reduce_map": null,
+          "measurement_fold": null,
+          "min_max": null,
+          "place": {"median": 11102583.5, "min_round_median": 11009687.5, "max_round_median": 11273938.0, "sampling": {"rounds": 5, "samples": 20}},
+          "place_remainder": {"median": 61833.0, "min_round_median": 60230.0, "max_round_median": 66937.0, "sampling": {"rounds": 5, "samples": 20}},
+          "placement_geometry": {"median": 59937.5, "min_round_median": 59062.0, "max_round_median": 72187.0, "sampling": {"rounds": 5, "samples": 20}},
+          "plane_reset": {"median": 97417.0, "min_round_median": 88521.0, "max_round_median": 125708.5, "sampling": {"rounds": 5, "samples": 20}},
+          "resample": {"median": 1048978.5, "min_round_median": 936979.5, "max_round_median": 1146250.0, "sampling": {"rounds": 5, "samples": 20}},
+          "split_columns": {"median": 175583.0, "min_round_median": 170625.0, "max_round_median": 189438.0, "sampling": {"rounds": 5, "samples": 20}},
+          "tile_writes": {"median": 1429021.0, "min_round_median": 1386728.5, "max_round_median": 1499459.0, "sampling": {"rounds": 5, "samples": 20}},
+          "trigger": {"median": 9666999.5, "min_round_median": 9625145.5, "max_round_median": 9826687.5, "sampling": {"rounds": 5, "samples": 20}},
+          "trigger_source_decode": null
+        }
+      },
+      "dense-1ch-1us": {
+        "fixture_sha256": "45b992e3c1734ba187599c8436aa5c81a234f75b17c99f7f986141f26cf9e0fb",
+        "stages": {
+          "code_to_row": {"median": 21292.0, "min_round_median": 21000.0, "max_round_median": 21437.5, "sampling": {"rounds": 5, "samples": 270}},
+          "column_edges": {"median": 17792.0, "min_round_median": 16771.0, "max_round_median": 17792.0, "sampling": {"rounds": 5, "samples": 270}},
+          "core_estimate": null,
+          "decode": null,
+          "fused_reduce_map": null,
+          "measurement_fold": null,
+          "min_max": {"median": 44916.5, "min_round_median": 44334.0, "max_round_median": 45500.0, "sampling": {"rounds": 5, "samples": 270}},
+          "place": {"median": 150792.0, "min_round_median": 146271.0, "max_round_median": 158083.5, "sampling": {"rounds": 5, "samples": 470}},
+          "place_remainder": {"median": 13999.0, "min_round_median": 13563.0, "max_round_median": 14582.5, "sampling": {"rounds": 5, "samples": 470}},
+          "placement_geometry": {"median": 1459.0, "min_round_median": 1458.0, "max_round_median": 1459.0, "sampling": {"rounds": 5, "samples": 470}},
+          "plane_reset": {"median": 1779.0, "min_round_median": 1691.0, "max_round_median": 1954.0, "sampling": {"rounds": 5, "samples": 470}},
+          "resample": {"median": 423937.5, "min_round_median": 421459.0, "max_round_median": 426562.5, "sampling": {"rounds": 5, "samples": 200}},
+          "split_columns": null,
+          "tile_writes": {"median": 49874.5, "min_round_median": 47542.5, "max_round_median": 55125.0, "sampling": {"rounds": 5, "samples": 470}},
+          "trigger": {"median": 15167.0, "min_round_median": 14875.5, "max_round_median": 15750.0, "sampling": {"rounds": 5, "samples": 470}},
+          "trigger_source_decode": null
+        }
+      },
+      "hires-1us": {
+        "fixture_sha256": "862e56cc2e0b9a9e76fbd13f0abb370ec429193b05730d2148189f5cc45e881e",
+        "stages": {
+          "code_to_row": null,
+          "column_edges": null,
+          "core_estimate": null,
+          "decode": null,
+          "fused_reduce_map": {"median": 254334.0, "min_round_median": 243541.0, "max_round_median": 263958.0, "sampling": {"rounds": 5, "samples": 175}},
+          "measurement_fold": null,
+          "min_max": null,
+          "place": {"median": 2085125.0, "min_round_median": 2079292.0, "max_round_median": 2091542.0, "sampling": {"rounds": 5, "samples": 175}},
+          "place_remainder": {"median": 22750.0, "min_round_median": 21000.0, "max_round_median": 27709.0, "sampling": {"rounds": 5, "samples": 175}},
+          "placement_geometry": {"median": 2625.0, "min_round_median": 2333.0, "max_round_median": 3208.0, "sampling": {"rounds": 5, "samples": 175}},
+          "plane_reset": {"median": 1199.0, "min_round_median": 1069.0, "max_round_median": 1199.0, "sampling": {"rounds": 5, "samples": 175}},
+          "resample": {"median": 333084.0, "min_round_median": 332209.0, "max_round_median": 336000.0, "sampling": {"rounds": 5, "samples": 175}},
+          "split_columns": null,
+          "tile_writes": {"median": 37626.0, "min_round_median": 36751.0, "max_round_median": 38208.0, "sampling": {"rounds": 5, "samples": 175}},
+          "trigger": {"median": 772333.0, "min_round_median": 749292.0, "max_round_median": 869459.0, "sampling": {"rounds": 5, "samples": 175}},
+          "trigger_source_decode": {"median": 632333.0, "min_round_median": 631750.0, "max_round_median": 633208.0, "sampling": {"rounds": 5, "samples": 175}}
+        }
+      },
+      "hires-200ns": {
+        "fixture_sha256": "970d68389fc97e8d8a317b4c175bcdce2c03d602a77a5918bf74755ea5306899",
+        "stages": {
+          "code_to_row": null,
+          "column_edges": null,
+          "core_estimate": null,
+          "decode": {"median": 123375.0, "min_round_median": 123375.0, "max_round_median": 123667.0, "sampling": {"rounds": 5, "samples": 215}},
+          "fused_reduce_map": {"median": 74958.5, "min_round_median": 70729.5, "max_round_median": 75979.5, "sampling": {"rounds": 5, "samples": 240}},
+          "measurement_fold": null,
+          "min_max": null,
+          "place": {"median": 553292.0, "min_round_median": 551395.5, "max_round_median": 555771.0, "sampling": {"rounds": 5, "samples": 240}},
+          "place_remainder": {"median": 12251.0, "min_round_median": 11959.5, "max_round_median": 12543.0, "sampling": {"rounds": 5, "samples": 240}},
+          "placement_geometry": {"median": 1459.0, "min_round_median": 1459.0, "max_round_median": 1750.0, "sampling": {"rounds": 5, "samples": 240}},
+          "plane_reset": {"median": 1603.5, "min_round_median": 1400.0, "max_round_median": 1691.0, "sampling": {"rounds": 5, "samples": 240}},
+          "resample": {"median": 163917.0, "min_round_median": 163917.0, "max_round_median": 164208.0, "sampling": {"rounds": 5, "samples": 240}},
+          "split_columns": null,
+          "tile_writes": {"median": 39520.5, "min_round_median": 38063.0, "max_round_median": 40834.0, "sampling": {"rounds": 5, "samples": 240}},
+          "trigger": {"median": 175292.0, "min_round_median": 175146.0, "max_round_median": 175437.5, "sampling": {"rounds": 5, "samples": 240}},
+          "trigger_source_decode": null
+        }
+      }
+    }
+  },
+  "result": {
+    "commit": "63f82b80bd12a13b7baed41ecd65ef1fcc00c387",
+    "binary_sha256": "df79df2400ce0533a70a6e62647e3573ecb42c22363b71f3e8bddeda1d48edc2",
+    "cpu": 2,
+    "core_type": "0x00000000410fd034",
+    "groups": {
+      "deep": {
+        "fixture_sha256": "70a7512efa96b3b5d29ad7c30c151dc59bcc06316c651fa84ae35363572502f4",
+        "stages": {
+          "code_to_row": null,
+          "column_edges": null,
+          "core_estimate": null,
+          "decode": null,
+          "fused_reduce_map": null,
+          "measurement_fold": null,
+          "min_max": null,
+          "place": {"median": 11448500.0, "min_round_median": 11125916.5, "max_round_median": 11632833.5, "sampling": {"rounds": 5, "samples": 20}},
+          "place_remainder": {"median": 61978.5, "min_round_median": 57897.0, "max_round_median": 99458.5, "sampling": {"rounds": 5, "samples": 20}},
+          "placement_geometry": {"median": 60958.0, "min_round_median": 59937.0, "max_round_median": 65770.5, "sampling": {"rounds": 5, "samples": 20}},
+          "plane_reset": {"median": 89395.5, "min_round_median": 86479.0, "max_round_median": 111416.5, "sampling": {"rounds": 5, "samples": 20}},
+          "resample": {"median": 1031625.0, "min_round_median": 1018062.5, "max_round_median": 1223687.0, "sampling": {"rounds": 5, "samples": 20}},
+          "split_columns": {"median": 185645.0, "min_round_median": 178063.5, "max_round_median": 213645.5, "sampling": {"rounds": 5, "samples": 20}},
+          "tile_writes": {"median": 1390521.5, "min_round_median": 1363687.5, "max_round_median": 1455124.0, "sampling": {"rounds": 5, "samples": 20}},
+          "trigger": {"median": 9997166.5, "min_round_median": 9801312.5, "max_round_median": 10015541.5, "sampling": {"rounds": 5, "samples": 20}},
+          "trigger_source_decode": null
+        }
+      },
+      "dense-1ch-1us": {
+        "fixture_sha256": "45b992e3c1734ba187599c8436aa5c81a234f75b17c99f7f986141f26cf9e0fb",
+        "stages": {
+          "code_to_row": {"median": 21292.0, "min_round_median": 21291.0, "max_round_median": 21583.5, "sampling": {"rounds": 5, "samples": 270}},
+          "column_edges": {"median": 17208.5, "min_round_median": 16771.0, "max_round_median": 17208.5, "sampling": {"rounds": 5, "samples": 270}},
+          "core_estimate": null,
+          "decode": null,
+          "fused_reduce_map": null,
+          "measurement_fold": null,
+          "min_max": {"median": 44917.0, "min_round_median": 44625.0, "max_round_median": 45500.0, "sampling": {"rounds": 5, "samples": 270}},
+          "place": {"median": 142916.5, "min_round_median": 139125.0, "max_round_median": 154437.0, "sampling": {"rounds": 5, "samples": 470}},
+          "place_remainder": {"median": 14582.0, "min_round_median": 13999.0, "max_round_median": 16334.0, "sampling": {"rounds": 5, "samples": 470}},
+          "placement_geometry": {"median": 1458.5, "min_round_median": 1458.0, "max_round_median": 1459.0, "sampling": {"rounds": 5, "samples": 470}},
+          "plane_reset": {"median": 1750.0, "min_round_median": 1662.0, "max_round_median": 2683.0, "sampling": {"rounds": 5, "samples": 470}},
+          "resample": {"median": 429916.5, "min_round_median": 419270.5, "max_round_median": 437937.5, "sampling": {"rounds": 5, "samples": 200}},
+          "split_columns": null,
+          "tile_writes": {"median": 47686.5, "min_round_median": 46813.0, "max_round_median": 49729.0, "sampling": {"rounds": 5, "samples": 470}},
+          "trigger": {"median": 15458.5, "min_round_median": 15312.5, "max_round_median": 16479.0, "sampling": {"rounds": 5, "samples": 470}},
+          "trigger_source_decode": null
+        }
+      },
+      "hires-1us": {
+        "fixture_sha256": "862e56cc2e0b9a9e76fbd13f0abb370ec429193b05730d2148189f5cc45e881e",
+        "stages": {
+          "code_to_row": null,
+          "column_edges": null,
+          "core_estimate": null,
+          "decode": null,
+          "fused_reduce_map": {"median": 251708.0, "min_round_median": 248208.0, "max_round_median": 253750.0, "sampling": {"rounds": 5, "samples": 175}},
+          "measurement_fold": null,
+          "min_max": null,
+          "place": {"median": 2084250.0, "min_round_median": 2069958.0, "max_round_median": 2092709.0, "sampling": {"rounds": 5, "samples": 175}},
+          "place_remainder": {"median": 22166.0, "min_round_median": 20416.0, "max_round_median": 25665.0, "sampling": {"rounds": 5, "samples": 175}},
+          "placement_geometry": {"median": 2625.0, "min_round_median": 2624.0, "max_round_median": 2916.0, "sampling": {"rounds": 5, "samples": 175}},
+          "plane_reset": {"median": 1199.0, "min_round_median": 1166.0, "max_round_median": 1283.0, "sampling": {"rounds": 5, "samples": 175}},
+          "resample": {"median": 333375.0, "min_round_median": 332500.0, "max_round_median": 334250.0, "sampling": {"rounds": 5, "samples": 175}},
+          "split_columns": null,
+          "tile_writes": {"median": 37626.0, "min_round_median": 37042.0, "max_round_median": 38209.0, "sampling": {"rounds": 5, "samples": 175}},
+          "trigger": {"median": 839416.0, "min_round_median": 765917.0, "max_round_median": 866542.0, "sampling": {"rounds": 5, "samples": 175}},
+          "trigger_source_decode": {"median": 631459.0, "min_round_median": 630583.0, "max_round_median": 633792.0, "sampling": {"rounds": 5, "samples": 175}}
+        }
+      },
+      "hires-200ns": {
+        "fixture_sha256": "970d68389fc97e8d8a317b4c175bcdce2c03d602a77a5918bf74755ea5306899",
+        "stages": {
+          "code_to_row": null,
+          "column_edges": null,
+          "core_estimate": null,
+          "decode": {"median": 123375.0, "min_round_median": 123375.0, "max_round_median": 123375.0, "sampling": {"rounds": 5, "samples": 215}},
+          "fused_reduce_map": {"median": 71458.5, "min_round_median": 70291.5, "max_round_median": 76417.0, "sampling": {"rounds": 5, "samples": 240}},
+          "measurement_fold": null,
+          "min_max": null,
+          "place": {"median": 553000.0, "min_round_median": 550083.5, "max_round_median": 554459.0, "sampling": {"rounds": 5, "samples": 240}},
+          "place_remainder": {"median": 12251.5, "min_round_median": 11812.0, "max_round_median": 13124.5, "sampling": {"rounds": 5, "samples": 240}},
+          "placement_geometry": {"median": 1459.0, "min_round_median": 1458.0, "max_round_median": 1750.0, "sampling": {"rounds": 5, "samples": 240}},
+          "plane_reset": {"median": 1472.5, "min_round_median": 1312.0, "max_round_median": 1487.0, "sampling": {"rounds": 5, "samples": 240}},
+          "resample": {"median": 164208.0, "min_round_median": 163917.0, "max_round_median": 164500.0, "sampling": {"rounds": 5, "samples": 240}},
+          "split_columns": null,
+          "tile_writes": {"median": 39374.5, "min_round_median": 38499.0, "max_round_median": 39811.0, "sampling": {"rounds": 5, "samples": 240}},
+          "trigger": {"median": 175291.0, "min_round_median": 175000.0, "max_round_median": 175292.0, "sampling": {"rounds": 5, "samples": 240}},
+          "trigger_source_decode": null
+        }
+      }
+    }
+  }
+}

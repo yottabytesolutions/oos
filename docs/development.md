@@ -24,6 +24,99 @@ Run from the repository root. Each executed step reports its time and failures, 
 makes the command exit nonzero. A successful full run names its tier: `gate passed (default)`
 or `gate passed (image)`. Hooks use the same command. Missing Docker cannot fail the default gate.
 
+## Unit stage benchmark
+
+`cargo xtask unit-bench` measures cold nanoseconds per record for each drawing stage by replaying recorded DMA
+batches on a pinned CPU. On the unit, identical stage code showed a 2.90% difference in `deep / tile_writes`
+over three rounds. Five-round repeats for that stage differed by +3.32% and -4.53% from their reference.
+On 2026-11-22, code layout alone moved live records per second by up to 5% between builds. Use the replay for code-cost
+regressions and the installed live matrix for end-to-end acquisition acceptance.
+
+Follow the [DMA fixture capture procedure](architecture/fixture-benchmark.md). Enable `acq.dump` for the
+recording session, exercise each setup, and copy its completed batches from `/tmp/oos-batches` into a group
+directory, for example `fixtures/short-1ch/…`. Disable the dump after recording. Keep the fixture directory,
+reference and candidate JSON files outside the repository.
+
+With the owner's release and a current [test lease](../tools/README.md#scope-lease), use trusted SSH and
+SCPI port 5555 on the same unit. Run from the baseline checkout to create a reference, then from the
+candidate checkout with the same unit, CPU and fixtures. If the baseline predates this command, apply
+the xtask tooling change to the baseline checkout first. Renew the lease while the command runs.
+The host uses system SSH, tar and SHA-256 tools (GNU tar and sha256sum on Linux, BSD tar and shasum on macOS).
+
+```sh
+cargo xtask unit-bench run --unit root@example.invalid --fixtures /path/to/fixtures --out /path/to/reference.json
+cargo xtask unit-bench run --unit root@example.invalid --fixtures /path/to/fixtures --out /path/to/result.json
+cargo xtask unit-bench compare --reference /path/to/reference.json --result /path/to/result.json
+```
+
+The run cross-builds the ignored release test, verifies its test listing and caches the executable and
+fixture groups under `/tmp/oos-bench/` by SHA-256. By default it runs all groups for five rounds on CPU 2.
+That adds about 67% to replay time compared with three rounds. Build and initial transfer costs are fixed per run.
+Use repeatable `--group`, `--rounds` and `--cpu` to select a subset or change sampling. The report records the
+checkout commit, executable SHA-256, the CPU number, the kernel's MIDR and a content SHA-256 for each fixture
+group. The group hash covers sorted relative file names and file contents. Keep fixtures fixed during a run.
+Run on a stopped scope or use `--stop` to pause an acquiring scope before uploads and rounds. When the command
+pauses acquisition, it sends `:RUN` on completion or error and checks that acquisition resumed. If restoration
+fails, it reconnects and retries once. A failed retry reports the recovery command.
+Process termination by signal, including Ctrl+C or SIGKILL, can leave the scope stopped. Before pausing the
+scope, the command prints the recovery command below. Set `SCPI_HOST` to the unit's SCPI hostname first.
+The SSH child runs in a separate process group and can continue after Ctrl+C. A benchmark round on the unit
+has a 120-second remote timeout. Once the child has finished, remove the interrupted run's local scratch
+directory with `rm -r -- target/unit-bench-PID-SUFFIX`, using the actual PID and suffix in the directory name.
+An interrupted run can also leave an output staging file named `<output>.PID.tmp` next to the requested report.
+
+```sh
+printf ':RUN\n' | nc -w 2 "$SCPI_HOST" 5555
+```
+
+The report pools cold per-record timings across fixtures and rounds and gives the range of each stage's
+round medians. It counts non-null samples once per record per round, and counts a round when it has at least
+one timing for the stage. Stages with zero measured samples in both reports appear as `unmeasured`.
+
+Each measured stage needs at least five measured rounds and ten samples in each report.
+A median change must exceed both the tolerance (default 2%) of the reference stage median and
+the sum of the two round-median ranges to count as `REGRESSION` (increase) or `faster` (decrease),
+and a component change must also exceed the tolerance times the reference `place` median.
+The component floor exists because a stage worth 0.2 % of placement was flagged as a regression between
+two builds with identical stage code: three round medians understated its spread.
+Changes within either shared threshold are `same`, and changes that clear both but fall at or
+below the component floor are `within limits`.
+
+Two archived five-round runs of the same binary on CPU 2 on 2026-11-22 show the following
+placement variation. Each spread is the round-median range divided by that run's pooled median.
+
+| Group | Median change | Reference spread | Result spread |
+| --- | ---: | ---: | ---: |
+| `deep` | +3.12% | 2.38% | 4.43% |
+| `dense-1ch-10us` | +0.97% | 2.12% | 3.06% |
+| `dense-1ch-1us` | -5.22% | 7.83% | 10.71% |
+| `dense-2ch-1us` | +1.04% | 4.49% | 4.65% |
+| `dense-4ch-10us` | -0.28% | 3.07% | 5.74% |
+| `dense-4ch-1us` | -0.66% | 2.32% | 3.84% |
+| `dots` | -1.84% | 9.18% | 1.87% |
+| `hires-1us` | -0.04% | 0.59% | 1.09% |
+| `hires-200ns` | -0.05% | 0.79% | 0.79% |
+| `measurement` | +1.39% | 2.66% | 2.62% |
+| `peak` | +1.30% | 6.86% | 5.02% |
+| `short-1ch-200ns` | +0.31% | 1.86% | 3.10% |
+| `short-1ch-5ns` | -0.56% | 4.00% | 2.95% |
+| `short-4ch-50ns` | +0.29% | 2.55% | 0.60% |
+| `zoom` | -0.14% | 2.69% | 2.78% |
+
+The two `dense-1ch-1us` round-median ranges overlap, with both endpoints lower in the result.
+Archived reports retain the extrema and pooled medians. Individual round values and their order
+would be needed to identify a first-round anomaly. A cache or frequency shift that persists
+through a run could move all rounds together without increasing its range. A follow-up could
+interleave reference and candidate rounds per group in one session on the same CPU and alternate
+which binary runs first in each pair.
+
+The comparison exits 1 for a regression when sampling is sufficient. If a stage reports `insufficient data`,
+the comparison exits 2 and shows the required rounds at the observed sampling rate. Rerun older reports
+that lack sampling counts or group hashes. Other exit 2 errors include missing groups or stages, one-sided
+measurements and mismatches in CPU, MIDR or fixture SHA-256. Use the same repeatable group selection to make
+a subset reference.
+
+
 ## Setup
 
 Install Git, rustup and Python >=3.12 as `python3` on macOS arm64 or Linux x86-64.

@@ -116,6 +116,11 @@ The dense envelope shares column edges across lanes. Code layouts support stride
 four words. Three channels use four lanes with one inactive lane. Correction applies the captured
 eight-phase offsets before column reduction. AArch64 has NEON paths and scalar edges and tails.
 Line spans can include the preceding column's last sample. Workers reuse placement scratch.
+For paired codes, both words of pair `j` share the time of word `2j + 1` relative to the
+record's trigger. A pair centre on a column edge belongs to the column on its right.
+Line joins extend to the nearest end of the preceding pair if the two ranges are disjoint.
+In line views with fewer than one pair per column, empty columns between pair centres cover the nearest
+ends of disjoint ranges or the overlap of intersecting ranges. Each occupied column keeps its pair extrema.
 Screen-grid adapters and decoded fallbacks remain. `ui/src/picture/deposit/standard` contains the
 adapter implementations.
 

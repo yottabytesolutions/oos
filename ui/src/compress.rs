@@ -144,8 +144,7 @@ pub fn ranges(v: &[f32], m: &Map, w: usize) -> Vec<Option<(f32, f32)>> {
 /// `fastdraw::deposit` for a frame of min/max pairs: per column the span of its pairs (`ranges`), joined to the last
 /// pair before the column where the two do not overlap (to its nearest end: the raw trace's last sample lies inside
 /// that pair). With `dots` (`Model::dots`) no join: each column is the span its samples cover, as the record path
-/// draws pairs in dots mode (`Phosphor::draw_ex`); the dot density of a raw frame is not in the pairs. Needs at least
-/// one pair per column (`x_per_sample` <= 0.5).
+/// draws pairs in dots mode (`Phosphor::draw_ex`); the dot density of a raw frame is not in the pairs.
 #[cfg(test)]
 pub fn deposit_pairs(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16, dots: bool) {
     let mut spans = crate::fastdraw::Spans::default();
@@ -187,6 +186,38 @@ pub(crate) fn reference_spans(w: usize, h: usize, v: &[f32], m: &Map, dots: bool
         let r1 = (ya.max(yb).round() as i32).min(hh - 1);
         if r0 <= r1 {
             spans.rows[c] = (r0 as i16, r1 as i16);
+        }
+    }
+}
+
+/// Overlay connections on the legacy picture by walking the input pairs in record order.
+#[cfg(test)]
+pub(crate) fn reference_bridged_spans(
+    w: usize,
+    h: usize,
+    samples: &[f32],
+    map: &Map,
+    dots: bool,
+    spans: &mut crate::fastdraw::Spans,
+) {
+    use crate::fastdraw::Samples;
+
+    reference_spans(w, h, samples, map, dots, spans);
+    if dots || map.x_per_sample <= 0.5 {
+        return;
+    }
+    let column = |pair: usize| (((2 * pair + 1) as f64 - map.ti) * map.x_per_sample + map.x0).floor() as i64;
+    for pair in 1..samples.len().div_ceil(2) {
+        let columns = column(pair - 1).saturating_add(1).max(0)..column(pair).min(w as i64);
+        if columns.is_empty() {
+            continue;
+        }
+        let (a, b) = samples.extremes(2 * pair - 2, 2 * pair);
+        let (c, d) = samples.extremes(2 * pair, (2 * pair + 2).min(samples.len()));
+        if a <= b && c <= d {
+            let (lo, hi) = (a.max(c), b.min(d));
+            let rows = crate::fastdraw::mapped_rows((lo.min(hi), lo.max(hi)), None, map, h);
+            spans.rows[columns.start as usize..columns.end as usize].fill(rows);
         }
     }
 }

@@ -16,7 +16,7 @@ fn place(
         let mut cache = RowCache::default();
         let rows = cache.get(&codes, map, height).unwrap();
         edges.update_for(width, codes.n, map, true);
-        pairs::code_spans_into(&codes, edges, width, dots, rows, spans);
+        pairs::code_spans_into(&codes, edges, (width, map.x_per_sample), dots, rows, spans);
     } else {
         pairs::spans_into(&input, edges, map, (width, height), dots, spans);
     }
@@ -40,7 +40,7 @@ fn pairs_match_compression_with_clipping_joins_and_partial_pairs() {
             for (x_per_sample, ti, x0) in [(0.17, 315.8, 70.1), (0.5, 20.0, 0.5), (0.53, 16.7, 5.9), (0.0, 0.0, 0.0)] {
                 let map = Map { ti, x_per_sample, x0, y0: 182.2, y_per_volt: -80.0 };
                 for dots in [false, true] {
-                    crate::compress::reference_spans(WIDTH, HEIGHT, &decoded, &map, dots, &mut expected);
+                    crate::compress::reference_bridged_spans(WIDTH, HEIGHT, &decoded, &map, dots, &mut expected);
                     for input in inputs {
                         place(input, &mut edges, &map, (WIDTH, HEIGHT), dots, &mut actual);
                         assert_spans(&actual, &expected);
@@ -52,7 +52,7 @@ fn pairs_match_compression_with_clipping_joins_and_partial_pairs() {
 }
 
 #[test]
-fn random_pairs_match_pre_adapter_spans_for_lines_and_dots() {
+fn random_pairs_match_the_reference_for_lines_and_dots() {
     let mut seed = 0xfac3_0e19_u32;
     let mut random = || {
         seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -83,13 +83,24 @@ fn random_pairs_match_pre_adapter_spans_for_lines_and_dots() {
             y_per_volt: (random() * 400.0 - 200.0) as f32,
         };
         for dots in [false, true] {
-            crate::compress::reference_spans(width, height, &decoded, &map, dots, &mut expected);
+            crate::compress::reference_bridged_spans(width, height, &decoded, &map, dots, &mut expected);
             for input in [SamplesRef::Volts(&decoded), SamplesRef::Codes(codes)] {
                 place(input, &mut edges, &map, (width, height), dots, &mut actual);
                 assert_eq!(actual.c0, expected.c0);
                 assert_eq!(actual.rows, expected.rows, "case {case}, dots={dots}");
             }
         }
+    }
+}
+
+#[test]
+fn clipped_gap_uses_both_pairs_and_ignores_a_missing_endpoint() {
+    let map = Map { ti: 2.0, x_per_sample: 4.0, x0: 0.0, y0: 0.0, y_per_volt: 1.0 };
+    let mut edges = ColumnEdges::default();
+    let mut spans = Spans::default();
+    for (samples, expected) in [([2.0, 6.0, 4.0], (4, 4)), ([2.0, 6.0, 7.0], (6, 7)), ([2.0, 6.0, f32::NAN], (1, 0))] {
+        pairs::spans_into(samples.as_slice(), &mut edges, &map, (4, 8), false, &mut spans);
+        assert_eq!(spans.rows, [expected; 4]);
     }
 }
 

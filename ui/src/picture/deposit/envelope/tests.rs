@@ -10,6 +10,7 @@ use oos_core::model::HDIV;
 use oos_hal::dho::samples::{code_map, volt_code, CodeMap};
 
 mod bench;
+mod sparse_pairs;
 
 const CAL: [(f64, f64); 4] = [(1.0, 0.125), (-0.5, -0.25), (1.25, 0.375), (0.75, 0.5125)];
 
@@ -207,18 +208,26 @@ fn interleaved_code_pairs_match_decoded_pairs_in_every_lane() {
     let record = Record::new(0b1111, data, Some(offsets));
     let mut scratch = Scratch::default();
     let inputs = std::array::from_fn(|c| SamplesRef::Codes(record.codes(c).unwrap()));
+    let decoded: [Vec<f32>; NCH] = inputs.map(|samples| (0..samples.len()).map(|i| samples.at(i)).collect());
     let (mut actual, mut expected) = (std::array::from_fn(|_| None), Spans::default());
-    let mut projection = record.projection(117, 480, 7.125, 59.0);
-    for (ti, dots) in [(0.0, false), (240.21, false), (410.0, true), (812.0, false)] {
-        projection.dots = dots;
-        scratch.pairs((&inputs, Some(Layout::Four(record.lanes))), &projection, ti, &mut actual);
-        for (c, span) in actual.iter().enumerate() {
-            let codes = record.codes(c).unwrap();
-            let decoded: Vec<_> = (0..codes.n).map(|i| codes.at(i)).collect();
-            let map = kernel::raw_map(&projection, c, ti).unwrap();
-            crate::compress::reference_spans(projection.cols, projection.rows, &decoded, &map, dots, &mut expected);
-            let span = span.as_ref().unwrap();
-            assert_eq!((span.c0, &span.rows), (expected.c0, &expected.rows), "channel={c} ti={ti} dots={dots}");
+    for per_column in [0.6, 1.0, 1.52, 2.0, 3.0, 7.125] {
+        let mut projection = record.projection(117, 480, per_column, 59.0);
+        for (ti, dots) in [(0.0, false), (240.21, false), (410.0, true), (812.0, false)] {
+            projection.dots = dots;
+            scratch.pairs((&inputs, Some(Layout::Four(record.lanes))), &projection, ti, &mut actual);
+            for (c, span) in actual.iter().enumerate() {
+                let map = kernel::raw_map(&projection, c, ti).unwrap();
+                crate::compress::reference_bridged_spans(
+                    projection.cols,
+                    projection.rows,
+                    &decoded[c],
+                    &map,
+                    dots,
+                    &mut expected,
+                );
+                let span = span.as_ref().unwrap();
+                assert_eq!((span.c0, &span.rows), (expected.c0, &expected.rows), "channel={c} ti={ti} dots={dots}");
+            }
         }
     }
 }

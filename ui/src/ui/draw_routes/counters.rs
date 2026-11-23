@@ -77,14 +77,15 @@ fn perf_guard_pipeline_counters() {
                 counted();
             }
             let before = build.borrow().route.ui.wfm_total;
-            let pair = crate::system::perfguard::measure(crate::perfguard::ROUNDS, 16, baseline, counted);
+            let pair =
+                crate::system::perfguard::measure_matched_workers(crate::perfguard::ROUNDS, 16, baseline, counted);
             let build = build.borrow();
             println!("PIPELINE_COUNTERS channels={channels} tdiv={tdiv} frames={}", build.frames);
             pair.report("perf_guard_pipeline_counters");
             // ADR 0031: temporary F0 staging headroom; restore 1.01 at F3 frame cutover.
             let ratio = pair.best.1.as_secs_f64() / pair.best.0.as_secs_f64();
             println!(
-                "COUNTERS_WALL ratio={ratio:.9} target=1.01 target_pass={} temporary_limit=1.02 temporary_pass={}",
+                "COUNTERS_CPU_MATCHED ratio={ratio:.9} target=1.01 target_pass={} temporary_limit=1.02 temporary_pass={}",
                 ratio <= 1.01,
                 ratio <= 1.02
             );

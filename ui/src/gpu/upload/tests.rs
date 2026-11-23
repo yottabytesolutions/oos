@@ -83,67 +83,47 @@ fn shared_buffers_match_the_picture_after_clear_replacement_and_skipped_monitor_
     assert!(arenas[0].iter().all(|&v| v == 0));
 }
 
+thread_local! {
+    static WORK: std::cell::Cell<Option<[usize; 3]>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn record_work(compared: usize, copied: usize, copies: usize) {
+    if let Some([a, b, c]) = WORK.get() {
+        WORK.set(Some([a + compared, b + copied, c + copies]));
+    }
+}
+
 #[test]
-#[ignore = "host upload ratio: release, OOS_PERF_TESTS=1, one test thread"]
+#[ignore = "host upload work: OOS_PERF_TESTS=1"]
 fn perf_guard_upload_rows() {
-    upload_ratio(200..208, 0.2, "perf_guard_upload_rows");
+    upload_work(200..208);
 }
 
 #[test]
-#[ignore = "host full upload ratio: release, OOS_PERF_TESTS=1, one test thread"]
+#[ignore = "host upload work: OOS_PERF_TESTS=1"]
 fn perf_guard_upload_full() {
-    upload_ratio(0..448, 1.0, "perf_guard_upload_full");
+    upload_work(0..448);
 }
 
-fn upload_ratio(band: Range<usize>, limit: f64, id: &str) {
-    use std::hint::black_box;
+fn upload_work(band: Range<usize>) {
     assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"));
     let (w, h) = (970, 448);
-    let mut pictures: [_; 2] = std::array::from_fn(|_| Phosphor::new(w, h));
-    let empty = vec![0; w * h * 2];
-    let old: [[_; 4]; 2] = std::array::from_fn(|i| {
-        std::array::from_fn(|c| {
-            Block::publish(0, &mut empty.clone(), UploadData::Channel { phosphor: &pictures[i], channel: c }, None).0
-        })
-    });
-    for (i, ph) in pictures.iter_mut().enumerate() {
-        for c in 0..4 {
-            ph.edit_channel(c, |map| {
-                map[band.start * w..band.end * w].fill(u16::from_ne_bytes([24 * (i as u8 + 1); 2]));
-                band.clone()
-            });
-        }
+    let mut ph = Phosphor::new(w, h);
+    for c in 0..4 {
+        let mut dst = vec![0; w * h * 2];
+        let (old, _) = Block::publish(0, &mut dst, UploadData::Channel { phosphor: &ph, channel: c }, None);
+        ph.edit_channel(c, |map| {
+            map[band.start * w..band.end * w].fill(24);
+            band.clone()
+        });
+        WORK.set(Some([0; 3]));
+        let (_, copied) = Block::publish(0, &mut dst, UploadData::Channel { phosphor: &ph, channel: c }, Some(&old));
+        let work = WORK.take().unwrap();
+        assert_eq!(copied, band);
+        assert_eq!(work, [0, band.len(), 1], "no scan and one contiguous copy per channel");
+        assert_eq!(dst, (UploadData::Channel { phosphor: &ph, channel: c }).bytes());
     }
-    let src: [_; 2] =
-        std::array::from_fn(|i| pictures[i].maps()[0].iter().flat_map(|value| value.to_ne_bytes()).collect::<Vec<_>>());
-    let mut reference: [_; 4] = std::array::from_fn(|_| empty.clone());
-    let mut candidate = reference.clone();
-    let (mut ref_frame, mut frame) = (0, 0);
-    let pair = crate::system::perfguard::measure(
-        crate::perfguard::ROUNDS,
-        8,
-        || {
-            ref_frame ^= 1;
-            for dst in &mut reference {
-                black_box(copy_rows(black_box(dst), black_box(&src[ref_frame]), w * 2, None));
-            }
-        },
-        || {
-            frame ^= 1;
-            for (c, dst) in candidate.iter_mut().enumerate() {
-                black_box(Block::publish(
-                    0,
-                    black_box(dst),
-                    UploadData::Channel { phosphor: black_box(&pictures[frame]), channel: c },
-                    Some(black_box(&old[frame][c])),
-                ));
-            }
-        },
-    );
-    assert_eq!(reference, candidate);
-    pair.report(id);
-    pair.check_tail(limit * 1.5);
-    assert!(pair.best.1.as_secs_f64() / pair.best.0.as_secs_f64() <= limit, "{pair:?}");
+    println!("UPLOAD_WORK channels=4 compared_rows=0 copied_rows={} copies=4", 4 * band.len());
 }
 
 #[test]

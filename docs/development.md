@@ -429,7 +429,7 @@ Host plan equality does not establish timing or calibrated behaviour on a unit (
 ## Test time and completion
 
 [ADR 0009](adr/0009-test-time.md) requires tests to advance elapsed time explicitly and await
-worker completion events. Real duration assertions belong to the explicit perf-guard suite. A timeout in
+worker completion events. Host perf guards check work counts or interleaved CPU-cost ratios. A timeout in
 ordinary tests is only a named hang guard of at least 60 seconds; the shared host helper uses 120 seconds.
 
 The `test-time` fast step follows every Cargo target and test module, including compound test-only cfgs
@@ -661,12 +661,9 @@ UI/HAL/core/DSP sources. It passed alone, then failed 2 of 5 adjacent loaded run
 while the baseline full gate was building. Its fixed projected-A72 assertion
 reported 11.088 and 10.603 ms against 9 ms at host loads 167-169. This assertion
 predated the PR; HAL's shared `test-release` artifacts did not cause it.
-The projected-A72 p99 CPU assertion remains alongside best <= 1.0 and p99 CPU <= 1.5
-against Standard learning in the same run. Removing the provisional 9 ms limit
-requires an owner-approved ADR; shared-host load evidence alone does not authorize it.
-Deterministic regression tests accept the exact 9 ms projected boundary and reject
-an overrun even when both ratios pass. Separate cases reject candidate-only
-throughput and tail regressions within the absolute budget.
+At that point the projected-A72 assertion still ran alongside best <= 1.0 and p99 CPU <= 1.5.
+The acquisition sweep retains those cost ratios and makes the 9 ms A72 budget a measured unit target.
+A fixed host-to-unit factor cannot account for CPU model, frequency and memory differences.
 The fast-job environment regression test also failed before its override was added.
 
 The unchanged PR passed the full gate using the existing target:
@@ -766,7 +763,7 @@ function; a file reached both as test and as production code is production code.
 | architecture | `cargo metadata`, syntax walk | `xtask/data/architecture.txt`: allowed crate dependencies; module rules inside a crate | the layers cannot erode by accident |
 | clippy | `cargo clippy --all-targets`, for the host and for `aarch64-unknown-linux-musl` | the `[lints]` table of each crate and `clippy.toml`; the scope build compiles | correctness, idiom, size and complexity, also in Linux-only code |
 | tests (debug, release) | `cargo nextest run`, `--cargo-profile test-release` | every test passes in both profiles, full counts | release-only bugs (overflow checks, timing) show |
-| perf guards | `tools/perf-guard.sh` | the fork's allocation counts and timing ratios; its exit code decides | the fast paths stay fast |
+| perf guards | `tools/perf-guard.sh` | the fork's work counts and CPU-cost ratios; its exit code decides | the fast paths stay fast |
 | coverage | `cargo llvm-cov` per crate | line coverage per crate ≥ the floor in `xtask/data/coverage.txt` | coverage does not fall |
 
 The limits have no exemptions (ADR 0006): a record over 12 fields groups its fields into sub-structs.

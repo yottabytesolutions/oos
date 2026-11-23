@@ -1905,17 +1905,4 @@ mod measurement_gate_tests {
         assert_eq!(ui.fact_meas(Meas::Vpp, WaveId::Ref(0)), 2.0);
         assert_eq!(ui.replay.captures, 0);
     }
-    #[test]
-    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
-    fn perf_guard_reference_full_and_screen_dispatch() {
-        let mut ui = large();
-        crate::perfguard::latency::check(std::time::Duration::from_millis(500), || {
-            ui.set_measurement_full_record(true)
-        });
-        pump(&mut ui);
-        ui.m.tscale = tscales().iter().position(|&v| (v - 100e-6).abs() < 1e-10).unwrap();
-        ui.m.delay = 400e-6;
-        ui.m.meas_full_record = false;
-        crate::perfguard::latency::check(std::time::Duration::from_millis(500), || ui.measure_refs());
-    }
 }

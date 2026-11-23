@@ -162,24 +162,3 @@ fn a_measurement_query_waits_for_the_background_job() {
     assert!((freq - 25e6).abs() < 1.0, "{answer}");
     assert!(!ui.measurement_busy());
 }
-
-#[test]
-#[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
-fn perf_guard_native_measurement_dispatch_and_cached_reads() {
-    let mut ui = native(600_000);
-    crate::perfguard::latency::check(std::time::Duration::from_millis(250), || {
-        ui.measure_last();
-    });
-    assert!(ui.azr.ref_measure_worker.borrow().is_none());
-    ui.m.meas.push((Meas::Freq, WaveId::Ch(0)));
-    crate::perfguard::latency::check(std::time::Duration::from_millis(250), || {
-        ui.measure_last();
-    });
-    let _ = wait(&mut ui);
-    crate::perfguard::latency::check(std::time::Duration::from_millis(150), || {
-        for _ in 0..1_000 {
-            assert!((ui.fact_meas(Meas::PWidth, WaveId::Ch(0)) - 20e-9).abs() < 1e-12);
-            assert!((ui.meas_at(WaveId::Ch(0), Meas::PDuty) - 50.0).abs() < 1e-6);
-        }
-    });
-}

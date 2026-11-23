@@ -153,15 +153,3 @@ fn unfinished_query_expires_with_its_value_unavailable() {
     assert!(ui.azr.own_measure.borrow().cached.is_empty());
     assert_eq!(ui.azr.ref_measure_worker.borrow().as_ref().unwrap().submitted, 1);
 }
-
-#[test]
-#[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
-fn perf_guard_custom_row_dispatch() {
-    let mut ui = reference(600_000);
-    custom(&mut ui, Meas::Rise, 0.1, 0.9);
-    custom(&mut ui, Meas::Fall, 0.2, 0.8);
-    crate::perfguard::latency::check(std::time::Duration::from_millis(250), || {
-        assert!(ui.meas_number(WaveId::Ref(0), Meas::Rise).is_nan());
-        assert!(ui.meas_number(WaveId::Ref(0), Meas::Fall).is_nan());
-    });
-}

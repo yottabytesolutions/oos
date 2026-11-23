@@ -23,6 +23,8 @@ pub(crate) fn with_scratch<T>(draw: impl FnOnce(&mut Scratch) -> T) -> T {
 }
 
 mod dots;
+#[cfg(test)]
+mod work;
 pub use dots::deposit_dots;
 #[cfg(test)]
 pub fn deposit_dots_band(band: &mut [u16], w: usize, r_lo: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
@@ -39,15 +41,33 @@ pub fn deposit_dots_band(band: &mut [u16], w: usize, r_lo: usize, h: usize, v: &
 /// were three quarters of the time.
 #[must_use]
 pub fn deposit(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) -> Range<usize> {
-    deposit_from(map, w, wgt, |scratch| super::spans_into(w, h, v, m, &mut scratch.spans))
+    deposit_samples::<false>(map, w, h, v, m, wgt)
+}
+
+fn deposit_samples<const TRACK: bool>(
+    map: &mut [u16],
+    w: usize,
+    h: usize,
+    v: &(impl super::Samples + ?Sized),
+    m: &Map,
+    wgt: u16,
+) -> Range<usize> {
+    deposit_from::<TRACK>(map, w, wgt, |scratch| super::spans_into(w, h, v, m, &mut scratch.spans))
 }
 /// `deposit` straight from a frame's read-out words (`Codes`): the same picture, without the f32 copy of the channel.
 #[must_use]
 pub fn deposit_codes(map: &mut [u16], w: usize, h: usize, v: &Codes, m: &Map, wgt: u16) -> Range<usize> {
-    deposit_from(map, w, wgt, |scratch| super::code_spans_into(w, h, v, m, &mut scratch.rows, &mut scratch.spans))
+    deposit_from::<false>(map, w, wgt, |scratch| {
+        super::code_spans_into(w, h, v, m, &mut scratch.rows, &mut scratch.spans)
+    })
 }
 
-fn deposit_from(map: &mut [u16], w: usize, wgt: u16, build: impl FnOnce(&mut Scratch)) -> Range<usize> {
+fn deposit_from<const TRACK: bool>(
+    map: &mut [u16],
+    w: usize,
+    wgt: u16,
+    build: impl FnOnce(&mut Scratch),
+) -> Range<usize> {
     super::with_scratch(|scratch| {
         build(scratch);
         let sp = &scratch.spans;
@@ -56,6 +76,10 @@ fn deposit_from(map: &mut [u16], w: usize, wgt: u16, build: impl FnOnce(&mut Scr
             for r in rmin..=rmax {
                 let row = &mut map[r * w + c0..r * w + c1];
                 let r = r as i16;
+                #[cfg(test)]
+                if TRACK {
+                    work::spans(0, row.len());
+                }
                 for (px, &(a, b)) in row.iter_mut().zip(&sp.rows) {
                     let inside = ((a <= r) & (r <= b)) as u16;
                     *px = px.saturating_add(wgt & 0u16.wrapping_sub(inside));
@@ -64,6 +88,10 @@ fn deposit_from(map: &mut [u16], w: usize, wgt: u16, build: impl FnOnce(&mut Scr
         } else {
             for (c, &(a, b)) in sp.rows.iter().enumerate() {
                 let mut i = a.max(0) as usize * w + c0 + c;
+                #[cfg(test)]
+                if TRACK {
+                    work::spans((a..=b).len(), 0);
+                }
                 for _ in a..=b {
                     map[i] = map[i].saturating_add(wgt);
                     i += w;
@@ -87,7 +115,7 @@ fn sweep_cost(rows: usize, cols: usize) -> usize {
 }
 
 /// `deposit` as it was before the span pass (one scattered write per pixel, one compare chain per sample): the
-/// reference of the equality test and of the timing guard.
+/// reference for equality and the work budget.
 #[cfg(test)]
 pub fn deposit_reference(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
     if v.is_empty() || m.x_per_sample <= 0.0 {
@@ -124,7 +152,7 @@ pub fn deposit_reference(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map
     }
 }
 
-/// `deposit_dots` as it was (one scattered write per sample): the reference of the equality test and timing guard.
+/// `deposit_dots` as it was (one scattered write per sample): the reference for equality and work.
 #[cfg(test)]
 pub fn deposit_dots_reference(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) {
     if v.is_empty() || m.x_per_sample <= 0.0 {

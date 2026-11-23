@@ -7,7 +7,7 @@
 //! brings back `read_dma` or `deinterleave` + `volts` in the batch loop, or a decode that allocates scratch space.
 
 use oos_hal::dho::bus::{DmaBuf, Recorder};
-use oos_hal::dho::seq::{decode_volts, decode_volts_into, execute_bus, read_len, Step};
+use oos_hal::dho::seq::{decode_volts, decode_volts_into, execute_bus, frame_stride, read_len, Step};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
@@ -82,21 +82,44 @@ fn dma_buf_reads_allocate_nothing_after_the_first() {
     }
 }
 
+const WARM_BYTE: u8 = 37;
+
+struct RetainedRead<'a> {
+    input: &'a [u8],
+    expected: *const u8,
+    calls: usize,
+}
+
+impl std::io::Read for RetainedRead<'_> {
+    fn read(&mut self, dst: &mut [u8]) -> std::io::Result<usize> {
+        self.calls += 1;
+        assert_eq!(dst.as_ptr(), self.expected, "DMA must read directly into the retained buffer");
+        assert_eq!(dst.len(), self.input.len(), "one request covers this DMA batch");
+        assert!(dst.iter().all(|&byte| byte == WARM_BYTE), "a warmed read must leave the buffer untouched until DMA");
+        dst.copy_from_slice(self.input);
+        Ok(dst.len())
+    }
+}
+
 #[test]
-fn the_read_step_allocates_nothing_after_the_first() {
-    // 2816 bytes: no stream padding; 2500 bytes: padded frames, unpadded in place
-    for frame in [2816usize, 2500] {
-        let frames = 1000;
-        let data = bytes(read_len(frames, frame));
+fn the_read_step_reuses_storage_without_zero_fill_or_allocation() {
+    for (frame, frames) in [(2816, 1420), (2500, 1600), (200_000, 20), (4000, 1000), (8000, 500)] {
+        let size = read_len(frames, frame);
+        let data = bytes(size);
+        let warm = vec![WARM_BYTE; size];
         let steps = [Step::Read { frames, frame }];
         let (mut bar, mut dma) = (Recorder::default(), DmaBuf::new());
-        execute_bus(&steps, &mut bar, &mut Mem(&data, 0), &mut dma, |_| {}).unwrap();
-        for _ in 0..3 {
-            let (k, r) = allocs(|| execute_bus(&steps, &mut bar, &mut Mem(&data, 0), &mut dma, |_| {}));
-            r.unwrap();
-            assert_eq!(k, 0, "frame {}", frame);
-            assert_eq!(dma.data().len(), frames * frame);
-        }
+        execute_bus(&steps, &mut bar, &mut Mem(&warm, 0), &mut dma, |_| {}).unwrap();
+        let expected = dma.data().as_ptr();
+        let mut read = RetainedRead { input: &data, expected, calls: 0 };
+        let (allocations, result) = allocs(|| execute_bus(&steps, &mut bar, &mut read, &mut dma, |_| {}));
+        result.unwrap();
+        assert_eq!((allocations, read.calls), (0, 1), "frame {frame}");
+        assert_eq!(dma.data().as_ptr(), expected, "unpadding must stay in the DMA buffer");
+        let payload = data.chunks_exact(frame_stride(frame)).flat_map(|slot| &slot[..frame]);
+        assert_eq!(dma.data().len(), frames * frame);
+        assert!(dma.data().iter().eq(payload), "unpadding must preserve frame payloads");
+        println!("DMA_READ_WORK frame={frame} frames={frames} bytes={size} reads=1 allocations=0");
     }
 }
 

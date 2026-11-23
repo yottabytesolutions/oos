@@ -146,25 +146,4 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(*events.borrow(), ["main stopped", "remote", "deposit and measure", "persist", "helper", "DRM"]);
     }
-    #[test]
-    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
-    fn perf_guard_overrun_and_total_shutdown_budgets() {
-        crate::perfguard::latency::check(Duration::from_millis(250), overrun_continues_without_freeing_live_buffers);
-        crate::perfguard::latency::check(Duration::from_millis(2500), || {
-            let start = Instant::now();
-            run(
-                start,
-                &mut (),
-                crate::perfguard::latency::wait_until,
-                |_, deadline| crate::perfguard::latency::wait_until(deadline),
-                |_| Ok(()),
-                |deadline| {
-                    crate::perfguard::latency::wait_until(deadline + Duration::from_millis(100));
-                    true
-                },
-                || {},
-            )
-            .unwrap();
-        });
-    }
 }

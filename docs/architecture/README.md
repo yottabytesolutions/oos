@@ -558,8 +558,7 @@ otherwise; the first unit round after each step may tighten them, never loosen t
 | memory | RSS <= 120 MB + `memplan` total, flat over a 2 h soak ([Memory and queues](#memory-and-queues)) | `rss` | host soak, unitlab | M5b |
 
 Picture invalidation is a separate consumer phase; intake/change timing excludes it.
-The IO experiment records its own before/after evidence. Existing host ratio guards below remain unchanged.
-Absolute timing belongs in perf/unit acceptance, not machine-speed-dependent unit tests.
+The IO experiment records its own before/after evidence. Absolute latency budgets are measured on the unit.
 Host intake/change guards use the limits in `ui/src/ui/tests/allocation_budget.rs` and count the calling thread's
 allocations after warm-up: input/change oracle cases and mapping acceptance with both map clears permit at most four
 (five for CLEAR); Peak backlog intake permits six.
@@ -570,40 +569,39 @@ are excluded. The absolute intake/change and picture timing budgets remain unit 
 ### Host budget rows
 
 `tools/perf-budgets.py` reads this table. Candidate/reference paths alternate over 101 rounds.
-Best ratios use elapsed time; p99 ratios compare process-CPU run distributions, including worker CPU.
-They are not runtime frame-event quantiles or proof of unit performance.
+Most best ratios compare the minimum CPU time for each path. Tail ratios compare each path’s p99. Synchronous probes use thread CPU time.
+The worker and counter-overhead probes wait for batch completion and measure the sum of CPU time
+across the serial test process. Unit frame-event quantiles are measured separately.
 
-| Guard ID | Best ratio <= | p99 CPU ratio <= | Workload / reference | Budget covered |
+| Guard ID | Best CPU ratio <= | p99 CPU ratio <= | Workload / reference | Budget covered |
 |---|---|---|---|---|
-| batch_read | 1.0 | 1.5 | five approximately 4 MB batches; retained DMA buffer / allocating read | acquisition read primitive |
 | batch_decode | 0.5 | 0.75 | five channel/depth cases; fused decode / two-pass decode | acquisition decode primitive |
 | decode_f32 | 0.8 | 1.2 | same batches; f32 / f64 fused decode | acquisition decode primitive |
-| perf_guard_batch_core_learning | 1.0 | 1.5 | full 4 MB, 1/2/4 channels; BatchMatch::learn / Standard deinterleave, learn and correct | ordered ADC learning; projected A72 p99 CPU <= 9 ms/4 MB at 4x host CPU ([basis](../fork/perf-plan.md#host-measurements)), unverified |
-| perf_guard_deposit_spans | 1.25 | 1.875 | nine signals, 100 k and 12.5 k points; spans / pixel writes | deposit kernel |
-| perf_guard_dots | 1.25 | 1.875 | nine signals, 100 k points; runs / per-sample adds | deposit kernel |
+| perf_guard_batch_core_learning | 1.0 | 1.5 | full 4 MB, 1/2/4 channels; BatchMatch::learn / Standard deinterleave, learn and correct | ordered ADC learning; measure the 9 ms/4 MB A72 p99 CPU target on the unit |
 | perf_guard_fast_interpolation | 1.1 | 1.65 | seven sparse timebase/channel cases; fast / exact | deposit kernel |
 | perf_guard_compressed_frame | 0.5 | 0.75 | 100 k point square, k=15; compressed / raw decode and draw | deposit kernel |
 | perf_guard_codes_per_frame | 0.9 | 1.35 | five channel/trigger cases; codes / decode and draw | deposit kernel |
-| perf_guard_pipeline_counters | 1.02 | 1.515 | identical warmed Batch pipelines, counters on / off; 1/2/4 channels at 1 and 10 us/div, full production-plan batches | temporary F0 staging elapsed overhead <= 2 %; restore 1.01 at F3 cutover (ADR 0031); CPU tail unchanged |
+| perf_guard_pipeline_counters | 1.02 | 1.515 | identical warmed Batch pipelines, counters on / off; 1/2/4 channels at 1 and 10 us/div, full production-plan batches | temporary F0 staging CPU overhead <= 2 %; restore 1.01 at F3 cutover (ADR 0031) |
 | perf_guard_deposit_worker_per_frame | 1.5 | 2.25 | three depths, measurements off; one worker / frames mode | worker orchestration |
 | perf_guard_deep_record_reuse | 0.8 | 1.0 | 4 channels, 10M depth (625k pairs each); actual hw_record + reused draw / hw_record + independent draw_frame conversion | main-view conversion and draw |
-| perf_guard_upload_full | 1.0 | 1.5 | four 970 x 448 u16 maps, all rows changed; single band copy / previous compare and row copies | worst-case shared GPU upload publication |
-| perf_guard_upload_rows | 0.2 | 0.3 | four 970 x 448 u16 maps, eight changed rows; revision-band copy / previous full-map comparison | shared GPU upload publication |
 | perf_guard_framestats | 0.7 | 1.05 | 125 k points, cheap set; fused / reference statistics | measure primitive |
 
-The counters wall limit is an owner-approved intermediate allowance for live F2 evaluation. Reports retain raw
-paired timings and compare wall ratios with both 1.01 and 1.02. Restore the 1 % wall limit after cutover. The six
-workloads, sample counts, CPU-tail limit and four-channel 30 FPS hardware goal retain their existing budgets.
+The F0 counter row caps overhead at 2 % until F3 frame cutover. The paths alternate after each
+picture and each sample sums 16 pictures per side. For the best comparison, sum both sides over windows spanning two thirds of the alternating rounds and choose the window with
+the lowest combined CPU time. The selected window compares the same rounds on the shared workers. At cutover restore 1.01
+in the executable assertion, this table and its contract fixtures, with all six workloads measured.
+Keep CPU p99 <= 1.515 and preserve the picture and record counts and pixel/pacing equivalence assertions.
+Measure four-channel 30 FPS and scheduling latency on the unit.
 
 Allocation probes require at least 64 allocation-free warmed frames for deposit spans/dots/codes,
-cheap measurements and both core-matching probes. HAL separately checks retained reads and decode.
-These are primitive guards, not a zero-allocation claim for the whole UI.
-
-The F0 counter row alone permits temporary staging headroom. Restore best elapsed <= 1.01 at F3 frame
-cutover in both the executable assertion and this table, with updated contract fixtures and all six measured
-rows before accepting that cutover. CPU p99 stays <= 1.515 throughout; do not derive a larger tail from 1.02.
-Keep the actual picture count, consumed-record count and pixel/pacing equivalence assertions.
-This row neither accepts hardware performance nor releases the existing M12/unit holds.
+cheap measurements and both core-matching probes. HAL checks five warmed batches for one transfer
+into the retained storage, no zero-fill or allocation, and in-place unpadding.
+The raster guards compare nine signals with the scalar references. Spans pin scattered writes or the
+contiguous eight-lane sweep, using the cheaper operation count at both depths. Dots visit every sample
+once, coalesce repeated rows, and limit repeat probes for noisy columns.
+The upload guards pin zero row comparisons and one contiguous copy per channel. They check both the
+eight-row dirty band and full-map update. The batch merge guard counts actual prefix and map writes on
+the picture owner. Measure the half-picture-period merge latency target on the unit.
 
 ### How each budget is measured
 

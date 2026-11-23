@@ -210,7 +210,7 @@ fn exempt(path: &str, name: &str, kind: &str) -> bool {
             | ("ui/src/perfguard/deep/tests.rs", "bench_deep_diagnostics_overhead")
             | ("ui/src/sparse.rs", "tests::sparse_path_is_cheaper_than_the_record_path")
             | ("ui/src/trignear.rs", "tests::near_first_is_much_cheaper_at_the_hardware_point")
-            | ("ui/src/perfguard/latency.rs", "check" | "wait_until")
+            | ("ui/src/perfguard/latency.rs", "check")
     )
 }
 fn findings(source: &sources::Source) -> Ratchet {

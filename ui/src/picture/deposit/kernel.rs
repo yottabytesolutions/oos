@@ -306,6 +306,9 @@ pub(crate) fn fold_band<T: Count>(
     })
 }
 
+#[cfg(test)]
+pub(crate) mod fold_work;
+
 pub(super) fn fold_rows<T: Count, M: Count>(
     map: &mut [M],
     run: &mut [T],
@@ -316,16 +319,25 @@ pub(super) fn fold_rows<T: Count, M: Count>(
     let width = run.len();
     let mut painted = rows..0;
     run.fill(T::default());
-    for r in touched.start.min(rows)..(touched.end.min(rows) + 1).min(rows + 1) {
+    let rows_to_prefix = touched.start.min(rows)..(touched.end.min(rows) + 1).min(rows + 1);
+    #[cfg(test)]
+    let mut rows_written = 0;
+    for r in rows_to_prefix.clone() {
         let occupied = prefix(r, run);
         if occupied && r < rows {
             painted.start = painted.start.min(r);
             painted.end = r + 1;
+            #[cfg(test)]
+            {
+                rows_written += 1;
+            }
             for (pixel, sum) in map[r * cols + first..][..width].iter_mut().zip(run.iter()) {
                 *pixel = pixel.saturating_add(M::from_value(sum.value()));
             }
         }
     }
+    #[cfg(test)]
+    fold_work::record(rows_to_prefix.len() * width, rows_written * width);
     painted
 }
 

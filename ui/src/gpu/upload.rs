@@ -77,16 +77,22 @@ pub(super) fn copy_rows(dst: &mut [u8], src: &[u8], row: usize, dirty: Option<Ra
     if let Some(band) = dirty {
         let bytes = band.start * row..band.end * row;
         dst[bytes.clone()].copy_from_slice(&src[bytes]);
+        #[cfg(test)]
+        tests::record_work(0, band.len(), usize::from(!band.is_empty()));
         return band;
     }
     let mut band = 0..0;
     for (y, (dst, src)) in dst.chunks_mut(row).zip(src.chunks(row)).enumerate() {
+        #[cfg(test)]
+        tests::record_work(1, 0, 0);
         if super::differ(dst, src) {
             if band.is_empty() {
                 band.start = y;
             }
             band.end = y + 1;
             dst.copy_from_slice(src);
+            #[cfg(test)]
+            tests::record_work(0, 1, 1);
         }
     }
     band

@@ -318,44 +318,15 @@ fn perf_guard_batch_core_learning() {
                 std::hint::black_box(BatchMatch::prepare(&bytes, fb, 0..frames, &s, &p, &mut cores));
             },
         );
-        eprintln!(
-            "Source matching 4 MB mask={mask}: best {:?}, p99 CPU {:?}; estimated A72 p99 {:?} (4x, unverified)",
-            pair.best.1,
-            pair.p99.1,
-            pair.p99.1 * 4
-        );
+        eprintln!("Source matching 4 MB mask={mask}: {pair:?}");
         pair.report("perf_guard_batch_core_learning");
         check_learning_budget(&pair);
     }
 }
 
 fn check_learning_budget(pair: &crate::system::perfguard::Pair) {
-    // Host p99 1.415 ms x the perf plan's 4x A72 factor x 1.5 headroom, rounded up to 9 ms.
-    // This is a provisional projection, not measured unit timing.
-    assert!(pair.p99.1 * 4 <= std::time::Duration::from_millis(9), "projected A72 learning exceeds 9 ms/4 MB");
     assert!(pair.best.1 <= pair.best.0, "batch learning exceeds Standard learning plus correction");
     pair.check_tail(1.5);
-}
-
-#[test]
-fn learning_budget_accepts_projected_a72_limit() {
-    use std::time::Duration;
-    let pair = crate::system::perfguard::Pair {
-        best: (Duration::from_millis(2), Duration::from_millis(1)),
-        p99: (Duration::from_millis(4), Duration::from_micros(2250)),
-    };
-    check_learning_budget(&pair);
-}
-
-#[test]
-#[should_panic(expected = "projected A72 learning exceeds 9 ms/4 MB")]
-fn learning_budget_rejects_projected_a72_overrun() {
-    use std::time::Duration;
-    let pair = crate::system::perfguard::Pair {
-        best: (Duration::from_millis(2), Duration::from_millis(1)),
-        p99: (Duration::from_millis(4), Duration::from_micros(2251)),
-    };
-    check_learning_budget(&pair);
 }
 
 #[test]

@@ -1,40 +1,15 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Timing guards of the fork's batch read and decode (docs/fork/perf-plan.md, P3). Each compares the fork's path with
+//! CPU-cost guards of the fork's batch decode (docs/fork/perf-plan.md, P3). Each compares the fork's path with
 //! a reference copy of the path it replaced, on the same host in the same run: ratios are stable across hosts,
 //! absolute times are not. `#[ignore]`: run them in release with `tools/perf-guard.sh`.
 
-use oos_hal::dho::bus::DmaBuf;
-use oos_hal::dho::seq::{decode_volts, unpad_in};
+use oos_hal::dho::seq::decode_volts;
 
-/// Upstream's batch path at 0.1.11 (`read_dma`, `unpad`, `deinterleave`, `volts`), and the fork's f64 fused decode
+/// Upstream's batch decode at 0.1.11 (`deinterleave`, `volts`), and the fork's f64 fused decode
 /// before the f32 one: copies, so a later change to the library cannot move the baseline.
 mod reference {
-    pub fn read_dma(c2h: &mut impl std::io::Read, bytes: usize) -> std::io::Result<Vec<u8>> {
-        let mut buf = vec![0u8; bytes];
-        let mut got = 0;
-        while got < bytes {
-            match c2h.read(&mut buf[got..])? {
-                0 => return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "end of stream")),
-                k => got += k,
-            }
-        }
-        Ok(buf)
-    }
-
-    pub fn unpad(buf: &mut Vec<u8>, frame: usize) {
-        let stride = oos_hal::dho::seq::frame_stride(frame);
-        if frame == 0 || stride == frame {
-            return;
-        }
-        let n = buf.len() / stride;
-        for k in 1..n {
-            buf.copy_within(k * stride..k * stride + frame, k * frame);
-        }
-        buf.truncate(n * frame);
-    }
-
     pub fn deinterleave(bytes: &[u8], mask: u32) -> [Vec<u16>; 4] {
         let w: Vec<u16> = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
         let on: Vec<usize> = (0..4).filter(|c| mask & (1 << c) != 0).collect();
@@ -92,17 +67,6 @@ mod reference {
     }
 }
 
-struct Mem<'a>(&'a [u8], usize);
-
-impl std::io::Read for Mem<'_> {
-    fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
-        let k = b.len().min(self.0.len() - self.1);
-        b[..k].copy_from_slice(&self.0[self.1..self.1 + k]);
-        self.1 += k;
-        Ok(k)
-    }
-}
-
 /// Pseudo-random read-out bytes (a fixed LCG).
 fn noise(n: usize, seed: u32) -> Vec<u8> {
     let mut x = seed;
@@ -136,7 +100,7 @@ const CAL: [(f64, f64); 4] = [(1.0, 0.0), (0.5, 0.1), (2.0, -0.3), (1.0, 0.0)];
 const CASES: [(u32, usize, usize); 5] =
     [(1, 2816, 1420), (1, 2500, 1600), (1, 200_000, 20), (3, 4000, 1000), (0xf, 8000, 500)];
 
-/// One 4 MB batch, read + decode: upstream's path against the fork's. Fails when the fork's decode is less than 2x
+/// One 4 MB batch decode: upstream's path against the fork's. Fails when the fork's decode is less than 2x
 /// faster (a merge that brought back deinterleave + volts in the batch loop, or slowed the fused decode; measured
 /// 3.4-5x on an M3 Max, 1.6x before the f32 decode). `cargo test --release --test perf_ratio -- --ignored --nocapture`.
 #[test]
@@ -145,22 +109,6 @@ fn bench_batch_decode() {
     assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
     for (mask, frame, frames) in CASES {
         let data = noise(frames * frame, 1);
-        let mut dma = DmaBuf::new();
-        let (read_old, read_new) = guarded_pair_ms(
-            "batch_read",
-            1.0,
-            || {
-                let mut v = reference::read_dma(&mut Mem(&data, 0), data.len()).unwrap();
-                reference::unpad(&mut v, frame);
-                std::hint::black_box(v);
-            },
-            || {
-                let b = dma.read(&mut Mem(&data, 0), data.len(), |_, _| {}).unwrap();
-                let n = unpad_in(b, frame);
-                dma.truncate(n);
-                std::hint::black_box(dma.data());
-            },
-        );
         let (dec_old, dec_new) = guarded_pair_ms(
             "batch_decode",
             0.5,
@@ -177,11 +125,10 @@ fn bench_batch_decode() {
         );
         let ratio = dec_old / dec_new;
         eprintln!(
-            "mask {:#x}, {} frames of {} bytes: read {:.2} -> {:.2} ms, decode {:.2} -> {:.2} ms ({:.2}x)",
-            mask, frames, frame, read_old, read_new, dec_old, dec_new, ratio
+            "mask {:#x}, {} frames of {} bytes: decode {:.2} -> {:.2} ms ({:.2}x)",
+            mask, frames, frame, dec_old, dec_new, ratio
         );
         assert!(ratio >= 2.0, "mask {:#x}: fused decode only {:.2}x the two-pass one", mask, ratio);
-        assert!(read_old / read_new >= 1.0, "mask {:#x}: the kept DMA buffer reads slower than a new vector", mask);
     }
 }
 

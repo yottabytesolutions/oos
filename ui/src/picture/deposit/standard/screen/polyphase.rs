@@ -6,6 +6,9 @@ use crate::fastdraw::{clip_rows, Codes, Map, Spans};
 use crate::picture::deposit::interpolation::{dot, fill_sample_runs, Taps};
 use std::{cell::RefCell, sync::OnceLock};
 
+mod average;
+pub(crate) use average::AverageGrid;
+
 const TAPS: usize = 16;
 const PHASE_BITS: u32 = 10;
 const PHASES: usize = 1 << PHASE_BITS;
@@ -64,6 +67,15 @@ fn visible_kernels(lo: usize, hi: usize, len: usize) -> [&'static Phases; TAPS] 
             interior
         }
     })
+}
+
+#[inline]
+fn kernel_edge(i: usize, len: usize) -> usize {
+    if i + 8 >= len {
+        8 + i + 8 - len
+    } else {
+        7usize.saturating_sub(i)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -256,7 +268,7 @@ fn interpolate(s: &mut Scratch, codes: &Codes<'_>, (origin, stride): (i64, i64),
         s.samples.extend([0; 8]);
         let kernels = visible_kernels(lo, hi, codes.n);
         fill_sample_runs::<POSITION_BITS>(&mut s.vertices, (start, stride, end), |i, x, out| {
-            let edge = if i + 8 >= codes.n { 8 + i + 8 - codes.n } else { 7usize.saturating_sub(i) };
+            let edge = kernel_edge(i, codes.n);
             let samples = s.samples[i - a..].first_chunk().expect("the sample window is padded");
             let phases = &kernels[edge];
             scale.fill(out, |k| {

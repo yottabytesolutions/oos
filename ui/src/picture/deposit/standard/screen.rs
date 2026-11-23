@@ -7,6 +7,7 @@ use crate::board::{record, Frame};
 use crate::sparse::{self, Interp, POINTS};
 
 mod polyphase;
+pub(crate) use polyphase::AverageGrid;
 #[cfg(test)]
 mod trigger_tests;
 

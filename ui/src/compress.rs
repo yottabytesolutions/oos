@@ -59,11 +59,10 @@ pub fn hold(m: &Model, f: Option<&Frame>) -> bool {
     m.run == RunState::Run && m.trig_mode != TrigMode::Single && f.is_some_and(live)
 }
 
-/// The model allows compressed frames: the frames of a batch are only drawn, and drawn by the dense fast path
-/// (`Ui::fast_ok`: plain edge trigger, Normal acquisition, no mask, zones, zoom or Z input, DC coupling without the
-/// 20 MHz limit), not Single (the one record is the answer), no segments, no LA (its own second read of the record), no
-/// Roll and scan are the caller's (`hw::slow_mode`). Not with dots: a pair cannot carry the dot density of its samples,
-/// and the raw newest frame (`RAW_PERIOD`) drawn as dots among pair frames swings the grade (docs/fork/flicker.md).
+/// Live compression is for modes that draw envelopes. Average needs samples.
+/// The eligible view draws Normal edge-triggered batches through the dense fast path. Single, segments and the LA
+/// need raw records. The caller excludes Roll and Scan. Dots need sample density, which pairs lose, and interleaving
+/// the raw replay (`RAW_PERIOD`) with pair frames would swing the grade (docs/fork/flicker.md).
 pub fn allowed(m: &Model) -> bool {
     // the samples of a compressed record lie far closer than a pixel: Auto draws lines there (`trace_style`)
     !m.dots_at(0.0)

@@ -174,6 +174,25 @@ fn raw_batch_stage_benchmark() {
 }
 
 #[test]
+#[ignore = "set OOS_FIXTURES to captured plain DMA batches for Average"]
+fn captured_average_matches_the_decoded_grid_and_fold() {
+    assert!(std::env::var_os("OOS_FIXTURES").is_some(), "set OOS_FIXTURES");
+    let mut checked = 0;
+    for_each_fixture(&mut |fixture| {
+        let Some(replay) = Replay::new(fixture) else { return };
+        if !newest(&replay.batch)
+            .is_some_and(|f| crate::drawpipe::average::accepts_grid(&replay.view.m, f.dt, f.envelope))
+        {
+            println!("{}: the legacy Average batch route excludes this pair grid", fixture.name());
+            return;
+        }
+        checked += replay.range.len();
+        average::verify_codes(fixture.name(), &replay.batch, &replay.view, replay.range);
+    });
+    assert!(checked > 0, "the fixture group must exercise the plain Average grid");
+}
+
+#[test]
 #[ignore = "set OOS_FIXTURES to a group of captured DMA batches"]
 fn captured_fallback_counts() {
     use std::collections::BTreeMap;

@@ -58,8 +58,7 @@ pub(super) fn smooth(
     let mut emit = |range, band| emit_run(codes, base, a, l, (range, band), (indexed, window));
     let raw = Codes { corrected: None, ..*codes };
     let band_of = |first, last| {
-        let (lo, hi) = raw.code_extremes(first - base, last + l - 1 - base);
-        let (lo, hi) = codes.calibrated(correct_adc_code(lo, offsets.1), correct_adc_code(hi, offsets.0));
+        let (lo, hi) = calibrated_bounds(codes, &raw, offsets, first - base..last + l - 1 - base);
         Band::of(lo, hi, trigger)
     };
     let mut add = |first, band| {
@@ -84,6 +83,20 @@ pub(super) fn smooth(
     if let Some(band) = current.filter(|&band| start != a || band != Band::Mixed) {
         emit(start..end, band);
     }
+}
+
+pub(super) fn bounds_for_single_sample_smoothing(codes: &Codes<'_>) -> Option<(f32, f32)> {
+    let offsets = offset_bounds(codes)?;
+    if !exact_sum(codes, 1) {
+        return None;
+    }
+    let raw = Codes { corrected: None, ..*codes };
+    Some(calibrated_bounds(codes, &raw, offsets, 0..codes.n))
+}
+
+fn calibrated_bounds(codes: &Codes<'_>, raw: &Codes<'_>, (low, high): (i32, i32), range: Range<usize>) -> (f32, f32) {
+    let (lo, hi) = raw.code_extremes(range.start, range.end);
+    codes.calibrated(correct_adc_code(lo, high), correct_adc_code(hi, low))
 }
 
 fn emit_run(

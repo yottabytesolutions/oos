@@ -44,6 +44,8 @@ pull request that fixes a mistake: what happened, then the rule.
 
 ## Tests and CI
 
+- The source simulator played one word per sample for every channel mask. Derive the interleave ratio from the
+  requested mask and use it when marking and splitting simulated DMA records.
 - The disarm simulator preserved DONE through the stop pulse, hiding a hardware assumption in ring replay. Exercise
   alternate register behavior in host tests and keep the default conservative until the unit confirms the behavior.
 - The first completed record can leave position at the first slot while the stop pulse clears DONE. Include the

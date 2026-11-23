@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 mod screen;
 pub(crate) use screen::trigger as screen_trigger;
+pub(crate) use screen::AverageGrid;
 pub(crate) use zoom::{zoom_code_plans, zoom_plans, zoom_reduced_plans, ZoomScratch};
 mod zoom;
 
